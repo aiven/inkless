@@ -152,6 +152,8 @@ We could avoid reading from S3 in the same if we dual-write to S3 and a cache.
 We could also intentionally co-locate consumers and producers for the same partition on a single broker.
 How can we offer this optimization while preserving load-balancing & scalability?
 A single partition may have very high ultimate throughput requirements (multiple producers, consumer share groups) and very high fan-out (>1000 consumers)
+We need to explore the idea of having other consumers request messages to any broker, and if the broker doesn't have them instead of going to S3, go to the partition leader and ask for those. In a sense we could use the existing flows of replicas to ask for not yet seen messages to the leader.
+
 
 ### Compression
 
