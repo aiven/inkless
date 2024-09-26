@@ -29,6 +29,8 @@ flowchart LR
     Consumer --> Proxy <--> ConsumerMetadata
 ```
 
+# Explanation
+
 This design prioritizes reusing off-the-shelf components and requiring the least new software.
 
 Inkless brokers are Kroxylicious proxies with custom filters.
@@ -37,7 +39,7 @@ Multiple Infinispan members cluster together to share data.
 
 A Kraft 3-node Kafka cluster is allocated as the Metadata store.
 Group coordination and consumer offsets are naively passed through the proxy to the backing Kafka.
-Kroxylicious should already manage the client metadata, to cause produce/fetch requests to target the proxy directly
+Kroxylicious should already manage the client metadata, to cause produce/fetch requests to target the proxy directly.
 
 The produce filter in Kroxylicious will delay the request to batch it together produces from other clients.
 After batching together multiple produce requests, the produce filter will append their data together into a single object.
@@ -54,8 +56,8 @@ Once an object is loaded from Object storage, it is populated in Infinispan and 
 Other consumers fetching the same data can then retrieve data from Infinispan without new GET requests.
 
 Limitations:
-This has substantial dependencies: Infinispan is very mature, but Kroxylicious is pre-1.0
-There is no compaction or retention async jobs, so a single Fetch may require multiple GETs
-The single-partition batch topic is a bottleneck
-Each Inkless broker needs to consume and cache the single-partition batch topic
-The batch topic has infinite retention and eventually won't fit in Inkless broker's memory
+* This has substantial dependencies: Infinispan is very mature, but Kroxylicious is pre-1.0.
+* There is no compaction or retention async jobs, so a single Fetch may require multiple GETs.
+* The single-partition batch topic is a bottleneck.
+* Each Inkless broker needs to consume and cache the single-partition batch topic.
+* The batch topic has infinite retention and eventually won't fit in Inkless broker's memory.
