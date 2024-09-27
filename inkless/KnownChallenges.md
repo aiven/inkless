@@ -58,9 +58,16 @@ How to persist metadata in the metadata store?
 Could the local "segment" system be replaced with the same layout as the object storage to unify the stateful & stateless broker implementations?
 Maybe S3 Express 1Z actually makes sense for low-latency topics once we can use the object-storage file layout?
 
-### How to deal with batch metadata?
+### How to deal with batch coordinates?
 
 How can we record where is the data stored?
+
+### What is an acceptable size for batch coordinates? 
+
+Data storage required for batch coordinates will scale with time and the amount of data in an inkless topic-partition.
+Is this relationship linear O(n) or logarithmic O(log n)?
+If linear, what is the constant factor (e.g. metadata bytes per record, per batch, per data byte?)
+Can we use compression to optimize this ratio?
 
 ### What's our take on partition ownership?
 
@@ -116,6 +123,18 @@ AK has brought in dependencies in the past and later phased them out (ZooKeeper)
 * Number of AZs per metadata plane
 * Number of metadata planes per Operator
 * Number of metadata planes per Customer
+
+### Could there be more than one bucket per cluster, or more than one cluster per bucket? 
+
+Replication/mirroring/migrations between Kafka clusters may be cheaper when sharing underlying storage.
+How could we share metadata between clusters to access the same underlying data?
+
+It may be a requirement to have different inkless partitions in a cluster backed by different buckets.
+Either permissions/compliance reasons, reducing single points of failure, or to allow simple deletion
+
+### Could there be other readers/writers to the bucket other than Inkless?
+
+What if there are rogue writers? What if someone wants to pull data directly for analytics/data laking (e.g. iceberg)
 
 ## Business facing challenges / Cost management
 
