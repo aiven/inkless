@@ -19,7 +19,7 @@ flowchart LR
         PartitionOwnership[Partition Ownership]
         ObjectStorageCoordinates[Object Storage Coordinates]
     end
-    subgraph ObjStorageOptimzer[Object Storage Optimizer]
+    subgraph ObjStorageOptimizer[Object Storage Optimizer]
         Optimizer[Optimizer]
     end
 %% Produce Data
