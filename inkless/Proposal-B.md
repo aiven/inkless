@@ -11,11 +11,11 @@ flowchart LR
         ObjectStorage[Object Storage]
     end
     subgraph Service[Inkless Broker]
-        Broker[Tweaked Kafka Broker]
-        BatchProcessor[Batch Processor]
-        CacheManager[Cache Manager]
+        Broker[Tweaked ReplicaManager]
+        BatchProcessor["Batch Processor(*)"]
+        CacheManager["Cache Manager(*)"]
     end
-    subgraph Metadata[Metadata Store]
+    subgraph Metadata["RemoteLogMetadataManager(*)"]
         PartitionOwnership[Partition Ownership]
         ObjectStorageCoordinates[Object Storage Coordinates]
     end
@@ -35,6 +35,13 @@ flowchart LR
     Optimizer <--> ObjectStorage
     Optimizer <--> ObjectStorageCoordinates
 ```
+
+NOTE
+> (*) modules may already exist from Tiered Storage components:
+> - Batch Processor could be included within the RemoteLogManager
+> - Cache Manager: There is some caching already on the TS plugin -- maybe this should be moved to within RemoteLogManager as well?
+> - Metadata Store is already available from RemoteLogMetadataManager and could be extended for the new architecture.
+
 This architecture relies on a modified broker and enhances it with a MetadataStore, a CacheManager and a BatchProcessor.
 The goal of the CacheManager is to reduce the amount of object storage calls done. It's a limited sized circular cache.
 The goal of the batch processor is to group messages to make the upload in object storage efficient in terms of price.
