@@ -34,6 +34,22 @@ How do we "deduplicate" batches that have already been persisted?
 
 How can we support exactly once semantics? Where is the transaction coordinator and it's state?
 
+### Authorization
+
+How can we maintain feature parity with existing authorization mechanisms and policies? 
+
+### Partition creation & deletion
+
+Are partitions created upon first write, or explicitly via control plane/AdminClient?
+Can partitions be deleted?
+How do we communicate creation and deletion to brokers?
+
+### Compatibility with legacy clients
+
+Should we support all API versions that Apache Kafka supports?
+Should we accept legacy data formats and convert them upon writing?
+Can we keep existing data-safety (checksums, order verification) in place?
+
 ## Developer & Operator facing challenges / Implementation
 
 ### New type of Topic
