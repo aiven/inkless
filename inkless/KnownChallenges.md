@@ -25,6 +25,11 @@ Can we read existing tiered storage data into an Inkless broker?
 How do consumer groups perform coordination and persist offsets?
 Can we use the existing (modernized) consumer group coordinator & new consumer rebalance protocol directly?
 
+#### Answer
+Consumer Groups will be managed by an unmodified Group Coordinator and __consumer_offsets topic.
+If __consumer_offsets is a traditional topic, this will require a traditional broker to host it.
+If the Group Coordinator is in a different cluster, Inkless brokers can proxy consumer requests to the coordinator.
+
 ### Idempotent producers
 
 How do we support idempotent producers & producer IDs?
@@ -38,17 +43,28 @@ How can we support exactly once semantics? Where is the transaction coordinator 
 
 How can we maintain feature parity with existing authorization mechanisms and policies? 
 
+#### Answer
+
+We will leave existing authorization implementations in-place, with the exact same semantics as the upstream.
+Authorization should be performed at the edge of the cluster by inkless brokers, to distribute load.
+
 ### Partition creation & deletion
 
 Are partitions created upon first write, or explicitly via control plane/AdminClient?
 Can partitions be deleted?
 How do we communicate creation and deletion to brokers?
+How do we communicate ACLs and other metadata to brokers?
 
 ### Compatibility with legacy clients
 
 Should we support all API versions that Apache Kafka supports?
 Should we accept legacy data formats and convert them upon writing?
 Can we keep existing data-safety (checksums, order verification) in place?
+
+#### Answer
+
+We will inherit all legacy client handling from the upstream repository.
+We can enforce all available validations for fully implementation parity.
 
 ## Developer & Operator facing challenges / Implementation
 
@@ -99,11 +115,23 @@ How can we combine multiple files of a segment together for fewer Object API cal
 How can we ensure that Object Storage data can be read after a data-plane/metadata-plane upgrade?
 How can we evolve the data format after some data has already been written?
 
+#### Answer
+
+We should include necessary magic/version numbers in any custom data formats, similar to existing formats.
+
 ### Upgrades to wire protocols
 
 How will we keep pace with Kafka wire protocol changes? Does every version of Apache Kafka trigger a new version of the stateless brokers?
 How will we upgrade the broker <-> metadata wire protocol? How will we perform upgrades of brokers & metadata layer?
 How out-of-date can the data layer be from the metadata layer?
+
+#### Answer
+
+We will support all API calls with the exact same version as present in the corresponding Apache version.
+Kafka has supported very wide upgrade windows (many intermediate versions skipped) so users will expect the same from Inkless brokers.
+We should tolerate heterogeneous data & metadata layers, allowing for rolling upgrades for both in any order.
+We should tolerate any released version of the data layer against any released version of the metadata layer.
+When/if we want to deprecate or remove functionality, we can revise this policy.
 
 ### Async Jobs
 
