@@ -8,20 +8,24 @@ Choosing rows in one table may conflict with another (not all cross-products are
 
 ## Proxy Language
 
-| Instance | Description                                                             |
-|----------|-------------------------------------------------------------------------|
-| Java     | Used by Kafka<br/> +first class client support<br/> +easier to upstream |
-| Go       | Used by WarpStream<br/> -no experience                                  |
-| Cpp      | +no garbage collection<br/> -limited experience                         |
-| Python   | -untyped<br/> +easier for internal developers                           |
+| Instance   | Description                                                             |
+|------------|-------------------------------------------------------------------------|
+| Java       | Used by Kafka<br/> +first class client support<br/> +easier to upstream |
+| ~~Go~~     | ~~Used by WarpStream<br/> -no experience~~                              |
+| ~~Cpp~~    | ~~+no garbage collection<br/> -limited experience~~                     |
+| ~~Python~~ | ~~-untyped<br/> +easier for internal developers~~                       |
+
+See [ADR for Proxy Implementation](ADR-ProxyImplementation.md)
 
 ## Proxy Implementation
 
-| Instance        | Description                                                |
-|-----------------|------------------------------------------------------------|
-| Bespoke Service | Used by WarpStream<br/>-new boilerplate                    |
-| Modified Kafka  | +easier to upstream<br/> +no boilerplate                   |
-| Kroxylicious    | +prebuilt<br/> -immature<br/> -limited concurrency control |
+| Instance            | Description                                                    |
+|---------------------|----------------------------------------------------------------|
+| ~~Bespoke Service~~ | ~~Used by WarpStream<br/>-new boilerplate~~                    |
+| Modified Kafka      | +easier to upstream<br/> +no boilerplate                       |
+| ~~Kroxylicious~~    | ~~+prebuilt<br/> -immature<br/> -limited concurrency control~~ |
+
+See [ADR for Proxy Implementation](ADR-ProxyImplementation.md)
 
 ## Object Storage
 
@@ -69,7 +73,9 @@ Choosing rows in one table may conflict with another (not all cross-products are
 
 ## Consumer Offsets
 
-| Instance                | Description                                                                          |
-|-------------------------|--------------------------------------------------------------------------------------|
-| Bespoke Service         | Used by WarpStream<br/>-new boilerplate<br/> -need to port & maintain implementation |
-| Kafka Group Coordinator | +prebuilt<br/> -requires controller/stateful kafka                                   |
+| Instance                | Description                                                                              |
+|-------------------------|------------------------------------------------------------------------------------------|
+| ~~Bespoke Service~~     | ~~Used by WarpStream<br/>-new boilerplate<br/> -need to port & maintain implementation~~ |
+| Kafka Group Coordinator | +prebuilt<br/> -requires controller/stateful kafka                                       |
+
+See [ADR for Proxy Implementation](ADR-ProxyImplementation.md)
