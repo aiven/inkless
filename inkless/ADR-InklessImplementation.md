@@ -1,6 +1,6 @@
 ## Decision statement
 
-We should use Apache Kafka as a base for our inkless proxy implementation.
+We should use Apache Kafka as a base for our inkless implementation.
 We will make modifications to Apache Kafka to add our desired new functionality that meets the design requirements.
 We will release it as an alternative distribution of Apache Kafka on a similar cadence to the upstream.
 If/when merged into the upstream, we may deprecate and remove our fork.
