@@ -39,5 +39,6 @@ This will require an ongoing maintenance burden on our developers to merge the u
 * Choose our design to minimize this divergence
 * Influence the upstream to control the divergence and provide unofficial-APIs where possible
 * Hire additional Java developers to address the burden in the short-term
+  * Timeline wise, this would mean that we would need Java developer support in around 6 months of the beginning of the implementation phase
 * Discuss upstreaming this feature with the community for the long-term
 
