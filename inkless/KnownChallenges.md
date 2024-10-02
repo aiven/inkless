@@ -16,6 +16,18 @@ We need to understand how to effectively deactivate replication factor for the n
 Is setting replication factor to 1 enough?
 Should this setting be ignored for the new type of topics?
 
+#### Answer
+
+Replication factor is a configuration value that can set to 1 meaning effectively no replication occurs.
+We could piggyback on this setting and have it forcefully set to 1 for inkless topics.
+The way replication and being "in sync" is handled goes as following:
+- Leader keeps track of the replicas and their state of replication.
+- Uses the high watermark concept to understand if all needed followers (replication factor) have seen the messages so it can reply to the producer
+- Followers actively fetch latest messages from leader
+
+We should be able to use the fetch mechanism (with some modifications) in Inkless for brokers that are not partition owners
+to fetch data from the owner and store it in their cache.
+
 ### Integration with existing Tiered Storage data
 
 Can we read existing tiered storage data into an Inkless broker?
