@@ -66,6 +66,19 @@ Can we keep existing data-safety (checksums, order verification) in place?
 We will inherit all legacy client handling from the upstream repository.
 We can enforce all available validations for fully implementation parity.
 
+### Sources of Networking costs
+
+Networking costs come from 3 different sources: Replication (fixed), Incoming/Producer (variable), Outgoing/Consumer (variable).
+Both Producer and Consumer are variable as they depend on the placement of the clients vs the replica to write/read.
+Their requests may come all from the same AZ, all from different AZ, or spread across AZs.
+Replication costs are assumed to be fixed, as replication factor flows across 3 AZs.
+
+#### Answer
+
+We will approach a solution that first solves the Replication costs, and based on that model defines solutions for the other 2.
+Outgoing costs have already a solution on today's Kafka with Follower fetching. Our solution should find a compatible or similar approach.
+Incoming costs may require a solution that is not within the model of how Kafka works.
+
 ## Developer & Operator facing challenges / Implementation
 
 ### New type of Topic
