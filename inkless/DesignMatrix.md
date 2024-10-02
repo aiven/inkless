@@ -15,7 +15,7 @@ Choosing rows in one table may conflict with another (not all cross-products are
 | ~~Cpp~~    | ~~+no garbage collection<br/> -limited experience~~                     |
 | ~~Python~~ | ~~-untyped<br/> +easier for internal developers~~                       |
 
-See [ADR for Proxy Implementation](ADR-InklessImplementation.md)
+See [ADR for Inkless Implementation](ADR-InklessImplementation.md)
 
 ## Proxy Implementation
 
@@ -25,7 +25,7 @@ See [ADR for Proxy Implementation](ADR-InklessImplementation.md)
 | Modified Kafka      | +easier to upstream<br/> +no boilerplate                       |
 | ~~Kroxylicious~~    | ~~+prebuilt<br/> -immature<br/> -limited concurrency control~~ |
 
-See [ADR for Proxy Implementation](ADR-InklessImplementation.md)
+See [ADR for Inkless Implementation](ADR-InklessImplementation.md)
 
 ## Object Storage
 

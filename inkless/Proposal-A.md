@@ -29,7 +29,7 @@ flowchart LR
     Consumer --> Proxy <--> ConsumerMetadata
 ```
 
-Status: REJECTED due to [ADR for Proxy Implementation](ADR-InklessImplementation.md)
+Status: REJECTED due to [ADR for Inkless Implementation](ADR-InklessImplementation.md)
 
 # Explanation
 
