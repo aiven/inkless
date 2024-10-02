@@ -78,4 +78,4 @@ See [ADR for Proxy Implementation](ADR-InklessImplementation.md)
 | ~~Bespoke Service~~     | ~~Used by WarpStream<br/>-new boilerplate<br/> -need to port & maintain implementation~~ |
 | Kafka Group Coordinator | +prebuilt<br/> -requires controller/stateful kafka                                       |
 
-See [ADR for Proxy Implementation](ADR-InklessImplementation.md)
+See [ADR for Inkless Implementation](ADR-InklessImplementation.md)
