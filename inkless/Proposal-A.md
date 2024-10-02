@@ -29,6 +29,8 @@ flowchart LR
     Consumer --> Proxy <--> ConsumerMetadata
 ```
 
+Status: REJECTED due to [ADR for Proxy Implementation](ADR-ProxyImplementation.md)
+
 # Explanation
 
 This design prioritizes reusing off-the-shelf components and requiring the least new software.
