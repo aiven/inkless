@@ -98,6 +98,15 @@ Incoming costs may require a solution that is not within the model of how Kafka 
 We need to create a new type of topic, in order to have Inkless topics working alongside traditional topics.
 What would we need? can we piggyback on TS infrastructure?
 
+#### Answer
+
+Kafka doesn't have the concept of topic types at the moment. There are configuration per topic that we could use.
+
+org.apache.kafka.coordinator.group.modern.TopicMetadata seems to be a reasonable place to store this type.
+However, Kafka doesn't really operate at topic level within a broker, but at log level, this is why many of the metadata
+elements of a topic get pushed down (like configs).
+We can follow the same path tiered storage uses by setting the topic type as another topic level configuration value.
+
 ### New type of broker
 
 Should brokers without log directories join the cluster as full members?
