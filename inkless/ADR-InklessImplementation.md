@@ -42,3 +42,7 @@ This will require an ongoing maintenance burden on our developers to merge the u
   * Timeline wise, this would mean that we would need Java developer support in around 6 months of the beginning of the implementation phase
 * Discuss upstreaming this feature with the community for the long-term
 
+## Status
+
+Approved on: 2024/10/02
+Status: Valid
