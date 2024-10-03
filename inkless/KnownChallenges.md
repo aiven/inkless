@@ -107,6 +107,8 @@ However, Kafka doesn't really operate at topic level within a broker, but at log
 elements of a topic get pushed down (like configs).
 We can follow the same path tiered storage uses by setting the topic type as another topic level configuration value.
 
+We will likely need to modify the ReplicaPlacer interface to ensure topics are assigned to brokers which can accommodate them.
+
 ### New type of broker
 
 Should brokers without log directories join the cluster as full members?
@@ -138,6 +140,12 @@ Can we use compression to optimize this ratio?
 ### What's our take on partition ownership?
 
 Given brokers are stateless and Kafka has the concept of leader of a partition, how do we reconcile these two concepts? How can we guarantee ordering within partition?
+
+#### Answer
+
+For each partition, there will be a leader in control of a single linear history of the batch coordinates.
+This allows for good data producer data transfer locality when possible. 
+Multiple brokers can accept writes for a partition, but must contact the leader of the batch coordinates to obtain a total order.
 
 ### Data format of our Object Storage data
 
@@ -190,10 +198,31 @@ AK has brought in dependencies in the past and later phased them out (ZooKeeper)
 * Intra-AZ latency
 * Inter-AZ latency
 
+#### Answer (partial)
+
+The published latency for competitors is 400ms p99 producer-ack latency, and 1000ms p99 producer-consumer data latency.
+
+Our first released version should be <800ms p99 producer-ack latency and 2000ms p99 producer-consumer data latency.
+We should conduct this test with data + metadata layers in the same S3 region for best-case benchmarking.
+We should evaluate the viability to running a single metadata layer for multiple regions.
+
 ### What throughput is acceptable?
 
 * Per-broker throughput bytes/sec
 * Per-broker throughput records/sec
+
+#### Answer
+
+Due to the different latency and topology characteristics of Inkless, different tuning may be required for producers and consumers to reach optimal performance.
+Inkless brokers should target ultimate throughput performance parity with Apache Kafka, while not guaranteeing performance parity with any particular configuration.
+
+For fair comparisons, we should do performance tests on equivalently-specified hardware and find pairs of configurations that:
+* Use Replication Factor > 1 for Apache Kafka
+* Saturate the network bandwidth of brokers
+* Use very large records (>1MB) to test bytes/sec
+* Use very small records (~0b) to test records/sec
+
+We can also use recommended producer settings from competitors as a baseline for our testing.
 
 ### What topology is acceptable?
 
@@ -201,6 +230,13 @@ AK has brought in dependencies in the past and later phased them out (ZooKeeper)
 * Number of AZs per metadata plane
 * Number of metadata planes per Operator
 * Number of metadata planes per Customer
+
+### Answer
+
+< 100 brokers per AZ
+< 300 brokers per metadata plane
+< 10000 metadata planes per Operator
+< 100 metadata planes per Customer
 
 ### Could there be more than one bucket per cluster, or more than one cluster per bucket? 
 
@@ -213,6 +249,15 @@ Either permissions/compliance reasons, reducing single points of failure, or to 
 ### Could there be other readers/writers to the bucket other than Inkless?
 
 What if there are rogue writers? What if someone wants to pull data directly for analytics/data laking (e.g. iceberg)
+
+#### Answer
+
+There are numerous Kafka-based requirements for the data format that will constrain the design.
+Well-intentioned external uses of the data are poorly defined currently, and not part of the official requirements.
+To keep the design scope manageable, we should assume that there are no external dependencies on our data format or bucket contents.
+
+Additionally, we will design around cloud providers' durability guarantees, and treat data loss as an exceptional situation. 
+Users are expected to have tight controls over the data in their object storage, and prevent unintended access to the stored data.
 
 ## Business facing challenges / Cost management
 
