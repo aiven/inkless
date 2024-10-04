@@ -278,6 +278,11 @@ What sorts of communication is there between brokers in the same AZ?
 
 How can we make use of the active segment as a cache for fresh data, but at the same time, limiting the disk to the active segment
 
+#### Answer
+
+Inkless topics may tune the **local** retention and log rotation configs to limit the size of the active segment (e.g. rotate by 100MiB, 1h with minimal local retention).
+Similar to Tiered Storage, rotated segments should be removed as long as metadata confirms that records are in Remote Storage.
+
 ### How can we utilize ephemeral local storage for an out-of-memory cache?
 
 If we can use ephemeral disks with no reliability guarantees as caches, we could use hardware with less memory requirements.
@@ -287,6 +292,21 @@ Ephemeral disk cache may also save enough GET requests to justify their ongoing 
 
 How can we minimize the number of reads from object storage?
 How could we do this without harming scalability & stability while scaling?
+
+#### Answer
+
+Object storage pricing fixes our priority on optimizing more writes than reads.
+e.g. in AWS S3, write operations are 10x more expensive than reads.
+
+This problem would also benefit from separating between global WAL (live data, i.e. active segment) vs. rotated segments.
+If consumers are reading from the leader, records could be served from a local cache (many batches per request, no remote storage latency).
+If reading from a follower, they will have to read from the global WAL, which means quite fragmented data (as multiple topic partition may be in the same object, optimizing writes) 1 batch per request.
+If reading from older, rotated segments which should be compacted, per-partition, then consumption should be more performant (many batches per request + remote storage latency per request)
+
+This problem should be part of the Follower fetching support for Inkless Topics.
+Strategies could be applied:
+- Price follower fetching, so customers pay a bit more to account for the burst in fetch request when reading from local data.
+- Make the follower fetching lag behind a few global WAL batches, so we could apply some optimization (eager compaction) before serving data.
 
 ### How can we optimize same-AZ consumers & producers?
 
@@ -300,6 +320,16 @@ We need to explore the idea of having other consumers request messages to any br
 ### Compression
 
 How can we maintain or improve compression when writing to object storage?
+
+#### Answer
+
+This is more of a challenge for _rotated_ segments than the most recent data,
+so it could be solved when records in global WAL (live data) get materialized/compacted into a log-per-partition format.
+
+If we opt for a proposal where the rotated segments aim to be compatible with tiered storage format,
+then the same approach from the Tiered Storage plugin can be valid:
+There is a compression checker that validates if the first batch is compressed.
+If it is not, then a _compression per chunk_ (where a chunk is configurable size, e.g. 8MiB).
 
 ### Multitenant metadata-plane + control-plane
 
