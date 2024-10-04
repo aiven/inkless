@@ -10,6 +10,13 @@ How can we tweak partition ownership given that brokers should be stateless?
 How do we spread load of consumers and producers?
 Which type of metadata?
 
+#### Answer
+
+We should rely on KRaft to ensure we have some sort of partition ownership.
+Using some sort of load balancing algorithm (round robin, least connection, least response time, ...) we can try to ensure
+load is distributed evenly within all the brokers. We need some ADR to find out what would be the best for this. Maybe even make it configurable.
+This means we will fully utilize the current cluster metadata infrastructure.
+
 ### Replication
 
 We need to understand how to effectively deactivate replication factor for the new type of topics.
@@ -51,6 +58,11 @@ If the Group Coordinator is in a different cluster, Inkless brokers can proxy co
 
 How do we support idempotent producers & producer IDs?
 How do we "deduplicate" batches that have already been persisted?
+
+#### Answer
+
+As Inkless Kafka brokers are going to be built on top of Apache Kafka ones and we should have affinity between clients and brokers as well in Inkless.
+We should be able to rely on the same mechanisms Kafka is using.
 
 ### Transactional Producers/Exactly Once Semantics
 
