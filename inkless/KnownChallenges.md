@@ -32,6 +32,11 @@ to fetch data from the owner and store it in their cache.
 
 Can we read existing tiered storage data into an Inkless broker?
 
+#### Answer
+
+Once Inkless Followers (followers which are not part of the ISR and their main goal is to serve consumer requests in different AZs) are in place,
+they could in a similar way leverage Remote Log Metadata already available to source consumer requests.
+
 ### Consumer Groups
 
 How do consumer groups perform coordination and persist offsets?
@@ -231,7 +236,7 @@ We can also use recommended producer settings from competitors as a baseline for
 * Number of metadata planes per Operator
 * Number of metadata planes per Customer
 
-### Answer
+#### Answer
 
 < 100 brokers per AZ
 < 300 brokers per metadata plane
@@ -315,7 +320,6 @@ We could also intentionally co-locate consumers and producers for the same parti
 How can we offer this optimization while preserving load-balancing & scalability?
 A single partition may have very high ultimate throughput requirements (multiple producers, consumer share groups) and very high fan-out (>1000 consumers)
 We need to explore the idea of having other consumers request messages to any broker, and if the broker doesn't have them instead of going to S3, go to the partition leader and ask for those. In a sense we could use the existing flows of replicas to ask for not yet seen messages to the leader.
-
 
 ### Compression
 
