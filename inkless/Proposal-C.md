@@ -81,3 +81,119 @@ Limitations:
 * Requires 3 new Kafka APIs, which could later conflict with upstream request IDs
 * Partition count of Batch Coordinate Topic influences ultimate scalability of the cluster, or we need a resize strategy.
 * Election of Batch Coordinate Topic Leader could affect availability of many inkless topics 
+
+## Deployment Models
+
+For internal and external developers working on the Inkless feature, all components should be runnable on a single machine.
+```mermaid
+---
+title: Development Environment
+---
+flowchart LR
+    subgraph Developer
+        User
+    end
+    subgraph Localhost
+        Clients
+        Inkless
+        Traditional
+        Controller
+        ObjectStorage[MinIO]
+        Filesystem
+        ControlPlane[Shell Scripts]
+    end
+    User -.-> Clients & ControlPlane
+    Clients --> Inkless & Traditional
+    Traditional & Inkless -.-> Controller
+    Inkless --> Traditional
+    Inkless --> ObjectStorage --> Filesystem
+    Traditional & Controller --> Filesystem
+```
+
+For non-customers which want to utilize Inkless clusters, a basic set of shell scripts should permit operating on multiple machines.
+
+```mermaid
+---
+title: Self Managed
+---
+flowchart LR
+    subgraph Operator
+        User
+        Clients
+        Inkless
+        Traditional
+        Filesystem
+        Controller
+        ControlPlane[Shell Scripts]
+    end
+    subgraph Cloud
+        ObjectStorage[Object Storage]
+    end
+    User -.-> Clients & ControlPlane
+    ControlPlane -.-> Cloud
+    Clients --> Inkless & Traditional
+    Traditional & Inkless -.-> Controller
+    Inkless --> Traditional
+    Inkless --> ObjectStorage
+    Traditional & Controller --> Filesystem
+```
+
+For customers which want to keep data transfers within their cloud accounts, they may run Inkless brokers on ephemeral machines, which contact a managed backing Kafka cluster.
+Customers may run "embedded" inkless brokers within their applications, or a kubernetes-managed cluster for multiple applications.
+
+```mermaid
+---
+title: Partially Managed
+---
+flowchart LR
+    subgraph Customer
+        User
+        Clients
+        Inkless
+    end
+    subgraph Operator
+        ControlPlane[Control Plane]
+        Traditional
+        Filesystem
+        Controller
+    end
+    subgraph Cloud
+        ObjectStorage[Object Storage]
+    end
+    User -.-> Clients & ControlPlane & Cloud
+    Clients --> Inkless & Traditional
+    Traditional & Inkless -.-> Controller
+    Inkless --> Traditional
+    Inkless --> ObjectStorage
+    Traditional & Controller --> Filesystem
+```
+
+For customers that want fully managed inkless clusters as-a-service, Operators can host all services on their behalf.
+
+```mermaid
+---
+title: Fully Managed
+---
+flowchart LR
+    subgraph Customer
+        User
+        Clients
+    end
+    subgraph Operator
+        Inkless
+        Traditional
+        Filesystem
+        Controller
+        ControlPlane[Control Plane]
+    end
+    subgraph Cloud
+        ObjectStorage[Object Storage]
+    end
+    User -.-> Clients & ControlPlane
+    ControlPlane -.-> Cloud
+    Clients --> Inkless & Traditional
+    Traditional & Inkless -.-> Controller
+    Inkless --> Traditional
+    Inkless --> ObjectStorage
+    Traditional & Controller --> Filesystem
+```
