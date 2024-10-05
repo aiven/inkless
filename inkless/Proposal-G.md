@@ -63,3 +63,4 @@ The layout of the Global WAL files in the filesystem could be controlled by the 
 Limitations:
 * Compaction could be more expensive, or require leaky interfaces.
 * Two different sources of truth on segments: the object storage coordinator for low-latency data and the RLMM for high-latency data. 
+* By using a single-partition file format, object storage API costs can scale with the number of partitions for very small partitions. 

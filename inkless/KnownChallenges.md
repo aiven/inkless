@@ -44,6 +44,11 @@ Can we read existing tiered storage data into an Inkless broker?
 Once Inkless Followers (followers which are not part of the ISR and their main goal is to serve consumer requests in different AZs) are in place,
 they could in a similar way leverage Remote Log Metadata already available to source consumer requests.
 
+We could also have Inkless brokers write compacted data into tiered storage.
+This comes with a caveat that small segment sizes could cause wasteful API calls if minimums are not enforced.
+It may also not be efficient to compact from a multi-segment format into a single-segment format.
+Utilizing the object cache may make this shuffle efficient if the cache is large enough.
+
 ### Consumer Groups
 
 How do consumer groups perform coordination and persist offsets?
@@ -61,12 +66,20 @@ How do we "deduplicate" batches that have already been persisted?
 
 #### Answer
 
-As Inkless Kafka brokers are going to be built on top of Apache Kafka ones and we should have affinity between clients and brokers as well in Inkless.
-We should be able to rely on the same mechanisms Kafka is using.
+The metadata layer will need to be aware of producer IDs and deduplicate batches.
+Duplicate data in objects may be deleted after compaction occurs and live data is persisted to another object.
 
 ### Transactional Producers/Exactly Once Semantics
 
 How can we support exactly once semantics? Where is the transaction coordinator and it's state?
+
+#### Answer
+
+Exactly once transaction markers will be persisted to object storage similar to normal data.
+Transaction managers can periodically write blocks of commit messages to object storage, and contact the batch metadata system to persist their order.
+
+This may cause thundering-herd problems for the broker that is arbitrarily assigned to cache these commit messages.
+This may be replaced by special batch coordinates that encode retired transactions directly.
 
 ### Authorization
 
@@ -197,6 +210,15 @@ When/if we want to deprecate or remove functionality, we can revise this policy.
 How should asynchronous deletion & compaction jobs be coordinated?
 How do we avoid corrupting data that is in-use by other brokers?
 
+#### Answer
+
+Async jobs should contact the metadata service to obtain work assignments, as they should avoid performing duplicate work.
+The metadata service should reference count objects & extents of objects to determine if an object should remain live.
+
+The metadata service should include a TTL for batch coordinates, before which it will not delete the referenced data.
+Deletion of a file should take place if all data in a file is redundant/unused, and after all TTLs for emitted batch coordinates have expired.
+Reads from object storage completing within the TTL are expected to succeed, and reads after the TTL are undefined.
+
 ### What sort of external dependencies (libraries, services, cloud services) could/should we bring in?
 
 Some caching solutions could be solved with an existing library or prebuilt service/cloud offering.
@@ -262,6 +284,14 @@ How could we share metadata between clusters to access the same underlying data?
 
 It may be a requirement to have different inkless partitions in a cluster backed by different buckets.
 Either permissions/compliance reasons, reducing single points of failure, or to allow simple deletion
+
+#### Answer
+
+S3 Express 1Z support will require writing to multiple buckets cross-zone in parallel.
+We should plan to support a single cluster with multiple backing buckets, and encode the bucket in appropriate places.
+
+At this time there is not a strategy for sharing metadata between clusters, which would be necessary to make sharing buckets meaningful. 
+We will design as if a bucket will only be attached to a single cluster at a time.
 
 ### Could there be other readers/writers to the bucket other than Inkless?
 
