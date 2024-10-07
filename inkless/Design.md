@@ -16,7 +16,6 @@ flowchart LR
         ReadStorage[Read-Optimized Storage]
     end
     subgraph Service[Service Layer]
-        AdminProxy([Admin Proxy])
         ProducerProxy[Producer Proxy]
         ConsumerProxy[Consumer Proxy]
         ObjectCache[Object Cache]
@@ -24,12 +23,14 @@ flowchart LR
         Retention([Retention Jobs])
     end
     subgraph Metadata[Metadata Layer]
+        AdminProxy([Admin Proxy])
         ClientMetadata([Client Metadata])
-        BatchIndex([Batch Order Consensus & Index])
+        BatchIndex[Batch Order Consensus & Index]
+        BatchStorage[NoSQL Database]
         ConsumerMetadata([Group Coordinator/Offset Store])
     end
     subgraph ControlPlane[Control Plane]
-        ConfigStore([Configuration Store])
+        ConfigStore[Configuration Store SQL Database]
     end
     %% Data
     Producer ==> ProducerProxy ==> WriteStorage ==> Compaction ==> ReadStorage
@@ -39,6 +40,7 @@ flowchart LR
     %% Batch Metadata
     ProducerProxy --> BatchIndex --> ConsumerProxy
     AdminProxy <-.-> BatchIndex
+    BatchIndex <--> BatchStorage
     BatchIndex <--> Retention & Compaction
     Retention --> WriteStorage & ReadStorage
     %% Consumer Offsets
