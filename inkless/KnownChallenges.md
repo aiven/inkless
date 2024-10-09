@@ -243,6 +243,11 @@ Multiple brokers can accept writes for a partition, but must contact the leader 
 How does the data look like? Which metadata (topic, partition...) do we need to store and how?
 How can we combine multiple files of a segment together for fewer Object API calls?
 
+#### Answer (partial)
+
+Our data format is a necessary component for any solution, but with relatively little impact on the architecture.
+We should expect to spend time in the development phase designing the object storage format, after the architecture has been defined and the requirements are better understood.
+
 ### Upgrades to Data Format
 
 How can we ensure that Object Storage data can be read after a data-plane/metadata-plane upgrade?
@@ -318,7 +323,7 @@ We should evaluate the viability to running a single metadata layer for multiple
 * Per-broker throughput bytes/sec
 * Per-broker throughput records/sec
 
-#### Answer
+#### Answer (partial)
 
 Due to the different latency and topology characteristics of Inkless, different tuning may be required for producers and consumers to reach optimal performance.
 Inkless brokers should target ultimate throughput performance parity with Apache Kafka, while not guaranteeing performance parity with any particular configuration.
@@ -340,10 +345,10 @@ We can also use recommended producer settings from competitors as a baseline for
 
 #### Answer
 
-< 100 brokers per AZ
-< 300 brokers per metadata plane
-< 10000 metadata planes per Operator
-< 100 metadata planes per Customer
+* < 100 brokers per AZ
+* < 300 brokers per metadata plane
+* < 10000 metadata planes per Operator
+* < 100 metadata planes per Customer
 
 ### Could there be more than one bucket per cluster, or more than one cluster per bucket? 
 
@@ -357,6 +362,7 @@ Either permissions/compliance reasons, reducing single points of failure, or to 
 
 S3 Express 1Z support will require writing to multiple buckets cross-zone in parallel.
 We should plan to support a single cluster with multiple backing buckets, and encode the bucket in appropriate places.
+Buckets may also be regional, so we could also expect multiple buckets to be attached to one cluster, but without the requirement for dual writes.
 
 At this time there is not a strategy for sharing metadata between clusters, which would be necessary to make sharing buckets meaningful. 
 We will design as if a bucket will only be attached to a single cluster at a time.
@@ -450,7 +456,19 @@ We could avoid reading from S3 in the same if we dual-write to S3 and a cache.
 We could also intentionally co-locate consumers and producers for the same partition on a single broker.
 How can we offer this optimization while preserving load-balancing & scalability?
 A single partition may have very high ultimate throughput requirements (multiple producers, consumer share groups) and very high fan-out (>1000 consumers)
-We need to explore the idea of having other consumers request messages to any broker, and if the broker doesn't have them instead of going to S3, go to the partition leader and ask for those. In a sense we could use the existing flows of replicas to ask for not yet seen messages to the leader.
+We need to explore the idea of having other consumers request messages to any broker, and if the broker doesn't have them instead of going to S3, go to the partition leader and ask for those.
+In a sense we could use the existing flows of replicas to ask for not yet seen messages to the leader.
+
+#### Answer
+
+Eager cache warming on produce is wasteful if a partition has no consumers.
+However, if other partitions in the same object have consumers, the data is very likely to be read back in immediately.
+In a typical deployment, eager cache warming should reduce the number of GET requests for low-latency data by 1/3 in a 3-zone deployment.
+It may increase "fetch jitter", because data in the local AZ will be ready before data produced in other AZs, reduced by the latency of 1 GET request.
+
+We cannot influence the AZs that clients are created in, and we can't influence which partitions that they read/write to.
+We should prioritize balancing of clients across the brokers in a zone, and not try to implement intra-zone locality.
+Caches should manage distributing data between brokers in a cluster.
 
 ### Compression
 
@@ -470,3 +488,12 @@ If it is not, then a _compression per chunk_ (where a chunk is configurable size
 
 Should we design the metadata APIs with multitenancy as a first-class abstraction?
 Can we amortize costs of non-data-plane components by sharing them among multiple customers?
+
+#### Answer
+
+We expect that building a multitenant metadata-plane/control-plane will have poor ROI, and that we should not pursue it.
+The market segment of users that benefit from both a multitenant control-plane and from Inkless is minimal.
+Users of this feature that operate at a scale to be sensitive to the cost of cross-az-traffic are likely to find a fixed cost associated with the metadata plane reasonable, and are likely to desire dedicated infrastructure anyway.
+
+Building such a multitenant control plane also diverges us further from the upstream, requiring us to reimplement large parts of Kraft.
+We may undertake this in the future as part of a separate effort when the benefits become more clear.
