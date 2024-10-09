@@ -35,6 +35,10 @@ The way replication and being "in sync" is handled goes as following:
 We should be able to use the fetch mechanism (with some modifications) in Inkless for brokers that are not partition owners
 to fetch data from the owner and store it in their cache.
 
+Replication factor could also be used to manage high-fan-out topics: ones with many more consumers than producers.
+Perhaps rather than having a single broker per AZ responsible for caching data, more than one copy could be kept loaded.
+In Infinispan for example, there can be multiple "owners" for a key which can all serve requests.
+
 ### Integration with existing Tiered Storage data
 
 Can we read existing tiered storage data into an Inkless broker?
@@ -48,6 +52,15 @@ We could also have Inkless brokers write compacted data into tiered storage.
 This comes with a caveat that small segment sizes could cause wasteful API calls if minimums are not enforced.
 It may also not be efficient to compact from a multi-segment format into a single-segment format.
 Utilizing the object cache may make this shuffle efficient if the cache is large enough.
+
+Compaction can combine multi-segment files into large multi-segment files until the size of an individual partition reaches a minimum threshold.
+Then that individual partition can be moved into a tiered storage segment.
+Small partitions that never reach the minimum segment size would always remain merged with other small partitions.
+Large partitions could be compacted directly into a single-segment format after 1 pass.
+
+Compaction instead of being an N:1 operation could be an N:2 operation:
+N mixed input files could be selected which have a segment's worth of contiguous data for a single partition.
+The remaining partitions could be emitted into a new mixed segment, but with one fewer partition.
 
 ### Consumer Groups
 
@@ -90,12 +103,23 @@ How can we maintain feature parity with existing authorization mechanisms and po
 We will leave existing authorization implementations in-place, with the exact same semantics as the upstream.
 Authorization should be performed at the edge of the cluster by inkless brokers, to distribute load.
 
+When customer-hosted inkless brokers contact an operator-hosted backend, they should be using secured and authorized connections.
+Authorization here should be to mediate the customer/operator relationship, not enforcing intra-cluster resources.
+Customers using an "untrusted inkless broker" implementation will be allowed to circumvent topic topology limits.
+
 ### Partition creation & deletion
 
 Are partitions created upon first write, or explicitly via control plane/AdminClient?
 Can partitions be deleted?
 How do we communicate creation and deletion to brokers?
 How do we communicate ACLs and other metadata to brokers?
+
+#### Answer
+
+For full protocol compatibility, Inkless brokers should accept AdminClient metadata operations.
+We can optionally provide AdminClient access directly from the control plane if desirable.
+
+Deletion of topics could be immediate from the metadata layer, and asynchronous for the data layer.
 
 ### Compatibility with legacy clients
 
@@ -121,6 +145,9 @@ We will approach a solution that first solves the Replication costs, and based o
 Outgoing costs have already a solution on today's Kafka with Follower fetching. Our solution should find a compatible or similar approach.
 Incoming costs may require a solution that is not within the model of how Kafka works.
 
+Warpstream solves this by encoding a "rack ID" in the producer client ID, which the metadata layer parses
+The upstream could add native rack-awareness/multi-leader partitions to remove this hack.
+
 ## Developer & Operator facing challenges / Implementation
 
 ### New type of Topic
@@ -145,20 +172,48 @@ Should brokers without log directories join the cluster as full members?
 How would brokers in the same membership pool communicate their disk capacity to host traditional topics, tiered topics, etc)
 Could brokers without log directories use group coordination to isolate membership from the rest of the cluster?
 
+#### Answer
+
+Brokers could announce themselves as being in an "inkless" rack, with special meaning.
+Or the inkless brokers could get the real rack IDs, and traditional brokers given internal rack IDs.
+
 ### How to deal with Object Storage writing
 
 Where do we need to "inject" ourselves to enable Inkless writing on an Object Storage as primary storage.
 Ordering of batches?
 How to persist metadata in the metadata store?
 
+#### Answer
+
+Multiple Produce requests to the same broker will be batched together.
+This "multi-batch" will be serialized according to some format, and written to an object.
+The coordinates for the multi-batch will be sent to an offsets coordinator, which will determine:
+* Which produce requests succeed and fail
+* What order/offset the produce requests appear in the log
+* What timestamp the produce request was finalized with
+
 ### Cloud-First Layout of Local Storage
 
 Could the local "segment" system be replaced with the same layout as the object storage to unify the stateful & stateless broker implementations?
 Maybe S3 Express 1Z actually makes sense for low-latency topics once we can use the object-storage file layout?
 
+#### Answer
+
+Probably not. The existing layout is purpose designed to optimize for consumer locality at the time of writing.
+Requiring an additional compaction step to get consumer locality would generate wasteful disk load.
+Modern filesystems already provide performant in-kernel lookup from file -> extent -> block, and userspace solutions would be strictly slower.
+
 ### How to deal with batch coordinates?
 
 How can we record where is the data stored?
+
+#### Answer (partial)
+
+We need to vote on an ADR to choose the batch coordinate storage.
+Requirements for this storage are:
+* Strong consistency per-partition
+* Query by nearby offset (and timestamp?) for fetching
+* Query by object ID for compaction
 
 ### What is an acceptable size for batch coordinates? 
 
@@ -167,6 +222,13 @@ Is this relationship linear O(n) or logarithmic O(log n)?
 If linear, what is the constant factor (e.g. metadata bytes per record, per batch, per data byte?)
 Can we use compression to optimize this ratio?
 
+#### Answer (partial)
+
+This depends on the design chosen for the batch coordinates.
+We should expect on the order of ~100 bytes per producer batch, but variable per data byte.
+This will be more efficient for larger records and larger batch sizes.
+During compaction batches may be combined, and may allow batch coordinates to get more efficient for the same amount of data stored.
+
 ### What's our take on partition ownership?
 
 Given brokers are stateless and Kafka has the concept of leader of a partition, how do we reconcile these two concepts? How can we guarantee ordering within partition?
@@ -174,7 +236,6 @@ Given brokers are stateless and Kafka has the concept of leader of a partition, 
 #### Answer
 
 For each partition, there will be a leader in control of a single linear history of the batch coordinates.
-This allows for good data producer data transfer locality when possible. 
 Multiple brokers can accept writes for a partition, but must contact the leader of the batch coordinates to obtain a total order.
 
 ### Data format of our Object Storage data
@@ -224,6 +285,13 @@ Reads from object storage completing within the TTL are expected to succeed, and
 Some caching solutions could be solved with an existing library or prebuilt service/cloud offering.
 AK tends to avoid dependencies whenever possible, and builds services on top of log storage (e.g. group coordination, transaction coordination, kafka connect)
 AK has brought in dependencies in the past and later phased them out (ZooKeeper), or kept them long-term (RocksDB).
+
+#### Answer
+
+For commodity dependencies (cloud services) we should find a unifying abstraction that can accept plugins.
+Architectural dependencies should be libraries and not services, so that there is less deployment burden on operators.
+Architectural dependencies should also be open-source and well-supported.
+The lifetime of these dependencies will be discussed on a case-by-case basis.
 
 ### What latency is acceptable?
 
@@ -312,6 +380,11 @@ Users are expected to have tight controls over the data in their object storage,
 
 We need to calculate the right size to minimize costs and latency (which probably are at odds)
 
+#### Answer (partial)
+
+We will need to perform scale testing and optimization to determine a recommended default value for this.
+It will be one of the primary tuning parameters, and should be configurable by users and by operators.
+
 ### How to reduce inter-AZ costs?
 
 Intra-AZ traffic is usually free, while inter-AZ traffic is expensive.
@@ -320,6 +393,15 @@ How to have clusters that span multiple AZs but reduce inter-AZ traffic to a min
 Is setting independent clusters with same object storage enough? How do we deal with data linearization?
 What is communicated between brokers in different AZs?
 What sorts of communication is there between brokers in the same AZ?
+
+#### Answer
+
+Data transfer (producer -> broker, broker <-> object storage, broker -> consumer) should be zone-local in happy-path cases.
+Data consists of any record keys, values, or headers written by user-controlled producers.
+In cases of misconfiguration or infrastructure failure, data is allowed to cross AZ boundaries.
+
+Metadata is always allowed to cross AZ boundaries, and must be kept to a minimum size necessary.
+Metadata consists of everything that isn't data: Membership, leadership, topic topology, ACLs, batch coordinates, client service discovery, transactions, and consumer offsets.
 
 ### How to deal with the active segment?
 
@@ -330,10 +412,17 @@ How can we make use of the active segment as a cache for fresh data, but at the 
 Inkless topics may tune the **local** retention and log rotation configs to limit the size of the active segment (e.g. rotate by 100MiB, 1h with minimal local retention).
 Similar to Tiered Storage, rotated segments should be removed as long as metadata confirms that records are in Remote Storage.
 
+Note: The active segment may need to be completely empty for the lowest latency operation. 
+
 ### How can we utilize ephemeral local storage for an out-of-memory cache?
 
 If we can use ephemeral disks with no reliability guarantees as caches, we could use hardware with less memory requirements.
 Ephemeral disk cache may also save enough GET requests to justify their ongoing cost
+
+#### Answer (partial)
+
+Infinispan has support for multiple tiers of cache locality (memory, disk) and could make use of ephemeral storage.
+We would need to performance-test the implementation to discover how a larger working set could impact costs.
 
 ### Object Read Optimization
 
