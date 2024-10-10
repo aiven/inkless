@@ -71,4 +71,5 @@ We should discuss the migration path for existing traditional/tiered topics to i
 
 ## Status
 
-Status: Under Discussion
+Approved on: 2024/10/10
+Status: Valid
