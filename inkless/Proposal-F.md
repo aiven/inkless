@@ -37,6 +37,8 @@ flowchart LR
     Broker -- Group Membership --> GroupCoordinator
 ```
 
+Status: REJECTED due to [ADR for Inkless Cluster Metadata](ADR-InklessClusterMetadata.md)
+
 This design prioritizes multi-tenancy, where one controller quorum can serve multiple Inkless clusters.
 It also allows for inkless clusters to be truly diskless, by pushing all traditional topics into a central cluster.
 
