@@ -257,6 +257,17 @@ How can we evolve the data format after some data has already been written?
 
 We should include necessary magic/version numbers in any custom data formats, similar to existing formats.
 
+### What components are concerned with the data format?
+
+There are a few components that _must_ know the in-object data format in order to operate:
+* Producing records
+* Compaction jobs planning & execution
+* Fetching records
+
+Components that don't need to know the in-object data format in order to operate:
+* Object reads and writes
+* Cache system
+
 ### Upgrades to wire protocols
 
 How will we keep pace with Kafka wire protocol changes? Does every version of Apache Kafka trigger a new version of the stateless brokers?
@@ -483,6 +494,33 @@ If we opt for a proposal where the rotated segments aim to be compatible with ti
 then the same approach from the Tiered Storage plugin can be valid:
 There is a compression checker that validates if the first batch is compressed.
 If it is not, then a _compression per chunk_ (where a chunk is configurable size, e.g. 8MiB).
+
+### Zero Copying & Cache Ownership
+
+How can we minimize data copying (and possibly enable zero-copying?)
+
+What component is responsible for caching?
+
+#### Answer
+
+Producing records in Kafka currently involves copying and modification to assign offsets.
+Since we will continue to provide the same validation frontend, there isn't an opportunity to remove a copy operation.
+
+However, it may be possible to directly send from the in-memory buffers to object storage.
+This is an optimization that we should attempt to include in the API design.
+Whatever component is responsible for the data format will also be responsible for managing memory buffers.
+If the data format is plugin-controlled, this may lead to ownership complications and potential for resource leaks.
+
+Fetching will be strictly less efficient than the existing sendfile system, which can serve directly from the OS cache.
+Populating an in-memory cache will always involve a socket-to-memory copy, and serving from that cache will involve a memory-to-socket copy.
+If a distributed zonal cache is used, there will be additional memory-to-socket and socket-to-memory copies.
+
+Compaction will always require copying into user-memory buffers, and is not an opportunity for zero copy optimizations.
+Compaction reads could either be backed by the object cache, or be performed by dedicated direct reads.
+Writes from compaction will likely be larger files, and require streaming/multipart uploads.
+
+We should place responsibility for caching and zero-copy-optimization within Kafka.
+Operations across plugin interfaces should be best-effort zero-copy when available, but without expecting the plugin to perform caching.
 
 ### Multitenant metadata-plane + control-plane
 
