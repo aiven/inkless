@@ -117,17 +117,19 @@ Goal: Establish support for functionality that is already implemented by other a
 Allowances:
 * May be missing feature parity with upstream
 
-Acceptance criteria: Include support for
+Acceptance criteria:
 * All acceptance criteria from the previous phase
-* Low-Latency/Traditional topics
-* Compacted topics
-* Idempotent producers
+* Support for Low-Latency/Traditional topics
+* Support for Compacted topics
+* Support for Idempotent producers
+* Support for Kafka Connect
 
 ## Phase 7: Apache Kafka Feature Parity
 
 Goal: Establish support for functionality already implemented upstream
 
-* Kafka Connect
-* Transactional producers
-* read_committed consumers
-* Share groups
+Acceptance criteria:
+* All acceptance criteria from the previous phase
+* Support for Transactional producers
+* Support for read_committed consumers
+* Support for Share groups
