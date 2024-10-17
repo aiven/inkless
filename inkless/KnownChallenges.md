@@ -522,6 +522,8 @@ Writes from compaction will likely be larger files, and require streaming/multip
 We should place responsibility for caching and zero-copy-optimization within Kafka.
 Operations across plugin interfaces should be best-effort zero-copy when available, but without expecting the plugin to perform caching.
 
+If caching was performed on ephemeral disks instead of memory, this should incur just one additional copy, as sending from the file could be zero-copy.
+
 ### Multitenant metadata-plane + control-plane
 
 Should we design the metadata APIs with multitenancy as a first-class abstraction?
