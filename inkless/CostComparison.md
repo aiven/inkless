@@ -94,6 +94,16 @@ These are costs which are only present for an Inkless Kafka cluster.
 * 2x Object API cost for reading hot set
 * 1x Object API cost for deleting hot set
 
+The bandwidth of an inkless broker needs to have capacity for:
+* Client Produce requests
+* Writing to Hot Set
+* Reading from Hot Set
+* Writing to archive storage
+* Reading from archive storage
+* Making Fetch requests to other brokers
+* Filling Fetch requests from other brokers
+* Client Fetch requests
+
 ```mermaid
 ---
 title: Ideal Inkless Kafka
@@ -106,6 +116,7 @@ flowchart LR
     subgraph AZ1[AZ1]
         Consumer1[Hot set Consumer]
         Broker1[Broker]
+        Broker3[Broker]
     end
     subgraph AZ2[AZ2]
         Consumer2[Archive Consumer]
@@ -122,7 +133,7 @@ flowchart LR
     Broker0 -- Per-Request --> ObjectStorage
     ObjectStorage -- Per-Request --> Broker1
     ObjectStorage -- Per-Request --> Broker2
-    Broker1 --> Consumer1
+    Broker1 -- Distribution --> Broker3 --> Consumer1
     Broker2 --> Consumer2
 
     ObjectStorage -- Per-Request --> Compaction
