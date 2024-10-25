@@ -24,6 +24,7 @@ import kafka.log.{LogManager, OffsetResultHolder, UnifiedLog}
 import kafka.server.HostedPartition.Online
 import kafka.server.QuotaFactory.QuotaManagers
 import kafka.server.ReplicaManager.{AtMinIsrPartitionCountMetricName, FailedIsrUpdatesPerSecMetricName, IsrExpandsPerSecMetricName, IsrShrinksPerSecMetricName, LeaderCountMetricName, OfflineReplicaCountMetricName, PartitionCountMetricName, PartitionsWithLateTransactionsCountMetricName, ProducerIdCountMetricName, ReassigningPartitionsMetricName, UnderMinIsrPartitionCountMetricName, UnderReplicatedPartitionsMetricName, createLogReadResult, isListOffsetsTimestampUnsupported}
+import kafka.server.inkless_writer.InklessWriter
 import kafka.server.metadata.ZkMetadataCache
 import kafka.utils._
 import kafka.zk.KafkaZkClient
@@ -294,10 +295,15 @@ class ReplicaManager(val config: KafkaConfig,
                      ) extends Logging {
   private val metricsGroup = new KafkaMetricsGroup(this.getClass)
 
+  private val inklessWriter = new InklessWriter
+
   val delayedProducePurgatory = delayedProducePurgatoryParam.getOrElse(
     DelayedOperationPurgatory[DelayedProduce](
       purgatoryName = "Produce", brokerId = config.brokerId,
       purgeInterval = config.producerPurgatoryPurgeIntervalRequests))
+  val delayedInklessProducePurgatory = DelayedOperationPurgatory[DelayedInklessProduce](
+      purgatoryName = "InklessProduce", brokerId = config.brokerId,
+      purgeInterval = config.producerPurgatoryPurgeIntervalRequests)
   val delayedFetchPurgatory = delayedFetchPurgatoryParam.getOrElse(
     DelayedOperationPurgatory[DelayedFetch](
       purgatoryName = "Fetch", brokerId = config.brokerId,
@@ -782,27 +788,37 @@ class ReplicaManager(val config: KafkaConfig,
       return
     }
 
-    val sTime = time.milliseconds
-    val localProduceResults = appendToLocalLog(internalTopicsAllowed = internalTopicsAllowed,
-      origin, entriesPerPartition, requiredAcks, requestLocal, verificationGuards.toMap)
-    debug("Produce to local log in %d ms".format(time.milliseconds - sTime))
-
-    val produceStatus = buildProducePartitionStatus(localProduceResults)
-
-    addCompletePurgatoryAction(actionQueue, localProduceResults)
-    recordValidationStatsCallback(localProduceResults.map { case (k, v) =>
-      k -> v.info.recordValidationStats
-    })
-
-    maybeAddDelayedProduce(
-      requiredAcks,
-      delayedProduceLock,
-      timeout,
-      entriesPerPartition,
-      localProduceResults,
-      produceStatus,
-      responseCallback
+    val future = inklessWriter.write(entriesPerPartition.asJava)
+    val delayedInklessProduce = new DelayedInklessProduce(timeout, future, responseCallback, delayedProduceLock)
+    val producerRequestKeys = entriesPerPartition.keys.map(TopicPartitionOperationKey(_)).toSeq
+    delayedInklessProducePurgatory.tryCompleteElseWatch(delayedInklessProduce, producerRequestKeys)
+    future.thenAccept(r =>
+      for (key <- producerRequestKeys) {
+        delayedInklessProducePurgatory.checkAndComplete(key)
+      }
     )
+
+//    val sTime = time.milliseconds
+//    val localProduceResults = appendToLocalLog(internalTopicsAllowed = internalTopicsAllowed,
+//      origin, entriesPerPartition, requiredAcks, requestLocal, verificationGuards.toMap)
+//    debug("Produce to local log in %d ms".format(time.milliseconds - sTime))
+//
+//    val produceStatus = buildProducePartitionStatus(localProduceResults)
+//
+//    addCompletePurgatoryAction(actionQueue, localProduceResults)
+//    recordValidationStatsCallback(localProduceResults.map { case (k, v) =>
+//      k -> v.info.recordValidationStats
+//    })
+//
+//    maybeAddDelayedProduce(
+//      requiredAcks,
+//      delayedProduceLock,
+//      timeout,
+//      entriesPerPartition,
+//      localProduceResults,
+//      produceStatus,
+//      responseCallback
+//    )
   }
 
   /**
