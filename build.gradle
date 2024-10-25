@@ -746,8 +746,7 @@ subprojects {
       "-Xlint:poly-implicit-overload",
       "-Xlint:private-shadow",
       "-Xlint:stars-align",
-      "-Xlint:type-parameter-shadow",
-      "-Xlint:unused"
+      "-Xlint:type-parameter-shadow"
     ]
 
     // See README.md for details on this option and the meaning of each value
@@ -933,6 +932,7 @@ project(':server') {
     implementation libs.jacksonDatabind
 
     implementation libs.slf4jApi
+    implementation libs.slf4jReload4j
 
     compileOnly libs.reload4j
 
