@@ -24,6 +24,8 @@ import kafka.log.{LogManager, OffsetResultHolder, UnifiedLog}
 import kafka.server.HostedPartition.Online
 import kafka.server.QuotaFactory.QuotaManagers
 import kafka.server.ReplicaManager.{AtMinIsrPartitionCountMetricName, FailedIsrUpdatesPerSecMetricName, IsrExpandsPerSecMetricName, IsrShrinksPerSecMetricName, LeaderCountMetricName, OfflineReplicaCountMetricName, PartitionCountMetricName, PartitionsWithLateTransactionsCountMetricName, ProducerIdCountMetricName, ReassigningPartitionsMetricName, UnderMinIsrPartitionCountMetricName, UnderReplicatedPartitionsMetricName, createLogReadResult, isListOffsetsTimestampUnsupported}
+import kafka.server.inkless_control_plane.ControlPlane
+import kafka.server.inkless_reader.InklessReader
 import kafka.server.inkless_writer.InklessWriter
 import kafka.server.metadata.ZkMetadataCache
 import kafka.utils._
@@ -73,6 +75,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.locks.Lock
 import java.util.concurrent.{CompletableFuture, Future, RejectedExecutionException, TimeUnit}
 import java.util.{Collections, Optional, OptionalInt, OptionalLong}
+import scala.collection.convert.ImplicitConversions.`iterable AsScalaIterable`
 import scala.collection.{Map, Seq, Set, immutable, mutable}
 import scala.jdk.CollectionConverters._
 import scala.jdk.OptionConverters.{RichOption, RichOptional}
@@ -295,7 +298,9 @@ class ReplicaManager(val config: KafkaConfig,
                      ) extends Logging {
   private val metricsGroup = new KafkaMetricsGroup(this.getClass)
 
-  private val inklessWriter = new InklessWriter
+  private val controlPlane = new ControlPlane()
+  private val inklessWriter = new InklessWriter(controlPlane)
+  private val inklessReader = new InklessReader(controlPlane)
 
   val delayedProducePurgatory = delayedProducePurgatoryParam.getOrElse(
     DelayedOperationPurgatory[DelayedProduce](
@@ -308,6 +313,9 @@ class ReplicaManager(val config: KafkaConfig,
     DelayedOperationPurgatory[DelayedFetch](
       purgatoryName = "Fetch", brokerId = config.brokerId,
       purgeInterval = config.fetchPurgatoryPurgeIntervalRequests))
+  val delayedInklessFetchPurgatory = DelayedOperationPurgatory[DelayedInklessFetch](
+    purgatoryName = "InklessFetch", brokerId = config.brokerId,
+    purgeInterval = config.fetchPurgatoryPurgeIntervalRequests)
   val delayedDeleteRecordsPurgatory = delayedDeleteRecordsPurgatoryParam.getOrElse(
     DelayedOperationPurgatory[DelayedDeleteRecords](
       purgatoryName = "DeleteRecords", brokerId = config.brokerId,
@@ -1665,6 +1673,10 @@ class ReplicaManager(val config: KafkaConfig,
                     fetchInfos: Seq[(TopicIdPartition, PartitionData)],
                     quota: ReplicaQuota,
                     responseCallback: Seq[(TopicIdPartition, FetchPartitionData)] => Unit): Unit = {
+    val future = inklessReader.read(fetchInfos.asJava)
+    future.thenAccept(d => responseCallback(d.toSeq))
+    // TODO use purgatory
+    return
 
     // check if this fetch request can be satisfied right away
     val logReadResults = readFromLog(params, fetchInfos, quota, readFromPurgatory = false)
