@@ -3,12 +3,15 @@ package kafka.server.inkless_control_plane;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.TreeMap;
 
 import org.apache.kafka.common.TopicPartition;
 
 import kafka.server.inkless_common.CommitFileRequest;
 import kafka.server.inkless_common.CommitFileResponse;
+import kafka.server.inkless_common.FindBatchResponse;
+import kafka.server.inkless_common.FindBatchRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -37,6 +40,32 @@ public class ControlPlane {
         }
 
         return new CommitFileResponse(assignedOffsets);
+    }
+
+    public synchronized FindBatchResponse findBatch(final FindBatchRequest request) {
+        TreeMap<Long, Batch> tpCoordinates = batchCoordinates.get(request.topicPartition);
+        if (tpCoordinates == null) {
+            return null;
+        }
+
+        final Map.Entry<Long, Batch> entry = tpCoordinates.floorEntry(request.kafkaOffset);
+        if (entry == null) {
+            return null;
+        }
+
+        final long offset = entry.getKey();
+        final Batch batch = entry.getValue();
+        if (request.kafkaOffset >= offset + batch.numberOfRecords) {
+            return null;
+        }
+
+        return new FindBatchResponse(
+            batch.filePath,
+            batch.byteOffset,
+            batch.byteSize,
+            offset,
+            batch.numberOfRecords
+        );
     }
 
     private static class Batch {

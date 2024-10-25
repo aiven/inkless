@@ -31,7 +31,7 @@ import org.slf4j.LoggerFactory;
 public class InklessWriter {
     private static final Logger logger = LoggerFactory.getLogger(InklessWriter.class);
 
-    private static final ControlPlane controlPlane = new ControlPlane();
+    private final ControlPlane controlPlane;
 
     private final AtomicLong requestCounter = new AtomicLong(0);
 
@@ -41,6 +41,10 @@ public class InklessWriter {
     private BatchBuffer batchBuffer = null;
     private Map<Long, CompletableFuture<Map<TopicPartition, ProduceResponse.PartitionResponse>>> responseFutures =
         new HashMap<>();
+
+    public InklessWriter(final ControlPlane controlPlane) {
+        this.controlPlane = controlPlane;
+    }
 
     public CompletableFuture<Map<TopicPartition, ProduceResponse.PartitionResponse>> write(
         final Map<TopicPartition, MemoryRecords> entriesPerPartition
