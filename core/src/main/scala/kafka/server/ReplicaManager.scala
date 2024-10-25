@@ -16,6 +16,7 @@
  */
 package kafka.server
 
+import java.net.URI
 import com.yammer.metrics.core.Meter
 import kafka.cluster.{BrokerEndPoint, Partition, PartitionListener}
 import kafka.controller.{KafkaController, StateChangeLogger}
@@ -66,6 +67,8 @@ import org.apache.kafka.server.util.{Scheduler, ShutdownableThread}
 import org.apache.kafka.storage.internals.checkpoint.{LazyOffsetCheckpoints, OffsetCheckpointFile, OffsetCheckpoints}
 import org.apache.kafka.storage.internals.log.{AppendOrigin, FetchDataInfo, LeaderHwChange, LogAppendInfo, LogConfig, LogDirFailureChannel, LogOffsetMetadata, LogReadInfo, RecordValidationException, RemoteLogReadResult, RemoteStorageFetchInfo, VerificationGuard}
 import org.apache.kafka.storage.log.metrics.BrokerTopicStats
+import software.amazon.awssdk.regions.Region
+import software.amazon.awssdk.services.s3.S3Client
 
 import java.io.File
 import java.lang.{Long => JLong}
@@ -299,8 +302,13 @@ class ReplicaManager(val config: KafkaConfig,
   private val metricsGroup = new KafkaMetricsGroup(this.getClass)
 
   private val controlPlane = new ControlPlane()
-  private val inklessWriter = new InklessWriter(controlPlane)
-  private val inklessReader = new InklessReader(controlPlane)
+  private val s3Client = S3Client.builder
+    .region(Region.of("x"))
+    .endpointOverride(new URI("http://127.0.0.1:4566"))
+    .forcePathStyle(true)
+    .build()
+  private val inklessWriter = new InklessWriter(controlPlane, s3Client)
+  private val inklessReader = new InklessReader(controlPlane, s3Client)
 
   val delayedProducePurgatory = delayedProducePurgatoryParam.getOrElse(
     DelayedOperationPurgatory[DelayedProduce](

@@ -1,15 +1,9 @@
 package kafka.server.inkless_writer;
 
-import java.io.FileOutputStream;
-import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
@@ -27,11 +21,15 @@ import kafka.server.inkless_common.CommitFileResponse;
 import kafka.server.inkless_control_plane.ControlPlane;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import software.amazon.awssdk.core.sync.RequestBody;
+import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 
 public class InklessWriter {
     private static final Logger logger = LoggerFactory.getLogger(InklessWriter.class);
 
     private final ControlPlane controlPlane;
+    private final S3Client s3Client;
 
     private final AtomicLong requestCounter = new AtomicLong(0);
 
@@ -42,8 +40,9 @@ public class InklessWriter {
     private Map<Long, CompletableFuture<Map<TopicPartition, ProduceResponse.PartitionResponse>>> responseFutures =
         new HashMap<>();
 
-    public InklessWriter(final ControlPlane controlPlane) {
+    public InklessWriter(final ControlPlane controlPlane, final S3Client s3Client) {
         this.controlPlane = controlPlane;
+        this.s3Client = s3Client;
     }
 
     public CompletableFuture<Map<TopicPartition, ProduceResponse.PartitionResponse>> write(
@@ -86,10 +85,10 @@ public class InklessWriter {
             }
 
             final BatchBuffer.CloseResult closeResult = batchBuffer.close();
-            final Path filePath = writeDataFile(closeResult.data);
+            final String filePath = writeDataFile(closeResult.data);
             // Commit file to the control plane.
             final CommitFileResponse response = controlPlane.commitFile(
-                new CommitFileRequest(filePath.toString(), closeResult.batches));
+                new CommitFileRequest(filePath, closeResult.batches));
 
             // Match assigned offset to waiting futures.
             // TODO double check correctness (e.g. when request comes, save it's expected topic-partitions).
@@ -120,22 +119,14 @@ public class InklessWriter {
         }
     }
 
-    private Path writeDataFile(final byte[] data) {
-        // Write file to "S3".
-        final Path filePath = Paths.get("_s3").resolve(Uuid.randomUuid().toString());
-        try {
-            Files.createDirectories(filePath.getParent());
-        } catch (final IOException e) {
-            // TODO handle
-            throw new RuntimeException(e);
-        }
-        try (final FileOutputStream fos = new FileOutputStream(filePath.toFile())) {
-            fos.write(data);
-        } catch (final IOException e) {
-            // TODO handle
-            throw new RuntimeException(e);
-        }
-
-        return filePath;
+    private String writeDataFile(final byte[] data) {
+        final String path = Uuid.randomUuid().toString();
+        final PutObjectRequest putObjectRequest = PutObjectRequest.builder()
+            .key(path)
+            .bucket("my-bucket")
+            .build();
+        final RequestBody body = RequestBody.fromBytes(data);
+        s3Client.putObject(putObjectRequest, body);
+        return path;
     }
 }
