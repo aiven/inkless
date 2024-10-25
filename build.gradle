@@ -1087,6 +1087,8 @@ project(':core') {
     // ZooKeeperMain depends on commons-cli but declares the dependency as `provided`
     implementation libs.commonsCli
 
+    implementation libs.awsskdS3
+
     compileOnly libs.reload4j
 
     testImplementation project(':clients').sourceSets.test.output
