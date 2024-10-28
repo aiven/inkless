@@ -112,6 +112,10 @@ public class InklessReader {
             throw new RuntimeException(e);
         }
 
-        return MemoryRecords.readableRecords(ByteBuffer.wrap(data));
+        final ByteBuffer buffer = ByteBuffer.wrap(data);
+        buffer.position(0);
+        buffer.putLong(findBatchResponse.batchInfo.batchBaseOffset);
+        buffer.position(0);
+        return MemoryRecords.readableRecords(buffer);
     }
 }
