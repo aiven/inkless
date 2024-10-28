@@ -101,11 +101,11 @@ public class InklessReader {
         final GetObjectRequest getObjectRequest = GetObjectRequest.builder()
             .key(findBatchResponse.batchInfo.filePath)
             .bucket("my-bucket")
+            .range(String.format("bytes=%d-%d", findBatchResponse.batchInfo.byteOffset, findBatchResponse.batchInfo.byteSize))
             .build();
         final ResponseInputStream<GetObjectResponse> responseInputStream = s3Client.getObject(getObjectRequest);
         final byte[] data;
         try {
-            responseInputStream.skip(findBatchResponse.batchInfo.byteOffset);
             data = responseInputStream.readNBytes(findBatchResponse.batchInfo.byteSize);
         } catch (final IOException e) {
             // TODO handle
