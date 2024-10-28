@@ -22,6 +22,7 @@ import kafka.coordinator.transaction.{InitProducerIdResult, TransactionCoordinat
 import kafka.network.RequestChannel
 import kafka.server.QuotaFactory.{QuotaManagers, UnboundedQuota}
 import kafka.server.handlers.DescribeTopicPartitionsRequestHandler
+import kafka.server.inkless_reader.InklessTopic
 import kafka.server.metadata.{ConfigRepository, KRaftMetadataCache}
 import kafka.server.share.SharePartitionManager
 import kafka.utils.{CoreUtils, Logging}
@@ -614,6 +615,17 @@ class KafkaApis(val requestChannel: RequestChannel,
   def handleProduceRequest(request: RequestChannel.Request, requestLocal: RequestLocal): Unit = {
     val produceRequest = request.body[ProduceRequest]
 
+    // Prevent mixing Inkless and classic topics in a single request.
+    {
+      var topicKinds = Set[Boolean]()
+      produceRequest.data.topicData.forEach { tpData =>
+        topicKinds = topicKinds + InklessTopic.isInklessTopic(tpData.name())
+      }
+      if (topicKinds.size > 1) {
+        throw new InvalidRequestException(s"Cannot mix Inkless and classic topics in one request")
+      }
+    }
+
     if (RequestUtils.hasTransactionalRecords(produceRequest)) {
       val isAuthorizedTransactional = produceRequest.transactionalId != null &&
         authHelper.authorize(request.context, WRITE, TRANSACTIONAL_ID, produceRequest.transactionalId)
@@ -774,6 +786,17 @@ class KafkaApis(val requestChannel: RequestChannel,
 
     val fetchData = fetchRequest.fetchData(topicNames)
     val forgottenTopics = fetchRequest.forgottenTopics(topicNames)
+
+    // Prevent mixing Inkless and classic topics in a single request.
+    {
+      var topicKinds = Set[Boolean]()
+      fetchData.asScala.foreach { case (tp, _) =>
+        topicKinds = topicKinds + InklessTopic.isInklessTopic(tp.topic())
+      }
+      if (topicKinds.size > 1) {
+        throw new InvalidRequestException(s"Cannot mix Inkless and classic topics in one request")
+      }
+    }
 
     val fetchContext = fetchManager.newContext(
       fetchRequest.version,
