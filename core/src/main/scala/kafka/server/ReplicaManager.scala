@@ -26,7 +26,7 @@ import kafka.server.HostedPartition.Online
 import kafka.server.QuotaFactory.QuotaManagers
 import kafka.server.ReplicaManager.{AtMinIsrPartitionCountMetricName, FailedIsrUpdatesPerSecMetricName, IsrExpandsPerSecMetricName, IsrShrinksPerSecMetricName, LeaderCountMetricName, OfflineReplicaCountMetricName, PartitionCountMetricName, PartitionsWithLateTransactionsCountMetricName, ProducerIdCountMetricName, ReassigningPartitionsMetricName, UnderMinIsrPartitionCountMetricName, UnderReplicatedPartitionsMetricName, createLogReadResult, isListOffsetsTimestampUnsupported}
 import kafka.server.inkless_control_plane.ControlPlane
-import kafka.server.inkless_reader.InklessReader
+import kafka.server.inkless_reader.{InklessReader, InklessTopic}
 import kafka.server.inkless_writer.InklessWriter
 import kafka.server.metadata.ZkMetadataCache
 import kafka.utils._
@@ -804,37 +804,41 @@ class ReplicaManager(val config: KafkaConfig,
       return
     }
 
-    val future = inklessWriter.write(entriesPerPartition.asJava)
-    val delayedInklessProduce = new DelayedInklessProduce(timeout, future, responseCallback, delayedProduceLock)
-    val producerRequestKeys = entriesPerPartition.keys.map(TopicPartitionOperationKey(_)).toSeq
-    delayedInklessProducePurgatory.tryCompleteElseWatch(delayedInklessProduce, producerRequestKeys)
-    future.thenAccept(r =>
-      for (key <- producerRequestKeys) {
-        delayedInklessProducePurgatory.checkAndComplete(key)
-      }
-    )
+    // We know there won't be a mix of Inkless and classic topics.
+    if (entriesPerPartition.nonEmpty && InklessTopic.isInklessTopic(entriesPerPartition.keys.head.topic())) {
+      val future = inklessWriter.write(entriesPerPartition.asJava)
+      val delayedInklessProduce = new DelayedInklessProduce(timeout, future, responseCallback, delayedProduceLock)
+      val producerRequestKeys = entriesPerPartition.keys.map(TopicPartitionOperationKey(_)).toSeq
+      delayedInklessProducePurgatory.tryCompleteElseWatch(delayedInklessProduce, producerRequestKeys)
+      future.thenAccept(r =>
+        for (key <- producerRequestKeys) {
+          delayedInklessProducePurgatory.checkAndComplete(key)
+        }
+      )
+      return
+    }
 
-//    val sTime = time.milliseconds
-//    val localProduceResults = appendToLocalLog(internalTopicsAllowed = internalTopicsAllowed,
-//      origin, entriesPerPartition, requiredAcks, requestLocal, verificationGuards.toMap)
-//    debug("Produce to local log in %d ms".format(time.milliseconds - sTime))
-//
-//    val produceStatus = buildProducePartitionStatus(localProduceResults)
-//
-//    addCompletePurgatoryAction(actionQueue, localProduceResults)
-//    recordValidationStatsCallback(localProduceResults.map { case (k, v) =>
-//      k -> v.info.recordValidationStats
-//    })
-//
-//    maybeAddDelayedProduce(
-//      requiredAcks,
-//      delayedProduceLock,
-//      timeout,
-//      entriesPerPartition,
-//      localProduceResults,
-//      produceStatus,
-//      responseCallback
-//    )
+    val sTime = time.milliseconds
+    val localProduceResults = appendToLocalLog(internalTopicsAllowed = internalTopicsAllowed,
+      origin, entriesPerPartition, requiredAcks, requestLocal, verificationGuards.toMap)
+    debug("Produce to local log in %d ms".format(time.milliseconds - sTime))
+
+    val produceStatus = buildProducePartitionStatus(localProduceResults)
+
+    addCompletePurgatoryAction(actionQueue, localProduceResults)
+    recordValidationStatsCallback(localProduceResults.map { case (k, v) =>
+      k -> v.info.recordValidationStats
+    })
+
+    maybeAddDelayedProduce(
+      requiredAcks,
+      delayedProduceLock,
+      timeout,
+      entriesPerPartition,
+      localProduceResults,
+      produceStatus,
+      responseCallback
+    )
   }
 
   /**
@@ -1681,10 +1685,13 @@ class ReplicaManager(val config: KafkaConfig,
                     fetchInfos: Seq[(TopicIdPartition, PartitionData)],
                     quota: ReplicaQuota,
                     responseCallback: Seq[(TopicIdPartition, FetchPartitionData)] => Unit): Unit = {
-    val future = inklessReader.read(fetchInfos.asJava)
-    future.thenAccept(d => responseCallback(d.toSeq))
-    // TODO use purgatory
-    return
+    // We know there won't be a mix of Inkless and classic topics.
+    if (fetchInfos.nonEmpty && InklessTopic.isInklessTopic(fetchInfos.head._1.topic())) {
+      val future = inklessReader.read(fetchInfos.asJava)
+      future.thenAccept(d => responseCallback(d.toSeq))
+      // TODO use purgatory
+      return
+    }
 
     // check if this fetch request can be satisfied right away
     val logReadResults = readFromLog(params, fetchInfos, quota, readFromPurgatory = false)
