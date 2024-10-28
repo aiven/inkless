@@ -19,6 +19,7 @@ public class ControlPlane {
     private static final Logger logger = LoggerFactory.getLogger(ControlPlane.class);
 
     private final HashMap<TopicPartition, TreeMap<Long, Batch>> batchCoordinates = new HashMap<>();
+    private final HashMap<TopicPartition, Long> highWatermarks = new HashMap<>();
 
     public synchronized CommitFileResponse commitFile(final CommitFileRequest request) {
         logger.error("Committing file");
@@ -37,6 +38,8 @@ public class ControlPlane {
                 assignedOffset, new Batch(request.filePath, batch.byteOffset, batch.sizeInBytes, batch.numberOfRecords)
             );
             assignedOffsets.add(assignedOffset);
+
+            highWatermarks.put(batch.topicPartition, assignedOffset + batch.numberOfRecords);
         }
 
         return new CommitFileResponse(assignedOffsets);
@@ -47,24 +50,32 @@ public class ControlPlane {
         if (tpCoordinates == null) {
             return null;
         }
+        final Long highWatermark = highWatermarks.get(request.topicPartition);
+        if (highWatermark == null) {
+            // TODO handle
+            throw new RuntimeException("highWatermark is null");
+        }
 
         final Map.Entry<Long, Batch> entry = tpCoordinates.floorEntry(request.kafkaOffset);
         if (entry == null) {
-            return null;
+            return new FindBatchResponse(null, highWatermark);
         }
 
         final long offset = entry.getKey();
         final Batch batch = entry.getValue();
         if (request.kafkaOffset >= offset + batch.numberOfRecords) {
-            return null;
+            return new FindBatchResponse(null, highWatermark);
         }
 
         return new FindBatchResponse(
-            batch.filePath,
-            batch.byteOffset,
-            batch.byteSize,
-            offset,
-            batch.numberOfRecords
+            new FindBatchResponse.BatchInfo(
+                batch.filePath,
+                batch.byteOffset,
+                batch.byteSize,
+                offset,
+                batch.numberOfRecords
+            ),
+            highWatermark
         );
     }
 

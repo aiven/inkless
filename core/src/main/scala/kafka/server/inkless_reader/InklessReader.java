@@ -50,18 +50,47 @@ public class InklessReader {
             ));
             logger.error("findBatchResponse={}", findBatchResponse);
 
-            final Records records = getRecords(findBatchResponse);
-            final FetchPartitionData fetchPartitionData = new FetchPartitionData(
-                Errors.NONE,
-                findBatchResponse.batchBaseOffset + findBatchResponse.numberOfRecords,
-                findBatchResponse.batchBaseOffset,
-                records,
-                Optional.empty(),
-                OptionalLong.of(findBatchResponse.batchBaseOffset + findBatchResponse.numberOfRecords),
-                Optional.empty(),
-                OptionalInt.empty(),
-                false
-            );
+            final FetchPartitionData fetchPartitionData;
+            if (findBatchResponse == null) {
+                fetchPartitionData = new FetchPartitionData(
+                    Errors.UNKNOWN_TOPIC_OR_PARTITION,
+                    -1L,
+                    -1L,
+                    MemoryRecords.EMPTY,
+                    Optional.empty(),
+                    OptionalLong.empty(),
+                    Optional.empty(),
+                    OptionalInt.empty(),
+                    false
+                );
+            } else if (findBatchResponse.batchInfo == null) {
+                fetchPartitionData = new FetchPartitionData(
+                    Errors.NONE,
+                    findBatchResponse.highWatermark,
+                    0L,  // TODO insert correct
+                    MemoryRecords.EMPTY,
+                    Optional.empty(),
+                    OptionalLong.empty(),
+                    Optional.empty(),
+                    OptionalInt.empty(),
+                    false
+                );
+            } else {
+                final Records records = getRecords(findBatchResponse);
+                // LSO == high watermark in Inkless TODO check this
+                long lastStableOffset = findBatchResponse.highWatermark;
+                fetchPartitionData = new FetchPartitionData(
+                    Errors.NONE,
+                    findBatchResponse.highWatermark,
+                    findBatchResponse.batchInfo.batchBaseOffset,
+                    records,
+                    Optional.empty(),
+                    OptionalLong.of(lastStableOffset),
+                    Optional.empty(),
+                    OptionalInt.empty(),
+                    false
+                );
+            }
             result.add(new Tuple2<>(fetchInfo._1, fetchPartitionData));
         }
 
@@ -70,14 +99,14 @@ public class InklessReader {
 
     private Records getRecords(final FindBatchResponse findBatchResponse) {
         final GetObjectRequest getObjectRequest = GetObjectRequest.builder()
-            .key(findBatchResponse.filePath)
+            .key(findBatchResponse.batchInfo.filePath)
             .bucket("my-bucket")
             .build();
         final ResponseInputStream<GetObjectResponse> responseInputStream = s3Client.getObject(getObjectRequest);
         final byte[] data;
         try {
-            responseInputStream.skip(findBatchResponse.byteOffset);
-            data = responseInputStream.readNBytes(findBatchResponse.byteSize);
+            responseInputStream.skip(findBatchResponse.batchInfo.byteOffset);
+            data = responseInputStream.readNBytes(findBatchResponse.batchInfo.byteSize);
         } catch (final IOException e) {
             // TODO handle
             throw new RuntimeException(e);
