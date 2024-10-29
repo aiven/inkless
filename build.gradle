@@ -1088,6 +1088,8 @@ project(':core') {
     implementation libs.commonsCli
 
     implementation libs.awsskdS3
+    implementation libs.postgresql
+    implementation libs.hikaricp
 
     compileOnly libs.reload4j
 

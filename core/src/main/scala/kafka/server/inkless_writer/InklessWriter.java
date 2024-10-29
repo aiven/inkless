@@ -126,7 +126,13 @@ public class InklessWriter {
             .bucket("my-bucket")
             .build();
         final RequestBody body = RequestBody.fromBytes(data);
-        s3Client.putObject(putObjectRequest, body);
+        try {
+            s3Client.putObject(putObjectRequest, body);
+        } catch (Exception e) {
+            // TODO handle
+            logger.error("Error", e);
+            throw new RuntimeException(e);
+        }
         return path;
     }
 }

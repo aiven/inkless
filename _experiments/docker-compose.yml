@@ -8,3 +8,10 @@ services:
       - "127.0.0.1:4566:4566"
       # Now only required if you need to access LocalStack from the host
       - "127.0.0.1:4510-4559:4510-4559"
+
+  postgresql:
+    image: postgres:17.0-bullseye
+    ports:
+      - 5432:5432
+    environment:
+      POSTGRES_PASSWORD: "pwd"
