@@ -26,7 +26,7 @@ import kafka.server.inkless_reader.InklessTopic
 import kafka.server.metadata.{ConfigRepository, KRaftMetadataCache}
 import kafka.server.share.SharePartitionManager
 import kafka.utils.{CoreUtils, Logging}
-import org.apache.kafka.admin.AdminUtils
+import org.apache.kafka.admin.{AdminUtils, BrokerMetadata}
 import org.apache.kafka.clients.CommonClientConfigs
 import org.apache.kafka.clients.admin.AlterConfigOp.OpType
 import org.apache.kafka.clients.admin.{AlterConfigOp, ConfigEntry, EndpointType}
@@ -93,6 +93,7 @@ import scala.annotation.nowarn
 import scala.collection.mutable.ArrayBuffer
 import scala.collection.{Map, Seq, Set, mutable}
 import scala.jdk.CollectionConverters._
+import scala.jdk.OptionConverters.RichOptional
 import scala.util.{Failure, Success, Try}
 
 /**
@@ -1229,6 +1230,72 @@ class KafkaApis(val requestChannel: RequestChannel,
       .setPartitions(partitionData)
   }
 
+  private def inklessifyTopicMetadata(request: RequestChannel.Request,
+                                      aliveBrokers: Iterable[BrokerMetadata],
+                                      metadata: Seq[MetadataResponseTopic]): Seq[MetadataResponseTopic] = {
+    val az = extractClientAZ(request.header.clientId())
+    val leaderOfInklessPartitions = selectBrokerToBeLeaderOfInklessPartitions(request, aliveBrokers, az)
+    logger.error("Leader of Inkless partitions is broker {} with rack {} for AZ {}", leaderOfInklessPartitions.id, leaderOfInklessPartitions.rack, az)
+
+    // Don't change the metadata of non-Inkless topics.
+    val result = metadata.map { topicMetadata =>
+      if (InklessTopic.isInklessTopic(topicMetadata.name())) {
+        val newPartitionsMetadata = topicMetadata.partitions().asScala.map { partitionMetadata =>
+          val newPartitionMetadata = partitionMetadata.duplicate()
+          newPartitionMetadata.setLeaderId(leaderOfInklessPartitions.id)
+          newPartitionMetadata.setIsrNodes(Collections.singletonList(leaderOfInklessPartitions.id))
+          newPartitionMetadata.setReplicaNodes(Collections.singletonList(leaderOfInklessPartitions.id))
+          newPartitionMetadata.setOfflineReplicas(Collections.emptyList())
+          newPartitionMetadata
+        }
+        val newTopicMetadata = topicMetadata.duplicate()
+        newTopicMetadata.setPartitions(newPartitionsMetadata.asJava)
+        newTopicMetadata
+      } else {
+        topicMetadata
+      }
+    }
+    result
+  }
+
+  private def extractClientAZ(clientId: String): Option[String] = {
+    if (clientId == null) {
+      None
+    } else {
+      val azRegex = "inkless_az=([^,$]+)".r
+      azRegex.findFirstMatchIn(clientId)
+        .map(m => m.group(1))
+    }
+  }
+
+  private def selectBrokerToBeLeaderOfInklessPartitions(request: RequestChannel.Request,
+                                                        aliveBrokers: Iterable[BrokerMetadata],
+                                                        az: Option[String]): BrokerMetadata = {
+    // TODO explore stability and balancing of this allocation
+    val aliveBrokersSorted = aliveBrokers.toVector.sortBy(b => b.id)
+    val brokersToPickFrom = az match {
+      case Some(azVal) => {
+        val r = aliveBrokersSorted
+          .filter(b => b.rack.toScala.contains(azVal))
+        if (r.nonEmpty) {
+          r
+        } else {
+          // No brokers in the client's AZ -- fall back.
+          aliveBrokersSorted
+        }
+      }
+
+      case None =>
+        aliveBrokersSorted
+    }
+
+    val hash = (request.context.clientAddress.toString +
+      request.context.clientPort.map(p => ":" + p.toString).orElse(""))
+      .hashCode
+    val pos = hash % brokersToPickFrom.length
+    brokersToPickFrom(pos)
+  }
+
   private def getTopicMetadata(
     request: RequestChannel.Request,
     fetchAllTopics: Boolean,
@@ -1238,8 +1305,9 @@ class KafkaApis(val requestChannel: RequestChannel,
     errorUnavailableEndpoints: Boolean,
     errorUnavailableListeners: Boolean
   ): Seq[MetadataResponseTopic] = {
-    val topicResponses = metadataCache.getTopicMetadata(topics, listenerName,
+    var topicResponses = metadataCache.getTopicMetadata(topics, listenerName,
       errorUnavailableEndpoints, errorUnavailableListeners)
+    topicResponses = inklessifyTopicMetadata(request, metadataCache.getAliveBrokers(), topicResponses)
 
     if (topics.isEmpty || topicResponses.size == topics.size || fetchAllTopics) {
       topicResponses
