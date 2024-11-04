@@ -1,4 +1,4 @@
-package kafka.server.inkless_writer;
+package io.aiven.inkless.writer;
 
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
@@ -8,7 +8,7 @@ import java.util.List;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.record.RecordBatch;
 
-import kafka.server.inkless_common.CommitFileRequest;
+import io.aiven.inkless.common.CommitFileRequest;
 
 class BatchBuffer {
     private final List<BatchInfo> batches = new ArrayList<>();

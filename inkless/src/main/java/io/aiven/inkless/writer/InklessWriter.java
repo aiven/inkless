@@ -1,4 +1,4 @@
-package kafka.server.inkless_writer;
+package io.aiven.inkless.writer;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -16,9 +16,10 @@ import org.apache.kafka.common.record.MutableRecordBatch;
 import org.apache.kafka.common.requests.ProduceResponse;
 import org.apache.kafka.common.utils.AbstractIterator;
 
-import kafka.server.inkless_common.CommitFileRequest;
-import kafka.server.inkless_common.CommitFileResponse;
-import kafka.server.inkless_control_plane.ControlPlane;
+import io.aiven.inkless.common.CommitFileRequest;
+import io.aiven.inkless.common.CommitFileResponse;
+import io.aiven.inkless.control_plane.ControlPlane;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import software.amazon.awssdk.core.sync.RequestBody;

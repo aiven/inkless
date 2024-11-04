@@ -18,6 +18,7 @@ package kafka.server
 
 import java.net.URI
 import com.yammer.metrics.core.Meter
+import io.aiven.inkless.common.InklessTopic
 import kafka.cluster.{BrokerEndPoint, Partition, PartitionListener}
 import kafka.controller.{KafkaController, StateChangeLogger}
 import kafka.log.remote.RemoteLogManager
@@ -25,9 +26,6 @@ import kafka.log.{LogManager, OffsetResultHolder, UnifiedLog}
 import kafka.server.HostedPartition.Online
 import kafka.server.QuotaFactory.QuotaManagers
 import kafka.server.ReplicaManager.{AtMinIsrPartitionCountMetricName, FailedIsrUpdatesPerSecMetricName, IsrExpandsPerSecMetricName, IsrShrinksPerSecMetricName, LeaderCountMetricName, OfflineReplicaCountMetricName, PartitionCountMetricName, PartitionsWithLateTransactionsCountMetricName, ProducerIdCountMetricName, ReassigningPartitionsMetricName, UnderMinIsrPartitionCountMetricName, UnderReplicatedPartitionsMetricName, createLogReadResult, isListOffsetsTimestampUnsupported}
-import kafka.server.inkless_control_plane.ControlPlane
-import kafka.server.inkless_reader.{InklessReader, InklessTopic}
-import kafka.server.inkless_writer.InklessWriter
 import kafka.server.metadata.ZkMetadataCache
 import kafka.utils._
 import kafka.zk.KafkaZkClient
@@ -69,6 +67,9 @@ import org.apache.kafka.storage.internals.log.{AppendOrigin, FetchDataInfo, Lead
 import org.apache.kafka.storage.log.metrics.BrokerTopicStats
 import software.amazon.awssdk.regions.Region
 import software.amazon.awssdk.services.s3.S3Client
+import io.aiven.inkless.control_plane.ControlPlane
+import io.aiven.inkless.reader.{InklessReader, S3ObjectFetcher}
+import io.aiven.inkless.writer.InklessWriter
 
 import java.io.File
 import java.lang.{Long => JLong}
@@ -307,8 +308,9 @@ class ReplicaManager(val config: KafkaConfig,
     .endpointOverride(new URI("http://127.0.0.1:4566"))
     .forcePathStyle(true)
     .build()
+  private val objectFetcher = new S3ObjectFetcher(s3Client)
   private val inklessWriter = new InklessWriter(controlPlane, s3Client)
-  private val inklessReader = new InklessReader(controlPlane, s3Client)
+  private val inklessReader = new InklessReader(controlPlane, objectFetcher)
 
   val delayedProducePurgatory = delayedProducePurgatoryParam.getOrElse(
     DelayedOperationPurgatory[DelayedProduce](
@@ -1687,8 +1689,16 @@ class ReplicaManager(val config: KafkaConfig,
                     responseCallback: Seq[(TopicIdPartition, FetchPartitionData)] => Unit): Unit = {
     // We know there won't be a mix of Inkless and classic topics.
     if (fetchInfos.nonEmpty && InklessTopic.isInklessTopic(fetchInfos.head._1.topic())) {
-      val future = inklessReader.read(fetchInfos.asJava)
-      future.thenAccept(d => responseCallback(d.toSeq))
+      // TODO why Seq is used for fetchInfos? Can there be duplicates between TopicIdPartition?
+      val future = inklessReader.read(!params.hardMaxBytesLimit, params.maxBytes, fetchInfos.asJava)
+      future.thenAccept(m => {
+        val seq = m.asScala.toSeq.map { case (tp, data) =>
+          val topicId = metadataCache.topicNamesToIds().get(tp.topic())
+          val tidp = new TopicIdPartition(topicId, tp)
+          (tidp, data)
+        }
+        responseCallback(seq)
+      })
       // TODO use purgatory
       return
     }

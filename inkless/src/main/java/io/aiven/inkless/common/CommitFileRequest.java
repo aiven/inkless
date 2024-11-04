@@ -1,4 +1,4 @@
-package kafka.server.inkless_common;
+package io.aiven.inkless.common;
 
 import java.util.List;
 

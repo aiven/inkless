@@ -1,4 +1,4 @@
-package kafka.server.inkless_reader;
+package io.aiven.inkless.common;
 
 import static org.apache.kafka.common.internals.Topic.CLUSTER_METADATA_TOPIC_NAME;
 import static org.apache.kafka.common.internals.Topic.GROUP_METADATA_TOPIC_NAME;

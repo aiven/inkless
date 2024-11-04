@@ -1058,6 +1058,7 @@ project(':core') {
     implementation project(':coordinator-common')
     implementation project(':share')
     implementation project(':share-coordinator')
+    implementation project(':inkless')
 
     implementation libs.argparse4j
     implementation libs.commonsValidator
@@ -1350,6 +1351,33 @@ project(':core') {
         srcDirs = ["src/test/java", "src/test/scala"]
       }
     }
+  }
+}
+
+project(':inkless') {
+  apply plugin: 'scala'
+
+  checkstyle {
+    checkstyleMain.enabled = false
+    checkstyleTest.enabled = false
+  }
+
+  spotbugs {
+    ignoreFailures = true
+  }
+
+  dependencies {
+    api project(':clients')
+    implementation project(':server-common')
+    api libs.scalaLibrary
+
+    implementation libs.awsskdS3
+
+    testImplementation libs.junitJupiter
+    testImplementation libs.slf4jReload4j
+    testImplementation libs.assertj
+
+    testRuntimeOnly libs.junitPlatformLanucher
   }
 }
 
