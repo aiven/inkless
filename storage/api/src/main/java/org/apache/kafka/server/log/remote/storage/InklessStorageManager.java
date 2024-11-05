@@ -30,10 +30,9 @@ public interface InklessStorageManager {
      * Open storage for writing. Closing the object should finalize and persist the object with the hinted durability.
      * @param objectId A unique ID for an object
      * @param hint Hints as to how the storage will be used, to allow the implementation to provide an optimized result.
-     * @param length Hint about the expected number of bytes which will be read from the object, actual size may be higher or lower.
      * @return A future object which can accept writes. Exceptions are passed via the future if there is a problem starting to write, such as storage is unavailable.
      */
-    Future<WritableObject> write(Uuid objectId, UsageHint hint, long length);
+    Future<WritableObject> write(Uuid objectId, UsageHint hint);
 
     /**
      * Open storage for reading.

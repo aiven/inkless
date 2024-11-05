@@ -28,12 +28,15 @@ public class UsageHint {
     private final Durability durability;
     // The expected lifetime of this object
     private final Duration lifetime;
+    // The expected total size of the file
+    private final long size;
     // The expected number of reads for this object over its lifetime
     private final int reads;
 
-    public UsageHint(Durability durability, Duration lifetime, int reads) {
+    public UsageHint(Durability durability, Duration lifetime, long size, int reads) {
         this.durability = durability;
         this.lifetime = lifetime;
+        this.size = size;
         this.reads = reads;
     }
 
