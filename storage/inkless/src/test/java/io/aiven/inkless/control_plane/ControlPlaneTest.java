@@ -50,26 +50,114 @@ class ControlPlaneTest {
     }
 
     @Test
-    void notAppendForUnknownTopicOrPartition() {
+    void successfulCommitToExistingPartitions() {
         final ControlPlane controlPlane = new ControlPlane(metadataView);
-        final PlainObjectKey objectKey = new PlainObjectKey("a", "a");
-        final List<CommitBatchResponse> commitResponse = controlPlane.commitFile(
-            objectKey,
+        final PlainObjectKey objectKey1 = new PlainObjectKey("a", "a1");
+        final List<CommitBatchResponse> commitResponse1 = controlPlane.commitFile(
+            objectKey1,
             List.of(
-                new CommitBatchRequest(new TopicPartition(EXISTING_TOPIC, 0), 0, 10, 10),
-                new CommitBatchRequest(new TopicPartition(EXISTING_TOPIC, 1), 0, 10, 10),
-                new CommitBatchRequest(new TopicPartition(NONEXISTENT_TOPIC, 0), 0, 10, 10)
+                new CommitBatchRequest(new TopicPartition(EXISTING_TOPIC, 0), 1, 10, 10),
+                new CommitBatchRequest(new TopicPartition(EXISTING_TOPIC, 1), 2, 10, 10),
+                new CommitBatchRequest(new TopicPartition(NONEXISTENT_TOPIC, 0), 3, 10, 10)
             )
         );
-        assertThat(commitResponse.stream().map(CommitBatchResponse::errors))
-            .containsExactly(Errors.NONE, Errors.UNKNOWN_TOPIC_OR_PARTITION, Errors.UNKNOWN_TOPIC_OR_PARTITION);
+        assertThat(commitResponse1).containsExactly(
+            new CommitBatchResponse(Errors.NONE, 0),
+            new CommitBatchResponse(Errors.UNKNOWN_TOPIC_OR_PARTITION, -1),
+            new CommitBatchResponse(Errors.UNKNOWN_TOPIC_OR_PARTITION, -1)
+        );
+
+        final PlainObjectKey objectKey2 = new PlainObjectKey("a", "a2");
+        final List<CommitBatchResponse> commitResponse2 = controlPlane.commitFile(
+            objectKey2,
+            List.of(
+                new CommitBatchRequest(new TopicPartition(EXISTING_TOPIC, 0), 100, 10, 10),
+                new CommitBatchRequest(new TopicPartition(EXISTING_TOPIC, 1), 200, 10, 10),
+                new CommitBatchRequest(new TopicPartition(NONEXISTENT_TOPIC, 0), 300, 10, 10)
+            )
+        );
+        assertThat(commitResponse2).containsExactly(
+            new CommitBatchResponse(Errors.NONE, 10),
+            new CommitBatchResponse(Errors.UNKNOWN_TOPIC_OR_PARTITION, -1),
+            new CommitBatchResponse(Errors.UNKNOWN_TOPIC_OR_PARTITION, -1)
+        );
 
         final List<FindBatchResponse> findResponse = controlPlane.findBatches(
+            List.of(
+                new FindBatchRequest(EXISTING_TOPIC_ID_PARTITION, 11, Integer.MAX_VALUE),
+                new FindBatchRequest(new TopicIdPartition(EXISTING_TOPIC_ID, 1, EXISTING_TOPIC) , 11, Integer.MAX_VALUE),
+                new FindBatchRequest(new TopicIdPartition(Uuid.ONE_UUID, 0, NONEXISTENT_TOPIC), 11, Integer.MAX_VALUE)
+            ), true, Integer.MAX_VALUE);
+        assertThat(findResponse).containsExactly(
+            new FindBatchResponse(Errors.NONE, List.of(new BatchInfo(objectKey2, 100, 10, 10)), 20),
+            new FindBatchResponse(Errors.UNKNOWN_TOPIC_OR_PARTITION, null, -1),
+            new FindBatchResponse(Errors.UNKNOWN_TOPIC_OR_PARTITION, null, -1)
+        );
+    }
+
+    @Test
+    void topicDisappear() {
+        final ControlPlane controlPlane = new ControlPlane(metadataView);
+        final PlainObjectKey objectKey = new PlainObjectKey("a", "a");
+        controlPlane.commitFile(
+            objectKey,
+            List.of(
+                new CommitBatchRequest(new TopicPartition(EXISTING_TOPIC, 0), 11, 10, 10)
+            )
+        );
+
+        final List<FindBatchResponse> findResponse1 = controlPlane.findBatches(
             List.of(new FindBatchRequest(EXISTING_TOPIC_ID_PARTITION, 0, Integer.MAX_VALUE)),
             true,
             Integer.MAX_VALUE);
-        assertThat(findResponse).isEqualTo(List.of(
-            new FindBatchResponse(Errors.NONE, List.of(new BatchInfo(objectKey, 0, 10, 10)), 10)
-        ));
+        assertThat(findResponse1).containsExactly(
+            new FindBatchResponse(Errors.NONE, List.of(new BatchInfo(objectKey, 11, 10, 10)), 10)
+        );
+
+        // Make the topic "disappear".
+        when(metadataView.getTopicPartitions(EXISTING_TOPIC))
+            .thenReturn(Set.of());
+        when(metadataView.getTopicId(EXISTING_TOPIC))
+            .thenReturn(Uuid.ZERO_UUID);
+        final List<FindBatchResponse> findResponse2 = controlPlane.findBatches(
+            List.of(new FindBatchRequest(EXISTING_TOPIC_ID_PARTITION, 1, Integer.MAX_VALUE)),
+            true,
+            Integer.MAX_VALUE);
+        assertThat(findResponse2).containsExactly(
+            new FindBatchResponse(Errors.UNKNOWN_TOPIC_OR_PARTITION, null, -1)
+        );
+    }
+
+    @Test
+    void findOffsetOutOfRange() {
+        final ControlPlane controlPlane = new ControlPlane(metadataView);
+        final PlainObjectKey objectKey = new PlainObjectKey("a", "a");
+        controlPlane.commitFile(
+            objectKey,
+            List.of(
+                new CommitBatchRequest(new TopicPartition(EXISTING_TOPIC, 0), 11, 10, 10)
+            )
+        );
+
+        final List<FindBatchResponse> findResponse = controlPlane.findBatches(
+            List.of(new FindBatchRequest(EXISTING_TOPIC_ID_PARTITION, 10, Integer.MAX_VALUE)),
+            true,
+            Integer.MAX_VALUE);
+        assertThat(findResponse).containsExactly(
+            new FindBatchResponse(Errors.OFFSET_OUT_OF_RANGE, null, -1)
+        );
+    }
+
+    @Test
+    void findBeforeCommit() {
+        final ControlPlane controlPlane = new ControlPlane(metadataView);
+        final PlainObjectKey objectKey = new PlainObjectKey("a", "a");
+        final List<FindBatchResponse> findResponse = controlPlane.findBatches(
+            List.of(new FindBatchRequest(EXISTING_TOPIC_ID_PARTITION, 11, Integer.MAX_VALUE)),
+            true,
+            Integer.MAX_VALUE);
+        assertThat(findResponse).containsExactly(
+            new FindBatchResponse(Errors.OFFSET_OUT_OF_RANGE, null, -1)
+        );
     }
 }
