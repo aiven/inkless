@@ -2313,9 +2313,13 @@ project(':storage:inkless') {
     api project(':clients')
     implementation project(':server-common')
 
+    implementation libs.slf4jApi
+
     testImplementation project(':clients').sourceSets.test.output
     testImplementation libs.junitJupiter
     testImplementation libs.slf4jReload4j
+    testImplementation libs.assertj
+    testImplementation libs.mockitoCore
 
     testRuntimeOnly libs.junitPlatformLanucher
   }
