@@ -22,13 +22,8 @@ public class ControlPlane {
 
     private final MetadataView metadataView;
 
-    // TODO hide when we have get functions to use in testing.
-    // Visible for test.
-    final Map<TopicIdPartition, LogInfo> logs = new HashMap<>();
-
-    // TODO hide when we have get functions to use in testing.
-    // Visible for test.
-    final HashMap<TopicIdPartition, TreeMap<Long, BatchInfo>> batches = new HashMap<>();
+    private final Map<TopicIdPartition, LogInfo> logs = new HashMap<>();
+    private final HashMap<TopicIdPartition, TreeMap<Long, BatchInfo>> batches = new HashMap<>();
 
     public ControlPlane(final MetadataView metadataView) {
         this.metadataView = metadataView;
@@ -43,7 +38,6 @@ public class ControlPlane {
             final Uuid topicId = metadataView.getTopicId(topicName);
             final Set<TopicPartition> partitions = metadataView.getTopicPartitions(topicName);
             if (topicId == Uuid.ZERO_UUID
-                || partitions.isEmpty()
                 || !partitions.contains(request.topicPartition())) {
                 responses.add(CommitBatchResponse.unknownTopicOrPartition());
             } else {
@@ -74,7 +68,7 @@ public class ControlPlane {
             final Uuid topicId = metadataView.getTopicId(topicName);
             final Set<TopicPartition> partitions = metadataView.getTopicPartitions(topicName);
             if (!topicId.equals(request.topicIdPartition().topicId())
-                || partitions.isEmpty()) {
+                || !partitions.contains(request.topicIdPartition().topicPartition())) {
                 result.add(FindBatchResponse.unknownTopicOrPartition());
             } else {
                 final LogInfo logInfo = logs.computeIfAbsent(request.topicIdPartition(), ignore -> new LogInfo());
@@ -99,9 +93,7 @@ public class ControlPlane {
         return result;
     }
 
-    // TODO hide when we have get functions to use in testing.
-    // Visible for test.
-    static class LogInfo {
+    private static class LogInfo {
         long highWatermark = 0;
     }
 }
