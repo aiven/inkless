@@ -461,6 +461,7 @@ public class SynchronizationTest {
         return r -> {
             // This is essentially Executors.defaultThreadFactory except with
             // custom thread names so in order to filter by thread names when debugging
+            @SuppressWarnings("removal")
             SecurityManager s = System.getSecurityManager();
             Thread t = new Thread((s != null) ? s.getThreadGroup() :
                 Thread.currentThread().getThreadGroup(), r,
