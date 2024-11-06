@@ -96,6 +96,36 @@ class ControlPlaneTest {
     }
 
     @Test
+    void fullSpectrumFind() {
+        final ControlPlane controlPlane = new ControlPlane(metadataView);
+        final PlainObjectKey objectKey1 = new PlainObjectKey("a", "a1");
+        final PlainObjectKey objectKey2 = new PlainObjectKey("a", "a2");
+        final int numberOfRecordsInBatch1 = 3;
+        final int numberOfRecordsInBatch2 = 2;
+        controlPlane.commitFile(objectKey1,
+            List.of(new CommitBatchRequest(new TopicPartition(EXISTING_TOPIC, 0), 1, 10, numberOfRecordsInBatch1)));
+        controlPlane.commitFile(objectKey2,
+            List.of(new CommitBatchRequest(new TopicPartition(EXISTING_TOPIC, 0), 100, 10, numberOfRecordsInBatch2)));
+
+        final long expectedHighWatermark = numberOfRecordsInBatch1 + numberOfRecordsInBatch2;
+
+        for (int offset = 0; offset < numberOfRecordsInBatch1; offset++) {
+            final List<FindBatchResponse> findResponse = controlPlane.findBatches(
+                List.of(new FindBatchRequest(EXISTING_TOPIC_ID_PARTITION, offset, Integer.MAX_VALUE)), true, Integer.MAX_VALUE);
+            assertThat(findResponse).containsExactly(
+                new FindBatchResponse(Errors.NONE, List.of(new BatchInfo(objectKey1, 1, 10, numberOfRecordsInBatch1)), expectedHighWatermark)
+            );
+        }
+        for (int offset = numberOfRecordsInBatch1; offset < numberOfRecordsInBatch1 + numberOfRecordsInBatch2; offset++) {
+            final List<FindBatchResponse> findResponse = controlPlane.findBatches(
+                List.of(new FindBatchRequest(EXISTING_TOPIC_ID_PARTITION, offset, Integer.MAX_VALUE)), true, Integer.MAX_VALUE);
+            assertThat(findResponse).containsExactly(
+                new FindBatchResponse(Errors.NONE, List.of(new BatchInfo(objectKey2, 100, 10, numberOfRecordsInBatch2)), expectedHighWatermark)
+            );
+        }
+    }
+
+    @Test
     void topicDisappear() {
         final ControlPlane controlPlane = new ControlPlane(metadataView);
         final PlainObjectKey objectKey = new PlainObjectKey("a", "a");
@@ -144,20 +174,39 @@ class ControlPlaneTest {
             true,
             Integer.MAX_VALUE);
         assertThat(findResponse).containsExactly(
-            new FindBatchResponse(Errors.OFFSET_OUT_OF_RANGE, null, -1)
+            new FindBatchResponse(Errors.OFFSET_OUT_OF_RANGE, null, 10)
+        );
+    }
+
+    @Test
+    void findNegativeOffset() {
+        final ControlPlane controlPlane = new ControlPlane(metadataView);
+        final PlainObjectKey objectKey = new PlainObjectKey("a", "a");
+        controlPlane.commitFile(
+            objectKey,
+            List.of(
+                new CommitBatchRequest(new TopicPartition(EXISTING_TOPIC, 0), 11, 10, 10)
+            )
+        );
+
+        final List<FindBatchResponse> findResponse = controlPlane.findBatches(
+            List.of(new FindBatchRequest(EXISTING_TOPIC_ID_PARTITION, -1, Integer.MAX_VALUE)),
+            true,
+            Integer.MAX_VALUE);
+        assertThat(findResponse).containsExactly(
+            new FindBatchResponse(Errors.OFFSET_OUT_OF_RANGE, null, 10)
         );
     }
 
     @Test
     void findBeforeCommit() {
         final ControlPlane controlPlane = new ControlPlane(metadataView);
-        final PlainObjectKey objectKey = new PlainObjectKey("a", "a");
         final List<FindBatchResponse> findResponse = controlPlane.findBatches(
             List.of(new FindBatchRequest(EXISTING_TOPIC_ID_PARTITION, 11, Integer.MAX_VALUE)),
             true,
             Integer.MAX_VALUE);
         assertThat(findResponse).containsExactly(
-            new FindBatchResponse(Errors.OFFSET_OUT_OF_RANGE, null, -1)
+            new FindBatchResponse(Errors.OFFSET_OUT_OF_RANGE, null, 0)
         );
     }
 }
