@@ -321,6 +321,7 @@ class CommonNameLoggingTrustManagerFactoryWrapper {
         }
 
         @Override
+        @SuppressWarnings("deprecation")
         public Principal getIssuerDN() {
             return this.origCertificate.getIssuerDN();
         }
@@ -371,6 +372,7 @@ class CommonNameLoggingTrustManagerFactoryWrapper {
         }
 
         @Override
+        @SuppressWarnings("deprecation")
         public Principal getSubjectDN() {
             return this.origCertificate.getSubjectDN();
         }
