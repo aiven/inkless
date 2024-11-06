@@ -22,7 +22,7 @@ import kafka.coordinator.transaction.{InitProducerIdResult, TransactionCoordinat
 import kafka.network.RequestChannel
 import kafka.server.QuotaFactory.{QuotaManagers, UnboundedQuota}
 import kafka.server.handlers.DescribeTopicPartitionsRequestHandler
-import kafka.server.metadata.{ConfigRepository, KRaftMetadataCache}
+import kafka.server.metadata.{ConfigRepository, InklessMetadataView, KRaftMetadataCache}
 import kafka.server.share.SharePartitionManager
 import kafka.utils.{CoreUtils, Logging}
 import org.apache.kafka.admin.AdminUtils
@@ -80,6 +80,7 @@ import org.apache.kafka.server.share.acknowledge.ShareAcknowledgementBatch
 import org.apache.kafka.server.storage.log.{FetchIsolation, FetchParams, FetchPartitionData}
 import org.apache.kafka.storage.internals.log.AppendOrigin
 import org.apache.kafka.storage.log.metrics.BrokerTopicStats
+import io.aiven.inkless.control_plane.ControlPlane
 
 import java.lang.{Long => JLong}
 import java.nio.ByteBuffer
@@ -133,6 +134,8 @@ class KafkaApis(val requestChannel: RequestChannel,
       Some(new DescribeTopicPartitionsRequestHandler(kRaftMetadataCache, authHelper, config))
     case _ => None
   }
+
+  val controlPlane = new ControlPlane(new InklessMetadataView(metadataCache))
 
   def close(): Unit = {
     aclApis.close()

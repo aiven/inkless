@@ -1055,6 +1055,7 @@ project(':core') {
     implementation project(':tools:tools-api')
     implementation project(':raft')
     implementation project(':storage')
+    implementation project(':storage:inkless')
     implementation project(':server')
     implementation project(':coordinator-common')
     implementation project(':share')

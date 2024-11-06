@@ -2,4 +2,9 @@
 package io.aiven.inkless.control_plane;
 
 public class ControlPlane {
+    private final MetadataView metadataView;
+
+    public ControlPlane(final MetadataView metadataView) {
+        this.metadataView = metadataView;
+    }
 }
