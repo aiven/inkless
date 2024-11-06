@@ -12,8 +12,8 @@ public record FindBatchResponse(Errors errors,
         return new FindBatchResponse(Errors.NONE, batches, highWatermark);
     }
 
-    public static FindBatchResponse offsetOutOfRange() {
-        return new FindBatchResponse(Errors.OFFSET_OUT_OF_RANGE, null, -1);
+    public static FindBatchResponse offsetOutOfRange(final long highWatermark) {
+        return new FindBatchResponse(Errors.OFFSET_OUT_OF_RANGE, null, highWatermark);
     }
 
     public static FindBatchResponse unknownTopicOrPartition() {

@@ -72,19 +72,24 @@ public class ControlPlane {
                 result.add(FindBatchResponse.unknownTopicOrPartition());
             } else {
                 final LogInfo logInfo = logs.computeIfAbsent(request.topicIdPartition(), ignore -> new LogInfo());
-                if (request.offset() >= logInfo.highWatermark) {
-                    result.add(FindBatchResponse.offsetOutOfRange());
+                if (request.offset() < 0) {
+                    logger.debug("Invalid offset {} for {}", request.offset(), request.topicIdPartition());
+                    result.add(FindBatchResponse.offsetOutOfRange(logInfo.highWatermark));
                 } else {
-                    final TreeMap<Long, BatchInfo> coordinates = this.batches.get(request.topicIdPartition());
-                    if (coordinates != null) {
-                        final var entry = coordinates.floorEntry(request.offset());
-                        result.add(FindBatchResponse.success(List.of(entry.getValue()), logInfo.highWatermark));
+                    if (request.offset() >= logInfo.highWatermark) {
+                        result.add(FindBatchResponse.offsetOutOfRange(logInfo.highWatermark));
                     } else {
-                        logger.error("Batch coordinates not found for {}: high watermark={}, requested offset={}",
-                            request.topicIdPartition(),
-                            logInfo.highWatermark,
-                            request.offset());
-                        result.add(FindBatchResponse.unknownServerError());
+                        final TreeMap<Long, BatchInfo> coordinates = this.batches.get(request.topicIdPartition());
+                        if (coordinates != null) {
+                            final var entry = coordinates.floorEntry(request.offset());
+                            result.add(FindBatchResponse.success(List.of(entry.getValue()), logInfo.highWatermark));
+                        } else {
+                            logger.error("Batch coordinates not found for {}: high watermark={}, requested offset={}",
+                                request.topicIdPartition(),
+                                logInfo.highWatermark,
+                                request.offset());
+                            result.add(FindBatchResponse.unknownServerError());
+                        }
                     }
                 }
             }
