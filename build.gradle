@@ -2307,6 +2307,31 @@ project(':storage') {
   }
 }
 
+project(':storage:inkless') {
+  dependencies {
+    api project(':clients')
+    implementation project(':server-common')
+
+    testImplementation project(':clients').sourceSets.test.output
+    testImplementation libs.junitJupiter
+    testImplementation libs.slf4jReload4j
+
+    testRuntimeOnly libs.junitPlatformLanucher
+  }
+
+  javadoc {
+    enabled = false
+  }
+
+  checkstyle {
+    // TODO enable
+    checkstyleMain.enabled = false
+    checkstyleTest.enabled = false
+
+    configProperties = checkstyleConfigProperties("import-control-storage-inkless.xml")
+  }
+}
+
 project(':tools:tools-api') {
   base {
     archivesName = "kafka-tools-api"
