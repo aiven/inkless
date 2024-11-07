@@ -89,9 +89,9 @@ class ControlPlaneTest {
                 new FindBatchRequest(new TopicIdPartition(Uuid.ONE_UUID, 0, NONEXISTENT_TOPIC), 11, Integer.MAX_VALUE)
             ), true, Integer.MAX_VALUE);
         assertThat(findResponse).containsExactly(
-            new FindBatchResponse(Errors.NONE, List.of(new BatchInfo(objectKey2, 100, 10, 10)), 20),
-            new FindBatchResponse(Errors.UNKNOWN_TOPIC_OR_PARTITION, null, -1),
-            new FindBatchResponse(Errors.UNKNOWN_TOPIC_OR_PARTITION, null, -1)
+            new FindBatchResponse(Errors.NONE, List.of(new BatchInfo(objectKey2, 100, 10, 10)), 0, 20),
+            new FindBatchResponse(Errors.UNKNOWN_TOPIC_OR_PARTITION, null, -1, -1),
+            new FindBatchResponse(Errors.UNKNOWN_TOPIC_OR_PARTITION, null, -1, -1)
         );
     }
 
@@ -107,20 +107,25 @@ class ControlPlaneTest {
         controlPlane.commitFile(objectKey2,
             List.of(new CommitBatchRequest(new TopicPartition(EXISTING_TOPIC, 0), 100, 10, numberOfRecordsInBatch2)));
 
+        final long expectedLogStartOffset = 0;
         final long expectedHighWatermark = numberOfRecordsInBatch1 + numberOfRecordsInBatch2;
 
         for (int offset = 0; offset < numberOfRecordsInBatch1; offset++) {
             final List<FindBatchResponse> findResponse = controlPlane.findBatches(
                 List.of(new FindBatchRequest(EXISTING_TOPIC_ID_PARTITION, offset, Integer.MAX_VALUE)), true, Integer.MAX_VALUE);
             assertThat(findResponse).containsExactly(
-                new FindBatchResponse(Errors.NONE, List.of(new BatchInfo(objectKey1, 1, 10, numberOfRecordsInBatch1)), expectedHighWatermark)
+                new FindBatchResponse(Errors.NONE, List.of(
+                    new BatchInfo(objectKey1, 1, 10, numberOfRecordsInBatch1)
+                ), expectedLogStartOffset, expectedHighWatermark)
             );
         }
         for (int offset = numberOfRecordsInBatch1; offset < numberOfRecordsInBatch1 + numberOfRecordsInBatch2; offset++) {
             final List<FindBatchResponse> findResponse = controlPlane.findBatches(
                 List.of(new FindBatchRequest(EXISTING_TOPIC_ID_PARTITION, offset, Integer.MAX_VALUE)), true, Integer.MAX_VALUE);
             assertThat(findResponse).containsExactly(
-                new FindBatchResponse(Errors.NONE, List.of(new BatchInfo(objectKey2, 100, 10, numberOfRecordsInBatch2)), expectedHighWatermark)
+                new FindBatchResponse(Errors.NONE, List.of(
+                    new BatchInfo(objectKey2, 100, 10, numberOfRecordsInBatch2)
+                ), expectedLogStartOffset, expectedHighWatermark)
             );
         }
     }
@@ -141,7 +146,7 @@ class ControlPlaneTest {
             true,
             Integer.MAX_VALUE);
         assertThat(findResponse1).containsExactly(
-            new FindBatchResponse(Errors.NONE, List.of(new BatchInfo(objectKey, 11, 10, 10)), 10)
+            new FindBatchResponse(Errors.NONE, List.of(new BatchInfo(objectKey, 11, 10, 10)), 0, 10)
         );
 
         // Make the topic "disappear".
@@ -154,7 +159,7 @@ class ControlPlaneTest {
             true,
             Integer.MAX_VALUE);
         assertThat(findResponse2).containsExactly(
-            new FindBatchResponse(Errors.UNKNOWN_TOPIC_OR_PARTITION, null, -1)
+            new FindBatchResponse(Errors.UNKNOWN_TOPIC_OR_PARTITION, null, -1, -1)
         );
     }
 
@@ -174,7 +179,7 @@ class ControlPlaneTest {
             true,
             Integer.MAX_VALUE);
         assertThat(findResponse).containsExactly(
-            new FindBatchResponse(Errors.OFFSET_OUT_OF_RANGE, null, 10)
+            new FindBatchResponse(Errors.OFFSET_OUT_OF_RANGE, null, 0, 10)
         );
     }
 
@@ -194,7 +199,7 @@ class ControlPlaneTest {
             true,
             Integer.MAX_VALUE);
         assertThat(findResponse).containsExactly(
-            new FindBatchResponse(Errors.OFFSET_OUT_OF_RANGE, null, 10)
+            new FindBatchResponse(Errors.OFFSET_OUT_OF_RANGE, null, 0, 10)
         );
     }
 
@@ -206,7 +211,7 @@ class ControlPlaneTest {
             true,
             Integer.MAX_VALUE);
         assertThat(findResponse).containsExactly(
-            new FindBatchResponse(Errors.OFFSET_OUT_OF_RANGE, null, 0)
+            new FindBatchResponse(Errors.OFFSET_OUT_OF_RANGE, null, 0, 0)
         );
     }
 }

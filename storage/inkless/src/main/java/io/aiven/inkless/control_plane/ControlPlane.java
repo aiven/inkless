@@ -74,15 +74,18 @@ public class ControlPlane {
                 final LogInfo logInfo = logs.computeIfAbsent(request.topicIdPartition(), ignore -> new LogInfo());
                 if (request.offset() < 0) {
                     logger.debug("Invalid offset {} for {}", request.offset(), request.topicIdPartition());
-                    result.add(FindBatchResponse.offsetOutOfRange(logInfo.highWatermark));
+                    result.add(FindBatchResponse.offsetOutOfRange(
+                        logInfo.logStartOffset, logInfo.highWatermark));
                 } else {
                     if (request.offset() >= logInfo.highWatermark) {
-                        result.add(FindBatchResponse.offsetOutOfRange(logInfo.highWatermark));
+                        result.add(FindBatchResponse.offsetOutOfRange(
+                            logInfo.logStartOffset, logInfo.highWatermark));
                     } else {
                         final TreeMap<Long, BatchInfo> coordinates = this.batches.get(request.topicIdPartition());
                         if (coordinates != null) {
                             final var entry = coordinates.floorEntry(request.offset());
-                            result.add(FindBatchResponse.success(List.of(entry.getValue()), logInfo.highWatermark));
+                            result.add(FindBatchResponse.success(
+                                List.of(entry.getValue()), logInfo.logStartOffset, logInfo.highWatermark));
                         } else {
                             logger.error("Batch coordinates not found for {}: high watermark={}, requested offset={}",
                                 request.topicIdPartition(),
@@ -99,6 +102,7 @@ public class ControlPlane {
     }
 
     private static class LogInfo {
+        long logStartOffset = 0;
         long highWatermark = 0;
     }
 }
