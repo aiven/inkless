@@ -2315,13 +2315,20 @@ project(':storage:inkless') {
     api project(':clients')
     implementation project(':server-common')
 
+    api libs.pitestAnnotations
+
     implementation libs.slf4jApi
+    implementation libs.awsskdS3
 
     testImplementation project(':clients').sourceSets.test.output
     testImplementation libs.junitJupiter
     testImplementation libs.slf4jReload4j
     testImplementation libs.assertj
     testImplementation libs.mockitoCore
+    testImplementation libs.testcontainers
+    testImplementation libs.testcontainersJunitJupiter
+    testImplementation libs.testcontainersLocalstack
+    testImplementation libs.wiremock
 
     testRuntimeOnly libs.junitPlatformLanucher
   }
@@ -2346,6 +2353,7 @@ project(':storage:inkless') {
     junit5PluginVersion = '1.2.1'
     pitestVersion = '1.17.1'
     targetClasses.add("io.aiven.inkless.*")
+    excludedTestClasses.add("*io.aiven.inkless.storage_backend.s3.integration.*")
     targetTests.add("io.aiven.inkless.*")
     threads = Runtime.getRuntime().availableProcessors()
     outputFormats.addAll('XML', 'HTML')

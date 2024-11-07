@@ -54,6 +54,7 @@ versions += [
   apacheds: "2.0.0-M24",
   argparse4j: "0.7.0",
   assertj: "3.26.3",
+  awssdk: "2.29.6",
   bcpkix: "1.78.1",
   caffeine: "3.1.8",
   bndlib: "7.0.0",
@@ -112,6 +113,7 @@ versions += [
   opentelemetryProto: "1.0.0-alpha",
   protobuf: "3.25.5", // a dependency of opentelemetryProto
   pcollections: "4.0.1",
+  pitestAnnotations: "1.3.3",
   re2j: "1.7",
   rocksDB: "9.7.3",
   // When updating the scalafmt version please also update the version field in checkstyle/.scalafmt.conf. scalafmt now
@@ -122,12 +124,14 @@ versions += [
   slf4j: "1.7.36",
   snappy: "1.1.10.5",
   spotbugs: "4.8.6",
+  testcontainers: "1.20.3",
   zinc: "1.9.2",
   // When updating the zstd version, please do as well in docker/native/native-image-configs/resource-config.json
   // Also make sure the compression levels in org.apache.kafka.common.record.CompressionType are still valid
   zstd: "1.5.6-6",
   junitPlatform: "1.10.2",
-  hdrHistogram: "2.2.2"
+  hdrHistogram: "2.2.2",
+  wiremock: "3.9.2"
 ]
 
 libs += [
@@ -143,6 +147,7 @@ libs += [
   apachedsJdbmPartition: "org.apache.directory.server:apacheds-jdbm-partition:$versions.apacheds",
   argparse4j: "net.sourceforge.argparse4j:argparse4j:$versions.argparse4j",
   assertj: "org.assertj:assertj-core:$versions.assertj",
+  awsskdS3: "software.amazon.awssdk:s3:$versions.awssdk",
   bcpkix: "org.bouncycastle:bcpkix-jdk18on:$versions.bcpkix",
   bndlib:"biz.aQute.bnd:biz.aQute.bndlib:$versions.bndlib",
   caffeine: "com.github.ben-manes.caffeine:caffeine:$versions.caffeine",
@@ -211,6 +216,7 @@ libs += [
   pcollections: "org.pcollections:pcollections:$versions.pcollections",
   opentelemetryProto: "io.opentelemetry.proto:opentelemetry-proto:$versions.opentelemetryProto",
   protobuf: "com.google.protobuf:protobuf-java:$versions.protobuf",
+  pitestAnnotations: "com.arcmutate:pitest-annotations:$versions.pitestAnnotations",
   re2j: "com.google.re2j:re2j:$versions.re2j",
   rocksDBJni: "org.rocksdb:rocksdbjni:$versions.rocksDB",
   scalaLibrary: "org.scala-lang:scala-library:$versions.scala",
@@ -221,9 +227,13 @@ libs += [
   snappy: "org.xerial.snappy:snappy-java:$versions.snappy",
   spotbugs: "com.github.spotbugs:spotbugs-annotations:$versions.spotbugs",
   swaggerAnnotations: "io.swagger.core.v3:swagger-annotations:$swaggerVersion",
+  testcontainers: "org.testcontainers:testcontainers:$versions.testcontainers",
+  testcontainersJunitJupiter: "org.testcontainers:junit-jupiter:$versions.testcontainers",
+  testcontainersLocalstack: "org.testcontainers:localstack:$versions.testcontainers",
   jfreechart: "jfreechart:jfreechart:$versions.jfreechart",
   mavenArtifact: "org.apache.maven:maven-artifact:$versions.mavenArtifact",
   zstd: "com.github.luben:zstd-jni:$versions.zstd",
   httpclient: "org.apache.httpcomponents:httpclient:$versions.httpclient",
-  hdrHistogram: "org.hdrhistogram:HdrHistogram:$versions.hdrHistogram"
+  hdrHistogram: "org.hdrhistogram:HdrHistogram:$versions.hdrHistogram",
+  wiremock: "org.wiremock:wiremock:$versions.wiremock"
 ]
