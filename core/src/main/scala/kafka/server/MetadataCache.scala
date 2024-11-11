@@ -140,6 +140,8 @@ trait MetadataCache extends ConfigRepository {
     maximumNumberOfPartitions: Int,
     ignoreTopicsWithExceptions: Boolean
   ): DescribeTopicPartitionsResponseData
+
+  def isInklessTopic(topic: String): Boolean
 }
 
 object MetadataCache {
