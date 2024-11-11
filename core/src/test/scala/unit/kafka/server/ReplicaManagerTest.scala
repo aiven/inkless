@@ -18,6 +18,7 @@
 package kafka.server
 
 import com.yammer.metrics.core.{Gauge, Meter, Timer}
+import io.aiven.inkless.produce.AppendInterceptor
 import kafka.cluster.PartitionTest.MockPartitionListener
 import kafka.cluster.Partition
 import kafka.log.{LocalLog, LogManager, LogManagerTest, UnifiedLog}
@@ -61,7 +62,7 @@ import org.apache.kafka.metadata.properties.{MetaProperties, MetaPropertiesEnsem
 import org.apache.kafka.network.SocketServerConfigs
 import org.apache.kafka.raft.QuorumConfig
 import org.apache.kafka.server.common.MetadataVersion.IBP_2_6_IV0
-import org.apache.kafka.server.common.{DirectoryEventHandler, MetadataVersion, OffsetAndEpoch, RequestLocal}
+import org.apache.kafka.server.common.{DirectoryEventHandler, KRaftVersion, MetadataVersion, OffsetAndEpoch, RequestLocal}
 import org.apache.kafka.server.config.{KRaftConfigs, ReplicationConfigs, ServerLogConfigs}
 import org.apache.kafka.server.log.remote.storage._
 import org.apache.kafka.server.metrics.{KafkaMetricsGroup, KafkaYammerMetrics}
@@ -73,14 +74,14 @@ import org.apache.kafka.storage.internals.checkpoint.{LazyOffsetCheckpoints, Off
 import org.apache.kafka.storage.internals.log.{AppendOrigin, FetchDataInfo, LogConfig, LogDirFailureChannel, LogLoader, LogOffsetMetadata, LogOffsetSnapshot, LogSegments, LogStartOffsetIncrementReason, ProducerStateManager, ProducerStateManagerConfig, RemoteStorageFetchInfo, VerificationGuard}
 import org.apache.kafka.storage.log.metrics.BrokerTopicStats
 import org.junit.jupiter.api.Assertions._
-import org.junit.jupiter.api.{AfterAll, AfterEach, BeforeEach, Test}
+import org.junit.jupiter.api.{AfterAll, AfterEach, BeforeEach, Nested, Test}
 import org.junit.jupiter.params.ParameterizedTest
-import org.junit.jupiter.params.provider.{EnumSource, ValueSource}
+import org.junit.jupiter.params.provider.{CsvSource, EnumSource, ValueSource}
 import org.mockito.ArgumentMatchers._
 import org.mockito.Mockito._
 import org.mockito.invocation.InvocationOnMock
 import org.mockito.stubbing.Answer
-import org.mockito.{ArgumentCaptor, ArgumentMatchers}
+import org.mockito.{ArgumentCaptor, ArgumentMatchers, MockedConstruction}
 
 import java.io.{ByteArrayInputStream, File}
 import java.lang.{Long => JLong}
@@ -6855,6 +6856,59 @@ class ReplicaManagerTest {
       if (!names.contains(metricName.getMBeanName)) {
         KafkaYammerMetrics.defaultRegistry.removeMetric(metricName)
       }
+    }
+  }
+
+  @Nested
+  class Inkless {
+    @ParameterizedTest
+    @CsvSource(Array("true,0", "false,1"))
+    def testAppendInterceptorIsHonored(interceptorResult: Boolean, expectedCallbackTimes: Int): Unit = {
+      val appendInterceptorCtorMockInitializer: MockedConstruction.MockInitializer[AppendInterceptor] = {
+        case (mock, _) =>
+          when(mock.intercept(any(), any())).thenReturn(interceptorResult)
+      }
+      val appendInterceptorCtor = mockConstruction(classOf[AppendInterceptor], appendInterceptorCtorMockInitializer)
+      val replicaManager = try {
+        createReplicaManager()
+      } finally {
+        appendInterceptorCtor.close()
+      }
+
+      val responseCallback = mock(classOf[Function[Map[TopicPartition, PartitionResponse], Unit]])
+      replicaManager.appendRecords(
+        timeout = 0,
+        requiredAcks = -1,
+        internalTopicsAllowed = true,
+        origin = AppendOrigin.CLIENT,
+        entriesPerPartition = Map.empty,
+        responseCallback = responseCallback
+      )
+
+      verify(responseCallback, times(expectedCallbackTimes)).apply(any())
+    }
+
+    private def createReplicaManager(): ReplicaManager = {
+      val props = TestUtils.createBrokerConfig(1, TestUtils.MockZkConnect, logDirCount = 2)
+      val config = KafkaConfig.fromProps(props)
+      val logManagerMock = mock(classOf[LogManager])
+      when(logManagerMock.liveLogDirs).thenReturn(Seq.empty)
+
+      val logDirFailureChannel = new LogDirFailureChannel(config.logDirs.size)
+
+      new ReplicaManager(
+        metrics = metrics,
+        config = config,
+        time = time,
+        scheduler = time.scheduler,
+        logManager = logManagerMock,
+        quotaManagers = quotaManager,
+        metadataCache = MetadataCache.kRaftMetadataCache(config.brokerId, () => KRaftVersion.KRAFT_VERSION_0),
+        logDirFailureChannel = logDirFailureChannel,
+        alterPartitionManager = alterPartitionManager,
+        threadNamePrefix = Option(this.getClass.getName),
+        zkClient = None,
+      )
     }
   }
 }
