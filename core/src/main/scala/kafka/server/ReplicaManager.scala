@@ -17,6 +17,7 @@
 package kafka.server
 
 import com.yammer.metrics.core.Meter
+import io.aiven.inkless.produce.AppendInterceptor
 import kafka.cluster.{Partition, PartitionListener}
 import kafka.controller.StateChangeLogger
 import kafka.log.remote.RemoteLogManager
@@ -307,6 +308,8 @@ class ReplicaManager(val config: KafkaConfig,
     new DelayedOperationPurgatory[DelayedShareFetch](
       "ShareFetch", config.brokerId,
       config.shareGroupConfig.shareFetchPurgatoryPurgeIntervalRequests))
+
+  private val inklessAppendInterceptor = new AppendInterceptor()
 
   /* epoch of the controller that last changed the leader */
   @volatile private[server] var controllerEpoch: Int = 0
@@ -656,6 +659,10 @@ class ReplicaManager(val config: KafkaConfig,
                     verificationGuards: Map[TopicPartition, VerificationGuard] = Map.empty): Unit = {
     if (!isValidRequiredAcks(requiredAcks)) {
       sendInvalidRequiredAcksResponse(entriesPerPartition, responseCallback)
+      return
+    }
+
+    if (inklessAppendInterceptor.intercept(entriesPerPartition.asJava, r => responseCallback(r.asScala))) {
       return
     }
 
