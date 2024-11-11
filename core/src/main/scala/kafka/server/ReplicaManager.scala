@@ -26,6 +26,7 @@ import kafka.server.HostedPartition.Online
 import kafka.server.QuotaFactory.QuotaManagers
 import kafka.server.ReplicaManager.{AtMinIsrPartitionCountMetricName, FailedIsrUpdatesPerSecMetricName, IsrExpandsPerSecMetricName, IsrShrinksPerSecMetricName, LeaderCountMetricName, OfflineReplicaCountMetricName, PartitionCountMetricName, PartitionsWithLateTransactionsCountMetricName, ProducerIdCountMetricName, ReassigningPartitionsMetricName, UnderMinIsrPartitionCountMetricName, UnderReplicatedPartitionsMetricName, createLogReadResult, isListOffsetsTimestampUnsupported}
 import kafka.server.share.DelayedShareFetch
+import kafka.server.metadata.InklessMetadataView
 import kafka.utils._
 import org.apache.kafka.common.errors._
 import org.apache.kafka.common.internals.Topic
@@ -309,7 +310,7 @@ class ReplicaManager(val config: KafkaConfig,
       "ShareFetch", config.brokerId,
       config.shareGroupConfig.shareFetchPurgatoryPurgeIntervalRequests))
 
-  private val inklessAppendInterceptor = new AppendInterceptor()
+  private val inklessAppendInterceptor = new AppendInterceptor(new InklessMetadataView(metadataCache))
 
   /* epoch of the controller that last changed the leader */
   @volatile private[server] var controllerEpoch: Int = 0
@@ -1421,7 +1422,7 @@ class ReplicaManager(val config: KafkaConfig,
         if (duplicatePartitions.contains(topicPartition)) {
           debug(s"OffsetRequest with correlation id $correlationId from client $clientId on partition $topicPartition " +
             s"failed because the partition is duplicated in the request.")
-          statusByPartition += topicPartition -> 
+          statusByPartition += topicPartition ->
             ListOffsetsPartitionStatus.builder().responseOpt(Optional.of(buildErrorResponse(Errors.INVALID_REQUEST, partition))).build()
         } else if (isListOffsetsTimestampUnsupported(partition.timestamp(), version)) {
           statusByPartition += topicPartition ->
@@ -1487,7 +1488,7 @@ class ReplicaManager(val config: KafkaConfig,
                       _ : UnsupportedForMessageFormatException) =>
               debug(s"Offset request with correlation id $correlationId from client $clientId on " +
                 s"partition $topicPartition failed due to ${e.getMessage}")
-              statusByPartition += topicPartition -> 
+              statusByPartition += topicPartition ->
                 ListOffsetsPartitionStatus.builder().responseOpt(Optional.of(buildErrorResponse(Errors.forException(e), partition))).build()
             // Only V5 and newer ListOffset calls should get OFFSET_NOT_AVAILABLE
             case e: OffsetNotAvailableException =>

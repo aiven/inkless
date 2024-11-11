@@ -16,4 +16,8 @@ class InklessMetadataView(val metadataCache: MetadataCache) extends MetadataView
   override def getTopicId(topicName: String): Uuid = {
     metadataCache.getTopicId(topicName)
   }
+
+  override def isInklessTopic(topicName: String): Boolean = {
+    metadataCache.isInklessTopic(topicName)
+  }
 }

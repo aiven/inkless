@@ -10,4 +10,6 @@ public interface MetadataView {
     Set<TopicPartition> getTopicPartitions(String topicName);
 
     Uuid getTopicId(String topicName);
+
+    boolean isInklessTopic(String topicName);
 }
