@@ -712,4 +712,6 @@ class ZkMetadataCache(
   }
 
   override def getFeatureOption: Option[FinalizedFeatures] = _features
+
+  override def isInklessTopic(topic: String): Boolean = ???  // not implemented and must remain so
 }

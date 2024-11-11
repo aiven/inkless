@@ -557,5 +557,9 @@ class KRaftMetadataCache(
       image.highestOffsetAndEpoch().offset,
       true)
   }
+
+  override def isInklessTopic(topic: String): Boolean = {
+    !Topic.isInternal(topic) && topic != Topic.CLUSTER_METADATA_TOPIC_NAME
+  }
 }
 
