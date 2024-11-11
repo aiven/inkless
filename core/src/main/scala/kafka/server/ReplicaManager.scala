@@ -25,7 +25,7 @@ import kafka.log.{LogManager, OffsetResultHolder, UnifiedLog}
 import kafka.server.HostedPartition.Online
 import kafka.server.QuotaFactory.QuotaManagers
 import kafka.server.ReplicaManager.{AtMinIsrPartitionCountMetricName, FailedIsrUpdatesPerSecMetricName, IsrExpandsPerSecMetricName, IsrShrinksPerSecMetricName, LeaderCountMetricName, OfflineReplicaCountMetricName, PartitionCountMetricName, PartitionsWithLateTransactionsCountMetricName, ProducerIdCountMetricName, ReassigningPartitionsMetricName, UnderMinIsrPartitionCountMetricName, UnderReplicatedPartitionsMetricName, createLogReadResult, isListOffsetsTimestampUnsupported}
-import kafka.server.metadata.ZkMetadataCache
+import kafka.server.metadata.{InklessMetadataView, ZkMetadataCache}
 import kafka.server.share.{DelayedShareFetch, DelayedShareFetchKey, DelayedShareFetchPartitionKey}
 import kafka.utils._
 import kafka.zk.KafkaZkClient
@@ -324,7 +324,7 @@ class ReplicaManager(val config: KafkaConfig,
       purgatoryName = "ShareFetch", brokerId = config.brokerId,
       purgeInterval = config.shareGroupConfig.shareFetchPurgatoryPurgeIntervalRequests))
 
-  private val inklessAppendInterceptor = new AppendInterceptor()
+  private val inklessAppendInterceptor = new AppendInterceptor(new InklessMetadataView(metadataCache))
 
   /* epoch of the controller that last changed the leader */
   @volatile private[server] var controllerEpoch: Int = KafkaController.InitialControllerEpoch
