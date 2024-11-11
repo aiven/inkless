@@ -18,8 +18,10 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -51,5 +53,22 @@ public class AppendInterceptorTest {
             new TopicPartition("non_inkless", 0),
             new PartitionResponse(Errors.INVALID_REQUEST)
         ));
+    }
+
+    @Test
+    public void notInterceptProducingToClassicTopics() {
+        final MetadataView metadataView = mock(MetadataView.class);
+        when(metadataView.isInklessTopic(eq("non_inkless"))).thenReturn(false);
+        final AppendInterceptor interceptor = new AppendInterceptor(metadataView);
+
+        final Map<TopicPartition, MemoryRecords> entriesPerPartition = Map.of(
+            new TopicPartition("non_inkless", 0),
+            MemoryRecords.withRecords(Compression.NONE, new SimpleRecord("first message".getBytes()))
+        );
+        final var responseCallback = Mockito.<Consumer<Map<TopicPartition, PartitionResponse>>>mock();
+
+        final boolean result = interceptor.intercept(entriesPerPartition, responseCallback);
+        assertThat(result).isFalse();
+        verify(responseCallback, never()).accept(any());
     }
 }

@@ -44,7 +44,12 @@ public class AppendInterceptor {
             return true;
         }
 
-        return false;
+        // This request produces only to classic topics, don't intercept.
+        if (!entrySeparationResult.entitiesForNonInklessTopics.isEmpty()) {
+            return false;
+        }
+
+        return true;
     }
 
     private EntrySeparationResult separateEntries(final Map<TopicPartition, MemoryRecords> entriesPerPartition) {
