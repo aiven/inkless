@@ -49,6 +49,10 @@ public class AppendInterceptor {
             return false;
         }
 
+        if (rejectIdempotentProduce(entriesPerPartition, responseCallback)) {
+            return true;
+        }
+
         return true;
     }
 
@@ -63,6 +67,29 @@ public class AppendInterceptor {
             }
         }
         return new EntrySeparationResult(entitiesForInklessTopics, entitiesForNonInklessTopics);
+    }
+
+    private boolean rejectIdempotentProduce(final Map<TopicPartition, MemoryRecords> entriesPerPartition,
+                                            final Consumer<Map<TopicPartition, PartitionResponse>> responseCallback) {
+        boolean atLeastBatchHasProducerId = entriesPerPartition.values().stream().anyMatch(records -> {
+            for (final var batch : records.batches()) {
+                if (batch.hasProducerId()) {
+                    return true;
+                }
+            }
+            return false;
+        });
+
+        if (atLeastBatchHasProducerId) {
+            final var result = entriesPerPartition.entrySet().stream()
+                .collect(Collectors.toMap(
+                    Map.Entry::getKey,
+                    ignore -> new PartitionResponse(Errors.INVALID_REQUEST)));
+            responseCallback.accept(result);
+            return true;
+        } else {
+            return false;
+        }
     }
 
     private record EntrySeparationResult(Map<TopicPartition, MemoryRecords> entitiesForInklessTopics,
