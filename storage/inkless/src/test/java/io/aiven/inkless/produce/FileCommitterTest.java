@@ -4,7 +4,7 @@ package io.aiven.inkless.produce;
 import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.Executor;
-import java.util.function.BiFunction;
+import java.util.function.BiConsumer;
 
 import org.apache.kafka.common.utils.Time;
 
@@ -22,7 +22,6 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Captor;
 import org.mockito.Mock;
-import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
@@ -30,6 +29,8 @@ import org.mockito.quality.Strictness;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.ArgumentMatchers.same;
 import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
@@ -52,7 +53,7 @@ class FileCommitterTest {
     @Mock
     Time time;
     @Mock
-    BiFunction<List<CommitBatchResponse>, Throwable, Void> callback;
+    BiConsumer<List<CommitBatchResponse>, Throwable> callback;
 
     @Captor
     ArgumentCaptor<List<CommitBatchResponse>> callbackResultCaptor;
@@ -60,7 +61,7 @@ class FileCommitterTest {
     ArgumentCaptor<Throwable> callbackThrowableCaptor;
 
     @Test
-    void uploadSuccessFirstAttempt() throws StorageBackendException {
+    void commitSuccessFirstAttempt() throws StorageBackendException {
         final List<CommitBatchRequest> commitBatchRequests = List.of();
         final byte[] data = new byte[1];
         final List<CommitBatchResponse> commitResponse = List.of();
@@ -73,17 +74,17 @@ class FileCommitterTest {
             time, 1, Duration.ofMillis(100),
             callback);
 
-        committer.upload(commitBatchRequests, data);
+        committer.commit(commitBatchRequests, data);
 
         verify(objectUploader).upload(eq(OBJECT_KEY), eq(data));
         verify(time, never()).sleep(eq(100));
-        verify(callback).apply(callbackResultCaptor.capture(), callbackThrowableCaptor.capture());
+        verify(callback).accept(callbackResultCaptor.capture(), callbackThrowableCaptor.capture());
         assertThat(callbackResultCaptor.getValue()).isSameAs(commitResponse);
         assertThat(callbackThrowableCaptor.getValue()).isNull();
     }
 
     @Test
-    void uploadSuccessAfterRetry() throws StorageBackendException {
+    void commitSuccessAfterRetry() throws StorageBackendException {
         final List<CommitBatchRequest> commitBatchRequests = List.of();
         final byte[] data = new byte[1];
         final List<CommitBatchResponse> commitResponse = List.of();
@@ -98,18 +99,18 @@ class FileCommitterTest {
             SYNC_EXECUTOR, OBJECT_KEY_CREATOR, objectUploader, controlPlane,
             time, 3, Duration.ofMillis(100),
             callback);
-        committer.upload(commitBatchRequests, data);
+        committer.commit(commitBatchRequests, data);
 
         verify(objectUploader, times(3)).upload(eq(OBJECT_KEY), eq(data));
         // We don't sleep at the last attempt.
         verify(time, times(2)).sleep(eq(100L));
-        verify(callback).apply(callbackResultCaptor.capture(), callbackThrowableCaptor.capture());
+        verify(callback).accept(callbackResultCaptor.capture(), callbackThrowableCaptor.capture());
         assertThat(callbackResultCaptor.getValue()).isSameAs(commitResponse);
         assertThat(callbackThrowableCaptor.getValue()).isNull();
     }
 
     @Test
-    void uploadFailure() throws StorageBackendException {
+    void commitFailure() throws StorageBackendException {
         final List<CommitBatchRequest> commitBatchRequests = List.of();
         final byte[] data = new byte[1];
         final StorageBackendException exception = new StorageBackendException("Test");
@@ -120,13 +121,30 @@ class FileCommitterTest {
             SYNC_EXECUTOR, OBJECT_KEY_CREATOR, objectUploader, controlPlane,
             time, 2, Duration.ofMillis(100),
             callback);
-        committer.upload(commitBatchRequests, data);
+        committer.commit(commitBatchRequests, data);
 
         verify(objectUploader, times(2)).upload(eq(OBJECT_KEY), eq(data));
         // We don't sleep at the last attempt.
         verify(time, times(1)).sleep(eq(100L));
-        verify(callback).apply(callbackResultCaptor.capture(), callbackThrowableCaptor.capture());
+        verify(callback).accept(callbackResultCaptor.capture(), callbackThrowableCaptor.capture());
         assertThat(callbackResultCaptor.getValue()).isNull();
         assertThat(callbackThrowableCaptor.getValue()).isSameAs(exception);
+    }
+
+    @Test
+    void unknownErrorIsReported() throws StorageBackendException {
+        final List<CommitBatchRequest> commitBatchRequests = List.of();
+        final byte[] data = new byte[1];
+        final RuntimeException exception = new RuntimeException("Unknown exception");
+
+        doThrow(exception).when(objectUploader).upload(any(), eq(data));
+
+        final FileCommitter committer = new FileCommitter(
+            SYNC_EXECUTOR, OBJECT_KEY_CREATOR, objectUploader, controlPlane,
+            time, 2, Duration.ofMillis(100),
+            callback);
+        committer.commit(commitBatchRequests, data);
+
+        verify(callback).accept(isNull(), same(exception));
     }
 }
