@@ -27,12 +27,14 @@ class BatchBufferTest {
     void empty() {
         final BatchBuffer buffer = new BatchBuffer();
 
-        BatchBuffer.CloseResult result = buffer.close();
+        BatchBufferCloseResult result = buffer.close();
         assertThat(result.commitBatchRequests()).isEmpty();
+        assertThat(result.requestIds()).isEmpty();
         assertThat(result.data()).isEmpty();
 
         result = buffer.close();
         assertThat(result.commitBatchRequests()).isEmpty();
+        assertThat(result.requestIds()).isEmpty();
         assertThat(result.data()).isEmpty();
     }
 
@@ -42,7 +44,7 @@ class BatchBufferTest {
         final BatchBuffer buffer = new BatchBuffer();
         buffer.addBatch(T0P0, batch, 0);
 
-        final BatchBuffer.CloseResult result = buffer.close();
+        final BatchBufferCloseResult result = buffer.close();
         assertThat(result.commitBatchRequests()).containsExactly(
             new CommitBatchRequest(T0P0, 0, batch.sizeInBytes(), 3)
         );
@@ -80,7 +82,7 @@ class BatchBufferTest {
         buffer.addBatch(T1P0, t1p0b2, 2);
 
         // Here batches are sorted.
-        final BatchBuffer.CloseResult result = buffer.close();
+        final BatchBufferCloseResult result = buffer.close();
         assertThat(result.commitBatchRequests()).containsExactly(
             new CommitBatchRequest(T0P0, 0, batchSize, 1),
             new CommitBatchRequest(T0P0, batchSize, batchSize, 1),
@@ -122,7 +124,7 @@ class BatchBufferTest {
 
         final RecordBatch batch1 = createBatch(T0P0 + "-0");
         buffer.addBatch(T0P0, batch1, 0);
-        final BatchBuffer.CloseResult result1 = buffer.close();
+        final BatchBufferCloseResult result1 = buffer.close();
         assertThat(result1.commitBatchRequests()).containsExactly(
             new CommitBatchRequest(T0P0, 0, batch1.sizeInBytes(), 1)
         );
