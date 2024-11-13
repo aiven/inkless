@@ -11,6 +11,7 @@ import org.apache.kafka.common.record.MemoryRecords;
 import org.apache.kafka.common.record.SimpleRecord;
 import org.apache.kafka.common.record.TimestampType;
 import org.apache.kafka.common.requests.ProduceResponse.PartitionResponse;
+import org.apache.kafka.common.utils.Time;
 
 import io.aiven.inkless.config.InklessConfig;
 import io.aiven.inkless.control_plane.MetadataView;
@@ -73,7 +74,7 @@ public class AppendInterceptorTest {
     public void mixingInklessAndClassicTopicsIsNotAllowed() {
         when(metadataView.isInklessTopic(eq("inkless"))).thenReturn(true);
         when(metadataView.isInklessTopic(eq("non_inkless"))).thenReturn(false);
-        final AppendInterceptor interceptor = new AppendInterceptor(inklessConfig, metadataView);
+        final AppendInterceptor interceptor = new AppendInterceptor(inklessConfig, metadataView, Time.SYSTEM);
 
         final Map<TopicPartition, MemoryRecords> entriesPerPartition = Map.of(
             new TopicPartition("inkless", 0),
@@ -97,7 +98,7 @@ public class AppendInterceptorTest {
     @Test
     public void notInterceptProducingToClassicTopics() {
         when(metadataView.isInklessTopic(eq("non_inkless"))).thenReturn(false);
-        final AppendInterceptor interceptor = new AppendInterceptor(inklessConfig, metadataView);
+        final AppendInterceptor interceptor = new AppendInterceptor(inklessConfig, metadataView, Time.SYSTEM);
 
         final Map<TopicPartition, MemoryRecords> entriesPerPartition = Map.of(
             new TopicPartition("non_inkless", 0),
@@ -113,7 +114,7 @@ public class AppendInterceptorTest {
     public void rejectIdempotentProduceForInklessTopics() {
         when(metadataView.isInklessTopic(eq("inkless1"))).thenReturn(true);
         when(metadataView.isInklessTopic(eq("inkless2"))).thenReturn(true);
-        final AppendInterceptor interceptor = new AppendInterceptor(inklessConfig, metadataView);
+        final AppendInterceptor interceptor = new AppendInterceptor(inklessConfig, metadataView, Time.SYSTEM);
 
         final Map<TopicPartition, MemoryRecords> entriesPerPartition = Map.of(
             new TopicPartition("inkless1", 0),
@@ -137,7 +138,7 @@ public class AppendInterceptorTest {
     @Test
     public void acceptIdempotentProduceForNonInklessTopics() {
         when(metadataView.isInklessTopic(eq("non_inkless"))).thenReturn(false);
-        final AppendInterceptor interceptor = new AppendInterceptor(inklessConfig, metadataView);
+        final AppendInterceptor interceptor = new AppendInterceptor(inklessConfig, metadataView, Time.SYSTEM);
 
         final Map<TopicPartition, MemoryRecords> entriesPerPartition = Map.of(
             new TopicPartition("non_inkless", 0),
