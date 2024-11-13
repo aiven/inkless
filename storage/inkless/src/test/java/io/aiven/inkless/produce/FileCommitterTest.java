@@ -19,14 +19,11 @@ import io.aiven.inkless.storage_backend.common.StorageBackendException;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.ArgumentCaptor;
-import org.mockito.Captor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 
-import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
@@ -55,11 +52,6 @@ class FileCommitterTest {
     @Mock
     BiConsumer<List<CommitBatchResponse>, Throwable> callback;
 
-    @Captor
-    ArgumentCaptor<List<CommitBatchResponse>> callbackResultCaptor;
-    @Captor
-    ArgumentCaptor<Throwable> callbackThrowableCaptor;
-
     @Test
     void commitSuccessFirstAttempt() throws StorageBackendException {
         final List<CommitBatchRequest> commitBatchRequests = List.of();
@@ -78,9 +70,7 @@ class FileCommitterTest {
 
         verify(objectUploader).upload(eq(OBJECT_KEY), eq(data));
         verify(time, never()).sleep(eq(100));
-        verify(callback).accept(callbackResultCaptor.capture(), callbackThrowableCaptor.capture());
-        assertThat(callbackResultCaptor.getValue()).isSameAs(commitResponse);
-        assertThat(callbackThrowableCaptor.getValue()).isNull();
+        verify(callback).accept(same(commitResponse), isNull());
     }
 
     @Test
@@ -104,9 +94,7 @@ class FileCommitterTest {
         verify(objectUploader, times(3)).upload(eq(OBJECT_KEY), eq(data));
         // We don't sleep at the last attempt.
         verify(time, times(2)).sleep(eq(100L));
-        verify(callback).accept(callbackResultCaptor.capture(), callbackThrowableCaptor.capture());
-        assertThat(callbackResultCaptor.getValue()).isSameAs(commitResponse);
-        assertThat(callbackThrowableCaptor.getValue()).isNull();
+        verify(callback).accept(same(commitResponse), isNull());
     }
 
     @Test
@@ -126,9 +114,7 @@ class FileCommitterTest {
         verify(objectUploader, times(2)).upload(eq(OBJECT_KEY), eq(data));
         // We don't sleep at the last attempt.
         verify(time, times(1)).sleep(eq(100L));
-        verify(callback).accept(callbackResultCaptor.capture(), callbackThrowableCaptor.capture());
-        assertThat(callbackResultCaptor.getValue()).isNull();
-        assertThat(callbackThrowableCaptor.getValue()).isSameAs(exception);
+        verify(callback).accept(isNull(), same(exception));
     }
 
     @Test
