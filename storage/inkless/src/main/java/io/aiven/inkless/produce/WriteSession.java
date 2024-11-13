@@ -22,6 +22,8 @@ import org.slf4j.LoggerFactory;
  *
  * <p>This class brings together the batch buffer, the associated add requests,
  * and the logic to finish the promised futures based on the control plane commit result.
+ *
+ * <p>This class is not thread-safe and is supposed to be protected with a lock at the call site.
  */
 class WriteSession {
     private static final Logger LOGGER = LoggerFactory.getLogger(WriteSession.class);
@@ -85,34 +87,42 @@ class WriteSession {
         }
 
         if (error == null) {
-            LOGGER.debug("Committed successfully");
-            final Map<Integer, Map<TopicPartition, PartitionResponse>> resultsPerRequest = new HashMap<>();
-            for (int i = 0; i < commitBatchResponses.size(); i++) {
-                final int requestId = closeResult.requestIds().get(i);
-                final var result = resultsPerRequest.computeIfAbsent(requestId, ignore -> new HashMap<>());
-
-                final var commitBatchRequest = closeResult.commitBatchRequests().get(i);
-                final var commitBatchResponse = commitBatchResponses.get(i);
-                // TODO correct append time and start offset
-                result.put(commitBatchRequest.topicPartition(), new PartitionResponse(
-                    commitBatchResponse.errors(), commitBatchResponse.assignedOffset(), -1, -1
-                ));
-            }
-
-            for (final var entry : awaitingFuturesByRequest.entrySet()) {
-                final var result = resultsPerRequest.get(entry.getKey());
-                entry.getValue().complete(result);
-            }
+            finishCommitSuccessfully(commitBatchResponses);
         } else {
-            LOGGER.error("Commit failed", error);
-            for (final var entry : awaitingFuturesByRequest.entrySet()) {
-                final var originalRequest = originalRequests.get(entry.getKey());
-                final var result = originalRequest.entrySet().stream()
-                    .collect(Collectors.toMap(
-                        Map.Entry::getKey,
-                        ignore -> new PartitionResponse(Errors.KAFKA_STORAGE_ERROR, "Error commiting data")));
-                entry.getValue().complete(result);
-            }
+            finishCommitWithError(error);
+        }
+    }
+
+    private void finishCommitSuccessfully(final List<CommitBatchResponse> commitBatchResponses) {
+        LOGGER.debug("Committed successfully");
+        final Map<Integer, Map<TopicPartition, PartitionResponse>> resultsPerRequest = new HashMap<>();
+        for (int i = 0; i < commitBatchResponses.size(); i++) {
+            final int requestId = closeResult.requestIds().get(i);
+            final var result = resultsPerRequest.computeIfAbsent(requestId, ignore -> new HashMap<>());
+
+            final var commitBatchRequest = closeResult.commitBatchRequests().get(i);
+            final var commitBatchResponse = commitBatchResponses.get(i);
+            // TODO correct append time and start offset
+            result.put(commitBatchRequest.topicPartition(), new PartitionResponse(
+                commitBatchResponse.errors(), commitBatchResponse.assignedOffset(), -1, -1
+            ));
+        }
+
+        for (final var entry : awaitingFuturesByRequest.entrySet()) {
+            final var result = resultsPerRequest.get(entry.getKey());
+            entry.getValue().complete(result);
+        }
+    }
+
+    private void finishCommitWithError(final Throwable error) {
+        LOGGER.error("Commit failed", error);
+        for (final var entry : awaitingFuturesByRequest.entrySet()) {
+            final var originalRequest = originalRequests.get(entry.getKey());
+            final var result = originalRequest.entrySet().stream()
+                .collect(Collectors.toMap(
+                    Map.Entry::getKey,
+                    ignore -> new PartitionResponse(Errors.KAFKA_STORAGE_ERROR, "Error commiting data")));
+            entry.getValue().complete(result);
         }
     }
 

@@ -4,7 +4,7 @@ package io.aiven.inkless.produce;
 import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.Executor;
-import java.util.function.BiFunction;
+import java.util.function.BiConsumer;
 
 import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.utils.Time;
@@ -20,6 +20,13 @@ import io.aiven.inkless.storage_backend.common.StorageBackendException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+/**
+ * Object file committer.
+ *
+ * <p>This file uploads data object files and commits batch metadata to the control plane.
+ *
+ * <p>Retry logic is supported.
+ */
 class FileCommitter {
     private static final Logger LOGGER = LoggerFactory.getLogger(FileCommitter.class);
 
@@ -30,7 +37,7 @@ class FileCommitter {
     private final Time time;
     private final int attempts;
     private final Duration retryBackoff;
-    private final BiFunction<List<CommitBatchResponse>, Throwable, Void> callback;
+    private final BiConsumer<List<CommitBatchResponse>, Throwable> callback;
 
     FileCommitter(final Executor executor,
                   final ObjectKeyCreator objectKeyCreator,
@@ -39,7 +46,7 @@ class FileCommitter {
                   final Time time,
                   final int attempts,
                   final Duration retryBackoff,
-                  final BiFunction<List<CommitBatchResponse>, Throwable, Void> callback) {
+                  final BiConsumer<List<CommitBatchResponse>, Throwable> callback) {
         this.executor = executor;
         this.objectKeyCreator = objectKeyCreator;
         this.objectUploader = objectUploader;
@@ -50,22 +57,27 @@ class FileCommitter {
         this.callback = callback;
     }
 
-    public void upload(final List<CommitBatchRequest> commitBatchRequests,
+    public void commit(final List<CommitBatchRequest> commitBatchRequests,
                        final byte[] data) {
-        executor.execute(() -> uploadInternal(commitBatchRequests, data));
+        executor.execute(() -> commitInternal(commitBatchRequests, data));
     }
 
-    private void uploadInternal(final List<CommitBatchRequest> commitBatchRequests,
+    private void commitInternal(final List<CommitBatchRequest> commitBatchRequests,
                                 final byte[] data) {
-        final ObjectKey objectKey = objectKeyCreator.create(Uuid.randomUuid().toString());
-        final Throwable uploadError = uploadWithRetry(objectKey, data);
-        if (uploadError == null) {
-            LOGGER.debug("Committing {}", objectKey);
-            final var commitResult = controlPlane.commitFile(objectKey, commitBatchRequests);
-            callback.apply(commitResult, null);
-        } else {
-            LOGGER.error("Error uploading {}, giving up", objectKey, uploadError);
-            callback.apply(null, uploadError);
+        try {
+            final ObjectKey objectKey = objectKeyCreator.create(Uuid.randomUuid().toString());
+            final Throwable uploadError = uploadWithRetry(objectKey, data);
+            if (uploadError == null) {
+                LOGGER.debug("Committing {}", objectKey);
+                final var commitResult = controlPlane.commitFile(objectKey, commitBatchRequests);
+                callback.accept(commitResult, null);
+            } else {
+                LOGGER.error("Error uploading {}, giving up", objectKey, uploadError);
+                callback.accept(null, uploadError);
+            }
+        } catch (final Exception e) {
+            LOGGER.error("Unexpected exception", e);
+            callback.accept(null, e);
         }
     }
 
@@ -79,7 +91,7 @@ class FileCommitter {
                 return null;
             } catch (final StorageBackendException e) {
                 error = e;
-                // Retry on all attempts but last.
+                // Sleep on all attempts but last.
                 final boolean lastAttempt = attempt == attempts - 1;
                 if (lastAttempt) {
                     LOGGER.error("Error uploading {}, giving up", objectKey, e);
