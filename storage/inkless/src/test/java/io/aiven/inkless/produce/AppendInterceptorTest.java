@@ -15,18 +15,32 @@ import org.apache.kafka.common.requests.ProduceResponse.PartitionResponse;
 import io.aiven.inkless.control_plane.MetadataView;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
-import org.mockito.Mockito;
+import org.mockito.Captor;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+@ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.STRICT_STUBS)
 public class AppendInterceptorTest {
+    @Mock
+    MetadataView metadataView;
+    @Mock
+    Consumer<Map<TopicPartition, PartitionResponse>> responseCallback;
+
+    @Captor
+    ArgumentCaptor<Map<TopicPartition, PartitionResponse>> resultCaptor;
+
     private static final MemoryRecords RECORDS_WITH_PRODUCER_ID = MemoryRecords.withRecords(
         (byte) 2,
         0L,
@@ -54,7 +68,6 @@ public class AppendInterceptorTest {
 
     @Test
     public void mixingInklessAndClassicTopicsIsNotAllowed() {
-        final MetadataView metadataView = mock(MetadataView.class);
         when(metadataView.isInklessTopic(eq("inkless"))).thenReturn(true);
         when(metadataView.isInklessTopic(eq("non_inkless"))).thenReturn(false);
         final AppendInterceptor interceptor = new AppendInterceptor(metadataView);
@@ -65,13 +78,10 @@ public class AppendInterceptorTest {
             new TopicPartition("non_inkless", 0),
             MemoryRecords.withRecords(Compression.NONE, new SimpleRecord("first message".getBytes()))
         );
-        final var responseCallback = Mockito.<Consumer<Map<TopicPartition, PartitionResponse>>>mock();
 
         final boolean result = interceptor.intercept(entriesPerPartition, responseCallback);
         assertThat(result).isTrue();
 
-        @SuppressWarnings("unchecked") final ArgumentCaptor<Map<TopicPartition, PartitionResponse>> resultCaptor =
-            ArgumentCaptor.forClass(Map.class);
         verify(responseCallback).accept(resultCaptor.capture());
         assertThat(resultCaptor.getValue()).isEqualTo(Map.of(
             new TopicPartition("inkless", 0),
@@ -83,7 +93,6 @@ public class AppendInterceptorTest {
 
     @Test
     public void notInterceptProducingToClassicTopics() {
-        final MetadataView metadataView = mock(MetadataView.class);
         when(metadataView.isInklessTopic(eq("non_inkless"))).thenReturn(false);
         final AppendInterceptor interceptor = new AppendInterceptor(metadataView);
 
@@ -91,7 +100,6 @@ public class AppendInterceptorTest {
             new TopicPartition("non_inkless", 0),
             MemoryRecords.withRecords(Compression.NONE, new SimpleRecord("first message".getBytes()))
         );
-        final var responseCallback = Mockito.<Consumer<Map<TopicPartition, PartitionResponse>>>mock();
 
         final boolean result = interceptor.intercept(entriesPerPartition, responseCallback);
         assertThat(result).isFalse();
@@ -100,7 +108,6 @@ public class AppendInterceptorTest {
 
     @Test
     public void rejectIdempotentProduceForInklessTopics() {
-        final MetadataView metadataView = mock(MetadataView.class);
         when(metadataView.isInklessTopic(eq("inkless1"))).thenReturn(true);
         when(metadataView.isInklessTopic(eq("inkless2"))).thenReturn(true);
         final AppendInterceptor interceptor = new AppendInterceptor(metadataView);
@@ -111,13 +118,10 @@ public class AppendInterceptorTest {
             new TopicPartition("inkless2", 0),
             RECORDS_WITH_PRODUCER_ID
         );
-        final var responseCallback = Mockito.<Consumer<Map<TopicPartition, PartitionResponse>>>mock();
 
         final boolean result = interceptor.intercept(entriesPerPartition, responseCallback);
         assertThat(result).isTrue();
 
-        @SuppressWarnings("unchecked") final ArgumentCaptor<Map<TopicPartition, PartitionResponse>> resultCaptor =
-            ArgumentCaptor.forClass(Map.class);
         verify(responseCallback).accept(resultCaptor.capture());
         assertThat(resultCaptor.getValue()).isEqualTo(Map.of(
             new TopicPartition("inkless1", 0),
@@ -129,7 +133,6 @@ public class AppendInterceptorTest {
 
     @Test
     public void acceptIdempotentProduceForNonInklessTopics() {
-        final MetadataView metadataView = mock(MetadataView.class);
         when(metadataView.isInklessTopic(eq("non_inkless"))).thenReturn(false);
         final AppendInterceptor interceptor = new AppendInterceptor(metadataView);
 
@@ -137,7 +140,6 @@ public class AppendInterceptorTest {
             new TopicPartition("non_inkless", 0),
             RECORDS_WITH_PRODUCER_ID
         );
-        final var responseCallback = Mockito.<Consumer<Map<TopicPartition, PartitionResponse>>>mock();
 
         final boolean result = interceptor.intercept(entriesPerPartition, responseCallback);
         assertThat(result).isFalse();

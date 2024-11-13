@@ -2320,17 +2320,16 @@ project(':storage:inkless') {
     implementation libs.slf4jApi
     implementation libs.awsskdS3
 
-    testImplementation project(':clients').sourceSets.test.output
-    testImplementation libs.junitJupiter
-    testImplementation libs.slf4jReload4j
     testImplementation libs.assertj
+    testImplementation libs.junitJupiter
     testImplementation libs.mockitoCore
+    testImplementation libs.mockitoJunitJupiter // supports MockitoExtension
     testImplementation libs.testcontainers
     testImplementation libs.testcontainersJunitJupiter
     testImplementation libs.testcontainersLocalstack
     testImplementation libs.wiremock
 
-    testRuntimeOnly libs.junitPlatformLanucher
+    testRuntimeOnly runtimeTestLibs
   }
 
   javadoc {
