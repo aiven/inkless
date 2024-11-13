@@ -1,6 +1,7 @@
 // Copyright (c) 2024 Aiven, Helsinki, Finland. https://aiven.io/
 package io.aiven.inkless.produce;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutionException;
@@ -27,7 +28,7 @@ class WriteSessionTest {
 
     @Test
     void add() {
-        final WriteSession session = new WriteSession(1000);
+        final WriteSession session = new WriteSession(Instant.MIN);
 
         final var result = session.add(Map.of(
             T0P0, MemoryRecords.withRecords(Compression.NONE, new SimpleRecord(new byte[10]))
@@ -37,7 +38,7 @@ class WriteSessionTest {
 
     @Test
     void addAfterClosing() {
-        final WriteSession session = new WriteSession(1000);
+        final WriteSession session = new WriteSession(Instant.MIN);
         session.closeAndPrepareForCommit();
         assertThatThrownBy(() -> session.add(Map.of(
             T0P0, MemoryRecords.withRecords(Compression.NONE, new SimpleRecord(new byte[10]))
@@ -48,21 +49,8 @@ class WriteSessionTest {
     }
 
     @Test
-    void canAddMore() {
-        final WriteSession session = new WriteSession(1070);
-
-        assertThat(session.canAddMore()).isTrue();
-
-        session.add(Map.of(
-            T0P0, MemoryRecords.withRecords(Compression.NONE, new SimpleRecord(new byte[1000]))
-        ));
-
-        assertThat(session.canAddMore()).isFalse();
-    }
-
-    @Test
     void closeAndPrepareForCommit() {
-        final WriteSession session = new WriteSession(1000);
+        final WriteSession session = new WriteSession(Instant.MIN);
 
         session.add(Map.of(
             T0P0, MemoryRecords.withRecords(Compression.NONE, new SimpleRecord(new byte[10])),
@@ -85,7 +73,7 @@ class WriteSessionTest {
 
     @Test
     void closeAfterClosing() {
-        final WriteSession session = new WriteSession(1000);
+        final WriteSession session = new WriteSession(Instant.MIN);
         session.closeAndPrepareForCommit();
         assertThatThrownBy(session::closeAndPrepareForCommit)
             .isInstanceOf(IllegalStateException.class)
@@ -95,7 +83,7 @@ class WriteSessionTest {
 
     @Test
     void commitFinishedSuccessfully() throws ExecutionException, InterruptedException {
-        final WriteSession session = new WriteSession(1000);
+        final WriteSession session = new WriteSession(Instant.MIN);
 
         final var result1 = session.add(Map.of(
             T0P0, MemoryRecords.withRecords(Compression.NONE, new SimpleRecord(new byte[10])),
@@ -126,7 +114,7 @@ class WriteSessionTest {
 
     @Test
     void commitFinishedWithError() {
-        final WriteSession session = new WriteSession(1000);
+        final WriteSession session = new WriteSession(Instant.MIN);
 
         final var result1 = session.add(Map.of(
             T0P0, MemoryRecords.withRecords(Compression.NONE, new SimpleRecord(new byte[10])),
@@ -152,7 +140,7 @@ class WriteSessionTest {
 
     @Test
     void commitFinishedBeforeClosing() {
-        final WriteSession session = new WriteSession(1000);
+        final WriteSession session = new WriteSession(Instant.MIN);
         assertThatThrownBy(() -> session.finishCommit(null, null))
             .isInstanceOf(IllegalStateException.class)
             .hasMessage("Attempt to finish commit before closing");

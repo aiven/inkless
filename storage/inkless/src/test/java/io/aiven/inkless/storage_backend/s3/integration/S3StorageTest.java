@@ -7,6 +7,7 @@ import io.aiven.inkless.storage_backend.common.StorageBackend;
 import io.aiven.inkless.storage_backend.common.fixtures.BaseStorageTest;
 import io.aiven.inkless.storage_backend.common.fixtures.TestUtils;
 import io.aiven.inkless.storage_backend.s3.S3Storage;
+import io.aiven.inkless.test_utils.S3TestContainer;
 
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
