@@ -2353,6 +2353,7 @@ project(':storage:inkless') {
     pitestVersion = '1.17.1'
     targetClasses.add("io.aiven.inkless.*")
     excludedTestClasses.add("*io.aiven.inkless.storage_backend.s3.integration.*")
+    excludedTestClasses.add("*io.aiven.inkless.produce.WriterIntegrationTest")
     targetTests.add("io.aiven.inkless.*")
     threads = Runtime.getRuntime().availableProcessors()
     outputFormats.addAll('XML', 'HTML')

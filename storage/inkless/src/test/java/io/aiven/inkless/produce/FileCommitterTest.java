@@ -3,7 +3,6 @@ package io.aiven.inkless.produce;
 
 import java.time.Duration;
 import java.util.List;
-import java.util.concurrent.Executor;
 import java.util.function.BiConsumer;
 
 import org.apache.kafka.common.utils.Time;
@@ -24,6 +23,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 
+import static io.aiven.inkless.test_utils.Utils.SYNC_EXECUTOR;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
@@ -38,8 +38,6 @@ import static org.mockito.Mockito.when;
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.STRICT_STUBS)
 class FileCommitterTest {
-    static final Executor SYNC_EXECUTOR = Runnable::run;
-
     static final ObjectKey OBJECT_KEY = new PlainObjectKey("prefix/", "value");
     static final ObjectKeyCreator OBJECT_KEY_CREATOR = s -> OBJECT_KEY;
 

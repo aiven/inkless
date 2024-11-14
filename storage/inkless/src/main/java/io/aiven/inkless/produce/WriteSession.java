@@ -1,6 +1,7 @@
 // Copyright (c) 2024 Aiven, Helsinki, Finland. https://aiven.io/
 package io.aiven.inkless.produce;
 
+import java.time.Instant;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -28,7 +29,7 @@ import org.slf4j.LoggerFactory;
 class WriteSession {
     private static final Logger LOGGER = LoggerFactory.getLogger(WriteSession.class);
 
-    private final int maxSize;
+    private final Instant sessionStarted;
 
     private int requestId = 0;
     private final BatchBuffer buffer = new BatchBuffer();
@@ -37,8 +38,8 @@ class WriteSession {
         new HashMap<>();
     private BatchBufferCloseResult closeResult = null;
 
-    WriteSession(final int maxSize) {
-        this.maxSize = maxSize;
+    WriteSession(final Instant sessionStarted) {
+        this.sessionStarted = sessionStarted;
     }
 
     CompletableFuture<Map<TopicPartition, PartitionResponse>> add(
@@ -65,8 +66,12 @@ class WriteSession {
         return result;
     }
 
-    boolean canAddMore() {
-        return buffer.totalSize() < maxSize;
+    int totalSize() {
+        return buffer.totalSize();
+    }
+
+    Instant sessionStarted() {
+        return sessionStarted;
     }
 
     BatchBufferCloseResult closeAndPrepareForCommit() {
