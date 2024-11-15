@@ -1,7 +1,7 @@
 // Copyright (c) 2024 Aiven, Helsinki, Finland. https://aiven.io/
 package io.aiven.inkless.common;
 
-public record ByteRange(int offset, int size) {
+public record ByteRange(long offset, long size) {
     public ByteRange {
         if (offset < 0) {
             throw new IllegalArgumentException("offset cannot be negative, " + offset + " given");
@@ -15,11 +15,11 @@ public record ByteRange(int offset, int size) {
         return size == 0;
     }
 
-    public int endOffset() {
+    public long endOffset() {
         return offset + size - 1;
     }
 
     public static ByteRange maxRange() {
-        return new ByteRange(0, Integer.MAX_VALUE);
+        return new ByteRange(0L, Long.MAX_VALUE);
     }
 }
