@@ -1,106 +1,124 @@
 // Copyright (c) 2024 Aiven, Helsinki, Finland. https://aiven.io/
 package io.aiven.inkless.produce;
 
+import java.io.Closeable;
+import java.io.IOException;
 import java.time.Duration;
-import java.util.List;
-import java.util.concurrent.Executor;
-import java.util.function.BiConsumer;
+import java.util.Objects;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReentrantLock;
 
-import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.utils.Time;
 
+import io.aiven.inkless.common.InklessThreadFactory;
 import io.aiven.inkless.common.ObjectKey;
 import io.aiven.inkless.common.ObjectKeyCreator;
-import io.aiven.inkless.control_plane.CommitBatchRequest;
-import io.aiven.inkless.control_plane.CommitBatchResponse;
 import io.aiven.inkless.control_plane.ControlPlane;
 import io.aiven.inkless.storage_backend.common.ObjectUploader;
-import io.aiven.inkless.storage_backend.common.StorageBackendException;
 
+import com.groupcdg.pitest.annotations.DoNotMutate;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Object file committer.
+ * The file committer.
  *
- * <p>This file uploads data object files and commits batch metadata to the control plane.
- *
- * <p>Retry logic is supported.
+ * <p>It uploads files concurrently, but commits them to the control plan sequentially.
  */
-class FileCommitter {
+class FileCommitter implements Closeable {
     private static final Logger LOGGER = LoggerFactory.getLogger(FileCommitter.class);
 
-    private final Executor executor;
+    private final Lock lock = new ReentrantLock();
+
+    private final ControlPlane controlPlane;
     private final ObjectKeyCreator objectKeyCreator;
     private final ObjectUploader objectUploader;
-    private final ControlPlane controlPlane;
     private final Time time;
-    private final int attempts;
-    private final Duration retryBackoff;
-    private final BiConsumer<List<CommitBatchResponse>, Throwable> callback;
+    private final int maxFileUploadAttempts;
+    private final Duration fileUploadRetryBackoff;
+    private final ExecutorService executorServiceUpload;
+    private final ExecutorService executorServiceCommit;
 
-    FileCommitter(final Executor executor,
+    private final AtomicInteger totalBytesInProgress = new AtomicInteger(0);
+
+    @DoNotMutate
+    FileCommitter(final ControlPlane controlPlane,
                   final ObjectKeyCreator objectKeyCreator,
                   final ObjectUploader objectUploader,
-                  final ControlPlane controlPlane,
                   final Time time,
-                  final int attempts,
-                  final Duration retryBackoff,
-                  final BiConsumer<List<CommitBatchResponse>, Throwable> callback) {
-        this.executor = executor;
-        this.objectKeyCreator = objectKeyCreator;
-        this.objectUploader = objectUploader;
-        this.controlPlane = controlPlane;
-        this.time = time;
-        this.attempts = attempts;
-        this.retryBackoff = retryBackoff;
-        this.callback = callback;
+                  final int maxFileUploadAttempts,
+                  final Duration fileUploadRetryBackoff) {
+        this(controlPlane, objectKeyCreator, objectUploader, time, maxFileUploadAttempts, fileUploadRetryBackoff,
+            Executors.newCachedThreadPool(new InklessThreadFactory("inkless-file-uploader-", false)),
+            // It must be single-thread to preserve the commit order.
+            Executors.newSingleThreadExecutor(new InklessThreadFactory("inkless-file-uploader-finisher-", false))
+        );
     }
 
-    public void commit(final List<CommitBatchRequest> commitBatchRequests,
-                       final byte[] data) {
-        executor.execute(() -> commitInternal(commitBatchRequests, data));
+    // Visible for testing
+    FileCommitter(final ControlPlane controlPlane,
+                  final ObjectKeyCreator objectKeyCreator,
+                  final ObjectUploader objectUploader,
+                  final Time time,
+                  final int maxFileUploadAttempts,
+                  final Duration fileUploadRetryBackoff,
+                  final ExecutorService executorServiceUpload,
+                  final ExecutorService executorServiceCommit) {
+        this.controlPlane = Objects.requireNonNull(controlPlane, "controlPlane cannot be null");
+        this.objectKeyCreator = Objects.requireNonNull(objectKeyCreator, "objectKeyCreator cannot be null");
+        this.objectUploader = Objects.requireNonNull(objectUploader, "objectUploader cannot be null");
+        this.time = Objects.requireNonNull(time, "time cannot be null");
+        if (maxFileUploadAttempts <= 0) {
+            throw new IllegalArgumentException("maxFileUploadAttempts must be positive");
+        }
+        this.maxFileUploadAttempts = maxFileUploadAttempts;
+        this.fileUploadRetryBackoff = Objects.requireNonNull(fileUploadRetryBackoff,
+            "fileUploadRetryBackoff cannot be null");
+        this.executorServiceUpload = Objects.requireNonNull(executorServiceUpload,
+            "executorServiceUpload cannot be null");
+        this.executorServiceCommit = Objects.requireNonNull(executorServiceCommit,
+            "executorServiceCommit cannot be null");
     }
 
-    private void commitInternal(final List<CommitBatchRequest> commitBatchRequests,
-                                final byte[] data) {
+    void commit(final ClosedFile file) throws InterruptedException {
+        Objects.requireNonNull(file, "file cannot be null");
+        lock.lock();
         try {
-            final ObjectKey objectKey = objectKeyCreator.create(Uuid.randomUuid().toString());
-            final Throwable uploadError = uploadWithRetry(objectKey, data);
-            if (uploadError == null) {
-                LOGGER.debug("Committing {}", objectKey);
-                final var commitResult = controlPlane.commitFile(objectKey, commitBatchRequests);
-                callback.accept(commitResult, null);
-            } else {
-                LOGGER.error("Error uploading {}, giving up", objectKey, uploadError);
-                callback.accept(null, uploadError);
-            }
-        } catch (final Exception e) {
-            LOGGER.error("Unexpected exception", e);
-            callback.accept(null, e);
+            totalBytesInProgress.addAndGet(file.size());
+
+            // Start uploading and add to the commit queue (as Runnable).
+            // This ensures files are uploaded in concurrently, but committed to the control plane sequentially,
+            // because `executorServiceCommit` is single-threaded.
+            final Future<ObjectKey> uploadFuture = executorServiceUpload.submit(new FileUploadJob(
+                this.objectKeyCreator,
+                this.objectUploader,
+                this.time,
+                this.maxFileUploadAttempts,
+                this.fileUploadRetryBackoff,
+                file.data()
+            ));
+            executorServiceCommit.submit(new FileCommitJob(file, uploadFuture, controlPlane, this::decreaseTotalBytesInProgress));
+        } finally {
+            lock.unlock();
         }
     }
 
-    private Throwable uploadWithRetry(final ObjectKey objectKey, final byte[] data) {
-        LOGGER.debug("Uploading {}", objectKey);
-        Throwable error = null;
-        for (int attempt = 0; attempt < attempts; attempt++) {
-            try {
-                objectUploader.upload(objectKey, data);
-                LOGGER.debug("Successfully uploaded {}", objectKey);
-                return null;
-            } catch (final StorageBackendException e) {
-                error = e;
-                // Sleep on all attempts but last.
-                final boolean lastAttempt = attempt == attempts - 1;
-                if (lastAttempt) {
-                    LOGGER.error("Error uploading {}, giving up", objectKey, e);
-                } else {
-                    LOGGER.error("Error uploading {}, retrying in {}", objectKey, retryBackoff, e);
-                    time.sleep(retryBackoff.toMillis());
-                }
-            }
-        }
-        return error;
+    int totalBytesInProgress() {
+        return totalBytesInProgress.get();
+    }
+
+    private void decreaseTotalBytesInProgress(int delta) {
+        totalBytesInProgress.addAndGet(-delta);
+    }
+
+    @Override
+    public void close() throws IOException {
+        // Don't wait here, they should try to finish their work.
+        executorServiceUpload.shutdown();
+        executorServiceCommit.shutdown();
     }
 }

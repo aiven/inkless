@@ -24,10 +24,27 @@ class BatchBufferTest {
     private static final TopicPartition T1P1 = new TopicPartition("topic1", 1);
 
     @Test
+    void totalSize() {
+        final BatchBuffer buffer = new BatchBuffer();
+
+        assertThat(buffer.totalSize()).isZero();
+
+        final RecordBatch batch1 = createBatch(T0P0 + "-0", T0P0 + "-1", T0P0 + "-2");
+        buffer.addBatch(T0P0, batch1, 0);
+
+        assertThat(buffer.totalSize()).isEqualTo(batch1.sizeInBytes());
+
+        final RecordBatch batch2 = createBatch(T0P0 + "-0", T0P0 + "-1", T0P0 + "-2");
+        buffer.addBatch(T0P0, batch2, 1);
+
+        assertThat(buffer.totalSize()).isEqualTo(batch1.sizeInBytes() + batch2.sizeInBytes());
+    }
+
+    @Test
     void empty() {
         final BatchBuffer buffer = new BatchBuffer();
 
-        BatchBufferCloseResult result = buffer.close();
+        BatchBuffer.CloseResult result = buffer.close();
         assertThat(result.commitBatchRequests()).isEmpty();
         assertThat(result.requestIds()).isEmpty();
         assertThat(result.data()).isEmpty();
@@ -44,7 +61,7 @@ class BatchBufferTest {
         final BatchBuffer buffer = new BatchBuffer();
         buffer.addBatch(T0P0, batch, 0);
 
-        final BatchBufferCloseResult result = buffer.close();
+        final BatchBuffer.CloseResult result = buffer.close();
         assertThat(result.commitBatchRequests()).containsExactly(
             new CommitBatchRequest(T0P0, 0, batch.sizeInBytes(), 3)
         );
@@ -82,7 +99,7 @@ class BatchBufferTest {
         buffer.addBatch(T1P0, t1p0b2, 2);
 
         // Here batches are sorted.
-        final BatchBufferCloseResult result = buffer.close();
+        final BatchBuffer.CloseResult result = buffer.close();
         assertThat(result.commitBatchRequests()).containsExactly(
             new CommitBatchRequest(T0P0, 0, batchSize, 1),
             new CommitBatchRequest(T0P0, batchSize, batchSize, 1),
@@ -124,7 +141,7 @@ class BatchBufferTest {
 
         final RecordBatch batch1 = createBatch(T0P0 + "-0");
         buffer.addBatch(T0P0, batch1, 0);
-        final BatchBufferCloseResult result1 = buffer.close();
+        final BatchBuffer.CloseResult result1 = buffer.close();
         assertThat(result1.commitBatchRequests()).containsExactly(
             new CommitBatchRequest(T0P0, 0, batch1.sizeInBytes(), 1)
         );
@@ -149,5 +166,17 @@ class BatchBufferTest {
         final ByteBuffer buf = ByteBuffer.allocate(batch.sizeInBytes());
         batch.writeTo(buf);
         return buf.array();
+    }
+
+    @Test
+    void addBatchNulls() {
+        final BatchBuffer buffer = new BatchBuffer();
+
+        assertThatThrownBy(() -> buffer.addBatch(null, createBatch(), 0))
+            .isInstanceOf(NullPointerException.class)
+            .hasMessage("topicPartition cannot be null");
+        assertThatThrownBy(() -> buffer.addBatch(T0P0, null, 0))
+            .isInstanceOf(NullPointerException.class)
+            .hasMessage("batch cannot be null");
     }
 }
