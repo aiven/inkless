@@ -17,6 +17,7 @@
 package kafka.server
 
 import com.yammer.metrics.core.Meter
+import io.aiven.inkless.consume.FetchInterceptor
 import io.aiven.inkless.produce.AppendInterceptor
 import kafka.cluster.{Partition, PartitionListener}
 import kafka.controller.StateChangeLogger
@@ -311,6 +312,7 @@ class ReplicaManager(val config: KafkaConfig,
       config.shareGroupConfig.shareFetchPurgatoryPurgeIntervalRequests))
 
   private val inklessAppendInterceptor = new AppendInterceptor(new InklessMetadataView(metadataCache))
+  private val inklessFetchInterceptor = new FetchInterceptor(new InklessMetadataView(metadataCache))
 
   /* epoch of the controller that last changed the leader */
   @volatile private[server] var controllerEpoch: Int = 0
@@ -1595,6 +1597,10 @@ class ReplicaManager(val config: KafkaConfig,
                     fetchInfos: Seq[(TopicIdPartition, PartitionData)],
                     quota: ReplicaQuota,
                     responseCallback: Seq[(TopicIdPartition, FetchPartitionData)] => Unit): Unit = {
+
+    if (inklessFetchInterceptor.intercept(params, fetchInfos.toMap.asJava, r => responseCallback(r.asScala.toSeq))) {
+      return
+    }
 
     // check if this fetch request can be satisfied right away
     val logReadResults = readFromLog(params, fetchInfos, quota, readFromPurgatory = false)
