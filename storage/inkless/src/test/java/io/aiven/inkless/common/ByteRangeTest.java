@@ -35,6 +35,6 @@ class ByteRangeTest {
 
     @Test
     void maxRange() {
-        assertThat(ByteRange.maxRange()).isEqualTo(new ByteRange(0, Integer.MAX_VALUE));
+        assertThat(ByteRange.maxRange()).isEqualTo(new ByteRange(0, Long.MAX_VALUE));
     }
 }
