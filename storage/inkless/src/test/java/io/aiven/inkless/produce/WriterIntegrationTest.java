@@ -1,6 +1,7 @@
 // Copyright (c) 2024 Aiven, Helsinki, Finland. https://aiven.io/
 package io.aiven.inkless.produce;
 
+import java.io.IOException;
 import java.time.Duration;
 import java.util.Map;
 import java.util.Set;
@@ -109,53 +110,52 @@ class WriterIntegrationTest {
     }
 
     @Test
-    void test() throws ExecutionException, InterruptedException, TimeoutException {
+    void test() throws ExecutionException, InterruptedException, TimeoutException, IOException {
         final ControlPlane controlPlane = new ControlPlane(METADATA_VIEW);
         final Writer writer = new Writer(
-            Duration.ofMillis(10),
+            Time.SYSTEM, (String s) -> new PlainObjectKey("", s), storage, controlPlane, Duration.ofMillis(10),
             10 * 1024,
             1,
-            Duration.ofMillis(10),
-            (String s) -> new PlainObjectKey("", s),
-            storage,
-            controlPlane,
-            Time.SYSTEM
+            Duration.ofMillis(10)
         );
+        try {
+            final var writeFuture1 = writer.write(Map.of(
+                T0P0, recordCreator.create(T0P0, 101),
+                T0P1, recordCreator.create(T0P1, 102),
+                T1P0, recordCreator.create(T1P0, 103)
+            ));
+            final var writeFuture2 = writer.write(Map.of(
+                T0P0, recordCreator.create(T0P0, 11),
+                T0P1, recordCreator.create(T0P1, 12),
+                T1P0, recordCreator.create(T1P0, 13)
+            ));
 
-        final var writeFuture1 = writer.write(Map.of(
-            T0P0, recordCreator.create(T0P0, 101),
-            T0P1, recordCreator.create(T0P1, 102),
-            T1P0, recordCreator.create(T1P0, 103)
-        ));
-        final var writeFuture2 = writer.write(Map.of(
-            T0P0, recordCreator.create(T0P0, 11),
-            T0P1, recordCreator.create(T0P1, 12),
-            T1P0, recordCreator.create(T1P0, 13)
-        ));
+            Thread.sleep(50);
 
-        Thread.sleep(50);
+            final var writeFuture3 = writer.write(Map.of(
+                T1P0, recordCreator.create(T1P0, 1)
+            ));
 
-        final var writeFuture3 = writer.write(Map.of(
-            T1P0, recordCreator.create(T1P0, 1)
-        ));
+            final var result1 = writeFuture1.get(10, TimeUnit.SECONDS);
+            assertThat(result1).isEqualTo(Map.of(
+                T0P0, new PartitionResponse(Errors.NONE, 0, -1, -1),
+                T0P1, new PartitionResponse(Errors.NONE, 0, -1, -1),
+                T1P0, new PartitionResponse(Errors.NONE, 0, -1, -1)
+            ));
 
-        final var result1 = writeFuture1.get(10, TimeUnit.SECONDS);
-        assertThat(result1).isEqualTo(Map.of(
-            T0P0, new PartitionResponse(Errors.NONE, 0, -1, -1),
-            T0P1, new PartitionResponse(Errors.NONE, 0, -1, -1),
-            T1P0, new PartitionResponse(Errors.NONE, 0, -1, -1)
-        ));
+            final var result2 = writeFuture2.get(10, TimeUnit.SECONDS);
+            assertThat(result2).isEqualTo(Map.of(
+                T0P0, new PartitionResponse(Errors.NONE, 101, -1, -1),
+                T0P1, new PartitionResponse(Errors.NONE, 102, -1, -1),
+                T1P0, new PartitionResponse(Errors.NONE, 103, -1, -1)
+            ));
 
-        final var result2 = writeFuture2.get(10, TimeUnit.SECONDS);
-        assertThat(result2).isEqualTo(Map.of(
-            T0P0, new PartitionResponse(Errors.NONE, 101, -1, -1),
-            T0P1, new PartitionResponse(Errors.NONE, 102, -1, -1),
-            T1P0, new PartitionResponse(Errors.NONE, 103, -1, -1)
-        ));
-
-        final var result3 = writeFuture3.get(10, TimeUnit.SECONDS);
-        assertThat(result3).isEqualTo(Map.of(
-            T1P0, new PartitionResponse(Errors.NONE, 103 + 13, -1, -1)
-        ));
+            final var result3 = writeFuture3.get(10, TimeUnit.SECONDS);
+            assertThat(result3).isEqualTo(Map.of(
+                T1P0, new PartitionResponse(Errors.NONE, 103 + 13, -1, -1)
+            ));
+        } finally {
+            writer.close();
+        }
     }
 }

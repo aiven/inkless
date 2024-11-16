@@ -1,0 +1,64 @@
+// Copyright (c) 2024 Aiven, Helsinki, Finland. https://aiven.io/
+package io.aiven.inkless.produce;
+
+import java.util.HashMap;
+import java.util.Map;
+import java.util.Objects;
+import java.util.concurrent.CompletableFuture;
+
+import org.apache.kafka.common.TopicPartition;
+import org.apache.kafka.common.record.MemoryRecords;
+import org.apache.kafka.common.requests.ProduceResponse.PartitionResponse;
+
+/**
+ * An active file.
+ *
+ * <p>This class is not thread-safe and is supposed to be protected with a lock at the call site.
+ */
+class ActiveFile {
+    private int requestId = 0;
+    private final BatchBuffer buffer = new BatchBuffer();
+    private final Map<Integer, Map<TopicPartition, MemoryRecords>> originalRequests = new HashMap<>();
+    private final Map<Integer, CompletableFuture<Map<TopicPartition, PartitionResponse>>> awaitingFuturesByRequest =
+        new HashMap<>();
+
+    CompletableFuture<Map<TopicPartition, PartitionResponse>> add(
+        final Map<TopicPartition, MemoryRecords> entriesPerPartition
+    ) {
+        Objects.requireNonNull(entriesPerPartition, "entriesPerPartition cannot be null");
+
+        originalRequests.put(requestId, entriesPerPartition);
+
+        for (final var entry : entriesPerPartition.entrySet()) {
+            for (final var batch : entry.getValue().batches()) {
+                buffer.addBatch(entry.getKey(), batch, requestId);
+            }
+        }
+
+        final CompletableFuture<Map<TopicPartition, PartitionResponse>> result = new CompletableFuture<>();
+        awaitingFuturesByRequest.put(requestId, result);
+
+        requestId += 1;
+
+        return result;
+    }
+
+    boolean isEmpty() {
+        return size() == 0;
+    }
+
+    int size() {
+        return buffer.totalSize();
+    }
+
+    ClosedFile close() {
+        BatchBuffer.CloseResult closeResult = buffer.close();
+        return new ClosedFile(
+            originalRequests,
+            awaitingFuturesByRequest,
+            closeResult.commitBatchRequests(),
+            closeResult.requestIds(),
+            closeResult.data()
+        );
+    }
+}

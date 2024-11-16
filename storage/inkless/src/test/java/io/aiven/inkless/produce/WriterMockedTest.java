@@ -1,27 +1,21 @@
 // Copyright (c) 2024 Aiven, Helsinki, Finland. https://aiven.io/
 package io.aiven.inkless.produce;
 
+import java.io.IOException;
 import java.time.Duration;
-import java.time.Instant;
-import java.util.List;
 import java.util.Map;
-import java.util.stream.Stream;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 
 import org.apache.kafka.common.TopicPartition;
-import org.apache.kafka.common.protocol.Errors;
-import org.apache.kafka.common.requests.ProduceResponse.PartitionResponse;
-import org.apache.kafka.common.utils.Time;
-
-import io.aiven.inkless.control_plane.CommitBatchRequest;
-import io.aiven.inkless.control_plane.CommitBatchResponse;
-import io.aiven.inkless.storage_backend.common.StorageBackendException;
+import org.apache.kafka.common.record.MemoryRecords;
+import org.apache.kafka.common.requests.ProduceResponse;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.Arguments;
-import org.junit.jupiter.params.provider.MethodSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Captor;
 import org.mockito.Mock;
@@ -30,12 +24,14 @@ import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.reset;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -47,14 +43,12 @@ class WriterMockedTest {
     static final TopicPartition T1P1 = new TopicPartition("topic1", 1);
 
     @Mock
-    Time time;
-    @Mock
-    CommitTickScheduler commitTickScheduler;
+    ScheduledExecutorService commitTickScheduler;
     @Mock
     FileCommitter fileCommitter;
 
     @Captor
-    ArgumentCaptor<List<CommitBatchRequest>> commitBatchRequestsCaptor;
+    ArgumentCaptor<ClosedFile> closedFileCaptor;
 
     WriterTestUtils.RecordCreator recordCreator;
 
@@ -64,354 +58,240 @@ class WriterMockedTest {
     }
 
     @Test
-    void tickInEmpty() {
-        final Writer writer = new Writer(commitTickScheduler, fileCommitter, time, Duration.ofDays(1), 8 * 1024);
+    void tickWithEmptyFile() throws InterruptedException {
+        final Writer writer = new Writer(
+            Duration.ofMillis(1), 8 * 1024, commitTickScheduler, fileCommitter);
 
-        writer.tickTest();
+        verify(commitTickScheduler).scheduleAtFixedRate(any(), eq(1L), eq(1L), eq(TimeUnit.MILLISECONDS));
 
-        // Tick must be ignored in Empty.
-        verify(commitTickScheduler, never()).schedule(any(), any());
-        verify(fileCommitter, never()).commit(anyList(), any());
+        writer.tick();
+
+        // Tick must be ignored in as the active file is empty.
+        verify(fileCommitter, never()).commit(any());
     }
 
-    @ParameterizedTest
-    @MethodSource("provideCommitFinishedCallbackArgs")
-    void commitFinishedInEmpty(final List<CommitBatchResponse> commitBatchResponses, final Throwable error) {
-        final Writer writer = new Writer(commitTickScheduler, fileCommitter, time, Duration.ofDays(1), 8 * 1024);
+    @Test
+    void committingDueToOverfillWithFirstRequest() throws InterruptedException {
+        final Writer writer = new Writer(
+            Duration.ofMillis(1), 15908, commitTickScheduler, fileCommitter);
 
-        writer.commitFinished(commitBatchResponses, error);
-
-        // CommitFinished must be ignored in Empty.
-        verify(commitTickScheduler, never()).schedule(any(), any());
-        verify(fileCommitter, never()).commit(anyList(), any());
-    }
-
-    @ParameterizedTest
-    @MethodSource("provideCommitFinishedCallbackArgs")
-    void commitFinishedInWriting(final List<CommitBatchResponse> commitBatchResponses, final Throwable error) {
-        final Writer writer = new Writer(commitTickScheduler, fileCommitter, time, Duration.ofDays(1), 8 * 1024);
-
-        when(time.milliseconds()).thenReturn(10L);
-
-        final var writeFuture = writer.write(
-            Map.of(T0P0, recordCreator.create(T0P0, 10))
+        final Map<TopicPartition, MemoryRecords> writeRequest = Map.of(
+            T0P0, recordCreator.create(T0P0, 100),
+            T0P1, recordCreator.create(T0P1, 100),
+            T1P0, recordCreator.create(T1P0, 100),
+            T1P1, recordCreator.create(T1P1, 100)
         );
+        assertThat(writer.write(writeRequest)).isNotCompleted();
 
-        // As we enter Writing, the tick must be scheduled.
-        verify(commitTickScheduler).schedule(eq(Instant.ofEpochMilli(10L)), any());
+        // As we wrote too much, commit must be triggered.
+        verify(fileCommitter).commit(closedFileCaptor.capture());
+        assertThat(closedFileCaptor.getValue().originalRequests()).isEqualTo(Map.of(0, writeRequest));
+        assertThat(closedFileCaptor.getValue().awaitingFuturesByRequest()).hasSize(1);
+    }
 
+    @Test
+    void committingDueToOverfillWithMultipleRequests() throws InterruptedException {
+        final Writer writer = new Writer(
+            Duration.ofMillis(1), 8 * 1024, commitTickScheduler, fileCommitter);
+
+        final Map<TopicPartition, MemoryRecords> writeRequest0 = Map.of(
+            T0P0, recordCreator.create(T0P0, 1),
+            T0P1, recordCreator.create(T0P1, 1),
+            T1P0, recordCreator.create(T1P0, 1),
+            T1P1, recordCreator.create(T1P1, 1)
+        );
+        final Map<TopicPartition, MemoryRecords> writeRequest1 = Map.of(
+            T0P0, recordCreator.create(T0P0, 100),
+            T0P1, recordCreator.create(T0P1, 100),
+            T1P0, recordCreator.create(T1P0, 100),
+            T1P1, recordCreator.create(T1P1, 100)
+        );
+        assertThat(writer.write(writeRequest0)).isNotCompleted();
+        assertThat(writer.write(writeRequest1)).isNotCompleted();
+
+        // As we wrote too much, commit must be triggered.
+        verify(fileCommitter).commit(closedFileCaptor.capture());
+        assertThat(closedFileCaptor.getValue().originalRequests())
+            .isEqualTo(Map.of(0, writeRequest0, 1, writeRequest1));
+        assertThat(closedFileCaptor.getValue().awaitingFuturesByRequest()).hasSize(2);
+    }
+
+    @Test
+    void committingOnTick() throws InterruptedException {
+        final Writer writer = new Writer(
+            Duration.ofMillis(1), 8 * 1024, commitTickScheduler, fileCommitter);
+
+        final Map<TopicPartition, MemoryRecords> writeRequest = Map.of(
+            T0P0, recordCreator.create(T0P0, 1),
+            T0P1, recordCreator.create(T0P1, 1),
+            T1P0, recordCreator.create(T1P0, 1),
+            T1P1, recordCreator.create(T1P1, 1)
+        );
+        assertThat(writer.write(writeRequest)).isNotCompleted();
+
+        writer.tick();
+
+        verify(fileCommitter).commit(closedFileCaptor.capture());
+        assertThat(closedFileCaptor.getValue().originalRequests())
+            .isEqualTo(Map.of(0, writeRequest));
+        assertThat(closedFileCaptor.getValue().awaitingFuturesByRequest()).hasSize(1);
+    }
+
+    @Test
+    void committingDueToClose() throws InterruptedException, IOException {
+        final Writer writer = new Writer(
+            Duration.ofMillis(1), 8 * 1024, commitTickScheduler, fileCommitter);
+
+        final Map<TopicPartition, MemoryRecords> writeRequest = Map.of(
+            T0P0, recordCreator.create(T0P0, 1),
+            T0P1, recordCreator.create(T0P1, 1),
+            T1P0, recordCreator.create(T1P0, 1),
+            T1P1, recordCreator.create(T1P1, 1)
+        );
+        assertThat(writer.write(writeRequest)).isNotCompleted();
+
+        writer.close();
+
+        verify(fileCommitter).commit(closedFileCaptor.capture());
+        assertThat(closedFileCaptor.getValue().originalRequests())
+            .isEqualTo(Map.of(0, writeRequest));
+        assertThat(closedFileCaptor.getValue().awaitingFuturesByRequest()).hasSize(1);
+    }
+
+    @Test
+    void writeAfterRotation() throws InterruptedException {
+        final Writer writer = new Writer(
+            Duration.ofMillis(1), 8 * 1024, commitTickScheduler, fileCommitter);
+
+        final Map<TopicPartition, MemoryRecords> writeRequest = Map.of(
+            T0P0, recordCreator.create(T0P0, 100),
+            T0P1, recordCreator.create(T0P1, 100),
+            T1P0, recordCreator.create(T1P0, 100),
+            T1P1, recordCreator.create(T1P1, 100)
+        );
+        assertThat(writer.write(writeRequest)).isNotCompleted();
+
+        reset(fileCommitter);
+
+        assertThat(writer.write(writeRequest)).isNotCompleted();
+
+        verify(fileCommitter).commit(closedFileCaptor.capture());
+        assertThat(closedFileCaptor.getValue().originalRequests()).isEqualTo(Map.of(0, writeRequest));
+        assertThat(closedFileCaptor.getValue().awaitingFuturesByRequest()).hasSize(1);
+    }
+
+    @Test
+    void close() throws IOException {
+        final Writer writer = new Writer(
+            Duration.ofMillis(1), 8 * 1024, commitTickScheduler, fileCommitter);
         reset(commitTickScheduler);
 
-        writer.commitFinished(commitBatchResponses, error);
+        writer.close();
 
-        // CommitFinished must be ignored in Writing.
-        verify(commitTickScheduler, never()).schedule(any(), any());
-        verify(fileCommitter, never()).commit(anyList(), any());
-
-        assertThat(writeFuture).isNotCompleted();
+        verify(commitTickScheduler).shutdownNow();
+        verify(fileCommitter).close();
     }
 
     @Test
-    void committingDueToOverfillWithFirstRequest() {
-        final Writer writer = new Writer(commitTickScheduler, fileCommitter, time, Duration.ofDays(1), 8 * 1024);
+    void closeAfterClose() throws IOException {
+        final Writer writer = new Writer(
+            Duration.ofMillis(1), 8 * 1024, commitTickScheduler, fileCommitter);
+        writer.close();
 
-        when(time.milliseconds()).thenReturn(10L);
-
-        final var writeFuture1 = writer.write(
-            Map.of(
-                T0P0, recordCreator.create(T0P0, 100),
-                T0P1, recordCreator.create(T0P1, 100),
-                T1P0, recordCreator.create(T1P0, 100),
-                T1P1, recordCreator.create(T1P1, 100)
-            )
-        );
-
-        // As we enter Writing, tick must be scheduled.
-        verify(commitTickScheduler).schedule(eq(Instant.ofEpochMilli(10L)), any());
-        // As we wrote too much, commit must be triggered.
-        verify(fileCommitter).commit(commitBatchRequestsCaptor.capture(), any());
-        assertThat(commitBatchRequestsCaptor.getValue()).hasSize(4);
-
-        writer.commitFinished(List.of(
-            new CommitBatchResponse(Errors.NONE, 1),
-            new CommitBatchResponse(Errors.NONE, 2),
-            new CommitBatchResponse(Errors.NONE, 3),
-            new CommitBatchResponse(Errors.INVALID_TOPIC_EXCEPTION, -1)
-        ), null);
-
-        assertThat(writeFuture1).isCompletedWithValue(Map.of(
-            T0P0, new PartitionResponse(Errors.NONE, 1, -1, -1),
-            T0P1, new PartitionResponse(Errors.NONE, 2, -1, -1),
-            T1P0, new PartitionResponse(Errors.NONE, 3, -1, -1),
-            T1P1, new PartitionResponse(Errors.INVALID_TOPIC_EXCEPTION, -1, -1, -1)
-        ));
-    }
-
-    @Test
-    void committingDueToOverfillWithMultipleRequests() {
-        final Writer writer = new Writer(commitTickScheduler, fileCommitter, time, Duration.ofDays(1), 8 * 1024);
-
-        when(time.milliseconds()).thenReturn(10L);
-
-        final var writeFuture1 = writer.write(
-            Map.of(
-                T0P0, recordCreator.create(T0P0, 1),
-                T0P1, recordCreator.create(T0P1, 1),
-                T1P0, recordCreator.create(T1P0, 1),
-                T1P1, recordCreator.create(T1P1, 1)
-            )
-        );
-        final var writeFuture2 = writer.write(
-            Map.of(
-                T0P0, recordCreator.create(T0P0, 100),
-                T0P1, recordCreator.create(T0P1, 100),
-                T1P0, recordCreator.create(T1P0, 100),
-                T1P1, recordCreator.create(T1P1, 100)
-            )
-        );
-
-        // As we enter Writing, tick must be scheduled.
-        verify(commitTickScheduler).schedule(eq(Instant.ofEpochMilli(10L)), any());
-        // As we wrote too much, commit must be triggered.
-        verify(fileCommitter).commit(commitBatchRequestsCaptor.capture(), any());
-        assertThat(commitBatchRequestsCaptor.getValue()).hasSize(8);
-
-        writer.commitFinished(List.of(
-            new CommitBatchResponse(Errors.NONE, 0),
-            new CommitBatchResponse(Errors.NONE, 1),
-            new CommitBatchResponse(Errors.NONE, 0),
-            new CommitBatchResponse(Errors.NONE, 2),
-            new CommitBatchResponse(Errors.NONE, 0),
-            new CommitBatchResponse(Errors.NONE, 3),
-            new CommitBatchResponse(Errors.NONE, 0),
-            new CommitBatchResponse(Errors.INVALID_TOPIC_EXCEPTION, -1)
-        ), null);
-
-        assertThat(writeFuture1).isCompletedWithValue(Map.of(
-            T0P0, new PartitionResponse(Errors.NONE, 0, -1, -1),
-            T0P1, new PartitionResponse(Errors.NONE, 0, -1, -1),
-            T1P0, new PartitionResponse(Errors.NONE, 0, -1, -1),
-            T1P1, new PartitionResponse(Errors.NONE, 0, -1, -1)
-        ));
-        assertThat(writeFuture2).isCompletedWithValue(Map.of(
-            T0P0, new PartitionResponse(Errors.NONE, 1, -1, -1),
-            T0P1, new PartitionResponse(Errors.NONE, 2, -1, -1),
-            T1P0, new PartitionResponse(Errors.NONE, 3, -1, -1),
-            T1P1, new PartitionResponse(Errors.INVALID_TOPIC_EXCEPTION, -1, -1, -1)
-        ));
-    }
-
-    @Test
-    void failingCommit() {
-        final Writer writer = new Writer(commitTickScheduler, fileCommitter, time, Duration.ofDays(1), 8 * 1024);
-
-        when(time.milliseconds()).thenReturn(10L);
-
-        final var writeFuture1 = writer.write(
-            Map.of(
-                T0P0, recordCreator.create(T0P0, 100),
-                T0P1, recordCreator.create(T0P1, 100),
-                T1P0, recordCreator.create(T1P0, 100),
-                T1P1, recordCreator.create(T1P1, 100)
-            )
-        );
-
-        // As we enter Writing, tick must be scheduled.
-        verify(commitTickScheduler).schedule(eq(Instant.ofEpochMilli(10L)), any());
-        // As we wrote too much, commit must be triggered.
-        verify(fileCommitter).commit(commitBatchRequestsCaptor.capture(), any());
-        assertThat(commitBatchRequestsCaptor.getValue()).hasSize(4);
-
-        writer.commitFinished(null, new StorageBackendException("test"));
-
-        assertThat(writeFuture1).isCompletedWithValue(Map.of(
-            T0P0, new PartitionResponse(Errors.KAFKA_STORAGE_ERROR, -1, -1, -1, List.of(), "Error commiting data"),
-            T0P1, new PartitionResponse(Errors.KAFKA_STORAGE_ERROR, -1, -1, -1, List.of(), "Error commiting data"),
-            T1P0, new PartitionResponse(Errors.KAFKA_STORAGE_ERROR, -1, -1, -1, List.of(), "Error commiting data"),
-            T1P1, new PartitionResponse(Errors.KAFKA_STORAGE_ERROR, -1, -1, -1, List.of(), "Error commiting data")
-        ));
-    }
-
-    @Test
-    void committingDueToTimeout() {
-        final Writer writer = new Writer(commitTickScheduler, fileCommitter, time, Duration.ofDays(1), 8 * 1024);
-
-        when(time.milliseconds()).thenReturn(10L);
-
-        final var writeFuture1 = writer.write(
-            Map.of(
-                T0P0, recordCreator.create(T0P0, 10),
-                T0P1, recordCreator.create(T0P1, 10),
-                T1P0, recordCreator.create(T1P0, 10),
-                T1P1, recordCreator.create(T1P1, 10)
-            )
-        );
-
-        // As we enter Writing, tick must be scheduled.
-        verify(commitTickScheduler).schedule(eq(Instant.ofEpochMilli(10L)), any());
-        // As haven't written enough, commit must not be triggered.
-        verify(fileCommitter, never()).commit(any(), any());
-
-        writer.tickTest();
-
-        verify(fileCommitter).commit(commitBatchRequestsCaptor.capture(), any());
-        assertThat(commitBatchRequestsCaptor.getValue()).hasSize(4);
-
-        writer.commitFinished(List.of(
-            new CommitBatchResponse(Errors.NONE, 1),
-            new CommitBatchResponse(Errors.NONE, 2),
-            new CommitBatchResponse(Errors.NONE, 3),
-            new CommitBatchResponse(Errors.INVALID_TOPIC_EXCEPTION, -1)
-        ), null);
-
-        assertThat(writeFuture1).isCompletedWithValue(Map.of(
-            T0P0, new PartitionResponse(Errors.NONE, 1, -1, -1),
-            T0P1, new PartitionResponse(Errors.NONE, 2, -1, -1),
-            T1P0, new PartitionResponse(Errors.NONE, 3, -1, -1),
-            T1P1, new PartitionResponse(Errors.INVALID_TOPIC_EXCEPTION, -1, -1, -1)
-        ));
-    }
-
-    @Test
-    void committingAndWritingOverfill() {
-        final Writer writer = new Writer(commitTickScheduler, fileCommitter, time, Duration.ofDays(1), 8 * 1024);
-
-        when(time.milliseconds()).thenReturn(10L);
-
-        final var writeFuture1 = writer.write(
-            Map.of(
-                T0P0, recordCreator.create(T0P0, 100),
-                T0P1, recordCreator.create(T0P1, 100),
-                T1P0, recordCreator.create(T1P0, 100),
-                T1P1, recordCreator.create(T1P1, 100)
-            )
-        );
-
-        // As we enter Writing, tick must be scheduled.
-        verify(commitTickScheduler).schedule(eq(Instant.ofEpochMilli(10L)), any());
-        // As we wrote too much, commit must be triggered.
-        verify(fileCommitter).commit(commitBatchRequestsCaptor.capture(), any());
-        assertThat(commitBatchRequestsCaptor.getValue()).hasSize(4);
-
+        reset(commitTickScheduler);
         reset(fileCommitter);
 
-        // While we're committing, another write happens.
-        final var writeFuture2 = writer.write(
-            Map.of(
-                T0P0, recordCreator.create(T0P0, 100),
-                T0P1, recordCreator.create(T0P1, 100),
-                T1P0, recordCreator.create(T1P0, 100),
-                T1P1, recordCreator.create(T1P1, 100)
-            )
-        );
+        writer.close();
 
-        writer.commitFinished(List.of(
-            new CommitBatchResponse(Errors.NONE, 1),
-            new CommitBatchResponse(Errors.NONE, 2),
-            new CommitBatchResponse(Errors.NONE, 3),
-            new CommitBatchResponse(Errors.INVALID_TOPIC_EXCEPTION, -1)
-        ), null);
-
-        assertThat(writeFuture1).isCompletedWithValue(Map.of(
-            T0P0, new PartitionResponse(Errors.NONE, 1, -1, -1),
-            T0P1, new PartitionResponse(Errors.NONE, 2, -1, -1),
-            T1P0, new PartitionResponse(Errors.NONE, 3, -1, -1),
-            T1P1, new PartitionResponse(Errors.INVALID_TOPIC_EXCEPTION, -1, -1, -1)
-        ));
-        assertThat(writeFuture2).isNotCompleted();
-
-        // The second session is being committed as well.
-        verify(fileCommitter).commit(commitBatchRequestsCaptor.capture(), any());
-        assertThat(commitBatchRequestsCaptor.getValue()).hasSize(4);
-
-        writer.commitFinished(List.of(
-            new CommitBatchResponse(Errors.NONE, 10),
-            new CommitBatchResponse(Errors.NONE, 20),
-            new CommitBatchResponse(Errors.NONE, 30),
-            new CommitBatchResponse(Errors.NONE, 40)
-        ), null);
-
-        assertThat(writeFuture2).isCompletedWithValue(Map.of(
-            T0P0, new PartitionResponse(Errors.NONE, 10, -1, -1),
-            T0P1, new PartitionResponse(Errors.NONE, 20, -1, -1),
-            T1P0, new PartitionResponse(Errors.NONE, 30, -1, -1),
-            T1P1, new PartitionResponse(Errors.NONE, 40, -1, -1)
-        ));
+        verifyNoInteractions(commitTickScheduler);
+        verifyNoInteractions(fileCommitter);
     }
 
     @Test
-    void committingAndWritingTime() {
-        final Writer writer = new Writer(commitTickScheduler, fileCommitter, time, Duration.ofMillis(100), 8 * 1024);
+    void tickAfterClose() throws IOException {
+        final Writer writer = new Writer(
+            Duration.ofMillis(1), 8 * 1024, commitTickScheduler, fileCommitter);
+        writer.close();
 
-        when(time.milliseconds()).thenReturn(10L);
-
-        final var writeFuture1 = writer.write(
-            Map.of(
-                T0P0, recordCreator.create(T0P0, 100),
-                T0P1, recordCreator.create(T0P1, 100),
-                T1P0, recordCreator.create(T1P0, 100),
-                T1P1, recordCreator.create(T1P1, 100)
-            )
-        );
-
-        // As we enter Writing, tick must be scheduled.
-        verify(commitTickScheduler).schedule(eq(Instant.ofEpochMilli(10L)), any());
-        // As we wrote too much, commit must be triggered.
-        verify(fileCommitter).commit(commitBatchRequestsCaptor.capture(), any());
-        assertThat(commitBatchRequestsCaptor.getValue()).hasSize(4);
-
+        reset(commitTickScheduler);
         reset(fileCommitter);
 
-        // While we're committing, another write happens.
-        final var writeFuture2 = writer.write(
-            Map.of(
-                T0P0, recordCreator.create(T0P0, 1),
-                T0P1, recordCreator.create(T0P1, 1),
-                T1P0, recordCreator.create(T1P0, 1),
-                T1P1, recordCreator.create(T1P1, 1)
-            )
-        );
+        writer.tick();
 
-        when(time.milliseconds()).thenReturn(1000L);
-
-        writer.commitFinished(List.of(
-            new CommitBatchResponse(Errors.NONE, 1),
-            new CommitBatchResponse(Errors.NONE, 2),
-            new CommitBatchResponse(Errors.NONE, 3),
-            new CommitBatchResponse(Errors.INVALID_TOPIC_EXCEPTION, -1)
-        ), null);
-
-        assertThat(writeFuture1).isCompletedWithValue(Map.of(
-            T0P0, new PartitionResponse(Errors.NONE, 1, -1, -1),
-            T0P1, new PartitionResponse(Errors.NONE, 2, -1, -1),
-            T1P0, new PartitionResponse(Errors.NONE, 3, -1, -1),
-            T1P1, new PartitionResponse(Errors.INVALID_TOPIC_EXCEPTION, -1, -1, -1)
-        ));
-        assertThat(writeFuture2).isNotCompleted();
-
-        // The second session is being committed as well.
-        verify(fileCommitter).commit(commitBatchRequestsCaptor.capture(), any());
-        assertThat(commitBatchRequestsCaptor.getValue()).hasSize(4);
-
-        writer.commitFinished(List.of(
-            new CommitBatchResponse(Errors.NONE, 10),
-            new CommitBatchResponse(Errors.NONE, 20),
-            new CommitBatchResponse(Errors.NONE, 30),
-            new CommitBatchResponse(Errors.NONE, 40)
-        ), null);
-
-        assertThat(writeFuture2).isCompletedWithValue(Map.of(
-            T0P0, new PartitionResponse(Errors.NONE, 10, -1, -1),
-            T0P1, new PartitionResponse(Errors.NONE, 20, -1, -1),
-            T1P0, new PartitionResponse(Errors.NONE, 30, -1, -1),
-            T1P1, new PartitionResponse(Errors.NONE, 40, -1, -1)
-        ));
+        verifyNoInteractions(commitTickScheduler);
+        verifyNoInteractions(fileCommitter);
     }
 
-    private static Stream<Arguments> provideCommitFinishedCallbackArgs() {
-        return Stream.of(
-            Arguments.of(List.of(), null),
-            Arguments.of(null, new StorageBackendException("test"))
+    @Test
+    void writeAfterClose() throws IOException {
+        final Writer writer = new Writer(
+            Duration.ofMillis(1), 8 * 1024, commitTickScheduler, fileCommitter);
+        writer.close();
+        reset(commitTickScheduler);
+        reset(fileCommitter);
+
+        final var writeResult = writer.write(Map.of(T0P0, recordCreator.create(T0P0, 10)));
+
+        assertThat(writeResult).isCompletedExceptionally();
+        assertThatThrownBy(writeResult::get)
+            .isInstanceOf(ExecutionException.class)
+            .hasRootCauseInstanceOf(RuntimeException.class)
+            .hasRootCauseMessage("Writer already closed");
+
+        verifyNoInteractions(commitTickScheduler);
+        verifyNoInteractions(fileCommitter);
+    }
+
+    @Test
+    void commitInterrupted() throws InterruptedException, IOException {
+        final Writer writer = new Writer(
+            Duration.ofMillis(1), 8 * 1024, commitTickScheduler, fileCommitter);
+
+        final InterruptedException interruptedException = new InterruptedException();
+        doThrow(interruptedException).when(fileCommitter).commit(any());
+
+        final Map<TopicPartition, MemoryRecords> writeRequest = Map.of(
+            T0P0, recordCreator.create(T0P0, 100),
+            T0P1, recordCreator.create(T0P1, 100),
+            T1P0, recordCreator.create(T1P0, 100),
+            T1P1, recordCreator.create(T1P1, 100)
         );
+
+        assertThatThrownBy(() -> writer.write(writeRequest))
+            .hasRootCause(interruptedException);
+
+        // Shutdown happens.
+        verify(commitTickScheduler).shutdownNow();
+        verify(fileCommitter).close();
+    }
+
+    @Test
+    void constructorInvalidArguments() {
+        assertThatThrownBy(() -> new Writer(
+            null, 8 * 1024, commitTickScheduler, fileCommitter))
+            .isInstanceOf(NullPointerException.class)
+            .hasMessage("commitInterval cannot be null");
+        assertThatThrownBy(() -> new Writer(
+            Duration.ofMillis(1), 0, commitTickScheduler, fileCommitter))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessage("maxBufferSize must be positive");
+        assertThatThrownBy(() -> new Writer(
+            Duration.ofMillis(1), 8 * 1024, null, fileCommitter))
+            .isInstanceOf(NullPointerException.class)
+            .hasMessage("commitTickScheduler cannot be null");
+        assertThatThrownBy(() -> new Writer(
+            Duration.ofMillis(1), 8 * 1024, commitTickScheduler, null))
+            .isInstanceOf(NullPointerException.class)
+            .hasMessage("fileCommitter cannot be null");
+    }
+
+    @Test
+    void writeNull() {
+        final Writer writer = new Writer(
+            Duration.ofMillis(1), 8 * 1024, commitTickScheduler, fileCommitter);
+
+        assertThatThrownBy(() -> writer.write(null))
+            .isInstanceOf(NullPointerException.class)
+            .hasMessage("entriesPerPartition cannot be null");
     }
 }
