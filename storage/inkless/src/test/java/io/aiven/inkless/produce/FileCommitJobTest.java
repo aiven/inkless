@@ -104,6 +104,32 @@ class FileCommitJobTest {
     }
 
     @Test
+    void commitFinishedSuccessfullyZeroBatches() {
+        // We sent two requests, both without any batch.
+
+        final Map<Integer, CompletableFuture<Map<TopicPartition, PartitionResponse>>> awaitingFuturesByRequest = Map.of(
+            0, new CompletableFuture<>(),
+            1, new CompletableFuture<>()
+        );
+
+        final List<CommitBatchResponse> commitBatchResponses = List.of();
+
+        when(controlPlane.commitFile(eq(OBJECT_KEY), eq(COMMIT_BATCH_REQUESTS)))
+            .thenReturn(commitBatchResponses);
+
+        final ClosedFile file = new ClosedFile(REQUESTS, awaitingFuturesByRequest, COMMIT_BATCH_REQUESTS, REQUEST_IDS, DATA);
+        final CompletableFuture<ObjectKey> uploadFuture = CompletableFuture.completedFuture(OBJECT_KEY);
+        final FileCommitJob job = new FileCommitJob(file, uploadFuture, controlPlane, sizeCallback);
+
+        job.run();
+
+        assertThat(awaitingFuturesByRequest.get(0)).isCompletedWithValue(Map.of());
+        assertThat(awaitingFuturesByRequest.get(1)).isCompletedWithValue(Map.of());
+
+        verify(sizeCallback).accept(eq(DATA.length));
+    }
+
+    @Test
     void commitFinishedWithError() {
         final Map<Integer, CompletableFuture<Map<TopicPartition, PartitionResponse>>> awaitingFuturesByRequest = Map.of(
             0, new CompletableFuture<>(),

@@ -2320,6 +2320,7 @@ project(':storage:inkless') {
     implementation libs.slf4jApi
     implementation libs.awsskdS3
 
+    testImplementation project(':clients').sourceSets.test.output.classesDirs
     testImplementation libs.assertj
     testImplementation libs.junitJupiter
     testImplementation libs.mockitoCore
@@ -2328,6 +2329,7 @@ project(':storage:inkless') {
     testImplementation libs.testcontainersJunitJupiter
     testImplementation libs.testcontainersLocalstack
     testImplementation libs.wiremock
+    testImplementation libs.jqwik
 
     testRuntimeOnly runtimeTestLibs
   }
@@ -2344,6 +2346,12 @@ project(':storage:inkless') {
     configProperties = checkstyleConfigProperties("import-control-storage-inkless.xml")
   }
 
+  test {
+    useJUnitPlatform {
+      includeEngines 'jqwik', 'junit-jupiter'
+    }
+  }
+
   apply plugin: 'info.solidsoft.pitest'
   apply plugin: 'info.solidsoft.pitest.aggregator'
 
@@ -2354,6 +2362,7 @@ project(':storage:inkless') {
     targetClasses.add("io.aiven.inkless.*")
     excludedTestClasses.add("*io.aiven.inkless.storage_backend.s3.integration.*")
     excludedTestClasses.add("*io.aiven.inkless.produce.WriterIntegrationTest")
+    excludedTestClasses.add("*io.aiven.inkless.produce.WriterPropertyTest")
     targetTests.add("io.aiven.inkless.*")
     threads = Runtime.getRuntime().availableProcessors()
     outputFormats.addAll('XML', 'HTML')
