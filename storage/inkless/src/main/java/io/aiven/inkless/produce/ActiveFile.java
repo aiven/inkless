@@ -16,7 +16,7 @@ import org.apache.kafka.common.requests.ProduceResponse.PartitionResponse;
  * <p>This class is not thread-safe and is supposed to be protected with a lock at the call site.
  */
 class ActiveFile {
-    private int requestId = 0;
+    private int requestId = -1;
     private final BatchBuffer buffer = new BatchBuffer();
     private final Map<Integer, Map<TopicPartition, MemoryRecords>> originalRequests = new HashMap<>();
     private final Map<Integer, CompletableFuture<Map<TopicPartition, PartitionResponse>>> awaitingFuturesByRequest =
@@ -27,6 +27,7 @@ class ActiveFile {
     ) {
         Objects.requireNonNull(entriesPerPartition, "entriesPerPartition cannot be null");
 
+        requestId += 1;
         originalRequests.put(requestId, entriesPerPartition);
 
         for (final var entry : entriesPerPartition.entrySet()) {
@@ -38,13 +39,11 @@ class ActiveFile {
         final CompletableFuture<Map<TopicPartition, PartitionResponse>> result = new CompletableFuture<>();
         awaitingFuturesByRequest.put(requestId, result);
 
-        requestId += 1;
-
         return result;
     }
 
     boolean isEmpty() {
-        return size() == 0;
+        return requestId < 0;
     }
 
     int size() {

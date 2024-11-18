@@ -76,7 +76,13 @@ class FileCommitJob implements Runnable {
     private void finishCommitSuccessfully(final ObjectKey objectKey) {
         final var commitBatchResponses = controlPlane.commitFile(objectKey, file.commitBatchRequests());
         LOGGER.debug("Committed successfully");
-        final Map<Integer, Map<TopicPartition, ProduceResponse.PartitionResponse>> resultsPerRequest = new HashMap<>();
+
+        // Each request must have a response.
+        final Map<Integer, Map<TopicPartition, ProduceResponse.PartitionResponse>> resultsPerRequest = file
+            .awaitingFuturesByRequest()
+            .entrySet().stream()
+            .collect(Collectors.toMap(Map.Entry::getKey, ignore -> new HashMap<>()));
+
         for (int i = 0; i < commitBatchResponses.size(); i++) {
             final int requestId = file.requestIds().get(i);
             final var result = resultsPerRequest.computeIfAbsent(requestId, ignore -> new HashMap<>());
