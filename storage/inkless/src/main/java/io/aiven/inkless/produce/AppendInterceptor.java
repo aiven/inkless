@@ -11,6 +11,7 @@ import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.record.MemoryRecords;
 import org.apache.kafka.common.requests.ProduceResponse.PartitionResponse;
 
+import io.aiven.inkless.config.InklessConfig;
 import io.aiven.inkless.control_plane.MetadataView;
 
 import org.slf4j.Logger;
@@ -19,9 +20,12 @@ import org.slf4j.LoggerFactory;
 public class AppendInterceptor {
     private static final Logger LOGGER = LoggerFactory.getLogger(AppendInterceptor.class);
 
+    private final InklessConfig inklessConfig;
     private final MetadataView metadataView;
 
-    public AppendInterceptor(final MetadataView metadataView) {
+    public AppendInterceptor(final InklessConfig inklessConfig,
+                             final MetadataView metadataView) {
+        this.inklessConfig = inklessConfig;
         this.metadataView = metadataView;
     }
 

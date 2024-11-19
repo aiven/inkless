@@ -311,8 +311,8 @@ class ReplicaManager(val config: KafkaConfig,
       "ShareFetch", config.brokerId,
       config.shareGroupConfig.shareFetchPurgatoryPurgeIntervalRequests))
 
-  private val inklessAppendInterceptor = new AppendInterceptor(new InklessMetadataView(metadataCache))
-  private val inklessFetchInterceptor = new FetchInterceptor(new InklessMetadataView(metadataCache))
+  private val inklessAppendInterceptor = new AppendInterceptor(config.inklessConfig, new InklessMetadataView(metadataCache))
+  private val inklessFetchInterceptor = new FetchInterceptor(config.inklessConfig, new InklessMetadataView(metadataCache))
 
   /* epoch of the controller that last changed the leader */
   @volatile private[server] var controllerEpoch: Int = 0
