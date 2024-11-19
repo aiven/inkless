@@ -11,6 +11,8 @@ import org.apache.kafka.server.storage.log.FetchPartitionData;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.Closeable;
+import java.io.IOException;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
@@ -19,7 +21,7 @@ import java.util.OptionalLong;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
 
-public class FetchInterceptor {
+public class FetchInterceptor implements Closeable {
     private static final Logger LOGGER = LoggerFactory.getLogger(FetchInterceptor.class);
 
     private final InklessConfig inklessConfig;
@@ -69,6 +71,10 @@ public class FetchInterceptor {
             }
         }
         return new EntrySeparationResult(entitiesForInklessTopics, entitiesForNonInklessTopics);
+    }
+
+    @Override
+    public void close() throws IOException {
     }
 
     private record EntrySeparationResult(Map<TopicIdPartition, FetchRequest.PartitionData> entitiesForInklessTopics,

@@ -2578,6 +2578,8 @@ class ReplicaManager(val config: KafkaConfig,
     replicaSelectorOpt.foreach(_.close)
     removeAllTopicMetrics()
     addPartitionsToTxnManager.foreach(_.shutdown())
+    inklessAppendInterceptor.close()
+    inklessFetchInterceptor.close()
     info("Shut down completely")
   }
 

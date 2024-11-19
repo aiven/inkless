@@ -1,6 +1,8 @@
 // Copyright (c) 2024 Aiven, Helsinki, Finland. https://aiven.io/
 package io.aiven.inkless.produce;
 
+import java.io.Closeable;
+import java.io.IOException;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.function.Consumer;
@@ -22,7 +24,7 @@ import io.aiven.inkless.storage_backend.common.StorageBackend;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-public class AppendInterceptor {
+public class AppendInterceptor implements Closeable {
     private static final Logger LOGGER = LoggerFactory.getLogger(AppendInterceptor.class);
 
     private final InklessConfig config;
@@ -121,6 +123,11 @@ public class AppendInterceptor {
         } else {
             return false;
         }
+    }
+
+    @Override
+    public void close() throws IOException {
+        writer.close();
     }
 
     private record EntrySeparationResult(Map<TopicPartition, MemoryRecords> entitiesForInklessTopics,
