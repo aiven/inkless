@@ -1,6 +1,7 @@
 // Copyright (c) 2024 Aiven, Helsinki, Finland. https://aiven.io/
 package io.aiven.inkless.consume;
 
+import io.aiven.inkless.config.InklessConfig;
 import io.aiven.inkless.control_plane.MetadataView;
 import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.protocol.Errors;
@@ -21,9 +22,12 @@ import java.util.stream.Collectors;
 public class FetchInterceptor {
     private static final Logger LOGGER = LoggerFactory.getLogger(FetchInterceptor.class);
 
+    private final InklessConfig inklessConfig;
     private final MetadataView metadataView;
 
-    public FetchInterceptor(final MetadataView metadataView) {
+    public FetchInterceptor(final InklessConfig inklessConfig,
+                            final MetadataView metadataView) {
+        this.inklessConfig = inklessConfig;
         this.metadataView = metadataView;
     }
 

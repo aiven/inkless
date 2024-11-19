@@ -17,6 +17,8 @@
 
 package kafka.server
 
+import io.aiven.inkless.config.InklessConfig
+
 import java.util
 import java.util.concurrent.TimeUnit
 import java.util.Properties
@@ -252,6 +254,9 @@ class KafkaConfig private(doLog: Boolean, val props: util.Map[_, _])
 
   private val _quotaConfig = new QuotaConfig(this)
   def quotaConfig: QuotaConfig = _quotaConfig
+
+  private val _inklessConfig = new InklessConfig(this)
+  def inklessConfig = _inklessConfig
 
 
   private def zkBooleanConfigOrSystemPropertyWithDefaultValue(propKey: String): Boolean = {

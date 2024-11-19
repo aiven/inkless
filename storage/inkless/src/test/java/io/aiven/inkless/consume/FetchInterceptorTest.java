@@ -1,6 +1,7 @@
 // Copyright (c) 2024 Aiven, Helsinki, Finland. https://aiven.io/
 package io.aiven.inkless.consume;
 
+import io.aiven.inkless.config.InklessConfig;
 import io.aiven.inkless.control_plane.MetadataView;
 import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.Uuid;
@@ -36,6 +37,8 @@ import static org.mockito.Mockito.when;
 @MockitoSettings(strictness = Strictness.STRICT_STUBS)
 public class FetchInterceptorTest {
     @Mock
+    InklessConfig inklessConfig;
+    @Mock
     MetadataView metadataView;
     @Mock
     Consumer<Map<TopicIdPartition, FetchPartitionData>> responseCallback;
@@ -52,7 +55,7 @@ public class FetchInterceptorTest {
     public void mixingInklessAndClassicTopicsIsNotAllowed() {
         when(metadataView.isInklessTopic(eq("inkless"))).thenReturn(true);
         when(metadataView.isInklessTopic(eq("non_inkless"))).thenReturn(false);
-        final FetchInterceptor interceptor = new FetchInterceptor(metadataView);
+        final FetchInterceptor interceptor = new FetchInterceptor(inklessConfig, metadataView);
 
         final FetchParams params = new FetchParams(fetchVersion,
                 -1, -1, -1, -1, -1,
@@ -86,7 +89,7 @@ public class FetchInterceptorTest {
     @Test
     public void notInterceptProducingToClassicTopics() {
         when(metadataView.isInklessTopic(eq("non_inkless"))).thenReturn(false);
-        final FetchInterceptor interceptor = new FetchInterceptor(metadataView);
+        final FetchInterceptor interceptor = new FetchInterceptor(inklessConfig, metadataView);
 
         final FetchParams params = new FetchParams(fetchVersion,
                 -1, -1, -1, -1, -1,
