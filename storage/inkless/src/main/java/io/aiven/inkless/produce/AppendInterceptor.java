@@ -10,9 +10,14 @@ import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.record.MemoryRecords;
 import org.apache.kafka.common.requests.ProduceResponse.PartitionResponse;
+import org.apache.kafka.common.utils.Time;
 
+import io.aiven.inkless.common.ObjectKeyCreator;
+import io.aiven.inkless.common.PlainObjectKey;
 import io.aiven.inkless.config.InklessConfig;
+import io.aiven.inkless.control_plane.ControlPlane;
 import io.aiven.inkless.control_plane.MetadataView;
+import io.aiven.inkless.storage_backend.common.StorageBackend;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -20,13 +25,22 @@ import org.slf4j.LoggerFactory;
 public class AppendInterceptor {
     private static final Logger LOGGER = LoggerFactory.getLogger(AppendInterceptor.class);
 
-    private final InklessConfig inklessConfig;
+    private final InklessConfig config;
     private final MetadataView metadataView;
+    private final Writer writer;
 
-    public AppendInterceptor(final InklessConfig inklessConfig,
-                             final MetadataView metadataView) {
-        this.inklessConfig = inklessConfig;
+    public AppendInterceptor(final InklessConfig config,
+                             final MetadataView metadataView,
+                             final Time time) {
+        this.config = config;
         this.metadataView = metadataView;
+
+        final ObjectKeyCreator objectKeyCreator = (s) -> new PlainObjectKey(config.objectKeyPrefix(), s);
+        final StorageBackend storageBackend = config.storage();
+        final ControlPlane controlPlane = new ControlPlane(metadataView);
+        this.writer = new Writer(
+            time, objectKeyCreator, storageBackend, controlPlane,
+            config.commitInterval(), config.produceBufferMaxBytes(), config.produceMaxUploadAttempts(), config.produceUploadBackoff());
     }
 
     /**
@@ -57,6 +71,18 @@ public class AppendInterceptor {
             return true;
         }
 
+        // TODO use purgatory
+        final var resultFuture = writer.write(entriesPerPartition);
+        resultFuture.whenComplete((result, e) -> {
+            if (result == null) {
+                // We don't really expect this future to fail, but in case it does...
+                LOGGER.error("Write future failed", e);
+                result = entriesPerPartition.entrySet().stream()
+                    .collect(Collectors.toMap(Map.Entry::getKey, ignore -> new PartitionResponse(Errors.UNKNOWN_SERVER_ERROR)));
+            }
+            responseCallback.accept(result);
+        });
+
         return true;
     }
 
@@ -85,6 +111,7 @@ public class AppendInterceptor {
         });
 
         if (atLeastBatchHasProducerId) {
+            LOGGER.warn("Idempotent produce found, rejecting request");
             final var result = entriesPerPartition.entrySet().stream()
                 .collect(Collectors.toMap(
                     Map.Entry::getKey,
