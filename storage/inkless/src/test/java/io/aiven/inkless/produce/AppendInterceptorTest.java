@@ -1,6 +1,7 @@
 // Copyright (c) 2024 Aiven, Helsinki, Finland. https://aiven.io/
 package io.aiven.inkless.produce;
 
+import java.time.Duration;
 import java.util.Map;
 import java.util.function.Consumer;
 
@@ -15,7 +16,9 @@ import org.apache.kafka.common.utils.Time;
 
 import io.aiven.inkless.config.InklessConfig;
 import io.aiven.inkless.control_plane.MetadataView;
+import io.aiven.inkless.storage_backend.common.StorageBackend;
 
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -28,6 +31,7 @@ import org.mockito.quality.Strictness;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -44,6 +48,15 @@ public class AppendInterceptorTest {
 
     @Captor
     ArgumentCaptor<Map<TopicPartition, PartitionResponse>> resultCaptor;
+
+    @BeforeEach
+    void setup() {
+        when(inklessConfig.storage()).thenReturn(mock(StorageBackend.class));
+        when(inklessConfig.commitInterval()).thenReturn(Duration.ofMillis(1));
+        when(inklessConfig.produceBufferMaxBytes()).thenReturn(1);
+        when(inklessConfig.produceMaxUploadAttempts()).thenReturn(1);
+        when(inklessConfig.produceUploadBackoff()).thenReturn(Duration.ofMillis(1));
+    }
 
     private static final MemoryRecords RECORDS_WITH_PRODUCER_ID = MemoryRecords.withRecords(
         (byte) 2,
