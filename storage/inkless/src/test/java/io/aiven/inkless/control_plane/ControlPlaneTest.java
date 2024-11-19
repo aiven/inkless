@@ -62,9 +62,9 @@ class ControlPlaneTest {
             )
         );
         assertThat(commitResponse1).containsExactly(
-            new CommitBatchResponse(Errors.NONE, 0),
-            new CommitBatchResponse(Errors.UNKNOWN_TOPIC_OR_PARTITION, -1),
-            new CommitBatchResponse(Errors.UNKNOWN_TOPIC_OR_PARTITION, -1)
+            new CommitBatchResponse(Errors.NONE, 0, 0),
+            new CommitBatchResponse(Errors.UNKNOWN_TOPIC_OR_PARTITION, -1, -1),
+            new CommitBatchResponse(Errors.UNKNOWN_TOPIC_OR_PARTITION, -1, -1)
         );
 
         final PlainObjectKey objectKey2 = new PlainObjectKey("a", "a2");
@@ -77,9 +77,9 @@ class ControlPlaneTest {
             )
         );
         assertThat(commitResponse2).containsExactly(
-            new CommitBatchResponse(Errors.NONE, 10),
-            new CommitBatchResponse(Errors.UNKNOWN_TOPIC_OR_PARTITION, -1),
-            new CommitBatchResponse(Errors.UNKNOWN_TOPIC_OR_PARTITION, -1)
+            new CommitBatchResponse(Errors.NONE, 10, 0),
+            new CommitBatchResponse(Errors.UNKNOWN_TOPIC_OR_PARTITION, -1, -1),
+            new CommitBatchResponse(Errors.UNKNOWN_TOPIC_OR_PARTITION, -1, -1)
         );
 
         final List<FindBatchResponse> findResponse = controlPlane.findBatches(

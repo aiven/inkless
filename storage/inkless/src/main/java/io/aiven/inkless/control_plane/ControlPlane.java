@@ -49,7 +49,7 @@ public class ControlPlane {
                 this.batches
                     .computeIfAbsent(topicIdPartition, ignore -> new TreeMap<>())
                     .put(assignedOffset, batchToStore);
-                responses.add(CommitBatchResponse.success(assignedOffset));
+                responses.add(CommitBatchResponse.success(assignedOffset, logInfo.logStartOffset));
             }
         }
 
