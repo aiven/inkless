@@ -3,6 +3,8 @@ services:
     image: kafka/test:4.0.0-inkless-SNAPSHOT
     ports:
       - "9092:9092"
+      - "7070:7070" # prometheus metrics
+      - "9999:9999" # jmx port
     environment:
       CLUSTER_ID: "4L6g3nShT-eMCtK--X86sw"
       KAFKA_PROCESS_ROLES: "broker,controller"
@@ -23,7 +25,26 @@ services:
       KAFKA_INKLESS_STORAGE_S3_PATH_STYLE_ACCESS_ENABLED: "true"
       KAFKA_INKLESS_STORAGE_S3_BUCKET_NAME: "inkless"
       KAFKA_INKLESS_STORAGE_S3_REGION: "us-east-1"
+      # JMX
+      KAFKA_JMX_PORT: 9999
+      EXTRA_ARGS: -javaagent:/opt/prometheus-jmx-exporter/jmx_prometheus_javaagent.jar=7070:/opt/prometheus-jmx-exporter/kafka.yml
+    volumes:
+      - ./docker/extra/prometheus-jmx-exporter:/opt/prometheus-jmx-exporter
+
   localstack:
     image: localstack/localstack:s3-latest
     ports:
       - "4566:4566"
+  # Monitoring
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./docker/extra/prometheus/config/:/etc/prometheus/
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./docker/extra/grafana/:/etc/grafana/provisioning/

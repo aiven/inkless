@@ -1,0 +1,12 @@
+global:
+  # How frequently to scrape targets by default.
+  # Default 15s
+  scrape_interval: 30s
+  # How long until a scrape request times out.
+  # Default to 10s.
+  scrape_timeout: 30s
+
+scrape_configs:
+  - job_name: 'kafka'
+    static_configs:
+    - targets: ['broker:7070']

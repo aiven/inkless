@@ -22,6 +22,11 @@ docker_build_prep:
 	  source .venv/bin/activate && \
 	  pip install -r requirements.txt
 
+# download prometheus jmx exporter
+docker/extra/prometheus-jmx-javaagent/jmx_prometheus_javaagent.jar:
+	curl -o docker/extra/prometheus-jmx-javaagent/jmx_prometheus_javaagent.jar \
+	  https://repo1.maven.org/maven2/io/prometheus/jmx/jmx_prometheus_javaagent/1.0.1/jmx_prometheus_javaagent-1.0.1.jar
+
 .PHONY: docker_build
 docker_build: build_release docker_build_prep
 	cp -R core/build/distributions docker/resources/.
