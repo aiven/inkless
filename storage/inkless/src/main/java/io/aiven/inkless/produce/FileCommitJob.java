@@ -11,7 +11,9 @@ import java.util.stream.Collectors;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.requests.ProduceResponse;
+import org.apache.kafka.common.utils.Time;
 
+import io.aiven.inkless.TimeUtils;
 import io.aiven.inkless.common.ObjectKey;
 import io.aiven.inkless.control_plane.ControlPlane;
 
@@ -28,21 +30,28 @@ class FileCommitJob implements Runnable {
 
     private final ClosedFile file;
     private final Future<ObjectKey> uploadFuture;
+    private final Time time;
     private final ControlPlane controlPlane;
-    private final Consumer<Integer> sizeCallback;
+    private final Consumer<Long> durationCallback;
 
     FileCommitJob(final ClosedFile file,
                   final Future<ObjectKey> uploadFuture,
+                  final Time time,
                   final ControlPlane controlPlane,
-                  final Consumer<Integer> sizeCallback) {
+                  final Consumer<Long> durationCallback) {
         this.file = file;
         this.uploadFuture = uploadFuture;
         this.controlPlane = controlPlane;
-        this.sizeCallback = sizeCallback;
+        this.time = time;
+        this.durationCallback = durationCallback;
     }
 
     @Override
     public void run() {
+        TimeUtils.measureDurationMs(time, this::runInternal, durationCallback);
+    }
+
+    public void runInternal() {
         final WaitForFutureResult waitForFutureResult = waitForFuture();
 
         if (waitForFutureResult.objectKey != null) {
@@ -52,8 +61,6 @@ class FileCommitJob implements Runnable {
             LOGGER.error("Upload failed", waitForFutureResult.uploadError);
             finishCommitWithError();
         }
-
-        sizeCallback.accept(file.size());
     }
 
     private WaitForFutureResult waitForFuture() {

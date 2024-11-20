@@ -1,6 +1,7 @@
 // Copyright (c) 2024 Aiven, Helsinki, Finland. https://aiven.io/
 package io.aiven.inkless.produce;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 
@@ -23,7 +24,7 @@ class ActiveFileTest {
 
         @Test
         void addNull() {
-            final ActiveFile file = new ActiveFile();
+            final ActiveFile file = new ActiveFile(Instant.EPOCH);
 
             assertThatThrownBy(() -> file.add(null))
                 .isInstanceOf(NullPointerException.class)
@@ -32,7 +33,7 @@ class ActiveFileTest {
 
     @Test
     void add() {
-        final ActiveFile file = new ActiveFile();
+        final ActiveFile file = new ActiveFile(Instant.EPOCH);
 
         final var result = file.add(Map.of(
             T0P0, MemoryRecords.withRecords(Compression.NONE, new SimpleRecord(new byte[10]))
@@ -42,7 +43,7 @@ class ActiveFileTest {
 
     @Test
     void empty() {
-        final ActiveFile file = new ActiveFile();
+        final ActiveFile file = new ActiveFile(Instant.EPOCH);
 
         assertThat(file.isEmpty()).isTrue();
 
@@ -55,7 +56,7 @@ class ActiveFileTest {
 
     @Test
     void size() {
-        final ActiveFile file = new ActiveFile();
+        final ActiveFile file = new ActiveFile(Instant.EPOCH);
 
         assertThat(file.size()).isZero();
 
@@ -68,19 +69,21 @@ class ActiveFileTest {
 
     @Test
     void closeEmpty() {
-        final ActiveFile file = new ActiveFile();
+        final Instant start = Instant.ofEpochMilli(10);
+        final ActiveFile file = new ActiveFile(start);
         final ClosedFile result = file.close();
 
         assertThat(result)
             .usingRecursiveComparison()
             .ignoringFields("data")
-            .isEqualTo(new ClosedFile(Map.of(), Map.of(), List.of(), List.of(), new byte[0]));
+            .isEqualTo(new ClosedFile(start, Map.of(), Map.of(), List.of(), List.of(), new byte[0]));
         assertThat(result.data()).isEmpty();
     }
 
     @Test
     void closeNonEmpty() {
-        final ActiveFile file = new ActiveFile();
+        final Instant start = Instant.ofEpochMilli(10);
+        final ActiveFile file = new ActiveFile(start);
         final Map<TopicPartition, MemoryRecords> request1 = Map.of(
             T0P0, MemoryRecords.withRecords(Compression.NONE, new SimpleRecord(new byte[10])),
             T0P1, MemoryRecords.withRecords(Compression.NONE, new SimpleRecord(new byte[10]))
@@ -94,6 +97,8 @@ class ActiveFileTest {
 
         final ClosedFile result = file.close();
 
+        assertThat(result.start())
+            .isEqualTo(start);
         assertThat(result.originalRequests())
             .isEqualTo(Map.of(0, request1, 1, request2));
         assertThat(result.awaitingFuturesByRequest()).hasSize(2);

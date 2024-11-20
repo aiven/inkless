@@ -4,10 +4,12 @@ package io.aiven.inkless.produce;
 import java.time.Duration;
 import java.util.Objects;
 import java.util.concurrent.Callable;
+import java.util.function.Consumer;
 
 import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.utils.Time;
 
+import io.aiven.inkless.TimeUtils;
 import io.aiven.inkless.common.ObjectKey;
 import io.aiven.inkless.common.ObjectKeyCreator;
 import io.aiven.inkless.storage_backend.common.ObjectUploader;
@@ -28,13 +30,15 @@ class FileUploadJob implements Callable<ObjectKey> {
     private final int attempts;
     private final Duration retryBackoff;
     private final byte[] data;
+    private final Consumer<Long> durationCallback;
 
     FileUploadJob(final ObjectKeyCreator objectKeyCreator,
                   final ObjectUploader objectUploader,
                   final Time time,
                   final int attempts,
                   final Duration retryBackoff,
-                  final byte[] data) {
+                  final byte[] data,
+                  final Consumer<Long> durationCallback) {
         this.objectKeyCreator = Objects.requireNonNull(objectKeyCreator, "objectKeyCreator cannot be null");
         this.objectUploader = Objects.requireNonNull(objectUploader, "objectUploader cannot be null");
         this.time = Objects.requireNonNull(time, "time cannot be null");
@@ -44,10 +48,15 @@ class FileUploadJob implements Callable<ObjectKey> {
         this.attempts = attempts;
         this.retryBackoff = Objects.requireNonNull(retryBackoff, "retryBackoff cannot be null");
         this.data = Objects.requireNonNull(data, "data cannot be null");
+        this.durationCallback = Objects.requireNonNull(durationCallback, "durationCallback cannot be null");
     }
 
     @Override
     public ObjectKey call() throws Exception {
+        return TimeUtils.measureDurationMs(time, this::callInternal, durationCallback);
+    }
+
+    private ObjectKey callInternal() throws Exception {
         final ObjectKey objectKey;
         final Exception uploadError;
         try {

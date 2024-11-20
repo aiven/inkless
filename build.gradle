@@ -2319,6 +2319,7 @@ project(':storage:inkless') {
 
     implementation libs.slf4jApi
     implementation libs.awsskdS3
+    implementation libs.metrics
 
     testImplementation project(':clients').sourceSets.test.output.classesDirs
     testImplementation libs.assertj

@@ -4,7 +4,9 @@ package io.aiven.inkless.produce;
 import java.io.Closeable;
 import java.io.IOException;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.Objects;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -14,6 +16,7 @@ import java.util.concurrent.locks.ReentrantLock;
 
 import org.apache.kafka.common.utils.Time;
 
+import io.aiven.inkless.TimeUtils;
 import io.aiven.inkless.common.InklessThreadFactory;
 import io.aiven.inkless.common.ObjectKey;
 import io.aiven.inkless.common.ObjectKeyCreator;
@@ -32,6 +35,8 @@ import org.slf4j.LoggerFactory;
 class FileCommitter implements Closeable {
     private static final Logger LOGGER = LoggerFactory.getLogger(FileCommitter.class);
 
+    private final FileCommitterMetrics metrics;
+
     private final Lock lock = new ReentrantLock();
 
     private final ControlPlane controlPlane;
@@ -43,6 +48,7 @@ class FileCommitter implements Closeable {
     private final ExecutorService executorServiceUpload;
     private final ExecutorService executorServiceCommit;
 
+    private final AtomicInteger totalFilesInProgress = new AtomicInteger(0);
     private final AtomicInteger totalBytesInProgress = new AtomicInteger(0);
 
     @DoNotMutate
@@ -55,7 +61,8 @@ class FileCommitter implements Closeable {
         this(controlPlane, objectKeyCreator, objectUploader, time, maxFileUploadAttempts, fileUploadRetryBackoff,
             Executors.newCachedThreadPool(new InklessThreadFactory("inkless-file-uploader-", false)),
             // It must be single-thread to preserve the commit order.
-            Executors.newSingleThreadExecutor(new InklessThreadFactory("inkless-file-uploader-finisher-", false))
+            Executors.newSingleThreadExecutor(new InklessThreadFactory("inkless-file-uploader-finisher-", false)),
+            new FileCommitterMetrics(time)
         );
     }
 
@@ -67,7 +74,8 @@ class FileCommitter implements Closeable {
                   final int maxFileUploadAttempts,
                   final Duration fileUploadRetryBackoff,
                   final ExecutorService executorServiceUpload,
-                  final ExecutorService executorServiceCommit) {
+                  final ExecutorService executorServiceCommit,
+                  final FileCommitterMetrics metrics) {
         this.controlPlane = Objects.requireNonNull(controlPlane, "controlPlane cannot be null");
         this.objectKeyCreator = Objects.requireNonNull(objectKeyCreator, "objectKeyCreator cannot be null");
         this.objectUploader = Objects.requireNonNull(objectUploader, "objectUploader cannot be null");
@@ -82,37 +90,51 @@ class FileCommitter implements Closeable {
             "executorServiceUpload cannot be null");
         this.executorServiceCommit = Objects.requireNonNull(executorServiceCommit,
             "executorServiceCommit cannot be null");
+
+        this.metrics = Objects.requireNonNull(metrics, "metrics cannot be null");
+        // Can't do this in the FileCommitterMetrics constructor, so initializing this way.
+        this.metrics.initTotalFilesInProgressMetric(totalFilesInProgress::get);
+        this.metrics.initTotalBytesInProgressMetric(totalBytesInProgress::get);
     }
 
     void commit(final ClosedFile file) throws InterruptedException {
         Objects.requireNonNull(file, "file cannot be null");
+        metrics.fileAdded(file.size());
+
         lock.lock();
         try {
+            final Instant uploadAndCommitStart = TimeUtils.monotonicNow(time);
+
+            totalFilesInProgress.addAndGet(1);
             totalBytesInProgress.addAndGet(file.size());
 
             // Start uploading and add to the commit queue (as Runnable).
             // This ensures files are uploaded in concurrently, but committed to the control plane sequentially,
             // because `executorServiceCommit` is single-threaded.
-            final Future<ObjectKey> uploadFuture = executorServiceUpload.submit(new FileUploadJob(
-                this.objectKeyCreator,
-                this.objectUploader,
-                this.time,
-                this.maxFileUploadAttempts,
-                this.fileUploadRetryBackoff,
-                file.data()
-            ));
-            executorServiceCommit.submit(new FileCommitJob(file, uploadFuture, controlPlane, this::decreaseTotalBytesInProgress));
+            final FileUploadJob uploadJob = new FileUploadJob(
+                this.objectKeyCreator, this.objectUploader, this.time,
+                this.maxFileUploadAttempts, this.fileUploadRetryBackoff, file.data(), metrics::fileUploadFinished);
+            final Future<ObjectKey> uploadFuture = executorServiceUpload.submit(uploadJob);
+
+            final FileCommitJob commitJob =
+                new FileCommitJob(file, uploadFuture, time, controlPlane, metrics::fileCommitFinished);
+            CompletableFuture.runAsync(commitJob, executorServiceCommit)
+                .whenComplete((result, error) -> {
+                    totalFilesInProgress.addAndGet(-1);
+                    totalBytesInProgress.addAndGet(-file.size());
+                    metrics.fileFinished(file.start(), uploadAndCommitStart);
+                });
         } finally {
             lock.unlock();
         }
     }
 
-    int totalBytesInProgress() {
-        return totalBytesInProgress.get();
+    int totalFilesInProgress() {
+        return totalFilesInProgress.get();
     }
 
-    private void decreaseTotalBytesInProgress(int delta) {
-        totalBytesInProgress.addAndGet(-delta);
+    int totalBytesInProgress() {
+        return totalBytesInProgress.get();
     }
 
     @Override
@@ -120,5 +142,6 @@ class FileCommitter implements Closeable {
         // Don't wait here, they should try to finish their work.
         executorServiceUpload.shutdown();
         executorServiceCommit.shutdown();
+        metrics.close();
     }
 }

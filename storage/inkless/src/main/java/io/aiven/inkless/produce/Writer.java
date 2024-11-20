@@ -4,6 +4,7 @@ package io.aiven.inkless.produce;
 import java.io.Closeable;
 import java.io.IOException;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
@@ -19,6 +20,7 @@ import org.apache.kafka.common.requests.ProduceResponse.PartitionResponse;
 import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.common.utils.Utils;
 
+import io.aiven.inkless.TimeUtils;
 import io.aiven.inkless.common.InklessThreadFactory;
 import io.aiven.inkless.common.ObjectKeyCreator;
 import io.aiven.inkless.control_plane.ControlPlane;
@@ -45,6 +47,7 @@ class Writer implements Closeable {
     private final Lock lock = new ReentrantLock();
     private ActiveFile activeFile;
     private final FileCommitter fileCommitter;
+    private final Time time;
     private final int maxBufferSize;
     private final ScheduledExecutorService commitTickScheduler;
     private boolean closed = false;
@@ -58,17 +61,19 @@ class Writer implements Closeable {
            final int maxBufferSize,
            final int maxFileUploadAttempts,
            final Duration fileUploadRetryBackoff) {
-        this(commitInterval, maxBufferSize,
+        this(time, commitInterval, maxBufferSize,
             Executors.newScheduledThreadPool(1, new InklessThreadFactory("inkless-file-commit-ticker-", true)),
             new FileCommitter(controlPlane, objectKeyCreator, objectUploader, time, maxFileUploadAttempts, fileUploadRetryBackoff)
         );
     }
 
     // Visible for testing
-    Writer(final Duration commitInterval,
+    Writer(final Time time,
+           final Duration commitInterval,
            final int maxBufferSize,
            final ScheduledExecutorService commitTickScheduler,
            final FileCommitter fileCommitter) {
+        this.time = Objects.requireNonNull(time, "time cannot be null");
         Objects.requireNonNull(commitInterval, "commitInterval cannot be null");
         if (maxBufferSize <= 0) {
             throw new IllegalArgumentException("maxBufferSize must be positive");
@@ -77,7 +82,7 @@ class Writer implements Closeable {
         this.commitTickScheduler = Objects.requireNonNull(commitTickScheduler, "commitTickScheduler cannot be null");
         this.fileCommitter = Objects.requireNonNull(fileCommitter, "fileCommitter cannot be null");
 
-        this.activeFile = new ActiveFile();
+        this.activeFile = new ActiveFile(TimeUtils.monotonicNow(time));
 
         commitTickScheduler.scheduleAtFixedRate(
             this::tick, commitInterval.toMillis(), commitInterval.toMillis(), TimeUnit.MILLISECONDS);
@@ -142,7 +147,7 @@ class Writer implements Closeable {
     private void rotateFile(final boolean swallowInterrupted) {
         LOGGER.debug("Rotating active file");
         final ActiveFile prevActiveFile = this.activeFile;
-        this.activeFile = new ActiveFile();
+        this.activeFile = new ActiveFile(TimeUtils.monotonicNow(time));
 
         try {
             this.fileCommitter.commit(prevActiveFile.close());
