@@ -9,6 +9,9 @@ public record ByteRange(long offset, long size) {
         if (size < 0) {
             throw new IllegalArgumentException("size cannot be negative, " + size + " given");
         }
+        if (offset + size < 0) {
+            throw new IllegalArgumentException("size too large, overflows final offset");
+        }
     }
 
     public boolean empty() {
@@ -21,5 +24,17 @@ public record ByteRange(long offset, long size) {
 
     public static ByteRange maxRange() {
         return new ByteRange(0L, Long.MAX_VALUE);
+    }
+
+    public static ByteRange merge(ByteRange a, ByteRange b) {
+        if (a.empty()) return b;
+        if (b.empty()) return a;
+        long minOffset = Long.min(a.offset, b.offset);
+        long maxOffset = Long.max(a.offset + a.size, b.offset + b.size);
+        return new ByteRange(minOffset, maxOffset - minOffset);
+    }
+
+    public boolean contains(ByteRange range) {
+        return this.offset <= range.offset && this.size >= range.size;
     }
 }

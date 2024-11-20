@@ -89,7 +89,7 @@ class ControlPlaneTest {
                 new FindBatchRequest(new TopicIdPartition(Uuid.ONE_UUID, 0, NONEXISTENT_TOPIC), 11, Integer.MAX_VALUE)
             ), true, Integer.MAX_VALUE);
         assertThat(findResponse).containsExactly(
-            new FindBatchResponse(Errors.NONE, List.of(new BatchInfo(objectKey2, 100, 10, 10)), 0, 20),
+            new FindBatchResponse(Errors.NONE, List.of(new BatchInfo(objectKey2, 100, 10, 10, 10)), 0, 20),
             new FindBatchResponse(Errors.UNKNOWN_TOPIC_OR_PARTITION, null, -1, -1),
             new FindBatchResponse(Errors.UNKNOWN_TOPIC_OR_PARTITION, null, -1, -1)
         );
@@ -115,7 +115,7 @@ class ControlPlaneTest {
                 List.of(new FindBatchRequest(EXISTING_TOPIC_ID_PARTITION, offset, Integer.MAX_VALUE)), true, Integer.MAX_VALUE);
             assertThat(findResponse).containsExactly(
                 new FindBatchResponse(Errors.NONE, List.of(
-                    new BatchInfo(objectKey1, 1, 10, numberOfRecordsInBatch1)
+                    new BatchInfo(objectKey1, 1, 10, 0, numberOfRecordsInBatch1)
                 ), expectedLogStartOffset, expectedHighWatermark)
             );
         }
@@ -124,7 +124,7 @@ class ControlPlaneTest {
                 List.of(new FindBatchRequest(EXISTING_TOPIC_ID_PARTITION, offset, Integer.MAX_VALUE)), true, Integer.MAX_VALUE);
             assertThat(findResponse).containsExactly(
                 new FindBatchResponse(Errors.NONE, List.of(
-                    new BatchInfo(objectKey2, 100, 10, numberOfRecordsInBatch2)
+                    new BatchInfo(objectKey2, 100, 10, numberOfRecordsInBatch1, numberOfRecordsInBatch2)
                 ), expectedLogStartOffset, expectedHighWatermark)
             );
         }
@@ -146,7 +146,7 @@ class ControlPlaneTest {
             true,
             Integer.MAX_VALUE);
         assertThat(findResponse1).containsExactly(
-            new FindBatchResponse(Errors.NONE, List.of(new BatchInfo(objectKey, 11, 10, 10)), 0, 10)
+            new FindBatchResponse(Errors.NONE, List.of(new BatchInfo(objectKey, 11, 10, 0, 10)), 0, 10)
         );
 
         // Make the topic "disappear".
