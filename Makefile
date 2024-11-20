@@ -1,6 +1,6 @@
-.PHONY: compose
-compose:
-	docker compose -f docker-compose.yml up
+.PHONY: localstack
+localstack:
+	docker compose -f localstack.yml up
 
 .PHONY: bucket
 bucket:
