@@ -1,6 +1,7 @@
 // Copyright (c) 2024 Aiven, Helsinki, Finland. https://aiven.io/
 package io.aiven.inkless.produce;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
@@ -12,6 +13,7 @@ import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.record.MemoryRecords;
 import org.apache.kafka.common.record.SimpleRecord;
 import org.apache.kafka.common.requests.ProduceResponse.PartitionResponse;
+import org.apache.kafka.common.utils.Time;
 
 import io.aiven.inkless.common.ObjectKey;
 import io.aiven.inkless.common.PlainObjectKey;
@@ -64,9 +66,11 @@ class FileCommitJobTest {
     static final ObjectKey OBJECT_KEY = new PlainObjectKey("", "s");
 
     @Mock
+    Time time;
+    @Mock
     ControlPlane controlPlane;
     @Mock
-    Consumer<Integer> sizeCallback;
+    Consumer<Long> commitTimeDurationCallback;
 
     @Test
     void commitFinishedSuccessfully() {
@@ -84,10 +88,11 @@ class FileCommitJobTest {
 
         when(controlPlane.commitFile(eq(OBJECT_KEY), eq(COMMIT_BATCH_REQUESTS)))
             .thenReturn(commitBatchResponses);
+        when(time.nanoseconds()).thenReturn(10_000_000L, 20_000_000L);
 
-        final ClosedFile file = new ClosedFile(REQUESTS, awaitingFuturesByRequest, COMMIT_BATCH_REQUESTS, REQUEST_IDS, DATA);
+        final ClosedFile file = new ClosedFile(Instant.EPOCH, REQUESTS, awaitingFuturesByRequest, COMMIT_BATCH_REQUESTS, REQUEST_IDS, DATA);
         final CompletableFuture<ObjectKey> uploadFuture = CompletableFuture.completedFuture(OBJECT_KEY);
-        final FileCommitJob job = new FileCommitJob(file, uploadFuture, controlPlane, sizeCallback);
+        final FileCommitJob job = new FileCommitJob(file, uploadFuture, time, controlPlane, commitTimeDurationCallback);
 
         job.run();
 
@@ -99,8 +104,7 @@ class FileCommitJobTest {
             T0P1, new PartitionResponse(Errors.NONE, 20, -1, -1),
             T1P0, new PartitionResponse(Errors.NONE, 30, -1, -1)
         ));
-
-        verify(sizeCallback).accept(eq(DATA.length));
+        verify(commitTimeDurationCallback).accept(eq(10L));
     }
 
     @Test
@@ -116,17 +120,17 @@ class FileCommitJobTest {
 
         when(controlPlane.commitFile(eq(OBJECT_KEY), eq(COMMIT_BATCH_REQUESTS)))
             .thenReturn(commitBatchResponses);
+        when(time.nanoseconds()).thenReturn(10_000_000L, 20_000_000L);
 
-        final ClosedFile file = new ClosedFile(REQUESTS, awaitingFuturesByRequest, COMMIT_BATCH_REQUESTS, REQUEST_IDS, DATA);
+        final ClosedFile file = new ClosedFile(Instant.EPOCH, REQUESTS, awaitingFuturesByRequest, COMMIT_BATCH_REQUESTS, REQUEST_IDS, DATA);
         final CompletableFuture<ObjectKey> uploadFuture = CompletableFuture.completedFuture(OBJECT_KEY);
-        final FileCommitJob job = new FileCommitJob(file, uploadFuture, controlPlane, sizeCallback);
+        final FileCommitJob job = new FileCommitJob(file, uploadFuture, time, controlPlane, commitTimeDurationCallback);
 
         job.run();
 
         assertThat(awaitingFuturesByRequest.get(0)).isCompletedWithValue(Map.of());
         assertThat(awaitingFuturesByRequest.get(1)).isCompletedWithValue(Map.of());
-
-        verify(sizeCallback).accept(eq(DATA.length));
+        verify(commitTimeDurationCallback).accept(eq(10L));
     }
 
     @Test
@@ -136,9 +140,11 @@ class FileCommitJobTest {
             1, new CompletableFuture<>()
         );
 
-        final ClosedFile file = new ClosedFile(REQUESTS, awaitingFuturesByRequest, COMMIT_BATCH_REQUESTS, REQUEST_IDS, DATA);
+        when(time.nanoseconds()).thenReturn(10_000_000L, 20_000_000L);
+
+        final ClosedFile file = new ClosedFile(Instant.EPOCH, REQUESTS, awaitingFuturesByRequest, COMMIT_BATCH_REQUESTS, REQUEST_IDS, DATA);
         final CompletableFuture<ObjectKey> uploadFuture = CompletableFuture.failedFuture(new StorageBackendException("test"));
-        final FileCommitJob job = new FileCommitJob(file, uploadFuture, controlPlane, sizeCallback);
+        final FileCommitJob job = new FileCommitJob(file, uploadFuture, time, controlPlane, commitTimeDurationCallback);
 
         job.run();
 
@@ -150,7 +156,6 @@ class FileCommitJobTest {
             T0P1, new PartitionResponse(Errors.KAFKA_STORAGE_ERROR, "Error commiting data"),
             T1P0, new PartitionResponse(Errors.KAFKA_STORAGE_ERROR, "Error commiting data")
         ));
-
-        verify(sizeCallback).accept(eq(DATA.length));
+        verify(commitTimeDurationCallback).accept(eq(10L));
     }
 }

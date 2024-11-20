@@ -3,6 +3,7 @@ package io.aiven.inkless.produce;
 
 import java.io.IOException;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
@@ -12,6 +13,7 @@ import java.util.concurrent.TimeUnit;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.record.MemoryRecords;
 import org.apache.kafka.common.requests.ProduceResponse;
+import org.apache.kafka.common.utils.Time;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -43,6 +45,8 @@ class WriterMockedTest {
     static final TopicPartition T1P1 = new TopicPartition("topic1", 1);
 
     @Mock
+    Time time;
+    @Mock
     ScheduledExecutorService commitTickScheduler;
     @Mock
     FileCommitter fileCommitter;
@@ -60,7 +64,7 @@ class WriterMockedTest {
     @Test
     void tickWithEmptyFile() throws InterruptedException {
         final Writer writer = new Writer(
-            Duration.ofMillis(1), 8 * 1024, commitTickScheduler, fileCommitter);
+            time, Duration.ofMillis(1), 8 * 1024, commitTickScheduler, fileCommitter);
 
         verify(commitTickScheduler).scheduleAtFixedRate(any(), eq(1L), eq(1L), eq(TimeUnit.MILLISECONDS));
 
@@ -72,8 +76,10 @@ class WriterMockedTest {
 
     @Test
     void committingDueToOverfillWithFirstRequest() throws InterruptedException {
+        when(time.nanoseconds()).thenReturn(10_000_000L);
+
         final Writer writer = new Writer(
-            Duration.ofMillis(1), 15908, commitTickScheduler, fileCommitter);
+            time, Duration.ofMillis(1), 15908, commitTickScheduler, fileCommitter);
 
         final Map<TopicPartition, MemoryRecords> writeRequest = Map.of(
             T0P0, recordCreator.create(T0P0, 100),
@@ -85,6 +91,7 @@ class WriterMockedTest {
 
         // As we wrote too much, commit must be triggered.
         verify(fileCommitter).commit(closedFileCaptor.capture());
+        assertThat(closedFileCaptor.getValue().start()).isEqualTo(Instant.ofEpochMilli(10));
         assertThat(closedFileCaptor.getValue().originalRequests()).isEqualTo(Map.of(0, writeRequest));
         assertThat(closedFileCaptor.getValue().awaitingFuturesByRequest()).hasSize(1);
     }
@@ -92,7 +99,7 @@ class WriterMockedTest {
     @Test
     void committingDueToOverfillWithMultipleRequests() throws InterruptedException {
         final Writer writer = new Writer(
-            Duration.ofMillis(1), 8 * 1024, commitTickScheduler, fileCommitter);
+            time, Duration.ofMillis(1), 8 * 1024, commitTickScheduler, fileCommitter);
 
         final Map<TopicPartition, MemoryRecords> writeRequest0 = Map.of(
             T0P0, recordCreator.create(T0P0, 1),
@@ -119,7 +126,7 @@ class WriterMockedTest {
     @Test
     void committingOnTick() throws InterruptedException {
         final Writer writer = new Writer(
-            Duration.ofMillis(1), 8 * 1024, commitTickScheduler, fileCommitter);
+            time, Duration.ofMillis(1), 8 * 1024, commitTickScheduler, fileCommitter);
 
         final Map<TopicPartition, MemoryRecords> writeRequest = Map.of(
             T0P0, recordCreator.create(T0P0, 1),
@@ -140,7 +147,7 @@ class WriterMockedTest {
     @Test
     void committingDueToClose() throws InterruptedException, IOException {
         final Writer writer = new Writer(
-            Duration.ofMillis(1), 8 * 1024, commitTickScheduler, fileCommitter);
+            time, Duration.ofMillis(1), 8 * 1024, commitTickScheduler, fileCommitter);
 
         final Map<TopicPartition, MemoryRecords> writeRequest = Map.of(
             T0P0, recordCreator.create(T0P0, 1),
@@ -161,7 +168,7 @@ class WriterMockedTest {
     @Test
     void writeAfterRotation() throws InterruptedException {
         final Writer writer = new Writer(
-            Duration.ofMillis(1), 8 * 1024, commitTickScheduler, fileCommitter);
+            time, Duration.ofMillis(1), 8 * 1024, commitTickScheduler, fileCommitter);
 
         final Map<TopicPartition, MemoryRecords> writeRequest = Map.of(
             T0P0, recordCreator.create(T0P0, 100),
@@ -183,7 +190,7 @@ class WriterMockedTest {
     @Test
     void close() throws IOException {
         final Writer writer = new Writer(
-            Duration.ofMillis(1), 8 * 1024, commitTickScheduler, fileCommitter);
+            time, Duration.ofMillis(1), 8 * 1024, commitTickScheduler, fileCommitter);
         reset(commitTickScheduler);
 
         writer.close();
@@ -195,7 +202,7 @@ class WriterMockedTest {
     @Test
     void closeAfterClose() throws IOException {
         final Writer writer = new Writer(
-            Duration.ofMillis(1), 8 * 1024, commitTickScheduler, fileCommitter);
+            time, Duration.ofMillis(1), 8 * 1024, commitTickScheduler, fileCommitter);
         writer.close();
 
         reset(commitTickScheduler);
@@ -210,7 +217,7 @@ class WriterMockedTest {
     @Test
     void tickAfterClose() throws IOException {
         final Writer writer = new Writer(
-            Duration.ofMillis(1), 8 * 1024, commitTickScheduler, fileCommitter);
+            time, Duration.ofMillis(1), 8 * 1024, commitTickScheduler, fileCommitter);
         writer.close();
 
         reset(commitTickScheduler);
@@ -225,7 +232,7 @@ class WriterMockedTest {
     @Test
     void writeAfterClose() throws IOException {
         final Writer writer = new Writer(
-            Duration.ofMillis(1), 8 * 1024, commitTickScheduler, fileCommitter);
+            time, Duration.ofMillis(1), 8 * 1024, commitTickScheduler, fileCommitter);
         writer.close();
         reset(commitTickScheduler);
         reset(fileCommitter);
@@ -245,7 +252,7 @@ class WriterMockedTest {
     @Test
     void commitInterrupted() throws InterruptedException, IOException {
         final Writer writer = new Writer(
-            Duration.ofMillis(1), 8 * 1024, commitTickScheduler, fileCommitter);
+            time, Duration.ofMillis(1), 8 * 1024, commitTickScheduler, fileCommitter);
 
         final InterruptedException interruptedException = new InterruptedException();
         doThrow(interruptedException).when(fileCommitter).commit(any());
@@ -268,19 +275,23 @@ class WriterMockedTest {
     @Test
     void constructorInvalidArguments() {
         assertThatThrownBy(() -> new Writer(
-            null, 8 * 1024, commitTickScheduler, fileCommitter))
+            null, Duration.ofMillis(1), 8 * 1024, commitTickScheduler, fileCommitter))
+            .isInstanceOf(NullPointerException.class)
+            .hasMessage("time cannot be null");
+        assertThatThrownBy(() -> new Writer(
+            time, null, 8 * 1024, commitTickScheduler, fileCommitter))
             .isInstanceOf(NullPointerException.class)
             .hasMessage("commitInterval cannot be null");
         assertThatThrownBy(() -> new Writer(
-            Duration.ofMillis(1), 0, commitTickScheduler, fileCommitter))
+            time, Duration.ofMillis(1), 0, commitTickScheduler, fileCommitter))
             .isInstanceOf(IllegalArgumentException.class)
             .hasMessage("maxBufferSize must be positive");
         assertThatThrownBy(() -> new Writer(
-            Duration.ofMillis(1), 8 * 1024, null, fileCommitter))
+            time, Duration.ofMillis(1), 8 * 1024, null, fileCommitter))
             .isInstanceOf(NullPointerException.class)
             .hasMessage("commitTickScheduler cannot be null");
         assertThatThrownBy(() -> new Writer(
-            Duration.ofMillis(1), 8 * 1024, commitTickScheduler, null))
+            time, Duration.ofMillis(1), 8 * 1024, commitTickScheduler, null))
             .isInstanceOf(NullPointerException.class)
             .hasMessage("fileCommitter cannot be null");
     }
@@ -288,7 +299,7 @@ class WriterMockedTest {
     @Test
     void writeNull() {
         final Writer writer = new Writer(
-            Duration.ofMillis(1), 8 * 1024, commitTickScheduler, fileCommitter);
+            time, Duration.ofMillis(1), 8 * 1024, commitTickScheduler, fileCommitter);
 
         assertThatThrownBy(() -> writer.write(null))
             .isInstanceOf(NullPointerException.class)

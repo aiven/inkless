@@ -3,12 +3,12 @@ package io.aiven.inkless.produce;
 
 import java.io.IOException;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Future;
 
 import org.apache.kafka.common.utils.Time;
 
@@ -41,7 +41,7 @@ import static org.mockito.Mockito.when;
 class FileCommitterTest {
     static final ObjectKey OBJECT_KEY = new PlainObjectKey("prefix/", "value");
     static final ObjectKeyCreator OBJECT_KEY_CREATOR = s -> OBJECT_KEY;
-    static final ClosedFile FILE = new ClosedFile(Map.of(), Map.of(), List.of(), List.of(), new byte[10]);
+    static final ClosedFile FILE = new ClosedFile(Instant.EPOCH, Map.of(), Map.of(), List.of(), List.of(), new byte[10]);
 
     @Mock
     ControlPlane controlPlane;
@@ -53,6 +53,8 @@ class FileCommitterTest {
     ExecutorService executorServiceUpload;
     @Mock
     ExecutorService executorServiceCommit;
+    @Mock
+    FileCommitterMetrics metrics;
 
     @Captor
     ArgumentCaptor<Callable<ObjectKey>> uploadCallableCaptor;
@@ -65,28 +67,44 @@ class FileCommitterTest {
         doNothing()
             .when(objectUploader).upload(eq(OBJECT_KEY), eq(FILE.data()));
 
+        when(time.nanoseconds()).thenReturn(10_000_000L);
+
         final CompletableFuture<ObjectKey> uploadFuture = CompletableFuture.completedFuture(OBJECT_KEY);
         when(executorServiceUpload.submit(any(Callable.class)))
             .thenReturn(uploadFuture);
 
         final FileCommitter committer = new FileCommitter(
             controlPlane, OBJECT_KEY_CREATOR, objectUploader, time, 3, Duration.ofMillis(100),
-            executorServiceUpload, executorServiceCommit);
+            executorServiceUpload, executorServiceCommit, metrics);
 
+        verify(metrics).initTotalFilesInProgressMetric(any());
+        verify(metrics).initTotalBytesInProgressMetric(any());
+
+        assertThat(committer.totalFilesInProgress()).isZero();
         assertThat(committer.totalBytesInProgress()).isZero();
 
         committer.commit(FILE);
 
+        assertThat(committer.totalFilesInProgress()).isOne();
         assertThat(committer.totalBytesInProgress()).isEqualTo(FILE.data().length);
 
-        final Callable<ObjectKey> uploadCallable = verifyCommitCallable();
+        verify(executorServiceUpload).submit(uploadCallableCaptor.capture());
+        final Callable<ObjectKey> uploadCallable = uploadCallableCaptor.getValue();
+
         uploadCallable.call();
 
-        final Runnable commitRunnable = verifyCommitRunnable(uploadFuture);
+        verify(executorServiceCommit).execute(commitRunnableCaptor.capture());
+        final Runnable commitRunnable = commitRunnableCaptor.getValue();
 
         commitRunnable.run();
 
+        assertThat(committer.totalFilesInProgress()).isZero();
         assertThat(committer.totalBytesInProgress()).isZero();
+
+        verify(metrics).fileAdded(eq(FILE.size()));
+        verify(metrics).fileUploadFinished(eq(0L));
+        verify(metrics).fileCommitFinished(eq(0L));
+        verify(metrics).fileFinished(eq(Instant.EPOCH), eq(Instant.ofEpochMilli(10L)));
     }
 
     @Test
@@ -95,87 +113,54 @@ class FileCommitterTest {
         doNothing()
             .when(objectUploader).upload(eq(OBJECT_KEY), eq(FILE.data()));
 
+        when(time.nanoseconds()).thenReturn(10_000_000L);
+
         final CompletableFuture<ObjectKey> uploadFuture = CompletableFuture.failedFuture(new StorageBackendException("test"));
         when(executorServiceUpload.submit(any(Callable.class)))
             .thenReturn(uploadFuture);
 
         final FileCommitter committer = new FileCommitter(
             controlPlane, OBJECT_KEY_CREATOR, objectUploader, time, 3, Duration.ofMillis(100),
-            executorServiceUpload, executorServiceCommit);
+            executorServiceUpload, executorServiceCommit, metrics);
 
+        assertThat(committer.totalFilesInProgress()).isZero();
         assertThat(committer.totalBytesInProgress()).isZero();
 
         committer.commit(FILE);
 
+        assertThat(committer.totalFilesInProgress()).isOne();
         assertThat(committer.totalBytesInProgress()).isEqualTo(FILE.data().length);
 
-        final Callable<ObjectKey> uploadCallable = verifyCommitCallable();
+        verify(executorServiceUpload).submit(uploadCallableCaptor.capture());
+        final Callable<ObjectKey> uploadCallable = uploadCallableCaptor.getValue();
+
         uploadCallable.call();
 
-        final Runnable commitRunnable = verifyCommitRunnable(uploadFuture);
+        verify(executorServiceCommit).execute(commitRunnableCaptor.capture());
+        final Runnable commitRunnable = commitRunnableCaptor.getValue();
 
         commitRunnable.run();
 
+        assertThat(committer.totalFilesInProgress()).isZero();
         assertThat(committer.totalBytesInProgress()).isZero();
-    }
 
-    private Callable<ObjectKey> verifyCommitCallable() {
-        verify(executorServiceUpload).submit(uploadCallableCaptor.capture());
-
-        final Callable<ObjectKey> value = uploadCallableCaptor.getValue();
-        assertThat(value)
-            .isInstanceOf(FileUploadJob.class);
-        assertThat(value)
-            .extracting("objectKeyCreator")
-            .isSameAs(OBJECT_KEY_CREATOR);
-        assertThat(value)
-            .extracting("objectUploader")
-            .isSameAs(objectUploader);
-        assertThat(value)
-            .extracting("time")
-            .isSameAs(time);
-        assertThat(value)
-            .extracting("attempts")
-            .isEqualTo(3);
-        assertThat(value)
-            .extracting("retryBackoff")
-            .isEqualTo(Duration.ofMillis(100));
-        assertThat(value)
-            .extracting("data")
-            .isEqualTo(FILE.data());
-
-        return value;
-    }
-
-    private Runnable verifyCommitRunnable(final Future<ObjectKey> uploadFuture) {
-        verify(executorServiceCommit).submit(commitRunnableCaptor.capture());
-
-        final Runnable value = commitRunnableCaptor.getValue();
-        assertThat(value)
-            .isInstanceOf(FileCommitJob.class);
-        assertThat(value)
-            .extracting("file")
-            .isSameAs(FILE);
-        assertThat(value)
-            .extracting("uploadFuture")
-            .isSameAs(uploadFuture);
-        assertThat(value)
-            .extracting("controlPlane")
-            .isSameAs(controlPlane);
-
-        return value;
+        verify(metrics).fileAdded(eq(FILE.size()));
+        verify(metrics).fileUploadFinished(eq(0L));
+        verify(metrics).fileCommitFinished(eq(0L));
+        verify(metrics).fileFinished(eq(Instant.EPOCH), eq(Instant.ofEpochMilli(10L)));
     }
 
     @Test
     void close() throws IOException {
         final FileCommitter committer = new FileCommitter(
             controlPlane, OBJECT_KEY_CREATOR, objectUploader, time, 3, Duration.ofMillis(100),
-            executorServiceUpload, executorServiceCommit);
+            executorServiceUpload, executorServiceCommit, metrics);
 
         committer.close();
 
         verify(executorServiceUpload).shutdown();
         verify(executorServiceCommit).shutdown();
+        verify(metrics).close();
     }
 
     @Test
@@ -207,22 +192,28 @@ class FileCommitterTest {
         assertThatThrownBy(() ->
             new FileCommitter(
                 controlPlane, OBJECT_KEY_CREATOR, objectUploader, time, 3, Duration.ofMillis(100),
-                null, executorServiceCommit))
+                null, executorServiceCommit, metrics))
             .isInstanceOf(NullPointerException.class)
             .hasMessage("executorServiceUpload cannot be null");
         assertThatThrownBy(() ->
             new FileCommitter(
                 controlPlane, OBJECT_KEY_CREATOR, objectUploader, time, 3, Duration.ofMillis(100),
-                executorServiceUpload, null))
+                executorServiceUpload, null, metrics))
             .isInstanceOf(NullPointerException.class)
             .hasMessage("executorServiceCommit cannot be null");
+        assertThatThrownBy(() ->
+            new FileCommitter(
+                controlPlane, OBJECT_KEY_CREATOR, objectUploader, time, 3, Duration.ofMillis(100),
+                executorServiceUpload, executorServiceCommit, null))
+            .isInstanceOf(NullPointerException.class)
+            .hasMessage("metrics cannot be null");
     }
 
     @Test
     void commitNull() {
         final FileCommitter committer = new FileCommitter(
             controlPlane, OBJECT_KEY_CREATOR, objectUploader, time, 3, Duration.ofMillis(100),
-            executorServiceUpload, executorServiceCommit);
+            executorServiceUpload, executorServiceCommit, metrics);
         assertThatThrownBy(() -> committer.commit(null))
             .isInstanceOf(NullPointerException.class)
             .hasMessage("file cannot be null");

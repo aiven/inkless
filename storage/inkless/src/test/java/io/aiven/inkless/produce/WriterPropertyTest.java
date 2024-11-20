@@ -41,6 +41,7 @@ import net.jqwik.api.ForAll;
 import net.jqwik.api.Property;
 import net.jqwik.api.constraints.IntRange;
 import net.jqwik.api.statistics.Statistics;
+import org.jetbrains.annotations.NotNull;
 import org.junit.jupiter.api.Tag;
 import org.mockito.invocation.Invocation;
 
@@ -95,7 +96,7 @@ class WriterPropertyTest {
         final ControlPlane controlPlane = new ControlPlane(METADATA_VIEW);
         final ObjectUploader objectUploader = mock(ObjectUploader.class);
         final UploaderHandler uploaderHandler = new UploaderHandler(
-            new MockExecutorService(),
+            new MockExecutorServiceWithFutureSupport(),
             new Timer("upload",
                 time,
                 Instant.ofEpochMilli(time.milliseconds()),
@@ -117,10 +118,12 @@ class WriterPropertyTest {
             1,
             Duration.ZERO,
             uploaderHandler.executorService,
-            committerHandler.executorService
+            committerHandler.executorService,
+            mock(FileCommitterMetrics.class)
         );
 
         final Writer writer = new Writer(
+            time,
             Duration.ofMillis(commitIntervalMsAvg),  // it doesn't matter as the scheduling doesn't happen
             maxBufferSize,
             mock(ScheduledExecutorService.class),
@@ -322,42 +325,20 @@ class WriterPropertyTest {
     }
 
     private static class MockExecutorService implements ExecutorService {
-        private final LinkedBlockingQueue<Runnable> queue = new LinkedBlockingQueue<>();
-        private final LinkedBlockingQueue<Future<?>> returnedFutures = new LinkedBlockingQueue<>();
+        protected final LinkedBlockingQueue<Runnable> queue = new LinkedBlockingQueue<>();
 
         @Override
         public void execute(final Runnable command) {
             queue.offer(command);
         }
 
-        @Override
-        public Future<?> submit(final Runnable task) {
-            return this.submit(() -> {
-                task.run();
-                return null;
-            });
-        }
-
-        @Override
-        public <T> Future<T> submit(final Callable<T> task) {
-            final var result = new CompletableFuture<T>();
-            returnedFutures.offer(result);
-            queue.offer(() -> {
-                try {
-                    result.complete(task.call());
-                } catch (final Exception e) {
-                    result.completeExceptionally(e);
-                }
-            });
-            return result;
-        }
-
-        void runNextIfExists() throws InterruptedException {
-            assertThat(returnedFutures.size()).isEqualTo(queue.size());
+        boolean runNextIfExists() throws InterruptedException {
             final Runnable nextRunnable = queue.poll();
             if (nextRunnable != null) {
                 nextRunnable.run();
-                assert returnedFutures.take().isDone();
+                return true;
+            } else {
+                return false;
             }
         }
 
@@ -371,6 +352,16 @@ class WriterPropertyTest {
         }
 
         /* Not implemented functions below */
+
+        @Override
+        public @NotNull <T> Future<T> submit(@NotNull final Callable<T> task) {
+            throw new RuntimeException("Not implemented");
+        }
+
+        @Override
+        public @NotNull Future<?> submit(@NotNull final Runnable task) {
+            throw new RuntimeException("Not implemented");
+        }
 
         @Override
         public <T> Future<T> submit(final Runnable task, final T result) {
@@ -417,11 +408,47 @@ class WriterPropertyTest {
         }
     }
 
+    private static class MockExecutorServiceWithFutureSupport extends MockExecutorService {
+        private final LinkedBlockingQueue<Future<?>> returnedFutures = new LinkedBlockingQueue<>();
+
+        @Override
+        public Future<?> submit(final Runnable task) {
+            return this.submit(() -> {
+                task.run();
+                return null;
+            });
+        }
+
+        @Override
+        public <T> Future<T> submit(final Callable<T> task) {
+            final var result = new CompletableFuture<T>();
+            returnedFutures.offer(result);
+            queue.offer(() -> {
+                try {
+                    result.complete(task.call());
+                } catch (final Exception e) {
+                    result.completeExceptionally(e);
+                }
+            });
+            return result;
+        }
+
+        @Override
+        boolean runNextIfExists() throws InterruptedException {
+            assertThat(returnedFutures.size()).isEqualTo(queue.size());
+            final boolean result = super.runNextIfExists();
+            if (result) {
+                assert returnedFutures.take().isDone();
+            }
+            return result;
+        }
+    }
+
     private static class UploaderHandler {
-        private final MockExecutorService executorService;
+        private final MockExecutorServiceWithFutureSupport executorService;
         private final Timer timer;
 
-        private UploaderHandler(final MockExecutorService executorService,
+        private UploaderHandler(final MockExecutorServiceWithFutureSupport executorService,
                                 final Timer timer) {
             this.executorService = executorService;
             this.timer = timer;

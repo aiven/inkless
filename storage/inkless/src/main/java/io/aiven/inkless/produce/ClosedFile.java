@@ -1,6 +1,7 @@
 // Copyright (c) 2024 Aiven, Helsinki, Finland. https://aiven.io/
 package io.aiven.inkless.produce;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -12,12 +13,14 @@ import org.apache.kafka.common.requests.ProduceResponse.PartitionResponse;
 
 import io.aiven.inkless.control_plane.CommitBatchRequest;
 
-record ClosedFile(Map<Integer, Map<TopicPartition, MemoryRecords>> originalRequests,
+record ClosedFile(Instant start,
+                  Map<Integer, Map<TopicPartition, MemoryRecords>> originalRequests,
                   Map<Integer, CompletableFuture<Map<TopicPartition, PartitionResponse>>> awaitingFuturesByRequest,
                   List<CommitBatchRequest> commitBatchRequests,
                   List<Integer> requestIds,
                   byte[] data) {
     ClosedFile {
+        Objects.requireNonNull(start, "start cannot be null");
         Objects.requireNonNull(originalRequests, "originalRequests cannot be null");
         Objects.requireNonNull(awaitingFuturesByRequest, "awaitingFuturesByRequest cannot be null");
         Objects.requireNonNull(commitBatchRequests, "commitBatchRequests cannot be null");
