@@ -45,7 +45,8 @@ public class ControlPlane {
                 final LogInfo logInfo = logs.computeIfAbsent(topicIdPartition, ignore -> new LogInfo());
                 final long assignedOffset = logInfo.highWatermark;
                 logInfo.highWatermark += request.numberOfRecords();
-                final BatchInfo batchToStore = new BatchInfo(objectKey, request.byteOffset(), request.size(), request.numberOfRecords());
+                // TODO: also compute append timestamp
+                final BatchInfo batchToStore = new BatchInfo(objectKey, request.byteOffset(), request.size(), assignedOffset, request.numberOfRecords());
                 this.batches
                     .computeIfAbsent(topicIdPartition, ignore -> new TreeMap<>())
                     .put(assignedOffset, batchToStore);
