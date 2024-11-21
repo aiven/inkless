@@ -19,6 +19,7 @@ package kafka.server;
 import io.aiven.inkless.config.InklessConfig;
 import io.aiven.inkless.storage_backend.s3.S3Storage;
 import io.aiven.inkless.storage_backend.s3.S3StorageConfig;
+import io.aiven.inkless.test_utils.S3TestContainer;
 import org.apache.kafka.clients.CommonClientConfigs;
 import org.apache.kafka.clients.admin.Admin;
 import org.apache.kafka.clients.admin.AdminClient;
@@ -52,29 +53,54 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
+import org.testcontainers.containers.localstack.LocalStackContainer;
+import org.testcontainers.junit.jupiter.Container;
+import org.testcontainers.junit.jupiter.Testcontainers;
+import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
+import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
+import software.amazon.awssdk.regions.Region;
+import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.services.s3.model.CreateBucketRequest;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
+@Testcontainers
 public class InklessClusterTest {
 
     private static final Logger log = LoggerFactory.getLogger(InklessClusterTest.class);
+
+    @Container
+    private static final LocalStackContainer LOCALSTACK = S3TestContainer.container();
     private KafkaClusterTestKit cluster;
 
     @BeforeEach
     public void setup() throws Exception {
+        final String bucketName = "inkless";
+        try (S3Client s3Client = S3Client.builder()
+            .region(Region.of(LOCALSTACK.getRegion()))
+            .endpointOverride(LOCALSTACK.getEndpointOverride(LocalStackContainer.Service.S3))
+            .credentialsProvider(
+                StaticCredentialsProvider.create(
+                    AwsBasicCredentials.create(LOCALSTACK.getAccessKey(), LOCALSTACK.getSecretKey())
+                )
+            )
+            .build()) {
+            s3Client.createBucket(CreateBucketRequest.builder().bucket(bucketName).build());
+        }
+
         cluster = new KafkaClusterTestKit.Builder(new TestKitNodes.Builder()
                 .setCombined(true)
                 .setNumBrokerNodes(1)
                 .setNumControllerNodes(1)
                 .build())
                 .setConfigProp(InklessConfig.PREFIX + InklessConfig.STORAGE_BACKEND_CLASS_CONFIG, S3Storage.class.getName())
-                .setConfigProp(InklessConfig.PREFIX + InklessConfig.STORAGE_PREFIX + S3StorageConfig.S3_BUCKET_NAME_CONFIG, "inkless")
-                .setConfigProp(InklessConfig.PREFIX + InklessConfig.STORAGE_PREFIX + S3StorageConfig.S3_REGION_CONFIG, "us-east-1")
+                .setConfigProp(InklessConfig.PREFIX + InklessConfig.STORAGE_PREFIX + S3StorageConfig.S3_BUCKET_NAME_CONFIG, bucketName)
+                .setConfigProp(InklessConfig.PREFIX + InklessConfig.STORAGE_PREFIX + S3StorageConfig.S3_REGION_CONFIG, LOCALSTACK.getRegion())
                 // Localstack
-                .setConfigProp(InklessConfig.PREFIX + InklessConfig.STORAGE_PREFIX + S3StorageConfig.S3_ENDPOINT_URL_CONFIG, "http://127.0.0.1:4566")
+                .setConfigProp(InklessConfig.PREFIX + InklessConfig.STORAGE_PREFIX + S3StorageConfig.S3_ENDPOINT_URL_CONFIG, LOCALSTACK.getEndpointOverride(LocalStackContainer.Service.S3).toString())
                 .setConfigProp(InklessConfig.PREFIX + InklessConfig.STORAGE_PREFIX + S3StorageConfig.S3_PATH_STYLE_ENABLED_CONFIG, "true")
-                .setConfigProp(InklessConfig.PREFIX + InklessConfig.STORAGE_PREFIX + S3StorageConfig.AWS_ACCESS_KEY_ID_CONFIG, "123")
-                .setConfigProp(InklessConfig.PREFIX + InklessConfig.STORAGE_PREFIX + S3StorageConfig.AWS_SECRET_ACCESS_KEY_CONFIG, "abc")
+                .setConfigProp(InklessConfig.PREFIX + InklessConfig.STORAGE_PREFIX + S3StorageConfig.AWS_ACCESS_KEY_ID_CONFIG, LOCALSTACK.getAccessKey())
+                .setConfigProp(InklessConfig.PREFIX + InklessConfig.STORAGE_PREFIX + S3StorageConfig.AWS_SECRET_ACCESS_KEY_CONFIG, LOCALSTACK.getSecretKey())
                 .build();
         cluster.format();
         cluster.startup();
