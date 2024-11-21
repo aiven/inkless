@@ -68,7 +68,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("image", help="Image name that you want to keep for the Docker image")
     parser.add_argument("--image-tag", "-tag", default="latest", dest="tag", help="Image tag that you want to add to the image")
-    parser.add_argument("--image-type", "-type", choices=["jvm", "native"], default="jvm", dest="image_type", help="Image type you want to build")
+    parser.add_argument("--image-type", "-type", choices=["jvm", "native", "inkless"], default="jvm", dest="image_type", help="Image type you want to build")
     parser.add_argument("--kafka-url", "-u", dest="kafka_url", help="Kafka url to be used to download kafka binary tarball in the docker image")
     parser.add_argument("--build", "-b", action="store_true", dest="build_only", default=False, help="Only build the image, don't run tests")
     parser.add_argument("--test", "-t", action="store_true", dest="test_only", default=False, help="Only run the tests, don't build the image")
@@ -78,7 +78,10 @@ if __name__ == '__main__':
         if args.kafka_url:
             build_docker_image(args.image, args.tag, args.kafka_url, args.image_type)
         else:
-            raise ValueError("--kafka-url is a required argument for docker image")
-    
+            if args.image_type == "inkless":
+                build_docker_image(args.image, args.tag, "", args.image_type)
+            else:
+                raise ValueError("--kafka-url is a required argument for docker image")
+
     if args.test_only or not (args.build_only or args.test_only):
         run_docker_tests(args.image, args.tag, args.kafka_url, args.image_type)

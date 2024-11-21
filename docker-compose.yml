@@ -1,7 +1,72 @@
-version: "3.8"
-
 services:
-  localstack:
-    image: localstack/localstack:s3-latest
+  broker:
+    image: kafka/test:4.0.0-inkless-SNAPSHOT
     ports:
-      - "127.0.0.1:4566:4566"
+      - "9092:9092"
+      - "7070:7070" # prometheus metrics
+      - "9999:9999" # jmx port
+    environment:
+      CLUSTER_ID: "4L6g3nShT-eMCtK--X86sw"
+      KAFKA_PROCESS_ROLES: "broker,controller"
+      KAFKA_NODE_ID: 1
+      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@broker:29093"
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT"
+      KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT_HOST://localhost:9092,PLAINTEXT://broker:19092"
+      KAFKA_LISTENERS: "CONTROLLER://:29093,PLAINTEXT_HOST://:9092,PLAINTEXT://:19092"
+      KAFKA_INTER_BROKER_LISTENER_NAME: "PLAINTEXT"
+      KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_LOG_DIRS: "/tmp/kraft-combined-logs"
+      # Inkless
+      KAFKA_INKLESS_STORAGE_BACKEND_CLASS: "io.aiven.inkless.storage_backend.s3.S3Storage"
+      KAFKA_INKLESS_STORAGE_S3_PATH_STYLE_ACCESS_ENABLED: "true"
+      KAFKA_INKLESS_STORAGE_S3_BUCKET_NAME: "inkless"
+      KAFKA_INKLESS_STORAGE_S3_REGION: "us-east-1"
+      KAFKA_INKLESS_STORAGE_S3_ENDPOINT_URL: "http://minio:9000"
+      KAFKA_INKLESS_STORAGE_AWS_ACCESS_KEY_ID: "minioadmin"
+      KAFKA_INKLESS_STORAGE_AWS_SECRET_ACCESS_KEY: "minioadmin"
+      # JMX
+      KAFKA_JMX_PORT: 9999
+      EXTRA_ARGS: -javaagent:/opt/prometheus-jmx-exporter/jmx_prometheus_javaagent.jar=7070:/opt/prometheus-jmx-exporter/kafka.yml
+    volumes:
+      - ./docker/extra/prometheus-jmx-exporter:/opt/prometheus-jmx-exporter
+
+  # Object storage
+  minio:
+    image: quay.io/minio/minio
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    command: server /data --console-address ":9001"
+
+  minio-create_bucket:
+    image: quay.io/minio/mc
+    restart: "no"
+    depends_on:
+      - minio
+    entrypoint: >
+      /bin/sh -c "
+      until /usr/bin/mc config host add local http://minio:9000 minioadmin minioadmin; do
+        echo 'Waiting for Minio...';
+        sleep 5;
+      done;
+      /usr/bin/mc mb local/inkless;
+      exit 0;
+      "
+
+  # Monitoring
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./docker/extra/prometheus/config/:/etc/prometheus/
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./docker/extra/grafana/:/etc/grafana/provisioning/
