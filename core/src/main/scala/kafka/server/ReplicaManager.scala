@@ -817,13 +817,14 @@ class ReplicaManager(val config: KafkaConfig,
                     recordValidationStatsCallback: Map[TopicPartition, RecordValidationStats] => Unit = _ => (),
                     requestLocal: RequestLocal = RequestLocal.noCaching,
                     actionQueue: ActionQueue = this.defaultActionQueue,
-                    verificationGuards: Map[TopicPartition, VerificationGuard] = Map.empty): Unit = {
+                    verificationGuards: Map[TopicPartition, VerificationGuard] = Map.empty,
+                    requestVersion: Short = 0): Unit = {
     if (!isValidRequiredAcks(requiredAcks)) {
       sendInvalidRequiredAcksResponse(entriesPerPartition, responseCallback)
       return
     }
 
-    if (inklessAppendInterceptor.intercept(entriesPerPartition.asJava, r => responseCallback(r.asScala))) {
+    if (inklessAppendInterceptor.intercept(requestVersion, entriesPerPartition.asJava, r => responseCallback(r.asScala))) {
       return
     }
 
@@ -879,7 +880,8 @@ class ReplicaManager(val config: KafkaConfig,
                           recordValidationStatsCallback: Map[TopicPartition, RecordValidationStats] => Unit = _ => (),
                           requestLocal: RequestLocal = RequestLocal.noCaching,
                           actionQueue: ActionQueue = this.defaultActionQueue,
-                          transactionSupportedOperation: TransactionSupportedOperation): Unit = {
+                          transactionSupportedOperation: TransactionSupportedOperation,
+                          requestVersion: Short = 0): Unit = {
 
     val transactionalProducerInfo = mutable.HashSet[(Long, Short)]()
     val topicPartitionBatchInfo = mutable.Map[TopicPartition, Int]()
@@ -938,7 +940,8 @@ class ReplicaManager(val config: KafkaConfig,
         recordValidationStatsCallback = recordValidationStatsCallback,
         requestLocal = newRequestLocal,
         actionQueue = actionQueue,
-        verificationGuards = verificationGuards
+        verificationGuards = verificationGuards,
+        requestVersion = requestVersion
       )
     }
 

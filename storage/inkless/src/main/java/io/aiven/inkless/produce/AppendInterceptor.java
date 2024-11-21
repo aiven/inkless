@@ -8,19 +8,13 @@ import java.util.Map;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
 
-import io.aiven.inkless.common.SharedState;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.record.MemoryRecords;
 import org.apache.kafka.common.requests.ProduceResponse.PartitionResponse;
-import org.apache.kafka.common.utils.Time;
 
-import io.aiven.inkless.common.ObjectKeyCreator;
 import io.aiven.inkless.common.PlainObjectKey;
-import io.aiven.inkless.config.InklessConfig;
-import io.aiven.inkless.control_plane.ControlPlane;
-import io.aiven.inkless.control_plane.MetadataView;
-import io.aiven.inkless.storage_backend.common.StorageBackend;
+import io.aiven.inkless.common.SharedState;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -31,13 +25,27 @@ public class AppendInterceptor implements Closeable {
     private final SharedState state;
     private final Writer writer;
 
-    public AppendInterceptor(SharedState state) {
+    public AppendInterceptor(final SharedState state) {
+        this(
+            state,
+            new Writer(
+                state.time(),
+                (s) -> new PlainObjectKey(state.config().objectKeyPrefix(), s),
+                state.storage(),
+                state.controlPlane(),
+                state.config().commitInterval(),
+                state.config().produceBufferMaxBytes(),
+                state.config().produceMaxUploadAttempts(),
+                state.config().produceUploadBackoff()
+            )
+        );
+    }
+
+    // Visible for tests
+    AppendInterceptor(final SharedState state,
+                      final Writer writer) {
         this.state = state;
-        final ObjectKeyCreator objectKeyCreator = (s) -> new PlainObjectKey(state.config().objectKeyPrefix(), s);
-        this.writer = new Writer(
-            state.time(), objectKeyCreator, state.storage(), state.controlPlane(),
-            state.config().commitInterval(), state.config().produceBufferMaxBytes(),
-                state.config().produceMaxUploadAttempts(), state.config().produceUploadBackoff());
+        this.writer = writer;
     }
 
     /**
@@ -46,7 +54,8 @@ public class AppendInterceptor implements Closeable {
      * <p>If the interception happened, the {@code responseCallback} is called from inside the interceptor.
      * @return {@code true} if interception happened
      */
-    public boolean intercept(final Map<TopicPartition, MemoryRecords> entriesPerPartition,
+    public boolean intercept(final short requestVersion,
+                             final Map<TopicPartition, MemoryRecords> entriesPerPartition,
                              final Consumer<Map<TopicPartition, PartitionResponse>> responseCallback) {
         final EntrySeparationResult entrySeparationResult = separateEntries(entriesPerPartition);
         if (entrySeparationResult.bothTypesPresent()) {
@@ -62,6 +71,13 @@ public class AppendInterceptor implements Closeable {
         // This request produces only to classic topics, don't intercept.
         if (!entrySeparationResult.entitiesForNonInklessTopics.isEmpty()) {
             return false;
+        }
+
+        // We do this to ensure each topic-partition has exactly one batch in the request.
+        // The check itself is done in KafkaApis.handleProduceRequest, but it's performed only for version >= 3.
+        // If we enforce the version here, we piggyback on the original Kafka check.
+        if (rejectRequestsWithVersionOlderThan3(requestVersion, entriesPerPartition, responseCallback)) {
+            return true;
         }
 
         if (rejectIdempotentProduce(entriesPerPartition, responseCallback)) {
@@ -94,6 +110,24 @@ public class AppendInterceptor implements Closeable {
             }
         }
         return new EntrySeparationResult(entitiesForInklessTopics, entitiesForNonInklessTopics);
+    }
+
+    private boolean rejectRequestsWithVersionOlderThan3(
+        final short requestVersion,
+        final Map<TopicPartition, MemoryRecords> entriesPerPartition,
+        final Consumer<Map<TopicPartition, PartitionResponse>> responseCallback
+    ) {
+        if (requestVersion >= 3) {
+            return false;
+        } else {
+            LOGGER.warn("Produce requests with version < 3 are not supported by Inkless");
+            final var result = entriesPerPartition.entrySet().stream()
+                .collect(Collectors.toMap(
+                    Map.Entry::getKey,
+                    ignore -> new PartitionResponse(Errors.INVALID_REQUEST)));
+            responseCallback.accept(result);
+            return true;
+        }
     }
 
     private boolean rejectIdempotentProduce(final Map<TopicPartition, MemoryRecords> entriesPerPartition,
