@@ -1,13 +1,18 @@
 // Copyright (c) 2024 Aiven, Helsinki, Finland. https://aiven.io/
 package io.aiven.inkless.consume;
 
+import io.aiven.inkless.common.SharedState;
 import io.aiven.inkless.config.InklessConfig;
+import io.aiven.inkless.control_plane.ControlPlane;
 import io.aiven.inkless.control_plane.MetadataView;
+import io.aiven.inkless.storage_backend.common.StorageBackend;
 import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.message.ApiMessageType;
 import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.requests.FetchRequest;
+import org.apache.kafka.common.utils.MockTime;
+import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.server.storage.log.FetchIsolation;
 import org.apache.kafka.server.storage.log.FetchParams;
 import org.apache.kafka.server.storage.log.FetchPartitionData;
@@ -36,10 +41,15 @@ import static org.mockito.Mockito.when;
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.STRICT_STUBS)
 public class FetchInterceptorTest {
+    Time time = new MockTime();
     @Mock
     InklessConfig inklessConfig;
     @Mock
     MetadataView metadataView;
+    @Mock
+    ControlPlane controlPlane;
+    @Mock
+    StorageBackend storageBackend;
     @Mock
     Consumer<Map<TopicIdPartition, FetchPartitionData>> responseCallback;
 
@@ -55,7 +65,7 @@ public class FetchInterceptorTest {
     public void mixingInklessAndClassicTopicsIsNotAllowed() {
         when(metadataView.isInklessTopic(eq("inkless"))).thenReturn(true);
         when(metadataView.isInklessTopic(eq("non_inkless"))).thenReturn(false);
-        final FetchInterceptor interceptor = new FetchInterceptor(inklessConfig, metadataView);
+        final FetchInterceptor interceptor = new FetchInterceptor(new SharedState(time, inklessConfig, metadataView, controlPlane, storageBackend));
 
         final FetchParams params = new FetchParams(fetchVersion,
                 -1, -1, -1, -1, -1,
@@ -89,7 +99,7 @@ public class FetchInterceptorTest {
     @Test
     public void notInterceptProducingToClassicTopics() {
         when(metadataView.isInklessTopic(eq("non_inkless"))).thenReturn(false);
-        final FetchInterceptor interceptor = new FetchInterceptor(inklessConfig, metadataView);
+        final FetchInterceptor interceptor = new FetchInterceptor(new SharedState(time, inklessConfig, metadataView, controlPlane, storageBackend));
 
         final FetchParams params = new FetchParams(fetchVersion,
                 -1, -1, -1, -1, -1,

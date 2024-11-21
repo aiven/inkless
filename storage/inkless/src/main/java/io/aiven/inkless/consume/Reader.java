@@ -12,6 +12,7 @@ import org.apache.kafka.server.storage.log.FetchPartitionData;
 
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -53,11 +54,11 @@ public class Reader {
         this.fetchCompleterExecutor = fetchCompleterExecutor;
     }
 
-    public Future<Map<TopicIdPartition, FetchPartitionData>> fetch(
+    public CompletableFuture<Map<TopicIdPartition, FetchPartitionData>> fetch(
             final FetchParams params,
             final Map<TopicIdPartition, FetchRequest.PartitionData> fetchInfos) {
         Future<Map<TopicIdPartition, FindBatchResponse>> batchCoordinates = metadataExecutor.submit(new FindBatchesJob(controlPlane, params, fetchInfos));
         Future<List<Future<FetchedFile>>> fetchedData = fetchPlannerExecutor.submit(new FetchPlannerJob(objectFetcher, dataExecutor, batchCoordinates));
-        return fetchCompleterExecutor.submit(new FetchCompleterJob(fetchInfos, batchCoordinates, fetchedData));
+        return CompletableFuture.supplyAsync(new FetchCompleterJob(fetchInfos, batchCoordinates, fetchedData), fetchCompleterExecutor);
     }
 }

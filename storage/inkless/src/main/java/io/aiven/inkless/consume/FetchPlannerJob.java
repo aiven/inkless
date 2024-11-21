@@ -6,6 +6,7 @@ import io.aiven.inkless.control_plane.BatchInfo;
 import io.aiven.inkless.control_plane.FindBatchResponse;
 import io.aiven.inkless.storage_backend.common.ObjectFetcher;
 import org.apache.kafka.common.TopicIdPartition;
+import org.apache.kafka.common.protocol.Errors;
 
 import java.util.List;
 import java.util.Map;
@@ -47,6 +48,7 @@ public class FetchPlannerJob implements Callable<List<Future<FetchedFile>>> {
 
     private List<Callable<FetchedFile>> planJobs(Map<TopicIdPartition, FindBatchResponse> batchCoordinates) {
         return batchCoordinates.values().stream()
+                .filter(findBatch -> findBatch.errors() == Errors.NONE)
                 .map(FindBatchResponse::batches)
                 .flatMap(List::stream)
                 // Merge batch requests

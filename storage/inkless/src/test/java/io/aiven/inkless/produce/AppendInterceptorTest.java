@@ -5,6 +5,8 @@ import java.time.Duration;
 import java.util.Map;
 import java.util.function.Consumer;
 
+import io.aiven.inkless.common.SharedState;
+import io.aiven.inkless.control_plane.ControlPlane;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.compress.Compression;
 import org.apache.kafka.common.protocol.Errors;
@@ -12,6 +14,7 @@ import org.apache.kafka.common.record.MemoryRecords;
 import org.apache.kafka.common.record.SimpleRecord;
 import org.apache.kafka.common.record.TimestampType;
 import org.apache.kafka.common.requests.ProduceResponse.PartitionResponse;
+import org.apache.kafka.common.utils.MockTime;
 import org.apache.kafka.common.utils.Time;
 
 import io.aiven.inkless.config.InklessConfig;
@@ -39,10 +42,15 @@ import static org.mockito.Mockito.when;
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.STRICT_STUBS)
 public class AppendInterceptorTest {
+    Time time = new MockTime();
     @Mock
     InklessConfig inklessConfig;
     @Mock
     MetadataView metadataView;
+    @Mock
+    ControlPlane controlPlane;
+    @Mock
+    StorageBackend storageBackend;
     @Mock
     Consumer<Map<TopicPartition, PartitionResponse>> responseCallback;
 
@@ -51,7 +59,6 @@ public class AppendInterceptorTest {
 
     @BeforeEach
     void setup() {
-        when(inklessConfig.storage()).thenReturn(mock(StorageBackend.class));
         when(inklessConfig.commitInterval()).thenReturn(Duration.ofMillis(1));
         when(inklessConfig.produceBufferMaxBytes()).thenReturn(1);
         when(inklessConfig.produceMaxUploadAttempts()).thenReturn(1);
@@ -87,7 +94,7 @@ public class AppendInterceptorTest {
     public void mixingInklessAndClassicTopicsIsNotAllowed() {
         when(metadataView.isInklessTopic(eq("inkless"))).thenReturn(true);
         when(metadataView.isInklessTopic(eq("non_inkless"))).thenReturn(false);
-        final AppendInterceptor interceptor = new AppendInterceptor(inklessConfig, metadataView, Time.SYSTEM);
+        final AppendInterceptor interceptor = new AppendInterceptor(new SharedState(time, inklessConfig, metadataView, controlPlane, storageBackend));
 
         final Map<TopicPartition, MemoryRecords> entriesPerPartition = Map.of(
             new TopicPartition("inkless", 0),
@@ -111,7 +118,7 @@ public class AppendInterceptorTest {
     @Test
     public void notInterceptProducingToClassicTopics() {
         when(metadataView.isInklessTopic(eq("non_inkless"))).thenReturn(false);
-        final AppendInterceptor interceptor = new AppendInterceptor(inklessConfig, metadataView, Time.SYSTEM);
+        final AppendInterceptor interceptor = new AppendInterceptor(new SharedState(time, inklessConfig, metadataView, controlPlane, storageBackend));
 
         final Map<TopicPartition, MemoryRecords> entriesPerPartition = Map.of(
             new TopicPartition("non_inkless", 0),
@@ -127,7 +134,7 @@ public class AppendInterceptorTest {
     public void rejectIdempotentProduceForInklessTopics() {
         when(metadataView.isInklessTopic(eq("inkless1"))).thenReturn(true);
         when(metadataView.isInklessTopic(eq("inkless2"))).thenReturn(true);
-        final AppendInterceptor interceptor = new AppendInterceptor(inklessConfig, metadataView, Time.SYSTEM);
+        final AppendInterceptor interceptor = new AppendInterceptor(new SharedState(time, inklessConfig, metadataView, controlPlane, storageBackend));
 
         final Map<TopicPartition, MemoryRecords> entriesPerPartition = Map.of(
             new TopicPartition("inkless1", 0),
@@ -151,7 +158,7 @@ public class AppendInterceptorTest {
     @Test
     public void acceptIdempotentProduceForNonInklessTopics() {
         when(metadataView.isInklessTopic(eq("non_inkless"))).thenReturn(false);
-        final AppendInterceptor interceptor = new AppendInterceptor(inklessConfig, metadataView, Time.SYSTEM);
+        final AppendInterceptor interceptor = new AppendInterceptor(new SharedState(time, inklessConfig, metadataView, controlPlane, storageBackend));
 
         final Map<TopicPartition, MemoryRecords> entriesPerPartition = Map.of(
             new TopicPartition("non_inkless", 0),
