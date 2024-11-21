@@ -1124,6 +1124,17 @@ project(':core') {
     testImplementation libs.slf4jReload4j
     testImplementation libs.caffeine
 
+    // testcontainers for inkless cluster tests
+    testImplementation libs.assertj
+    testImplementation libs.junitJupiter
+    testImplementation libs.mockitoCore
+    testImplementation libs.mockitoJunitJupiter // supports MockitoExtension
+    testImplementation libs.testcontainers
+    testImplementation libs.testcontainersJunitJupiter
+    testImplementation libs.testcontainersLocalstack
+    testImplementation libs.awsskdS3
+    testImplementation project(':storage:inkless').sourceSets.test.output.classesDirs
+
     testRuntimeOnly libs.junitPlatformLanucher
   }
 
