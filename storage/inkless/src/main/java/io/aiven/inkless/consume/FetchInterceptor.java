@@ -1,11 +1,14 @@
 // Copyright (c) 2024 Aiven, Helsinki, Finland. https://aiven.io/
 package io.aiven.inkless.consume;
 
+import io.aiven.inkless.common.SharedState;
 import io.aiven.inkless.config.InklessConfig;
 import io.aiven.inkless.control_plane.MetadataView;
 import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.protocol.Errors;
+import org.apache.kafka.common.record.MemoryRecords;
 import org.apache.kafka.common.requests.FetchRequest;
+import org.apache.kafka.common.requests.ProduceResponse;
 import org.apache.kafka.server.storage.log.FetchParams;
 import org.apache.kafka.server.storage.log.FetchPartitionData;
 import org.slf4j.Logger;
@@ -18,19 +21,19 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.OptionalLong;
+import java.util.concurrent.CompletableFuture;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
 
 public class FetchInterceptor implements Closeable {
     private static final Logger LOGGER = LoggerFactory.getLogger(FetchInterceptor.class);
 
-    private final InklessConfig inklessConfig;
-    private final MetadataView metadataView;
+    private final SharedState state;
+    private final Reader reader;
 
-    public FetchInterceptor(final InklessConfig inklessConfig,
-                            final MetadataView metadataView) {
-        this.inklessConfig = inklessConfig;
-        this.metadataView = metadataView;
+    public FetchInterceptor(final SharedState state) {
+        this.state = state;
+        this.reader = new Reader(state.controlPlane(), state.storage());
     }
 
     public boolean intercept(final FetchParams params,
@@ -56,6 +59,20 @@ public class FetchInterceptor implements Closeable {
             return false;
         }
 
+        final var resultFuture = reader.fetch(params, fetchInfos);
+        resultFuture.whenComplete((result, e) -> {
+            if (result == null) {
+                // We don't really expect this future to fail, but in case it does...
+                LOGGER.error("Read future failed", e);
+                final var error = new FetchPartitionData(Errors.UNKNOWN_SERVER_ERROR, -1, -1,
+                        MemoryRecords.EMPTY, Optional.empty(), OptionalLong.empty(),
+                        Optional.empty(), OptionalInt.empty(), false);
+                result = fetchInfos.entrySet().stream()
+                        .collect(Collectors.toMap(Map.Entry::getKey, ignore -> error));
+            }
+            responseCallback.accept(result);
+        });
+
         return true;
     }
 
@@ -64,7 +81,7 @@ public class FetchInterceptor implements Closeable {
         final Map<TopicIdPartition, FetchRequest.PartitionData> entitiesForInklessTopics = new HashMap<>();
         final Map<TopicIdPartition, FetchRequest.PartitionData> entitiesForNonInklessTopics = new HashMap<>();
         for (final var entry : entriesPerPartition.entrySet()) {
-            if (metadataView.isInklessTopic(entry.getKey().topic())) {
+            if (state.metadata().isInklessTopic(entry.getKey().topic())) {
                 entitiesForInklessTopics.put(entry.getKey(), entry.getValue());
             } else {
                 entitiesForNonInklessTopics.put(entry.getKey(), entry.getValue());

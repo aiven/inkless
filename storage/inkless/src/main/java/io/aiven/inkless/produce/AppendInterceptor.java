@@ -8,6 +8,7 @@ import java.util.Map;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
 
+import io.aiven.inkless.common.SharedState;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.record.MemoryRecords;
@@ -27,22 +28,16 @@ import org.slf4j.LoggerFactory;
 public class AppendInterceptor implements Closeable {
     private static final Logger LOGGER = LoggerFactory.getLogger(AppendInterceptor.class);
 
-    private final InklessConfig config;
-    private final MetadataView metadataView;
+    private final SharedState state;
     private final Writer writer;
 
-    public AppendInterceptor(final InklessConfig config,
-                             final MetadataView metadataView,
-                             final Time time) {
-        this.config = config;
-        this.metadataView = metadataView;
-
-        final ObjectKeyCreator objectKeyCreator = (s) -> new PlainObjectKey(config.objectKeyPrefix(), s);
-        final StorageBackend storageBackend = config.storage();
-        final ControlPlane controlPlane = new ControlPlane(metadataView);
+    public AppendInterceptor(SharedState state) {
+        this.state = state;
+        final ObjectKeyCreator objectKeyCreator = (s) -> new PlainObjectKey(state.config().objectKeyPrefix(), s);
         this.writer = new Writer(
-            time, objectKeyCreator, storageBackend, controlPlane,
-            config.commitInterval(), config.produceBufferMaxBytes(), config.produceMaxUploadAttempts(), config.produceUploadBackoff());
+            state.time(), objectKeyCreator, state.storage(), state.controlPlane(),
+            state.config().commitInterval(), state.config().produceBufferMaxBytes(),
+                state.config().produceMaxUploadAttempts(), state.config().produceUploadBackoff());
     }
 
     /**
@@ -92,7 +87,7 @@ public class AppendInterceptor implements Closeable {
         final Map<TopicPartition, MemoryRecords> entitiesForInklessTopics = new HashMap<>();
         final Map<TopicPartition, MemoryRecords> entitiesForNonInklessTopics = new HashMap<>();
         for (final var entry : entriesPerPartition.entrySet()) {
-            if (metadataView.isInklessTopic(entry.getKey().topic())) {
+            if (state.metadata().isInklessTopic(entry.getKey().topic())) {
                 entitiesForInklessTopics.put(entry.getKey(), entry.getValue());
             } else {
                 entitiesForNonInklessTopics.put(entry.getKey(), entry.getValue());

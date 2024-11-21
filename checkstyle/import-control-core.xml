@@ -103,6 +103,7 @@
   <subpackage name="server">
     <allow pkg="kafka" />
     <allow pkg="org.apache.kafka" />
+    <allow pkg="io.aiven.inkless" />
   </subpackage>
 
   <subpackage name="test">

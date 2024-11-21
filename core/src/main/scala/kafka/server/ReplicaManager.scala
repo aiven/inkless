@@ -17,6 +17,7 @@
 package kafka.server
 
 import com.yammer.metrics.core.Meter
+import io.aiven.inkless.common.SharedState
 import io.aiven.inkless.consume.FetchInterceptor
 import io.aiven.inkless.produce.AppendInterceptor
 import kafka.cluster.{Partition, PartitionListener}
@@ -311,8 +312,9 @@ class ReplicaManager(val config: KafkaConfig,
       "ShareFetch", config.brokerId,
       config.shareGroupConfig.shareFetchPurgatoryPurgeIntervalRequests))
 
-  private val inklessAppendInterceptor = new AppendInterceptor(config.inklessConfig, new InklessMetadataView(metadataCache), time)
-  private val inklessFetchInterceptor = new FetchInterceptor(config.inklessConfig, new InklessMetadataView(metadataCache))
+  private val inklessSharedState = SharedState.initialize(time, config.inklessConfig, new InklessMetadataView(metadataCache))
+  private val inklessAppendInterceptor = new AppendInterceptor(inklessSharedState)
+  private val inklessFetchInterceptor = new FetchInterceptor(inklessSharedState)
 
   /* epoch of the controller that last changed the leader */
   @volatile private[server] var controllerEpoch: Int = 0

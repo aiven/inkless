@@ -33,7 +33,7 @@ public class S3StorageConfig extends AbstractConfig {
         + "To be used with custom S3-compatible backends (e.g. minio).";
     public static final String S3_REGION_CONFIG = "s3.region";
     private static final String S3_REGION_DOC = "AWS region where S3 bucket is placed";
-    static final String S3_PATH_STYLE_ENABLED_CONFIG = "s3.path.style.access.enabled";
+    public static final String S3_PATH_STYLE_ENABLED_CONFIG = "s3.path.style.access.enabled";
     private static final String S3_PATH_STYLE_ENABLED_DOC = "Whether to use path style access or virtual hosts. "
         + "By default, empty value means S3 library will auto-detect. "
         + "Amazon S3 uses virtual hosts by default (true), but other S3-compatible backends may differ (e.g. minio).";

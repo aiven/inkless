@@ -21,9 +21,10 @@ import java.util.OptionalLong;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
-public class FetchCompleterJob implements Callable<Map<TopicIdPartition, FetchPartitionData>> {
+public class FetchCompleterJob implements Supplier<Map<TopicIdPartition, FetchPartitionData>> {
 
     private final Map<TopicIdPartition, FetchRequest.PartitionData> fetchInfos;
     private final Future<Map<TopicIdPartition, FindBatchResponse>> coordinates;
@@ -38,10 +39,13 @@ public class FetchCompleterJob implements Callable<Map<TopicIdPartition, FetchPa
     }
 
     @Override
-    public Map<TopicIdPartition, FetchPartitionData> call() throws Exception {
-        Map<TopicIdPartition, FindBatchResponse> metadata = coordinates.get();
-        Map<ObjectKey, List<FetchedFile>> files = waitForFileData();
-        return serveFetch(metadata, files);
+    public Map<TopicIdPartition, FetchPartitionData> get() {
+        try {
+            Map<ObjectKey, List<FetchedFile>> files = waitForFileData();
+            return serveFetch(coordinates.get(), files);
+        } catch (InterruptedException | ExecutionException e) {
+            throw new RuntimeException(e);
+        }
     }
 
     private Map<ObjectKey, List<FetchedFile>> waitForFileData() throws InterruptedException, ExecutionException {
@@ -74,9 +78,9 @@ public class FetchCompleterJob implements Callable<Map<TopicIdPartition, FetchPa
 
     private FetchPartitionData servePartition(TopicIdPartition key, Map<TopicIdPartition, FindBatchResponse> allMetadata, Map<ObjectKey, List<FetchedFile>> allFiles) {
         FindBatchResponse metadata = allMetadata.get(key);
-        if (metadata.batches().isEmpty()) {
+        if (metadata.errors() != Errors.NONE) {
             return new FetchPartitionData(
-                    Errors.NONE,
+                    metadata.errors(),
                     metadata.highWatermark(),
                     metadata.logStartOffset(),
                     MemoryRecords.EMPTY,
@@ -90,6 +94,9 @@ public class FetchCompleterJob implements Callable<Map<TopicIdPartition, FetchPa
         for (BatchInfo batch : metadata.batches()) {
             // TODO: concatenate MemoryRecords together to increase fetch response size up to the defined limits
             List<FetchedFile> files = allFiles.get(batch.objectKey());
+            if (files == null || files.isEmpty()) {
+                continue;
+            }
             for (FetchedFile file : files) {
                 if (file.range().contains(batch.range())) {
                     MemoryRecords records = MemoryRecords.readableRecords(file.buffer());
