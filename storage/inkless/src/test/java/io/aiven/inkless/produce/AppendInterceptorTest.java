@@ -1,8 +1,9 @@
 // Copyright (c) 2024 Aiven, Helsinki, Finland. https://aiven.io/
 package io.aiven.inkless.produce;
 
-import java.time.Duration;
+import java.io.IOException;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 import java.util.function.Consumer;
 
 import io.aiven.inkless.common.SharedState;
@@ -21,7 +22,6 @@ import io.aiven.inkless.config.InklessConfig;
 import io.aiven.inkless.control_plane.MetadataView;
 import io.aiven.inkless.storage_backend.common.StorageBackend;
 
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -34,7 +34,6 @@ import org.mockito.quality.Strictness;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -53,17 +52,11 @@ public class AppendInterceptorTest {
     StorageBackend storageBackend;
     @Mock
     Consumer<Map<TopicPartition, PartitionResponse>> responseCallback;
+    @Mock
+    Writer writer;
 
     @Captor
     ArgumentCaptor<Map<TopicPartition, PartitionResponse>> resultCaptor;
-
-    @BeforeEach
-    void setup() {
-        when(inklessConfig.commitInterval()).thenReturn(Duration.ofMillis(1));
-        when(inklessConfig.produceBufferMaxBytes()).thenReturn(1);
-        when(inklessConfig.produceMaxUploadAttempts()).thenReturn(1);
-        when(inklessConfig.produceUploadBackoff()).thenReturn(Duration.ofMillis(1));
-    }
 
     private static final MemoryRecords RECORDS_WITH_PRODUCER_ID = MemoryRecords.withRecords(
         (byte) 2,
@@ -82,7 +75,7 @@ public class AppendInterceptorTest {
         0L,
         Compression.NONE,
         TimestampType.CREATE_TIME,
-        123L,
+        -1L,
         (short) 0,
         0,
         0,
@@ -94,7 +87,8 @@ public class AppendInterceptorTest {
     public void mixingInklessAndClassicTopicsIsNotAllowed() {
         when(metadataView.isInklessTopic(eq("inkless"))).thenReturn(true);
         when(metadataView.isInklessTopic(eq("non_inkless"))).thenReturn(false);
-        final AppendInterceptor interceptor = new AppendInterceptor(new SharedState(time, inklessConfig, metadataView, controlPlane, storageBackend));
+        final AppendInterceptor interceptor = new AppendInterceptor(
+            new SharedState(time, inklessConfig, metadataView, controlPlane, storageBackend), writer);
 
         final Map<TopicPartition, MemoryRecords> entriesPerPartition = Map.of(
             new TopicPartition("inkless", 0),
@@ -113,12 +107,14 @@ public class AppendInterceptorTest {
             new TopicPartition("non_inkless", 0),
             new PartitionResponse(Errors.INVALID_REQUEST)
         ));
+        verify(writer, never()).write(any());
     }
 
     @Test
     public void notInterceptProducingToClassicTopics() {
         when(metadataView.isInklessTopic(eq("non_inkless"))).thenReturn(false);
-        final AppendInterceptor interceptor = new AppendInterceptor(new SharedState(time, inklessConfig, metadataView, controlPlane, storageBackend));
+        final AppendInterceptor interceptor = new AppendInterceptor(
+            new SharedState(time, inklessConfig, metadataView, controlPlane, storageBackend), writer);
 
         final Map<TopicPartition, MemoryRecords> entriesPerPartition = Map.of(
             new TopicPartition("non_inkless", 0),
@@ -128,13 +124,15 @@ public class AppendInterceptorTest {
         final boolean result = interceptor.intercept(entriesPerPartition, responseCallback);
         assertThat(result).isFalse();
         verify(responseCallback, never()).accept(any());
+        verify(writer, never()).write(any());
     }
 
     @Test
     public void rejectIdempotentProduceForInklessTopics() {
         when(metadataView.isInklessTopic(eq("inkless1"))).thenReturn(true);
         when(metadataView.isInklessTopic(eq("inkless2"))).thenReturn(true);
-        final AppendInterceptor interceptor = new AppendInterceptor(new SharedState(time, inklessConfig, metadataView, controlPlane, storageBackend));
+        final AppendInterceptor interceptor = new AppendInterceptor(
+            new SharedState(time, inklessConfig, metadataView, controlPlane, storageBackend), writer);
 
         final Map<TopicPartition, MemoryRecords> entriesPerPartition = Map.of(
             new TopicPartition("inkless1", 0),
@@ -153,12 +151,14 @@ public class AppendInterceptorTest {
             new TopicPartition("inkless2", 0),
             new PartitionResponse(Errors.INVALID_REQUEST)
         ));
+        verify(writer, never()).write(any());
     }
 
     @Test
     public void acceptIdempotentProduceForNonInklessTopics() {
         when(metadataView.isInklessTopic(eq("non_inkless"))).thenReturn(false);
-        final AppendInterceptor interceptor = new AppendInterceptor(new SharedState(time, inklessConfig, metadataView, controlPlane, storageBackend));
+        final AppendInterceptor interceptor = new AppendInterceptor(
+            new SharedState(time, inklessConfig, metadataView, controlPlane, storageBackend), writer);
 
         final Map<TopicPartition, MemoryRecords> entriesPerPartition = Map.of(
             new TopicPartition("non_inkless", 0),
@@ -169,5 +169,65 @@ public class AppendInterceptorTest {
         assertThat(result).isFalse();
 
         verify(responseCallback, never()).accept(any());
+        verify(writer, never()).write(any());
+    }
+
+    @Test
+    public void acceptNonIdempotentProduceForInklessTopics() {
+        final Map<TopicPartition, MemoryRecords> entriesPerPartition = Map.of(
+            new TopicPartition("inkless", 0),
+            RECORDS_WITHOUT_PRODUCER_ID
+        );
+
+        final var writeResult = Map.of(
+            new TopicPartition("inkless", 0), new PartitionResponse(Errors.NONE)
+        );
+        when(writer.write(any())).thenReturn(
+            CompletableFuture.completedFuture(writeResult)
+        );
+
+        when(metadataView.isInklessTopic(eq("inkless"))).thenReturn(true);
+        final AppendInterceptor interceptor = new AppendInterceptor(
+            new SharedState(time, inklessConfig, metadataView, controlPlane, storageBackend), writer);
+
+        final boolean result = interceptor.intercept(entriesPerPartition, responseCallback);
+        assertThat(result).isTrue();
+
+        verify(responseCallback).accept(eq(writeResult));
+    }
+
+    @Test
+    public void writeFutureFailed() {
+        final Map<TopicPartition, MemoryRecords> entriesPerPartition = Map.of(
+            new TopicPartition("inkless", 0),
+            RECORDS_WITHOUT_PRODUCER_ID
+        );
+
+        final Exception exception = new Exception("test");
+        when(writer.write(any())).thenReturn(
+            CompletableFuture.failedFuture(exception)
+        );
+
+        when(metadataView.isInklessTopic(eq("inkless"))).thenReturn(true);
+        final AppendInterceptor interceptor = new AppendInterceptor(
+            new SharedState(time, inklessConfig, metadataView, controlPlane, storageBackend), writer);
+
+        final boolean result = interceptor.intercept(entriesPerPartition, responseCallback);
+        assertThat(result).isTrue();
+
+        final var expectedResult = Map.of(
+            new TopicPartition("inkless", 0), new PartitionResponse(Errors.UNKNOWN_SERVER_ERROR)
+        );
+        verify(responseCallback).accept(eq(expectedResult));
+    }
+
+    @Test
+    public void close() throws IOException {
+        final AppendInterceptor interceptor = new AppendInterceptor(
+            new SharedState(time, inklessConfig, metadataView, controlPlane, storageBackend), writer);
+
+        interceptor.close();
+
+        verify(writer).close();
     }
 }
