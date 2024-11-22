@@ -70,6 +70,13 @@ public class AppendInterceptorTest {
         false,
         new SimpleRecord(0, "hello".getBytes())
     );
+    private static final MemoryRecords TRANSACTIONAL_RECORDS = MemoryRecords.withTransactionalRecords(
+        Compression.NONE,
+        123,
+        (short) 0,
+        0,
+        new SimpleRecord(0, "hello".getBytes())
+    );
     private static final MemoryRecords RECORDS_WITHOUT_PRODUCER_ID = MemoryRecords.withRecords(
         (byte) 2,
         0L,
@@ -173,7 +180,52 @@ public class AppendInterceptorTest {
     }
 
     @Test
-    public void acceptNonIdempotentProduceForInklessTopics() {
+    public void rejectTransactionalProduceForInklessTopics() {
+        when(metadataView.isInklessTopic(eq("inkless1"))).thenReturn(true);
+        when(metadataView.isInklessTopic(eq("inkless2"))).thenReturn(true);
+        final AppendInterceptor interceptor = new AppendInterceptor(
+            new SharedState(time, inklessConfig, metadataView, controlPlane, storageBackend), writer);
+
+        final Map<TopicPartition, MemoryRecords> entriesPerPartition = Map.of(
+            new TopicPartition("inkless1", 0),
+            RECORDS_WITHOUT_PRODUCER_ID,
+            new TopicPartition("inkless2", 0),
+            TRANSACTIONAL_RECORDS
+        );
+
+        final boolean result = interceptor.intercept(entriesPerPartition, responseCallback);
+        assertThat(result).isTrue();
+
+        verify(responseCallback).accept(resultCaptor.capture());
+        assertThat(resultCaptor.getValue()).isEqualTo(Map.of(
+            new TopicPartition("inkless1", 0),
+            new PartitionResponse(Errors.INVALID_REQUEST),
+            new TopicPartition("inkless2", 0),
+            new PartitionResponse(Errors.INVALID_REQUEST)
+        ));
+        verify(writer, never()).write(any());
+    }
+
+    @Test
+    public void acceptTransactionalProduceForNonInklessTopics() {
+        when(metadataView.isInklessTopic(eq("non_inkless"))).thenReturn(false);
+        final AppendInterceptor interceptor = new AppendInterceptor(
+            new SharedState(time, inklessConfig, metadataView, controlPlane, storageBackend), writer);
+
+        final Map<TopicPartition, MemoryRecords> entriesPerPartition = Map.of(
+            new TopicPartition("non_inkless", 0),
+            RECORDS_WITH_PRODUCER_ID
+        );
+
+        final boolean result = interceptor.intercept(entriesPerPartition, responseCallback);
+        assertThat(result).isFalse();
+
+        verify(responseCallback, never()).accept(any());
+        verify(writer, never()).write(any());
+    }
+
+    @Test
+    public void acceptNonIdempotentNotTransactionalProduceForInklessTopics() {
         final Map<TopicPartition, MemoryRecords> entriesPerPartition = Map.of(
             new TopicPartition("inkless", 0),
             RECORDS_WITHOUT_PRODUCER_ID

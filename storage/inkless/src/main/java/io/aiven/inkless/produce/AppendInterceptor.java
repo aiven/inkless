@@ -75,6 +75,9 @@ public class AppendInterceptor implements Closeable {
             return false;
         }
 
+        // This automatically reject transactional produce with this check.
+        // However, it's likely that we allow idempotent produce earlier than we allow transactions.
+        // Remember to adjust the code and tests accordingly!
         if (rejectIdempotentProduce(entriesPerPartition, responseCallback)) {
             return true;
         }
