@@ -1,9 +1,6 @@
 // Copyright (c) 2024 Aiven, Helsinki, Finland. https://aiven.io/
 package io.aiven.inkless.consume;
 
-import io.aiven.inkless.control_plane.ControlPlane;
-import io.aiven.inkless.control_plane.FindBatchRequest;
-import io.aiven.inkless.control_plane.FindBatchResponse;
 import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.requests.FetchRequest;
 import org.apache.kafka.server.storage.log.FetchParams;
@@ -13,6 +10,10 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Callable;
+
+import io.aiven.inkless.control_plane.ControlPlane;
+import io.aiven.inkless.control_plane.FindBatchRequest;
+import io.aiven.inkless.control_plane.FindBatchResponse;
 
 public class FindBatchesJob implements Callable<Map<TopicIdPartition, FindBatchResponse>> {
 

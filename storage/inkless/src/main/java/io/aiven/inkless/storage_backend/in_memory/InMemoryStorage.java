@@ -1,6 +1,8 @@
 // Copyright (c) 2024 Aiven, Helsinki, Finland. https://aiven.io/
 package io.aiven.inkless.storage_backend.in_memory;
 
+import org.apache.commons.io.input.BoundedInputStream;
+
 import java.io.ByteArrayInputStream;
 import java.io.InputStream;
 import java.util.Map;
@@ -14,8 +16,6 @@ import io.aiven.inkless.storage_backend.common.InvalidRangeException;
 import io.aiven.inkless.storage_backend.common.KeyNotFoundException;
 import io.aiven.inkless.storage_backend.common.StorageBackend;
 import io.aiven.inkless.storage_backend.common.StorageBackendException;
-
-import org.apache.commons.io.input.BoundedInputStream;
 
 /**
  * The in-memory implementation of {@link StorageBackend}.

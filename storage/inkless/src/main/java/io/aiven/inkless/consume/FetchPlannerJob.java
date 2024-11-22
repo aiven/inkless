@@ -1,10 +1,6 @@
 // Copyright (c) 2024 Aiven, Helsinki, Finland. https://aiven.io/
 package io.aiven.inkless.consume;
 
-import io.aiven.inkless.common.ByteRange;
-import io.aiven.inkless.control_plane.BatchInfo;
-import io.aiven.inkless.control_plane.FindBatchResponse;
-import io.aiven.inkless.storage_backend.common.ObjectFetcher;
 import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.protocol.Errors;
 
@@ -15,6 +11,11 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
 import java.util.stream.Collectors;
+
+import io.aiven.inkless.common.ByteRange;
+import io.aiven.inkless.control_plane.BatchInfo;
+import io.aiven.inkless.control_plane.FindBatchResponse;
+import io.aiven.inkless.storage_backend.common.ObjectFetcher;
 
 public class FetchPlannerJob implements Callable<List<Future<FetchedFile>>> {
 

@@ -1,6 +1,8 @@
 // Copyright (c) 2024 Aiven, Helsinki, Finland. https://aiven.io/
 package io.aiven.inkless.storage_backend.s3;
 
+import com.groupcdg.pitest.annotations.CoverageIgnore;
+
 import java.io.InputStream;
 import java.util.Map;
 import java.util.Set;
@@ -13,8 +15,6 @@ import io.aiven.inkless.storage_backend.common.KeyNotFoundException;
 import io.aiven.inkless.storage_backend.common.StorageBackend;
 import io.aiven.inkless.storage_backend.common.StorageBackendException;
 import io.aiven.inkless.storage_backend.common.StorageBackendTimeoutException;
-
-import com.groupcdg.pitest.annotations.CoverageIgnore;
 import software.amazon.awssdk.awscore.exception.AwsServiceException;
 import software.amazon.awssdk.core.exception.ApiCallAttemptTimeoutException;
 import software.amazon.awssdk.core.exception.ApiCallTimeoutException;

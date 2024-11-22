@@ -35,4 +35,3 @@ public class Null implements ConfigDef.Validator {
         return "null or " + validator.toString();
     }
 }
-

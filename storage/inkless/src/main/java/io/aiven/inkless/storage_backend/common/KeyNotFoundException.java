@@ -1,9 +1,9 @@
 // Copyright (c) 2024 Aiven, Helsinki, Finland. https://aiven.io/
 package io.aiven.inkless.storage_backend.common;
 
-import io.aiven.inkless.common.ObjectKey;
-
 import com.groupcdg.pitest.annotations.CoverageIgnore;
+
+import io.aiven.inkless.common.ObjectKey;
 
 @CoverageIgnore
 public class KeyNotFoundException extends StorageBackendException {

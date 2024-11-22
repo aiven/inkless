@@ -1,12 +1,12 @@
 // Copyright (c) 2024 Aiven, Helsinki, Finland. https://aiven.io/
 package io.aiven.inkless;
 
+import org.apache.kafka.common.utils.Time;
+
 import java.time.Duration;
 import java.time.Instant;
 import java.util.concurrent.Callable;
 import java.util.function.Consumer;
-
-import org.apache.kafka.common.utils.Time;
 
 public class TimeUtils {
     private static final long NANOS_PER_SECOND = 1_000_000_000L;

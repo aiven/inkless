@@ -1,24 +1,25 @@
 // Copyright (c) 2024 Aiven, Helsinki, Finland. https://aiven.io/
 package io.aiven.inkless.produce;
 
+import org.apache.kafka.common.TopicPartition;
+import org.apache.kafka.common.protocol.Errors;
+import org.apache.kafka.common.record.MemoryRecords;
+import org.apache.kafka.common.requests.ProduceResponse.PartitionResponse;
+
+import com.groupcdg.pitest.annotations.CoverageIgnore;
+import com.groupcdg.pitest.annotations.DoNotMutate;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.io.Closeable;
 import java.io.IOException;
 import java.util.Map;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
 
-import org.apache.kafka.common.TopicPartition;
-import org.apache.kafka.common.protocol.Errors;
-import org.apache.kafka.common.record.MemoryRecords;
-import org.apache.kafka.common.requests.ProduceResponse.PartitionResponse;
-
 import io.aiven.inkless.common.PlainObjectKey;
 import io.aiven.inkless.common.SharedState;
-
-import com.groupcdg.pitest.annotations.CoverageIgnore;
-import com.groupcdg.pitest.annotations.DoNotMutate;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 public class AppendInterceptor implements Closeable {
     private static final Logger LOGGER = LoggerFactory.getLogger(AppendInterceptor.class);
