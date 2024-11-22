@@ -5,6 +5,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.NavigableSet;
 import java.util.Set;
 import java.util.TreeMap;
 
@@ -43,14 +44,15 @@ public class ControlPlane {
             } else {
                 final TopicIdPartition topicIdPartition = new TopicIdPartition(topicId, request.topicPartition());
                 final LogInfo logInfo = logs.computeIfAbsent(topicIdPartition, ignore -> new LogInfo());
-                final long assignedOffset = logInfo.highWatermark;
+                final long firstOffset = logInfo.highWatermark;
                 logInfo.highWatermark += request.numberOfRecords();
+                final long lastOffset = logInfo.highWatermark - 1;
                 // TODO: also compute append timestamp
-                final BatchInfo batchToStore = new BatchInfo(objectKey, request.byteOffset(), request.size(), assignedOffset, request.numberOfRecords());
+                final BatchInfo batchToStore = new BatchInfo(objectKey, request.byteOffset(), request.size(), firstOffset, request.numberOfRecords());
                 this.batches
                     .computeIfAbsent(topicIdPartition, ignore -> new TreeMap<>())
-                    .put(assignedOffset, batchToStore);
-                responses.add(CommitBatchResponse.success(assignedOffset, logInfo.logStartOffset));
+                    .put(lastOffset, batchToStore);
+                responses.add(CommitBatchResponse.success(firstOffset, logInfo.logStartOffset));
             }
         }
 
@@ -60,8 +62,6 @@ public class ControlPlane {
     public synchronized List<FindBatchResponse> findBatches(final List<FindBatchRequest> findBatchRequests,
                                                            final boolean minOneMessage,
                                                            final int fetchMaxBytes) {
-        // TODO return more batches per request
-
         final List<FindBatchResponse> result = new ArrayList<>();
 
         for (final FindBatchRequest request : findBatchRequests) {
@@ -84,9 +84,18 @@ public class ControlPlane {
                     } else {
                         final TreeMap<Long, BatchInfo> coordinates = this.batches.get(request.topicIdPartition());
                         if (coordinates != null) {
-                            final var entry = coordinates.floorEntry(request.offset());
+                            List<BatchInfo> batches = new ArrayList<>();
+                            long totalSize = 0;
+                            for (Long batchOffset : coordinates.navigableKeySet().tailSet(request.offset())) {
+                                BatchInfo batch = coordinates.get(batchOffset);
+                                batches.add(batch);
+                                totalSize += batch.size();
+                                if (totalSize > fetchMaxBytes) {
+                                    break;
+                                }
+                            }
                             result.add(FindBatchResponse.success(
-                                List.of(entry.getValue()), logInfo.logStartOffset, logInfo.highWatermark));
+                                batches, logInfo.logStartOffset, logInfo.highWatermark));
                         } else {
                             logger.error("Batch coordinates not found for {}: high watermark={}, requested offset={}",
                                 request.topicIdPartition(),

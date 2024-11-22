@@ -13,12 +13,12 @@ import org.apache.kafka.server.storage.log.FetchPartitionData;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.OptionalLong;
-import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
 import java.util.function.Supplier;
@@ -67,7 +67,7 @@ public class FetchCompleterJob implements Supplier<Map<TopicIdPartition, FetchPa
         return files;
     }
 
-    private Map<TopicIdPartition, FetchPartitionData> serveFetch(
+    private static Map<TopicIdPartition, FetchPartitionData> serveFetch(
             Map<TopicIdPartition, FindBatchResponse> metadata,
             Map<ObjectKey, List<FetchedFile>> files
     ) {
@@ -76,7 +76,7 @@ public class FetchCompleterJob implements Supplier<Map<TopicIdPartition, FetchPa
                 .collect(Collectors.toMap(Map.Entry::getKey, e -> servePartition(e.getKey(), metadata, files)));
     }
 
-    private FetchPartitionData servePartition(TopicIdPartition key, Map<TopicIdPartition, FindBatchResponse> allMetadata, Map<ObjectKey, List<FetchedFile>> allFiles) {
+    private static FetchPartitionData servePartition(TopicIdPartition key, Map<TopicIdPartition, FindBatchResponse> allMetadata, Map<ObjectKey, List<FetchedFile>> allFiles) {
         FindBatchResponse metadata = allMetadata.get(key);
         if (metadata.errors() != Errors.NONE) {
             return new FetchPartitionData(
@@ -91,45 +91,70 @@ public class FetchCompleterJob implements Supplier<Map<TopicIdPartition, FetchPa
                     false
             );
         }
-        for (BatchInfo batch : metadata.batches()) {
-            // TODO: concatenate MemoryRecords together to increase fetch response size up to the defined limits
-            List<FetchedFile> files = allFiles.get(batch.objectKey());
-            if (files == null || files.isEmpty()) {
-                continue;
-            }
-            for (FetchedFile file : files) {
-                if (file.range().contains(batch.range())) {
-                    MemoryRecords records = MemoryRecords.readableRecords(file.buffer());
-                    for (MutableRecordBatch mutableRecordBatch : records.batches()) {
-                        long lastOffset = batch.recordOffset() + batch.numberOfRecords() - 1;
-                        mutableRecordBatch.setLastOffset(lastOffset);
-                    }
-
-                    return new FetchPartitionData(
-                            Errors.NONE,
-                            metadata.highWatermark(),
-                            metadata.logStartOffset(),
-                            records,
-                            Optional.empty(),
-                            OptionalLong.empty(),
-                            Optional.empty(),
-                            OptionalInt.empty(),
-                            false
-                    );
-                }
-            }
+        List<MemoryRecords> foundRecords = extractRecords(metadata, allFiles);
+        if (foundRecords.isEmpty()) {
+            // If there is no FetchedFile to serve this topic id partition, the earlier steps which prepared the metadata + data have an error.
+            return new FetchPartitionData(
+                    Errors.KAFKA_STORAGE_ERROR,
+                    -1,
+                    -1,
+                    MemoryRecords.EMPTY,
+                    Optional.empty(),
+                    OptionalLong.empty(),
+                    Optional.empty(),
+                    OptionalInt.empty(),
+                    false
+            );
         }
-        // If there is no FetchedFile to serve this topic id partition, the earlier steps which prepared the metadata + data have an error.
+
         return new FetchPartitionData(
-                Errors.KAFKA_STORAGE_ERROR,
-                -1,
-                -1,
-                null,
+                Errors.NONE,
+                metadata.highWatermark(),
+                metadata.logStartOffset(),
+                new ConcatenatedRecords(foundRecords),
                 Optional.empty(),
                 OptionalLong.empty(),
                 Optional.empty(),
                 OptionalInt.empty(),
                 false
         );
+    }
+
+    private static List<MemoryRecords> extractRecords(FindBatchResponse metadata, Map<ObjectKey, List<FetchedFile>> allFiles) {
+        List<MemoryRecords> foundRecords = new ArrayList<>();
+        for (BatchInfo batch : metadata.batches()) {
+            List<FetchedFile> files = allFiles.get(batch.objectKey());
+            if (files == null || files.isEmpty()) {
+                // as soon as we encounter an error
+                return foundRecords;
+            }
+            MemoryRecords fileRecords = constructRecordsFromFile(batch, files);
+            if (fileRecords == null) {
+                return foundRecords;
+            }
+            foundRecords.add(fileRecords);
+        }
+        return foundRecords;
+    }
+
+    private static MemoryRecords constructRecordsFromFile(BatchInfo batch, List<FetchedFile> files) {
+        for (FetchedFile file : files) {
+            if (file.range().contains(batch.range())) {
+                MemoryRecords records = MemoryRecords.readableRecords(file.buffer());
+                Iterator<MutableRecordBatch> iterator = records.batches().iterator();
+                if (!iterator.hasNext()) {
+                    throw new IllegalStateException("Backing file should have at least one batch");
+                }
+                MutableRecordBatch mutableRecordBatch = iterator.next();
+                long lastOffset = batch.recordOffset() + batch.numberOfRecords() - 1;
+                mutableRecordBatch.setLastOffset(lastOffset);
+                if (iterator.hasNext()) {
+                    // TODO: support concatenating multiple batches into a single BatchInfo
+                    throw new IllegalStateException("Backing file should have at only one batch");
+                }
+                return records;
+            }
+        }
+        return null;
     }
 }

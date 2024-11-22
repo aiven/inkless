@@ -10,6 +10,7 @@ import java.util.Map;
 
 import io.aiven.inkless.common.ByteRange;
 import io.aiven.inkless.storage_backend.common.StorageBackendException;
+import io.aiven.inkless.storage_backend.common.StorageBackendTimeoutException;
 import io.aiven.inkless.storage_backend.common.fixtures.TestObjectKey;
 import io.aiven.inkless.storage_backend.s3.S3Storage;
 
@@ -107,7 +108,7 @@ class S3ErrorMetricsTest {
         stubFor(any(anyUrl()).willReturn(aResponse().withFixedDelay(100)));
 
         assertThatThrownBy(() -> storage.fetch(new TestObjectKey("key"), ByteRange.maxRange()))
-            .isExactlyInstanceOf(StorageBackendException.class)
+            .isExactlyInstanceOf(StorageBackendTimeoutException.class)
             .hasMessage("Failed to fetch key")
             .hasRootCauseExactlyInstanceOf(ApiCallAttemptTimeoutException.class)
             .hasRootCauseMessage(

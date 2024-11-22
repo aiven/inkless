@@ -115,7 +115,8 @@ class ControlPlaneTest {
                 List.of(new FindBatchRequest(EXISTING_TOPIC_ID_PARTITION, offset, Integer.MAX_VALUE)), true, Integer.MAX_VALUE);
             assertThat(findResponse).containsExactly(
                 new FindBatchResponse(Errors.NONE, List.of(
-                    new BatchInfo(objectKey1, 1, 10, 0, numberOfRecordsInBatch1)
+                    new BatchInfo(objectKey1, 1, 10, 0, numberOfRecordsInBatch1),
+                    new BatchInfo(objectKey2, 100, 10, numberOfRecordsInBatch1, numberOfRecordsInBatch2)
                 ), expectedLogStartOffset, expectedHighWatermark)
             );
         }
