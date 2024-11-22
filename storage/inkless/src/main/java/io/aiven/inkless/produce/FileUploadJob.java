@@ -14,6 +14,7 @@ import io.aiven.inkless.common.ObjectKey;
 import io.aiven.inkless.common.ObjectKeyCreator;
 import io.aiven.inkless.storage_backend.common.ObjectUploader;
 import io.aiven.inkless.storage_backend.common.StorageBackendException;
+import io.aiven.inkless.storage_backend.common.StorageBackendTimeoutException;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -70,7 +71,6 @@ class FileUploadJob implements Callable<ObjectKey> {
         if (uploadError == null) {
             return objectKey;
         } else {
-            LOGGER.error("Error uploading {}, giving up", objectKey, uploadError);
             throw uploadError;
         }
     }
@@ -88,13 +88,27 @@ class FileUploadJob implements Callable<ObjectKey> {
                 // Sleep on all attempts but last.
                 final boolean lastAttempt = attempt == attempts - 1;
                 if (lastAttempt) {
-                    LOGGER.error("Error uploading {}, giving up", objectKey, e);
+                    if (e instanceof StorageBackendTimeoutException) {
+                        LOGGER.error("Error uploading {} due to timeout, giving up: {}", objectKey, safeGetCauseMessage(e));
+                    } else {
+                        LOGGER.error("Error uploading {}, giving up", objectKey, e);
+                    }
                 } else {
-                    LOGGER.error("Error uploading {}, retrying in {}", objectKey, retryBackoff, e);
+                    if (e instanceof StorageBackendTimeoutException) {
+                        LOGGER.error("Error uploading {} due to timeout, retrying in {} ms: {}",
+                            objectKey, retryBackoff.toMillis(), safeGetCauseMessage(e));
+                    } else {
+                        LOGGER.error("Error uploading {}, retrying in {} ms",
+                            objectKey, retryBackoff.toMillis(), e);
+                    }
                     time.sleep(retryBackoff.toMillis());
                 }
             }
         }
         return error;
+    }
+
+    private static String safeGetCauseMessage(final Exception e) {
+        return e.getCause() != null ? e.getCause().getMessage() : "";
     }
 }
