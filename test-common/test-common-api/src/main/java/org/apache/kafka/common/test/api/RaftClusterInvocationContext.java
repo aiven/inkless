@@ -21,7 +21,6 @@ import kafka.server.BrokerServer;
 import kafka.server.ControllerServer;
 import kafka.server.KafkaBroker;
 
-import org.apache.kafka.clients.admin.Admin;
 import org.apache.kafka.common.network.ListenerName;
 import org.apache.kafka.common.test.KafkaClusterTestKit;
 import org.apache.kafka.common.test.TestKitNodes;
@@ -33,6 +32,7 @@ import org.apache.kafka.metadata.storage.FormatterException;
 import org.apache.kafka.server.common.FeatureVersion;
 import org.apache.kafka.server.common.Features;
 import org.apache.kafka.server.common.MetadataVersion;
+import org.apache.kafka.server.fault.FaultHandlerException;
 
 import org.junit.jupiter.api.extension.AfterTestExecutionCallback;
 import org.junit.jupiter.api.extension.BeforeTestExecutionCallback;
@@ -45,10 +45,8 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.Properties;
 import java.util.Set;
 import java.util.TreeMap;
-import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Collectors;
@@ -100,13 +98,12 @@ public class RaftClusterInvocationContext implements TestTemplateInvocationConte
         );
     }
 
-    public static class RaftClusterInstance implements ClusterInstance {
+    private static class RaftClusterInstance implements ClusterInstance {
 
         private final ClusterConfig clusterConfig;
         final AtomicBoolean started = new AtomicBoolean(false);
         final AtomicBoolean stopped = new AtomicBoolean(false);
         final AtomicBoolean formated = new AtomicBoolean(false);
-        private final ConcurrentLinkedQueue<Admin> admins = new ConcurrentLinkedQueue<>();
         private KafkaClusterTestKit clusterTestKit;
         private final boolean isCombined;
         private final ListenerName listenerName;
@@ -169,16 +166,8 @@ public class RaftClusterInvocationContext implements TestTemplateInvocationConte
             return controllers().keySet();
         }
 
-        @Override
         public KafkaClusterTestKit getUnderlying() {
             return clusterTestKit;
-        }
-
-        @Override
-        public Admin createAdminClient(Properties configOverrides) {
-            Admin admin = Admin.create(clusterTestKit.newClientPropertiesBuilder(configOverrides).build());
-            admins.add(admin);
-            return admin;
         }
 
         @Override
@@ -200,8 +189,6 @@ public class RaftClusterInvocationContext implements TestTemplateInvocationConte
         @Override
         public void stop() {
             if (stopped.compareAndSet(false, true)) {
-                admins.forEach(admin -> Utils.closeQuietly(admin, "admin"));
-                admins.clear();
                 Utils.closeQuietly(clusterTestKit, "cluster");
             }
         }
@@ -214,6 +201,16 @@ public class RaftClusterInvocationContext implements TestTemplateInvocationConte
         @Override
         public void startBroker(int brokerId) {
             findBrokerOrThrow(brokerId).startup();
+        }
+
+        @Override
+        public Optional<FaultHandlerException> firstFatalException() {
+            return Optional.ofNullable(clusterTestKit.fatalFaultHandler().firstException());
+        }
+
+        @Override
+        public Optional<FaultHandlerException> firstNonFatalException() {
+            return Optional.ofNullable(clusterTestKit.nonFatalFaultHandler().firstException());
         }
 
         @Override
@@ -287,11 +284,12 @@ public class RaftClusterInvocationContext implements TestTemplateInvocationConte
                         .setNumControllerNodes(clusterConfig.numControllers())
                         .setBrokerListenerName(listenerName)
                         .setBrokerSecurityProtocol(clusterConfig.brokerSecurityProtocol())
+                        .setControllerListenerName(clusterConfig.controllerListenerName())
+                        .setControllerSecurityProtocol(clusterConfig.controllerSecurityProtocol())
                         .build();
                 KafkaClusterTestKit.Builder builder = new KafkaClusterTestKit.Builder(nodes);
                 // Copy properties into the TestKit builder
                 clusterConfig.serverProperties().forEach(builder::setConfigProp);
-                // KAFKA-12512 need to pass security protocol and listener name here
                 this.clusterTestKit = builder.build();
                 this.clusterTestKit.format();
             }

@@ -42,6 +42,8 @@ import org.apache.kafka.coordinator.common.runtime.CoordinatorShardBuilderSuppli
 import org.apache.kafka.coordinator.common.runtime.MultiThreadedEventProcessor;
 import org.apache.kafka.coordinator.common.runtime.PartitionWriter;
 import org.apache.kafka.coordinator.share.metrics.ShareCoordinatorMetrics;
+import org.apache.kafka.image.MetadataDelta;
+import org.apache.kafka.image.MetadataImage;
 import org.apache.kafka.server.config.ShareCoordinatorConfig;
 import org.apache.kafka.server.record.BrokerCompressionType;
 import org.apache.kafka.server.share.SharePartitionKey;
@@ -58,6 +60,7 @@ import java.util.Map;
 import java.util.OptionalInt;
 import java.util.Properties;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.IntSupplier;
 import java.util.stream.Collectors;
@@ -173,6 +176,7 @@ public class ShareCoordinatorService implements ShareCoordinator {
                     .withSerializer(new ShareCoordinatorRecordSerde())
                     .withCompression(Compression.of(config.shareCoordinatorStateTopicCompressionType()).build())
                     .withAppendLingerMs(config.shareCoordinatorAppendLingerMs())
+                    .withExecutorService(Executors.newSingleThreadExecutor())
                     .build();
 
             return new ShareCoordinatorService(
@@ -199,8 +203,12 @@ public class ShareCoordinatorService implements ShareCoordinator {
     }
 
     @Override
-    public int partitionFor(String key) {
-        return Utils.abs(key.hashCode()) % numPartitions;
+    public int partitionFor(SharePartitionKey key) {
+        throwIfNotActive();
+        // Call to asCoordinatorKey is necessary as we depend only on topicId (Uuid) and
+        // not topic name. We do not want this calculation to distinguish between 2
+        // SharePartitionKeys where everything except topic name is the same.
+        return Utils.abs(key.asCoordinatorKey().hashCode()) % numPartitions;
     }
 
     @Override
@@ -513,6 +521,7 @@ public class ShareCoordinatorService implements ShareCoordinator {
 
     @Override
     public void onElection(int partitionIndex, int partitionLeaderEpoch) {
+        throwIfNotActive();
         runtime.scheduleLoadOperation(
             new TopicPartition(Topic.SHARE_GROUP_STATE_TOPIC_NAME, partitionIndex),
             partitionLeaderEpoch
@@ -521,17 +530,30 @@ public class ShareCoordinatorService implements ShareCoordinator {
 
     @Override
     public void onResignation(int partitionIndex, OptionalInt partitionLeaderEpoch) {
+        throwIfNotActive();
         runtime.scheduleUnloadOperation(
             new TopicPartition(Topic.SHARE_GROUP_STATE_TOPIC_NAME, partitionIndex),
             partitionLeaderEpoch
         );
     }
 
-    private TopicPartition topicPartitionFor(SharePartitionKey key) {
-        return new TopicPartition(Topic.SHARE_GROUP_STATE_TOPIC_NAME, partitionFor(key.toString()));
+    @Override
+    public void onNewMetadataImage(MetadataImage newImage, MetadataDelta delta) {
+        throwIfNotActive();
+        this.runtime.onNewMetadataImage(newImage, delta);
+    }
+
+    TopicPartition topicPartitionFor(SharePartitionKey key) {
+        return new TopicPartition(Topic.SHARE_GROUP_STATE_TOPIC_NAME, partitionFor(key));
     }
 
     private static <P> boolean isEmpty(List<P> list) {
         return list == null || list.isEmpty();
+    }
+
+    private void throwIfNotActive() {
+        if (!isActive.get()) {
+            throw Errors.COORDINATOR_NOT_AVAILABLE.exception();
+        }
     }
 }

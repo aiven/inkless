@@ -103,7 +103,7 @@ public class MeteredVersionedKeyValueStoreTest {
     private final Metrics metrics = new Metrics();
     private final Time mockTime = new MockTime();
     private final String threadId = Thread.currentThread().getName();
-    private InternalProcessorContext context = mock(InternalProcessorContext.class);
+    private final InternalProcessorContext context = mock(InternalProcessorContext.class);
     private Map<String, String> tags;
 
     private MeteredVersionedKeyValueStore<String, String> store;
@@ -111,7 +111,7 @@ public class MeteredVersionedKeyValueStoreTest {
     @BeforeEach
     public void setUp() {
         when(inner.name()).thenReturn(STORE_NAME);
-        when(context.metrics()).thenReturn(new StreamsMetricsImpl(metrics, "test", mockTime));
+        when(context.metrics()).thenReturn(new StreamsMetricsImpl(metrics, "test", "processId", mockTime));
         when(context.applicationId()).thenReturn(APPLICATION_ID);
         when(context.taskId()).thenReturn(TASK_ID);
 

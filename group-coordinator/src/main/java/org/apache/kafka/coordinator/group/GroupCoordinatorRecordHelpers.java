@@ -29,6 +29,8 @@ import org.apache.kafka.coordinator.group.generated.ConsumerGroupMetadataKey;
 import org.apache.kafka.coordinator.group.generated.ConsumerGroupMetadataValue;
 import org.apache.kafka.coordinator.group.generated.ConsumerGroupPartitionMetadataKey;
 import org.apache.kafka.coordinator.group.generated.ConsumerGroupPartitionMetadataValue;
+import org.apache.kafka.coordinator.group.generated.ConsumerGroupRegularExpressionKey;
+import org.apache.kafka.coordinator.group.generated.ConsumerGroupRegularExpressionValue;
 import org.apache.kafka.coordinator.group.generated.ConsumerGroupTargetAssignmentMemberKey;
 import org.apache.kafka.coordinator.group.generated.ConsumerGroupTargetAssignmentMemberValue;
 import org.apache.kafka.coordinator.group.generated.ConsumerGroupTargetAssignmentMetadataKey;
@@ -51,6 +53,7 @@ import org.apache.kafka.coordinator.group.generated.ShareGroupTargetAssignmentMe
 import org.apache.kafka.coordinator.group.generated.ShareGroupTargetAssignmentMetadataValue;
 import org.apache.kafka.coordinator.group.modern.TopicMetadata;
 import org.apache.kafka.coordinator.group.modern.consumer.ConsumerGroupMember;
+import org.apache.kafka.coordinator.group.modern.consumer.ResolvedRegularExpression;
 import org.apache.kafka.coordinator.group.modern.share.ShareGroupMember;
 import org.apache.kafka.server.common.ApiMessageAndVersion;
 import org.apache.kafka.server.common.MetadataVersion;
@@ -138,13 +141,13 @@ public class GroupCoordinatorRecordHelpers {
         Map<String, TopicMetadata> newSubscriptionMetadata
     ) {
         ConsumerGroupPartitionMetadataValue value = new ConsumerGroupPartitionMetadataValue();
-        newSubscriptionMetadata.forEach((topicName, topicMetadata) -> {
+        newSubscriptionMetadata.forEach((topicName, topicMetadata) ->
             value.topics().add(new ConsumerGroupPartitionMetadataValue.TopicMetadata()
                 .setTopicId(topicMetadata.id())
                 .setTopicName(topicMetadata.name())
                 .setNumPartitions(topicMetadata.numPartitions())
-            );
-        });
+            )
+        );
 
         return new CoordinatorRecord(
             new ApiMessageAndVersion(
@@ -358,35 +361,6 @@ public class GroupCoordinatorRecordHelpers {
     }
 
     /**
-     * Creates a ConsumerGroupCurrentMemberAssignment record.
-     *
-     * @param groupId   The consumer group id.
-     * @param member    The share group member.
-     * @return The record.
-     */
-    public static CoordinatorRecord newConsumerGroupCurrentAssignmentRecord(
-        String groupId,
-        ShareGroupMember member
-    ) {
-        return new CoordinatorRecord(
-            new ApiMessageAndVersion(
-                new ConsumerGroupCurrentMemberAssignmentKey()
-                    .setGroupId(groupId)
-                    .setMemberId(member.memberId()),
-                (short) 8
-            ),
-            new ApiMessageAndVersion(
-                new ConsumerGroupCurrentMemberAssignmentValue()
-                    .setMemberEpoch(member.memberEpoch())
-                    .setPreviousMemberEpoch(member.previousMemberEpoch())
-                    .setState(member.state().value())
-                    .setAssignedPartitions(toTopicPartitions(member.assignedPartitions())),
-                (short) 0
-            )
-        );
-    }
-
-    /**
      * Creates a ConsumerGroupCurrentMemberAssignment tombstone.
      *
      * @param groupId   The consumer group id.
@@ -403,6 +377,61 @@ public class GroupCoordinatorRecordHelpers {
                     .setGroupId(groupId)
                     .setMemberId(memberId),
                 (short) 8
+            ),
+            null // Tombstone
+        );
+    }
+
+    /**
+     * Creates a ConsumerGroupRegularExpression record.
+     *
+     * @param groupId                       The consumer group id.
+     * @param regex                         The regular expression.
+     * @param resolvedRegularExpression     The metadata associated with the regular expression.
+     * @return The record.
+     */
+    public static CoordinatorRecord newConsumerGroupRegularExpressionRecord(
+        String groupId,
+        String regex,
+        ResolvedRegularExpression resolvedRegularExpression
+    ) {
+        List<String> topics = new ArrayList<>(resolvedRegularExpression.topics);
+        Collections.sort(topics);
+
+        return new CoordinatorRecord(
+            new ApiMessageAndVersion(
+                new ConsumerGroupRegularExpressionKey()
+                    .setGroupId(groupId)
+                    .setRegularExpression(regex),
+                (short) 16
+            ),
+            new ApiMessageAndVersion(
+                new ConsumerGroupRegularExpressionValue()
+                    .setTopics(topics)
+                    .setVersion(resolvedRegularExpression.version)
+                    .setTimestamp(resolvedRegularExpression.timestamp),
+                (short) 0
+            )
+        );
+    }
+
+    /**
+     * Creates a ConsumerGroupRegularExpression tombstone.
+     *
+     * @param groupId   The consumer group id.
+     * @param regex     The regular expression.
+     * @return The record.
+     */
+    public static CoordinatorRecord newConsumerGroupRegularExpressionTombstone(
+        String groupId,
+        String regex
+    ) {
+        return new CoordinatorRecord(
+            new ApiMessageAndVersion(
+                new ConsumerGroupRegularExpressionKey()
+                    .setGroupId(groupId)
+                    .setRegularExpression(regex),
+                (short) 16
             ),
             null // Tombstone
         );
@@ -645,13 +674,13 @@ public class GroupCoordinatorRecordHelpers {
         Map<String, TopicMetadata> newSubscriptionMetadata
     ) {
         ShareGroupPartitionMetadataValue value = new ShareGroupPartitionMetadataValue();
-        newSubscriptionMetadata.forEach((topicName, topicMetadata) -> {
+        newSubscriptionMetadata.forEach((topicName, topicMetadata) ->
             value.topics().add(new ShareGroupPartitionMetadataValue.TopicMetadata()
                 .setTopicId(topicMetadata.id())
                 .setTopicName(topicMetadata.name())
                 .setNumPartitions(topicMetadata.numPartitions())
-            );
-        });
+            )
+        );
 
         return new CoordinatorRecord(
             new ApiMessageAndVersion(
@@ -673,7 +702,7 @@ public class GroupCoordinatorRecordHelpers {
      * @return The record.
      */
     public static CoordinatorRecord newShareGroupSubscriptionMetadataTombstoneRecord(
-            String groupId
+        String groupId
     ) {
         return new CoordinatorRecord(
             new ApiMessageAndVersion(
@@ -871,8 +900,8 @@ public class GroupCoordinatorRecordHelpers {
      * @return The record.
      */
     public static CoordinatorRecord newShareGroupCurrentAssignmentTombstoneRecord(
-            String groupId,
-            String memberId
+        String groupId,
+        String memberId
     ) {
         return new CoordinatorRecord(
             new ApiMessageAndVersion(

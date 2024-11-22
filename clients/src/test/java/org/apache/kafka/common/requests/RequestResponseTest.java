@@ -18,9 +18,9 @@ package org.apache.kafka.common.requests;
 
 import org.apache.kafka.common.ConsumerGroupState;
 import org.apache.kafka.common.ElectionType;
+import org.apache.kafka.common.GroupState;
 import org.apache.kafka.common.IsolationLevel;
 import org.apache.kafka.common.Node;
-import org.apache.kafka.common.ShareGroupState;
 import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.Uuid;
@@ -326,6 +326,7 @@ import static org.apache.kafka.common.protocol.ApiKeys.STOP_REPLICA;
 import static org.apache.kafka.common.protocol.ApiKeys.SYNC_GROUP;
 import static org.apache.kafka.common.protocol.ApiKeys.UPDATE_METADATA;
 import static org.apache.kafka.common.protocol.ApiKeys.WRITE_TXN_MARKERS;
+import static org.apache.kafka.common.requests.EndTxnRequest.LAST_STABLE_VERSION_BEFORE_TRANSACTION_V2;
 import static org.apache.kafka.common.requests.FetchMetadata.INVALID_SESSION_ID;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -1486,7 +1487,7 @@ public class RequestResponseTest {
                                 .setGroupId("group")
                                 .setErrorCode((short) 0)
                                 .setErrorMessage(Errors.forCode((short) 0).message())
-                                .setGroupState(ShareGroupState.EMPTY.toString())
+                                .setGroupState(GroupState.EMPTY.toString())
                                 .setMembers(new ArrayList<>(0))
                 ))
                 .setThrottleTimeMs(1000);
@@ -3062,12 +3063,14 @@ public class RequestResponseTest {
     }
 
     private EndTxnRequest createEndTxnRequest(short version) {
+        boolean isTransactionV2Enabled = version > LAST_STABLE_VERSION_BEFORE_TRANSACTION_V2;
         return new EndTxnRequest.Builder(
             new EndTxnRequestData()
                 .setTransactionalId("tid")
                 .setProducerId(21L)
                 .setProducerEpoch((short) 42)
-                .setCommitted(TransactionResult.COMMIT.id)
+                .setCommitted(TransactionResult.COMMIT.id),
+            isTransactionV2Enabled
             ).build(version);
     }
 
@@ -3872,7 +3875,7 @@ public class RequestResponseTest {
             .setSubscriptionId(1)
             .setTerminating(false)
             .setCompressionType(CompressionType.ZSTD.id)
-            .setMetrics("test-metrics".getBytes(StandardCharsets.UTF_8))
+            .setMetrics(ByteBuffer.wrap("test-metrics".getBytes(StandardCharsets.UTF_8)))
         ).build(version);
     }
 

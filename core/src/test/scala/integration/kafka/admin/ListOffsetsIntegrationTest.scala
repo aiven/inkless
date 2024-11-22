@@ -20,7 +20,7 @@ package kafka.admin
 import kafka.integration.KafkaServerTestHarness
 import kafka.server.KafkaConfig
 import kafka.utils.TestUtils
-import kafka.utils.TestUtils.{createProducer, plaintextBootstrapServers, tempDir, waitForAllReassignmentsToComplete}
+import kafka.utils.TestUtils.{createProducer, plaintextBootstrapServers, tempDir, waitUntilTrue}
 import org.apache.kafka.clients.admin._
 import org.apache.kafka.clients.producer.ProducerRecord
 import org.apache.kafka.common.TopicPartition
@@ -66,7 +66,7 @@ class ListOffsetsIntegrationTest extends KafkaServerTestHarness {
   }
 
   @ParameterizedTest
-  @ValueSource(strings = Array("zk", "kraft"))
+  @ValueSource(strings = Array("kraft"))
   def testListMaxTimestampWithEmptyLog(quorum: String): Unit = {
     val maxTimestampOffset = runFetchOffsets(adminClient, OffsetSpec.maxTimestamp(), topicName)
     assertEquals(ListOffsetsResponse.UNKNOWN_OFFSET, maxTimestampOffset.offset())
@@ -88,7 +88,7 @@ class ListOffsetsIntegrationTest extends KafkaServerTestHarness {
 
 
   @ParameterizedTest
-  @ValueSource(strings = Array("zk", "kraft"))
+  @ValueSource(strings = Array("kraft"))
   def testThreeCompressedRecordsInOneBatch(quorum: String): Unit = {
     produceMessagesInOneBatch("gzip")
     verifyListOffsets()
@@ -102,7 +102,7 @@ class ListOffsetsIntegrationTest extends KafkaServerTestHarness {
   }
 
   @ParameterizedTest
-  @ValueSource(strings = Array("zk", "kraft"))
+  @ValueSource(strings = Array("kraft"))
   def testThreeNonCompressedRecordsInOneBatch(quorum: String): Unit = {
     produceMessagesInOneBatch()
     verifyListOffsets()
@@ -117,7 +117,7 @@ class ListOffsetsIntegrationTest extends KafkaServerTestHarness {
   }
 
   @ParameterizedTest
-  @ValueSource(strings = Array("zk", "kraft"))
+  @ValueSource(strings = Array("kraft"))
   def testThreeNonCompressedRecordsInSeparateBatch(quorum: String): Unit = {
     produceMessagesInSeparateBatch()
     verifyListOffsets()
@@ -162,7 +162,7 @@ class ListOffsetsIntegrationTest extends KafkaServerTestHarness {
   }
 
   @ParameterizedTest
-  @ValueSource(strings = Array("zk", "kraft"))
+  @ValueSource(strings = Array("kraft"))
   def testThreeRecordsInOneBatchHavingDifferentCompressionTypeWithServer(quorum: String): Unit = {
     val props: Properties = new Properties()
     props.setProperty(TopicConfig.COMPRESSION_TYPE_CONFIG, "lz4")
@@ -172,7 +172,7 @@ class ListOffsetsIntegrationTest extends KafkaServerTestHarness {
   }
 
   @ParameterizedTest
-  @ValueSource(strings = Array("zk", "kraft"))
+  @ValueSource(strings = Array("kraft"))
   def testThreeRecordsInSeparateBatchHavingDifferentCompressionTypeWithServer(quorum: String): Unit = {
     val props: Properties = new Properties()
     props.setProperty(TopicConfig.COMPRESSION_TYPE_CONFIG, "lz4")
@@ -182,7 +182,7 @@ class ListOffsetsIntegrationTest extends KafkaServerTestHarness {
   }
 
   @ParameterizedTest
-  @ValueSource(strings = Array("zk", "kraft"))
+  @ValueSource(strings = Array("kraft"))
   def testThreeCompressedRecordsInSeparateBatch(quorum: String): Unit = {
     produceMessagesInSeparateBatch("gzip")
     verifyListOffsets()
@@ -247,7 +247,8 @@ class ListOffsetsIntegrationTest extends KafkaServerTestHarness {
     adminClient.alterPartitionReassignments(java.util.Collections.singletonMap(new TopicPartition(topic, 0),
       Optional.of(new NewPartitionReassignment(java.util.Arrays.asList(newLeader))))).all().get()
     // wait for all reassignments get completed
-    waitForAllReassignmentsToComplete(adminClient)
+    waitUntilTrue(() => adminClient.listPartitionReassignments().reassignments().get().isEmpty,
+      s"There still are ongoing reassignments")
     // make sure we are able to see the new leader
     var lastLeader = -1
     TestUtils.waitUntilTrue(() => {

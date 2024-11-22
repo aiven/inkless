@@ -44,8 +44,8 @@ Follow instructions in https://kafka.apache.org/quickstart
 ### Running a particular unit/integration test ###
     ./gradlew clients:test --tests RequestResponseTest
 
-### Repeatedly running a particular unit/integration test ###
-    I=0; while ./gradlew clients:test --tests RequestResponseTest --rerun --fail-fast; do (( I=$I+1 )); echo "Completed run: $I"; sleep 1; done
+### Repeatedly running a particular unit/integration test with specific times by setting N ###
+    N=500; I=0; while [ $I -lt $N ] && ./gradlew clients:test --tests RequestResponseTest --rerun --fail-fast; do (( I=$I+1 )); echo "Completed run: $I"; sleep 1; done
 
 ### Running a particular test method within a unit/integration test ###
     ./gradlew core:test --tests kafka.api.ProducerFailureHandlingTest.testCannotSendToInternalTopic
@@ -62,15 +62,15 @@ to `log4j.logger.org.apache.kafka=INFO` and then run:
 And you should see `INFO` level logs in the file under the `clients/build/test-results/test` directory.
 
 ### Specifying test retries ###
-By default, each failed test is retried once up to a maximum of three total retries per test run. 
-Tests are retried at the end of the test task. Adjust these parameters in the following way:
+Retries are disabled by default, but you can set maxTestRetryFailures and maxTestRetries to enable retries.
+
+The following example declares -PmaxTestRetries=1 and -PmaxTestRetryFailures=3 to enable a failed test to be retried once, with a total retry limit of 3.
 
     ./gradlew test -PmaxTestRetries=1 -PmaxTestRetryFailures=3
 
-Additionally, quarantined tests are automatically retried three times up to a total of
-20 retries per run. This is controlled by similar parameters.
+The quarantinedTest task also has no retries by default, but you can set maxQuarantineTestRetries and maxQuarantineTestRetryFailures to enable retries, similar to the test task.
 
-    ./gradlew test -PmaxQuarantineTestRetries=3 -PmaxQuarantineTestRetryFailures=20
+    ./gradlew quarantinedTest -PmaxQuarantineTestRetries=3 -PmaxQuarantineTestRetryFailures=20
 
 See [Test Retry Gradle Plugin](https://github.com/gradle/test-retry-gradle-plugin) for and [build.yml](.github/workflows/build.yml) more details.
 
@@ -99,8 +99,8 @@ fail due to code changes. You can just run:
 Using compiled files:
 
     KAFKA_CLUSTER_ID="$(./bin/kafka-storage.sh random-uuid)"
-    ./bin/kafka-storage.sh format -t $KAFKA_CLUSTER_ID -c config/kraft/server.properties
-    ./bin/kafka-server-start.sh config/kraft/server.properties
+    ./bin/kafka-storage.sh format -t $KAFKA_CLUSTER_ID -c config/kraft/reconfig-server.properties
+    ./bin/kafka-server-start.sh config/kraft/reconfig-server.properties
 
 Using docker image:
 

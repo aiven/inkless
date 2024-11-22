@@ -18,8 +18,10 @@
 package org.apache.kafka.coordinator.share;
 
 import org.apache.kafka.common.MetricName;
+import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.Uuid;
+import org.apache.kafka.common.errors.CoordinatorNotAvailableException;
 import org.apache.kafka.common.internals.Topic;
 import org.apache.kafka.common.message.ReadShareGroupStateRequestData;
 import org.apache.kafka.common.message.ReadShareGroupStateResponseData;
@@ -30,9 +32,11 @@ import org.apache.kafka.common.protocol.ApiKeys;
 import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.utils.LogContext;
 import org.apache.kafka.common.utils.Time;
+import org.apache.kafka.common.utils.Utils;
 import org.apache.kafka.coordinator.common.runtime.CoordinatorRecord;
 import org.apache.kafka.coordinator.common.runtime.CoordinatorRuntime;
 import org.apache.kafka.coordinator.share.metrics.ShareCoordinatorMetrics;
+import org.apache.kafka.server.share.SharePartitionKey;
 import org.apache.kafka.server.util.FutureUtils;
 
 import org.junit.jupiter.api.Test;
@@ -50,6 +54,7 @@ import java.util.concurrent.TimeoutException;
 
 import static org.apache.kafka.coordinator.common.runtime.TestUtil.requestContext;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
@@ -607,5 +612,66 @@ class ShareCoordinatorServiceTest {
                     ))
             ).get(5, TimeUnit.SECONDS)
         );
+    }
+
+    @Test
+    public void testTopicPartitionFor() {
+        CoordinatorRuntime<ShareCoordinatorShard, CoordinatorRecord> runtime = mockRuntime();
+        ShareCoordinatorService service = new ShareCoordinatorService(
+            new LogContext(),
+            ShareCoordinatorConfigTest.createConfig(ShareCoordinatorConfigTest.testConfigMap()),
+            runtime,
+            new ShareCoordinatorMetrics(),
+            Time.SYSTEM
+        );
+
+        service.startup(() -> 50);
+
+        String groupId = "group1";
+        Uuid topicId = Uuid.randomUuid();
+        int partition = 0;
+
+        TopicPartition tp = service.topicPartitionFor(new SharePartitionKey(groupId, new TopicIdPartition(topicId, partition, null)));
+        assertEquals(Topic.SHARE_GROUP_STATE_TOPIC_NAME, tp.topic());
+        int expectedPartition = tp.partition();
+
+        // The presence of a topic name should not affect the choice of partition
+        tp = service.topicPartitionFor(new SharePartitionKey(groupId, new TopicIdPartition(topicId, partition, "whatever")));
+        assertEquals(Topic.SHARE_GROUP_STATE_TOPIC_NAME, tp.topic());
+        assertEquals(expectedPartition, tp.partition());
+    }
+
+    @Test
+    public void testPartitionFor() {
+        CoordinatorRuntime<ShareCoordinatorShard, CoordinatorRecord> runtime = mockRuntime();
+        ShareCoordinatorService service = new ShareCoordinatorService(
+                new LogContext(),
+                ShareCoordinatorConfigTest.createConfig(ShareCoordinatorConfigTest.testConfigMap()),
+                runtime,
+                new ShareCoordinatorMetrics(),
+                Time.SYSTEM
+        );
+
+        String groupId = "group1";
+        Uuid topicId = Uuid.randomUuid();
+        int partition = 0;
+
+        // inactive shard should throw exception
+        assertThrows(CoordinatorNotAvailableException.class, () -> service.partitionFor(SharePartitionKey.getInstance(groupId, topicId, partition)));
+
+        final int numPartitions = 50;
+        service.startup(() -> numPartitions);
+
+        final SharePartitionKey key1 = SharePartitionKey.getInstance(groupId, new TopicIdPartition(topicId, partition, null));
+        int sharePartitionKey = service.partitionFor(key1);
+        assertEquals(Utils.abs(key1.asCoordinatorKey().hashCode()) % numPartitions, sharePartitionKey);
+
+        // The presence of a topic name should not affect the choice of partition
+        final SharePartitionKey key2 = new SharePartitionKey(groupId, new TopicIdPartition(topicId, partition, "whatever"));
+        sharePartitionKey = service.partitionFor(key2);
+        assertEquals(Utils.abs(key2.asCoordinatorKey().hashCode()) % numPartitions, sharePartitionKey);
+
+        // asCoordinatorKey does not discriminate on topic name
+        assertEquals(key1.asCoordinatorKey(), key2.asCoordinatorKey());
     }
 }

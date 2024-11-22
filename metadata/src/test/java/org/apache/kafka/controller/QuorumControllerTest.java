@@ -622,15 +622,15 @@ public class QuorumControllerTest {
 
     @Test
     public void testNoOpRecordWriteAfterTimeout() throws Throwable {
-        long maxIdleIntervalNs = 1_000;
-        long maxReplicationDelayMs = 60_000;
+        long maxIdleIntervalNs = TimeUnit.MICROSECONDS.toNanos(100);
+        long maxReplicationDelayMs = 1_000;
         try (
             LocalLogManagerTestEnv logEnv = new LocalLogManagerTestEnv.Builder(3).
                 build();
             QuorumControllerTestEnv controlEnv = new QuorumControllerTestEnv.Builder(logEnv).
-                setControllerBuilderInitializer(controllerBuilder -> {
-                    controllerBuilder.setMaxIdleIntervalNs(OptionalLong.of(maxIdleIntervalNs));
-                }).
+                setControllerBuilderInitializer(controllerBuilder ->
+                    controllerBuilder.setMaxIdleIntervalNs(OptionalLong.of(maxIdleIntervalNs))
+                ).
                 build()
         ) {
             ListenerCollection listeners = new ListenerCollection();
@@ -1388,10 +1388,10 @@ public class QuorumControllerTest {
 
         ControllerResult<Void> result = ActivationRecordsGenerator.generate(
             msg -> { },
-            !stateInLog.isPresent(),
+            stateInLog.isEmpty(),
             -1L,
             BootstrapMetadata.fromVersion(metadataVersion, "test"),
-            stateInLog.orElseGet(() -> ZkMigrationState.NONE),
+            stateInLog.orElse(ZkMigrationState.NONE),
             metadataVersion);
         RecordTestUtils.replayAll(featureControlManager, result.records());
         return featureControlManager;

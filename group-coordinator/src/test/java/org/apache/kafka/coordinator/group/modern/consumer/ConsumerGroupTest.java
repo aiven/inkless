@@ -58,9 +58,11 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.OptionalLong;
+import java.util.Set;
 
 import static org.apache.kafka.common.utils.Utils.mkEntry;
 import static org.apache.kafka.common.utils.Utils.mkMap;
@@ -1598,5 +1600,179 @@ public class ConsumerGroupTest {
         assertEquals(expectedConsumerGroup.state(), consumerGroup.state());
         assertEquals(expectedConsumerGroup.preferredServerAssignor(), consumerGroup.preferredServerAssignor());
         assertEquals(expectedConsumerGroup.members(), consumerGroup.members());
+    }
+
+    @Test
+    public void testSubscribedRegularExpressionCount() {
+        ConsumerGroup consumerGroup = createConsumerGroup("foo");
+
+        ConsumerGroupMember member1 = new ConsumerGroupMember.Builder("member1")
+            .setSubscribedTopicRegex("regex1")
+            .build();
+        ConsumerGroupMember member2 = new ConsumerGroupMember.Builder("member2")
+            .setSubscribedTopicRegex("regex2")
+            .build();
+        ConsumerGroupMember member3 = new ConsumerGroupMember.Builder("member3")
+            .setSubscribedTopicRegex("regex1")
+            .build();
+
+        // Assert the initial state.
+        assertEquals(0, consumerGroup.numSubscribedMembers("regex1"));
+        assertEquals(0, consumerGroup.numSubscribedMembers("regex2"));
+        assertEquals(0, consumerGroup.numSubscribedMembers("regex3"));
+
+        // Add member 1.
+        consumerGroup.updateMember(member1);
+        assertEquals(1, consumerGroup.numSubscribedMembers("regex1"));
+        assertEquals(0, consumerGroup.numSubscribedMembers("regex2"));
+        assertEquals(0, consumerGroup.numSubscribedMembers("regex3"));
+
+        // Add member 2.
+        consumerGroup.updateMember(member2);
+        assertEquals(1, consumerGroup.numSubscribedMembers("regex1"));
+        assertEquals(1, consumerGroup.numSubscribedMembers("regex2"));
+        assertEquals(0, consumerGroup.numSubscribedMembers("regex3"));
+
+        // Add member 3.
+        consumerGroup.updateMember(member3);
+        assertEquals(2, consumerGroup.numSubscribedMembers("regex1"));
+        assertEquals(1, consumerGroup.numSubscribedMembers("regex2"));
+        assertEquals(0, consumerGroup.numSubscribedMembers("regex3"));
+
+        // Update member 3.
+        member3 = new ConsumerGroupMember.Builder(member3)
+            .setSubscribedTopicRegex("regex2")
+            .build();
+        consumerGroup.updateMember(member3);
+        assertEquals(1, consumerGroup.numSubscribedMembers("regex1"));
+        assertEquals(2, consumerGroup.numSubscribedMembers("regex2"));
+        assertEquals(0, consumerGroup.numSubscribedMembers("regex3"));
+
+        // Remove member 1.
+        consumerGroup.removeMember(member1.memberId());
+        assertEquals(0, consumerGroup.numSubscribedMembers("regex1"));
+        assertEquals(2, consumerGroup.numSubscribedMembers("regex2"));
+        assertEquals(0, consumerGroup.numSubscribedMembers("regex3"));
+
+        // Remove member 2.
+        consumerGroup.removeMember(member2.memberId());
+        assertEquals(0, consumerGroup.numSubscribedMembers("regex1"));
+        assertEquals(1, consumerGroup.numSubscribedMembers("regex2"));
+        assertEquals(0, consumerGroup.numSubscribedMembers("regex3"));
+
+        // Remove member 3.
+        consumerGroup.removeMember(member3.memberId());
+        assertEquals(0, consumerGroup.numSubscribedMembers("regex1"));
+        assertEquals(0, consumerGroup.numSubscribedMembers("regex2"));
+        assertEquals(0, consumerGroup.numSubscribedMembers("regex3"));
+    }
+
+    @Test
+    public void testUpdateAndRemoveRegularExpression() {
+        ConsumerGroup consumerGroup = createConsumerGroup("foo");
+
+        ConsumerGroupMember member1 = new ConsumerGroupMember.Builder("member1")
+            .setSubscribedTopicNames(Arrays.asList("foo", "bar", "zar"))
+            .build();
+        consumerGroup.updateMember(member1);
+
+        ConsumerGroupMember member2 = new ConsumerGroupMember.Builder("member2")
+            .setSubscribedTopicNames(Arrays.asList("foo", "bar"))
+            .build();
+        consumerGroup.updateMember(member2);
+
+        // Verify initial state.
+        assertEquals(
+            Map.of(
+                "foo", 2,
+                "bar", 2,
+                "zar", 1
+            ),
+            consumerGroup.subscribedTopicNames()
+        );
+
+        // Add a regex.
+        consumerGroup.updateResolvedRegularExpression(
+            "foo|bar",
+            new ResolvedRegularExpression(
+                Set.of("foo", "bar"),
+                10L,
+                12345L
+            )
+        );
+
+        assertEquals(
+            Map.of(
+                "foo", 3,
+                "bar", 3,
+                "zar", 1
+            ),
+            consumerGroup.subscribedTopicNames()
+        );
+
+        // Add a regex.
+        consumerGroup.updateResolvedRegularExpression(
+            "foobar",
+            new ResolvedRegularExpression(
+                Set.of("foobar"),
+                10L,
+                12345L
+            )
+        );
+
+        assertEquals(
+            Map.of(
+                "foo", 3,
+                "bar", 3,
+                "zar", 1,
+                "foobar", 1
+            ),
+            consumerGroup.subscribedTopicNames()
+        );
+
+        // Update a regex.
+        consumerGroup.updateResolvedRegularExpression(
+            "foo|bar",
+            new ResolvedRegularExpression(
+                Set.of("foo"),
+                10L,
+                12345L
+            )
+        );
+
+        assertEquals(
+            Map.of(
+                "foo", 3,
+                "bar", 2,
+                "zar", 1,
+                "foobar", 1
+            ),
+            consumerGroup.subscribedTopicNames()
+        );
+
+        // Remove a regex.
+        consumerGroup.removeResolvedRegularExpression("foo|bar");
+
+        assertEquals(
+            Map.of(
+                "foo", 2,
+                "bar", 2,
+                "zar", 1,
+                "foobar", 1
+            ),
+            consumerGroup.subscribedTopicNames()
+        );
+
+        // Remove another regex.
+        consumerGroup.removeResolvedRegularExpression("foobar");
+
+        assertEquals(
+            Map.of(
+                "foo", 2,
+                "bar", 2,
+                "zar", 1
+            ),
+            consumerGroup.subscribedTopicNames()
+        );
     }
 }

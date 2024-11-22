@@ -1289,7 +1289,7 @@ class KRaftClusterTest {
             () => admin.createTopics(newTopics).all().get())
         assertNotNull(executionException.getCause)
         assertEquals(classOf[PolicyViolationException], executionException.getCause.getClass)
-        assertEquals("Unable to perform excessively large batch operation.",
+        assertEquals("Excessively large number of partitions per request.",
           executionException.getCause.getMessage)
       } finally {
         admin.close()
@@ -1389,8 +1389,7 @@ class KRaftClusterTest {
         setName("num.io.threads").
         setValue("9"), 0.toShort))
     val cluster = new KafkaClusterTestKit.Builder(
-      new TestKitNodes.Builder().
-        setBootstrapMetadata(BootstrapMetadata.fromRecords(bootstrapRecords, "testRecords")).
+      new TestKitNodes.Builder(BootstrapMetadata.fromRecords(bootstrapRecords, "testRecords")).
         setNumBrokerNodes(1).
         setNumControllerNodes(1).build()).
       build()

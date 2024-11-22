@@ -22,7 +22,6 @@ import java.util.{Collections, Properties}
 import kafka.controller.KafkaController
 import kafka.log.UnifiedLog
 import kafka.network.ConnectionQuotas
-import kafka.server.Constants._
 import kafka.server.QuotaFactory.QuotaManagers
 import kafka.utils.Logging
 import org.apache.kafka.server.config.{QuotaConfig, ReplicationConfigs, ZooKeeperInternals}
@@ -33,6 +32,7 @@ import org.apache.kafka.common.utils.Sanitizer
 import org.apache.kafka.coordinator.group.GroupCoordinator
 import org.apache.kafka.security.CredentialProvider
 import org.apache.kafka.server.ClientMetricsManager
+import org.apache.kafka.server.common.StopPartition
 import org.apache.kafka.storage.internals.log.{LogStartOffsetIncrementReason, ThrottledReplicaListValidator}
 import org.apache.kafka.storage.internals.log.LogConfig.MessageFormatVersion
 
@@ -99,7 +99,7 @@ class TopicConfigHandler(private val replicaManager: ReplicaManager,
     // When copy disabled, we should stop leaderCopyRLMTask, but keep expirationTask
     if (isRemoteLogEnabled && !wasCopyDisabled && isCopyDisabled) {
       replicaManager.remoteLogManager.foreach(rlm => {
-        rlm.stopLeaderCopyRLMTasks(leaderPartitions.toSet.asJava);
+        rlm.stopLeaderCopyRLMTasks(leaderPartitions.toSet.asJava)
       })
     }
 
@@ -108,14 +108,12 @@ class TopicConfigHandler(private val replicaManager: ReplicaManager,
       val stopPartitions: java.util.HashSet[StopPartition] = new java.util.HashSet[StopPartition]()
       leaderPartitions.foreach(partition => {
         // delete remote logs and stop RemoteLogMetadataManager
-        stopPartitions.add(StopPartition(partition.topicPartition, deleteLocalLog = false,
-          deleteRemoteLog = true, stopRemoteLogMetadataManager = true))
+        stopPartitions.add(new StopPartition(partition.topicPartition, false, true, true))
       })
 
       followerPartitions.foreach(partition => {
         // we need to cancel follower tasks and stop RemoteLogMetadataManager
-        stopPartitions.add(StopPartition(partition.topicPartition, deleteLocalLog = false,
-          deleteRemoteLog = false, stopRemoteLogMetadataManager = true))
+        stopPartitions.add(new StopPartition(partition.topicPartition, false, false, true))
       })
 
       // update the log start offset to local log start offset for the leader replicas
@@ -132,7 +130,7 @@ class TopicConfigHandler(private val replicaManager: ReplicaManager,
     def updateThrottledList(prop: String, quotaManager: ReplicationQuotaManager): Unit = {
       if (topicConfig.containsKey(prop) && topicConfig.getProperty(prop).nonEmpty) {
         val partitions = parseThrottledPartitions(topicConfig, kafkaConfig.brokerId, prop)
-        quotaManager.markThrottled(topic, partitions)
+        quotaManager.markThrottled(topic, partitions.map(Integer.valueOf).asJava)
         debug(s"Setting $prop on broker ${kafkaConfig.brokerId} for topic: $topic and partitions $partitions")
       } else {
         quotaManager.removeThrottle(topic)
@@ -152,7 +150,7 @@ class TopicConfigHandler(private val replicaManager: ReplicaManager,
     ThrottledReplicaListValidator.ensureValidString(prop, configValue)
     configValue match {
       case "" => Seq()
-      case "*" => AllReplicas
+      case "*" => ReplicationQuotaManager.ALL_REPLICAS.asScala.map(_.toInt).toSeq
       case _ => configValue.trim
         .split(",")
         .map(_.split(":"))

@@ -115,16 +115,29 @@ ext {
 
   commitId = determineCommitId()
 
-  addParametersForTests = { name, options ->
+  configureJavaCompiler = { name, options ->
     // -parameters generates arguments with parameter names in TestInfo#getDisplayName.
     // ref: https://github.com/junit-team/junit5/blob/4c0dddad1b96d4a20e92a2cd583954643ac56ac0/junit-jupiter-params/src/main/java/org/junit/jupiter/params/ParameterizedTest.java#L161-L164
-    if (name == "compileTestJava" || name == "compileTestScala")
+    if (name == "compileTestJava" || name == "compileTestScala") {
       options.compilerArgs << "-parameters"
+      options.compilerArgs += ["--release", String.valueOf(minJavaVersion)]
+    } else if (name == "compileJava" || name == "compileScala") {
+      options.compilerArgs << "-Xlint:all"
+      if (!project.path.startsWith(":connect") && !project.path.startsWith(":storage"))
+        options.compilerArgs << "-Xlint:-rawtypes"
+      options.compilerArgs << "-encoding" << "UTF-8"
+      options.compilerArgs << "-Xlint:-rawtypes"
+      options.compilerArgs << "-Xlint:-serial"
+      options.compilerArgs << "-Xlint:-try"
+      options.compilerArgs << "-Werror"
+      options.compilerArgs += ["--release", String.valueOf(minJavaVersion)]
+    }
   }
 
   runtimeTestLibs = [
     libs.slf4jReload4j,
     libs.junitPlatformLanucher,
+    project(":test-common:test-common-runtime")
   ]
 }
 
@@ -310,16 +323,7 @@ subprojects {
   }
 
   tasks.withType(JavaCompile) {
-    options.encoding = 'UTF-8'
-    options.compilerArgs << "-Xlint:all"
-    // temporary exclusions until all the warnings are fixed
-    if (!project.path.startsWith(":connect") && !project.path.startsWith(":storage"))
-      options.compilerArgs << "-Xlint:-rawtypes"
-    options.compilerArgs << "-Xlint:-serial"
-    options.compilerArgs << "-Xlint:-try"
-    options.compilerArgs << "-Werror"
-    options.release = minJavaVersion
-    addParametersForTests(name, options)
+    configureJavaCompiler(name, options)
   }
 
   if (shouldPublish) {
@@ -482,6 +486,8 @@ subprojects {
 
     // KAFKA-17433 Used by deflake.yml github action to repeat individual tests
     systemProperty("kafka.cluster.test.repeat", project.findProperty("kafka.cluster.test.repeat"))
+    systemProperty("kafka.test.catalog.file", project.findProperty("kafka.test.catalog.file"))
+    systemProperty("kafka.test.run.quarantined", "false")
 
     testLogging {
       events = userTestLoggingEvents ?: testLoggingEvents
@@ -518,9 +524,9 @@ subprojects {
     doLast {
       if (ext.isGithubActions) {
         def moduleDirPath = projectToJUnitXmlPath(project)
-        def dest = rootProject.layout.buildDirectory.dir("junit-xml/${moduleDirPath}").get().asFile
+        def dest = rootProject.layout.buildDirectory.dir("junit-xml/${moduleDirPath}/test").get().asFile
         println "Copy JUnit XML for ${project.name} to $dest"
-        ant.copy(todir: "$dest/test") {
+        ant.copy(todir: "$dest") {
           ant.fileset(dir: "${test.reports.junitXml.entryPoint}")
         }
 
@@ -552,6 +558,8 @@ subprojects {
 
     // KAFKA-17433 Used by deflake.yml github action to repeat individual tests
     systemProperty("kafka.cluster.test.repeat", project.findProperty("kafka.cluster.test.repeat"))
+    systemProperty("kafka.test.catalog.file", project.findProperty("kafka.test.catalog.file"))
+    systemProperty("kafka.test.run.quarantined", "true")
 
     testLogging {
       events = userTestLoggingEvents ?: testLoggingEvents
@@ -563,7 +571,6 @@ subprojects {
 
     useJUnitPlatform {
       includeEngines 'junit-jupiter'
-      includeTags 'flaky'
     }
 
     develocity {
@@ -579,9 +586,9 @@ subprojects {
     doLast {
       if (ext.isGithubActions) {
         def moduleDirPath = projectToJUnitXmlPath(project)
-        def dest = rootProject.layout.buildDirectory.dir("junit-xml/${moduleDirPath}").get().asFile
+        def dest = rootProject.layout.buildDirectory.dir("junit-xml/${moduleDirPath}/quarantinedTest").get().asFile
         println "Copy JUnit XML for ${project.name} to $dest"
-        ant.copy(todir: "$dest/quarantinedTest", failonerror: "false") {
+        ant.copy(todir: "$dest", failonerror: "false") {
           ant.fileset(dir: "${quarantinedTest.reports.junitXml.entryPoint}") {
             ant.include(name: "**/*.xml")
           }
@@ -771,9 +778,8 @@ subprojects {
     scalaCompileOptions.additionalParameters += ["-Xfatal-warnings"]
 
     scalaCompileOptions.additionalParameters += ["-release", String.valueOf(minJavaVersion)]
-    options.compilerArgs += ["--release", String.valueOf(minJavaVersion)]
 
-    addParametersForTests(name, options)
+    configureJavaCompiler(name, options)
 
     configure(scalaCompileOptions.forkOptions) {
       memoryMaximumSize = defaultMaxHeapSize
@@ -945,7 +951,7 @@ project(':server') {
     testImplementation libs.junitJupiter
     testImplementation libs.slf4jReload4j
 
-    testRuntimeOnly libs.junitPlatformLanucher
+    testRuntimeOnly runtimeTestLibs
   }
 
   task createVersionFile() {
@@ -995,25 +1001,16 @@ project(':share') {
   dependencies {
     implementation project(':server-common')
 
+    testImplementation project(':clients').sourceSets.test.output
+    testImplementation project(':server-common').sourceSets.test.output
+
     implementation libs.slf4jApi
 
     testImplementation libs.junitJupiter
+    testImplementation libs.mockitoCore
     testImplementation libs.slf4jReload4j
 
-    testRuntimeOnly libs.junitPlatformLanucher
-  }
-
-  sourceSets {
-    main {
-      java {
-        srcDirs = ["src/main/java"]
-      }
-    }
-    test {
-      java {
-        srcDirs = ["src/test/java"]
-      }
-    }
+    testRuntimeOnly runtimeTestLibs
   }
 
   checkstyle {
@@ -1135,7 +1132,7 @@ project(':core') {
     testImplementation libs.awsskdS3
     testImplementation project(':storage:inkless').sourceSets.test.output.classesDirs
 
-    testRuntimeOnly libs.junitPlatformLanucher
+    testRuntimeOnly runtimeTestLibs
   }
 
   if (userEnableTestCoverage) {
@@ -1333,9 +1330,6 @@ project(':core') {
     //By default gradle does not handle test dependencies between the sub-projects
     //This line is to include clients project test jar to dependant-testlibs
     from (project(':clients').testJar ) { "$buildDir/dependant-testlibs" }
-    // log4j-appender is not in core dependencies,
-    // so we add it to dependant-testlibs to avoid ClassNotFoundException in running kafka_log4j_appender.py
-    from (project(':log4j-appender').jar ) { "$buildDir/dependant-testlibs" }
     duplicatesStrategy 'exclude'
   }
 
@@ -1391,7 +1385,7 @@ project(':metadata') {
     testImplementation project(':raft').sourceSets.test.output
     testImplementation project(':server-common').sourceSets.test.output
 
-    testRuntimeOnly libs.junitPlatformLanucher
+    testRuntimeOnly runtimeTestLibs
 
     generator project(':generator')
   }
@@ -1465,19 +1459,6 @@ project(':group-coordinator:group-coordinator-api') {
     }
   }
 
-  sourceSets {
-    main {
-      java {
-        srcDirs = ["src/main/java"]
-      }
-    }
-    test {
-      java {
-        srcDirs = ["src/test/java"]
-      }
-    }
-  }
-
   jar {
     dependsOn createVersionFile
     from("$buildDir") {
@@ -1519,6 +1500,7 @@ project(':group-coordinator') {
     implementation libs.slf4jApi
     implementation libs.metrics
     implementation libs.hdrHistogram
+    implementation libs.re2j
 
     testImplementation project(':clients').sourceSets.test.output
     testImplementation project(':server-common').sourceSets.test.output
@@ -1572,6 +1554,7 @@ project(':group-coordinator') {
 }
 
 project(':test-common') {
+  // Test framework stuff. Implementations that support test-common-api
   base {
     archivesName = "kafka-test-common"
   }
@@ -1590,19 +1573,6 @@ project(':test-common') {
     testRuntimeOnly runtimeTestLibs
   }
 
-  sourceSets {
-    main {
-      java {
-        srcDirs = ["src/main/java"]
-      }
-    }
-    test {
-      java {
-        srcDirs = ["src/test/java"]
-      }
-    }
-  }
-
   checkstyle {
     configProperties = checkstyleConfigProperties("import-control-test-common.xml")
   }
@@ -1613,10 +1583,10 @@ project(':test-common') {
 }
 
 project(':test-common:test-common-api') {
+  // Interfaces, config classes, and other test APIs
   base {
     archivesName = "kafka-test-common-api"
   }
-
 
   dependencies {
     implementation project(':clients')
@@ -1626,6 +1596,7 @@ project(':test-common:test-common-api') {
     implementation project(':raft')
     implementation project(':server')
     implementation project(':server-common')
+    implementation project(':storage')
     implementation project(':test-common')
     implementation libs.junitJupiterApi
 
@@ -1635,17 +1606,26 @@ project(':test-common:test-common-api') {
     testRuntimeOnly runtimeTestLibs
   }
 
-  sourceSets {
-    main {
-      java {
-        srcDirs = ["src/main/java"]
-      }
-    }
-    test {
-      java {
-        srcDirs = ["src/test/java"]
-      }
-    }
+  checkstyle {
+    configProperties = checkstyleConfigProperties("import-control-test-common-api.xml")
+  }
+
+  javadoc {
+    enabled = false
+  }
+}
+
+project(':test-common:test-common-runtime') {
+  // Runtime-only test code including JUnit extentions
+  base {
+    archivesName = "kafka-test-common-runtime"
+  }
+
+  dependencies {
+    implementation libs.slf4jApi
+    implementation libs.junitPlatformLanucher
+    implementation libs.junitJupiterApi
+    implementation libs.junitJupiter
   }
 
   checkstyle {
@@ -1669,9 +1649,14 @@ project(':transaction-coordinator') {
   dependencies {
     implementation libs.jacksonDatabind
     implementation project(':clients')
+    implementation project(':server-common')
+    implementation libs.slf4jApi
+
     testImplementation libs.junitJupiter
     testImplementation libs.mockitoCore
-
+    testImplementation project(':clients').sourceSets.test.output
+    testImplementation project(':test-common')
+    testImplementation project(':test-common:test-common-api')
     testRuntimeOnly runtimeTestLibs
 
     generator project(':generator')
@@ -1737,19 +1722,6 @@ project(':coordinator-common') {
     testImplementation libs.mockitoCore
 
     testRuntimeOnly runtimeTestLibs
-  }
-
-  sourceSets {
-    main {
-      java {
-        srcDirs = ["src/main/java"]
-      }
-    }
-    test {
-      java {
-        srcDirs = ["src/test/java"]
-      }
-    }
   }
 
   checkstyle {
@@ -1858,7 +1830,7 @@ project(':generator') {
     implementation libs.jacksonJaxrsJsonProvider
     testImplementation libs.junitJupiter
 
-    testRuntimeOnly libs.junitPlatformLanucher
+    testRuntimeOnly runtimeTestLibs
   }
 
   javadoc {
@@ -2163,7 +2135,6 @@ project(':server-common') {
     testImplementation libs.mockitoCore
 
     testRuntimeOnly runtimeTestLibs
-    testRuntimeOnly project(":test-common")
   }
 
   task createVersionFile() {
@@ -2240,19 +2211,6 @@ project(':storage:storage-api') {
       receiptFile.parentFile.mkdirs()
       def content = data.entrySet().collect { "$it.key=$it.value" }.sort().join("\n")
       receiptFile.setText(content, "ISO-8859-1")
-    }
-  }
-
-  sourceSets {
-    main {
-      java {
-        srcDirs = ["src/main/java"]
-      }
-    }
-    test {
-      java {
-        srcDirs = ["src/test/java"]
-      }
     }
   }
 
@@ -2469,7 +2427,7 @@ project(':tools:tools-api') {
   dependencies {
     implementation project(':clients')
     testImplementation libs.junitJupiter
-    testRuntimeOnly libs.junitPlatformLanucher
+    testRuntimeOnly runtimeTestLibs
   }
 
   task createVersionFile() {
@@ -2488,19 +2446,6 @@ project(':tools:tools-api') {
       receiptFile.parentFile.mkdirs()
       def content = data.entrySet().collect { "$it.key=$it.value" }.sort().join("\n")
       receiptFile.setText(content, "ISO-8859-1")
-    }
-  }
-
-  sourceSets {
-    main {
-      java {
-        srcDirs = ["src/main/java"]
-      }
-    }
-    test {
-      java {
-        srcDirs = ["src/test/java"]
-      }
     }
   }
 
@@ -2563,6 +2508,10 @@ project(':tools') {
     testImplementation project(':connect:runtime').sourceSets.test.output
     testImplementation project(':storage:storage-api').sourceSets.main.output
     testImplementation project(':storage').sourceSets.test.output
+    testImplementation project(':streams')
+    testImplementation project(':streams').sourceSets.test.output
+    testImplementation project(':streams:integration-tests').sourceSets.test.output
+    testImplementation project(':test-common')
     testImplementation libs.junitJupiter
     testImplementation libs.mockitoCore
     testImplementation libs.mockitoJunitJupiter // supports MockitoExtension
@@ -2578,8 +2527,8 @@ project(':tools') {
     testImplementation libs.apachedsProtocolLdap
     testImplementation libs.apachedsLdifPartition
 
-    testRuntimeOnly libs.junitPlatformLanucher
-    testRuntimeOnly project(':test-common')
+    testRuntimeOnly runtimeTestLibs
+    testRuntimeOnly libs.hamcrest
   }
 
   javadoc {
@@ -2621,10 +2570,15 @@ project(':trogdor') {
     implementation libs.jettyServlet
     implementation libs.jettyServlets
 
+    implementation project(':group-coordinator')
+    implementation project(':group-coordinator:group-coordinator-api')
+
     testImplementation project(':clients')
     testImplementation libs.junitJupiter
     testImplementation project(':clients').sourceSets.test.output
     testImplementation libs.mockitoCore
+
+    testImplementation project(':group-coordinator')
 
     testRuntimeOnly runtimeTestLibs
   }
@@ -2705,7 +2659,7 @@ project(':streams') {
   }
 
   dependencies {
-    api project(':clients')
+    api project(path: ':clients', configuration: 'shadow')
     // `org.rocksdb.Options` is part of Kafka Streams public api via `RocksDBConfigSetter`
     api libs.rocksDBJni
 
@@ -2718,16 +2672,6 @@ project(':streams') {
 
     testImplementation project(':metadata')
     testImplementation project(':clients').sourceSets.test.output
-    testImplementation project(':server')
-    testImplementation project(':core')
-    testImplementation project(':tools')
-    testImplementation project(':test-common')
-    testImplementation project(':storage')
-    testImplementation project(':group-coordinator')
-    testImplementation project(':transaction-coordinator')
-    testImplementation project(':server-common')
-    testImplementation project(':server-common').sourceSets.test.output
-    testImplementation project(':server')
     testImplementation libs.reload4j
     testImplementation libs.junitJupiter
     testImplementation libs.bcpkix
@@ -2827,6 +2771,7 @@ project(':streams') {
   task testAll(
     dependsOn: [
             ':streams:test',
+            ':streams:integration-tests',
             ':streams:test-utils:test',
             ':streams:streams-scala:test',
             ':streams:upgrade-system-tests-0100:test',
@@ -2853,6 +2798,7 @@ project(':streams') {
             ':streams:upgrade-system-tests-36:test',
             ':streams:upgrade-system-tests-37:test',
             ':streams:upgrade-system-tests-38:test',
+            ':streams:upgrade-system-tests-39:test',
             ':streams:examples:test'
     ]
   )
@@ -2869,18 +2815,12 @@ project(':streams:streams-scala') {
     api project(':streams')
 
     api libs.scalaLibrary
-    testImplementation project(':group-coordinator')
-    testImplementation project(':core')
-    testImplementation project(':test-common')
-    testImplementation project(':server-common').sourceSets.test.output
     testImplementation project(':streams').sourceSets.test.output
     testImplementation project(':clients').sourceSets.test.output
     testImplementation project(':streams:test-utils')
 
     testImplementation libs.junitJupiter
-    testImplementation libs.mockitoCore
     testImplementation libs.mockitoJunitJupiter // supports MockitoExtension
-    testImplementation libs.hamcrest
     testRuntimeOnly runtimeTestLibs
   }
 
@@ -2910,6 +2850,58 @@ project(':streams:streams-scala') {
       target '**/*.scala'
       scalafmt("$versions.scalafmt").configFile('../../checkstyle/.scalafmt.conf').scalaMajorVersion(versions.baseScala)
       licenseHeaderFile '../../checkstyle/java.header', 'package'
+    }
+  }
+}
+
+project(':streams:integration-tests') {
+  apply plugin: 'scala'
+
+  base {
+    archivesName = "kafka-streams-integration-tests"
+  }
+
+  dependencies {
+    testImplementation project(':clients').sourceSets.test.output
+    testImplementation project(':group-coordinator')
+    testImplementation project(':server')
+    testImplementation project(':server-common')
+    testImplementation project(':server-common').sourceSets.test.output
+    testImplementation project(':storage')
+    testImplementation project(':streams').sourceSets.test.output
+    testImplementation project(':streams:streams-scala')
+    testImplementation project(':test-common')
+    testImplementation project(':tools')
+    testImplementation project(':transaction-coordinator')
+    testImplementation libs.bcpkix
+    testImplementation libs.hamcrest
+    testImplementation libs.junitJupiter
+    testImplementation libs.junitPlatformSuiteEngine // supports suite test
+    testImplementation libs.mockitoCore
+    testImplementation libs.reload4j
+    testImplementation libs.slf4jApi
+    testImplementation project(':streams:test-utils')
+
+    testRuntimeOnly runtimeTestLibs
+  }
+
+  sourceSets {
+    // Set java/scala source folders in the `scala` block to enable joint compilation
+    main {
+      java {
+        srcDirs = []
+      }
+      scala {
+        srcDirs = []
+      }
+    }
+    test {
+      java {
+        srcDirs = []
+      }
+      scala {
+        srcDirs = ["src/test/java", "src/test/scala"]
+      }
     }
   }
 }
@@ -2968,7 +2960,7 @@ project(':streams:examples') {
     testImplementation libs.junitJupiter
     testImplementation libs.hamcrest
 
-    testRuntimeOnly libs.junitPlatformLanucher
+    testRuntimeOnly runtimeTestLibs
   }
 
   javadoc {
@@ -3354,6 +3346,21 @@ project(':streams:upgrade-system-tests-38') {
   }
 }
 
+project(':streams:upgrade-system-tests-39') {
+  base {
+    archivesName = "kafka-streams-upgrade-system-tests-39"
+  }
+
+  dependencies {
+    testImplementation libs.kafkaStreams_39
+    testRuntimeOnly libs.junitJupiter
+  }
+
+  systemTestLibs {
+    dependsOn testJar
+  }
+}
+
 project(':jmh-benchmarks') {
 
   apply plugin: 'io.github.goooler.shadow'
@@ -3425,29 +3432,6 @@ project(':jmh-benchmarks') {
   javadoc {
      enabled = false
   }
-}
-
-project(':log4j-appender') {
-  base {
-    archivesName = "kafka-log4j-appender"
-  }
-
-  dependencies {
-    implementation project(':clients')
-    implementation libs.slf4jReload4j
-
-    testImplementation project(':clients').sourceSets.test.output
-    testImplementation libs.junitJupiter
-    testImplementation libs.hamcrest
-    testImplementation libs.mockitoCore
-
-    testRuntimeOnly libs.junitPlatformLanucher
-  }
-
-  javadoc {
-    enabled = false
-  }
-
 }
 
 project(':connect:api') {
@@ -3531,7 +3515,7 @@ project(':connect:json') {
 
     api libs.jacksonDatabind
     api libs.jacksonJDK8Datatypes
-    api libs.jacksonAfterburner
+    api libs.jacksonBlackbird
 
     implementation libs.slf4jApi
     runtimeOnly libs.reload4j

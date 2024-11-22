@@ -114,34 +114,6 @@ public class KStreamImplTest {
     private final MockApiProcessorSupplier<String, String, Void, Void> processorSupplier = new MockApiProcessorSupplier<>();
     private final MockApiFixedKeyProcessorSupplier<String, String, Void> fixedKeyProcessorSupplier = new MockApiFixedKeyProcessorSupplier<>();
     @SuppressWarnings("deprecation")
-    private final org.apache.kafka.streams.kstream.TransformerSupplier<String, String, KeyValue<String, String>> transformerSupplier =
-        () -> new org.apache.kafka.streams.kstream.Transformer<String, String, KeyValue<String, String>>() {
-            @Override
-            public void init(final ProcessorContext context) {}
-
-            @Override
-            public KeyValue<String, String> transform(final String key, final String value) {
-                return new KeyValue<>(key, value);
-            }
-
-            @Override
-            public void close() {}
-        };
-    @SuppressWarnings("deprecation")
-    private final org.apache.kafka.streams.kstream.TransformerSupplier<String, String, Iterable<KeyValue<String, String>>> flatTransformerSupplier =
-        () -> new org.apache.kafka.streams.kstream.Transformer<String, String, Iterable<KeyValue<String, String>>>() {
-            @Override
-            public void init(final ProcessorContext context) {}
-
-            @Override
-            public Iterable<KeyValue<String, String>> transform(final String key, final String value) {
-                return Collections.singleton(new KeyValue<>(key, value));
-            }
-
-            @Override
-            public void close() {}
-        };
-    @SuppressWarnings("deprecation")
     private final org.apache.kafka.streams.kstream.ValueTransformerSupplier<String, String> valueTransformerSupplier =
         () -> new org.apache.kafka.streams.kstream.ValueTransformer<String, String>() {
             @Override
@@ -1241,9 +1213,6 @@ public class KStreamImplTest {
         assertEquals(((AbstractStream) stream1.flatMapValues(flatMapper)).keySerde(), consumedInternal.keySerde());
         assertNull(((AbstractStream) stream1.flatMapValues(flatMapper)).valueSerde());
 
-        assertNull(((AbstractStream) stream1.transform(transformerSupplier)).keySerde());
-        assertNull(((AbstractStream) stream1.transform(transformerSupplier)).valueSerde());
-
         assertEquals(((AbstractStream) stream1.transformValues(valueTransformerSupplier)).keySerde(), consumedInternal.keySerde());
         assertNull(((AbstractStream) stream1.transformValues(valueTransformerSupplier)).valueSerde());
 
@@ -1351,7 +1320,7 @@ public class KStreamImplTest {
         final StreamsBuilder builder = new StreamsBuilder();
         final String input = "topic";
         final KStream<String, String> stream = builder.stream(input, stringConsumed);
-        stream.to((key, value, context) -> context.topic() + "-" + key + "-" + value.substring(0, 1),
+        stream.to((key, value, context) -> context.topic() + "-" + key + "-" + value.charAt(0),
             Produced.with(Serdes.String(), Serdes.String()));
         builder.stream(input + "-a-v", stringConsumed).process(processorSupplier);
         builder.stream(input + "-b-v", stringConsumed).process(processorSupplier);
@@ -1593,227 +1562,47 @@ public class KStreamImplTest {
     }
 
     @Test
-    @SuppressWarnings("deprecation")
-    public void shouldNotAllowNullTransformerSupplierOnTransform() {
-        final NullPointerException exception = assertThrows(
-            NullPointerException.class,
-            () -> testStream.transform(null));
-        assertThat(exception.getMessage(), equalTo("transformerSupplier can't be null"));
-    }
-
-    @Test
-    @SuppressWarnings("deprecation")
-    public void shouldNotAllowNullTransformerSupplierOnTransformWithStores() {
-        final NullPointerException exception = assertThrows(
-            NullPointerException.class,
-            () -> testStream.transform(null, "storeName"));
-        assertThat(exception.getMessage(), equalTo("transformerSupplier can't be null"));
-    }
-
-    @Test
-    @SuppressWarnings("deprecation")
-    public void shouldNotAllowNullTransformerSupplierOnTransformWithNamed() {
-        final NullPointerException exception = assertThrows(
-            NullPointerException.class,
-            () -> testStream.transform(null, Named.as("transformer")));
-        assertThat(exception.getMessage(), equalTo("transformerSupplier can't be null"));
-    }
-
-    @Test
-    @SuppressWarnings("deprecation")
-    public void shouldNotAllowNullTransformerSupplierOnTransformWithNamedAndStores() {
-        final NullPointerException exception = assertThrows(
-            NullPointerException.class,
-            () -> testStream.transform(null, Named.as("transformer"), "storeName"));
-        assertThat(exception.getMessage(), equalTo("transformerSupplier can't be null"));
-    }
-
-    @Test
-    @SuppressWarnings("deprecation")
-    public void shouldNotAllowNullStoreNamesOnTransform() {
-        final NullPointerException exception = assertThrows(
-            NullPointerException.class,
-            () -> testStream.transform(transformerSupplier, (String[]) null));
-        assertThat(exception.getMessage(), equalTo("stateStoreNames can't be a null array"));
-    }
-
-    @Test
-    @SuppressWarnings("deprecation")
-    public void shouldNotAllowNullStoreNameOnTransform() {
-        final NullPointerException exception = assertThrows(
-            NullPointerException.class,
-            () -> testStream.transform(transformerSupplier, (String) null));
-        assertThat(exception.getMessage(), equalTo("stateStoreNames can't contain `null` as store name"));
-    }
-
-    @Test
-    @SuppressWarnings("deprecation")
-    public void shouldNotAllowNullStoreNamesOnTransformWithNamed() {
-        final NullPointerException exception = assertThrows(
-            NullPointerException.class,
-            () -> testStream.transform(transformerSupplier, Named.as("transform"), (String[]) null));
-        assertThat(exception.getMessage(), equalTo("stateStoreNames can't be a null array"));
-    }
-
-    @Test
-    @SuppressWarnings("deprecation")
-    public void shouldNotAllowNullStoreNameOnTransformWithNamed() {
-        final NullPointerException exception = assertThrows(
-            NullPointerException.class,
-            () -> testStream.transform(transformerSupplier, Named.as("transform"), (String) null));
-        assertThat(exception.getMessage(), equalTo("stateStoreNames can't contain `null` as store name"));
-    }
-
-    @Test
-    @SuppressWarnings("deprecation")
-    public void shouldNotAllowNullNamedOnTransform() {
-        final NullPointerException exception = assertThrows(
-            NullPointerException.class,
-            () -> testStream.transform(transformerSupplier, (Named) null));
-        assertThat(exception.getMessage(), equalTo("named can't be null"));
-    }
-
-    @Test
-    @SuppressWarnings("deprecation")
-    public void shouldNotAllowNullNamedOnTransformWithStoreName() {
-        final NullPointerException exception = assertThrows(
-            NullPointerException.class,
-            () -> testStream.transform(transformerSupplier, (Named) null, "storeName"));
-        assertThat(exception.getMessage(), equalTo("named can't be null"));
-    }
-
-    @Test
-    @SuppressWarnings("deprecation")
-    public void shouldNotAllowBadTransformerSupplierOnFlatTransform() {
-        final org.apache.kafka.streams.kstream.Transformer<String, String, Iterable<KeyValue<String, String>>> transformer = flatTransformerSupplier.get();
+    public void shouldNotAllowBadProcessSupplierOnProcess() {
+        final org.apache.kafka.streams.processor.api.Processor<String, String, Void, Void> processor =
+            processorSupplier.get();
         final IllegalArgumentException exception = assertThrows(
             IllegalArgumentException.class,
-            () -> testStream.flatTransform(() -> transformer)
+            () -> testStream.process(() -> processor)
         );
         assertThat(exception.getMessage(), containsString("#get() must return a new object each time it is called."));
     }
 
     @Test
-    @SuppressWarnings("deprecation")
-    public void shouldNotAllowBadTransformerSupplierOnFlatTransformWithStores() {
-        final org.apache.kafka.streams.kstream.Transformer<String, String, Iterable<KeyValue<String, String>>> transformer = flatTransformerSupplier.get();
+    public void shouldNotAllowBadProcessSupplierOnProcessWithStores() {
+        final org.apache.kafka.streams.processor.api.Processor<String, String, Void, Void> processor =
+            processorSupplier.get();
         final IllegalArgumentException exception = assertThrows(
                 IllegalArgumentException.class,
-            () -> testStream.flatTransform(() -> transformer, "storeName")
+            () -> testStream.process(() -> processor, "storeName")
         );
         assertThat(exception.getMessage(), containsString("#get() must return a new object each time it is called."));
     }
 
     @Test
-    @SuppressWarnings("deprecation")
-    public void shouldNotAllowBadTransformerSupplierOnFlatTransformWithNamed() {
-        final org.apache.kafka.streams.kstream.Transformer<String, String, Iterable<KeyValue<String, String>>> transformer = flatTransformerSupplier.get();
+    public void shouldNotAllowBadProcessSupplierOnProcessWithNamed() {
+        final org.apache.kafka.streams.processor.api.Processor<String, String, Void, Void> processor =
+            processorSupplier.get();
         final IllegalArgumentException exception = assertThrows(
                 IllegalArgumentException.class,
-            () -> testStream.flatTransform(() -> transformer, Named.as("flatTransformer"))
+            () -> testStream.process(() -> processor, Named.as("flatTransformer"))
         );
         assertThat(exception.getMessage(), containsString("#get() must return a new object each time it is called."));
     }
 
     @Test
-    @SuppressWarnings("deprecation")
-    public void shouldNotAllowBadTransformerSupplierOnFlatTransformWithNamedAndStores() {
-        final org.apache.kafka.streams.kstream.Transformer<String, String, Iterable<KeyValue<String, String>>> transformer = flatTransformerSupplier.get();
+    public void shouldNotAllowBadProcessSupplierOnProcessWithNamedAndStores() {
+        final org.apache.kafka.streams.processor.api.Processor<String, String, Void, Void> processor =
+            processorSupplier.get();
         final IllegalArgumentException exception = assertThrows(
                 IllegalArgumentException.class,
-            () -> testStream.flatTransform(() -> transformer, Named.as("flatTransformer"), "storeName")
+            () -> testStream.process(() -> processor, Named.as("processor"), "storeName")
         );
         assertThat(exception.getMessage(), containsString("#get() must return a new object each time it is called."));
-    }
-
-    @Test
-    @SuppressWarnings("deprecation")
-    public void shouldNotAllowNullTransformerSupplierOnFlatTransform() {
-        final NullPointerException exception = assertThrows(
-            NullPointerException.class,
-            () -> testStream.flatTransform(null));
-        assertThat(exception.getMessage(), equalTo("transformerSupplier can't be null"));
-    }
-
-    @Test
-    @SuppressWarnings("deprecation")
-    public void shouldNotAllowNullTransformerSupplierOnFlatTransformWithStores() {
-        final NullPointerException exception = assertThrows(
-            NullPointerException.class,
-            () -> testStream.flatTransform(null, "storeName"));
-        assertThat(exception.getMessage(), equalTo("transformerSupplier can't be null"));
-    }
-
-    @Test
-    @SuppressWarnings("deprecation")
-    public void shouldNotAllowNullTransformerSupplierOnFlatTransformWithNamed() {
-        final NullPointerException exception = assertThrows(
-            NullPointerException.class,
-            () -> testStream.flatTransform(null, Named.as("flatTransformer")));
-        assertThat(exception.getMessage(), equalTo("transformerSupplier can't be null"));
-    }
-
-    @Test
-    @SuppressWarnings("deprecation")
-    public void shouldNotAllowNullTransformerSupplierOnFlatTransformWithNamedAndStores() {
-        final NullPointerException exception = assertThrows(
-            NullPointerException.class,
-            () -> testStream.flatTransform(null, Named.as("flatTransformer"), "storeName"));
-        assertThat(exception.getMessage(), equalTo("transformerSupplier can't be null"));
-    }
-
-    @Test
-    @SuppressWarnings("deprecation")
-    public void shouldNotAllowNullStoreNamesOnFlatTransform() {
-        final NullPointerException exception = assertThrows(
-            NullPointerException.class,
-            () -> testStream.flatTransform(flatTransformerSupplier, (String[]) null));
-        assertThat(exception.getMessage(), equalTo("stateStoreNames can't be a null array"));
-    }
-
-    @Test
-    @SuppressWarnings("deprecation")
-    public void shouldNotAllowNullStoreNameOnFlatTransform() {
-        final NullPointerException exception = assertThrows(
-            NullPointerException.class,
-            () -> testStream.flatTransform(flatTransformerSupplier, (String) null));
-        assertThat(exception.getMessage(), equalTo("stateStoreNames can't contain `null` as store name"));
-    }
-
-    @Test
-    @SuppressWarnings("deprecation")
-    public void shouldNotAllowNullStoreNamesOnFlatTransformWithNamed() {
-        final NullPointerException exception = assertThrows(
-            NullPointerException.class,
-            () -> testStream.flatTransform(flatTransformerSupplier, Named.as("flatTransform"), (String[]) null));
-        assertThat(exception.getMessage(), equalTo("stateStoreNames can't be a null array"));
-    }
-
-    @Test
-    @SuppressWarnings("deprecation")
-    public void shouldNotAllowNullStoreNameOnFlatTransformWithNamed() {
-        final NullPointerException exception = assertThrows(
-            NullPointerException.class,
-            () -> testStream.flatTransform(flatTransformerSupplier, Named.as("flatTransform"), (String) null));
-        assertThat(exception.getMessage(), equalTo("stateStoreNames can't contain `null` as store name"));
-    }
-
-    @Test
-    @SuppressWarnings("deprecation")
-    public void shouldNotAllowNullNamedOnFlatTransform() {
-        final NullPointerException exception = assertThrows(
-            NullPointerException.class,
-            () -> testStream.flatTransform(flatTransformerSupplier, (Named) null));
-        assertThat(exception.getMessage(), equalTo("named can't be null"));
-    }
-
-    @Test
-    @SuppressWarnings("deprecation")
-    public void shouldNotAllowNullNamedOnFlatTransformWithStoreName() {
-        final NullPointerException exception = assertThrows(
-            NullPointerException.class,
-            () -> testStream.flatTransform(flatTransformerSupplier, (Named) null, "storeName"));
-        assertThat(exception.getMessage(), equalTo("named can't be null"));
     }
 
     @Test

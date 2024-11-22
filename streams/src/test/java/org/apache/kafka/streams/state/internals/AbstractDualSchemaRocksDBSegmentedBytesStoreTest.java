@@ -482,7 +482,7 @@ public abstract class AbstractDualSchemaRocksDBSegmentedBytesStoreTest {
         try (final KeyValueIterator<Bytes, byte[]> values = bytesStore.fetch(
             null, Bytes.wrap(keyA.getBytes()), startEdgeTime, endEdgeTime - 1L)) {
 
-            final List<KeyValue<Windowed<String>, Long>> expected = asList(
+            final List<KeyValue<Windowed<String>, Long>> expected = Collections.singletonList(
                 KeyValue.pair(new Windowed<>(keyA, startEdgeWindow), 10L)
             );
 
@@ -492,7 +492,7 @@ public abstract class AbstractDualSchemaRocksDBSegmentedBytesStoreTest {
         try (final KeyValueIterator<Bytes, byte[]> values = bytesStore.fetch(
             Bytes.wrap(keyB.getBytes()), null, startEdgeTime + 1, endEdgeTime)) {
 
-            final List<KeyValue<Windowed<String>, Long>> expected = asList(
+            final List<KeyValue<Windowed<String>, Long>> expected = Collections.singletonList(
                 KeyValue.pair(new Windowed<>(keyB, endEdgeWindow), 150L)
             );
 
@@ -662,7 +662,7 @@ public abstract class AbstractDualSchemaRocksDBSegmentedBytesStoreTest {
         try (final KeyValueIterator<Bytes, byte[]> values = bytesStore.backwardFetch(
             null, Bytes.wrap(keyA.getBytes()), startEdgeTime, endEdgeTime - 1L)) {
 
-            final List<KeyValue<Windowed<String>, Long>> expected = asList(
+            final List<KeyValue<Windowed<String>, Long>> expected = Collections.singletonList(
                 KeyValue.pair(new Windowed<>(keyA, startEdgeWindow), 10L)
             );
 
@@ -672,7 +672,7 @@ public abstract class AbstractDualSchemaRocksDBSegmentedBytesStoreTest {
         try (final KeyValueIterator<Bytes, byte[]> values = bytesStore.backwardFetch(
             Bytes.wrap(keyB.getBytes()), null, startEdgeTime + 1, endEdgeTime)) {
 
-            final List<KeyValue<Windowed<String>, Long>> expected = asList(
+            final List<KeyValue<Windowed<String>, Long>> expected = Collections.singletonList(
                 KeyValue.pair(new Windowed<>(keyB, endEdgeWindow), 150L)
             );
 
@@ -740,7 +740,7 @@ public abstract class AbstractDualSchemaRocksDBSegmentedBytesStoreTest {
         try (final KeyValueIterator<Bytes, byte[]> values = bytesStore.fetch(
             Bytes.wrap(keyA.getBytes()), 0, Long.MAX_VALUE)) {
 
-            final List<KeyValue<Windowed<String>, Long>> expected = asList(
+            final List<KeyValue<Windowed<String>, Long>> expected = Collections.singletonList(
                 KeyValue.pair(new Windowed<>(keyA, maxWindow), 10L)
             );
 
@@ -823,7 +823,7 @@ public abstract class AbstractDualSchemaRocksDBSegmentedBytesStoreTest {
         try (final KeyValueIterator<Bytes, byte[]> values = bytesStore.backwardFetch(
             Bytes.wrap(keyA.getBytes()), 0, Long.MAX_VALUE)) {
 
-            final List<KeyValue<Windowed<String>, Long>> expected = asList(
+            final List<KeyValue<Windowed<String>, Long>> expected = Collections.singletonList(
                 KeyValue.pair(new Windowed<>(keyA, maxWindow), 10L)
             );
 
@@ -1415,7 +1415,7 @@ public abstract class AbstractDualSchemaRocksDBSegmentedBytesStoreTest {
                 dir,
                 Serdes.String(),
                 Serdes.String(),
-                new StreamsMetricsImpl(new Metrics(), "mock", new MockTime()),
+                new StreamsMetricsImpl(new Metrics(), "mock", "processId", new MockTime()),
                 new StreamsConfig(props),
                 MockRecordCollector::new,
                 new ThreadCache(new LogContext("testCache "), 0, new MockStreamsMetrics(new Metrics())),
@@ -1451,7 +1451,7 @@ public abstract class AbstractDualSchemaRocksDBSegmentedBytesStoreTest {
                 dir,
                 Serdes.String(),
                 Serdes.String(),
-                new StreamsMetricsImpl(new Metrics(), "mock", new MockTime()),
+                new StreamsMetricsImpl(new Metrics(), "mock", "processId", new MockTime()),
                 new StreamsConfig(props),
                 MockRecordCollector::new,
                 new ThreadCache(new LogContext("testCache "), 0, new MockStreamsMetrics(new Metrics())),
@@ -1490,7 +1490,7 @@ public abstract class AbstractDualSchemaRocksDBSegmentedBytesStoreTest {
                 dir,
                 Serdes.String(),
                 Serdes.String(),
-                new StreamsMetricsImpl(new Metrics(), "mock", new MockTime()),
+                new StreamsMetricsImpl(new Metrics(), "mock", "processId", new MockTime()),
                 new StreamsConfig(props),
                 MockRecordCollector::new,
                 new ThreadCache(new LogContext("testCache "), 0, new MockStreamsMetrics(new Metrics())),
@@ -1531,7 +1531,7 @@ public abstract class AbstractDualSchemaRocksDBSegmentedBytesStoreTest {
                 dir,
                 Serdes.String(),
                 Serdes.String(),
-                new StreamsMetricsImpl(new Metrics(), "mock", new MockTime()),
+                new StreamsMetricsImpl(new Metrics(), "mock", "processId", new MockTime()),
                 new StreamsConfig(props),
                 MockRecordCollector::new,
                 new ThreadCache(new LogContext("testCache "), 0, new MockStreamsMetrics(new Metrics())),
