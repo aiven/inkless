@@ -58,7 +58,7 @@ class FileCommitJob implements Runnable {
             LOGGER.debug("Uploaded {} successfully, committing", waitForFutureResult.objectKey);
             finishCommitSuccessfully(waitForFutureResult.objectKey);
         } else {
-            LOGGER.error("Upload failed", waitForFutureResult.uploadError);
+            LOGGER.error("Upload failed: {}", waitForFutureResult.uploadError.getMessage());
             finishCommitWithError();
         }
     }

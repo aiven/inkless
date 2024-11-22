@@ -12,9 +12,12 @@ import io.aiven.inkless.storage_backend.common.InvalidRangeException;
 import io.aiven.inkless.storage_backend.common.KeyNotFoundException;
 import io.aiven.inkless.storage_backend.common.StorageBackend;
 import io.aiven.inkless.storage_backend.common.StorageBackendException;
+import io.aiven.inkless.storage_backend.common.StorageBackendTimeoutException;
 
 import com.groupcdg.pitest.annotations.CoverageIgnore;
 import software.amazon.awssdk.awscore.exception.AwsServiceException;
+import software.amazon.awssdk.core.exception.ApiCallAttemptTimeoutException;
+import software.amazon.awssdk.core.exception.ApiCallTimeoutException;
 import software.amazon.awssdk.core.exception.SdkClientException;
 import software.amazon.awssdk.core.exception.SdkException;
 import software.amazon.awssdk.core.sync.RequestBody;
@@ -48,6 +51,8 @@ public class S3Storage implements StorageBackend {
         final RequestBody requestBody = RequestBody.fromBytes(data);
         try {
             s3Client.putObject(putObjectRequest, requestBody);
+        } catch (final ApiCallTimeoutException | ApiCallAttemptTimeoutException e) {
+            throw new StorageBackendTimeoutException("Failed to upload " + key, e);
         } catch (final SdkException e) {
             throw new StorageBackendException("Failed to upload " + key, e);
         }
@@ -75,6 +80,8 @@ public class S3Storage implements StorageBackend {
             }
 
             throw new StorageBackendException("Failed to fetch " + key, e);
+        } catch (final ApiCallTimeoutException | ApiCallAttemptTimeoutException e) {
+            throw new StorageBackendTimeoutException("Failed to fetch " + key, e);
         } catch (final SdkClientException e) {
             throw new StorageBackendException("Failed to fetch " + key, e);
         }
@@ -89,6 +96,8 @@ public class S3Storage implements StorageBackend {
         try {
             final var deleteRequest = DeleteObjectRequest.builder().bucket(bucketName).key(key.value()).build();
             s3Client.deleteObject(deleteRequest);
+        } catch (final ApiCallTimeoutException | ApiCallAttemptTimeoutException e) {
+            throw new StorageBackendTimeoutException("Failed to delete " + key, e);
         } catch (final SdkException e) {
             throw new StorageBackendException("Failed to delete " + key, e);
         }
@@ -106,6 +115,8 @@ public class S3Storage implements StorageBackend {
                 .delete(delete)
                 .build();
             s3Client.deleteObjects(deleteObjectsRequest);
+        } catch (final ApiCallTimeoutException | ApiCallAttemptTimeoutException e) {
+            throw new StorageBackendTimeoutException("Failed to delete keys " + keys, e);
         } catch (final SdkException e) {
             throw new StorageBackendException("Failed to delete keys " + keys, e);
         }
