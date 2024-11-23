@@ -13,6 +13,7 @@ import org.apache.kafka.common.utils.Time;
 
 import java.io.IOException;
 import java.util.List;
+import java.util.Objects;
 
 public class ConcatenatedRecords extends AbstractRecords {
 
@@ -20,7 +21,7 @@ public class ConcatenatedRecords extends AbstractRecords {
     private final int sizeInBytes;
 
     public ConcatenatedRecords(List<MemoryRecords> backingRecords) {
-        this.backingRecords = backingRecords;
+        this.backingRecords = Objects.requireNonNull(backingRecords, "backing records must be specified");
         int totalSize = 0;
         for (MemoryRecords backingRecord : this.backingRecords) {
             totalSize += backingRecord.sizeInBytes();

@@ -7,6 +7,7 @@ import io.aiven.inkless.storage_backend.common.ObjectFetcher;
 
 import java.io.InputStream;
 import java.nio.ByteBuffer;
+import java.util.Objects;
 import java.util.concurrent.Callable;
 
 public class FileFetchJob implements Callable<FetchedFile> {
@@ -32,5 +33,22 @@ public class FileFetchJob implements Callable<FetchedFile> {
             byte[] bytes = stream.readNBytes(size);
             return new FetchedFile(key, range, ByteBuffer.wrap(bytes));
         }
+    }
+
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (o == null || getClass() != o.getClass()) return false;
+        FileFetchJob that = (FileFetchJob) o;
+        return size == that.size
+                && Objects.equals(objectFetcher, that.objectFetcher)
+                && Objects.equals(key, that.key)
+                && Objects.equals(range, that.range);
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(objectFetcher, key, range, size);
     }
 }

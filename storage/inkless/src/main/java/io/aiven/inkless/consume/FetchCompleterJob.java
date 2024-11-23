@@ -67,18 +67,31 @@ public class FetchCompleterJob implements Supplier<Map<TopicIdPartition, FetchPa
         return files;
     }
 
-    private static Map<TopicIdPartition, FetchPartitionData> serveFetch(
+    private Map<TopicIdPartition, FetchPartitionData> serveFetch(
             Map<TopicIdPartition, FindBatchResponse> metadata,
             Map<ObjectKey, List<FetchedFile>> files
     ) {
-        return metadata.entrySet()
+        return fetchInfos.entrySet()
                 .stream()
                 .collect(Collectors.toMap(Map.Entry::getKey, e -> servePartition(e.getKey(), metadata, files)));
     }
 
     private static FetchPartitionData servePartition(TopicIdPartition key, Map<TopicIdPartition, FindBatchResponse> allMetadata, Map<ObjectKey, List<FetchedFile>> allFiles) {
         FindBatchResponse metadata = allMetadata.get(key);
-        if (metadata.errors() != Errors.NONE) {
+        if (metadata == null) {
+            return new FetchPartitionData(
+                    Errors.KAFKA_STORAGE_ERROR,
+                    -1,
+                    -1,
+                    MemoryRecords.EMPTY,
+                    Optional.empty(),
+                    OptionalLong.empty(),
+                    Optional.empty(),
+                    OptionalInt.empty(),
+                    false
+            );
+        }
+        if (metadata.errors() != Errors.NONE || metadata.batches().isEmpty()) {
             return new FetchPartitionData(
                     metadata.errors(),
                     metadata.highWatermark(),
