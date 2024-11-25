@@ -1,9 +1,6 @@
 // Copyright (c) 2024 Aiven, Helsinki, Finland. https://aiven.io/
 package io.aiven.inkless.consume;
 
-import io.aiven.inkless.common.ObjectKey;
-import io.aiven.inkless.control_plane.BatchInfo;
-import io.aiven.inkless.control_plane.FindBatchResponse;
 import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.record.MemoryRecords;
@@ -23,6 +20,10 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
+
+import io.aiven.inkless.common.ObjectKey;
+import io.aiven.inkless.control_plane.BatchInfo;
+import io.aiven.inkless.control_plane.FindBatchResponse;
 
 public class FetchCompleterJob implements Supplier<Map<TopicIdPartition, FetchPartitionData>> {
 

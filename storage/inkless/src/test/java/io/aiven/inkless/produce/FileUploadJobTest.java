@@ -1,16 +1,7 @@
 // Copyright (c) 2024 Aiven, Helsinki, Finland. https://aiven.io/
 package io.aiven.inkless.produce;
 
-import java.time.Duration;
-import java.util.function.Consumer;
-
 import org.apache.kafka.common.utils.Time;
-
-import io.aiven.inkless.common.ObjectKey;
-import io.aiven.inkless.common.ObjectKeyCreator;
-import io.aiven.inkless.common.PlainObjectKey;
-import io.aiven.inkless.storage_backend.common.ObjectUploader;
-import io.aiven.inkless.storage_backend.common.StorageBackendException;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -18,6 +9,15 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
+
+import java.time.Duration;
+import java.util.function.Consumer;
+
+import io.aiven.inkless.common.ObjectKey;
+import io.aiven.inkless.common.ObjectKeyCreator;
+import io.aiven.inkless.common.PlainObjectKey;
+import io.aiven.inkless.storage_backend.common.ObjectUploader;
+import io.aiven.inkless.storage_backend.common.StorageBackendException;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;

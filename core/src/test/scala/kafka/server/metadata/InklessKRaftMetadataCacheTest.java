@@ -17,9 +17,10 @@
 
 package kafka.server.metadata;
 
+import kafka.server.MetadataCache;
+
 import org.apache.kafka.server.common.KRaftVersion;
 
-import kafka.server.MetadataCache;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 

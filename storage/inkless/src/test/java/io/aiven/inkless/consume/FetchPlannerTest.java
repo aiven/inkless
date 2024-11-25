@@ -1,14 +1,9 @@
 // Copyright (c) 2024 Aiven, Helsinki, Finland. https://aiven.io/
 package io.aiven.inkless.consume;
 
-import io.aiven.inkless.common.ByteRange;
-import io.aiven.inkless.common.ObjectKey;
-import io.aiven.inkless.common.PlainObjectKey;
-import io.aiven.inkless.control_plane.BatchInfo;
-import io.aiven.inkless.control_plane.FindBatchResponse;
-import io.aiven.inkless.storage_backend.common.ObjectFetcher;
 import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.Uuid;
+
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -24,6 +19,13 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
+
+import io.aiven.inkless.common.ByteRange;
+import io.aiven.inkless.common.ObjectKey;
+import io.aiven.inkless.common.PlainObjectKey;
+import io.aiven.inkless.control_plane.BatchInfo;
+import io.aiven.inkless.control_plane.FindBatchResponse;
+import io.aiven.inkless.storage_backend.common.ObjectFetcher;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.Mockito.verifyNoInteractions;

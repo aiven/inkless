@@ -1,15 +1,15 @@
 // Copyright (c) 2024 Aiven, Helsinki, Finland. https://aiven.io/
 package io.aiven.inkless.produce;
 
+import org.apache.kafka.common.TopicPartition;
+import org.apache.kafka.common.record.MemoryRecords;
+import org.apache.kafka.common.requests.ProduceResponse.PartitionResponse;
+
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
-
-import org.apache.kafka.common.TopicPartition;
-import org.apache.kafka.common.record.MemoryRecords;
-import org.apache.kafka.common.requests.ProduceResponse.PartitionResponse;
 
 import io.aiven.inkless.control_plane.CommitBatchRequest;
 

@@ -1,6 +1,12 @@
 // Copyright (c) 2024 Aiven, Helsinki, Finland. https://aiven.io/
 package io.aiven.inkless.produce;
 
+import org.apache.kafka.common.utils.Time;
+import org.apache.kafka.server.metrics.KafkaMetricsGroup;
+
+import com.groupcdg.pitest.annotations.CoverageIgnore;
+import com.yammer.metrics.core.Histogram;
+
 import java.io.Closeable;
 import java.io.IOException;
 import java.time.Duration;
@@ -9,13 +15,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.function.Supplier;
 
-import org.apache.kafka.common.utils.Time;
-import org.apache.kafka.server.metrics.KafkaMetricsGroup;
-
 import io.aiven.inkless.TimeUtils;
-
-import com.groupcdg.pitest.annotations.CoverageIgnore;
-import com.yammer.metrics.core.Histogram;
 
 @CoverageIgnore
 class FileCommitterMetrics implements Closeable {

@@ -2407,7 +2407,7 @@ project(':storage:inkless') {
     testImplementation libs.jqwik
 
     testRuntimeOnly libs.slf4jReload4j
-    testRuntimeOnly libs.junitPlatformLanucher
+    testRuntimeOnly libs.junitPlatformLauncher
   }
 
   javadoc {

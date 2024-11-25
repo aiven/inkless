@@ -1,20 +1,6 @@
 // Copyright (c) 2024 Aiven, Helsinki, Finland. https://aiven.io/
 package io.aiven.inkless.storage_backend.s3.integration;
 
-import javax.management.MBeanServer;
-import javax.management.ObjectName;
-
-import java.io.InputStream;
-import java.lang.management.ManagementFactory;
-import java.util.Map;
-import java.util.Set;
-
-import io.aiven.inkless.common.ByteRange;
-import io.aiven.inkless.common.ObjectKey;
-import io.aiven.inkless.storage_backend.common.fixtures.TestObjectKey;
-import io.aiven.inkless.storage_backend.s3.S3Storage;
-import io.aiven.inkless.test_utils.S3TestContainer;
-
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
@@ -22,6 +8,20 @@ import org.junit.jupiter.api.Test;
 import org.testcontainers.containers.localstack.LocalStackContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
+
+import java.io.InputStream;
+import java.lang.management.ManagementFactory;
+import java.util.Map;
+import java.util.Set;
+
+import javax.management.MBeanServer;
+import javax.management.ObjectName;
+
+import io.aiven.inkless.common.ByteRange;
+import io.aiven.inkless.common.ObjectKey;
+import io.aiven.inkless.storage_backend.common.fixtures.TestObjectKey;
+import io.aiven.inkless.storage_backend.s3.S3Storage;
+import io.aiven.inkless.test_utils.S3TestContainer;
 import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
 import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
 import software.amazon.awssdk.regions.Region;
