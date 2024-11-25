@@ -2344,8 +2344,7 @@ project(':storage:inkless') {
     testImplementation libs.wiremock
     testImplementation libs.jqwik
 
-    testRuntimeOnly libs.slf4jReload4j
-    testRuntimeOnly libs.junitPlatformLanucher
+    testRuntimeOnly runtimeTestLibs
   }
 
   javadoc {
@@ -2373,6 +2372,7 @@ project(':storage:inkless') {
     //adds dependency to org.pitest:pitest-junit5-plugin and sets "testPlugin" to "junit5"
     junit5PluginVersion = '1.2.1'
     pitestVersion = '1.17.1'
+    addJUnitPlatformLauncher = false
     targetClasses.add("io.aiven.inkless.*")
     excludedTestClasses.add("*io.aiven.inkless.storage_backend.s3.integration.*")
     excludedTestClasses.add("*io.aiven.inkless.produce.WriterIntegrationTest")

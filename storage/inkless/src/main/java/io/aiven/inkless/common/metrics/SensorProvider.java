@@ -1,16 +1,16 @@
 // Copyright (c) 2024 Aiven, Helsinki, Finland. https://aiven.io/
 package io.aiven.inkless.common.metrics;
 
-import java.util.Collections;
-import java.util.Map;
-import java.util.function.Supplier;
-
 import org.apache.kafka.common.MetricNameTemplate;
 import org.apache.kafka.common.metrics.MeasurableStat;
 import org.apache.kafka.common.metrics.Metrics;
 import org.apache.kafka.common.metrics.Sensor;
 
 import com.groupcdg.pitest.annotations.CoverageIgnore;
+
+import java.util.Collections;
+import java.util.Map;
+import java.util.function.Supplier;
 
 /**
  * Inspired by <a href="https://github.com/apache/kafka/blob/trunk/clients/src/main/java/org/apache/kafka/clients/consumer/internals/SensorBuilder.java">SensorBuilder</a>

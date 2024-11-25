@@ -1,10 +1,6 @@
 // Copyright (c) 2024 Aiven, Helsinki, Finland. https://aiven.io/
 package io.aiven.inkless.consume;
 
-import io.aiven.inkless.common.InklessThreadFactory;
-import io.aiven.inkless.control_plane.ControlPlane;
-import io.aiven.inkless.control_plane.FindBatchResponse;
-import io.aiven.inkless.storage_backend.common.ObjectFetcher;
 import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.requests.FetchRequest;
 import org.apache.kafka.server.storage.log.FetchParams;
@@ -16,6 +12,11 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+
+import io.aiven.inkless.common.InklessThreadFactory;
+import io.aiven.inkless.control_plane.ControlPlane;
+import io.aiven.inkless.control_plane.FindBatchResponse;
+import io.aiven.inkless.storage_backend.common.ObjectFetcher;
 
 public class Reader {
 

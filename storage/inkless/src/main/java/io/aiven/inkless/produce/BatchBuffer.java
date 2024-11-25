@@ -1,14 +1,14 @@
 // Copyright (c) 2024 Aiven, Helsinki, Finland. https://aiven.io/
 package io.aiven.inkless.produce;
 
+import org.apache.kafka.common.TopicPartition;
+import org.apache.kafka.common.record.RecordBatch;
+
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
-
-import org.apache.kafka.common.TopicPartition;
-import org.apache.kafka.common.record.RecordBatch;
 
 import io.aiven.inkless.control_plane.CommitBatchRequest;
 
