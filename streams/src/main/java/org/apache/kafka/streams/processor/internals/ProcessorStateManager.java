@@ -24,11 +24,11 @@ import org.apache.kafka.streams.errors.ProcessorStateException;
 import org.apache.kafka.streams.errors.StreamsException;
 import org.apache.kafka.streams.errors.TaskCorruptedException;
 import org.apache.kafka.streams.errors.TaskMigratedException;
+import org.apache.kafka.streams.errors.internals.FailedProcessingException;
 import org.apache.kafka.streams.processor.CommitCallback;
 import org.apache.kafka.streams.processor.StateRestoreCallback;
 import org.apache.kafka.streams.processor.StateRestoreListener;
 import org.apache.kafka.streams.processor.StateStore;
-import org.apache.kafka.streams.processor.StateStoreContext;
 import org.apache.kafka.streams.processor.TaskId;
 import org.apache.kafka.streams.processor.internals.Task.TaskType;
 import org.apache.kafka.streams.state.internals.CachedStateStore;
@@ -61,12 +61,12 @@ import static org.apache.kafka.streams.state.internals.OffsetCheckpoint.OFFSET_U
  * ProcessorStateManager is the source of truth for the current offset for each state store,
  * which is either the read offset during restoring, or the written offset during normal processing.
  *
- * The offset is initialized as null when the state store is registered, and then it can be updated by
+ * <p>The offset is initialized as null when the state store is registered, and then it can be updated by
  * loading checkpoint file, restore state stores, or passing from the record collector's written offsets.
  *
- * When checkpointing, if the offset is not null it would be written to the file.
+ * <p>When checkpointing, if the offset is not null it would be written to the file.
  *
- * The manager is also responsible for restoring state stores via their registered restore callback,
+ * <p>The manager is also responsible for restoring state stores via their registered restore callback,
  * which is used for both updating standby tasks as well as restoring active tasks.
  */
 public class ProcessorStateManager implements StateManager {
@@ -222,7 +222,7 @@ public class ProcessorStateManager implements StateManager {
         log.debug("Created state store manager for task {}", taskId);
     }
 
-    void registerStateStores(final List<StateStore> allStores, final InternalProcessorContext processorContext) {
+    void registerStateStores(final List<StateStore> allStores, final InternalProcessorContext<?, ?> processorContext) {
         processorContext.uninitialize();
         for (final StateStore store : allStores) {
             if (stores.containsKey(store.name())) {
@@ -230,7 +230,7 @@ public class ProcessorStateManager implements StateManager {
                     maybeRegisterStoreWithChangelogReader(store.name());
                 }
             } else {
-                store.init((StateStoreContext) processorContext, store);
+                store.init(processorContext, store);
             }
             log.trace("Registered state store {}", store.name());
         }
@@ -505,13 +505,20 @@ public class ProcessorStateManager implements StateManager {
                 } catch (final RuntimeException exception) {
                     if (firstException == null) {
                         // do NOT wrap the error if it is actually caused by Streams itself
-                        if (exception instanceof StreamsException)
+                        // In case of FailedProcessingException Do not keep the failed processing exception in the stack trace
+                        if (exception instanceof FailedProcessingException)
+                            firstException = new ProcessorStateException(
+                                format("%sFailed to flush state store %s", logPrefix, store.name()),
+                                exception.getCause());
+                        else if (exception instanceof StreamsException)
                             firstException = exception;
                         else
                             firstException = new ProcessorStateException(
                                 format("%sFailed to flush state store %s", logPrefix, store.name()), exception);
+                        log.error("Failed to flush state store {}: ", store.name(), firstException);
+                    } else {
+                        log.error("Failed to flush state store {}: ", store.name(), exception);
                     }
-                    log.error("Failed to flush state store {}: ", store.name(), exception);
                 }
             }
         }
@@ -534,13 +541,18 @@ public class ProcessorStateManager implements StateManager {
                     if (store instanceof TimeOrderedKeyValueBuffer) {
                         store.flush();
                     } else if (store instanceof CachedStateStore) {
-                        ((CachedStateStore) store).flushCache();
+                        ((CachedStateStore<?, ?>) store).flushCache();
                     }
                     log.trace("Flushed cache or buffer {}", store.name());
                 } catch (final RuntimeException exception) {
                     if (firstException == null) {
                         // do NOT wrap the error if it is actually caused by Streams itself
-                        if (exception instanceof StreamsException) {
+                        // In case of FailedProcessingException Do not keep the failed processing exception in the stack trace
+                        if (exception instanceof FailedProcessingException) {
+                            firstException = new ProcessorStateException(
+                                format("%sFailed to flush cache of store %s", logPrefix, store.name()),
+                                exception.getCause());
+                        } else if (exception instanceof StreamsException) {
                             firstException = exception;
                         } else {
                             firstException = new ProcessorStateException(
@@ -548,8 +560,10 @@ public class ProcessorStateManager implements StateManager {
                                 exception
                             );
                         }
+                        log.error("Failed to flush cache of store {}: ", store.name(), firstException);
+                    } else {
+                        log.error("Failed to flush cache of store {}: ", store.name(), exception);
                     }
-                    log.error("Failed to flush cache of store {}: ", store.name(), exception);
                 }
             }
         }
@@ -585,13 +599,20 @@ public class ProcessorStateManager implements StateManager {
                 } catch (final RuntimeException exception) {
                     if (firstException == null) {
                         // do NOT wrap the error if it is actually caused by Streams itself
-                        if (exception instanceof StreamsException)
+                        // In case of FailedProcessingException Do not keep the failed processing exception in the stack trace
+                        if (exception instanceof FailedProcessingException)
+                            firstException = new ProcessorStateException(
+                                format("%sFailed to close state store %s", logPrefix, store.name()),
+                                exception.getCause());
+                        else if (exception instanceof StreamsException)
                             firstException = exception;
                         else
                             firstException = new ProcessorStateException(
                                 format("%sFailed to close state store %s", logPrefix, store.name()), exception);
+                        log.error("Failed to close state store {}: ", store.name(), firstException);
+                    } else {
+                        log.error("Failed to close state store {}: ", store.name(), exception);
                     }
-                    log.error("Failed to close state store {}: ", store.name(), exception);
                 }
             }
 
@@ -624,7 +645,7 @@ public class ProcessorStateManager implements StateManager {
                 final StateStore store = metadata.stateStore;
 
                 if (store instanceof CachedStateStore) {
-                    ((CachedStateStore) store).clearCache();
+                    ((CachedStateStore<?, ?>) store).clearCache();
                 }
                 log.trace("Cleared cache {}", store.name());
             }

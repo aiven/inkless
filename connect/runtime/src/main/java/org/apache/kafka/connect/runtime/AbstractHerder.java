@@ -63,7 +63,7 @@ import org.apache.kafka.connect.util.ConnectorTaskId;
 import org.apache.kafka.connect.util.Stage;
 import org.apache.kafka.connect.util.TemporaryStage;
 
-import org.apache.log4j.Level;
+import org.apache.logging.log4j.Level;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -325,20 +325,6 @@ public abstract class AbstractHerder implements Herder, TaskStatus.Listener, Con
             configState.tasks(connector),
             connectorType(config)
         );
-    }
-
-    protected Map<ConnectorTaskId, Map<String, String>> buildTasksConfig(String connector) {
-        final ClusterConfigState configState = configBackingStore.snapshot();
-
-        if (!configState.contains(connector))
-            return Collections.emptyMap();
-
-        Map<ConnectorTaskId, Map<String, String>> configs = new HashMap<>();
-        for (ConnectorTaskId cti : configState.tasks(connector)) {
-            configs.put(cti, configState.rawTaskConfig(cti));
-        }
-
-        return configs;
     }
 
     @Override

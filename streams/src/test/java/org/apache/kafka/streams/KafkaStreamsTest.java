@@ -21,6 +21,7 @@ import org.apache.kafka.clients.admin.ListOffsetsResult.ListOffsetsResultInfo;
 import org.apache.kafka.clients.admin.MockAdminClient;
 import org.apache.kafka.clients.producer.MockProducer;
 import org.apache.kafka.common.Cluster;
+import org.apache.kafka.common.KafkaFuture;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.errors.TimeoutException;
@@ -97,9 +98,9 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static java.util.Collections.singletonList;
-import static org.apache.kafka.streams.integration.utils.IntegrationTestUtils.safeUniqueTestName;
-import static org.apache.kafka.streams.integration.utils.IntegrationTestUtils.waitForApplicationState;
 import static org.apache.kafka.streams.state.QueryableStoreTypes.keyValueStore;
+import static org.apache.kafka.streams.utils.TestUtils.safeUniqueTestName;
+import static org.apache.kafka.streams.utils.TestUtils.waitForApplicationState;
 import static org.apache.kafka.test.TestUtils.waitForCondition;
 import static org.hamcrest.CoreMatchers.hasItem;
 import static org.hamcrest.CoreMatchers.not;
@@ -1627,6 +1628,34 @@ public class KafkaStreamsTest {
                 streams.clientInstanceIds(Duration.ZERO).adminInstanceId(),
                 equalTo(instanceId)
             );
+        }
+    }
+
+    @Test
+    public void shouldReturnProducerAndConsumerInstanceIds() {
+        prepareStreams();
+        prepareStreamThread(streamThreadOne, 1);
+        props.put(StreamsConfig.NUM_STREAM_THREADS_CONFIG, 1);
+        final Uuid mainConsumerInstanceId = Uuid.randomUuid();
+        final Uuid producerInstanceId = Uuid.randomUuid();
+        final KafkaFutureImpl<Uuid> consumerFuture = new KafkaFutureImpl<>();
+        final KafkaFutureImpl<Uuid> producerFuture = new KafkaFutureImpl<>();
+        consumerFuture.complete(mainConsumerInstanceId);
+        producerFuture.complete(producerInstanceId);
+        final Uuid adminInstanceId = Uuid.randomUuid();
+        adminClient.setClientInstanceId(adminInstanceId);
+        
+        final Map<String, KafkaFuture<Uuid>> expectedClientIds = Map.of("main-consumer", consumerFuture, "some-thread-producer", producerFuture);
+        when(streamThreadOne.clientInstanceIds(any())).thenReturn(expectedClientIds);
+
+        try (final KafkaStreams streams = new KafkaStreams(getBuilderWithSource().build(), props, supplier, time)) {
+            streams.start();
+            final ClientInstanceIds clientInstanceIds = streams.clientInstanceIds(Duration.ZERO);
+            assertThat(clientInstanceIds.consumerInstanceIds().size(), equalTo(1));
+            assertThat(clientInstanceIds.consumerInstanceIds().get("main-consumer"), equalTo(mainConsumerInstanceId));
+            assertThat(clientInstanceIds.producerInstanceIds().size(),  equalTo(1));
+            assertThat(clientInstanceIds.producerInstanceIds().get("some-thread-producer"), equalTo(producerInstanceId));
+            assertThat(clientInstanceIds.adminInstanceId(), equalTo(adminInstanceId));
         }
     }
 

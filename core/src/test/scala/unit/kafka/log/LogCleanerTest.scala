@@ -29,7 +29,7 @@ import org.apache.kafka.common.utils.Utils
 import org.apache.kafka.coordinator.transaction.TransactionLogConfig
 import org.apache.kafka.server.metrics.{KafkaMetricsGroup, KafkaYammerMetrics}
 import org.apache.kafka.server.util.MockTime
-import org.apache.kafka.storage.internals.log.{AbortedTxn, AppendOrigin, CleanerConfig, LogAppendInfo, LogConfig, LogDirFailureChannel, LogFileUtils, LogLoader, LogSegment, LogSegments, LogStartOffsetIncrementReason, OffsetMap, ProducerStateManager, ProducerStateManagerConfig}
+import org.apache.kafka.storage.internals.log.{AbortedTxn, AppendOrigin, CleanerConfig, LocalLog, LogAppendInfo, LogConfig, LogDirFailureChannel, LogFileUtils, LogLoader, LogSegment, LogSegments, LogStartOffsetIncrementReason, OffsetMap, ProducerStateManager, ProducerStateManagerConfig}
 import org.apache.kafka.storage.internals.utils.Throttler
 import org.apache.kafka.storage.log.metrics.BrokerTopicStats
 import org.junit.jupiter.api.Assertions._
@@ -46,7 +46,6 @@ import java.util.Properties
 import java.util.concurrent.{ConcurrentHashMap, CountDownLatch, TimeUnit}
 import scala.collection._
 import scala.jdk.CollectionConverters._
-import scala.jdk.OptionConverters.RichOption
 
 /**
  * Unit tests for the log cleaning logic
@@ -133,8 +132,8 @@ class LogCleanerTest extends Logging {
       var nonexistent = LogCleaner.MetricNames.diff(KafkaYammerMetrics.defaultRegistry.allMetrics().keySet().asScala.map(_.getName))
       assertEquals(0, nonexistent.size, s"$nonexistent should be existent")
 
-      logCleaner.reconfigure(new KafkaConfig(TestUtils.createBrokerConfig(1, "localhost:2181")),
-        new KafkaConfig(TestUtils.createBrokerConfig(1, "localhost:2181")))
+      logCleaner.reconfigure(new KafkaConfig(TestUtils.createBrokerConfig(1)),
+        new KafkaConfig(TestUtils.createBrokerConfig(1)))
 
       nonexistent = LogCleaner.MetricNames.diff(KafkaYammerMetrics.defaultRegistry.allMetrics().keySet().asScala.map(_.getName))
       assertEquals(0, nonexistent.size, s"$nonexistent should be existent")
@@ -189,8 +188,8 @@ class LogCleanerTest extends Logging {
     val maxTransactionTimeoutMs = 5 * 60 * 1000
     val producerIdExpirationCheckIntervalMs = TransactionLogConfig.PRODUCER_ID_EXPIRATION_CHECK_INTERVAL_MS_DEFAULT
     val logSegments = new LogSegments(topicPartition)
-    val leaderEpochCache = UnifiedLog.maybeCreateLeaderEpochCache(
-      dir, topicPartition, logDirFailureChannel, config.recordVersion, "", None, time.scheduler)
+    val leaderEpochCache = UnifiedLog.createLeaderEpochCache(
+      dir, topicPartition, logDirFailureChannel, None, time.scheduler)
     val producerStateManager = new ProducerStateManager(topicPartition, dir,
       maxTransactionTimeoutMs, producerStateManagerConfig, time)
     val offsets = new LogLoader(
@@ -204,7 +203,7 @@ class LogCleanerTest extends Logging {
       logSegments,
       0L,
       0L,
-      leaderEpochCache.toJava,
+      leaderEpochCache,
       producerStateManager,
       new ConcurrentHashMap[String, Integer],
       false
@@ -1919,7 +1918,10 @@ class LogCleanerTest extends Logging {
 
   @Test
   def testCleanTombstone(): Unit = {
-    val logConfig = new LogConfig(new Properties())
+    val properties = new Properties()
+    // This test uses future timestamps beyond the default of 1 hour.
+    properties.put(TopicConfig.MESSAGE_TIMESTAMP_AFTER_MAX_MS_CONFIG, Long.MaxValue.toString)
+    val logConfig = new LogConfig(properties)
 
     val log = makeLog(config = logConfig)
     val cleaner = makeCleaner(10)
@@ -2017,7 +2019,7 @@ class LogCleanerTest extends Logging {
 
   @Test
   def testReconfigureLogCleanerIoMaxBytesPerSecond(): Unit = {
-    val oldKafkaProps = TestUtils.createBrokerConfig(1, "localhost:2181")
+    val oldKafkaProps = TestUtils.createBrokerConfig(1)
     oldKafkaProps.setProperty(CleanerConfig.LOG_CLEANER_IO_MAX_BYTES_PER_SECOND_PROP, "10000000")
 
     val logCleaner = new LogCleaner(LogCleaner.cleanerConfig(new KafkaConfig(oldKafkaProps)),
@@ -2034,7 +2036,7 @@ class LogCleanerTest extends Logging {
     try {
       assertEquals(10000000, logCleaner.throttler.desiredRatePerSec, s"Throttler.desiredRatePerSec should be initialized from initial `${CleanerConfig.LOG_CLEANER_IO_MAX_BYTES_PER_SECOND_PROP}` config.")
 
-      val newKafkaProps = TestUtils.createBrokerConfig(1, "localhost:2181")
+      val newKafkaProps = TestUtils.createBrokerConfig(1)
       newKafkaProps.setProperty(CleanerConfig.LOG_CLEANER_IO_MAX_BYTES_PER_SECOND_PROP, "20000000")
 
       logCleaner.reconfigure(new KafkaConfig(oldKafkaProps), new KafkaConfig(newKafkaProps))
@@ -2043,6 +2045,45 @@ class LogCleanerTest extends Logging {
     } finally {
       logCleaner.shutdown()
     }
+  }
+
+  @Test
+  def testMaxOverCleanerThreads(): Unit = {
+    val logCleaner =  new LogCleaner(new CleanerConfig(true),
+      logDirs = Array(TestUtils.tempDir(), TestUtils.tempDir()),
+      logs = new Pool[TopicPartition, UnifiedLog](),
+      logDirFailureChannel = new LogDirFailureChannel(1),
+      time = time)
+
+    val cleaners = logCleaner.cleaners
+
+    val cleaner1 = new logCleaner.CleanerThread(1)
+    cleaner1.lastStats = new CleanerStats(time)
+    cleaner1.lastStats.bufferUtilization = 0.75
+    cleaners += cleaner1
+
+    val cleaner2 = new logCleaner.CleanerThread(2)
+    cleaner2.lastStats = new CleanerStats(time)
+    cleaner2.lastStats.bufferUtilization = 0.85
+    cleaners += cleaner2
+
+    val cleaner3 = new logCleaner.CleanerThread(3)
+    cleaner3.lastStats = new CleanerStats(time)
+    cleaner3.lastStats.bufferUtilization = 0.65
+    cleaners += cleaner3
+
+    assertEquals(0, logCleaner.maxOverCleanerThreads(_.lastStats.bufferUtilization))
+
+    cleaners.clear()
+
+    cleaner1.lastStats.bufferUtilization = 5d
+    cleaners += cleaner1
+    cleaner2.lastStats.bufferUtilization = 6d
+    cleaners += cleaner2
+    cleaner3.lastStats.bufferUtilization = 7d
+    cleaners += cleaner3
+
+    assertEquals(7, logCleaner.maxOverCleanerThreads(_.lastStats.bufferUtilization))
   }
 
   private def writeToLog(log: UnifiedLog, keysAndValues: Iterable[(Int, Int)], offsetSeq: Iterable[Long]): Iterable[Long] = {

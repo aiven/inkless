@@ -49,8 +49,8 @@ import org.apache.kafka.common.utils.MockTime;
 import org.apache.kafka.common.utils.annotation.ApiKeyVersionsSource;
 import org.apache.kafka.coordinator.common.runtime.CoordinatorRecord;
 import org.apache.kafka.coordinator.common.runtime.CoordinatorResult;
+import org.apache.kafka.coordinator.common.runtime.MockCoordinatorExecutor;
 import org.apache.kafka.coordinator.common.runtime.MockCoordinatorTimer;
-import org.apache.kafka.coordinator.group.assignor.RangeAssignor;
 import org.apache.kafka.coordinator.group.classic.ClassicGroup;
 import org.apache.kafka.coordinator.group.classic.ClassicGroupMember;
 import org.apache.kafka.coordinator.group.classic.ClassicGroupState;
@@ -62,7 +62,6 @@ import org.apache.kafka.coordinator.group.modern.consumer.ConsumerGroup;
 import org.apache.kafka.coordinator.group.modern.consumer.ConsumerGroupMember;
 import org.apache.kafka.image.MetadataImage;
 import org.apache.kafka.server.common.ApiMessageAndVersion;
-import org.apache.kafka.server.common.MetadataVersion;
 import org.apache.kafka.timeline.SnapshotRegistry;
 
 import org.junit.jupiter.api.Test;
@@ -100,13 +99,14 @@ public class OffsetMetadataManagerTest {
         public static class Builder {
             private final MockTime time = new MockTime();
             private final MockCoordinatorTimer<Void, CoordinatorRecord> timer = new MockCoordinatorTimer<>(time);
+            private final MockCoordinatorExecutor<CoordinatorRecord> executor = new MockCoordinatorExecutor<>();
             private final LogContext logContext = new LogContext();
             private final SnapshotRegistry snapshotRegistry = new SnapshotRegistry(logContext);
+            private final GroupCoordinatorMetricsShard metrics = mock(GroupCoordinatorMetricsShard.class);
+            private final GroupConfigManager configManager = mock(GroupConfigManager.class);
             private GroupMetadataManager groupMetadataManager = null;
             private MetadataImage metadataImage = null;
             private GroupCoordinatorConfig config = null;
-            private GroupCoordinatorMetricsShard metrics = mock(GroupCoordinatorMetricsShard.class);
-            private GroupConfigManager configManager = mock(GroupConfigManager.class);
 
             Builder withOffsetMetadataMaxSize(int offsetMetadataMaxSize) {
                 config = GroupCoordinatorConfigTest.createGroupCoordinatorConfig(offsetMetadataMaxSize, 60000L, 24 * 60);
@@ -133,12 +133,13 @@ public class OffsetMetadataManagerTest {
                     groupMetadataManager = new GroupMetadataManager.Builder()
                         .withTime(time)
                         .withTimer(timer)
+                        .withExecutor(executor)
                         .withSnapshotRegistry(snapshotRegistry)
                         .withLogContext(logContext)
                         .withMetadataImage(metadataImage)
-                        .withConsumerGroupAssignors(Collections.singletonList(new RangeAssignor()))
                         .withGroupCoordinatorMetricsShard(metrics)
                         .withGroupConfigManager(configManager)
+                        .withConfig(GroupCoordinatorConfig.fromProps(Collections.emptyMap()))
                         .build();
                 }
 
@@ -447,8 +448,7 @@ public class OffsetMetadataManagerTest {
                     "metadata",
                     commitTimestamp,
                     OptionalLong.empty()
-                ),
-                MetadataVersion.latestTesting()
+                )
             ));
         }
 
@@ -905,8 +905,7 @@ public class OffsetMetadataManagerTest {
                     "",
                     context.time.milliseconds(),
                     OptionalLong.of(context.time.milliseconds() + 1234L)
-                ),
-                MetadataImage.EMPTY.features().metadataVersion()
+                )
             )),
             result.records()
         );
@@ -1013,8 +1012,7 @@ public class OffsetMetadataManagerTest {
                     "",
                     context.time.milliseconds(),
                     OptionalLong.empty()
-                ),
-                MetadataImage.EMPTY.features().metadataVersion()
+                )
             )),
             result.records()
         );
@@ -1073,8 +1071,7 @@ public class OffsetMetadataManagerTest {
                     "",
                     context.time.milliseconds(),
                     OptionalLong.empty()
-                ),
-                MetadataImage.EMPTY.features().metadataVersion()
+                )
             )),
             result.records()
         );
@@ -1237,8 +1234,7 @@ public class OffsetMetadataManagerTest {
                     "",
                     context.time.milliseconds(),
                     OptionalLong.empty()
-                ),
-                MetadataImage.EMPTY.features().metadataVersion()
+                )
             )),
             result.records()
         );
@@ -1275,7 +1271,6 @@ public class OffsetMetadataManagerTest {
                                 .setCommittedOffset(100L)
                                 .setCommittedLeaderEpoch(10)
                                 .setCommittedMetadata("metadata")
-                                .setCommitTimestamp(context.time.milliseconds())
                         ))
                 ))
         );
@@ -1305,8 +1300,7 @@ public class OffsetMetadataManagerTest {
                     "metadata",
                     context.time.milliseconds(),
                     OptionalLong.empty()
-                ),
-                MetadataImage.EMPTY.features().metadataVersion()
+                )
             )),
             result.records()
         );
@@ -1344,14 +1338,12 @@ public class OffsetMetadataManagerTest {
                                 .setPartitionIndex(0)
                                 .setCommittedOffset(100L)
                                 .setCommittedLeaderEpoch(10)
-                                .setCommittedMetadata("toolarge")
-                                .setCommitTimestamp(context.time.milliseconds()),
+                                .setCommittedMetadata("toolarge"),
                             new OffsetCommitRequestData.OffsetCommitRequestPartition()
                                 .setPartitionIndex(1)
                                 .setCommittedOffset(100L)
                                 .setCommittedLeaderEpoch(10)
                                 .setCommittedMetadata("small")
-                                .setCommitTimestamp(context.time.milliseconds())
                         ))
                 ))
         );
@@ -1384,8 +1376,7 @@ public class OffsetMetadataManagerTest {
                     "small",
                     context.time.milliseconds(),
                     OptionalLong.empty()
-                ),
-                MetadataImage.EMPTY.features().metadataVersion()
+                )
             )),
             result.records()
         );
@@ -1451,8 +1442,7 @@ public class OffsetMetadataManagerTest {
                     "metadata",
                     context.time.milliseconds(),
                     OptionalLong.empty()
-                ),
-                MetadataImage.EMPTY.features().metadataVersion()
+                )
             )),
             result.records()
         );
@@ -1609,8 +1599,7 @@ public class OffsetMetadataManagerTest {
                     "metadata",
                     context.time.milliseconds(),
                     OptionalLong.empty()
-                ),
-                MetadataImage.EMPTY.features().metadataVersion()
+                )
             )),
             result.records()
         );
@@ -3137,8 +3126,7 @@ public class OffsetMetadataManagerTest {
             groupId,
             topic,
             partition,
-            offsetAndMetadata,
-            MetadataImage.EMPTY.features().metadataVersion()
+            offsetAndMetadata
         ));
 
         assertEquals(offsetAndMetadata, context.offsetMetadataManager.offset(
@@ -3160,8 +3148,7 @@ public class OffsetMetadataManagerTest {
             groupId,
             topic,
             partition,
-            offsetAndMetadata,
-            MetadataImage.EMPTY.features().metadataVersion()
+            offsetAndMetadata
         ));
 
         assertEquals(offsetAndMetadata, context.offsetMetadataManager.pendingTransactionalOffset(

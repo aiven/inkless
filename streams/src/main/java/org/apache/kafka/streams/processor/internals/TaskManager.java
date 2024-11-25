@@ -1013,7 +1013,8 @@ public class TaskManager {
         } catch (final LockException lockException) {
             // The state directory may still be locked by another thread, when the rebalance just happened.
             // Retry in the next iteration.
-            log.info("Encountered lock exception. Reattempting locking the state in the next iteration.", lockException);
+            log.info("Encountered lock exception. Reattempting locking the state in the next iteration. Error message was: {}",
+                     lockException.getMessage());
             tasks.addPendingTasksToInit(Collections.singleton(task));
             updateOrCreateBackoffRecord(task.id(), nowMs);
         }
@@ -1805,16 +1806,44 @@ public class TaskManager {
      */
     void addRecordsToTasks(final ConsumerRecords<byte[], byte[]> records) {
         for (final TopicPartition partition : records.partitions()) {
-            final Task activeTask = tasks.activeTasksForInputPartition(partition);
-
-            if (activeTask == null) {
-                log.error("Unable to locate active task for received-record partition {}. Current tasks: {}",
-                    partition, toString(">"));
-                throw new NullPointerException("Task was unexpectedly missing for partition " + partition);
-            }
-
+            final Task activeTask = getActiveTask(partition);
             activeTask.addRecords(partition, records.records(partition));
         }
+    }
+
+    /**
+     * Update the next offsets for each task
+     *
+     * @param nextOffsets A map of offsets keyed by partition
+     */
+    void updateNextOffsets(final Map<TopicPartition, OffsetAndMetadata> nextOffsets) {
+        for (final Map.Entry<TopicPartition, OffsetAndMetadata> entry : nextOffsets.entrySet()) {
+            final Task activeTask = getActiveTask(entry.getKey());
+            activeTask.updateNextOffsets(entry.getKey(), entry.getValue());
+        }
+    }
+
+    void maybeInitTaskTimeoutsOrThrow(
+        final Collection<TopicPartition> partitions,
+        final TimeoutException timeoutException,
+        final long nowMs
+    ) {
+        for (final TopicPartition partition : partitions) {
+            final Task task = getActiveTask(partition);
+            task.maybeInitTaskTimeoutOrThrow(nowMs, timeoutException);
+            stateUpdater.add(task);
+        }
+    }
+
+    private Task getActiveTask(final TopicPartition partition) {
+        final Task activeTask = tasks.activeTasksForInputPartition(partition);
+
+        if (activeTask == null) {
+            log.error("Unable to locate active task for received-record partition {}. Current tasks: {}",
+                partition, toString(">"));
+            throw new NullPointerException("Task was unexpectedly missing for partition " + partition);
+        }
+        return activeTask;
     }
 
     private void maybeLockTasks(final Set<TaskId> ids) {
