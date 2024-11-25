@@ -18,7 +18,7 @@
 package kafka.server
 
 import kafka.server.AbstractFetcherThread.{ReplicaFetch, ResultWithPartitions}
-import kafka.server.QuotaFactory.UnboundedQuota
+import kafka.server.QuotaFactory.UNBOUNDED_QUOTA
 import kafka.utils.Logging
 import org.apache.kafka.common.errors.KafkaStorageException
 import org.apache.kafka.common.message.FetchResponseData
@@ -105,7 +105,7 @@ class LocalLeaderEndPoint(sourceBroker: BrokerEndPoint,
     replicaManager.fetchMessages(
       params = fetchParams,
       fetchInfos = fetchData.asScala.toSeq,
-      quota = UnboundedQuota,
+      quota = UNBOUNDED_QUOTA,
       responseCallback = processResponseCallback
     )
 
@@ -118,21 +118,21 @@ class LocalLeaderEndPoint(sourceBroker: BrokerEndPoint,
   override def fetchEarliestOffset(topicPartition: TopicPartition, currentLeaderEpoch: Int): OffsetAndEpoch = {
     val partition = replicaManager.getPartitionOrException(topicPartition)
     val logStartOffset = partition.localLogOrException.logStartOffset
-    val epoch = partition.localLogOrException.leaderEpochCache.get.epochForOffset(logStartOffset)
+    val epoch = partition.localLogOrException.leaderEpochCache.epochForOffset(logStartOffset)
     new OffsetAndEpoch(logStartOffset, epoch.orElse(0))
   }
 
   override def fetchLatestOffset(topicPartition: TopicPartition, currentLeaderEpoch: Int): OffsetAndEpoch = {
     val partition = replicaManager.getPartitionOrException(topicPartition)
     val logEndOffset = partition.localLogOrException.logEndOffset
-    val epoch = partition.localLogOrException.leaderEpochCache.get.epochForOffset(logEndOffset)
+    val epoch = partition.localLogOrException.leaderEpochCache.epochForOffset(logEndOffset)
     new OffsetAndEpoch(logEndOffset, epoch.orElse(0))
   }
 
   override def fetchEarliestLocalOffset(topicPartition: TopicPartition, currentLeaderEpoch: Int): OffsetAndEpoch = {
     val partition = replicaManager.getPartitionOrException(topicPartition)
     val localLogStartOffset = partition.localLogOrException.localLogStartOffset()
-    val epoch = partition.localLogOrException.leaderEpochCache.get.epochForOffset(localLogStartOffset)
+    val epoch = partition.localLogOrException.leaderEpochCache.epochForOffset(localLogStartOffset)
     new OffsetAndEpoch(localLogStartOffset, epoch.orElse(0))
   }
 

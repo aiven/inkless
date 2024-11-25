@@ -1,14 +1,14 @@
 // Copyright (c) 2024 Aiven, Helsinki, Finland. https://aiven.io/
 package io.aiven.inkless.consume;
 
-import io.aiven.inkless.common.ByteRange;
-import io.aiven.inkless.common.ObjectKey;
-import io.aiven.inkless.storage_backend.common.ObjectFetcher;
-
 import java.io.InputStream;
 import java.nio.ByteBuffer;
 import java.util.Objects;
 import java.util.concurrent.Callable;
+
+import io.aiven.inkless.common.ByteRange;
+import io.aiven.inkless.common.ObjectKey;
+import io.aiven.inkless.storage_backend.common.ObjectFetcher;
 
 public class FileFetchJob implements Callable<FetchedFile> {
 

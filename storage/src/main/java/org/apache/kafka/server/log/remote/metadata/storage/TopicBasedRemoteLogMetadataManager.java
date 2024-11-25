@@ -272,15 +272,6 @@ public class TopicBasedRemoteLogMetadataManager implements RemoteLogMetadataMana
         }
     }
 
-    public int metadataPartition(TopicIdPartition topicIdPartition) {
-        return rlmTopicPartitioner.metadataPartition(topicIdPartition);
-    }
-
-    // Visible For Testing
-    public Optional<Long> readOffsetForPartition(int metadataPartition) {
-        return consumerManager.readOffsetForPartition(metadataPartition);
-    }
-
     @Override
     public void onPartitionLeadershipChanges(Set<TopicIdPartition> leaderPartitions,
                                              Set<TopicIdPartition> followerPartitions) {
@@ -357,6 +348,17 @@ public class TopicBasedRemoteLogMetadataManager implements RemoteLogMetadataMana
     }
 
     @Override
+    public Optional<RemoteLogSegmentMetadata> nextSegmentWithTxnIndex(TopicIdPartition topicIdPartition, int epoch, long offset) throws RemoteStorageException {
+        lock.readLock().lock();
+        try {
+            ensureInitializedAndNotClosed();
+            return remotePartitionMetadataStore.nextSegmentWithTxnIndex(topicIdPartition, epoch, offset);
+        } finally {
+            lock.readLock().unlock();
+        }
+    }
+
+    @Override
     public void configure(Map<String, ?> configs) {
         Objects.requireNonNull(configs, "configs can not be null.");
 
@@ -383,6 +385,11 @@ public class TopicBasedRemoteLogMetadataManager implements RemoteLogMetadataMana
         } finally {
             lock.writeLock().unlock();
         }
+    }
+
+    @Override
+    public boolean isReady(TopicIdPartition topicIdPartition) {
+        return remotePartitionMetadataStore.isInitialized(topicIdPartition);
     }
 
     private void initializeResources() {
@@ -544,7 +551,7 @@ public class TopicBasedRemoteLogMetadataManager implements RemoteLogMetadataMana
         return doesTopicExist;
     }
 
-    public boolean isInitialized() {
+    boolean isInitialized() {
         return initialized.get();
     }
 
@@ -557,11 +564,6 @@ public class TopicBasedRemoteLogMetadataManager implements RemoteLogMetadataMana
             throw new IllegalStateException("This instance is in invalid state, initialized: " + initialized +
                                                     " close: " + closing);
         }
-    }
-
-    // Visible for testing.
-    public TopicBasedRemoteLogMetadataManagerConfig config() {
-        return rlmmConfig;
     }
 
     @Override

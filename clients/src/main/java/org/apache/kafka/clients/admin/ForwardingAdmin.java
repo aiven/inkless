@@ -103,12 +103,6 @@ public class ForwardingAdmin implements Admin {
         return delegate.describeConfigs(resources, options);
     }
 
-    @Deprecated
-    @Override
-    public AlterConfigsResult alterConfigs(Map<ConfigResource, Config> configs, AlterConfigsOptions options) {
-        return delegate.alterConfigs(configs, options);
-    }
-
     @Override
     public AlterConfigsResult incrementalAlterConfigs(Map<ConfigResource, Collection<AlterConfigOp>> configs, AlterConfigsOptions options) {
         return delegate.incrementalAlterConfigs(configs, options);
@@ -305,8 +299,28 @@ public class ForwardingAdmin implements Admin {
     }
 
     @Override
-    public ListShareGroupsResult listShareGroups(ListShareGroupsOptions options) {
-        return delegate.listShareGroups(options);
+    public AlterShareGroupOffsetsResult alterShareGroupOffsets(String groupId, Map<TopicPartition, Long> offsets, AlterShareGroupOffsetsOptions options) {
+        return delegate.alterShareGroupOffsets(groupId, offsets, options);
+    }
+
+    @Override
+    public ListShareGroupOffsetsResult listShareGroupOffsets(Map<String, ListShareGroupOffsetsSpec> groupSpecs, ListShareGroupOffsetsOptions options) {
+        return delegate.listShareGroupOffsets(groupSpecs, options);
+    }
+
+    @Override
+    public DeleteShareGroupsResult deleteShareGroups(Collection<String> groupIds, DeleteShareGroupsOptions options) {
+        return delegate.deleteShareGroups(groupIds, options);
+    }
+
+    @Override
+    public ListGroupsResult listGroups(ListGroupsOptions options) {
+        return delegate.listGroups(options);
+    }
+
+    @Override
+    public DescribeClassicGroupsResult describeClassicGroups(Collection<String> groupIds, DescribeClassicGroupsOptions options) {
+        return delegate.describeClassicGroups(groupIds, options);
     }
 
     @Override

@@ -1,14 +1,14 @@
 // Copyright (c) 2024 Aiven, Helsinki, Finland. https://aiven.io/
 package io.aiven.inkless.common.config.validators;
 
-import java.net.MalformedURLException;
-import java.net.URL;
-import java.util.List;
-
 import org.apache.kafka.common.config.ConfigDef;
 import org.apache.kafka.common.config.ConfigException;
 
 import com.groupcdg.pitest.annotations.CoverageIgnore;
+
+import java.net.MalformedURLException;
+import java.net.URL;
+import java.util.List;
 
 /**
  * {@link ConfigDef.Validator} implementation that verifies that a config value is
