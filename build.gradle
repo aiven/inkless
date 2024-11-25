@@ -2344,7 +2344,8 @@ project(':storage:inkless') {
     testImplementation libs.wiremock
     testImplementation libs.jqwik
 
-    testRuntimeOnly runtimeTestLibs
+    testRuntimeOnly libs.slf4jReload4j
+    testRuntimeOnly libs.junitPlatformLanucher
   }
 
   javadoc {
