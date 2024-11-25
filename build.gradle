@@ -139,7 +139,7 @@ ext {
 
   runtimeTestLibs = [
     libs.slf4jLog4j2,
-    libs.junitPlatformLanucher,
+    libs.junitPlatformLauncher,
     libs.jacksonDatabindYaml,
     project(":test-common:test-common-util")
   ]
@@ -1522,7 +1522,7 @@ project(':test-common:test-common-util') {
   }
 
   dependencies {
-    implementation libs.junitPlatformLanucher
+    implementation libs.junitPlatformLauncher
     implementation libs.junitJupiterApi
     implementation libs.junitJupiter
     implementation libs.slf4jApi
@@ -1555,7 +1555,7 @@ project(':test-common:test-common-runtime') {
     implementation project(':server-common')
     implementation project(':storage')
 
-    implementation libs.junitPlatformLanucher
+    implementation libs.junitPlatformLauncher
     implementation libs.junitJupiter
     implementation libs.jacksonDatabindYaml
     implementation libs.slf4jApi
@@ -2345,8 +2345,7 @@ project(':storage:inkless') {
     testImplementation libs.wiremock
     testImplementation testLog4j2Libs
 
-    testRuntimeOnly libs.slf4jReload4j
-    testRuntimeOnly libs.junitPlatformLanucher
+    testRuntimeOnly libs.junitPlatformLauncher
   }
 
   javadoc {
@@ -2563,7 +2562,7 @@ project(':trogdor') {
     testImplementation testLog4j2Libs
 
     testRuntimeOnly runtimeTestLibs
-    testRuntimeOnly libs.junitPlatformLanucher
+    testRuntimeOnly libs.junitPlatformLauncher
   }
 
   javadoc {
