@@ -1,12 +1,12 @@
 // Copyright (c) 2024 Aiven, Helsinki, Finland. https://aiven.io/
 package io.aiven.inkless.config;
 
-import java.time.Duration;
-import java.util.Map;
-
 import org.apache.kafka.common.config.AbstractConfig;
 import org.apache.kafka.common.config.ConfigDef;
 import org.apache.kafka.common.utils.Utils;
+
+import java.time.Duration;
+import java.util.Map;
 
 import io.aiven.inkless.storage_backend.common.StorageBackend;
 

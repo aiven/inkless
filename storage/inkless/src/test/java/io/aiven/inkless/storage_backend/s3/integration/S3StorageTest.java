@@ -1,14 +1,6 @@
 // Copyright (c) 2024 Aiven, Helsinki, Finland. https://aiven.io/
 package io.aiven.inkless.storage_backend.s3.integration;
 
-import java.util.Map;
-
-import io.aiven.inkless.storage_backend.common.StorageBackend;
-import io.aiven.inkless.storage_backend.common.fixtures.BaseStorageTest;
-import io.aiven.inkless.storage_backend.common.fixtures.TestUtils;
-import io.aiven.inkless.storage_backend.s3.S3Storage;
-import io.aiven.inkless.test_utils.S3TestContainer;
-
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -17,6 +9,14 @@ import org.junit.jupiter.api.TestInfo;
 import org.testcontainers.containers.localstack.LocalStackContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
+
+import java.util.Map;
+
+import io.aiven.inkless.storage_backend.common.StorageBackend;
+import io.aiven.inkless.storage_backend.common.fixtures.BaseStorageTest;
+import io.aiven.inkless.storage_backend.common.fixtures.TestUtils;
+import io.aiven.inkless.storage_backend.s3.S3Storage;
+import io.aiven.inkless.test_utils.S3TestContainer;
 import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
 import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
 import software.amazon.awssdk.regions.Region;

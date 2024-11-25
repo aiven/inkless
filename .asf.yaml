@@ -15,6 +15,10 @@
 # specific language governing permissions and limitations
 # under the License.
 
+# Enable the next-gen .asf.yaml parser
+meta:
+  nextgen: true
+
 notifications:
   commits: commits@kafka.apache.org
   issues: jira@kafka.apache.org
@@ -25,13 +29,19 @@ notifications:
 # Read more here: https://github.com/apache/infrastructure-asfyaml
 github:
   collaborators:
-    - AndrewJSchofield
-    - apoorvmittal10
-    - brandboat
-    - dongnuo123
-    - frankvicky
     - FrankYang0529
     - kirktrue
-    - m1a2st
-    - nizhikov
+    - brandboat
+    - AndrewJSchofield
     - OmniaGM
+    - nizhikov
+    - dongnuo123
+    - gaurav-narula
+    - apourchet
+    - apoorvmittal10
+
+  enabled_merge_buttons:
+    squash: true
+    squash_commit_message: PR_TITLE_AND_DESC
+    merge: false
+    rebase: false

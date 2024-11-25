@@ -37,6 +37,7 @@ public interface Group {
         CONSUMER("consumer"),
         CLASSIC("classic"),
         SHARE("share"),
+        STREAMS("streams"),
         UNKNOWN("unknown");
 
         private final String name;
@@ -66,6 +67,13 @@ public interface Group {
             GroupType type = NAME_TO_ENUM.get(name.toLowerCase(Locale.ROOT));
 
             return type == null ? UNKNOWN : type;
+        }
+        
+        static String[] documentValidValues() {
+            return Arrays.stream(GroupType.values())
+                .filter(type -> type != UNKNOWN)
+                .map(GroupType::toString)
+                .toArray(String[]::new);
         }
     }
 

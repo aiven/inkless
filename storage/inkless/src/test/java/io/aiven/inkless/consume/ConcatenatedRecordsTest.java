@@ -5,6 +5,7 @@ import org.apache.kafka.common.compress.Compression;
 import org.apache.kafka.common.network.TransferableChannel;
 import org.apache.kafka.common.record.MemoryRecords;
 import org.apache.kafka.common.record.SimpleRecord;
+
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
@@ -42,7 +43,6 @@ public class ConcatenatedRecordsTest {
 
         assertFalse(records.batches().iterator().hasNext());
         assertFalse(records.batchIterator().hasNext());
-        assertThrows(UnsupportedOperationException.class, () -> records.downConvert((byte) 1, 0, null));
 
         assertEquals(0, records.writeTo(channel, 0, 1));
         assertEquals(0, records.sizeInBytes());
@@ -54,7 +54,6 @@ public class ConcatenatedRecordsTest {
 
         assertFalse(records.batches().iterator().hasNext());
         assertFalse(records.batchIterator().hasNext());
-        assertThrows(UnsupportedOperationException.class, () -> records.downConvert((byte) 1, 0, null));
 
         assertEquals(0, records.writeTo(channel, 0, 1));
         assertEquals(0, records.sizeInBytes());
@@ -67,7 +66,6 @@ public class ConcatenatedRecordsTest {
 
         assertTrue(records.batches().iterator().hasNext());
         assertTrue(records.batchIterator().hasNext());
-        assertThrows(UnsupportedOperationException.class, () -> records.downConvert((byte) 1, 0, null));
 
         setupChannel(1000);
         assertEquals(backingRecords.writeTo(channel, 0, 1), records.writeTo(channel, 0, 1));
@@ -81,7 +79,6 @@ public class ConcatenatedRecordsTest {
 
         assertTrue(records.batches().iterator().hasNext());
         assertTrue(records.batchIterator().hasNext());
-        assertThrows(UnsupportedOperationException.class, () -> records.downConvert((byte) 1, 0, null));
 
         setupChannel(1000);
         assertEquals(backingRecords.writeTo(channel, 0, 1), records.writeTo(channel, 0, 1));

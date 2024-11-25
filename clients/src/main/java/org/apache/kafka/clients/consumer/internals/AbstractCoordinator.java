@@ -568,7 +568,7 @@ public abstract class AbstractCoordinator implements Closeable {
             if (lastRebalanceStartMs == -1L)
                 lastRebalanceStartMs = time.milliseconds();
             joinFuture = sendJoinGroupRequest();
-            joinFuture.addListener(new RequestFutureListener<ByteBuffer>() {
+            joinFuture.addListener(new RequestFutureListener<>() {
                 @Override
                 public void onSuccess(ByteBuffer value) {
                     // do nothing since all the handler logic are in SyncGroupResponseHandler already
@@ -1188,7 +1188,7 @@ public abstract class AbstractCoordinator implements Closeable {
     }
 
     protected boolean isDynamicMember() {
-        return !rebalanceConfig.groupInstanceId.isPresent();
+        return rebalanceConfig.groupInstanceId.isEmpty();
     }
 
     private class LeaveGroupResponseHandler extends CoordinatorResponseHandler<LeaveGroupResponse, Void> {
@@ -1528,7 +1528,7 @@ public abstract class AbstractCoordinator implements Closeable {
                         } else {
                             heartbeat.sentHeartbeat(now);
                             final RequestFuture<Void> heartbeatFuture = sendHeartbeatRequest();
-                            heartbeatFuture.addListener(new RequestFutureListener<Void>() {
+                            heartbeatFuture.addListener(new RequestFutureListener<>() {
                                 @Override
                                 public void onSuccess(Void value) {
                                     synchronized (AbstractCoordinator.this) {
@@ -1577,7 +1577,9 @@ public abstract class AbstractCoordinator implements Closeable {
                     this.failed.set(new RuntimeException(e));
             } finally {
                 log.debug("Heartbeat thread has closed");
-                this.closed = true;
+                synchronized (AbstractCoordinator.this) {
+                    this.closed = true;
+                }
             }
         }
 

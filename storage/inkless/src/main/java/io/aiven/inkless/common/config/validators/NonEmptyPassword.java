@@ -1,13 +1,13 @@
 // Copyright (c) 2024 Aiven, Helsinki, Finland. https://aiven.io/
 package io.aiven.inkless.common.config.validators;
 
-import java.util.Objects;
-
 import org.apache.kafka.common.config.ConfigDef;
 import org.apache.kafka.common.config.ConfigException;
 import org.apache.kafka.common.config.types.Password;
 
 import com.groupcdg.pitest.annotations.CoverageIgnore;
+
+import java.util.Objects;
 
 public class NonEmptyPassword implements ConfigDef.Validator {
     @Override
