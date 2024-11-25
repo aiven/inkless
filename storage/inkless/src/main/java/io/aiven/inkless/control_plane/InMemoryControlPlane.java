@@ -17,7 +17,7 @@ import java.util.TreeMap;
 
 import io.aiven.inkless.common.ObjectKey;
 
-public class InMemoryControlPlane {
+public class InMemoryControlPlane implements ControlPlane {
     private static final Logger logger = LoggerFactory.getLogger(InMemoryControlPlane.class);
 
     private final MetadataView metadataView;
@@ -29,6 +29,7 @@ public class InMemoryControlPlane {
         this.metadataView = metadataView;
     }
 
+    @Override
     public synchronized List<CommitBatchResponse> commitFile(final ObjectKey objectKey,
                                                              final List<CommitBatchRequest> batches) {
         final List<CommitBatchResponse> responses = new ArrayList<>();
@@ -58,6 +59,7 @@ public class InMemoryControlPlane {
         return responses;
     }
 
+    @Override
     public synchronized List<FindBatchResponse> findBatches(final List<FindBatchRequest> findBatchRequests,
                                                            final boolean minOneMessage,
                                                            final int fetchMaxBytes) {

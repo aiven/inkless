@@ -27,7 +27,7 @@ import java.util.concurrent.locks.ReentrantLock;
 import io.aiven.inkless.TimeUtils;
 import io.aiven.inkless.common.InklessThreadFactory;
 import io.aiven.inkless.common.ObjectKeyCreator;
-import io.aiven.inkless.control_plane.InMemoryControlPlane;
+import io.aiven.inkless.control_plane.ControlPlane;
 import io.aiven.inkless.storage_backend.common.ObjectUploader;
 
 /**
@@ -56,7 +56,7 @@ class Writer implements Closeable {
     Writer(final Time time,
            final ObjectKeyCreator objectKeyCreator,
            final ObjectUploader objectUploader,
-           final InMemoryControlPlane controlPlane,
+           final ControlPlane controlPlane,
            final Duration commitInterval,
            final int maxBufferSize,
            final int maxFileUploadAttempts,

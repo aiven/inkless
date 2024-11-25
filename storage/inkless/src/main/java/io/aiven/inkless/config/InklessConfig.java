@@ -8,10 +8,17 @@ import org.apache.kafka.common.utils.Utils;
 import java.time.Duration;
 import java.util.Map;
 
+import io.aiven.inkless.common.config.validators.Subclass;
+import io.aiven.inkless.control_plane.ControlPlane;
 import io.aiven.inkless.storage_backend.common.StorageBackend;
 
 public class InklessConfig extends AbstractConfig {
     public static final String PREFIX = "inkless.";
+
+    public static final String CONTROL_PLANE_PREFIX = "control.plane.";
+
+    public static final String CONTROL_PLANE_CLASS_CONFIG = CONTROL_PLANE_PREFIX + "class";
+    private static final String CONTROL_PLANE_CLASS_DOC = "The control plane implementation class";
 
     public static final String OBJECT_KEY_PREFIX_CONFIG = "object.key.prefix";
     private static final String OBJECT_KEY_PREFIX_DOC = "The object storage key prefix.";
@@ -42,6 +49,15 @@ public class InklessConfig extends AbstractConfig {
 
     public static ConfigDef configDef() {
         final ConfigDef configDef = new ConfigDef();
+
+        configDef.define(
+            CONTROL_PLANE_CLASS_CONFIG,
+            ConfigDef.Type.CLASS,
+            ConfigDef.NO_DEFAULT_VALUE,
+            new Subclass(ControlPlane.class),
+            ConfigDef.Importance.HIGH,
+            CONTROL_PLANE_CLASS_DOC
+        );
 
         configDef.define(
             OBJECT_KEY_PREFIX_CONFIG,
@@ -106,6 +122,11 @@ public class InklessConfig extends AbstractConfig {
     // Visible for testing
     InklessConfig(final Map<String, ?> props) {
         super(configDef(), props);
+    }
+
+    @SuppressWarnings("unchecked")
+    public Class<ControlPlane> controlPlaneClass() {
+        return (Class<ControlPlane>) getClass(CONTROL_PLANE_CLASS_CONFIG);
     }
 
     public String objectKeyPrefix() {

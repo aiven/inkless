@@ -24,7 +24,7 @@ import java.util.concurrent.ExecutorService;
 import io.aiven.inkless.common.ObjectKey;
 import io.aiven.inkless.common.ObjectKeyCreator;
 import io.aiven.inkless.common.PlainObjectKey;
-import io.aiven.inkless.control_plane.InMemoryControlPlane;
+import io.aiven.inkless.control_plane.ControlPlane;
 import io.aiven.inkless.storage_backend.common.ObjectUploader;
 import io.aiven.inkless.storage_backend.common.StorageBackendException;
 
@@ -44,7 +44,7 @@ class FileCommitterTest {
     static final ClosedFile FILE = new ClosedFile(Instant.EPOCH, Map.of(), Map.of(), List.of(), List.of(), new byte[10]);
 
     @Mock
-    InMemoryControlPlane controlPlane;
+    ControlPlane controlPlane;
     @Mock
     ObjectUploader objectUploader;
     @Mock

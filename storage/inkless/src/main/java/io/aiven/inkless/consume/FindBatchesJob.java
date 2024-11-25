@@ -11,17 +11,17 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Callable;
 
-import io.aiven.inkless.control_plane.InMemoryControlPlane;
+import io.aiven.inkless.control_plane.ControlPlane;
 import io.aiven.inkless.control_plane.FindBatchRequest;
 import io.aiven.inkless.control_plane.FindBatchResponse;
 
 public class FindBatchesJob implements Callable<Map<TopicIdPartition, FindBatchResponse>> {
 
-    private final InMemoryControlPlane controlPlane;
+    private final ControlPlane controlPlane;
     private final FetchParams params;
     private final Map<TopicIdPartition, FetchRequest.PartitionData> fetchInfos;
 
-    public FindBatchesJob(InMemoryControlPlane controlPlane, FetchParams params, Map<TopicIdPartition, FetchRequest.PartitionData> fetchInfos) {
+    public FindBatchesJob(ControlPlane controlPlane, FetchParams params, Map<TopicIdPartition, FetchRequest.PartitionData> fetchInfos) {
         this.controlPlane = controlPlane;
         this.params = params;
         this.fetchInfos = fetchInfos;

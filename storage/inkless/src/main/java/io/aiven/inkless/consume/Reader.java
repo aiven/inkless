@@ -14,20 +14,20 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 
 import io.aiven.inkless.common.InklessThreadFactory;
-import io.aiven.inkless.control_plane.InMemoryControlPlane;
+import io.aiven.inkless.control_plane.ControlPlane;
 import io.aiven.inkless.control_plane.FindBatchResponse;
 import io.aiven.inkless.storage_backend.common.ObjectFetcher;
 
 public class Reader {
 
-    private final InMemoryControlPlane controlPlane;
+    private final ControlPlane controlPlane;
     private final ObjectFetcher objectFetcher;
     private final ExecutorService metadataExecutor;
     private final ExecutorService fetchPlannerExecutor;
     private final ExecutorService dataExecutor;
     private final ExecutorService fetchCompleterExecutor;
 
-    public Reader(InMemoryControlPlane controlPlane, ObjectFetcher objectFetcher) {
+    public Reader(ControlPlane controlPlane, ObjectFetcher objectFetcher) {
         this(
                 controlPlane,
                 objectFetcher,
@@ -40,7 +40,7 @@ public class Reader {
 
 
     public Reader(
-            InMemoryControlPlane controlPlane,
+            ControlPlane controlPlane,
             ObjectFetcher objectFetcher,
             ExecutorService metadataExecutor,
             ExecutorService fetchPlannerExecutor,
