@@ -1459,7 +1459,7 @@ public class ClassicGroupTest {
 
         ClassicGroup classicGroup = ClassicGroup.fromConsumerGroup(
             consumerGroup,
-            memberId2,
+            Collections.emptySet(),
             newMember2,
             logContext,
             time,
@@ -1590,7 +1590,7 @@ public class ClassicGroupTest {
 
         ClassicGroup classicGroup = ClassicGroup.fromConsumerGroup(
             consumerGroup,
-            memberId2,
+            Set.of(member2),
             null,
             logContext,
             time,

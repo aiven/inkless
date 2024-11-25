@@ -45,6 +45,7 @@
     <allow pkg="org.apache.kafka.common.utils" />
     <allow pkg="org.apache.kafka.common.errors" exact-match="true" />
     <allow pkg="org.apache.kafka.common.memory" />
+    <allow pkg="org.apache.kafka.common.test.api" />
 
     <subpackage name="coordinator">
         <subpackage name="group">
@@ -70,6 +71,7 @@
             <allow pkg="org.apache.kafka.timeline" />
             <allow pkg="org.apache.kafka.coordinator.common" />
             <allow pkg="org.apache.kafka.coordinator.common.runtime" />
+            <allow pkg="com.google.re2j" />
             <subpackage name="metrics">
                 <allow pkg="com.yammer.metrics"/>
                 <allow pkg="org.HdrHistogram" />

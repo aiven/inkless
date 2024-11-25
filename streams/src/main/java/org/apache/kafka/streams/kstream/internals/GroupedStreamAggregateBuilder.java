@@ -21,8 +21,8 @@ import org.apache.kafka.streams.kstream.Aggregator;
 import org.apache.kafka.streams.kstream.Initializer;
 import org.apache.kafka.streams.kstream.KTable;
 import org.apache.kafka.streams.kstream.internals.graph.GraphNode;
+import org.apache.kafka.streams.kstream.internals.graph.ProcessorGraphNode;
 import org.apache.kafka.streams.kstream.internals.graph.ProcessorParameters;
-import org.apache.kafka.streams.kstream.internals.graph.StatefulProcessorNode;
 import org.apache.kafka.streams.processor.internals.StoreFactory;
 
 import java.util.Collections;
@@ -73,7 +73,7 @@ class GroupedStreamAggregateBuilder<K, V> {
                                   final Serde<KR> keySerde,
                                   final Serde<VR> valueSerde,
                                   final boolean isOutputVersioned) {
-        assert queryableStoreName == null || queryableStoreName.equals(storeFactory.name());
+        assert queryableStoreName == null || queryableStoreName.equals(storeFactory.storeName());
 
         final String aggFunctionName = functionName.name();
 
@@ -82,7 +82,7 @@ class GroupedStreamAggregateBuilder<K, V> {
 
         if (repartitionRequired) {
             final OptimizableRepartitionNodeBuilder<K, V> repartitionNodeBuilder = optimizableRepartitionNodeBuilder();
-            final String repartitionTopicPrefix = userProvidedRepartitionTopicName != null ? userProvidedRepartitionTopicName : storeFactory.name();
+            final String repartitionTopicPrefix = userProvidedRepartitionTopicName != null ? userProvidedRepartitionTopicName : storeFactory.storeName();
             sourceName = createRepartitionSource(repartitionTopicPrefix, repartitionNodeBuilder);
 
             // First time through we need to create a repartition node.
@@ -97,11 +97,10 @@ class GroupedStreamAggregateBuilder<K, V> {
             parentNode = repartitionNode;
         }
 
-        final StatefulProcessorNode<K, V> statefulProcessorNode =
-            new StatefulProcessorNode<>(
+        final ProcessorGraphNode<K, V> statefulProcessorNode =
+            new ProcessorGraphNode<>(
                 aggFunctionName,
-                new ProcessorParameters<>(aggregateSupplier, aggFunctionName),
-                storeFactory
+                new ProcessorParameters<>(aggregateSupplier, aggFunctionName)
             );
         statefulProcessorNode.setOutputVersioned(isOutputVersioned);
 

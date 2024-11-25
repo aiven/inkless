@@ -197,7 +197,7 @@ final class KafkaMetadataLog private (
   }
 
   override def initializeLeaderEpoch(epoch: Int): Unit = {
-    log.maybeAssignEpochStartOffset(epoch, log.logEndOffset)
+    log.assignEpochStartOffset(epoch, log.logEndOffset)
   }
 
   override def updateHighWatermark(offsetMetadata: LogOffsetMetadata): Unit = {
@@ -269,6 +269,25 @@ final class KafkaMetadataLog private (
     if (validOffsetAndEpoch.kind() != ValidOffsetAndEpoch.Kind.VALID) {
       throw new IllegalArgumentException(
         s"Snapshot id ($snapshotId) is not valid according to the log: $validOffsetAndEpoch"
+      )
+    }
+
+    /*
+      Perform a check that the requested snapshot offset is batch aligned via a log read, which
+      returns the base offset of the batch that contains the requested offset. A snapshot offset
+      is one greater than the last offset contained in the snapshot, and cannot go past the high
+      watermark.
+
+      This check is necessary because Raft replication code assumes the snapshot offset is the
+      start of a batch. If a follower applies a non-batch aligned snapshot at offset (X) and
+      fetches from this offset, the returned batch will start at offset (X - M), and the
+      follower will be unable to append it since (X - M) < (X).
+     */
+    val baseOffset = read(snapshotId.offset, Isolation.COMMITTED).startOffsetMetadata.offset
+    if (snapshotId.offset != baseOffset) {
+      throw new IllegalArgumentException(
+        s"Cannot create snapshot at offset (${snapshotId.offset}) because it is not batch aligned. " +
+        s"The batch containing the requested offset has a base offset of ($baseOffset)"
       )
     }
 

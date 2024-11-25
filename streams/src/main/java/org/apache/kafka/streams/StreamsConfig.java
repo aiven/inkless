@@ -17,6 +17,7 @@
 package org.apache.kafka.streams;
 
 import org.apache.kafka.clients.CommonClientConfigs;
+import org.apache.kafka.clients.MetadataRecoveryStrategy;
 import org.apache.kafka.clients.admin.Admin;
 import org.apache.kafka.clients.admin.AdminClientConfig;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
@@ -48,6 +49,7 @@ import org.apache.kafka.streams.processor.FailOnInvalidTimestamp;
 import org.apache.kafka.streams.processor.TimestampExtractor;
 import org.apache.kafka.streams.processor.assignment.TaskAssignor;
 import org.apache.kafka.streams.processor.internals.DefaultKafkaClientSupplier;
+import org.apache.kafka.streams.processor.internals.NoOpProcessorWrapper;
 import org.apache.kafka.streams.processor.internals.StreamsPartitionAssignor;
 import org.apache.kafka.streams.processor.internals.assignment.RackAwareTaskAssignor;
 import org.apache.kafka.streams.state.BuiltInDslStoreSuppliers;
@@ -163,6 +165,7 @@ public class StreamsConfig extends AbstractConfig {
     @Deprecated
     @SuppressWarnings("unused")
     public static final int DUMMY_THREAD_INDEX = 1;
+
     public static final long MAX_TASK_IDLE_MS_DISABLED = -1;
 
     // We impose these limitations because client tags are encoded into the subscription info,
@@ -422,6 +425,12 @@ public class StreamsConfig extends AbstractConfig {
     @SuppressWarnings("WeakerAccess")
     public static final String UPGRADE_FROM_38 = UpgradeFromValues.UPGRADE_FROM_38.toString();
 
+    /**
+     * Config value for parameter {@link #UPGRADE_FROM_CONFIG "upgrade.from"} for upgrading an application from version {@code 3.9.x}.
+     */
+    @SuppressWarnings("WeakerAccess")
+    public static final String UPGRADE_FROM_39 = UpgradeFromValues.UPGRADE_FROM_39.toString();
+
 
     /**
      * Config value for parameter {@link #PROCESSING_GUARANTEE_CONFIG "processing.guarantee"} for at-least-once processing guarantees.
@@ -478,7 +487,7 @@ public class StreamsConfig extends AbstractConfig {
     private static final String BUILT_IN_METRICS_VERSION_DOC = "Version of the built-in metrics to use.";
 
     /** {@code cache.max.bytes.buffering}
-     * @deprecated since 3.4.0 Use {@link #STATESTORE_CACHE_MAX_BYTES_CONFIG "statestore.cache.max.bytes"} instead. */
+     * @deprecated Since 3.4. Use {@link #STATESTORE_CACHE_MAX_BYTES_CONFIG "statestore.cache.max.bytes"} instead. */
     @SuppressWarnings("WeakerAccess")
     @Deprecated
     public static final String CACHE_MAX_BYTES_BUFFERING_CONFIG = "cache.max.bytes.buffering";
@@ -512,7 +521,7 @@ public class StreamsConfig extends AbstractConfig {
 
     /**
      * {@code default.deserialization.exception.handler}
-     * @deprecated since 4.0; use {@link #DESERIALIZATION_EXCEPTION_HANDLER_CLASS_CONFIG} instead
+     * @deprecated Since 4.0. Use {@link #DESERIALIZATION_EXCEPTION_HANDLER_CLASS_CONFIG} instead.
      */
     @SuppressWarnings("WeakerAccess")
     @Deprecated
@@ -527,7 +536,7 @@ public class StreamsConfig extends AbstractConfig {
 
     /**
      * {@code default.production.exception.handler}
-     * @deprecated since 4.0; Use {@link #PRODUCTION_EXCEPTION_HANDLER_CLASS_CONFIG} instead
+     * @deprecated Since 4.0. Use {@link #PRODUCTION_EXCEPTION_HANDLER_CLASS_CONFIG} instead.
      */
     @SuppressWarnings("WeakerAccess")
     @Deprecated
@@ -538,7 +547,10 @@ public class StreamsConfig extends AbstractConfig {
     public static final String PRODUCTION_EXCEPTION_HANDLER_CLASS_CONFIG = "production.exception.handler";
     private static final String PRODUCTION_EXCEPTION_HANDLER_CLASS_DOC = "Exception handling class that implements the <code>org.apache.kafka.streams.errors.ProductionExceptionHandler</code> interface.";
 
-    /** {@code default.dsl.store} */
+    /**
+     * {@code default.dsl.store}
+     * @deprecated Since 3.7. Use {@link #DSL_STORE_SUPPLIERS_CLASS_CONFIG} instead.
+     */
     @Deprecated
     @SuppressWarnings("WeakerAccess")
     public static final String DEFAULT_DSL_STORE_CONFIG = "default.dsl.store";
@@ -668,6 +680,11 @@ public class StreamsConfig extends AbstractConfig {
         "recommended setting for production; for development you can change this, by adjusting broker setting " +
         "<code>transaction.state.log.replication.factor</code> and <code>transaction.state.log.min.isr</code>.";
 
+    /** {@code processor.wrapper.class} */
+    public static final String PROCESSOR_WRAPPER_CLASS_CONFIG = "processor.wrapper.class";
+    static final String PROCESSOR_WRAPPER_CLASS_DOC = "A processor wrapper class or class name that implements the <code>org.apache.kafka.streams.state.ProcessorWrapper</code> interface. "
+        + "Must be passed in to the StreamsBuilder or Topology constructor in order to take effect";
+
     /** {@code repartition.purge.interval.ms} */
     @SuppressWarnings("WeakerAccess")
     public static final String REPARTITION_PURGE_INTERVAL_MS_CONFIG = "repartition.purge.interval.ms";
@@ -777,18 +794,16 @@ public class StreamsConfig extends AbstractConfig {
     /** {@code upgrade.from} */
     @SuppressWarnings("WeakerAccess")
     public static final String UPGRADE_FROM_CONFIG = "upgrade.from";
-    private static final String UPGRADE_FROM_DOC = "Allows upgrading in a backward compatible way. " +
-        "This is needed when upgrading from [0.10.0, 1.1] to 2.0+, or when upgrading from [2.0, 2.3] to 2.4+. " +
-        "When upgrading from 3.3 to a newer version it is not required to specify this config. Default is `null`. " +
-        "Accepted values are \"" + UPGRADE_FROM_0100 + "\", \"" + UPGRADE_FROM_0101 + "\", \"" +
-        UPGRADE_FROM_0102 + "\", \"" + UPGRADE_FROM_0110 + "\", \"" + UPGRADE_FROM_10 + "\", \"" +
-        UPGRADE_FROM_11 + "\", \"" + UPGRADE_FROM_20 + "\", \"" + UPGRADE_FROM_21 + "\", \"" +
-        UPGRADE_FROM_22 + "\", \"" + UPGRADE_FROM_23 + "\", \"" + UPGRADE_FROM_24 + "\", \"" +
+    private static final String UPGRADE_FROM_DOC = "Allows live upgrading (and downgrading in some cases -- see upgrade guide) in a backward compatible way. Default is `null`. " +
+        "Please refer to the Kafka Streams upgrade guide for instructions on how and when to use this config. " +
+        "Note that when upgrading from 3.5 to a newer version it is never required to specify this config, " +
+        "while upgrading live directly to 4.0+ from 2.3 or below is no longer supported even with this config. " +
+        "Accepted values are \"" + UPGRADE_FROM_24 + "\", \"" +
         UPGRADE_FROM_25 + "\", \"" + UPGRADE_FROM_26 + "\", \"" + UPGRADE_FROM_27 + "\", \"" +
         UPGRADE_FROM_28 + "\", \"" + UPGRADE_FROM_30 + "\", \"" + UPGRADE_FROM_31 + "\", \"" +
         UPGRADE_FROM_32 + "\", \"" + UPGRADE_FROM_33 + "\", \"" + UPGRADE_FROM_34 + "\", \"" +
         UPGRADE_FROM_35 + "\", \"" + UPGRADE_FROM_36 + "\", \"" + UPGRADE_FROM_37 + "\", \"" +
-        UPGRADE_FROM_38 + "(for upgrading from the corresponding old version).";
+        UPGRADE_FROM_38 + "\", \"" + UPGRADE_FROM_39 + "\", \"" + "(for upgrading from the corresponding old version).";
 
     /** {@code topology.optimization} */
     public static final String TOPOLOGY_OPTIMIZATION_CONFIG = "topology.optimization";
@@ -961,28 +976,6 @@ public class StreamsConfig extends AbstractConfig {
                     DefaultProductionExceptionHandler.class.getName(),
                     Importance.MEDIUM,
                     PRODUCTION_EXCEPTION_HANDLER_CLASS_DOC)
-            .define(RACK_AWARE_ASSIGNMENT_NON_OVERLAP_COST_CONFIG,
-                    Type.INT,
-                    null,
-                    Importance.MEDIUM,
-                    RACK_AWARE_ASSIGNMENT_NON_OVERLAP_COST_DOC)
-            .define(RACK_AWARE_ASSIGNMENT_STRATEGY_CONFIG,
-                    Type.STRING,
-                    RACK_AWARE_ASSIGNMENT_STRATEGY_NONE,
-                    in(RACK_AWARE_ASSIGNMENT_STRATEGY_NONE, RACK_AWARE_ASSIGNMENT_STRATEGY_MIN_TRAFFIC, RACK_AWARE_ASSIGNMENT_STRATEGY_BALANCE_SUBTOPOLOGY),
-                    Importance.MEDIUM,
-                    RACK_AWARE_ASSIGNMENT_STRATEGY_DOC)
-            .define(RACK_AWARE_ASSIGNMENT_TAGS_CONFIG,
-                    Type.LIST,
-                    Collections.emptyList(),
-                    atMostOfSize(MAX_RACK_AWARE_ASSIGNMENT_TAG_LIST_SIZE),
-                    Importance.MEDIUM,
-                    RACK_AWARE_ASSIGNMENT_TAGS_DOC)
-            .define(RACK_AWARE_ASSIGNMENT_TRAFFIC_COST_CONFIG,
-                    Type.INT,
-                    null,
-                    Importance.MEDIUM,
-                    RACK_AWARE_ASSIGNMENT_TRAFFIC_COST_DOC)
             .define(TASK_ASSIGNOR_CLASS_CONFIG,
                     Type.STRING,
                     null,
@@ -1045,6 +1038,28 @@ public class StreamsConfig extends AbstractConfig {
                     true,
                     Importance.LOW,
                     ENABLE_METRICS_PUSH_DOC)
+            .define(RACK_AWARE_ASSIGNMENT_NON_OVERLAP_COST_CONFIG,
+                    Type.INT,
+                    null,
+                    Importance.LOW,
+                    RACK_AWARE_ASSIGNMENT_NON_OVERLAP_COST_DOC)
+            .define(RACK_AWARE_ASSIGNMENT_STRATEGY_CONFIG,
+                    Type.STRING,
+                    RACK_AWARE_ASSIGNMENT_STRATEGY_NONE,
+                    in(RACK_AWARE_ASSIGNMENT_STRATEGY_NONE, RACK_AWARE_ASSIGNMENT_STRATEGY_MIN_TRAFFIC, RACK_AWARE_ASSIGNMENT_STRATEGY_BALANCE_SUBTOPOLOGY),
+                    Importance.LOW,
+                    RACK_AWARE_ASSIGNMENT_STRATEGY_DOC)
+            .define(RACK_AWARE_ASSIGNMENT_TAGS_CONFIG,
+                    Type.LIST,
+                    Collections.emptyList(),
+                    atMostOfSize(MAX_RACK_AWARE_ASSIGNMENT_TAG_LIST_SIZE),
+                    Importance.LOW,
+                    RACK_AWARE_ASSIGNMENT_TAGS_DOC)
+            .define(RACK_AWARE_ASSIGNMENT_TRAFFIC_COST_CONFIG,
+                    Type.INT,
+                    null,
+                    Importance.LOW,
+                    RACK_AWARE_ASSIGNMENT_TRAFFIC_COST_DOC)
             .define(REPARTITION_PURGE_INTERVAL_MS_CONFIG,
                     Type.LONG,
                     DEFAULT_COMMIT_INTERVAL_MS,
@@ -1117,6 +1132,11 @@ public class StreamsConfig extends AbstractConfig {
                     atLeast(60 * 1000L),
                     Importance.LOW,
                     PROBING_REBALANCE_INTERVAL_MS_DOC)
+            .define(PROCESSOR_WRAPPER_CLASS_CONFIG,
+                    Type.CLASS,
+                    NoOpProcessorWrapper.class,
+                    Importance.LOW,
+                    PROCESSOR_WRAPPER_CLASS_DOC)
             .define(RECEIVE_BUFFER_CONFIG,
                     Type.INT,
                     32 * 1024,
@@ -1147,6 +1167,19 @@ public class StreamsConfig extends AbstractConfig {
                     atLeast(0),
                     Importance.LOW,
                     CommonClientConfigs.REQUEST_TIMEOUT_MS_DOC)
+            .define(CommonClientConfigs.METADATA_RECOVERY_STRATEGY_CONFIG,
+                    Type.STRING,
+                    CommonClientConfigs.DEFAULT_METADATA_RECOVERY_STRATEGY,
+                    ConfigDef.CaseInsensitiveValidString
+                    .in(Utils.enumOptions(MetadataRecoveryStrategy.class)),
+                    Importance.LOW,
+                    CommonClientConfigs.METADATA_RECOVERY_STRATEGY_DOC)
+            .define(CommonClientConfigs.METADATA_RECOVERY_REBOOTSTRAP_TRIGGER_MS_CONFIG,
+                    Type.LONG,
+                    CommonClientConfigs.DEFAULT_METADATA_RECOVERY_REBOOTSTRAP_TRIGGER_MS,
+                    atLeast(0),
+                    Importance.LOW,
+                    CommonClientConfigs.METADATA_RECOVERY_REBOOTSTRAP_TRIGGER_MS_DOC)
             .define(ROCKSDB_CONFIG_SETTER_CLASS_CONFIG,
                     Type.CLASS,
                     null,
@@ -1230,7 +1263,7 @@ public class StreamsConfig extends AbstractConfig {
     private static final Map<String, Object> ADMIN_CLIENT_OVERRIDES;
     static {
         final Map<String, Object> tempAdminClientDefaultOverrides = new HashMap<>();
-        tempAdminClientDefaultOverrides.put(AdminClientConfig.ENABLE_METRICS_PUSH_CONFIG, "true");
+        tempAdminClientDefaultOverrides.put(AdminClientConfig.ENABLE_METRICS_PUSH_CONFIG, true);
         ADMIN_CLIENT_OVERRIDES = Collections.unmodifiableMap(tempAdminClientDefaultOverrides);
     }
 
@@ -1568,7 +1601,7 @@ public class StreamsConfig extends AbstractConfig {
         checkIfUnexpectedUserSpecifiedConsumerConfig(clientProvidedProps, NON_CONFIGURABLE_CONSUMER_EOS_CONFIGS);
 
         final Map<String, Object> consumerProps = new HashMap<>(eosEnabled ? CONSUMER_EOS_OVERRIDES : CONSUMER_DEFAULT_OVERRIDES);
-        if (StreamsConfigUtils.processingMode(this) == StreamsConfigUtils.ProcessingMode.EXACTLY_ONCE_V2) {
+        if (StreamsConfigUtils.eosEnabled(this)) {
             consumerProps.put("internal.throw.on.fetch.stable.offset.unsupported", true);
         }
         consumerProps.putAll(getClientCustomProps());
@@ -1811,7 +1844,6 @@ public class StreamsConfig extends AbstractConfig {
         // add client id with stream client id prefix
         baseConsumerProps.put(CommonClientConfigs.CLIENT_ID_CONFIG, clientId + "-global-consumer");
         baseConsumerProps.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "none");
-
         return baseConsumerProps;
     }
 
@@ -1857,7 +1889,6 @@ public class StreamsConfig extends AbstractConfig {
 
         // add client id with stream client id prefix
         props.put(CommonClientConfigs.CLIENT_ID_CONFIG, clientId);
-
         return props;
     }
 
@@ -2003,7 +2034,7 @@ public class StreamsConfig extends AbstractConfig {
     }
 
     /**
-     * @deprecated since kafka 4.0; use {@link #deserializationExceptionHandler()} instead
+     * @deprecated Since 4.0. Use {@link #deserializationExceptionHandler()} instead.
      */
     @Deprecated
     @SuppressWarnings("WeakerAccess")
@@ -2025,7 +2056,7 @@ public class StreamsConfig extends AbstractConfig {
     }
 
     /**
-     * @deprecated since kafka 4.0; use {@link #productionExceptionHandler()} instead
+     * @deprecated Since 4.0. Use {@link #productionExceptionHandler()} instead.
      */
     @Deprecated
     @SuppressWarnings("WeakerAccess")

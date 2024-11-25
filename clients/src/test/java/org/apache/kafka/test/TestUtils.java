@@ -31,7 +31,6 @@ import org.apache.kafka.common.network.NetworkReceive;
 import org.apache.kafka.common.network.Send;
 import org.apache.kafka.common.protocol.ApiKeys;
 import org.apache.kafka.common.protocol.Errors;
-import org.apache.kafka.common.record.RecordVersion;
 import org.apache.kafka.common.record.UnalignedRecords;
 import org.apache.kafka.common.requests.ApiVersionsResponse;
 import org.apache.kafka.common.requests.ByteBufferChannel;
@@ -277,6 +276,23 @@ public class TestUtils {
         });
 
         return file;
+    }
+
+    /**
+     * Create a random log directory in the format <string>-<int> used for Kafka partition logs.
+     * It is the responsibility of the caller to set up a shutdown hook for deletion of the directory.
+     */
+    public static File randomPartitionLogDir(File parentDir) {
+        int attempts = 1000;
+        while (attempts > 0) {
+            File f = new File(parentDir, "kafka-" + RANDOM.nextInt(1000000));
+            if (f.mkdir()) {
+                f.deleteOnExit();
+                return f;
+            }
+            attempts--;
+        }
+        throw new RuntimeException("Failed to create directory after 1000 attempts");
     }
 
     public static Properties producerConfig(final String bootstrapServers,
@@ -660,7 +676,7 @@ public class TestUtils {
     ) {
         return createApiVersionsResponse(
                 throttleTimeMs,
-                ApiVersionsResponse.filterApis(RecordVersion.current(), listenerType, true, true),
+                ApiVersionsResponse.filterApis(listenerType, true, true),
                 Features.emptySupportedFeatures(),
                 false
         );
@@ -673,7 +689,7 @@ public class TestUtils {
     ) {
         return createApiVersionsResponse(
                 throttleTimeMs,
-                ApiVersionsResponse.filterApis(RecordVersion.current(), listenerType, enableUnstableLastVersion, true),
+                ApiVersionsResponse.filterApis(listenerType, enableUnstableLastVersion, true),
                 Features.emptySupportedFeatures(),
                 false
         );

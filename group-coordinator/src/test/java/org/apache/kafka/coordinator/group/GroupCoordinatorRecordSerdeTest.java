@@ -18,8 +18,8 @@ package org.apache.kafka.coordinator.group;
 
 import org.apache.kafka.common.protocol.ApiMessage;
 import org.apache.kafka.common.protocol.MessageUtil;
-import org.apache.kafka.coordinator.common.runtime.CoordinatorLoader;
 import org.apache.kafka.coordinator.common.runtime.CoordinatorRecord;
+import org.apache.kafka.coordinator.common.runtime.Deserializer;
 import org.apache.kafka.coordinator.group.generated.ConsumerGroupCurrentMemberAssignmentKey;
 import org.apache.kafka.coordinator.group.generated.ConsumerGroupCurrentMemberAssignmentValue;
 import org.apache.kafka.coordinator.group.generated.ConsumerGroupMemberMetadataKey;
@@ -28,6 +28,8 @@ import org.apache.kafka.coordinator.group.generated.ConsumerGroupMetadataKey;
 import org.apache.kafka.coordinator.group.generated.ConsumerGroupMetadataValue;
 import org.apache.kafka.coordinator.group.generated.ConsumerGroupPartitionMetadataKey;
 import org.apache.kafka.coordinator.group.generated.ConsumerGroupPartitionMetadataValue;
+import org.apache.kafka.coordinator.group.generated.ConsumerGroupRegularExpressionKey;
+import org.apache.kafka.coordinator.group.generated.ConsumerGroupRegularExpressionValue;
 import org.apache.kafka.coordinator.group.generated.ConsumerGroupTargetAssignmentMemberKey;
 import org.apache.kafka.coordinator.group.generated.ConsumerGroupTargetAssignmentMemberValue;
 import org.apache.kafka.coordinator.group.generated.ConsumerGroupTargetAssignmentMetadataKey;
@@ -164,8 +166,8 @@ public class GroupCoordinatorRecordSerdeTest {
 
         ByteBuffer valueBuffer = ByteBuffer.allocate(64);
 
-        CoordinatorLoader.UnknownRecordTypeException ex =
-            assertThrows(CoordinatorLoader.UnknownRecordTypeException.class,
+        Deserializer.UnknownRecordTypeException ex =
+            assertThrows(Deserializer.UnknownRecordTypeException.class,
                 () -> serde.deserialize(keyBuffer, valueBuffer));
         assertEquals((short) 255, ex.unknownType());
     }
@@ -242,6 +244,35 @@ public class GroupCoordinatorRecordSerdeTest {
     }
 
     @Test
+    public void testDeserializeWithInvalidValueVersion() {
+        GroupCoordinatorRecordSerde serde = new GroupCoordinatorRecordSerde();
+
+        ApiMessageAndVersion key = new ApiMessageAndVersion(
+            new ConsumerGroupMetadataKey().setGroupId("foo"),
+            (short) 3
+        );
+        ByteBuffer keyBuffer = MessageUtil.toVersionPrefixedByteBuffer(key.version(), key.message());
+
+        ByteBuffer valueBuffer1 = ByteBuffer.allocate(2);
+        valueBuffer1.putShort((short) (ConsumerGroupMetadataValue.HIGHEST_SUPPORTED_VERSION + 1));
+        valueBuffer1.rewind();
+        Deserializer.UnknownRecordVersionException ex =
+            assertThrows(Deserializer.UnknownRecordVersionException.class,
+                () -> serde.deserialize(keyBuffer, valueBuffer1));
+        assertEquals(key.version(), ex.type());
+        assertEquals(ConsumerGroupMetadataValue.HIGHEST_SUPPORTED_VERSION + 1, ex.unknownVersion());
+
+        keyBuffer.rewind();
+        ByteBuffer valueBuffer2 = ByteBuffer.allocate(2);
+        valueBuffer2.putShort((short) (ConsumerGroupMetadataValue.LOWEST_SUPPORTED_VERSION - 1));
+        valueBuffer2.rewind();
+        ex = assertThrows(Deserializer.UnknownRecordVersionException.class,
+            () -> serde.deserialize(keyBuffer, valueBuffer2));
+        assertEquals(key.version(), ex.type());
+        assertEquals(ConsumerGroupMetadataValue.LOWEST_SUPPORTED_VERSION - 1, ex.unknownVersion());
+    }
+
+    @Test
     public void testDeserializeAllRecordTypes() {
         roundTrip((short) 0, new OffsetCommitKey(), new OffsetCommitValue());
         roundTrip((short) 1, new OffsetCommitKey(), new OffsetCommitValue());
@@ -259,6 +290,7 @@ public class GroupCoordinatorRecordSerdeTest {
         roundTrip((short) 13, new ShareGroupTargetAssignmentMemberKey(), new ShareGroupTargetAssignmentMemberValue());
         roundTrip((short) 14, new ShareGroupCurrentMemberAssignmentKey(), new ShareGroupCurrentMemberAssignmentValue());
         roundTrip((short) 15, new ShareGroupStatePartitionMetadataKey(), new ShareGroupStatePartitionMetadataValue());
+        roundTrip((short) 16, new ConsumerGroupRegularExpressionKey(), new ConsumerGroupRegularExpressionValue());
     }
 
     private void roundTrip(
