@@ -35,6 +35,16 @@ services:
     volumes:
       - ./docker/extra/prometheus-jmx-exporter:/opt/prometheus-jmx-exporter
 
+  # Postgresql for control plane
+  postgres:
+    image: postgres:17.2
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: "inkless"
+      POSTGRES_USER: "admin"
+      POSTGRES_PASSWORD: "admin"
+
   # Object storage
   minio:
     image: quay.io/minio/minio

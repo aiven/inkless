@@ -86,6 +86,7 @@ versions += [
   jose4j: "0.9.4",
   junit: "5.10.2",
   jqwik: "1.8.3",
+  flyway: "11.0.0",
   kafka_0100: "0.10.0.1",
   kafka_0101: "0.10.1.1",
   kafka_0102: "0.10.2.2",
@@ -118,6 +119,7 @@ versions += [
   mockito: "5.14.2",
   netty: "4.1.115.Final",
   opentelemetryProto: "1.0.0-alpha",
+  postgresql: "42.7.4",
   protobuf: "3.25.5", // a dependency of opentelemetryProto
   pcollections: "4.0.1",
   pitestAnnotations: "1.3.3",
@@ -140,6 +142,7 @@ versions += [
   zstd: "1.5.6-6",
   junitPlatform: "1.10.2",
   hdrHistogram: "2.2.2",
+  hikariCP: "6.2.1",
   wiremock: "3.9.2"
 ]
 
@@ -191,6 +194,8 @@ libs += [
   junitPlatformSuiteEngine: "org.junit.platform:junit-platform-suite-engine:$versions.junitPlatform",
   junitPlatformLauncher: "org.junit.platform:junit-platform-launcher:$versions.junitPlatform",
   jqwik: "net.jqwik:jqwik:$versions.jqwik",
+  flyway: "org.flywaydb:flyway-core:$versions.flyway",
+  flywayPostgres: "org.flywaydb:flyway-database-postgresql:$versions.flyway",
   hamcrest: "org.hamcrest:hamcrest:$versions.hamcrest",
   kafkaStreams_0100: "org.apache.kafka:kafka-streams:$versions.kafka_0100",
   kafkaStreams_0101: "org.apache.kafka:kafka-streams:$versions.kafka_0101",
@@ -226,6 +231,7 @@ libs += [
   nettyTransportNativeEpoll: "io.netty:netty-transport-native-epoll:$versions.netty",
   pcollections: "org.pcollections:pcollections:$versions.pcollections",
   opentelemetryProto: "io.opentelemetry.proto:opentelemetry-proto:$versions.opentelemetryProto",
+  postgresql: "org.postgresql:postgresql:$versions.postgresql",
   protobuf: "com.google.protobuf:protobuf-java:$versions.protobuf",
   pitestAnnotations: "com.arcmutate:pitest-annotations:$versions.pitestAnnotations",
   reload4j: "ch.qos.reload4j:reload4j:$versions.reload4j",
@@ -242,11 +248,13 @@ libs += [
   testcontainers: "org.testcontainers:testcontainers:$versions.testcontainers",
   testcontainersJunitJupiter: "org.testcontainers:junit-jupiter:$versions.testcontainers",
   testcontainersLocalstack: "org.testcontainers:localstack:$versions.testcontainers",
+  testcontainersPostgresql: "org.testcontainers:postgresql:$versions.testcontainers",
   zookeeper: "org.apache.zookeeper:zookeeper:$versions.zookeeper",
   jfreechart: "jfreechart:jfreechart:$versions.jfreechart",
   mavenArtifact: "org.apache.maven:maven-artifact:$versions.mavenArtifact",
   zstd: "com.github.luben:zstd-jni:$versions.zstd",
   httpclient: "org.apache.httpcomponents:httpclient:$versions.httpclient",
   hdrHistogram: "org.hdrhistogram:HdrHistogram:$versions.hdrHistogram",
+  hikariCP: "com.zaxxer:HikariCP:$versions.hikariCP",
   wiremock: "org.wiremock:wiremock:$versions.wiremock"
 ]
