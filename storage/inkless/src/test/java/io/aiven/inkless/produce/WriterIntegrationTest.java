@@ -16,7 +16,7 @@ import org.apache.kafka.common.requests.ProduceResponse.PartitionResponse;
 import org.apache.kafka.common.utils.Time;
 
 import io.aiven.inkless.common.PlainObjectKey;
-import io.aiven.inkless.control_plane.ControlPlane;
+import io.aiven.inkless.control_plane.InMemoryControlPlane;
 import io.aiven.inkless.control_plane.MetadataView;
 import io.aiven.inkless.storage_backend.s3.S3Storage;
 import io.aiven.inkless.test_utils.S3TestContainer;
@@ -111,7 +111,7 @@ class WriterIntegrationTest {
 
     @Test
     void test() throws ExecutionException, InterruptedException, TimeoutException, IOException {
-        final ControlPlane controlPlane = new ControlPlane(METADATA_VIEW);
+        final InMemoryControlPlane controlPlane = new InMemoryControlPlane(METADATA_VIEW);
         final Writer writer = new Writer(
             Time.SYSTEM, (String s) -> new PlainObjectKey("", s), storage, controlPlane, Duration.ofMillis(10),
             10 * 1024,

@@ -4,7 +4,6 @@ package io.aiven.inkless.produce;
 import java.io.Closeable;
 import java.io.IOException;
 import java.time.Duration;
-import java.time.Instant;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
