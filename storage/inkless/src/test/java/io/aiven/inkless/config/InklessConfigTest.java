@@ -11,6 +11,8 @@ import java.time.Duration;
 import java.util.HashMap;
 import java.util.Map;
 
+import io.aiven.inkless.control_plane.InMemoryControlPlane;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -18,6 +20,7 @@ class InklessConfigTest {
     @Test
     void publicConstructor() {
         final InklessConfig config = new InklessConfig(new AbstractConfig(new ConfigDef(), Map.of(
+            "inkless.control.plane.class", InMemoryControlPlane.class.getCanonicalName(),
             "inkless.object.key.prefix", "prefix/",
             "inkless.produce.commit.interval.ms", "100",
             "inkless.produce.buffer.max.bytes", "1024",
@@ -25,6 +28,7 @@ class InklessConfigTest {
             "inkless.produce.upload.backoff.ms", "30",
             "inkless.storage.backend.class", ConfigTestStorageBackend.class.getCanonicalName()
         )));
+        assertThat(config.controlPlaneClass()).isEqualTo(InMemoryControlPlane.class);
         assertThat(config.objectKeyPrefix()).isEqualTo("prefix/");
         assertThat(config.commitInterval()).isEqualTo(Duration.ofMillis(100));
         assertThat(config.produceBufferMaxBytes()).isEqualTo(1024);
@@ -37,9 +41,11 @@ class InklessConfigTest {
     void minimalConfig() {
         final var config = new InklessConfig(
             Map.of(
+                "control.plane.class", InMemoryControlPlane.class.getCanonicalName(),
                 "storage.backend.class", ConfigTestStorageBackend.class.getCanonicalName()
             )
         );
+        assertThat(config.controlPlaneClass()).isEqualTo(InMemoryControlPlane.class);
         assertThat(config.objectKeyPrefix()).isEqualTo("");
         assertThat(config.commitInterval()).isEqualTo(Duration.ofMillis(250));
         assertThat(config.produceBufferMaxBytes()).isEqualTo(8 * 1024 * 1024);
@@ -52,6 +58,7 @@ class InklessConfigTest {
     void fullConfig() {
         final var config = new InklessConfig(
             Map.of(
+                "control.plane.class", InMemoryControlPlane.class.getCanonicalName(),
                 "object.key.prefix", "prefix/",
                 "produce.commit.interval.ms", "100",
                 "produce.buffer.max.bytes", "1024",
@@ -60,6 +67,7 @@ class InklessConfigTest {
                 "storage.backend.class", ConfigTestStorageBackend.class.getCanonicalName()
             )
         );
+        assertThat(config.controlPlaneClass()).isEqualTo(InMemoryControlPlane.class);
         assertThat(config.objectKeyPrefix()).isEqualTo("prefix/");
         assertThat(config.commitInterval()).isEqualTo(Duration.ofMillis(100));
         assertThat(config.produceBufferMaxBytes()).isEqualTo(1024);
@@ -71,6 +79,7 @@ class InklessConfigTest {
     @Test
     void objectKeyPrefixNull() {
         final Map<String, String> config = new HashMap<>();
+        config.put("control.plane.class", InMemoryControlPlane.class.getCanonicalName());
         config.put("storage.backend.class", ConfigTestStorageBackend.class.getCanonicalName());
         config.put("object.key.prefix", null);
         assertThatThrownBy(() -> new InklessConfig(config))
@@ -79,8 +88,9 @@ class InklessConfigTest {
     }
 
     @Test
-    void produceCmmitIntervalZero() {
+    void produceCommitIntervalZero() {
         final Map<String, String> config = Map.of(
+            "control.plane.class", InMemoryControlPlane.class.getCanonicalName(),
             "storage.backend.class", ConfigTestStorageBackend.class.getCanonicalName(),
             "produce.commit.interval.ms", "0"
         );
@@ -92,6 +102,7 @@ class InklessConfigTest {
     @Test
     void produceBufferMaxBytesZero() {
         final Map<String, String> config = Map.of(
+            "control.plane.class", InMemoryControlPlane.class.getCanonicalName(),
             "storage.backend.class", ConfigTestStorageBackend.class.getCanonicalName(),
             "produce.buffer.max.bytes", "0"
         );
@@ -103,6 +114,7 @@ class InklessConfigTest {
     @Test
     void produceMaxUploadAttemptsZero() {
         final Map<String, String> config = Map.of(
+            "control.plane.class", InMemoryControlPlane.class.getCanonicalName(),
             "storage.backend.class", ConfigTestStorageBackend.class.getCanonicalName(),
             "produce.max.upload.attempts", "0"
         );
@@ -114,6 +126,7 @@ class InklessConfigTest {
     @Test
     void produceMaxUploadBackoffMsNegative() {
         final Map<String, String> config = Map.of(
+            "control.plane.class", InMemoryControlPlane.class.getCanonicalName(),
             "storage.backend.class", ConfigTestStorageBackend.class.getCanonicalName(),
             "produce.upload.backoff.ms", "-1"
         );
@@ -124,9 +137,11 @@ class InklessConfigTest {
 
     @Test
     void objectStorageConfiguration() {
+        final String controlPlaneClass = InMemoryControlPlane.class.getCanonicalName();
         final String backendClass = ConfigTestStorageBackend.class.getCanonicalName();
         final var config = new InklessConfig(
             Map.of(
+                "control.plane.class", controlPlaneClass,
                 "storage.backend.class", backendClass,
                 "storage.a", "1",
                 "storage.b", "str",

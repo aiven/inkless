@@ -26,7 +26,7 @@ import io.aiven.inkless.common.ObjectKey;
 import io.aiven.inkless.common.PlainObjectKey;
 import io.aiven.inkless.control_plane.CommitBatchRequest;
 import io.aiven.inkless.control_plane.CommitBatchResponse;
-import io.aiven.inkless.control_plane.ControlPlane;
+import io.aiven.inkless.control_plane.InMemoryControlPlane;
 import io.aiven.inkless.storage_backend.common.StorageBackendException;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -68,7 +68,7 @@ class FileCommitJobTest {
     @Mock
     Time time;
     @Mock
-    ControlPlane controlPlane;
+    InMemoryControlPlane controlPlane;
     @Mock
     Consumer<Long> commitTimeDurationCallback;
 

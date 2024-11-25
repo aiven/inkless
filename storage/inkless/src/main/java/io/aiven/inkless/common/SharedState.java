@@ -17,7 +17,7 @@ public record SharedState(
 ) {
 
     public static SharedState initialize(Time time, InklessConfig config, MetadataView metadata) {
-        return new SharedState(time, config, metadata, new ControlPlane(metadata), config.storage());
+        return new SharedState(time, config, metadata, ControlPlane.create(config, metadata), config.storage());
     }
 
 }
