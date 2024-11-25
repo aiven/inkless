@@ -18,7 +18,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
-class ControlPlaneTest {
+class InMemoryControlPlaneTest {
     static final String EXISTING_TOPIC = "topic-existing";
     static final Uuid EXISTING_TOPIC_ID = new Uuid(10, 10);
     static final TopicIdPartition EXISTING_TOPIC_ID_PARTITION = new TopicIdPartition(EXISTING_TOPIC_ID, 0, EXISTING_TOPIC);
@@ -41,7 +41,7 @@ class ControlPlaneTest {
 
     @Test
     void emptyCommit() {
-        final ControlPlane controlPlane = new ControlPlane(metadataView);
+        final InMemoryControlPlane controlPlane = new InMemoryControlPlane(metadataView);
         final List<CommitBatchResponse> commitBatchRespons = controlPlane.commitFile(
             new PlainObjectKey("a", "a"),
             List.of()
@@ -51,7 +51,7 @@ class ControlPlaneTest {
 
     @Test
     void successfulCommitToExistingPartitions() {
-        final ControlPlane controlPlane = new ControlPlane(metadataView);
+        final InMemoryControlPlane controlPlane = new InMemoryControlPlane(metadataView);
         final PlainObjectKey objectKey1 = new PlainObjectKey("a", "a1");
         final List<CommitBatchResponse> commitResponse1 = controlPlane.commitFile(
             objectKey1,
@@ -97,7 +97,7 @@ class ControlPlaneTest {
 
     @Test
     void fullSpectrumFind() {
-        final ControlPlane controlPlane = new ControlPlane(metadataView);
+        final InMemoryControlPlane controlPlane = new InMemoryControlPlane(metadataView);
         final PlainObjectKey objectKey1 = new PlainObjectKey("a", "a1");
         final PlainObjectKey objectKey2 = new PlainObjectKey("a", "a2");
         final int numberOfRecordsInBatch1 = 3;
@@ -133,7 +133,7 @@ class ControlPlaneTest {
 
     @Test
     void topicDisappear() {
-        final ControlPlane controlPlane = new ControlPlane(metadataView);
+        final InMemoryControlPlane controlPlane = new InMemoryControlPlane(metadataView);
         final PlainObjectKey objectKey = new PlainObjectKey("a", "a");
         controlPlane.commitFile(
             objectKey,
@@ -166,7 +166,7 @@ class ControlPlaneTest {
 
     @Test
     void findOffsetOutOfRange() {
-        final ControlPlane controlPlane = new ControlPlane(metadataView);
+        final InMemoryControlPlane controlPlane = new InMemoryControlPlane(metadataView);
         final PlainObjectKey objectKey = new PlainObjectKey("a", "a");
         controlPlane.commitFile(
             objectKey,
@@ -186,7 +186,7 @@ class ControlPlaneTest {
 
     @Test
     void findNegativeOffset() {
-        final ControlPlane controlPlane = new ControlPlane(metadataView);
+        final InMemoryControlPlane controlPlane = new InMemoryControlPlane(metadataView);
         final PlainObjectKey objectKey = new PlainObjectKey("a", "a");
         controlPlane.commitFile(
             objectKey,
@@ -206,7 +206,7 @@ class ControlPlaneTest {
 
     @Test
     void findBeforeCommit() {
-        final ControlPlane controlPlane = new ControlPlane(metadataView);
+        final InMemoryControlPlane controlPlane = new InMemoryControlPlane(metadataView);
         final List<FindBatchResponse> findResponse = controlPlane.findBatches(
             List.of(new FindBatchRequest(EXISTING_TOPIC_ID_PARTITION, 11, Integer.MAX_VALUE)),
             true,
