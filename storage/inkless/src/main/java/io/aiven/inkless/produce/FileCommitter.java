@@ -25,7 +25,7 @@ import io.aiven.inkless.TimeUtils;
 import io.aiven.inkless.common.InklessThreadFactory;
 import io.aiven.inkless.common.ObjectKey;
 import io.aiven.inkless.common.ObjectKeyCreator;
-import io.aiven.inkless.control_plane.ControlPlane;
+import io.aiven.inkless.control_plane.InMemoryControlPlane;
 import io.aiven.inkless.storage_backend.common.ObjectUploader;
 
 /**
@@ -40,7 +40,7 @@ class FileCommitter implements Closeable {
 
     private final Lock lock = new ReentrantLock();
 
-    private final ControlPlane controlPlane;
+    private final InMemoryControlPlane controlPlane;
     private final ObjectKeyCreator objectKeyCreator;
     private final ObjectUploader objectUploader;
     private final Time time;
@@ -53,7 +53,7 @@ class FileCommitter implements Closeable {
     private final AtomicInteger totalBytesInProgress = new AtomicInteger(0);
 
     @DoNotMutate
-    FileCommitter(final ControlPlane controlPlane,
+    FileCommitter(final InMemoryControlPlane controlPlane,
                   final ObjectKeyCreator objectKeyCreator,
                   final ObjectUploader objectUploader,
                   final Time time,
@@ -68,7 +68,7 @@ class FileCommitter implements Closeable {
     }
 
     // Visible for testing
-    FileCommitter(final ControlPlane controlPlane,
+    FileCommitter(final InMemoryControlPlane controlPlane,
                   final ObjectKeyCreator objectKeyCreator,
                   final ObjectUploader objectUploader,
                   final Time time,

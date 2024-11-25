@@ -27,7 +27,7 @@ import java.util.function.Consumer;
 
 import io.aiven.inkless.common.SharedState;
 import io.aiven.inkless.config.InklessConfig;
-import io.aiven.inkless.control_plane.ControlPlane;
+import io.aiven.inkless.control_plane.InMemoryControlPlane;
 import io.aiven.inkless.control_plane.MetadataView;
 import io.aiven.inkless.storage_backend.common.StorageBackend;
 
@@ -47,7 +47,7 @@ public class AppendInterceptorTest {
     @Mock
     MetadataView metadataView;
     @Mock
-    ControlPlane controlPlane;
+    InMemoryControlPlane controlPlane;
     @Mock
     StorageBackend storageBackend;
     @Mock

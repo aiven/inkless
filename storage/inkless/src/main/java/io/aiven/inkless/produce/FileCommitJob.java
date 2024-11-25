@@ -18,7 +18,7 @@ import java.util.stream.Collectors;
 
 import io.aiven.inkless.TimeUtils;
 import io.aiven.inkless.common.ObjectKey;
-import io.aiven.inkless.control_plane.ControlPlane;
+import io.aiven.inkless.control_plane.InMemoryControlPlane;
 
 /**
  * The job of committing the already uploaded file to the control plane.
@@ -31,13 +31,13 @@ class FileCommitJob implements Runnable {
     private final ClosedFile file;
     private final Future<ObjectKey> uploadFuture;
     private final Time time;
-    private final ControlPlane controlPlane;
+    private final InMemoryControlPlane controlPlane;
     private final Consumer<Long> durationCallback;
 
     FileCommitJob(final ClosedFile file,
                   final Future<ObjectKey> uploadFuture,
                   final Time time,
-                  final ControlPlane controlPlane,
+                  final InMemoryControlPlane controlPlane,
                   final Consumer<Long> durationCallback) {
         this.file = file;
         this.uploadFuture = uploadFuture;

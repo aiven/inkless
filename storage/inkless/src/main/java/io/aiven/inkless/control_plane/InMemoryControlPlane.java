@@ -17,15 +17,15 @@ import java.util.TreeMap;
 
 import io.aiven.inkless.common.ObjectKey;
 
-public class ControlPlane {
-    private static final Logger logger = LoggerFactory.getLogger(ControlPlane.class);
+public class InMemoryControlPlane {
+    private static final Logger logger = LoggerFactory.getLogger(InMemoryControlPlane.class);
 
     private final MetadataView metadataView;
 
     private final Map<TopicIdPartition, LogInfo> logs = new HashMap<>();
     private final HashMap<TopicIdPartition, TreeMap<Long, BatchInfo>> batches = new HashMap<>();
 
-    public ControlPlane(final MetadataView metadataView) {
+    public InMemoryControlPlane(final MetadataView metadataView) {
         this.metadataView = metadataView;
     }
 

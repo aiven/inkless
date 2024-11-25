@@ -41,7 +41,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
 import io.aiven.inkless.common.PlainObjectKey;
-import io.aiven.inkless.control_plane.ControlPlane;
+import io.aiven.inkless.control_plane.InMemoryControlPlane;
 import io.aiven.inkless.control_plane.MetadataView;
 import io.aiven.inkless.storage_backend.common.ObjectUploader;
 import io.aiven.inkless.storage_backend.common.StorageBackendException;
@@ -94,7 +94,7 @@ class WriterPropertyTest {
         Statistics.label("requestCount").collect(requestCount);
         final MockTime time = new MockTime(0, 0, 0);
 
-        final ControlPlane controlPlane = new ControlPlane(METADATA_VIEW);
+        final InMemoryControlPlane controlPlane = new InMemoryControlPlane(METADATA_VIEW);
         final ObjectUploader objectUploader = mock(ObjectUploader.class);
         final UploaderHandler uploaderHandler = new UploaderHandler(
             new MockExecutorServiceWithFutureSupport(),
