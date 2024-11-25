@@ -42,6 +42,7 @@ import java.util.concurrent.TimeoutException;
 
 import io.aiven.inkless.common.PlainObjectKey;
 import io.aiven.inkless.control_plane.ControlPlane;
+import io.aiven.inkless.control_plane.InMemoryControlPlane;
 import io.aiven.inkless.control_plane.MetadataView;
 import io.aiven.inkless.storage_backend.common.ObjectUploader;
 import io.aiven.inkless.storage_backend.common.StorageBackendException;
@@ -85,16 +86,26 @@ class WriterPropertyTest {
     };
 
     @Property(tries = 1000)
-    void test(@ForAll @IntRange(max = 100) int requestCount,
+    void testInMemoryControlPlane(@ForAll @IntRange(max = 100) int requestCount,
               @ForAll @IntRange(min = 1, max = 10) int requestIntervalMsAvg,
               @ForAll @IntRange(min = 1, max = 100) int commitIntervalMsAvg,
               @ForAll @IntRange(min = 10, max = 30) int uploadDurationAvg,
               @ForAll @IntRange(min = 5, max = 10) int commitDurationAvg,
               @ForAll @IntRange(min = 1, max = 1 * 1024) int maxBufferSize) throws InterruptedException, ExecutionException, StorageBackendException {
+        test(requestCount, requestIntervalMsAvg, commitIntervalMsAvg, uploadDurationAvg, commitDurationAvg, maxBufferSize,
+            new InMemoryControlPlane(METADATA_VIEW));
+    }
+
+    void test(final int requestCount,
+              final int requestIntervalMsAvg,
+              final int commitIntervalMsAvg,
+              final int uploadDurationAvg,
+              final int commitDurationAvg,
+              final int maxBufferSize,
+              final ControlPlane controlPlane) throws InterruptedException, ExecutionException, StorageBackendException {
         Statistics.label("requestCount").collect(requestCount);
         final MockTime time = new MockTime(0, 0, 0);
 
-        final ControlPlane controlPlane = new ControlPlane(METADATA_VIEW);
         final ObjectUploader objectUploader = mock(ObjectUploader.class);
         final UploaderHandler uploaderHandler = new UploaderHandler(
             new MockExecutorServiceWithFutureSupport(),
