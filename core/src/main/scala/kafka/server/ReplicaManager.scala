@@ -27,7 +27,7 @@ import kafka.log.{LogManager, UnifiedLog}
 import kafka.server.HostedPartition.Online
 import kafka.server.QuotaFactory.QuotaManagers
 import kafka.server.ReplicaManager.{AtMinIsrPartitionCountMetricName, FailedIsrUpdatesPerSecMetricName, IsrExpandsPerSecMetricName, IsrShrinksPerSecMetricName, LeaderCountMetricName, OfflineReplicaCountMetricName, PartitionCountMetricName, PartitionsWithLateTransactionsCountMetricName, ProducerIdCountMetricName, ReassigningPartitionsMetricName, UnderMinIsrPartitionCountMetricName, UnderReplicatedPartitionsMetricName, createLogReadResult, isListOffsetsTimestampUnsupported}
-import kafka.server.metadata.InklessMetadataView
+import kafka.server.metadata.{InklessMetadataView, KRaftMetadataCache}
 import kafka.server.share.DelayedShareFetch
 import kafka.utils._
 import org.apache.kafka.common.errors._
@@ -312,7 +312,11 @@ class ReplicaManager(val config: KafkaConfig,
       "ShareFetch", config.brokerId,
       config.shareGroupConfig.shareFetchPurgatoryPurgeIntervalRequests))
 
-  private val inklessSharedState = SharedState.initialize(time, config.inklessConfig, new InklessMetadataView(metadataCache))
+  private val inklessSharedState = metadataCache match {
+    case kraftMetadataCache: KRaftMetadataCache =>
+       SharedState.initialize(time, config.inklessConfig, new InklessMetadataView(kraftMetadataCache, () => logManager.currentDefaultConfig))
+    case _ => throw new RuntimeException("ZK not supported")
+  }
   private val inklessAppendInterceptor = new AppendInterceptor(inklessSharedState)
   private val inklessFetchInterceptor = new FetchInterceptor(inklessSharedState)
 
