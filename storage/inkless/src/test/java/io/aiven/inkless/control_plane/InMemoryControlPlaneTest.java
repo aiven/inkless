@@ -5,11 +5,13 @@ import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.protocol.Errors;
+import org.apache.kafka.storage.internals.log.LogConfig;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 import io.aiven.inkless.common.PlainObjectKey;
@@ -37,6 +39,8 @@ class InMemoryControlPlaneTest {
             .thenReturn(Set.of());
         when(metadataView.getTopicId(NONEXISTENT_TOPIC))
             .thenReturn(Uuid.ZERO_UUID);
+        when(metadataView.getTopicConfig(EXISTING_TOPIC))
+            .thenReturn(new LogConfig(Map.of()));
     }
 
     @Test

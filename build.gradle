@@ -2368,6 +2368,7 @@ project(':storage:inkless') {
   dependencies {
     api project(':clients')
     implementation project(':server-common')
+    implementation project(':storage')
 
     api libs.pitestAnnotations
 

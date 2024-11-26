@@ -6,6 +6,7 @@ import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.requests.ProduceResponse.PartitionResponse;
 import org.apache.kafka.common.utils.Time;
+import org.apache.kafka.storage.internals.log.LogConfig;
 
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -18,6 +19,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import java.io.IOException;
 import java.time.Duration;
 import java.util.Map;
+import java.util.Properties;
 import java.util.Set;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
@@ -68,6 +70,11 @@ class WriterIntegrationTest {
         @Override
         public boolean isInklessTopic(final String topicName) {
             return true;
+        }
+
+        @Override
+        public LogConfig getTopicConfig(final String topicName) {
+            return LogConfig.fromProps(Map.of(), new Properties());
         }
     };
 
