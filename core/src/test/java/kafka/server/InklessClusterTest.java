@@ -55,6 +55,7 @@ import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import io.aiven.inkless.config.InklessConfig;
+import io.aiven.inkless.control_plane.InMemoryControlPlane;
 import io.aiven.inkless.storage_backend.s3.S3Storage;
 import io.aiven.inkless.storage_backend.s3.S3StorageConfig;
 import io.aiven.inkless.test_utils.S3TestContainer;
@@ -95,6 +96,7 @@ public class InklessClusterTest {
                 .setNumBrokerNodes(1)
                 .setNumControllerNodes(1)
                 .build())
+                .setConfigProp(InklessConfig.PREFIX + InklessConfig.CONTROL_PLANE_CLASS_CONFIG, InMemoryControlPlane.class.getName())
                 .setConfigProp(InklessConfig.PREFIX + InklessConfig.STORAGE_BACKEND_CLASS_CONFIG, S3Storage.class.getName())
                 .setConfigProp(InklessConfig.PREFIX + InklessConfig.STORAGE_PREFIX + S3StorageConfig.S3_BUCKET_NAME_CONFIG, bucketName)
                 .setConfigProp(InklessConfig.PREFIX + InklessConfig.STORAGE_PREFIX + S3StorageConfig.S3_REGION_CONFIG, LOCALSTACK.getRegion())
