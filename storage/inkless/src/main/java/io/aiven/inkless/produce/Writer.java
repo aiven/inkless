@@ -24,7 +24,6 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 
-import io.aiven.inkless.TimeUtils;
 import io.aiven.inkless.common.InklessThreadFactory;
 import io.aiven.inkless.common.ObjectKeyCreator;
 import io.aiven.inkless.control_plane.ControlPlane;
@@ -82,7 +81,7 @@ class Writer implements Closeable {
         this.commitTickScheduler = Objects.requireNonNull(commitTickScheduler, "commitTickScheduler cannot be null");
         this.fileCommitter = Objects.requireNonNull(fileCommitter, "fileCommitter cannot be null");
 
-        this.activeFile = new ActiveFile(TimeUtils.monotonicNow(time));
+        this.activeFile = new ActiveFile(time);
 
         commitTickScheduler.scheduleAtFixedRate(
             this::tick, commitInterval.toMillis(), commitInterval.toMillis(), TimeUnit.MILLISECONDS);
@@ -147,7 +146,7 @@ class Writer implements Closeable {
     private void rotateFile(final boolean swallowInterrupted) {
         LOGGER.debug("Rotating active file");
         final ActiveFile prevActiveFile = this.activeFile;
-        this.activeFile = new ActiveFile(TimeUtils.monotonicNow(time));
+        this.activeFile = new ActiveFile(time);
 
         try {
             this.fileCommitter.commit(prevActiveFile.close());

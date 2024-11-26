@@ -5,6 +5,9 @@ import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.protocol.Errors;
+import org.apache.kafka.common.record.TimestampType;
+import org.apache.kafka.common.utils.MockTime;
+import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.storage.internals.log.LogConfig;
 
 import org.junit.jupiter.api.BeforeEach;
@@ -45,7 +48,8 @@ class InMemoryControlPlaneTest {
 
     @Test
     void emptyCommit() {
-        final InMemoryControlPlane controlPlane = new InMemoryControlPlane(metadataView);
+        final Time time = Time.SYSTEM;
+        final InMemoryControlPlane controlPlane = new InMemoryControlPlane(time, metadataView);
         final List<CommitBatchResponse> commitBatchRespons = controlPlane.commitFile(
             new PlainObjectKey("a", "a"),
             List.of()
@@ -55,7 +59,8 @@ class InMemoryControlPlaneTest {
 
     @Test
     void successfulCommitToExistingPartitions() {
-        final InMemoryControlPlane controlPlane = new InMemoryControlPlane(metadataView);
+        final Time time = new MockTime();
+        final InMemoryControlPlane controlPlane = new InMemoryControlPlane(time, metadataView);
         final PlainObjectKey objectKey1 = new PlainObjectKey("a", "a1");
         final List<CommitBatchResponse> commitResponse1 = controlPlane.commitFile(
             objectKey1,
@@ -66,9 +71,9 @@ class InMemoryControlPlaneTest {
             )
         );
         assertThat(commitResponse1).containsExactly(
-            new CommitBatchResponse(Errors.NONE, 0, 0),
-            new CommitBatchResponse(Errors.UNKNOWN_TOPIC_OR_PARTITION, -1, -1),
-            new CommitBatchResponse(Errors.UNKNOWN_TOPIC_OR_PARTITION, -1, -1)
+            new CommitBatchResponse(Errors.NONE, 0, time.milliseconds(), 0),
+            new CommitBatchResponse(Errors.UNKNOWN_TOPIC_OR_PARTITION, -1, -1, -1),
+            new CommitBatchResponse(Errors.UNKNOWN_TOPIC_OR_PARTITION, -1, -1, -1)
         );
 
         final PlainObjectKey objectKey2 = new PlainObjectKey("a", "a2");
@@ -81,9 +86,9 @@ class InMemoryControlPlaneTest {
             )
         );
         assertThat(commitResponse2).containsExactly(
-            new CommitBatchResponse(Errors.NONE, 10, 0),
-            new CommitBatchResponse(Errors.UNKNOWN_TOPIC_OR_PARTITION, -1, -1),
-            new CommitBatchResponse(Errors.UNKNOWN_TOPIC_OR_PARTITION, -1, -1)
+            new CommitBatchResponse(Errors.NONE, 10, time.milliseconds(), 0),
+            new CommitBatchResponse(Errors.UNKNOWN_TOPIC_OR_PARTITION, -1, -1, -1),
+            new CommitBatchResponse(Errors.UNKNOWN_TOPIC_OR_PARTITION, -1, -1, -1)
         );
 
         final List<FindBatchResponse> findResponse = controlPlane.findBatches(
@@ -93,15 +98,19 @@ class InMemoryControlPlaneTest {
                 new FindBatchRequest(new TopicIdPartition(Uuid.ONE_UUID, 0, NONEXISTENT_TOPIC), 11, Integer.MAX_VALUE)
             ), true, Integer.MAX_VALUE);
         assertThat(findResponse).containsExactly(
-            new FindBatchResponse(Errors.NONE, List.of(new BatchInfo(objectKey2, 100, 10, 10, 10)), 0, 20),
-            new FindBatchResponse(Errors.UNKNOWN_TOPIC_OR_PARTITION, null, -1, -1),
-            new FindBatchResponse(Errors.UNKNOWN_TOPIC_OR_PARTITION, null, -1, -1)
+            new FindBatchResponse(
+                Errors.NONE,
+                List.of(new BatchInfo(objectKey2, 100, 10, 10, 10, TimestampType.CREATE_TIME)),
+                0, time.milliseconds(), 20),
+            new FindBatchResponse(Errors.UNKNOWN_TOPIC_OR_PARTITION, null, -1, -1, -1),
+            new FindBatchResponse(Errors.UNKNOWN_TOPIC_OR_PARTITION, null, -1, -1, -1)
         );
     }
 
     @Test
     void fullSpectrumFind() {
-        final InMemoryControlPlane controlPlane = new InMemoryControlPlane(metadataView);
+        final Time time = new MockTime();
+        final InMemoryControlPlane controlPlane = new InMemoryControlPlane(time, metadataView);
         final PlainObjectKey objectKey1 = new PlainObjectKey("a", "a1");
         final PlainObjectKey objectKey2 = new PlainObjectKey("a", "a2");
         final int numberOfRecordsInBatch1 = 3;
@@ -113,15 +122,16 @@ class InMemoryControlPlaneTest {
 
         final long expectedLogStartOffset = 0;
         final long expectedHighWatermark = numberOfRecordsInBatch1 + numberOfRecordsInBatch2;
+        final long expectedLogAppendTime = time.milliseconds();
 
         for (int offset = 0; offset < numberOfRecordsInBatch1; offset++) {
             final List<FindBatchResponse> findResponse = controlPlane.findBatches(
                 List.of(new FindBatchRequest(EXISTING_TOPIC_ID_PARTITION, offset, Integer.MAX_VALUE)), true, Integer.MAX_VALUE);
             assertThat(findResponse).containsExactly(
                 new FindBatchResponse(Errors.NONE, List.of(
-                    new BatchInfo(objectKey1, 1, 10, 0, numberOfRecordsInBatch1),
-                    new BatchInfo(objectKey2, 100, 10, numberOfRecordsInBatch1, numberOfRecordsInBatch2)
-                ), expectedLogStartOffset, expectedHighWatermark)
+                    new BatchInfo(objectKey1, 1, 10, 0, numberOfRecordsInBatch1, TimestampType.CREATE_TIME),
+                    new BatchInfo(objectKey2, 100, 10, numberOfRecordsInBatch1, numberOfRecordsInBatch2, TimestampType.CREATE_TIME)
+                ), expectedLogStartOffset, expectedLogAppendTime, expectedHighWatermark)
             );
         }
         for (int offset = numberOfRecordsInBatch1; offset < numberOfRecordsInBatch1 + numberOfRecordsInBatch2; offset++) {
@@ -129,15 +139,16 @@ class InMemoryControlPlaneTest {
                 List.of(new FindBatchRequest(EXISTING_TOPIC_ID_PARTITION, offset, Integer.MAX_VALUE)), true, Integer.MAX_VALUE);
             assertThat(findResponse).containsExactly(
                 new FindBatchResponse(Errors.NONE, List.of(
-                    new BatchInfo(objectKey2, 100, 10, numberOfRecordsInBatch1, numberOfRecordsInBatch2)
-                ), expectedLogStartOffset, expectedHighWatermark)
+                    new BatchInfo(objectKey2, 100, 10, numberOfRecordsInBatch1, numberOfRecordsInBatch2, TimestampType.CREATE_TIME)
+                ), expectedLogStartOffset, expectedLogAppendTime, expectedHighWatermark)
             );
         }
     }
 
     @Test
     void topicDisappear() {
-        final InMemoryControlPlane controlPlane = new InMemoryControlPlane(metadataView);
+        final Time time = new MockTime();
+        final InMemoryControlPlane controlPlane = new InMemoryControlPlane(time, metadataView);
         final PlainObjectKey objectKey = new PlainObjectKey("a", "a");
         controlPlane.commitFile(
             objectKey,
@@ -151,7 +162,10 @@ class InMemoryControlPlaneTest {
             true,
             Integer.MAX_VALUE);
         assertThat(findResponse1).containsExactly(
-            new FindBatchResponse(Errors.NONE, List.of(new BatchInfo(objectKey, 11, 10, 0, 10)), 0, 10)
+            new FindBatchResponse(
+                Errors.NONE,
+                List.of(new BatchInfo(objectKey, 11, 10, 0, 10, TimestampType.CREATE_TIME)),
+                0, time.milliseconds(), 10)
         );
 
         // Make the topic "disappear".
@@ -164,13 +178,14 @@ class InMemoryControlPlaneTest {
             true,
             Integer.MAX_VALUE);
         assertThat(findResponse2).containsExactly(
-            new FindBatchResponse(Errors.UNKNOWN_TOPIC_OR_PARTITION, null, -1, -1)
+            new FindBatchResponse(Errors.UNKNOWN_TOPIC_OR_PARTITION, null, -1, -1, -1)
         );
     }
 
     @Test
     void findOffsetOutOfRange() {
-        final InMemoryControlPlane controlPlane = new InMemoryControlPlane(metadataView);
+        final Time time = new MockTime();
+        final InMemoryControlPlane controlPlane = new InMemoryControlPlane(time, metadataView);
         final PlainObjectKey objectKey = new PlainObjectKey("a", "a");
         controlPlane.commitFile(
             objectKey,
@@ -184,13 +199,14 @@ class InMemoryControlPlaneTest {
             true,
             Integer.MAX_VALUE);
         assertThat(findResponse).containsExactly(
-            new FindBatchResponse(Errors.OFFSET_OUT_OF_RANGE, null, 0, 10)
+            new FindBatchResponse(Errors.OFFSET_OUT_OF_RANGE, null, 0, time.milliseconds(), 10)
         );
     }
 
     @Test
     void findNegativeOffset() {
-        final InMemoryControlPlane controlPlane = new InMemoryControlPlane(metadataView);
+        final Time time = new MockTime();
+        final InMemoryControlPlane controlPlane = new InMemoryControlPlane(time, metadataView);
         final PlainObjectKey objectKey = new PlainObjectKey("a", "a");
         controlPlane.commitFile(
             objectKey,
@@ -204,19 +220,20 @@ class InMemoryControlPlaneTest {
             true,
             Integer.MAX_VALUE);
         assertThat(findResponse).containsExactly(
-            new FindBatchResponse(Errors.OFFSET_OUT_OF_RANGE, null, 0, 10)
+            new FindBatchResponse(Errors.OFFSET_OUT_OF_RANGE, null, 0, time.milliseconds(), 10)
         );
     }
 
     @Test
     void findBeforeCommit() {
-        final InMemoryControlPlane controlPlane = new InMemoryControlPlane(metadataView);
+        final Time time = new MockTime();
+        final InMemoryControlPlane controlPlane = new InMemoryControlPlane(time, metadataView);
         final List<FindBatchResponse> findResponse = controlPlane.findBatches(
             List.of(new FindBatchRequest(EXISTING_TOPIC_ID_PARTITION, 11, Integer.MAX_VALUE)),
             true,
             Integer.MAX_VALUE);
         assertThat(findResponse).containsExactly(
-            new FindBatchResponse(Errors.OFFSET_OUT_OF_RANGE, null, 0, 0)
+            new FindBatchResponse(Errors.OFFSET_OUT_OF_RANGE, null, 0, -1, 0)
         );
     }
 }

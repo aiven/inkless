@@ -4,6 +4,8 @@ package io.aiven.inkless.control_plane;
 import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.Uuid;
+import org.apache.kafka.common.record.RecordBatch;
+import org.apache.kafka.common.utils.Time;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -20,12 +22,14 @@ import io.aiven.inkless.common.ObjectKey;
 public class InMemoryControlPlane implements ControlPlane {
     private static final Logger logger = LoggerFactory.getLogger(InMemoryControlPlane.class);
 
+    private final Time time;
     private final MetadataView metadataView;
 
     private final Map<TopicIdPartition, LogInfo> logs = new HashMap<>();
     private final HashMap<TopicIdPartition, TreeMap<Long, BatchInfo>> batches = new HashMap<>();
 
-    public InMemoryControlPlane(final MetadataView metadataView) {
+    public InMemoryControlPlane(final Time time, final MetadataView metadataView) {
+        this.time = time;
         this.metadataView = metadataView;
     }
 
@@ -33,6 +37,7 @@ public class InMemoryControlPlane implements ControlPlane {
     public synchronized List<CommitBatchResponse> commitFile(final ObjectKey objectKey,
                                                              final List<CommitBatchRequest> batches) {
         final List<CommitBatchResponse> responses = new ArrayList<>();
+        final long now = time.milliseconds();
 
         for (final CommitBatchRequest request : batches) {
             final String topicName = request.topicPartition().topic();
@@ -46,13 +51,20 @@ public class InMemoryControlPlane implements ControlPlane {
                 final LogInfo logInfo = logs.computeIfAbsent(topicIdPartition, ignore -> new LogInfo());
                 final long firstOffset = logInfo.highWatermark;
                 logInfo.highWatermark += request.numberOfRecords();
+                logInfo.logAppendTime = now;
                 final long lastOffset = logInfo.highWatermark - 1;
-                // TODO: also compute append timestamp
-                final BatchInfo batchToStore = new BatchInfo(objectKey, request.byteOffset(), request.size(), firstOffset, request.numberOfRecords());
+                final BatchInfo batchToStore = new BatchInfo(
+                    objectKey,
+                    request.byteOffset(),
+                    request.size(),
+                    firstOffset,
+                    request.numberOfRecords(),
+                    metadataView.getTopicConfig(topicName).messageTimestampType
+                );
                 this.batches
                     .computeIfAbsent(topicIdPartition, ignore -> new TreeMap<>())
                     .put(lastOffset, batchToStore);
-                responses.add(CommitBatchResponse.success(firstOffset, logInfo.logStartOffset));
+                responses.add(CommitBatchResponse.success(firstOffset, now, logInfo.logStartOffset));
             }
         }
 
@@ -77,11 +89,11 @@ public class InMemoryControlPlane implements ControlPlane {
                 if (request.offset() < 0) {
                     logger.debug("Invalid offset {} for {}", request.offset(), request.topicIdPartition());
                     result.add(FindBatchResponse.offsetOutOfRange(
-                        logInfo.logStartOffset, logInfo.highWatermark));
+                        logInfo.logStartOffset, logInfo.logAppendTime, logInfo.highWatermark));
                 } else {
                     if (request.offset() >= logInfo.highWatermark) {
                         result.add(FindBatchResponse.offsetOutOfRange(
-                            logInfo.logStartOffset, logInfo.highWatermark));
+                            logInfo.logStartOffset, logInfo.logAppendTime, logInfo.highWatermark));
                     } else {
                         final TreeMap<Long, BatchInfo> coordinates = this.batches.get(request.topicIdPartition());
                         if (coordinates != null) {
@@ -96,7 +108,7 @@ public class InMemoryControlPlane implements ControlPlane {
                                 }
                             }
                             result.add(FindBatchResponse.success(
-                                batches, logInfo.logStartOffset, logInfo.highWatermark));
+                                batches, logInfo.logStartOffset, logInfo.logAppendTime, logInfo.highWatermark));
                         } else {
                             logger.error("Batch coordinates not found for {}: high watermark={}, requested offset={}",
                                 request.topicIdPartition(),
@@ -115,5 +127,6 @@ public class InMemoryControlPlane implements ControlPlane {
     private static class LogInfo {
         long logStartOffset = 0;
         long highWatermark = 0;
+        long logAppendTime = RecordBatch.NO_TIMESTAMP;
     }
 }

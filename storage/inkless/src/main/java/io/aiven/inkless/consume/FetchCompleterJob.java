@@ -5,6 +5,7 @@ import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.record.MemoryRecords;
 import org.apache.kafka.common.record.MutableRecordBatch;
+import org.apache.kafka.common.record.TimestampType;
 import org.apache.kafka.common.requests.FetchRequest;
 import org.apache.kafka.server.storage.log.FetchPartitionData;
 
@@ -142,7 +143,7 @@ public class FetchCompleterJob implements Supplier<Map<TopicIdPartition, FetchPa
                 // as soon as we encounter an error
                 return foundRecords;
             }
-            MemoryRecords fileRecords = constructRecordsFromFile(batch, files);
+            MemoryRecords fileRecords = constructRecordsFromFile(metadata, batch, files);
             if (fileRecords == null) {
                 return foundRecords;
             }
@@ -151,7 +152,9 @@ public class FetchCompleterJob implements Supplier<Map<TopicIdPartition, FetchPa
         return foundRecords;
     }
 
-    private static MemoryRecords constructRecordsFromFile(BatchInfo batch, List<FetchedFile> files) {
+    private static MemoryRecords constructRecordsFromFile(FindBatchResponse metadata,
+                                                          BatchInfo batch,
+                                                          List<FetchedFile> files) {
         for (FetchedFile file : files) {
             if (file.range().contains(batch.range())) {
                 MemoryRecords records = MemoryRecords.readableRecords(file.buffer());
@@ -160,12 +163,21 @@ public class FetchCompleterJob implements Supplier<Map<TopicIdPartition, FetchPa
                     throw new IllegalStateException("Backing file should have at least one batch");
                 }
                 MutableRecordBatch mutableRecordBatch = iterator.next();
+
+                // set last offset
                 long lastOffset = batch.recordOffset() + batch.numberOfRecords() - 1;
                 mutableRecordBatch.setLastOffset(lastOffset);
+
+                // set log append timestamp
+                if (batch.timestampType() == TimestampType.LOG_APPEND_TIME) {
+                    mutableRecordBatch.setMaxTimestamp(TimestampType.LOG_APPEND_TIME, metadata.logAppendTime());
+                }
+                
                 if (iterator.hasNext()) {
                     // TODO: support concatenating multiple batches into a single BatchInfo
                     throw new IllegalStateException("Backing file should have at only one batch");
                 }
+
                 return records;
             }
         }

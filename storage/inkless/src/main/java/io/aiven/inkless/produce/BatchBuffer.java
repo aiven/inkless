@@ -2,7 +2,8 @@
 package io.aiven.inkless.produce;
 
 import org.apache.kafka.common.TopicPartition;
-import org.apache.kafka.common.record.RecordBatch;
+import org.apache.kafka.common.record.MutableRecordBatch;
+import org.apache.kafka.common.utils.Time;
 
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
@@ -18,7 +19,13 @@ class BatchBuffer {
     private int totalSize = 0;
     private boolean closed = false;
 
-    void addBatch(final TopicPartition topicPartition, final RecordBatch batch, final int requestId) {
+    final BatchValidator batchValidator;
+
+    BatchBuffer(Time time) {
+        this.batchValidator = new BatchValidator(time);
+    }
+
+    void addBatch(final TopicPartition topicPartition, final MutableRecordBatch batch, final int requestId) {
         Objects.requireNonNull(topicPartition, "topicPartition cannot be null");
         Objects.requireNonNull(batch, "batch cannot be null");
 
@@ -44,10 +51,18 @@ class BatchBuffer {
         final List<CommitBatchRequest> commitBatchRequests = new ArrayList<>();
         final List<Integer> requestIds = new ArrayList<>();
         for (final BatchHolder batchHolder : batches) {
-            final int offset = byteBuffer.position();
-            commitBatchRequests.add(new CommitBatchRequest(
-                batchHolder.topicPartition(), offset, batchHolder.batch.sizeInBytes(), batchHolder.numberOfRecords()
-            ));
+            final int byteOffset = byteBuffer.position();
+
+            batchValidator.validateAndSetMaxTimestamp(batchHolder.batch);
+
+            commitBatchRequests.add(
+                new CommitBatchRequest(
+                    batchHolder.topicPartition(),
+                    byteOffset,
+                    batchHolder.batch.sizeInBytes(),
+                    batchHolder.numberOfRecords()
+                )
+            );
             requestIds.add(batchHolder.requestId);
             batchHolder.batch.writeTo(byteBuffer);
         }
@@ -61,7 +76,7 @@ class BatchBuffer {
     }
 
     private record BatchHolder(TopicPartition topicPartition,
-                               RecordBatch batch,
+                               MutableRecordBatch batch,
                                int requestId) {
         long numberOfRecords() {
             return batch.nextOffset() - batch.baseOffset();

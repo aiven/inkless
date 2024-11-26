@@ -4,6 +4,7 @@ package io.aiven.inkless.produce;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.record.MemoryRecords;
 import org.apache.kafka.common.requests.ProduceResponse.PartitionResponse;
+import org.apache.kafka.common.utils.Time;
 
 import java.time.Instant;
 import java.util.HashMap;
@@ -11,6 +12,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 
+import io.aiven.inkless.TimeUtils;
 
 /**
  * An active file.
@@ -21,12 +23,19 @@ class ActiveFile {
     private final Instant start;
 
     private int requestId = -1;
-    private final BatchBuffer buffer = new BatchBuffer();
+    private final BatchBuffer buffer;
     private final Map<Integer, Map<TopicPartition, MemoryRecords>> originalRequests = new HashMap<>();
     private final Map<Integer, CompletableFuture<Map<TopicPartition, PartitionResponse>>> awaitingFuturesByRequest =
         new HashMap<>();
 
-    ActiveFile(final Instant start) {
+    ActiveFile(final Time time) {
+        this.buffer = new BatchBuffer(time);
+        this.start = TimeUtils.monotonicNow(time);
+    }
+
+    // For testing
+    ActiveFile(final Time time, final Instant start) {
+        this.buffer = new BatchBuffer(time);
         this.start = start;
     }
 

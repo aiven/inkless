@@ -7,6 +7,7 @@ import org.apache.kafka.common.compress.Compression;
 import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.record.MemoryRecords;
 import org.apache.kafka.common.record.SimpleRecord;
+import org.apache.kafka.common.record.TimestampType;
 import org.apache.kafka.common.requests.FetchRequest;
 import org.apache.kafka.server.storage.log.FetchPartitionData;
 
@@ -66,17 +67,18 @@ public class FetchCompleterJobTest {
         Map<TopicIdPartition, FetchRequest.PartitionData> fetchInfos = Map.of(
                 partition0, new FetchRequest.PartitionData(topicId, 0, 0, 1000, Optional.empty())
         );
-        int logStart = 0;
+        int logStartOffset = 0;
+        long logAppendTime = 0L;
         int highWatermark = 0;
         Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of(
-                partition0, FindBatchResponse.success(Collections.emptyList(), logStart, highWatermark)
+                partition0, FindBatchResponse.success(Collections.emptyList(), logStartOffset, logAppendTime, highWatermark)
         );
         FetchCompleterJob job = new FetchCompleterJob(fetchInfos, CompletableFuture.completedFuture(coordinates), CompletableFuture.completedFuture(Collections.emptyList()));
         Map<TopicIdPartition, FetchPartitionData> result = job.get();
         FetchPartitionData data = result.get(partition0);
         assertEquals(Errors.NONE, data.error);
         assertEquals(MemoryRecords.EMPTY, data.records);
-        assertEquals(logStart, data.logStartOffset);
+        assertEquals(logStartOffset, data.logStartOffset);
         assertEquals(highWatermark, data.highWatermark);
     }
 
@@ -85,12 +87,13 @@ public class FetchCompleterJobTest {
         Map<TopicIdPartition, FetchRequest.PartitionData> fetchInfos = Map.of(
                 partition0, new FetchRequest.PartitionData(topicId, 0, 0, 1000, Optional.empty())
         );
-        int logStart = 0;
+        int logStartOffset = 0;
+        long logAppendTime = 10L;
         int highWatermark = 1;
         Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of(
                 partition0, FindBatchResponse.success(List.of(
-                        new BatchInfo(objectA, 0, 10, 0, 1)
-                ), logStart, highWatermark)
+                        new BatchInfo(objectA, 0, 10, 0, 1, TimestampType.CREATE_TIME)
+                ), logStartOffset, logAppendTime, highWatermark)
         );
         FetchCompleterJob job = new FetchCompleterJob(fetchInfos, CompletableFuture.completedFuture(coordinates), CompletableFuture.completedFuture(Collections.emptyList()));
         Map<TopicIdPartition, FetchPartitionData> result = job.get();
@@ -105,13 +108,14 @@ public class FetchCompleterJobTest {
         Map<TopicIdPartition, FetchRequest.PartitionData> fetchInfos = Map.of(
                 partition0, new FetchRequest.PartitionData(topicId, 0, 0, 1000, Optional.empty())
         );
-        int logStart = 0;
+        int logStartOffset = 0;
+        long logAppendTime = 10L;
         int highWatermark = 1;
         Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of(
                 partition0, FindBatchResponse.success(List.of(
-                        new BatchInfo(objectA, 0, records.sizeInBytes(), 0, 1),
-                        new BatchInfo(objectB, 0, records.sizeInBytes(), 0, 1)
-                ), logStart, highWatermark)
+                        new BatchInfo(objectA, 0, records.sizeInBytes(), 0, 1, TimestampType.CREATE_TIME),
+                        new BatchInfo(objectB, 0, records.sizeInBytes(), 0, 1, TimestampType.CREATE_TIME)
+                ), logStartOffset, logAppendTime, highWatermark)
         );
 
         List<Future<FetchedFile>> files = Stream.of(
@@ -122,7 +126,7 @@ public class FetchCompleterJobTest {
         Map<TopicIdPartition, FetchPartitionData> result = job.get();
         FetchPartitionData data = result.get(partition0);
         assertEquals(2 * records.sizeInBytes(), data.records.sizeInBytes());
-        assertEquals(logStart, data.logStartOffset);
+        assertEquals(logStartOffset, data.logStartOffset);
         assertEquals(highWatermark, data.highWatermark);
     }
 
@@ -134,12 +138,13 @@ public class FetchCompleterJobTest {
         Map<TopicIdPartition, FetchRequest.PartitionData> fetchInfos = Map.of(
                 partition0, new FetchRequest.PartitionData(topicId, 0, 0, 1000, Optional.empty())
         );
-        int logStart = 0;
+        int logStartOffset = 0;
+        long logAppendTime = 10L;
         int highWatermark = 1;
         Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of(
                 partition0, FindBatchResponse.success(List.of(
-                        new BatchInfo(objectA, 0, records.sizeInBytes(), 0, 1)
-                ), logStart, highWatermark)
+                        new BatchInfo(objectA, 0, records.sizeInBytes(), 0, 1, TimestampType.CREATE_TIME)
+                ), logStartOffset, logAppendTime, highWatermark)
         );
 
         List<Future<FetchedFile>> files = Stream.of(
@@ -149,7 +154,7 @@ public class FetchCompleterJobTest {
         Map<TopicIdPartition, FetchPartitionData> result = job.get();
         FetchPartitionData data = result.get(partition0);
         assertEquals(records.sizeInBytes(), data.records.sizeInBytes());
-        assertEquals(logStart, data.logStartOffset);
+        assertEquals(logStartOffset, data.logStartOffset);
         assertEquals(highWatermark, data.highWatermark);
     }
 }

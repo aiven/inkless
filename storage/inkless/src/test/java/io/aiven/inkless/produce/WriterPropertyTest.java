@@ -100,7 +100,7 @@ class WriterPropertyTest {
               @ForAll @IntRange(min = 5, max = 10) int commitDurationAvg,
               @ForAll @IntRange(min = 1, max = 1 * 1024) int maxBufferSize) throws InterruptedException, ExecutionException, StorageBackendException {
         test(requestCount, requestIntervalMsAvg, commitIntervalMsAvg, uploadDurationAvg, commitDurationAvg, maxBufferSize,
-            new InMemoryControlPlane(METADATA_VIEW));
+            new InMemoryControlPlane(new MockTime(0, 0, 0), METADATA_VIEW));
     }
 
     void test(final int requestCount,
