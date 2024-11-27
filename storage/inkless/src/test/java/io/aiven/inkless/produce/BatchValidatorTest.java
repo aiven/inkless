@@ -1,3 +1,4 @@
+// Copyright (c) 2024 Aiven, Helsinki, Finland. https://aiven.io/
 package io.aiven.inkless.produce;
 
 import org.apache.kafka.common.compress.Compression;
@@ -59,9 +60,10 @@ class BatchValidatorTest {
 
         // given a batch with records with increasing timestamps
         time.sleep(100);
-        final long createTimeBase = time.milliseconds();
         final MutableRecordBatch batch =
             createBatchWithTimeSpreadRecords(TimestampType.LOG_APPEND_TIME, time, 10, "a", "b", "c");
+        // replace logAppendTime = System.currentMillis() set by MemoryRecords that could lead to flakiness
+        batch.setMaxTimestamp(TimestampType.LOG_APPEND_TIME, time.milliseconds());
         final long previousChecksum = batch.checksum();
 
         // when we validate the batch
@@ -72,8 +74,7 @@ class BatchValidatorTest {
         // then the batch should have the max timestamp not updated (i.e. before validation time, CRC unchanged)
         assertThat(batch.timestampType()).isEqualTo(TimestampType.LOG_APPEND_TIME);
         assertThat(batch.maxTimestamp())
-            .isLessThan(validationTime)
-            .isLessThan(createTimeBase);
+            .isLessThan(validationTime);
         assertThat(batch.checksum()).isEqualTo(previousChecksum);
     }
 
