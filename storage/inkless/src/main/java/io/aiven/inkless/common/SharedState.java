@@ -2,6 +2,7 @@
 package io.aiven.inkless.common;
 
 import org.apache.kafka.common.utils.Time;
+import org.apache.kafka.storage.log.metrics.BrokerTopicStats;
 
 import io.aiven.inkless.config.InklessConfig;
 import io.aiven.inkless.control_plane.ControlPlane;
@@ -13,11 +14,24 @@ public record SharedState(
         InklessConfig config,
         MetadataView metadata,
         ControlPlane controlPlane,
-        StorageBackend storage
+        StorageBackend storage,
+        BrokerTopicStats brokerTopicStats
 ) {
 
-    public static SharedState initialize(Time time, InklessConfig config, MetadataView metadata) {
-        return new SharedState(time, config, metadata, ControlPlane.create(config, time, metadata), config.storage());
+    public static SharedState initialize(
+        Time time,
+        InklessConfig config,
+        MetadataView metadata,
+        BrokerTopicStats brokerTopicStats
+    ) {
+        return new SharedState(
+            time,
+            config,
+            metadata,
+            ControlPlane.create(config, time, metadata),
+            config.storage(),
+            brokerTopicStats
+        );
     }
 
 }

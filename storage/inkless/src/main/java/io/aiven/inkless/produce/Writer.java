@@ -6,6 +6,7 @@ import org.apache.kafka.common.record.MemoryRecords;
 import org.apache.kafka.common.requests.ProduceResponse.PartitionResponse;
 import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.common.utils.Utils;
+import org.apache.kafka.storage.log.metrics.BrokerTopicStats;
 
 import com.groupcdg.pitest.annotations.DoNotMutate;
 
@@ -23,6 +24,8 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
+import java.util.function.BiConsumer;
+import java.util.function.Consumer;
 
 import io.aiven.inkless.common.InklessThreadFactory;
 import io.aiven.inkless.common.ObjectKeyCreator;
@@ -50,6 +53,9 @@ class Writer implements Closeable {
     private final int maxBufferSize;
     private final ScheduledExecutorService commitTickScheduler;
     private boolean closed = false;
+    private final Consumer<String> requestRateMark;
+    private final BiConsumer<String, Integer> bytesInRateMark;
+    private final BiConsumer<String, Long> messagesInRateMark;
 
     @DoNotMutate
     Writer(final Time time,
@@ -59,10 +65,15 @@ class Writer implements Closeable {
            final Duration commitInterval,
            final int maxBufferSize,
            final int maxFileUploadAttempts,
-           final Duration fileUploadRetryBackoff) {
-        this(time, commitInterval, maxBufferSize,
+           final Duration fileUploadRetryBackoff,
+           final BrokerTopicStats brokerTopicStats) {
+        this(
+            time,
+            commitInterval,
+            maxBufferSize,
             Executors.newScheduledThreadPool(1, new InklessThreadFactory("inkless-file-commit-ticker-", true)),
-            new FileCommitter(controlPlane, objectKeyCreator, objectUploader, time, maxFileUploadAttempts, fileUploadRetryBackoff)
+            new FileCommitter(controlPlane, objectKeyCreator, objectUploader, time, maxFileUploadAttempts, fileUploadRetryBackoff),
+            brokerTopicStats
         );
     }
 
@@ -71,7 +82,8 @@ class Writer implements Closeable {
            final Duration commitInterval,
            final int maxBufferSize,
            final ScheduledExecutorService commitTickScheduler,
-           final FileCommitter fileCommitter) {
+           final FileCommitter fileCommitter,
+           final BrokerTopicStats brokerTopicStats) {
         this.time = Objects.requireNonNull(time, "time cannot be null");
         Objects.requireNonNull(commitInterval, "commitInterval cannot be null");
         if (maxBufferSize <= 0) {
@@ -81,7 +93,24 @@ class Writer implements Closeable {
         this.commitTickScheduler = Objects.requireNonNull(commitTickScheduler, "commitTickScheduler cannot be null");
         this.fileCommitter = Objects.requireNonNull(fileCommitter, "fileCommitter cannot be null");
 
-        this.activeFile = new ActiveFile(time);
+        requestRateMark = (String topicName) -> {
+            brokerTopicStats.topicStats(topicName).totalProduceRequestRate().mark();
+            brokerTopicStats.allTopicsStats().totalProduceRequestRate().mark();
+        };
+        bytesInRateMark = (String topicName, Integer bytes) -> {
+            brokerTopicStats.topicStats(topicName).bytesInRate().mark(bytes);
+            brokerTopicStats.allTopicsStats().bytesInRate().mark(bytes);
+        };
+        messagesInRateMark = (String topicName, Long messages) -> {
+            brokerTopicStats.topicStats(topicName).messagesInRate().mark(messages);
+            brokerTopicStats.allTopicsStats().messagesInRate().mark(messages);
+        };
+        this.activeFile = new ActiveFile(
+            time,
+            requestRateMark,
+            bytesInRateMark,
+            messagesInRateMark
+        );
 
         commitTickScheduler.scheduleAtFixedRate(
             this::tick, commitInterval.toMillis(), commitInterval.toMillis(), TimeUnit.MILLISECONDS);
@@ -146,7 +175,12 @@ class Writer implements Closeable {
     private void rotateFile(final boolean swallowInterrupted) {
         LOGGER.debug("Rotating active file");
         final ActiveFile prevActiveFile = this.activeFile;
-        this.activeFile = new ActiveFile(time);
+        this.activeFile = new ActiveFile(
+            time,
+            requestRateMark,
+            bytesInRateMark,
+            messagesInRateMark
+        );
 
         try {
             this.fileCommitter.commit(prevActiveFile.close());

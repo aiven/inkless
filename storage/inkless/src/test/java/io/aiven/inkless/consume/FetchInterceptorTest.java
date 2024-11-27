@@ -11,6 +11,7 @@ import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.server.storage.log.FetchIsolation;
 import org.apache.kafka.server.storage.log.FetchParams;
 import org.apache.kafka.server.storage.log.FetchPartitionData;
+import org.apache.kafka.storage.log.metrics.BrokerTopicStats;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -54,20 +55,22 @@ public class FetchInterceptorTest {
     StorageBackend storageBackend;
     @Mock
     Consumer<Map<TopicIdPartition, FetchPartitionData>> responseCallback;
+    @Mock
+    BrokerTopicStats brokerTopicStats;
 
     @Captor
     ArgumentCaptor<Map<TopicIdPartition, FetchPartitionData>> resultCaptor;
 
     private final short fetchVersion = ApiMessageType.FETCH.highestSupportedVersion(true);
     private final Uuid inklessUuid = Uuid.randomUuid();
-    private final Uuid inklessOtherUuid = Uuid.randomUuid();
     private final Uuid classicUuid = Uuid.randomUuid();
 
     @Test
     public void mixingInklessAndClassicTopicsIsNotAllowed() {
         when(metadataView.isInklessTopic(eq("inkless"))).thenReturn(true);
         when(metadataView.isInklessTopic(eq("non_inkless"))).thenReturn(false);
-        final FetchInterceptor interceptor = new FetchInterceptor(new SharedState(time, inklessConfig, metadataView, controlPlane, storageBackend));
+        final FetchInterceptor interceptor = new FetchInterceptor(
+            new SharedState(time, inklessConfig, metadataView, controlPlane, storageBackend, brokerTopicStats));
 
         final FetchParams params = new FetchParams(fetchVersion,
                 -1, -1, -1, -1, -1,
@@ -101,7 +104,8 @@ public class FetchInterceptorTest {
     @Test
     public void notInterceptProducingToClassicTopics() {
         when(metadataView.isInklessTopic(eq("non_inkless"))).thenReturn(false);
-        final FetchInterceptor interceptor = new FetchInterceptor(new SharedState(time, inklessConfig, metadataView, controlPlane, storageBackend));
+        final FetchInterceptor interceptor = new FetchInterceptor(
+            new SharedState(time, inklessConfig, metadataView, controlPlane, storageBackend, brokerTopicStats));
 
         final FetchParams params = new FetchParams(fetchVersion,
                 -1, -1, -1, -1, -1,

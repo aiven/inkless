@@ -8,6 +8,7 @@ import org.apache.kafka.common.requests.ProduceResponse.PartitionResponse;
 import org.apache.kafka.common.utils.MockTime;
 import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.storage.internals.log.LogConfig;
+import org.apache.kafka.storage.log.metrics.BrokerTopicStats;
 
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -126,7 +127,8 @@ class WriterIntegrationTest {
                 time, (String s) -> new PlainObjectKey("", s), storage, controlPlane, Duration.ofMillis(10),
                 10 * 1024,
                 1,
-                Duration.ofMillis(10)
+                Duration.ofMillis(10),
+                new BrokerTopicStats()
             )
         ) {
             time.sleep(100);
