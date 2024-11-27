@@ -3,6 +3,7 @@ package io.aiven.inkless.consume;
 
 import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.Uuid;
+import org.apache.kafka.common.record.TimestampType;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -59,7 +60,7 @@ public class FetchPlannerTest {
     public void planSingleRequest() {
         assertBatchPlan(Map.of(
                 partition0, FindBatchResponse.success(List.of(
-                        new BatchInfo(objectA, 0, 10, 0, 1)
+                        new BatchInfo(objectA, 0, 10, 0, 1, TimestampType.CREATE_TIME, 10)
                 ), 0, 1)
         ), Set.of(
                 new FileFetchJob(fetcher, objectA, new ByteRange(0, 10))
@@ -70,8 +71,8 @@ public class FetchPlannerTest {
     public void planRequestsForMultipleObjects() {
         assertBatchPlan(Map.of(
                 partition0, FindBatchResponse.success(List.of(
-                        new BatchInfo(objectA, 0, 10, 0, 1),
-                        new BatchInfo(objectB, 0, 10, 1, 1)
+                        new BatchInfo(objectA, 0, 10, 0, 1, TimestampType.CREATE_TIME, 10),
+                        new BatchInfo(objectB, 0, 10, 1, 1, TimestampType.CREATE_TIME, 11)
                 ), 0, 2)
         ), Set.of(
                 new FileFetchJob(fetcher, objectA, new ByteRange(0, 10)),
@@ -83,10 +84,10 @@ public class FetchPlannerTest {
     public void planRequestsForMultiplePartitions() {
         assertBatchPlan(Map.of(
                 partition0, FindBatchResponse.success(List.of(
-                        new BatchInfo(objectA, 0, 10, 0, 1)
+                        new BatchInfo(objectA, 0, 10, 0, 1, TimestampType.CREATE_TIME, 10)
                 ), 0, 1),
                 partition1, FindBatchResponse.success(List.of(
-                        new BatchInfo(objectB, 0, 10, 0, 1)
+                        new BatchInfo(objectB, 0, 10, 0, 1, TimestampType.CREATE_TIME, 11)
                 ), 0, 1)
         ), Set.of(
                 new FileFetchJob(fetcher, objectA, new ByteRange(0, 10)),
@@ -98,11 +99,11 @@ public class FetchPlannerTest {
     public void planMergedRequestsForSameObject() {
         assertBatchPlan(Map.of(
                 partition0, FindBatchResponse.success(List.of(
-                        new BatchInfo(objectA, 0, 10, 0, 1)
+                        new BatchInfo(objectA, 0, 10, 0, 1, TimestampType.CREATE_TIME, 10)
                 ), 0, 1),
                 partition1, FindBatchResponse.success(List.of(
-                        new BatchInfo(objectA, 30, 10, 0, 1)
-                ), 0, 1)
+                        new BatchInfo(objectA, 30, 10, 0, 1, TimestampType.CREATE_TIME, 11)
+                ), 0,  1)
                 ), Set.of(
                 new FileFetchJob(fetcher, objectA, new ByteRange(0, 40))
         ));
