@@ -58,3 +58,8 @@ rules:
     type: GAUGE
     labels:
       quantile: "0.$3"
+  - pattern: io.aiven.inkless.consume<type=(.+), name=(.+)><>(\d+)thPercentile
+    name: kafka_inkless_consume_$1_$2
+    type: GAUGE
+    labels:
+      quantile: "0.$3"
