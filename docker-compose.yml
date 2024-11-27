@@ -21,6 +21,7 @@ services:
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
       KAFKA_LOG_DIRS: "/tmp/kraft-combined-logs"
       # Inkless
+      KAFKA_INKLESS_CONTROL_PLANE_CLASS: "io.aiven.inkless.control_plane.InMemoryControlPlane"
       KAFKA_INKLESS_STORAGE_BACKEND_CLASS: "io.aiven.inkless.storage_backend.s3.S3Storage"
       KAFKA_INKLESS_STORAGE_S3_PATH_STYLE_ACCESS_ENABLED: "true"
       KAFKA_INKLESS_STORAGE_S3_BUCKET_NAME: "inkless"
