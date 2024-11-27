@@ -80,7 +80,7 @@ class FileCommitJobTest {
 
         final List<CommitBatchResponse> commitBatchResponses = List.of(
             new CommitBatchResponse(Errors.NONE, 0, 10, 0),
-            new CommitBatchResponse(Errors.INVALID_TOPIC_EXCEPTION, -1, -1, 0),  // some arbitrary uploadError
+            new CommitBatchResponse(Errors.INVALID_TOPIC_EXCEPTION, -1, -1, -1),  // some arbitrary uploadError
             new CommitBatchResponse(Errors.NONE, 20, 10, 0),
             new CommitBatchResponse(Errors.NONE, 30, 10, 0)
         );
@@ -97,7 +97,7 @@ class FileCommitJobTest {
 
         assertThat(awaitingFuturesByRequest.get(0)).isCompletedWithValue(Map.of(
             T0P0, new PartitionResponse(Errors.NONE, 0, 10, 0),
-            T0P1, new PartitionResponse(Errors.INVALID_TOPIC_EXCEPTION, -1, -1, 0)
+            T0P1, new PartitionResponse(Errors.INVALID_TOPIC_EXCEPTION, -1, -1, -1)
         ));
         assertThat(awaitingFuturesByRequest.get(1)).isCompletedWithValue(Map.of(
             T0P1, new PartitionResponse(Errors.NONE, 20, 10, 0),

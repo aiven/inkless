@@ -121,13 +121,16 @@ class WriterIntegrationTest {
     void test() throws ExecutionException, InterruptedException, TimeoutException, IOException {
         final Time time = new MockTime();
         final InMemoryControlPlane controlPlane = new InMemoryControlPlane(time, METADATA_VIEW);
-        final Writer writer = new Writer(
-            time, (String s) -> new PlainObjectKey("", s), storage, controlPlane, Duration.ofMillis(10),
-            10 * 1024,
-            1,
-            Duration.ofMillis(10)
-        );
-        try {
+        try (
+            final Writer writer = new Writer(
+                time, (String s) -> new PlainObjectKey("", s), storage, controlPlane, Duration.ofMillis(10),
+                10 * 1024,
+                1,
+                Duration.ofMillis(10)
+            )
+        ) {
+            time.sleep(100);
+
             final var writeFuture1 = writer.write(Map.of(
                 T0P0, recordCreator.create(T0P0, 101),
                 T0P1, recordCreator.create(T0P1, 102),
@@ -138,33 +141,33 @@ class WriterIntegrationTest {
                 T0P1, recordCreator.create(T0P1, 12),
                 T1P0, recordCreator.create(T1P0, 13)
             ));
+            final var ts1 = time.milliseconds();
+            final var result1 = writeFuture1.get(10, TimeUnit.SECONDS);
+            final var result2 = writeFuture2.get(10, TimeUnit.SECONDS);
 
-            Thread.sleep(50);
+            time.sleep(50);
 
             final var writeFuture3 = writer.write(Map.of(
                 T1P0, recordCreator.create(T1P0, 1)
             ));
-
-            final var result1 = writeFuture1.get(10, TimeUnit.SECONDS);
-            assertThat(result1).isEqualTo(Map.of(
-                T0P0, new PartitionResponse(Errors.NONE, 0, time.milliseconds(), 0),
-                T0P1, new PartitionResponse(Errors.NONE, 0, time.milliseconds(), 0),
-                T1P0, new PartitionResponse(Errors.NONE, 0, time.milliseconds(), 0)
-            ));
-
-            final var result2 = writeFuture2.get(10, TimeUnit.SECONDS);
-            assertThat(result2).isEqualTo(Map.of(
-                T0P0, new PartitionResponse(Errors.NONE, 101, time.milliseconds(), 0),
-                T0P1, new PartitionResponse(Errors.NONE, 102, time.milliseconds(), 0),
-                T1P0, new PartitionResponse(Errors.NONE, 103, time.milliseconds(), 0)
-            ));
-
+            final var ts2 = time.milliseconds();
             final var result3 = writeFuture3.get(10, TimeUnit.SECONDS);
-            assertThat(result3).isEqualTo(Map.of(
-                T1P0, new PartitionResponse(Errors.NONE, 103 + 13, time.milliseconds(), 0)
+
+            assertThat(result1).isEqualTo(Map.of(
+                T0P0, new PartitionResponse(Errors.NONE, 0, ts1, 0),
+                T0P1, new PartitionResponse(Errors.NONE, 0, ts1, 0),
+                T1P0, new PartitionResponse(Errors.NONE, 0, ts1, 0)
             ));
-        } finally {
-            writer.close();
+
+            assertThat(result2).isEqualTo(Map.of(
+                T0P0, new PartitionResponse(Errors.NONE, 101, ts1, 0),
+                T0P1, new PartitionResponse(Errors.NONE, 102, ts1, 0),
+                T1P0, new PartitionResponse(Errors.NONE, 103, ts1, 0)
+            ));
+
+            assertThat(result3).isEqualTo(Map.of(
+                T1P0, new PartitionResponse(Errors.NONE, 103 + 13, ts2, 0)
+            ));
         }
     }
 }

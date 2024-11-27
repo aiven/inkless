@@ -60,8 +60,8 @@ public class FetchPlannerTest {
     public void planSingleRequest() {
         assertBatchPlan(Map.of(
                 partition0, FindBatchResponse.success(List.of(
-                        new BatchInfo(objectA, 0, 10, 0, 1, TimestampType.CREATE_TIME)
-                ), 0, 10, 1)
+                        new BatchInfo(objectA, 0, 10, 0, 1, TimestampType.CREATE_TIME, 10)
+                ), 0, 1)
         ), Set.of(
                 new FileFetchJob(fetcher, objectA, new ByteRange(0, 10))
         ));
@@ -71,9 +71,9 @@ public class FetchPlannerTest {
     public void planRequestsForMultipleObjects() {
         assertBatchPlan(Map.of(
                 partition0, FindBatchResponse.success(List.of(
-                        new BatchInfo(objectA, 0, 10, 0, 1, TimestampType.CREATE_TIME),
-                        new BatchInfo(objectB, 0, 10, 1, 1, TimestampType.CREATE_TIME)
-                ), 0, 20, 2)
+                        new BatchInfo(objectA, 0, 10, 0, 1, TimestampType.CREATE_TIME, 10),
+                        new BatchInfo(objectB, 0, 10, 1, 1, TimestampType.CREATE_TIME, 11)
+                ), 0, 2)
         ), Set.of(
                 new FileFetchJob(fetcher, objectA, new ByteRange(0, 10)),
                 new FileFetchJob(fetcher, objectB, new ByteRange(0, 10))
@@ -84,11 +84,11 @@ public class FetchPlannerTest {
     public void planRequestsForMultiplePartitions() {
         assertBatchPlan(Map.of(
                 partition0, FindBatchResponse.success(List.of(
-                        new BatchInfo(objectA, 0, 10, 0, 1, TimestampType.CREATE_TIME)
-                ), 0, 10, 1),
+                        new BatchInfo(objectA, 0, 10, 0, 1, TimestampType.CREATE_TIME, 10)
+                ), 0, 1),
                 partition1, FindBatchResponse.success(List.of(
-                        new BatchInfo(objectB, 0, 10, 0, 1, TimestampType.CREATE_TIME)
-                ), 0, 11, 1)
+                        new BatchInfo(objectB, 0, 10, 0, 1, TimestampType.CREATE_TIME, 11)
+                ), 0, 1)
         ), Set.of(
                 new FileFetchJob(fetcher, objectA, new ByteRange(0, 10)),
                 new FileFetchJob(fetcher, objectB, new ByteRange(0, 10))
@@ -99,11 +99,11 @@ public class FetchPlannerTest {
     public void planMergedRequestsForSameObject() {
         assertBatchPlan(Map.of(
                 partition0, FindBatchResponse.success(List.of(
-                        new BatchInfo(objectA, 0, 10, 0, 1, TimestampType.CREATE_TIME)
-                ), 0, 10, 1),
+                        new BatchInfo(objectA, 0, 10, 0, 1, TimestampType.CREATE_TIME, 10)
+                ), 0, 1),
                 partition1, FindBatchResponse.success(List.of(
-                        new BatchInfo(objectA, 30, 10, 0, 1, TimestampType.CREATE_TIME)
-                ), 0, 11, 1)
+                        new BatchInfo(objectA, 30, 10, 0, 1, TimestampType.CREATE_TIME, 11)
+                ), 0,  1)
                 ), Set.of(
                 new FileFetchJob(fetcher, objectA, new ByteRange(0, 40))
         ));

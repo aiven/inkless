@@ -100,10 +100,10 @@ class InMemoryControlPlaneTest {
         assertThat(findResponse).containsExactly(
             new FindBatchResponse(
                 Errors.NONE,
-                List.of(new BatchInfo(objectKey2, 100, 10, 10, 10, TimestampType.CREATE_TIME)),
-                0, time.milliseconds(), 20),
-            new FindBatchResponse(Errors.UNKNOWN_TOPIC_OR_PARTITION, null, -1, -1, -1),
-            new FindBatchResponse(Errors.UNKNOWN_TOPIC_OR_PARTITION, null, -1, -1, -1)
+                List.of(new BatchInfo(objectKey2, 100, 10, 10, 10, TimestampType.CREATE_TIME, time.milliseconds())),
+                0, 20),
+            new FindBatchResponse(Errors.UNKNOWN_TOPIC_OR_PARTITION, null, -1, -1),
+            new FindBatchResponse(Errors.UNKNOWN_TOPIC_OR_PARTITION, null, -1, -1)
         );
     }
 
@@ -129,9 +129,9 @@ class InMemoryControlPlaneTest {
                 List.of(new FindBatchRequest(EXISTING_TOPIC_ID_PARTITION, offset, Integer.MAX_VALUE)), true, Integer.MAX_VALUE);
             assertThat(findResponse).containsExactly(
                 new FindBatchResponse(Errors.NONE, List.of(
-                    new BatchInfo(objectKey1, 1, 10, 0, numberOfRecordsInBatch1, TimestampType.CREATE_TIME),
-                    new BatchInfo(objectKey2, 100, 10, numberOfRecordsInBatch1, numberOfRecordsInBatch2, TimestampType.CREATE_TIME)
-                ), expectedLogStartOffset, expectedLogAppendTime, expectedHighWatermark)
+                    new BatchInfo(objectKey1, 1, 10, 0, numberOfRecordsInBatch1, TimestampType.CREATE_TIME, expectedLogAppendTime),
+                    new BatchInfo(objectKey2, 100, 10, numberOfRecordsInBatch1, numberOfRecordsInBatch2, TimestampType.CREATE_TIME, expectedLogAppendTime)
+                ), expectedLogStartOffset, expectedHighWatermark)
             );
         }
         for (int offset = numberOfRecordsInBatch1; offset < numberOfRecordsInBatch1 + numberOfRecordsInBatch2; offset++) {
@@ -139,8 +139,8 @@ class InMemoryControlPlaneTest {
                 List.of(new FindBatchRequest(EXISTING_TOPIC_ID_PARTITION, offset, Integer.MAX_VALUE)), true, Integer.MAX_VALUE);
             assertThat(findResponse).containsExactly(
                 new FindBatchResponse(Errors.NONE, List.of(
-                    new BatchInfo(objectKey2, 100, 10, numberOfRecordsInBatch1, numberOfRecordsInBatch2, TimestampType.CREATE_TIME)
-                ), expectedLogStartOffset, expectedLogAppendTime, expectedHighWatermark)
+                    new BatchInfo(objectKey2, 100, 10, numberOfRecordsInBatch1, numberOfRecordsInBatch2, TimestampType.CREATE_TIME, expectedLogAppendTime)
+                ), expectedLogStartOffset, expectedHighWatermark)
             );
         }
     }
@@ -164,8 +164,8 @@ class InMemoryControlPlaneTest {
         assertThat(findResponse1).containsExactly(
             new FindBatchResponse(
                 Errors.NONE,
-                List.of(new BatchInfo(objectKey, 11, 10, 0, 10, TimestampType.CREATE_TIME)),
-                0, time.milliseconds(), 10)
+                List.of(new BatchInfo(objectKey, 11, 10, 0, 10, TimestampType.CREATE_TIME, time.milliseconds())),
+                0, 10)
         );
 
         // Make the topic "disappear".
@@ -178,7 +178,7 @@ class InMemoryControlPlaneTest {
             true,
             Integer.MAX_VALUE);
         assertThat(findResponse2).containsExactly(
-            new FindBatchResponse(Errors.UNKNOWN_TOPIC_OR_PARTITION, null, -1, -1, -1)
+            new FindBatchResponse(Errors.UNKNOWN_TOPIC_OR_PARTITION, null, -1, -1)
         );
     }
 
@@ -199,7 +199,7 @@ class InMemoryControlPlaneTest {
             true,
             Integer.MAX_VALUE);
         assertThat(findResponse).containsExactly(
-            new FindBatchResponse(Errors.OFFSET_OUT_OF_RANGE, null, 0, time.milliseconds(), 10)
+            new FindBatchResponse(Errors.OFFSET_OUT_OF_RANGE, null, 0, 10)
         );
     }
 
@@ -220,7 +220,7 @@ class InMemoryControlPlaneTest {
             true,
             Integer.MAX_VALUE);
         assertThat(findResponse).containsExactly(
-            new FindBatchResponse(Errors.OFFSET_OUT_OF_RANGE, null, 0, time.milliseconds(), 10)
+            new FindBatchResponse(Errors.OFFSET_OUT_OF_RANGE, null, 0, 10)
         );
     }
 
@@ -233,7 +233,7 @@ class InMemoryControlPlaneTest {
             true,
             Integer.MAX_VALUE);
         assertThat(findResponse).containsExactly(
-            new FindBatchResponse(Errors.OFFSET_OUT_OF_RANGE, null, 0, -1, 0)
+            new FindBatchResponse(Errors.OFFSET_OUT_OF_RANGE, null, 0, 0)
         );
     }
 }

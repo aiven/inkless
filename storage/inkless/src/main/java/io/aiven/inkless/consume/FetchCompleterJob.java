@@ -143,7 +143,7 @@ public class FetchCompleterJob implements Supplier<Map<TopicIdPartition, FetchPa
                 // as soon as we encounter an error
                 return foundRecords;
             }
-            MemoryRecords fileRecords = constructRecordsFromFile(metadata, batch, files);
+            MemoryRecords fileRecords = constructRecordsFromFile(batch, files);
             if (fileRecords == null) {
                 return foundRecords;
             }
@@ -152,9 +152,7 @@ public class FetchCompleterJob implements Supplier<Map<TopicIdPartition, FetchPa
         return foundRecords;
     }
 
-    private static MemoryRecords constructRecordsFromFile(FindBatchResponse metadata,
-                                                          BatchInfo batch,
-                                                          List<FetchedFile> files) {
+    private static MemoryRecords constructRecordsFromFile(BatchInfo batch, List<FetchedFile> files) {
         for (FetchedFile file : files) {
             if (file.range().contains(batch.range())) {
                 MemoryRecords records = MemoryRecords.readableRecords(file.buffer());
@@ -170,7 +168,7 @@ public class FetchCompleterJob implements Supplier<Map<TopicIdPartition, FetchPa
 
                 // set log append timestamp
                 if (batch.timestampType() == TimestampType.LOG_APPEND_TIME) {
-                    mutableRecordBatch.setMaxTimestamp(TimestampType.LOG_APPEND_TIME, metadata.logAppendTime());
+                    mutableRecordBatch.setMaxTimestamp(TimestampType.LOG_APPEND_TIME, batch.logAppendTime());
                 }
                 
                 if (iterator.hasNext()) {
