@@ -20,6 +20,7 @@ import java.util.Set;
 import io.aiven.inkless.common.PlainObjectKey;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -235,5 +236,19 @@ class InMemoryControlPlaneTest {
         assertThat(findResponse).containsExactly(
             new FindBatchResponse(Errors.OFFSET_OUT_OF_RANGE, null, 0, 0)
         );
+    }
+
+    @Test
+    void commitEmptyBatches() {
+        final InMemoryControlPlane controlPlane = new InMemoryControlPlane(mock(Time.class), metadataView);
+        final PlainObjectKey objectKey = new PlainObjectKey("a", "a1");
+        assertThatThrownBy(() -> controlPlane.commitFile(objectKey,
+            List.of(
+                new CommitBatchRequest(new TopicPartition(EXISTING_TOPIC, 0), 1, 10, 10),
+                new CommitBatchRequest(new TopicPartition(EXISTING_TOPIC, 1), 2, 0, 10)
+            )
+        ))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessage("Batches with size 0 are not allowed");
     }
 }
