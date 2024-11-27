@@ -5,6 +5,7 @@ import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.requests.ProduceResponse.PartitionResponse;
+import org.apache.kafka.common.utils.MockTime;
 import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.storage.internals.log.LogConfig;
 
@@ -118,14 +119,18 @@ class WriterIntegrationTest {
 
     @Test
     void test() throws ExecutionException, InterruptedException, TimeoutException, IOException {
-        final InMemoryControlPlane controlPlane = new InMemoryControlPlane(METADATA_VIEW);
-        final Writer writer = new Writer(
-            Time.SYSTEM, (String s) -> new PlainObjectKey("", s), storage, controlPlane, Duration.ofMillis(10),
-            10 * 1024,
-            1,
-            Duration.ofMillis(10)
-        );
-        try {
+        final Time time = new MockTime();
+        final InMemoryControlPlane controlPlane = new InMemoryControlPlane(time, METADATA_VIEW);
+        try (
+            final Writer writer = new Writer(
+                time, (String s) -> new PlainObjectKey("", s), storage, controlPlane, Duration.ofMillis(10),
+                10 * 1024,
+                1,
+                Duration.ofMillis(10)
+            )
+        ) {
+            time.sleep(100);
+
             final var writeFuture1 = writer.write(Map.of(
                 T0P0, recordCreator.create(T0P0, 101),
                 T0P1, recordCreator.create(T0P1, 102),
@@ -136,33 +141,33 @@ class WriterIntegrationTest {
                 T0P1, recordCreator.create(T0P1, 12),
                 T1P0, recordCreator.create(T1P0, 13)
             ));
+            final var ts1 = time.milliseconds();
+            final var result1 = writeFuture1.get(10, TimeUnit.SECONDS);
+            final var result2 = writeFuture2.get(10, TimeUnit.SECONDS);
 
-            Thread.sleep(50);
+            time.sleep(50);
 
             final var writeFuture3 = writer.write(Map.of(
                 T1P0, recordCreator.create(T1P0, 1)
             ));
-
-            final var result1 = writeFuture1.get(10, TimeUnit.SECONDS);
-            assertThat(result1).isEqualTo(Map.of(
-                T0P0, new PartitionResponse(Errors.NONE, 0, -1, -1),
-                T0P1, new PartitionResponse(Errors.NONE, 0, -1, -1),
-                T1P0, new PartitionResponse(Errors.NONE, 0, -1, -1)
-            ));
-
-            final var result2 = writeFuture2.get(10, TimeUnit.SECONDS);
-            assertThat(result2).isEqualTo(Map.of(
-                T0P0, new PartitionResponse(Errors.NONE, 101, -1, -1),
-                T0P1, new PartitionResponse(Errors.NONE, 102, -1, -1),
-                T1P0, new PartitionResponse(Errors.NONE, 103, -1, -1)
-            ));
-
+            final var ts2 = time.milliseconds();
             final var result3 = writeFuture3.get(10, TimeUnit.SECONDS);
-            assertThat(result3).isEqualTo(Map.of(
-                T1P0, new PartitionResponse(Errors.NONE, 103 + 13, -1, -1)
+
+            assertThat(result1).isEqualTo(Map.of(
+                T0P0, new PartitionResponse(Errors.NONE, 0, ts1, 0),
+                T0P1, new PartitionResponse(Errors.NONE, 0, ts1, 0),
+                T1P0, new PartitionResponse(Errors.NONE, 0, ts1, 0)
             ));
-        } finally {
-            writer.close();
+
+            assertThat(result2).isEqualTo(Map.of(
+                T0P0, new PartitionResponse(Errors.NONE, 101, ts1, 0),
+                T0P1, new PartitionResponse(Errors.NONE, 102, ts1, 0),
+                T1P0, new PartitionResponse(Errors.NONE, 103, ts1, 0)
+            ));
+
+            assertThat(result3).isEqualTo(Map.of(
+                T1P0, new PartitionResponse(Errors.NONE, 103 + 13, ts2, 0)
+            ));
         }
     }
 }

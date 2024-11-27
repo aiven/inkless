@@ -96,10 +96,15 @@ class FileCommitJob implements Runnable {
 
             final var commitBatchRequest = file.commitBatchRequests().get(i);
             final var commitBatchResponse = commitBatchResponses.get(i);
-            // TODO correct append time and start offset
-            result.put(commitBatchRequest.topicPartition(), new ProduceResponse.PartitionResponse(
-                commitBatchResponse.errors(), commitBatchResponse.assignedOffset(), -1, -1
-            ));
+            result.put(
+                commitBatchRequest.topicPartition(),
+                new ProduceResponse.PartitionResponse(
+                    commitBatchResponse.errors(),
+                    commitBatchResponse.assignedOffset(),
+                    commitBatchResponse.logAppendTime(),
+                    commitBatchResponse.logStartOffset()
+                )
+            );
         }
 
         for (final var entry : file.awaitingFuturesByRequest().entrySet()) {

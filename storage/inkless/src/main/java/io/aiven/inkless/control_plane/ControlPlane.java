@@ -1,6 +1,8 @@
 // Copyright (c) 2024 Aiven, Helsinki, Finland. https://aiven.io/
 package io.aiven.inkless.control_plane;
 
+import org.apache.kafka.common.utils.Time;
+
 import java.lang.reflect.Constructor;
 import java.lang.reflect.InvocationTargetException;
 import java.util.List;
@@ -16,11 +18,11 @@ public interface ControlPlane {
                                         boolean minOneMessage,
                                         int fetchMaxBytes);
 
-    static ControlPlane create(final InklessConfig config, final MetadataView metadata) {
+    static ControlPlane create(final InklessConfig config, final Time time, final MetadataView metadata) {
         final Class<ControlPlane> controlPlaneClass = config.controlPlaneClass();
         try {
-            final Constructor<ControlPlane> ctor = controlPlaneClass.getConstructor(MetadataView.class);
-            return ctor.newInstance(metadata);
+            final Constructor<ControlPlane> ctor = controlPlaneClass.getConstructor(Time.class, MetadataView.class);
+            return ctor.newInstance(time, metadata);
         } catch (final NoSuchMethodException | InstantiationException | IllegalAccessException |
                        InvocationTargetException e) {
             throw new RuntimeException(e);

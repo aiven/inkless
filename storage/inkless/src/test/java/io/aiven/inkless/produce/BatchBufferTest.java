@@ -4,13 +4,18 @@ package io.aiven.inkless.produce;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.compress.Compression;
 import org.apache.kafka.common.record.MemoryRecords;
+import org.apache.kafka.common.record.MutableRecordBatch;
 import org.apache.kafka.common.record.RecordBatch;
 import org.apache.kafka.common.record.SimpleRecord;
+import org.apache.kafka.common.record.TimestampType;
+import org.apache.kafka.common.utils.MockTime;
+import org.apache.kafka.common.utils.Time;
 
 import org.junit.jupiter.api.Test;
 
 import java.nio.ByteBuffer;
 import java.util.Arrays;
+import java.util.Iterator;
 
 import io.aiven.inkless.control_plane.CommitBatchRequest;
 
@@ -21,20 +26,20 @@ class BatchBufferTest {
     private static final TopicPartition T0P0 = new TopicPartition("topic0", 0);
     private static final TopicPartition T0P1 = new TopicPartition("topic0", 1);
     private static final TopicPartition T1P0 = new TopicPartition("topic1", 0);
-    private static final TopicPartition T1P1 = new TopicPartition("topic1", 1);
 
     @Test
     void totalSize() {
-        final BatchBuffer buffer = new BatchBuffer();
+        final Time time = Time.SYSTEM;
+        final BatchBuffer buffer = new BatchBuffer(time);
 
         assertThat(buffer.totalSize()).isZero();
 
-        final RecordBatch batch1 = createBatch(T0P0 + "-0", T0P0 + "-1", T0P0 + "-2");
+        final MutableRecordBatch batch1 = createBatch(time, T0P0 + "-0", T0P0 + "-1", T0P0 + "-2");
         buffer.addBatch(T0P0, batch1, 0);
 
         assertThat(buffer.totalSize()).isEqualTo(batch1.sizeInBytes());
 
-        final RecordBatch batch2 = createBatch(T0P0 + "-0", T0P0 + "-1", T0P0 + "-2");
+        final MutableRecordBatch batch2 = createBatch(time, T0P0 + "-0", T0P0 + "-1", T0P0 + "-2");
         buffer.addBatch(T0P0, batch2, 1);
 
         assertThat(buffer.totalSize()).isEqualTo(batch1.sizeInBytes() + batch2.sizeInBytes());
@@ -42,7 +47,8 @@ class BatchBufferTest {
 
     @Test
     void empty() {
-        final BatchBuffer buffer = new BatchBuffer();
+        final Time time = new MockTime();
+        final BatchBuffer buffer = new BatchBuffer(time);
 
         BatchBuffer.CloseResult result = buffer.close();
         assertThat(result.commitBatchRequests()).isEmpty();
@@ -57,8 +63,11 @@ class BatchBufferTest {
 
     @Test
     void singleBatch() {
-        final RecordBatch batch = createBatch(T0P0 + "-0", T0P0 + "-1", T0P0 + "-2");
-        final BatchBuffer buffer = new BatchBuffer();
+        final Time time = new MockTime();
+        final BatchBuffer buffer = new BatchBuffer(time);
+
+        final MutableRecordBatch batch = createBatch(time, T0P0 + "-0", T0P0 + "-1", T0P0 + "-2");
+        final byte[] beforeAdding = batchToBytes(batch);
         buffer.addBatch(T0P0, batch, 0);
 
         final BatchBuffer.CloseResult result = buffer.close();
@@ -67,23 +76,47 @@ class BatchBufferTest {
         );
         assertThat(result.requestIds()).containsExactly(0);
         assertThat(result.data()).containsExactly(batchToBytes(batch));
+        assertThat(result.data()).containsExactly(beforeAdding);
+    }
+
+    @Test
+    void singleBatchUpdatingMaxTimestamp() {
+        final Time time = new MockTime();
+        final BatchBuffer buffer = new BatchBuffer(time);
+
+        // given that buffer validation will mutate batch
+        final MutableRecordBatch batch = createBatch(time, T0P0 + "-0", T0P0 + "-1", T0P0 + "-2");
+        // force a value that will change after adding batch
+        batch.setMaxTimestamp(TimestampType.CREATE_TIME, 0);
+        final byte[] beforeAdding = batchToBytes(batch);
+        buffer.addBatch(T0P0, batch, 0);
+
+        final BatchBuffer.CloseResult result = buffer.close();
+        assertThat(result.commitBatchRequests()).containsExactly(
+            new CommitBatchRequest(T0P0, 0, batch.sizeInBytes(), 3)
+        );
+        assertThat(result.requestIds()).containsExactly(0);
+        assertThat(result.data()).containsExactly(batchToBytes(batch));
+        // then bytes will change
+        assertThat(result.data()).isNotEqualTo(beforeAdding);
     }
 
     @Test
     void multipleTopicPartitions() {
-        final BatchBuffer buffer = new BatchBuffer();
+        final Time time = Time.SYSTEM;
+        final BatchBuffer buffer = new BatchBuffer(time);
 
-        final RecordBatch t0p0b0 = createBatch(T0P0 + "-0");
-        final RecordBatch t0p0b2 = createBatch(T0P0 + "-2");
-        final RecordBatch t0p0b1 = createBatch(T0P0 + "-1");
+        final MutableRecordBatch t0p0b0 = createBatch(time, T0P0 + "-0");
+        final MutableRecordBatch t0p0b2 = createBatch(time, T0P0 + "-2");
+        final MutableRecordBatch t0p0b1 = createBatch(time, T0P0 + "-1");
 
-        final RecordBatch t0p1b0 = createBatch(T0P1 + "-0");
-        final RecordBatch t0p1b1 = createBatch(T0P1 + "-1");
-        final RecordBatch t0p1b2 = createBatch(T0P1 + "-2");
+        final MutableRecordBatch t0p1b0 = createBatch(time, T0P1 + "-0");
+        final MutableRecordBatch t0p1b1 = createBatch(time, T0P1 + "-1");
+        final MutableRecordBatch t0p1b2 = createBatch(time, T0P1 + "-2");
 
-        final RecordBatch t1p0b0 = createBatch(T1P0 + "-0");
-        final RecordBatch t1p0b1 = createBatch(T1P0 + "-1");
-        final RecordBatch t1p0b2 = createBatch(T1P0 + "-2");
+        final MutableRecordBatch t1p0b0 = createBatch(time, T1P0 + "-0");
+        final MutableRecordBatch t1p0b1 = createBatch(time, T1P0 + "-1");
+        final MutableRecordBatch t1p0b2 = createBatch(time, T1P0 + "-2");
 
         final int batchSize = t0p0b0.sizeInBytes();  // expecting it to be same everywhere
         buffer.addBatch(T0P0, t0p0b0, 0);
@@ -137,9 +170,10 @@ class BatchBufferTest {
 
     @Test
     void notWorksAfterClosing() {
-        final BatchBuffer buffer = new BatchBuffer();
+        final Time time = Time.SYSTEM;
+        final BatchBuffer buffer = new BatchBuffer(time);
 
-        final RecordBatch batch1 = createBatch(T0P0 + "-0");
+        final MutableRecordBatch batch1 = createBatch(time, T0P0 + "-0");
         buffer.addBatch(T0P0, batch1, 0);
         final BatchBuffer.CloseResult result1 = buffer.close();
         assertThat(result1.commitBatchRequests()).containsExactly(
@@ -148,18 +182,23 @@ class BatchBufferTest {
         assertThat(result1.data()).containsExactly(batchToBytes(batch1));
         assertThat(result1.requestIds()).containsExactly(0);
 
-        final RecordBatch batch2 = createBatch(T1P0 + "-0-longer");
+        final MutableRecordBatch batch2 = createBatch(time, T1P0 + "-0-longer");
         assertThatThrownBy(() -> buffer.addBatch(T1P0, batch2, 1))
             .isInstanceOf(IllegalStateException.class)
             .hasMessage("Already closed");
     }
 
-    RecordBatch createBatch(String ...content) {
-        final SimpleRecord[] simpleRecords = Arrays.stream(content).map(c -> new SimpleRecord(c.getBytes()))
+    MutableRecordBatch createBatch(Time time, String... content) {
+        final SimpleRecord[] simpleRecords = Arrays.stream(content)
+            .map(c -> new SimpleRecord(time.milliseconds(), c.getBytes()))
             .toArray(SimpleRecord[]::new);
         final int initialOffset = 19;  // some non-zero number
         final MemoryRecords records = MemoryRecords.withRecords(initialOffset, Compression.NONE, simpleRecords);
-        return records.firstBatch();
+        final Iterator<MutableRecordBatch> iterator = records.batches().iterator();
+        if (!iterator.hasNext()) {
+            return null;
+        }
+        return iterator.next();
     }
 
     byte[] batchToBytes(final RecordBatch batch) {
@@ -170,9 +209,10 @@ class BatchBufferTest {
 
     @Test
     void addBatchNulls() {
-        final BatchBuffer buffer = new BatchBuffer();
+        final Time time = Time.SYSTEM;
+        final BatchBuffer buffer = new BatchBuffer(time);
 
-        assertThatThrownBy(() -> buffer.addBatch(null, createBatch(), 0))
+        assertThatThrownBy(() -> buffer.addBatch(null, createBatch(time), 0))
             .isInstanceOf(NullPointerException.class)
             .hasMessage("topicPartition cannot be null");
         assertThatThrownBy(() -> buffer.addBatch(T0P0, null, 0))

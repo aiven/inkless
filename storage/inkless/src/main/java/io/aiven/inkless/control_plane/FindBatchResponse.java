@@ -22,10 +22,18 @@ public record FindBatchResponse(Errors errors,
     }
 
     public static FindBatchResponse unknownTopicOrPartition() {
-        return new FindBatchResponse(Errors.UNKNOWN_TOPIC_OR_PARTITION, null, UNKNOWN_OFFSET, UNKNOWN_OFFSET);
+        return new FindBatchResponse(
+            Errors.UNKNOWN_TOPIC_OR_PARTITION,
+            null,
+            UNKNOWN_OFFSET,
+            UNKNOWN_OFFSET);
     }
 
     public static FindBatchResponse unknownServerError() {
-        return new FindBatchResponse(Errors.UNKNOWN_SERVER_ERROR, null, UNKNOWN_OFFSET, UNKNOWN_OFFSET);
+        return new FindBatchResponse(
+            Errors.UNKNOWN_SERVER_ERROR,
+            null,
+            UNKNOWN_OFFSET,
+            UNKNOWN_OFFSET);
     }
 }
