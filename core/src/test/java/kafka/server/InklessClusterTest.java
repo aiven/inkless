@@ -31,6 +31,8 @@ import org.apache.kafka.clients.producer.Producer;
 import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.common.TopicPartition;
+import org.apache.kafka.common.config.TopicConfig;
+import org.apache.kafka.common.record.TimestampType;
 import org.apache.kafka.common.serialization.ByteArrayDeserializer;
 import org.apache.kafka.common.serialization.ByteArraySerializer;
 import org.apache.kafka.common.test.KafkaClusterTestKit;
@@ -38,7 +40,9 @@ import org.apache.kafka.common.test.TestKitNodes;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.testcontainers.containers.localstack.LocalStackContainer;
@@ -49,10 +53,9 @@ import java.time.Duration;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.stream.Stream;
 
 import io.aiven.inkless.config.InklessConfig;
 import io.aiven.inkless.control_plane.InMemoryControlPlane;
@@ -66,6 +69,7 @@ import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.CreateBucketRequest;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 @Testcontainers
 public class InklessClusterTest {
@@ -116,8 +120,20 @@ public class InklessClusterTest {
         cluster.close();
     }
 
-    @Test
-    public void createInklessTopic() throws ExecutionException, InterruptedException, TimeoutException {
+    public static Stream<Arguments> params() {
+        return Stream.of(
+            Arguments.of(
+                TimestampType.CREATE_TIME
+            ),
+            Arguments.of(
+                TimestampType.LOG_APPEND_TIME
+            )
+        );
+    }
+
+    @ParameterizedTest
+    @MethodSource("params")
+    public void createInklessTopic(final TimestampType timestampType) throws Exception {
         Map<String, Object> clientConfigs = new HashMap<>();
         clientConfigs.put(CommonClientConfigs.BOOTSTRAP_SERVERS_CONFIG, cluster.bootstrapServers());
         clientConfigs.put(ProducerConfig.ENABLE_IDEMPOTENCE_CONFIG, "false");
@@ -129,19 +145,25 @@ public class InklessClusterTest {
         byte numRecords = 10;
 
         try (Admin admin = AdminClient.create(clientConfigs)) {
-            CreateTopicsResult topics = admin.createTopics(Collections.singletonList(new NewTopic(topicName, 1, (short) 1)));
+            final NewTopic topic = new NewTopic(topicName, 1, (short) 1)
+                .configs(Map.of(
+                    TopicConfig.MESSAGE_TIMESTAMP_TYPE_CONFIG, timestampType.name
+                ));
+            CreateTopicsResult topics = admin.createTopics(Collections.singletonList(topic));
             topics.all().get(10, TimeUnit.SECONDS);
         }
 
         AtomicInteger recordsProduced = new AtomicInteger();
+        final long now = System.currentTimeMillis();
         try (Producer<byte[], byte[]> producer = new KafkaProducer<>(clientConfigs)) {
             for (byte i = 0; i < numRecords; i++) {
                 byte[] value = new byte[]{i};
-                producer.send(new ProducerRecord<>(topicName, value), (metadata, exception) -> {
+                final ProducerRecord<byte[], byte[]> record = new ProducerRecord<>(topicName, 0, now, null, value);
+                producer.send(record, (metadata, exception) -> {
                     if (exception != null) {
                         log.error("Failed to send record", exception);
                     } else {
-                        log.info("Committed {} at offset {}", value, metadata.offset());
+                        log.info("Committed {} at offset {} at {}", value, metadata.offset(), now);
                         recordsProduced.incrementAndGet();
                     }
                 });
@@ -156,7 +178,11 @@ public class InklessClusterTest {
             consumer.assign(Collections.singletonList(new TopicPartition(topicName, 0)));
             ConsumerRecords<byte[], byte[]> poll = consumer.poll(Duration.ofSeconds(30));
             for (ConsumerRecord<byte[], byte[]> record : poll) {
-                log.info("Received record {} with data {}", recordsConsumed, record.value());
+                log.info("Received record {} with data {} at {}", recordsConsumed, record.value(), record.timestamp());
+                switch (timestampType) {
+                    case CREATE_TIME -> assertEquals(now, record.timestamp());
+                    case LOG_APPEND_TIME -> assertTrue(record.timestamp() > now);
+                }
                 recordsConsumed++;
             }
         }

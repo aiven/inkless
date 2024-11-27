@@ -40,7 +40,6 @@ class FileCommitJobTest {
     static final TopicPartition T0P0 = new TopicPartition("topic0", 0);
     static final TopicPartition T0P1 = new TopicPartition("topic0", 1);
     static final TopicPartition T1P0 = new TopicPartition("topic1", 0);
-    static final TopicPartition T1P1 = new TopicPartition("topic1", 1);
 
     static final Map<TopicPartition, MemoryRecords> REQUEST_0 = Map.of(
         T0P0, MemoryRecords.withRecords(Compression.NONE, new SimpleRecord(new byte[10])),
@@ -80,10 +79,10 @@ class FileCommitJobTest {
         );
 
         final List<CommitBatchResponse> commitBatchResponses = List.of(
-            new CommitBatchResponse(Errors.NONE, 0, 0),
-            new CommitBatchResponse(Errors.INVALID_TOPIC_EXCEPTION, -1, 0),  // some arbitrary uploadError
-            new CommitBatchResponse(Errors.NONE, 20, 0),
-            new CommitBatchResponse(Errors.NONE, 30, 0)
+            new CommitBatchResponse(Errors.NONE, 0, 10, 0),
+            new CommitBatchResponse(Errors.INVALID_TOPIC_EXCEPTION, -1, -1, -1),  // some arbitrary uploadError
+            new CommitBatchResponse(Errors.NONE, 20, 10, 0),
+            new CommitBatchResponse(Errors.NONE, 30, 10, 0)
         );
 
         when(controlPlane.commitFile(eq(OBJECT_KEY), eq(COMMIT_BATCH_REQUESTS)))
@@ -97,12 +96,12 @@ class FileCommitJobTest {
         job.run();
 
         assertThat(awaitingFuturesByRequest.get(0)).isCompletedWithValue(Map.of(
-            T0P0, new PartitionResponse(Errors.NONE, 0, -1, -1),
+            T0P0, new PartitionResponse(Errors.NONE, 0, 10, 0),
             T0P1, new PartitionResponse(Errors.INVALID_TOPIC_EXCEPTION, -1, -1, -1)
         ));
         assertThat(awaitingFuturesByRequest.get(1)).isCompletedWithValue(Map.of(
-            T0P1, new PartitionResponse(Errors.NONE, 20, -1, -1),
-            T1P0, new PartitionResponse(Errors.NONE, 30, -1, -1)
+            T0P1, new PartitionResponse(Errors.NONE, 20, 10, 0),
+            T1P0, new PartitionResponse(Errors.NONE, 30, 10, 0)
         ));
         verify(commitTimeDurationCallback).accept(eq(10L));
     }

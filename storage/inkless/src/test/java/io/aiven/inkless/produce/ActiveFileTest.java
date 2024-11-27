@@ -5,6 +5,7 @@ import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.compress.Compression;
 import org.apache.kafka.common.record.MemoryRecords;
 import org.apache.kafka.common.record.SimpleRecord;
+import org.apache.kafka.common.utils.Time;
 
 import org.junit.jupiter.api.Test;
 
@@ -22,18 +23,18 @@ class ActiveFileTest {
     static final TopicPartition T0P1 = new TopicPartition("topic0", 1);
     static final TopicPartition T1P0 = new TopicPartition("topic1", 0);
 
-        @Test
-        void addNull() {
-            final ActiveFile file = new ActiveFile(Instant.EPOCH);
+    @Test
+    void addNull() {
+        final ActiveFile file = new ActiveFile(Time.SYSTEM, Instant.EPOCH);
 
-            assertThatThrownBy(() -> file.add(null))
-                .isInstanceOf(NullPointerException.class)
-                .hasMessage("entriesPerPartition cannot be null");
-        }
+        assertThatThrownBy(() -> file.add(null))
+            .isInstanceOf(NullPointerException.class)
+            .hasMessage("entriesPerPartition cannot be null");
+    }
 
     @Test
     void add() {
-        final ActiveFile file = new ActiveFile(Instant.EPOCH);
+        final ActiveFile file = new ActiveFile(Time.SYSTEM, Instant.EPOCH);
 
         final var result = file.add(Map.of(
             T0P0, MemoryRecords.withRecords(Compression.NONE, new SimpleRecord(new byte[10]))
@@ -43,7 +44,7 @@ class ActiveFileTest {
 
     @Test
     void empty() {
-        final ActiveFile file = new ActiveFile(Instant.EPOCH);
+        final ActiveFile file = new ActiveFile(Time.SYSTEM, Instant.EPOCH);
 
         assertThat(file.isEmpty()).isTrue();
 
@@ -56,7 +57,7 @@ class ActiveFileTest {
 
     @Test
     void size() {
-        final ActiveFile file = new ActiveFile(Instant.EPOCH);
+        final ActiveFile file = new ActiveFile(Time.SYSTEM, Instant.EPOCH);
 
         assertThat(file.size()).isZero();
 
@@ -70,7 +71,7 @@ class ActiveFileTest {
     @Test
     void closeEmpty() {
         final Instant start = Instant.ofEpochMilli(10);
-        final ActiveFile file = new ActiveFile(start);
+        final ActiveFile file = new ActiveFile(Time.SYSTEM, start);
         final ClosedFile result = file.close();
 
         assertThat(result)
@@ -83,7 +84,7 @@ class ActiveFileTest {
     @Test
     void closeNonEmpty() {
         final Instant start = Instant.ofEpochMilli(10);
-        final ActiveFile file = new ActiveFile(start);
+        final ActiveFile file = new ActiveFile(Time.SYSTEM, start);
         final Map<TopicPartition, MemoryRecords> request1 = Map.of(
             T0P0, MemoryRecords.withRecords(Compression.NONE, new SimpleRecord(new byte[10])),
             T0P1, MemoryRecords.withRecords(Compression.NONE, new SimpleRecord(new byte[10]))
