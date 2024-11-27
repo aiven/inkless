@@ -34,3 +34,16 @@ docker_build: build_release docker_build_prep
 	cd docker && \
 	  .venv/bin/python3 docker_build_test.py -b kafka/test --image-tag=$(VERSION) --image-type=inkless
 
+.PHONY: fmt
+fmt:
+	./gradlew :core:spotlessJavaApply
+	./gradlew :storage:inkless:spotlessJavaApply
+
+.PHONY: test
+test:
+	./gradlew :storage:inkless:test
+	./gradlew :core:test --tests InklessClusterTest
+
+.PHONY: clean
+clean:
+	./gradlew clean
