@@ -11,6 +11,8 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
+import java.util.function.BiConsumer;
+import java.util.function.Consumer;
 
 import io.aiven.inkless.TimeUtils;
 
@@ -25,18 +27,23 @@ class ActiveFile {
     private int requestId = -1;
     private final BatchBuffer buffer;
     private final Map<Integer, Map<TopicPartition, MemoryRecords>> originalRequests = new HashMap<>();
-    private final Map<Integer, CompletableFuture<Map<TopicPartition, PartitionResponse>>> awaitingFuturesByRequest =
-        new HashMap<>();
+    private final Map<Integer, CompletableFuture<Map<TopicPartition, PartitionResponse>>> awaitingFuturesByRequest = new HashMap<>();
+    private final Consumer<String> requestRateMark;
 
-    ActiveFile(final Time time) {
-        this.buffer = new BatchBuffer(time);
+    ActiveFile(final Time time,
+               final Consumer<String> requestRateMark,
+               final BiConsumer<String, Integer> bytesInRateMark,
+               final BiConsumer<String, Long> messagesInRateMark) {
+        this.buffer = new BatchBuffer(time, bytesInRateMark, messagesInRateMark);
         this.start = TimeUtils.monotonicNow(time);
+        this.requestRateMark = requestRateMark;
     }
 
     // For testing
     ActiveFile(final Time time, final Instant start) {
-        this.buffer = new BatchBuffer(time);
+        this.buffer = new BatchBuffer(time, (topic, bytes) -> {}, (topic, messages) -> {});
         this.start = start;
+        this.requestRateMark = request -> {};
     }
 
     CompletableFuture<Map<TopicPartition, PartitionResponse>> add(
@@ -48,6 +55,9 @@ class ActiveFile {
         originalRequests.put(requestId, entriesPerPartition);
 
         for (final var entry : entriesPerPartition.entrySet()) {
+            final String topic = entry.getKey().topic();
+            requestRateMark.accept(topic);
+
             for (final var batch : entry.getValue().batches()) {
                 buffer.addBatch(entry.getKey(), batch, requestId);
             }

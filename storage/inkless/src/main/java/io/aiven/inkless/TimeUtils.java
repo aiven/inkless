@@ -24,7 +24,7 @@ public class TimeUtils {
     /**
      * Measure the duration of a {@link Callable}.
      */
-    public static <V> V measureDurationMs(final Time time, final Callable<V> f, Consumer<Long> callback) throws Exception {
+    public static <V> V measureDurationMs(final Time time, final Callable<V> f, final Consumer<Long> callback) throws Exception {
         final Instant start = TimeUtils.monotonicNow(time);
         try {
             return f.call();
@@ -37,7 +37,7 @@ public class TimeUtils {
     /**
      * Measure the duration of a {@link Runnable}.
      */
-    public static void measureDurationMs(final Time time, final Runnable f, Consumer<Long> callback) {
+    public static void measureDurationMs(final Time time, final Runnable f, final Consumer<Long> callback) {
         try {
             measureDurationMs(time,
                 () -> {
