@@ -10,12 +10,15 @@ import org.apache.kafka.common.record.Records;
 import org.apache.kafka.common.utils.AbstractIterator;
 import org.apache.kafka.common.utils.FlattenedIterator;
 import org.apache.kafka.common.utils.Time;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.util.List;
 import java.util.Objects;
 
 public class ConcatenatedRecords extends AbstractRecords {
+    private static final Logger LOG = LoggerFactory.getLogger(ConcatenatedRecords.class);
 
     private final List<MemoryRecords> backingRecords;
     private final int sizeInBytes;
@@ -47,6 +50,7 @@ public class ConcatenatedRecords extends AbstractRecords {
 
     @Override
     public int writeTo(TransferableChannel channel, int position, int length) throws IOException {
+        LOG.info("Writing records to channel, position: {}, length: {}", position, length);
         int recordsStart = 0;
         for (MemoryRecords records : backingRecords) {
             int recordsSize = records.sizeInBytes();
@@ -60,6 +64,7 @@ public class ConcatenatedRecords extends AbstractRecords {
             // The first byte of position is somewhere in this buffer
             int writePosition = position - recordsStart;
             int writeLength = Math.min(recordsSize, length);
+            LOG.info("Writing records, writePosition: {}, writeLength: {} @ record start: {}", writePosition, writeLength, recordsStart);
             return records.writeTo(channel, writePosition, writeLength);
         }
         return 0;
