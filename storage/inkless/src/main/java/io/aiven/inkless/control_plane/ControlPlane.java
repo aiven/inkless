@@ -1,6 +1,7 @@
 // Copyright (c) 2024 Aiven, Helsinki, Finland. https://aiven.io/
 package io.aiven.inkless.control_plane;
 
+import org.apache.kafka.common.Configurable;
 import org.apache.kafka.common.utils.Time;
 
 import java.lang.reflect.Constructor;
@@ -10,7 +11,7 @@ import java.util.List;
 import io.aiven.inkless.common.ObjectKey;
 import io.aiven.inkless.config.InklessConfig;
 
-public interface ControlPlane {
+public interface ControlPlane extends Configurable {
     List<CommitBatchResponse> commitFile(ObjectKey objectKey,
                                          List<CommitBatchRequest> batches);
 
@@ -22,7 +23,9 @@ public interface ControlPlane {
         final Class<ControlPlane> controlPlaneClass = config.controlPlaneClass();
         try {
             final Constructor<ControlPlane> ctor = controlPlaneClass.getConstructor(Time.class, MetadataView.class);
-            return ctor.newInstance(time, metadata);
+            final ControlPlane result = ctor.newInstance(time, metadata);
+            result.configure(config.controlPlaneConfig());
+            return result;
         } catch (final NoSuchMethodException | InstantiationException | IllegalAccessException |
                        InvocationTargetException e) {
             throw new RuntimeException(e);
