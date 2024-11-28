@@ -3,6 +3,7 @@ package io.aiven.inkless.consume;
 
 import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.protocol.Errors;
+import org.apache.kafka.common.utils.Time;
 
 import java.util.List;
 import java.util.Map;
@@ -10,8 +11,10 @@ import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
+import java.util.function.Consumer;
 import java.util.stream.Collectors;
 
+import io.aiven.inkless.TimeUtils;
 import io.aiven.inkless.common.ByteRange;
 import io.aiven.inkless.control_plane.BatchInfo;
 import io.aiven.inkless.control_plane.FindBatchResponse;
@@ -19,20 +22,37 @@ import io.aiven.inkless.storage_backend.common.ObjectFetcher;
 
 public class FetchPlannerJob implements Callable<List<Future<FetchedFile>>> {
 
+    private final Time time;
     private final ObjectFetcher objectFetcher;
     private final ExecutorService dataExecutor;
     private final Future<Map<TopicIdPartition, FindBatchResponse>> batchCoordinatesFuture;
+    private final Consumer<Long> durationCallback;
+    private final Consumer<Long> fileFetchDurationCallback;
 
-    public FetchPlannerJob(ObjectFetcher objectFetcher, ExecutorService dataExecutor, Future<Map<TopicIdPartition, FindBatchResponse>> batchCoordinatesFuture) {
+    public FetchPlannerJob(Time time,
+                           ObjectFetcher objectFetcher,
+                           ExecutorService dataExecutor,
+                           Future<Map<TopicIdPartition, FindBatchResponse>> batchCoordinatesFuture,
+                           Consumer<Long> durationCallback,
+                           Consumer<Long> fileFetchDurationCallback) {
+        this.time = time;
         this.objectFetcher = objectFetcher;
         this.dataExecutor = dataExecutor;
         this.batchCoordinatesFuture = batchCoordinatesFuture;
+        this.durationCallback = durationCallback;
+        this.fileFetchDurationCallback = fileFetchDurationCallback;
     }
 
-    public List<Future<FetchedFile>> call() {
+    public List<Future<FetchedFile>> call() throws Exception {
+        return TimeUtils.measureDurationMs(time, this::doWork, durationCallback);
+    }
+
+    private List<Future<FetchedFile>> doWork() {
         try {
             Map<TopicIdPartition, FindBatchResponse> batchCoordinates = batchCoordinatesFuture.get();
+
             List<Callable<FetchedFile>> jobs = planJobs(batchCoordinates);
+
             return submitAll(jobs);
         } catch (InterruptedException e) {
             throw new RuntimeException(e);
@@ -56,7 +76,7 @@ public class FetchPlannerJob implements Callable<List<Future<FetchedFile>>> {
                 .collect(Collectors.toMap(BatchInfo::objectKey, BatchInfo::range, ByteRange::merge))
                 .entrySet()
                 .stream()
-                .map(e -> new FileFetchJob(objectFetcher, e.getKey(), e.getValue()))
+                .map(e -> new FileFetchJob(time, objectFetcher, e.getKey(), e.getValue(), fileFetchDurationCallback))
                 .collect(Collectors.toList());
     }
 }

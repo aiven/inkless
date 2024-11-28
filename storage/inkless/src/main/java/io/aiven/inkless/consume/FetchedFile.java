@@ -10,5 +10,4 @@ public record FetchedFile(
         ObjectKey key,
         ByteRange range,
         ByteBuffer buffer) {
-
 }

@@ -9,6 +9,7 @@ import org.apache.kafka.common.record.MemoryRecords;
 import org.apache.kafka.common.record.SimpleRecord;
 import org.apache.kafka.common.record.TimestampType;
 import org.apache.kafka.common.requests.FetchRequest;
+import org.apache.kafka.common.utils.MockTime;
 import org.apache.kafka.server.storage.log.FetchPartitionData;
 
 import org.junit.jupiter.api.Test;
@@ -46,7 +47,13 @@ public class FetchCompleterJobTest {
 
     @Test
     public void testEmptyFetch() {
-        FetchCompleterJob job = new FetchCompleterJob(Collections.emptyMap(), CompletableFuture.completedFuture(Collections.emptyMap()), CompletableFuture.completedFuture(Collections.emptyList()));
+        FetchCompleterJob job = new FetchCompleterJob(
+            new MockTime(),
+            Collections.emptyMap(),
+            CompletableFuture.completedFuture(Collections.emptyMap()),
+            CompletableFuture.completedFuture(Collections.emptyList()),
+            durationMs -> {}
+        );
         Map<TopicIdPartition, FetchPartitionData> result = job.get();
         assertTrue(result.isEmpty());
     }
@@ -56,7 +63,13 @@ public class FetchCompleterJobTest {
         Map<TopicIdPartition, FetchRequest.PartitionData> fetchInfos = Map.of(
                 partition0, new FetchRequest.PartitionData(topicId, 0, 0, 1000, Optional.empty())
         );
-        FetchCompleterJob job = new FetchCompleterJob(fetchInfos, CompletableFuture.completedFuture(Collections.emptyMap()), CompletableFuture.completedFuture(Collections.emptyList()));
+        FetchCompleterJob job = new FetchCompleterJob(
+            new MockTime(),
+            fetchInfos,
+            CompletableFuture.completedFuture(Collections.emptyMap()),
+            CompletableFuture.completedFuture(Collections.emptyList()),
+            durationMs -> {}
+        );
         Map<TopicIdPartition, FetchPartitionData> result = job.get();
         FetchPartitionData data = result.get(partition0);
         assertEquals(Errors.KAFKA_STORAGE_ERROR, data.error);
@@ -72,7 +85,13 @@ public class FetchCompleterJobTest {
         Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of(
                 partition0, FindBatchResponse.success(Collections.emptyList(), logStartOffset, highWatermark)
         );
-        FetchCompleterJob job = new FetchCompleterJob(fetchInfos, CompletableFuture.completedFuture(coordinates), CompletableFuture.completedFuture(Collections.emptyList()));
+        FetchCompleterJob job = new FetchCompleterJob(
+            new MockTime(),
+            fetchInfos,
+            CompletableFuture.completedFuture(coordinates),
+            CompletableFuture.completedFuture(Collections.emptyList()),
+            durationMs -> {}
+        );
         Map<TopicIdPartition, FetchPartitionData> result = job.get();
         FetchPartitionData data = result.get(partition0);
         assertEquals(Errors.NONE, data.error);
@@ -94,7 +113,13 @@ public class FetchCompleterJobTest {
                         new BatchInfo(objectA, 0, 10, 0, 1, TimestampType.CREATE_TIME, logAppendTime)
                 ), logStartOffset, highWatermark)
         );
-        FetchCompleterJob job = new FetchCompleterJob(fetchInfos, CompletableFuture.completedFuture(coordinates), CompletableFuture.completedFuture(Collections.emptyList()));
+        FetchCompleterJob job = new FetchCompleterJob(
+            new MockTime(),
+            fetchInfos,
+            CompletableFuture.completedFuture(coordinates),
+            CompletableFuture.completedFuture(Collections.emptyList()),
+            durationMs -> {}
+        );
         Map<TopicIdPartition, FetchPartitionData> result = job.get();
         FetchPartitionData data = result.get(partition0);
         assertEquals(Errors.KAFKA_STORAGE_ERROR, data.error);
@@ -121,7 +146,13 @@ public class FetchCompleterJobTest {
                 new FetchedFile(objectA, new ByteRange(0, records.sizeInBytes()), records.buffer()),
                 new FetchedFile(objectB, new ByteRange(0, records.sizeInBytes()), records.buffer())
         ).map(CompletableFuture::completedFuture).collect(Collectors.toList());
-        FetchCompleterJob job = new FetchCompleterJob(fetchInfos, CompletableFuture.completedFuture(coordinates), CompletableFuture.completedFuture(files));
+        FetchCompleterJob job = new FetchCompleterJob(
+            new MockTime(),
+            fetchInfos,
+            CompletableFuture.completedFuture(coordinates),
+            CompletableFuture.completedFuture(files),
+            durationMs -> {}
+        );
         Map<TopicIdPartition, FetchPartitionData> result = job.get();
         FetchPartitionData data = result.get(partition0);
         assertEquals(2 * records.sizeInBytes(), data.records.sizeInBytes());
@@ -149,7 +180,13 @@ public class FetchCompleterJobTest {
         List<Future<FetchedFile>> files = Stream.of(
                 new FetchedFile(objectA, new ByteRange(0, records.sizeInBytes()), records.buffer())
         ).map(CompletableFuture::completedFuture).collect(Collectors.toList());
-        FetchCompleterJob job = new FetchCompleterJob(fetchInfos, CompletableFuture.completedFuture(coordinates), CompletableFuture.completedFuture(files));
+        FetchCompleterJob job = new FetchCompleterJob(
+            new MockTime(),
+            fetchInfos,
+            CompletableFuture.completedFuture(coordinates),
+            CompletableFuture.completedFuture(files),
+            durationMs -> {}
+        );
         Map<TopicIdPartition, FetchPartitionData> result = job.get();
         FetchPartitionData data = result.get(partition0);
         assertEquals(records.sizeInBytes(), data.records.sizeInBytes());
