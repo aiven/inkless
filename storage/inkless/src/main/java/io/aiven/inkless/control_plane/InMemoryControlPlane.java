@@ -79,94 +79,121 @@ public class InMemoryControlPlane implements ControlPlane {
             }
         }
 
-        final List<CommitBatchResponse> responses = new ArrayList<>();
         final long now = time.milliseconds();
 
-        for (final CommitBatchRequest request : batches) {
-            final String topicName = request.topicPartition().topic();
-            final Uuid topicId = metadataView.getTopicId(topicName);
-            final Set<TopicPartition> partitions = metadataView.getTopicPartitions(topicName);
-            if (topicId == Uuid.ZERO_UUID
-                || !partitions.contains(request.topicPartition())) {
-                responses.add(CommitBatchResponse.unknownTopicOrPartition());
-                continue;
-            }
+        final SplitMapper<CommitBatchRequest, CommitBatchResponse> splitMapper = new SplitMapper<>(
+            batches, this::partitionExistsInMetadataForCommitBatchRequest
+        );
 
-            final TopicIdPartition topicIdPartition = new TopicIdPartition(topicId, request.topicPartition());
-            final LogInfo logInfo = logs.get(topicIdPartition);
-            final TreeMap<Long, BatchInfo> coordinates = this.batches.get(topicIdPartition);
-            if (logInfo == null || coordinates == null) {
-                responses.add(CommitBatchResponse.unknownTopicOrPartition());
-                continue;
-            }
+        // Right away set answer for partitions not present in the metadata.
+        splitMapper.setFalseOut(
+            splitMapper.getFalseIn().map(r -> CommitBatchResponse.unknownTopicOrPartition()).iterator()
+        );
 
-            final long firstOffset = logInfo.highWatermark;
-            logInfo.highWatermark += request.numberOfRecords();
-            final long lastOffset = logInfo.highWatermark - 1;
-            final BatchInfo batchToStore = new BatchInfo(
-                    objectKey,
-                    request.byteOffset(),
-                    request.size(),
-                    firstOffset,
-                    request.numberOfRecords(),
-                    metadataView.getTopicConfig(topicName).messageTimestampType,
-                    now
-            );
-            coordinates.put(lastOffset, batchToStore);
-            responses.add(CommitBatchResponse.success(firstOffset, now, logInfo.logStartOffset));
+        // Process those partitions that are present in the metadata.
+        splitMapper.setTrueOut(
+            splitMapper.getTrueIn().map(request -> commitFileForExistingPartition(now, objectKey, request)).iterator()
+        );
+
+        return splitMapper.getOut();
+    }
+
+    private boolean partitionExistsInMetadataForCommitBatchRequest(final CommitBatchRequest request) {
+        final String topicName = request.topicPartition().topic();
+        final Uuid topicId = metadataView.getTopicId(topicName);
+        final Set<TopicPartition> partitions = metadataView.getTopicPartitions(topicName);
+        return topicId != Uuid.ZERO_UUID
+            && partitions.contains(request.topicPartition());
+    }
+
+    private CommitBatchResponse commitFileForExistingPartition(final long now,
+                                                               final ObjectKey objectKey,
+                                                               final CommitBatchRequest request) {
+        final String topicName = request.topicPartition().topic();
+        final Uuid topicId = metadataView.getTopicId(topicName);
+
+        final TopicIdPartition topicIdPartition = new TopicIdPartition(topicId, request.topicPartition());
+        final LogInfo logInfo = logs.get(topicIdPartition);
+        final TreeMap<Long, BatchInfo> coordinates = this.batches.get(topicIdPartition);
+        if (logInfo == null || coordinates == null) {
+            return CommitBatchResponse.unknownTopicOrPartition();
         }
 
-        return responses;
+        final long firstOffset = logInfo.highWatermark;
+        logInfo.highWatermark += request.numberOfRecords();
+        final long lastOffset = logInfo.highWatermark - 1;
+        final BatchInfo batchToStore = new BatchInfo(
+            objectKey,
+            request.byteOffset(),
+            request.size(),
+            firstOffset,
+            request.numberOfRecords(),
+            metadataView.getTopicConfig(topicName).messageTimestampType,
+            now
+        );
+        coordinates.put(lastOffset, batchToStore);
+        return CommitBatchResponse.success(firstOffset, now, logInfo.logStartOffset);
     }
 
     @Override
     public synchronized List<FindBatchResponse> findBatches(final List<FindBatchRequest> findBatchRequests,
-                                                           final boolean minOneMessage,
-                                                           final int fetchMaxBytes) {
-        final List<FindBatchResponse> result = new ArrayList<>();
+                                                            final boolean minOneMessage,
+                                                            final int fetchMaxBytes) {
+        final SplitMapper<FindBatchRequest, FindBatchResponse> splitMapper = new SplitMapper<>(
+            findBatchRequests, this::partitionExistsInMetadataForFindBatchRequest
+        );
 
-        for (final FindBatchRequest request : findBatchRequests) {
-            final String topicName = request.topicIdPartition().topic();
-            final Uuid topicId = metadataView.getTopicId(topicName);
-            final Set<TopicPartition> partitions = metadataView.getTopicPartitions(topicName);
-            if (!topicId.equals(request.topicIdPartition().topicId())
-                || !partitions.contains(request.topicIdPartition().topicPartition())) {
-                result.add(FindBatchResponse.unknownTopicOrPartition());
-                continue;
-            }
+        // Right away set answer for partitions not present in the metadata.
+        splitMapper.setFalseOut(
+            splitMapper.getFalseIn().map(r -> FindBatchResponse.unknownTopicOrPartition()).iterator()
+        );
 
-            final LogInfo logInfo = logs.get(request.topicIdPartition());
-            final TreeMap<Long, BatchInfo> coordinates = this.batches.get(request.topicIdPartition());
-            if (logInfo == null || coordinates == null) {
-                result.add(FindBatchResponse.unknownTopicOrPartition());
-                continue;
-            }
+        // Process those partitions that are present in the metadata.
+        splitMapper.setTrueOut(
+            splitMapper.getTrueIn()
+                .map(request -> findBatchesForExistingPartition(request, minOneMessage, fetchMaxBytes)).iterator()
+        );
 
-            if (request.offset() < 0) {
-                logger.debug("Invalid offset {} for {}", request.offset(), request.topicIdPartition());
-                result.add(FindBatchResponse.offsetOutOfRange(logInfo.logStartOffset, logInfo.highWatermark));
-                continue;
-            }
+        return splitMapper.getOut();
+    }
 
-            if (request.offset() >= logInfo.highWatermark) {
-                result.add(FindBatchResponse.offsetOutOfRange(logInfo.logStartOffset, logInfo.highWatermark));
-                continue;
-            }
-
-            List<BatchInfo> batches = new ArrayList<>();
-            long totalSize = 0;
-            for (Long batchOffset : coordinates.navigableKeySet().tailSet(request.offset())) {
-                BatchInfo batch = coordinates.get(batchOffset);
-                batches.add(batch);
-                totalSize += batch.size();
-                if (totalSize > fetchMaxBytes) {
-                    break;
-                }
-            }
-            result.add(FindBatchResponse.success(batches, logInfo.logStartOffset, logInfo.highWatermark));
+    private FindBatchResponse findBatchesForExistingPartition(final FindBatchRequest request,
+                                                              final boolean minOneMessage,
+                                                              final int fetchMaxBytes) {
+        final LogInfo logInfo = logs.get(request.topicIdPartition());
+        final TreeMap<Long, BatchInfo> coordinates = this.batches.get(request.topicIdPartition());
+        if (logInfo == null || coordinates == null) {
+            return FindBatchResponse.unknownTopicOrPartition();
         }
 
-        return result;
+        if (request.offset() < 0) {
+            logger.debug("Invalid offset {} for {}", request.offset(), request.topicIdPartition());
+            return FindBatchResponse.offsetOutOfRange(logInfo.logStartOffset, logInfo.highWatermark);
+        }
+
+        if (request.offset() >= logInfo.highWatermark) {
+            return FindBatchResponse.offsetOutOfRange(logInfo.logStartOffset, logInfo.highWatermark);
+        }
+
+        List<BatchInfo> batches = new ArrayList<>();
+        long totalSize = 0;
+        for (Long batchOffset : coordinates.navigableKeySet().tailSet(request.offset())) {
+            BatchInfo batch = coordinates.get(batchOffset);
+            batches.add(batch);
+            totalSize += batch.size();
+            if (totalSize > fetchMaxBytes) {
+                break;
+            }
+        }
+        return FindBatchResponse.success(batches, logInfo.logStartOffset, logInfo.highWatermark);
+    }
+
+    private boolean partitionExistsInMetadataForFindBatchRequest(final FindBatchRequest request) {
+        final String topicName = request.topicIdPartition().topic();
+        final Uuid topicId = metadataView.getTopicId(topicName);
+        final Set<TopicPartition> partitions = metadataView.getTopicPartitions(topicName);
+        return topicId.equals(request.topicIdPartition().topicId())
+            && partitions.contains(request.topicIdPartition().topicPartition());
     }
 
     private static class LogInfo {
