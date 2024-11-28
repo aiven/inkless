@@ -7,6 +7,7 @@ import org.apache.kafka.common.record.MemoryRecords;
 import org.apache.kafka.common.record.MutableRecordBatch;
 import org.apache.kafka.common.record.TimestampType;
 import org.apache.kafka.common.requests.FetchRequest;
+import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.server.storage.log.FetchPartitionData;
 
 import java.util.ArrayList;
@@ -19,35 +20,47 @@ import java.util.OptionalInt;
 import java.util.OptionalLong;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
+import java.util.function.Consumer;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
+import io.aiven.inkless.TimeUtils;
 import io.aiven.inkless.common.ObjectKey;
 import io.aiven.inkless.control_plane.BatchInfo;
 import io.aiven.inkless.control_plane.FindBatchResponse;
 
 public class FetchCompleterJob implements Supplier<Map<TopicIdPartition, FetchPartitionData>> {
 
+    private final Time time;
     private final Map<TopicIdPartition, FetchRequest.PartitionData> fetchInfos;
     private final Future<Map<TopicIdPartition, FindBatchResponse>> coordinates;
     private final Future<List<Future<FetchedFile>>> backingData;
+    private final Consumer<Long> durationCallback;
 
-    public FetchCompleterJob(Map<TopicIdPartition, FetchRequest.PartitionData> fetchInfos,
+    public FetchCompleterJob(Time time,
+                             Map<TopicIdPartition, FetchRequest.PartitionData> fetchInfos,
                              Future<Map<TopicIdPartition, FindBatchResponse>> coordinates,
-                             Future<List<Future<FetchedFile>>> backingData) {
+                             Future<List<Future<FetchedFile>>> backingData,
+                             Consumer<Long> durationCallback) {
+        this.time = time;
         this.fetchInfos = fetchInfos;
         this.coordinates = coordinates;
         this.backingData = backingData;
+        this.durationCallback = durationCallback;
     }
 
     @Override
     public Map<TopicIdPartition, FetchPartitionData> get() {
         try {
-            Map<ObjectKey, List<FetchedFile>> files = waitForFileData();
-            return serveFetch(coordinates.get(), files);
-        } catch (InterruptedException | ExecutionException e) {
+            return TimeUtils.measureDurationMs(time, this::doGet, durationCallback);
+        } catch (Exception e) {
             throw new RuntimeException(e);
         }
+    }
+
+    private Map<TopicIdPartition, FetchPartitionData> doGet() throws ExecutionException, InterruptedException {
+            Map<ObjectKey, List<FetchedFile>> files = waitForFileData();
+            return serveFetch(coordinates.get(), files);
     }
 
     private Map<ObjectKey, List<FetchedFile>> waitForFileData() throws InterruptedException, ExecutionException {
