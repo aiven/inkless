@@ -19,8 +19,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class InklessConfigTest {
     @Test
     void publicConstructor() {
+        final String controlPlaneClass = InMemoryControlPlane.class.getCanonicalName();
         final InklessConfig config = new InklessConfig(new AbstractConfig(new ConfigDef(), Map.of(
-            "inkless.control.plane.class", InMemoryControlPlane.class.getCanonicalName(),
+            "inkless.control.plane.class", controlPlaneClass,
             "inkless.object.key.prefix", "prefix/",
             "inkless.produce.commit.interval.ms", "100",
             "inkless.produce.buffer.max.bytes", "1024",
@@ -29,6 +30,7 @@ class InklessConfigTest {
             "inkless.storage.backend.class", ConfigTestStorageBackend.class.getCanonicalName()
         )));
         assertThat(config.controlPlaneClass()).isEqualTo(InMemoryControlPlane.class);
+        assertThat(config.controlPlaneConfig()).isEqualTo(Map.of("class", controlPlaneClass));
         assertThat(config.objectKeyPrefix()).isEqualTo("prefix/");
         assertThat(config.commitInterval()).isEqualTo(Duration.ofMillis(100));
         assertThat(config.produceBufferMaxBytes()).isEqualTo(1024);
@@ -39,13 +41,15 @@ class InklessConfigTest {
 
     @Test
     void minimalConfig() {
+        final String controlPlaneClass = InMemoryControlPlane.class.getCanonicalName();
         final var config = new InklessConfig(
             Map.of(
-                "control.plane.class", InMemoryControlPlane.class.getCanonicalName(),
+                "control.plane.class", controlPlaneClass,
                 "storage.backend.class", ConfigTestStorageBackend.class.getCanonicalName()
             )
         );
         assertThat(config.controlPlaneClass()).isEqualTo(InMemoryControlPlane.class);
+        assertThat(config.controlPlaneConfig()).isEqualTo(Map.of("class", controlPlaneClass));
         assertThat(config.objectKeyPrefix()).isEqualTo("");
         assertThat(config.commitInterval()).isEqualTo(Duration.ofMillis(250));
         assertThat(config.produceBufferMaxBytes()).isEqualTo(8 * 1024 * 1024);
@@ -56,9 +60,10 @@ class InklessConfigTest {
 
     @Test
     void fullConfig() {
+        final String controlPlaneClass = InMemoryControlPlane.class.getCanonicalName();
         final var config = new InklessConfig(
             Map.of(
-                "control.plane.class", InMemoryControlPlane.class.getCanonicalName(),
+                "control.plane.class", controlPlaneClass,
                 "object.key.prefix", "prefix/",
                 "produce.commit.interval.ms", "100",
                 "produce.buffer.max.bytes", "1024",
@@ -68,6 +73,7 @@ class InklessConfigTest {
             )
         );
         assertThat(config.controlPlaneClass()).isEqualTo(InMemoryControlPlane.class);
+        assertThat(config.controlPlaneConfig()).isEqualTo(Map.of("class", controlPlaneClass));
         assertThat(config.objectKeyPrefix()).isEqualTo("prefix/");
         assertThat(config.commitInterval()).isEqualTo(Duration.ofMillis(100));
         assertThat(config.produceBufferMaxBytes()).isEqualTo(1024);
@@ -133,6 +139,25 @@ class InklessConfigTest {
         assertThatThrownBy(() -> new InklessConfig(config))
             .isInstanceOf(ConfigException.class)
             .hasMessage("Invalid value -1 for configuration produce.upload.backoff.ms: Value must be at least 0");
+    }
+
+    @Test
+    void controlPlaneConfiguration() {
+        final String controlPlaneClass = InMemoryControlPlane.class.getCanonicalName();
+        final String backendClass = ConfigTestStorageBackend.class.getCanonicalName();
+        final var config = new InklessConfig(
+            Map.of(
+                "control.plane.class", controlPlaneClass,
+                "control.plane.a", "1",
+                "control.plane.b", "str",
+                "storage.backend.class", backendClass,
+                "unrelated", "x"
+            )
+        );
+        assertThat(config.controlPlaneConfig()).isEqualTo(Map.of(
+            "class", controlPlaneClass,
+            "a", "1",
+            "b", "str"));
     }
 
     @Test

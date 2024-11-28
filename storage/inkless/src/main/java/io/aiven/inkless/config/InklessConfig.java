@@ -129,6 +129,10 @@ public class InklessConfig extends AbstractConfig {
         return (Class<ControlPlane>) getClass(CONTROL_PLANE_CLASS_CONFIG);
     }
 
+    public Map<String, Object> controlPlaneConfig() {
+        return originalsWithPrefix(CONTROL_PLANE_PREFIX);
+    }
+
     public String objectKeyPrefix() {
         return getString(OBJECT_KEY_PREFIX_CONFIG);
     }
