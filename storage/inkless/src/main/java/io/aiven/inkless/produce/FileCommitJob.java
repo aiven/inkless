@@ -48,27 +48,16 @@ class FileCommitJob implements Runnable {
 
     @Override
     public void run() {
-        TimeUtils.measureDurationMs(time, this::runInternal, durationCallback);
+        final UploadResult uploadResult = waitForUpload();
+        TimeUtils.measureDurationMs(time, () -> doCommit(uploadResult), durationCallback);
     }
 
-    public void runInternal() {
-        final WaitForFutureResult waitForFutureResult = waitForFuture();
-
-        if (waitForFutureResult.objectKey != null) {
-            LOGGER.debug("Uploaded {} successfully, committing", waitForFutureResult.objectKey);
-            finishCommitSuccessfully(waitForFutureResult.objectKey);
-        } else {
-            LOGGER.error("Upload failed: {}", waitForFutureResult.uploadError.getMessage());
-            finishCommitWithError();
-        }
-    }
-
-    private WaitForFutureResult waitForFuture() {
+    private UploadResult waitForUpload() {
         try {
             final ObjectKey objectKey = uploadFuture.get();
-            return new WaitForFutureResult(objectKey, null);
+            return new UploadResult(objectKey, null);
         } catch (final ExecutionException e) {
-            return new WaitForFutureResult(null, e.getCause());
+            return new UploadResult(null, e.getCause());
         } catch (final InterruptedException e) {
             // This is not expected as we try to shut down the executor gracefully.
             LOGGER.error("Interrupted", e);
@@ -76,8 +65,14 @@ class FileCommitJob implements Runnable {
         }
     }
 
-    private record WaitForFutureResult(ObjectKey objectKey,
-                                       Throwable uploadError) {
+    private void doCommit(final UploadResult result) {
+        if (result.objectKey != null) {
+            LOGGER.debug("Uploaded {} successfully, committing", result.objectKey);
+            finishCommitSuccessfully(result.objectKey);
+        } else {
+            LOGGER.error("Upload failed: {}", result.uploadError.getMessage());
+            finishCommitWithError();
+        }
     }
 
     private void finishCommitSuccessfully(final ObjectKey objectKey) {
@@ -122,5 +117,8 @@ class FileCommitJob implements Runnable {
                     ignore -> new ProduceResponse.PartitionResponse(Errors.KAFKA_STORAGE_ERROR, "Error commiting data")));
             entry.getValue().complete(result);
         }
+    }
+
+    private record UploadResult(ObjectKey objectKey, Throwable uploadError) {
     }
 }
