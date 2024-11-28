@@ -40,7 +40,8 @@ public class AppendInterceptor implements Closeable {
                 state.config().commitInterval(),
                 state.config().produceBufferMaxBytes(),
                 state.config().produceMaxUploadAttempts(),
-                state.config().produceUploadBackoff()
+                state.config().produceUploadBackoff(),
+                state.brokerTopicStats()
             )
         );
     }

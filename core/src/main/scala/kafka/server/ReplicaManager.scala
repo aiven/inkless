@@ -314,7 +314,12 @@ class ReplicaManager(val config: KafkaConfig,
 
   private val inklessSharedState = metadataCache match {
     case kraftMetadataCache: KRaftMetadataCache =>
-       SharedState.initialize(time, config.inklessConfig, new InklessMetadataView(kraftMetadataCache, () => logManager.currentDefaultConfig))
+       SharedState.initialize(
+         time,
+         config.inklessConfig,
+         new InklessMetadataView(kraftMetadataCache, () => logManager.currentDefaultConfig),
+         brokerTopicStats
+       )
     case _ => throw new RuntimeException("ZK not supported")
   }
   private val inklessAppendInterceptor = new AppendInterceptor(inklessSharedState)
