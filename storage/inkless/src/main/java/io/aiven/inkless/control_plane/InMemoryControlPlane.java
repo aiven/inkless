@@ -33,6 +33,11 @@ public class InMemoryControlPlane implements ControlPlane {
     }
 
     @Override
+    public void configure(final Map<String, ?> configs) {
+        // Do nothing.
+    }
+
+    @Override
     public synchronized List<CommitBatchResponse> commitFile(final ObjectKey objectKey,
                                                              final List<CommitBatchRequest> batches) {
         // Real-life batches cannot be empty, even if they have 0 records
