@@ -35,6 +35,14 @@ public class InMemoryControlPlane implements ControlPlane {
     @Override
     public synchronized List<CommitBatchResponse> commitFile(final ObjectKey objectKey,
                                                              final List<CommitBatchRequest> batches) {
+        // Real-life batches cannot be empty, even if they have 0 records
+        // Checking this just as an assertion.
+        for (final CommitBatchRequest batch : batches) {
+            if (batch.size() == 0) {
+                throw new IllegalArgumentException("Batches with size 0 are not allowed");
+            }
+        }
+
         final List<CommitBatchResponse> responses = new ArrayList<>();
         final long now = time.milliseconds();
 
