@@ -52,15 +52,12 @@ public class FetchCompleterJob implements Supplier<Map<TopicIdPartition, FetchPa
     @Override
     public Map<TopicIdPartition, FetchPartitionData> get() {
         try {
-            return TimeUtils.measureDurationMs(time, this::doGet, durationCallback);
+            final Map<ObjectKey, List<FetchedFile>> files = waitForFileData();
+            final Map<TopicIdPartition, FindBatchResponse> metadata = coordinates.get();
+            return TimeUtils.measureDurationMs(time, () -> serveFetch(metadata, files), durationCallback);
         } catch (Exception e) {
             throw new RuntimeException(e);
         }
-    }
-
-    private Map<TopicIdPartition, FetchPartitionData> doGet() throws ExecutionException, InterruptedException {
-            Map<ObjectKey, List<FetchedFile>> files = waitForFileData();
-            return serveFetch(coordinates.get(), files);
     }
 
     private Map<ObjectKey, List<FetchedFile>> waitForFileData() throws InterruptedException, ExecutionException {
