@@ -10,6 +10,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
+import java.util.function.BiConsumer;
 
 import io.aiven.inkless.control_plane.CommitBatchRequest;
 
@@ -21,8 +22,21 @@ class BatchBuffer {
 
     final BatchValidator batchValidator;
 
+    private final BiConsumer<String, Integer> bytesInRateMark;
+    private final BiConsumer<String, Long> messagesInRateMark;
+
+    BatchBuffer(Time time,
+                BiConsumer<String, Integer> bytesInRateMark,
+                BiConsumer<String, Long> messagesInRateMark) {
+        this.batchValidator = new BatchValidator(time);
+        this.bytesInRateMark = bytesInRateMark;
+        this.messagesInRateMark = messagesInRateMark;
+    }
+
     BatchBuffer(Time time) {
         this.batchValidator = new BatchValidator(time);
+        this.bytesInRateMark = (topic, bytes) -> {};
+        this.messagesInRateMark = (topic, messages) -> {};
     }
 
     void addBatch(final TopicPartition topicPartition, final MutableRecordBatch batch, final int requestId) {
@@ -32,8 +46,12 @@ class BatchBuffer {
         if (closed) {
             throw new IllegalStateException("Already closed");
         }
-        batches.add(new BatchHolder(topicPartition, batch, requestId));
+        final BatchHolder batchHolder = new BatchHolder(topicPartition, batch, requestId);
+        batches.add(batchHolder);
         totalSize += batch.sizeInBytes();
+
+        bytesInRateMark.accept(topicPartition.topic(), batch.sizeInBytes());
+        messagesInRateMark.accept(topicPartition.topic(), batchHolder.numberOfRecords());
     }
 
     CloseResult close() {

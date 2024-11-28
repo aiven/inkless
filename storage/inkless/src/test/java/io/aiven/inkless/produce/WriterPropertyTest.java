@@ -10,6 +10,7 @@ import org.apache.kafka.common.requests.ProduceResponse;
 import org.apache.kafka.common.utils.MockTime;
 import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.storage.internals.log.LogConfig;
+import org.apache.kafka.storage.log.metrics.BrokerTopicStats;
 
 import net.jqwik.api.Arbitraries;
 import net.jqwik.api.Arbitrary;
@@ -146,7 +147,8 @@ class WriterPropertyTest {
             Duration.ofMillis(commitIntervalMsAvg),  // it doesn't matter as the scheduling doesn't happen
             maxBufferSize,
             mock(ScheduledExecutorService.class),
-            fileCommitter
+            fileCommitter,
+            new BrokerTopicStats()
         );
 
         final Arbitrary<Map<TopicPartition, MemoryRecords>> requestArbitrary = requests();
