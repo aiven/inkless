@@ -31,7 +31,7 @@ public class FetchInterceptor implements Closeable {
 
     public FetchInterceptor(final SharedState state) {
         this.state = state;
-        this.reader = new Reader(state.controlPlane(), state.storage());
+        this.reader = new Reader(state.time(), state.controlPlane(), state.storage());
     }
 
     public boolean intercept(final FetchParams params,
