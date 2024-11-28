@@ -8,7 +8,6 @@ import org.apache.kafka.common.utils.Time;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Callable;
-import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
 import java.util.function.Consumer;
@@ -44,27 +43,13 @@ public class FetchPlannerJob implements Callable<List<Future<FetchedFile>>> {
     }
 
     public List<Future<FetchedFile>> call() throws Exception {
-        return TimeUtils.measureDurationMs(time, this::doWork, durationCallback);
+        final Map<TopicIdPartition, FindBatchResponse> batchCoordinates = batchCoordinatesFuture.get();
+        return TimeUtils.measureDurationMs(time, () -> doWork(batchCoordinates), durationCallback);
     }
 
-    private List<Future<FetchedFile>> doWork() {
-        try {
-            Map<TopicIdPartition, FindBatchResponse> batchCoordinates = batchCoordinatesFuture.get();
-
-            List<Callable<FetchedFile>> jobs = planJobs(batchCoordinates);
-
-            return submitAll(jobs);
-        } catch (InterruptedException e) {
-            throw new RuntimeException(e);
-        } catch (ExecutionException e) {
-            throw new RuntimeException("Unable to plan object fetches without coordinates", e);
-        }
-    }
-
-    private List<Future<FetchedFile>> submitAll(List<Callable<FetchedFile>> jobs) {
-        return jobs.stream()
-                .map(dataExecutor::submit)
-                .collect(Collectors.toList());
+    private List<Future<FetchedFile>> doWork(final Map<TopicIdPartition, FindBatchResponse> batchCoordinates) {
+        final List<Callable<FetchedFile>> jobs = planJobs(batchCoordinates);
+        return submitAll(jobs);
     }
 
     private List<Callable<FetchedFile>> planJobs(Map<TopicIdPartition, FindBatchResponse> batchCoordinates) {
@@ -76,7 +61,14 @@ public class FetchPlannerJob implements Callable<List<Future<FetchedFile>>> {
                 .collect(Collectors.toMap(BatchInfo::objectKey, BatchInfo::range, ByteRange::merge))
                 .entrySet()
                 .stream()
-                .map(e -> new FileFetchJob(time, objectFetcher, e.getKey(), e.getValue(), fileFetchDurationCallback))
+                .map(e ->
+                    new FileFetchJob(time, objectFetcher, e.getKey(), e.getValue(), fileFetchDurationCallback))
                 .collect(Collectors.toList());
+    }
+
+    private List<Future<FetchedFile>> submitAll(List<Callable<FetchedFile>> jobs) {
+        return jobs.stream()
+            .map(dataExecutor::submit)
+            .collect(Collectors.toList());
     }
 }
