@@ -137,12 +137,14 @@ public class InklessClusterTest {
         Map<String, Object> clientConfigs = new HashMap<>();
         clientConfigs.put(CommonClientConfigs.BOOTSTRAP_SERVERS_CONFIG, cluster.bootstrapServers());
         clientConfigs.put(ProducerConfig.ENABLE_IDEMPOTENCE_CONFIG, "false");
+        clientConfigs.put(ProducerConfig.LINGER_MS_CONFIG, "1000");
+        clientConfigs.put(ProducerConfig.BATCH_SIZE_CONFIG, "100000");
         clientConfigs.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, ByteArraySerializer.class.getName());
         clientConfigs.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, ByteArraySerializer.class.getName());
         clientConfigs.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, ByteArrayDeserializer.class.getName());
         clientConfigs.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, ByteArrayDeserializer.class.getName());
         String topicName = "inkless-topic";
-        byte numRecords = 10;
+        int numRecords = 500;
 
         try (Admin admin = AdminClient.create(clientConfigs)) {
             final NewTopic topic = new NewTopic(topicName, 1, (short) 1)
@@ -156,14 +158,14 @@ public class InklessClusterTest {
         AtomicInteger recordsProduced = new AtomicInteger();
         final long now = System.currentTimeMillis();
         try (Producer<byte[], byte[]> producer = new KafkaProducer<>(clientConfigs)) {
-            for (byte i = 0; i < numRecords; i++) {
-                byte[] value = new byte[]{i};
+            for (int i = 0; i < numRecords; i++) {
+                byte[] value = new byte[10000];
                 final ProducerRecord<byte[], byte[]> record = new ProducerRecord<>(topicName, 0, now, null, value);
                 producer.send(record, (metadata, exception) -> {
                     if (exception != null) {
                         log.error("Failed to send record", exception);
                     } else {
-                        log.info("Committed {} at offset {} at {}", value, metadata.offset(), now);
+                        log.info("Committed value at offset {} at {}", metadata.offset(), now);
                         recordsProduced.incrementAndGet();
                     }
                 });
@@ -178,7 +180,7 @@ public class InklessClusterTest {
             consumer.assign(Collections.singletonList(new TopicPartition(topicName, 0)));
             ConsumerRecords<byte[], byte[]> poll = consumer.poll(Duration.ofSeconds(30));
             for (ConsumerRecord<byte[], byte[]> record : poll) {
-                log.info("Received record {} with data {} at {}", recordsConsumed, record.value(), record.timestamp());
+                log.info("Received record {}  at {}", recordsConsumed, record.timestamp());
                 switch (timestampType) {
                     case CREATE_TIME -> assertEquals(now, record.timestamp());
                     case LOG_APPEND_TIME -> assertTrue(record.timestamp() > now);
