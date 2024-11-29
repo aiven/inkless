@@ -15,4 +15,6 @@ public interface MetadataView {
     boolean isInklessTopic(String topicName);
 
     LogConfig getTopicConfig(String topicName);
+
+    void subscribeToTopicMetadataChanges(TopicMetadataChangesSubscriber subscriber);
 }

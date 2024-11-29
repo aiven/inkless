@@ -222,6 +222,7 @@ public class ReplicaManagerBuilder {
                              () -> brokerEpoch,
                              OptionConverters.toScala(addPartitionsToTxnManager),
                              directoryEventHandler,
-                             new DelayedActionQueue());
+                             new DelayedActionQueue(),
+                             OptionConverters.toScala(Optional.empty()));
     }
 }

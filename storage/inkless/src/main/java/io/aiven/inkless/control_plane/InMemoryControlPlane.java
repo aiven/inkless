@@ -5,6 +5,9 @@ import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.utils.Time;
+import org.apache.kafka.image.TopicsDelta;
+
+import com.groupcdg.pitest.annotations.DoNotMutate;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -15,6 +18,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
+import java.util.stream.Collectors;
 
 import io.aiven.inkless.common.ObjectKey;
 
@@ -30,11 +34,38 @@ public class InMemoryControlPlane implements ControlPlane {
     public InMemoryControlPlane(final Time time, final MetadataView metadataView) {
         this.time = time;
         this.metadataView = metadataView;
+        metadataView.subscribeToTopicMetadataChanges(this);
     }
 
     @Override
     public void configure(final Map<String, ?> configs) {
         // Do nothing.
+    }
+
+    @Override
+    @DoNotMutate
+    public synchronized void onTopicMetadataChanges(final TopicsDelta topicsDelta) {
+        // Delete.
+        final Set<TopicIdPartition> tidpsToDelete = logs.keySet().stream()
+                .filter(tidp -> topicsDelta.deletedTopicIds().contains(tidp.topicId()))
+                .collect(Collectors.toSet());
+        for (final TopicIdPartition topicIdPartition : tidpsToDelete) {
+            logger.info("Deleting {}", topicIdPartition);
+            logs.remove(topicIdPartition);
+            batches.remove(topicIdPartition);
+        }
+
+        // Create.
+        for (final var changedTopic : topicsDelta.changedTopics().entrySet()) {
+            for (final var entry : changedTopic.getValue().newPartitions().entrySet()) {
+                final TopicIdPartition topicIdPartition = new TopicIdPartition(
+                        changedTopic.getKey(), entry.getKey(), changedTopic.getValue().name());
+
+                logger.info("Creating {}", topicIdPartition);
+                logs.put(topicIdPartition, new LogInfo());
+                batches.put(topicIdPartition, new TreeMap<>());
+            }
+        }
     }
 
     @Override
@@ -58,13 +89,21 @@ public class InMemoryControlPlane implements ControlPlane {
             if (topicId == Uuid.ZERO_UUID
                 || !partitions.contains(request.topicPartition())) {
                 responses.add(CommitBatchResponse.unknownTopicOrPartition());
-            } else {
-                final TopicIdPartition topicIdPartition = new TopicIdPartition(topicId, request.topicPartition());
-                final LogInfo logInfo = logs.computeIfAbsent(topicIdPartition, ignore -> new LogInfo());
-                final long firstOffset = logInfo.highWatermark;
-                logInfo.highWatermark += request.numberOfRecords();
-                final long lastOffset = logInfo.highWatermark - 1;
-                final BatchInfo batchToStore = new BatchInfo(
+                continue;
+            }
+
+            final TopicIdPartition topicIdPartition = new TopicIdPartition(topicId, request.topicPartition());
+            final LogInfo logInfo = logs.get(topicIdPartition);
+            final TreeMap<Long, BatchInfo> coordinates = this.batches.get(topicIdPartition);
+            if (logInfo == null || coordinates == null) {
+                responses.add(CommitBatchResponse.unknownTopicOrPartition());
+                continue;
+            }
+
+            final long firstOffset = logInfo.highWatermark;
+            logInfo.highWatermark += request.numberOfRecords();
+            final long lastOffset = logInfo.highWatermark - 1;
+            final BatchInfo batchToStore = new BatchInfo(
                     objectKey,
                     request.byteOffset(),
                     request.size(),
@@ -72,12 +111,9 @@ public class InMemoryControlPlane implements ControlPlane {
                     request.numberOfRecords(),
                     metadataView.getTopicConfig(topicName).messageTimestampType,
                     now
-                );
-                this.batches
-                    .computeIfAbsent(topicIdPartition, ignore -> new TreeMap<>())
-                    .put(lastOffset, batchToStore);
-                responses.add(CommitBatchResponse.success(firstOffset, now, logInfo.logStartOffset));
-            }
+            );
+            coordinates.put(lastOffset, batchToStore);
+            responses.add(CommitBatchResponse.success(firstOffset, now, logInfo.logStartOffset));
         }
 
         return responses;
@@ -96,39 +132,38 @@ public class InMemoryControlPlane implements ControlPlane {
             if (!topicId.equals(request.topicIdPartition().topicId())
                 || !partitions.contains(request.topicIdPartition().topicPartition())) {
                 result.add(FindBatchResponse.unknownTopicOrPartition());
-            } else {
-                final LogInfo logInfo = logs.computeIfAbsent(request.topicIdPartition(), ignore -> new LogInfo());
-                if (request.offset() < 0) {
-                    logger.debug("Invalid offset {} for {}", request.offset(), request.topicIdPartition());
-                    result.add(FindBatchResponse.offsetOutOfRange(logInfo.logStartOffset, logInfo.highWatermark));
-                } else {
-                    if (request.offset() >= logInfo.highWatermark) {
-                        result.add(FindBatchResponse.offsetOutOfRange(logInfo.logStartOffset, logInfo.highWatermark));
-                    } else {
-                        final TreeMap<Long, BatchInfo> coordinates = this.batches.get(request.topicIdPartition());
-                        if (coordinates != null) {
-                            List<BatchInfo> batches = new ArrayList<>();
-                            long totalSize = 0;
-                            for (Long batchOffset : coordinates.navigableKeySet().tailSet(request.offset())) {
-                                BatchInfo batch = coordinates.get(batchOffset);
-                                batches.add(batch);
-                                totalSize += batch.size();
-                                if (totalSize > fetchMaxBytes) {
-                                    break;
-                                }
-                            }
-                            result.add(FindBatchResponse.success(
-                                batches, logInfo.logStartOffset, logInfo.highWatermark));
-                        } else {
-                            logger.error("Batch coordinates not found for {}: high watermark={}, requested offset={}",
-                                request.topicIdPartition(),
-                                logInfo.highWatermark,
-                                request.offset());
-                            result.add(FindBatchResponse.unknownServerError());
-                        }
-                    }
+                continue;
+            }
+
+            final LogInfo logInfo = logs.get(request.topicIdPartition());
+            final TreeMap<Long, BatchInfo> coordinates = this.batches.get(request.topicIdPartition());
+            if (logInfo == null || coordinates == null) {
+                result.add(FindBatchResponse.unknownTopicOrPartition());
+                continue;
+            }
+
+            if (request.offset() < 0) {
+                logger.debug("Invalid offset {} for {}", request.offset(), request.topicIdPartition());
+                result.add(FindBatchResponse.offsetOutOfRange(logInfo.logStartOffset, logInfo.highWatermark));
+                continue;
+            }
+
+            if (request.offset() >= logInfo.highWatermark) {
+                result.add(FindBatchResponse.offsetOutOfRange(logInfo.logStartOffset, logInfo.highWatermark));
+                continue;
+            }
+
+            List<BatchInfo> batches = new ArrayList<>();
+            long totalSize = 0;
+            for (Long batchOffset : coordinates.navigableKeySet().tailSet(request.offset())) {
+                BatchInfo batch = coordinates.get(batchOffset);
+                batches.add(batch);
+                totalSize += batch.size();
+                if (totalSize > fetchMaxBytes) {
+                    break;
                 }
             }
+            result.add(FindBatchResponse.success(batches, logInfo.logStartOffset, logInfo.highWatermark));
         }
 
         return result;

@@ -201,6 +201,7 @@ class BrokerMetadataPublisherTest {
       mock(classOf[ScramPublisher]),
       mock(classOf[DelegationTokenPublisher]),
       mock(classOf[AclPublisher]),
+      mock(classOf[InklessMetadataPublisher]),
       faultHandler,
       faultHandler
     )
