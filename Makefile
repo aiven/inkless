@@ -4,7 +4,7 @@ localstack:
 
 .PHONY: bucket
 bucket:
-	AWS_ACCESS_KEY_ID='123' AWS_SECRET_KEY='xyz' AWS_SECRET_ACCESS_KEY='abc' AWS_BUCKET_NAME='inkless' aws --endpoint-url http://127.0.0.1:4566 s3api create-bucket --bucket inkless --region us-east-1
+	AWS_ACCESS_KEY_ID='minioadmin' AWS_SECRET_KEY='minioadmin' AWS_SECRET_ACCESS_KEY='minioadmin' aws --endpoint-url http://127.0.0.1:9000 s3api create-bucket --bucket inkless1 --region us-east-1
 
 
 VERSION := 4.0.0-inkless-SNAPSHOT
