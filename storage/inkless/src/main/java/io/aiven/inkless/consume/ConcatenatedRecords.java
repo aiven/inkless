@@ -10,6 +10,7 @@ import org.apache.kafka.common.record.Records;
 import org.apache.kafka.common.utils.AbstractIterator;
 import org.apache.kafka.common.utils.FlattenedIterator;
 import org.apache.kafka.common.utils.Time;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -30,7 +31,6 @@ public class ConcatenatedRecords extends AbstractRecords {
             totalSize += backingRecord.sizeInBytes();
         }
         this.sizeInBytes = totalSize;
-
     }
 
     @Override
@@ -50,7 +50,6 @@ public class ConcatenatedRecords extends AbstractRecords {
 
     @Override
     public int writeTo(TransferableChannel channel, int position, int length) throws IOException {
-        LOG.info("Writing records to channel, position: {}, length: {}", position, length);
         int recordsStart = 0;
         for (MemoryRecords records : backingRecords) {
             int recordsSize = records.sizeInBytes();
@@ -61,11 +60,14 @@ public class ConcatenatedRecords extends AbstractRecords {
                 // This batch was already written
                 continue;
             }
+
+            // Position and length where the current batch should be read from to write to the channel
             // The first byte of position is somewhere in this buffer
-            int writePosition = position - recordsStart;
-            int writeLength = Math.min(recordsSize, length);
-            LOG.info("Writing records, writePosition: {}, writeLength: {} @ record start: {}", writePosition, writeLength, recordsStart);
-            return records.writeTo(channel, writePosition, writeLength);
+            int readPosition = position - recordsStart;
+            // Length comes from the remaining bytes to write, so use it only when it is smaller than the records size
+            // Adjust the record size when reading based on the position to avoid going over buffer limits
+            int readLength = Math.min(recordsSize - readPosition, length);
+            return records.writeTo(channel, readPosition, readLength);
         }
         return 0;
     }
