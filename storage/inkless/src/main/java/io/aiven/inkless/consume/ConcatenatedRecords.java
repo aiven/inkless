@@ -8,11 +8,15 @@ import org.apache.kafka.common.record.MutableRecordBatch;
 import org.apache.kafka.common.utils.AbstractIterator;
 import org.apache.kafka.common.utils.FlattenedIterator;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.io.IOException;
 import java.util.List;
 import java.util.Objects;
 
 public class ConcatenatedRecords extends AbstractRecords {
+    private static final Logger LOG = LoggerFactory.getLogger(ConcatenatedRecords.class);
 
     private final List<MemoryRecords> backingRecords;
     private final int sizeInBytes;
@@ -24,7 +28,6 @@ public class ConcatenatedRecords extends AbstractRecords {
             totalSize += backingRecord.sizeInBytes();
         }
         this.sizeInBytes = totalSize;
-
     }
 
     @Override
@@ -49,10 +52,14 @@ public class ConcatenatedRecords extends AbstractRecords {
                 // This batch was already written
                 continue;
             }
+
+            // Position and length where the current batch should be read from to write to the channel
             // The first byte of position is somewhere in this buffer
-            int writePosition = position - recordsStart;
-            int writeLength = Math.min(recordsSize, length);
-            return records.writeTo(channel, writePosition, writeLength);
+            int readPosition = position - recordsStart;
+            // Length comes from the remaining bytes to write, so use it only when it is smaller than the records size
+            // Adjust the record size when reading based on the position to avoid going over buffer limits
+            int readLength = Math.min(recordsSize - readPosition, length);
+            return records.writeTo(channel, readPosition, readLength);
         }
         return 0;
     }
