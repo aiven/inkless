@@ -11,7 +11,7 @@ import java.util.List;
 import io.aiven.inkless.common.ObjectKey;
 import io.aiven.inkless.config.InklessConfig;
 
-public interface ControlPlane extends Configurable {
+public interface ControlPlane extends Configurable, TopicMetadataChangesSubscriber {
     List<CommitBatchResponse> commitFile(ObjectKey objectKey,
                                          List<CommitBatchRequest> batches);
 
