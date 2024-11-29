@@ -30,6 +30,7 @@ import java.util.concurrent.TimeoutException;
 import io.aiven.inkless.common.PlainObjectKey;
 import io.aiven.inkless.control_plane.InMemoryControlPlane;
 import io.aiven.inkless.control_plane.MetadataView;
+import io.aiven.inkless.control_plane.TopicMetadataChangesSubscriber;
 import io.aiven.inkless.storage_backend.s3.S3Storage;
 import io.aiven.inkless.test_utils.S3TestContainer;
 import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
@@ -77,6 +78,11 @@ class WriterIntegrationTest {
         @Override
         public LogConfig getTopicConfig(final String topicName) {
             return LogConfig.fromProps(Map.of(), new Properties());
+        }
+
+        @Override
+        public void subscribeToTopicMetadataChanges(final TopicMetadataChangesSubscriber subscriber) {
+            // We don't create/delete topics/partitions, so this is no-op.
         }
     };
 

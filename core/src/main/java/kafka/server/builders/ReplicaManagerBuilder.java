@@ -37,8 +37,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 import scala.Option;
 
-
-
 public class ReplicaManagerBuilder {
     private KafkaConfig config = null;
     private Metrics metrics = null;
@@ -117,23 +115,24 @@ public class ReplicaManagerBuilder {
                              time,
                              scheduler,
                              logManager,
-                             Option.empty(),
+                             OptionConverters.toScala(remoteLogManager),
                              quotaManagers,
                              metadataCache,
                              logDirFailureChannel,
                              alterPartitionManager,
                              brokerTopicStats,
-                             new AtomicBoolean(false),
-                             Option.empty(),
-                             Option.empty(),
-                             Option.empty(),
-                             Option.empty(),
-                             Option.empty(),
-                             Option.empty(),
-                             Option.empty(),
-                             () ->  -1L,
-                             Option.empty(),
-                             DirectoryEventHandler.NOOP,
-                             new DelayedActionQueue());
+            new AtomicBoolean(false),
+            Option.empty(),
+            Option.empty(),
+            Option.empty(),
+            Option.empty(),
+            Option.empty(),
+            Option.empty(),
+            Option.empty(),
+            () ->  -1L,
+            Option.empty(),
+            DirectoryEventHandler.NOOP,
+            new DelayedActionQueue(),
+            Option.empty());
     }
 }
