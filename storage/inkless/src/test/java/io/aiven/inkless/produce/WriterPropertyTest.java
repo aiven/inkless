@@ -47,6 +47,7 @@ import io.aiven.inkless.common.PlainObjectKey;
 import io.aiven.inkless.control_plane.ControlPlane;
 import io.aiven.inkless.control_plane.InMemoryControlPlane;
 import io.aiven.inkless.control_plane.MetadataView;
+import io.aiven.inkless.control_plane.TopicMetadataChangesSubscriber;
 import io.aiven.inkless.storage_backend.common.ObjectUploader;
 import io.aiven.inkless.storage_backend.common.StorageBackendException;
 
@@ -90,6 +91,11 @@ class WriterPropertyTest {
         @Override
         public LogConfig getTopicConfig(final String topicName) {
             return LogConfig.fromProps(Map.of(), new Properties());
+        }
+
+        @Override
+        public void subscribeToTopicMetadataChanges(final TopicMetadataChangesSubscriber subscriber) {
+            // We don't create/delete topics/partitions, so this is no-op.
         }
     };
 

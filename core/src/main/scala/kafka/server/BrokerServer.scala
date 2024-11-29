@@ -17,6 +17,7 @@
 
 package kafka.server
 
+import io.aiven.inkless.common.SharedState
 import kafka.coordinator.group.{CoordinatorLoaderImpl, CoordinatorPartitionWriter, GroupCoordinatorAdapter}
 import kafka.coordinator.transaction.TransactionCoordinator
 import kafka.log.LogManager
@@ -331,6 +332,9 @@ class BrokerServer(
        */
       val defaultActionQueue = new DelayedActionQueue
 
+      val inklessMetadataView = new InklessMetadataView(metadataCache, () => logManager.currentDefaultConfig)
+      val inklessSharedState = SharedState.initialize(time, config.inklessConfig, inklessMetadataView, brokerTopicStats)
+
       this._replicaManager = new ReplicaManager(
         config = config,
         metrics = metrics,
@@ -349,7 +353,8 @@ class BrokerServer(
         brokerEpochSupplier = () => lifecycleManager.brokerEpoch,
         addPartitionsToTxnManager = Some(addPartitionsToTxnManager),
         directoryEventHandler = directoryEventHandler,
-        defaultActionQueue = defaultActionQueue
+        defaultActionQueue = defaultActionQueue,
+        inklessSharedState = Some(inklessSharedState)
       )
 
       /* start token manager */
@@ -530,6 +535,7 @@ class BrokerServer(
           "broker",
           authorizer
         ),
+        new InklessMetadataPublisher(inklessMetadataView),
         sharedServer.initialBrokerMetadataLoadFaultHandler,
         sharedServer.metadataPublishingFaultHandler
       )

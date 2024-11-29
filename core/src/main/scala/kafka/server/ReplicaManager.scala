@@ -27,7 +27,6 @@ import kafka.log.{LogManager, UnifiedLog}
 import kafka.server.HostedPartition.Online
 import kafka.server.QuotaFactory.QuotaManagers
 import kafka.server.ReplicaManager.{AtMinIsrPartitionCountMetricName, FailedIsrUpdatesPerSecMetricName, IsrExpandsPerSecMetricName, IsrShrinksPerSecMetricName, LeaderCountMetricName, OfflineReplicaCountMetricName, PartitionCountMetricName, PartitionsWithLateTransactionsCountMetricName, ProducerIdCountMetricName, ReassigningPartitionsMetricName, UnderMinIsrPartitionCountMetricName, UnderReplicatedPartitionsMetricName, createLogReadResult, isListOffsetsTimestampUnsupported}
-import kafka.server.metadata.{InklessMetadataView, KRaftMetadataCache}
 import kafka.server.share.DelayedShareFetch
 import kafka.utils._
 import org.apache.kafka.common.errors._
@@ -285,7 +284,8 @@ class ReplicaManager(val config: KafkaConfig,
                      val brokerEpochSupplier: () => Long = () => -1,
                      addPartitionsToTxnManager: Option[AddPartitionsToTxnManager] = None,
                      val directoryEventHandler: DirectoryEventHandler = DirectoryEventHandler.NOOP,
-                     val defaultActionQueue: ActionQueue = new DelayedActionQueue
+                     val defaultActionQueue: ActionQueue = new DelayedActionQueue,
+                     inklessSharedState: Option[SharedState] = None
                      ) extends Logging {
   private val metricsGroup = new KafkaMetricsGroup(this.getClass)
 
@@ -312,18 +312,8 @@ class ReplicaManager(val config: KafkaConfig,
       "ShareFetch", config.brokerId,
       config.shareGroupConfig.shareFetchPurgatoryPurgeIntervalRequests))
 
-  private val inklessSharedState = metadataCache match {
-    case kraftMetadataCache: KRaftMetadataCache =>
-       SharedState.initialize(
-         time,
-         config.inklessConfig,
-         new InklessMetadataView(kraftMetadataCache, () => logManager.currentDefaultConfig),
-         brokerTopicStats
-       )
-    case _ => throw new RuntimeException("ZK not supported")
-  }
-  private val inklessAppendInterceptor = new AppendInterceptor(inklessSharedState)
-  private val inklessFetchInterceptor = new FetchInterceptor(inklessSharedState)
+  private val inklessAppendInterceptor = new AppendInterceptor(inklessSharedState.get)
+  private val inklessFetchInterceptor = new FetchInterceptor(inklessSharedState.get)
 
   /* epoch of the controller that last changed the leader */
   @volatile private[server] var controllerEpoch: Int = 0

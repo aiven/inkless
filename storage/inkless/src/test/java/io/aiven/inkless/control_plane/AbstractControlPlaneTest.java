@@ -4,9 +4,13 @@ package io.aiven.inkless.control_plane;
 import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.Uuid;
+import org.apache.kafka.common.metadata.PartitionRecord;
+import org.apache.kafka.common.metadata.TopicRecord;
 import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.record.TimestampType;
 import org.apache.kafka.common.utils.Time;
+import org.apache.kafka.image.MetadataDelta;
+import org.apache.kafka.image.MetadataImage;
 import org.apache.kafka.storage.internals.log.LogConfig;
 
 import org.junit.jupiter.api.BeforeEach;
@@ -25,7 +29,9 @@ import io.aiven.inkless.common.PlainObjectKey;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -58,6 +64,20 @@ abstract class AbstractControlPlaneTest {
     }
 
     ControlPlane controlPlane;
+
+    protected abstract ControlPlane createControlPlane();
+
+    @BeforeEach
+    void setupControlPlane() {
+        controlPlane = createControlPlane();
+
+        verify(metadataView).subscribeToTopicMetadataChanges(eq(controlPlane));
+
+        final var delta = new MetadataDelta.Builder().setImage(MetadataImage.EMPTY).build();
+        delta.replay(new TopicRecord().setName(EXISTING_TOPIC).setTopicId(EXISTING_TOPIC_ID));
+        delta.replay(new PartitionRecord().setTopicId(EXISTING_TOPIC_ID).setPartitionId(EXISTING_TOPIC_ID_PARTITION.partition()));
+        controlPlane.onTopicMetadataChanges(delta.topicsDelta());
+    }
 
     @Test
     void emptyCommit() {
