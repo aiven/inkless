@@ -324,8 +324,8 @@ class ReplicaManager(val config: KafkaConfig,
       "ShareFetch", config.brokerId,
       config.shareGroupConfig.shareFetchPurgatoryPurgeIntervalRequests))
 
-  private val inklessAppendInterceptor = new AppendInterceptor(inklessSharedState.get)
-  private val inklessFetchInterceptor = new FetchInterceptor(inklessSharedState.get)
+  private val inklessAppendInterceptor: Option[AppendInterceptor] = inklessSharedState.map(new AppendInterceptor(_))
+  private val inklessFetchInterceptor: Option[FetchInterceptor] = inklessSharedState.map(new FetchInterceptor(_))
 
   /* epoch of the controller that last changed the leader */
   @volatile private[server] var controllerEpoch: Int = KafkaController.InitialControllerEpoch
@@ -820,7 +820,7 @@ class ReplicaManager(val config: KafkaConfig,
       return
     }
 
-    if (inklessAppendInterceptor.intercept(entriesPerPartition.asJava, r => responseCallback(r.asScala))) {
+    if (inklessAppendInterceptor.exists(_.intercept(entriesPerPartition.asJava, r => responseCallback(r.asScala)))) {
       return
     }
 
@@ -1700,7 +1700,7 @@ class ReplicaManager(val config: KafkaConfig,
                     quota: ReplicaQuota,
                     responseCallback: Seq[(TopicIdPartition, FetchPartitionData)] => Unit): Unit = {
 
-    if (inklessFetchInterceptor.intercept(params, fetchInfos.toMap.asJava, r => responseCallback(r.asScala.toSeq))) {
+    if (inklessFetchInterceptor.exists(_.intercept(params, fetchInfos.toMap.asJava, r => responseCallback(r.asScala.toSeq)))) {
       return
     }
 
@@ -2736,8 +2736,8 @@ class ReplicaManager(val config: KafkaConfig,
     replicaSelectorOpt.foreach(_.close)
     removeAllTopicMetrics()
     addPartitionsToTxnManager.foreach(_.shutdown())
-    inklessAppendInterceptor.close()
-    inklessFetchInterceptor.close()
+    inklessAppendInterceptor.foreach(_.close())
+    inklessFetchInterceptor.foreach(_.close())
     info("Shut down completely")
   }
 
