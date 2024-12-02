@@ -4,11 +4,15 @@ package io.aiven.inkless.produce;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.compress.Compression;
+import org.apache.kafka.common.metadata.PartitionRecord;
+import org.apache.kafka.common.metadata.TopicRecord;
 import org.apache.kafka.common.record.MemoryRecords;
 import org.apache.kafka.common.record.SimpleRecord;
 import org.apache.kafka.common.requests.ProduceResponse;
 import org.apache.kafka.common.utils.MockTime;
 import org.apache.kafka.common.utils.Time;
+import org.apache.kafka.image.MetadataDelta;
+import org.apache.kafka.image.MetadataImage;
 import org.apache.kafka.storage.internals.log.LogConfig;
 import org.apache.kafka.storage.log.metrics.BrokerTopicStats;
 
@@ -60,6 +64,8 @@ import static org.mockito.Mockito.verify;
 
 @Tag("integration")
 class WriterPropertyTest {
+    private static final Uuid TOPIC_ID_0 = new Uuid(0, 1);
+    private static final Uuid TOPIC_ID_1 = new Uuid(0, 2);
     private static final TopicPartition T0P0 = new TopicPartition("topic0", 0);
     private static final TopicPartition T0P1 = new TopicPartition("topic0", 1);
     private static final TopicPartition T1P0 = new TopicPartition("topic1", 0);
@@ -69,8 +75,8 @@ class WriterPropertyTest {
 
     static final MetadataView METADATA_VIEW = new MetadataView() {
         private final Map<String, Uuid> uuids = Map.of(
-            T0P0.topic(), new Uuid(0, 1),
-            T1P0.topic(), new Uuid(0, 2)
+            T0P0.topic(), TOPIC_ID_0,
+            T1P0.topic(), TOPIC_ID_1
         );
 
         @Override
@@ -117,6 +123,15 @@ class WriterPropertyTest {
               final int commitDurationAvg,
               final int maxBufferSize,
               final ControlPlane controlPlane) throws InterruptedException, ExecutionException, StorageBackendException {
+        final var delta = new MetadataDelta.Builder().setImage(MetadataImage.EMPTY).build();
+        delta.replay(new TopicRecord().setName(T0P0.topic()).setTopicId(TOPIC_ID_0));
+        delta.replay(new PartitionRecord().setTopicId(TOPIC_ID_0).setPartitionId(0));
+        delta.replay(new PartitionRecord().setTopicId(TOPIC_ID_0).setPartitionId(1));
+        delta.replay(new TopicRecord().setName(T1P0.topic()).setTopicId(TOPIC_ID_1));
+        delta.replay(new PartitionRecord().setTopicId(TOPIC_ID_1).setPartitionId(0));
+        delta.replay(new PartitionRecord().setTopicId(TOPIC_ID_1).setPartitionId(1));
+        controlPlane.onTopicMetadataChanges(delta.topicsDelta());
+
         Statistics.label("requestCount").collect(requestCount);
         final MockTime time = new MockTime(0, 0, 0);
 
