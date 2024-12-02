@@ -21,7 +21,7 @@ import kafka.server.MetadataCache
 import kafka.utils.Logging
 import org.apache.kafka.admin.BrokerMetadata
 import org.apache.kafka.common._
-import org.apache.kafka.common.config.ConfigResource
+import org.apache.kafka.common.config.{ConfigResource, TopicConfig}
 import org.apache.kafka.common.errors.InvalidTopicException
 import org.apache.kafka.common.internals.Topic
 import org.apache.kafka.common.message.DescribeTopicPartitionsResponseData.{Cursor, DescribeTopicPartitionsResponsePartition, DescribeTopicPartitionsResponseTopic}
@@ -33,6 +33,7 @@ import org.apache.kafka.common.requests.MetadataResponse
 import org.apache.kafka.image.MetadataImage
 import org.apache.kafka.metadata.{BrokerRegistration, LeaderAndIsr, PartitionRegistration, Replicas}
 import org.apache.kafka.server.common.{FinalizedFeatures, KRaftVersion, MetadataVersion}
+import org.apache.kafka.storage.internals.log.LogConfig
 
 import java.util
 import java.util.concurrent.ThreadLocalRandom
@@ -529,7 +530,9 @@ class KRaftMetadataCache(
   }
 
   override def isInklessTopic(topic: String): Boolean = {
-    !Topic.isInternal(topic) && topic != Topic.CLUSTER_METADATA_TOPIC_NAME
+    val logConfig = new LogConfig(config(new ConfigResource(ConfigResource.Type.TOPIC, topic)))
+    val inklessEnabled = logConfig.getBoolean(TopicConfig.INKLESS_ENABLE_CONFIG)
+    !Topic.isInternal(topic) && topic != Topic.CLUSTER_METADATA_TOPIC_NAME && inklessEnabled
   }
 }
 

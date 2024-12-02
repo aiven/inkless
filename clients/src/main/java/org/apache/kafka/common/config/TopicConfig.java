@@ -216,6 +216,10 @@ public class TopicConfig {
         "configuration. If message.timestamp.type=CreateTime, the message will be rejected if the difference in " +
         "timestamps exceeds this specified threshold. This configuration is ignored if message.timestamp.type=LogAppendTime.";
 
+    public static final String INKLESS_ENABLE_CONFIG = "inkless.enable";
+    public static final String INKLESS_ENABLE_DOC = "To enable inkless mode for a topic, set this configuration as true. " +
+        "You can not disable this config once it is enabled.";
+
     /**
      * @deprecated down-conversion is not possible in Apache Kafka 4.0 and newer, hence this configuration is a no-op,
      *             and it is deprecated for removal in Apache Kafka 5.0.

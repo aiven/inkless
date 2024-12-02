@@ -149,6 +149,7 @@ public class InklessClusterTest {
         try (Admin admin = AdminClient.create(clientConfigs)) {
             final NewTopic topic = new NewTopic(topicName, 1, (short) 1)
                 .configs(Map.of(
+                    TopicConfig.INKLESS_ENABLE_CONFIG, "true",
                     TopicConfig.MESSAGE_TIMESTAMP_TYPE_CONFIG, timestampType.name
                 ));
             CreateTopicsResult topics = admin.createTopics(Collections.singletonList(topic));
