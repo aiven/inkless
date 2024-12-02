@@ -447,6 +447,21 @@ class LogConfigTest {
     LogConfig.validate(logProps)
   }
 
+  @ParameterizedTest
+  @ValueSource(booleans = Array(true, false))
+  def testValidInklessEnable(enable: Boolean): Unit = {
+    val kafkaProps = TestUtils.createDummyBrokerConfig()
+    val kafkaConfig = KafkaConfig.fromProps(kafkaProps)
+    val logProps = new Properties
+    logProps.put(TopicConfig.INKLESS_ENABLE_CONFIG, enable.toString)
+    // Should be possible to set inkless to true/false at creation time
+    LogConfig.validate(Collections.emptyMap(), logProps, kafkaConfig.extractLogConfigMap, false)
+    // But fail to reset value after creation
+    assertThrows(
+      classOf[InvalidConfigurationException],
+      () => LogConfig.validate(Collections.singletonMap(TopicConfig.INKLESS_ENABLE_CONFIG, (!enable).toString), logProps, kafkaConfig.extractLogConfigMap, false))
+  }
+
   @Test
   def testValidateWithMetadataVersionJbodSupport(): Unit = {
     def validate(metadataVersion: MetadataVersion, jbodConfig: Boolean): Unit =

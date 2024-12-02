@@ -19,10 +19,20 @@ package kafka.server.metadata;
 
 import kafka.server.MetadataCache;
 
+import org.apache.kafka.common.config.TopicConfig;
+import org.apache.kafka.common.metadata.ConfigRecord;
+import org.apache.kafka.common.protocol.ApiMessage;
+import org.apache.kafka.common.resource.ResourceType;
+import org.apache.kafka.image.ClusterImage;
+import org.apache.kafka.image.MetadataDelta;
+import org.apache.kafka.image.MetadataImage;
+import org.apache.kafka.image.MetadataProvenance;
 import org.apache.kafka.server.common.KRaftVersion;
 
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
+
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
@@ -31,9 +41,42 @@ class InklessKRaftMetadataCacheTest {
     @ParameterizedTest
     @CsvSource({
         "__consumer_offsets,false", "__transaction_state,false", "__share_group_state,false", "__cluster_metadata,false",
-        "__other_topic1,true", "__other_topic2__,true", "_other_topic3,true", "other_topic4,true"})
+        "__other_topic1,false", "__other_topic2__,true", "_other_topic3,false", "other_topic4,true"})
     void isInklessTopic(final String topicName, final boolean expectedIsInkless) {
+        // Given a cache with a couple of inkless topics
         final KRaftMetadataCache cache = MetadataCache.kRaftMetadataCache(1, () -> KRaftVersion.KRAFT_VERSION_0);
+        final List<ApiMessage> configRecords = List.of(new ConfigRecord()
+                .setResourceType(ResourceType.TOPIC.code())
+                .setResourceName("__other_topic2__")
+                .setName(TopicConfig.INKLESS_ENABLE_CONFIG)
+                .setValue("true"),
+            new ConfigRecord()
+                .setResourceType(ResourceType.TOPIC.code())
+                .setResourceName("other_topic4")
+                .setName(TopicConfig.INKLESS_ENABLE_CONFIG)
+                .setValue("true"));
+        updateCache(cache, configRecords);
+        // When checking if a topic is inkless, then the expected result is returned
         assertEquals(expectedIsInkless, cache.isInklessTopic(topicName));
     }
+
+    // Similar to {@link kafka.server.MetadataCacheTest#updateCache}
+    private static void updateCache(KRaftMetadataCache c, List<ApiMessage> configRecords) {
+        var image = c.currentImage();
+        var partialImage = new MetadataImage(
+            new MetadataProvenance(100L, 10, 1000L, true),
+            image.features(),
+            ClusterImage.EMPTY,
+            image.topics(),
+            image.configs(),
+            image.clientQuotas(),
+            image.producerIds(),
+            image.acls(),
+            image.scram(),
+            image.delegationTokens());
+        var delta = new MetadataDelta.Builder().setImage(partialImage).build();
+        configRecords.forEach(delta::replay);
+        c.setImage(delta.apply(new MetadataProvenance(100L, 10, 1000L, true)));
+    }
+
 }

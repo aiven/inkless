@@ -150,7 +150,8 @@ public class LogConfig extends AbstractConfig {
             TopicConfig.REMOTE_LOG_DELETE_ON_DISABLE_CONFIG,
             TopicConfig.REMOTE_LOG_COPY_DISABLE_CONFIG,
             QuotaConfig.LEADER_REPLICATION_THROTTLED_REPLICAS_CONFIG,
-            QuotaConfig.FOLLOWER_REPLICATION_THROTTLED_REPLICAS_CONFIG
+            QuotaConfig.FOLLOWER_REPLICATION_THROTTLED_REPLICAS_CONFIG,
+            TopicConfig.INKLESS_ENABLE_CONFIG
     );
 
     public static final ConfigDef SERVER_CONFIG_DEF = new ConfigDef()
@@ -257,7 +258,8 @@ public class LogConfig extends AbstractConfig {
                 .define(TopicConfig.LOCAL_LOG_RETENTION_BYTES_CONFIG, LONG, DEFAULT_LOCAL_RETENTION_BYTES, atLeast(-2), MEDIUM,
                         TopicConfig.LOCAL_LOG_RETENTION_BYTES_DOC)
                 .define(TopicConfig.REMOTE_LOG_COPY_DISABLE_CONFIG, BOOLEAN, false, MEDIUM, TopicConfig.REMOTE_LOG_COPY_DISABLE_DOC)
-                .define(TopicConfig.REMOTE_LOG_DELETE_ON_DISABLE_CONFIG, BOOLEAN, false, MEDIUM, TopicConfig.REMOTE_LOG_DELETE_ON_DISABLE_DOC);
+                .define(TopicConfig.REMOTE_LOG_DELETE_ON_DISABLE_CONFIG, BOOLEAN, false, MEDIUM, TopicConfig.REMOTE_LOG_DELETE_ON_DISABLE_DOC)
+                .define(TopicConfig.INKLESS_ENABLE_CONFIG, BOOLEAN, false, MEDIUM, TopicConfig.INKLESS_ENABLE_DOC);
     }
 
     public final Set<String> overriddenConfigs;
@@ -523,6 +525,20 @@ public class LogConfig extends AbstractConfig {
             // The new config "remote.storage.enable" is false, validate if it's turning from true to false
             boolean wasRemoteLogEnabled = Boolean.parseBoolean(existingConfigs.getOrDefault(TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG, "false"));
             validateTurningOffRemoteStorageWithDelete(newConfigs, wasRemoteLogEnabled, isRemoteLogStorageEnabled);
+        }
+        boolean isInklessEnabled = (Boolean) newConfigs.get(TopicConfig.INKLESS_ENABLE_CONFIG);
+        if (isInklessEnabled) {
+            if (existingConfigs.containsKey(TopicConfig.INKLESS_ENABLE_CONFIG)) {
+                boolean wasInklessEnabled = Boolean.parseBoolean(existingConfigs.get(TopicConfig.INKLESS_ENABLE_CONFIG));
+                if (!wasInklessEnabled) {
+                    throw new InvalidConfigurationException("It is invalid to enable inkless");
+                }
+            }
+        } else {
+            boolean wasInklessEnabled = Boolean.parseBoolean(existingConfigs.getOrDefault(TopicConfig.INKLESS_ENABLE_CONFIG, "false"));
+            if (wasInklessEnabled) {
+                throw new InvalidConfigurationException("It is invalid to disable inkless");
+            }
         }
     }
 
