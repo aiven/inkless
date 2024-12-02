@@ -257,4 +257,8 @@ public class TopicConfig {
         "broker will not perform down-conversion for consumers expecting an older message format. The broker responds " +
         "with <code>UNSUPPORTED_VERSION</code> error for consume requests from such older clients. This configuration" +
         "does not apply to any message format conversion that might be required for replication to followers.";
+
+    public static final String INKLESS_ENABLE_CONFIG = "inkless.enable";
+    public static final String INKLESS_ENABLE_DOC = "To enable inkless mode for a topic, set this configuration as true. " +
+            "You can not disable this config once it is enabled.";
 }

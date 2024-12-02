@@ -456,6 +456,20 @@ class LogConfigTest {
   }
 
   @ParameterizedTest
+  @ValueSource(booleans = Array(true, false))
+  def testValidInklessEnable(enable: Boolean): Unit = {
+    val kafkaProps = TestUtils.createDummyBrokerConfig()
+    val logProps = new Properties
+    logProps.put(TopicConfig.INKLESS_ENABLE_CONFIG, enable.toString)
+    // Should be possible to set inkless to true/false at creation time
+    LogConfig.validate(Collections.emptyMap(), logProps, kafkaProps, false, false)
+    // But fail to reset value after creation
+    assertThrows(
+      classOf[InvalidConfigurationException],
+      () => LogConfig.validate(Collections.singletonMap(TopicConfig.INKLESS_ENABLE_CONFIG, (!enable).toString), logProps, kafkaProps, false, false))
+  }
+
+  @ParameterizedTest
   @ValueSource(strings = Array(TopicConfig.REMOTE_LOG_DELETE_ON_DISABLE_CONFIG, TopicConfig.REMOTE_LOG_COPY_DISABLE_CONFIG))
   def testInValidRemoteConfigsInZK(configKey: String): Unit = {
     val kafkaProps = TestUtils.createDummyBrokerConfig()
