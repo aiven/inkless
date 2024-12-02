@@ -42,7 +42,7 @@ fmt:
 .PHONY: test
 test:
 	./gradlew :storage:inkless:test
-	./gradlew :core:test --tests InklessClusterTest
+	./gradlew :core:test --tests "Inkless*"
 
 .PHONY: clean
 clean:
