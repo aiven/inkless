@@ -10,7 +10,9 @@ import java.util.Map;
 
 import io.aiven.inkless.common.config.validators.Subclass;
 import io.aiven.inkless.control_plane.ControlPlane;
+import io.aiven.inkless.control_plane.InMemoryControlPlane;
 import io.aiven.inkless.storage_backend.common.StorageBackend;
+import io.aiven.inkless.storage_backend.in_memory.InMemoryStorage;
 
 public class InklessConfig extends AbstractConfig {
     public static final String PREFIX = "inkless.";
@@ -19,6 +21,7 @@ public class InklessConfig extends AbstractConfig {
 
     public static final String CONTROL_PLANE_CLASS_CONFIG = CONTROL_PLANE_PREFIX + "class";
     private static final String CONTROL_PLANE_CLASS_DOC = "The control plane implementation class";
+    private static final String CONTROL_PLANE_CLASS_DEFAULT = InMemoryControlPlane.class.getCanonicalName();
 
     public static final String OBJECT_KEY_PREFIX_CONFIG = "object.key.prefix";
     private static final String OBJECT_KEY_PREFIX_DOC = "The object storage key prefix.";
@@ -46,6 +49,7 @@ public class InklessConfig extends AbstractConfig {
 
     public static final String STORAGE_BACKEND_CLASS_CONFIG = STORAGE_PREFIX + "backend.class";
     private static final String STORAGE_BACKEND_CLASS_DOC = "The storage backend implementation class";
+    private static final String STORAGE_BACKEND_CLASS_DEFAULT = InMemoryStorage.class.getCanonicalName();
 
     public static ConfigDef configDef() {
         final ConfigDef configDef = new ConfigDef();
@@ -53,7 +57,7 @@ public class InklessConfig extends AbstractConfig {
         configDef.define(
             CONTROL_PLANE_CLASS_CONFIG,
             ConfigDef.Type.CLASS,
-            ConfigDef.NO_DEFAULT_VALUE,
+            CONTROL_PLANE_CLASS_DEFAULT,
             new Subclass(ControlPlane.class),
             ConfigDef.Importance.HIGH,
             CONTROL_PLANE_CLASS_DOC
@@ -107,7 +111,7 @@ public class InklessConfig extends AbstractConfig {
         configDef.define(
             STORAGE_BACKEND_CLASS_CONFIG,
             ConfigDef.Type.CLASS,
-            ConfigDef.NO_DEFAULT_VALUE,
+            STORAGE_BACKEND_CLASS_DEFAULT,
             ConfigDef.Importance.HIGH,
             STORAGE_BACKEND_CLASS_DOC
         );

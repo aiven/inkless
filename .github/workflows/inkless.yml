@@ -126,7 +126,7 @@ jobs:
           -PmaxTestRetries=1 -PmaxTestRetryFailures=3 \
           -PmaxQuarantineTestRetries=3 -PmaxQuarantineTestRetryFailures=0 \
           -PcommitId=xxxxxxxxxxxxxxxx \
-          :core:test --tests "Inkless*"
+          :core:test --tests "*Inkless*"
           # exitcode="$?"
           # echo "exitcode=$exitcode" >> $GITHUB_OUTPUT
       - name: Archive JUnit HTML reports
