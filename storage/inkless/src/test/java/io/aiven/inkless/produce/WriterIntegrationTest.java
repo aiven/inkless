@@ -3,10 +3,14 @@ package io.aiven.inkless.produce;
 
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.Uuid;
+import org.apache.kafka.common.metadata.PartitionRecord;
+import org.apache.kafka.common.metadata.TopicRecord;
 import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.requests.ProduceResponse.PartitionResponse;
 import org.apache.kafka.common.utils.MockTime;
 import org.apache.kafka.common.utils.Time;
+import org.apache.kafka.image.MetadataDelta;
+import org.apache.kafka.image.MetadataImage;
 import org.apache.kafka.storage.internals.log.LogConfig;
 import org.apache.kafka.storage.log.metrics.BrokerTopicStats;
 
@@ -47,6 +51,8 @@ class WriterIntegrationTest {
     @Container
     static final LocalStackContainer LOCALSTACK = S3TestContainer.container();
 
+    static final Uuid TOPIC_ID_0 = new Uuid(0, 1);
+    static final Uuid TOPIC_ID_1 = new Uuid(0, 2);
     static final TopicPartition T0P0 = new TopicPartition("topic0", 0);
     static final TopicPartition T0P1 = new TopicPartition("topic0", 1);
     static final TopicPartition T1P0 = new TopicPartition("topic1", 0);
@@ -62,9 +68,9 @@ class WriterIntegrationTest {
         @Override
         public Uuid getTopicId(final String topicName) {
             if (topicName.equals(T0P0.topic())) {
-                return new Uuid(0, 1);
+                return TOPIC_ID_0;
             } else if (topicName.equals(T1P0.topic())) {
-                return new Uuid(0, 2);
+                return TOPIC_ID_1;
             } else {
                 return null;
             }
@@ -128,6 +134,15 @@ class WriterIntegrationTest {
     void test() throws ExecutionException, InterruptedException, TimeoutException, IOException {
         final Time time = new MockTime();
         final InMemoryControlPlane controlPlane = new InMemoryControlPlane(time, METADATA_VIEW);
+
+        final var delta = new MetadataDelta.Builder().setImage(MetadataImage.EMPTY).build();
+        delta.replay(new TopicRecord().setName(T0P0.topic()).setTopicId(TOPIC_ID_0));
+        delta.replay(new PartitionRecord().setTopicId(TOPIC_ID_0).setPartitionId(0));
+        delta.replay(new PartitionRecord().setTopicId(TOPIC_ID_0).setPartitionId(1));
+        delta.replay(new TopicRecord().setName(T1P0.topic()).setTopicId(TOPIC_ID_1));
+        delta.replay(new PartitionRecord().setTopicId(TOPIC_ID_1).setPartitionId(0));
+        controlPlane.onTopicMetadataChanges(delta.topicsDelta());
+
         try (
             final Writer writer = new Writer(
                 time, (String s) -> new PlainObjectKey("", s), storage, controlPlane, Duration.ofMillis(10),
