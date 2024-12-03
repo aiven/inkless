@@ -1,0 +1,87 @@
+// Copyright (c) 2024 Aiven, Helsinki, Finland. https://aiven.io/
+package io.aiven.inkless.control_plane.postgres;
+
+import org.apache.kafka.common.utils.Time;
+import org.apache.kafka.image.TopicsDelta;
+
+import com.zaxxer.hikari.HikariConfig;
+import com.zaxxer.hikari.HikariDataSource;
+import com.zaxxer.hikari.util.IsolationLevel;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.util.Iterator;
+import java.util.Map;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.stream.Stream;
+
+import io.aiven.inkless.control_plane.AbstractControlPlane;
+import io.aiven.inkless.control_plane.CommitBatchRequest;
+import io.aiven.inkless.control_plane.CommitBatchResponse;
+import io.aiven.inkless.control_plane.FindBatchRequest;
+import io.aiven.inkless.control_plane.FindBatchResponse;
+import io.aiven.inkless.control_plane.MetadataView;
+
+public class PostgresControlPlane extends AbstractControlPlane {
+    private static final Logger LOGGER = LoggerFactory.getLogger(PostgresControlPlane.class);
+
+    private final ExecutorService executor = Executors.newCachedThreadPool();
+
+    private HikariDataSource hikariDataSource;
+
+    public PostgresControlPlane(final Time time,
+                                final MetadataView metadataView) {
+        super(time, metadataView);
+    }
+
+    public void onTopicMetadataChanges(final TopicsDelta topicsDelta) {
+        // Delete.
+        executor.submit(new TopicsDeleteJob(time, hikariDataSource, topicsDelta.deletedTopicIds()));
+        // Create.
+        executor.submit(new TopicsCreateJob(time, hikariDataSource, topicsDelta.changedTopics()));
+    }
+
+    @Override
+    public void configure(final Map<String, ?> configs) {
+        final PostgresControlPlaneConfig controlPlaneConfig = new PostgresControlPlaneConfig(configs);
+        Migrations.migrate(controlPlaneConfig);
+
+        final HikariConfig config = new HikariConfig();
+        config.setJdbcUrl(controlPlaneConfig.connectionString());
+        config.setUsername(controlPlaneConfig.username());
+        config.setPassword(controlPlaneConfig.password());
+
+        // TODO consider relaxing
+        config.setTransactionIsolation(IsolationLevel.TRANSACTION_REPEATABLE_READ.name());
+
+        // We're doing interactive transactions.
+        config.setAutoCommit(false);
+
+        hikariDataSource = new HikariDataSource(config);
+    }
+
+    @Override
+    protected Iterator<CommitBatchResponse> commitFileForExistingPartitions(
+        final String objectKey,
+        final Stream<CommitBatchRequest> requests) {
+        final var requestExtras = requests.map(r -> new CommitFileJob.CommitBatchRequestExtra(
+            r,
+            metadataView.getTopicId(r.topicPartition().topic()),
+            metadataView.getTopicConfig(r.topicPartition().topic()).messageTimestampType
+        )).toList();
+        final CommitFileJob job = new CommitFileJob(time, hikariDataSource, objectKey, requestExtras);
+        return job.call().iterator();
+    }
+
+    @Override
+    protected Iterator<FindBatchResponse> findBatchesForExistingPartitions(
+        final Stream<FindBatchRequest> requests,
+        final boolean minOneMessage, final int fetchMaxBytes) {
+        final FindBatchesJob job = new FindBatchesJob(
+            time, hikariDataSource,
+            requests.toList(), minOneMessage, fetchMaxBytes);
+        return job.call().iterator();
+    }
+}
