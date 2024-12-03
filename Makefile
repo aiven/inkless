@@ -1,11 +1,21 @@
-.PHONY: localstack
-localstack:
-	docker compose -f localstack.yml up
+.PHONY: local_minio
+local_minio:
+	docker compose up -d minio minio-create_bucket
 
 .PHONY: bucket
 bucket:
 	AWS_ACCESS_KEY_ID='minioadmin' AWS_SECRET_KEY='minioadmin' AWS_SECRET_ACCESS_KEY='minioadmin' aws --endpoint-url http://127.0.0.1:9000 s3api create-bucket --bucket inkless1 --region us-east-1
 
+CLUSTER_ID := ervoWKqFT-qvyKLkTo494w
+
+.PHONY: kafka_storage_format
+kafka_storage_format:
+	./bin/kafka-storage.sh format -c config/inkless/single-broker-0.properties -t $(CLUSTER_ID)
+
+.PHONY: local_destroy
+local_destroy:
+	docker compose down
+	rm -rf ./_data
 
 VERSION := 4.0.0-inkless-SNAPSHOT
 
