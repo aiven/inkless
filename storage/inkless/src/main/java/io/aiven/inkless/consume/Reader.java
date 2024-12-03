@@ -3,6 +3,7 @@ package io.aiven.inkless.consume;
 
 import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.requests.FetchRequest;
+import org.apache.kafka.common.utils.ThreadUtils;
 import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.server.storage.log.FetchParams;
 import org.apache.kafka.server.storage.log.FetchPartitionData;
@@ -12,14 +13,16 @@ import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 import io.aiven.inkless.TimeUtils;
 import io.aiven.inkless.common.InklessThreadFactory;
 import io.aiven.inkless.control_plane.ControlPlane;
 import io.aiven.inkless.storage_backend.common.ObjectFetcher;
 
-public class Reader {
+public class Reader implements AutoCloseable {
 
+    private static final long EXECUTOR_SHUTDOWN_TIMEOUT_SECONDS = 5;
     private final Time time;
     private final ControlPlane controlPlane;
     private final ObjectFetcher objectFetcher;
@@ -100,5 +103,13 @@ public class Reader {
             .whenComplete((topicIdPartitionFetchPartitionDataMap, throwable) -> {
                 fetchMetrics.fetchCompleted(startAt);
             });
+    }
+
+    @Override
+    public void close() {
+        ThreadUtils.shutdownExecutorServiceQuietly(metadataExecutor, EXECUTOR_SHUTDOWN_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+        ThreadUtils.shutdownExecutorServiceQuietly(fetchPlannerExecutor, EXECUTOR_SHUTDOWN_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+        ThreadUtils.shutdownExecutorServiceQuietly(dataExecutor, EXECUTOR_SHUTDOWN_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+        ThreadUtils.shutdownExecutorServiceQuietly(fetchCompleterExecutor, EXECUTOR_SHUTDOWN_TIMEOUT_SECONDS, TimeUnit.SECONDS);
     }
 }
