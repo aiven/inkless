@@ -2,7 +2,6 @@
 package io.aiven.inkless.control_plane;
 
 import org.apache.kafka.common.TopicIdPartition;
-import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.image.TopicsDelta;
@@ -14,26 +13,24 @@ import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 
-public class InMemoryControlPlane implements ControlPlane {
+public class InMemoryControlPlane extends AbstractControlPlane {
     private static final Logger logger = LoggerFactory.getLogger(InMemoryControlPlane.class);
-
-    private final Time time;
-    private final MetadataView metadataView;
 
     private final Map<TopicIdPartition, LogInfo> logs = new HashMap<>();
     private final HashMap<TopicIdPartition, TreeMap<Long, BatchInfo>> batches = new HashMap<>();
 
-    public InMemoryControlPlane(final Time time, final MetadataView metadataView) {
-        this.time = time;
-        this.metadataView = metadataView;
-        metadataView.subscribeToTopicMetadataChanges(this);
+    public InMemoryControlPlane(final Time time,
+                                final MetadataView metadataView) {
+        super(time, metadataView);
     }
 
     @Override
@@ -68,41 +65,14 @@ public class InMemoryControlPlane implements ControlPlane {
     }
 
     @Override
-    public synchronized List<CommitBatchResponse> commitFile(final String objectKey,
-                                                             final List<CommitBatchRequest> batches) {
-        // Real-life batches cannot be empty, even if they have 0 records
-        // Checking this just as an assertion.
-        for (final CommitBatchRequest batch : batches) {
-            if (batch.size() == 0) {
-                throw new IllegalArgumentException("Batches with size 0 are not allowed");
-            }
-        }
-
+    protected Iterator<CommitBatchResponse> commitFileForExistingPartitions(
+        final String objectKey,
+        final Stream<CommitBatchRequest> requests
+    ) {
         final long now = time.milliseconds();
-
-        final SplitMapper<CommitBatchRequest, CommitBatchResponse> splitMapper = new SplitMapper<>(
-            batches, this::partitionExistsInMetadataForCommitBatchRequest
-        );
-
-        // Right away set answer for partitions not present in the metadata.
-        splitMapper.setFalseOut(
-            splitMapper.getFalseIn().map(r -> CommitBatchResponse.unknownTopicOrPartition()).iterator()
-        );
-
-        // Process those partitions that are present in the metadata.
-        splitMapper.setTrueOut(
-            splitMapper.getTrueIn().map(request -> commitFileForExistingPartition(now, objectKey, request)).iterator()
-        );
-
-        return splitMapper.getOut();
-    }
-
-    private boolean partitionExistsInMetadataForCommitBatchRequest(final CommitBatchRequest request) {
-        final String topicName = request.topicPartition().topic();
-        final Uuid topicId = metadataView.getTopicId(topicName);
-        final Set<TopicPartition> partitions = metadataView.getTopicPartitions(topicName);
-        return topicId != Uuid.ZERO_UUID
-            && partitions.contains(request.topicPartition());
+        return requests
+            .map(request -> commitFileForExistingPartition(now, objectKey, request))
+            .iterator();
     }
 
     private CommitBatchResponse commitFileForExistingPartition(final long now,
@@ -135,25 +105,14 @@ public class InMemoryControlPlane implements ControlPlane {
     }
 
     @Override
-    public synchronized List<FindBatchResponse> findBatches(final List<FindBatchRequest> findBatchRequests,
-                                                            final boolean minOneMessage,
-                                                            final int fetchMaxBytes) {
-        final SplitMapper<FindBatchRequest, FindBatchResponse> splitMapper = new SplitMapper<>(
-            findBatchRequests, this::partitionExistsInMetadataForFindBatchRequest
-        );
-
-        // Right away set answer for partitions not present in the metadata.
-        splitMapper.setFalseOut(
-            splitMapper.getFalseIn().map(r -> FindBatchResponse.unknownTopicOrPartition()).iterator()
-        );
-
-        // Process those partitions that are present in the metadata.
-        splitMapper.setTrueOut(
-            splitMapper.getTrueIn()
-                .map(request -> findBatchesForExistingPartition(request, minOneMessage, fetchMaxBytes)).iterator()
-        );
-
-        return splitMapper.getOut();
+    protected Iterator<FindBatchResponse> findBatchesForExistingPartitions(
+        final Stream<FindBatchRequest> requests,
+        final boolean minOneMessage,
+        final int fetchMaxBytes
+    ) {
+        return requests
+            .map(request -> findBatchesForExistingPartition(request, minOneMessage, fetchMaxBytes))
+            .iterator();
     }
 
     private FindBatchResponse findBatchesForExistingPartition(final FindBatchRequest request,
@@ -185,14 +144,6 @@ public class InMemoryControlPlane implements ControlPlane {
             }
         }
         return FindBatchResponse.success(batches, logInfo.logStartOffset, logInfo.highWatermark);
-    }
-
-    private boolean partitionExistsInMetadataForFindBatchRequest(final FindBatchRequest request) {
-        final String topicName = request.topicIdPartition().topic();
-        final Uuid topicId = metadataView.getTopicId(topicName);
-        final Set<TopicPartition> partitions = metadataView.getTopicPartitions(topicName);
-        return topicId.equals(request.topicIdPartition().topicId())
-            && partitions.contains(request.topicIdPartition().topicPartition());
     }
 
     private static class LogInfo {
