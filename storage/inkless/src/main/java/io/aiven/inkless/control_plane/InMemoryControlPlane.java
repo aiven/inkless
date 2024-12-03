@@ -119,7 +119,7 @@ public class InMemoryControlPlane extends AbstractControlPlane {
                                                               final boolean minOneMessage,
                                                               final int fetchMaxBytes) {
         final LogInfo logInfo = logs.get(request.topicIdPartition());
-        final TreeMap<Long, BatchInfo> coordinates = this.batches.get(request.topicIdPartition());
+        final TreeMap<Long, BatchInfo> coordinates = batches.get(request.topicIdPartition());
         if (logInfo == null || coordinates == null) {
             return FindBatchResponse.unknownTopicOrPartition();
         }
@@ -129,7 +129,9 @@ public class InMemoryControlPlane extends AbstractControlPlane {
             return FindBatchResponse.offsetOutOfRange(logInfo.logStartOffset, logInfo.highWatermark);
         }
 
-        if (request.offset() >= logInfo.highWatermark) {
+        // if offset requests is > end offset return out-of-range exception, otherwise return empty batch.
+        // Similar to {@link LocalLog#read() L490}
+        if (request.offset() > logInfo.highWatermark) {
             return FindBatchResponse.offsetOutOfRange(logInfo.logStartOffset, logInfo.highWatermark);
         }
 
