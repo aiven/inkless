@@ -18,7 +18,6 @@ import java.util.Map;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
 
-import io.aiven.inkless.common.PlainObjectKey;
 import io.aiven.inkless.common.SharedState;
 
 public class AppendInterceptor implements Closeable {
@@ -34,7 +33,7 @@ public class AppendInterceptor implements Closeable {
             state,
             new Writer(
                 state.time(),
-                (s) -> new PlainObjectKey(state.config().objectKeyPrefix(), s),
+                state.objectKeyCreator(),
                 state.storage(),
                 state.controlPlane(),
                 state.config().commitInterval(),

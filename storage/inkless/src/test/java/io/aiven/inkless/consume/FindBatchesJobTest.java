@@ -22,8 +22,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
-import io.aiven.inkless.common.ObjectKey;
-import io.aiven.inkless.common.PlainObjectKey;
 import io.aiven.inkless.control_plane.BatchInfo;
 import io.aiven.inkless.control_plane.ControlPlane;
 import io.aiven.inkless.control_plane.FindBatchRequest;
@@ -51,7 +49,7 @@ public class FindBatchesJobTest {
     ArgumentCaptor<List<FindBatchRequest>> requestCaptor;
 
     Uuid topicId = Uuid.randomUuid();
-    ObjectKey objectA = new PlainObjectKey("a", "a");
+    static final String OBJECT_KEY_MAIN_PART = "a";
     TopicIdPartition partition0 = new TopicIdPartition(topicId, 0, "inkless-topic");
 
     @Test
@@ -64,7 +62,7 @@ public class FindBatchesJobTest {
         int highWatermark = 1;
         Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of(
                 partition0, FindBatchResponse.success(List.of(
-                        new BatchInfo(objectA, 0, 10, 0, 1, TimestampType.CREATE_TIME, logAppendTime)
+                        new BatchInfo(OBJECT_KEY_MAIN_PART, 0, 10, 0, 1, TimestampType.CREATE_TIME, logAppendTime)
                 ), logStartOffset, highWatermark)
         );
         FindBatchesJob job = new FindBatchesJob(time, controlPlane, params, fetchInfos, durationMs -> { });

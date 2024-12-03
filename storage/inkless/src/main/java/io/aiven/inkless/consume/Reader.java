@@ -17,6 +17,7 @@ import java.util.concurrent.TimeUnit;
 
 import io.aiven.inkless.TimeUtils;
 import io.aiven.inkless.common.InklessThreadFactory;
+import io.aiven.inkless.common.ObjectKeyCreator;
 import io.aiven.inkless.control_plane.ControlPlane;
 import io.aiven.inkless.storage_backend.common.ObjectFetcher;
 
@@ -24,6 +25,7 @@ public class Reader implements AutoCloseable {
 
     private static final long EXECUTOR_SHUTDOWN_TIMEOUT_SECONDS = 5;
     private final Time time;
+    private final ObjectKeyCreator objectKeyCreator;
     private final ControlPlane controlPlane;
     private final ObjectFetcher objectFetcher;
     private final ExecutorService metadataExecutor;
@@ -33,10 +35,12 @@ public class Reader implements AutoCloseable {
     private final InklessFetchMetrics fetchMetrics;
 
     public Reader(Time time,
+                  ObjectKeyCreator objectKeyCreator,
                   ControlPlane controlPlane,
                   ObjectFetcher objectFetcher) {
         this(
             time,
+            objectKeyCreator,
             controlPlane,
             objectFetcher,
             Executors.newCachedThreadPool(new InklessThreadFactory("inkless-fetch-metadata-", false)),
@@ -49,6 +53,7 @@ public class Reader implements AutoCloseable {
 
     public Reader(
         Time time,
+        ObjectKeyCreator objectKeyCreator,
         ControlPlane controlPlane,
         ObjectFetcher objectFetcher,
         ExecutorService metadataExecutor,
@@ -57,6 +62,7 @@ public class Reader implements AutoCloseable {
         ExecutorService fetchCompleterExecutor
     ) {
         this.time = time;
+        this.objectKeyCreator = objectKeyCreator;
         this.controlPlane = controlPlane;
         this.objectFetcher = objectFetcher;
         this.metadataExecutor = metadataExecutor;
@@ -83,6 +89,7 @@ public class Reader implements AutoCloseable {
         final var fetchedData = fetchPlannerExecutor.submit(
             new FetchPlannerJob(
                 time,
+                objectKeyCreator,
                 objectFetcher,
                 dataExecutor,
                 batchCoordinates,
@@ -93,6 +100,7 @@ public class Reader implements AutoCloseable {
         return CompletableFuture.supplyAsync(
                 new FetchCompleterJob(
                     time,
+                    objectKeyCreator,
                     fetchInfos,
                     batchCoordinates,
                     fetchedData,

@@ -15,7 +15,16 @@ public record PlainObjectKey(String prefix, String mainPath) implements ObjectKe
     }
 
     @Override
+    public String storedPart() {
+        return mainPath;
+    }
+
+    @Override
     public String toString() {
         return value();
+    }
+
+    public static ObjectKeyCreator creator(final String prefix) {
+        return (s) -> new PlainObjectKey(prefix, s);
     }
 }

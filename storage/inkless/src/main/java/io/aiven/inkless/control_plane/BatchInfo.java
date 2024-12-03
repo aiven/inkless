@@ -4,10 +4,9 @@ package io.aiven.inkless.control_plane;
 import org.apache.kafka.common.record.TimestampType;
 
 import io.aiven.inkless.common.ByteRange;
-import io.aiven.inkless.common.ObjectKey;
 
 public record BatchInfo(
-    ObjectKey objectKey,
+    String objectKey,
     long byteOffset,
     long size,
     long recordOffset,

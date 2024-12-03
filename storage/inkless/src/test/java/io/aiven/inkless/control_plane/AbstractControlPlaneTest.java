@@ -25,8 +25,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-import io.aiven.inkless.common.PlainObjectKey;
-
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.eq;
@@ -82,7 +80,7 @@ abstract class AbstractControlPlaneTest {
     @Test
     void emptyCommit() {
         final List<CommitBatchResponse> commitBatchResponse = controlPlane.commitFile(
-            new PlainObjectKey("a", "a"),
+            "a",
             List.of()
         );
         assertThat(commitBatchResponse).isEmpty();
@@ -90,7 +88,9 @@ abstract class AbstractControlPlaneTest {
 
     @Test
     void successfulCommitToExistingPartitions() {
-        final PlainObjectKey objectKey1 = new PlainObjectKey("a", "a1");
+        final String objectKey1 = "a1";
+        final String objectKey2 = "a2";
+
         final List<CommitBatchResponse> commitResponse1 = controlPlane.commitFile(
             objectKey1,
             List.of(
@@ -105,7 +105,6 @@ abstract class AbstractControlPlaneTest {
             new CommitBatchResponse(Errors.UNKNOWN_TOPIC_OR_PARTITION, -1, -1, -1)
         );
 
-        final PlainObjectKey objectKey2 = new PlainObjectKey("a", "a2");
         final List<CommitBatchResponse> commitResponse2 = controlPlane.commitFile(
             objectKey2,
             List.of(
@@ -138,8 +137,8 @@ abstract class AbstractControlPlaneTest {
 
     @Test
     void fullSpectrumFind() {
-        final PlainObjectKey objectKey1 = new PlainObjectKey("a", "a1");
-        final PlainObjectKey objectKey2 = new PlainObjectKey("a", "a2");
+        final String objectKey1 = "a1";
+        final String objectKey2 = "a2";
         final int numberOfRecordsInBatch1 = 3;
         final int numberOfRecordsInBatch2 = 2;
         controlPlane.commitFile(objectKey1,
@@ -174,7 +173,8 @@ abstract class AbstractControlPlaneTest {
 
     @Test
     void topicDisappear() {
-        final PlainObjectKey objectKey = new PlainObjectKey("a", "a");
+        final String objectKey = "a";
+
         controlPlane.commitFile(
             objectKey,
             List.of(
@@ -209,7 +209,8 @@ abstract class AbstractControlPlaneTest {
 
     @Test
     void findOffsetOutOfRange() {
-        final PlainObjectKey objectKey = new PlainObjectKey("a", "a");
+        final String objectKey = "a";
+
         controlPlane.commitFile(
             objectKey,
             List.of(
@@ -228,7 +229,8 @@ abstract class AbstractControlPlaneTest {
 
     @Test
     void findNegativeOffset() {
-        final PlainObjectKey objectKey = new PlainObjectKey("a", "a");
+        final String objectKey = "a";
+
         controlPlane.commitFile(
             objectKey,
             List.of(
@@ -258,7 +260,8 @@ abstract class AbstractControlPlaneTest {
 
     @Test
     void commitEmptyBatches() {
-        final PlainObjectKey objectKey = new PlainObjectKey("a", "a1");
+        final String objectKey = "a";
+
         assertThatThrownBy(() -> controlPlane.commitFile(objectKey,
             List.of(
                 new CommitBatchRequest(new TopicPartition(EXISTING_TOPIC, 0), 1, 10, 10),

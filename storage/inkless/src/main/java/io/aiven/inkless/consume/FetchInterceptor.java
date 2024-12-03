@@ -29,7 +29,7 @@ public class FetchInterceptor implements Closeable {
     private final Reader reader;
 
     public FetchInterceptor(final SharedState state) {
-        this(state, new Reader(state.time(), state.controlPlane(), state.storage()));
+        this(state, new Reader(state.time(), state.objectKeyCreator(), state.controlPlane(), state.storage()));
     }
 
     public FetchInterceptor(final SharedState state, final Reader reader) {

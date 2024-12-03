@@ -26,23 +26,27 @@ import java.util.stream.Collectors;
 
 import io.aiven.inkless.TimeUtils;
 import io.aiven.inkless.common.ObjectKey;
+import io.aiven.inkless.common.ObjectKeyCreator;
 import io.aiven.inkless.control_plane.BatchInfo;
 import io.aiven.inkless.control_plane.FindBatchResponse;
 
 public class FetchCompleterJob implements Supplier<Map<TopicIdPartition, FetchPartitionData>> {
 
     private final Time time;
+    private final ObjectKeyCreator objectKeyCreator;
     private final Map<TopicIdPartition, FetchRequest.PartitionData> fetchInfos;
     private final Future<Map<TopicIdPartition, FindBatchResponse>> coordinates;
     private final Future<List<Future<FetchedFile>>> backingData;
     private final Consumer<Long> durationCallback;
 
     public FetchCompleterJob(Time time,
+                             ObjectKeyCreator objectKeyCreator,
                              Map<TopicIdPartition, FetchRequest.PartitionData> fetchInfos,
                              Future<Map<TopicIdPartition, FindBatchResponse>> coordinates,
                              Future<List<Future<FetchedFile>>> backingData,
                              Consumer<Long> durationCallback) {
         this.time = time;
+        this.objectKeyCreator = objectKeyCreator;
         this.fetchInfos = fetchInfos;
         this.coordinates = coordinates;
         this.backingData = backingData;
@@ -88,7 +92,7 @@ public class FetchCompleterJob implements Supplier<Map<TopicIdPartition, FetchPa
                 .collect(Collectors.toMap(Map.Entry::getKey, e -> servePartition(e.getKey(), metadata, files)));
     }
 
-    private static FetchPartitionData servePartition(TopicIdPartition key, Map<TopicIdPartition, FindBatchResponse> allMetadata, Map<ObjectKey, List<FetchedFile>> allFiles) {
+    private FetchPartitionData servePartition(TopicIdPartition key, Map<TopicIdPartition, FindBatchResponse> allMetadata, Map<ObjectKey, List<FetchedFile>> allFiles) {
         FindBatchResponse metadata = allMetadata.get(key);
         if (metadata == null) {
             return new FetchPartitionData(
@@ -145,10 +149,10 @@ public class FetchCompleterJob implements Supplier<Map<TopicIdPartition, FetchPa
         );
     }
 
-    private static List<MemoryRecords> extractRecords(FindBatchResponse metadata, Map<ObjectKey, List<FetchedFile>> allFiles) {
+    private List<MemoryRecords> extractRecords(FindBatchResponse metadata, Map<ObjectKey, List<FetchedFile>> allFiles) {
         List<MemoryRecords> foundRecords = new ArrayList<>();
         for (BatchInfo batch : metadata.batches()) {
-            List<FetchedFile> files = allFiles.get(batch.objectKey());
+            List<FetchedFile> files = allFiles.get(objectKeyCreator.create(batch.objectKey()));
             if (files == null || files.isEmpty()) {
                 // as soon as we encounter an error
                 return foundRecords;

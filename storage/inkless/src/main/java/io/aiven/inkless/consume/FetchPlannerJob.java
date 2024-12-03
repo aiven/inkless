@@ -15,6 +15,7 @@ import java.util.stream.Collectors;
 
 import io.aiven.inkless.TimeUtils;
 import io.aiven.inkless.common.ByteRange;
+import io.aiven.inkless.common.ObjectKeyCreator;
 import io.aiven.inkless.control_plane.BatchInfo;
 import io.aiven.inkless.control_plane.FindBatchResponse;
 import io.aiven.inkless.storage_backend.common.ObjectFetcher;
@@ -22,6 +23,7 @@ import io.aiven.inkless.storage_backend.common.ObjectFetcher;
 public class FetchPlannerJob implements Callable<List<Future<FetchedFile>>> {
 
     private final Time time;
+    private final ObjectKeyCreator objectKeyCreator;
     private final ObjectFetcher objectFetcher;
     private final ExecutorService dataExecutor;
     private final Future<Map<TopicIdPartition, FindBatchResponse>> batchCoordinatesFuture;
@@ -29,12 +31,14 @@ public class FetchPlannerJob implements Callable<List<Future<FetchedFile>>> {
     private final Consumer<Long> fileFetchDurationCallback;
 
     public FetchPlannerJob(Time time,
+                           ObjectKeyCreator objectKeyCreator,
                            ObjectFetcher objectFetcher,
                            ExecutorService dataExecutor,
                            Future<Map<TopicIdPartition, FindBatchResponse>> batchCoordinatesFuture,
                            Consumer<Long> durationCallback,
                            Consumer<Long> fileFetchDurationCallback) {
         this.time = time;
+        this.objectKeyCreator = objectKeyCreator;
         this.objectFetcher = objectFetcher;
         this.dataExecutor = dataExecutor;
         this.batchCoordinatesFuture = batchCoordinatesFuture;
@@ -62,7 +66,7 @@ public class FetchPlannerJob implements Callable<List<Future<FetchedFile>>> {
                 .entrySet()
                 .stream()
                 .map(e ->
-                    new FileFetchJob(time, objectFetcher, e.getKey(), e.getValue(), fileFetchDurationCallback))
+                    new FileFetchJob(time, objectFetcher, objectKeyCreator.create(e.getKey()), e.getValue(), fileFetchDurationCallback))
                 .collect(Collectors.toList());
     }
 
