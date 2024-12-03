@@ -12,7 +12,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.Closeable;
-import java.io.IOException;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
@@ -30,8 +29,12 @@ public class FetchInterceptor implements Closeable {
     private final Reader reader;
 
     public FetchInterceptor(final SharedState state) {
+        this(state, new Reader(state.time(), state.controlPlane(), state.storage()));
+    }
+
+    public FetchInterceptor(final SharedState state, final Reader reader) {
         this.state = state;
-        this.reader = new Reader(state.time(), state.controlPlane(), state.storage());
+        this.reader = reader;
     }
 
     public boolean intercept(final FetchParams params,
@@ -89,7 +92,8 @@ public class FetchInterceptor implements Closeable {
     }
 
     @Override
-    public void close() throws IOException {
+    public void close() {
+        reader.close();
     }
 
     private record EntrySeparationResult(Map<TopicIdPartition, FetchRequest.PartitionData> entitiesForInklessTopics,

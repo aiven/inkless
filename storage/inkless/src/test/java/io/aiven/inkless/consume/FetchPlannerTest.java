@@ -42,6 +42,8 @@ public class FetchPlannerTest {
     ObjectFetcher fetcher;
     @Mock
     ExecutorService dataExecutor;
+
+    Time time = new MockTime();
     Uuid topicId = Uuid.randomUuid();
     ObjectKey objectA = new PlainObjectKey("a", "a");
     ObjectKey objectB = new PlainObjectKey("b", "b");
@@ -84,7 +86,6 @@ public class FetchPlannerTest {
 
     @Test
     public void planRequestsForMultipleObjects() throws Exception {
-        final Time time = new MockTime();
         assertBatchPlan(Map.of(
                 partition0, FindBatchResponse.success(List.of(
                         new BatchInfo(objectA, 0, 10, 0, 1, TimestampType.CREATE_TIME, 10),
@@ -98,7 +99,6 @@ public class FetchPlannerTest {
 
     @Test
     public void planRequestsForMultiplePartitions() throws Exception {
-        final Time time = new MockTime();
         assertBatchPlan(Map.of(
                 partition0, FindBatchResponse.success(List.of(
                         new BatchInfo(objectA, 0, 10, 0, 1, TimestampType.CREATE_TIME, 10)
@@ -114,7 +114,6 @@ public class FetchPlannerTest {
 
     @Test
     public void planMergedRequestsForSameObject() throws Exception {
-        final Time time = new MockTime();
         assertBatchPlan(Map.of(
                 partition0, FindBatchResponse.success(List.of(
                         new BatchInfo(objectA, 0, 10, 0, 1, TimestampType.CREATE_TIME, 10)
@@ -124,6 +123,42 @@ public class FetchPlannerTest {
                 ), 0,  1)
                 ), Set.of(
                     new FileFetchJob(time, fetcher, objectA, new ByteRange(0, 40), durationMs -> {})
+        ));
+    }
+
+    @Test
+    public void planOffsetOutOfRange() throws Exception {
+        assertBatchPlan(Map.of(
+                partition0, FindBatchResponse.offsetOutOfRange(0, 1),
+                partition1, FindBatchResponse.success(List.of(
+                        new BatchInfo(objectB, 0, 10, 0, 1, TimestampType.CREATE_TIME, 11)
+                ), 0, 1)
+        ), Set.of(
+                new FileFetchJob(time, fetcher, objectB, new ByteRange(0, 10), durationMs -> {})
+        ));
+    }
+
+    @Test
+    public void planUnknownTopicOrPartition() throws Exception {
+        assertBatchPlan(Map.of(
+                partition0, FindBatchResponse.unknownTopicOrPartition(),
+                partition1, FindBatchResponse.success(List.of(
+                        new BatchInfo(objectB, 0, 10, 0, 1, TimestampType.CREATE_TIME, 11)
+                ), 0, 1)
+        ), Set.of(
+                new FileFetchJob(time, fetcher, objectB, new ByteRange(0, 10), durationMs -> {})
+        ));
+    }
+
+    @Test
+    public void planUnknownServerError() throws Exception {
+        assertBatchPlan(Map.of(
+                partition0, FindBatchResponse.unknownServerError(),
+                partition1, FindBatchResponse.success(List.of(
+                        new BatchInfo(objectB, 0, 10, 0, 1, TimestampType.CREATE_TIME, 11)
+                ), 0, 1)
+        ), Set.of(
+                new FileFetchJob(time, fetcher, objectB, new ByteRange(0, 10), durationMs -> {})
         ));
     }
 
