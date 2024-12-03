@@ -4,6 +4,7 @@ package io.aiven.inkless.produce;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.compress.Compression;
 import org.apache.kafka.common.record.MemoryRecords;
+import org.apache.kafka.common.record.RecordBatch;
 import org.apache.kafka.common.record.SimpleRecord;
 import org.apache.kafka.common.utils.Time;
 
@@ -106,10 +107,10 @@ class ActiveFileTest {
         assertThat(result.awaitingFuturesByRequest().get(0)).isNotCompleted();
         assertThat(result.awaitingFuturesByRequest().get(1)).isNotCompleted();
         assertThat(result.commitBatchRequests()).containsExactly(
-            new CommitBatchRequest(T0P0, 0, 78, 1),
-            new CommitBatchRequest(T0P1, 78, 78, 1),
-            new CommitBatchRequest(T0P1, 156, 78, 1),
-            new CommitBatchRequest(T1P0, 234, 78, 1)
+            new CommitBatchRequest(T0P0, 0, 78, 1, RecordBatch.NO_PRODUCER_ID),
+            new CommitBatchRequest(T0P1, 78, 78, 1, RecordBatch.NO_PRODUCER_ID),
+            new CommitBatchRequest(T0P1, 156, 78, 1, RecordBatch.NO_PRODUCER_ID),
+            new CommitBatchRequest(T1P0, 234, 78, 1, RecordBatch.NO_PRODUCER_ID)
         );
         assertThat(result.requestIds()).containsExactly(0, 0, 1, 1);
         assertThat(result.data()).hasSize(312);

@@ -6,6 +6,7 @@ import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.metadata.PartitionRecord;
 import org.apache.kafka.common.metadata.TopicRecord;
 import org.apache.kafka.common.protocol.Errors;
+import org.apache.kafka.common.record.RecordBatch;
 import org.apache.kafka.common.record.TimestampType;
 import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.image.MetadataDelta;
@@ -67,8 +68,8 @@ class CommitFileJobTest extends SharedPostgreSQLTest {
         when(time.milliseconds()).thenReturn(123456L);
 
         final CommitFileJob job = new CommitFileJob(time, hikariDataSource, objectKey, List.of(
-            new CommitFileJob.CommitBatchRequestExtra(new CommitBatchRequest(T0P1, 0, 100, 15), TOPIC_ID_0, TimestampType.CREATE_TIME),
-            new CommitFileJob.CommitBatchRequestExtra(new CommitBatchRequest(T1P0, 100, 50, 27), TOPIC_ID_1, TimestampType.LOG_APPEND_TIME)
+            new CommitFileJob.CommitBatchRequestExtra(new CommitBatchRequest(T0P1, 0, 100, 15, RecordBatch.NO_PRODUCER_ID), TOPIC_ID_0, TimestampType.CREATE_TIME),
+            new CommitFileJob.CommitBatchRequestExtra(new CommitBatchRequest(T1P0, 100, 50, 27, RecordBatch.NO_PRODUCER_ID), TOPIC_ID_1, TimestampType.LOG_APPEND_TIME)
         ));
         final List<CommitBatchResponse> result = job.call();
 
@@ -99,8 +100,8 @@ class CommitFileJobTest extends SharedPostgreSQLTest {
         when(time.milliseconds()).thenReturn(1000L);
 
         final CommitFileJob job1 = new CommitFileJob(time, hikariDataSource, objectKey1, List.of(
-            new CommitFileJob.CommitBatchRequestExtra(new CommitBatchRequest(T0P1, 0, 100, 15), TOPIC_ID_0, TimestampType.CREATE_TIME),
-            new CommitFileJob.CommitBatchRequestExtra(new CommitBatchRequest(T1P0, 100, 50, 27), TOPIC_ID_1, TimestampType.LOG_APPEND_TIME)
+            new CommitFileJob.CommitBatchRequestExtra(new CommitBatchRequest(T0P1, 0, 100, 15, RecordBatch.NO_PRODUCER_ID), TOPIC_ID_0, TimestampType.CREATE_TIME),
+            new CommitFileJob.CommitBatchRequestExtra(new CommitBatchRequest(T1P0, 100, 50, 27, RecordBatch.NO_PRODUCER_ID), TOPIC_ID_1, TimestampType.LOG_APPEND_TIME)
         ));
         final List<CommitBatchResponse> result1 = job1.call();
 
@@ -112,8 +113,8 @@ class CommitFileJobTest extends SharedPostgreSQLTest {
         when(time.milliseconds()).thenReturn(2000L);
 
         final CommitFileJob job2 = new CommitFileJob(time, hikariDataSource, objectKey2, List.of(
-            new CommitFileJob.CommitBatchRequestExtra(new CommitBatchRequest(T0P0, 0, 111, 159), TOPIC_ID_0, TimestampType.CREATE_TIME),
-            new CommitFileJob.CommitBatchRequestExtra(new CommitBatchRequest(T0P1, 111, 222, 245), TOPIC_ID_0, TimestampType.CREATE_TIME)
+            new CommitFileJob.CommitBatchRequestExtra(new CommitBatchRequest(T0P0, 0, 111, 159, RecordBatch.NO_PRODUCER_ID), TOPIC_ID_0, TimestampType.CREATE_TIME),
+            new CommitFileJob.CommitBatchRequestExtra(new CommitBatchRequest(T0P1, 111, 222, 245, RecordBatch.NO_PRODUCER_ID), TOPIC_ID_0, TimestampType.CREATE_TIME)
         ));
         final List<CommitBatchResponse> result2 = job2.call();
 
@@ -148,9 +149,9 @@ class CommitFileJobTest extends SharedPostgreSQLTest {
         // Non-existent partition.
         final var t1p1 = new TopicPartition(TOPIC_1, 10);
         final CommitFileJob job = new CommitFileJob(time, hikariDataSource, objectKey, List.of(
-            new CommitFileJob.CommitBatchRequestExtra(new CommitBatchRequest(T0P1, 0, 100, 15), TOPIC_ID_0, TimestampType.CREATE_TIME),
-            new CommitFileJob.CommitBatchRequestExtra(new CommitBatchRequest(T1P0, 100, 50, 27), TOPIC_ID_1, TimestampType.LOG_APPEND_TIME),
-            new CommitFileJob.CommitBatchRequestExtra(new CommitBatchRequest(t1p1, 150, 1243, 82), TOPIC_ID_1, TimestampType.LOG_APPEND_TIME)
+            new CommitFileJob.CommitBatchRequestExtra(new CommitBatchRequest(T0P1, 0, 100, 15, RecordBatch.NO_PRODUCER_ID), TOPIC_ID_0, TimestampType.CREATE_TIME),
+            new CommitFileJob.CommitBatchRequestExtra(new CommitBatchRequest(T1P0, 100, 50, 27, RecordBatch.NO_PRODUCER_ID), TOPIC_ID_1, TimestampType.LOG_APPEND_TIME),
+            new CommitFileJob.CommitBatchRequestExtra(new CommitBatchRequest(t1p1, 150, 1243, 82, RecordBatch.NO_PRODUCER_ID), TOPIC_ID_1, TimestampType.LOG_APPEND_TIME)
         ));
 
         final List<CommitBatchResponse> result = job.call();

@@ -42,8 +42,6 @@ public class FindBatchesJobTest {
     private ControlPlane controlPlane;
     @Mock
     private FetchParams params;
-    @Mock
-    private Map<TopicIdPartition, FetchRequest.PartitionData> fetchInfos;
 
     @Captor
     ArgumentCaptor<List<FindBatchRequest>> requestCaptor;

@@ -142,7 +142,7 @@ public class AppendInterceptorTest {
     }
 
     @Test
-    public void rejectIdempotentProduceForInklessTopics() {
+    public void acceptIdempotentProduceForInklessTopics() {
         when(metadataView.isInklessTopic(eq("inkless1"))).thenReturn(true);
         when(metadataView.isInklessTopic(eq("inkless2"))).thenReturn(true);
         final AppendInterceptor interceptor = new AppendInterceptor(
@@ -155,17 +155,18 @@ public class AppendInterceptorTest {
             RECORDS_WITH_PRODUCER_ID
         );
 
+        final var writeResult = Map.of(
+            new TopicPartition("inkless1", 0), new PartitionResponse(Errors.NONE),
+            new TopicPartition("inkless2", 0), new PartitionResponse(Errors.NONE)
+        );
+        when(writer.write(any())).thenReturn(
+            CompletableFuture.completedFuture(writeResult)
+        );
+
         final boolean result = interceptor.intercept(entriesPerPartition, responseCallback);
         assertThat(result).isTrue();
 
-        verify(responseCallback).accept(resultCaptor.capture());
-        assertThat(resultCaptor.getValue()).isEqualTo(Map.of(
-            new TopicPartition("inkless1", 0),
-            new PartitionResponse(Errors.INVALID_REQUEST),
-            new TopicPartition("inkless2", 0),
-            new PartitionResponse(Errors.INVALID_REQUEST)
-        ));
-        verify(writer, never()).write(any());
+        verify(responseCallback).accept(eq(writeResult));
     }
 
     @Test

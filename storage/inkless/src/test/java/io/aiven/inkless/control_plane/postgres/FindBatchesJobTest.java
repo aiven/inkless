@@ -7,6 +7,7 @@ import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.metadata.PartitionRecord;
 import org.apache.kafka.common.metadata.TopicRecord;
 import org.apache.kafka.common.protocol.Errors;
+import org.apache.kafka.common.record.RecordBatch;
 import org.apache.kafka.common.record.TimestampType;
 import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.image.MetadataDelta;
@@ -42,8 +43,6 @@ class FindBatchesJobTest extends SharedPostgreSQLTest {
     static final Uuid TOPIC_ID_0 = new Uuid(10, 12);
     static final Uuid TOPIC_ID_1 = new Uuid(555, 333);
     static final TopicPartition T0P0 = new TopicPartition(TOPIC_0, 0);
-    static final TopicPartition T0P1 = new TopicPartition(TOPIC_0, 1);
-    static final TopicPartition T1P0 = new TopicPartition(TOPIC_1, 0);
 
     @Mock
     Time time;
@@ -72,7 +71,7 @@ class FindBatchesJobTest extends SharedPostgreSQLTest {
         final CommitFileJob commitJob = new CommitFileJob(
             time, hikariDataSource, objectKey1,
             List.of(
-                new CommitFileJob.CommitBatchRequestExtra(new CommitBatchRequest(T0P0, 0, 1234, 12), TOPIC_ID_0, TimestampType.CREATE_TIME)
+                new CommitFileJob.CommitBatchRequestExtra(new CommitBatchRequest(T0P0, 0, 1234, 12, RecordBatch.NO_PRODUCER_ID), TOPIC_ID_0, TimestampType.CREATE_TIME)
             )
         );
         assertThat(commitJob.call()).isNotEmpty();

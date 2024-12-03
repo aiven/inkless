@@ -77,9 +77,7 @@ public class AppendInterceptor implements Closeable {
         }
 
         // This automatically reject transactional produce with this check.
-        // However, it's likely that we allow idempotent produce earlier than we allow transactions.
-        // Remember to adjust the code and tests accordingly!
-        if (rejectIdempotentProduce(entriesPerPartition, responseCallback)) {
+        if (rejectTransactionalProduce(entriesPerPartition, responseCallback)) {
             return true;
         }
 
@@ -111,23 +109,25 @@ public class AppendInterceptor implements Closeable {
         return new EntryCountResult(entitiesForInklessTopics, entitiesForNonInklessTopics);
     }
 
-    private boolean rejectIdempotentProduce(final Map<TopicPartition, MemoryRecords> entriesPerPartition,
-                                            final Consumer<Map<TopicPartition, PartitionResponse>> responseCallback) {
-        boolean atLeastBatchHasProducerId = entriesPerPartition.values().stream().anyMatch(records -> {
-            for (final var batch : records.batches()) {
-                if (batch.hasProducerId()) {
-                    return true;
+    private boolean rejectTransactionalProduce(final Map<TopicPartition, MemoryRecords> entriesPerPartition,
+                                               final Consumer<Map<TopicPartition, PartitionResponse>> responseCallback) {
+        boolean atLeastOneBatchIsTransactional = entriesPerPartition.values().stream()
+            .anyMatch(records -> {
+                for (final var batch : records.batches()) {
+                    if (batch.isTransactional()) {
+                        return true;
+                    }
                 }
-            }
-            return false;
-        });
+                return false;
+            });
 
-        if (atLeastBatchHasProducerId) {
-            LOGGER.warn("Idempotent produce found, rejecting request");
+        if (atLeastOneBatchIsTransactional) {
+            LOGGER.warn("Transactional produce found, rejecting request");
             final var result = entriesPerPartition.entrySet().stream()
                 .collect(Collectors.toMap(
                     Map.Entry::getKey,
-                    ignore -> new PartitionResponse(Errors.INVALID_REQUEST)));
+                    ignore -> new PartitionResponse(Errors.INVALID_REQUEST)
+                ));
             responseCallback.accept(result);
             return true;
         } else {
