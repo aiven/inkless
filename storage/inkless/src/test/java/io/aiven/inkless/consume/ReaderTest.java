@@ -16,11 +16,10 @@
  */
 package io.aiven.inkless.consume;
 
-import io.aiven.inkless.control_plane.ControlPlane;
-import io.aiven.inkless.storage_backend.common.ObjectFetcher;
 import org.apache.kafka.common.utils.MockTime;
 import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.server.storage.log.FetchParams;
+
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -32,6 +31,9 @@ import org.mockito.quality.Strictness;
 import java.util.Collections;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
+
+import io.aiven.inkless.control_plane.ControlPlane;
+import io.aiven.inkless.storage_backend.common.ObjectFetcher;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
