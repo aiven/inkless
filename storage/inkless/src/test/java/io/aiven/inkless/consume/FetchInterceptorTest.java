@@ -31,6 +31,8 @@ import java.util.OptionalLong;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.Consumer;
 
+import io.aiven.inkless.common.ObjectKeyCreator;
+import io.aiven.inkless.common.PlainObjectKey;
 import io.aiven.inkless.common.SharedState;
 import io.aiven.inkless.config.InklessConfig;
 import io.aiven.inkless.control_plane.ControlPlane;
@@ -47,6 +49,8 @@ import static org.mockito.Mockito.when;
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.STRICT_STUBS)
 public class FetchInterceptorTest {
+    static final ObjectKeyCreator OBJECT_KEY_CREATOR = PlainObjectKey.creator("");
+
     Time time = new MockTime();
     @Mock
     InklessConfig inklessConfig;
@@ -73,7 +77,7 @@ public class FetchInterceptorTest {
 
     @BeforeEach
     public void setup() {
-        sharedState = new SharedState(time, inklessConfig, metadataView, controlPlane, storageBackend, brokerTopicStats);
+        sharedState = new SharedState(time, inklessConfig, metadataView, controlPlane, storageBackend, OBJECT_KEY_CREATOR, brokerTopicStats);
     }
 
     @Test

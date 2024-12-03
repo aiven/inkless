@@ -3,4 +3,8 @@ package io.aiven.inkless.common;
 
 public interface ObjectKey {
     String value();
+
+    default String storedPart() {
+        return value();
+    }
 }

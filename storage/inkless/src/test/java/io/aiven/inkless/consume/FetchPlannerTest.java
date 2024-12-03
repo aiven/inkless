@@ -25,6 +25,7 @@ import java.util.concurrent.ExecutorService;
 
 import io.aiven.inkless.common.ByteRange;
 import io.aiven.inkless.common.ObjectKey;
+import io.aiven.inkless.common.ObjectKeyCreator;
 import io.aiven.inkless.common.PlainObjectKey;
 import io.aiven.inkless.control_plane.BatchInfo;
 import io.aiven.inkless.control_plane.FindBatchResponse;
@@ -37,6 +38,12 @@ import static org.mockito.Mockito.when;
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.STRICT_STUBS)
 public class FetchPlannerTest {
+    static final String OBJECT_KEY_PREFIX = "prefix/";
+    static final ObjectKeyCreator OBJECT_KEY_CREATOR = PlainObjectKey.creator(OBJECT_KEY_PREFIX);
+    static final String OBJECT_KEY_A_MAIN_PART = "a";
+    static final String OBJECT_KEY_B_MAIN_PART = "b";
+    static final ObjectKey OBJECT_KEY_A = new PlainObjectKey(OBJECT_KEY_PREFIX, OBJECT_KEY_A_MAIN_PART);
+    static final ObjectKey OBJECT_KEY_B = new PlainObjectKey(OBJECT_KEY_PREFIX, OBJECT_KEY_B_MAIN_PART);
 
     @Mock
     ObjectFetcher fetcher;
@@ -45,8 +52,6 @@ public class FetchPlannerTest {
 
     Time time = new MockTime();
     Uuid topicId = Uuid.randomUuid();
-    ObjectKey objectA = new PlainObjectKey("a", "a");
-    ObjectKey objectB = new PlainObjectKey("b", "b");
     TopicIdPartition partition0 = new TopicIdPartition(topicId, 0, "inkless-topic");
     TopicIdPartition partition1 = new TopicIdPartition(topicId, 1, "inkless-topic");
 
@@ -55,6 +60,7 @@ public class FetchPlannerTest {
         Map<TopicIdPartition, FindBatchResponse> coordinates = new HashMap<>();
         FetchPlannerJob job = new FetchPlannerJob(
             new MockTime(),
+            OBJECT_KEY_CREATOR,
             fetcher,
             dataExecutor,
             CompletableFuture.completedFuture(coordinates),
@@ -71,13 +77,13 @@ public class FetchPlannerTest {
     public void planSingleRequest() throws Exception {
         assertBatchPlan(Map.of(
                 partition0, FindBatchResponse.success(List.of(
-                        new BatchInfo(objectA, 0, 10, 0, 1, TimestampType.CREATE_TIME, 10)
+                        new BatchInfo(OBJECT_KEY_A_MAIN_PART, 0, 10, 0, 1, TimestampType.CREATE_TIME, 10)
                 ), 0, 1)
         ), Set.of(
                 new FileFetchJob(
                     new MockTime(),
                     fetcher,
-                    objectA,
+                    OBJECT_KEY_A,
                     new ByteRange(0, 10),
                     durationMs -> {}
                 )
@@ -88,12 +94,12 @@ public class FetchPlannerTest {
     public void planRequestsForMultipleObjects() throws Exception {
         assertBatchPlan(Map.of(
                 partition0, FindBatchResponse.success(List.of(
-                        new BatchInfo(objectA, 0, 10, 0, 1, TimestampType.CREATE_TIME, 10),
-                        new BatchInfo(objectB, 0, 10, 1, 1, TimestampType.CREATE_TIME, 11)
+                        new BatchInfo(OBJECT_KEY_A_MAIN_PART, 0, 10, 0, 1, TimestampType.CREATE_TIME, 10),
+                        new BatchInfo(OBJECT_KEY_B_MAIN_PART, 0, 10, 1, 1, TimestampType.CREATE_TIME, 11)
                 ), 0, 2)
         ), Set.of(
-                new FileFetchJob(time, fetcher, objectA, new ByteRange(0, 10), durationMs -> {}),
-                new FileFetchJob(time, fetcher, objectB, new ByteRange(0, 10), durationMs -> {})
+                new FileFetchJob(time, fetcher, OBJECT_KEY_A, new ByteRange(0, 10), durationMs -> {}),
+                new FileFetchJob(time, fetcher, OBJECT_KEY_B, new ByteRange(0, 10), durationMs -> {})
         ));
     }
 
@@ -101,14 +107,14 @@ public class FetchPlannerTest {
     public void planRequestsForMultiplePartitions() throws Exception {
         assertBatchPlan(Map.of(
                 partition0, FindBatchResponse.success(List.of(
-                        new BatchInfo(objectA, 0, 10, 0, 1, TimestampType.CREATE_TIME, 10)
+                        new BatchInfo(OBJECT_KEY_A_MAIN_PART, 0, 10, 0, 1, TimestampType.CREATE_TIME, 10)
                 ), 0, 1),
                 partition1, FindBatchResponse.success(List.of(
-                        new BatchInfo(objectB, 0, 10, 0, 1, TimestampType.CREATE_TIME, 11)
+                        new BatchInfo(OBJECT_KEY_B_MAIN_PART, 0, 10, 0, 1, TimestampType.CREATE_TIME, 11)
                 ), 0, 1)
         ), Set.of(
-                new FileFetchJob(time, fetcher, objectA, new ByteRange(0, 10), durationMs -> {}),
-                new FileFetchJob(time, fetcher, objectB, new ByteRange(0, 10), durationMs -> {})
+                new FileFetchJob(time, fetcher, OBJECT_KEY_A, new ByteRange(0, 10), durationMs -> {}),
+                new FileFetchJob(time, fetcher, OBJECT_KEY_B, new ByteRange(0, 10), durationMs -> {})
         ));
     }
 
@@ -116,13 +122,13 @@ public class FetchPlannerTest {
     public void planMergedRequestsForSameObject() throws Exception {
         assertBatchPlan(Map.of(
                 partition0, FindBatchResponse.success(List.of(
-                        new BatchInfo(objectA, 0, 10, 0, 1, TimestampType.CREATE_TIME, 10)
+                        new BatchInfo(OBJECT_KEY_A_MAIN_PART, 0, 10, 0, 1, TimestampType.CREATE_TIME, 10)
                 ), 0, 1),
                 partition1, FindBatchResponse.success(List.of(
-                        new BatchInfo(objectA, 30, 10, 0, 1, TimestampType.CREATE_TIME, 11)
+                        new BatchInfo(OBJECT_KEY_A_MAIN_PART, 30, 10, 0, 1, TimestampType.CREATE_TIME, 11)
                 ), 0,  1)
                 ), Set.of(
-                    new FileFetchJob(time, fetcher, objectA, new ByteRange(0, 40), durationMs -> {})
+                    new FileFetchJob(time, fetcher, OBJECT_KEY_A, new ByteRange(0, 40), durationMs -> {})
         ));
     }
 
@@ -131,10 +137,10 @@ public class FetchPlannerTest {
         assertBatchPlan(Map.of(
                 partition0, FindBatchResponse.offsetOutOfRange(0, 1),
                 partition1, FindBatchResponse.success(List.of(
-                        new BatchInfo(objectB, 0, 10, 0, 1, TimestampType.CREATE_TIME, 11)
+                        new BatchInfo(OBJECT_KEY_B_MAIN_PART, 0, 10, 0, 1, TimestampType.CREATE_TIME, 11)
                 ), 0, 1)
         ), Set.of(
-                new FileFetchJob(time, fetcher, objectB, new ByteRange(0, 10), durationMs -> {})
+                new FileFetchJob(time, fetcher, OBJECT_KEY_B, new ByteRange(0, 10), durationMs -> {})
         ));
     }
 
@@ -143,10 +149,10 @@ public class FetchPlannerTest {
         assertBatchPlan(Map.of(
                 partition0, FindBatchResponse.unknownTopicOrPartition(),
                 partition1, FindBatchResponse.success(List.of(
-                        new BatchInfo(objectB, 0, 10, 0, 1, TimestampType.CREATE_TIME, 11)
+                        new BatchInfo(OBJECT_KEY_B_MAIN_PART, 0, 10, 0, 1, TimestampType.CREATE_TIME, 11)
                 ), 0, 1)
         ), Set.of(
-                new FileFetchJob(time, fetcher, objectB, new ByteRange(0, 10), durationMs -> {})
+                new FileFetchJob(time, fetcher, OBJECT_KEY_B, new ByteRange(0, 10), durationMs -> {})
         ));
     }
 
@@ -155,10 +161,10 @@ public class FetchPlannerTest {
         assertBatchPlan(Map.of(
                 partition0, FindBatchResponse.unknownServerError(),
                 partition1, FindBatchResponse.success(List.of(
-                        new BatchInfo(objectB, 0, 10, 0, 1, TimestampType.CREATE_TIME, 11)
+                        new BatchInfo(OBJECT_KEY_B_MAIN_PART, 0, 10, 0, 1, TimestampType.CREATE_TIME, 11)
                 ), 0, 1)
         ), Set.of(
-                new FileFetchJob(time, fetcher, objectB, new ByteRange(0, 10), durationMs -> {})
+                new FileFetchJob(time, fetcher, OBJECT_KEY_B, new ByteRange(0, 10), durationMs -> {})
         ));
     }
 
@@ -168,6 +174,7 @@ public class FetchPlannerTest {
 
         FetchPlannerJob job = new FetchPlannerJob(
             new MockTime(),
+            OBJECT_KEY_CREATOR,
             fetcher,
             dataExecutor,
             CompletableFuture.completedFuture(coordinates),

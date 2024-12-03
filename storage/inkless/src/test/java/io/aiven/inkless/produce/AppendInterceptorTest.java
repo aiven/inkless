@@ -26,6 +26,8 @@ import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.Consumer;
 
+import io.aiven.inkless.common.ObjectKeyCreator;
+import io.aiven.inkless.common.PlainObjectKey;
 import io.aiven.inkless.common.SharedState;
 import io.aiven.inkless.config.InklessConfig;
 import io.aiven.inkless.control_plane.ControlPlane;
@@ -42,6 +44,8 @@ import static org.mockito.Mockito.when;
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.STRICT_STUBS)
 public class AppendInterceptorTest {
+    static final ObjectKeyCreator OBJECT_KEY_CREATOR = PlainObjectKey.creator("");
+
     Time time = new MockTime();
     @Mock
     InklessConfig inklessConfig;
@@ -98,7 +102,7 @@ public class AppendInterceptorTest {
         when(metadataView.isInklessTopic(eq("inkless"))).thenReturn(true);
         when(metadataView.isInklessTopic(eq("non_inkless"))).thenReturn(false);
         final AppendInterceptor interceptor = new AppendInterceptor(
-            new SharedState(time, inklessConfig, metadataView, controlPlane, storageBackend, brokerTopicStats), writer);
+            new SharedState(time, inklessConfig, metadataView, controlPlane, storageBackend, OBJECT_KEY_CREATOR, brokerTopicStats), writer);
 
         final Map<TopicPartition, MemoryRecords> entriesPerPartition = Map.of(
             new TopicPartition("inkless", 0),
@@ -124,7 +128,7 @@ public class AppendInterceptorTest {
     public void notInterceptProducingToClassicTopics() {
         when(metadataView.isInklessTopic(eq("non_inkless"))).thenReturn(false);
         final AppendInterceptor interceptor = new AppendInterceptor(
-            new SharedState(time, inklessConfig, metadataView, controlPlane, storageBackend, brokerTopicStats), writer);
+            new SharedState(time, inklessConfig, metadataView, controlPlane, storageBackend, OBJECT_KEY_CREATOR, brokerTopicStats), writer);
 
         final Map<TopicPartition, MemoryRecords> entriesPerPartition = Map.of(
             new TopicPartition("non_inkless", 0),
@@ -142,7 +146,7 @@ public class AppendInterceptorTest {
         when(metadataView.isInklessTopic(eq("inkless1"))).thenReturn(true);
         when(metadataView.isInklessTopic(eq("inkless2"))).thenReturn(true);
         final AppendInterceptor interceptor = new AppendInterceptor(
-            new SharedState(time, inklessConfig, metadataView, controlPlane, storageBackend, brokerTopicStats), writer);
+            new SharedState(time, inklessConfig, metadataView, controlPlane, storageBackend, OBJECT_KEY_CREATOR, brokerTopicStats), writer);
 
         final Map<TopicPartition, MemoryRecords> entriesPerPartition = Map.of(
             new TopicPartition("inkless1", 0),
@@ -168,7 +172,7 @@ public class AppendInterceptorTest {
     public void acceptIdempotentProduceForNonInklessTopics() {
         when(metadataView.isInklessTopic(eq("non_inkless"))).thenReturn(false);
         final AppendInterceptor interceptor = new AppendInterceptor(
-            new SharedState(time, inklessConfig, metadataView, controlPlane, storageBackend, brokerTopicStats), writer);
+            new SharedState(time, inklessConfig, metadataView, controlPlane, storageBackend, OBJECT_KEY_CREATOR, brokerTopicStats), writer);
 
         final Map<TopicPartition, MemoryRecords> entriesPerPartition = Map.of(
             new TopicPartition("non_inkless", 0),
@@ -187,7 +191,7 @@ public class AppendInterceptorTest {
         when(metadataView.isInklessTopic(eq("inkless1"))).thenReturn(true);
         when(metadataView.isInklessTopic(eq("inkless2"))).thenReturn(true);
         final AppendInterceptor interceptor = new AppendInterceptor(
-            new SharedState(time, inklessConfig, metadataView, controlPlane, storageBackend, brokerTopicStats), writer);
+            new SharedState(time, inklessConfig, metadataView, controlPlane, storageBackend, OBJECT_KEY_CREATOR, brokerTopicStats), writer);
 
         final Map<TopicPartition, MemoryRecords> entriesPerPartition = Map.of(
             new TopicPartition("inkless1", 0),
@@ -213,7 +217,7 @@ public class AppendInterceptorTest {
     public void acceptTransactionalProduceForNonInklessTopics() {
         when(metadataView.isInklessTopic(eq("non_inkless"))).thenReturn(false);
         final AppendInterceptor interceptor = new AppendInterceptor(
-            new SharedState(time, inklessConfig, metadataView, controlPlane, storageBackend, brokerTopicStats), writer);
+            new SharedState(time, inklessConfig, metadataView, controlPlane, storageBackend, OBJECT_KEY_CREATOR, brokerTopicStats), writer);
 
         final Map<TopicPartition, MemoryRecords> entriesPerPartition = Map.of(
             new TopicPartition("non_inkless", 0),
@@ -243,7 +247,7 @@ public class AppendInterceptorTest {
 
         when(metadataView.isInklessTopic(eq("inkless"))).thenReturn(true);
         final AppendInterceptor interceptor = new AppendInterceptor(
-            new SharedState(time, inklessConfig, metadataView, controlPlane, storageBackend, brokerTopicStats), writer);
+            new SharedState(time, inklessConfig, metadataView, controlPlane, storageBackend, OBJECT_KEY_CREATOR, brokerTopicStats), writer);
 
         final boolean result = interceptor.intercept(entriesPerPartition, responseCallback);
         assertThat(result).isTrue();
@@ -265,7 +269,7 @@ public class AppendInterceptorTest {
 
         when(metadataView.isInklessTopic(eq("inkless"))).thenReturn(true);
         final AppendInterceptor interceptor = new AppendInterceptor(
-            new SharedState(time, inklessConfig, metadataView, controlPlane, storageBackend, brokerTopicStats), writer);
+            new SharedState(time, inklessConfig, metadataView, controlPlane, storageBackend, OBJECT_KEY_CREATOR, brokerTopicStats), writer);
 
         final boolean result = interceptor.intercept(entriesPerPartition, responseCallback);
         assertThat(result).isTrue();
@@ -279,7 +283,7 @@ public class AppendInterceptorTest {
     @Test
     public void close() throws IOException {
         final AppendInterceptor interceptor = new AppendInterceptor(
-            new SharedState(time, inklessConfig, metadataView, controlPlane, storageBackend, brokerTopicStats), writer);
+            new SharedState(time, inklessConfig, metadataView, controlPlane, storageBackend, OBJECT_KEY_CREATOR, brokerTopicStats), writer);
 
         interceptor.close();
 

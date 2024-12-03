@@ -29,6 +29,7 @@ import java.util.stream.Stream;
 
 import io.aiven.inkless.common.ByteRange;
 import io.aiven.inkless.common.ObjectKey;
+import io.aiven.inkless.common.ObjectKeyCreator;
 import io.aiven.inkless.common.PlainObjectKey;
 import io.aiven.inkless.control_plane.BatchInfo;
 import io.aiven.inkless.control_plane.FindBatchResponse;
@@ -39,16 +40,21 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.STRICT_STUBS)
 public class FetchCompleterJobTest {
+    static final String OBJECT_KEY_PREFIX = "prefix/";
+    static final ObjectKeyCreator OBJECT_KEY_CREATOR = PlainObjectKey.creator(OBJECT_KEY_PREFIX);
+    static final String OBJECT_KEY_A_MAIN_PART = "a";
+    static final String OBJECT_KEY_B_MAIN_PART = "b";
+    static final ObjectKey OBJECT_KEY_A = new PlainObjectKey(OBJECT_KEY_PREFIX, OBJECT_KEY_A_MAIN_PART);
+    static final ObjectKey OBJECT_KEY_B = new PlainObjectKey(OBJECT_KEY_PREFIX, OBJECT_KEY_B_MAIN_PART);
 
     Uuid topicId = Uuid.randomUuid();
-    ObjectKey objectA = new PlainObjectKey("a", "a");
-    ObjectKey objectB = new PlainObjectKey("b", "b");
     TopicIdPartition partition0 = new TopicIdPartition(topicId, 0, "inkless-topic");
 
     @Test
     public void testEmptyFetch() {
         FetchCompleterJob job = new FetchCompleterJob(
             new MockTime(),
+            OBJECT_KEY_CREATOR,
             Collections.emptyMap(),
             CompletableFuture.completedFuture(Collections.emptyMap()),
             CompletableFuture.completedFuture(Collections.emptyList()),
@@ -65,6 +71,7 @@ public class FetchCompleterJobTest {
         );
         FetchCompleterJob job = new FetchCompleterJob(
             new MockTime(),
+            OBJECT_KEY_CREATOR,
             fetchInfos,
             CompletableFuture.completedFuture(Collections.emptyMap()),
             CompletableFuture.completedFuture(Collections.emptyList()),
@@ -87,6 +94,7 @@ public class FetchCompleterJobTest {
         );
         FetchCompleterJob job = new FetchCompleterJob(
             new MockTime(),
+            OBJECT_KEY_CREATOR,
             fetchInfos,
             CompletableFuture.completedFuture(coordinates),
             CompletableFuture.completedFuture(Collections.emptyList()),
@@ -110,11 +118,12 @@ public class FetchCompleterJobTest {
         int highWatermark = 1;
         Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of(
                 partition0, FindBatchResponse.success(List.of(
-                        new BatchInfo(objectA, 0, 10, 0, 1, TimestampType.CREATE_TIME, logAppendTime)
+                        new BatchInfo(OBJECT_KEY_A_MAIN_PART, 0, 10, 0, 1, TimestampType.CREATE_TIME, logAppendTime)
                 ), logStartOffset, highWatermark)
         );
         FetchCompleterJob job = new FetchCompleterJob(
             new MockTime(),
+            OBJECT_KEY_CREATOR,
             fetchInfos,
             CompletableFuture.completedFuture(coordinates),
             CompletableFuture.completedFuture(Collections.emptyList()),
@@ -137,17 +146,18 @@ public class FetchCompleterJobTest {
         int highWatermark = 1;
         Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of(
                 partition0, FindBatchResponse.success(List.of(
-                        new BatchInfo(objectA, 0, records.sizeInBytes(), 0, 1, TimestampType.CREATE_TIME, logAppendTime),
-                        new BatchInfo(objectB, 0, records.sizeInBytes(), 0, 1, TimestampType.CREATE_TIME, logAppendTime)
+                        new BatchInfo(OBJECT_KEY_A_MAIN_PART, 0, records.sizeInBytes(), 0, 1, TimestampType.CREATE_TIME, logAppendTime),
+                        new BatchInfo(OBJECT_KEY_B_MAIN_PART, 0, records.sizeInBytes(), 0, 1, TimestampType.CREATE_TIME, logAppendTime)
                 ), logStartOffset, highWatermark)
         );
 
         List<Future<FetchedFile>> files = Stream.of(
-                new FetchedFile(objectA, new ByteRange(0, records.sizeInBytes()), records.buffer()),
-                new FetchedFile(objectB, new ByteRange(0, records.sizeInBytes()), records.buffer())
+                new FetchedFile(OBJECT_KEY_A, new ByteRange(0, records.sizeInBytes()), records.buffer()),
+                new FetchedFile(OBJECT_KEY_B, new ByteRange(0, records.sizeInBytes()), records.buffer())
         ).map(CompletableFuture::completedFuture).collect(Collectors.toList());
         FetchCompleterJob job = new FetchCompleterJob(
             new MockTime(),
+            OBJECT_KEY_CREATOR,
             fetchInfos,
             CompletableFuture.completedFuture(coordinates),
             CompletableFuture.completedFuture(files),
@@ -173,15 +183,16 @@ public class FetchCompleterJobTest {
         int highWatermark = 1;
         Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of(
                 partition0, FindBatchResponse.success(List.of(
-                        new BatchInfo(objectA, 0, records.sizeInBytes(), 0, 1, TimestampType.CREATE_TIME, logAppendTime)
+                        new BatchInfo(OBJECT_KEY_A_MAIN_PART, 0, records.sizeInBytes(), 0, 1, TimestampType.CREATE_TIME, logAppendTime)
                 ), logStartOffset, highWatermark)
         );
 
         List<Future<FetchedFile>> files = Stream.of(
-                new FetchedFile(objectA, new ByteRange(0, records.sizeInBytes()), records.buffer())
+                new FetchedFile(OBJECT_KEY_A, new ByteRange(0, records.sizeInBytes()), records.buffer())
         ).map(CompletableFuture::completedFuture).collect(Collectors.toList());
         FetchCompleterJob job = new FetchCompleterJob(
             new MockTime(),
+            OBJECT_KEY_CREATOR,
             fetchInfos,
             CompletableFuture.completedFuture(coordinates),
             CompletableFuture.completedFuture(files),
