@@ -20,7 +20,6 @@ import java.util.Set;
 import java.util.TreeMap;
 import java.util.stream.Collectors;
 
-import io.aiven.inkless.common.ObjectKey;
 
 public class InMemoryControlPlane implements ControlPlane {
     private static final Logger logger = LoggerFactory.getLogger(InMemoryControlPlane.class);
@@ -69,7 +68,7 @@ public class InMemoryControlPlane implements ControlPlane {
     }
 
     @Override
-    public synchronized List<CommitBatchResponse> commitFile(final ObjectKey objectKey,
+    public synchronized List<CommitBatchResponse> commitFile(final String objectKey,
                                                              final List<CommitBatchRequest> batches) {
         // Real-life batches cannot be empty, even if they have 0 records
         // Checking this just as an assertion.
@@ -107,7 +106,7 @@ public class InMemoryControlPlane implements ControlPlane {
     }
 
     private CommitBatchResponse commitFileForExistingPartition(final long now,
-                                                               final ObjectKey objectKey,
+                                                               final String objectKey,
                                                                final CommitBatchRequest request) {
         final String topicName = request.topicPartition().topic();
         final Uuid topicId = metadataView.getTopicId(topicName);

@@ -8,11 +8,10 @@ import java.lang.reflect.Constructor;
 import java.lang.reflect.InvocationTargetException;
 import java.util.List;
 
-import io.aiven.inkless.common.ObjectKey;
 import io.aiven.inkless.config.InklessConfig;
 
 public interface ControlPlane extends Configurable, TopicMetadataChangesSubscriber {
-    List<CommitBatchResponse> commitFile(ObjectKey objectKey,
+    List<CommitBatchResponse> commitFile(String objectKey,
                                          List<CommitBatchRequest> batches);
 
     List<FindBatchResponse> findBatches(List<FindBatchRequest> findBatchRequests,
