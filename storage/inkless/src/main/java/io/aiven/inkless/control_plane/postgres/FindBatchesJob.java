@@ -120,7 +120,7 @@ class FindBatchesJob implements Callable<List<FindBatchResponse>> {
             return FindBatchResponse.offsetOutOfRange(logInfo.logStartOffset, logInfo.highWatermark);
         }
 
-        if (request.offset() >= logInfo.highWatermark) {
+        if (request.offset() > logInfo.highWatermark) {
             return FindBatchResponse.offsetOutOfRange(logInfo.logStartOffset, logInfo.highWatermark);
         }
 
