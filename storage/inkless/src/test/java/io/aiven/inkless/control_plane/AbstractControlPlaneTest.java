@@ -208,7 +208,7 @@ abstract class AbstractControlPlaneTest {
     }
 
     @Test
-    void findOffsetOutOfRange() {
+    void findEmptyBatchOnLastOffset() {
         final String objectKey = "a";
 
         controlPlane.commitFile(
@@ -220,6 +220,26 @@ abstract class AbstractControlPlaneTest {
 
         final List<FindBatchResponse> findResponse = controlPlane.findBatches(
             List.of(new FindBatchRequest(EXISTING_TOPIC_ID_PARTITION, 10, Integer.MAX_VALUE)),
+            true,
+            Integer.MAX_VALUE);
+        assertThat(findResponse).containsExactly(
+            new FindBatchResponse(Errors.NONE, List.of(), 0, 10)
+        );
+    }
+
+    @Test
+    void findOffsetOutOfRange() {
+        final String objectKey = "a";
+
+        controlPlane.commitFile(
+            objectKey,
+            List.of(
+                new CommitBatchRequest(new TopicPartition(EXISTING_TOPIC, 0), 11, 10, 10)
+            )
+        );
+
+        final List<FindBatchResponse> findResponse = controlPlane.findBatches(
+            List.of(new FindBatchRequest(EXISTING_TOPIC_ID_PARTITION, 11, Integer.MAX_VALUE)),
             true,
             Integer.MAX_VALUE);
         assertThat(findResponse).containsExactly(
