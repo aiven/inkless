@@ -15,6 +15,7 @@ import org.apache.kafka.storage.internals.log.LogConfig;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.TestInfo;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -35,16 +36,16 @@ import static org.mockito.Mockito.when;
 @ExtendWith(MockitoExtension.class)
 // Leniency is fine in this class, otherwise there will be too much tailored mocking on metadataView.
 @MockitoSettings(strictness = Strictness.LENIENT)
-abstract class AbstractControlPlaneTest {
+public abstract class AbstractControlPlaneTest {
     static final String EXISTING_TOPIC = "topic-existing";
     static final Uuid EXISTING_TOPIC_ID = new Uuid(10, 10);
     static final TopicIdPartition EXISTING_TOPIC_ID_PARTITION = new TopicIdPartition(EXISTING_TOPIC_ID, 0, EXISTING_TOPIC);
     static final String NONEXISTENT_TOPIC = "topic-nonexistent";
 
     @Mock
-    Time time;
+    protected Time time;
 
-    MetadataView metadataView;
+    protected MetadataView metadataView;
 
     @BeforeEach
     void setup() {
@@ -61,13 +62,13 @@ abstract class AbstractControlPlaneTest {
             .thenReturn(new LogConfig(Map.of()));
     }
 
-    ControlPlane controlPlane;
+    protected ControlPlane controlPlane;
 
-    protected abstract ControlPlane createControlPlane();
+    protected abstract ControlPlane createControlPlane(final TestInfo testInfo);
 
     @BeforeEach
-    void setupControlPlane() {
-        controlPlane = createControlPlane();
+    void setupControlPlane(final TestInfo testInfo) {
+        controlPlane = createControlPlane(testInfo);
 
         verify(metadataView).subscribeToTopicMetadataChanges(eq(controlPlane));
 

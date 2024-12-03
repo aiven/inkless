@@ -2331,11 +2331,16 @@ project(':storage:inkless') {
     api libs.pitestAnnotations
 
     implementation libs.slf4jApi
+    implementation libs.postgresql
+    implementation libs.hikariCP
+    implementation libs.flyway
+    implementation libs.flywayPostgres
     implementation libs.awsskdS3
     implementation libs.metrics
     implementation libs.commonsIo
 
     testImplementation project(':clients').sourceSets.test.output
+    testImplementation project(':test-common')
     testImplementation libs.assertj
     testImplementation libs.junitJupiter
     testImplementation libs.jqwik
@@ -2343,6 +2348,7 @@ project(':storage:inkless') {
     testImplementation libs.mockitoJunitJupiter // supports MockitoExtension
     testImplementation libs.testcontainers
     testImplementation libs.testcontainersJunitJupiter
+    testImplementation libs.testcontainersPostgresql
     testImplementation libs.testcontainersLocalstack
     testImplementation libs.wiremock
     testImplementation testLog4j2Libs
@@ -2380,6 +2386,7 @@ project(':storage:inkless') {
   //   excludedTestClasses.add("*io.aiven.inkless.storage_backend.s3.integration.*")
   //   excludedTestClasses.add("*io.aiven.inkless.produce.WriterIntegrationTest")
   //   excludedTestClasses.add("*io.aiven.inkless.produce.WriterPropertyTest")
+  //   excludedTestClasses.add("*io.aiven.inkless.control_plane.postgres.*")
   //   targetTests.add("io.aiven.inkless.*")
   //   threads = Runtime.getRuntime().availableProcessors()
   //   outputFormats.addAll('XML', 'HTML')
