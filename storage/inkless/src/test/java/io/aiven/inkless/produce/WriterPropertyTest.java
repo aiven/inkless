@@ -153,7 +153,7 @@ class WriterPropertyTest {
         );
         final FileCommitter fileCommitter = new FileCommitter(
             controlPlane,
-            (String s) -> new PlainObjectKey("", s),
+            PlainObjectKey.creator(""),
             objectUploader,
             time,
             1,

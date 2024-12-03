@@ -32,6 +32,8 @@ import java.util.Collections;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 
+import io.aiven.inkless.common.ObjectKeyCreator;
+import io.aiven.inkless.common.PlainObjectKey;
 import io.aiven.inkless.control_plane.ControlPlane;
 import io.aiven.inkless.storage_backend.common.ObjectFetcher;
 
@@ -45,7 +47,7 @@ import static org.mockito.Mockito.when;
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.STRICT_STUBS)
 public class ReaderTest {
-
+    static final ObjectKeyCreator OBJECT_KEY_CREATOR = PlainObjectKey.creator("");
     @Mock
     private ControlPlane controlPlane;
     @Mock
@@ -66,7 +68,7 @@ public class ReaderTest {
 
     @BeforeEach
     public void setup() {
-        reader = new Reader(time, controlPlane, objectFetcher, metadataExecutor, fetchPlannerExecutor, dataExecutor, fetchCompleterExecutor);
+        reader = new Reader(time, OBJECT_KEY_CREATOR, controlPlane, objectFetcher, metadataExecutor, fetchPlannerExecutor, dataExecutor, fetchCompleterExecutor);
     }
 
     @Test

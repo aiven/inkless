@@ -76,7 +76,7 @@ class FileCommitJob implements Runnable {
     }
 
     private void finishCommitSuccessfully(final ObjectKey objectKey) {
-        final var commitBatchResponses = controlPlane.commitFile(objectKey, file.commitBatchRequests());
+        final var commitBatchResponses = controlPlane.commitFile(objectKey.storedPart(), file.commitBatchRequests());
         LOGGER.debug("Committed successfully");
 
         // Each request must have a response.

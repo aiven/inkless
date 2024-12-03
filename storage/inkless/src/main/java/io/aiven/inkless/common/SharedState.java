@@ -15,6 +15,7 @@ public record SharedState(
         MetadataView metadata,
         ControlPlane controlPlane,
         StorageBackend storage,
+        ObjectKeyCreator objectKeyCreator,
         BrokerTopicStats brokerTopicStats
 ) {
 
@@ -30,6 +31,7 @@ public record SharedState(
             metadata,
             ControlPlane.create(config, time, metadata),
             config.storage(),
+            PlainObjectKey.creator(config.objectKeyPrefix()),
             brokerTopicStats
         );
     }

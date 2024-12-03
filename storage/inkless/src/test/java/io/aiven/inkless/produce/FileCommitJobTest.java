@@ -62,7 +62,8 @@ class FileCommitJobTest {
     static final List<Integer> REQUEST_IDS = List.of(0, 0, 1, 1);
 
     static final byte[] DATA = new byte[10];
-    static final ObjectKey OBJECT_KEY = new PlainObjectKey("", "s");
+    static final String OBJECT_KEY_MAIN_PART = "obj";
+    static final ObjectKey OBJECT_KEY = new PlainObjectKey("", OBJECT_KEY_MAIN_PART);
 
     @Mock
     Time time;
@@ -85,7 +86,7 @@ class FileCommitJobTest {
             new CommitBatchResponse(Errors.NONE, 30, 10, 0)
         );
 
-        when(controlPlane.commitFile(eq(OBJECT_KEY), eq(COMMIT_BATCH_REQUESTS)))
+        when(controlPlane.commitFile(eq(OBJECT_KEY_MAIN_PART), eq(COMMIT_BATCH_REQUESTS)))
             .thenReturn(commitBatchResponses);
         when(time.nanoseconds()).thenReturn(10_000_000L, 20_000_000L);
 
@@ -117,7 +118,7 @@ class FileCommitJobTest {
 
         final List<CommitBatchResponse> commitBatchResponses = List.of();
 
-        when(controlPlane.commitFile(eq(OBJECT_KEY), eq(COMMIT_BATCH_REQUESTS)))
+        when(controlPlane.commitFile(eq(OBJECT_KEY_MAIN_PART), eq(COMMIT_BATCH_REQUESTS)))
             .thenReturn(commitBatchResponses);
         when(time.nanoseconds()).thenReturn(10_000_000L, 20_000_000L);
 
