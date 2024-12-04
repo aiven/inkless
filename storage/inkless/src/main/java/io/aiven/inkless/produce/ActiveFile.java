@@ -25,25 +25,37 @@ class ActiveFile {
     private final Instant start;
 
     private int requestId = -1;
+
     private final BatchBuffer buffer;
+    private final BatchValidator batchValidator;
+
     private final Map<Integer, Map<TopicPartition, MemoryRecords>> originalRequests = new HashMap<>();
     private final Map<Integer, CompletableFuture<Map<TopicPartition, PartitionResponse>>> awaitingFuturesByRequest = new HashMap<>();
+
     private final Consumer<String> requestRateMark;
+    private final BiConsumer<String, Integer> bytesInRateMark;
+    private final BiConsumer<String, Long> messagesInRateMark;
 
     ActiveFile(final Time time,
                final Consumer<String> requestRateMark,
                final BiConsumer<String, Integer> bytesInRateMark,
                final BiConsumer<String, Long> messagesInRateMark) {
-        this.buffer = new BatchBuffer(time, bytesInRateMark, messagesInRateMark);
+        this.buffer = new BatchBuffer();
+        this.batchValidator = new BatchValidator(time);
         this.start = TimeUtils.monotonicNow(time);
         this.requestRateMark = requestRateMark;
+        this.bytesInRateMark = bytesInRateMark;
+        this.messagesInRateMark = messagesInRateMark;
     }
 
     // For testing
     ActiveFile(final Time time, final Instant start) {
-        this.buffer = new BatchBuffer(time, (topic, bytes) -> {}, (topic, messages) -> {});
+        this.buffer = new BatchBuffer();
+        this.batchValidator = new BatchValidator(time);
         this.start = start;
         this.requestRateMark = request -> {};
+        this.bytesInRateMark = (topic, bytes) -> {};
+        this.messagesInRateMark = (topic, messages) -> {};
     }
 
     CompletableFuture<Map<TopicPartition, PartitionResponse>> add(
@@ -59,7 +71,14 @@ class ActiveFile {
             requestRateMark.accept(topic);
 
             for (final var batch : entry.getValue().batches()) {
-                buffer.addBatch(entry.getKey(), batch, requestId);
+                final TopicPartition topicPartition = entry.getKey();
+
+                batchValidator.validateAndMaybeSetMaxTimestamp(batch);
+
+                buffer.addBatch(topicPartition, batch, requestId);
+
+                bytesInRateMark.accept(topicPartition.topic(), batch.sizeInBytes());
+                messagesInRateMark.accept(topicPartition.topic(), batch.nextOffset() - batch.baseOffset());
             }
         }
 

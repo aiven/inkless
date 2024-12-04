@@ -7,7 +7,6 @@ import org.apache.kafka.common.record.MemoryRecords;
 import org.apache.kafka.common.record.MutableRecordBatch;
 import org.apache.kafka.common.record.RecordBatch;
 import org.apache.kafka.common.record.SimpleRecord;
-import org.apache.kafka.common.record.TimestampType;
 import org.apache.kafka.common.utils.MockTime;
 import org.apache.kafka.common.utils.Time;
 
@@ -30,7 +29,7 @@ class BatchBufferTest {
     @Test
     void totalSize() {
         final Time time = Time.SYSTEM;
-        final BatchBuffer buffer = new BatchBuffer(time);
+        final BatchBuffer buffer = new BatchBuffer();
 
         assertThat(buffer.totalSize()).isZero();
 
@@ -48,7 +47,7 @@ class BatchBufferTest {
     @Test
     void empty() {
         final Time time = new MockTime();
-        final BatchBuffer buffer = new BatchBuffer(time);
+        final BatchBuffer buffer = new BatchBuffer();
 
         BatchBuffer.CloseResult result = buffer.close();
         assertThat(result.commitBatchRequests()).isEmpty();
@@ -64,7 +63,7 @@ class BatchBufferTest {
     @Test
     void singleBatch() {
         final Time time = new MockTime();
-        final BatchBuffer buffer = new BatchBuffer(time);
+        final BatchBuffer buffer = new BatchBuffer();
 
         final MutableRecordBatch batch = createBatch(time, T0P0 + "-0", T0P0 + "-1", T0P0 + "-2");
         final byte[] beforeAdding = batchToBytes(batch);
@@ -80,31 +79,9 @@ class BatchBufferTest {
     }
 
     @Test
-    void singleBatchUpdatingMaxTimestamp() {
-        final Time time = new MockTime();
-        final BatchBuffer buffer = new BatchBuffer(time);
-
-        // given that buffer validation will mutate batch
-        final MutableRecordBatch batch = createBatch(time, T0P0 + "-0", T0P0 + "-1", T0P0 + "-2");
-        // force a value that will change after adding batch
-        batch.setMaxTimestamp(TimestampType.CREATE_TIME, 0);
-        final byte[] beforeAdding = batchToBytes(batch);
-        buffer.addBatch(T0P0, batch, 0);
-
-        final BatchBuffer.CloseResult result = buffer.close();
-        assertThat(result.commitBatchRequests()).containsExactly(
-            new CommitBatchRequest(T0P0, 0, batch.sizeInBytes(), 3)
-        );
-        assertThat(result.requestIds()).containsExactly(0);
-        assertThat(result.data()).containsExactly(batchToBytes(batch));
-        // then bytes will change
-        assertThat(result.data()).isNotEqualTo(beforeAdding);
-    }
-
-    @Test
     void multipleTopicPartitions() {
         final Time time = Time.SYSTEM;
-        final BatchBuffer buffer = new BatchBuffer(time);
+        final BatchBuffer buffer = new BatchBuffer();
 
         final MutableRecordBatch t0p0b0 = createBatch(time, T0P0 + "-0");
         final MutableRecordBatch t0p0b2 = createBatch(time, T0P0 + "-2");
@@ -171,7 +148,7 @@ class BatchBufferTest {
     @Test
     void notWorksAfterClosing() {
         final Time time = Time.SYSTEM;
-        final BatchBuffer buffer = new BatchBuffer(time);
+        final BatchBuffer buffer = new BatchBuffer();
 
         final MutableRecordBatch batch1 = createBatch(time, T0P0 + "-0");
         buffer.addBatch(T0P0, batch1, 0);
@@ -210,7 +187,7 @@ class BatchBufferTest {
     @Test
     void addBatchNulls() {
         final Time time = Time.SYSTEM;
-        final BatchBuffer buffer = new BatchBuffer(time);
+        final BatchBuffer buffer = new BatchBuffer();
 
         assertThatThrownBy(() -> buffer.addBatch(null, createBatch(time), 0))
             .isInstanceOf(NullPointerException.class)

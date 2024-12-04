@@ -3,14 +3,12 @@ package io.aiven.inkless.produce;
 
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.record.MutableRecordBatch;
-import org.apache.kafka.common.utils.Time;
 
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
-import java.util.function.BiConsumer;
 
 import io.aiven.inkless.control_plane.CommitBatchRequest;
 
@@ -19,25 +17,6 @@ class BatchBuffer {
 
     private int totalSize = 0;
     private boolean closed = false;
-
-    final BatchValidator batchValidator;
-
-    private final BiConsumer<String, Integer> bytesInRateMark;
-    private final BiConsumer<String, Long> messagesInRateMark;
-
-    BatchBuffer(Time time,
-                BiConsumer<String, Integer> bytesInRateMark,
-                BiConsumer<String, Long> messagesInRateMark) {
-        this.batchValidator = new BatchValidator(time);
-        this.bytesInRateMark = bytesInRateMark;
-        this.messagesInRateMark = messagesInRateMark;
-    }
-
-    BatchBuffer(Time time) {
-        this.batchValidator = new BatchValidator(time);
-        this.bytesInRateMark = (topic, bytes) -> {};
-        this.messagesInRateMark = (topic, messages) -> {};
-    }
 
     void addBatch(final TopicPartition topicPartition, final MutableRecordBatch batch, final int requestId) {
         Objects.requireNonNull(topicPartition, "topicPartition cannot be null");
@@ -49,9 +28,6 @@ class BatchBuffer {
         final BatchHolder batchHolder = new BatchHolder(topicPartition, batch, requestId);
         batches.add(batchHolder);
         totalSize += batch.sizeInBytes();
-
-        bytesInRateMark.accept(topicPartition.topic(), batch.sizeInBytes());
-        messagesInRateMark.accept(topicPartition.topic(), batchHolder.numberOfRecords());
     }
 
     CloseResult close() {
@@ -70,8 +46,6 @@ class BatchBuffer {
         final List<Integer> requestIds = new ArrayList<>();
         for (final BatchHolder batchHolder : batches) {
             final int byteOffset = byteBuffer.position();
-
-            batchValidator.validateAndSetMaxTimestamp(batchHolder.batch);
 
             commitBatchRequests.add(
                 new CommitBatchRequest(

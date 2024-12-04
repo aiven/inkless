@@ -21,7 +21,7 @@ public class BatchValidator {
         this.time = time;
     }
 
-    public void validateAndSetMaxTimestamp(final MutableRecordBatch batch) {
+    public void validateAndMaybeSetMaxTimestamp(final MutableRecordBatch batch) {
         Objects.requireNonNull(batch, "batch cannot be null");
 
         final TimestampType timestampType = batch.timestampType();
