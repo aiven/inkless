@@ -74,8 +74,12 @@ class FindBatchesJobTest extends SharedPostgreSQLTest {
         final FindBatchesJob job = new FindBatchesJob(
             time, hikariDataSource,
             List.of(
+                // This will produce a normal find result with some batches.
                 new FindBatchRequest(new TopicIdPartition(TOPIC_ID_0, 0, TOPIC_0), 0, 1000),
-                new FindBatchRequest(new TopicIdPartition(TOPIC_ID_0, 1, TOPIC_0), 0, 1000)
+                // This will be on the border, offset matching HWM, will produce no bathes, but still a successful result.
+                new FindBatchRequest(new TopicIdPartition(TOPIC_ID_0, 1, TOPIC_0), 0, 1000),
+                // This will result in the out-of-range error.
+                new FindBatchRequest(new TopicIdPartition(TOPIC_ID_1, 0, TOPIC_1), 10, 1000)
             ),
             true, 2000);
         final List<FindBatchResponse> result = job.call();
@@ -84,6 +88,7 @@ class FindBatchesJobTest extends SharedPostgreSQLTest {
             new FindBatchResponse(Errors.NONE, List.of(
                 new BatchInfo(objectKey1, 0, 1234, 0, 12, TimestampType.CREATE_TIME, 123456L)), 0, 12
             ),
+            new FindBatchResponse(Errors.NONE, List.of(), 0, 0),
             new FindBatchResponse(Errors.OFFSET_OUT_OF_RANGE, null, 0, 0)
         );
     }
