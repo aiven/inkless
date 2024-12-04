@@ -23,9 +23,12 @@ import java.util.List;
 
 import io.aiven.inkless.control_plane.CommitBatchRequest;
 import io.aiven.inkless.control_plane.CommitBatchResponse;
+import io.aiven.inkless.control_plane.MetadataView;
 import io.aiven.inkless.test_utils.SharedPostgreSQLTest;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -44,13 +47,16 @@ class CommitFileJobTest extends SharedPostgreSQLTest {
 
     @BeforeEach
     void createTopics() {
+        final MetadataView metadataView = mock(MetadataView.class);
+        when(metadataView.isInklessTopic(anyString())).thenReturn(true);
+
         final MetadataDelta delta = new MetadataDelta.Builder().setImage(MetadataImage.EMPTY).build();
         delta.replay(new TopicRecord().setName(TOPIC_0).setTopicId(TOPIC_ID_0));
         delta.replay(new PartitionRecord().setTopicId(TOPIC_ID_0).setPartitionId(0));
         delta.replay(new PartitionRecord().setTopicId(TOPIC_ID_0).setPartitionId(1));
         delta.replay(new TopicRecord().setName(TOPIC_1).setTopicId(TOPIC_ID_1));
         delta.replay(new PartitionRecord().setTopicId(TOPIC_ID_1).setPartitionId(0));
-        new TopicsCreateJob(Time.SYSTEM, hikariDataSource, delta.topicsDelta().changedTopics())
+        new TopicsCreateJob(Time.SYSTEM, metadataView, hikariDataSource, delta.topicsDelta().changedTopics())
             .run();
     }
 
