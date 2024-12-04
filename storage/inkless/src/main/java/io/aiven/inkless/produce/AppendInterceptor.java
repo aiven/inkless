@@ -36,6 +36,7 @@ public class AppendInterceptor implements Closeable {
                 state.objectKeyCreator(),
                 state.storage(),
                 state.controlPlane(),
+                state.producerStateManagers(),
                 state.config().commitInterval(),
                 state.config().produceBufferMaxBytes(),
                 state.config().produceMaxUploadAttempts(),

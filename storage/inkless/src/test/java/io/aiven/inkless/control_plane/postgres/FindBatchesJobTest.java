@@ -7,7 +7,6 @@ import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.metadata.PartitionRecord;
 import org.apache.kafka.common.metadata.TopicRecord;
 import org.apache.kafka.common.protocol.Errors;
-import org.apache.kafka.common.record.RecordBatch;
 import org.apache.kafka.common.record.TimestampType;
 import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.image.MetadataDelta;
@@ -71,7 +70,7 @@ class FindBatchesJobTest extends SharedPostgreSQLTest {
         final CommitFileJob commitJob = new CommitFileJob(
             time, hikariDataSource, objectKey1,
             List.of(
-                new CommitFileJob.CommitBatchRequestExtra(new CommitBatchRequest(T0P0, 0, 1234, 12, RecordBatch.NO_PRODUCER_ID), TOPIC_ID_0, TimestampType.CREATE_TIME)
+                new CommitFileJob.CommitBatchRequestExtra(CommitBatchRequest.of(T0P0, 0, 1234, 0, 11), TOPIC_ID_0, TimestampType.CREATE_TIME)
             )
         );
         assertThat(commitJob.call()).isNotEmpty();

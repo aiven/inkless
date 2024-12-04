@@ -16,6 +16,7 @@ import io.aiven.inkless.control_plane.CommitBatchRequest;
 record ClosedFile(Instant start,
                   Map<Integer, Map<TopicPartition, MemoryRecords>> originalRequests,
                   Map<Integer, CompletableFuture<Map<TopicPartition, PartitionResponse>>> awaitingFuturesByRequest,
+                  Map<Integer, Map<TopicPartition, PartitionResponse>> duplicatedBatchResponses,
                   List<CommitBatchRequest> commitBatchRequests,
                   List<Integer> requestIds,
                   byte[] data) {
@@ -23,6 +24,7 @@ record ClosedFile(Instant start,
         Objects.requireNonNull(start, "start cannot be null");
         Objects.requireNonNull(originalRequests, "originalRequests cannot be null");
         Objects.requireNonNull(awaitingFuturesByRequest, "awaitingFuturesByRequest cannot be null");
+        Objects.requireNonNull(duplicatedBatchResponses, "duplicatedBatchResponses cannot be null");
         Objects.requireNonNull(commitBatchRequests, "commitBatchRequests cannot be null");
         Objects.requireNonNull(requestIds, "requestIds cannot be null");
 

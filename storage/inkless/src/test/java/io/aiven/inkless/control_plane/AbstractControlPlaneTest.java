@@ -7,7 +7,6 @@ import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.metadata.PartitionRecord;
 import org.apache.kafka.common.metadata.TopicRecord;
 import org.apache.kafka.common.protocol.Errors;
-import org.apache.kafka.common.record.RecordBatch;
 import org.apache.kafka.common.record.TimestampType;
 import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.image.MetadataDelta;
@@ -99,9 +98,9 @@ public abstract class AbstractControlPlaneTest {
         final List<CommitBatchResponse> commitResponse1 = controlPlane.commitFile(
             objectKey1,
             List.of(
-                new CommitBatchRequest(new TopicPartition(EXISTING_TOPIC, 0), 1, 10, 10, RecordBatch.NO_PRODUCER_ID),
-                new CommitBatchRequest(new TopicPartition(EXISTING_TOPIC, 1), 2, 10, 10, RecordBatch.NO_PRODUCER_ID),
-                new CommitBatchRequest(new TopicPartition(NONEXISTENT_TOPIC, 0), 3, 10, 10, RecordBatch.NO_PRODUCER_ID)
+                CommitBatchRequest.of(new TopicPartition(EXISTING_TOPIC, 0), 1, 10, 0, 9),
+                CommitBatchRequest.of(new TopicPartition(EXISTING_TOPIC, 1), 2, 10, 0, 9),
+                CommitBatchRequest.of(new TopicPartition(NONEXISTENT_TOPIC, 0), 3, 10, 0, 9)
             )
         );
         assertThat(commitResponse1).containsExactly(
@@ -113,9 +112,9 @@ public abstract class AbstractControlPlaneTest {
         final List<CommitBatchResponse> commitResponse2 = controlPlane.commitFile(
             objectKey2,
             List.of(
-                new CommitBatchRequest(new TopicPartition(EXISTING_TOPIC, 0), 100, 10, 10, RecordBatch.NO_PRODUCER_ID),
-                new CommitBatchRequest(new TopicPartition(EXISTING_TOPIC, 1), 200, 10, 10, RecordBatch.NO_PRODUCER_ID),
-                new CommitBatchRequest(new TopicPartition(NONEXISTENT_TOPIC, 0), 300, 10, 10, RecordBatch.NO_PRODUCER_ID)
+                CommitBatchRequest.of(new TopicPartition(EXISTING_TOPIC, 0), 100, 10, 0, 9),
+                CommitBatchRequest.of(new TopicPartition(EXISTING_TOPIC, 1), 200, 10, 0, 9),
+                CommitBatchRequest.of(new TopicPartition(NONEXISTENT_TOPIC, 0), 300, 10, 0, 9)
             )
         );
         assertThat(commitResponse2).containsExactly(
@@ -147,9 +146,9 @@ public abstract class AbstractControlPlaneTest {
         final int numberOfRecordsInBatch1 = 3;
         final int numberOfRecordsInBatch2 = 2;
         controlPlane.commitFile(objectKey1,
-            List.of(new CommitBatchRequest(new TopicPartition(EXISTING_TOPIC, 0), 1, 10, numberOfRecordsInBatch1, RecordBatch.NO_PRODUCER_ID)));
+            List.of(CommitBatchRequest.of(new TopicPartition(EXISTING_TOPIC, 0), 1, 10, 10, 12)));
         controlPlane.commitFile(objectKey2,
-            List.of(new CommitBatchRequest(new TopicPartition(EXISTING_TOPIC, 0), 100, 10, numberOfRecordsInBatch2, RecordBatch.NO_PRODUCER_ID)));
+            List.of(CommitBatchRequest.of(new TopicPartition(EXISTING_TOPIC, 0), 100, 10, 13, 14)));
 
         final long expectedLogStartOffset = 0;
         final long expectedHighWatermark = numberOfRecordsInBatch1 + numberOfRecordsInBatch2;
@@ -183,7 +182,7 @@ public abstract class AbstractControlPlaneTest {
         controlPlane.commitFile(
             objectKey,
             List.of(
-                new CommitBatchRequest(new TopicPartition(EXISTING_TOPIC, 0), 11, 10, 10, RecordBatch.NO_PRODUCER_ID)
+                CommitBatchRequest.of(new TopicPartition(EXISTING_TOPIC, 0), 11, 10, 0, 9)
             )
         );
 
@@ -219,7 +218,7 @@ public abstract class AbstractControlPlaneTest {
         controlPlane.commitFile(
             objectKey,
             List.of(
-                new CommitBatchRequest(new TopicPartition(EXISTING_TOPIC, 0), 11, 10, 10, RecordBatch.NO_PRODUCER_ID)
+                CommitBatchRequest.of(new TopicPartition(EXISTING_TOPIC, 0), 11, 10, 0, 9)
             )
         );
 
@@ -239,7 +238,7 @@ public abstract class AbstractControlPlaneTest {
         controlPlane.commitFile(
             objectKey,
             List.of(
-                new CommitBatchRequest(new TopicPartition(EXISTING_TOPIC, 0), 11, 10, 10, RecordBatch.NO_PRODUCER_ID)
+                CommitBatchRequest.of(new TopicPartition(EXISTING_TOPIC, 0), 11, 10, 0, 9)
             )
         );
 
@@ -259,7 +258,7 @@ public abstract class AbstractControlPlaneTest {
         controlPlane.commitFile(
             objectKey,
             List.of(
-                new CommitBatchRequest(new TopicPartition(EXISTING_TOPIC, 0), 11, 10, 10, RecordBatch.NO_PRODUCER_ID)
+                CommitBatchRequest.of(new TopicPartition(EXISTING_TOPIC, 0), 11, 10, 0, 9)
             )
         );
 
@@ -289,8 +288,8 @@ public abstract class AbstractControlPlaneTest {
 
         assertThatThrownBy(() -> controlPlane.commitFile(objectKey,
             List.of(
-                new CommitBatchRequest(new TopicPartition(EXISTING_TOPIC, 0), 1, 10, 10, RecordBatch.NO_PRODUCER_ID),
-                new CommitBatchRequest(new TopicPartition(EXISTING_TOPIC, 1), 2, 0, 10, RecordBatch.NO_PRODUCER_ID)
+                CommitBatchRequest.of(new TopicPartition(EXISTING_TOPIC, 0), 1, 10, 0, 9),
+                CommitBatchRequest.of(new TopicPartition(EXISTING_TOPIC, 1), 2, 0, 0, 9)
             )
         ))
             .isInstanceOf(IllegalArgumentException.class)

@@ -47,6 +47,7 @@ class Writer implements Closeable {
     private final Lock lock = new ReentrantLock();
     private ActiveFile activeFile;
     private final FileCommitter fileCommitter;
+    private final ProducerStateManagers producerStateManagers;
     private final Time time;
     private final int maxBufferSize;
     private final ScheduledExecutorService commitTickScheduler;
@@ -58,6 +59,7 @@ class Writer implements Closeable {
            final ObjectKeyCreator objectKeyCreator,
            final ObjectUploader objectUploader,
            final ControlPlane controlPlane,
+           final ProducerStateManagers producerStateManagers,
            final Duration commitInterval,
            final int maxBufferSize,
            final int maxFileUploadAttempts,
@@ -69,6 +71,7 @@ class Writer implements Closeable {
             maxBufferSize,
             Executors.newScheduledThreadPool(1, new InklessThreadFactory("inkless-file-commit-ticker-", true)),
             new FileCommitter(controlPlane, objectKeyCreator, objectUploader, time, maxFileUploadAttempts, fileUploadRetryBackoff),
+            producerStateManagers,
             new BrokerTopicMetricMarks(brokerTopicStats)
         );
     }
@@ -79,6 +82,7 @@ class Writer implements Closeable {
            final int maxBufferSize,
            final ScheduledExecutorService commitTickScheduler,
            final FileCommitter fileCommitter,
+           final ProducerStateManagers producerStateManagers,
            final BrokerTopicMetricMarks brokerTopicMetricMarks) {
         this.time = Objects.requireNonNull(time, "time cannot be null");
         Objects.requireNonNull(commitInterval, "commitInterval cannot be null");
@@ -88,6 +92,7 @@ class Writer implements Closeable {
         this.maxBufferSize = maxBufferSize;
         this.commitTickScheduler = Objects.requireNonNull(commitTickScheduler, "commitTickScheduler cannot be null");
         this.fileCommitter = Objects.requireNonNull(fileCommitter, "fileCommitter cannot be null");
+        this.producerStateManagers = Objects.requireNonNull(producerStateManagers, "producerStateManager cannot be null");
         this.brokerTopicMetricMarks = brokerTopicMetricMarks;
         this.activeFile = new ActiveFile(time, brokerTopicMetricMarks);
 
@@ -157,7 +162,16 @@ class Writer implements Closeable {
         this.activeFile = new ActiveFile(time, brokerTopicMetricMarks);
 
         try {
-            this.fileCommitter.commit(prevActiveFile.close());
+            // gather requests from previous active file
+            var requestsWithProducerId = prevActiveFile.requestsWithProducerIds();
+            // call producer state manager to validate batches
+            var response = producerStateManagers.validateProducer(requestsWithProducerId);
+            // pass result to close
+            final ClosedFile file = prevActiveFile.close(response.duplicates());
+            // commit file
+            this.fileCommitter.commit(file);
+            // update producer state
+            producerStateManagers.updateProducer(response.requests());
         } catch (final InterruptedException e) {
             if (!swallowInterrupted) {
                 // This is not expected as this is probably closing of the Writer, and

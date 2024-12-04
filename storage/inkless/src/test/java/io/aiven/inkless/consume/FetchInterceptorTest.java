@@ -37,6 +37,7 @@ import io.aiven.inkless.common.SharedState;
 import io.aiven.inkless.config.InklessConfig;
 import io.aiven.inkless.control_plane.ControlPlane;
 import io.aiven.inkless.control_plane.MetadataView;
+import io.aiven.inkless.produce.ProducerStateManagers;
 import io.aiven.inkless.storage_backend.common.StorageBackend;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -59,6 +60,8 @@ public class FetchInterceptorTest {
     @Mock
     ControlPlane controlPlane;
     @Mock
+    ProducerStateManagers producerStateManagers;
+    @Mock
     StorageBackend storageBackend;
     @Mock
     Consumer<Map<TopicIdPartition, FetchPartitionData>> responseCallback;
@@ -77,7 +80,7 @@ public class FetchInterceptorTest {
 
     @BeforeEach
     public void setup() {
-        sharedState = new SharedState(time, inklessConfig, metadataView, controlPlane, storageBackend, OBJECT_KEY_CREATOR, brokerTopicStats);
+        sharedState = new SharedState(time, inklessConfig, metadataView, controlPlane, producerStateManagers, storageBackend, OBJECT_KEY_CREATOR, brokerTopicStats);
     }
 
     @Test

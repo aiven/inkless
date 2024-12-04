@@ -2,11 +2,13 @@
 package io.aiven.inkless.common;
 
 import org.apache.kafka.common.utils.Time;
+import org.apache.kafka.storage.internals.log.ProducerStateManagerConfig;
 import org.apache.kafka.storage.log.metrics.BrokerTopicStats;
 
 import io.aiven.inkless.config.InklessConfig;
 import io.aiven.inkless.control_plane.ControlPlane;
 import io.aiven.inkless.control_plane.MetadataView;
+import io.aiven.inkless.produce.ProducerStateManagers;
 import io.aiven.inkless.storage_backend.common.StorageBackend;
 
 public record SharedState(
@@ -14,6 +16,7 @@ public record SharedState(
         InklessConfig config,
         MetadataView metadata,
         ControlPlane controlPlane,
+        ProducerStateManagers producerStateManagers,
         StorageBackend storage,
         ObjectKeyCreator objectKeyCreator,
         BrokerTopicStats brokerTopicStats
@@ -22,6 +25,7 @@ public record SharedState(
     public static SharedState initialize(
         Time time,
         InklessConfig config,
+        ProducerStateManagerConfig producerStateManagerConfig,
         MetadataView metadata,
         BrokerTopicStats brokerTopicStats
     ) {
@@ -30,6 +34,7 @@ public record SharedState(
             config,
             metadata,
             ControlPlane.create(config, time, metadata),
+            new ProducerStateManagers(time, producerStateManagerConfig),
             config.storage(),
             PlainObjectKey.creator(config.objectKeyPrefix()),
             brokerTopicStats

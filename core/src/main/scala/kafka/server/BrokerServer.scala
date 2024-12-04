@@ -55,7 +55,7 @@ import org.apache.kafka.server.share.session.ShareSessionCache
 import org.apache.kafka.server.util.timer.{SystemTimer, SystemTimerReaper}
 import org.apache.kafka.server.util.{Deadline, FutureUtils, KafkaScheduler}
 import org.apache.kafka.server.{AssignmentsManager, BrokerFeatures, ClientMetricsManager, DelayedActionQueue}
-import org.apache.kafka.storage.internals.log.LogDirFailureChannel
+import org.apache.kafka.storage.internals.log.{LogDirFailureChannel, ProducerStateManagerConfig}
 import org.apache.kafka.storage.log.metrics.BrokerTopicStats
 
 import java.time.Duration
@@ -336,7 +336,8 @@ class BrokerServer(
       val defaultActionQueue = new DelayedActionQueue
 
       val inklessMetadataView = new InklessMetadataView(metadataCache, () => logManager.currentDefaultConfig)
-      val inklessSharedState = SharedState.initialize(time, config.inklessConfig, inklessMetadataView, brokerTopicStats)
+      val producerStateManagerConfig = new ProducerStateManagerConfig(config.transactionLogConfig.producerIdExpirationMs, config.transactionLogConfig.transactionPartitionVerificationEnable)
+      val inklessSharedState = SharedState.initialize(time, config.inklessConfig, producerStateManagerConfig, inklessMetadataView, brokerTopicStats)
 
       this._replicaManager = new ReplicaManager(
         config = config,

@@ -41,7 +41,7 @@ import static org.mockito.Mockito.when;
 class FileCommitterTest {
     static final ObjectKey OBJECT_KEY = new PlainObjectKey("prefix/", "value");
     static final ObjectKeyCreator OBJECT_KEY_CREATOR = s -> OBJECT_KEY;
-    static final ClosedFile FILE = new ClosedFile(Instant.EPOCH, Map.of(), Map.of(), List.of(), List.of(), new byte[10]);
+    static final ClosedFile FILE = new ClosedFile(Instant.EPOCH, Map.of(), Map.of(), Map.of(), List.of(), List.of(), new byte[10]);
 
     @Mock
     ControlPlane controlPlane;

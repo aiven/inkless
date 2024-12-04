@@ -123,20 +123,20 @@ public class InklessClusterTest {
     public static Stream<Arguments> params() {
         return Stream.of(
             Arguments.of(
-                TimestampType.CREATE_TIME
+                TimestampType.CREATE_TIME, true
             ),
             Arguments.of(
-                TimestampType.LOG_APPEND_TIME
+                TimestampType.LOG_APPEND_TIME, false
             )
         );
     }
 
     @ParameterizedTest
     @MethodSource("params")
-    public void createInklessTopic(final TimestampType timestampType) throws Exception {
+    public void createInklessTopic(final TimestampType timestampType, final boolean idempotenceEnabled) throws Exception {
         Map<String, Object> clientConfigs = new HashMap<>();
         clientConfigs.put(CommonClientConfigs.BOOTSTRAP_SERVERS_CONFIG, cluster.bootstrapServers());
-        clientConfigs.put(ProducerConfig.ENABLE_IDEMPOTENCE_CONFIG, "false");
+        clientConfigs.put(ProducerConfig.ENABLE_IDEMPOTENCE_CONFIG, String.valueOf(idempotenceEnabled));
         clientConfigs.put(ProducerConfig.LINGER_MS_CONFIG, "1000");
         clientConfigs.put(ProducerConfig.BATCH_SIZE_CONFIG, "100000");
         clientConfigs.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, ByteArraySerializer.class.getName());

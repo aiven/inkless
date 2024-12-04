@@ -14,6 +14,7 @@ import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.image.MetadataDelta;
 import org.apache.kafka.image.MetadataImage;
 import org.apache.kafka.storage.internals.log.LogConfig;
+import org.apache.kafka.storage.internals.log.ProducerStateManagerConfig;
 
 import net.jqwik.api.Arbitraries;
 import net.jqwik.api.Arbitrary;
@@ -168,6 +169,7 @@ class WriterPropertyTest {
             maxBufferSize,
             mock(ScheduledExecutorService.class),
             fileCommitter,
+            new ProducerStateManagers(time, new ProducerStateManagerConfig(100000, false)),
             new BrokerTopicMetricMarks()
         );
 

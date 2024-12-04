@@ -12,6 +12,7 @@ import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.image.MetadataDelta;
 import org.apache.kafka.image.MetadataImage;
 import org.apache.kafka.storage.internals.log.LogConfig;
+import org.apache.kafka.storage.internals.log.ProducerStateManagerConfig;
 import org.apache.kafka.storage.log.metrics.BrokerTopicStats;
 
 import org.junit.jupiter.api.BeforeAll;
@@ -134,6 +135,7 @@ class WriterIntegrationTest {
     void test() throws ExecutionException, InterruptedException, TimeoutException, IOException {
         final Time time = new MockTime();
         final InMemoryControlPlane controlPlane = new InMemoryControlPlane(time, METADATA_VIEW);
+        final ProducerStateManagers producerStateManagers = new ProducerStateManagers(time, new ProducerStateManagerConfig(100000, false));
 
         final var delta = new MetadataDelta.Builder().setImage(MetadataImage.EMPTY).build();
         delta.replay(new TopicRecord().setName(T0P0.topic()).setTopicId(TOPIC_ID_0));
@@ -145,7 +147,7 @@ class WriterIntegrationTest {
 
         try (
             final Writer writer = new Writer(
-                time, PlainObjectKey.creator(""), storage, controlPlane, Duration.ofMillis(10),
+                time, PlainObjectKey.creator(""), storage, controlPlane, producerStateManagers, Duration.ofMillis(10),
                 10 * 1024,
                 1,
                 Duration.ofMillis(10),

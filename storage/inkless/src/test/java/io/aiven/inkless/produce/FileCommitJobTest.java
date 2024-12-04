@@ -5,7 +5,6 @@ import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.compress.Compression;
 import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.record.MemoryRecords;
-import org.apache.kafka.common.record.RecordBatch;
 import org.apache.kafka.common.record.SimpleRecord;
 import org.apache.kafka.common.requests.ProduceResponse.PartitionResponse;
 import org.apache.kafka.common.utils.Time;
@@ -55,10 +54,10 @@ class FileCommitJobTest {
         1, REQUEST_1
     );
     static final List<CommitBatchRequest> COMMIT_BATCH_REQUESTS = List.of(
-        new CommitBatchRequest(T0P0, 0, 100, 10, RecordBatch.NO_PRODUCER_ID),
-        new CommitBatchRequest(T0P1, 100, 100, 10, RecordBatch.NO_PRODUCER_ID),
-        new CommitBatchRequest(T0P1, 200, 100, 10, RecordBatch.NO_PRODUCER_ID),
-        new CommitBatchRequest(T1P0, 300, 100, 10, RecordBatch.NO_PRODUCER_ID)
+        CommitBatchRequest.of(T0P0, 0, 100, 1, 10),
+        CommitBatchRequest.of(T0P1, 100, 100, 1, 10),
+        CommitBatchRequest.of(T0P1, 200, 100, 1, 10),
+        CommitBatchRequest.of(T1P0, 300, 100, 1, 10)
     );
     static final List<Integer> REQUEST_IDS = List.of(0, 0, 1, 1);
 
@@ -91,7 +90,8 @@ class FileCommitJobTest {
             .thenReturn(commitBatchResponses);
         when(time.nanoseconds()).thenReturn(10_000_000L, 20_000_000L);
 
-        final ClosedFile file = new ClosedFile(Instant.EPOCH, REQUESTS, awaitingFuturesByRequest, COMMIT_BATCH_REQUESTS, REQUEST_IDS, DATA);
+        // FIXME: replace map correctly
+        final ClosedFile file = new ClosedFile(Instant.EPOCH, REQUESTS, awaitingFuturesByRequest, Map.of(), COMMIT_BATCH_REQUESTS, REQUEST_IDS, DATA);
         final CompletableFuture<ObjectKey> uploadFuture = CompletableFuture.completedFuture(OBJECT_KEY);
         final FileCommitJob job = new FileCommitJob(file, uploadFuture, time, controlPlane, commitTimeDurationCallback);
 
@@ -123,7 +123,8 @@ class FileCommitJobTest {
             .thenReturn(commitBatchResponses);
         when(time.nanoseconds()).thenReturn(10_000_000L, 20_000_000L);
 
-        final ClosedFile file = new ClosedFile(Instant.EPOCH, REQUESTS, awaitingFuturesByRequest, COMMIT_BATCH_REQUESTS, REQUEST_IDS, DATA);
+        // FIXME: replace map correctly
+        final ClosedFile file = new ClosedFile(Instant.EPOCH, REQUESTS, awaitingFuturesByRequest, Map.of(), COMMIT_BATCH_REQUESTS, REQUEST_IDS, DATA);
         final CompletableFuture<ObjectKey> uploadFuture = CompletableFuture.completedFuture(OBJECT_KEY);
         final FileCommitJob job = new FileCommitJob(file, uploadFuture, time, controlPlane, commitTimeDurationCallback);
 
@@ -143,7 +144,8 @@ class FileCommitJobTest {
 
         when(time.nanoseconds()).thenReturn(10_000_000L, 20_000_000L);
 
-        final ClosedFile file = new ClosedFile(Instant.EPOCH, REQUESTS, awaitingFuturesByRequest, COMMIT_BATCH_REQUESTS, REQUEST_IDS, DATA);
+        // FIXME: replace map correctly
+        final ClosedFile file = new ClosedFile(Instant.EPOCH, REQUESTS, awaitingFuturesByRequest, Map.of(), COMMIT_BATCH_REQUESTS, REQUEST_IDS, DATA);
         final CompletableFuture<ObjectKey> uploadFuture = CompletableFuture.failedFuture(new StorageBackendException("test"));
         final FileCommitJob job = new FileCommitJob(file, uploadFuture, time, controlPlane, commitTimeDurationCallback);
 
