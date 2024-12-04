@@ -120,7 +120,9 @@ class FindBatchesJob implements Callable<List<FindBatchResponse>> {
             return FindBatchResponse.offsetOutOfRange(logInfo.logStartOffset, logInfo.highWatermark);
         }
 
-        if (request.offset() >= logInfo.highWatermark) {
+        // if offset requests is > end offset return out-of-range exception, otherwise return empty batch.
+        // Similar to {@link LocalLog#read() L490}
+        if (request.offset() > logInfo.highWatermark) {
             return FindBatchResponse.offsetOutOfRange(logInfo.logStartOffset, logInfo.highWatermark);
         }
 
