@@ -43,6 +43,7 @@ public class InMemoryControlPlane extends AbstractControlPlane {
     public synchronized void onTopicMetadataChanges(final TopicsDelta topicsDelta) {
         // Delete.
         final Set<TopicIdPartition> tidpsToDelete = logs.keySet().stream()
+                .filter(tidp -> metadataView.isInklessTopic(tidp.topic()))
                 .filter(tidp -> topicsDelta.deletedTopicIds().contains(tidp.topicId()))
                 .collect(Collectors.toSet());
         for (final TopicIdPartition topicIdPartition : tidpsToDelete) {
@@ -53,9 +54,15 @@ public class InMemoryControlPlane extends AbstractControlPlane {
 
         // Create.
         for (final var changedTopic : topicsDelta.changedTopics().entrySet()) {
+            final String topicName = changedTopic.getValue().name();
+
+            if (!metadataView.isInklessTopic(topicName)) {
+                continue;
+            }
+
             for (final var entry : changedTopic.getValue().newPartitions().entrySet()) {
                 final TopicIdPartition topicIdPartition = new TopicIdPartition(
-                        changedTopic.getKey(), entry.getKey(), changedTopic.getValue().name());
+                        changedTopic.getKey(), entry.getKey(), topicName);
 
                 logger.info("Creating {}", topicIdPartition);
                 logs.put(topicIdPartition, new LogInfo());

@@ -17,6 +17,7 @@ import java.util.Arrays;
 import java.util.Map;
 
 import io.aiven.inkless.common.UuidUtil;
+import io.aiven.inkless.control_plane.MetadataView;
 
 public class TopicsCreateJob implements Runnable {
     private static final Logger LOGGER = LoggerFactory.getLogger(TopicsCreateJob.class);
@@ -28,13 +29,16 @@ public class TopicsCreateJob implements Runnable {
         """;
 
     private final Time time;
+    private final MetadataView metadataView;
     private final HikariDataSource hikariDataSource;
     private final Map<Uuid, TopicDelta> changedTopics;
 
     TopicsCreateJob(final Time time,
+                    final MetadataView metadataView,
                     final HikariDataSource hikariDataSource,
                     final Map<Uuid, TopicDelta> changedTopics) {
         this.time = time;
+        this.metadataView = metadataView;
         this.hikariDataSource = hikariDataSource;
         this.changedTopics = changedTopics;
     }
@@ -79,12 +83,23 @@ public class TopicsCreateJob implements Runnable {
     }
 
     private void runWithConnection(final Connection connection) throws SQLException {
+        // See how topics are created in ReplicationControlManager.createTopic.
+        // It's ordered so that ConfigRecords go after TopicRecord but before PartitionRecord(s).
+        // So it means we will see topic configs before any partition.
+
         try (final PreparedStatement preparedStatement = connection.prepareStatement(INSERT_LOG_ROW_QUERY)) {
             for (final var topicEntry : changedTopics.entrySet()) {
+                final String topicName = topicEntry.getValue().name();
+
+                // Skip non-Inkless topics.
+                if (!metadataView.isInklessTopic(topicName)) {
+                    continue;
+                }
+
                 for (final var partitionEntry : topicEntry.getValue().newPartitions().entrySet()) {
                     preparedStatement.setObject(1, UuidUtil.toJava(topicEntry.getValue().id()));
                     preparedStatement.setInt(2, partitionEntry.getKey());
-                    preparedStatement.setString(3, topicEntry.getValue().name());
+                    preparedStatement.setString(3, topicName);
                     // log_start_offset
                     preparedStatement.setLong(4, 0);
                     // high_watermark

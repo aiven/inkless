@@ -11,17 +11,22 @@ import org.slf4j.LoggerFactory;
 
 import java.util.Set;
 
+import io.aiven.inkless.control_plane.MetadataView;
+
 class TopicsDeleteJob implements Runnable {
     private static final Logger LOGGER = LoggerFactory.getLogger(TopicsDeleteJob.class);
 
     private final Time time;
+    private final MetadataView metadataView;
     private final HikariDataSource hikariDataSource;
     private final Set<Uuid> deletedTopicIds;
 
     TopicsDeleteJob(final Time time,
+                    final MetadataView metadataView,
                     final HikariDataSource hikariDataSource,
                     final Set<Uuid> deletedTopicIds) {
         this.time = time;
+        this.metadataView = metadataView;
         this.hikariDataSource = hikariDataSource;
         this.deletedTopicIds = deletedTopicIds;
     }

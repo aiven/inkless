@@ -28,6 +28,7 @@ import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
@@ -60,6 +61,8 @@ public abstract class AbstractControlPlaneTest {
             .thenReturn(Uuid.ZERO_UUID);
         when(metadataView.getTopicConfig(EXISTING_TOPIC))
             .thenReturn(new LogConfig(Map.of()));
+        when(metadataView.isInklessTopic(anyString()))
+            .thenReturn(true);
     }
 
     protected ControlPlane controlPlane;
