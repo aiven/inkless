@@ -27,13 +27,21 @@ import io.aiven.inkless.control_plane.MetadataView;
 public class PostgresControlPlane extends AbstractControlPlane {
     private static final Logger LOGGER = LoggerFactory.getLogger(PostgresControlPlane.class);
 
-    private final ExecutorService executor = Executors.newCachedThreadPool();
+    private final ExecutorService executor;
 
     private HikariDataSource hikariDataSource;
 
     public PostgresControlPlane(final Time time,
                                 final MetadataView metadataView) {
+        this(time, metadataView, Executors.newCachedThreadPool());
+    }
+
+    // Visible for testing
+    PostgresControlPlane(final Time time,
+                         final MetadataView metadataView,
+                         final ExecutorService executor) {
         super(time, metadataView);
+        this.executor = executor;
     }
 
     public void onTopicMetadataChanges(final TopicsDelta topicsDelta) {
