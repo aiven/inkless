@@ -38,9 +38,9 @@ public class PostgresControlPlane extends AbstractControlPlane {
 
     public void onTopicMetadataChanges(final TopicsDelta topicsDelta) {
         // Delete.
-        executor.submit(new TopicsDeleteJob(time, hikariDataSource, topicsDelta.deletedTopicIds()));
+        executor.submit(new TopicsDeleteJob(time, metadataView, hikariDataSource, topicsDelta.deletedTopicIds()));
         // Create.
-        executor.submit(new TopicsCreateJob(time, hikariDataSource, topicsDelta.changedTopics()));
+        executor.submit(new TopicsCreateJob(time, metadataView, hikariDataSource, topicsDelta.changedTopics()));
     }
 
     @Override
