@@ -214,6 +214,7 @@ class BrokerMetadataPublisher(
       aclPublisher.onMetadataUpdate(delta, newImage, manifest)
 
       // Apply Inkless delta.
+      // This can be anywhere related to other publishers, but must be after metadataCache.setImage(newImage).
       inklessPublisher.onMetadataUpdate(delta, newImage, manifest)
 
       try {
