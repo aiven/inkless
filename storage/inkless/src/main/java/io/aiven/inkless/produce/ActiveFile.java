@@ -11,8 +11,6 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
-import java.util.function.BiConsumer;
-import java.util.function.Consumer;
 
 import io.aiven.inkless.TimeUtils;
 
@@ -32,20 +30,14 @@ class ActiveFile {
     private final Map<Integer, Map<TopicPartition, MemoryRecords>> originalRequests = new HashMap<>();
     private final Map<Integer, CompletableFuture<Map<TopicPartition, PartitionResponse>>> awaitingFuturesByRequest = new HashMap<>();
 
-    private final Consumer<String> requestRateMark;
-    private final BiConsumer<String, Integer> bytesInRateMark;
-    private final BiConsumer<String, Long> messagesInRateMark;
+    private final BrokerTopicMetricMarks brokerTopicMetricMarks;
 
     ActiveFile(final Time time,
-               final Consumer<String> requestRateMark,
-               final BiConsumer<String, Integer> bytesInRateMark,
-               final BiConsumer<String, Long> messagesInRateMark) {
+               final BrokerTopicMetricMarks brokerTopicMetricMarks) {
         this.buffer = new BatchBuffer();
         this.batchValidator = new BatchValidator(time);
         this.start = TimeUtils.monotonicNow(time);
-        this.requestRateMark = requestRateMark;
-        this.bytesInRateMark = bytesInRateMark;
-        this.messagesInRateMark = messagesInRateMark;
+        this.brokerTopicMetricMarks = brokerTopicMetricMarks;
     }
 
     // For testing
@@ -53,9 +45,7 @@ class ActiveFile {
         this.buffer = new BatchBuffer();
         this.batchValidator = new BatchValidator(time);
         this.start = start;
-        this.requestRateMark = request -> {};
-        this.bytesInRateMark = (topic, bytes) -> {};
-        this.messagesInRateMark = (topic, messages) -> {};
+        this.brokerTopicMetricMarks = new BrokerTopicMetricMarks();
     }
 
     CompletableFuture<Map<TopicPartition, PartitionResponse>> add(
@@ -68,7 +58,7 @@ class ActiveFile {
 
         for (final var entry : entriesPerPartition.entrySet()) {
             final String topic = entry.getKey().topic();
-            requestRateMark.accept(topic);
+            brokerTopicMetricMarks.requestRateMark.accept(topic);
 
             for (final var batch : entry.getValue().batches()) {
                 final TopicPartition topicPartition = entry.getKey();
@@ -77,8 +67,8 @@ class ActiveFile {
 
                 buffer.addBatch(topicPartition, batch, requestId);
 
-                bytesInRateMark.accept(topicPartition.topic(), batch.sizeInBytes());
-                messagesInRateMark.accept(topicPartition.topic(), batch.nextOffset() - batch.baseOffset());
+                brokerTopicMetricMarks.bytesInRateMark.accept(topicPartition.topic(), batch.sizeInBytes());
+                brokerTopicMetricMarks.messagesInRateMark.accept(topicPartition.topic(), batch.nextOffset() - batch.baseOffset());
             }
         }
 

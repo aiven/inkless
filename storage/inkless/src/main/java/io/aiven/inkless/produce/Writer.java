@@ -24,8 +24,6 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
-import java.util.function.BiConsumer;
-import java.util.function.Consumer;
 
 import io.aiven.inkless.common.InklessThreadFactory;
 import io.aiven.inkless.common.ObjectKeyCreator;
@@ -53,9 +51,7 @@ class Writer implements Closeable {
     private final int maxBufferSize;
     private final ScheduledExecutorService commitTickScheduler;
     private boolean closed = false;
-    private final Consumer<String> requestRateMark;
-    private final BiConsumer<String, Integer> bytesInRateMark;
-    private final BiConsumer<String, Long> messagesInRateMark;
+    private final BrokerTopicMetricMarks brokerTopicMetricMarks;
 
     @DoNotMutate
     Writer(final Time time,
@@ -73,7 +69,7 @@ class Writer implements Closeable {
             maxBufferSize,
             Executors.newScheduledThreadPool(1, new InklessThreadFactory("inkless-file-commit-ticker-", true)),
             new FileCommitter(controlPlane, objectKeyCreator, objectUploader, time, maxFileUploadAttempts, fileUploadRetryBackoff),
-            brokerTopicStats
+            new BrokerTopicMetricMarks(brokerTopicStats)
         );
     }
 
@@ -83,7 +79,7 @@ class Writer implements Closeable {
            final int maxBufferSize,
            final ScheduledExecutorService commitTickScheduler,
            final FileCommitter fileCommitter,
-           final BrokerTopicStats brokerTopicStats) {
+           final BrokerTopicMetricMarks brokerTopicMetricMarks) {
         this.time = Objects.requireNonNull(time, "time cannot be null");
         Objects.requireNonNull(commitInterval, "commitInterval cannot be null");
         if (maxBufferSize <= 0) {
@@ -92,25 +88,8 @@ class Writer implements Closeable {
         this.maxBufferSize = maxBufferSize;
         this.commitTickScheduler = Objects.requireNonNull(commitTickScheduler, "commitTickScheduler cannot be null");
         this.fileCommitter = Objects.requireNonNull(fileCommitter, "fileCommitter cannot be null");
-
-        requestRateMark = (String topicName) -> {
-            brokerTopicStats.topicStats(topicName).totalProduceRequestRate().mark();
-            brokerTopicStats.allTopicsStats().totalProduceRequestRate().mark();
-        };
-        bytesInRateMark = (String topicName, Integer bytes) -> {
-            brokerTopicStats.topicStats(topicName).bytesInRate().mark(bytes);
-            brokerTopicStats.allTopicsStats().bytesInRate().mark(bytes);
-        };
-        messagesInRateMark = (String topicName, Long messages) -> {
-            brokerTopicStats.topicStats(topicName).messagesInRate().mark(messages);
-            brokerTopicStats.allTopicsStats().messagesInRate().mark(messages);
-        };
-        this.activeFile = new ActiveFile(
-            time,
-            requestRateMark,
-            bytesInRateMark,
-            messagesInRateMark
-        );
+        this.brokerTopicMetricMarks = brokerTopicMetricMarks;
+        this.activeFile = new ActiveFile(time, brokerTopicMetricMarks);
 
         commitTickScheduler.scheduleAtFixedRate(
             this::tick, commitInterval.toMillis(), commitInterval.toMillis(), TimeUnit.MILLISECONDS);
@@ -175,12 +154,7 @@ class Writer implements Closeable {
     private void rotateFile(final boolean swallowInterrupted) {
         LOGGER.debug("Rotating active file");
         final ActiveFile prevActiveFile = this.activeFile;
-        this.activeFile = new ActiveFile(
-            time,
-            requestRateMark,
-            bytesInRateMark,
-            messagesInRateMark
-        );
+        this.activeFile = new ActiveFile(time, brokerTopicMetricMarks);
 
         try {
             this.fileCommitter.commit(prevActiveFile.close());
