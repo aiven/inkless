@@ -11,15 +11,11 @@ import org.apache.kafka.common.utils.AbstractIterator;
 import org.apache.kafka.common.utils.FlattenedIterator;
 import org.apache.kafka.common.utils.Time;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import java.io.IOException;
 import java.util.List;
 import java.util.Objects;
 
 public class ConcatenatedRecords extends AbstractRecords {
-    private static final Logger LOG = LoggerFactory.getLogger(ConcatenatedRecords.class);
 
     private final List<MemoryRecords> backingRecords;
     private final int sizeInBytes;
