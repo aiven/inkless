@@ -61,8 +61,7 @@ public class PostgresControlPlane extends AbstractControlPlane {
         config.setUsername(controlPlaneConfig.username());
         config.setPassword(controlPlaneConfig.password());
 
-        // TODO consider relaxing
-        config.setTransactionIsolation(IsolationLevel.TRANSACTION_REPEATABLE_READ.name());
+        config.setTransactionIsolation(IsolationLevel.TRANSACTION_READ_COMMITTED.name());
 
         // We're doing interactive transactions.
         config.setAutoCommit(false);

@@ -14,13 +14,11 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
-import java.text.MessageFormat;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.UUID;
 import java.util.concurrent.Callable;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 
 import io.aiven.inkless.common.UuidUtil;
@@ -30,12 +28,6 @@ import io.aiven.inkless.control_plane.FindBatchResponse;
 
 class FindBatchesJob implements Callable<List<FindBatchResponse>> {
     private static final Logger LOGGER = LoggerFactory.getLogger(FindBatchesJob.class);
-
-    private static final MessageFormat SELECT_LOGS_QUERY_TEMPLATE = new MessageFormat("""
-        SELECT topic_id, partition, topic_name, log_start_offset, high_watermark
-        FROM logs
-        WHERE {0}
-        """);
 
     private static final String SELECT_BATCHES = """
         SELECT base_offset, last_offset, object_key, byte_offset,
@@ -98,7 +90,7 @@ class FindBatchesJob implements Callable<List<FindBatchResponse>> {
     }
 
     private List<FindBatchResponse> runWithConnection(final Connection connection) throws SQLException {
-        final Map<TopicIdPartition, LogInfo> logInfos = getLogInfos(connection);
+        final Map<TopicIdPartition, LogEntity> logInfos = getLogInfos(connection);
         final List<FindBatchResponse> result = new ArrayList<>();
         for (final FindBatchRequest request : requests) {
             result.add(
@@ -110,18 +102,18 @@ class FindBatchesJob implements Callable<List<FindBatchResponse>> {
 
     private FindBatchResponse findBatchPerPartition(final Connection connection,
                                                     final FindBatchRequest request,
-                                                    final LogInfo logInfo) throws SQLException {
-        if (logInfo == null) {
+                                                    final LogEntity logEntity) throws SQLException {
+        if (logEntity == null) {
             return FindBatchResponse.unknownTopicOrPartition();
         }
 
-        if (request.offset() < logInfo.logStartOffset) {
+        if (request.offset() < logEntity.logStartOffset()) {
             LOGGER.debug("Invalid offset {} for {}", request.offset(), request.topicIdPartition());
-            return FindBatchResponse.offsetOutOfRange(logInfo.logStartOffset, logInfo.highWatermark);
+            return FindBatchResponse.offsetOutOfRange(logEntity.logStartOffset(), logEntity.highWatermark());
         }
 
-        if (request.offset() > logInfo.highWatermark) {
-            return FindBatchResponse.offsetOutOfRange(logInfo.logStartOffset, logInfo.highWatermark);
+        if (request.offset() > logEntity.highWatermark()) {
+            return FindBatchResponse.offsetOutOfRange(logEntity.logStartOffset(), logEntity.highWatermark());
         }
 
         final List<BatchInfo> batches = new ArrayList<>();
@@ -131,8 +123,8 @@ class FindBatchesJob implements Callable<List<FindBatchResponse>> {
             preparedStatement.setObject(1, UuidUtil.toJava(request.topicIdPartition().topicId()));
             preparedStatement.setInt(2, request.topicIdPartition().partition());
             preparedStatement.setLong(3, request.offset());
-            preparedStatement.setLong(4, logInfo.highWatermark());
-            preparedStatement.setLong(5, logInfo.logStartOffset());
+            preparedStatement.setLong(4, logEntity.highWatermark());
+            preparedStatement.setLong(5, logEntity.logStartOffset());
 
             preparedStatement.setFetchSize(1000);  // fetch lazily
 
@@ -156,46 +148,19 @@ class FindBatchesJob implements Callable<List<FindBatchResponse>> {
             }
         }
 
-        return FindBatchResponse.success(batches, logInfo.logStartOffset, logInfo.highWatermark);
+        return FindBatchResponse.success(batches, logEntity.logStartOffset(), logEntity.highWatermark());
     }
 
-    private Map<TopicIdPartition, LogInfo> getLogInfos(final Connection connection) throws SQLException {
+    private Map<TopicIdPartition, LogEntity> getLogInfos(final Connection connection) throws SQLException {
         if (requests.isEmpty()) {
             return Map.of();
         }
 
-        final String wherePlaceholders = requests.stream()
-            .map(r -> "(topic_id = ? AND partition = ?)")
-            .collect(Collectors.joining(" OR "));
-        final String query = SELECT_LOGS_QUERY_TEMPLATE.format(new String[]{wherePlaceholders});
-
-        final Map<TopicIdPartition, LogInfo> result = new HashMap<>();
-        try (final PreparedStatement preparedStatement = connection.prepareStatement(query)) {
-            int placeholderI = 1;
-            for (final FindBatchRequest request : requests) {
-                preparedStatement.setObject(placeholderI++, UuidUtil.toJava(request.topicIdPartition().topicId()));
-                preparedStatement.setInt(placeholderI++, request.topicIdPartition().partition());
-            }
-
-            final ResultSet resultSet = preparedStatement.executeQuery();
-            while (resultSet.next()) {
-                final TopicIdPartition topicIdPartition = new TopicIdPartition(
-                    UuidUtil.fromJava(resultSet.getObject("topic_id", UUID.class)),
-                    resultSet.getInt("partition"),
-                    resultSet.getString("topic_name")
-                );
-                final LogInfo log = new LogInfo(
-                    resultSet.getLong("log_start_offset"),
-                    resultSet.getLong("high_watermark")
-                );
-                result.put(topicIdPartition, log);
-            }
-        }
-
-        return result;
-    }
-
-    private record LogInfo(long logStartOffset, long highWatermark) {
+        final List<TopicIdPartition> tidps = requests.stream()
+            .map(FindBatchRequest::topicIdPartition)
+            .toList();
+        return LogSelectQuery.execute(connection, tidps, false).stream()
+            .collect(Collectors.toMap(LogEntity::topicIdPartition, Function.identity()));
     }
 
     private TimestampType timestampTypeFromId(short id) {

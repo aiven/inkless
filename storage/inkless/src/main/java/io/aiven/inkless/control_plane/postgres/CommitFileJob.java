@@ -1,6 +1,7 @@
 // Copyright (c) 2024 Aiven, Helsinki, Finland. https://aiven.io/
 package io.aiven.inkless.control_plane.postgres;
 
+import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.record.TimestampType;
 import org.apache.kafka.common.utils.Time;
@@ -98,6 +99,16 @@ class CommitFileJob implements Callable<List<CommitBatchResponse>> {
     }
 
     private List<Optional<UpdateHighWatermarkResult>> updateHighWatermarks(final Connection connection) throws SQLException {
+        if (requests.isEmpty()) {
+            return List.of();
+        }
+
+        // Execute this only to lock the rows.
+        final List<TopicIdPartition> tidps = requests.stream()
+            .map(CommitBatchRequestExtra::topicIdPartition)
+            .toList();
+        LogSelectQuery.execute(connection, tidps, true);
+
         final List<Optional<UpdateHighWatermarkResult>> result = new ArrayList<>();
         // TODO reduce the number of round-trips
         // This piece does a DB round-trip per topic-partitions. We should do 1 round trip instead.
@@ -176,6 +187,9 @@ class CommitFileJob implements Callable<List<CommitBatchResponse>> {
     record CommitBatchRequestExtra(CommitBatchRequest request,
                                    Uuid topicId,
                                    TimestampType timestampType) {
+        TopicIdPartition topicIdPartition() {
+            return new TopicIdPartition(topicId(), request().topicPartition());
+        }
     }
 
     private record UpdateHighWatermarkResult(UUID topicId,
