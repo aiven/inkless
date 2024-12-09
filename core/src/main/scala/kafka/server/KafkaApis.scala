@@ -17,6 +17,8 @@
 
 package kafka.server
 
+import io.aiven.inkless.common.SharedState
+import io.aiven.inkless.metadata.InklessTopicMetadataTransformer
 import kafka.controller.ReplicaAssignment
 import kafka.coordinator.transaction.{InitProducerIdResult, TransactionCoordinator}
 import kafka.network.RequestChannel
@@ -119,7 +121,8 @@ class KafkaApis(val requestChannel: RequestChannel,
                 time: Time,
                 val tokenManager: DelegationTokenManager,
                 val apiVersionManager: ApiVersionManager,
-                val clientMetricsManager: Option[ClientMetricsManager]
+                val clientMetricsManager: Option[ClientMetricsManager],
+                inklessSharedState: Option[SharedState] = None
 ) extends ApiRequestHandler with Logging {
 
   type FetchResponseStats = Map[TopicPartition, RecordValidationStats]
@@ -134,6 +137,8 @@ class KafkaApis(val requestChannel: RequestChannel,
       Some(new DescribeTopicPartitionsRequestHandler(kRaftMetadataCache, authHelper, config))
     case _ => None
   }
+
+  val inklessTopicMetadataTransformer = new InklessTopicMetadataTransformer(inklessSharedState.get.metadata())
 
   def close(): Unit = {
     aclApis.close()
@@ -1352,6 +1357,8 @@ class KafkaApis(val requestChannel: RequestChannel,
         setTopicAuthorizedOperations(topicMetadata)
       }
     }
+
+    inklessTopicMetadataTransformer.transform(request.context.clientId(), topicMetadata.asJava)
 
     val completeTopicMetadata =  unknownTopicIdsTopicMetadata ++
       topicMetadata ++ unauthorizedForCreateTopicMetadata ++ unauthorizedForDescribeTopicMetadata

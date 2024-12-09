@@ -1,6 +1,7 @@
 // Copyright (c) 2024 Aiven, Helsinki, Finland. https://aiven.io/
 package io.aiven.inkless.produce;
 
+import org.apache.kafka.admin.BrokerMetadata;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.metadata.PartitionRecord;
@@ -24,6 +25,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.io.IOException;
 import java.time.Duration;
+import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
@@ -60,6 +62,11 @@ class WriterIntegrationTest {
     static final String BUCKET_NAME = "test-bucket";
 
     static final MetadataView METADATA_VIEW = new MetadataView() {
+        @Override
+        public Iterable<BrokerMetadata> getAliveBrokers() {
+            return List.of();
+        }
+
         @Override
         public Set<TopicPartition> getTopicPartitions(final String topicName) {
             return Set.of(T0P0, T0P1, T1P0);
