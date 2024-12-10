@@ -10,6 +10,7 @@ import org.apache.kafka.common.requests.FetchRequest;
 import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.server.storage.log.FetchPartitionData;
 
+import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Iterator;
@@ -169,7 +170,8 @@ public class FetchCompleterJob implements Supplier<Map<TopicIdPartition, FetchPa
     private static MemoryRecords constructRecordsFromFile(BatchInfo batch, List<FetchedFile> files) {
         for (FetchedFile file : files) {
             if (file.range().contains(batch.range())) {
-                MemoryRecords records = MemoryRecords.readableRecords(file.buffer());
+                ByteBuffer buffer = file.buffer().slice(Math.toIntExact(batch.byteOffset() - file.range().offset()), Math.toIntExact(batch.size()));
+                MemoryRecords records = MemoryRecords.readableRecords(buffer);
                 Iterator<MutableRecordBatch> iterator = records.batches().iterator();
                 if (!iterator.hasNext()) {
                     throw new IllegalStateException("Backing file should have at least one batch");
