@@ -335,7 +335,7 @@ class Estimator:
                 row[1] = str(replication_factor)
                 for hot_set_retention_hours in [1e0, 1e1]:
                     row[2] = str(hot_set_retention_hours)
-                    for hot_set_bytes_per_block in [1e4, 1e5, 1e6, 2e6, 4e6, 8e6, 16e6, 32e6]:
+                    for hot_set_bytes_per_block in [1e4, 1e5, 1e6, 2e6, 4e6, 8e6, 16e6, 32e6, 64e6, 128e6]:
                         row[3] = str(hot_set_bytes_per_block)
                         for hot_set_consumer_count in [1, 3, 10]:
                             row[4] = str(hot_set_consumer_count)
@@ -414,6 +414,22 @@ class Estimator:
                     network_total_fn=lambda traditional, inkless: traditional,
                     network_capacity_fn=network_capacity_fn,
                     network_price_fn=network_price_fn,
+                    hot_set_storage_price_fn=self.ebs_storage_price(storage_type),
+                    hot_set_io_price_fn=self.ebs_iops_price(storage_type),
+                    archive_storage_price_fn=archive_storage_price_fn,
+                    archive_io_price_fn=archive_io_price_fn
+                )
+
+            for storage_type in ["standard", "sc1", "st1", "gp2", "gp3", "io1", "io2"]:
+                self._run_price_fns(
+                    ["unoptimized", instance_type, "ebs-standard" if storage_type == "standard" else storage_type, archive_type],
+                    reduced_durability_fn=self.ebs_durability(storage_type),
+                    fixed_instance_price_fn=instance_price_fn,
+                    variable_instance_price_fn=instance_price_fn,
+                    network_total_fn=lambda traditional, inkless: traditional,
+                    network_capacity_fn=network_capacity_fn,
+                    # Assume all replication data is cross-az, and 2/3 of producer data is cross-az.
+                    network_price_fn=lambda outbound, inbound: network_price_fn(outbound * 5/3, inbound * 5/3),
                     hot_set_storage_price_fn=self.ebs_storage_price(storage_type),
                     hot_set_io_price_fn=self.ebs_iops_price(storage_type),
                     archive_storage_price_fn=archive_storage_price_fn,
