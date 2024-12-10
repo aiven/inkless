@@ -1,7 +1,7 @@
 // Copyright (c) 2024 Aiven, Helsinki, Finland. https://aiven.io/
 package io.aiven.inkless.control_plane.postgres;
 
-import org.apache.kafka.common.test.TestUtils;
+import org.apache.kafka.test.TestUtils;
 
 import org.junit.jupiter.api.TestInfo;
 import org.testcontainers.junit.jupiter.Container;

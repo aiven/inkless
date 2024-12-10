@@ -1,0 +1,87 @@
+// Copyright (c) 2024 Aiven, Helsinki, Finland. https://aiven.io/
+package io.aiven.inkless.metadata;
+
+import org.apache.kafka.admin.BrokerMetadata;
+import org.apache.kafka.common.message.MetadataResponseData;
+
+import java.util.Comparator;
+import java.util.List;
+import java.util.Objects;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.stream.StreamSupport;
+
+import io.aiven.inkless.control_plane.MetadataView;
+
+public class InklessTopicMetadataTransformer {
+    private final MetadataView metadataView;
+
+    private final AtomicInteger roundRobinCounter = new AtomicInteger();
+
+    public InklessTopicMetadataTransformer(final MetadataView metadataView) {
+        this.metadataView = Objects.requireNonNull(metadataView, "metadataView cannot be null");
+    }
+
+    /**
+     * @param clientId client ID, {@code null} if not provided.
+     */
+    public void transform(
+        final String clientId,
+        final Iterable<MetadataResponseData.MetadataResponseTopic> topicMetadata
+    ) {
+        Objects.requireNonNull(topicMetadata, "topicMetadata cannot be null");
+
+        final int leaderForInklessPartitions = selectLeaderForInklessPartitions(clientId);
+        for (final var topic : topicMetadata) {
+            if (!metadataView.isInklessTopic(topic.name())) {
+                continue;
+            }
+            for (final var partition : topic.partitions()) {
+                partition.setLeaderId(leaderForInklessPartitions);
+            }
+        }
+    }
+
+    /**
+     * Select the broker ID to be the leader of all Inkless partitions.
+     *
+     * <p>The selection happens from brokers in the client AZ or from all brokers
+     * (if brokers in the client AZ not found or the client AZ is not set).
+     *
+     * @return the selected broker ID.
+     */
+    private int selectLeaderForInklessPartitions(final String clientId) {
+        final String clientAZ = ClientAZExtractor.getClientAZ(clientId);
+        // This gracefully handles the null client AZ, no need for a special check.
+        final List<BrokerMetadata> brokersInClientAZ = brokersInAZ(clientAZ);
+        // Fall back on all brokers if no broker in the client AZ.
+        final List<BrokerMetadata> brokersToPickFrom = brokersInClientAZ.isEmpty()
+            ? allAliveBrokers()
+            : brokersInClientAZ;
+
+        // This cannot happen in a normal broker run. This will serve as a guard in tests.
+        if (brokersToPickFrom.isEmpty()) {
+            throw new RuntimeException("No broker found, unexpected");
+        }
+
+        final int c = roundRobinCounter.getAndUpdate(v -> Math.max(v + 1, 0));
+        final int idx = c % brokersToPickFrom.size();
+        return brokersToPickFrom.get(idx).id;
+    }
+
+    private List<BrokerMetadata> allAliveBrokers() {
+        return StreamSupport.stream(metadataView.getAliveBrokers().spliterator(), false)
+            .sorted(Comparator.comparing(bm -> bm.id))
+            .toList();
+    }
+
+    /**
+     * Get brokers in the specified AZ.
+     * @param az the AZ to look for, can be {@code null}.
+     */
+    private List<BrokerMetadata> brokersInAZ(final String az) {
+        return StreamSupport.stream(metadataView.getAliveBrokers().spliterator(), false)
+            .filter(bm -> Objects.equals(bm.rack.orElse(null), az))
+            .sorted(Comparator.comparing(bm -> bm.id))
+            .toList();
+    }
+}

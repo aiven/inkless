@@ -220,6 +220,7 @@ public class KafkaApisBuilder {
                              time,
                              tokenManager,
                              apiVersionManager,
-                             clientMetricsManager);
+                             clientMetricsManager,
+                             OptionConverters.toScala(Optional.empty()));
     }
 }
