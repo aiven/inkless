@@ -1,6 +1,7 @@
 // Copyright (c) 2024 Aiven, Helsinki, Finland. https://aiven.io/
 package io.aiven.inkless.produce;
 
+import org.apache.kafka.admin.BrokerMetadata;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.compress.Compression;
@@ -73,6 +74,11 @@ class WriterPropertyTest {
     private static final Set<TopicPartition> ALL_TPS = Set.of(T0P0, T0P1, T1P0, T1P1);
 
     static final MetadataView METADATA_VIEW = new MetadataView() {
+        @Override
+        public Iterable<BrokerMetadata> getAliveBrokers() {
+            return List.of();
+        }
+
         private final Map<String, Uuid> uuids = Map.of(
             T0P0.topic(), TOPIC_ID_0,
             T1P0.topic(), TOPIC_ID_1
