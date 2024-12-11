@@ -54,6 +54,10 @@ test:
 	./gradlew :storage:inkless:test
 	./gradlew :core:test --tests "*Inkless*"
 
+.PHONY: pitest
+pitest:
+	./gradlew :storage:inkless:pitest
+
 .PHONY: clean
 clean:
 	./gradlew clean
