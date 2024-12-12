@@ -4,6 +4,7 @@ package io.aiven.inkless.metadata;
 import org.apache.kafka.admin.BrokerMetadata;
 import org.apache.kafka.common.message.MetadataResponseData;
 
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
@@ -37,6 +38,9 @@ public class InklessTopicMetadataTransformer {
             }
             for (final var partition : topic.partitions()) {
                 partition.setLeaderId(leaderForInklessPartitions);
+                partition.setReplicaNodes(List.of(leaderForInklessPartitions));
+                partition.setIsrNodes(List.of(leaderForInklessPartitions));
+                partition.setOfflineReplicas(Collections.emptyList());
             }
         }
     }
