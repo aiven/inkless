@@ -1,0 +1,25 @@
+services:
+  producer:
+    image: apache/kafka:3.9.0
+    network_mode: host
+    entrypoint:
+      - /opt/kafka/bin/kafka-producer-perf-test.sh
+    command:
+      - "--topic"
+      - "test-topic"
+      - "--throughput"
+      - "-1"
+      - "--record-size"
+      - "1000"
+      - "--num-records"
+      - "100000000"
+      - "--producer-props"
+      - "bootstrap.servers=127.0.0.1:9092"
+      - "batch.size=400000"
+      - "buffer.memory=128000000"
+      - "max.request.size=64000000"
+      - "enable.idempotence=false"
+      - "max.in.flight.requests.per.connection=5"
+      - "linger.ms=100"
+    deploy:
+      replicas: 10
