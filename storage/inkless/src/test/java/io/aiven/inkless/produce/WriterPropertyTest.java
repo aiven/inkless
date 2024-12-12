@@ -174,6 +174,7 @@ class WriterPropertyTest {
             maxBufferSize,
             mock(ScheduledExecutorService.class),
             fileCommitter,
+            mock(WriterMetrics.class),
             new BrokerTopicMetricMarks()
         );
 
