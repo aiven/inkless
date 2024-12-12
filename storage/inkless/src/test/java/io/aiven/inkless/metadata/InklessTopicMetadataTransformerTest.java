@@ -16,6 +16,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 
+import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 import java.util.function.Supplier;
@@ -92,15 +93,24 @@ class InklessTopicMetadataTransformerTest {
                     new MetadataResponseData.MetadataResponsePartition()
                         .setPartitionIndex(0)
                         .setErrorCode((short) 0)
-                        .setLeaderId(-1),
+                        .setLeaderId(-1)
+                        .setReplicaNodes(List.of(1, 2, 3, 4))
+                        .setIsrNodes(List.of(1, 2))
+                        .setOfflineReplicas(List.of(3, 4)),
                     new MetadataResponseData.MetadataResponsePartition()
                         .setPartitionIndex(1)
                         .setErrorCode((short) 1)
-                        .setLeaderId(-1),
+                        .setLeaderId(-1)
+                        .setReplicaNodes(List.of(1, 2, 3, 4))
+                        .setIsrNodes(List.of(1, 2))
+                        .setOfflineReplicas(List.of(3, 4)),
                     new MetadataResponseData.MetadataResponsePartition()
                         .setPartitionIndex(2)
                         .setErrorCode((short) 2)
                         .setLeaderId(-1)
+                        .setReplicaNodes(List.of(1, 2, 3, 4))
+                        .setIsrNodes(List.of(1, 2))
+                        .setOfflineReplicas(List.of(3, 4))
                 ));
 
         final Supplier<MetadataResponseData.MetadataResponseTopic> classicTopicMetadata =
@@ -113,6 +123,9 @@ class InklessTopicMetadataTransformerTest {
                         .setPartitionIndex(0)
                         .setErrorCode((short) 0)
                         .setLeaderId(-10)
+                        .setReplicaNodes(List.of(1, 2, 3, 4))
+                        .setIsrNodes(List.of(1, 2))
+                        .setOfflineReplicas(List.of(3, 4))
                 ));
 
         final List<MetadataResponseData.MetadataResponseTopic> topicMetadata = List.of(
@@ -124,9 +137,9 @@ class InklessTopicMetadataTransformerTest {
         transformer.transform("inkless_az=" + clientAZ, topicMetadata);
 
         final var expectedInklessTopicMetadata = inklessTopicMetadata.get();
-        expectedInklessTopicMetadata.partitions().get(0).setLeaderId(expectedLeaderId1);
-        expectedInklessTopicMetadata.partitions().get(1).setLeaderId(expectedLeaderId1);
-        expectedInklessTopicMetadata.partitions().get(2).setLeaderId(expectedLeaderId1);
+        for (final int partition : List.of(0, 1, 2)) {
+            setExpectedLeader(expectedInklessTopicMetadata.partitions().get(partition), expectedLeaderId1);
+        }
 
         assertThat(topicMetadata.get(0)).isEqualTo(expectedInklessTopicMetadata);
         assertThat(topicMetadata.get(1)).isEqualTo(classicTopicMetadata.get());
@@ -134,9 +147,9 @@ class InklessTopicMetadataTransformerTest {
         // Check that rotation happens by transforming again.
         transformer.transform("inkless_az=" + clientAZ, topicMetadata);
 
-        expectedInklessTopicMetadata.partitions().get(0).setLeaderId(expectedLeaderId2);
-        expectedInklessTopicMetadata.partitions().get(1).setLeaderId(expectedLeaderId2);
-        expectedInklessTopicMetadata.partitions().get(2).setLeaderId(expectedLeaderId2);
+        for (final int partition : List.of(0, 1, 2)) {
+            setExpectedLeader(expectedInklessTopicMetadata.partitions().get(partition), expectedLeaderId2);
+        }
 
         assertThat(topicMetadata.get(0)).isEqualTo(expectedInklessTopicMetadata);
         assertThat(topicMetadata.get(1)).isEqualTo(classicTopicMetadata.get());
@@ -160,6 +173,9 @@ class InklessTopicMetadataTransformerTest {
                         .setPartitionIndex(0)
                         .setErrorCode((short) 0)
                         .setLeaderId(-1)
+                        .setReplicaNodes(List.of(1, 2, 3, 4))
+                        .setIsrNodes(List.of(1, 2))
+                        .setOfflineReplicas(List.of(3, 4))
                 ));
 
         final List<MetadataResponseData.MetadataResponseTopic> topicMetadata = List.of(inklessTopicMetadata.get());
@@ -167,11 +183,11 @@ class InklessTopicMetadataTransformerTest {
 
         transformer.transform("inkless_az=az0", topicMetadata);
         final var expectedInklessTopicMetadata = inklessTopicMetadata.get();
-        expectedInklessTopicMetadata.partitions().get(0).setLeaderId(0);
+        setExpectedLeader(expectedInklessTopicMetadata.partitions().get(0), 0);
         assertThat(topicMetadata.get(0)).isEqualTo(expectedInklessTopicMetadata);
 
         transformer.transform("inkless_az=az0", topicMetadata);
-        expectedInklessTopicMetadata.partitions().get(0).setLeaderId(1);
+        setExpectedLeader(expectedInklessTopicMetadata.partitions().get(0), 1);
         assertThat(topicMetadata.get(0)).isEqualTo(expectedInklessTopicMetadata);
     }
 
@@ -193,6 +209,9 @@ class InklessTopicMetadataTransformerTest {
                         .setPartitionIndex(0)
                         .setErrorCode((short) 0)
                         .setLeaderId(-1)
+                        .setReplicaNodes(List.of(1, 2, 3, 4))
+                        .setIsrNodes(List.of(1, 2))
+                        .setOfflineReplicas(List.of(3, 4))
                 ));
 
         final List<MetadataResponseData.MetadataResponseTopic> topicMetadata = List.of(inklessTopicMetadata.get());
@@ -200,11 +219,18 @@ class InklessTopicMetadataTransformerTest {
 
         transformer.transform(null, topicMetadata);
         final var expectedInklessTopicMetadata = inklessTopicMetadata.get();
-        expectedInklessTopicMetadata.partitions().get(0).setLeaderId(0);
+        setExpectedLeader(expectedInklessTopicMetadata.partitions().get(0), 0);
         assertThat(topicMetadata.get(0)).isEqualTo(expectedInklessTopicMetadata);
 
         transformer.transform(null, topicMetadata);
-        expectedInklessTopicMetadata.partitions().get(0).setLeaderId(1);
+        setExpectedLeader(expectedInklessTopicMetadata.partitions().get(0), 1);
         assertThat(topicMetadata.get(0)).isEqualTo(expectedInklessTopicMetadata);
+    }
+
+    private static void setExpectedLeader(final MetadataResponseData. MetadataResponsePartition partition, final int leaderId) {
+        partition.setLeaderId(leaderId);
+        partition.setReplicaNodes(List.of(leaderId));
+        partition.setIsrNodes(List.of(leaderId));
+        partition.setOfflineReplicas(Collections.emptyList());
     }
 }
