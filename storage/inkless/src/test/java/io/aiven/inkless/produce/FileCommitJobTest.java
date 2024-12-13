@@ -54,10 +54,10 @@ class FileCommitJobTest {
         1, REQUEST_1
     );
     static final List<CommitBatchRequest> COMMIT_BATCH_REQUESTS = List.of(
-        new CommitBatchRequest(T0P0, 0, 100, 10),
-        new CommitBatchRequest(T0P1, 100, 100, 10),
-        new CommitBatchRequest(T0P1, 200, 100, 10),
-        new CommitBatchRequest(T1P0, 300, 100, 10)
+        new CommitBatchRequest(T0P0, 0, 100, 10, 1000L),
+        new CommitBatchRequest(T0P1, 100, 100, 10, 1001L),
+        new CommitBatchRequest(T0P1, 200, 100, 10, 1002L),
+        new CommitBatchRequest(T1P0, 300, 100, 10, 1003L)
     );
     static final List<Integer> REQUEST_IDS = List.of(0, 0, 1, 1);
 

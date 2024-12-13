@@ -67,12 +67,10 @@ class FindBatchesJobTest extends SharedPostgreSQLTest {
     void simpleFind() {
         final String objectKey1 = "obj1";
 
-        when(time.milliseconds()).thenReturn(123456L);
-
         final CommitFileJob commitJob = new CommitFileJob(
             time, hikariDataSource, objectKey1,
             List.of(
-                new CommitFileJob.CommitBatchRequestExtra(new CommitBatchRequest(T0P0, 0, 1234, 12), TOPIC_ID_0, TimestampType.CREATE_TIME)
+                new CommitFileJob.CommitBatchRequestExtra(new CommitBatchRequest(T0P0, 0, 1234, 12, 123456L), TOPIC_ID_0, TimestampType.CREATE_TIME)
             )
         );
         assertThat(commitJob.call()).isNotEmpty();

@@ -3,6 +3,7 @@ package io.aiven.inkless.control_plane;
 
 import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.Uuid;
+import org.apache.kafka.common.record.TimestampType;
 import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.image.TopicsDelta;
 
@@ -98,17 +99,19 @@ public class InMemoryControlPlane extends AbstractControlPlane {
         final long firstOffset = logInfo.highWatermark;
         logInfo.highWatermark += request.numberOfRecords();
         final long lastOffset = logInfo.highWatermark - 1;
+        final TimestampType messageTimestampType = metadataView.getTopicConfig(topicName).messageTimestampType;
+        final long logAppendTime = messageTimestampType == TimestampType.CREATE_TIME ? request.maxTimestamp() : now;
         final BatchInfo batchToStore = new BatchInfo(
             objectKey,
             request.byteOffset(),
             request.size(),
             firstOffset,
             request.numberOfRecords(),
-            metadataView.getTopicConfig(topicName).messageTimestampType,
-            now
+            messageTimestampType,
+            logAppendTime
         );
         coordinates.put(lastOffset, batchToStore);
-        return CommitBatchResponse.success(firstOffset, now, logInfo.logStartOffset);
+        return CommitBatchResponse.success(firstOffset, logAppendTime, logInfo.logStartOffset);
     }
 
     @Override

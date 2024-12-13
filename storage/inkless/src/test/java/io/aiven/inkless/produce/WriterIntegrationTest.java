@@ -7,6 +7,7 @@ import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.metadata.PartitionRecord;
 import org.apache.kafka.common.metadata.TopicRecord;
 import org.apache.kafka.common.protocol.Errors;
+import org.apache.kafka.common.record.TimestampType;
 import org.apache.kafka.common.requests.ProduceResponse.PartitionResponse;
 import org.apache.kafka.common.utils.MockTime;
 import org.apache.kafka.common.utils.Time;
@@ -27,7 +28,6 @@ import java.io.IOException;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
-import java.util.Properties;
 import java.util.Set;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
@@ -90,7 +90,13 @@ class WriterIntegrationTest {
 
         @Override
         public LogConfig getTopicConfig(final String topicName) {
-            return LogConfig.fromProps(Map.of(), new Properties());
+            if (topicName.equals(T0P0.topic())) {
+                return new LogConfig(Map.of("message.timestamp.type", TimestampType.LOG_APPEND_TIME.name));
+            } else if (topicName.equals(T1P0.topic())) {
+                return new LogConfig(Map.of("message.timestamp.type", TimestampType.CREATE_TIME.name));
+            } else {
+                return null;
+            }
         }
 
         @Override
@@ -171,7 +177,8 @@ class WriterIntegrationTest {
                 T0P1, recordCreator.create(T0P1, 12),
                 T1P0, recordCreator.create(T1P0, 13)
             ));
-            final var ts1 = time.milliseconds();
+            final long createTime = time.milliseconds();
+            final long logAppendTime = 0L;
             final var result1 = writeFuture1.get(10, TimeUnit.SECONDS);
             final var result2 = writeFuture2.get(10, TimeUnit.SECONDS);
 
@@ -180,23 +187,22 @@ class WriterIntegrationTest {
             final var writeFuture3 = writer.write(Map.of(
                 T1P0, recordCreator.create(T1P0, 1)
             ));
-            final var ts2 = time.milliseconds();
             final var result3 = writeFuture3.get(10, TimeUnit.SECONDS);
 
             assertThat(result1).isEqualTo(Map.of(
-                T0P0, new PartitionResponse(Errors.NONE, 0, ts1, 0),
-                T0P1, new PartitionResponse(Errors.NONE, 0, ts1, 0),
-                T1P0, new PartitionResponse(Errors.NONE, 0, ts1, 0)
+                T0P0, new PartitionResponse(Errors.NONE, 0, createTime, 0),
+                T0P1, new PartitionResponse(Errors.NONE, 0, createTime, 0),
+                T1P0, new PartitionResponse(Errors.NONE, 0, logAppendTime, 0)
             ));
 
             assertThat(result2).isEqualTo(Map.of(
-                T0P0, new PartitionResponse(Errors.NONE, 101, ts1, 0),
-                T0P1, new PartitionResponse(Errors.NONE, 102, ts1, 0),
-                T1P0, new PartitionResponse(Errors.NONE, 103, ts1, 0)
+                T0P0, new PartitionResponse(Errors.NONE, 101, createTime, 0),
+                T0P1, new PartitionResponse(Errors.NONE, 102, createTime, 0),
+                T1P0, new PartitionResponse(Errors.NONE, 103, logAppendTime, 0)
             ));
 
             assertThat(result3).isEqualTo(Map.of(
-                T1P0, new PartitionResponse(Errors.NONE, 103 + 13, ts2, 0)
+                T1P0, new PartitionResponse(Errors.NONE, 103 + 13, logAppendTime, 0)
             ));
         }
     }

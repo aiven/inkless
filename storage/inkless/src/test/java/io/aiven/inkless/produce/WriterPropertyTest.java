@@ -9,6 +9,7 @@ import org.apache.kafka.common.metadata.PartitionRecord;
 import org.apache.kafka.common.metadata.TopicRecord;
 import org.apache.kafka.common.record.MemoryRecords;
 import org.apache.kafka.common.record.SimpleRecord;
+import org.apache.kafka.common.record.TimestampType;
 import org.apache.kafka.common.requests.ProduceResponse;
 import org.apache.kafka.common.utils.MockTime;
 import org.apache.kafka.common.utils.Time;
@@ -35,7 +36,6 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.Properties;
 import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CompletableFuture;
@@ -101,7 +101,7 @@ class WriterPropertyTest {
 
         @Override
         public LogConfig getTopicConfig(final String topicName) {
-            return LogConfig.fromProps(Map.of(), new Properties());
+            return new LogConfig(Map.of("message.timestamp.type", TimestampType.LOG_APPEND_TIME.name));
         }
 
         @Override

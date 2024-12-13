@@ -158,20 +158,28 @@ class CommitFileJob implements Callable<List<CommitBatchResponse>> {
                 final var updateHighWatermarkResult = updateHighWatermarkResults.get(i).get();
                 preparedStatement.setObject(1, updateHighWatermarkResult.topicId());
                 preparedStatement.setInt(2, updateHighWatermarkResult.partition());
+
                 // We know that we increased the HWM by the number of records. Hence, to get the base offset we need to subtract.
                 final long baseOffset = updateHighWatermarkResult.highWatermark() - request.numberOfRecords();
                 preparedStatement.setLong(3, baseOffset);
+
                 final long lastOffset = updateHighWatermarkResult.highWatermark() - 1;
                 preparedStatement.setLong(4, lastOffset);
+
                 preparedStatement.setString(5, objectKey);
                 preparedStatement.setLong(6, request.byteOffset());
                 preparedStatement.setLong(7, request.size());
                 preparedStatement.setLong(8, request.numberOfRecords());
-                preparedStatement.setShort(9, (short) requests.get(i).timestampType().id);
-                preparedStatement.setLong(10, now);
+
+                final TimestampType timestampType = requests.get(i).timestampType();
+                preparedStatement.setShort(9, (short) timestampType.id);
+
+                final long logAppendTime = timestampType == TimestampType.CREATE_TIME ? request.maxTimestamp() : now;
+                preparedStatement.setLong(10, logAppendTime);
+
                 preparedStatement.addBatch();
 
-                responses.add(CommitBatchResponse.success(baseOffset, now, updateHighWatermarkResult.logStartOffset()));
+                responses.add(CommitBatchResponse.success(baseOffset, logAppendTime, updateHighWatermarkResult.logStartOffset()));
             }
 
             final int[] batchResults = preparedStatement.executeBatch();

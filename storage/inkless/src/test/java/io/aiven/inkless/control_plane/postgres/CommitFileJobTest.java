@@ -67,13 +67,13 @@ class CommitFileJobTest extends SharedPostgreSQLTest {
         when(time.milliseconds()).thenReturn(123456L);
 
         final CommitFileJob job = new CommitFileJob(time, hikariDataSource, objectKey, List.of(
-            new CommitFileJob.CommitBatchRequestExtra(new CommitBatchRequest(T0P1, 0, 100, 15), TOPIC_ID_0, TimestampType.CREATE_TIME),
-            new CommitFileJob.CommitBatchRequestExtra(new CommitBatchRequest(T1P0, 100, 50, 27), TOPIC_ID_1, TimestampType.LOG_APPEND_TIME)
+            new CommitFileJob.CommitBatchRequestExtra(new CommitBatchRequest(T0P1, 0, 100, 15, 1000L), TOPIC_ID_0, TimestampType.CREATE_TIME),
+            new CommitFileJob.CommitBatchRequestExtra(new CommitBatchRequest(T1P0, 100, 50, 27, 1001L), TOPIC_ID_1, TimestampType.LOG_APPEND_TIME)
         ));
         final List<CommitBatchResponse> result = job.call();
 
         assertThat(result).containsExactlyInAnyOrder(
-            new CommitBatchResponse(Errors.NONE, 0, 123456L, 0),
+            new CommitBatchResponse(Errors.NONE, 0, 1000L, 0),
             new CommitBatchResponse(Errors.NONE, 0, 123456L, 0)
         );
 
@@ -96,30 +96,30 @@ class CommitFileJobTest extends SharedPostgreSQLTest {
         final String objectKey1 = "obj1";
         final String objectKey2 = "obj2";
 
-        when(time.milliseconds()).thenReturn(1000L);
+        when(time.milliseconds()).thenReturn(123456L);
 
         final CommitFileJob job1 = new CommitFileJob(time, hikariDataSource, objectKey1, List.of(
-            new CommitFileJob.CommitBatchRequestExtra(new CommitBatchRequest(T0P1, 0, 100, 15), TOPIC_ID_0, TimestampType.CREATE_TIME),
-            new CommitFileJob.CommitBatchRequestExtra(new CommitBatchRequest(T1P0, 100, 50, 27), TOPIC_ID_1, TimestampType.LOG_APPEND_TIME)
+            new CommitFileJob.CommitBatchRequestExtra(new CommitBatchRequest(T0P1, 0, 100, 15, 1000L), TOPIC_ID_0, TimestampType.CREATE_TIME),
+            new CommitFileJob.CommitBatchRequestExtra(new CommitBatchRequest(T1P0, 100, 50, 27, 1001L), TOPIC_ID_1, TimestampType.LOG_APPEND_TIME)
         ));
         final List<CommitBatchResponse> result1 = job1.call();
 
         assertThat(result1).containsExactlyInAnyOrder(
             new CommitBatchResponse(Errors.NONE, 0, 1000L, 0),
-            new CommitBatchResponse(Errors.NONE, 0, 1000L, 0)
+            new CommitBatchResponse(Errors.NONE, 0, 123456L, 0)
         );
 
-        when(time.milliseconds()).thenReturn(2000L);
+        when(time.milliseconds()).thenReturn(7891011L);
 
         final CommitFileJob job2 = new CommitFileJob(time, hikariDataSource, objectKey2, List.of(
-            new CommitFileJob.CommitBatchRequestExtra(new CommitBatchRequest(T0P0, 0, 111, 159), TOPIC_ID_0, TimestampType.CREATE_TIME),
-            new CommitFileJob.CommitBatchRequestExtra(new CommitBatchRequest(T0P1, 111, 222, 245), TOPIC_ID_0, TimestampType.CREATE_TIME)
+            new CommitFileJob.CommitBatchRequestExtra(new CommitBatchRequest(T0P0, 0, 111, 159, 2000L), TOPIC_ID_0, TimestampType.CREATE_TIME),
+            new CommitFileJob.CommitBatchRequestExtra(new CommitBatchRequest(T0P1, 111, 222, 245, 2001L), TOPIC_ID_0, TimestampType.CREATE_TIME)
         ));
         final List<CommitBatchResponse> result2 = job2.call();
 
         assertThat(result2).containsExactlyInAnyOrder(
             new CommitBatchResponse(Errors.NONE, 0, 2000L, 0),
-            new CommitBatchResponse(Errors.NONE, 15, 2000L, 0)
+            new CommitBatchResponse(Errors.NONE, 15, 2001L, 0)
         );
 
         assertThat(DBUtils.getAllLogs(hikariDataSource))
@@ -148,15 +148,15 @@ class CommitFileJobTest extends SharedPostgreSQLTest {
         // Non-existent partition.
         final var t1p1 = new TopicPartition(TOPIC_1, 10);
         final CommitFileJob job = new CommitFileJob(time, hikariDataSource, objectKey, List.of(
-            new CommitFileJob.CommitBatchRequestExtra(new CommitBatchRequest(T0P1, 0, 100, 15), TOPIC_ID_0, TimestampType.CREATE_TIME),
-            new CommitFileJob.CommitBatchRequestExtra(new CommitBatchRequest(T1P0, 100, 50, 27), TOPIC_ID_1, TimestampType.LOG_APPEND_TIME),
-            new CommitFileJob.CommitBatchRequestExtra(new CommitBatchRequest(t1p1, 150, 1243, 82), TOPIC_ID_1, TimestampType.LOG_APPEND_TIME)
+            new CommitFileJob.CommitBatchRequestExtra(new CommitBatchRequest(T0P1, 0, 100, 15, 1000L), TOPIC_ID_0, TimestampType.CREATE_TIME),
+            new CommitFileJob.CommitBatchRequestExtra(new CommitBatchRequest(T1P0, 100, 50, 27, 1001L), TOPIC_ID_1, TimestampType.LOG_APPEND_TIME),
+            new CommitFileJob.CommitBatchRequestExtra(new CommitBatchRequest(t1p1, 150, 1243, 82, 1002L), TOPIC_ID_1, TimestampType.LOG_APPEND_TIME)
         ));
 
         final List<CommitBatchResponse> result = job.call();
 
         assertThat(result).containsExactlyInAnyOrder(
-            new CommitBatchResponse(Errors.NONE, 0, 123456L, 0),
+            new CommitBatchResponse(Errors.NONE, 0, 1000L, 0),
             new CommitBatchResponse(Errors.NONE, 0, 123456L, 0),
             new CommitBatchResponse(Errors.UNKNOWN_TOPIC_OR_PARTITION, -1, -1, -1)
         );

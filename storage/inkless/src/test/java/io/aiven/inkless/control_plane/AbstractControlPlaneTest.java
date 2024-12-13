@@ -53,6 +53,8 @@ public abstract class AbstractControlPlaneTest {
         metadataView = mock(MetadataView.class);
         when(metadataView.getTopicPartitions(EXISTING_TOPIC))
             .thenReturn(Set.of(new TopicPartition(EXISTING_TOPIC, 0)));
+        when(metadataView.getTopicConfig(EXISTING_TOPIC))
+            .thenReturn(new LogConfig(Map.of("message.timestamp.type", TimestampType.CREATE_TIME.name)));
         when(metadataView.getTopicId(EXISTING_TOPIC))
             .thenReturn(EXISTING_TOPIC_ID);
         when(metadataView.getTopicPartitions(NONEXISTENT_TOPIC))
@@ -98,13 +100,13 @@ public abstract class AbstractControlPlaneTest {
         final List<CommitBatchResponse> commitResponse1 = controlPlane.commitFile(
             objectKey1,
             List.of(
-                new CommitBatchRequest(new TopicPartition(EXISTING_TOPIC, 0), 1, 10, 10),
-                new CommitBatchRequest(new TopicPartition(EXISTING_TOPIC, 1), 2, 10, 10),
-                new CommitBatchRequest(new TopicPartition(NONEXISTENT_TOPIC, 0), 3, 10, 10)
+                new CommitBatchRequest(new TopicPartition(EXISTING_TOPIC, 0), 1, 10, 10, 1000L),
+                new CommitBatchRequest(new TopicPartition(EXISTING_TOPIC, 1), 2, 10, 10, 1001L),
+                new CommitBatchRequest(new TopicPartition(NONEXISTENT_TOPIC, 0), 3, 10, 10, 10002)
             )
         );
         assertThat(commitResponse1).containsExactly(
-            new CommitBatchResponse(Errors.NONE, 0, time.milliseconds(), 0),
+            new CommitBatchResponse(Errors.NONE, 0, 1000L, 0),
             new CommitBatchResponse(Errors.UNKNOWN_TOPIC_OR_PARTITION, -1, -1, -1),
             new CommitBatchResponse(Errors.UNKNOWN_TOPIC_OR_PARTITION, -1, -1, -1)
         );
@@ -112,13 +114,13 @@ public abstract class AbstractControlPlaneTest {
         final List<CommitBatchResponse> commitResponse2 = controlPlane.commitFile(
             objectKey2,
             List.of(
-                new CommitBatchRequest(new TopicPartition(EXISTING_TOPIC, 0), 100, 10, 10),
-                new CommitBatchRequest(new TopicPartition(EXISTING_TOPIC, 1), 200, 10, 10),
-                new CommitBatchRequest(new TopicPartition(NONEXISTENT_TOPIC, 0), 300, 10, 10)
+                new CommitBatchRequest(new TopicPartition(EXISTING_TOPIC, 0), 100, 10, 10, 1003L),
+                new CommitBatchRequest(new TopicPartition(EXISTING_TOPIC, 1), 200, 10, 10, 1004L),
+                new CommitBatchRequest(new TopicPartition(NONEXISTENT_TOPIC, 0), 300, 10, 10, 1005L)
             )
         );
         assertThat(commitResponse2).containsExactly(
-            new CommitBatchResponse(Errors.NONE, 10, time.milliseconds(), 0),
+            new CommitBatchResponse(Errors.NONE, 10, 1003L, 0),
             new CommitBatchResponse(Errors.UNKNOWN_TOPIC_OR_PARTITION, -1, -1, -1),
             new CommitBatchResponse(Errors.UNKNOWN_TOPIC_OR_PARTITION, -1, -1, -1)
         );
@@ -132,10 +134,30 @@ public abstract class AbstractControlPlaneTest {
         assertThat(findResponse).containsExactly(
             new FindBatchResponse(
                 Errors.NONE,
-                List.of(new BatchInfo(objectKey2, 100, 10, 10, 10, TimestampType.CREATE_TIME, time.milliseconds())),
+                List.of(new BatchInfo(objectKey2, 100, 10, 10, 10, TimestampType.CREATE_TIME, 1003L)),
                 0, 20),
             new FindBatchResponse(Errors.UNKNOWN_TOPIC_OR_PARTITION, null, -1, -1),
             new FindBatchResponse(Errors.UNKNOWN_TOPIC_OR_PARTITION, null, -1, -1)
+        );
+    }
+
+    @Test
+    void commitTimestamp() {
+        final String objectKey = "a1";
+        final long logAppendTimestamp = 123456L;
+
+        when(metadataView.getTopicConfig(EXISTING_TOPIC))
+            .thenReturn(new LogConfig(Map.of("message.timestamp.type", TimestampType.LOG_APPEND_TIME.name)));
+        when(time.milliseconds()).thenReturn(logAppendTimestamp);
+
+        final List<CommitBatchResponse> commitResponse = controlPlane.commitFile(
+            objectKey,
+            List.of(
+                new CommitBatchRequest(new TopicPartition(EXISTING_TOPIC, 0), 1, 10, 10, 1000L)
+            )
+        );
+        assertThat(commitResponse).containsExactly(
+            new CommitBatchResponse(Errors.NONE, 0, logAppendTimestamp, 0)
         );
     }
 
@@ -145,22 +167,22 @@ public abstract class AbstractControlPlaneTest {
         final String objectKey2 = "a2";
         final int numberOfRecordsInBatch1 = 3;
         final int numberOfRecordsInBatch2 = 2;
+
         controlPlane.commitFile(objectKey1,
-            List.of(new CommitBatchRequest(new TopicPartition(EXISTING_TOPIC, 0), 1, 10, numberOfRecordsInBatch1)));
+            List.of(new CommitBatchRequest(new TopicPartition(EXISTING_TOPIC, 0), 1, 10, numberOfRecordsInBatch1, 1000L)));
         controlPlane.commitFile(objectKey2,
-            List.of(new CommitBatchRequest(new TopicPartition(EXISTING_TOPIC, 0), 100, 10, numberOfRecordsInBatch2)));
+            List.of(new CommitBatchRequest(new TopicPartition(EXISTING_TOPIC, 0), 100, 10, numberOfRecordsInBatch2, 1001L)));
 
         final long expectedLogStartOffset = 0;
         final long expectedHighWatermark = numberOfRecordsInBatch1 + numberOfRecordsInBatch2;
-        final long expectedLogAppendTime = time.milliseconds();
 
         for (int offset = 0; offset < numberOfRecordsInBatch1; offset++) {
             final List<FindBatchResponse> findResponse = controlPlane.findBatches(
                 List.of(new FindBatchRequest(EXISTING_TOPIC_ID_PARTITION, offset, Integer.MAX_VALUE)), true, Integer.MAX_VALUE);
             assertThat(findResponse).containsExactly(
                 new FindBatchResponse(Errors.NONE, List.of(
-                    new BatchInfo(objectKey1, 1, 10, 0, numberOfRecordsInBatch1, TimestampType.CREATE_TIME, expectedLogAppendTime),
-                    new BatchInfo(objectKey2, 100, 10, numberOfRecordsInBatch1, numberOfRecordsInBatch2, TimestampType.CREATE_TIME, expectedLogAppendTime)
+                    new BatchInfo(objectKey1, 1, 10, 0, numberOfRecordsInBatch1, TimestampType.CREATE_TIME, 1000L),
+                    new BatchInfo(objectKey2, 100, 10, numberOfRecordsInBatch1, numberOfRecordsInBatch2, TimestampType.CREATE_TIME, 1001L)
                 ), expectedLogStartOffset, expectedHighWatermark)
             );
         }
@@ -169,7 +191,7 @@ public abstract class AbstractControlPlaneTest {
                 List.of(new FindBatchRequest(EXISTING_TOPIC_ID_PARTITION, offset, Integer.MAX_VALUE)), true, Integer.MAX_VALUE);
             assertThat(findResponse).containsExactly(
                 new FindBatchResponse(Errors.NONE, List.of(
-                    new BatchInfo(objectKey2, 100, 10, numberOfRecordsInBatch1, numberOfRecordsInBatch2, TimestampType.CREATE_TIME, expectedLogAppendTime)
+                    new BatchInfo(objectKey2, 100, 10, numberOfRecordsInBatch1, numberOfRecordsInBatch2, TimestampType.CREATE_TIME, 1001L)
                 ), expectedLogStartOffset, expectedHighWatermark)
             );
         }
@@ -182,7 +204,7 @@ public abstract class AbstractControlPlaneTest {
         controlPlane.commitFile(
             objectKey,
             List.of(
-                new CommitBatchRequest(new TopicPartition(EXISTING_TOPIC, 0), 11, 10, 10)
+                new CommitBatchRequest(new TopicPartition(EXISTING_TOPIC, 0), 11, 10, 10, 1000L)
             )
         );
 
@@ -193,7 +215,7 @@ public abstract class AbstractControlPlaneTest {
         assertThat(findResponse1).containsExactly(
             new FindBatchResponse(
                 Errors.NONE,
-                List.of(new BatchInfo(objectKey, 11, 10, 0, 10, TimestampType.CREATE_TIME, time.milliseconds())),
+                List.of(new BatchInfo(objectKey, 11, 10, 0, 10, TimestampType.CREATE_TIME, 1000L)),
                 0, 10)
         );
 
@@ -218,7 +240,7 @@ public abstract class AbstractControlPlaneTest {
         controlPlane.commitFile(
             objectKey,
             List.of(
-                new CommitBatchRequest(new TopicPartition(EXISTING_TOPIC, 0), 11, 10, 10)
+                new CommitBatchRequest(new TopicPartition(EXISTING_TOPIC, 0), 11, 10, 10, 1000L)
             )
         );
 
@@ -238,7 +260,7 @@ public abstract class AbstractControlPlaneTest {
         controlPlane.commitFile(
             objectKey,
             List.of(
-                new CommitBatchRequest(new TopicPartition(EXISTING_TOPIC, 0), 11, 10, 10)
+                new CommitBatchRequest(new TopicPartition(EXISTING_TOPIC, 0), 11, 10, 10, 1000L)
             )
         );
 
@@ -258,7 +280,7 @@ public abstract class AbstractControlPlaneTest {
         controlPlane.commitFile(
             objectKey,
             List.of(
-                new CommitBatchRequest(new TopicPartition(EXISTING_TOPIC, 0), 11, 10, 10)
+                new CommitBatchRequest(new TopicPartition(EXISTING_TOPIC, 0), 11, 10, 10, 1000L)
             )
         );
 
@@ -288,8 +310,8 @@ public abstract class AbstractControlPlaneTest {
 
         assertThatThrownBy(() -> controlPlane.commitFile(objectKey,
             List.of(
-                new CommitBatchRequest(new TopicPartition(EXISTING_TOPIC, 0), 1, 10, 10),
-                new CommitBatchRequest(new TopicPartition(EXISTING_TOPIC, 1), 2, 0, 10)
+                new CommitBatchRequest(new TopicPartition(EXISTING_TOPIC, 0), 1, 10, 10, 1000L),
+                new CommitBatchRequest(new TopicPartition(EXISTING_TOPIC, 1), 2, 0, 10, 1000L)
             )
         ))
             .isInstanceOf(IllegalArgumentException.class)
