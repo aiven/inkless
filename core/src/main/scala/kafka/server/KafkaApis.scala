@@ -949,7 +949,7 @@ class KafkaApis(val requestChannel: RequestChannel,
       }
     }
 
-    inklessTopicMetadataTransformer.transform(request.context.clientId(), topicMetadata.asJava)
+    inklessTopicMetadataTransformer.transformClusterMetadata(request.context.clientId(), topicMetadata.asJava)
 
     val completeTopicMetadata =  unknownTopicIdsTopicMetadata ++
       topicMetadata ++ unauthorizedForCreateTopicMetadata ++ unauthorizedForDescribeTopicMetadata
@@ -983,6 +983,8 @@ class KafkaApis(val requestChannel: RequestChannel,
         val response = handler.handleDescribeTopicPartitionsRequest(request)
         trace("Sending topic partitions metadata %s for correlation id %d to client %s".format(response.topics().asScala.mkString(","),
           request.header.correlationId, request.header.clientId))
+
+        inklessTopicMetadataTransformer.transformDescribeTopicResponse(request.header.clientId, response)
 
         requestHelper.sendResponseMaybeThrottle(request, requestThrottleMs => {
           response.setThrottleTimeMs(requestThrottleMs)
