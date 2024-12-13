@@ -2,6 +2,7 @@
 package io.aiven.inkless.metadata;
 
 import org.apache.kafka.admin.BrokerMetadata;
+import org.apache.kafka.common.message.DescribeTopicPartitionsResponseData;
 import org.apache.kafka.common.message.MetadataResponseData;
 
 import java.util.Collections;
@@ -25,7 +26,7 @@ public class InklessTopicMetadataTransformer {
     /**
      * @param clientId client ID, {@code null} if not provided.
      */
-    public void transform(
+    public void transformClusterMetadata(
         final String clientId,
         final Iterable<MetadataResponseData.MetadataResponseTopic> topicMetadata
     ) {
@@ -38,8 +39,36 @@ public class InklessTopicMetadataTransformer {
             }
             for (final var partition : topic.partitions()) {
                 partition.setLeaderId(leaderForInklessPartitions);
-                partition.setReplicaNodes(List.of(leaderForInklessPartitions));
-                partition.setIsrNodes(List.of(leaderForInklessPartitions));
+                final List<Integer> list = List.of(leaderForInklessPartitions);
+                partition.setReplicaNodes(list);
+                partition.setIsrNodes(list);
+                partition.setOfflineReplicas(Collections.emptyList());
+            }
+        }
+    }
+
+    /**
+     * @param clientId client ID, {@code null} if not provided.
+     */
+    public void transformDescribeTopicResponse(
+        final String clientId,
+        final DescribeTopicPartitionsResponseData responseData
+    ) {
+        Objects.requireNonNull(responseData, "responseData cannot be null");
+
+        final int leaderForInklessPartitions = selectLeaderForInklessPartitions(clientId);
+        for (final var topic : responseData.topics()) {
+            if (!metadataView.isInklessTopic(topic.name())) {
+                continue;
+            }
+
+            for (final var partition : topic.partitions()) {
+                partition.setLeaderId(leaderForInklessPartitions);
+                final List<Integer> list = List.of(leaderForInklessPartitions);
+                partition.setReplicaNodes(list);
+                partition.setIsrNodes(list);
+                partition.setEligibleLeaderReplicas(Collections.emptyList());
+                partition.setLastKnownElr(Collections.emptyList());
                 partition.setOfflineReplicas(Collections.emptyList());
             }
         }
@@ -80,6 +109,7 @@ public class InklessTopicMetadataTransformer {
 
     /**
      * Get brokers in the specified AZ.
+     *
      * @param az the AZ to look for, can be {@code null}.
      */
     private List<BrokerMetadata> brokersInAZ(final String az) {
