@@ -333,13 +333,13 @@ class Estimator:
             row[0] = str(brokers_per_cluster)
             for replication_factor in [1, 3]:
                 row[1] = str(replication_factor)
-                for hot_set_retention_hours in [1e0, 1e1]:
+                for hot_set_retention_hours in [1e0, 1e2]:  # ~1hr, ~1wk
                     row[2] = str(hot_set_retention_hours)
-                    for hot_set_bytes_per_block in [1e4, 1e5, 1e6, 2e6, 4e6, 8e6, 16e6, 32e6, 64e6, 128e6]:
+                    for hot_set_bytes_per_block in [1e4, 1e5, 5e5, 1e6, 2e6, 4e6, 8e6, 64e6]:
                         row[3] = str(hot_set_bytes_per_block)
                         for hot_set_consumer_count in [1, 3, 10]:
                             row[4] = str(hot_set_consumer_count)
-                            for archive_retention_hours in [0, 1e3, 1e4]:  # ~1 month, ~1 year
+                            for archive_retention_hours in [0, 1e3, 1e4, 1e5]:  # ~1 month, ~1 year, ~10 year
                                 row[5] = str(archive_retention_hours)
                                 for archive_bytes_per_block in [1e9]:
                                     row[6] = str(archive_bytes_per_block)
@@ -532,9 +532,10 @@ class Estimator:
 
     def _ebs_storage_price(self, max_size, rate):
         def _compute(number_of_brokers, redundancy, total_size):
-            volume_size = redundancy * total_size / number_of_brokers
+            bytes_per_broker = redundancy * total_size / number_of_brokers
             # Split the volumes if they become too large
-            number_of_volumes = math.ceil(volume_size / max_size) * number_of_brokers
+            number_of_volumes = math.ceil(bytes_per_broker / max_size) * number_of_brokers
+            volume_size = bytes_per_broker / number_of_volumes
             return number_of_volumes * self.calculate_cost(rate, ["GB-Mo", "GB-month"], volume_size * BYTES_TO_GB)
         return _compute
 
