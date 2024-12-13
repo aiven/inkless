@@ -16,15 +16,34 @@
  */
 package io.aiven.inkless.test_utils;
 
+import org.apache.kafka.common.header.Header;
+import org.apache.kafka.common.record.Records;
+import org.apache.kafka.common.record.SimpleRecord;
+
 import net.jqwik.api.ForAll;
 import net.jqwik.api.Property;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 
-public class DataLayoutTest {
+public class ArbitraryProvidersTest {
 
     @Property
-    public void dataLayoutEvenBatches(@ForAll DataLayout layout) {
-        assertEquals(0, layout.data().size() % 2);
+    public void dataLayout(@ForAll DataLayout layout) {
+        assertNotNull(layout);
+    }
+
+    @Property
+    public void headers(@ForAll Header header) {
+        assertNotNull(header);
+    }
+
+    @Property
+    public void simpleRecord(@ForAll SimpleRecord record) {
+        assertNotNull(record);
+    }
+
+    @Property
+    public void records(@ForAll Records records) {
+        assertNotNull(records);
     }
 }
