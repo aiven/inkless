@@ -614,9 +614,9 @@ class Estimator:
             # If reading above or below a block worth of data, round it up to the nearest block
             # This imposes a throughput penalty on very small reads, as if they caused a much larger read to happen
             block_count = math.ceil(1.0 * request_size / block_size)
-            total_iops = (read_iops + redundancy * write_iops + redundancy * delete_iops) * block_count
-            number_of_volumes = math.ceil(total_iops / maximum_iops)
-            per_volume_iops = total_iops / number_of_volumes
+            total_iops_per_broker = (read_iops + redundancy * write_iops + redundancy * delete_iops) / broker_count * block_count
+            number_of_volumes = math.ceil(total_iops_per_broker / maximum_iops)
+            per_volume_iops = total_iops_per_broker / number_of_volumes
             total_throughput = per_volume_iops * block_size
             if total_throughput > max_throughput:
                 raise InvalidHardware("Necessary throughput %d exceeds maximum throughput %d" % (total_throughput, max_throughput))
