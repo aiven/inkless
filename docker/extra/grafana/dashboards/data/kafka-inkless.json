@@ -1832,7 +1832,7 @@
       },
       "id": 22,
       "panels": [],
-      "title": "Row title",
+      "title": "S3",
       "type": "row"
     },
     {
@@ -2094,6 +2094,6 @@
   "timezone": "browser",
   "title": "Kafka Inkless",
   "uid": "ee4jhhuz3t2bkb",
-  "version": 1,
+  "version": 5,
   "weekStart": ""
 }
