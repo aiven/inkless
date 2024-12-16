@@ -148,7 +148,7 @@ public record DataLayout (
                     TopicIdPartition topicIdPartition = batch.topicIdPartition.value();
                     long firstOffset = partitionOffsets.compute(topicIdPartition, (k, v) -> (v == null ? 0 : v) + skippedOffsets);
                     partitionOffsets.compute(topicIdPartition, (k, v) -> (v == null ? 0 : v) + recordCount);
-                    BatchInfo batchInfo = new BatchInfo(files.getKey().objectId.value(), byteOffset + skippedBytes, batchSize, firstOffset, recordCount, timestampType, batch.appendTime.value());
+                    BatchInfo batchInfo = new BatchInfo(files.getKey().objectId.value(), byteOffset + skippedBytes, batchSize, firstOffset, recordCount, timestampType, batch.appendTime.value(), 1000);
                     data.put(batchInfo, records);
                     byteOffset += skippedBytes + batchSize;
                 }

@@ -39,11 +39,13 @@ class CommitFileJob implements Callable<List<CommitBatchResponse>> {
     private static final String INSERT_BATCH_QUERY = """
         INSERT INTO batches (
             topic_id, partition, base_offset, last_offset, object_key,
-            byte_offset, byte_size, number_of_records, timestamp_type, batch_timestamp
+            byte_offset, byte_size, number_of_records,
+            timestamp_type, log_append_timestamp, batch_max_timestamp
         )
         VALUES (
             ?, ?, ?, ?, ?,
-            ?, ?, ?, ?, ?
+            ?, ?, ?,
+            ?, ?, ?
         )
         """;
 
@@ -169,6 +171,7 @@ class CommitFileJob implements Callable<List<CommitBatchResponse>> {
                 preparedStatement.setLong(8, request.numberOfRecords());
                 preparedStatement.setShort(9, (short) requests.get(i).timestampType().id);
                 preparedStatement.setLong(10, now);
+                preparedStatement.setLong(11, request.batchMaxTimestamp());
                 preparedStatement.addBatch();
 
                 responses.add(CommitBatchResponse.success(baseOffset, now, updateHighWatermarkResult.logStartOffset()));

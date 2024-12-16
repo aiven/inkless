@@ -184,7 +184,7 @@ public class FetchCompleterJob implements Supplier<Map<TopicIdPartition, FetchPa
 
                 // set log append timestamp
                 if (batch.timestampType() == TimestampType.LOG_APPEND_TIME) {
-                    mutableRecordBatch.setMaxTimestamp(TimestampType.LOG_APPEND_TIME, batch.logAppendTime());
+                    mutableRecordBatch.setMaxTimestamp(TimestampType.LOG_APPEND_TIME, batch.logAppendTimestamp());
                 }
                 
                 if (iterator.hasNext()) {

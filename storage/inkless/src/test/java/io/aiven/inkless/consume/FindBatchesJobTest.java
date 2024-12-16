@@ -58,11 +58,12 @@ public class FindBatchesJobTest {
                 partition0, new FetchRequest.PartitionData(topicId, 0, 0, 1000, Optional.empty())
         );
         int logStartOffset = 0;
-        long logAppendTime = 10L;
+        long logAppendTimestamp = 10L;
+        long maxBatchTimestamp = 20L;
         int highWatermark = 1;
         Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of(
                 partition0, FindBatchResponse.success(List.of(
-                        new BatchInfo(OBJECT_KEY_MAIN_PART, 0, 10, 0, 1, TimestampType.CREATE_TIME, logAppendTime)
+                        new BatchInfo(OBJECT_KEY_MAIN_PART, 0, 10, 0, 1, TimestampType.CREATE_TIME, logAppendTimestamp, maxBatchTimestamp)
                 ), logStartOffset, highWatermark)
         );
         FindBatchesJob job = new FindBatchesJob(time, controlPlane, params, fetchInfos, durationMs -> { });

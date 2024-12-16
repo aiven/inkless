@@ -12,7 +12,8 @@ public record BatchInfo(
     long recordOffset,
     long numberOfRecords,
     TimestampType timestampType,
-    long logAppendTime
+    long logAppendTimestamp,
+    long batchMaxTimestamp
 ) {
     public ByteRange range() {
         return new ByteRange(byteOffset, size);

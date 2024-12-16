@@ -71,7 +71,7 @@ class BatchBufferTest {
 
         final BatchBuffer.CloseResult result = buffer.close();
         assertThat(result.commitBatchRequests()).containsExactly(
-            new CommitBatchRequest(T0P0, 0, batch.sizeInBytes(), 3)
+            new CommitBatchRequest(T0P0, 0, batch.sizeInBytes(), 3, time.milliseconds())
         );
         assertThat(result.requestIds()).containsExactly(0);
         assertThat(result.data()).containsExactly(batchToBytes(batch));
@@ -80,7 +80,7 @@ class BatchBufferTest {
 
     @Test
     void multipleTopicPartitions() {
-        final Time time = Time.SYSTEM;
+        final Time time = new MockTime();
         final BatchBuffer buffer = new BatchBuffer();
 
         final MutableRecordBatch t0p0b0 = createBatch(time, T0P0 + "-0");
@@ -111,15 +111,15 @@ class BatchBufferTest {
         // Here batches are sorted.
         final BatchBuffer.CloseResult result = buffer.close();
         assertThat(result.commitBatchRequests()).containsExactly(
-            new CommitBatchRequest(T0P0, 0, batchSize, 1),
-            new CommitBatchRequest(T0P0, batchSize, batchSize, 1),
-            new CommitBatchRequest(T0P0, batchSize*2, batchSize, 1),
-            new CommitBatchRequest(T0P1, batchSize*3, batchSize, 1),
-            new CommitBatchRequest(T0P1, batchSize*4, batchSize, 1),
-            new CommitBatchRequest(T0P1, batchSize*5, batchSize, 1),
-            new CommitBatchRequest(T1P0, batchSize*6, batchSize, 1),
-            new CommitBatchRequest(T1P0, batchSize*7, batchSize, 1),
-            new CommitBatchRequest(T1P0, batchSize*8, batchSize, 1)
+            new CommitBatchRequest(T0P0, 0, batchSize, 1, time.milliseconds()),
+            new CommitBatchRequest(T0P0, batchSize, batchSize, 1, time.milliseconds()),
+            new CommitBatchRequest(T0P0, batchSize*2, batchSize, 1, time.milliseconds()),
+            new CommitBatchRequest(T0P1, batchSize*3, batchSize, 1, time.milliseconds()),
+            new CommitBatchRequest(T0P1, batchSize*4, batchSize, 1, time.milliseconds()),
+            new CommitBatchRequest(T0P1, batchSize*5, batchSize, 1, time.milliseconds()),
+            new CommitBatchRequest(T1P0, batchSize*6, batchSize, 1, time.milliseconds()),
+            new CommitBatchRequest(T1P0, batchSize*7, batchSize, 1, time.milliseconds()),
+            new CommitBatchRequest(T1P0, batchSize*8, batchSize, 1, time.milliseconds())
         );
         assertThat(result.requestIds()).containsExactly(
             0, 0, 1,
@@ -147,14 +147,14 @@ class BatchBufferTest {
 
     @Test
     void notWorksAfterClosing() {
-        final Time time = Time.SYSTEM;
+        final Time time = new MockTime();
         final BatchBuffer buffer = new BatchBuffer();
 
         final MutableRecordBatch batch1 = createBatch(time, T0P0 + "-0");
         buffer.addBatch(T0P0, batch1, 0);
         final BatchBuffer.CloseResult result1 = buffer.close();
         assertThat(result1.commitBatchRequests()).containsExactly(
-            new CommitBatchRequest(T0P0, 0, batch1.sizeInBytes(), 1)
+            new CommitBatchRequest(T0P0, 0, batch1.sizeInBytes(), 1, time.milliseconds())
         );
         assertThat(result1.data()).containsExactly(batchToBytes(batch1));
         assertThat(result1.requestIds()).containsExactly(0);

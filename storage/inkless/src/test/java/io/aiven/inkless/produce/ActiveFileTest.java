@@ -86,13 +86,13 @@ class ActiveFileTest {
         final Instant start = Instant.ofEpochMilli(10);
         final ActiveFile file = new ActiveFile(Time.SYSTEM, start);
         final Map<TopicPartition, MemoryRecords> request1 = Map.of(
-            T0P0, MemoryRecords.withRecords(Compression.NONE, new SimpleRecord(new byte[10])),
-            T0P1, MemoryRecords.withRecords(Compression.NONE, new SimpleRecord(new byte[10]))
+            T0P0, MemoryRecords.withRecords(Compression.NONE, new SimpleRecord(1000, new byte[10])),
+            T0P1, MemoryRecords.withRecords(Compression.NONE, new SimpleRecord(2000, new byte[10]))
         );
         file.add(request1);
         final Map<TopicPartition, MemoryRecords> request2 = Map.of(
-            T0P1, MemoryRecords.withRecords(Compression.NONE, new SimpleRecord(new byte[10])),
-            T1P0, MemoryRecords.withRecords(Compression.NONE, new SimpleRecord(new byte[10]))
+            T0P1, MemoryRecords.withRecords(Compression.NONE, new SimpleRecord(3000, new byte[10])),
+            T1P0, MemoryRecords.withRecords(Compression.NONE, new SimpleRecord(4000, new byte[10]))
         );
         file.add(request2);
 
@@ -106,10 +106,10 @@ class ActiveFileTest {
         assertThat(result.awaitingFuturesByRequest().get(0)).isNotCompleted();
         assertThat(result.awaitingFuturesByRequest().get(1)).isNotCompleted();
         assertThat(result.commitBatchRequests()).containsExactly(
-            new CommitBatchRequest(T0P0, 0, 78, 1),
-            new CommitBatchRequest(T0P1, 78, 78, 1),
-            new CommitBatchRequest(T0P1, 156, 78, 1),
-            new CommitBatchRequest(T1P0, 234, 78, 1)
+            new CommitBatchRequest(T0P0, 0, 78, 1, 1000),
+            new CommitBatchRequest(T0P1, 78, 78, 1, 2000),
+            new CommitBatchRequest(T0P1, 156, 78, 1, 3000),
+            new CommitBatchRequest(T1P0, 234, 78, 1, 4000)
         );
         assertThat(result.requestIds()).containsExactly(0, 0, 1, 1);
         assertThat(result.data()).hasSize(312);

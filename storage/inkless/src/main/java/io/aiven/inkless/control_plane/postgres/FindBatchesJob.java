@@ -31,7 +31,8 @@ class FindBatchesJob implements Callable<List<FindBatchResponse>> {
 
     private static final String SELECT_BATCHES = """
         SELECT base_offset, last_offset, object_key, byte_offset,
-            byte_size, number_of_records, timestamp_type, batch_timestamp
+            byte_size, number_of_records,
+            timestamp_type, log_append_timestamp, batch_max_timestamp
         FROM batches
         WHERE topic_id = ?
             AND partition = ?
@@ -137,7 +138,8 @@ class FindBatchesJob implements Callable<List<FindBatchResponse>> {
                         resultSet.getLong("base_offset"),
                         resultSet.getLong("number_of_records"),
                         timestampTypeFromId(resultSet.getShort("timestamp_type")),
-                        resultSet.getLong("batch_timestamp")
+                        resultSet.getLong("log_append_timestamp"),
+                        resultSet.getLong("batch_max_timestamp")
                     );
                     batches.add(batch);
                     totalSize += batch.size();
