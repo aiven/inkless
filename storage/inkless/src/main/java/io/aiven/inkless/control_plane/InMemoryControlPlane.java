@@ -105,7 +105,8 @@ public class InMemoryControlPlane extends AbstractControlPlane {
             firstOffset,
             request.numberOfRecords(),
             metadataView.getTopicConfig(topicName).messageTimestampType,
-            now
+            now,
+            request.batchMaxTimestamp()
         );
         coordinates.put(lastOffset, batchToStore);
         return CommitBatchResponse.success(firstOffset, now, logInfo.logStartOffset);

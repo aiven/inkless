@@ -72,7 +72,7 @@ class FindBatchesJobTest extends SharedPostgreSQLTest {
         final CommitFileJob commitJob = new CommitFileJob(
             time, hikariDataSource, objectKey1,
             List.of(
-                new CommitFileJob.CommitBatchRequestExtra(new CommitBatchRequest(T0P0, 0, 1234, 12), TOPIC_ID_0, TimestampType.CREATE_TIME)
+                new CommitFileJob.CommitBatchRequestExtra(new CommitBatchRequest(T0P0, 0, 1234, 12, 1000), TOPIC_ID_0, TimestampType.CREATE_TIME)
             )
         );
         assertThat(commitJob.call()).isNotEmpty();
@@ -92,7 +92,7 @@ class FindBatchesJobTest extends SharedPostgreSQLTest {
 
         assertThat(result).containsExactlyInAnyOrder(
             new FindBatchResponse(Errors.NONE, List.of(
-                new BatchInfo(objectKey1, 0, 1234, 0, 12, TimestampType.CREATE_TIME, 123456L)), 0, 12
+                new BatchInfo(objectKey1, 0, 1234, 0, 12, TimestampType.CREATE_TIME, 123456L, 1000)), 0, 12
             ),
             new FindBatchResponse(Errors.NONE, List.of(), 0, 0),
             new FindBatchResponse(Errors.OFFSET_OUT_OF_RANGE, null, 0, 0)

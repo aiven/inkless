@@ -6,5 +6,6 @@ import org.apache.kafka.common.TopicPartition;
 public record CommitBatchRequest(TopicPartition topicPartition,
                                  int byteOffset,
                                  int size,
-                                 long numberOfRecords) {
+                                 long numberOfRecords,
+                                 long batchMaxTimestamp) {
 }

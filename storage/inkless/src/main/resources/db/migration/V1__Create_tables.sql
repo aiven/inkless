@@ -19,7 +19,8 @@ CREATE TABLE batches (
     byte_size BIGINT NOT NULL CHECK (byte_size >= 0),  -- TODO replace with INT?
     number_of_records BIGINT NOT NULL CHECK (number_of_records >= 0),  -- TODO replace with INT?
     timestamp_type SMALLINT NOT NULL CHECK (timestamp_type >= -1 AND timestamp_type <= 1),
-    batch_timestamp BIGINT NOT NULL,
+    log_append_timestamp BIGINT NOT NULL CHECK (log_append_timestamp >= -1),
+    batch_max_timestamp BIGINT NOT NULL CHECK (batch_max_timestamp >= -1),
     PRIMARY KEY(topic_id, partition, base_offset)
 );
 
