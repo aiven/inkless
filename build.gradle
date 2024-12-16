@@ -2560,6 +2560,8 @@ project(':storage:inkless') {
     }
   }
 
+// FIXME enable pitest that got broken while rebasing upstream
+//
 //  apply plugin: 'info.solidsoft.pitest'
 //  apply plugin: 'info.solidsoft.pitest.aggregator'
 //
