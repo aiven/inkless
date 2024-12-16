@@ -52,7 +52,8 @@ class BatchBuffer {
                     batchHolder.topicPartition(),
                     byteOffset,
                     batchHolder.batch.sizeInBytes(),
-                    batchHolder.numberOfRecords()
+                    batchHolder.numberOfRecords(),
+                    batchHolder.batchMaxTimestamp()
                 )
             );
             requestIds.add(batchHolder.requestId);
@@ -72,6 +73,10 @@ class BatchBuffer {
                                int requestId) {
         long numberOfRecords() {
             return batch.nextOffset() - batch.baseOffset();
+        }
+
+        long batchMaxTimestamp() {
+            return batch.maxTimestamp();
         }
     }
 
