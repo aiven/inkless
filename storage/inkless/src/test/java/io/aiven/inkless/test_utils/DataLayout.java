@@ -14,19 +14,17 @@ import net.jqwik.api.Arbitrary;
 import net.jqwik.api.RandomGenerator;
 import net.jqwik.api.Shrinkable;
 import net.jqwik.api.ShrinkingDistance;
-import net.jqwik.api.arbitraries.IntegerArbitrary;
 import net.jqwik.api.arbitraries.LongArbitrary;
 import net.jqwik.api.arbitraries.StringArbitrary;
 import net.jqwik.api.providers.ArbitraryProvider;
 import net.jqwik.api.providers.TypeUsage;
 
-import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
 import java.util.Set;
-import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import io.aiven.inkless.control_plane.BatchInfo;
@@ -34,6 +32,8 @@ import io.aiven.inkless.control_plane.BatchInfo;
 public record DataLayout (
         Map<BatchInfo, Records> data
 ) {
+
+    private static final int COLLECTION_MAX_SIZE = 30;
 
     public static class DataLayoutArbitraryProvider implements ArbitraryProvider {
 
@@ -47,16 +47,14 @@ public record DataLayout (
             StringArbitrary arbitraryString = Arbitraries.strings();
             LongArbitrary arbitraryLong = Arbitraries.longs();
             LongArbitrary arbitraryNonNegativeLong = Arbitraries.longs().greaterOrEqual(0);
-            IntegerArbitrary arbitrarySize = Arbitraries.integers().lessOrEqual(30);
-            Arbitrary<byte[]> arbitraryByteArray = Arbitraries.bytes().array(byte[].class).ofMaxSize(255);
-            Arbitrary<Set<TopicIdPartition>> topicIdPartition = Arbitraries.defaultFor(TypeUsage.of(Set.class, TypeUsage.forType(TopicIdPartition.class)));
+            Arbitrary<byte[]> arbitraryByteArray = Arbitraries.bytes().array(byte[].class).ofMaxSize(COLLECTION_MAX_SIZE);
+            Arbitrary<Set<TopicIdPartition>> topicIdPartition = Arbitraries.defaultFor(TopicIdPartition.class).set().ofMaxSize(COLLECTION_MAX_SIZE);
             Arbitrary<TimestampType> arbitraryTimestampType = Arbitraries.defaultFor(TimestampType.class);
             Arbitrary<Records> arbitraryRecords = Arbitraries.defaultFor(Records.class);
             return Set.of(Arbitraries.fromGenerator(new DataLayoutRandomGenerator(
                     arbitraryString.generator(1),
                     arbitraryLong.generator(1),
                     arbitraryNonNegativeLong.generator(1),
-                    arbitrarySize.generator(1),
                     arbitraryByteArray.generator(1),
                     topicIdPartition.generator(1),
                     arbitraryTimestampType.generator(1),
@@ -69,7 +67,6 @@ public record DataLayout (
             RandomGenerator<String> randomString,
             RandomGenerator<Long> randomLong,
             RandomGenerator<Long> randomNonNegativeLong,
-            RandomGenerator<Integer> randomSize,
             RandomGenerator<byte[]> randomByteArray,
             RandomGenerator<Set<TopicIdPartition>> randomTopicPartitions,
             RandomGenerator<TimestampType> randomTimestampType,
@@ -79,38 +76,107 @@ public record DataLayout (
         @Override
         public Shrinkable<DataLayout> next(Random random) {
             Shrinkable<Set<TopicIdPartition>> topicPartitions = randomTopicPartitions.next(random);
-            Map<TopicIdPartition, Shrinkable<Long>> initialOffsets = new HashMap<>();
-            for (TopicIdPartition topicIdPartition : topicPartitions.value()) {
-                initialOffsets.put(topicIdPartition, randomNonNegativeLong.next(random));
+            Set<TopicIdPartition> initialTopicPartitions = topicPartitions.value();
+            if (initialTopicPartitions.isEmpty()) {
+                return new ShrinkableDataLayout(Shrinkable.unshrinkable(Collections.emptyList()));
             }
-            RandomGenerator<TopicIdPartition> chosenTopicPartition = Arbitraries.of(initialOffsets.keySet()).generator(1);
-            Shrinkable<Integer> numFiles = initialOffsets.isEmpty() ? Shrinkable.unshrinkable(0) : randomSize.next(random);
-            int fileCount = numFiles.value();
-            Map<ShrinkableFileData, List<ShrinkableBatchData>> batchData = new HashMap<>();
-            for (int i = 0; i < fileCount; i++) {
-                Shrinkable<Integer> numBatches = randomSize.next(random);
-                int batchCount = numBatches.value();
-                List<ShrinkableBatchData> batches = new ArrayList<>();
-                for (int j = 0; j < batchCount; j++) {
-                    batches.add(new ShrinkableBatchData(
-                            randomNonNegativeLong.next(random),
-                            randomNonNegativeLong.next(random),
-                            randomTimestampType.next(random),
-                            randomRecords.next(random),
-                            randomLong.next(random),
-                            chosenTopicPartition.next(random)
-                    ));
-                }
-                batchData.put(new ShrinkableFileData(
-                        randomString.next(random)
-                ), batches);
-            }
-            return new ShrinkableDataLayout(topicPartitions, initialOffsets, batchData);
+            RandomGenerator<TopicIdPartition> randomTopicPartition = Arbitraries.of(initialTopicPartitions).generator(1);
+            RandomGenerator<List<BatchData>> randomBatchData = Arbitraries.fromGenerator(inner -> new ShrinkableBatchData(
+                    randomNonNegativeLong.next(inner),
+                    randomNonNegativeLong.next(inner),
+                    randomTimestampType.next(inner),
+                    randomRecords.next(inner),
+                    randomLong.next(inner),
+                    randomTopicPartition.next(inner).value()
+            )).list().ofMaxSize(COLLECTION_MAX_SIZE).generator(1);
+            RandomGenerator<List<FileData>> randomFileData = Arbitraries.fromGenerator(inner -> new ShrinkableFileData(
+                    randomString.next(inner),
+                    randomBatchData.next(inner)
+            )).list().ofMaxSize(COLLECTION_MAX_SIZE).generator(1);
+            return new ShrinkableDataLayout(randomFileData.next(random));
         }
     }
 
+
+    private record ShrinkableDataLayout(
+            Shrinkable<List<FileData>> files
+    ) implements Shrinkable<DataLayout> {
+
+        @Override
+        public DataLayout value() {
+            Map<BatchInfo, Records> data = new HashMap<>();
+            Map<TopicIdPartition, Long> offsets = new HashMap<>();
+            for (FileData file : files.value()) {
+                long byteOffset = 0L;
+                for (BatchData batch : file.batches()) {
+                    long firstOffset = offsets.compute(batch.topicIdPartition(), (k, v) -> (v == null ? 0 : v) + batch.skippedOffsets());
+                    byteOffset += batch.skippedBytes();
+                    BatchInfo batchInfo = new BatchInfo(
+                            file.objectId(),
+                            byteOffset,
+                            batch.batchSize(),
+                            firstOffset,
+                            batch.recordCount(),
+                            batch.timestampType(),
+                            batch.appendTime(),
+                            batch.maxTimestamp()
+                    );
+                    data.put(batchInfo, batch.records());
+                    offsets.compute(batch.topicIdPartition(), (k, v) -> (v == null ? 0 : v) + batch.recordCount());
+                    byteOffset += batch.batchSize();
+                }
+            }
+            return new DataLayout(data);
+        }
+
+        @Override
+        public Stream<Shrinkable<DataLayout>> shrink() {
+            return files.shrink().map(ShrinkableDataLayout::new);
+        }
+
+        @Override
+        public ShrinkingDistance distance() {
+            return files.distance();
+        }
+    }
+
+    private record FileData(String objectId, List<BatchData> batches) {
+    }
+
     private record ShrinkableFileData(
-            Shrinkable<String> objectId
+            Shrinkable<String> objectId,
+            Shrinkable<List<BatchData>> batches
+    ) implements Shrinkable<FileData> {
+
+        @Override
+        public FileData value() {
+            return new FileData(objectId.value(), batches.value());
+        }
+
+        @Override
+        public Stream<Shrinkable<FileData>> shrink() {
+            return Stream.concat(
+                    batches.shrink().map(batches -> new ShrinkableFileData(objectId, batches)),
+                    objectId.shrink().map(objectId -> new ShrinkableFileData(objectId, batches))
+            );
+        }
+
+        @Override
+        public ShrinkingDistance distance() {
+            return objectId.distance().append(batches.distance());
+        }
+    }
+
+    private record BatchData(
+            long skippedBytes,
+            long skippedOffsets,
+            TimestampType timestampType,
+            Records records,
+            int batchSize,
+            int recordCount,
+            long maxTimestamp,
+            long appendTime,
+            TopicIdPartition topicIdPartition
     ) {
 
     }
@@ -121,97 +187,75 @@ public record DataLayout (
             Shrinkable<TimestampType> timestampType,
             Shrinkable<Records> records,
             Shrinkable<Long> appendTime,
-            Shrinkable<TopicIdPartition> topicIdPartition
-    ) {
-    }
-
-    private record ShrinkableDataLayout(
-            Shrinkable<Set<TopicIdPartition>> topicPartitions,
-            Map<TopicIdPartition, Shrinkable<Long>> initialOffsets,
-            Map<ShrinkableFileData, List<ShrinkableBatchData>> batchData
-    ) implements Shrinkable<DataLayout> {
+            TopicIdPartition topicIdPartition
+    ) implements Shrinkable<BatchData> {
 
         @Override
-        public DataLayout value() {
-            Map<BatchInfo, Records> data = new HashMap<>();
-
-            Map<TopicIdPartition, Long> partitionOffsets = initialOffsets.entrySet().stream().collect(Collectors.toMap(Map.Entry::getKey, e -> e.getValue().value()));
-            for (Map.Entry<ShrinkableFileData, List<ShrinkableBatchData>> files : batchData.entrySet()) {
-                long byteOffset = 0L;
-                for (ShrinkableBatchData batch : files.getValue()) {
-                    long skippedBytes = batch.skippedBytes.value();
-                    long skippedOffsets = batch.skippedOffsets.value();
-                    TimestampType timestampType = batch.timestampType.value();
-                    Records records = batch.records.value();
-                    int batchSize = records.sizeInBytes();
-                    int recordCount = countRecordsInBatch(records);
-                    TopicIdPartition topicIdPartition = batch.topicIdPartition.value();
-                    long firstOffset = partitionOffsets.compute(topicIdPartition, (k, v) -> (v == null ? 0 : v) + skippedOffsets);
-                    partitionOffsets.compute(topicIdPartition, (k, v) -> (v == null ? 0 : v) + recordCount);
-                    BatchInfo batchInfo = new BatchInfo(files.getKey().objectId.value(), byteOffset + skippedBytes, batchSize, firstOffset, recordCount, timestampType, batch.appendTime.value(), 1000);
-                    data.put(batchInfo, records);
-                    byteOffset += skippedBytes + batchSize;
-                }
-            }
-            return new DataLayout(data);
-        }
-
-        private int countRecordsInBatch(Records records) {
+        public BatchData value() {
+            Records records = this.records.value();
+            int batchSize = records.sizeInBytes();
             int recordCount = 0;
+            long maxTimestamp = Long.MIN_VALUE;
             for (RecordBatch batch : records.batches()) {
-                Integer i = batch.countOrNull();
-                if (i != null) {
-                    recordCount += i;
-                } else {
-                    try (CloseableIterator<Record> iter = batch.streamingIterator(BufferSupplier.create())) {
-                        while (iter.hasNext()) {
-                            iter.next();
-                            recordCount++;
-                        }
-                    }
-                }
+                maxTimestamp = Math.max(maxTimestamp, batch.maxTimestamp());
+                recordCount += getRecordCountInBatch(batch);
             }
-            return recordCount;
-        }
-
-        @Override
-        public Stream<Shrinkable<DataLayout>> shrink() {
-            return Stream.concat(
-                    removeFiles(),
-                    removeTopicPartitions()
+            return new BatchData(
+                    skippedBytes.value(),
+                    skippedOffsets.value(),
+                    timestampType.value(),
+                    records,
+                    batchSize,
+                    recordCount,
+                    maxTimestamp,
+                    appendTime.value(),
+                    topicIdPartition
             );
         }
 
-        private Stream<Shrinkable<DataLayout>> removeFiles() {
-            return this.batchData.keySet().stream().map(fileData -> {
-                Map<ShrinkableFileData, List<ShrinkableBatchData>> batchData = this.batchData.entrySet()
-                        .stream()
-                        .filter(e -> e.getKey() == fileData)
-                        .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
-                return new ShrinkableDataLayout(topicPartitions, initialOffsets, batchData);
-            });
-        }
-
-        private Stream<Shrinkable<DataLayout>> removeTopicPartitions() {
-            return this.topicPartitions.shrink().map(topicPartitions -> {
-                Set<TopicIdPartition> removedTopicPartitions = this.topicPartitions.value();
-                removedTopicPartitions.removeAll(topicPartitions.value());
-                HashMap<TopicIdPartition, Shrinkable<Long>> initialOffsets = new HashMap<>(this.initialOffsets);
-                removedTopicPartitions.forEach(initialOffsets::remove);
-                Map<ShrinkableFileData, List<ShrinkableBatchData>> batchData = this.batchData.entrySet()
-                        .stream()
-                        .collect(Collectors.toMap(Map.Entry::getKey,
-                                e -> e.getValue().stream().filter(batch -> removedTopicPartitions.contains(batch.topicIdPartition.value())).collect(Collectors.toList())
-                        ));
-                return new ShrinkableDataLayout(topicPartitions, initialOffsets, batchData);
-            });
+        @Override
+        public Stream<Shrinkable<BatchData>> shrink() {
+            return Stream.concat(
+                    Stream.concat(
+                            records.shrink().map(records -> new ShrinkableBatchData(skippedBytes, skippedOffsets, timestampType, records, appendTime, topicIdPartition)),
+                            skippedOffsets.shrink().map(skippedOffsets -> new ShrinkableBatchData(skippedBytes, skippedOffsets, timestampType, records, appendTime, topicIdPartition))
+                    ),
+                    Stream.concat(
+                        Stream.concat(
+                                skippedBytes.shrink().map(skippedBytes -> new ShrinkableBatchData(skippedBytes, skippedOffsets, timestampType, records, appendTime, topicIdPartition)),
+                                skippedOffsets.shrink().map(skippedOffsets -> new ShrinkableBatchData(skippedBytes, skippedOffsets, timestampType, records, appendTime, topicIdPartition))
+                        ),
+                        Stream.concat(
+                                timestampType.shrink().map(timestampType -> new ShrinkableBatchData(skippedBytes, skippedOffsets, timestampType, records, appendTime, topicIdPartition)),
+                                appendTime.shrink().map(appendTime -> new ShrinkableBatchData(skippedBytes, skippedOffsets, timestampType, records, appendTime, topicIdPartition))
+                        )
+                    )
+            );
         }
 
         @Override
         public ShrinkingDistance distance() {
-            List<Shrinkable<?>> inner = new ArrayList<>();
-            inner.add(topicPartitions);
-            return ShrinkingDistance.forCollection(inner.stream().map(Shrinkable::asGeneric).toList());
+            return skippedBytes.distance()
+                    .append(skippedOffsets.distance())
+                    .append(timestampType.distance())
+                    .append(records.distance())
+                    .append(appendTime.distance());
+        }
+
+        private static int getRecordCountInBatch(RecordBatch batch) {
+            Integer i = batch.countOrNull();
+            if (i != null) {
+                return i;
+            } else {
+                int recordCount = 0;
+                try (CloseableIterator<Record> iter = batch.streamingIterator(BufferSupplier.create())) {
+                    while (iter.hasNext()) {
+                        iter.next();
+                        recordCount++;
+                    }
+                }
+                return recordCount;
+            }
         }
     }
 }
