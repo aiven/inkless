@@ -16,6 +16,7 @@ import net.jqwik.api.ShrinkingDistance;
 import net.jqwik.api.providers.ArbitraryProvider;
 import net.jqwik.api.providers.TypeUsage;
 
+import java.lang.annotation.Annotation;
 import java.util.List;
 import java.util.Set;
 import java.util.stream.Stream;
@@ -35,7 +36,6 @@ public class RecordsProvider implements ArbitraryProvider {
         RandomGenerator<Short> randomNonNegativeShort = Arbitraries.shorts().greaterOrEqual((short) 0).generator(1);
         RandomGenerator<Integer> randomInt = Arbitraries.integers().generator(1);
         RandomGenerator<Integer> randomNonNegativeInt = Arbitraries.integers().greaterOrEqual(0).generator(1);
-        RandomGenerator<Long> randomLong = Arbitraries.longs().generator(1);
         RandomGenerator<Long> randomNonNegativeLong = Arbitraries.longs().greaterOrEqual(0).generator(1);
         RandomGenerator<Compression> randomCompressionForV1V0 = Arbitraries.of(
                 Compression.none().build(),
@@ -54,7 +54,30 @@ public class RecordsProvider implements ArbitraryProvider {
                 TimestampType.LOG_APPEND_TIME,
                 TimestampType.CREATE_TIME
         ).generator(1);
-        RandomGenerator<SimpleRecord[]> simpleRecords = Arbitraries.defaultFor(SimpleRecord.class).array(SimpleRecord[].class).ofMaxSize(255).generator(1);
+        SimpleRecordProvider.HeaderCount noHeaders = new SimpleRecordProvider.HeaderCount() {
+            @Override
+            public Class<? extends Annotation> annotationType() {
+                return SimpleRecordProvider.HeaderCount.class;
+            }
+
+            @Override
+            public int max() {
+                return 0;
+            }
+        };
+        RandomGenerator<SimpleRecord[]> simpleRecordsNoHeaders = Arbitraries.defaultFor(
+                        TypeUsage.of(SimpleRecord.class)
+                                .withAnnotation(noHeaders)
+                )
+                .array(SimpleRecord[].class)
+                .ofMaxSize(255)
+                .generator(1);
+        RandomGenerator<SimpleRecord[]> simpleRecords = Arbitraries.defaultFor(
+                        TypeUsage.of(SimpleRecord.class)
+                )
+                .array(SimpleRecord[].class)
+                .ofMaxSize(255)
+                .generator(1);
         return Set.of(Arbitraries.fromGenerator(random -> {
             byte magic = randomMagicByte.next(random).value();
             return new ShrinkableRecords(
@@ -67,7 +90,7 @@ public class RecordsProvider implements ArbitraryProvider {
                     randomNonNegativeInt.next(random),
                     randomInt.next(random),
                     magic > 1 && random.nextBoolean(),
-                    simpleRecords.next(random)
+                    magic > 1 ? simpleRecords.next(random) : simpleRecordsNoHeaders.next(random)
             );
         }));
     }

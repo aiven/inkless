@@ -2,7 +2,6 @@
 package io.aiven.inkless.test_utils;
 
 import org.apache.kafka.common.header.Header;
-import org.apache.kafka.common.record.Record;
 import org.apache.kafka.common.record.SimpleRecord;
 
 import net.jqwik.api.Arbitraries;
@@ -13,11 +12,22 @@ import net.jqwik.api.ShrinkingDistance;
 import net.jqwik.api.providers.ArbitraryProvider;
 import net.jqwik.api.providers.TypeUsage;
 
+import java.lang.annotation.ElementType;
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
+import java.lang.annotation.Target;
 import java.util.List;
 import java.util.Set;
 import java.util.stream.Stream;
 
 public class SimpleRecordProvider implements ArbitraryProvider {
+
+    @Target({ ElementType.ANNOTATION_TYPE, ElementType.PARAMETER })
+    @Retention(RetentionPolicy.RUNTIME)
+    public @interface HeaderCount {
+        int max();
+    }
+
     @Override
     public boolean canProvideFor(TypeUsage targetType) {
         return targetType.isAssignableFrom(SimpleRecord.class);
@@ -27,12 +37,16 @@ public class SimpleRecordProvider implements ArbitraryProvider {
     public Set<Arbitrary<?>> provideFor(TypeUsage targetType, SubtypeProvider subtypeProvider) {
         RandomGenerator<Long> randomLong = Arbitraries.longs().greaterOrEqual(0).generator(1);
         RandomGenerator<byte[]> randomByteArray = Arbitraries.bytes().array(byte[].class).ofMaxSize(10).generator(1);
-        RandomGenerator<Header[]> randomHeaders = Arbitraries.defaultFor(Header.class).array(Header[].class).ofMaxSize(10).generator(1);
+        int maxHeaders = targetType.findAnnotation(HeaderCount.class).map(HeaderCount::max).orElse(10);
+        RandomGenerator<Header[]> randomHeaders = Arbitraries.defaultFor(Header.class)
+                .array(Header[].class)
+                .ofMaxSize(maxHeaders)
+                .generator(1);
         return Set.of(Arbitraries.fromGenerator(random -> new ShrinkableSimpleRecord(
                 randomLong.next(random),
                 randomByteArray.next(random),
                 randomByteArray.next(random),
-                Shrinkable.unshrinkable(Record.EMPTY_HEADERS) //TODO: Generate headers randomHeaders.next(random)
+                randomHeaders.next(random)
         )));
     }
 
