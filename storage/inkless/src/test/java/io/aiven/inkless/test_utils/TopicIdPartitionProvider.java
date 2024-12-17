@@ -26,7 +26,7 @@ public class TopicIdPartitionProvider implements ArbitraryProvider {
     public Set<Arbitrary<?>> provideFor(TypeUsage targetType, SubtypeProvider subtypeProvider) {
         RandomGenerator<Long> longGenerator = Arbitraries.longs().generator(0);
         RandomGenerator<Integer> intGenerator = Arbitraries.integers().generator(0);
-        RandomGenerator<String> stringGenerator = Arbitraries.strings().generator(0);
+        RandomGenerator<String> stringGenerator = Arbitraries.strings().ofMaxLength(255).generator(0);
         return Set.of(Arbitraries.fromGenerator(random -> new ShrinkableTopicIdPartition(
                 longGenerator.next(random),
                 longGenerator.next(random),

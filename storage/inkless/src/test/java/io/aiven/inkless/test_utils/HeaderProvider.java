@@ -24,7 +24,7 @@ public class HeaderProvider implements ArbitraryProvider {
 
     @Override
     public Set<Arbitrary<?>> provideFor(TypeUsage targetType, SubtypeProvider subtypeProvider) {
-        RandomGenerator<String> randomString = Arbitraries.strings().generator(1);
+        RandomGenerator<String> randomString = Arbitraries.strings().ofMaxLength(10).generator(1);
         RandomGenerator<byte[]> randomByteArray = Arbitraries.bytes().array(byte[].class).ofMaxSize(10).generator(1);
         return Set.of(Arbitraries.fromGenerator(random -> new ShrinkableHeader(
                 randomString.next(random),
