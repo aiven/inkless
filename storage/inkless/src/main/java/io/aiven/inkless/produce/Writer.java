@@ -22,6 +22,7 @@ import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
@@ -50,12 +51,14 @@ class Writer implements Closeable {
     private ActiveFile activeFile;
     private final FileCommitter fileCommitter;
     private final Time time;
+    private final Duration commitInterval;
     private final int maxBufferSize;
     private final ScheduledExecutorService commitTickScheduler;
     private boolean closed = false;
     private final WriterMetrics writerMetrics;
     private final BrokerTopicMetricMarks brokerTopicMetricMarks;
     private Instant openedAt;
+    private ScheduledFuture<?> scheduledTick;
 
     @DoNotMutate
     Writer(final Time time,
@@ -87,7 +90,7 @@ class Writer implements Closeable {
            final WriterMetrics writerMetrics,
            final BrokerTopicMetricMarks brokerTopicMetricMarks) {
         this.time = Objects.requireNonNull(time, "time cannot be null");
-        Objects.requireNonNull(commitInterval, "commitInterval cannot be null");
+        this.commitInterval = Objects.requireNonNull(commitInterval, "commitInterval cannot be null");
         if (maxBufferSize <= 0) {
             throw new IllegalArgumentException("maxBufferSize must be positive");
         }
@@ -97,9 +100,6 @@ class Writer implements Closeable {
         this.writerMetrics = Objects.requireNonNull(writerMetrics, "writerMetrics cannot be null");
         this.brokerTopicMetricMarks = brokerTopicMetricMarks;
         this.activeFile = new ActiveFile(time, brokerTopicMetricMarks);
-
-        commitTickScheduler.scheduleAtFixedRate(
-            this::tick, commitInterval.toMillis(), commitInterval.toMillis(), TimeUnit.MILLISECONDS);
     }
 
     CompletableFuture<Map<TopicPartition, PartitionResponse>> write(
@@ -122,8 +122,15 @@ class Writer implements Closeable {
             final var result = this.activeFile.add(entriesPerPartition);
             writerMetrics.requestAdded();
             if (this.activeFile.size() >= maxBufferSize) {
+                if (this.scheduledTick != null) {
+                    this.scheduledTick.cancel(false);
+                    this.scheduledTick = null;
+                }
                 rotateFile(false);
+            } else if (this.scheduledTick == null) {
+                this.scheduledTick = commitTickScheduler.schedule(this::tick, commitInterval.toMillis(), TimeUnit.MILLISECONDS);
             }
+
             return result;
         } finally {
             lock.unlock();
@@ -134,6 +141,8 @@ class Writer implements Closeable {
     void tick() {
         lock.lock();
         try {
+            this.scheduledTick = null;
+
             if (closed) {
                 return;
             }
