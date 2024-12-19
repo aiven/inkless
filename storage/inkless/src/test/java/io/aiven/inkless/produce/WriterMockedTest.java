@@ -69,12 +69,23 @@ class WriterMockedTest {
         final Writer writer = new Writer(
             time, Duration.ofMillis(1), 8 * 1024, commitTickScheduler, fileCommitter, writerMetrics, brokerTopicMetricMarks);
 
-        verify(commitTickScheduler).scheduleAtFixedRate(any(), eq(1L), eq(1L), eq(TimeUnit.MILLISECONDS));
-
         writer.tick();
 
         // Tick must be ignored in as the active file is empty.
         verify(fileCommitter, never()).commit(any());
+    }
+
+    @Test
+    void tickIsScheduledWhenFileIsWrittenTo() {
+        final Writer writer = new Writer(
+            time, Duration.ofMillis(1), 8 * 1024, commitTickScheduler, fileCommitter, writerMetrics, brokerTopicMetricMarks);
+
+        final Map<TopicPartition, MemoryRecords> writeRequest = Map.of(
+            T0P0, recordCreator.create(T0P0, 100)
+        );
+        writer.write(writeRequest);
+
+        verify(commitTickScheduler).schedule(any(Runnable.class), eq(1L), eq(TimeUnit.MILLISECONDS));
     }
 
     @Test
