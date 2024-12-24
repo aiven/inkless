@@ -4,6 +4,7 @@ package io.aiven.inkless.config;
 import org.apache.kafka.common.config.AbstractConfig;
 import org.apache.kafka.common.config.ConfigDef;
 import org.apache.kafka.common.utils.Utils;
+import org.apache.kafka.storage.internals.log.ProducerStateManagerConfig;
 
 import java.time.Duration;
 import java.util.Map;
@@ -47,6 +48,13 @@ public class InklessConfig extends AbstractConfig {
     public static final String PRODUCE_UPLOAD_BACKOFF_MS_CONFIG = PRODUCE_PREFIX + "upload.backoff.ms";
     private static final String PRODUCE_UPLOAD_BACKOFF_MS_DOC = "The number of millisecond to back off for before the next upload attempt.";
     private static final int PRODUCE_UPLOAD_BACKOFF_MS_DEFAULT = 10;
+
+    public static final String PRODUCER_ID_EXPIRATION_MS_CONFIG = "producer.id.expiration.ms";
+    public static final int PRODUCER_ID_EXPIRATION_MS_DEFAULT = 86400000;
+    // keeping same docs as TransactionLogConfig.PRODUCER_ID_EXPIRATION_MS_DOC for now
+    public static final String PRODUCER_ID_EXPIRATION_MS_DOC = "The time in ms that a topic partition leader will wait before expiring producer IDs. Producer IDs will not expire while a transaction associated to them is still ongoing. " +
+        "Note that producer IDs may expire sooner if the last write from the producer ID is deleted due to the topic's retention settings. Setting this value the same or higher than " +
+        "<code>delivery.timeout.ms</code> can help prevent expiration during retries and protect against message duplication, but the default should be reasonable for most use cases.";
 
     public static final String STORAGE_PREFIX = "storage.";
 
@@ -125,6 +133,15 @@ public class InklessConfig extends AbstractConfig {
         );
 
         configDef.define(
+            PRODUCER_ID_EXPIRATION_MS_CONFIG,
+            ConfigDef.Type.INT,
+            PRODUCER_ID_EXPIRATION_MS_DEFAULT,
+            ConfigDef.Range.atLeast(1),
+            ConfigDef.Importance.LOW,
+            PRODUCER_ID_EXPIRATION_MS_DOC
+        );
+
+        configDef.define(
             STORAGE_BACKEND_CLASS_CONFIG,
             ConfigDef.Type.CLASS,
             STORAGE_BACKEND_CLASS_DEFAULT,
@@ -147,8 +164,7 @@ public class InklessConfig extends AbstractConfig {
         this(config.originalsWithPrefix(InklessConfig.PREFIX));
     }
 
-    // Visible for testing
-    InklessConfig(final Map<String, ?> props) {
+    public InklessConfig(final Map<String, ?> props) {
         super(configDef(), props);
     }
 
@@ -193,5 +209,11 @@ public class InklessConfig extends AbstractConfig {
 
     public int fetchCacheBlockBytes() {
         return getInt(CONSUME_CACHE_BLOCK_BYTES_CONFIG);
+    }
+
+    public ProducerStateManagerConfig producerStateManagerConfig() {
+        final Integer producerIdExpirationMsConfig = getInt(PRODUCER_ID_EXPIRATION_MS_CONFIG);
+        final boolean transactionVerificationEnabled = false; // no transaction support on inkless yet
+        return new ProducerStateManagerConfig(producerIdExpirationMsConfig, transactionVerificationEnabled);
     }
 }

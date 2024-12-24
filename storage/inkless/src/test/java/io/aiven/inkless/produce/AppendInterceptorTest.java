@@ -158,34 +158,6 @@ public class AppendInterceptorTest {
     }
 
     @Test
-    public void rejectIdempotentProduceForInklessTopics() {
-        when(metadataView.isInklessTopic(eq("inkless1"))).thenReturn(true);
-        when(metadataView.isInklessTopic(eq("inkless2"))).thenReturn(true);
-        final AppendInterceptor interceptor = new AppendInterceptor(
-            new SharedState(time, BROKER_ID, inklessConfig, metadataView, controlPlane, storageBackend,
-                OBJECT_KEY_CREATOR, KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, brokerTopicStats, DEFAULT_TOPIC_CONFIGS), writer);
-
-        final Map<TopicPartition, MemoryRecords> entriesPerPartition = Map.of(
-            new TopicPartition("inkless1", 0),
-            RECORDS_WITHOUT_PRODUCER_ID,
-            new TopicPartition("inkless2", 0),
-            RECORDS_WITH_PRODUCER_ID
-        );
-
-        final boolean result = interceptor.intercept(entriesPerPartition, responseCallback);
-        assertThat(result).isTrue();
-
-        verify(responseCallback).accept(resultCaptor.capture());
-        assertThat(resultCaptor.getValue()).isEqualTo(Map.of(
-            new TopicPartition("inkless1", 0),
-            new PartitionResponse(Errors.INVALID_REQUEST),
-            new TopicPartition("inkless2", 0),
-            new PartitionResponse(Errors.INVALID_REQUEST)
-        ));
-        verify(writer, never()).write(any(), anyMap());
-    }
-
-    @Test
     public void acceptIdempotentProduceForNonInklessTopics() {
         when(metadataView.isInklessTopic(eq("non_inkless"))).thenReturn(false);
         final AppendInterceptor interceptor = new AppendInterceptor(

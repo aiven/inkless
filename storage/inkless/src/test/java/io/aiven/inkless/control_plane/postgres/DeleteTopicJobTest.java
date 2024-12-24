@@ -81,8 +81,8 @@ class DeleteTopicJobTest extends SharedPostgreSQLTest {
         new CommitFileJob(
             time, hikariDataSource, objectKey1, BROKER_ID, file1Size,
             List.of(
-                new CommitFileJob.CommitBatchRequestJson(new CommitBatchRequest(T0P0, 0, file1Batch1Size, 12, 1000, TimestampType.CREATE_TIME)),
-                new CommitFileJob.CommitBatchRequestJson(new CommitBatchRequest(T0P1, 0, file1Batch2Size, 12, 1000, TimestampType.CREATE_TIME))
+                new CommitFileJob.CommitBatchRequestJson(CommitBatchRequest.of(T0P0, 0, file1Batch1Size, 0, 11, 1000, TimestampType.CREATE_TIME)),
+                new CommitFileJob.CommitBatchRequestJson(CommitBatchRequest.of(T0P1, 0, file1Batch2Size, 0, 11, 1000, TimestampType.CREATE_TIME))
             ), durationCallback
         ).call();
 
@@ -93,8 +93,8 @@ class DeleteTopicJobTest extends SharedPostgreSQLTest {
         new CommitFileJob(
             time, hikariDataSource, objectKey2, BROKER_ID, file2Size,
             List.of(
-                new CommitFileJob.CommitBatchRequestJson(new CommitBatchRequest(T0P0, 0, file2Batch1Size, 12, 1000, TimestampType.CREATE_TIME)),
-                new CommitFileJob.CommitBatchRequestJson(new CommitBatchRequest(T2P0, 0, file2Batch2Size, 12, 1000, TimestampType.CREATE_TIME))
+                new CommitFileJob.CommitBatchRequestJson(CommitBatchRequest.of(T0P0, 0, file2Batch1Size, 0, 11, 1000, TimestampType.CREATE_TIME)),
+                new CommitFileJob.CommitBatchRequestJson(CommitBatchRequest.of(T2P0, 0, file2Batch2Size, 0, 11, 1000, TimestampType.CREATE_TIME))
             ), durationCallback
         ).call();
 
@@ -106,9 +106,9 @@ class DeleteTopicJobTest extends SharedPostgreSQLTest {
         new CommitFileJob(
             time, hikariDataSource, objectKey3, BROKER_ID, file3Size,
             List.of(
-                new CommitFileJob.CommitBatchRequestJson(new CommitBatchRequest(T0P0, 0, file1Batch1Size, 12, 1000, TimestampType.CREATE_TIME)),
-                new CommitFileJob.CommitBatchRequestJson(new CommitBatchRequest(T0P1, 0, file1Batch2Size, 12, 1000, TimestampType.CREATE_TIME)),
-                new CommitFileJob.CommitBatchRequestJson(new CommitBatchRequest(T2P0, 0, file1Batch2Size, 12, 1000, TimestampType.CREATE_TIME))
+                new CommitFileJob.CommitBatchRequestJson(CommitBatchRequest.of(T0P0, 0, file1Batch1Size, 0, 11, 1000, TimestampType.CREATE_TIME)),
+                new CommitFileJob.CommitBatchRequestJson(CommitBatchRequest.of(T0P1, 0, file1Batch2Size, 0, 11, 1000, TimestampType.CREATE_TIME)),
+                new CommitFileJob.CommitBatchRequestJson(CommitBatchRequest.of(T2P0, 0, file1Batch2Size, 0, 11, 1000, TimestampType.CREATE_TIME))
             ), durationCallback
         ).call();
 
@@ -126,8 +126,8 @@ class DeleteTopicJobTest extends SharedPostgreSQLTest {
 
         // The batches of the deleted topics must be gone, i.e. only TOPIC_2 remains.
         assertThat(DBUtils.getAllBatches(hikariDataSource)).containsExactlyInAnyOrder(
-            new DBUtils.Batch(TOPIC_ID_2, 0, 0, 11, 2, 0, 2000, 12),
-            new DBUtils.Batch(TOPIC_ID_2, 0, 12, 23, 3, 0, 2000, 12)
+            new DBUtils.Batch(TOPIC_ID_2, 0, 0, 11, 2, 0, 2000, 0, 11),
+            new DBUtils.Batch(TOPIC_ID_2, 0, 12, 23, 3, 0, 2000, 0, 11)
         );
 
         // File 1 must be `deleting` because it contained only data from the deleted TOPIC_1.

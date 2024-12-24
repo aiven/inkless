@@ -43,7 +43,7 @@ class CommitFileJob implements Callable<List<CommitBatchResponse>> {
         .build();
 
     private static final String CALL_COMMIT_FUNCTION = """
-        SELECT topic_id, partition, log_exists, assigned_offset, log_start_offset
+        SELECT topic_id, partition, log_exists, assigned_offset, log_start_offset, invalid_producer_epoch, sequence_out_of_order
         FROM commit_file_v1(?, ?, ?, ?, ?::JSONB)
         """;
 
@@ -148,10 +148,14 @@ class CommitFileJob implements Callable<List<CommitBatchResponse>> {
 
             if (!resultSet.getBoolean("log_exists")) {
                 responses.add(CommitBatchResponse.unknownTopicOrPartition());
+            } else if (resultSet.getBoolean("invalid_producer_epoch")) {
+                responses.add(CommitBatchResponse.invalidProducerEpoch());
+            } else if (resultSet.getBoolean("sequence_out_of_order")) {
+                responses.add(CommitBatchResponse.sequenceOutOfOrder(request.request()));
             } else {
                 final long assignedOffset = resultSet.getLong("assigned_offset");
                 final long logStartOffset = resultSet.getLong("log_start_offset");
-                responses.add(CommitBatchResponse.success(assignedOffset, now, logStartOffset));
+                responses.add(CommitBatchResponse.success(assignedOffset, now, logStartOffset, request.request()));
             }
         }
 
@@ -173,6 +177,16 @@ class CommitFileJob implements Callable<List<CommitBatchResponse>> {
             return request().topicIdPartition().partition();
         }
 
+        @JsonProperty("request_base_offset")
+        long requestBaseOffset() {
+            return request().baseOffset();
+        }
+
+        @JsonProperty("request_last_offset")
+        long requestLastOffset() {
+            return request().lastOffset();
+        }
+
         @JsonProperty("byte_offset")
         int byteOffset() {
             return request().byteOffset();
@@ -181,11 +195,6 @@ class CommitFileJob implements Callable<List<CommitBatchResponse>> {
         @JsonProperty("byte_size")
         int byteSize() {
             return request().size();
-        }
-
-        @JsonProperty("number_of_records")
-        long numberOfRecords() {
-            return request().numberOfRecords();
         }
 
         @JsonProperty("timestamp_type")
@@ -198,6 +207,25 @@ class CommitFileJob implements Callable<List<CommitBatchResponse>> {
             return request().batchMaxTimestamp();
         }
 
+        @JsonProperty("producer_id")
+        long producerId() {
+            return request().producerId();
+        }
+
+        @JsonProperty("producer_epoch")
+        short producerEpoch() {
+            return request().producerEpoch();
+        }
+
+        @JsonProperty("base_sequence")
+        int baseSequence() {
+            return request().baseSequence();
+        }
+
+        @JsonProperty("last_sequence")
+        int lastSequence() {
+            return request().lastSequence();
+        }
     }
 
     private String requestsAsJsonString() {

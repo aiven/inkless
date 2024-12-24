@@ -122,9 +122,10 @@ public class FetchCompleterJobTest {
         long maxBatchTimestamp = 20L;
         int highWatermark = 1;
         Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of(
-                partition0, FindBatchResponse.success(List.of(
-                        new BatchInfo(OBJECT_KEY_A_MAIN_PART, 0, 10, 0, 1, TimestampType.CREATE_TIME, logAppendTimestamp, maxBatchTimestamp)
-                ), logStartOffset, highWatermark)
+            partition0,
+            FindBatchResponse.success(List.of(
+                BatchInfo.of(OBJECT_KEY_A_MAIN_PART, 0, 10, 0, 0, 0, logAppendTimestamp, maxBatchTimestamp, TimestampType.CREATE_TIME)
+            ), logStartOffset, highWatermark)
         );
         FetchCompleterJob job = new FetchCompleterJob(
             new MockTime(),
@@ -151,9 +152,10 @@ public class FetchCompleterJobTest {
         long maxBatchTimestamp = 20L;
         int highWatermark = 1;
         Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of(
-                partition0, FindBatchResponse.success(List.of(
-                        new BatchInfo(OBJECT_KEY_A_MAIN_PART, 0, records.sizeInBytes(), 0, 1, TimestampType.CREATE_TIME, logAppendTimestamp, maxBatchTimestamp)
-                ), logStartOffset, highWatermark)
+            partition0,
+            FindBatchResponse.success(List.of(
+                BatchInfo.of(OBJECT_KEY_A_MAIN_PART, 0, records.sizeInBytes(), 0, 0, 0, logAppendTimestamp, maxBatchTimestamp, TimestampType.CREATE_TIME)
+            ), logStartOffset, highWatermark)
         );
 
         List<Future<FileExtent>> files = Stream.of(
@@ -187,10 +189,11 @@ public class FetchCompleterJobTest {
         long maxBatchTimestamp = 20L;
         int highWatermark = 1;
         Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of(
-                partition0, FindBatchResponse.success(List.of(
-                        new BatchInfo(OBJECT_KEY_A_MAIN_PART, 0, records.sizeInBytes(), 0, 1, TimestampType.CREATE_TIME, logAppendTimestamp, maxBatchTimestamp),
-                        new BatchInfo(OBJECT_KEY_B_MAIN_PART, 0, records.sizeInBytes(), 0, 1, TimestampType.CREATE_TIME, logAppendTimestamp, maxBatchTimestamp)
-                ), logStartOffset, highWatermark)
+            partition0,
+            FindBatchResponse.success(List.of(
+                BatchInfo.of(OBJECT_KEY_A_MAIN_PART, 0, records.sizeInBytes(), 0, 0, 0, logAppendTimestamp, maxBatchTimestamp, TimestampType.CREATE_TIME),
+                BatchInfo.of(OBJECT_KEY_B_MAIN_PART, 0, records.sizeInBytes(), 0, 0, 0, logAppendTimestamp, maxBatchTimestamp, TimestampType.CREATE_TIME)
+            ), logStartOffset, highWatermark)
         );
 
         List<Future<FileExtent>> files = Stream.of(
@@ -232,10 +235,11 @@ public class FetchCompleterJobTest {
         long maxBatchTimestamp = 10L;
         int highWatermark = 2;
         Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of(
-                partition0, FindBatchResponse.success(List.of(
-                        new BatchInfo(OBJECT_KEY_A_MAIN_PART, 0, recordsA.sizeInBytes(), 0, 1, TimestampType.CREATE_TIME, logAppendTimestamp, maxBatchTimestamp),
-                        new BatchInfo(OBJECT_KEY_A_MAIN_PART, recordsA.sizeInBytes(), recordsB.sizeInBytes(), 1, 1, TimestampType.CREATE_TIME, logAppendTimestamp, maxBatchTimestamp)
-                ), logStartOffset, highWatermark)
+            partition0,
+            FindBatchResponse.success(List.of(
+                BatchInfo.of(OBJECT_KEY_A_MAIN_PART, 0, recordsA.sizeInBytes(), 0, 0, 0, logAppendTimestamp, maxBatchTimestamp, TimestampType.CREATE_TIME),
+                BatchInfo.of(OBJECT_KEY_A_MAIN_PART, recordsA.sizeInBytes(), recordsB.sizeInBytes(), 1, 1, 1, logAppendTimestamp, maxBatchTimestamp, TimestampType.CREATE_TIME)
+            ), logStartOffset, highWatermark)
         );
 
         List<Future<FileExtent>> files = Stream.of(

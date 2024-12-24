@@ -50,16 +50,7 @@ class BatchBuffer {
         for (final BatchHolder batchHolder : batches) {
             final int byteOffset = byteBuffer.position();
 
-            commitBatchRequests.add(
-                new CommitBatchRequest(
-                    batchHolder.topicIdPartition(),
-                    byteOffset,
-                    batchHolder.batch.sizeInBytes(),
-                    batchHolder.numberOfRecords(),
-                    batchHolder.batchMaxTimestamp(),
-                    batchHolder.timestampType()
-                )
-            );
+            commitBatchRequests.add(batchHolder.commitBatchRequest(byteOffset));
             requestIds.add(batchHolder.requestId);
             batchHolder.batch.writeTo(byteBuffer);
         }
@@ -76,12 +67,34 @@ class BatchBuffer {
                                MutableRecordBatch batch,
                                TimestampType timestampType,
                                int requestId) {
-        long numberOfRecords() {
-            return batch.nextOffset() - batch.baseOffset();
-        }
-
-        long batchMaxTimestamp() {
-            return batch.maxTimestamp();
+        CommitBatchRequest commitBatchRequest(int byteOffset) {
+            final CommitBatchRequest request;
+            if (batch.hasProducerId()) {
+                request = CommitBatchRequest.idempotent(
+                    topicIdPartition(),
+                    byteOffset,
+                    batch.sizeInBytes(),
+                    batch.baseOffset(),
+                    batch.lastOffset(),
+                    batch.maxTimestamp(),
+                    timestampType,
+                    batch.producerId(),
+                    batch.producerEpoch(),
+                    batch.baseSequence(),
+                    batch.lastSequence()
+                );
+            } else {
+                request = CommitBatchRequest.of(
+                    topicIdPartition(),
+                    byteOffset,
+                    batch.sizeInBytes(),
+                    batch.baseOffset(),
+                    batch.lastOffset(),
+                    batch.maxTimestamp(),
+                    timestampType
+                );
+            }
+            return request;
         }
     }
 

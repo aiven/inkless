@@ -4,6 +4,8 @@ package io.aiven.inkless.control_plane;
 import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.utils.Time;
+import org.apache.kafka.storage.internals.log.BatchMetadata;
+import org.apache.kafka.storage.internals.log.ProducerStateEntry;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -13,6 +15,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Iterator;
+import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -28,6 +31,7 @@ public class InMemoryControlPlane extends AbstractControlPlane {
     private final Map<String, FileInfo> files = new HashMap<>();
     private final List<FileToDeleteInternal> filesToDelete = new ArrayList<>();
     private final HashMap<TopicIdPartition, TreeMap<Long, BatchInfoInternal>> batches = new HashMap<>();
+    private final HashMap<TopicIdPartition, TreeMap<Long, LatestProducerState>> producers = new HashMap<>();
 
     public InMemoryControlPlane(final Time time) {
         super(time);
@@ -36,6 +40,7 @@ public class InMemoryControlPlane extends AbstractControlPlane {
     @Override
     public void configure(final Map<String, ?> configs) {
         // Do nothing.
+        super.configure(configs);
     }
 
     @Override
@@ -53,7 +58,7 @@ public class InMemoryControlPlane extends AbstractControlPlane {
     }
 
     @Override
-    protected Iterator<CommitBatchResponse> commitFileForExistingPartitions(
+    protected Iterator<CommitBatchResponse> commitFileForValidRequests(
         final String objectKey,
         final int uploaderBrokerId,
         final long fileSize,
@@ -63,13 +68,13 @@ public class InMemoryControlPlane extends AbstractControlPlane {
         final FileInfo fileInfo = new FileInfo(objectKey, uploaderBrokerId, fileSize);
         files.put(objectKey, fileInfo);
         return requests
-            .map(request -> commitFileForExistingPartition(now, fileInfo, request))
+            .map(request -> commitFileForValidRequest(now, fileInfo, request))
             .iterator();
     }
 
-    private CommitBatchResponse commitFileForExistingPartition(final long now,
-                                                               final FileInfo fileInfo,
-                                                               final CommitBatchRequest request) {
+    private CommitBatchResponse commitFileForValidRequest(final long now,
+                                                          final FileInfo fileInfo,
+                                                          final CommitBatchRequest request) {
         final TopicIdPartition topicIdPartition = request.topicIdPartition();
         final LogInfo logInfo = logs.get(topicIdPartition);
         final TreeMap<Long, BatchInfoInternal> coordinates = this.batches.get(topicIdPartition);
@@ -79,21 +84,64 @@ public class InMemoryControlPlane extends AbstractControlPlane {
             return CommitBatchResponse.unknownTopicOrPartition();
         }
 
+        // Update the producer state
+        if (request.hasProducerId()) {
+            final LatestProducerState latestProducerState = producers
+                .computeIfAbsent(topicIdPartition, k -> new TreeMap<>())
+                .computeIfAbsent(request.producerId(), k -> LatestProducerState.empty(request));
+
+            if (latestProducerState.epoch > request.producerEpoch()) {
+                LOGGER.warn("Producer request with epoch {} is less than the latest epoch {}. Rejecting request",
+                    request.producerEpoch(), latestProducerState.epoch);
+                return CommitBatchResponse.invalidProducerEpoch();
+            }
+
+            if (latestProducerState.lastEntries.isEmpty()) {
+                if (request.baseSequence() != 0) {
+                    LOGGER.warn("Producer request with base sequence {} is not 0. Rejecting request", request.baseSequence());
+                    return CommitBatchResponse.sequenceOutOfOrder(request);
+                }
+            } else {
+                final int lastSeq = latestProducerState.lastEntries.getLast().lastSeq;
+                if (request.baseSequence() - 1 != lastSeq || (lastSeq == Integer.MAX_VALUE && request.baseSequence() != 0)) {
+                    LOGGER.warn("Producer request with base sequence {} is not the next sequence after the last sequence {}. Rejecting request",
+                        request.baseSequence(), lastSeq);
+                    return CommitBatchResponse.sequenceOutOfOrder(request);
+                }
+            }
+
+            final LatestProducerState current;
+            if (latestProducerState.epoch < request.producerEpoch()) {
+                current = LatestProducerState.empty(request);
+            } else {
+                current = latestProducerState;
+            }
+            current.addElement(request.batchMetadata());
+
+            producers.get(topicIdPartition).put(request.producerId(), current);
+        }
+
         final long firstOffset = logInfo.highWatermark;
-        logInfo.highWatermark += request.numberOfRecords();
-        final long lastOffset = logInfo.highWatermark - 1;
+        final long lastOffset = firstOffset + request.offsetDelta();
+        logInfo.highWatermark = lastOffset + 1;
         final BatchInfo batchInfo = new BatchInfo(
             fileInfo.objectKey,
             request.byteOffset(),
             request.size(),
             firstOffset,
-            request.numberOfRecords(),
-            request.messageTimestampType(),
+            request.baseOffset(),
+            request.lastOffset(),
             now,
-            request.batchMaxTimestamp()
+            request.batchMaxTimestamp(),
+            request.messageTimestampType(),
+            request.producerId(),
+            request.producerEpoch(),
+            request.baseSequence(),
+            request.lastSequence()
         );
         coordinates.put(lastOffset, new BatchInfoInternal(batchInfo, fileInfo));
-        return CommitBatchResponse.success(firstOffset, now, logInfo.logStartOffset);
+
+        return CommitBatchResponse.success(firstOffset, now, logInfo.logStartOffset, request);
     }
 
     @Override
@@ -177,6 +225,44 @@ public class InMemoryControlPlane extends AbstractControlPlane {
     }
 
     @Override
+    public List<FindProducerStateResponse> findProducerStates(final List<FindProducerStateRequest> findProducerStateRequests) {
+        return findProducerStateRequests.stream()
+            .map(this::findProducerState)
+            .toList();
+    }
+
+    private FindProducerStateResponse findProducerState(final FindProducerStateRequest request) {
+        ProducerStateEntry entry = ProducerStateEntry.empty(request.producerId());
+        entry.maybeUpdateProducerEpoch(request.producerEpoch());
+
+        final TreeMap<Long, LatestProducerState> producerIdsState = producers.get(request.topicIdPartition());
+        if (producerIdsState == null) {
+            return FindProducerStateResponse.empty(request);
+        }
+
+        final LatestProducerState latestProducerState = producerIdsState.get(request.producerId());
+        if (latestProducerState == null) {
+            return FindProducerStateResponse.empty(request);
+        }
+
+        final Instant minTimestamp = producerStateCache.minimumTimestamp();
+        final boolean isNewEpoch = latestProducerState.epoch != request.producerEpoch();
+        final boolean isOldProducer = latestProducerState.timestamp < minTimestamp.toEpochMilli();
+        if (isNewEpoch || isOldProducer) {
+            // Return new state to let commit handle the update
+            return FindProducerStateResponse.empty(request);
+        }
+
+        // Return existing state when epoch matches and time is valid
+        return FindProducerStateResponse.of(request, latestProducerState.lastEntries());
+    }
+
+    @Override
+    public long logStartOffset(final TopicIdPartition topicIdPartition) {
+        return logs.get(topicIdPartition).logStartOffset;
+    }
+
+    @Override
     public void close() throws IOException {
         // Do nothing.
     }
@@ -220,5 +306,19 @@ public class InMemoryControlPlane extends AbstractControlPlane {
 
     private record BatchInfoInternal(BatchInfo batchInfo,
                                      FileInfo fileInfo) {
+    }
+    
+    private record LatestProducerState(short epoch, long timestamp, LinkedList<BatchMetadata> lastEntries) {
+        static LatestProducerState empty(CommitBatchRequest request) {
+            return new LatestProducerState(request.producerEpoch(), request.batchMaxTimestamp(), new LinkedList<>());
+        }
+
+        public void addElement(BatchMetadata element) {
+            // Keep the last 5 entries
+            while (lastEntries.size() >= 5) {
+                lastEntries.removeFirst();
+            }
+            lastEntries.addLast(element);
+        }
     }
 }

@@ -63,10 +63,10 @@ class FileCommitJobTest {
         1, REQUEST_1
     );
     static final List<CommitBatchRequest> COMMIT_BATCH_REQUESTS = List.of(
-        new CommitBatchRequest(T0P0, 0, 100, 10, 1000, TimestampType.CREATE_TIME),
-        new CommitBatchRequest(T0P1, 100, 100, 10, 1000, TimestampType.CREATE_TIME),
-        new CommitBatchRequest(T0P1, 200, 100, 10, 1000, TimestampType.CREATE_TIME),
-        new CommitBatchRequest(T1P0, 300, 100, 10, 1000, TimestampType.LOG_APPEND_TIME)
+        CommitBatchRequest.of(T0P0, 0, 100, 0, 9, 1000, TimestampType.CREATE_TIME),
+        CommitBatchRequest.of(T0P1, 100, 100, 0, 9, 1000, TimestampType.CREATE_TIME),
+        CommitBatchRequest.of(T0P1, 200, 100, 0, 9, 1000, TimestampType.CREATE_TIME),
+        CommitBatchRequest.of(T1P0, 300, 100, 0, 9, 1000, TimestampType.LOG_APPEND_TIME)
     );
     static final List<Integer> REQUEST_IDS = List.of(0, 0, 1, 1);
 
@@ -90,10 +90,10 @@ class FileCommitJobTest {
         );
 
         final List<CommitBatchResponse> commitBatchResponses = List.of(
-            new CommitBatchResponse(Errors.NONE, 0, 10, 0),
-            new CommitBatchResponse(Errors.INVALID_TOPIC_EXCEPTION, -1, -1, -1),  // some arbitrary uploadError
-            new CommitBatchResponse(Errors.NONE, 20, 10, 0),
-            new CommitBatchResponse(Errors.NONE, 30, 10, 0)
+            CommitBatchResponse.of(Errors.NONE, 0, 10, 0),
+            CommitBatchResponse.of(Errors.INVALID_TOPIC_EXCEPTION, -1, -1, -1),  // some arbitrary uploadError
+            CommitBatchResponse.of(Errors.NONE, 20, 10, 0),
+            CommitBatchResponse.of(Errors.NONE, 30, 10, 0)
         );
 
         when(controlPlane.commitFile(eq(OBJECT_KEY_MAIN_PART), eq(BROKER_ID), eq(FILE_SIZE), eq(COMMIT_BATCH_REQUESTS)))

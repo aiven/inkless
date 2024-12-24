@@ -1,6 +1,7 @@
 // Copyright (c) 2024 Aiven, Helsinki, Finland. https://aiven.io/
 package io.aiven.inkless.control_plane.postgres;
 
+import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.utils.Time;
 
@@ -8,7 +9,12 @@ import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
 import com.zaxxer.hikari.util.IsolationLevel;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.io.IOException;
+import java.sql.Connection;
+import java.sql.SQLException;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
@@ -22,8 +28,11 @@ import io.aiven.inkless.control_plane.CreateTopicAndPartitionsRequest;
 import io.aiven.inkless.control_plane.FileToDelete;
 import io.aiven.inkless.control_plane.FindBatchRequest;
 import io.aiven.inkless.control_plane.FindBatchResponse;
+import io.aiven.inkless.control_plane.FindProducerStateRequest;
+import io.aiven.inkless.control_plane.FindProducerStateResponse;
 
 public class PostgresControlPlane extends AbstractControlPlane {
+    private static final Logger LOGGER = LoggerFactory.getLogger(PostgresControlPlane.class);
 
     private final PostgresControlPlaneMetrics metrics;
 
@@ -42,6 +51,8 @@ public class PostgresControlPlane extends AbstractControlPlane {
 
     @Override
     public void configure(final Map<String, ?> configs) {
+        super.configure(configs);
+
         final PostgresControlPlaneConfig controlPlaneConfig = new PostgresControlPlaneConfig(configs);
         Migrations.migrate(controlPlaneConfig);
 
@@ -59,7 +70,7 @@ public class PostgresControlPlane extends AbstractControlPlane {
     }
 
     @Override
-    protected Iterator<CommitBatchResponse> commitFileForExistingPartitions(
+    protected Iterator<CommitBatchResponse> commitFileForValidRequests(
         final String objectKey,
         final int uploaderBrokerId,
         final long fileSize,
@@ -93,6 +104,43 @@ public class PostgresControlPlane extends AbstractControlPlane {
     public List<FileToDelete> getFilesToDelete() {
         final FindFilesToDeleteJob job = new FindFilesToDeleteJob(time, hikariDataSource);
         return job.call();
+    }
+
+    public List<FindProducerStateResponse> findProducerStates(
+        final List<FindProducerStateRequest> findProducerStateRequests
+    ) {
+        final FindProducerStateJob job = new FindProducerStateJob(
+            time, hikariDataSource,
+            findProducerStateRequests,
+            producerStateCache.minimumTimestamp(),
+            metrics::onFindProducerStateCompleted);
+        return job.call();
+    }
+
+    private Connection readOnlyConnection() throws SQLException {
+        final Connection connection;
+        try {
+            connection = hikariDataSource.getConnection();
+            // Mind this read-only setting.
+            connection.setReadOnly(true);
+        } catch (final SQLException e) {
+            LOGGER.error("Cannot get Postgres connection", e);
+            throw e;
+        }
+        return connection;
+    }
+
+    @Override
+    public long logStartOffset(TopicIdPartition topicIdPartition) {
+        try {
+            final Connection connection = readOnlyConnection();
+
+            final var topicIdPartitions = List.of(topicIdPartition);
+            final var logs = LogSelectQuery.execute(time, connection, topicIdPartitions, false, metrics::onGetLogsCompleted);
+            return logs.stream().findAny().map(LogEntity::logStartOffset).orElse(-1L);
+        } catch (final Exception e) {
+            throw new RuntimeException(e);
+        }
     }
 
     @Override

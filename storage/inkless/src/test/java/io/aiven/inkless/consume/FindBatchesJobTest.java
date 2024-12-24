@@ -42,8 +42,6 @@ public class FindBatchesJobTest {
     private ControlPlane controlPlane;
     @Mock
     private FetchParams params;
-    @Mock
-    private Map<TopicIdPartition, FetchRequest.PartitionData> fetchInfos;
 
     @Captor
     ArgumentCaptor<List<FindBatchRequest>> requestCaptor;
@@ -62,9 +60,10 @@ public class FindBatchesJobTest {
         long maxBatchTimestamp = 20L;
         int highWatermark = 1;
         Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of(
-                partition0, FindBatchResponse.success(List.of(
-                        new BatchInfo(OBJECT_KEY_MAIN_PART, 0, 10, 0, 1, TimestampType.CREATE_TIME, logAppendTimestamp, maxBatchTimestamp)
-                ), logStartOffset, highWatermark)
+            partition0,
+            FindBatchResponse.success(List.of(
+                BatchInfo.of(OBJECT_KEY_MAIN_PART, 0, 10, 0, 0, 0, logAppendTimestamp, maxBatchTimestamp, TimestampType.CREATE_TIME)
+            ), logStartOffset, highWatermark)
         );
         FindBatchesJob job = new FindBatchesJob(time, controlPlane, params, fetchInfos, durationMs -> { });
         when(controlPlane.findBatches(requestCaptor.capture(), anyBoolean(), anyInt())).thenReturn(new ArrayList<>(coordinates.values()));

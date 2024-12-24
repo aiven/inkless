@@ -13,10 +13,14 @@ import org.apache.kafka.common.utils.MockTime;
 import org.apache.kafka.common.utils.Time;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 
 import java.nio.ByteBuffer;
 import java.util.Arrays;
 import java.util.Iterator;
+import java.util.stream.Stream;
 
 import io.aiven.inkless.control_plane.CommitBatchRequest;
 
@@ -52,7 +56,6 @@ class BatchBufferTest {
 
     @Test
     void empty() {
-        final Time time = new MockTime();
         final BatchBuffer buffer = new BatchBuffer();
 
         BatchBuffer.CloseResult result = buffer.close();
@@ -66,22 +69,34 @@ class BatchBufferTest {
         assertThat(result.data()).isEmpty();
     }
 
-    @Test
-    void singleBatch() {
+    public static Stream<Arguments> singleBatchParams() {
         final Time time = new MockTime();
+        return Stream.of(
+            Arguments.of(
+                createBatch(time, T0P0 + "-0", T0P0 + "-1", T0P0 + "-2"),
+                CommitBatchRequest.of(T0P0, 0, 181, 19, 21, time.milliseconds(), TimestampType.CREATE_TIME)
+            ),
+            Arguments.of(
+                createIdempotentBatch(time, T0P0 + "-0", T0P0 + "-1", T0P0 + "-2"),
+                CommitBatchRequest.idempotent(T0P0, 0, 181, 19, 21, time.milliseconds(), TimestampType.CREATE_TIME, 1, (short) 1, 1, 3)
+            )
+        );
+    }
+
+    @ParameterizedTest
+    @MethodSource("singleBatchParams")
+    void singleBatch(MutableRecordBatch batch, CommitBatchRequest expectedRequest) {
         final BatchBuffer buffer = new BatchBuffer();
 
-        final MutableRecordBatch batch = createBatch(time, T0P0 + "-0", T0P0 + "-1", T0P0 + "-2");
         final byte[] beforeAdding = batchToBytes(batch);
         buffer.addBatch(T0P0, TimestampType.CREATE_TIME, batch, 0);
 
         final BatchBuffer.CloseResult result = buffer.close();
-        assertThat(result.commitBatchRequests()).containsExactly(
-            new CommitBatchRequest(T0P0, 0, batch.sizeInBytes(), 3, time.milliseconds(), TimestampType.CREATE_TIME)
-        );
+        assertThat(result.commitBatchRequests()).containsExactly(expectedRequest);
         assertThat(result.requestIds()).containsExactly(0);
         assertThat(result.data()).containsExactly(batchToBytes(batch));
         assertThat(result.data()).containsExactly(beforeAdding);
+        assertThat(batch.hasProducerId()).isEqualTo(expectedRequest.hasProducerId());
     }
 
     @Test
@@ -117,15 +132,15 @@ class BatchBufferTest {
         // Here batches are sorted.
         final BatchBuffer.CloseResult result = buffer.close();
         assertThat(result.commitBatchRequests()).containsExactly(
-            new CommitBatchRequest(T0P0, 0, batchSize, 1, time.milliseconds(), TimestampType.CREATE_TIME),
-            new CommitBatchRequest(T0P0, batchSize, batchSize, 1, time.milliseconds(), TimestampType.CREATE_TIME),
-            new CommitBatchRequest(T0P0, batchSize*2, batchSize, 1, time.milliseconds(), TimestampType.CREATE_TIME),
-            new CommitBatchRequest(T0P1, batchSize*3, batchSize, 1, time.milliseconds(), TimestampType.LOG_APPEND_TIME),
-            new CommitBatchRequest(T0P1, batchSize*4, batchSize, 1, time.milliseconds(), TimestampType.LOG_APPEND_TIME),
-            new CommitBatchRequest(T0P1, batchSize*5, batchSize, 1, time.milliseconds(), TimestampType.LOG_APPEND_TIME),
-            new CommitBatchRequest(T1P0, batchSize*6, batchSize, 1, time.milliseconds(), TimestampType.LOG_APPEND_TIME),
-            new CommitBatchRequest(T1P0, batchSize*7, batchSize, 1, time.milliseconds(), TimestampType.LOG_APPEND_TIME),
-            new CommitBatchRequest(T1P0, batchSize*8, batchSize, 1, time.milliseconds(), TimestampType.LOG_APPEND_TIME)
+            CommitBatchRequest.of(T0P0, 0, batchSize, 19, 19, time.milliseconds(), TimestampType.CREATE_TIME),
+            CommitBatchRequest.of(T0P0, batchSize, batchSize, 19, 19, time.milliseconds(), TimestampType.CREATE_TIME),
+            CommitBatchRequest.of(T0P0, batchSize*2, batchSize, 19, 19, time.milliseconds(), TimestampType.CREATE_TIME),
+            CommitBatchRequest.of(T0P1, batchSize*3, batchSize, 19, 19, time.milliseconds(), TimestampType.LOG_APPEND_TIME),
+            CommitBatchRequest.of(T0P1, batchSize*4, batchSize, 19, 19, time.milliseconds(), TimestampType.LOG_APPEND_TIME),
+            CommitBatchRequest.of(T0P1, batchSize*5, batchSize, 19, 19, time.milliseconds(), TimestampType.LOG_APPEND_TIME),
+            CommitBatchRequest.of(T1P0, batchSize*6, batchSize, 19, 19, time.milliseconds(), TimestampType.LOG_APPEND_TIME),
+            CommitBatchRequest.of(T1P0, batchSize*7, batchSize, 19, 19, time.milliseconds(), TimestampType.LOG_APPEND_TIME),
+            CommitBatchRequest.of(T1P0, batchSize*8, batchSize, 19, 19, time.milliseconds(), TimestampType.LOG_APPEND_TIME)
         );
         assertThat(result.requestIds()).containsExactly(
             0, 0, 1,
@@ -160,7 +175,7 @@ class BatchBufferTest {
         buffer.addBatch(T0P0, TimestampType.LOG_APPEND_TIME, batch1, 0);
         final BatchBuffer.CloseResult result1 = buffer.close();
         assertThat(result1.commitBatchRequests()).containsExactly(
-            new CommitBatchRequest(T0P0, 0, batch1.sizeInBytes(), 1, time.milliseconds(), TimestampType.LOG_APPEND_TIME)
+            CommitBatchRequest.of(T0P0, 0, batch1.sizeInBytes(), 19, 19, time.milliseconds(), TimestampType.LOG_APPEND_TIME)
         );
         assertThat(result1.data()).containsExactly(batchToBytes(batch1));
         assertThat(result1.requestIds()).containsExactly(0);
@@ -171,10 +186,8 @@ class BatchBufferTest {
             .hasMessage("Already closed");
     }
 
-    MutableRecordBatch createBatch(Time time, String... content) {
-        final SimpleRecord[] simpleRecords = Arrays.stream(content)
-            .map(c -> new SimpleRecord(time.milliseconds(), c.getBytes()))
-            .toArray(SimpleRecord[]::new);
+    static MutableRecordBatch createBatch(Time time, String... content) {
+        final SimpleRecord[] simpleRecords = simpleRecords(time, content);
         final int initialOffset = 19;  // some non-zero number
         final MemoryRecords records = MemoryRecords.withRecords(initialOffset, Compression.NONE, simpleRecords);
         final Iterator<MutableRecordBatch> iterator = records.batches().iterator();
@@ -182,6 +195,23 @@ class BatchBufferTest {
             return null;
         }
         return iterator.next();
+    }
+
+    static MutableRecordBatch createIdempotentBatch(Time time, String... content) {
+        final SimpleRecord[] simpleRecords = simpleRecords(time, content);
+        final int initialOffset = 19;  // some non-zero number
+        final MemoryRecords records = MemoryRecords.withIdempotentRecords(initialOffset, Compression.NONE, 1L, (short) 1, 1, 1, simpleRecords);
+        final Iterator<MutableRecordBatch> iterator = records.batches().iterator();
+        if (!iterator.hasNext()) {
+            return null;
+        }
+        return iterator.next();
+    }
+
+    private static SimpleRecord [] simpleRecords(Time time, String[] content) {
+        return Arrays.stream(content)
+            .map(c -> new SimpleRecord(time.milliseconds(), c.getBytes()))
+            .toArray(SimpleRecord[]::new);
     }
 
     byte[] batchToBytes(final RecordBatch batch) {
