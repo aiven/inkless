@@ -35,7 +35,6 @@ import io.aiven.inkless.control_plane.ListOffsetsResponse;
 import io.aiven.inkless.control_plane.MergedFileBatch;
 
 public class PostgresControlPlane extends AbstractControlPlane {
-
     private final PostgresControlPlaneMetrics metrics;
 
     private HikariDataSource hikariDataSource;
@@ -73,7 +72,7 @@ public class PostgresControlPlane extends AbstractControlPlane {
     }
 
     @Override
-    protected Iterator<CommitBatchResponse> commitFileForExistingPartitions(
+    protected Iterator<CommitBatchResponse> commitFileForValidRequests(
         final String objectKey,
         final int uploaderBrokerId,
         final long fileSize,

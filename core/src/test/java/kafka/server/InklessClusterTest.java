@@ -130,20 +130,20 @@ public class InklessClusterTest extends SharedPostgreSQLTest {
     public static Stream<Arguments> params() {
         return Stream.of(
             Arguments.of(
-                TimestampType.CREATE_TIME
+                true, TimestampType.CREATE_TIME
             ),
             Arguments.of(
-                TimestampType.LOG_APPEND_TIME
+                false, TimestampType.LOG_APPEND_TIME
             )
         );
     }
 
     @ParameterizedTest
     @MethodSource("params")
-    public void createInklessTopic(final TimestampType timestampType) throws Exception {
+    public void createInklessTopic(final boolean idempotenceEnable, final TimestampType timestampType) throws Exception {
         Map<String, Object> clientConfigs = new HashMap<>();
         clientConfigs.put(CommonClientConfigs.BOOTSTRAP_SERVERS_CONFIG, cluster.bootstrapServers());
-        clientConfigs.put(ProducerConfig.ENABLE_IDEMPOTENCE_CONFIG, "false");
+        clientConfigs.put(ProducerConfig.ENABLE_IDEMPOTENCE_CONFIG, String.valueOf(idempotenceEnable));
         clientConfigs.put(ProducerConfig.LINGER_MS_CONFIG, "1000");
         clientConfigs.put(ProducerConfig.BATCH_SIZE_CONFIG, "100000");
         clientConfigs.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, ByteArraySerializer.class.getName());
