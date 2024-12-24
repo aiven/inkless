@@ -136,6 +136,12 @@ public class ProducerStateEntry {
         else return batchWithSequenceRange(batch.baseSequence(), batch.lastSequence());
     }
 
+    // inkless: decouple from RecordBatch
+    public Optional<BatchMetadata> findDuplicateBatch(int producerEpoch, int firstSeq, int lastSeq) {
+        if (producerEpoch != this.producerEpoch) return Optional.empty();
+        else return batchWithSequenceRange(firstSeq, lastSeq);
+    }
+
     // Return the batch metadata of the cached batch having the exact sequence range, if any.
     Optional<BatchMetadata> batchWithSequenceRange(int firstSeq, int lastSeq) {
         Stream<BatchMetadata> duplicate = batchMetadata.stream().filter(metadata -> firstSeq == metadata.firstSeq() && lastSeq == metadata.lastSeq);

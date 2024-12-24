@@ -1,6 +1,7 @@
 // Copyright (c) 2024 Aiven, Helsinki, Finland. https://aiven.io/
 package io.aiven.inkless.control_plane;
 
+import org.apache.kafka.common.record.RecordBatch;
 import org.apache.kafka.common.record.TimestampType;
 
 import io.aiven.inkless.common.ByteRange;
@@ -14,7 +15,11 @@ public record BatchInfo(
     long requestLastOffset,
     long logAppendTimestamp,
     long batchMaxTimestamp,
-    TimestampType timestampType
+    TimestampType timestampType,
+    long producerId,
+    short producerEpoch,
+    int baseSequence,
+    int lastSequence
 ) {
     public BatchInfo {
         if (requestLastOffset < requestBaseOffset) {
@@ -43,7 +48,11 @@ public record BatchInfo(
             requestLastOffset,
             logAppendTimestamp,
             batchMaxTimestamp,
-            timestampType
+            timestampType,
+            RecordBatch.NO_PRODUCER_ID,
+            RecordBatch.NO_PRODUCER_EPOCH,
+            RecordBatch.NO_SEQUENCE,
+            RecordBatch.NO_SEQUENCE
         );
     }
 

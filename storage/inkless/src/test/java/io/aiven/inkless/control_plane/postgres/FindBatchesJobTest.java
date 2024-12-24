@@ -58,7 +58,8 @@ class FindBatchesJobTest extends SharedPostgreSQLTest {
         assertThat(commitJob.call()).isNotEmpty();
 
         final FindBatchesJob job = new FindBatchesJob(
-            time, hikariDataSource,
+            time,
+            hikariDataSource,
             List.of(
                 // This will produce a normal find result with some batches.
                 new FindBatchRequest(new TopicIdPartition(TOPIC_ID_0, 0, TOPIC_0), 0, 1000),

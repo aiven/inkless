@@ -27,6 +27,15 @@ CHECK (VALUE >= -1 AND VALUE <= 1);
 CREATE DOMAIN timestamp_t AS BIGINT NOT NULL
 CHECK (VALUE >= -1);
 
+CREATE DOMAIN producer_id_t AS BIGINT NOT NULL
+CHECK (VALUE >= -1);
+
+CREATE DOMAIN producer_epoch_t AS SMALLINT NOT NULL
+CHECK (VALUE >= -1);
+
+CREATE DOMAIN sequence_t AS INT NOT NULL
+CHECK (VALUE >= -1);
+
 CREATE TABLE logs (
     topic_id topic_id_t,
     partition partition_t,
@@ -79,6 +88,10 @@ CREATE TABLE batches (
     timestamp_type timestamp_type_t,
     log_append_timestamp timestamp_t,
     batch_max_timestamp timestamp_t,
+    producer_id producer_id_t,
+    producer_epoch producer_epoch_t,
+    base_sequence sequence_t,
+    last_sequence sequence_t,
     PRIMARY KEY(topic_id, partition, base_offset),
     CONSTRAINT fk_batches_logs FOREIGN KEY (topic_id, partition) REFERENCES logs(topic_id, partition)
         ON DELETE NO ACTION ON UPDATE CASCADE DEFERRABLE INITIALLY DEFERRED,  -- allow deleting logs before batches
@@ -87,12 +100,16 @@ CREATE TABLE batches (
 
 CREATE INDEX batches_by_last_offset_idx ON batches (topic_id, partition, last_offset);
 
+CREATE INDEX batches_by_producer_idx ON batches (producer_id, producer_epoch);
+
 CREATE TYPE commit_batch_response_v1 AS (
     topic_id topic_id_t,
     partition partition_t,
     log_exists BOOLEAN,
     assigned_offset offset_nullable_t,
-    log_start_offset offset_nullable_t
+    log_start_offset offset_nullable_t,
+    invalid_producer_epoch BOOLEAN,
+    sequence_out_of_order BOOLEAN
 );
 
 CREATE FUNCTION commit_file_v1(
@@ -126,7 +143,11 @@ BEGIN
                 request_base_offset offset_t,
                 request_last_offset offset_t,
                 timestamp_type timestamp_type_t,
-                batch_max_timestamp timestamp_t
+                batch_max_timestamp timestamp_t,
+                producer_id producer_id_t,
+                producer_epoch producer_epoch_t,
+                base_sequence sequence_t,
+                last_sequence sequence_t
             )
     LOOP
         SELECT *
@@ -137,8 +158,63 @@ BEGIN
         INTO log;
 
         IF NOT FOUND THEN
-            RETURN NEXT (request.topic_id, request.partition, FALSE, NULL, NULL)::commit_batch_response_v1;
+            RETURN NEXT (request.topic_id, request.partition, FALSE, NULL, NULL, FALSE, FALSE)::commit_batch_response_v1;
             CONTINUE;
+        END IF;
+
+        -- Validate that the new request base sequence is not larger than the previous batch last sequence
+        IF request.producer_id > -1 AND request.producer_epoch > -1
+        THEN
+             IF EXISTS (
+                SELECT 1
+                FROM batches
+                WHERE topic_id = request.topic_id
+                    AND partition = request.partition
+                    AND producer_id = request.producer_id
+                    AND producer_epoch > request.producer_epoch
+             ) THEN
+                RETURN NEXT (request.topic_id, request.partition, TRUE, NULL, NULL, TRUE, FALSE)::commit_batch_response_v1;
+                CONTINUE;
+             END IF;
+            -- If there are previous batches for the producer, check that the base sequence is not larger than the last sequence
+            IF EXISTS (
+                SELECT 1
+                FROM batches
+                WHERE topic_id = request.topic_id
+                  AND partition = request.partition
+                  AND producer_id = request.producer_id
+                  AND producer_epoch = request.producer_epoch
+            ) THEN
+                IF EXISTS (
+                    SELECT 1
+                    FROM batches
+                    WHERE topic_id = request.topic_id
+                        AND partition = request.partition
+                        AND producer_id = request.producer_id
+                        AND producer_epoch = request.producer_epoch
+                        AND last_sequence = (
+                            SELECT MAX(last_sequence)
+                            FROM batches
+                            WHERE topic_id = request.topic_id
+                            AND partition = request.partition
+                            AND producer_id = request.producer_id
+                            AND producer_epoch = request.producer_epoch
+                        )
+                        -- sequence is out of order if the base sequence is not a continuation of the last sequence
+                        AND request.base_sequence - 1 != last_sequence
+                        -- if end of int32 range, the base sequence must be 0 and the last sequence must be 2147483647
+                        AND NOT (request.base_sequence = 0 AND last_sequence = 2147483647)
+                ) THEN
+                    RETURN NEXT (request.topic_id, request.partition, TRUE, NULL, NULL, FALSE, TRUE)::commit_batch_response_v1;
+                    CONTINUE;
+                END IF;
+            ELSE
+                IF request.base_sequence != 0
+                THEN
+                    RETURN NEXT (request.topic_id, request.partition, TRUE, NULL, NULL, FALSE, TRUE)::commit_batch_response_v1;
+                    CONTINUE;
+                END IF;
+            END IF;
         END IF;
 
         assigned_offset = log.high_watermark;
@@ -158,9 +234,8 @@ BEGIN
             request_last_offset,
             file_id,
             byte_offset, byte_size,
-            timestamp_type,
-            log_append_timestamp,
-            batch_max_timestamp
+            timestamp_type, log_append_timestamp, batch_max_timestamp,
+            producer_id, producer_epoch, base_sequence, last_sequence
         )
         VALUES (
             request.topic_id, request.partition,
@@ -171,10 +246,11 @@ BEGIN
             request.byte_offset, request.byte_size,
             request.timestamp_type,
             (EXTRACT(EPOCH FROM now AT TIME ZONE 'UTC') * 1000)::BIGINT,
-            request.batch_max_timestamp
+            request.batch_max_timestamp,
+            request.producer_id, request.producer_epoch, request.base_sequence, request.last_sequence
         );
 
-        RETURN NEXT (request.topic_id, request.partition, TRUE, assigned_offset, log.log_start_offset)::commit_batch_response_v1;
+        RETURN NEXT (request.topic_id, request.partition, TRUE, assigned_offset, log.log_start_offset, FALSE, FALSE)::commit_batch_response_v1;
     END LOOP;
 END;
 $$

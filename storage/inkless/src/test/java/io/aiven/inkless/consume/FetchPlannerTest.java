@@ -142,8 +142,7 @@ public class FetchPlannerTest {
                 ), 0,  1)
             ),
             Set.of(
-                new CacheFetchJob(cache, OBJECT_KEY_A, requestRange, time, fetcher, durationMs -> {
-                })
+                new CacheFetchJob(cache, OBJECT_KEY_A, requestRange, time, fetcher, durationMs -> {})
             )
         );
     }

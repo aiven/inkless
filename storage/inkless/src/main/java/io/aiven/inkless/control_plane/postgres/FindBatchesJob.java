@@ -33,7 +33,8 @@ class FindBatchesJob implements Callable<List<FindBatchResponse>> {
     private static final String SELECT_BATCHES = """
         SELECT b.base_offset, b.last_offset, f.object_key, b.byte_offset,
             b.byte_size, b.request_base_offset, b.request_last_offset,
-            b.timestamp_type, b.log_append_timestamp, b.batch_max_timestamp
+            b.timestamp_type, b.log_append_timestamp, b.batch_max_timestamp,
+            b.producer_id, b.producer_epoch, b.base_sequence, b.last_sequence
         FROM batches AS b
             INNER JOIN files AS f ON b.file_id = f.file_id
         WHERE topic_id = ?
@@ -152,7 +153,11 @@ class FindBatchesJob implements Callable<List<FindBatchResponse>> {
                         resultSet.getLong("request_last_offset"),
                         resultSet.getLong("log_append_timestamp"),
                         resultSet.getLong("batch_max_timestamp"),
-                        BatchInfo.timestampTypeFromId(resultSet.getShort("timestamp_type"))
+                        BatchInfo.timestampTypeFromId(resultSet.getShort("timestamp_type")),
+                        resultSet.getLong("producer_id"),
+                        resultSet.getShort("producer_epoch"),
+                        resultSet.getInt("base_sequence"),
+                        resultSet.getInt("last_sequence")
                     );
                     batches.add(batch);
                     totalSize += batch.size();

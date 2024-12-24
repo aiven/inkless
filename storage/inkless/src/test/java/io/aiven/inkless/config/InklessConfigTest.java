@@ -27,6 +27,7 @@ class InklessConfigTest {
             "inkless.produce.buffer.max.bytes", "1024",
             "inkless.produce.max.upload.attempts", "5",
             "inkless.produce.upload.backoff.ms", "30",
+            "inkless.producer.id.expiration.ms", "60000",
             "inkless.storage.backend.class", ConfigTestStorageBackend.class.getCanonicalName()
         )));
         assertThat(config.controlPlaneClass()).isEqualTo(InMemoryControlPlane.class);
@@ -36,6 +37,7 @@ class InklessConfigTest {
         assertThat(config.produceBufferMaxBytes()).isEqualTo(1024);
         assertThat(config.produceMaxUploadAttempts()).isEqualTo(5);
         assertThat(config.produceUploadBackoff()).isEqualTo(Duration.ofMillis(30));
+        assertThat(config.producerStateManagerConfig().producerIdExpirationMs()).isEqualTo(60000);
         assertThat(config.storage()).isInstanceOf(ConfigTestStorageBackend.class);
     }
 
@@ -55,6 +57,7 @@ class InklessConfigTest {
         assertThat(config.produceBufferMaxBytes()).isEqualTo(8 * 1024 * 1024);
         assertThat(config.produceMaxUploadAttempts()).isEqualTo(3);
         assertThat(config.produceUploadBackoff()).isEqualTo(Duration.ofMillis(10));
+        assertThat(config.producerStateManagerConfig().producerIdExpirationMs()).isEqualTo(86400000);
         assertThat(config.storage()).isInstanceOf(ConfigTestStorageBackend.class);
     }
 
@@ -69,6 +72,7 @@ class InklessConfigTest {
                 "produce.buffer.max.bytes", "1024",
                 "produce.max.upload.attempts", "5",
                 "produce.upload.backoff.ms", "30",
+                "producer.id.expiration.ms", "60000",
                 "storage.backend.class", ConfigTestStorageBackend.class.getCanonicalName()
             )
         );
@@ -79,6 +83,7 @@ class InklessConfigTest {
         assertThat(config.produceBufferMaxBytes()).isEqualTo(1024);
         assertThat(config.produceMaxUploadAttempts()).isEqualTo(5);
         assertThat(config.produceUploadBackoff()).isEqualTo(Duration.ofMillis(30));
+        assertThat(config.producerStateManagerConfig().producerIdExpirationMs()).isEqualTo(60000);
         assertThat(config.storage()).isInstanceOf(ConfigTestStorageBackend.class);
     }
 

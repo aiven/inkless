@@ -66,19 +66,33 @@ class BatchBuffer {
                                TimestampType timestampType,
                                int requestId) {
         CommitBatchRequest toCommitBatchRequest(final int byteOffset) {
-            return CommitBatchRequest.of(
-                topicIdPartition,
-                byteOffset,
-                batch.sizeInBytes(),
-                batch.baseOffset(),
-                batch.lastOffset(),
-                batchMaxTimestamp(),
-                timestampType
-            );
-        }
-
-        long batchMaxTimestamp() {
-            return batch.maxTimestamp();
+            final CommitBatchRequest request;
+            if (batch.hasProducerId()) {
+                request = CommitBatchRequest.idempotent(
+                    topicIdPartition(),
+                    byteOffset,
+                    batch.sizeInBytes(),
+                    batch.baseOffset(),
+                    batch.lastOffset(),
+                    batch.maxTimestamp(),
+                    timestampType,
+                    batch.producerId(),
+                    batch.producerEpoch(),
+                    batch.baseSequence(),
+                    batch.lastSequence()
+                );
+            } else {
+                request = CommitBatchRequest.of(
+                    topicIdPartition(),
+                    byteOffset,
+                    batch.sizeInBytes(),
+                    batch.baseOffset(),
+                    batch.lastOffset(),
+                    batch.maxTimestamp(),
+                    timestampType
+                );
+            }
+            return request;
         }
     }
 

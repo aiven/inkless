@@ -3,13 +3,14 @@ package io.aiven.inkless.control_plane.postgres;
 
 import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.Uuid;
-import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.record.TimestampType;
 import org.apache.kafka.common.utils.MockTime;
 import org.apache.kafka.common.utils.Time;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 
 import java.time.Instant;
 import java.util.List;
@@ -65,8 +66,8 @@ class CommitFileJobTest extends SharedPostgreSQLTest {
         final List<CommitBatchResponse> result = job.call();
 
         assertThat(result).containsExactlyInAnyOrder(
-            new CommitBatchResponse(Errors.NONE, 0, time.milliseconds(), 0),
-            new CommitBatchResponse(Errors.NONE, 0, time.milliseconds(), 0)
+            CommitBatchResponse.success(0, time.milliseconds(), 0, request1),
+            CommitBatchResponse.success(0, time.milliseconds(), 0, request2)
         );
 
         assertThat(DBUtils.getAllLogs(hikariDataSource))
@@ -103,8 +104,8 @@ class CommitFileJobTest extends SharedPostgreSQLTest {
         final List<CommitBatchResponse> result1 = job1.call();
 
         assertThat(result1).containsExactlyInAnyOrder(
-            new CommitBatchResponse(Errors.NONE, 0, time.milliseconds(), 0),
-            new CommitBatchResponse(Errors.NONE, 0, time.milliseconds(), 0)
+            CommitBatchResponse.success(0, time.milliseconds(), 0, request1),
+            CommitBatchResponse.success(0, time.milliseconds(), 0, request2)
         );
 
         time.sleep(1000);  // advance time
@@ -119,8 +120,8 @@ class CommitFileJobTest extends SharedPostgreSQLTest {
         final List<CommitBatchResponse> result2 = job2.call();
 
         assertThat(result2).containsExactlyInAnyOrder(
-            new CommitBatchResponse(Errors.NONE, 0, time.milliseconds(), 0),
-            new CommitBatchResponse(Errors.NONE, 15, time.milliseconds(), 0)
+            CommitBatchResponse.success(0, time.milliseconds(), 0, request3),
+            CommitBatchResponse.success(15, time.milliseconds(), 0, request4)
         );
 
         assertThat(DBUtils.getAllLogs(hikariDataSource))
@@ -164,9 +165,9 @@ class CommitFileJobTest extends SharedPostgreSQLTest {
         final List<CommitBatchResponse> result = job.call();
 
         assertThat(result).containsExactlyInAnyOrder(
-            new CommitBatchResponse(Errors.NONE, 0, time.milliseconds(), 0),
-            new CommitBatchResponse(Errors.NONE, 0, time.milliseconds(), 0),
-            new CommitBatchResponse(Errors.UNKNOWN_TOPIC_OR_PARTITION, -1, -1, -1)
+            CommitBatchResponse.success(0, time.milliseconds(), 0, request1),
+            CommitBatchResponse.success(0, time.milliseconds(), 0, request2),
+            CommitBatchResponse.unknownTopicOrPartition()
         );
 
         assertThat(DBUtils.getAllLogs(hikariDataSource))
@@ -185,6 +186,183 @@ class CommitFileJobTest extends SharedPostgreSQLTest {
             .containsExactlyInAnyOrder(
                 new DBUtils.Batch(TOPIC_ID_0, 1, 0, 14, EXPECTED_FILE_ID_1, 0, 100, 0, 14),
                 new DBUtils.Batch(TOPIC_ID_1, 0, 0, 26, EXPECTED_FILE_ID_1, 100, 50, 0, 26)
+            );
+    }
+
+    @Test
+    void simpleIdempotentCommit() {
+        final String objectKey = "obj1";
+
+        final CommitBatchRequest request1 = CommitBatchRequest.idempotent(T0P1, 0, 100, 0, 14, 1000, TimestampType.CREATE_TIME, 1L, (short) 3, 0, 14);
+        final CommitBatchRequest request2 = CommitBatchRequest.idempotent(T1P0, 100, 50, 0, 26, 2000, TimestampType.LOG_APPEND_TIME, 1L, (short) 3, 0, 26);
+        final CommitFileJob job = new CommitFileJob(time, hikariDataSource, objectKey, BROKER_ID, FILE_SIZE, List.of(
+            new CommitFileJob.CommitBatchRequestJson(request1),
+            new CommitFileJob.CommitBatchRequestJson(request2)
+        ), duration -> {});
+        final List<CommitBatchResponse> result = job.call();
+
+        assertThat(result).containsExactlyInAnyOrder(
+            CommitBatchResponse.success(0, time.milliseconds(), 0, request1),
+            CommitBatchResponse.success(0, time.milliseconds(), 0, request2)
+        );
+
+        assertThat(DBUtils.getAllLogs(hikariDataSource))
+            .containsExactlyInAnyOrder(
+                new DBUtils.Log(TOPIC_ID_0, 0, TOPIC_0, 0, 0),
+                new DBUtils.Log(TOPIC_ID_0, 1, TOPIC_0, 0, 15),
+                new DBUtils.Log(TOPIC_ID_1, 0, TOPIC_1, 0, 27)
+            );
+
+        assertThat(DBUtils.getAllFiles(hikariDataSource))
+            .containsExactlyInAnyOrder(
+                new DBUtils.File(EXPECTED_FILE_ID_1, "obj1", FileReason.PRODUCE, FileState.UPLOADED, BROKER_ID, TimeUtils.now(time), FILE_SIZE, FILE_SIZE)
+            );
+
+        assertThat(DBUtils.getAllBatches(hikariDataSource))
+            .containsExactlyInAnyOrder(
+                new DBUtils.Batch(TOPIC_ID_0, 1, 0, 14, EXPECTED_FILE_ID_1, 0, 100, 0, 14),
+                new DBUtils.Batch(TOPIC_ID_1, 0, 0, 26, EXPECTED_FILE_ID_1, 100, 50, 0, 26)
+            );
+    }
+
+    @Test
+    void inSequenceCommit() {
+        final String objectKey = "obj1";
+
+        final CommitBatchRequest request1 = CommitBatchRequest.idempotent(T0P1, 0, 100, 0, 14, 1000, TimestampType.CREATE_TIME, 1L, (short) 3, 0, 14);
+        final CommitBatchRequest request2 = CommitBatchRequest.idempotent(T0P1, 100, 50, 15, 26, 2000, TimestampType.LOG_APPEND_TIME, 1L, (short) 3, 15, 26);
+        final CommitFileJob job = new CommitFileJob(time, hikariDataSource, objectKey, BROKER_ID, FILE_SIZE, List.of(
+            new CommitFileJob.CommitBatchRequestJson(request1),
+            new CommitFileJob.CommitBatchRequestJson(request2)
+        ), duration -> {});
+        final List<CommitBatchResponse> result = job.call();
+
+        assertThat(result).containsExactlyInAnyOrder(
+            CommitBatchResponse.success(0, time.milliseconds(), 0, request1),
+            CommitBatchResponse.success(15, time.milliseconds(), 0, request2)
+        );
+
+        assertThat(DBUtils.getAllLogs(hikariDataSource))
+            .containsExactlyInAnyOrder(
+                new DBUtils.Log(TOPIC_ID_0, 0, TOPIC_0, 0, 0),
+                new DBUtils.Log(TOPIC_ID_0, 1, TOPIC_0, 0, 27),
+                new DBUtils.Log(TOPIC_ID_1, 0, TOPIC_1, 0, 0)
+            );
+
+        assertThat(DBUtils.getAllFiles(hikariDataSource))
+            .containsExactlyInAnyOrder(
+                new DBUtils.File(EXPECTED_FILE_ID_1, "obj1", FileReason.PRODUCE, FileState.UPLOADED, BROKER_ID, TimeUtils.now(time), FILE_SIZE, FILE_SIZE)
+            );
+
+        assertThat(DBUtils.getAllBatches(hikariDataSource))
+            .containsExactlyInAnyOrder(
+                new DBUtils.Batch(TOPIC_ID_0, 1, 0, 14, EXPECTED_FILE_ID_1, 0, 100, 0, 14),
+                new DBUtils.Batch(TOPIC_ID_0, 1, 15, 26, EXPECTED_FILE_ID_1, 100, 50, 15, 26)
+            );
+    }
+
+    @ParameterizedTest
+    @CsvSource({
+        "14, 13", // lower than 15
+        "14, 14", // lower than 15
+        "14, 16", // larger than 15
+        "2147483647, 1" // not zero
+    })
+        // 15 is the first sequence number for the second batch
+    void outOfOrderCommit(int lastBatchSequence, int firstBatchSequence) {
+        final String objectKey = "obj1";
+
+        final CommitBatchRequest request1 = CommitBatchRequest.idempotent(T0P1, 0, 100, 0, 14, 1000, TimestampType.CREATE_TIME, 1L, (short) 3, 0, lastBatchSequence);
+        final CommitBatchRequest request2 = CommitBatchRequest.idempotent(T0P1, 100, 50, 0, 26, 2000, TimestampType.LOG_APPEND_TIME, 1L, (short) 3, firstBatchSequence, 26);
+        final CommitFileJob job = new CommitFileJob(time, hikariDataSource, objectKey, BROKER_ID, FILE_SIZE, List.of(
+            new CommitFileJob.CommitBatchRequestJson(request1),
+            new CommitFileJob.CommitBatchRequestJson(request2)
+        ), duration -> {});
+        final List<CommitBatchResponse> result = job.call();
+
+        assertThat(result).containsExactlyInAnyOrder(
+            CommitBatchResponse.success(0, time.milliseconds(), 0, request1),
+            CommitBatchResponse.sequenceOutOfOrder(request2)
+        );
+
+        assertThat(DBUtils.getAllLogs(hikariDataSource))
+            .containsExactlyInAnyOrder(
+                new DBUtils.Log(TOPIC_ID_0, 0, TOPIC_0, 0, 0),
+                new DBUtils.Log(TOPIC_ID_0, 1, TOPIC_0, 0, 15),
+                new DBUtils.Log(TOPIC_ID_1, 0, TOPIC_1, 0, 0)
+            );
+
+        assertThat(DBUtils.getAllFiles(hikariDataSource))
+            .containsExactlyInAnyOrder(
+                new DBUtils.File(EXPECTED_FILE_ID_1, "obj1", FileReason.PRODUCE, FileState.UPLOADED, BROKER_ID, TimeUtils.now(time), FILE_SIZE, FILE_SIZE)
+            );
+
+        assertThat(DBUtils.getAllBatches(hikariDataSource))
+            .containsExactlyInAnyOrder(
+                new DBUtils.Batch(TOPIC_ID_0, 1, 0, 14, EXPECTED_FILE_ID_1, 0, 100, 0, 14)
+            );
+    }
+
+    @Test
+    void outOfOrderCommitNewEpoch() {
+        final String objectKey = "obj1";
+
+        final CommitBatchRequest request1 = CommitBatchRequest.idempotent(T0P1, 0, 100, 0, 14, 1000, TimestampType.CREATE_TIME, 1L, (short) 2, 1, 15);
+        final CommitFileJob job = new CommitFileJob(time, hikariDataSource, objectKey, BROKER_ID, FILE_SIZE, List.of(
+            new CommitFileJob.CommitBatchRequestJson(request1)
+        ), duration -> {});
+        final List<CommitBatchResponse> result = job.call();
+
+        assertThat(result).containsExactlyInAnyOrder(
+            CommitBatchResponse.sequenceOutOfOrder(request1)
+        );
+
+        assertThat(DBUtils.getAllLogs(hikariDataSource))
+            .containsExactlyInAnyOrder(
+                new DBUtils.Log(TOPIC_ID_0, 0, TOPIC_0, 0, 0),
+                new DBUtils.Log(TOPIC_ID_0, 1, TOPIC_0, 0, 0),
+                new DBUtils.Log(TOPIC_ID_1, 0, TOPIC_1, 0, 0)
+            );
+
+        assertThat(DBUtils.getAllFiles(hikariDataSource))
+            .containsExactlyInAnyOrder(
+                new DBUtils.File(EXPECTED_FILE_ID_1, "obj1", FileReason.PRODUCE, FileState.UPLOADED, BROKER_ID, TimeUtils.now(time), FILE_SIZE, FILE_SIZE)
+            );
+        assertThat(DBUtils.getAllBatches(hikariDataSource)).isEmpty();
+    }
+
+    @Test
+    void invalidProducerEpoch() {
+        final String objectKey = "obj1";
+
+        final CommitBatchRequest request1 = CommitBatchRequest.idempotent(T0P1, 0, 100, 0, 14, 1000, TimestampType.CREATE_TIME, 1L, (short) 3, 0, 14);
+        final CommitBatchRequest request2 = CommitBatchRequest.idempotent(T0P1, 100, 50, 0, 26, 2000, TimestampType.LOG_APPEND_TIME, 1L, (short) 2, 15, 26);
+        final CommitFileJob job = new CommitFileJob(time, hikariDataSource, objectKey, BROKER_ID, FILE_SIZE, List.of(
+            new CommitFileJob.CommitBatchRequestJson(request1),
+            new CommitFileJob.CommitBatchRequestJson(request2)
+        ), duration -> {});
+        final List<CommitBatchResponse> result = job.call();
+
+        assertThat(result).containsExactlyInAnyOrder(
+            CommitBatchResponse.success(0, time.milliseconds(), 0, request1),
+            CommitBatchResponse.invalidProducerEpoch()
+        );
+
+        assertThat(DBUtils.getAllLogs(hikariDataSource))
+            .containsExactlyInAnyOrder(
+                new DBUtils.Log(TOPIC_ID_0, 0, TOPIC_0, 0, 0),
+                new DBUtils.Log(TOPIC_ID_0, 1, TOPIC_0, 0, 15),
+                new DBUtils.Log(TOPIC_ID_1, 0, TOPIC_1, 0, 0)
+            );
+
+        assertThat(DBUtils.getAllFiles(hikariDataSource))
+            .containsExactlyInAnyOrder(
+                new DBUtils.File(EXPECTED_FILE_ID_1, "obj1", FileReason.PRODUCE, FileState.UPLOADED, BROKER_ID, TimeUtils.now(time), FILE_SIZE, FILE_SIZE)
+            );
+
+        assertThat(DBUtils.getAllBatches(hikariDataSource))
+            .containsExactlyInAnyOrder(
+                new DBUtils.Batch(TOPIC_ID_0, 1, 0, 14, EXPECTED_FILE_ID_1, 0, 100, 0, 14)
             );
     }
 }
