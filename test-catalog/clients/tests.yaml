@@ -961,6 +961,7 @@ org.apache.kafka.clients.consumer.internals.AbstractCoordinatorTest:
 - testWakeupAfterJoinGroupSent
 - testWakeupAfterJoinGroupSentExternalCompletion
 - testWakeupAfterSyncGroupReceived
+- testWakeupAfterSyncGroupReceivedExternalCompletion
 - testWakeupAfterSyncGroupSentExternalCompletion
 - testWakeupFromEnsureCoordinatorReady
 - testWakeupInOnJoinComplete
@@ -2354,7 +2355,6 @@ org.apache.kafka.clients.producer.KafkaProducerTest:
 - testOsDefaultSocketBufferSizes
 - testOverwriteAcksAndRetriesForIdempotentProducers
 - testPartitionAddedToTransaction
-- testPartitionAddedToTransactionAfterFullBatchRetry
 - testPartitionerClose
 - testPartitionsForWithNullTopic
 - testProducerJmxPrefix
@@ -2453,8 +2453,6 @@ org.apache.kafka.clients.producer.RecordSendTest:
 - testTimeout
 org.apache.kafka.clients.producer.RoundRobinPartitionerTest:
 - testRoundRobinWithKeyBytes
-- testRoundRobinWithNullKeyBytes
-- testRoundRobinWithNullKeyBytesAndEvenPartitionCount
 - testRoundRobinWithUnavailablePartitions
 org.apache.kafka.clients.producer.internals.BufferPoolTest:
 - outOfMemoryOnAllocation
