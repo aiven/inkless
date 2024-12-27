@@ -961,6 +961,7 @@ org.apache.kafka.clients.consumer.internals.AbstractCoordinatorTest:
 - testWakeupAfterJoinGroupSent
 - testWakeupAfterJoinGroupSentExternalCompletion
 - testWakeupAfterSyncGroupReceived
+- testWakeupAfterSyncGroupReceivedExternalCompletion
 - testWakeupAfterSyncGroupSentExternalCompletion
 - testWakeupFromEnsureCoordinatorReady
 - testWakeupInOnJoinComplete
@@ -4129,13 +4130,14 @@ org.apache.kafka.common.security.authenticator.SaslAuthenticatorTest:
 - testValidSaslScramMechanisms
 - testValidSaslScramSha256
 org.apache.kafka.common.security.authenticator.SaslServerAuthenticatorTest:
+- testInvalidRequestHeader
 - testLatestApiVersionsRequest
 - testOldestApiVersionsRequest
 - testOversizeRequest
 - testSessionExpiresAtMaxReauthTime
 - testSessionExpiresAtTokenExpiry
 - testSessionExpiresAtTokenExpiryDespiteNoReauthIsSet
-- testUnexpectedRequestType
+- testUnexpectedRequestTypeWithValidRequestHeader
 org.apache.kafka.common.security.kerberos.KerberosNameTest:
 - testInvalidRules
 - testParse
