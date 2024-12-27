@@ -1,4 +1,6 @@
 -- Copyright (c) 2024 Aiven, Helsinki, Finland. https://aiven.io/
+CREATE DOMAIN broker_id_t AS INT NOT NULL;
+
 CREATE DOMAIN topic_id_t AS UUID NOT NULL;
 
 CREATE DOMAIN partition_t AS INT NOT NULL
@@ -37,19 +39,36 @@ CREATE TABLE logs (
     PRIMARY KEY(topic_id, partition)
 );
 
+-- The reasons why a file on the remote storage exists.
+CREATE TYPE file_reason_t AS ENUM (
+    -- Uploaded by a broker as the result of producing.
+    'produce'
+);
+
+CREATE TABLE files (
+    file_id BIGSERIAL PRIMARY KEY,
+    object_key object_key_t UNIQUE NOT NULL,
+    reason file_reason_t NOT NULL,
+    uploader_broker_id broker_id_t,
+    committed_at TIMESTAMP WITH TIME ZONE,
+    size byte_size_t,
+    used_size byte_size_t
+);
+
 CREATE TABLE batches (
     topic_id topic_id_t,
     partition partition_t,
     base_offset offset_t,
     last_offset offset_t,
-    object_key object_key_t,
+    file_id BIGINT NOT NULL,
     byte_offset byte_offset_t,
     byte_size byte_size_t,
     number_of_records number_of_records_t,
     timestamp_type timestamp_type_t,
     log_append_timestamp timestamp_t,
     batch_max_timestamp timestamp_t,
-    PRIMARY KEY(topic_id, partition, base_offset)
+    PRIMARY KEY(topic_id, partition, base_offset),
+    CONSTRAINT fk_batches_files FOREIGN KEY (file_id) REFERENCES files(file_id) ON DELETE RESTRICT ON UPDATE CASCADE
 );
 
 CREATE INDEX batches_by_last_offset_idx ON batches (topic_id, partition, last_offset);
@@ -64,16 +83,24 @@ CREATE TYPE commit_batch_response_v1 AS (
 
 CREATE FUNCTION commit_file_v1(
     object_key object_key_t,
-    now timestamp_t,
+    uploader_broker_id broker_id_t,
+    file_size byte_size_t,
+    now TIMESTAMP WITH TIME ZONE,
     requests JSONB
 )
 RETURNS SETOF commit_batch_response_v1 LANGUAGE plpgsql VOLATILE AS $$
 DECLARE
+    new_file_id BIGINT;
     request RECORD;
     log RECORD;
     assigned_offset offset_nullable_t;
     new_high_watermark offset_nullable_t;
 BEGIN
+    INSERT INTO files (object_key, reason, uploader_broker_id, committed_at, size, used_size)
+    VALUES (object_key, 'produce', uploader_broker_id, now, file_size, file_size)
+    RETURNING file_id
+    INTO new_file_id;
+
     FOR request IN
         SELECT *
         FROM jsonb_to_recordset(requests)
@@ -112,17 +139,21 @@ BEGIN
             topic_id, partition,
             base_offset,
             last_offset,
-            object_key,
+            file_id,
             byte_offset, byte_size, number_of_records,
-            timestamp_type, log_append_timestamp, batch_max_timestamp
+            timestamp_type,
+            log_append_timestamp,
+            batch_max_timestamp
         )
         VALUES (
             request.topic_id, request.partition,
             assigned_offset,
             new_high_watermark - 1,
-            object_key,
+            new_file_id,
             request.byte_offset, request.byte_size, request.number_of_records,
-            request.timestamp_type, now, request.batch_max_timestamp
+            request.timestamp_type,
+            (EXTRACT(EPOCH FROM now AT TIME ZONE 'UTC') * 1000)::BIGINT,
+            request.batch_max_timestamp
         );
 
         RETURN NEXT (request.topic_id, request.partition, TRUE, assigned_offset, log.log_start_offset)::commit_batch_response_v1;

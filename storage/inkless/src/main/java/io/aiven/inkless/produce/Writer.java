@@ -62,6 +62,7 @@ class Writer implements Closeable {
 
     @DoNotMutate
     Writer(final Time time,
+           final int brokerId,
            final ObjectKeyCreator objectKeyCreator,
            final ObjectUploader objectUploader,
            final ControlPlane controlPlane,
@@ -75,7 +76,7 @@ class Writer implements Closeable {
             commitInterval,
             maxBufferSize,
             Executors.newScheduledThreadPool(1, new InklessThreadFactory("inkless-file-commit-ticker-", true)),
-            new FileCommitter(controlPlane, objectKeyCreator, objectUploader, time, maxFileUploadAttempts, fileUploadRetryBackoff),
+            new FileCommitter(brokerId, controlPlane, objectKeyCreator, objectUploader, time, maxFileUploadAttempts, fileUploadRetryBackoff),
             new WriterMetrics(time),
             new BrokerTopicMetricMarks(brokerTopicStats)
         );
@@ -116,7 +117,7 @@ class Writer implements Closeable {
             }
 
             if (openedAt == null) {
-                openedAt = TimeUtils.monotonicNow(time);
+                openedAt = TimeUtils.durationMeasurementNow(time);
             }
 
             final var result = this.activeFile.add(entriesPerPartition);

@@ -19,10 +19,12 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 
+import java.time.Instant;
 import java.util.List;
 
 import io.aiven.inkless.control_plane.CommitBatchRequest;
 import io.aiven.inkless.control_plane.CommitBatchResponse;
+import io.aiven.inkless.control_plane.FileReason;
 import io.aiven.inkless.control_plane.MetadataView;
 import io.aiven.inkless.test_utils.SharedPostgreSQLTest;
 
@@ -34,6 +36,9 @@ import static org.mockito.Mockito.when;
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.STRICT_STUBS)
 class CommitFileJobTest extends SharedPostgreSQLTest {
+    static final int BROKER_ID = 11;
+    static final long FILE_SIZE = 123456789;
+
     static final String TOPIC_0 = "topic0";
     static final String TOPIC_1 = "topic1";
     static final Uuid TOPIC_ID_0 = new Uuid(10, 12);
@@ -41,6 +46,9 @@ class CommitFileJobTest extends SharedPostgreSQLTest {
     static final TopicPartition T0P0 = new TopicPartition(TOPIC_0, 0);
     static final TopicPartition T0P1 = new TopicPartition(TOPIC_0, 1);
     static final TopicPartition T1P0 = new TopicPartition(TOPIC_1, 0);
+
+    static final long EXPECTED_FILE_ID_1 = 1;
+    static final long EXPECTED_FILE_ID_2 = 2;
 
     @Mock
     Time time;
@@ -66,7 +74,7 @@ class CommitFileJobTest extends SharedPostgreSQLTest {
 
         when(time.milliseconds()).thenReturn(123456L);
 
-        final CommitFileJob job = new CommitFileJob(time, hikariDataSource, objectKey, List.of(
+        final CommitFileJob job = new CommitFileJob(time, hikariDataSource, objectKey, BROKER_ID, FILE_SIZE, List.of(
             new CommitFileJob.CommitBatchRequestExtra(new CommitBatchRequest(T0P1, 0, 100, 15, 1000), TOPIC_ID_0, TimestampType.CREATE_TIME),
             new CommitFileJob.CommitBatchRequestExtra(new CommitBatchRequest(T1P0, 100, 50, 27, 2000), TOPIC_ID_1, TimestampType.LOG_APPEND_TIME)
         ));
@@ -84,10 +92,15 @@ class CommitFileJobTest extends SharedPostgreSQLTest {
                 new DBUtils.Log(TOPIC_ID_1, 0, TOPIC_1, 0, 27)
             );
 
+        assertThat(DBUtils.getAllFiles(hikariDataSource))
+            .containsExactlyInAnyOrder(
+                new DBUtils.File(EXPECTED_FILE_ID_1, "obj1", FileReason.PRODUCE, BROKER_ID, Instant.ofEpochMilli(123456L), FILE_SIZE, FILE_SIZE)
+            );
+
         assertThat(DBUtils.getAllBatches(hikariDataSource))
             .containsExactlyInAnyOrder(
-                new DBUtils.Batch(TOPIC_ID_0, 1, 0, 14, "obj1", 0, 100, 15),
-                new DBUtils.Batch(TOPIC_ID_1, 0, 0, 26, "obj1", 100, 50, 27)
+                new DBUtils.Batch(TOPIC_ID_0, 1, 0, 14, EXPECTED_FILE_ID_1, 0, 100, 15),
+                new DBUtils.Batch(TOPIC_ID_1, 0, 0, 26, EXPECTED_FILE_ID_1, 100, 50, 27)
             );
     }
 
@@ -98,7 +111,7 @@ class CommitFileJobTest extends SharedPostgreSQLTest {
 
         when(time.milliseconds()).thenReturn(1000L);
 
-        final CommitFileJob job1 = new CommitFileJob(time, hikariDataSource, objectKey1, List.of(
+        final CommitFileJob job1 = new CommitFileJob(time, hikariDataSource, objectKey1, BROKER_ID, FILE_SIZE, List.of(
             new CommitFileJob.CommitBatchRequestExtra(new CommitBatchRequest(T0P1, 0, 100, 15, 1000), TOPIC_ID_0, TimestampType.CREATE_TIME),
             new CommitFileJob.CommitBatchRequestExtra(new CommitBatchRequest(T1P0, 100, 50, 27, 2000), TOPIC_ID_1, TimestampType.LOG_APPEND_TIME)
         ));
@@ -111,7 +124,7 @@ class CommitFileJobTest extends SharedPostgreSQLTest {
 
         when(time.milliseconds()).thenReturn(2000L);
 
-        final CommitFileJob job2 = new CommitFileJob(time, hikariDataSource, objectKey2, List.of(
+        final CommitFileJob job2 = new CommitFileJob(time, hikariDataSource, objectKey2, BROKER_ID, FILE_SIZE, List.of(
             new CommitFileJob.CommitBatchRequestExtra(new CommitBatchRequest(T0P0, 0, 111, 159, 3000), TOPIC_ID_0, TimestampType.CREATE_TIME),
             new CommitFileJob.CommitBatchRequestExtra(new CommitBatchRequest(T0P1, 111, 222, 245, 4000), TOPIC_ID_0, TimestampType.CREATE_TIME)
         ));
@@ -129,13 +142,19 @@ class CommitFileJobTest extends SharedPostgreSQLTest {
                 new DBUtils.Log(TOPIC_ID_1, 0, TOPIC_1, 0, 27)
             );
 
+        assertThat(DBUtils.getAllFiles(hikariDataSource))
+            .containsExactlyInAnyOrder(
+                new DBUtils.File(EXPECTED_FILE_ID_1, "obj1", FileReason.PRODUCE, BROKER_ID, Instant.ofEpochMilli(1000L), FILE_SIZE, FILE_SIZE),
+                new DBUtils.File(EXPECTED_FILE_ID_2, "obj2", FileReason.PRODUCE, BROKER_ID, Instant.ofEpochMilli(2000L), FILE_SIZE, FILE_SIZE)
+            );
+
         assertThat(DBUtils.getAllBatches(hikariDataSource))
             .containsExactlyInAnyOrder(
-                new DBUtils.Batch(TOPIC_ID_0, 1, 0, 14, "obj1", 0, 100, 15),
-                new DBUtils.Batch(TOPIC_ID_1, 0, 0, 26, "obj1", 100, 50, 27),
+                new DBUtils.Batch(TOPIC_ID_0, 1, 0, 14, EXPECTED_FILE_ID_1, 0, 100, 15),
+                new DBUtils.Batch(TOPIC_ID_1, 0, 0, 26, EXPECTED_FILE_ID_1, 100, 50, 27),
 
-                new DBUtils.Batch(TOPIC_ID_0, 0, 0, 158, "obj2", 0, 111, 159),
-                new DBUtils.Batch(TOPIC_ID_0, 1, 15, 15 + 245 - 1, "obj2", 111, 222, 245)
+                new DBUtils.Batch(TOPIC_ID_0, 0, 0, 158, EXPECTED_FILE_ID_2, 0, 111, 159),
+                new DBUtils.Batch(TOPIC_ID_0, 1, 15, 15 + 245 - 1, EXPECTED_FILE_ID_2, 111, 222, 245)
             );
     }
 
@@ -147,7 +166,7 @@ class CommitFileJobTest extends SharedPostgreSQLTest {
 
         // Non-existent partition.
         final var t1p1 = new TopicPartition(TOPIC_1, 10);
-        final CommitFileJob job = new CommitFileJob(time, hikariDataSource, objectKey, List.of(
+        final CommitFileJob job = new CommitFileJob(time, hikariDataSource, objectKey, BROKER_ID, FILE_SIZE, List.of(
             new CommitFileJob.CommitBatchRequestExtra(new CommitBatchRequest(T0P1, 0, 100, 15, 1000), TOPIC_ID_0, TimestampType.CREATE_TIME),
             new CommitFileJob.CommitBatchRequestExtra(new CommitBatchRequest(T1P0, 100, 50, 27, 2000), TOPIC_ID_1, TimestampType.LOG_APPEND_TIME),
             new CommitFileJob.CommitBatchRequestExtra(new CommitBatchRequest(t1p1, 150, 1243, 82, 3000), TOPIC_ID_1, TimestampType.LOG_APPEND_TIME)
@@ -168,10 +187,15 @@ class CommitFileJobTest extends SharedPostgreSQLTest {
                 new DBUtils.Log(TOPIC_ID_1, 0, TOPIC_1, 0, 27)
             );
 
+        assertThat(DBUtils.getAllFiles(hikariDataSource))
+            .containsExactlyInAnyOrder(
+                new DBUtils.File(EXPECTED_FILE_ID_1, "obj1", FileReason.PRODUCE, BROKER_ID, Instant.ofEpochMilli(123456L), FILE_SIZE, FILE_SIZE)
+            );
+
         assertThat(DBUtils.getAllBatches(hikariDataSource))
             .containsExactlyInAnyOrder(
-                new DBUtils.Batch(TOPIC_ID_0, 1, 0, 14, "obj1", 0, 100, 15),
-                new DBUtils.Batch(TOPIC_ID_1, 0, 0, 26, "obj1", 100, 50, 27)
+                new DBUtils.Batch(TOPIC_ID_0, 1, 0, 14, EXPECTED_FILE_ID_1, 0, 100, 15),
+                new DBUtils.Batch(TOPIC_ID_1, 0, 0, 26, EXPECTED_FILE_ID_1, 100, 50, 27)
             );
     }
 }

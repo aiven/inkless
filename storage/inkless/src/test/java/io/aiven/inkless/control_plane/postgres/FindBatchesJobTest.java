@@ -37,6 +37,9 @@ import static org.mockito.Mockito.when;
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.STRICT_STUBS)
 class FindBatchesJobTest extends SharedPostgreSQLTest {
+    static final int BROKER_ID = 11;
+    static final long FILE_SIZE = 123456;
+
     static final String TOPIC_0 = "topic0";
     static final String TOPIC_1 = "topic1";
     static final Uuid TOPIC_ID_0 = new Uuid(10, 12);
@@ -70,7 +73,7 @@ class FindBatchesJobTest extends SharedPostgreSQLTest {
         when(time.milliseconds()).thenReturn(123456L);
 
         final CommitFileJob commitJob = new CommitFileJob(
-            time, hikariDataSource, objectKey1,
+            time, hikariDataSource, objectKey1, BROKER_ID, FILE_SIZE,
             List.of(
                 new CommitFileJob.CommitBatchRequestExtra(new CommitBatchRequest(T0P0, 0, 1234, 12, 1000), TOPIC_ID_0, TimestampType.CREATE_TIME)
             )

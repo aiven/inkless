@@ -28,17 +28,20 @@ import io.aiven.inkless.control_plane.ControlPlane;
 class FileCommitJob implements Runnable {
     private static final Logger LOGGER = LoggerFactory.getLogger(FileCommitJob.class);
 
+    private final int brokerId;
     private final ClosedFile file;
     private final Future<ObjectKey> uploadFuture;
     private final Time time;
     private final ControlPlane controlPlane;
     private final Consumer<Long> durationCallback;
 
-    FileCommitJob(final ClosedFile file,
+    FileCommitJob(final int brokerId,
+                  final ClosedFile file,
                   final Future<ObjectKey> uploadFuture,
                   final Time time,
                   final ControlPlane controlPlane,
                   final Consumer<Long> durationCallback) {
+        this.brokerId = brokerId;
         this.file = file;
         this.uploadFuture = uploadFuture;
         this.controlPlane = controlPlane;
@@ -76,7 +79,7 @@ class FileCommitJob implements Runnable {
     }
 
     private void finishCommitSuccessfully(final ObjectKey objectKey) {
-        final var commitBatchResponses = controlPlane.commitFile(objectKey.storedPart(), file.commitBatchRequests());
+        final var commitBatchResponses = controlPlane.commitFile(objectKey.storedPart(), brokerId, file.size(), file.commitBatchRequests());
         LOGGER.debug("Committed successfully");
 
         // Each request must have a response.

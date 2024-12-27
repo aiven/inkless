@@ -38,6 +38,9 @@ import static org.mockito.Mockito.when;
 // Leniency is fine in this class, otherwise there will be too much tailored mocking on metadataView.
 @MockitoSettings(strictness = Strictness.LENIENT)
 public abstract class AbstractControlPlaneTest {
+    static final int BROKER_ID = 11;
+    static final long FILE_SIZE = 123456;
+
     static final String EXISTING_TOPIC = "topic-existing";
     static final Uuid EXISTING_TOPIC_ID = new Uuid(10, 10);
     static final TopicIdPartition EXISTING_TOPIC_ID_PARTITION = new TopicIdPartition(EXISTING_TOPIC_ID, 0, EXISTING_TOPIC);
@@ -84,8 +87,7 @@ public abstract class AbstractControlPlaneTest {
     @Test
     void emptyCommit() {
         final List<CommitBatchResponse> commitBatchResponse = controlPlane.commitFile(
-            "a",
-            List.of()
+            "a", BROKER_ID, FILE_SIZE, List.of()
         );
         assertThat(commitBatchResponse).isEmpty();
     }
@@ -96,7 +98,8 @@ public abstract class AbstractControlPlaneTest {
         final String objectKey2 = "a2";
 
         final List<CommitBatchResponse> commitResponse1 = controlPlane.commitFile(
-            objectKey1,
+            objectKey1, BROKER_ID,
+            FILE_SIZE,
             List.of(
                 new CommitBatchRequest(new TopicPartition(EXISTING_TOPIC, 0), 1, 10, 10, 1000),
                 new CommitBatchRequest(new TopicPartition(EXISTING_TOPIC, 1), 2, 10, 10, 1000),
@@ -110,7 +113,8 @@ public abstract class AbstractControlPlaneTest {
         );
 
         final List<CommitBatchResponse> commitResponse2 = controlPlane.commitFile(
-            objectKey2,
+            objectKey2, BROKER_ID,
+            FILE_SIZE,
             List.of(
                 new CommitBatchRequest(new TopicPartition(EXISTING_TOPIC, 0), 100, 10, 10, 1000),
                 new CommitBatchRequest(new TopicPartition(EXISTING_TOPIC, 1), 200, 10, 10, 2000),
@@ -145,9 +149,9 @@ public abstract class AbstractControlPlaneTest {
         final String objectKey2 = "a2";
         final int numberOfRecordsInBatch1 = 3;
         final int numberOfRecordsInBatch2 = 2;
-        controlPlane.commitFile(objectKey1,
+        controlPlane.commitFile(objectKey1, BROKER_ID, FILE_SIZE,
             List.of(new CommitBatchRequest(new TopicPartition(EXISTING_TOPIC, 0), 1, 10, numberOfRecordsInBatch1, 1000)));
-        controlPlane.commitFile(objectKey2,
+        controlPlane.commitFile(objectKey2, BROKER_ID, FILE_SIZE,
             List.of(new CommitBatchRequest(new TopicPartition(EXISTING_TOPIC, 0), 100, 10, numberOfRecordsInBatch2, 2000)));
 
         final long expectedLogStartOffset = 0;
@@ -180,7 +184,7 @@ public abstract class AbstractControlPlaneTest {
         final String objectKey = "a";
 
         controlPlane.commitFile(
-            objectKey,
+            objectKey, BROKER_ID, FILE_SIZE,
             List.of(
                 new CommitBatchRequest(new TopicPartition(EXISTING_TOPIC, 0), 11, 10, 10, 1000)
             )
@@ -216,7 +220,7 @@ public abstract class AbstractControlPlaneTest {
         final String objectKey = "a";
 
         controlPlane.commitFile(
-            objectKey,
+            objectKey, BROKER_ID, FILE_SIZE,
             List.of(
                 new CommitBatchRequest(new TopicPartition(EXISTING_TOPIC, 0), 11, 10, 10, 1000)
             )
@@ -236,7 +240,7 @@ public abstract class AbstractControlPlaneTest {
         final String objectKey = "a";
 
         controlPlane.commitFile(
-            objectKey,
+            objectKey, BROKER_ID, FILE_SIZE,
             List.of(
                 new CommitBatchRequest(new TopicPartition(EXISTING_TOPIC, 0), 11, 10, 10, 1000)
             )
@@ -256,7 +260,7 @@ public abstract class AbstractControlPlaneTest {
         final String objectKey = "a";
 
         controlPlane.commitFile(
-            objectKey,
+            objectKey, BROKER_ID, FILE_SIZE,
             List.of(
                 new CommitBatchRequest(new TopicPartition(EXISTING_TOPIC, 0), 11, 10, 10, 1000)
             )
@@ -286,7 +290,7 @@ public abstract class AbstractControlPlaneTest {
     void commitEmptyBatches() {
         final String objectKey = "a";
 
-        assertThatThrownBy(() -> controlPlane.commitFile(objectKey,
+        assertThatThrownBy(() -> controlPlane.commitFile(objectKey, BROKER_ID, FILE_SIZE,
             List.of(
                 new CommitBatchRequest(new TopicPartition(EXISTING_TOPIC, 0), 1, 10, 10, 1000),
                 new CommitBatchRequest(new TopicPartition(EXISTING_TOPIC, 1), 2, 0, 10, 1000)
