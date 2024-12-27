@@ -961,7 +961,6 @@ org.apache.kafka.clients.consumer.internals.AbstractCoordinatorTest:
 - testWakeupAfterJoinGroupSent
 - testWakeupAfterJoinGroupSentExternalCompletion
 - testWakeupAfterSyncGroupReceived
-- testWakeupAfterSyncGroupReceivedExternalCompletion
 - testWakeupAfterSyncGroupSentExternalCompletion
 - testWakeupFromEnsureCoordinatorReady
 - testWakeupInOnJoinComplete
