@@ -6,7 +6,6 @@ import org.apache.kafka.test.TestUtils;
 
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
-import com.zaxxer.hikari.util.IsolationLevel;
 
 import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.BeforeEach;
@@ -33,7 +32,6 @@ public abstract class SharedPostgreSQLTest {
         config.setJdbcUrl(pgContainer.getJdbcUrl(dbName));
         config.setUsername(PostgreSQLTestContainer.USERNAME);
         config.setPassword(PostgreSQLTestContainer.PASSWORD);
-        config.setTransactionIsolation(IsolationLevel.TRANSACTION_REPEATABLE_READ.name());
         config.setAutoCommit(false);
         hikariDataSource = new HikariDataSource(config);
     }
