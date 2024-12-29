@@ -394,6 +394,20 @@ org.apache.kafka.connect.runtime.InternalSinkRecordTest:
 - shouldRetainOriginalTopicPartition
 - testNewRecordHeaders
 org.apache.kafka.connect.runtime.LoggersTest:
+- testAllLevelsAfterCreatingNewLogger
+- testLevelWithExistLoggerName
+- testLevelWithNewlyCreatedLogger
+- testLevelWithNonExistLoggerName
+- testLevelWithNullLoggerName
+- testLevelWithValidRootLoggerNames
+- testLookupLoggerAfterCreatingNewLogger
+- testLookupLoggerWithValidRootLoggerNames
+- testSetLevel
+- testSetLevelWithDifferentLevels
+- testSetLevelWithNullNameSpaceOrNullLevel
+- testSetLevelWithSameLevel
+- testSetLevelWithValidRootLoggerNames
+org.apache.kafka.connect.runtime.MockLoggersTest:
 - testGetLoggerFallsBackToEffectiveLogLevel
 - testGetLoggersIgnoresNullLevels
 - testGetUnknownLogger
