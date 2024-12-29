@@ -2829,7 +2829,6 @@ kafka.server.KafkaApisTest:
 - testDescribeConfigsWithAuthorizer
 - testDescribeProducers
 - testDescribeQuorumForwardedForKRaftClusters
-- testDescribeQuorumNotAllowedForZkClusters
 - testDescribeTransactions
 - testDescribeTransactionsFiltersUnauthorizedTopics
 - testElectLeadersForwarding
@@ -2856,7 +2855,6 @@ kafka.server.KafkaApisTest:
 - testGetAcknowledgeBatchesFromShareFetchRequestError
 - testGetAllTopicMetadataShouldNotCreateTopicOrReturnUnknownTopicPartition
 - testGetTelemetrySubscriptions
-- testGetTelemetrySubscriptionsNotAllowedForZkClusters
 - testGetTelemetrySubscriptionsWithException
 - testHandleAcknowledgementsInvalidAcknowledgementBatches
 - testHandleAcknowledgementsSuccess
@@ -2945,7 +2943,6 @@ kafka.server.KafkaApisTest:
 - testLeaderReplicaIfLocalRaisesUnknownTopicOrPartition
 - testListClientMetricsResources
 - testListClientMetricsResourcesEmptyResponse
-- testListClientMetricsResourcesNotAllowedForZkClusters
 - testListClientMetricsResourcesWithException
 - testListGroupsRequest
 - testListGroupsRequestFiltersUnauthorizedGroupsWithDescribeCluster
@@ -2982,7 +2979,6 @@ kafka.server.KafkaApisTest:
 - testProduceResponseMetadataLookupErrorOnNotLeaderOrFollower
 - testProduceResponseReplicaManagerLookupErrorOnNotLeaderOrFollower
 - testPushTelemetry
-- testPushTelemetryNotAllowedForZkClusters
 - testPushTelemetryWithException
 - testRaftShouldAlwaysForwardAlterClientQuotasRequest
 - testRaftShouldAlwaysForwardAlterPartitionReassignmentsRequest
