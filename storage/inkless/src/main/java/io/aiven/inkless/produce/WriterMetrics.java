@@ -41,7 +41,7 @@ public class WriterMetrics implements Closeable {
     }
 
     public void fileRotated(Instant openedAt) {
-        final Instant now = TimeUtils.monotonicNow(time);
+        final Instant now = TimeUtils.durationMeasurementNow(time);
         rotations.increment();
         rotationTime.update(Duration.between(openedAt, now).toMillis());
     }

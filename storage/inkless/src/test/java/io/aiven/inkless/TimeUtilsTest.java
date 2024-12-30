@@ -32,16 +32,34 @@ class TimeUtilsTest {
     Time time;
 
     @ParameterizedTest
-    @MethodSource("monotonicNowParams")
-    void monotonicNow(final long nanos, final Instant expectedResult) {
-        when(time.nanoseconds()).thenReturn(nanos);
+    @MethodSource("nowParams")
+    void now(final long millis, final Instant expectedResult) {
+        when(time.milliseconds()).thenReturn(millis);
 
-        final Instant result = TimeUtils.monotonicNow(time);
+        final Instant result = TimeUtils.now(time);
 
         assertThat(result).isEqualTo(expectedResult);
     }
 
-    private static Stream<Arguments> monotonicNowParams() {
+    private static Stream<Arguments> nowParams() {
+        return Stream.of(
+            Arguments.of(0L, Instant.EPOCH),
+            Arguments.of(123L, Instant.EPOCH.plusMillis(123L)),
+            Arguments.of(1000L, Instant.ofEpochSecond(1))
+        );
+    }
+
+    @ParameterizedTest
+    @MethodSource("durationMeasurementNowParams")
+    void durationMeasurementNow(final long nanos, final Instant expectedResult) {
+        when(time.nanoseconds()).thenReturn(nanos);
+
+        final Instant result = TimeUtils.durationMeasurementNow(time);
+
+        assertThat(result).isEqualTo(expectedResult);
+    }
+
+    private static Stream<Arguments> durationMeasurementNowParams() {
         return Stream.of(
             Arguments.of(0L, Instant.EPOCH),
             Arguments.of(123L, Instant.EPOCH.plusNanos(123L)),

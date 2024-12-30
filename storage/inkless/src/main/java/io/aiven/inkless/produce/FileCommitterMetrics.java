@@ -75,7 +75,7 @@ class FileCommitterMetrics implements Closeable {
     }
 
     void fileFinished(final Instant fileStart, final Instant uploadAndCommitStart) {
-        final Instant now = TimeUtils.monotonicNow(time);
+        final Instant now = TimeUtils.durationMeasurementNow(time);
         fileTotalLifeTimeHistogram.update(Duration.between(fileStart, now).toMillis());
         fileUploadAndCommitTimeHistogram.update(Duration.between(uploadAndCommitStart, now).toMillis());
     }

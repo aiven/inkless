@@ -33,6 +33,7 @@ public class AppendInterceptor implements Closeable {
             state,
             new Writer(
                 state.time(),
+                state.brokerId(),
                 state.objectKeyCreator(),
                 state.storage(),
                 state.controlPlane(),

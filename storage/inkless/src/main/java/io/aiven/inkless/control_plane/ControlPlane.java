@@ -12,6 +12,8 @@ import io.aiven.inkless.config.InklessConfig;
 
 public interface ControlPlane extends Configurable, TopicMetadataChangesSubscriber {
     List<CommitBatchResponse> commitFile(String objectKey,
+                                         int uploaderBrokerId,
+                                         long fileSize,
                                          List<CommitBatchRequest> batches);
 
     List<FindBatchResponse> findBatches(List<FindBatchRequest> findBatchRequests,

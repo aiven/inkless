@@ -152,7 +152,7 @@ class WriterIntegrationTest {
 
         try (
             final Writer writer = new Writer(
-                time, PlainObjectKey.creator(""), storage, controlPlane, Duration.ofMillis(10),
+                time, 11, PlainObjectKey.creator(""), storage, controlPlane, Duration.ofMillis(10),
                 10 * 1024,
                 1,
                 Duration.ofMillis(10),
