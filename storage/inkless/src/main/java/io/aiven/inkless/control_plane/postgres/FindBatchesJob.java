@@ -30,10 +30,11 @@ class FindBatchesJob implements Callable<List<FindBatchResponse>> {
     private static final Logger LOGGER = LoggerFactory.getLogger(FindBatchesJob.class);
 
     private static final String SELECT_BATCHES = """
-        SELECT base_offset, last_offset, object_key, byte_offset,
-            byte_size, number_of_records,
-            timestamp_type, log_append_timestamp, batch_max_timestamp
-        FROM batches
+        SELECT b.base_offset, b.last_offset, f.object_key, b.byte_offset,
+            b.byte_size, b.number_of_records,
+            b.timestamp_type, b.log_append_timestamp, b.batch_max_timestamp
+        FROM batches AS b
+            INNER JOIN files AS f ON b.file_id = f.file_id
         WHERE topic_id = ?
             AND partition = ?
             AND last_offset >= ?  -- offset to find

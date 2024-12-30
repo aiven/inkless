@@ -19,12 +19,14 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.Callable;
 
+import io.aiven.inkless.TimeUtils;
 import io.aiven.inkless.common.UuidUtil;
 import io.aiven.inkless.control_plane.CommitBatchRequest;
 import io.aiven.inkless.control_plane.CommitBatchResponse;
@@ -42,21 +44,27 @@ class CommitFileJob implements Callable<List<CommitBatchResponse>> {
 
     private static final String CALL_COMMIT_FUNCTION = """
         SELECT topic_id, partition, log_exists, assigned_offset, log_start_offset
-        FROM commit_file_v1(?, ?, ?::JSONB)
+        FROM commit_file_v1(?, ?, ?, ?, ?::JSONB)
         """;
 
     private final Time time;
     private final HikariDataSource hikariDataSource;
     private final String objectKey;
+    private final int uploaderBrokerId;
+    private final long fileSize;
     private final List<CommitBatchRequestExtra> requests;
 
     CommitFileJob(final Time time,
                   final HikariDataSource hikariDataSource,
                   final String objectKey,
+                  final int uploaderBrokerId,
+                  final long fileSize,
                   final List<CommitBatchRequestExtra> requests) {
         this.time = time;
         this.hikariDataSource = hikariDataSource;
         this.objectKey = objectKey;
+        this.uploaderBrokerId = uploaderBrokerId;
+        this.fileSize = fileSize;
         this.requests = requests;
     }
 
@@ -99,14 +107,16 @@ class CommitFileJob implements Callable<List<CommitBatchResponse>> {
     }
 
     private List<CommitBatchResponse> callCommitFunction(final Connection connection) throws SQLException {
-        final long now = time.milliseconds();
+        final Instant now = TimeUtils.now(time);
         try (final PreparedStatement preparedStatement = connection.prepareStatement(CALL_COMMIT_FUNCTION)) {
             preparedStatement.setString(1, objectKey);
-            preparedStatement.setLong(2, now);
-            preparedStatement.setString(3, requestsAsJsonString());
+            preparedStatement.setInt(2, uploaderBrokerId);
+            preparedStatement.setLong(3, fileSize);
+            preparedStatement.setTimestamp(4, java.sql.Timestamp.from(now));
+            preparedStatement.setString(5, requestsAsJsonString());
 
             try (final ResultSet resultSet = preparedStatement.executeQuery()) {
-                return processCommitFunctionResult(now, resultSet);
+                return processCommitFunctionResult(now.toEpochMilli(), resultSet);
             }
         }
     }

@@ -76,7 +76,7 @@ public class Reader implements AutoCloseable {
         final FetchParams params,
         final Map<TopicIdPartition, FetchRequest.PartitionData> fetchInfos
     ) {
-        final Instant startAt = TimeUtils.monotonicNow(time);
+        final Instant startAt = TimeUtils.durationMeasurementNow(time);
         final var batchCoordinates = metadataExecutor.submit(
             new FindBatchesJob(
                 time,

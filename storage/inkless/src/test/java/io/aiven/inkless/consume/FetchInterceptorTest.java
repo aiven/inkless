@@ -49,6 +49,7 @@ import static org.mockito.Mockito.when;
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.STRICT_STUBS)
 public class FetchInterceptorTest {
+    static final int BROKER_ID = 11;
     static final ObjectKeyCreator OBJECT_KEY_CREATOR = PlainObjectKey.creator("");
 
     Time time = new MockTime();
@@ -77,7 +78,7 @@ public class FetchInterceptorTest {
 
     @BeforeEach
     public void setup() {
-        sharedState = new SharedState(time, inklessConfig, metadataView, controlPlane, storageBackend, OBJECT_KEY_CREATOR, brokerTopicStats);
+        sharedState = new SharedState(time, BROKER_ID, inklessConfig, metadataView, controlPlane, storageBackend, OBJECT_KEY_CREATOR, brokerTopicStats);
     }
 
     @Test

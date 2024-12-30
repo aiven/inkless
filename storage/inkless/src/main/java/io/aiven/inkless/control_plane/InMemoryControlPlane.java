@@ -26,7 +26,8 @@ public class InMemoryControlPlane extends AbstractControlPlane {
     private static final Logger logger = LoggerFactory.getLogger(InMemoryControlPlane.class);
 
     private final Map<TopicIdPartition, LogInfo> logs = new HashMap<>();
-    private final HashMap<TopicIdPartition, TreeMap<Long, BatchInfo>> batches = new HashMap<>();
+    private final List<FileInfo> files = new ArrayList<>();
+    private final HashMap<TopicIdPartition, TreeMap<Long, BatchInfoInternal>> batches = new HashMap<>();
 
     public InMemoryControlPlane(final Time time,
                                 final MetadataView metadataView) {
@@ -74,23 +75,27 @@ public class InMemoryControlPlane extends AbstractControlPlane {
     @Override
     protected Iterator<CommitBatchResponse> commitFileForExistingPartitions(
         final String objectKey,
+        final int uploaderBrokerId,
+        final long fileSize,
         final Stream<CommitBatchRequest> requests
     ) {
         final long now = time.milliseconds();
+        final FileInfo fileInfo = new FileInfo(objectKey, uploaderBrokerId, fileSize);
+        files.add(fileInfo);
         return requests
-            .map(request -> commitFileForExistingPartition(now, objectKey, request))
+            .map(request -> commitFileForExistingPartition(now, fileInfo, request))
             .iterator();
     }
 
     private CommitBatchResponse commitFileForExistingPartition(final long now,
-                                                               final String objectKey,
+                                                               final FileInfo fileInfo,
                                                                final CommitBatchRequest request) {
         final String topicName = request.topicPartition().topic();
         final Uuid topicId = metadataView.getTopicId(topicName);
 
         final TopicIdPartition topicIdPartition = new TopicIdPartition(topicId, request.topicPartition());
         final LogInfo logInfo = logs.get(topicIdPartition);
-        final TreeMap<Long, BatchInfo> coordinates = this.batches.get(topicIdPartition);
+        final TreeMap<Long, BatchInfoInternal> coordinates = this.batches.get(topicIdPartition);
         if (logInfo == null || coordinates == null) {
             return CommitBatchResponse.unknownTopicOrPartition();
         }
@@ -98,8 +103,8 @@ public class InMemoryControlPlane extends AbstractControlPlane {
         final long firstOffset = logInfo.highWatermark;
         logInfo.highWatermark += request.numberOfRecords();
         final long lastOffset = logInfo.highWatermark - 1;
-        final BatchInfo batchToStore = new BatchInfo(
-            objectKey,
+        final BatchInfo batchInfo = new BatchInfo(
+            fileInfo.objectKey(),
             request.byteOffset(),
             request.size(),
             firstOffset,
@@ -108,7 +113,7 @@ public class InMemoryControlPlane extends AbstractControlPlane {
             now,
             request.batchMaxTimestamp()
         );
-        coordinates.put(lastOffset, batchToStore);
+        coordinates.put(lastOffset, new BatchInfoInternal(batchInfo, fileInfo));
         return CommitBatchResponse.success(firstOffset, now, logInfo.logStartOffset);
     }
 
@@ -127,7 +132,7 @@ public class InMemoryControlPlane extends AbstractControlPlane {
                                                               final boolean minOneMessage,
                                                               final int fetchMaxBytes) {
         final LogInfo logInfo = logs.get(request.topicIdPartition());
-        final TreeMap<Long, BatchInfo> coordinates = batches.get(request.topicIdPartition());
+        final TreeMap<Long, BatchInfoInternal> coordinates = batches.get(request.topicIdPartition());
         if (logInfo == null || coordinates == null) {
             return FindBatchResponse.unknownTopicOrPartition();
         }
@@ -146,7 +151,7 @@ public class InMemoryControlPlane extends AbstractControlPlane {
         List<BatchInfo> batches = new ArrayList<>();
         long totalSize = 0;
         for (Long batchOffset : coordinates.navigableKeySet().tailSet(request.offset())) {
-            BatchInfo batch = coordinates.get(batchOffset);
+            BatchInfo batch = coordinates.get(batchOffset).batchInfo();
             batches.add(batch);
             totalSize += batch.size();
             if (totalSize > fetchMaxBytes) {
@@ -159,5 +164,14 @@ public class InMemoryControlPlane extends AbstractControlPlane {
     private static class LogInfo {
         long logStartOffset = 0;
         long highWatermark = 0;
+    }
+
+    private record FileInfo(String objectKey,
+                            int uploaderBrokerId,
+                            long fileSize) {
+    }
+
+    private record BatchInfoInternal(BatchInfo batchInfo,
+                                     FileInfo fileInfo) {
     }
 }

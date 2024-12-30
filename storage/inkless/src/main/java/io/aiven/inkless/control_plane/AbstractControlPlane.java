@@ -24,6 +24,8 @@ public abstract class AbstractControlPlane implements ControlPlane {
 
     @Override
     public synchronized List<CommitBatchResponse> commitFile(final String objectKey,
+                                                             final int uploaderBrokerId,
+                                                             final long fileSize,
                                                              final List<CommitBatchRequest> batches) {
         // Real-life batches cannot be empty, even if they have 0 records
         // Checking this just as an assertion.
@@ -43,7 +45,7 @@ public abstract class AbstractControlPlane implements ControlPlane {
         );
 
         // Process those partitions that are present in the metadata.
-        splitMapper.setTrueOut(commitFileForExistingPartitions(objectKey, splitMapper.getTrueIn()));
+        splitMapper.setTrueOut(commitFileForExistingPartitions(objectKey, uploaderBrokerId, fileSize, splitMapper.getTrueIn()));
 
         return splitMapper.getOut();
     }
@@ -58,6 +60,8 @@ public abstract class AbstractControlPlane implements ControlPlane {
 
     protected abstract Iterator<CommitBatchResponse> commitFileForExistingPartitions(
         final String objectKey,
+        final int uploaderBrokerId,
+        final long fileSize,
         final Stream<CommitBatchRequest> requests
     );
 
