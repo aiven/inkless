@@ -11,6 +11,7 @@ import io.aiven.inkless.storage_backend.common.StorageBackend;
 
 public record SharedState(
         Time time,
+        int brokerId,
         InklessConfig config,
         MetadataView metadata,
         ControlPlane controlPlane,
@@ -21,12 +22,14 @@ public record SharedState(
 
     public static SharedState initialize(
         Time time,
+        int brokerId,
         InklessConfig config,
         MetadataView metadata,
         BrokerTopicStats brokerTopicStats
     ) {
         return new SharedState(
             time,
+            brokerId,
             config,
             metadata,
             ControlPlane.create(config, time, metadata),
@@ -35,5 +38,4 @@ public record SharedState(
             brokerTopicStats
         );
     }
-
 }

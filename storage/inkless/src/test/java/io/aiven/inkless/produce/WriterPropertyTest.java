@@ -157,6 +157,7 @@ class WriterPropertyTest {
                 Arbitraries.longs().between(commitDurationAvg - 2, commitDurationAvg + 2))
         );
         final FileCommitter fileCommitter = new FileCommitter(
+            11,
             controlPlane,
             PlainObjectKey.creator(""),
             objectUploader,

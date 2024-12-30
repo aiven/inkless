@@ -36,7 +36,7 @@ class ActiveFile {
                final BrokerTopicMetricMarks brokerTopicMetricMarks) {
         this.buffer = new BatchBuffer();
         this.batchValidator = new BatchValidator(time);
-        this.start = TimeUtils.monotonicNow(time);
+        this.start = TimeUtils.durationMeasurementNow(time);
         this.brokerTopicMetricMarks = brokerTopicMetricMarks;
     }
 

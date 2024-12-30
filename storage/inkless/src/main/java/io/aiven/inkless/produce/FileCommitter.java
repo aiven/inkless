@@ -40,6 +40,7 @@ class FileCommitter implements Closeable {
 
     private final Lock lock = new ReentrantLock();
 
+    private final int brokerId;
     private final ControlPlane controlPlane;
     private final ObjectKeyCreator objectKeyCreator;
     private final ObjectUploader objectUploader;
@@ -53,13 +54,14 @@ class FileCommitter implements Closeable {
     private final AtomicInteger totalBytesInProgress = new AtomicInteger(0);
 
     @DoNotMutate
-    FileCommitter(final ControlPlane controlPlane,
+    FileCommitter(final int brokerId,
+                  final ControlPlane controlPlane,
                   final ObjectKeyCreator objectKeyCreator,
                   final ObjectUploader objectUploader,
                   final Time time,
                   final int maxFileUploadAttempts,
                   final Duration fileUploadRetryBackoff) {
-        this(controlPlane, objectKeyCreator, objectUploader, time, maxFileUploadAttempts, fileUploadRetryBackoff,
+        this(brokerId, controlPlane, objectKeyCreator, objectUploader, time, maxFileUploadAttempts, fileUploadRetryBackoff,
             Executors.newCachedThreadPool(new InklessThreadFactory("inkless-file-uploader-", false)),
             // It must be single-thread to preserve the commit order.
             Executors.newSingleThreadExecutor(new InklessThreadFactory("inkless-file-uploader-finisher-", false)),
@@ -68,7 +70,8 @@ class FileCommitter implements Closeable {
     }
 
     // Visible for testing
-    FileCommitter(final ControlPlane controlPlane,
+    FileCommitter(final int brokerId,
+                  final ControlPlane controlPlane,
                   final ObjectKeyCreator objectKeyCreator,
                   final ObjectUploader objectUploader,
                   final Time time,
@@ -77,6 +80,7 @@ class FileCommitter implements Closeable {
                   final ExecutorService executorServiceUpload,
                   final ExecutorService executorServiceCommit,
                   final FileCommitterMetrics metrics) {
+        this.brokerId = brokerId;
         this.controlPlane = Objects.requireNonNull(controlPlane, "controlPlane cannot be null");
         this.objectKeyCreator = Objects.requireNonNull(objectKeyCreator, "objectKeyCreator cannot be null");
         this.objectUploader = Objects.requireNonNull(objectUploader, "objectUploader cannot be null");
@@ -104,7 +108,7 @@ class FileCommitter implements Closeable {
 
         lock.lock();
         try {
-            final Instant uploadAndCommitStart = TimeUtils.monotonicNow(time);
+            final Instant uploadAndCommitStart = TimeUtils.durationMeasurementNow(time);
 
             totalFilesInProgress.addAndGet(1);
             totalBytesInProgress.addAndGet(file.size());
@@ -118,7 +122,7 @@ class FileCommitter implements Closeable {
             final Future<ObjectKey> uploadFuture = executorServiceUpload.submit(uploadJob);
 
             final FileCommitJob commitJob =
-                new FileCommitJob(file, uploadFuture, time, controlPlane, metrics::fileCommitFinished);
+                new FileCommitJob(brokerId, file, uploadFuture, time, controlPlane, metrics::fileCommitFinished);
             CompletableFuture.runAsync(commitJob, executorServiceCommit)
                 .whenComplete((result, error) -> {
                     totalFilesInProgress.addAndGet(-1);

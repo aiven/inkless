@@ -72,13 +72,15 @@ public class PostgresControlPlane extends AbstractControlPlane {
     @Override
     protected Iterator<CommitBatchResponse> commitFileForExistingPartitions(
         final String objectKey,
+        final int uploaderBrokerId,
+        final long fileSize,
         final Stream<CommitBatchRequest> requests) {
         final var requestExtras = requests.map(r -> new CommitFileJob.CommitBatchRequestExtra(
             r,
             metadataView.getTopicId(r.topicPartition().topic()),
             metadataView.getTopicConfig(r.topicPartition().topic()).messageTimestampType
         )).toList();
-        final CommitFileJob job = new CommitFileJob(time, hikariDataSource, objectKey, requestExtras);
+        final CommitFileJob job = new CommitFileJob(time, hikariDataSource, objectKey, uploaderBrokerId, fileSize, requestExtras);
         return job.call().iterator();
     }
 

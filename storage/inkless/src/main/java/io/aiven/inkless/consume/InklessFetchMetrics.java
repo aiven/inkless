@@ -41,7 +41,7 @@ public class InklessFetchMetrics {
     }
 
     public void fetchCompleted(Instant startAt) {
-        final Instant now = TimeUtils.monotonicNow(time);
+        final Instant now = TimeUtils.durationMeasurementNow(time);
         fetchTimeHistogram.update(Duration.between(startAt, now).toMillis());
     }
 
