@@ -24,10 +24,6 @@ org.apache.kafka.queue.KafkaEventQueueTest:
 - testShutdownBeforeDeferred
 - testSize
 - testTimeouts
-org.apache.kafka.security.PasswordEncoderTest:
-- testEncodeDecode
-- testEncodeDecodeAlgorithms
-- testEncoderConfigChange
 org.apache.kafka.server.common.FeatureTest:
 - testDefaultLevelAllFeatures
 - testDefaultTestVersion
