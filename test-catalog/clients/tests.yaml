@@ -967,6 +967,7 @@ org.apache.kafka.clients.consumer.internals.AbstractCoordinatorTest:
 - testWakeupAfterJoinGroupSent
 - testWakeupAfterJoinGroupSentExternalCompletion
 - testWakeupAfterSyncGroupReceived
+- testWakeupAfterSyncGroupReceivedExternalCompletion
 - testWakeupAfterSyncGroupSentExternalCompletion
 - testWakeupFromEnsureCoordinatorReady
 - testWakeupInOnJoinComplete
@@ -1181,7 +1182,8 @@ org.apache.kafka.clients.consumer.internals.ConsumerHeartbeatRequestManagerTest:
 - testSkippingHeartbeat
 - testSuccessfulHeartbeatTiming
 - testTimerNotDue
-- testUnsupportedVersion
+- testUnsupportedVersionFromBroker
+- testUnsupportedVersionFromClient
 - testValidateConsumerGroupHeartbeatRequest
 - testValidateConsumerGroupHeartbeatRequestAssignmentSentWhenLocalEpochChanges
 - testisExpiredByUsedForLogging
@@ -2087,6 +2089,8 @@ org.apache.kafka.clients.consumer.internals.ShareHeartbeatRequestManagerTest:
 - testSkippingHeartbeat
 - testSuccessfulHeartbeatTiming
 - testTimerNotDue
+- testUnsupportedVersionGeneratedOnTheBroker
+- testUnsupportedVersionGeneratedOnTheClient
 org.apache.kafka.clients.consumer.internals.ShareMembershipManagerTest:
 - testDelayedMetadataUsedToCompleteAssignment
 - testFatalFailureWhenMemberAlreadyLeft
