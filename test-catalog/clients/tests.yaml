@@ -4710,7 +4710,6 @@ org.apache.kafka.common.utils.ConfigUtilsTest:
 - testConfigMapToRedactedStringWithSecrets
 - testGetBoolean
 org.apache.kafka.common.utils.Crc32CTest:
-- testUpdate
 - testValue
 org.apache.kafka.common.utils.ExitTest:
 - shouldAddShutdownHookImmediately
