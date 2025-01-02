@@ -16,6 +16,7 @@ import java.util.UUID;
 
 import io.aiven.inkless.common.UuidUtil;
 import io.aiven.inkless.control_plane.FileReason;
+import io.aiven.inkless.control_plane.FileState;
 
 public class DBUtils {
     static Set<Log> getAllLogs(final HikariDataSource hikariDataSource) {
@@ -49,11 +50,12 @@ public class DBUtils {
                 final long id = resultSet.getLong("file_id");
                 final String objectKey = resultSet.getString("object_key");
                 final FileReason reason = FileReason.fromName(resultSet.getString("reason"));
+                final FileState state = FileState.fromName(resultSet.getString("state"));
                 final int uploaderBrokerId = resultSet.getInt("uploader_broker_id");
                 final Instant committedAt = resultSet.getTimestamp("committed_at").toInstant();
                 final long size = resultSet.getLong("size");
                 final long usedSize = resultSet.getLong("used_size");
-                result.add(new DBUtils.File(id, objectKey, reason, uploaderBrokerId, committedAt, size, usedSize));
+                result.add(new DBUtils.File(id, objectKey, reason, state, uploaderBrokerId, committedAt, size, usedSize));
             }
         } catch (final SQLException e) {
             throw new RuntimeException(e);
@@ -86,6 +88,7 @@ public class DBUtils {
     record File(long id,
                 String objectKey,
                 FileReason reason,
+                FileState state,
                 int uploaderBrokerId,
                 Instant committedAt,
                 long size,
