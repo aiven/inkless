@@ -25,6 +25,7 @@ import java.util.List;
 import io.aiven.inkless.control_plane.CommitBatchRequest;
 import io.aiven.inkless.control_plane.CommitBatchResponse;
 import io.aiven.inkless.control_plane.FileReason;
+import io.aiven.inkless.control_plane.FileState;
 import io.aiven.inkless.control_plane.MetadataView;
 import io.aiven.inkless.test_utils.SharedPostgreSQLTest;
 
@@ -94,7 +95,7 @@ class CommitFileJobTest extends SharedPostgreSQLTest {
 
         assertThat(DBUtils.getAllFiles(hikariDataSource))
             .containsExactlyInAnyOrder(
-                new DBUtils.File(EXPECTED_FILE_ID_1, "obj1", FileReason.PRODUCE, BROKER_ID, Instant.ofEpochMilli(123456L), FILE_SIZE, FILE_SIZE)
+                new DBUtils.File(EXPECTED_FILE_ID_1, "obj1", FileReason.PRODUCE, FileState.UPLOADED, BROKER_ID, Instant.ofEpochMilli(123456L), FILE_SIZE, FILE_SIZE)
             );
 
         assertThat(DBUtils.getAllBatches(hikariDataSource))
@@ -144,8 +145,8 @@ class CommitFileJobTest extends SharedPostgreSQLTest {
 
         assertThat(DBUtils.getAllFiles(hikariDataSource))
             .containsExactlyInAnyOrder(
-                new DBUtils.File(EXPECTED_FILE_ID_1, "obj1", FileReason.PRODUCE, BROKER_ID, Instant.ofEpochMilli(1000L), FILE_SIZE, FILE_SIZE),
-                new DBUtils.File(EXPECTED_FILE_ID_2, "obj2", FileReason.PRODUCE, BROKER_ID, Instant.ofEpochMilli(2000L), FILE_SIZE, FILE_SIZE)
+                new DBUtils.File(EXPECTED_FILE_ID_1, "obj1", FileReason.PRODUCE, FileState.UPLOADED, BROKER_ID, Instant.ofEpochMilli(1000L), FILE_SIZE, FILE_SIZE),
+                new DBUtils.File(EXPECTED_FILE_ID_2, "obj2", FileReason.PRODUCE, FileState.UPLOADED, BROKER_ID, Instant.ofEpochMilli(2000L), FILE_SIZE, FILE_SIZE)
             );
 
         assertThat(DBUtils.getAllBatches(hikariDataSource))
@@ -189,7 +190,7 @@ class CommitFileJobTest extends SharedPostgreSQLTest {
 
         assertThat(DBUtils.getAllFiles(hikariDataSource))
             .containsExactlyInAnyOrder(
-                new DBUtils.File(EXPECTED_FILE_ID_1, "obj1", FileReason.PRODUCE, BROKER_ID, Instant.ofEpochMilli(123456L), FILE_SIZE, FILE_SIZE)
+                new DBUtils.File(EXPECTED_FILE_ID_1, "obj1", FileReason.PRODUCE, FileState.UPLOADED, BROKER_ID, Instant.ofEpochMilli(123456L), FILE_SIZE, FILE_SIZE)
             );
 
         assertThat(DBUtils.getAllBatches(hikariDataSource))
