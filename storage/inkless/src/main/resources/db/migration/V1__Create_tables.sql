@@ -45,10 +45,18 @@ CREATE TYPE file_reason_t AS ENUM (
     'produce'
 );
 
+CREATE TYPE file_state_t AS ENUM (
+    -- Uploaded by a broker, in use, etc.
+    'uploaded',
+    -- Marked for deletion.
+    'deleting'
+);
+
 CREATE TABLE files (
     file_id BIGSERIAL PRIMARY KEY,
     object_key object_key_t UNIQUE NOT NULL,
     reason file_reason_t NOT NULL,
+    state file_state_t NOT NULL,
     uploader_broker_id broker_id_t,
     committed_at TIMESTAMP WITH TIME ZONE,
     size byte_size_t,
@@ -96,8 +104,8 @@ DECLARE
     assigned_offset offset_nullable_t;
     new_high_watermark offset_nullable_t;
 BEGIN
-    INSERT INTO files (object_key, reason, uploader_broker_id, committed_at, size, used_size)
-    VALUES (object_key, 'produce', uploader_broker_id, now, file_size, file_size)
+    INSERT INTO files (object_key, reason, state, uploader_broker_id, committed_at, size, used_size)
+    VALUES (object_key, 'produce', 'uploaded', uploader_broker_id, now, file_size, file_size)
     RETURNING file_id
     INTO new_file_id;
 
