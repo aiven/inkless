@@ -3301,9 +3301,9 @@ kafka.server.OffsetsForLeaderEpochRequestTest:
 kafka.server.PermissiveControllerMutationQuotaTest:
 - testControllerMutationQuotaViolation
 kafka.server.ProduceRequestTest:
-- quorum
 - testCorruptLz4ProduceRequest
 - testProduceToNonReplica
+- testProduceWithInvalidTimestamp
 - testSimpleProduceRequest
 - testZSTDProduceRequest
 kafka.server.RaftClusterSnapshotTest:
