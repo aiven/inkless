@@ -4,6 +4,7 @@ package io.aiven.inkless.control_plane;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
+import java.util.NoSuchElementException;
 import java.util.Objects;
 import java.util.function.Predicate;
 import java.util.stream.IntStream;
@@ -82,7 +83,7 @@ public class SplitMapper<TIn, TOut> {
             try {
                 final Iterator<TOut> iter = mark ? trueOut : falseOut;
                 result.add(iter.next());
-            } catch (final Exception e) {
+            } catch (final NoSuchElementException e) {
                 final String iterName = mark ? "True out" : "False out";
                 throw new IllegalStateException(iterName + " is exhausted");
             }

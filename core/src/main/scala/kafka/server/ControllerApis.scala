@@ -17,6 +17,8 @@
 
 package kafka.server
 
+import io.aiven.inkless.control_plane.ControlPlane
+
 import java.{lang, util}
 import java.nio.ByteBuffer
 import java.util.{Collections, OptionalLong}
@@ -27,7 +29,7 @@ import kafka.network.RequestChannel
 import kafka.raft.RaftManager
 import kafka.server.QuotaFactory.QuotaManagers
 import kafka.server.logger.RuntimeLoggerManager
-import kafka.server.metadata.KRaftMetadataCache
+import kafka.server.metadata.{InklessMetadataView, KRaftMetadataCache}
 import kafka.utils.Logging
 import org.apache.kafka.clients.admin.{AlterConfigOp, EndpointType}
 import org.apache.kafka.common.Uuid.ZERO_UUID
@@ -85,6 +87,9 @@ class ControllerApis(
   val requestHelper = new RequestHandlerHelper(requestChannel, quotas, time)
   val runtimeLoggerManager = new RuntimeLoggerManager(config.nodeId, logger.underlying)
   private val aclApis = new AclApis(authHelper, authorizer, requestHelper, "controller", config)
+
+  private val inklessMetadataView = new InklessMetadataView(metadataCache)
+  private val inklessControlPlane = ControlPlane.create(config.inklessConfig, time, inklessMetadataView)
 
   def isClosed: Boolean = aclApis.isClosed
 
@@ -343,6 +348,9 @@ class ControllerApis(
             appendResponse(name, ZERO_UUID, new ApiError(TOPIC_AUTHORIZATION_FAILED))
           }
         }
+
+        inklessControlPlane.deleteTopics(idToName.keySet())
+
         // Finally, the idToName map contains all the topics that we are authorized to delete.
         // Perform the deletion and create responses for each one.
         controller.deleteTopics(context, idToName.keySet).thenApply { idToError =>

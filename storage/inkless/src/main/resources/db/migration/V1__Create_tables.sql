@@ -63,6 +63,12 @@ CREATE TABLE files (
     used_size byte_size_t
 );
 
+CREATE TABLE files_to_delete (
+    file_id BIGINT PRIMARY KEY,
+    marked_for_deletion_at TIMESTAMP WITH TIME ZONE,
+    CONSTRAINT fk_files_to_delete_files FOREIGN KEY (file_id) REFERENCES files(file_id) ON DELETE RESTRICT ON UPDATE CASCADE
+);
+
 CREATE TABLE batches (
     topic_id topic_id_t,
     partition partition_t,
@@ -76,6 +82,8 @@ CREATE TABLE batches (
     log_append_timestamp timestamp_t,
     batch_max_timestamp timestamp_t,
     PRIMARY KEY(topic_id, partition, base_offset),
+    CONSTRAINT fk_batches_logs FOREIGN KEY (topic_id, partition) REFERENCES logs(topic_id, partition)
+        ON DELETE NO ACTION ON UPDATE CASCADE DEFERRABLE INITIALLY DEFERRED,  -- allow deleting logs before batches
     CONSTRAINT fk_batches_files FOREIGN KEY (file_id) REFERENCES files(file_id) ON DELETE RESTRICT ON UPDATE CASCADE
 );
 
@@ -166,6 +174,78 @@ BEGIN
 
         RETURN NEXT (request.topic_id, request.partition, TRUE, assigned_offset, log.log_start_offset)::commit_batch_response_v1;
     END LOOP;
+END;
+$$
+;
+
+CREATE FUNCTION delete_topic_v1(
+    now TIMESTAMP WITH TIME ZONE,
+    arg_topic_ids JSONB
+)
+RETURNS VOID LANGUAGE plpgsql VOLATILE AS $$
+DECLARE
+    log RECORD;
+BEGIN
+    FOR log IN
+        WITH topic_ids AS
+            (SELECT value::uuid AS topic_id FROM jsonb_array_elements_text(arg_topic_ids))
+        DELETE FROM logs
+        WHERE topic_id IN (SELECT topic_id FROM topic_ids)
+        RETURNING logs.*
+    LOOP
+        PERFORM delete_batch_v1(now, topic_id, partition, base_offset)
+        FROM batches
+        WHERE topic_id = log.topic_id
+            AND partition = log.partition;
+    END LOOP;
+END;
+$$
+;
+
+CREATE FUNCTION delete_batch_v1(
+    now TIMESTAMP WITH TIME ZONE,
+    arg_topic_id topic_id_t,
+    arg_partition partition_t,
+    arg_base_offset offset_t
+)
+RETURNS VOID LANGUAGE plpgsql VOLATILE AS $$
+DECLARE
+    l_file_id BIGINT;
+    batch_size byte_size_t = 0;
+    new_used_size byte_size_t = 0;
+BEGIN
+    DELETE FROM batches
+    WHERE topic_id = arg_topic_id
+        AND partition = arg_partition
+        AND base_offset = arg_base_offset
+    RETURNING file_id, byte_size
+    INTO l_file_id, batch_size;
+
+    UPDATE files
+    SET used_size = used_size - batch_size
+    WHERE file_id = l_file_id
+    RETURNING used_size
+    INTO new_used_size;
+
+    IF new_used_size = 0 THEN
+        PERFORM delete_file_v1(now, l_file_id);
+    END IF;
+END;
+$$
+;
+
+CREATE FUNCTION delete_file_v1(
+    now TIMESTAMP WITH TIME ZONE,
+    arg_file_id BIGINT
+)
+RETURNS VOID LANGUAGE plpgsql VOLATILE AS $$
+BEGIN
+    UPDATE files
+    SET state = 'deleting'
+    WHERE file_id = arg_file_id;
+
+    INSERT INTO files_to_delete(file_id, marked_for_deletion_at)
+    VALUES (arg_file_id, now);
 END;
 $$
 ;
