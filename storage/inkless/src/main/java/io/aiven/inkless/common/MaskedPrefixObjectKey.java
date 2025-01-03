@@ -1,10 +1,10 @@
-// Copyright (c) 2024 Aiven, Helsinki, Finland. https://aiven.io/
+// Copyright (c) 2025 Aiven, Helsinki, Finland. https://aiven.io/
 package io.aiven.inkless.common;
 
 import java.util.Objects;
 
-public record PlainObjectKey(String prefix, String mainPath) implements ObjectKey {
-    public PlainObjectKey {
+public record MaskedPrefixObjectKey(String prefix, String mainPath) implements ObjectKey {
+    public MaskedPrefixObjectKey {
         Objects.requireNonNull(prefix, "prefix cannot be null");
         Objects.requireNonNull(mainPath, "mainPath cannot be null");
     }
@@ -16,10 +16,10 @@ public record PlainObjectKey(String prefix, String mainPath) implements ObjectKe
 
     @Override
     public String toString() {
-        return value();
+        return "<prefix>" + mainPath;
     }
 
     public static ObjectKeyCreator creator(final String prefix) {
-        return (s) -> new PlainObjectKey(prefix, s);
+        return (s) -> new MaskedPrefixObjectKey(prefix, s);
     }
 }

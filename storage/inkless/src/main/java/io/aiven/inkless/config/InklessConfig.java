@@ -26,6 +26,9 @@ public class InklessConfig extends AbstractConfig {
     public static final String OBJECT_KEY_PREFIX_CONFIG = "object.key.prefix";
     private static final String OBJECT_KEY_PREFIX_DOC = "The object storage key prefix.";
 
+    public static final String OBJECT_KEY_LOG_PREFIX_MASKED_CONFIG = "object.key.log.prefix.masked";
+    private static final String OBJECT_KEY_LOG_PREFIX_MASKED_DOC = "Whether to log full object key path, or mask the prefix.";
+
     public static final String PRODUCE_PREFIX = "produce.";
 
     public static final String PRODUCE_COMMIT_INTERVAL_MS_CONFIG = PRODUCE_PREFIX + "commit.interval.ms";
@@ -70,6 +73,13 @@ public class InklessConfig extends AbstractConfig {
             new ConfigDef.NonNullValidator(),
             ConfigDef.Importance.MEDIUM,
             OBJECT_KEY_PREFIX_DOC
+        );
+        configDef.define(
+            OBJECT_KEY_LOG_PREFIX_MASKED_CONFIG,
+            ConfigDef.Type.BOOLEAN,
+            false,
+            ConfigDef.Importance.LOW,
+            OBJECT_KEY_LOG_PREFIX_MASKED_DOC
         );
 
         configDef.define(
@@ -139,6 +149,10 @@ public class InklessConfig extends AbstractConfig {
 
     public String objectKeyPrefix() {
         return getString(OBJECT_KEY_PREFIX_CONFIG);
+    }
+
+    public boolean objectKeyLogPrefixMasked() {
+        return getBoolean(OBJECT_KEY_LOG_PREFIX_MASKED_CONFIG);
     }
 
     public StorageBackend storage() {
