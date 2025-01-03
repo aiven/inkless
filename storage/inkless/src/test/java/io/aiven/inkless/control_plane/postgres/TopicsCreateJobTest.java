@@ -43,7 +43,7 @@ class TopicsCreateJobTest extends SharedPostgreSQLTest {
 
     @Test
     void empty() {
-        final TopicsCreateJob job = new TopicsCreateJob(Time.SYSTEM, metadataView, hikariDataSource, Map.of());
+        final TopicsCreateJob job = new TopicsCreateJob(Time.SYSTEM, metadataView, hikariDataSource, Map.of(), durationMs -> {});
         job.run();
         assertThat(DBUtils.getAllLogs(hikariDataSource)).isEmpty();
     }
@@ -56,7 +56,7 @@ class TopicsCreateJobTest extends SharedPostgreSQLTest {
         delta.replay(new TopicRecord().setName(TOPIC_1).setTopicId(TOPIC_ID1));
         delta.replay(new TopicRecord().setName(TOPIC_2).setTopicId(TOPIC_ID2));
 
-        final TopicsCreateJob job = new TopicsCreateJob(Time.SYSTEM, metadataView, hikariDataSource, delta.topicsDelta().changedTopics());
+        final TopicsCreateJob job = new TopicsCreateJob(Time.SYSTEM, metadataView, hikariDataSource, delta.topicsDelta().changedTopics(), durationMs -> {});
         job.run();
         assertThat(DBUtils.getAllLogs(hikariDataSource)).isEmpty();
     }
@@ -72,7 +72,7 @@ class TopicsCreateJobTest extends SharedPostgreSQLTest {
         delta.replay(new TopicRecord().setName(TOPIC_2).setTopicId(TOPIC_ID2));
         delta.replay(new PartitionRecord().setTopicId(TOPIC_ID2).setPartitionId(0));
 
-        final TopicsCreateJob job1 = new TopicsCreateJob(Time.SYSTEM, metadataView, hikariDataSource, delta.topicsDelta().changedTopics());
+        final TopicsCreateJob job1 = new TopicsCreateJob(Time.SYSTEM, metadataView, hikariDataSource, delta.topicsDelta().changedTopics(), durationMs -> {});
         job1.run();
         assertThat(DBUtils.getAllLogs(hikariDataSource)).containsExactlyInAnyOrder(
             new DBUtils.Log(TOPIC_ID1, 0, TOPIC_1, 0, 0),
@@ -81,7 +81,7 @@ class TopicsCreateJobTest extends SharedPostgreSQLTest {
         );
 
         // Repetition doesn't affect anything.
-        final TopicsCreateJob job2 = new TopicsCreateJob(Time.SYSTEM, metadataView, hikariDataSource, delta.topicsDelta().changedTopics());
+        final TopicsCreateJob job2 = new TopicsCreateJob(Time.SYSTEM, metadataView, hikariDataSource, delta.topicsDelta().changedTopics(), durationMs -> {});
         job2.run();
         assertThat(DBUtils.getAllLogs(hikariDataSource)).containsExactlyInAnyOrder(
                 new DBUtils.Log(TOPIC_ID1, 0, TOPIC_1, 0, 0),
@@ -102,12 +102,12 @@ class TopicsCreateJobTest extends SharedPostgreSQLTest {
         delta1.replay(new PartitionRecord().setTopicId(TOPIC_ID2).setPartitionId(0));
         final MetadataImage image1 = delta1.apply(MetadataProvenance.EMPTY);
 
-        final TopicsCreateJob job1 = new TopicsCreateJob(Time.SYSTEM, metadataView, hikariDataSource, delta1.topicsDelta().changedTopics());
+        final TopicsCreateJob job1 = new TopicsCreateJob(Time.SYSTEM, metadataView, hikariDataSource, delta1.topicsDelta().changedTopics(), durationMs -> {});
         job1.run();
 
         final MetadataDelta delta2 = new MetadataDelta.Builder().setImage(image1).build();
         delta2.replay(new PartitionRecord().setTopicId(TOPIC_ID2).setPartitionId(1));
-        final TopicsCreateJob job2 = new TopicsCreateJob(Time.SYSTEM, metadataView, hikariDataSource, delta2.topicsDelta().changedTopics());
+        final TopicsCreateJob job2 = new TopicsCreateJob(Time.SYSTEM, metadataView, hikariDataSource, delta2.topicsDelta().changedTopics(), durationMs -> {});
         job2.run();
 
         assertThat(DBUtils.getAllLogs(hikariDataSource)).containsExactlyInAnyOrder(
@@ -153,7 +153,7 @@ class TopicsCreateJobTest extends SharedPostgreSQLTest {
         delta.replay(new TopicRecord().setName(TOPIC_2).setTopicId(TOPIC_ID2));
         delta.replay(new PartitionRecord().setTopicId(TOPIC_ID2).setPartitionId(0));
 
-        final TopicsCreateJob job1 = new TopicsCreateJob(Time.SYSTEM, metadataView, hikariDataSource, delta.topicsDelta().changedTopics());
+        final TopicsCreateJob job1 = new TopicsCreateJob(Time.SYSTEM, metadataView, hikariDataSource, delta.topicsDelta().changedTopics(), durationMs -> {});
         job1.run();
 
         assertThat(DBUtils.getAllLogs(hikariDataSource)).containsExactlyInAnyOrder(
@@ -175,7 +175,7 @@ class TopicsCreateJobTest extends SharedPostgreSQLTest {
         delta.replay(new TopicRecord().setName(TOPIC_2).setTopicId(TOPIC_ID2));
         delta.replay(new PartitionRecord().setTopicId(TOPIC_ID2).setPartitionId(0));
 
-        final TopicsCreateJob job1 = new TopicsCreateJob(Time.SYSTEM, metadataView, hikariDataSource, delta.topicsDelta().changedTopics());
+        final TopicsCreateJob job1 = new TopicsCreateJob(Time.SYSTEM, metadataView, hikariDataSource, delta.topicsDelta().changedTopics(), durationMs -> {});
         job1.run();
         assertThat(DBUtils.getAllLogs(hikariDataSource)).containsExactlyInAnyOrder(
             new DBUtils.Log(TOPIC_ID2, 0, TOPIC_2, 0, 0)

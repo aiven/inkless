@@ -18,9 +18,11 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Callable;
+import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
+import io.aiven.inkless.TimeUtils;
 import io.aiven.inkless.common.UuidUtil;
 import io.aiven.inkless.control_plane.BatchInfo;
 import io.aiven.inkless.control_plane.FindBatchRequest;
@@ -48,17 +50,23 @@ class FindBatchesJob implements Callable<List<FindBatchResponse>> {
     private final List<FindBatchRequest> requests;
     private final boolean minOneMessage;
     private final int fetchMaxBytes;
+    private final Consumer<Long> durationCallback;
+    private final Consumer<Long> getLogsDurationCallback;
 
     FindBatchesJob(final Time time,
                    final HikariDataSource hikariDataSource,
                    final List<FindBatchRequest> requests,
                    final boolean minOneMessage,
-                   final int fetchMaxBytes) {
+                   final int fetchMaxBytes,
+                   final Consumer<Long> durationCallback,
+                   final Consumer<Long> getLogsDurationCallback) {
         this.time = time;
         this.hikariDataSource = hikariDataSource;
         this.requests = requests;
         this.minOneMessage = minOneMessage;
         this.fetchMaxBytes = fetchMaxBytes;
+        this.durationCallback = durationCallback;
+        this.getLogsDurationCallback = getLogsDurationCallback;
     }
 
     @Override
@@ -66,12 +74,12 @@ class FindBatchesJob implements Callable<List<FindBatchResponse>> {
         // TODO add retry (or not, let the consumers do this?)
         try {
             return runOnce();
-        } catch (final SQLException e) {
+        } catch (final Exception e) {
             throw new RuntimeException(e);
         }
     }
 
-    private List<FindBatchResponse> runOnce() throws SQLException {
+    private List<FindBatchResponse> runOnce() throws Exception {
         final Connection connection;
         try {
             connection = hikariDataSource.getConnection();
@@ -91,7 +99,7 @@ class FindBatchesJob implements Callable<List<FindBatchResponse>> {
         }
     }
 
-    private List<FindBatchResponse> runWithConnection(final Connection connection) throws SQLException {
+    private List<FindBatchResponse> runWithConnection(final Connection connection) throws Exception {
         final Map<TopicIdPartition, LogEntity> logInfos = getLogInfos(connection);
         final List<FindBatchResponse> result = new ArrayList<>();
         for (final FindBatchRequest request : requests) {
@@ -104,7 +112,7 @@ class FindBatchesJob implements Callable<List<FindBatchResponse>> {
 
     private FindBatchResponse findBatchPerPartition(final Connection connection,
                                                     final FindBatchRequest request,
-                                                    final LogEntity logEntity) throws SQLException {
+                                                    final LogEntity logEntity) throws Exception {
         if (logEntity == null) {
             return FindBatchResponse.unknownTopicOrPartition();
         }
@@ -118,6 +126,10 @@ class FindBatchesJob implements Callable<List<FindBatchResponse>> {
             return FindBatchResponse.offsetOutOfRange(logEntity.logStartOffset(), logEntity.highWatermark());
         }
 
+        return TimeUtils.measureDurationMs(time, ()->getBatchResponse(connection, request, logEntity), durationCallback);
+    }
+
+    private FindBatchResponse getBatchResponse(Connection connection, FindBatchRequest request, LogEntity logEntity) throws SQLException {
         final List<BatchInfo> batches = new ArrayList<>();
         long totalSize = 0;
 
@@ -154,7 +166,7 @@ class FindBatchesJob implements Callable<List<FindBatchResponse>> {
         return FindBatchResponse.success(batches, logEntity.logStartOffset(), logEntity.highWatermark());
     }
 
-    private Map<TopicIdPartition, LogEntity> getLogInfos(final Connection connection) throws SQLException {
+    private Map<TopicIdPartition, LogEntity> getLogInfos(final Connection connection) throws Exception {
         if (requests.isEmpty()) {
             return Map.of();
         }
@@ -162,7 +174,7 @@ class FindBatchesJob implements Callable<List<FindBatchResponse>> {
         final List<TopicIdPartition> tidps = requests.stream()
             .map(FindBatchRequest::topicIdPartition)
             .toList();
-        return LogSelectQuery.execute(connection, tidps, false).stream()
+        return LogSelectQuery.execute(time, connection, tidps, false, getLogsDurationCallback).stream()
             .collect(Collectors.toMap(LogEntity::topicIdPartition, Function.identity()));
     }
 

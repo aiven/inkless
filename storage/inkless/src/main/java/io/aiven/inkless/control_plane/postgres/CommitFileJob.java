@@ -25,6 +25,7 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.Callable;
+import java.util.function.Consumer;
 
 import io.aiven.inkless.TimeUtils;
 import io.aiven.inkless.common.UuidUtil;
@@ -53,19 +54,22 @@ class CommitFileJob implements Callable<List<CommitBatchResponse>> {
     private final int uploaderBrokerId;
     private final long fileSize;
     private final List<CommitBatchRequestExtra> requests;
+    private final Consumer<Long> durationCallback;
 
     CommitFileJob(final Time time,
                   final HikariDataSource hikariDataSource,
                   final String objectKey,
                   final int uploaderBrokerId,
                   final long fileSize,
-                  final List<CommitBatchRequestExtra> requests) {
+                  final List<CommitBatchRequestExtra> requests,
+                  final Consumer<Long> durationCallback) {
         this.time = time;
         this.hikariDataSource = hikariDataSource;
         this.objectKey = objectKey;
         this.uploaderBrokerId = uploaderBrokerId;
         this.fileSize = fileSize;
         this.requests = requests;
+        this.durationCallback = durationCallback;
     }
 
     @Override
@@ -77,12 +81,12 @@ class CommitFileJob implements Callable<List<CommitBatchResponse>> {
         // TODO add retry
         try {
             return runOnce();
-        } catch (final SQLException e) {
+        } catch (final Exception e) {
             throw new RuntimeException(e);
         }
     }
 
-    private List<CommitBatchResponse> runOnce() throws SQLException {
+    private List<CommitBatchResponse> runOnce() throws Exception {
         final Connection connection;
         try {
             connection = hikariDataSource.getConnection();
@@ -94,7 +98,7 @@ class CommitFileJob implements Callable<List<CommitBatchResponse>> {
         }
 
         try (connection) {
-            return callCommitFunction(connection);
+            return TimeUtils.measureDurationMs(time, () -> callCommitFunction(connection), durationCallback);
         } catch (final Exception e) {
             LOGGER.error("Error executing query", e);
             try {

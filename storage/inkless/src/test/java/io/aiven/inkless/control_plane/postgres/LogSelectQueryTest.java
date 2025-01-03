@@ -3,6 +3,8 @@ package io.aiven.inkless.control_plane.postgres;
 
 import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.Uuid;
+import org.apache.kafka.common.utils.MockTime;
+import org.apache.kafka.common.utils.Time;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -19,7 +21,6 @@ import org.mockito.quality.Strictness;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
-import java.sql.SQLException;
 import java.util.List;
 import java.util.UUID;
 import java.util.stream.Stream;
@@ -53,24 +54,30 @@ class LogSelectQueryTest {
 
     @Test
     void testNulls() {
-        assertThatThrownBy(() -> LogSelectQuery.execute(null, List.of(T0P0), false))
+        final Time time = new MockTime();
+        assertThatThrownBy(() -> LogSelectQuery.execute(time, null, List.of(T0P0), false, durationMs -> {
+        }))
             .isInstanceOf(NullPointerException.class)
             .hasMessage("connection cannot be null");
-        assertThatThrownBy(() -> LogSelectQuery.execute(connection, null, false))
+        assertThatThrownBy(() -> LogSelectQuery.execute(time, connection, null, false, durationMs -> {
+        }))
             .isInstanceOf(NullPointerException.class)
             .hasMessage("topicIdAndPartitions cannot be null");
     }
 
     @Test
     void testEmpty() {
-        assertThatThrownBy(() -> LogSelectQuery.execute(connection, List.of(), false))
+        final Time time = new MockTime();
+        assertThatThrownBy(() -> LogSelectQuery.execute(time, connection, List.of(), false, durationMs -> {
+        }))
             .isInstanceOf(IllegalArgumentException.class)
             .hasMessage("topicIdAndPartitions cannot be empty");
     }
 
     @ParameterizedTest
     @MethodSource("testSingleTopicPartitionProvider")
-    void testSingleTopicPartition(final boolean forUpdate, final String expectedQuery) throws SQLException {
+    void testSingleTopicPartition(final boolean forUpdate, final String expectedQuery) throws Exception {
+        final Time time = new MockTime();
         final long logStartOffset = 1L;
         final long highWatermark = 2L;
 
@@ -90,7 +97,8 @@ class LogSelectQueryTest {
         when(resultSet.getLong(eq("high_watermark")))
             .thenReturn(highWatermark);
 
-        final List<LogEntity> result = LogSelectQuery.execute(connection, List.of(T0P1), forUpdate);
+        final List<LogEntity> result = LogSelectQuery.execute(time, connection, List.of(T0P1), forUpdate, durationMs -> {
+        });
         assertThat(result).containsExactlyInAnyOrder(
             new LogEntity(T0P1.topicId(), T0P1.partition(), T0P1.topic(), logStartOffset, highWatermark));
 
@@ -121,7 +129,8 @@ class LogSelectQueryTest {
 
     @ParameterizedTest
     @MethodSource("testMultipleTopicPartitionsProvider")
-    void testMultipleTopicPartitions(final boolean forUpdate, final String expectedQuery) throws SQLException {
+    void testMultipleTopicPartitions(final boolean forUpdate, final String expectedQuery) throws Exception {
+        final Time time = new MockTime();
         final long logStartOffset1 = 1L;
         final long highWatermark1 = 2L;
         final long logStartOffset2 = 10L;
@@ -143,7 +152,7 @@ class LogSelectQueryTest {
         when(resultSet.getLong(eq("high_watermark")))
             .thenReturn(highWatermark1, highWatermark2);
 
-        final List<LogEntity> result = LogSelectQuery.execute(connection, List.of(T0P1, T1P0), forUpdate);
+        final List<LogEntity> result = LogSelectQuery.execute(time, connection, List.of(T0P1, T1P0), forUpdate, durationMs -> {});
         assertThat(result).containsExactlyInAnyOrder(
             new LogEntity(T0P1.topicId(), T0P1.partition(), T0P1.topic(), logStartOffset1, highWatermark1),
             new LogEntity(T1P0.topicId(), T1P0.partition(), T1P0.topic(), logStartOffset2, highWatermark2)
