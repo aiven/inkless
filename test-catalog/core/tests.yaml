@@ -3915,7 +3915,6 @@ kafka.tools.StorageToolTest:
 - testConfigToLogDirectories
 - testConfigToLogDirectoriesWithMetaLogDir
 - testFormatFailsIfAllDirectoriesAreUnavailable
-- testFormatFailsInZkMode
 - testFormatFailsOnAlreadyFormatted
 - testFormatSucceedsIfAllDirectoriesAreAvailable
 - testFormatSucceedsIfAtLeastOneDirectoryIsAvailable
