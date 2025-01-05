@@ -252,7 +252,7 @@ static def projectToJUnitXmlPath(project) {
     projectNames.push(p.name)
     p = p.parent
     if (p.name == "kafka") {
-      break;
+      break
     }
   }
   return projectNames.join("/")
@@ -995,7 +995,7 @@ project(':server') {
   }
 
   task createVersionFile() {
-    def receiptFile = file("$buildDir/kafka/$buildVersionFileName")
+    def receiptFile = file("${layout.buildDirectory.get().asFile.path}/kafka/$buildVersionFileName")
     inputs.property "commitId", commitId
     inputs.property "version", version
     outputs.file receiptFile
@@ -1015,13 +1015,13 @@ project(':server') {
 
   jar {
     dependsOn createVersionFile
-    from("$buildDir") {
+    from("${layout.buildDirectory.get().asFile.path}") {
       include "kafka/$buildVersionFileName"
     }
   }
 
   clean.doFirst {
-    delete "$buildDir/kafka/"
+    delete "${layout.buildDirectory.get().asFile.path}/kafka/"
   }
 
   checkstyle {
@@ -1204,7 +1204,7 @@ project(':core') {
     from (configurations.runtimeClasspath) {
       exclude('kafka-clients*')
     }
-    into "$buildDir/dependant-libs-${versions.scala}"
+    into "${layout.buildDirectory.get().asFile.path}/dependant-libs-${versions.scala}"
     duplicatesStrategy 'exclude'
   }
 
@@ -1363,10 +1363,10 @@ project(':core') {
     from (configurations.testRuntimeClasspath) {
       include('*.jar')
     }
-    into "$buildDir/dependant-testlibs"
+    into "${layout.buildDirectory.get().asFile.path}/dependant-testlibs"
     //By default gradle does not handle test dependencies between the sub-projects
     //This line is to include clients project test jar to dependant-testlibs
-    from (project(':clients').testJar ) { "$buildDir/dependant-testlibs" }
+    from (project(':clients').testJar ) { "${layout.buildDirectory.get().asFile.path}/dependant-testlibs" }
     duplicatesStrategy 'exclude'
   }
 
@@ -1480,7 +1480,7 @@ project(':group-coordinator:group-coordinator-api') {
   }
 
   task createVersionFile() {
-    def receiptFile = file("$buildDir/kafka/$buildVersionFileName")
+    def receiptFile = file("${layout.buildDirectory.get().asFile.path}/kafka/$buildVersionFileName")
     inputs.property "commitId", commitId
     inputs.property "version", version
     outputs.file receiptFile
@@ -1500,13 +1500,13 @@ project(':group-coordinator:group-coordinator-api') {
 
   jar {
     dependsOn createVersionFile
-    from("$buildDir") {
+    from("${layout.buildDirectory.get().asFile.path}") {
       include "kafka/$buildVersionFileName"
     }
   }
 
   clean.doFirst {
-    delete "$buildDir/kafka/"
+    delete "${layout.buildDirectory.get().asFile.path}/kafka/"
   }
 
   javadoc {
@@ -1951,7 +1951,7 @@ project(':clients') {
   }
 
   task createVersionFile() {
-    def receiptFile = file("$buildDir/kafka/$buildVersionFileName")
+    def receiptFile = file("${layout.buildDirectory.get().asFile.path}/kafka/$buildVersionFileName")
     inputs.property "commitId", commitId
     inputs.property "version", version
     outputs.file receiptFile
@@ -1991,7 +1991,7 @@ project(':clients') {
       exclude "**/google/protobuf/*.proto"
     }
 
-    from("$buildDir") {
+    from("${layout.buildDirectory.get().asFile.path}") {
       include "kafka/$buildVersionFileName"
     }
 
@@ -2005,7 +2005,7 @@ project(':clients') {
   }
 
   clean.doFirst {
-    delete "$buildDir/kafka/"
+    delete "${layout.buildDirectory.get().asFile.path}/kafka/"
   }
 
   task processMessages(type:JavaExec) {
@@ -2118,7 +2118,7 @@ project(':raft') {
   }
 
   task createVersionFile() {
-    def receiptFile = file("$buildDir/kafka/$buildVersionFileName")
+    def receiptFile = file("${layout.buildDirectory.get().asFile.path}/kafka/$buildVersionFileName")
     inputs.property "commitId", commitId
     inputs.property "version", version
     outputs.file receiptFile
@@ -2168,7 +2168,7 @@ project(':raft') {
 
   jar {
     dependsOn createVersionFile
-    from("$buildDir") {
+    from("${layout.buildDirectory.get().asFile.path}") {
         include "kafka/$buildVersionFileName"
     }
   }
@@ -2180,7 +2180,7 @@ project(':raft') {
   }
 
   clean.doFirst {
-    delete "$buildDir/kafka/"
+    delete "${layout.buildDirectory.get().asFile.path}/kafka/"
   }
 
   javadoc {
@@ -2213,7 +2213,7 @@ project(':server-common') {
   }
 
   task createVersionFile() {
-    def receiptFile = file("$buildDir/kafka/$buildVersionFileName")
+    def receiptFile = file("${layout.buildDirectory.get().asFile.path}/kafka/$buildVersionFileName")
     inputs.property "commitId", commitId
     inputs.property "version", version
     outputs.file receiptFile
@@ -2233,13 +2233,13 @@ project(':server-common') {
 
   jar {
     dependsOn createVersionFile
-    from("$buildDir") {
+    from("${layout.buildDirectory.get().asFile.path}") {
       include "kafka/$buildVersionFileName"
     }
   }
 
   clean.doFirst {
-    delete "$buildDir/kafka/"
+    delete "${layout.buildDirectory.get().asFile.path}/kafka/"
   }
 
   checkstyle {
@@ -2273,7 +2273,7 @@ project(':storage:storage-api') {
   }
 
   task createVersionFile() {
-    def receiptFile = file("$buildDir/kafka/$buildVersionFileName")
+    def receiptFile = file("${layout.buildDirectory.get().asFile.path}/kafka/$buildVersionFileName")
     inputs.property "commitId", commitId
     inputs.property "version", version
     outputs.file receiptFile
@@ -2293,13 +2293,13 @@ project(':storage:storage-api') {
 
   jar {
     dependsOn createVersionFile
-    from("$buildDir") {
+    from("${layout.buildDirectory.get().asFile.path}") {
       include "kafka/$buildVersionFileName"
     }
   }
 
   clean.doFirst {
-    delete "$buildDir/kafka/"
+    delete "${layout.buildDirectory.get().asFile.path}/kafka/"
   }
 
   javadoc {
@@ -2353,7 +2353,7 @@ project(':storage') {
   }
 
   task createVersionFile() {
-    def receiptFile = file("$buildDir/kafka/$buildVersionFileName")
+    def receiptFile = file("${layout.buildDirectory.get().asFile.path}/kafka/$buildVersionFileName")
     inputs.property "commitId", commitId
     inputs.property "version", version
     outputs.file receiptFile
@@ -2418,13 +2418,13 @@ project(':storage') {
 
   jar {
     dependsOn createVersionFile
-    from("$buildDir") {
+    from("${layout.buildDirectory.get().asFile.path}") {
       include "kafka/$buildVersionFileName"
     }
   }
 
   clean.doFirst {
-    delete "$buildDir/kafka/"
+    delete "${layout.buildDirectory.get().asFile.path}/kafka/"
   }
 
   javadoc {
@@ -2619,7 +2619,7 @@ project(':tools:tools-api') {
   }
 
   task createVersionFile() {
-    def receiptFile = file("$buildDir/kafka/$buildVersionFileName")
+    def receiptFile = file("${layout.buildDirectory.get().asFile.path}/kafka/$buildVersionFileName")
     inputs.property "commitId", commitId
     inputs.property "version", version
     outputs.file receiptFile
@@ -2639,13 +2639,13 @@ project(':tools:tools-api') {
 
   jar {
     dependsOn createVersionFile
-    from("$buildDir") {
+    from("${layout.buildDirectory.get().asFile.path}") {
       include "kafka/$buildVersionFileName"
     }
   }
 
   clean.doFirst {
-    delete "$buildDir/kafka/"
+    delete "${layout.buildDirectory.get().asFile.path}/kafka/"
   }
 
   javadoc {
@@ -2730,7 +2730,7 @@ project(':tools') {
     from (configurations.runtimeClasspath) {
       exclude('kafka-clients*')
     }
-    into "$buildDir/dependant-libs-${versions.scala}"
+    into "${layout.buildDirectory.get().asFile.path}/dependant-libs-${versions.scala}"
     duplicatesStrategy 'exclude'
   }
 
@@ -2791,7 +2791,7 @@ project(':trogdor') {
     from (configurations.runtimeClasspath) {
       exclude('kafka-clients*')
     }
-    into "$buildDir/dependant-libs-${versions.scala}"
+    into "${layout.buildDirectory.get().asFile.path}/dependant-libs-${versions.scala}"
     duplicatesStrategy 'exclude'
   }
 
@@ -2841,7 +2841,7 @@ project(':shell') {
     from (configurations.runtimeClasspath) {
       include('jline-*jar')
     }
-    into "$buildDir/dependant-libs-${versions.scala}"
+    into "${layout.buildDirectory.get().asFile.path}/dependant-libs-${versions.scala}"
     duplicatesStrategy 'exclude'
   }
 
@@ -2931,12 +2931,12 @@ project(':streams') {
     from (configurations.runtimeClasspath) {
       exclude('kafka-clients*')
     }
-    into "$buildDir/dependant-libs-${versions.scala}"
+    into "${layout.buildDirectory.get().asFile.path}/dependant-libs-${versions.scala}"
     duplicatesStrategy 'exclude'
   }
 
   task createStreamsVersionFile() {
-    def receiptFile = file("$buildDir/kafka/$buildStreamsVersionFileName")
+    def receiptFile = file("${layout.buildDirectory.get().asFile.path}/kafka/$buildStreamsVersionFileName")
     inputs.property "commitId", commitId
     inputs.property "version", version
     outputs.file receiptFile
@@ -2955,7 +2955,7 @@ project(':streams') {
 
   jar {
     dependsOn 'createStreamsVersionFile'
-    from("$buildDir") {
+    from("${layout.buildDirectory.get().asFile.path}") {
       include "kafka/$buildStreamsVersionFileName"
     }
     dependsOn 'copyDependantLibs'
@@ -3038,7 +3038,7 @@ project(':streams:streams-scala') {
     from (configurations.runtimeClasspath) {
       exclude('kafka-streams*')
     }
-    into "$buildDir/dependant-libs-${versions.scala}"
+    into "${layout.buildDirectory.get().asFile.path}/dependant-libs-${versions.scala}"
     duplicatesStrategy 'exclude'
   }
 
@@ -3136,7 +3136,7 @@ project(':streams:test-utils') {
     from (configurations.runtimeClasspath) {
       exclude('kafka-streams*')
     }
-    into "$buildDir/dependant-libs-${versions.scala}"
+    into "${layout.buildDirectory.get().asFile.path}/dependant-libs-${versions.scala}"
     duplicatesStrategy 'exclude'
   }
 
@@ -3175,7 +3175,7 @@ project(':streams:examples') {
     from (configurations.runtimeClasspath) {
       exclude('kafka-streams*')
     }
-    into "$buildDir/dependant-libs-${versions.scala}"
+    into "${layout.buildDirectory.get().asFile.path}/dependant-libs-${versions.scala}"
     duplicatesStrategy 'exclude'
   }
 
@@ -3617,7 +3617,7 @@ project(':connect:api') {
       exclude('kafka-clients*')
       exclude('connect-*')
     }
-    into "$buildDir/dependant-libs"
+    into "${layout.buildDirectory.get().asFile.path}/dependant-libs"
     duplicatesStrategy 'exclude'
   }
 
@@ -3653,7 +3653,7 @@ project(':connect:transforms') {
       exclude('kafka-clients*')
       exclude('connect-*')
     }
-    into "$buildDir/dependant-libs"
+    into "${layout.buildDirectory.get().asFile.path}/dependant-libs"
     duplicatesStrategy 'exclude'
   }
 
@@ -3694,7 +3694,7 @@ project(':connect:json') {
       exclude('kafka-clients*')
       exclude('connect-*')
     }
-    into "$buildDir/dependant-libs"
+    into "${layout.buildDirectory.get().asFile.path}/dependant-libs"
     duplicatesStrategy 'exclude'
   }
 
@@ -3789,7 +3789,7 @@ project(':connect:runtime') {
       exclude('kafka-clients*')
       exclude('connect-*')
     }
-    into "$buildDir/dependant-libs"
+    into "${layout.buildDirectory.get().asFile.path}/dependant-libs"
     duplicatesStrategy 'exclude'
   }
 
@@ -3841,7 +3841,7 @@ project(':connect:runtime') {
 
   task setVersionInOpenAPISpec(type: Copy) {
     from "$rootDir/gradle/openapi.template"
-    into "$buildDir/resources/docs"
+    into "${layout.buildDirectory.get().asFile.path}/resources/docs"
     rename ('openapi.template', 'openapi.yaml')
     expand(kafkaVersion: "$rootProject.version")
   }
@@ -3854,7 +3854,7 @@ project(':connect:runtime') {
     outputFormat = 'YAML'
     prettyPrint = 'TRUE'
     sortOutput = 'TRUE'
-    openApiFile = file("$buildDir/resources/docs/openapi.yaml")
+    openApiFile = file("${layout.buildDirectory.get().asFile.path}/resources/docs/openapi.yaml")
     resourcePackages = ['org.apache.kafka.connect.runtime.rest.resources']
     if( !generatedDocsDir.exists() ) { generatedDocsDir.mkdirs() }
     outputDir = file(generatedDocsDir)
@@ -3895,7 +3895,7 @@ project(':connect:file') {
       exclude('kafka-clients*')
       exclude('connect-*')
     }
-    into "$buildDir/dependant-libs"
+    into "${layout.buildDirectory.get().asFile.path}/dependant-libs"
     duplicatesStrategy 'exclude'
   }
 
@@ -3936,7 +3936,7 @@ project(':connect:basic-auth-extension') {
       exclude('kafka-clients*')
       exclude('connect-*')
     }
-    into "$buildDir/dependant-libs"
+    into "${layout.buildDirectory.get().asFile.path}/dependant-libs"
     duplicatesStrategy 'exclude'
   }
 
@@ -4005,7 +4005,7 @@ project(':connect:mirror') {
       exclude('kafka-clients*')
       exclude('connect-*')
     }
-    into "$buildDir/dependant-libs"
+    into "${layout.buildDirectory.get().asFile.path}/dependant-libs"
     duplicatesStrategy 'exclude'
   }
 
@@ -4068,7 +4068,7 @@ project(':connect:mirror-client') {
       exclude('kafka-clients*')
       exclude('connect-*')
     }
-    into "$buildDir/dependant-libs"
+    into "${layout.buildDirectory.get().asFile.path}/dependant-libs"
     duplicatesStrategy 'exclude'
   }
 
