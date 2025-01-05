@@ -178,6 +178,7 @@ org.apache.kafka.streams.StreamsBuilderTest:
 - shouldWrapProcessorsForStreamStreamSelfJoinWithSharedStoreOptimization
 - shouldWrapProcessorsForStreamTableJoin
 - shouldWrapProcessorsForStreamTableJoinWithGracePeriod
+- shouldWrapProcessorsForSuppress
 - shouldWrapProcessorsForTableAggregate
 - shouldWrapProcessorsForTableReduce
 - shouldWrapProcessorsForTableTableInnerJoin
