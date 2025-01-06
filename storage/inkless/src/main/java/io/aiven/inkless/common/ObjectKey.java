@@ -2,9 +2,13 @@
 package io.aiven.inkless.common;
 
 public interface ObjectKey {
-    String value();
-
-    default String storedPart() {
-        return value();
+    static ObjectKeyCreator create(String prefix, boolean masked) {
+        if (masked) {
+            return (s) -> new MaskedPrefixObjectKey(prefix, s);
+        } else {
+            return (s) -> new PlainObjectKey(prefix, s);
+        }
     }
+
+    String value();
 }
