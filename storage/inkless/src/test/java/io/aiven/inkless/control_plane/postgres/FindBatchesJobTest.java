@@ -62,8 +62,7 @@ class FindBatchesJobTest extends SharedPostgreSQLTest {
         delta.replay(new PartitionRecord().setTopicId(TOPIC_ID_0).setPartitionId(1));
         delta.replay(new TopicRecord().setName(TOPIC_1).setTopicId(TOPIC_ID_1));
         delta.replay(new PartitionRecord().setTopicId(TOPIC_ID_1).setPartitionId(0));
-        new TopicsCreateJob(Time.SYSTEM, metadataView, hikariDataSource, delta.topicsDelta().changedTopics())
-            .run();
+        new TopicsCreateJob(Time.SYSTEM, metadataView, hikariDataSource, delta.topicsDelta().changedTopics(), duration -> {}).run();
     }
 
     @Test
@@ -76,7 +75,8 @@ class FindBatchesJobTest extends SharedPostgreSQLTest {
             time, hikariDataSource, objectKey1, BROKER_ID, FILE_SIZE,
             List.of(
                 new CommitFileJob.CommitBatchRequestExtra(new CommitBatchRequest(T0P0, 0, 1234, 12, 1000), TOPIC_ID_0, TimestampType.CREATE_TIME)
-            )
+            ),
+            duration -> {}
         );
         assertThat(commitJob.call()).isNotEmpty();
 
@@ -90,7 +90,8 @@ class FindBatchesJobTest extends SharedPostgreSQLTest {
                 // This will result in the out-of-range error.
                 new FindBatchRequest(new TopicIdPartition(TOPIC_ID_1, 0, TOPIC_1), 10, 1000)
             ),
-            true, 2000);
+            true, 2000,
+            duration -> {}, duration -> {});
         final List<FindBatchResponse> result = job.call();
 
         assertThat(result).containsExactlyInAnyOrder(
