@@ -8,9 +8,6 @@ import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
 import com.zaxxer.hikari.util.IsolationLevel;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import java.util.Iterator;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
@@ -25,9 +22,9 @@ import io.aiven.inkless.control_plane.FindBatchResponse;
 import io.aiven.inkless.control_plane.MetadataView;
 
 public class PostgresControlPlane extends AbstractControlPlane {
-    private static final Logger LOGGER = LoggerFactory.getLogger(PostgresControlPlane.class);
 
     private final ExecutorService executor;
+    private final PostgresControlPlaneMetrics metrics;
 
     private HikariDataSource hikariDataSource;
 
@@ -42,13 +39,20 @@ public class PostgresControlPlane extends AbstractControlPlane {
                          final ExecutorService executor) {
         super(time, metadataView);
         this.executor = executor;
+        this.metrics = new PostgresControlPlaneMetrics(time);
     }
 
     public void onTopicMetadataChanges(final TopicsDelta topicsDelta) {
         // Delete.
-        executor.submit(new TopicsDeleteJob(time, metadataView, hikariDataSource, topicsDelta.deletedTopicIds()));
+        executor.submit(new TopicsDeleteJob(
+            time, metadataView, hikariDataSource,
+            topicsDelta.deletedTopicIds(),
+            metrics::onTopicDeleteCompleted));
         // Create.
-        executor.submit(new TopicsCreateJob(time, metadataView, hikariDataSource, topicsDelta.changedTopics()));
+        executor.submit(new TopicsCreateJob(
+            time, metadataView, hikariDataSource,
+            topicsDelta.changedTopics(),
+            metrics::onTopicCreateCompleted));
     }
 
     @Override
@@ -80,7 +84,10 @@ public class PostgresControlPlane extends AbstractControlPlane {
             metadataView.getTopicId(r.topicPartition().topic()),
             metadataView.getTopicConfig(r.topicPartition().topic()).messageTimestampType
         )).toList();
-        final CommitFileJob job = new CommitFileJob(time, hikariDataSource, objectKey, uploaderBrokerId, fileSize, requestExtras);
+        final CommitFileJob job = new CommitFileJob(
+            time, hikariDataSource,
+            objectKey, uploaderBrokerId, fileSize, requestExtras,
+            metrics::onCommitFileCompleted);
         return job.call().iterator();
     }
 
@@ -90,7 +97,8 @@ public class PostgresControlPlane extends AbstractControlPlane {
         final boolean minOneMessage, final int fetchMaxBytes) {
         final FindBatchesJob job = new FindBatchesJob(
             time, hikariDataSource,
-            requests.toList(), minOneMessage, fetchMaxBytes);
+            requests.toList(), minOneMessage, fetchMaxBytes,
+            metrics::onFindBatchesCompleted, metrics::onGetLogsCompleted);
         return job.call().iterator();
     }
 }

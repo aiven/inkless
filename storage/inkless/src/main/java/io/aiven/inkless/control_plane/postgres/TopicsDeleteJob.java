@@ -10,6 +10,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.Set;
+import java.util.function.Consumer;
 
 import io.aiven.inkless.control_plane.MetadataView;
 
@@ -20,15 +21,18 @@ class TopicsDeleteJob implements Runnable {
     private final MetadataView metadataView;
     private final HikariDataSource hikariDataSource;
     private final Set<Uuid> deletedTopicIds;
+    private final Consumer<Long> durationCallback;
 
     TopicsDeleteJob(final Time time,
                     final MetadataView metadataView,
                     final HikariDataSource hikariDataSource,
-                    final Set<Uuid> deletedTopicIds) {
+                    final Set<Uuid> deletedTopicIds,
+                    final Consumer<Long> durationCallback) {
         this.time = time;
         this.metadataView = metadataView;
         this.hikariDataSource = hikariDataSource;
         this.deletedTopicIds = deletedTopicIds;
+        this.durationCallback = durationCallback;
     }
 
     @Override

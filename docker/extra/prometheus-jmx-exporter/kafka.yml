@@ -63,6 +63,13 @@ rules:
     type: GAUGE
     labels:
       quantile: "0.$3"
+  - pattern: io.aiven.inkless.control_plane.postgres<type=(.+), name=(.+)><>(\d+)thPercentile
+    name: kafka_inkless_controlplane_$1_$2
+    type: GAUGE
+    labels:
+      quantile: "0.$3"
+  - pattern: io.aiven.inkless.control_plane.postgres<type=(.+), name=(.+)><>(Count|Value)
+    name: kafka_inkless_controlplane_$1_$2
 
   # Everything else
   - pattern: ".*"

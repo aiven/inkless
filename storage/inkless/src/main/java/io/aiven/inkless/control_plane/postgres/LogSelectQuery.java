@@ -2,6 +2,7 @@
 package io.aiven.inkless.control_plane.postgres;
 
 import org.apache.kafka.common.TopicIdPartition;
+import org.apache.kafka.common.utils.Time;
 
 import java.sql.Connection;
 import java.sql.PreparedStatement;
@@ -12,8 +13,10 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.Objects;
+import java.util.function.Consumer;
 import java.util.stream.Collectors;
 
+import io.aiven.inkless.TimeUtils;
 import io.aiven.inkless.common.UuidUtil;
 
 class LogSelectQuery {
@@ -25,16 +28,22 @@ class LogSelectQuery {
         """);
 
     static List<LogEntity> execute(
+        final Time time,
         final Connection connection,
         final Collection<TopicIdPartition> topicIdAndPartitions,
-        final boolean forUpdate
-    ) throws SQLException {
+        final boolean forUpdate,
+        final Consumer<Long> durationCallback
+    ) throws Exception {
         Objects.requireNonNull(connection, "connection cannot be null");
         Objects.requireNonNull(topicIdAndPartitions, "topicIdAndPartitions cannot be null");
         if (topicIdAndPartitions.isEmpty()) {
             throw new IllegalArgumentException("topicIdAndPartitions cannot be empty");
         }
 
+        return TimeUtils.measureDurationMs(time, ()  -> getLogEntities(connection, topicIdAndPartitions, forUpdate), durationCallback);
+    }
+
+    private static List<LogEntity> getLogEntities(Connection connection, Collection<TopicIdPartition> topicIdAndPartitions, boolean forUpdate) throws SQLException {
         final String wherePlaceholders = topicIdAndPartitions.stream()
             .map(r -> "(topic_id = ? AND partition = ?)")
             .collect(Collectors.joining(" OR "));

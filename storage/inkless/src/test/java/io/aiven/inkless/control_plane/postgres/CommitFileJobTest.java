@@ -65,7 +65,7 @@ class CommitFileJobTest extends SharedPostgreSQLTest {
         delta.replay(new PartitionRecord().setTopicId(TOPIC_ID_0).setPartitionId(1));
         delta.replay(new TopicRecord().setName(TOPIC_1).setTopicId(TOPIC_ID_1));
         delta.replay(new PartitionRecord().setTopicId(TOPIC_ID_1).setPartitionId(0));
-        new TopicsCreateJob(Time.SYSTEM, metadataView, hikariDataSource, delta.topicsDelta().changedTopics())
+        new TopicsCreateJob(Time.SYSTEM, metadataView, hikariDataSource, delta.topicsDelta().changedTopics(), duration -> {})
             .run();
     }
 
@@ -78,7 +78,7 @@ class CommitFileJobTest extends SharedPostgreSQLTest {
         final CommitFileJob job = new CommitFileJob(time, hikariDataSource, objectKey, BROKER_ID, FILE_SIZE, List.of(
             new CommitFileJob.CommitBatchRequestExtra(new CommitBatchRequest(T0P1, 0, 100, 15, 1000), TOPIC_ID_0, TimestampType.CREATE_TIME),
             new CommitFileJob.CommitBatchRequestExtra(new CommitBatchRequest(T1P0, 100, 50, 27, 2000), TOPIC_ID_1, TimestampType.LOG_APPEND_TIME)
-        ));
+        ), duration -> {});
         final List<CommitBatchResponse> result = job.call();
 
         assertThat(result).containsExactlyInAnyOrder(
@@ -115,7 +115,7 @@ class CommitFileJobTest extends SharedPostgreSQLTest {
         final CommitFileJob job1 = new CommitFileJob(time, hikariDataSource, objectKey1, BROKER_ID, FILE_SIZE, List.of(
             new CommitFileJob.CommitBatchRequestExtra(new CommitBatchRequest(T0P1, 0, 100, 15, 1000), TOPIC_ID_0, TimestampType.CREATE_TIME),
             new CommitFileJob.CommitBatchRequestExtra(new CommitBatchRequest(T1P0, 100, 50, 27, 2000), TOPIC_ID_1, TimestampType.LOG_APPEND_TIME)
-        ));
+        ), duration -> {});
         final List<CommitBatchResponse> result1 = job1.call();
 
         assertThat(result1).containsExactlyInAnyOrder(
@@ -128,7 +128,7 @@ class CommitFileJobTest extends SharedPostgreSQLTest {
         final CommitFileJob job2 = new CommitFileJob(time, hikariDataSource, objectKey2, BROKER_ID, FILE_SIZE, List.of(
             new CommitFileJob.CommitBatchRequestExtra(new CommitBatchRequest(T0P0, 0, 111, 159, 3000), TOPIC_ID_0, TimestampType.CREATE_TIME),
             new CommitFileJob.CommitBatchRequestExtra(new CommitBatchRequest(T0P1, 111, 222, 245, 4000), TOPIC_ID_0, TimestampType.CREATE_TIME)
-        ));
+        ), duration -> {});
         final List<CommitBatchResponse> result2 = job2.call();
 
         assertThat(result2).containsExactlyInAnyOrder(
@@ -171,7 +171,7 @@ class CommitFileJobTest extends SharedPostgreSQLTest {
             new CommitFileJob.CommitBatchRequestExtra(new CommitBatchRequest(T0P1, 0, 100, 15, 1000), TOPIC_ID_0, TimestampType.CREATE_TIME),
             new CommitFileJob.CommitBatchRequestExtra(new CommitBatchRequest(T1P0, 100, 50, 27, 2000), TOPIC_ID_1, TimestampType.LOG_APPEND_TIME),
             new CommitFileJob.CommitBatchRequestExtra(new CommitBatchRequest(t1p1, 150, 1243, 82, 3000), TOPIC_ID_1, TimestampType.LOG_APPEND_TIME)
-        ));
+        ), duration -> {});
 
         final List<CommitBatchResponse> result = job.call();
 

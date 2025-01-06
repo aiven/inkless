@@ -15,6 +15,7 @@ import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import java.util.Arrays;
 import java.util.Map;
+import java.util.function.Consumer;
 
 import io.aiven.inkless.common.UuidUtil;
 import io.aiven.inkless.control_plane.MetadataView;
@@ -32,15 +33,18 @@ public class TopicsCreateJob implements Runnable {
     private final MetadataView metadataView;
     private final HikariDataSource hikariDataSource;
     private final Map<Uuid, TopicDelta> changedTopics;
+    private final Consumer<Long> durationCallback;
 
     TopicsCreateJob(final Time time,
                     final MetadataView metadataView,
                     final HikariDataSource hikariDataSource,
-                    final Map<Uuid, TopicDelta> changedTopics) {
+                    final Map<Uuid, TopicDelta> changedTopics,
+                    final Consumer<Long> durationCallback) {
         this.time = time;
         this.metadataView = metadataView;
         this.hikariDataSource = hikariDataSource;
         this.changedTopics = changedTopics;
+        this.durationCallback = durationCallback;
     }
 
     @Override
