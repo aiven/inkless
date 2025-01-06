@@ -11,6 +11,7 @@ import com.groupcdg.pitest.annotations.DoNotMutate;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Iterator;
@@ -159,6 +160,11 @@ public class InMemoryControlPlane extends AbstractControlPlane {
             }
         }
         return FindBatchResponse.success(batches, logInfo.logStartOffset, logInfo.highWatermark);
+    }
+
+    @Override
+    public void close() throws IOException {
+        // Do nothing.
     }
 
     private static class LogInfo {

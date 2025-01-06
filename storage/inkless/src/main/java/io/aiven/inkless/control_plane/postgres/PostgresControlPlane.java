@@ -8,6 +8,7 @@ import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
 import com.zaxxer.hikari.util.IsolationLevel;
 
+import java.io.IOException;
 import java.util.Iterator;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
@@ -100,5 +101,10 @@ public class PostgresControlPlane extends AbstractControlPlane {
             requests.toList(), minOneMessage, fetchMaxBytes,
             metrics::onFindBatchesCompleted, metrics::onGetLogsCompleted);
         return job.call().iterator();
+    }
+
+    @Override
+    public void close() throws IOException {
+        hikariDataSource.close();
     }
 }

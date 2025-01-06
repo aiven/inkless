@@ -4,13 +4,14 @@ package io.aiven.inkless.control_plane;
 import org.apache.kafka.common.Configurable;
 import org.apache.kafka.common.utils.Time;
 
+import java.io.Closeable;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.InvocationTargetException;
 import java.util.List;
 
 import io.aiven.inkless.config.InklessConfig;
 
-public interface ControlPlane extends Configurable, TopicMetadataChangesSubscriber {
+public interface ControlPlane extends Closeable, Configurable, TopicMetadataChangesSubscriber {
     List<CommitBatchResponse> commitFile(String objectKey,
                                          int uploaderBrokerId,
                                          long fileSize,
