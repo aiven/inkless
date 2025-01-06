@@ -17,6 +17,7 @@ import java.util.Arrays;
 import java.util.Map;
 import java.util.function.Consumer;
 
+import io.aiven.inkless.TimeUtils;
 import io.aiven.inkless.common.UuidUtil;
 import io.aiven.inkless.control_plane.MetadataView;
 
@@ -73,7 +74,10 @@ public class TopicsCreateJob implements Runnable {
         }
 
         try (connection) {
-            runWithConnection(connection);
+            TimeUtils.measureDurationMs(time, () -> {
+                runWithConnection(connection);
+                return null;
+            }, durationCallback);
             return true;
         } catch (final Exception e) {
             LOGGER.error("Error executing query", e);
