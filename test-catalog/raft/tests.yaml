@@ -467,6 +467,7 @@ org.apache.kafka.raft.RaftEventSimulationTest:
 - canRecoverFromSingleNodeCommittedDataLoss
 org.apache.kafka.raft.RaftUtilTest:
 - testErrorResponse
+- testFetchRequestV17Compatibility
 - testSingletonBeginQuorumEpochRequestForAllVersion
 - testSingletonBeginQuorumEpochResponseForAllVersion
 - testSingletonDescribeQuorumRequestForAllVersion
@@ -476,6 +477,7 @@ org.apache.kafka.raft.RaftUtilTest:
 - testSingletonFetchRequestForAllVersion
 - testSingletonFetchResponseForAllVersion
 - testSingletonFetchSnapshotRequestForAllVersion
+- testSingletonFetchSnapshotRequestV1Compatibility
 - testSingletonFetchSnapshotResponseForAllVersion
 - testSingletonVoteRequestForAllVersion
 - testSingletonVoteResponseForAllVersion

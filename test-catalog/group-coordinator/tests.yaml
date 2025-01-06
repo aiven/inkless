@@ -789,6 +789,12 @@ org.apache.kafka.coordinator.group.streams.assignor.MockAssignorTest:
 - testTwoMembersTwoSubtopologies
 - testTwoMembersTwoSubtopologiesStickiness
 - testZeroMembers
+org.apache.kafka.coordinator.group.streams.topics.ChangelogTopicsTest:
+- shouldContainBothTypesOfPreExistingChangelogs
+- shouldContainNonSourceBasedChangelogs
+- shouldFailIfNoSourceTopics
+- shouldNotContainChangelogsForStatelessTasks
+- shouldNotContainSourceBasedChangelogs
 org.apache.kafka.coordinator.group.streams.topics.ConfiguredInternalTopicTest:
 - testAsStreamsGroupDescribeTopicInfo
 - testConstructorWithInvalidName
