@@ -789,3 +789,26 @@ org.apache.kafka.coordinator.group.streams.assignor.MockAssignorTest:
 - testTwoMembersTwoSubtopologies
 - testTwoMembersTwoSubtopologiesStickiness
 - testZeroMembers
+org.apache.kafka.coordinator.group.streams.topics.ConfiguredInternalTopicTest:
+- testAsStreamsGroupDescribeTopicInfo
+- testConstructorWithInvalidName
+- testConstructorWithNullName
+- testConstructorWithNullTopicConfigs
+- testConstructorWithZeroPartitions
+org.apache.kafka.coordinator.group.streams.topics.ConfiguredSubtopologyTest:
+- testAsStreamsGroupDescribeSubtopology
+- testConstructorWithNullRepartitionSinkTopics
+- testConstructorWithNullRepartitionSourceTopics
+- testConstructorWithNullSourceTopics
+- testConstructorWithNullStateChangelogTopics
+org.apache.kafka.coordinator.group.streams.topics.ConfiguredTopologyTest:
+- testAsStreamsGroupDescribeTopology
+- testConstructorWithInvalidTopologyEpoch
+- testConstructorWithNullInternalTopicsToBeCreated
+- testConstructorWithNullSubtopologies
+- testConstructorWithNullTopicConfigurationException
+- testIsReady
+org.apache.kafka.coordinator.group.streams.topics.TopicConfigurationExceptionTest:
+- testIncorrectlyPartitionedTopics
+- testMissingInternalTopics
+- testMissingSourceTopics
