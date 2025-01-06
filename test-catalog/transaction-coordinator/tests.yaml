@@ -3,18 +3,6 @@ org.apache.kafka.coordinator.transaction.ProducerIdManagerTest:
 - testInvalidRanges
 - testRetryBackoff
 - testUnrecoverableErrors
-org.apache.kafka.coordinator.transaction.TransactionCoordinatorRecordSerdeTest:
-- testDeserialize
-- testDeserializeAllRecordTypes
-- testDeserializeWithInvalidKeyBytes
-- testDeserializeWithInvalidRecordType
-- testDeserializeWithInvalidValueBytes
-- testDeserializeWithKeyEmptyBuffer
-- testDeserializeWithTombstoneForValue
-- testDeserializeWithValueEmptyBuffer
-- testSerializeKey
-- testSerializeNullValue
-- testSerializeValue
 org.apache.kafka.coordinator.transaction.TransactionLogConfigTest:
 - ShouldDefineAllConfigInConfigDef
 - ShouldGetDynamicValueFromAbstractConfig
