@@ -34,7 +34,7 @@ public record SharedState(
             metadata,
             ControlPlane.create(config, time, metadata),
             config.storage(),
-            PlainObjectKey.creator(config.objectKeyPrefix()),
+            ObjectKey.create(config.objectKeyPrefix(), config.objectKeyLogPrefixMasked()),
             brokerTopicStats
         );
     }
