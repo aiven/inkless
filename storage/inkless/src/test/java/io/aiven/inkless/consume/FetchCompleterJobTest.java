@@ -30,6 +30,7 @@ import java.util.concurrent.Future;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
+import io.aiven.inkless.cache.FileExtent;
 import io.aiven.inkless.common.ByteRange;
 import io.aiven.inkless.common.ObjectKey;
 import io.aiven.inkless.common.ObjectKeyCreator;
@@ -155,8 +156,8 @@ public class FetchCompleterJobTest {
                 ), logStartOffset, highWatermark)
         );
 
-        List<Future<FetchedFile>> files = Stream.of(
-                new FetchedFile(OBJECT_KEY_A, new ByteRange(0, records.sizeInBytes()), records.buffer())
+        List<Future<FileExtent>> files = Stream.of(
+                new FileExtent(OBJECT_KEY_A, new ByteRange(0, records.sizeInBytes()), records.buffer())
         ).map(CompletableFuture::completedFuture).collect(Collectors.toList());
         FetchCompleterJob job = new FetchCompleterJob(
             new MockTime(),
@@ -192,9 +193,9 @@ public class FetchCompleterJobTest {
                 ), logStartOffset, highWatermark)
         );
 
-        List<Future<FetchedFile>> files = Stream.of(
-                new FetchedFile(OBJECT_KEY_A, new ByteRange(0, records.sizeInBytes()), records.buffer()),
-                new FetchedFile(OBJECT_KEY_B, new ByteRange(0, records.sizeInBytes()), records.buffer())
+        List<Future<FileExtent>> files = Stream.of(
+                new FileExtent(OBJECT_KEY_A, new ByteRange(0, records.sizeInBytes()), records.buffer()),
+                new FileExtent(OBJECT_KEY_B, new ByteRange(0, records.sizeInBytes()), records.buffer())
         ).map(CompletableFuture::completedFuture).collect(Collectors.toList());
         FetchCompleterJob job = new FetchCompleterJob(
             new MockTime(),
@@ -237,8 +238,8 @@ public class FetchCompleterJobTest {
                 ), logStartOffset, highWatermark)
         );
 
-        List<Future<FetchedFile>> files = Stream.of(
-                new FetchedFile(OBJECT_KEY_A, new ByteRange(0, totalSize), concatenatedBuffer)
+        List<Future<FileExtent>> files = Stream.of(
+                new FileExtent(OBJECT_KEY_A, new ByteRange(0, totalSize), concatenatedBuffer)
         ).map(CompletableFuture::completedFuture).collect(Collectors.toList());
         FetchCompleterJob job = new FetchCompleterJob(
                 new MockTime(),
