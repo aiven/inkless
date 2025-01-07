@@ -332,8 +332,9 @@ class BrokerServer(
        */
       val defaultActionQueue = new DelayedActionQueue
 
-      val inklessMetadataView = new InklessMetadataView(metadataCache, () => logManager.currentDefaultConfig)
-      val inklessSharedState = SharedState.initialize(time, config.brokerId, config.inklessConfig, inklessMetadataView, brokerTopicStats)
+      val inklessMetadataView = new InklessMetadataView(metadataCache)
+      val inklessSharedState = SharedState.initialize(time, config.brokerId, config.inklessConfig, inklessMetadataView, brokerTopicStats,
+        () => logManager.currentDefaultConfig)
 
       this._replicaManager = new ReplicaManager(
         config = config,

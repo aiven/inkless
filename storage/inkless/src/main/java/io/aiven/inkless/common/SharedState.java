@@ -2,7 +2,10 @@
 package io.aiven.inkless.common;
 
 import org.apache.kafka.common.utils.Time;
+import org.apache.kafka.storage.internals.log.LogConfig;
 import org.apache.kafka.storage.log.metrics.BrokerTopicStats;
+
+import java.util.function.Supplier;
 
 import io.aiven.inkless.cache.FixedBlockAlignment;
 import io.aiven.inkless.cache.KeyAlignmentStrategy;
@@ -23,7 +26,8 @@ public record SharedState(
         ObjectKeyCreator objectKeyCreator,
         KeyAlignmentStrategy keyAlignmentStrategy,
         ObjectCache cache,
-        BrokerTopicStats brokerTopicStats
+        BrokerTopicStats brokerTopicStats,
+        Supplier<LogConfig> defaultTopicConfigs
 ) {
 
     public static SharedState initialize(
@@ -31,7 +35,8 @@ public record SharedState(
         int brokerId,
         InklessConfig config,
         MetadataView metadata,
-        BrokerTopicStats brokerTopicStats
+        BrokerTopicStats brokerTopicStats,
+        Supplier<LogConfig> defaultTopicConfigs
     ) {
         return new SharedState(
             time,
@@ -43,7 +48,8 @@ public record SharedState(
             ObjectKey.create(config.objectKeyPrefix(), config.objectKeyLogPrefixMasked()),
             new FixedBlockAlignment(config.fetchCacheBlockBytes()),
             new MemoryCache(),
-            brokerTopicStats
+            brokerTopicStats,
+            defaultTopicConfigs
         );
     }
 }

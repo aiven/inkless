@@ -7,6 +7,7 @@ import org.apache.kafka.common.record.MemoryRecords;
 import org.apache.kafka.common.record.MutableRecordBatch;
 import org.apache.kafka.common.record.RecordBatch;
 import org.apache.kafka.common.record.SimpleRecord;
+import org.apache.kafka.common.record.TimestampType;
 import org.apache.kafka.common.utils.MockTime;
 import org.apache.kafka.common.utils.Time;
 
@@ -34,12 +35,12 @@ class BatchBufferTest {
         assertThat(buffer.totalSize()).isZero();
 
         final MutableRecordBatch batch1 = createBatch(time, T0P0 + "-0", T0P0 + "-1", T0P0 + "-2");
-        buffer.addBatch(T0P0, batch1, 0);
+        buffer.addBatch(T0P0, TimestampType.CREATE_TIME, batch1, 0);
 
         assertThat(buffer.totalSize()).isEqualTo(batch1.sizeInBytes());
 
         final MutableRecordBatch batch2 = createBatch(time, T0P0 + "-0", T0P0 + "-1", T0P0 + "-2");
-        buffer.addBatch(T0P0, batch2, 1);
+        buffer.addBatch(T0P0, TimestampType.CREATE_TIME, batch2, 1);
 
         assertThat(buffer.totalSize()).isEqualTo(batch1.sizeInBytes() + batch2.sizeInBytes());
     }
@@ -67,11 +68,11 @@ class BatchBufferTest {
 
         final MutableRecordBatch batch = createBatch(time, T0P0 + "-0", T0P0 + "-1", T0P0 + "-2");
         final byte[] beforeAdding = batchToBytes(batch);
-        buffer.addBatch(T0P0, batch, 0);
+        buffer.addBatch(T0P0, TimestampType.CREATE_TIME, batch, 0);
 
         final BatchBuffer.CloseResult result = buffer.close();
         assertThat(result.commitBatchRequests()).containsExactly(
-            new CommitBatchRequest(T0P0, 0, batch.sizeInBytes(), 3, time.milliseconds())
+            new CommitBatchRequest(T0P0, 0, batch.sizeInBytes(), 3, time.milliseconds(), TimestampType.CREATE_TIME)
         );
         assertThat(result.requestIds()).containsExactly(0);
         assertThat(result.data()).containsExactly(batchToBytes(batch));
@@ -96,30 +97,30 @@ class BatchBufferTest {
         final MutableRecordBatch t1p0b2 = createBatch(time, T1P0 + "-2");
 
         final int batchSize = t0p0b0.sizeInBytes();  // expecting it to be same everywhere
-        buffer.addBatch(T0P0, t0p0b0, 0);
-        buffer.addBatch(T1P0, t1p0b0, 0);
-        buffer.addBatch(T0P0, t0p0b1, 0);
+        buffer.addBatch(T0P0, TimestampType.CREATE_TIME, t0p0b0, 0);
+        buffer.addBatch(T1P0, TimestampType.LOG_APPEND_TIME, t1p0b0, 0);
+        buffer.addBatch(T0P0, TimestampType.CREATE_TIME, t0p0b1, 0);
 
-        buffer.addBatch(T1P0, t1p0b1, 1);
-        buffer.addBatch(T0P1, t0p1b0, 1);
-        buffer.addBatch(T0P0, t0p0b2, 1);
+        buffer.addBatch(T1P0, TimestampType.LOG_APPEND_TIME, t1p0b1, 1);
+        buffer.addBatch(T0P1, TimestampType.LOG_APPEND_TIME, t0p1b0, 1);
+        buffer.addBatch(T0P0, TimestampType.CREATE_TIME, t0p0b2, 1);
 
-        buffer.addBatch(T0P1, t0p1b1, 2);
-        buffer.addBatch(T0P1, t0p1b2, 2);
-        buffer.addBatch(T1P0, t1p0b2, 2);
+        buffer.addBatch(T0P1, TimestampType.LOG_APPEND_TIME, t0p1b1, 2);
+        buffer.addBatch(T0P1, TimestampType.LOG_APPEND_TIME, t0p1b2, 2);
+        buffer.addBatch(T1P0, TimestampType.LOG_APPEND_TIME, t1p0b2, 2);
 
         // Here batches are sorted.
         final BatchBuffer.CloseResult result = buffer.close();
         assertThat(result.commitBatchRequests()).containsExactly(
-            new CommitBatchRequest(T0P0, 0, batchSize, 1, time.milliseconds()),
-            new CommitBatchRequest(T0P0, batchSize, batchSize, 1, time.milliseconds()),
-            new CommitBatchRequest(T0P0, batchSize*2, batchSize, 1, time.milliseconds()),
-            new CommitBatchRequest(T0P1, batchSize*3, batchSize, 1, time.milliseconds()),
-            new CommitBatchRequest(T0P1, batchSize*4, batchSize, 1, time.milliseconds()),
-            new CommitBatchRequest(T0P1, batchSize*5, batchSize, 1, time.milliseconds()),
-            new CommitBatchRequest(T1P0, batchSize*6, batchSize, 1, time.milliseconds()),
-            new CommitBatchRequest(T1P0, batchSize*7, batchSize, 1, time.milliseconds()),
-            new CommitBatchRequest(T1P0, batchSize*8, batchSize, 1, time.milliseconds())
+            new CommitBatchRequest(T0P0, 0, batchSize, 1, time.milliseconds(), TimestampType.CREATE_TIME),
+            new CommitBatchRequest(T0P0, batchSize, batchSize, 1, time.milliseconds(), TimestampType.CREATE_TIME),
+            new CommitBatchRequest(T0P0, batchSize*2, batchSize, 1, time.milliseconds(), TimestampType.CREATE_TIME),
+            new CommitBatchRequest(T0P1, batchSize*3, batchSize, 1, time.milliseconds(), TimestampType.LOG_APPEND_TIME),
+            new CommitBatchRequest(T0P1, batchSize*4, batchSize, 1, time.milliseconds(), TimestampType.LOG_APPEND_TIME),
+            new CommitBatchRequest(T0P1, batchSize*5, batchSize, 1, time.milliseconds(), TimestampType.LOG_APPEND_TIME),
+            new CommitBatchRequest(T1P0, batchSize*6, batchSize, 1, time.milliseconds(), TimestampType.LOG_APPEND_TIME),
+            new CommitBatchRequest(T1P0, batchSize*7, batchSize, 1, time.milliseconds(), TimestampType.LOG_APPEND_TIME),
+            new CommitBatchRequest(T1P0, batchSize*8, batchSize, 1, time.milliseconds(), TimestampType.LOG_APPEND_TIME)
         );
         assertThat(result.requestIds()).containsExactly(
             0, 0, 1,
@@ -151,16 +152,16 @@ class BatchBufferTest {
         final BatchBuffer buffer = new BatchBuffer();
 
         final MutableRecordBatch batch1 = createBatch(time, T0P0 + "-0");
-        buffer.addBatch(T0P0, batch1, 0);
+        buffer.addBatch(T0P0, TimestampType.LOG_APPEND_TIME, batch1, 0);
         final BatchBuffer.CloseResult result1 = buffer.close();
         assertThat(result1.commitBatchRequests()).containsExactly(
-            new CommitBatchRequest(T0P0, 0, batch1.sizeInBytes(), 1, time.milliseconds())
+            new CommitBatchRequest(T0P0, 0, batch1.sizeInBytes(), 1, time.milliseconds(), TimestampType.LOG_APPEND_TIME)
         );
         assertThat(result1.data()).containsExactly(batchToBytes(batch1));
         assertThat(result1.requestIds()).containsExactly(0);
 
         final MutableRecordBatch batch2 = createBatch(time, T1P0 + "-0-longer");
-        assertThatThrownBy(() -> buffer.addBatch(T1P0, batch2, 1))
+        assertThatThrownBy(() -> buffer.addBatch(T1P0, TimestampType.LOG_APPEND_TIME, batch2, 1))
             .isInstanceOf(IllegalStateException.class)
             .hasMessage("Already closed");
     }
@@ -189,10 +190,13 @@ class BatchBufferTest {
         final Time time = Time.SYSTEM;
         final BatchBuffer buffer = new BatchBuffer();
 
-        assertThatThrownBy(() -> buffer.addBatch(null, createBatch(time), 0))
+        assertThatThrownBy(() -> buffer.addBatch(null, TimestampType.LOG_APPEND_TIME, createBatch(time), 0))
             .isInstanceOf(NullPointerException.class)
             .hasMessage("topicPartition cannot be null");
-        assertThatThrownBy(() -> buffer.addBatch(T0P0, null, 0))
+        assertThatThrownBy(() -> buffer.addBatch(T0P0, null, createBatch(time), 0))
+            .isInstanceOf(NullPointerException.class)
+            .hasMessage("timestampType cannot be null");
+        assertThatThrownBy(() -> buffer.addBatch(T0P0, TimestampType.LOG_APPEND_TIME, null, 0))
             .isInstanceOf(NullPointerException.class)
             .hasMessage("batch cannot be null");
     }
