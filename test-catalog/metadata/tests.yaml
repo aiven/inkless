@@ -84,6 +84,19 @@ org.apache.kafka.controller.ConfigurationControlManagerTest:
 - testIncrementalAlterMultipleConfigValues
 - testLegacyAlterConfigs
 - testReplay
+org.apache.kafka.controller.EventPerformanceMonitorTest:
+- testDefaultPeriodNs
+- testDoNotLogFastEvent
+- testFormatNsAsDecimalMsWith100
+- testFormatNsAsDecimalMsWith123456789
+- testFormatNsAsDecimalMsWithZero
+- testGeneratePeriodicPerformanceMessageResetsState
+- testLogSlowEvent
+- testPeriodicPerformanceMessageWithNoEvents
+- testPeriodicPerformanceMessageWithOneEvent
+- testPeriodicPerformanceMessageWithThreeEvents
+- testSlowestEventWithNoEvents
+- testSlowestEventWithThreeEvents
 org.apache.kafka.controller.FeatureControlManagerTest:
 - testApplyMetadataVersionChangeRecord
 - testCanUpgradeToHigherVersion
