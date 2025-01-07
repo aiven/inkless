@@ -4,7 +4,9 @@ package io.aiven.inkless.produce;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.record.MemoryRecords;
+import org.apache.kafka.common.record.TimestampType;
 import org.apache.kafka.common.requests.ProduceResponse.PartitionResponse;
+import org.apache.kafka.storage.internals.log.LogConfig;
 
 import com.groupcdg.pitest.annotations.CoverageIgnore;
 import com.groupcdg.pitest.annotations.DoNotMutate;
@@ -14,6 +16,7 @@ import org.slf4j.LoggerFactory;
 
 import java.io.Closeable;
 import java.io.IOException;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
@@ -57,6 +60,7 @@ public class AppendInterceptor implements Closeable {
      * Intercept an attempt to append records.
      *
      * <p>If the interception happened, the {@code responseCallback} is called from inside the interceptor.
+     *
      * @return {@code true} if interception happened
      */
     public boolean intercept(final Map<TopicPartition, MemoryRecords> entriesPerPartition,
@@ -85,7 +89,7 @@ public class AppendInterceptor implements Closeable {
         }
 
         // TODO use purgatory
-        final var resultFuture = writer.write(entriesPerPartition);
+        final var resultFuture = writer.write(entriesPerPartition, getTimestampTypes(entriesPerPartition));
         resultFuture.whenComplete((result, e) -> {
             if (result == null) {
                 // We don't really expect this future to fail, but in case it does...
@@ -134,6 +138,16 @@ public class AppendInterceptor implements Closeable {
         } else {
             return false;
         }
+    }
+
+    private Map<String, TimestampType> getTimestampTypes(final Map<TopicPartition, MemoryRecords> entriesPerPartition) {
+        final Map<String, Object> defaultTopicConfigs = state.defaultTopicConfigs().get().originals();
+        final Map<String, TimestampType> result = new HashMap<>();
+        for (final TopicPartition tp : entriesPerPartition.keySet()) {
+            final var overrides = state.metadata().getTopicConfig(tp.topic());
+            result.put(tp.topic(), LogConfig.fromProps(defaultTopicConfigs, overrides).messageTimestampType);
+        }
+        return result;
     }
 
     @Override

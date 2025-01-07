@@ -3,6 +3,7 @@ package io.aiven.inkless.produce;
 
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.record.MemoryRecords;
+import org.apache.kafka.common.record.TimestampType;
 import org.apache.kafka.common.requests.ProduceResponse.PartitionResponse;
 import org.apache.kafka.common.utils.Time;
 
@@ -49,9 +50,11 @@ class ActiveFile {
     }
 
     CompletableFuture<Map<TopicPartition, PartitionResponse>> add(
-        final Map<TopicPartition, MemoryRecords> entriesPerPartition
+        final Map<TopicPartition, MemoryRecords> entriesPerPartition,
+        final Map<String, TimestampType> timestampTypes
     ) {
         Objects.requireNonNull(entriesPerPartition, "entriesPerPartition cannot be null");
+        Objects.requireNonNull(timestampTypes, "timestampTypes cannot be null");
 
         requestId += 1;
         originalRequests.put(requestId, entriesPerPartition);
@@ -59,13 +62,16 @@ class ActiveFile {
         for (final var entry : entriesPerPartition.entrySet()) {
             final String topic = entry.getKey().topic();
             brokerTopicMetricMarks.requestRateMark.accept(topic);
+            final TopicPartition topicPartition = entry.getKey();
+            final TimestampType messageTimestampType = timestampTypes.get(topicPartition.topic());
+            if (messageTimestampType == null) {
+                throw new IllegalArgumentException("Timestamp type not provided for topic " + topicPartition.topic());
+            }
 
             for (final var batch : entry.getValue().batches()) {
-                final TopicPartition topicPartition = entry.getKey();
-
                 batchValidator.validateAndMaybeSetMaxTimestamp(batch);
 
-                buffer.addBatch(topicPartition, batch, requestId);
+                buffer.addBatch(topicPartition, messageTimestampType, batch, requestId);
 
                 brokerTopicMetricMarks.bytesInRateMark.accept(topicPartition.topic(), batch.sizeInBytes());
                 brokerTopicMetricMarks.messagesInRateMark.accept(topicPartition.topic(), batch.nextOffset() - batch.baseOffset());

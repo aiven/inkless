@@ -2,7 +2,6 @@
 package io.aiven.inkless.control_plane.postgres;
 
 import org.apache.kafka.common.Uuid;
-import org.apache.kafka.common.record.TimestampType;
 import org.apache.kafka.common.utils.Time;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
@@ -163,8 +162,7 @@ class CommitFileJob implements Callable<List<CommitBatchResponse>> {
     }
 
     record CommitBatchRequestExtra(CommitBatchRequest request,
-                                   Uuid topicId,
-                                   TimestampType timestampType) {
+                                   Uuid topicId) {
 
         @JsonProperty("topic_id")
         UUID topicIdJson() {
@@ -193,7 +191,7 @@ class CommitFileJob implements Callable<List<CommitBatchResponse>> {
 
         @JsonProperty("timestamp_type")
         short timestampTypeJson() {
-            return (short) timestampType.id;
+            return (short) request().messageTimestampType().id;
         }
 
         @JsonProperty("batch_max_timestamp")

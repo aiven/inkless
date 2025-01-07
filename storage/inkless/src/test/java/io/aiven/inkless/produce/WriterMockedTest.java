@@ -3,6 +3,7 @@ package io.aiven.inkless.produce;
 
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.record.MemoryRecords;
+import org.apache.kafka.common.record.TimestampType;
 import org.apache.kafka.common.utils.Time;
 
 import org.junit.jupiter.api.BeforeEach;
@@ -37,10 +38,17 @@ import static org.mockito.Mockito.when;
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.STRICT_STUBS)
 class WriterMockedTest {
-    static final TopicPartition T0P0 = new TopicPartition("topic0", 0);
-    static final TopicPartition T0P1 = new TopicPartition("topic0", 1);
-    static final TopicPartition T1P0 = new TopicPartition("topic1", 0);
-    static final TopicPartition T1P1 = new TopicPartition("topic1", 1);
+    static final String TOPIC_0 = "topic0";
+    static final String TOPIC_1 = "topic1";
+    static final TopicPartition T0P0 = new TopicPartition(TOPIC_0, 0);
+    static final TopicPartition T0P1 = new TopicPartition(TOPIC_0, 1);
+    static final TopicPartition T1P0 = new TopicPartition(TOPIC_1, 0);
+    static final TopicPartition T1P1 = new TopicPartition(TOPIC_1, 1);
+
+    static final Map<String, TimestampType> TIMESTAMP_TYPES = Map.of(
+        TOPIC_0, TimestampType.CREATE_TIME,
+        TOPIC_1, TimestampType.LOG_APPEND_TIME
+    );
 
     @Mock
     Time time;
@@ -83,7 +91,7 @@ class WriterMockedTest {
         final Map<TopicPartition, MemoryRecords> writeRequest = Map.of(
             T0P0, recordCreator.create(T0P0, 100)
         );
-        writer.write(writeRequest);
+        writer.write(writeRequest, TIMESTAMP_TYPES);
 
         verify(commitTickScheduler).schedule(any(Runnable.class), eq(1L), eq(TimeUnit.MILLISECONDS));
     }
@@ -101,7 +109,7 @@ class WriterMockedTest {
             T1P0, recordCreator.create(T1P0, 100),
             T1P1, recordCreator.create(T1P1, 100)
         );
-        assertThat(writer.write(writeRequest)).isNotCompleted();
+        assertThat(writer.write(writeRequest, TIMESTAMP_TYPES)).isNotCompleted();
 
         // As we wrote too much, commit must be triggered.
         verify(fileCommitter).commit(closedFileCaptor.capture());
@@ -127,8 +135,8 @@ class WriterMockedTest {
             T1P0, recordCreator.create(T1P0, 100),
             T1P1, recordCreator.create(T1P1, 100)
         );
-        assertThat(writer.write(writeRequest0)).isNotCompleted();
-        assertThat(writer.write(writeRequest1)).isNotCompleted();
+        assertThat(writer.write(writeRequest0, TIMESTAMP_TYPES)).isNotCompleted();
+        assertThat(writer.write(writeRequest1, TIMESTAMP_TYPES)).isNotCompleted();
 
         // As we wrote too much, commit must be triggered.
         verify(fileCommitter).commit(closedFileCaptor.capture());
@@ -148,7 +156,7 @@ class WriterMockedTest {
             T1P0, recordCreator.create(T1P0, 1),
             T1P1, recordCreator.create(T1P1, 1)
         );
-        assertThat(writer.write(writeRequest)).isNotCompleted();
+        assertThat(writer.write(writeRequest, TIMESTAMP_TYPES)).isNotCompleted();
 
         writer.tick();
 
@@ -169,7 +177,7 @@ class WriterMockedTest {
             T1P0, recordCreator.create(T1P0, 1),
             T1P1, recordCreator.create(T1P1, 1)
         );
-        assertThat(writer.write(writeRequest)).isNotCompleted();
+        assertThat(writer.write(writeRequest, TIMESTAMP_TYPES)).isNotCompleted();
 
         writer.close();
 
@@ -190,11 +198,11 @@ class WriterMockedTest {
             T1P0, recordCreator.create(T1P0, 100),
             T1P1, recordCreator.create(T1P1, 100)
         );
-        assertThat(writer.write(writeRequest)).isNotCompleted();
+        assertThat(writer.write(writeRequest, TIMESTAMP_TYPES)).isNotCompleted();
 
         reset(fileCommitter);
 
-        assertThat(writer.write(writeRequest)).isNotCompleted();
+        assertThat(writer.write(writeRequest, TIMESTAMP_TYPES)).isNotCompleted();
 
         verify(fileCommitter).commit(closedFileCaptor.capture());
         assertThat(closedFileCaptor.getValue().originalRequests()).isEqualTo(Map.of(0, writeRequest));
@@ -251,7 +259,7 @@ class WriterMockedTest {
         reset(commitTickScheduler);
         reset(fileCommitter);
 
-        final var writeResult = writer.write(Map.of(T0P0, recordCreator.create(T0P0, 10)));
+        final var writeResult = writer.write(Map.of(T0P0, recordCreator.create(T0P0, 10)), TIMESTAMP_TYPES);
 
         assertThat(writeResult).isCompletedExceptionally();
         assertThatThrownBy(writeResult::get)
@@ -278,7 +286,7 @@ class WriterMockedTest {
             T1P1, recordCreator.create(T1P1, 100)
         );
 
-        assertThatThrownBy(() -> writer.write(writeRequest))
+        assertThatThrownBy(() -> writer.write(writeRequest, TIMESTAMP_TYPES))
             .hasRootCause(interruptedException);
 
         // Shutdown happens.
@@ -316,8 +324,11 @@ class WriterMockedTest {
     void writeNull() {
         final Writer writer = new Writer(time, Duration.ofMillis(1), 8 * 1024, commitTickScheduler, fileCommitter, writerMetrics, brokerTopicMetricMarks);
 
-        assertThatThrownBy(() -> writer.write(null))
+        assertThatThrownBy(() -> writer.write(null, TIMESTAMP_TYPES))
             .isInstanceOf(NullPointerException.class)
             .hasMessage("entriesPerPartition cannot be null");
+        assertThatThrownBy(() -> writer.write(Map.of(), null))
+            .isInstanceOf(NullPointerException.class)
+            .hasMessage("timestampTypes cannot be null");
     }
 }

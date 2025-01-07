@@ -110,7 +110,7 @@ public class InMemoryControlPlane extends AbstractControlPlane {
             request.size(),
             firstOffset,
             request.numberOfRecords(),
-            metadataView.getTopicConfig(topicName).messageTimestampType,
+            request.messageTimestampType(),
             now,
             request.batchMaxTimestamp()
         );

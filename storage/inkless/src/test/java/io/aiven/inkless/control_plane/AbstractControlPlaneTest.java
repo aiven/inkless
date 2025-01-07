@@ -11,7 +11,6 @@ import org.apache.kafka.common.record.TimestampType;
 import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.image.MetadataDelta;
 import org.apache.kafka.image.MetadataImage;
-import org.apache.kafka.storage.internals.log.LogConfig;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -23,7 +22,7 @@ import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 
 import java.util.List;
-import java.util.Map;
+import java.util.Properties;
 import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -63,7 +62,7 @@ public abstract class AbstractControlPlaneTest {
         when(metadataView.getTopicId(NONEXISTENT_TOPIC))
             .thenReturn(Uuid.ZERO_UUID);
         when(metadataView.getTopicConfig(EXISTING_TOPIC))
-            .thenReturn(new LogConfig(Map.of()));
+            .thenReturn(new Properties());
         when(metadataView.isInklessTopic(anyString()))
             .thenReturn(true);
     }
@@ -101,9 +100,9 @@ public abstract class AbstractControlPlaneTest {
             objectKey1, BROKER_ID,
             FILE_SIZE,
             List.of(
-                new CommitBatchRequest(new TopicPartition(EXISTING_TOPIC, 0), 1, 10, 10, 1000),
-                new CommitBatchRequest(new TopicPartition(EXISTING_TOPIC, 1), 2, 10, 10, 1000),
-                new CommitBatchRequest(new TopicPartition(NONEXISTENT_TOPIC, 0), 3, 10, 10, 1000)
+                new CommitBatchRequest(new TopicPartition(EXISTING_TOPIC, 0), 1, 10, 10, 1000, TimestampType.CREATE_TIME),
+                new CommitBatchRequest(new TopicPartition(EXISTING_TOPIC, 1), 2, 10, 10, 1000, TimestampType.CREATE_TIME),
+                new CommitBatchRequest(new TopicPartition(NONEXISTENT_TOPIC, 0), 3, 10, 10, 1000, TimestampType.CREATE_TIME)
             )
         );
         assertThat(commitResponse1).containsExactly(
@@ -116,9 +115,9 @@ public abstract class AbstractControlPlaneTest {
             objectKey2, BROKER_ID,
             FILE_SIZE,
             List.of(
-                new CommitBatchRequest(new TopicPartition(EXISTING_TOPIC, 0), 100, 10, 10, 1000),
-                new CommitBatchRequest(new TopicPartition(EXISTING_TOPIC, 1), 200, 10, 10, 2000),
-                new CommitBatchRequest(new TopicPartition(NONEXISTENT_TOPIC, 0), 300, 10, 10, 3000)
+                new CommitBatchRequest(new TopicPartition(EXISTING_TOPIC, 0), 100, 10, 10, 1000, TimestampType.CREATE_TIME),
+                new CommitBatchRequest(new TopicPartition(EXISTING_TOPIC, 1), 200, 10, 10, 2000, TimestampType.CREATE_TIME),
+                new CommitBatchRequest(new TopicPartition(NONEXISTENT_TOPIC, 0), 300, 10, 10, 3000, TimestampType.CREATE_TIME)
             )
         );
         assertThat(commitResponse2).containsExactly(
@@ -150,9 +149,9 @@ public abstract class AbstractControlPlaneTest {
         final int numberOfRecordsInBatch1 = 3;
         final int numberOfRecordsInBatch2 = 2;
         controlPlane.commitFile(objectKey1, BROKER_ID, FILE_SIZE,
-            List.of(new CommitBatchRequest(new TopicPartition(EXISTING_TOPIC, 0), 1, 10, numberOfRecordsInBatch1, 1000)));
+            List.of(new CommitBatchRequest(new TopicPartition(EXISTING_TOPIC, 0), 1, 10, numberOfRecordsInBatch1, 1000, TimestampType.CREATE_TIME)));
         controlPlane.commitFile(objectKey2, BROKER_ID, FILE_SIZE,
-            List.of(new CommitBatchRequest(new TopicPartition(EXISTING_TOPIC, 0), 100, 10, numberOfRecordsInBatch2, 2000)));
+            List.of(new CommitBatchRequest(new TopicPartition(EXISTING_TOPIC, 0), 100, 10, numberOfRecordsInBatch2, 2000, TimestampType.CREATE_TIME)));
 
         final long expectedLogStartOffset = 0;
         final long expectedHighWatermark = numberOfRecordsInBatch1 + numberOfRecordsInBatch2;
@@ -186,7 +185,7 @@ public abstract class AbstractControlPlaneTest {
         controlPlane.commitFile(
             objectKey, BROKER_ID, FILE_SIZE,
             List.of(
-                new CommitBatchRequest(new TopicPartition(EXISTING_TOPIC, 0), 11, 10, 10, 1000)
+                new CommitBatchRequest(new TopicPartition(EXISTING_TOPIC, 0), 11, 10, 10, 1000, TimestampType.CREATE_TIME)
             )
         );
 
@@ -222,7 +221,7 @@ public abstract class AbstractControlPlaneTest {
         controlPlane.commitFile(
             objectKey, BROKER_ID, FILE_SIZE,
             List.of(
-                new CommitBatchRequest(new TopicPartition(EXISTING_TOPIC, 0), 11, 10, 10, 1000)
+                new CommitBatchRequest(new TopicPartition(EXISTING_TOPIC, 0), 11, 10, 10, 1000, TimestampType.CREATE_TIME)
             )
         );
 
@@ -242,7 +241,7 @@ public abstract class AbstractControlPlaneTest {
         controlPlane.commitFile(
             objectKey, BROKER_ID, FILE_SIZE,
             List.of(
-                new CommitBatchRequest(new TopicPartition(EXISTING_TOPIC, 0), 11, 10, 10, 1000)
+                new CommitBatchRequest(new TopicPartition(EXISTING_TOPIC, 0), 11, 10, 10, 1000, TimestampType.CREATE_TIME)
             )
         );
 
@@ -262,7 +261,7 @@ public abstract class AbstractControlPlaneTest {
         controlPlane.commitFile(
             objectKey, BROKER_ID, FILE_SIZE,
             List.of(
-                new CommitBatchRequest(new TopicPartition(EXISTING_TOPIC, 0), 11, 10, 10, 1000)
+                new CommitBatchRequest(new TopicPartition(EXISTING_TOPIC, 0), 11, 10, 10, 1000, TimestampType.CREATE_TIME)
             )
         );
 
@@ -292,8 +291,8 @@ public abstract class AbstractControlPlaneTest {
 
         assertThatThrownBy(() -> controlPlane.commitFile(objectKey, BROKER_ID, FILE_SIZE,
             List.of(
-                new CommitBatchRequest(new TopicPartition(EXISTING_TOPIC, 0), 1, 10, 10, 1000),
-                new CommitBatchRequest(new TopicPartition(EXISTING_TOPIC, 1), 2, 0, 10, 1000)
+                new CommitBatchRequest(new TopicPartition(EXISTING_TOPIC, 0), 1, 10, 10, 1000, TimestampType.CREATE_TIME),
+                new CommitBatchRequest(new TopicPartition(EXISTING_TOPIC, 1), 2, 0, 10, 1000, TimestampType.CREATE_TIME)
             )
         ))
             .isInstanceOf(IllegalArgumentException.class)

@@ -9,12 +9,12 @@ import org.apache.kafka.common.metadata.PartitionRecord;
 import org.apache.kafka.common.metadata.TopicRecord;
 import org.apache.kafka.common.record.MemoryRecords;
 import org.apache.kafka.common.record.SimpleRecord;
+import org.apache.kafka.common.record.TimestampType;
 import org.apache.kafka.common.requests.ProduceResponse;
 import org.apache.kafka.common.utils.MockTime;
 import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.image.MetadataDelta;
 import org.apache.kafka.image.MetadataImage;
-import org.apache.kafka.storage.internals.log.LogConfig;
 
 import net.jqwik.api.Arbitraries;
 import net.jqwik.api.Arbitrary;
@@ -64,12 +64,19 @@ import static org.mockito.Mockito.verify;
 
 @Tag("integration")
 class WriterPropertyTest {
+    static final String TOPIC_0 = "topic0";
+    static final String TOPIC_1 = "topic1";
     private static final Uuid TOPIC_ID_0 = new Uuid(0, 1);
     private static final Uuid TOPIC_ID_1 = new Uuid(0, 2);
-    private static final TopicPartition T0P0 = new TopicPartition("topic0", 0);
-    private static final TopicPartition T0P1 = new TopicPartition("topic0", 1);
-    private static final TopicPartition T1P0 = new TopicPartition("topic1", 0);
-    private static final TopicPartition T1P1 = new TopicPartition("topic1", 1);
+    private static final TopicPartition T0P0 = new TopicPartition(TOPIC_0, 0);
+    private static final TopicPartition T0P1 = new TopicPartition(TOPIC_0, 1);
+    private static final TopicPartition T1P0 = new TopicPartition(TOPIC_1, 0);
+    private static final TopicPartition T1P1 = new TopicPartition(TOPIC_1, 1);
+
+    static final Map<String, TimestampType> TIMESTAMP_TYPES = Map.of(
+        TOPIC_0, TimestampType.CREATE_TIME,
+        TOPIC_1, TimestampType.LOG_APPEND_TIME
+    );
 
     private static final Set<TopicPartition> ALL_TPS = Set.of(T0P0, T0P1, T1P0, T1P1);
 
@@ -100,8 +107,8 @@ class WriterPropertyTest {
         }
 
         @Override
-        public LogConfig getTopicConfig(final String topicName) {
-            return LogConfig.fromProps(Map.of(), new Properties());
+        public Properties getTopicConfig(final String topicName) {
+            return new Properties();
         }
 
         @Override
@@ -292,7 +299,7 @@ class WriterPropertyTest {
                     sentRequests.computeIfAbsent(entry.getKey(), ignore -> new ArrayList<>())
                         .add(entry.getValue());
                 }
-                final var responseFuture = writer.write(request);
+                final var responseFuture = writer.write(request, TIMESTAMP_TYPES);
                 waitingResponseFutures.add(responseFuture);
                 requestCount += 1;
             }

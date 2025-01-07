@@ -3,6 +3,7 @@ package io.aiven.inkless.produce;
 
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.record.MutableRecordBatch;
+import org.apache.kafka.common.record.TimestampType;
 
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
@@ -18,14 +19,16 @@ class BatchBuffer {
     private int totalSize = 0;
     private boolean closed = false;
 
-    void addBatch(final TopicPartition topicPartition, final MutableRecordBatch batch, final int requestId) {
+    void addBatch(final TopicPartition topicPartition, final TimestampType messageTimestampType,
+                  final MutableRecordBatch batch, final int requestId) {
         Objects.requireNonNull(topicPartition, "topicPartition cannot be null");
+        Objects.requireNonNull(messageTimestampType, "timestampType cannot be null");
         Objects.requireNonNull(batch, "batch cannot be null");
 
         if (closed) {
             throw new IllegalStateException("Already closed");
         }
-        final BatchHolder batchHolder = new BatchHolder(topicPartition, batch, requestId);
+        final BatchHolder batchHolder = new BatchHolder(topicPartition, batch, messageTimestampType, requestId);
         batches.add(batchHolder);
         totalSize += batch.sizeInBytes();
     }
@@ -53,7 +56,8 @@ class BatchBuffer {
                     byteOffset,
                     batchHolder.batch.sizeInBytes(),
                     batchHolder.numberOfRecords(),
-                    batchHolder.batchMaxTimestamp()
+                    batchHolder.batchMaxTimestamp(),
+                    batchHolder.timestampType()
                 )
             );
             requestIds.add(batchHolder.requestId);
@@ -70,6 +74,7 @@ class BatchBuffer {
 
     private record BatchHolder(TopicPartition topicPartition,
                                MutableRecordBatch batch,
+                               TimestampType timestampType,
                                int requestId) {
         long numberOfRecords() {
             return batch.nextOffset() - batch.baseOffset();
