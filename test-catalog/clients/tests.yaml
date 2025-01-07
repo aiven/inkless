@@ -822,12 +822,6 @@ org.apache.kafka.clients.consumer.KafkaShareConsumerMetricsTest:
 - testClosingConsumerUnregistersConsumerMetrics
 - testPollIdleRatio
 - testPollTimeMetrics
-- testRegisteringCustomMetricsDoesntAffectConsumerMetrics
-- testRegisteringCustomMetricsWithSameNameDoesntAffectConsumerMetrics
-- testShouldNotCallMetricReporterMetricRemovalWithExistingConsumerMetric
-- testShouldOnlyCallMetricReporterMetricChangeOnceWithExistingConsumerMetric
-- testUnregisteringCustomMetricsWithSameNameDoesntAffectConsumerMetrics
-- testUnregisteringNonexistingMetricsDoesntCauseError
 org.apache.kafka.clients.consumer.MockConsumerTest:
 - endOffsetsShouldBeIdempotent
 - shouldNotClearRecordsForPausedPartitions
@@ -973,7 +967,6 @@ org.apache.kafka.clients.consumer.internals.AbstractCoordinatorTest:
 - testWakeupAfterJoinGroupSent
 - testWakeupAfterJoinGroupSentExternalCompletion
 - testWakeupAfterSyncGroupReceived
-- testWakeupAfterSyncGroupReceivedExternalCompletion
 - testWakeupAfterSyncGroupSentExternalCompletion
 - testWakeupFromEnsureCoordinatorReady
 - testWakeupInOnJoinComplete
@@ -1188,8 +1181,7 @@ org.apache.kafka.clients.consumer.internals.ConsumerHeartbeatRequestManagerTest:
 - testSkippingHeartbeat
 - testSuccessfulHeartbeatTiming
 - testTimerNotDue
-- testUnsupportedVersionFromBroker
-- testUnsupportedVersionFromClient
+- testUnsupportedVersion
 - testValidateConsumerGroupHeartbeatRequest
 - testValidateConsumerGroupHeartbeatRequestAssignmentSentWhenLocalEpochChanges
 - testisExpiredByUsedForLogging
@@ -1678,8 +1670,6 @@ org.apache.kafka.clients.consumer.internals.FetchMetricsManagerTest:
 - testBytesFetched
 - testBytesFetchedTopic
 - testLatency
-- testMaybeUpdateAssignment
-- testMaybeUpdateAssignmentWithAdditionalRegisteredMetrics
 - testNodeLatency
 - testPartitionLag
 - testPartitionLead
@@ -2097,8 +2087,6 @@ org.apache.kafka.clients.consumer.internals.ShareHeartbeatRequestManagerTest:
 - testSkippingHeartbeat
 - testSuccessfulHeartbeatTiming
 - testTimerNotDue
-- testUnsupportedVersionGeneratedOnTheBroker
-- testUnsupportedVersionGeneratedOnTheClient
 org.apache.kafka.clients.consumer.internals.ShareMembershipManagerTest:
 - testDelayedMetadataUsedToCompleteAssignment
 - testFatalFailureWhenMemberAlreadyLeft
@@ -2320,7 +2308,6 @@ org.apache.kafka.clients.producer.KafkaProducerTest:
 - configurableObjectsShouldSeeGeneratedClientId
 - negativePartitionShouldThrow
 - shouldCloseProperlyAndThrowIfInterrupted
-- shouldNotInvokeFlushInCallback
 - testAbortTransaction
 - testAcksAndIdempotenceForIdempotentProducers
 - testCallbackAndInterceptorHandleError
@@ -4717,6 +4704,7 @@ org.apache.kafka.common.utils.ConfigUtilsTest:
 - testConfigMapToRedactedStringWithSecrets
 - testGetBoolean
 org.apache.kafka.common.utils.Crc32CTest:
+- testUpdate
 - testValue
 org.apache.kafka.common.utils.ExitTest:
 - shouldAddShutdownHookImmediately

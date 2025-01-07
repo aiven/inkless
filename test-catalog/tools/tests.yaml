@@ -619,15 +619,8 @@ org.apache.kafka.tools.consumer.group.SaslClientsWithInvalidCredentialsTest:
 - testConsumerGroupServiceWithAuthenticationFailure
 - testConsumerGroupServiceWithAuthenticationSuccess
 org.apache.kafka.tools.consumer.group.ShareGroupCommandTest:
-- testDescribeMembersOfAllExistingGroups
-- testDescribeMembersOfExistingGroup
-- testDescribeNonexistentGroup
-- testDescribeOffsetsOfAllExistingGroups
-- testDescribeOffsetsOfExistingGroup
-- testDescribeShareGroupsInvalidVerboseOption
-- testDescribeShareGroupsOffsetsInvalidVerboseOption
-- testDescribeStateOfExistingGroup
-- testDescribeStatesOfAllExistingGroups
+- testDescribeShareGroups
+- testDescribeShareGroupsGetOffsets
 - testGroupStatesFromString
 - testListShareGroups
 - testListShareGroupsWithStates
