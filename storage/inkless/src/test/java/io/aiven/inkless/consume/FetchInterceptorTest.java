@@ -31,6 +31,10 @@ import java.util.OptionalLong;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.Consumer;
 
+import io.aiven.inkless.cache.FixedBlockAlignment;
+import io.aiven.inkless.cache.KeyAlignmentStrategy;
+import io.aiven.inkless.cache.NullCache;
+import io.aiven.inkless.cache.ObjectCache;
 import io.aiven.inkless.common.ObjectKeyCreator;
 import io.aiven.inkless.common.PlainObjectKey;
 import io.aiven.inkless.common.SharedState;
@@ -49,8 +53,10 @@ import static org.mockito.Mockito.when;
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.STRICT_STUBS)
 public class FetchInterceptorTest {
-    static final int BROKER_ID = 11;
-    static final ObjectKeyCreator OBJECT_KEY_CREATOR = PlainObjectKey.creator("");
+    private static final int BROKER_ID = 11;
+    private static final ObjectKeyCreator OBJECT_KEY_CREATOR = PlainObjectKey.creator("");
+    private static final KeyAlignmentStrategy KEY_ALIGNMENT_STRATEGY = new FixedBlockAlignment(Integer.MAX_VALUE);
+    private static final ObjectCache OBJECT_CACHE = new NullCache();
 
     Time time = new MockTime();
     @Mock
@@ -78,7 +84,7 @@ public class FetchInterceptorTest {
 
     @BeforeEach
     public void setup() {
-        sharedState = new SharedState(time, BROKER_ID, inklessConfig, metadataView, controlPlane, storageBackend, OBJECT_KEY_CREATOR, brokerTopicStats);
+        sharedState = new SharedState(time, BROKER_ID, inklessConfig, metadataView, controlPlane, storageBackend, OBJECT_KEY_CREATOR, KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, brokerTopicStats);
     }
 
     @Test

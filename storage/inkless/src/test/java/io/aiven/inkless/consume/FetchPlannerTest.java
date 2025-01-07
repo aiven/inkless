@@ -23,6 +23,11 @@ import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 
+import io.aiven.inkless.cache.CacheKey;
+import io.aiven.inkless.cache.FixedBlockAlignment;
+import io.aiven.inkless.cache.KeyAlignmentStrategy;
+import io.aiven.inkless.cache.NullCache;
+import io.aiven.inkless.cache.ObjectCache;
 import io.aiven.inkless.common.ByteRange;
 import io.aiven.inkless.common.ObjectKey;
 import io.aiven.inkless.common.ObjectKeyCreator;
@@ -50,6 +55,9 @@ public class FetchPlannerTest {
     @Mock
     ExecutorService dataExecutor;
 
+    ObjectCache cache = new NullCache();
+    KeyAlignmentStrategy keyAlignmentStrategy = new FixedBlockAlignment(Integer.MAX_VALUE);
+    ByteRange requestRange = new ByteRange(0, Integer.MAX_VALUE);
     Time time = new MockTime();
     Uuid topicId = Uuid.randomUuid();
     TopicIdPartition partition0 = new TopicIdPartition(topicId, 0, "inkless-topic");
@@ -61,6 +69,8 @@ public class FetchPlannerTest {
         FetchPlannerJob job = new FetchPlannerJob(
             new MockTime(),
             OBJECT_KEY_CREATOR,
+            keyAlignmentStrategy,
+            cache,
             fetcher,
             dataExecutor,
             CompletableFuture.completedFuture(coordinates),
@@ -80,13 +90,7 @@ public class FetchPlannerTest {
                         new BatchInfo(OBJECT_KEY_A_MAIN_PART, 0, 10, 0, 1, TimestampType.CREATE_TIME, 10, 20)
                 ), 0, 1)
         ), Set.of(
-                new FileFetchJob(
-                    new MockTime(),
-                    fetcher,
-                    OBJECT_KEY_A,
-                    new ByteRange(0, 10),
-                    durationMs -> {}
-                )
+                new CacheFetchJob(cache, new CacheKey(OBJECT_KEY_A, requestRange), time, fetcher, durationMs -> {})
         ));
     }
 
@@ -98,8 +102,8 @@ public class FetchPlannerTest {
                         new BatchInfo(OBJECT_KEY_B_MAIN_PART, 0, 10, 1, 1, TimestampType.CREATE_TIME, 11, 21)
                 ), 0, 2)
         ), Set.of(
-                new FileFetchJob(time, fetcher, OBJECT_KEY_A, new ByteRange(0, 10), durationMs -> {}),
-                new FileFetchJob(time, fetcher, OBJECT_KEY_B, new ByteRange(0, 10), durationMs -> {})
+                new CacheFetchJob(cache, new CacheKey(OBJECT_KEY_A, requestRange), time, fetcher, durationMs -> {}),
+                new CacheFetchJob(cache, new CacheKey(OBJECT_KEY_B, requestRange), time, fetcher, durationMs -> {})
         ));
     }
 
@@ -113,8 +117,8 @@ public class FetchPlannerTest {
                         new BatchInfo(OBJECT_KEY_B_MAIN_PART, 0, 10, 0, 1, TimestampType.CREATE_TIME, 11, 21)
                 ), 0, 1)
         ), Set.of(
-                new FileFetchJob(time, fetcher, OBJECT_KEY_A, new ByteRange(0, 10), durationMs -> {}),
-                new FileFetchJob(time, fetcher, OBJECT_KEY_B, new ByteRange(0, 10), durationMs -> {})
+                new CacheFetchJob(cache, new CacheKey(OBJECT_KEY_A, requestRange), time, fetcher, durationMs -> {}),
+                new CacheFetchJob(cache, new CacheKey(OBJECT_KEY_B, requestRange), time, fetcher, durationMs -> {})
         ));
     }
 
@@ -128,7 +132,7 @@ public class FetchPlannerTest {
                         new BatchInfo(OBJECT_KEY_A_MAIN_PART, 30, 10, 0, 1, TimestampType.CREATE_TIME, 11, 21)
                 ), 0,  1)
                 ), Set.of(
-                    new FileFetchJob(time, fetcher, OBJECT_KEY_A, new ByteRange(0, 40), durationMs -> {})
+                    new CacheFetchJob(cache, new CacheKey(OBJECT_KEY_A, requestRange), time, fetcher, durationMs -> {})
         ));
     }
 
@@ -140,7 +144,7 @@ public class FetchPlannerTest {
                         new BatchInfo(OBJECT_KEY_B_MAIN_PART, 0, 10, 0, 1, TimestampType.CREATE_TIME, 11, 21)
                 ), 0, 1)
         ), Set.of(
-                new FileFetchJob(time, fetcher, OBJECT_KEY_B, new ByteRange(0, 10), durationMs -> {})
+                new CacheFetchJob(cache, new CacheKey(OBJECT_KEY_B, requestRange), time, fetcher, durationMs -> {})
         ));
     }
 
@@ -152,7 +156,7 @@ public class FetchPlannerTest {
                         new BatchInfo(OBJECT_KEY_B_MAIN_PART, 0, 10, 0, 1, TimestampType.CREATE_TIME, 11, 21)
                 ), 0, 1)
         ), Set.of(
-                new FileFetchJob(time, fetcher, OBJECT_KEY_B, new ByteRange(0, 10), durationMs -> {})
+                new CacheFetchJob(cache, new CacheKey(OBJECT_KEY_B, requestRange), time, fetcher, durationMs -> {})
         ));
     }
 
@@ -164,17 +168,19 @@ public class FetchPlannerTest {
                         new BatchInfo(OBJECT_KEY_B_MAIN_PART, 0, 10, 0, 1, TimestampType.CREATE_TIME, 11, 21)
                 ), 0, 1)
         ), Set.of(
-                new FileFetchJob(time, fetcher, OBJECT_KEY_B, new ByteRange(0, 10), durationMs -> {})
+                new CacheFetchJob(cache, new CacheKey(OBJECT_KEY_B, requestRange), time, fetcher, durationMs -> {})
         ));
     }
 
-    private void assertBatchPlan(Map<TopicIdPartition, FindBatchResponse> coordinates, Set<FileFetchJob> jobs) throws Exception {
-        ArgumentCaptor<FileFetchJob> submittedCallables = ArgumentCaptor.captor();
+    private void assertBatchPlan(Map<TopicIdPartition, FindBatchResponse> coordinates, Set<CacheFetchJob> jobs) throws Exception {
+        ArgumentCaptor<CacheFetchJob> submittedCallables = ArgumentCaptor.captor();
         when(dataExecutor.submit(submittedCallables.capture())).thenReturn(null);
 
         FetchPlannerJob job = new FetchPlannerJob(
             new MockTime(),
             OBJECT_KEY_CREATOR,
+            keyAlignmentStrategy,
+            cache,
             fetcher,
             dataExecutor,
             CompletableFuture.completedFuture(coordinates),

@@ -54,6 +54,12 @@ public class InklessConfig extends AbstractConfig {
     private static final String STORAGE_BACKEND_CLASS_DOC = "The storage backend implementation class";
     private static final String STORAGE_BACKEND_CLASS_DEFAULT = InMemoryStorage.class.getCanonicalName();
 
+    public static final String CONSUME_PREFIX = "consume.";
+
+    public static final String CONSUME_CACHE_BLOCK_BYTES_CONFIG = CONSUME_PREFIX + "cache.block.bytes";
+    private static final String CONSUME_CACHE_BLOCK_BYTES_DOC = "The number of bytes to fetch as a single block from object storage when serving fetch requests.";
+    private static final int CONSUME_CACHE_BLOCK_BYTES_DEFAULT = 16 * 1024 * 1024;  // 16 MiB
+
     public static ConfigDef configDef() {
         final ConfigDef configDef = new ConfigDef();
 
@@ -126,6 +132,14 @@ public class InklessConfig extends AbstractConfig {
             STORAGE_BACKEND_CLASS_DOC
         );
 
+        configDef.define(
+                CONSUME_CACHE_BLOCK_BYTES_CONFIG,
+                ConfigDef.Type.INT,
+                CONSUME_CACHE_BLOCK_BYTES_DEFAULT,
+                ConfigDef.Importance.LOW,
+                CONSUME_CACHE_BLOCK_BYTES_DOC
+        );
+
         return configDef;
     }
 
@@ -175,5 +189,9 @@ public class InklessConfig extends AbstractConfig {
     }
     public Duration produceUploadBackoff() {
         return Duration.ofMillis(getInt(PRODUCE_UPLOAD_BACKOFF_MS_CONFIG));
+    }
+
+    public int fetchCacheBlockBytes() {
+        return getInt(CONSUME_CACHE_BLOCK_BYTES_CONFIG);
     }
 }

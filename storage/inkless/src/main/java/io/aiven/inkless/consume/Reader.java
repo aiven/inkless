@@ -16,6 +16,8 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
 import io.aiven.inkless.TimeUtils;
+import io.aiven.inkless.cache.KeyAlignmentStrategy;
+import io.aiven.inkless.cache.ObjectCache;
 import io.aiven.inkless.common.InklessThreadFactory;
 import io.aiven.inkless.common.ObjectKeyCreator;
 import io.aiven.inkless.control_plane.ControlPlane;
@@ -26,6 +28,8 @@ public class Reader implements AutoCloseable {
     private static final long EXECUTOR_SHUTDOWN_TIMEOUT_SECONDS = 5;
     private final Time time;
     private final ObjectKeyCreator objectKeyCreator;
+    private final KeyAlignmentStrategy keyAlignmentStrategy;
+    private final ObjectCache cache;
     private final ControlPlane controlPlane;
     private final ObjectFetcher objectFetcher;
     private final ExecutorService metadataExecutor;
@@ -36,11 +40,15 @@ public class Reader implements AutoCloseable {
 
     public Reader(Time time,
                   ObjectKeyCreator objectKeyCreator,
+                  KeyAlignmentStrategy keyAlignmentStrategy,
+                  ObjectCache cache,
                   ControlPlane controlPlane,
                   ObjectFetcher objectFetcher) {
         this(
             time,
             objectKeyCreator,
+            keyAlignmentStrategy,
+            cache,
             controlPlane,
             objectFetcher,
             Executors.newCachedThreadPool(new InklessThreadFactory("inkless-fetch-metadata-", false)),
@@ -52,17 +60,21 @@ public class Reader implements AutoCloseable {
 
 
     public Reader(
-        Time time,
-        ObjectKeyCreator objectKeyCreator,
-        ControlPlane controlPlane,
-        ObjectFetcher objectFetcher,
-        ExecutorService metadataExecutor,
-        ExecutorService fetchPlannerExecutor,
-        ExecutorService dataExecutor,
-        ExecutorService fetchCompleterExecutor
+            Time time,
+            ObjectKeyCreator objectKeyCreator,
+            KeyAlignmentStrategy keyAlignmentStrategy,
+            ObjectCache cache,
+            ControlPlane controlPlane,
+            ObjectFetcher objectFetcher,
+            ExecutorService metadataExecutor,
+            ExecutorService fetchPlannerExecutor,
+            ExecutorService dataExecutor,
+            ExecutorService fetchCompleterExecutor
     ) {
         this.time = time;
         this.objectKeyCreator = objectKeyCreator;
+        this.keyAlignmentStrategy = keyAlignmentStrategy;
+        this.cache = cache;
         this.controlPlane = controlPlane;
         this.objectFetcher = objectFetcher;
         this.metadataExecutor = metadataExecutor;
@@ -90,6 +102,8 @@ public class Reader implements AutoCloseable {
             new FetchPlannerJob(
                 time,
                 objectKeyCreator,
+                keyAlignmentStrategy,
+                cache,
                 objectFetcher,
                 dataExecutor,
                 batchCoordinates,
