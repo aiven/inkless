@@ -804,7 +804,6 @@ kafka.clients.consumer.ConsumerIntegrationTest:
 - testFetchPartitionsAfterFailedListenerWithGroupProtocolConsumer
 - testFetchPartitionsWithAlwaysFailedListenerWithGroupProtocolClassic
 - testFetchPartitionsWithAlwaysFailedListenerWithGroupProtocolConsumer
-- testLeaderEpoch
 kafka.cluster.AssignmentStateTest:
 - testPartitionAssignmentStatus
 kafka.cluster.BrokerEndPointTest:
@@ -1134,7 +1133,6 @@ kafka.coordinator.group.GroupMetadataManagerTest:
 - testGroupLoadWithConsumerAndTransactionalOffsetCommitsConsumerWins
 - testGroupLoadWithConsumerAndTransactionalOffsetCommitsTransactionWins
 - testGroupLoadedWithPendingCommits
-- testGroupMetadataKey
 - testGroupMetadataRemoval
 - testGroupMetadataRemovalWithLogAppendTime
 - testGroupNotExists
@@ -1160,7 +1158,6 @@ kafka.coordinator.group.GroupMetadataManagerTest:
 - testLoadWithCommittedAndAbortedTransactionalOffsetCommits
 - testLogInfoFromCleanupGroupMetadata
 - testMetrics
-- testOffsetCommitKey
 - testOffsetExpirationOfActiveGroupSemantics
 - testOffsetExpirationOfSimpleConsumer
 - testOffsetExpirationSemantics
@@ -1355,6 +1352,8 @@ kafka.coordinator.transaction.TransactionLogTest:
 - testReadTxnRecordKeyCanReadUnknownMessage
 - testSerializeTransactionLogValueToFlexibleVersion
 - testSerializeTransactionLogValueToHighestNonFlexibleVersion
+- testTransactionMetadataParsing
+- testTransactionMetadataTombstoneParsing
 kafka.coordinator.transaction.TransactionMarkerChannelManagerTest:
 - shouldAbortAppendToLogOnEndTxnWhenNotCoordinatorError
 - shouldCompleteAppendToLogOnEndTxnWhenSendMarkersSucceed
@@ -1986,9 +1985,6 @@ kafka.network.DynamicConnectionQuotaTest:
 - testDynamicListenerConnectionQuota
 kafka.network.DynamicNumNetworkThreadsTest:
 - testDynamicNumNetworkThreads
-kafka.network.ProcessorTest:
-- testParseRequestHeaderWithDisabledApi
-- testParseRequestHeaderWithUnsupportedApiVersion
 kafka.network.RequestChannelTest:
 - testAlterRequests
 - testBuildEnvelopeResponse
@@ -2100,7 +2096,6 @@ kafka.raft.KafkaMetadataLogTest:
 - testValidateUnknownEpochLessThanLastKnownGreaterThanOldestSnapshot
 - testValidateValidEpochAndOffset
 kafka.raft.RaftManagerTest:
-- testKRaftBrokerDoesNotDeleteMetadataLog
 - testLogDirLockWhenBrokerOnlyWithSeparateMetadataDir
 - testLogDirLockWhenControllerOnly
 - testNodeIdPresent
@@ -2286,27 +2281,6 @@ kafka.server.AuthHelperTest:
 - testComputeDescribeClusterResponseV1WithUnknownEndpointType
 - testComputeDescribeClusterResponseWhereControllerIsNotFound
 - testFilterByAuthorized
-kafka.server.AutoTopicCreationManagerTest:
-- testCreateNonInternalTopic
-- testCreateOffsetTopic
-- testCreateShareStateTopic
-- testCreateTopicsWithForwardingDisabled
-- testCreateTxnTopic
-- testInvalidReplicationFactorForConsumerOffsetsTopic
-- testInvalidReplicationFactorForNonInternalTopics
-- testInvalidReplicationFactorForTxnOffsetTopic
-- testRequestTimeoutErrorSwapForConsumerOffsetTopic
-- testRequestTimeoutErrorSwapForNonInternalTopics
-- testRequestTimeoutErrorSwapForTxnOffsetTopic
-- testTopicCreationWithMetadataContextNoRetryUponUnsupportedVersion
-- testTopicCreationWithMetadataContextPassPrincipal
-- testTopicCreationWithMetadataContextWhenPrincipalSerdeNotDefined
-- testTopicExistsErrorSwapForConsumerOffsetsTopic
-- testTopicExistsErrorSwapForNonInternalTopics
-- testTopicExistsErrorSwapForTxnOffsetTopic
-- testUnknownTopicPartitionForConsumerOffsetTopic
-- testUnknownTopicPartitionForNonIntervalTopic
-- testUnknownTopicPartitionForTxnOffsetTopic
 kafka.server.BootstrapControllersIntegrationTest:
 - testAcls
 - testAclsByControllers
@@ -2767,12 +2741,6 @@ kafka.server.KRaftClusterTest:
 - testUnregisterBroker
 - testUpdateMetadataVersion
 kafka.server.KafkaApisTest:
-- rejectHeartbeatRequestWhenStaticMembershipNotSupported
-- rejectInitProducerIdWhenEpochButNotIdProvided
-- rejectInitProducerIdWhenIdButNotEpochProvided
-- rejectJoinGroupRequestWhenStaticMembershipNotSupported
-- rejectOffsetCommitRequestWhenStaticMembershipNotSupported
-- rejectSyncGroupRequestWhenStaticMembershipNotSupported
 - requiredAclsNotPresentWriteTxnMarkersThrowsAuthorizationException
 - shouldAppendToLogOnWriteTxnMarkersWhenCorrectMagicVersion
 - shouldNotResignCoordinatorsIfStopReplicaReceivedWithoutDeleteFlag
@@ -2787,11 +2755,6 @@ kafka.server.KafkaApisTest:
 - shouldResignCoordinatorsIfStopReplicaReceivedWithDeleteFlagAndNoEpochSentinel
 - shouldRespondWithUnknownTopicOrPartitionForBadPartitionAndNoErrorsForGoodPartition
 - shouldRespondWithUnknownTopicWhenPartitionIsNotHosted
-- shouldThrowUnsupportedVersionExceptionOnHandleAddOffsetToTxnRequestWhenInterBrokerProtocolNotSupported
-- shouldThrowUnsupportedVersionExceptionOnHandleAddPartitionsToTxnRequestWhenInterBrokerProtocolNotSupported
-- shouldThrowUnsupportedVersionExceptionOnHandleEndTxnRequestWhenInterBrokerProtocolNotSupported
-- shouldThrowUnsupportedVersionExceptionOnHandleTxnOffsetCommitRequestWhenInterBrokerProtocolNotSupported
-- shouldThrowUnsupportedVersionExceptionOnHandleWriteTxnMarkersRequestWhenInterBrokerProtocolNotSupported
 - testAddPartitionsToTxnOperationNotAttempted
 - testAddPartitionsToTxnWithInvalidPartition
 - testAlterClientQuotasWithAuthorizer
@@ -3044,7 +3007,6 @@ kafka.server.KafkaConfigTest:
 - testControllerListenerNameDoesNotMapToPlaintextByDefaultForNonKRaft
 - testControllerListenerNameMapsToPlaintextByDefaultForKRaft
 - testControllerListenerNames
-- testControllerListenerNamesValidForKRaftControllerOnly
 - testControllerListenersCanBeAdvertisedForKRaftCombined
 - testControllerQuorumVoterStringsToNodes
 - testCustomMetadataLogDir
@@ -3301,9 +3263,9 @@ kafka.server.OffsetsForLeaderEpochRequestTest:
 kafka.server.PermissiveControllerMutationQuotaTest:
 - testControllerMutationQuotaViolation
 kafka.server.ProduceRequestTest:
+- quorum
 - testCorruptLz4ProduceRequest
 - testProduceToNonReplica
-- testProduceWithInvalidTimestamp
 - testSimpleProduceRequest
 - testZSTDProduceRequest
 kafka.server.RaftClusterSnapshotTest:
@@ -3341,23 +3303,13 @@ kafka.server.ReplicaFetchTest:
 - testReplicaFetcherThread
 kafka.server.ReplicaFetcherThreadTest:
 - shouldCatchExceptionFromBlockingSendWhenShuttingDownReplicaFetcherThread
-- shouldFetchLeaderEpochOnFirstFetchOnlyIfLeaderEpochKnownToBothIbp26
-- shouldFetchLeaderEpochSecondTimeIfLeaderRepliesWithEpochNotKnownToFollower
-- shouldFilterPartitionsMadeLeaderDuringLeaderEpochRequest
 - shouldHandleExceptionFromBlockingSend
-- shouldMovePartitionsOutOfTruncatingLogState
 - shouldNotFetchLeaderEpochOnFirstFetchWithTruncateOnFetch
 - shouldNotUpdateReassignmentBytesInMetricsWhenNoReassignmentsInProgress
-- shouldPollIndefinitelyIfLeaderReturnsAnyException
 - shouldSendLatestRequestVersionsByDefault
 - shouldTruncateIfLeaderRepliesWithDivergingEpochNotKnownToFollower
-- shouldTruncateToInitialFetchOffsetIfLeaderReturnsUndefinedOffset
-- shouldTruncateToOffsetSpecifiedInEpochOffsetResponse
-- shouldTruncateToOffsetSpecifiedInEpochOffsetResponseIfFollowerHasNoMoreEpochs
 - shouldUpdateReassignmentBytesInMetrics
-- shouldUseLeaderEndOffsetIfInterBrokerVersionBelow20
 - testBuildFetch
-- testFetchLeaderEpochRequestIfLastEpochDefinedForSomePartitions
 - testLagIsUpdatedWhenNoRecords
 - testLocalFetchCompletionIfHighWatermarkUpdated
 - testTruncateOnFetchDoesNotUpdateHighWatermark
@@ -3872,8 +3824,6 @@ kafka.test.api.ShareConsumerTest:
 - testMultipleConsumersWithDifferentGroupIds
 - testPollNoSubscribeFails
 - testPollThrowsInterruptExceptionIfInterrupted
-- testShareAutoOffsetResetByDuration
-- testShareAutoOffsetResetByDurationInvalidFormat
 - testShareAutoOffsetResetDefaultValue
 - testShareAutoOffsetResetEarliest
 - testShareAutoOffsetResetEarliestAfterLsoMovement
@@ -3909,7 +3859,6 @@ kafka.tools.DumpLogSegmentsTest:
 - testPrintDataLog
 - testPrintDataLogPartialBatches
 - testShareGroupStateMessageParser
-- testTransactionLogMessageParser
 kafka.tools.StorageToolTest:
 - testBootstrapScramRecords
 - testConfigToLogDirectories
