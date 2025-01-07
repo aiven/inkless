@@ -17,6 +17,8 @@ org.apache.kafka.common.test.api.ClusterTestExtensionsTest:
 - testDefaults
 - testNoAutoStart
 - testNotSupportedNewGroupProtocols
+- testSaslPlaintext
+- testSaslPlaintextWithController
 - testShutdownAndSyncMetadata
 - testSupportedNewGroupProtocols
 - testVerifyTopicDeletion
