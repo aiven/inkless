@@ -6,13 +6,13 @@ import org.apache.kafka.admin.BrokerMetadata
 import org.apache.kafka.common.config.ConfigResource
 import org.apache.kafka.common.{TopicPartition, Uuid}
 import org.apache.kafka.image.TopicsDelta
-import org.apache.kafka.storage.internals.log.LogConfig
 
+import java.util.Properties
 import java.{lang, util}
 import java.util.concurrent.atomic.AtomicReference
 import scala.jdk.CollectionConverters.{IterableHasAsJava, SetHasAsJava}
 
-class InklessMetadataView(val metadataCache: KRaftMetadataCache, val defaultTopicConfigs: () => LogConfig) extends MetadataView {
+class InklessMetadataView(val metadataCache: KRaftMetadataCache) extends MetadataView {
   private val topicMetadataChangesSubscribers = new AtomicReference[List[TopicMetadataChangesSubscriber]](Nil)
 
   override def getAliveBrokers: lang.Iterable[BrokerMetadata] = {
@@ -31,14 +31,8 @@ class InklessMetadataView(val metadataCache: KRaftMetadataCache, val defaultTopi
     metadataCache.isInklessTopic(topicName)
   }
 
-  override def getTopicConfig(topicName: String): LogConfig = {
-    val overrides = metadataCache.config(new ConfigResource(ConfigResource.Type.TOPIC, topicName))
-
-    if (overrides.isEmpty) {
-      defaultTopicConfigs()
-    }
-
-    LogConfig.fromProps(defaultTopicConfigs().originals(), overrides)
+  override def getTopicConfig(topicName: String): Properties = {
+    metadataCache.config(new ConfigResource(ConfigResource.Type.TOPIC, topicName))
   }
 
   override def subscribeToTopicMetadataChanges(subscriber: TopicMetadataChangesSubscriber): Unit = {

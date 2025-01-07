@@ -7,12 +7,12 @@ import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.metadata.PartitionRecord;
 import org.apache.kafka.common.metadata.TopicRecord;
 import org.apache.kafka.common.protocol.Errors;
+import org.apache.kafka.common.record.TimestampType;
 import org.apache.kafka.common.requests.ProduceResponse.PartitionResponse;
 import org.apache.kafka.common.utils.MockTime;
 import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.image.MetadataDelta;
 import org.apache.kafka.image.MetadataImage;
-import org.apache.kafka.storage.internals.log.LogConfig;
 import org.apache.kafka.storage.log.metrics.BrokerTopicStats;
 
 import org.junit.jupiter.api.BeforeAll;
@@ -53,11 +53,18 @@ class WriterIntegrationTest {
     @Container
     static final LocalStackContainer LOCALSTACK = S3TestContainer.container();
 
+    static final String TOPIC_0 = "topic0";
+    static final String TOPIC_1 = "topic1";
     static final Uuid TOPIC_ID_0 = new Uuid(0, 1);
     static final Uuid TOPIC_ID_1 = new Uuid(0, 2);
-    static final TopicPartition T0P0 = new TopicPartition("topic0", 0);
-    static final TopicPartition T0P1 = new TopicPartition("topic0", 1);
-    static final TopicPartition T1P0 = new TopicPartition("topic1", 0);
+    static final TopicPartition T0P0 = new TopicPartition(TOPIC_0, 0);
+    static final TopicPartition T0P1 = new TopicPartition(TOPIC_0, 1);
+    static final TopicPartition T1P0 = new TopicPartition(TOPIC_1, 0);
+
+    static final Map<String, TimestampType> TIMESTAMP_TYPES = Map.of(
+        TOPIC_0, TimestampType.CREATE_TIME,
+        TOPIC_1, TimestampType.LOG_APPEND_TIME
+    );
 
     static final String BUCKET_NAME = "test-bucket";
 
@@ -89,8 +96,8 @@ class WriterIntegrationTest {
         }
 
         @Override
-        public LogConfig getTopicConfig(final String topicName) {
-            return LogConfig.fromProps(Map.of(), new Properties());
+        public Properties getTopicConfig(final String topicName) {
+            return new Properties();
         }
 
         @Override
@@ -165,12 +172,12 @@ class WriterIntegrationTest {
                 T0P0, recordCreator.create(T0P0, 101),
                 T0P1, recordCreator.create(T0P1, 102),
                 T1P0, recordCreator.create(T1P0, 103)
-            ));
+            ), TIMESTAMP_TYPES);
             final var writeFuture2 = writer.write(Map.of(
                 T0P0, recordCreator.create(T0P0, 11),
                 T0P1, recordCreator.create(T0P1, 12),
                 T1P0, recordCreator.create(T1P0, 13)
-            ));
+            ), TIMESTAMP_TYPES);
             final var ts1 = time.milliseconds();
             final var result1 = writeFuture1.get(10, TimeUnit.SECONDS);
             final var result2 = writeFuture2.get(10, TimeUnit.SECONDS);
@@ -179,7 +186,7 @@ class WriterIntegrationTest {
 
             final var writeFuture3 = writer.write(Map.of(
                 T1P0, recordCreator.create(T1P0, 1)
-            ));
+            ), TIMESTAMP_TYPES);
             final var ts2 = time.milliseconds();
             final var result3 = writeFuture3.get(10, TimeUnit.SECONDS);
 

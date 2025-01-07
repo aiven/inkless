@@ -1,6 +1,8 @@
 // Copyright (c) 2024 Aiven, Helsinki, Finland. https://aiven.io/
 package io.aiven.inkless.produce;
 
+import org.apache.kafka.common.record.TimestampType;
+
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
@@ -60,7 +62,7 @@ class ClosedFileTest {
         assertThatThrownBy(() -> new ClosedFile(
             Instant.EPOCH,
             Map.of(), Map.of(),
-            List.of(new CommitBatchRequest(null, 0, 0, 0, 0)),
+            List.of(new CommitBatchRequest(null, 0, 0, 0, 0, TimestampType.CREATE_TIME)),
             List.of(),
             new byte[1]))
             .isInstanceOf(IllegalArgumentException.class)
