@@ -26,6 +26,10 @@ import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.Consumer;
 
+import io.aiven.inkless.cache.FixedBlockAlignment;
+import io.aiven.inkless.cache.KeyAlignmentStrategy;
+import io.aiven.inkless.cache.NullCache;
+import io.aiven.inkless.cache.ObjectCache;
 import io.aiven.inkless.common.ObjectKeyCreator;
 import io.aiven.inkless.common.PlainObjectKey;
 import io.aiven.inkless.common.SharedState;
@@ -46,6 +50,8 @@ import static org.mockito.Mockito.when;
 public class AppendInterceptorTest {
     static final int BROKER_ID = 11;
     static final ObjectKeyCreator OBJECT_KEY_CREATOR = PlainObjectKey.creator("");
+    private static final KeyAlignmentStrategy KEY_ALIGNMENT_STRATEGY = new FixedBlockAlignment(Integer.MAX_VALUE);
+    private static final ObjectCache OBJECT_CACHE = new NullCache();
 
     Time time = new MockTime();
     @Mock
@@ -103,7 +109,7 @@ public class AppendInterceptorTest {
         when(metadataView.isInklessTopic(eq("inkless"))).thenReturn(true);
         when(metadataView.isInklessTopic(eq("non_inkless"))).thenReturn(false);
         final AppendInterceptor interceptor = new AppendInterceptor(
-            new SharedState(time, BROKER_ID, inklessConfig, metadataView, controlPlane, storageBackend, OBJECT_KEY_CREATOR, brokerTopicStats), writer);
+            new SharedState(time, BROKER_ID, inklessConfig, metadataView, controlPlane, storageBackend, OBJECT_KEY_CREATOR, KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, brokerTopicStats), writer);
 
         final Map<TopicPartition, MemoryRecords> entriesPerPartition = Map.of(
             new TopicPartition("inkless", 0),
@@ -129,7 +135,7 @@ public class AppendInterceptorTest {
     public void notInterceptProducingToClassicTopics() {
         when(metadataView.isInklessTopic(eq("non_inkless"))).thenReturn(false);
         final AppendInterceptor interceptor = new AppendInterceptor(
-            new SharedState(time, BROKER_ID, inklessConfig, metadataView, controlPlane, storageBackend, OBJECT_KEY_CREATOR, brokerTopicStats), writer);
+            new SharedState(time, BROKER_ID, inklessConfig, metadataView, controlPlane, storageBackend, OBJECT_KEY_CREATOR, KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, brokerTopicStats), writer);
 
         final Map<TopicPartition, MemoryRecords> entriesPerPartition = Map.of(
             new TopicPartition("non_inkless", 0),
@@ -147,7 +153,7 @@ public class AppendInterceptorTest {
         when(metadataView.isInklessTopic(eq("inkless1"))).thenReturn(true);
         when(metadataView.isInklessTopic(eq("inkless2"))).thenReturn(true);
         final AppendInterceptor interceptor = new AppendInterceptor(
-            new SharedState(time, BROKER_ID, inklessConfig, metadataView, controlPlane, storageBackend, OBJECT_KEY_CREATOR, brokerTopicStats), writer);
+            new SharedState(time, BROKER_ID, inklessConfig, metadataView, controlPlane, storageBackend, OBJECT_KEY_CREATOR, KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, brokerTopicStats), writer);
 
         final Map<TopicPartition, MemoryRecords> entriesPerPartition = Map.of(
             new TopicPartition("inkless1", 0),
@@ -173,7 +179,7 @@ public class AppendInterceptorTest {
     public void acceptIdempotentProduceForNonInklessTopics() {
         when(metadataView.isInklessTopic(eq("non_inkless"))).thenReturn(false);
         final AppendInterceptor interceptor = new AppendInterceptor(
-            new SharedState(time, BROKER_ID, inklessConfig, metadataView, controlPlane, storageBackend, OBJECT_KEY_CREATOR, brokerTopicStats), writer);
+            new SharedState(time, BROKER_ID, inklessConfig, metadataView, controlPlane, storageBackend, OBJECT_KEY_CREATOR, KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, brokerTopicStats), writer);
 
         final Map<TopicPartition, MemoryRecords> entriesPerPartition = Map.of(
             new TopicPartition("non_inkless", 0),
@@ -192,7 +198,7 @@ public class AppendInterceptorTest {
         when(metadataView.isInklessTopic(eq("inkless1"))).thenReturn(true);
         when(metadataView.isInklessTopic(eq("inkless2"))).thenReturn(true);
         final AppendInterceptor interceptor = new AppendInterceptor(
-            new SharedState(time, BROKER_ID, inklessConfig, metadataView, controlPlane, storageBackend, OBJECT_KEY_CREATOR, brokerTopicStats), writer);
+            new SharedState(time, BROKER_ID, inklessConfig, metadataView, controlPlane, storageBackend, OBJECT_KEY_CREATOR, KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, brokerTopicStats), writer);
 
         final Map<TopicPartition, MemoryRecords> entriesPerPartition = Map.of(
             new TopicPartition("inkless1", 0),
@@ -218,7 +224,7 @@ public class AppendInterceptorTest {
     public void acceptTransactionalProduceForNonInklessTopics() {
         when(metadataView.isInklessTopic(eq("non_inkless"))).thenReturn(false);
         final AppendInterceptor interceptor = new AppendInterceptor(
-            new SharedState(time, BROKER_ID, inklessConfig, metadataView, controlPlane, storageBackend, OBJECT_KEY_CREATOR, brokerTopicStats), writer);
+            new SharedState(time, BROKER_ID, inklessConfig, metadataView, controlPlane, storageBackend, OBJECT_KEY_CREATOR, KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, brokerTopicStats), writer);
 
         final Map<TopicPartition, MemoryRecords> entriesPerPartition = Map.of(
             new TopicPartition("non_inkless", 0),
@@ -248,7 +254,7 @@ public class AppendInterceptorTest {
 
         when(metadataView.isInklessTopic(eq("inkless"))).thenReturn(true);
         final AppendInterceptor interceptor = new AppendInterceptor(
-            new SharedState(time, BROKER_ID, inklessConfig, metadataView, controlPlane, storageBackend, OBJECT_KEY_CREATOR, brokerTopicStats), writer);
+            new SharedState(time, BROKER_ID, inklessConfig, metadataView, controlPlane, storageBackend, OBJECT_KEY_CREATOR, KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, brokerTopicStats), writer);
 
         final boolean result = interceptor.intercept(entriesPerPartition, responseCallback);
         assertThat(result).isTrue();
@@ -270,7 +276,7 @@ public class AppendInterceptorTest {
 
         when(metadataView.isInklessTopic(eq("inkless"))).thenReturn(true);
         final AppendInterceptor interceptor = new AppendInterceptor(
-            new SharedState(time, BROKER_ID, inklessConfig, metadataView, controlPlane, storageBackend, OBJECT_KEY_CREATOR, brokerTopicStats), writer);
+            new SharedState(time, BROKER_ID, inklessConfig, metadataView, controlPlane, storageBackend, OBJECT_KEY_CREATOR, KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, brokerTopicStats), writer);
 
         final boolean result = interceptor.intercept(entriesPerPartition, responseCallback);
         assertThat(result).isTrue();
@@ -284,7 +290,7 @@ public class AppendInterceptorTest {
     @Test
     public void close() throws IOException {
         final AppendInterceptor interceptor = new AppendInterceptor(
-            new SharedState(time, BROKER_ID, inklessConfig, metadataView, controlPlane, storageBackend, OBJECT_KEY_CREATOR, brokerTopicStats), writer);
+            new SharedState(time, BROKER_ID, inklessConfig, metadataView, controlPlane, storageBackend, OBJECT_KEY_CREATOR, KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, brokerTopicStats), writer);
 
         interceptor.close();
 

@@ -14,19 +14,23 @@ import org.mockito.quality.Strictness;
 import java.io.ByteArrayInputStream;
 import java.nio.ByteBuffer;
 
+import io.aiven.inkless.cache.CacheKey;
 import io.aiven.inkless.cache.FileExtent;
+import io.aiven.inkless.cache.MemoryCache;
+import io.aiven.inkless.cache.NullCache;
+import io.aiven.inkless.cache.ObjectCache;
 import io.aiven.inkless.common.ByteRange;
 import io.aiven.inkless.common.ObjectKey;
 import io.aiven.inkless.common.PlainObjectKey;
 import io.aiven.inkless.storage_backend.common.ObjectFetcher;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.STRICT_STUBS)
-public class FileFetchJobTest {
+public class CacheFetchJobTest {
 
     @Mock
     ObjectFetcher fetcher;
@@ -35,25 +39,42 @@ public class FileFetchJobTest {
     ObjectKey objectA = new PlainObjectKey("a", "a");
 
     @Test
-    public void testOversizeFileFetch() {
-        assertThrows(IllegalArgumentException.class, () -> new FileFetchJob(time, fetcher, objectA, ByteRange.maxRange(), durationMs -> {}));
-    }
-
-    @Test
-    public void testFetch() throws Exception {
+    public void testCacheMiss() throws Exception {
         int size = 10;
         byte[] array = new byte[10];
         for (int i = 0; i < size; i++) {
             array[i] = (byte) i;
         }
         ByteRange range = new ByteRange(0, size);
-        FileFetchJob job = new FileFetchJob(time, fetcher, objectA, range, durationMs -> { });
+        CacheKey key = new CacheKey(objectA, range);
         FileExtent expectedFile = new FileExtent(objectA, range, ByteBuffer.wrap(array));
-
         when(fetcher.fetch(objectA, range)).thenReturn(new ByteArrayInputStream(array));
-        FileExtent actualFile = job.call();
+
+        ObjectCache cache = new NullCache();
+        CacheFetchJob cacheFetchJob = new CacheFetchJob(cache, key, time, fetcher, durationMs -> { });
+        FileExtent actualFile = cacheFetchJob.call();
 
         assertThat(actualFile).isEqualTo(expectedFile);
+    }
+
+    @Test
+    public void testCacheHit() throws Exception {
+        int size = 10;
+        byte[] array = new byte[10];
+        for (int i = 0; i < size; i++) {
+            array[i] = (byte) i;
+        }
+        ByteRange range = new ByteRange(0, size);
+        CacheKey key = new CacheKey(objectA, range);
+        FileExtent expectedFile = new FileExtent(objectA, range, ByteBuffer.wrap(array));
+
+        ObjectCache cache = new MemoryCache();
+        cache.put(key, expectedFile);
+        CacheFetchJob cacheFetchJob = new CacheFetchJob(cache, key, time, fetcher, durationMs -> { });
+        FileExtent actualFile = cacheFetchJob.call();
+
+        assertThat(actualFile).isEqualTo(expectedFile);
+        verifyNoInteractions(fetcher);
     }
 
 }

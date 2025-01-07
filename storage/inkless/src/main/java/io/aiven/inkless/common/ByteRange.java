@@ -35,6 +35,6 @@ public record ByteRange(long offset, long size) {
     }
 
     public boolean contains(ByteRange range) {
-        return this.offset <= range.offset && this.size >= range.size;
+        return this.offset <= range.offset && this.endOffset() >= range.endOffset();
     }
 }
