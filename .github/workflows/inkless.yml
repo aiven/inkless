@@ -118,7 +118,22 @@ jobs:
           -PmaxTestRetries=1 -PmaxTestRetryFailures=3 \
           -PmaxQuarantineTestRetries=3 -PmaxQuarantineTestRetryFailures=0 \
           -PcommitId=xxxxxxxxxxxxxxxx \
-          :storage:inkless:test
+          :storage:inkless:test :storage:inkless:integrationTest
+          exitcode="$?"
+          echo "exitcode=$exitcode" >> $GITHUB_OUTPUT
+      - name: E2E Test
+        # Gradle flags
+        # --build-cache:  Let Gradle restore the build cache
+        # --no-scan:      Don't attempt to publish the scan yet. We want to archive it first.
+        # --continue:     Keep running even if a test fails
+        # -PcommitId      Prevent the Git SHA being written into the jar files (which breaks caching)
+        id: junit-e2e-test
+        env:
+          TIMEOUT_MINUTES: 180  # 3 hours
+        # Point to inkless tests
+        run: |
+          set +e
+          ./.github/scripts/thread-dump.sh &
           # e2e tests
           timeout ${TIMEOUT_MINUTES}m ./gradlew --build-cache --continue --no-scan \
           -PtestLoggingEvents=started,passed,skipped,failed \
@@ -127,8 +142,8 @@ jobs:
           -PmaxQuarantineTestRetries=3 -PmaxQuarantineTestRetryFailures=0 \
           -PcommitId=xxxxxxxxxxxxxxxx \
           :core:test --tests "*Inkless*"
-          # exitcode="$?"
-          # echo "exitcode=$exitcode" >> $GITHUB_OUTPUT
+          exitcode="$?"
+          echo "exitcode=$exitcode" >> $GITHUB_OUTPUT
       - name: Archive JUnit HTML reports
         uses: actions/upload-artifact@v4
         id: junit-upload-artifact
@@ -148,7 +163,7 @@ jobs:
           if-no-files-found: ignore
       - name: Archive Thread Dumps
         id: thread-dump-upload-artifact
-        if: always() && steps.junit-test.outputs.exitcode == '124'
+        if: always() && ( steps.junit-test.outputs.exitcode == '124' || steps.junit-e2e-test.outputs.exitcode == '124' )
         uses: actions/upload-artifact@v4
         with:
           name: junit-thread-dumps-${{ matrix.java }}
@@ -179,3 +194,6 @@ jobs:
           path: ~/.gradle/build-scan-data
           compression-level: 9
           if-no-files-found: ignore
+      - name: Check test results
+        if: always() && ( steps.junit-test.outputs.exitcode != '0' || steps.junit-e2e-test.outputs.exitcode != '0' )
+        run: exit 1
