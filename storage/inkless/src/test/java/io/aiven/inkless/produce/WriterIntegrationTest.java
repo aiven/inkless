@@ -155,7 +155,7 @@ class WriterIntegrationTest {
         delta.replay(new PartitionRecord().setTopicId(TOPIC_ID_0).setPartitionId(1));
         delta.replay(new TopicRecord().setName(T1P0.topic()).setTopicId(TOPIC_ID_1));
         delta.replay(new PartitionRecord().setTopicId(TOPIC_ID_1).setPartitionId(0));
-        controlPlane.onTopicMetadataChanges(delta.topicsDelta());
+        controlPlane.onTopicMetadataChanges(delta.topicsDelta()).get();
 
         try (
             final Writer writer = new Writer(

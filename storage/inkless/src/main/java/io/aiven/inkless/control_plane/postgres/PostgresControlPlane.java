@@ -16,6 +16,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.stream.Stream;
 
 import io.aiven.inkless.control_plane.AbstractControlPlane;
@@ -47,9 +48,9 @@ public class PostgresControlPlane extends AbstractControlPlane {
         this.metrics = new PostgresControlPlaneMetrics(time);
     }
 
-    public void onTopicMetadataChanges(final TopicsDelta topicsDelta) {
+    public Future<?> onTopicMetadataChanges(final TopicsDelta topicsDelta) {
         // Create.
-        executor.submit(new TopicsCreateJob(
+        return executor.submit(new TopicsCreateJob(
             time, metadataView, hikariDataSource,
             topicsDelta.changedTopics(),
             metrics::onTopicCreateCompleted));

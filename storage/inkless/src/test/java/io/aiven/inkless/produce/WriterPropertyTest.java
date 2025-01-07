@@ -142,7 +142,7 @@ class WriterPropertyTest {
         delta.replay(new TopicRecord().setName(T1P0.topic()).setTopicId(TOPIC_ID_1));
         delta.replay(new PartitionRecord().setTopicId(TOPIC_ID_1).setPartitionId(0));
         delta.replay(new PartitionRecord().setTopicId(TOPIC_ID_1).setPartitionId(1));
-        controlPlane.onTopicMetadataChanges(delta.topicsDelta());
+        controlPlane.onTopicMetadataChanges(delta.topicsDelta()).get();
 
         Statistics.label("requestCount").collect(requestCount);
         final MockTime time = new MockTime(0, 0, 0);

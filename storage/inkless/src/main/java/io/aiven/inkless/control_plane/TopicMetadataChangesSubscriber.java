@@ -3,7 +3,9 @@ package io.aiven.inkless.control_plane;
 
 import org.apache.kafka.image.TopicsDelta;
 
+import java.util.concurrent.Future;
+
 @FunctionalInterface
 public interface TopicMetadataChangesSubscriber {
-    void onTopicMetadataChanges(TopicsDelta topicsDelta);
+    Future<?> onTopicMetadataChanges(TopicsDelta topicsDelta);
 }

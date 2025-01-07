@@ -20,6 +20,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Future;
 import java.util.stream.Stream;
 
 import io.aiven.inkless.TimeUtils;
@@ -44,7 +46,7 @@ public class InMemoryControlPlane extends AbstractControlPlane {
 
     @Override
     @DoNotMutate
-    public synchronized void onTopicMetadataChanges(final TopicsDelta topicsDelta) {
+    public synchronized Future<?> onTopicMetadataChanges(final TopicsDelta topicsDelta) {
         // Create.
         for (final var changedTopic : topicsDelta.changedTopics().entrySet()) {
             final String topicName = changedTopic.getValue().name();
@@ -62,6 +64,7 @@ public class InMemoryControlPlane extends AbstractControlPlane {
                 batches.put(topicIdPartition, new TreeMap<>());
             }
         }
+        return CompletableFuture.completedFuture(null);
     }
 
     @Override

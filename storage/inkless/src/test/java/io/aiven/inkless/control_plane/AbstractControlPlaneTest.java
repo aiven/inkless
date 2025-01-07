@@ -83,7 +83,7 @@ public abstract class AbstractControlPlaneTest {
     protected abstract ControlPlane createControlPlane(final TestInfo testInfo);
 
     @BeforeEach
-    void setupControlPlane(final TestInfo testInfo) {
+    void setupControlPlane(final TestInfo testInfo) throws Exception {
         controlPlane = createControlPlane(testInfo);
 
         verify(metadataView).subscribeToTopicMetadataChanges(eq(controlPlane));
@@ -91,7 +91,7 @@ public abstract class AbstractControlPlaneTest {
         final var delta = new MetadataDelta.Builder().setImage(MetadataImage.EMPTY).build();
         delta.replay(new TopicRecord().setName(EXISTING_TOPIC_1).setTopicId(EXISTING_TOPIC_1_ID));
         delta.replay(new PartitionRecord().setTopicId(EXISTING_TOPIC_1_ID).setPartitionId(EXISTING_TOPIC_1_ID_PARTITION.partition()));
-        controlPlane.onTopicMetadataChanges(delta.topicsDelta());
+        controlPlane.onTopicMetadataChanges(delta.topicsDelta()).get();
     }
 
     @Test
