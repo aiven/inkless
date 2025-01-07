@@ -1,6 +1,7 @@
 // Copyright (c) 2024 Aiven, Helsinki, Finland. https://aiven.io/
 package io.aiven.inkless.control_plane.postgres;
 
+import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.image.TopicsDelta;
 
@@ -10,7 +11,9 @@ import com.zaxxer.hikari.util.IsolationLevel;
 
 import java.io.IOException;
 import java.util.Iterator;
+import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.stream.Stream;
@@ -18,6 +21,7 @@ import java.util.stream.Stream;
 import io.aiven.inkless.control_plane.AbstractControlPlane;
 import io.aiven.inkless.control_plane.CommitBatchRequest;
 import io.aiven.inkless.control_plane.CommitBatchResponse;
+import io.aiven.inkless.control_plane.FileToDelete;
 import io.aiven.inkless.control_plane.FindBatchRequest;
 import io.aiven.inkless.control_plane.FindBatchResponse;
 import io.aiven.inkless.control_plane.MetadataView;
@@ -44,11 +48,6 @@ public class PostgresControlPlane extends AbstractControlPlane {
     }
 
     public void onTopicMetadataChanges(final TopicsDelta topicsDelta) {
-        // Delete.
-        executor.submit(new TopicsDeleteJob(
-            time, metadataView, hikariDataSource,
-            topicsDelta.deletedTopicIds(),
-            metrics::onTopicDeleteCompleted));
         // Create.
         executor.submit(new TopicsCreateJob(
             time, metadataView, hikariDataSource,
@@ -100,6 +99,18 @@ public class PostgresControlPlane extends AbstractControlPlane {
             requests.toList(), minOneMessage, fetchMaxBytes,
             metrics::onFindBatchesCompleted, metrics::onGetLogsCompleted);
         return job.call().iterator();
+    }
+
+    @Override
+    public void deleteTopics(final Set<Uuid> topicIds) {
+        final DeleteTopicJob job = new DeleteTopicJob(time, hikariDataSource, topicIds, metrics::onTopicDeleteCompleted);
+        job.run();
+    }
+
+    @Override
+    public List<FileToDelete> getFilesToDelete() {
+        final FindFilesToDeleteJob job = new FindFilesToDeleteJob(time, hikariDataSource);
+        return job.call();
     }
 
     @Override

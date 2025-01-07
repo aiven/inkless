@@ -12,6 +12,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Iterator;
@@ -19,15 +20,16 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
-import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
+import io.aiven.inkless.TimeUtils;
 
 public class InMemoryControlPlane extends AbstractControlPlane {
-    private static final Logger logger = LoggerFactory.getLogger(InMemoryControlPlane.class);
+    private static final Logger LOGGER = LoggerFactory.getLogger(InMemoryControlPlane.class);
 
     private final Map<TopicIdPartition, LogInfo> logs = new HashMap<>();
-    private final List<FileInfo> files = new ArrayList<>();
+    private final Map<String, FileInfo> files = new HashMap<>();
+    private final List<FileToDeleteInternal> filesToDelete = new ArrayList<>();
     private final HashMap<TopicIdPartition, TreeMap<Long, BatchInfoInternal>> batches = new HashMap<>();
 
     public InMemoryControlPlane(final Time time,
@@ -43,17 +45,6 @@ public class InMemoryControlPlane extends AbstractControlPlane {
     @Override
     @DoNotMutate
     public synchronized void onTopicMetadataChanges(final TopicsDelta topicsDelta) {
-        // Delete.
-        final Set<TopicIdPartition> tidpsToDelete = logs.keySet().stream()
-                .filter(tidp -> metadataView.isInklessTopic(tidp.topic()))
-                .filter(tidp -> topicsDelta.deletedTopicIds().contains(tidp.topicId()))
-                .collect(Collectors.toSet());
-        for (final TopicIdPartition topicIdPartition : tidpsToDelete) {
-            logger.info("Deleting {}", topicIdPartition);
-            logs.remove(topicIdPartition);
-            batches.remove(topicIdPartition);
-        }
-
         // Create.
         for (final var changedTopic : topicsDelta.changedTopics().entrySet()) {
             final String topicName = changedTopic.getValue().name();
@@ -66,7 +57,7 @@ public class InMemoryControlPlane extends AbstractControlPlane {
                 final TopicIdPartition topicIdPartition = new TopicIdPartition(
                         changedTopic.getKey(), entry.getKey(), topicName);
 
-                logger.info("Creating {}", topicIdPartition);
+                LOGGER.info("Creating {}", topicIdPartition);
                 logs.put(topicIdPartition, new LogInfo());
                 batches.put(topicIdPartition, new TreeMap<>());
             }
@@ -82,7 +73,7 @@ public class InMemoryControlPlane extends AbstractControlPlane {
     ) {
         final long now = time.milliseconds();
         final FileInfo fileInfo = new FileInfo(objectKey, uploaderBrokerId, fileSize);
-        files.add(fileInfo);
+        files.put(objectKey, fileInfo);
         return requests
             .map(request -> commitFileForExistingPartition(now, fileInfo, request))
             .iterator();
@@ -97,7 +88,9 @@ public class InMemoryControlPlane extends AbstractControlPlane {
         final TopicIdPartition topicIdPartition = new TopicIdPartition(topicId, request.topicPartition());
         final LogInfo logInfo = logs.get(topicIdPartition);
         final TreeMap<Long, BatchInfoInternal> coordinates = this.batches.get(topicIdPartition);
+        // This can't really happen as non-existing partitions should be filtered out earlier.
         if (logInfo == null || coordinates == null) {
+            LOGGER.warn("Unexpected non-existing partition {}", topicIdPartition);
             return CommitBatchResponse.unknownTopicOrPartition();
         }
 
@@ -105,7 +98,7 @@ public class InMemoryControlPlane extends AbstractControlPlane {
         logInfo.highWatermark += request.numberOfRecords();
         final long lastOffset = logInfo.highWatermark - 1;
         final BatchInfo batchInfo = new BatchInfo(
-            fileInfo.objectKey(),
+            fileInfo.objectKey,
             request.byteOffset(),
             request.size(),
             firstOffset,
@@ -134,12 +127,14 @@ public class InMemoryControlPlane extends AbstractControlPlane {
                                                               final int fetchMaxBytes) {
         final LogInfo logInfo = logs.get(request.topicIdPartition());
         final TreeMap<Long, BatchInfoInternal> coordinates = batches.get(request.topicIdPartition());
+        // This can't really happen as non-existing partitions should be filtered out earlier.
         if (logInfo == null || coordinates == null) {
+            LOGGER.warn("Unexpected non-existing partition {}", request.topicIdPartition());
             return FindBatchResponse.unknownTopicOrPartition();
         }
 
         if (request.offset() < 0) {
-            logger.debug("Invalid offset {} for {}", request.offset(), request.topicIdPartition());
+            LOGGER.debug("Invalid offset {} for {}", request.offset(), request.topicIdPartition());
             return FindBatchResponse.offsetOutOfRange(logInfo.logStartOffset, logInfo.highWatermark);
         }
 
@@ -163,6 +158,39 @@ public class InMemoryControlPlane extends AbstractControlPlane {
     }
 
     @Override
+    public synchronized void deleteTopics(final Set<Uuid> topicIds) {
+        // There may be some non-Inkless topics there, but they should be no-op.
+
+        final List<TopicIdPartition> partitionsToDelete = logs.keySet().stream()
+            .filter(tidp -> topicIds.contains(tidp.topicId()))
+            .toList();
+        for (final TopicIdPartition topicIdPartition : partitionsToDelete) {
+            logs.remove(topicIdPartition);
+            final TreeMap<Long, BatchInfoInternal> coordinates = batches.remove(topicIdPartition);
+            if (coordinates == null) {
+                continue;
+            }
+
+            for (final var entry : coordinates.entrySet()) {
+                final BatchInfoInternal batchInfoInternal = entry.getValue();
+                final FileInfo fileInfo = batchInfoInternal.fileInfo;
+                fileInfo.deleteBatch(batchInfoInternal.batchInfo);
+                if (fileInfo.allDeleted()) {
+                    files.remove(fileInfo.objectKey);
+                    filesToDelete.add(new FileToDeleteInternal(fileInfo, TimeUtils.now(time)));
+                }
+            }
+        }
+    }
+
+    @Override
+    public List<FileToDelete> getFilesToDelete() {
+        return filesToDelete.stream()
+            .map(f -> new FileToDelete(f.fileInfo().objectKey, f.markedForDeletionAt()))
+            .toList();
+    }
+
+    @Override
     public void close() throws IOException {
         // Do nothing.
     }
@@ -172,9 +200,36 @@ public class InMemoryControlPlane extends AbstractControlPlane {
         long highWatermark = 0;
     }
 
-    private record FileInfo(String objectKey,
-                            int uploaderBrokerId,
-                            long fileSize) {
+    private static class FileInfo {
+        final String objectKey;
+        final int uploaderBrokerId;
+        final long fileSize;
+        long usedSize;
+
+        private FileInfo(final String objectKey,
+                         final int uploaderBrokerId,
+                         final long fileSize) {
+            this.objectKey = objectKey;
+            this.uploaderBrokerId = uploaderBrokerId;
+            this.fileSize = fileSize;
+            this.usedSize = fileSize;
+        }
+
+        private void deleteBatch(final BatchInfo batchInfo) {
+            final long newUsedSize = usedSize - batchInfo.size();
+            if (newUsedSize < 0) {
+                throw new IllegalStateException("newUsedSize < 0: " + newUsedSize);
+            }
+            this.usedSize = newUsedSize;
+        }
+
+        private boolean allDeleted() {
+            return this.usedSize == 0;
+        }
+    }
+
+    private record FileToDeleteInternal(FileInfo fileInfo,
+                                        Instant markedForDeletionAt) {
     }
 
     private record BatchInfoInternal(BatchInfo batchInfo,
