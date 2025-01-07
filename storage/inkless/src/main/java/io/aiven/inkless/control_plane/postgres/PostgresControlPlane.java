@@ -82,8 +82,7 @@ public class PostgresControlPlane extends AbstractControlPlane {
         final Stream<CommitBatchRequest> requests) {
         final var requestExtras = requests.map(r -> new CommitFileJob.CommitBatchRequestExtra(
             r,
-            metadataView.getTopicId(r.topicPartition().topic()),
-            metadataView.getTopicConfig(r.topicPartition().topic()).messageTimestampType
+            metadataView.getTopicId(r.topicPartition().topic())
         )).toList();
         final CommitFileJob job = new CommitFileJob(
             time, hikariDataSource,

@@ -12,6 +12,7 @@ import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.server.storage.log.FetchIsolation;
 import org.apache.kafka.server.storage.log.FetchParams;
 import org.apache.kafka.server.storage.log.FetchPartitionData;
+import org.apache.kafka.storage.internals.log.LogConfig;
 import org.apache.kafka.storage.log.metrics.BrokerTopicStats;
 
 import org.junit.jupiter.api.BeforeEach;
@@ -30,6 +31,7 @@ import java.util.OptionalInt;
 import java.util.OptionalLong;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.Consumer;
+import java.util.function.Supplier;
 
 import io.aiven.inkless.cache.FixedBlockAlignment;
 import io.aiven.inkless.cache.KeyAlignmentStrategy;
@@ -73,6 +75,8 @@ public class FetchInterceptorTest {
     BrokerTopicStats brokerTopicStats;
     @Mock
     Reader reader;
+    @Mock
+    Supplier<LogConfig> defaultTopicConfigs;
 
     @Captor
     ArgumentCaptor<Map<TopicIdPartition, FetchPartitionData>> resultCaptor;
@@ -84,7 +88,8 @@ public class FetchInterceptorTest {
 
     @BeforeEach
     public void setup() {
-        sharedState = new SharedState(time, BROKER_ID, inklessConfig, metadataView, controlPlane, storageBackend, OBJECT_KEY_CREATOR, KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, brokerTopicStats);
+        sharedState = new SharedState(time, BROKER_ID, inklessConfig, metadataView, controlPlane, storageBackend,
+            OBJECT_KEY_CREATOR, KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, brokerTopicStats, defaultTopicConfigs);
     }
 
     @Test

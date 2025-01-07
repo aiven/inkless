@@ -5,6 +5,7 @@ import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.compress.Compression;
 import org.apache.kafka.common.record.MemoryRecords;
 import org.apache.kafka.common.record.SimpleRecord;
+import org.apache.kafka.common.record.TimestampType;
 import org.apache.kafka.common.utils.Time;
 
 import org.junit.jupiter.api.Test;
@@ -19,17 +20,27 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class ActiveFileTest {
-    static final TopicPartition T0P0 = new TopicPartition("topic0", 0);
-    static final TopicPartition T0P1 = new TopicPartition("topic0", 1);
-    static final TopicPartition T1P0 = new TopicPartition("topic1", 0);
+    static final String TOPIC_0 = "topic0";
+    static final String TOPIC_1 = "topic1";
+    static final TopicPartition T0P0 = new TopicPartition(TOPIC_0, 0);
+    static final TopicPartition T0P1 = new TopicPartition(TOPIC_0, 1);
+    static final TopicPartition T1P0 = new TopicPartition(TOPIC_1, 0);
+
+    static final Map<String, TimestampType> TIMESTAMP_TYPES = Map.of(
+        TOPIC_0, TimestampType.CREATE_TIME,
+        TOPIC_1, TimestampType.LOG_APPEND_TIME
+    );
 
     @Test
     void addNull() {
         final ActiveFile file = new ActiveFile(Time.SYSTEM, Instant.EPOCH);
 
-        assertThatThrownBy(() -> file.add(null))
+        assertThatThrownBy(() -> file.add(null, TIMESTAMP_TYPES))
             .isInstanceOf(NullPointerException.class)
             .hasMessage("entriesPerPartition cannot be null");
+        assertThatThrownBy(() -> file.add(Map.of(), null))
+            .isInstanceOf(NullPointerException.class)
+            .hasMessage("timestampTypes cannot be null");
     }
 
     @Test
@@ -38,8 +49,19 @@ class ActiveFileTest {
 
         final var result = file.add(Map.of(
             T0P0, MemoryRecords.withRecords(Compression.NONE, new SimpleRecord(new byte[10]))
-        ));
+        ), TIMESTAMP_TYPES);
         assertThat(result).isNotCompleted();
+    }
+
+    @Test
+    void addWithoutTimestampType() {
+        final ActiveFile file = new ActiveFile(Time.SYSTEM, Instant.EPOCH);
+
+        assertThatThrownBy(() -> file.add(Map.of(
+            T0P0, MemoryRecords.withRecords(Compression.NONE, new SimpleRecord(new byte[10]))
+        ), Map.of()))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessage("Timestamp type not provided for topic " + TOPIC_0);
     }
 
     @Test
@@ -50,7 +72,7 @@ class ActiveFileTest {
 
         file.add(Map.of(
             T0P0, MemoryRecords.withRecords(Compression.NONE, new SimpleRecord(new byte[10]))
-        ));
+        ), TIMESTAMP_TYPES);
 
         assertThat(file.isEmpty()).isFalse();
     }
@@ -63,7 +85,7 @@ class ActiveFileTest {
 
         file.add(Map.of(
             T0P0, MemoryRecords.withRecords(Compression.NONE, new SimpleRecord(new byte[10]))
-        ));
+        ), TIMESTAMP_TYPES);
 
         assertThat(file.size()).isEqualTo(78);
     }
@@ -89,12 +111,12 @@ class ActiveFileTest {
             T0P0, MemoryRecords.withRecords(Compression.NONE, new SimpleRecord(1000, new byte[10])),
             T0P1, MemoryRecords.withRecords(Compression.NONE, new SimpleRecord(2000, new byte[10]))
         );
-        file.add(request1);
+        file.add(request1, TIMESTAMP_TYPES);
         final Map<TopicPartition, MemoryRecords> request2 = Map.of(
             T0P1, MemoryRecords.withRecords(Compression.NONE, new SimpleRecord(3000, new byte[10])),
             T1P0, MemoryRecords.withRecords(Compression.NONE, new SimpleRecord(4000, new byte[10]))
         );
-        file.add(request2);
+        file.add(request2, TIMESTAMP_TYPES);
 
         final ClosedFile result = file.close();
 
@@ -106,10 +128,10 @@ class ActiveFileTest {
         assertThat(result.awaitingFuturesByRequest().get(0)).isNotCompleted();
         assertThat(result.awaitingFuturesByRequest().get(1)).isNotCompleted();
         assertThat(result.commitBatchRequests()).containsExactly(
-            new CommitBatchRequest(T0P0, 0, 78, 1, 1000),
-            new CommitBatchRequest(T0P1, 78, 78, 1, 2000),
-            new CommitBatchRequest(T0P1, 156, 78, 1, 3000),
-            new CommitBatchRequest(T1P0, 234, 78, 1, 4000)
+            new CommitBatchRequest(T0P0, 0, 78, 1, 1000, TimestampType.CREATE_TIME),
+            new CommitBatchRequest(T0P1, 78, 78, 1, 2000, TimestampType.CREATE_TIME),
+            new CommitBatchRequest(T0P1, 156, 78, 1, 3000, TimestampType.CREATE_TIME),
+            new CommitBatchRequest(T1P0, 234, 78, 1, 4000, TimestampType.LOG_APPEND_TIME)
         );
         assertThat(result.requestIds()).containsExactly(0, 0, 1, 1);
         assertThat(result.data()).hasSize(312);

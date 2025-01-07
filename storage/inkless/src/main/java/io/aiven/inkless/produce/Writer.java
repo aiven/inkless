@@ -3,6 +3,7 @@ package io.aiven.inkless.produce;
 
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.record.MemoryRecords;
+import org.apache.kafka.common.record.TimestampType;
 import org.apache.kafka.common.requests.ProduceResponse.PartitionResponse;
 import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.common.utils.Utils;
@@ -104,9 +105,11 @@ class Writer implements Closeable {
     }
 
     CompletableFuture<Map<TopicPartition, PartitionResponse>> write(
-        final Map<TopicPartition, MemoryRecords> entriesPerPartition
+        final Map<TopicPartition, MemoryRecords> entriesPerPartition,
+        final Map<String, TimestampType> timestampTypes
     ) {
         Objects.requireNonNull(entriesPerPartition, "entriesPerPartition cannot be null");
+        Objects.requireNonNull(timestampTypes, "timestampTypes cannot be null");
 
         // TODO add back pressure
 
@@ -120,7 +123,7 @@ class Writer implements Closeable {
                 openedAt = TimeUtils.durationMeasurementNow(time);
             }
 
-            final var result = this.activeFile.add(entriesPerPartition);
+            final var result = this.activeFile.add(entriesPerPartition, timestampTypes);
             writerMetrics.requestAdded();
             if (this.activeFile.size() >= maxBufferSize) {
                 if (this.scheduledTick != null) {

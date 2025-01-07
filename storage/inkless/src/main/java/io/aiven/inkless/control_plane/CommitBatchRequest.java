@@ -2,10 +2,12 @@
 package io.aiven.inkless.control_plane;
 
 import org.apache.kafka.common.TopicPartition;
+import org.apache.kafka.common.record.TimestampType;
 
 public record CommitBatchRequest(TopicPartition topicPartition,
                                  int byteOffset,
                                  int size,
                                  long numberOfRecords,
-                                 long batchMaxTimestamp) {
+                                 long batchMaxTimestamp,
+                                 TimestampType messageTimestampType) {
 }

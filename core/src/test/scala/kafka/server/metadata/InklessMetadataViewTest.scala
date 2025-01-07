@@ -3,7 +3,6 @@ package kafka.server.metadata
 
 import io.aiven.inkless.control_plane.TopicMetadataChangesSubscriber
 import org.apache.kafka.image.TopicsDelta
-import org.apache.kafka.storage.internals.log.LogConfig
 import org.junit.jupiter.api.Test
 import org.mockito.ArgumentMatchers.same
 import org.mockito.Mockito.{mock, reset, verify}
@@ -11,7 +10,7 @@ import org.mockito.Mockito.{mock, reset, verify}
 class InklessMetadataViewTest {
   @Test
   def topicMetadataChangesSubscriptionEmpty(): Unit = {
-    val metadataView = new InklessMetadataView(mock(classOf[KRaftMetadataCache]), mock(classOf[() => LogConfig]))
+    val metadataView = new InklessMetadataView(mock(classOf[KRaftMetadataCache]))
     val delta = mock(classOf[TopicsDelta])
 
     // No exception, all good.
