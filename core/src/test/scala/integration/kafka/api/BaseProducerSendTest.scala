@@ -54,7 +54,6 @@ abstract class BaseProducerSendTest extends InklessServerTestHarness {
     overridingProps.put(ServerLogConfigs.NUM_PARTITIONS_CONFIG, 4.toString)
     TestUtils.createBrokerConfigs(
       numServers,
-      null,
       interBrokerSecurityProtocol = Some(securityProtocol),
       trustStoreFile = trustStoreFile,
       saslProperties = serverSaslProperties
