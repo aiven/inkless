@@ -2,12 +2,14 @@
 package io.aiven.inkless.control_plane;
 
 import org.apache.kafka.common.Configurable;
+import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.utils.Time;
 
 import java.io.Closeable;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.InvocationTargetException;
 import java.util.List;
+import java.util.Set;
 
 import io.aiven.inkless.config.InklessConfig;
 
@@ -20,6 +22,10 @@ public interface ControlPlane extends Closeable, Configurable, TopicMetadataChan
     List<FindBatchResponse> findBatches(List<FindBatchRequest> findBatchRequests,
                                         boolean minOneMessage,
                                         int fetchMaxBytes);
+
+    void deleteTopics(Set<Uuid> topicIds);
+
+    List<FileToDelete> getFilesToDelete();
 
     static ControlPlane create(final InklessConfig config, final Time time, final MetadataView metadata) {
         final Class<ControlPlane> controlPlaneClass = config.controlPlaneClass();

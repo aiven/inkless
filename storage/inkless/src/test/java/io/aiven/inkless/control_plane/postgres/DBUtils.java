@@ -55,7 +55,24 @@ public class DBUtils {
                 final Instant committedAt = resultSet.getTimestamp("committed_at").toInstant();
                 final long size = resultSet.getLong("size");
                 final long usedSize = resultSet.getLong("used_size");
-                result.add(new DBUtils.File(id, objectKey, reason, state, uploaderBrokerId, committedAt, size, usedSize));
+                result.add(new DBUtils.File(
+                    id, objectKey, reason, state, uploaderBrokerId, committedAt, size, usedSize));
+            }
+        } catch (final SQLException e) {
+            throw new RuntimeException(e);
+        }
+        return result;
+    }
+
+    static Set<FileToDelete> getAllFilesToDelete(final HikariDataSource hikariDataSource) {
+        final Set<DBUtils.FileToDelete> result = new HashSet<>();
+        try (final Connection connection = hikariDataSource.getConnection();
+             final PreparedStatement statement = connection.prepareStatement("SELECT * FROM files_to_delete");
+             final ResultSet resultSet = statement.executeQuery()) {
+            while (resultSet.next()) {
+                final long id = resultSet.getLong("file_id");
+                final Instant markedForDeletionAt = resultSet.getTimestamp("marked_for_deletion_at").toInstant();
+                result.add(new DBUtils.FileToDelete(id, markedForDeletionAt));
             }
         } catch (final SQLException e) {
             throw new RuntimeException(e);
@@ -103,5 +120,9 @@ public class DBUtils {
                  long byteOffset,
                  long byteSize,
                  long numberOfRecords) {
+    }
+
+    record FileToDelete(long id,
+                        Instant markedForDeletionAt) {
     }
 }
