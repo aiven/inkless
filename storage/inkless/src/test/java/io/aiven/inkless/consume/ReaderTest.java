@@ -32,6 +32,10 @@ import java.util.Collections;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 
+import io.aiven.inkless.cache.FixedBlockAlignment;
+import io.aiven.inkless.cache.KeyAlignmentStrategy;
+import io.aiven.inkless.cache.NullCache;
+import io.aiven.inkless.cache.ObjectCache;
 import io.aiven.inkless.common.ObjectKeyCreator;
 import io.aiven.inkless.common.PlainObjectKey;
 import io.aiven.inkless.control_plane.ControlPlane;
@@ -47,7 +51,9 @@ import static org.mockito.Mockito.when;
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.STRICT_STUBS)
 public class ReaderTest {
-    static final ObjectKeyCreator OBJECT_KEY_CREATOR = PlainObjectKey.creator("");
+    private static final ObjectKeyCreator OBJECT_KEY_CREATOR = PlainObjectKey.creator("");
+    private static final KeyAlignmentStrategy KEY_ALIGNMENT_STRATEGY = new FixedBlockAlignment(Integer.MAX_VALUE);
+    private static final ObjectCache OBJECT_CACHE = new NullCache();
     @Mock
     private ControlPlane controlPlane;
     @Mock
@@ -68,7 +74,7 @@ public class ReaderTest {
 
     @BeforeEach
     public void setup() {
-        reader = new Reader(time, OBJECT_KEY_CREATOR, controlPlane, objectFetcher, metadataExecutor, fetchPlannerExecutor, dataExecutor, fetchCompleterExecutor);
+        reader = new Reader(time, OBJECT_KEY_CREATOR, KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, controlPlane, objectFetcher, metadataExecutor, fetchPlannerExecutor, dataExecutor, fetchCompleterExecutor);
     }
 
     @Test

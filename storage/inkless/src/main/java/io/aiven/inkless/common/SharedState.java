@@ -4,6 +4,10 @@ package io.aiven.inkless.common;
 import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.storage.log.metrics.BrokerTopicStats;
 
+import io.aiven.inkless.cache.FixedBlockAlignment;
+import io.aiven.inkless.cache.KeyAlignmentStrategy;
+import io.aiven.inkless.cache.MemoryCache;
+import io.aiven.inkless.cache.ObjectCache;
 import io.aiven.inkless.config.InklessConfig;
 import io.aiven.inkless.control_plane.ControlPlane;
 import io.aiven.inkless.control_plane.MetadataView;
@@ -17,6 +21,8 @@ public record SharedState(
         ControlPlane controlPlane,
         StorageBackend storage,
         ObjectKeyCreator objectKeyCreator,
+        KeyAlignmentStrategy keyAlignmentStrategy,
+        ObjectCache cache,
         BrokerTopicStats brokerTopicStats
 ) {
 
@@ -35,6 +41,8 @@ public record SharedState(
             ControlPlane.create(config, time, metadata),
             config.storage(),
             ObjectKey.create(config.objectKeyPrefix(), config.objectKeyLogPrefixMasked()),
+            new FixedBlockAlignment(config.fetchCacheBlockBytes()),
+            new MemoryCache(),
             brokerTopicStats
         );
     }

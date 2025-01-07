@@ -11,12 +11,13 @@ import java.util.concurrent.Callable;
 import java.util.function.Consumer;
 
 import io.aiven.inkless.TimeUtils;
+import io.aiven.inkless.cache.FileExtent;
 import io.aiven.inkless.common.ByteRange;
 import io.aiven.inkless.common.ObjectKey;
 import io.aiven.inkless.storage_backend.common.ObjectFetcher;
 import io.aiven.inkless.storage_backend.common.StorageBackendException;
 
-public class FileFetchJob implements Callable<FetchedFile> {
+public class FileFetchJob implements Callable<FileExtent> {
 
     private final Time time;
     private final ObjectFetcher objectFetcher;
@@ -42,14 +43,14 @@ public class FileFetchJob implements Callable<FetchedFile> {
     }
 
     @Override
-    public FetchedFile call() throws Exception {
+    public FileExtent call() throws Exception {
         return TimeUtils.measureDurationMs(time, this::doWork, durationCallback);
     }
 
-    private FetchedFile doWork() throws StorageBackendException, IOException {
+    private FileExtent doWork() throws StorageBackendException, IOException {
         try (InputStream stream = objectFetcher.fetch(key, range)) {
             byte[] bytes = stream.readNBytes(size);
-            return new FetchedFile(key, range, ByteBuffer.wrap(bytes));
+            return new FileExtent(key, range, ByteBuffer.wrap(bytes));
         }
     }
 
