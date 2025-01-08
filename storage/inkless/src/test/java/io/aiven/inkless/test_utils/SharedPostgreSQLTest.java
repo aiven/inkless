@@ -41,11 +41,15 @@ public abstract class SharedPostgreSQLTest {
         dbName = testInfo.getDisplayName()
                 .toLowerCase()
                 .replace(" ", "")
-                .replace(",", "-")
+                .replace("\"", "")
+                .replace(",", "_")
+                .replace(".", "_")
+                .replace("=", "_")
                 .replace("(", "")
                 .replace(")", "")
                 .replace("[", "")
-                .replace("]", "");
+                .replace("]", "")
+                .substring(0, 40);
         dbName += "_" + TestUtils.randomString(20);
         dbName = dbName.toLowerCase();
 
