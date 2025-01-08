@@ -1,9 +1,6 @@
 // Copyright (c) 2024 Aiven, Helsinki, Finland. https://aiven.io/
 package io.aiven.inkless.test_utils;
 
-
-import org.apache.kafka.common.test.TestUtils;
-
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
 
@@ -12,11 +9,6 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.TestInfo;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
-
-import java.sql.Connection;
-import java.sql.DriverManager;
-import java.sql.SQLException;
-import java.sql.Statement;
 
 @Testcontainers
 public abstract class SharedPostgreSQLTest {
@@ -38,28 +30,9 @@ public abstract class SharedPostgreSQLTest {
 
     @BeforeEach
     void createDBForTest(final TestInfo testInfo) {
-        dbName = testInfo.getDisplayName()
-                .toLowerCase()
-                .replace(" ", "")
-                .replace("\"", "")
-                .replace(",", "_")
-                .replace(".", "_")
-                .replace("=", "_")
-                .replace("(", "")
-                .replace(")", "")
-                .replace("[", "")
-                .replace("]", "");
-        dbName = dbName.substring(0, Math.min(40, dbName.length()));
-        dbName += "_" + TestUtils.randomString(20);
-        dbName = dbName.toLowerCase();
+        dbName = PostgreSQLContainer.dbNameFromTestInfo(testInfo);
 
-        try (final Connection connection = DriverManager.getConnection(
-                pgContainer.getJdbcUrl(), PostgreSQLTestContainer.USERNAME, PostgreSQLTestContainer.PASSWORD);
-             final Statement statement = connection.createStatement()) {
-            statement.execute("CREATE DATABASE " + dbName);
-        } catch (final SQLException e) {
-            throw new RuntimeException(e);
-        }
+        pgContainer.createDatabase(dbName);
 
         final Flyway flyway = Flyway.configure().dataSource(
             pgContainer.getJdbcUrl(dbName),
