@@ -1218,7 +1218,6 @@ org.apache.kafka.connect.storage.KafkaConfigBackingStoreTest:
 - testRecordToRestartRequestOnlyFailedInconsistent
 - testRemoveConnectorConfigSlowProducer
 - testRestore
-- testRestoreCompactedDeletedConnector
 - testRestoreConnectorDeletion
 - testRestoreRestartRequestInconsistentState
 - testRestoreTargetState
