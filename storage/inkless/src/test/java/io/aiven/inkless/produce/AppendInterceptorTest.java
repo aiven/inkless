@@ -2,6 +2,7 @@
 package io.aiven.inkless.produce;
 
 import org.apache.kafka.common.TopicPartition;
+import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.compress.Compression;
 import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.record.MemoryRecords;
@@ -264,6 +265,7 @@ public class AppendInterceptorTest {
             CompletableFuture.completedFuture(writeResult)
         );
 
+        when(metadataView.getTopicId(eq("inkless"))).thenReturn(new Uuid(123, 456));
         when(metadataView.isInklessTopic(eq("inkless"))).thenReturn(true);
         when(metadataView.getTopicConfig(any())).thenReturn(new Properties());
         final AppendInterceptor interceptor = new AppendInterceptor(
@@ -288,6 +290,7 @@ public class AppendInterceptorTest {
             CompletableFuture.failedFuture(exception)
         );
 
+        when(metadataView.getTopicId(eq("inkless"))).thenReturn(new Uuid(123, 456));
         when(metadataView.isInklessTopic(eq("inkless"))).thenReturn(true);
         when(metadataView.getTopicConfig(any())).thenReturn(new Properties());
         final AppendInterceptor interceptor = new AppendInterceptor(

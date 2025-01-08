@@ -1,7 +1,8 @@
 // Copyright (c) 2024 Aiven, Helsinki, Finland. https://aiven.io/
 package io.aiven.inkless.produce;
 
-import org.apache.kafka.common.TopicPartition;
+import org.apache.kafka.common.TopicIdPartition;
+import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.compress.Compression;
 import org.apache.kafka.common.record.MemoryRecords;
 import org.apache.kafka.common.record.SimpleRecord;
@@ -20,11 +21,13 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class ActiveFileTest {
+    static final Uuid TOPIC_ID_0 = new Uuid(1000, 1000);
+    static final Uuid TOPIC_ID_1 = new Uuid(2000, 2000);
     static final String TOPIC_0 = "topic0";
     static final String TOPIC_1 = "topic1";
-    static final TopicPartition T0P0 = new TopicPartition(TOPIC_0, 0);
-    static final TopicPartition T0P1 = new TopicPartition(TOPIC_0, 1);
-    static final TopicPartition T1P0 = new TopicPartition(TOPIC_1, 0);
+    static final TopicIdPartition T0P0 = new TopicIdPartition(TOPIC_ID_0, 0, TOPIC_0);
+    static final TopicIdPartition T0P1 = new TopicIdPartition(TOPIC_ID_0, 1, TOPIC_0);
+    static final TopicIdPartition T1P0 = new TopicIdPartition(TOPIC_ID_1, 0, TOPIC_1);
 
     static final Map<String, TimestampType> TIMESTAMP_TYPES = Map.of(
         TOPIC_0, TimestampType.CREATE_TIME,
@@ -107,12 +110,12 @@ class ActiveFileTest {
     void closeNonEmpty() {
         final Instant start = Instant.ofEpochMilli(10);
         final ActiveFile file = new ActiveFile(Time.SYSTEM, start);
-        final Map<TopicPartition, MemoryRecords> request1 = Map.of(
+        final Map<TopicIdPartition, MemoryRecords> request1 = Map.of(
             T0P0, MemoryRecords.withRecords(Compression.NONE, new SimpleRecord(1000, new byte[10])),
             T0P1, MemoryRecords.withRecords(Compression.NONE, new SimpleRecord(2000, new byte[10]))
         );
         file.add(request1, TIMESTAMP_TYPES);
-        final Map<TopicPartition, MemoryRecords> request2 = Map.of(
+        final Map<TopicIdPartition, MemoryRecords> request2 = Map.of(
             T0P1, MemoryRecords.withRecords(Compression.NONE, new SimpleRecord(3000, new byte[10])),
             T1P0, MemoryRecords.withRecords(Compression.NONE, new SimpleRecord(4000, new byte[10]))
         );
