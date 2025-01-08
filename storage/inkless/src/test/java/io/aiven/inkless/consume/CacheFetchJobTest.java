@@ -14,14 +14,13 @@ import org.mockito.quality.Strictness;
 import java.io.ByteArrayInputStream;
 import java.nio.ByteBuffer;
 
-import io.aiven.inkless.cache.CacheKey;
-import io.aiven.inkless.cache.FileExtent;
 import io.aiven.inkless.cache.MemoryCache;
 import io.aiven.inkless.cache.NullCache;
 import io.aiven.inkless.cache.ObjectCache;
 import io.aiven.inkless.common.ByteRange;
 import io.aiven.inkless.common.ObjectKey;
 import io.aiven.inkless.common.PlainObjectKey;
+import io.aiven.inkless.generated.FileExtent;
 import io.aiven.inkless.storage_backend.common.ObjectFetcher;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -46,12 +45,11 @@ public class CacheFetchJobTest {
             array[i] = (byte) i;
         }
         ByteRange range = new ByteRange(0, size);
-        CacheKey key = new CacheKey(objectA, range);
-        FileExtent expectedFile = new FileExtent(objectA, range, ByteBuffer.wrap(array));
+        FileExtent expectedFile = FileFetchJob.createFileExtent(objectA, range, ByteBuffer.wrap(array));
         when(fetcher.fetch(objectA, range)).thenReturn(new ByteArrayInputStream(array));
 
         ObjectCache cache = new NullCache();
-        CacheFetchJob cacheFetchJob = new CacheFetchJob(cache, key, time, fetcher, durationMs -> { });
+        CacheFetchJob cacheFetchJob = new CacheFetchJob(cache, objectA, range, time, fetcher, durationMs -> { });
         FileExtent actualFile = cacheFetchJob.call();
 
         assertThat(actualFile).isEqualTo(expectedFile);
@@ -65,12 +63,11 @@ public class CacheFetchJobTest {
             array[i] = (byte) i;
         }
         ByteRange range = new ByteRange(0, size);
-        CacheKey key = new CacheKey(objectA, range);
-        FileExtent expectedFile = new FileExtent(objectA, range, ByteBuffer.wrap(array));
+        FileExtent expectedFile = FileFetchJob.createFileExtent(objectA, range, ByteBuffer.wrap(array));
 
         ObjectCache cache = new MemoryCache();
-        cache.put(key, expectedFile);
-        CacheFetchJob cacheFetchJob = new CacheFetchJob(cache, key, time, fetcher, durationMs -> { });
+        cache.put(CacheFetchJob.createCacheKey(objectA, range), expectedFile);
+        CacheFetchJob cacheFetchJob = new CacheFetchJob(cache, objectA, range, time, fetcher, durationMs -> { });
         FileExtent actualFile = cacheFetchJob.call();
 
         assertThat(actualFile).isEqualTo(expectedFile);

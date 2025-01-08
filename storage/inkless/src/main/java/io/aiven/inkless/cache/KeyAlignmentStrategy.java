@@ -5,7 +5,6 @@ import java.util.List;
 import java.util.Set;
 
 import io.aiven.inkless.common.ByteRange;
-import io.aiven.inkless.common.ObjectKey;
 
 /**
  * Computes a set of aligned cache keys that cover the requested byte ranges.
@@ -13,5 +12,5 @@ import io.aiven.inkless.common.ObjectKey;
  */
 public interface KeyAlignmentStrategy {
 
-    Set<CacheKey> align(ObjectKey key, List<ByteRange> ranges);
+    Set<ByteRange> align(List<ByteRange> ranges);
 }

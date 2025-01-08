@@ -21,25 +21,20 @@ import org.junit.jupiter.api.Test;
 import java.util.Collections;
 import java.util.List;
 import java.util.Set;
-import java.util.stream.Collectors;
 
 import io.aiven.inkless.common.ByteRange;
-import io.aiven.inkless.common.ObjectKey;
-import io.aiven.inkless.common.PlainObjectKey;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 public class FixedBlockAlignmentTest {
 
-    ObjectKey objectA = new PlainObjectKey("a", "a");
     KeyAlignmentStrategy maxBlockSize = new FixedBlockAlignment(Integer.MAX_VALUE);
     KeyAlignmentStrategy kilobyteBlockSize = new FixedBlockAlignment(1000);
 
     @Test
     public void testNullAndEmptyArguments() {
-        assertThat(maxBlockSize.align(null, null)).isEmpty();
-        assertThat(maxBlockSize.align(objectA, null)).isEmpty();
-        assertThat(maxBlockSize.align(null, Collections.emptyList())).isEmpty();
+        assertThat(maxBlockSize.align(null)).isEmpty();
+        assertThat(maxBlockSize.align(Collections.emptyList())).isEmpty();
     }
 
     @Test
@@ -85,9 +80,8 @@ public class FixedBlockAlignmentTest {
         ));
     }
 
-    public void assertRanges(KeyAlignmentStrategy strategy, List<ByteRange> input, Set<ByteRange> output) {
-        Set<CacheKey> expectedOutput = output.stream().map(range -> new CacheKey(objectA, range)).collect(Collectors.toSet());
-        Set<CacheKey> actualOutput = strategy.align(objectA, input);
+    public void assertRanges(KeyAlignmentStrategy strategy, List<ByteRange> input, Set<ByteRange> expectedOutput) {
+        Set<ByteRange> actualOutput = strategy.align(input);
         assertThat(actualOutput).isEqualTo(expectedOutput);
     }
 }

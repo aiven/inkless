@@ -4,6 +4,9 @@ package io.aiven.inkless.cache;
 import org.apache.kafka.common.cache.Cache;
 import org.apache.kafka.common.cache.LRUCache;
 
+import io.aiven.inkless.generated.CacheKey;
+import io.aiven.inkless.generated.FileExtent;
+
 public class MemoryCache implements ObjectCache {
 
     private final Cache<CacheKey, FileExtent> backingCache = new LRUCache<>(10);
