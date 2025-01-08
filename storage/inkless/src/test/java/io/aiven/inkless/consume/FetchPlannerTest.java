@@ -23,7 +23,6 @@ import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 
-import io.aiven.inkless.cache.CacheKey;
 import io.aiven.inkless.cache.FixedBlockAlignment;
 import io.aiven.inkless.cache.KeyAlignmentStrategy;
 import io.aiven.inkless.cache.NullCache;
@@ -90,7 +89,7 @@ public class FetchPlannerTest {
                         new BatchInfo(OBJECT_KEY_A_MAIN_PART, 0, 10, 0, 1, TimestampType.CREATE_TIME, 10, 20)
                 ), 0, 1)
         ), Set.of(
-                new CacheFetchJob(cache, new CacheKey(OBJECT_KEY_A, requestRange), time, fetcher, durationMs -> {})
+                new CacheFetchJob(cache, OBJECT_KEY_A, requestRange, time, fetcher, durationMs -> {})
         ));
     }
 
@@ -102,8 +101,8 @@ public class FetchPlannerTest {
                         new BatchInfo(OBJECT_KEY_B_MAIN_PART, 0, 10, 1, 1, TimestampType.CREATE_TIME, 11, 21)
                 ), 0, 2)
         ), Set.of(
-                new CacheFetchJob(cache, new CacheKey(OBJECT_KEY_A, requestRange), time, fetcher, durationMs -> {}),
-                new CacheFetchJob(cache, new CacheKey(OBJECT_KEY_B, requestRange), time, fetcher, durationMs -> {})
+                new CacheFetchJob(cache, OBJECT_KEY_A, requestRange, time, fetcher, durationMs -> {}),
+                new CacheFetchJob(cache, OBJECT_KEY_B, requestRange, time, fetcher, durationMs -> {})
         ));
     }
 
@@ -117,8 +116,8 @@ public class FetchPlannerTest {
                         new BatchInfo(OBJECT_KEY_B_MAIN_PART, 0, 10, 0, 1, TimestampType.CREATE_TIME, 11, 21)
                 ), 0, 1)
         ), Set.of(
-                new CacheFetchJob(cache, new CacheKey(OBJECT_KEY_A, requestRange), time, fetcher, durationMs -> {}),
-                new CacheFetchJob(cache, new CacheKey(OBJECT_KEY_B, requestRange), time, fetcher, durationMs -> {})
+                new CacheFetchJob(cache, OBJECT_KEY_A, requestRange, time, fetcher, durationMs -> {}),
+                new CacheFetchJob(cache, OBJECT_KEY_B, requestRange, time, fetcher, durationMs -> {})
         ));
     }
 
@@ -132,7 +131,7 @@ public class FetchPlannerTest {
                         new BatchInfo(OBJECT_KEY_A_MAIN_PART, 30, 10, 0, 1, TimestampType.CREATE_TIME, 11, 21)
                 ), 0,  1)
                 ), Set.of(
-                    new CacheFetchJob(cache, new CacheKey(OBJECT_KEY_A, requestRange), time, fetcher, durationMs -> {})
+                    new CacheFetchJob(cache, OBJECT_KEY_A, requestRange, time, fetcher, durationMs -> {})
         ));
     }
 
@@ -144,7 +143,7 @@ public class FetchPlannerTest {
                         new BatchInfo(OBJECT_KEY_B_MAIN_PART, 0, 10, 0, 1, TimestampType.CREATE_TIME, 11, 21)
                 ), 0, 1)
         ), Set.of(
-                new CacheFetchJob(cache, new CacheKey(OBJECT_KEY_B, requestRange), time, fetcher, durationMs -> {})
+                new CacheFetchJob(cache, OBJECT_KEY_B, requestRange, time, fetcher, durationMs -> {})
         ));
     }
 
@@ -156,7 +155,7 @@ public class FetchPlannerTest {
                         new BatchInfo(OBJECT_KEY_B_MAIN_PART, 0, 10, 0, 1, TimestampType.CREATE_TIME, 11, 21)
                 ), 0, 1)
         ), Set.of(
-                new CacheFetchJob(cache, new CacheKey(OBJECT_KEY_B, requestRange), time, fetcher, durationMs -> {})
+                new CacheFetchJob(cache, OBJECT_KEY_B, requestRange, time, fetcher, durationMs -> {})
         ));
     }
 
@@ -168,7 +167,7 @@ public class FetchPlannerTest {
                         new BatchInfo(OBJECT_KEY_B_MAIN_PART, 0, 10, 0, 1, TimestampType.CREATE_TIME, 11, 21)
                 ), 0, 1)
         ), Set.of(
-                new CacheFetchJob(cache, new CacheKey(OBJECT_KEY_B, requestRange), time, fetcher, durationMs -> {})
+                new CacheFetchJob(cache, OBJECT_KEY_B, requestRange, time, fetcher, durationMs -> {})
         ));
     }
 

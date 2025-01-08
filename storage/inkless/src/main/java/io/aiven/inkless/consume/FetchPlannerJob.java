@@ -14,12 +14,12 @@ import java.util.function.Consumer;
 import java.util.stream.Collectors;
 
 import io.aiven.inkless.TimeUtils;
-import io.aiven.inkless.cache.FileExtent;
 import io.aiven.inkless.cache.KeyAlignmentStrategy;
 import io.aiven.inkless.cache.ObjectCache;
 import io.aiven.inkless.common.ObjectKeyCreator;
 import io.aiven.inkless.control_plane.BatchInfo;
 import io.aiven.inkless.control_plane.FindBatchResponse;
+import io.aiven.inkless.generated.FileExtent;
 import io.aiven.inkless.storage_backend.common.ObjectFetcher;
 
 public class FetchPlannerJob implements Callable<List<Future<FileExtent>>> {
@@ -73,10 +73,11 @@ public class FetchPlannerJob implements Callable<List<Future<FileExtent>>> {
                 .collect(Collectors.groupingBy(BatchInfo::objectKey, Collectors.mapping(BatchInfo::range, Collectors.toList())))
                 .entrySet()
                 .stream()
-                .flatMap(e -> keyAlignment.align(objectKeyCreator.create(e.getKey()), e.getValue()).stream())
-                .map(cacheKey ->
-                        new CacheFetchJob(cache, cacheKey, time, objectFetcher, fileFetchDurationCallback)
-                        )
+                .flatMap(e -> keyAlignment.align(e.getValue())
+                        .stream()
+                        .map(byteRange ->
+                                new CacheFetchJob(cache, objectKeyCreator.create(e.getKey()), byteRange, time, objectFetcher, fileFetchDurationCallback)
+                        ))
                 .collect(Collectors.toList());
     }
 

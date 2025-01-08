@@ -11,9 +11,9 @@ import java.util.concurrent.Callable;
 import java.util.function.Consumer;
 
 import io.aiven.inkless.TimeUtils;
-import io.aiven.inkless.cache.FileExtent;
 import io.aiven.inkless.common.ByteRange;
 import io.aiven.inkless.common.ObjectKey;
+import io.aiven.inkless.generated.FileExtent;
 import io.aiven.inkless.storage_backend.common.ObjectFetcher;
 import io.aiven.inkless.storage_backend.common.StorageBackendException;
 
@@ -42,6 +42,16 @@ public class FileFetchJob implements Callable<FileExtent> {
         this.size = (int) range.size();
     }
 
+    // visible for testing
+    static FileExtent createFileExtent(ObjectKey object, ByteRange byteRange, ByteBuffer buffer) {
+        return new FileExtent()
+                .setObject(object.value())
+                .setRange(new FileExtent.ByteRange()
+                        .setOffset(byteRange.offset())
+                        .setLength(byteRange.size()))
+                .setData(buffer.array());
+    }
+
     @Override
     public FileExtent call() throws Exception {
         return TimeUtils.measureDurationMs(time, this::doWork, durationCallback);
@@ -50,7 +60,7 @@ public class FileFetchJob implements Callable<FileExtent> {
     private FileExtent doWork() throws StorageBackendException, IOException {
         try (InputStream stream = objectFetcher.fetch(key, range)) {
             byte[] bytes = stream.readNBytes(size);
-            return new FileExtent(key, range, ByteBuffer.wrap(bytes));
+            return createFileExtent(key, range, ByteBuffer.wrap(bytes));
         }
     }
 

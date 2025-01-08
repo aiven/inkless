@@ -7,9 +7,11 @@ import java.util.Objects;
 import java.util.concurrent.Callable;
 import java.util.function.Consumer;
 
-import io.aiven.inkless.cache.CacheKey;
-import io.aiven.inkless.cache.FileExtent;
 import io.aiven.inkless.cache.ObjectCache;
+import io.aiven.inkless.common.ByteRange;
+import io.aiven.inkless.common.ObjectKey;
+import io.aiven.inkless.generated.CacheKey;
+import io.aiven.inkless.generated.FileExtent;
 import io.aiven.inkless.storage_backend.common.ObjectFetcher;
 
 public class CacheFetchJob implements Callable<FileExtent> {
@@ -20,14 +22,24 @@ public class CacheFetchJob implements Callable<FileExtent> {
 
     public CacheFetchJob(
             ObjectCache cache,
-            CacheKey key,
+            ObjectKey objectKey,
+            ByteRange byteRange,
             Time time,
             ObjectFetcher objectFetcher,
             Consumer<Long> fileFetchDurationCallback
     ) {
         this.cache = cache;
-        this.key = key;
-        this.fallback = new FileFetchJob(time, objectFetcher, key.object(), key.range(), fileFetchDurationCallback);
+        this.key = createCacheKey(objectKey, byteRange);
+        this.fallback = new FileFetchJob(time, objectFetcher, objectKey, byteRange, fileFetchDurationCallback);
+    }
+
+    // visible for testing
+    static CacheKey createCacheKey(ObjectKey object, ByteRange byteRange) {
+        return new CacheKey().
+                setObject(object.value())
+                .setRange(new CacheKey.ByteRange()
+                        .setOffset(byteRange.offset())
+                        .setLength(byteRange.size()));
     }
 
     @Override
