@@ -48,8 +48,8 @@ public abstract class SharedPostgreSQLTest {
                 .replace("(", "")
                 .replace(")", "")
                 .replace("[", "")
-                .replace("]", "")
-                .substring(0, 40);
+                .replace("]", "");
+        dbName = dbName.substring(0, Math.min(40, dbName.length()));
         dbName += "_" + TestUtils.randomString(20);
         dbName = dbName.toLowerCase();
 
