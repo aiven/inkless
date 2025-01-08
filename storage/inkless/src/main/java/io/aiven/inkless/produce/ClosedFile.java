@@ -1,6 +1,7 @@
 // Copyright (c) 2024 Aiven, Helsinki, Finland. https://aiven.io/
 package io.aiven.inkless.produce;
 
+import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.record.MemoryRecords;
 import org.apache.kafka.common.requests.ProduceResponse.PartitionResponse;
@@ -14,7 +15,7 @@ import java.util.concurrent.CompletableFuture;
 import io.aiven.inkless.control_plane.CommitBatchRequest;
 
 record ClosedFile(Instant start,
-                  Map<Integer, Map<TopicPartition, MemoryRecords>> originalRequests,
+                  Map<Integer, Map<TopicIdPartition, MemoryRecords>> originalRequests,
                   Map<Integer, CompletableFuture<Map<TopicPartition, PartitionResponse>>> awaitingFuturesByRequest,
                   List<CommitBatchRequest> commitBatchRequests,
                   List<Integer> requestIds,

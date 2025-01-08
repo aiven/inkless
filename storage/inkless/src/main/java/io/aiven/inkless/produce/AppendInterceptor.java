@@ -1,7 +1,10 @@
 // Copyright (c) 2024 Aiven, Helsinki, Finland. https://aiven.io/
 package io.aiven.inkless.produce;
 
+import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.TopicPartition;
+import org.apache.kafka.common.Uuid;
+import org.apache.kafka.common.errors.UnknownServerException;
 import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.record.MemoryRecords;
 import org.apache.kafka.common.record.TimestampType;
@@ -22,6 +25,7 @@ import java.util.function.Consumer;
 import java.util.stream.Collectors;
 
 import io.aiven.inkless.common.SharedState;
+import io.aiven.inkless.control_plane.MetadataView;
 
 public class AppendInterceptor implements Closeable {
     private static final Logger LOGGER = LoggerFactory.getLogger(AppendInterceptor.class);
@@ -88,8 +92,9 @@ public class AppendInterceptor implements Closeable {
             return true;
         }
 
+        final Map<TopicIdPartition, MemoryRecords> entriesPerPartitionEnriched = enrichWithTopicId(entriesPerPartition);
         // TODO use purgatory
-        final var resultFuture = writer.write(entriesPerPartition, getTimestampTypes(entriesPerPartition));
+        final var resultFuture = writer.write(entriesPerPartitionEnriched, getTimestampTypes(entriesPerPartition));
         resultFuture.whenComplete((result, e) -> {
             if (result == null) {
                 // We don't really expect this future to fail, but in case it does...
@@ -101,6 +106,21 @@ public class AppendInterceptor implements Closeable {
         });
 
         return true;
+    }
+
+    private Map<TopicIdPartition, MemoryRecords> enrichWithTopicId(final Map<TopicPartition, MemoryRecords> entriesPerPartition) {
+        final MetadataView metadata = state.metadata();
+        final Map<TopicIdPartition, MemoryRecords> result = new HashMap<>();
+        for (final var entry : entriesPerPartition.entrySet()) {
+            final String topicName = entry.getKey().topic();
+            final Uuid topicId = metadata.getTopicId(topicName);
+            // This should not happen as the upstream code should check the topic exists.
+            if (topicId.equals(Uuid.ZERO_UUID)) {
+                throw new UnknownServerException("Cannot find UUID for topic " + topicName);
+            }
+            result.put(new TopicIdPartition(topicId, entry.getKey()), entry.getValue());
+        }
+        return result;
     }
 
     private EntryCountResult countEntries(final Map<TopicPartition, MemoryRecords> entriesPerPartition) {

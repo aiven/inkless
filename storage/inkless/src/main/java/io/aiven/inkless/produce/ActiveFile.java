@@ -1,6 +1,7 @@
 // Copyright (c) 2024 Aiven, Helsinki, Finland. https://aiven.io/
 package io.aiven.inkless.produce;
 
+import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.record.MemoryRecords;
 import org.apache.kafka.common.record.TimestampType;
@@ -28,7 +29,7 @@ class ActiveFile {
     private final BatchBuffer buffer;
     private final BatchValidator batchValidator;
 
-    private final Map<Integer, Map<TopicPartition, MemoryRecords>> originalRequests = new HashMap<>();
+    private final Map<Integer, Map<TopicIdPartition, MemoryRecords>> originalRequests = new HashMap<>();
     private final Map<Integer, CompletableFuture<Map<TopicPartition, PartitionResponse>>> awaitingFuturesByRequest = new HashMap<>();
 
     private final BrokerTopicMetricMarks brokerTopicMetricMarks;
@@ -50,7 +51,7 @@ class ActiveFile {
     }
 
     CompletableFuture<Map<TopicPartition, PartitionResponse>> add(
-        final Map<TopicPartition, MemoryRecords> entriesPerPartition,
+        final Map<TopicIdPartition, MemoryRecords> entriesPerPartition,
         final Map<String, TimestampType> timestampTypes
     ) {
         Objects.requireNonNull(entriesPerPartition, "entriesPerPartition cannot be null");
@@ -62,19 +63,19 @@ class ActiveFile {
         for (final var entry : entriesPerPartition.entrySet()) {
             final String topic = entry.getKey().topic();
             brokerTopicMetricMarks.requestRateMark.accept(topic);
-            final TopicPartition topicPartition = entry.getKey();
-            final TimestampType messageTimestampType = timestampTypes.get(topicPartition.topic());
+            final TopicIdPartition topicIdPartition = entry.getKey();
+            final TimestampType messageTimestampType = timestampTypes.get(topicIdPartition.topic());
             if (messageTimestampType == null) {
-                throw new IllegalArgumentException("Timestamp type not provided for topic " + topicPartition.topic());
+                throw new IllegalArgumentException("Timestamp type not provided for topic " + topicIdPartition.topic());
             }
 
             for (final var batch : entry.getValue().batches()) {
                 batchValidator.validateAndMaybeSetMaxTimestamp(batch);
 
-                buffer.addBatch(topicPartition, messageTimestampType, batch, requestId);
+                buffer.addBatch(topicIdPartition, messageTimestampType, batch, requestId);
 
-                brokerTopicMetricMarks.bytesInRateMark.accept(topicPartition.topic(), batch.sizeInBytes());
-                brokerTopicMetricMarks.messagesInRateMark.accept(topicPartition.topic(), batch.nextOffset() - batch.baseOffset());
+                brokerTopicMetricMarks.bytesInRateMark.accept(topicIdPartition.topic(), batch.sizeInBytes());
+                brokerTopicMetricMarks.messagesInRateMark.accept(topicIdPartition.topic(), batch.nextOffset() - batch.baseOffset());
             }
         }
 

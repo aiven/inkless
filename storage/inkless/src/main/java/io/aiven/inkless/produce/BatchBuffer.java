@@ -1,7 +1,7 @@
 // Copyright (c) 2024 Aiven, Helsinki, Finland. https://aiven.io/
 package io.aiven.inkless.produce;
 
-import org.apache.kafka.common.TopicPartition;
+import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.record.MutableRecordBatch;
 import org.apache.kafka.common.record.TimestampType;
 
@@ -19,7 +19,7 @@ class BatchBuffer {
     private int totalSize = 0;
     private boolean closed = false;
 
-    void addBatch(final TopicPartition topicPartition, final TimestampType messageTimestampType,
+    void addBatch(final TopicIdPartition topicPartition, final TimestampType messageTimestampType,
                   final MutableRecordBatch batch, final int requestId) {
         Objects.requireNonNull(topicPartition, "topicPartition cannot be null");
         Objects.requireNonNull(messageTimestampType, "timestampType cannot be null");
@@ -39,8 +39,8 @@ class BatchBuffer {
         // Group together by topic-partition.
         // The sort is stable so the relative order of batches of the same partition won't change.
         batches.sort(
-            Comparator.comparing((BatchHolder b) -> b.topicPartition().topic())
-                .thenComparing(b -> b.topicPartition().partition())
+            Comparator.comparing((BatchHolder b) -> b.topicIdPartition().topicId())
+                .thenComparing(b -> b.topicIdPartition().partition())
         );
 
         final ByteBuffer byteBuffer = ByteBuffer.allocate(totalSize);
@@ -52,7 +52,7 @@ class BatchBuffer {
 
             commitBatchRequests.add(
                 new CommitBatchRequest(
-                    batchHolder.topicPartition(),
+                    batchHolder.topicIdPartition(),
                     byteOffset,
                     batchHolder.batch.sizeInBytes(),
                     batchHolder.numberOfRecords(),
@@ -72,7 +72,7 @@ class BatchBuffer {
         return totalSize;
     }
 
-    private record BatchHolder(TopicPartition topicPartition,
+    private record BatchHolder(TopicIdPartition topicIdPartition,
                                MutableRecordBatch batch,
                                TimestampType timestampType,
                                int requestId) {

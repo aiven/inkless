@@ -95,7 +95,7 @@ class FileCommitJob implements Runnable {
             final var commitBatchRequest = file.commitBatchRequests().get(i);
             final var commitBatchResponse = commitBatchResponses.get(i);
             result.put(
-                commitBatchRequest.topicPartition(),
+                commitBatchRequest.topicIdPartition().topicPartition(),
                 new ProduceResponse.PartitionResponse(
                     commitBatchResponse.errors(),
                     commitBatchResponse.assignedOffset(),
@@ -116,7 +116,7 @@ class FileCommitJob implements Runnable {
             final var originalRequest = file.originalRequests().get(entry.getKey());
             final var result = originalRequest.entrySet().stream()
                 .collect(Collectors.toMap(
-                    Map.Entry::getKey,
+                    kv -> kv.getKey().topicPartition(),
                     ignore -> new ProduceResponse.PartitionResponse(Errors.KAFKA_STORAGE_ERROR, "Error commiting data")));
             entry.getValue().complete(result);
         }

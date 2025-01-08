@@ -2,6 +2,7 @@
 package io.aiven.inkless.produce;
 
 import org.apache.kafka.admin.BrokerMetadata;
+import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.compress.Compression;
@@ -51,6 +52,7 @@ import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.stream.Collectors;
 
 import io.aiven.inkless.common.PlainObjectKey;
 import io.aiven.inkless.control_plane.ControlPlane;
@@ -79,17 +81,17 @@ class WriterPropertyTest {
     private static final String TOPIC_1 = "topic1";
     private static final Uuid TOPIC_ID_0 = new Uuid(0, 1);
     private static final Uuid TOPIC_ID_1 = new Uuid(0, 2);
-    private static final TopicPartition T0P0 = new TopicPartition(TOPIC_0, 0);
-    private static final TopicPartition T0P1 = new TopicPartition(TOPIC_0, 1);
-    private static final TopicPartition T1P0 = new TopicPartition(TOPIC_1, 0);
-    private static final TopicPartition T1P1 = new TopicPartition(TOPIC_1, 1);
+    private static final TopicIdPartition T0P0 = new TopicIdPartition(TOPIC_ID_0, 0, TOPIC_0);
+    private static final TopicIdPartition T0P1 = new TopicIdPartition(TOPIC_ID_0, 1, TOPIC_0);
+    private static final TopicIdPartition T1P0 = new TopicIdPartition(TOPIC_ID_1, 0, TOPIC_1);
+    private static final TopicIdPartition T1P1 = new TopicIdPartition(TOPIC_ID_1, 1, TOPIC_1);
 
     static final Map<String, TimestampType> TIMESTAMP_TYPES = Map.of(
         TOPIC_0, TimestampType.CREATE_TIME,
         TOPIC_1, TimestampType.LOG_APPEND_TIME
     );
 
-    private static final Set<TopicPartition> ALL_TPS = Set.of(T0P0, T0P1, T1P0, T1P1);
+    private static final Set<TopicIdPartition> ALL_TPS = Set.of(T0P0, T0P1, T1P0, T1P1);
 
     static final MetadataView METADATA_VIEW = new MetadataView() {
         @Override
@@ -104,7 +106,7 @@ class WriterPropertyTest {
 
         @Override
         public Set<TopicPartition> getTopicPartitions(final String topicName) {
-            return ALL_TPS;
+            return ALL_TPS.stream().map(TopicIdPartition::topicPartition).collect(Collectors.toSet());
         }
 
         @Override
@@ -237,7 +239,7 @@ class WriterPropertyTest {
             new BrokerTopicMetricMarks()
         );
 
-        final Arbitrary<Map<TopicPartition, MemoryRecords>> requestArbitrary = requests();
+        final Arbitrary<Map<TopicIdPartition, MemoryRecords>> requestArbitrary = requests();
         final Requester requester = new Requester(
             writer, requestArbitrary, requestCount,
             new Timer("request",
@@ -323,10 +325,10 @@ class WriterPropertyTest {
 
     private static class Requester {
         private final Writer writer;
-        private final Arbitrary<Map<TopicPartition, MemoryRecords>> writeRequestArbitrary;
+        private final Arbitrary<Map<TopicIdPartition, MemoryRecords>> writeRequestArbitrary;
         private final int maxRequestCount;
         private int requestCount = 0;
-        private final Map<TopicPartition, List<MemoryRecords>> sentRequests = new HashMap<>();
+        private final Map<TopicIdPartition, List<MemoryRecords>> sentRequests = new HashMap<>();
         private List<CompletableFuture<Map<TopicPartition, ProduceResponse.PartitionResponse>>> waitingResponseFutures =
             new ArrayList<>();
         private final Map<TopicPartition, List<Long>> assignedOffsets = new HashMap<>();
@@ -335,7 +337,7 @@ class WriterPropertyTest {
         private final Timer timer;
 
         private Requester(final Writer writer,
-                          final Arbitrary<Map<TopicPartition, MemoryRecords>> writeRequestArbitrary,
+                          final Arbitrary<Map<TopicIdPartition, MemoryRecords>> writeRequestArbitrary,
                           final int maxRequestCount,
                           final Timer timer) {
             this.writer = writer;
@@ -392,7 +394,7 @@ class WriterPropertyTest {
             final Map<TopicPartition, List<Long>> expectedAssignedOffsets = new HashMap<>();
             for (final var entry : sentRequests.entrySet()) {
                 final List<Long> offsets = expectedAssignedOffsets
-                    .computeIfAbsent(entry.getKey(), ignore -> new ArrayList<>());
+                    .computeIfAbsent(entry.getKey().topicPartition(), ignore -> new ArrayList<>());
 
                 offsets.add(0L);  // first is always 0
                 for (int i = 0; i < entry.getValue().size() - 1; i++) {
@@ -606,11 +608,11 @@ class WriterPropertyTest {
         }
     }
 
-    private Arbitrary<Map<TopicPartition, MemoryRecords>> requests() {
+    private Arbitrary<Map<TopicIdPartition, MemoryRecords>> requests() {
         final Arbitrary<MemoryRecords> memoryRecordsArbitrary = memoryRecords();
         return Arbitraries.subsetOf(ALL_TPS).map(tps -> {
-            final Map<TopicPartition, MemoryRecords> result = new HashMap<>();
-            for (final TopicPartition tp : tps) {
+            final Map<TopicIdPartition, MemoryRecords> result = new HashMap<>();
+            for (final TopicIdPartition tp : tps) {
                 result.put(tp, memoryRecordsArbitrary.sample());
             }
             return result;
