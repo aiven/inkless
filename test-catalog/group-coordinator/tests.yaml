@@ -780,6 +780,22 @@ org.apache.kafka.coordinator.group.modern.share.ShareGroupTest:
 - testValidateOffsetCommit
 - testValidateOffsetDelete
 - testValidateOffsetFetch
+org.apache.kafka.coordinator.group.streams.AssignmentTest:
+- testFromTargetAssignmentRecord
+- testReturnUnmodifiableTaskAssignments
+- testTasksCannotBeNull
+org.apache.kafka.coordinator.group.streams.StreamsGroupMemberTest:
+- testAsStreamsGroupDescribeMember
+- testAsStreamsGroupDescribeWithTargetAssignmentNull
+- testBuilderMaybeUpdateMember
+- testBuilderNewMember
+- testBuilderUpdateMemberEpoch
+- testBuilderUpdateWithConsumerGroupCurrentMemberAssignmentValue
+- testBuilderUpdateWithStreamsGroupMemberMetadataValue
+- testBuilderWithDefaults
+- testBuilderWithMemberIdIsNull
+- testBuilderWithMemberIsNull
+- testReturnUnmodifiableFields
 org.apache.kafka.coordinator.group.streams.assignor.GroupSpecImplTest:
 - testMembers
 org.apache.kafka.coordinator.group.streams.assignor.MockAssignorTest:
