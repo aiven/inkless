@@ -58,10 +58,13 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Stream;
 
 import io.aiven.inkless.config.InklessConfig;
-import io.aiven.inkless.control_plane.InMemoryControlPlane;
+import io.aiven.inkless.control_plane.postgres.PostgresControlPlane;
+import io.aiven.inkless.control_plane.postgres.PostgresControlPlaneConfig;
 import io.aiven.inkless.storage_backend.s3.S3Storage;
 import io.aiven.inkless.storage_backend.s3.S3StorageConfig;
+import io.aiven.inkless.test_utils.PostgreSQLTestContainer;
 import io.aiven.inkless.test_utils.S3TestContainer;
+import io.aiven.inkless.test_utils.SharedPostgreSQLTest;
 import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
 import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
 import software.amazon.awssdk.regions.Region;
@@ -72,7 +75,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 @Testcontainers
-public class InklessClusterTest {
+public class InklessClusterTest extends SharedPostgreSQLTest {
 
     private static final Logger log = LoggerFactory.getLogger(InklessClusterTest.class);
 
@@ -97,10 +100,10 @@ public class InklessClusterTest {
 
         cluster = new KafkaClusterTestKit.Builder(new TestKitNodes.Builder()
                 .setCombined(true)
-                .setNumBrokerNodes(1)
+                .setNumBrokerNodes(2)
                 .setNumControllerNodes(1)
                 .build())
-                .setConfigProp(InklessConfig.PREFIX + InklessConfig.CONTROL_PLANE_CLASS_CONFIG, InMemoryControlPlane.class.getName())
+                .setConfigProp(InklessConfig.PREFIX + InklessConfig.CONTROL_PLANE_CLASS_CONFIG, PostgresControlPlane.class.getName())
                 .setConfigProp(InklessConfig.PREFIX + InklessConfig.STORAGE_BACKEND_CLASS_CONFIG, S3Storage.class.getName())
                 .setConfigProp(InklessConfig.PREFIX + InklessConfig.STORAGE_PREFIX + S3StorageConfig.S3_BUCKET_NAME_CONFIG, bucketName)
                 .setConfigProp(InklessConfig.PREFIX + InklessConfig.STORAGE_PREFIX + S3StorageConfig.S3_REGION_CONFIG, LOCALSTACK.getRegion())
@@ -109,6 +112,10 @@ public class InklessClusterTest {
                 .setConfigProp(InklessConfig.PREFIX + InklessConfig.STORAGE_PREFIX + S3StorageConfig.S3_PATH_STYLE_ENABLED_CONFIG, "true")
                 .setConfigProp(InklessConfig.PREFIX + InklessConfig.STORAGE_PREFIX + S3StorageConfig.AWS_ACCESS_KEY_ID_CONFIG, LOCALSTACK.getAccessKey())
                 .setConfigProp(InklessConfig.PREFIX + InklessConfig.STORAGE_PREFIX + S3StorageConfig.AWS_SECRET_ACCESS_KEY_CONFIG, LOCALSTACK.getSecretKey())
+                .setConfigProp(InklessConfig.PREFIX + InklessConfig.STORAGE_PREFIX + S3StorageConfig.AWS_SECRET_ACCESS_KEY_CONFIG, LOCALSTACK.getSecretKey())
+                .setConfigProp(InklessConfig.PREFIX + InklessConfig.CONTROL_PLANE_PREFIX + PostgresControlPlaneConfig.CONNECTION_STRING_CONFIG, pgContainer.getJdbcUrl(dbName))
+                .setConfigProp(InklessConfig.PREFIX + InklessConfig.CONTROL_PLANE_PREFIX + PostgresControlPlaneConfig.USERNAME_CONFIG, PostgreSQLTestContainer.USERNAME)
+                .setConfigProp(InklessConfig.PREFIX + InklessConfig.CONTROL_PLANE_PREFIX + PostgresControlPlaneConfig.PASSWORD_CONFIG, PostgreSQLTestContainer.PASSWORD)
                 .build();
         cluster.format();
         cluster.startup();
@@ -175,7 +182,11 @@ public class InklessClusterTest {
         }
 
         assertEquals(numRecords, recordsProduced.get());
+        consume(timestampType, clientConfigs, topicName, now, numRecords);
+        consume(timestampType, clientConfigs, topicName, now, numRecords);
+    }
 
+    private static void consume(TimestampType timestampType, Map<String, Object> clientConfigs, String topicName, long now, int numRecords) {
         int recordsConsumed = 0;
         try (Consumer<byte[], byte[]> consumer = new KafkaConsumer<>(clientConfigs)) {
             consumer.assign(Collections.singletonList(new TopicPartition(topicName, 0)));

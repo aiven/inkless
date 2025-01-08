@@ -1139,8 +1139,9 @@ project(':core') {
       testImplementation libs.testcontainers
       testImplementation libs.testcontainersJunitJupiter
       testImplementation libs.testcontainersLocalstack
+      testImplementation libs.testcontainersPostgresql
       testImplementation libs.awsskdS3
-      testImplementation project(':storage:inkless').sourceSets.test.output.classesDirs
+      testImplementation project(':storage:inkless').sourceSets.test.output
 
       testRuntimeOnly runtimeTestLibs
   }
