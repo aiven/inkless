@@ -276,23 +276,6 @@ class KafkaConfigTest {
   }
 
   @Test
-  def testControlPlaneListenerNameNotAllowedWithKRaft(): Unit = {
-    val props = new Properties()
-    props.setProperty(KRaftConfigs.PROCESS_ROLES_CONFIG, "broker,controller")
-    props.setProperty(SocketServerConfigs.LISTENERS_CONFIG, "PLAINTEXT://localhost:9092,SSL://localhost:9093")
-    props.setProperty(KRaftConfigs.CONTROLLER_LISTENER_NAMES_CONFIG, "SSL")
-    props.setProperty(KRaftConfigs.NODE_ID_CONFIG, "2")
-    props.setProperty(QuorumConfig.QUORUM_VOTERS_CONFIG, "2@localhost:9093")
-    props.setProperty(SocketServerConfigs.CONTROL_PLANE_LISTENER_NAME_CONFIG, "SSL")
-
-    assertFalse(isValidKafkaConfig(props))
-    assertBadConfigContainingMessage(props, "control.plane.listener.name is not supported in KRaft mode.")
-
-    props.remove(SocketServerConfigs.CONTROL_PLANE_LISTENER_NAME_CONFIG)
-    KafkaConfig.fromProps(props)
-  }
-
-  @Test
   def testControllerListenerDefinedForKRaftController(): Unit = {
     val props = new Properties()
     props.setProperty(KRaftConfigs.PROCESS_ROLES_CONFIG, "controller")
