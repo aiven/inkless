@@ -13,7 +13,7 @@ import java.util.Set;
 
 import io.aiven.inkless.config.InklessConfig;
 
-public interface ControlPlane extends Closeable, Configurable, TopicMetadataChangesSubscriber {
+public interface ControlPlane extends Closeable, Configurable {
     List<CommitBatchResponse> commitFile(String objectKey,
                                          int uploaderBrokerId,
                                          long fileSize,
@@ -22,6 +22,8 @@ public interface ControlPlane extends Closeable, Configurable, TopicMetadataChan
     List<FindBatchResponse> findBatches(List<FindBatchRequest> findBatchRequests,
                                         boolean minOneMessage,
                                         int fetchMaxBytes);
+
+    void createTopicAndPartitions(Set<CreateTopicAndPartitionsRequest> requests);
 
     void deleteTopics(Set<Uuid> topicIds);
 

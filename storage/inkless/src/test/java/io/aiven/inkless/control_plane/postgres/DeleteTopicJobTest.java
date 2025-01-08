@@ -3,12 +3,8 @@ package io.aiven.inkless.control_plane.postgres;
 
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.Uuid;
-import org.apache.kafka.common.metadata.PartitionRecord;
-import org.apache.kafka.common.metadata.TopicRecord;
 import org.apache.kafka.common.record.TimestampType;
 import org.apache.kafka.common.utils.Time;
-import org.apache.kafka.image.MetadataDelta;
-import org.apache.kafka.image.MetadataImage;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -25,15 +21,12 @@ import java.util.function.Consumer;
 
 import io.aiven.inkless.TimeUtils;
 import io.aiven.inkless.control_plane.CommitBatchRequest;
+import io.aiven.inkless.control_plane.CreateTopicAndPartitionsRequest;
 import io.aiven.inkless.control_plane.FileReason;
 import io.aiven.inkless.control_plane.FileState;
-import io.aiven.inkless.control_plane.MetadataView;
 import io.aiven.inkless.test_utils.SharedPostgreSQLTest;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.STRICT_STUBS)
@@ -58,18 +51,12 @@ class DeleteTopicJobTest extends SharedPostgreSQLTest {
 
     @BeforeEach
     void createTopics() {
-        final MetadataView metadataView = mock(MetadataView.class);
-        when(metadataView.isInklessTopic(anyString())).thenReturn(true);
-
-        final MetadataDelta delta = new MetadataDelta.Builder().setImage(MetadataImage.EMPTY).build();
-        delta.replay(new TopicRecord().setName(TOPIC_0).setTopicId(TOPIC_ID_0));
-        delta.replay(new PartitionRecord().setTopicId(TOPIC_ID_0).setPartitionId(0));
-        delta.replay(new PartitionRecord().setTopicId(TOPIC_ID_0).setPartitionId(1));
-        delta.replay(new TopicRecord().setName(TOPIC_1).setTopicId(TOPIC_ID_1));
-        delta.replay(new PartitionRecord().setTopicId(TOPIC_ID_1).setPartitionId(0));
-        delta.replay(new TopicRecord().setName(TOPIC_2).setTopicId(TOPIC_ID_2));
-        delta.replay(new PartitionRecord().setTopicId(TOPIC_ID_2).setPartitionId(0));
-        new TopicsCreateJob(Time.SYSTEM, metadataView, hikariDataSource, delta.topicsDelta().changedTopics(), durationCallback)
+        final Set<CreateTopicAndPartitionsRequest> createTopicAndPartitionsRequests = Set.of(
+            new CreateTopicAndPartitionsRequest(TOPIC_ID_0, TOPIC_0, 2),
+            new CreateTopicAndPartitionsRequest(TOPIC_ID_1, TOPIC_1, 1),
+            new CreateTopicAndPartitionsRequest(TOPIC_ID_2, TOPIC_2, 1)
+        );
+        new TopicsAndPartitionsCreateJob(Time.SYSTEM, hikariDataSource, createTopicAndPartitionsRequests, durationCallback)
             .run();
     }
 

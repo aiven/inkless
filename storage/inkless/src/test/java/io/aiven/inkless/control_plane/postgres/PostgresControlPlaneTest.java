@@ -17,7 +17,6 @@ import io.aiven.inkless.control_plane.AbstractControlPlaneTest;
 import io.aiven.inkless.control_plane.ControlPlane;
 import io.aiven.inkless.test_utils.PostgreSQLContainer;
 import io.aiven.inkless.test_utils.PostgreSQLTestContainer;
-import io.aiven.inkless.test_utils.SynchronousExecutor;
 
 @Testcontainers
 class PostgresControlPlaneTest extends AbstractControlPlaneTest {
@@ -45,7 +44,7 @@ class PostgresControlPlaneTest extends AbstractControlPlaneTest {
             throw new RuntimeException(e);
         }
 
-        final var controlPlane = new PostgresControlPlane(time, metadataView, new SynchronousExecutor());
+        final var controlPlane = new PostgresControlPlane(time, metadataView);
         controlPlane.configure(Map.of(
             "connection.string", pgContainer.getJdbcUrl(dbName),
             "username", pgContainer.getUsername(),

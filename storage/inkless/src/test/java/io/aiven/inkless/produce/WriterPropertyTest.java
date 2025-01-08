@@ -5,16 +5,12 @@ import org.apache.kafka.admin.BrokerMetadata;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.compress.Compression;
-import org.apache.kafka.common.metadata.PartitionRecord;
-import org.apache.kafka.common.metadata.TopicRecord;
 import org.apache.kafka.common.record.MemoryRecords;
 import org.apache.kafka.common.record.SimpleRecord;
 import org.apache.kafka.common.record.TimestampType;
 import org.apache.kafka.common.requests.ProduceResponse;
 import org.apache.kafka.common.utils.MockTime;
 import org.apache.kafka.common.utils.Time;
-import org.apache.kafka.image.MetadataDelta;
-import org.apache.kafka.image.MetadataImage;
 
 import net.jqwik.api.Arbitraries;
 import net.jqwik.api.Arbitrary;
@@ -49,9 +45,9 @@ import java.util.concurrent.TimeoutException;
 
 import io.aiven.inkless.common.PlainObjectKey;
 import io.aiven.inkless.control_plane.ControlPlane;
+import io.aiven.inkless.control_plane.CreateTopicAndPartitionsRequest;
 import io.aiven.inkless.control_plane.InMemoryControlPlane;
 import io.aiven.inkless.control_plane.MetadataView;
-import io.aiven.inkless.control_plane.TopicMetadataChangesSubscriber;
 import io.aiven.inkless.storage_backend.common.ObjectUploader;
 import io.aiven.inkless.storage_backend.common.StorageBackendException;
 
@@ -110,11 +106,6 @@ class WriterPropertyTest {
         public Properties getTopicConfig(final String topicName) {
             return new Properties();
         }
-
-        @Override
-        public void subscribeToTopicMetadataChanges(final TopicMetadataChangesSubscriber subscriber) {
-            // We don't create/delete topics/partitions, so this is no-op.
-        }
     };
 
     @Property(tries = 1000)
@@ -135,14 +126,11 @@ class WriterPropertyTest {
               final int commitDurationAvg,
               final int maxBufferSize,
               final ControlPlane controlPlane) throws InterruptedException, ExecutionException, StorageBackendException {
-        final var delta = new MetadataDelta.Builder().setImage(MetadataImage.EMPTY).build();
-        delta.replay(new TopicRecord().setName(T0P0.topic()).setTopicId(TOPIC_ID_0));
-        delta.replay(new PartitionRecord().setTopicId(TOPIC_ID_0).setPartitionId(0));
-        delta.replay(new PartitionRecord().setTopicId(TOPIC_ID_0).setPartitionId(1));
-        delta.replay(new TopicRecord().setName(T1P0.topic()).setTopicId(TOPIC_ID_1));
-        delta.replay(new PartitionRecord().setTopicId(TOPIC_ID_1).setPartitionId(0));
-        delta.replay(new PartitionRecord().setTopicId(TOPIC_ID_1).setPartitionId(1));
-        controlPlane.onTopicMetadataChanges(delta.topicsDelta());
+        final Set<CreateTopicAndPartitionsRequest> createTopicAndPartitionsRequests = Set.of(
+            new CreateTopicAndPartitionsRequest(TOPIC_ID_0, T0P0.topic(), 2),
+            new CreateTopicAndPartitionsRequest(TOPIC_ID_1, T1P0.topic(), 2)
+        );
+        controlPlane.createTopicAndPartitions(createTopicAndPartitionsRequests);
 
         Statistics.label("requestCount").collect(requestCount);
         final MockTime time = new MockTime(0, 0, 0);
