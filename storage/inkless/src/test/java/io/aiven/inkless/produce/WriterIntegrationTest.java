@@ -4,15 +4,11 @@ package io.aiven.inkless.produce;
 import org.apache.kafka.admin.BrokerMetadata;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.Uuid;
-import org.apache.kafka.common.metadata.PartitionRecord;
-import org.apache.kafka.common.metadata.TopicRecord;
 import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.record.TimestampType;
 import org.apache.kafka.common.requests.ProduceResponse.PartitionResponse;
 import org.apache.kafka.common.utils.MockTime;
 import org.apache.kafka.common.utils.Time;
-import org.apache.kafka.image.MetadataDelta;
-import org.apache.kafka.image.MetadataImage;
 import org.apache.kafka.storage.log.metrics.BrokerTopicStats;
 
 import org.junit.jupiter.api.BeforeAll;
@@ -34,9 +30,9 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
 import io.aiven.inkless.common.PlainObjectKey;
+import io.aiven.inkless.control_plane.CreateTopicAndPartitionsRequest;
 import io.aiven.inkless.control_plane.InMemoryControlPlane;
 import io.aiven.inkless.control_plane.MetadataView;
-import io.aiven.inkless.control_plane.TopicMetadataChangesSubscriber;
 import io.aiven.inkless.storage_backend.s3.S3Storage;
 import io.aiven.inkless.test_utils.S3TestContainer;
 import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
@@ -99,11 +95,6 @@ class WriterIntegrationTest {
         public Properties getTopicConfig(final String topicName) {
             return new Properties();
         }
-
-        @Override
-        public void subscribeToTopicMetadataChanges(final TopicMetadataChangesSubscriber subscriber) {
-            // We don't create/delete topics/partitions, so this is no-op.
-        }
     };
 
     S3Storage storage;
@@ -149,13 +140,11 @@ class WriterIntegrationTest {
         final Time time = new MockTime();
         final InMemoryControlPlane controlPlane = new InMemoryControlPlane(time, METADATA_VIEW);
 
-        final var delta = new MetadataDelta.Builder().setImage(MetadataImage.EMPTY).build();
-        delta.replay(new TopicRecord().setName(T0P0.topic()).setTopicId(TOPIC_ID_0));
-        delta.replay(new PartitionRecord().setTopicId(TOPIC_ID_0).setPartitionId(0));
-        delta.replay(new PartitionRecord().setTopicId(TOPIC_ID_0).setPartitionId(1));
-        delta.replay(new TopicRecord().setName(T1P0.topic()).setTopicId(TOPIC_ID_1));
-        delta.replay(new PartitionRecord().setTopicId(TOPIC_ID_1).setPartitionId(0));
-        controlPlane.onTopicMetadataChanges(delta.topicsDelta());
+        final Set<CreateTopicAndPartitionsRequest> createTopicAndPartitionsRequests = Set.of(
+            new CreateTopicAndPartitionsRequest(TOPIC_ID_0, T0P0.topic(), 2),
+            new CreateTopicAndPartitionsRequest(TOPIC_ID_1, T1P0.topic(), 1)
+        );
+        controlPlane.createTopicAndPartitions(createTopicAndPartitionsRequests);
 
         try (
             final Writer writer = new Writer(

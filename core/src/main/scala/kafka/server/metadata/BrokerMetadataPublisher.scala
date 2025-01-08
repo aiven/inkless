@@ -75,7 +75,6 @@ class BrokerMetadataPublisher(
   scramPublisher: ScramPublisher,
   delegationTokenPublisher: DelegationTokenPublisher,
   aclPublisher: AclPublisher,
-  inklessPublisher: InklessMetadataPublisher,
   fatalFaultHandler: FaultHandler,
   metadataPublishingFaultHandler: FaultHandler,
 ) extends MetadataPublisher with Logging {
@@ -212,10 +211,6 @@ class BrokerMetadataPublisher(
 
       // Apply ACL delta.
       aclPublisher.onMetadataUpdate(delta, newImage, manifest)
-
-      // Apply Inkless delta.
-      // This can be anywhere related to other publishers, but must be after metadataCache.setImage(newImage).
-      inklessPublisher.onMetadataUpdate(delta, newImage, manifest)
 
       try {
         // Propagate the new image to the group coordinator.
