@@ -7,7 +7,6 @@ import java.util.List;
 import java.util.Set;
 
 import io.aiven.inkless.common.ByteRange;
-import io.aiven.inkless.common.ObjectKey;
 
 /**
  * Strategy which breaks files into blocks of a specified fixed size for caching and fetching.
@@ -21,20 +20,20 @@ public class FixedBlockAlignment implements KeyAlignmentStrategy {
     }
 
     @Override
-    public Set<CacheKey> align(ObjectKey key, List<ByteRange> ranges) {
-        if (key == null || ranges == null) {
+    public Set<ByteRange> align(List<ByteRange> ranges) {
+        if (ranges == null) {
             return Collections.emptySet();
         }
-        HashSet<CacheKey> keys = new HashSet<>();
+        HashSet<ByteRange> keys = new HashSet<>();
         for (ByteRange requestRange : ranges) {
             // Rely on integer division to align ranges within some offset.
             long firstOffset = blockSize * (requestRange.offset() / blockSize);
             ByteRange blockRange = new ByteRange(firstOffset, blockSize);
             if (blockRange.contains(requestRange)) {
-                keys.add(new CacheKey(key, blockRange));
+                keys.add(blockRange);
             } else {
                 // TODO INK-77: For ranges which cross multiple blocks, issue multiple requests and concatenate them later.
-                keys.add(new CacheKey(key, requestRange));
+                keys.add(requestRange);
             }
         }
         return Collections.unmodifiableSet(keys);

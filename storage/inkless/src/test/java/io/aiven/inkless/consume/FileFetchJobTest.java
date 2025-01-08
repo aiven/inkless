@@ -14,10 +14,10 @@ import org.mockito.quality.Strictness;
 import java.io.ByteArrayInputStream;
 import java.nio.ByteBuffer;
 
-import io.aiven.inkless.cache.FileExtent;
 import io.aiven.inkless.common.ByteRange;
 import io.aiven.inkless.common.ObjectKey;
 import io.aiven.inkless.common.PlainObjectKey;
+import io.aiven.inkless.generated.FileExtent;
 import io.aiven.inkless.storage_backend.common.ObjectFetcher;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -48,7 +48,7 @@ public class FileFetchJobTest {
         }
         ByteRange range = new ByteRange(0, size);
         FileFetchJob job = new FileFetchJob(time, fetcher, objectA, range, durationMs -> { });
-        FileExtent expectedFile = new FileExtent(objectA, range, ByteBuffer.wrap(array));
+        FileExtent expectedFile = FileFetchJob.createFileExtent(objectA, range, ByteBuffer.wrap(array));
 
         when(fetcher.fetch(objectA, range)).thenReturn(new ByteArrayInputStream(array));
         FileExtent actualFile = job.call();

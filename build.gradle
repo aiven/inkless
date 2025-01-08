@@ -2366,6 +2366,11 @@ project(':storage') {
 }
 
 project(':storage:inkless') {
+
+  configurations {
+    generator
+  }
+
   dependencies {
     api project(':clients')
     implementation project(':server-common')
@@ -2398,7 +2403,40 @@ project(':storage:inkless') {
 
     testRuntimeOnly libs.slf4jReload4j
     testRuntimeOnly libs.junitPlatformLauncher
+
+    generator project(':generator')
   }
+
+  task processMessages(type:JavaExec) {
+    mainClass = "org.apache.kafka.message.MessageGenerator"
+    classpath = configurations.generator
+    args = [ "-p", "io.aiven.inkless.generated",
+             "-o", "${projectDir}/build/generated/main/java/io/aiven/inkless/generated",
+             "-i", "src/main/resources/message",
+             "-m", "MessageDataGenerator", "JsonConverterGenerator"
+    ]
+    inputs.dir("src/main/resources/message")
+            .withPropertyName("messages")
+            .withPathSensitivity(PathSensitivity.RELATIVE)
+    outputs.cacheIf { true }
+    outputs.dir("${projectDir}/build/generated/main/java/io/aiven/inkless/generated")
+  }
+
+  sourceSets {
+    main {
+      java {
+        srcDirs = ["src/main/java", "${projectDir}/build/generated/main/java"]
+      }
+    }
+    test {
+      java {
+        srcDirs = ["src/test/java"]
+      }
+    }
+  }
+
+  compileJava.dependsOn 'processMessages'
+  srcJar.dependsOn 'processMessages'
 
   javadoc {
     enabled = false

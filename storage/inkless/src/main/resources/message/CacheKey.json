@@ -1,0 +1,35 @@
+// Copyright (c) 2024 Aiven, Helsinki, Finland. https://aiven.io/
+{
+  "name": "CacheKey",
+  "type": "data",
+  "validVersions": "0",
+  "flexibleVersions": "0+",
+  "fields": [
+    {
+      "name": "Object",
+      "type": "string",
+      "versions": "0",
+      "about": "Identifier for object in backing storage"
+    },
+    {
+      "name": "Range",
+      "type": "ByteRange",
+      "versions": "0",
+      "about": "A range of bytes within the specified file",
+      "fields": [
+        {
+          "name": "Offset",
+          "type": "int64",
+          "versions": "0",
+          "about": "The index of the first byte in the object"
+        },
+        {
+          "name": "Length",
+          "type": "int64",
+          "versions": "0",
+          "about": "Number of bytes"
+        }
+      ]
+    }
+  ]
+}
