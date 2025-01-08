@@ -178,6 +178,7 @@ org.apache.kafka.streams.StreamsBuilderTest:
 - shouldWrapProcessorsForStreamStreamSelfJoinWithSharedStoreOptimization
 - shouldWrapProcessorsForStreamTableJoin
 - shouldWrapProcessorsForStreamTableJoinWithGracePeriod
+- shouldWrapProcessorsForSuppress
 - shouldWrapProcessorsForTableAggregate
 - shouldWrapProcessorsForTableReduce
 - shouldWrapProcessorsForTableTableInnerJoin
@@ -4347,8 +4348,11 @@ org.apache.kafka.streams.state.internals.MaybeTest:
 - shouldUpholdHashCodeCorrectness
 org.apache.kafka.streams.state.internals.MergedSortedCacheKeyValueBytesStoreIteratorTest:
 - shouldIgnoreIfDeletedInCacheButExistsInStore
+- shouldIterateCacheOnly
 - shouldIterateOverRange
+- shouldIterateStoreOnly
 - shouldNotHaveNextIfAllCachedItemsDeleted
+- shouldNotHaveNextIfBothIteratorsInitializedEmpty
 - shouldNotHaveNextIfOnlyCacheItemsAndAllDeleted
 - shouldPeekNextKey
 - shouldPeekNextKeyReverse
