@@ -1,6 +1,7 @@
 // Copyright (c) 2024 Aiven, Helsinki, Finland. https://aiven.io/
 package io.aiven.inkless.produce;
 
+import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.record.MemoryRecords;
 import org.apache.kafka.common.record.TimestampType;
@@ -105,7 +106,7 @@ class Writer implements Closeable {
     }
 
     CompletableFuture<Map<TopicPartition, PartitionResponse>> write(
-        final Map<TopicPartition, MemoryRecords> entriesPerPartition,
+        final Map<TopicIdPartition, MemoryRecords> entriesPerPartition,
         final Map<String, TimestampType> timestampTypes
     ) {
         Objects.requireNonNull(entriesPerPartition, "entriesPerPartition cannot be null");

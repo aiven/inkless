@@ -2,7 +2,6 @@
 package io.aiven.inkless.control_plane.postgres;
 
 import org.apache.kafka.common.TopicIdPartition;
-import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.record.TimestampType;
@@ -39,9 +38,9 @@ class FindBatchesJobTest extends SharedPostgreSQLTest {
     static final String TOPIC_1 = "topic1";
     static final Uuid TOPIC_ID_0 = new Uuid(10, 12);
     static final Uuid TOPIC_ID_1 = new Uuid(555, 333);
-    static final TopicPartition T0P0 = new TopicPartition(TOPIC_0, 0);
-    static final TopicPartition T0P1 = new TopicPartition(TOPIC_0, 1);
-    static final TopicPartition T1P0 = new TopicPartition(TOPIC_1, 0);
+    static final TopicIdPartition T0P0 = new TopicIdPartition(TOPIC_ID_0, 0, TOPIC_0);
+    static final TopicIdPartition T0P1 = new TopicIdPartition(TOPIC_ID_0, 1, TOPIC_0);
+    static final TopicIdPartition T1P0 = new TopicIdPartition(TOPIC_ID_1, 0, TOPIC_1);
 
     @Mock
     Time time;
@@ -64,7 +63,7 @@ class FindBatchesJobTest extends SharedPostgreSQLTest {
         final CommitFileJob commitJob = new CommitFileJob(
             time, hikariDataSource, objectKey1, BROKER_ID, FILE_SIZE,
             List.of(
-                new CommitFileJob.CommitBatchRequestExtra(new CommitBatchRequest(T0P0, 0, 1234, 12, 1000, TimestampType.CREATE_TIME), TOPIC_ID_0)
+                new CommitFileJob.CommitBatchRequestJson(new CommitBatchRequest(T0P0, 0, 1234, 12, 1000, TimestampType.CREATE_TIME))
             ),
             duration -> {}
         );
