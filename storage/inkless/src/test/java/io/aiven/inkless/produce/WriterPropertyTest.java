@@ -5,10 +5,12 @@ import org.apache.kafka.admin.BrokerMetadata;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.compress.Compression;
+import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.record.MemoryRecords;
 import org.apache.kafka.common.record.SimpleRecord;
 import org.apache.kafka.common.record.TimestampType;
 import org.apache.kafka.common.requests.ProduceResponse;
+import org.apache.kafka.common.test.TestUtils;
 import org.apache.kafka.common.utils.MockTime;
 import org.apache.kafka.common.utils.Time;
 
@@ -17,12 +19,19 @@ import net.jqwik.api.Arbitrary;
 import net.jqwik.api.ForAll;
 import net.jqwik.api.Property;
 import net.jqwik.api.constraints.IntRange;
+import net.jqwik.api.lifecycle.AfterContainer;
+import net.jqwik.api.lifecycle.BeforeContainer;
 import net.jqwik.api.statistics.Statistics;
 
 import org.jetbrains.annotations.NotNull;
 import org.junit.jupiter.api.Tag;
 import org.mockito.invocation.Invocation;
+import org.testcontainers.junit.jupiter.Container;
 
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.SQLException;
+import java.sql.Statement;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -48,8 +57,11 @@ import io.aiven.inkless.control_plane.ControlPlane;
 import io.aiven.inkless.control_plane.CreateTopicAndPartitionsRequest;
 import io.aiven.inkless.control_plane.InMemoryControlPlane;
 import io.aiven.inkless.control_plane.MetadataView;
+import io.aiven.inkless.control_plane.postgres.PostgresControlPlane;
 import io.aiven.inkless.storage_backend.common.ObjectUploader;
 import io.aiven.inkless.storage_backend.common.StorageBackendException;
+import io.aiven.inkless.test_utils.PostgreSQLContainer;
+import io.aiven.inkless.test_utils.PostgreSQLTestContainer;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -60,8 +72,11 @@ import static org.mockito.Mockito.verify;
 
 @Tag("integration")
 class WriterPropertyTest {
-    static final String TOPIC_0 = "topic0";
-    static final String TOPIC_1 = "topic1";
+    @Container
+    private static final PostgreSQLContainer pgContainer = PostgreSQLTestContainer.container();
+
+    private static final String TOPIC_0 = "topic0";
+    private static final String TOPIC_1 = "topic1";
     private static final Uuid TOPIC_ID_0 = new Uuid(0, 1);
     private static final Uuid TOPIC_ID_1 = new Uuid(0, 2);
     private static final TopicPartition T0P0 = new TopicPartition(TOPIC_0, 0);
@@ -108,15 +123,63 @@ class WriterPropertyTest {
         }
     };
 
+    @BeforeContainer
+    static void setUp() {
+        pgContainer.start();
+    }
+
+    @AfterContainer
+    static void tearDown() {
+        pgContainer.stop();
+    }
+
     @Property(tries = 1000)
     void testInMemoryControlPlane(@ForAll @IntRange(max = 100) int requestCount,
-              @ForAll @IntRange(min = 1, max = 10) int requestIntervalMsAvg,
-              @ForAll @IntRange(min = 1, max = 100) int commitIntervalMsAvg,
-              @ForAll @IntRange(min = 10, max = 30) int uploadDurationAvg,
-              @ForAll @IntRange(min = 5, max = 10) int commitDurationAvg,
-              @ForAll @IntRange(min = 1, max = 1 * 1024) int maxBufferSize) throws InterruptedException, ExecutionException, StorageBackendException {
-        test(requestCount, requestIntervalMsAvg, commitIntervalMsAvg, uploadDurationAvg, commitDurationAvg, maxBufferSize,
-            new InMemoryControlPlane(new MockTime(0, 0, 0), METADATA_VIEW));
+                                  @ForAll @IntRange(min = 1, max = 10) int requestIntervalMsAvg,
+                                  @ForAll @IntRange(min = 1, max = 100) int commitIntervalMsAvg,
+                                  @ForAll @IntRange(min = 10, max = 30) int uploadDurationAvg,
+                                  @ForAll @IntRange(min = 5, max = 10) int commitDurationAvg,
+                                  @ForAll @IntRange(min = 1, max = 1 * 1024) int maxBufferSize) throws Exception {
+        try (final ControlPlane controlPlane = new InMemoryControlPlane(new MockTime(0, 0, 0), METADATA_VIEW)) {
+            controlPlane.configure(Map.of());
+            test(requestCount, requestIntervalMsAvg, commitIntervalMsAvg, uploadDurationAvg, commitDurationAvg, maxBufferSize, controlPlane);
+        }
+    }
+
+    // smaller than in-mem as it require more machinery to be setup in between
+    @Property(tries = 100)
+    void testPostgresControlPlane(@ForAll @IntRange(max = 100) int requestCount,
+                                  @ForAll @IntRange(min = 1, max = 10) int requestIntervalMsAvg,
+                                  @ForAll @IntRange(min = 1, max = 100) int commitIntervalMsAvg,
+                                  @ForAll @IntRange(min = 10, max = 30) int uploadDurationAvg,
+                                  @ForAll @IntRange(min = 5, max = 10) int commitDurationAvg,
+                                  @ForAll @IntRange(min = 1, max = 1 * 1024) int maxBufferSize) throws Exception {
+        String dbName = "test-" + requestCount
+            + "-" + requestIntervalMsAvg
+            + "-" + commitIntervalMsAvg
+            + "-" + uploadDurationAvg
+            + "-" + commitDurationAvg
+            + "-" + maxBufferSize
+            + "_" + TestUtils.randomString(5);
+        dbName = dbName.toLowerCase();
+
+        try (final Connection connection = DriverManager.getConnection(
+            pgContainer.getJdbcUrl(), PostgreSQLTestContainer.USERNAME, PostgreSQLTestContainer.PASSWORD);
+             final Statement statement = connection.createStatement()) {
+            statement.execute("CREATE DATABASE \"" + dbName + "\"");
+        } catch (final SQLException e) {
+            throw new RuntimeException(e);
+        }
+
+        try (final ControlPlane controlPlane = new PostgresControlPlane(new MockTime(0, 0, 0), METADATA_VIEW)) {
+            controlPlane.configure(Map.of(
+                "connection.string", pgContainer.getJdbcUrl(dbName),
+                "username", pgContainer.getUsername(),
+                "password", pgContainer.getPassword()
+            ));
+
+            test(requestCount, requestIntervalMsAvg, commitIntervalMsAvg, uploadDurationAvg, commitDurationAvg, maxBufferSize, controlPlane);
+        }
     }
 
     void test(final int requestCount,
@@ -267,6 +330,7 @@ class WriterPropertyTest {
         private List<CompletableFuture<Map<TopicPartition, ProduceResponse.PartitionResponse>>> waitingResponseFutures =
             new ArrayList<>();
         private final Map<TopicPartition, List<Long>> assignedOffsets = new HashMap<>();
+        private final Map<TopicPartition, List<Errors>> errors = new HashMap<>();
 
         private final Timer timer;
 
@@ -299,8 +363,13 @@ class WriterPropertyTest {
             for (final var f : waitingResponseFutures) {
                 if (f.isDone()) {
                     for (final var entry : f.get().entrySet()) {
+                        final ProduceResponse.PartitionResponse value = entry.getValue();
                         assignedOffsets.computeIfAbsent(entry.getKey(), ignored -> new ArrayList<>())
-                            .add(entry.getValue().baseOffset);
+                            .add(value.baseOffset);
+                        if (value.error != Errors.NONE) {
+                            errors.computeIfAbsent(entry.getKey(), ignored -> new ArrayList<>())
+                                .add(value.error);
+                        }
                     }
                 } else {
                     newWaitingResponseFutures.add(f);
@@ -336,6 +405,7 @@ class WriterPropertyTest {
                 }
             }
 
+            assertThat(errors).isEmpty();
             assertThat(assignedOffsets).isEqualTo(expectedAssignedOffsets);
             for (final List<MemoryRecords> recordList : sentRequests.values()) {
                 Statistics.label("requests-per-topic-partition").collect(recordList.size());
