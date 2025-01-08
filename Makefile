@@ -51,7 +51,7 @@ fmt:
 
 .PHONY: test
 test:
-	./gradlew :storage:inkless:test
+	./gradlew :storage:inkless:test :storage:inkless:integrationTest
 	./gradlew :core:test --tests "*Inkless*"
 
 .PHONY: pitest

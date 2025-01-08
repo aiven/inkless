@@ -7,10 +7,6 @@ import org.junit.jupiter.api.TestInfo;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
-import java.sql.Connection;
-import java.sql.DriverManager;
-import java.sql.SQLException;
-import java.sql.Statement;
 import java.util.Map;
 
 import io.aiven.inkless.control_plane.AbstractControlPlaneTest;
@@ -25,24 +21,9 @@ class PostgresControlPlaneTest extends AbstractControlPlaneTest {
 
     @Override
     protected ControlPlane createControlPlane(final TestInfo testInfo) {
-        String dbName = testInfo.getDisplayName()
-            .toLowerCase()
-            .replace(" ", "")
-            .replace(",", "-")
-            .replace("(", "")
-            .replace(")", "")
-            .replace("[", "")
-            .replace("]", "");
-        dbName += "_" + TestUtils.randomString(20);
-        dbName = dbName.toLowerCase();
+        final var dbName = PostgreSQLContainer.dbNameFromTestInfo(testInfo);
 
-        try (final Connection connection = DriverManager.getConnection(
-            pgContainer.getJdbcUrl(), PostgreSQLTestContainer.USERNAME, PostgreSQLTestContainer.PASSWORD);
-             final Statement statement = connection.createStatement()) {
-            statement.execute("CREATE DATABASE " + dbName);
-        } catch (final SQLException e) {
-            throw new RuntimeException(e);
-        }
+        pgContainer.createDatabase(dbName);
 
         final var controlPlane = new PostgresControlPlane(time, metadataView);
         controlPlane.configure(Map.of(
