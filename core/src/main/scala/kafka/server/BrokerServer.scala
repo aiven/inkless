@@ -536,7 +536,6 @@ class BrokerServer(
           "broker",
           authorizer
         ),
-        new InklessMetadataPublisher(inklessMetadataView),
         sharedServer.initialBrokerMetadataLoadFaultHandler,
         sharedServer.metadataPublishingFaultHandler
       )

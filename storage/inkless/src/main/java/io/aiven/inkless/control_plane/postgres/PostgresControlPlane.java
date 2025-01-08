@@ -3,7 +3,6 @@ package io.aiven.inkless.control_plane.postgres;
 
 import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.utils.Time;
-import org.apache.kafka.image.TopicsDelta;
 
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
@@ -14,13 +13,12 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.stream.Stream;
 
 import io.aiven.inkless.control_plane.AbstractControlPlane;
 import io.aiven.inkless.control_plane.CommitBatchRequest;
 import io.aiven.inkless.control_plane.CommitBatchResponse;
+import io.aiven.inkless.control_plane.CreateTopicAndPartitionsRequest;
 import io.aiven.inkless.control_plane.FileToDelete;
 import io.aiven.inkless.control_plane.FindBatchRequest;
 import io.aiven.inkless.control_plane.FindBatchResponse;
@@ -28,31 +26,20 @@ import io.aiven.inkless.control_plane.MetadataView;
 
 public class PostgresControlPlane extends AbstractControlPlane {
 
-    private final ExecutorService executor;
     private final PostgresControlPlaneMetrics metrics;
 
     private HikariDataSource hikariDataSource;
 
     public PostgresControlPlane(final Time time,
                                 final MetadataView metadataView) {
-        this(time, metadataView, Executors.newCachedThreadPool());
-    }
-
-    // Visible for testing
-    PostgresControlPlane(final Time time,
-                         final MetadataView metadataView,
-                         final ExecutorService executor) {
         super(time, metadataView);
-        this.executor = executor;
         this.metrics = new PostgresControlPlaneMetrics(time);
     }
 
-    public void onTopicMetadataChanges(final TopicsDelta topicsDelta) {
-        // Create.
-        executor.submit(new TopicsCreateJob(
-            time, metadataView, hikariDataSource,
-            topicsDelta.changedTopics(),
-            metrics::onTopicCreateCompleted));
+    @Override
+    public void createTopicAndPartitions(final Set<CreateTopicAndPartitionsRequest> requests) {
+        // Expected to be performed synchronously
+        new TopicsAndPartitionsCreateJob(time, hikariDataSource, requests, metrics::onTopicCreateCompleted).run();
     }
 
     @Override

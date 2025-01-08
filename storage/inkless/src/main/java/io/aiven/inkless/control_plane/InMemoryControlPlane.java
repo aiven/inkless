@@ -4,9 +4,6 @@ package io.aiven.inkless.control_plane;
 import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.utils.Time;
-import org.apache.kafka.image.TopicsDelta;
-
-import com.groupcdg.pitest.annotations.DoNotMutate;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -43,23 +40,15 @@ public class InMemoryControlPlane extends AbstractControlPlane {
     }
 
     @Override
-    @DoNotMutate
-    public synchronized void onTopicMetadataChanges(final TopicsDelta topicsDelta) {
-        // Create.
-        for (final var changedTopic : topicsDelta.changedTopics().entrySet()) {
-            final String topicName = changedTopic.getValue().name();
-
-            if (!metadataView.isInklessTopic(topicName)) {
-                continue;
-            }
-
-            for (final var entry : changedTopic.getValue().newPartitions().entrySet()) {
+    public synchronized void createTopicAndPartitions(final Set<CreateTopicAndPartitionsRequest> requests) {
+        for (final CreateTopicAndPartitionsRequest request : requests) {
+            for (int partition = 0; partition < request.numPartitions(); partition++) {
                 final TopicIdPartition topicIdPartition = new TopicIdPartition(
-                        changedTopic.getKey(), entry.getKey(), topicName);
+                    request.topicId(), partition, request.topicName());
 
                 LOGGER.info("Creating {}", topicIdPartition);
-                logs.put(topicIdPartition, new LogInfo());
-                batches.put(topicIdPartition, new TreeMap<>());
+                logs.putIfAbsent(topicIdPartition, new LogInfo());
+                batches.putIfAbsent(topicIdPartition, new TreeMap<>());
             }
         }
     }
@@ -165,6 +154,7 @@ public class InMemoryControlPlane extends AbstractControlPlane {
             .filter(tidp -> topicIds.contains(tidp.topicId()))
             .toList();
         for (final TopicIdPartition topicIdPartition : partitionsToDelete) {
+            LOGGER.info("Deleting {}", topicIdPartition);
             logs.remove(topicIdPartition);
             final TreeMap<Long, BatchInfoInternal> coordinates = batches.remove(topicIdPartition);
             if (coordinates == null) {

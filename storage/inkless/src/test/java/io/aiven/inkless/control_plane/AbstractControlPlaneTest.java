@@ -4,13 +4,9 @@ package io.aiven.inkless.control_plane;
 import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.Uuid;
-import org.apache.kafka.common.metadata.PartitionRecord;
-import org.apache.kafka.common.metadata.TopicRecord;
 import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.record.TimestampType;
 import org.apache.kafka.common.utils.Time;
-import org.apache.kafka.image.MetadataDelta;
-import org.apache.kafka.image.MetadataImage;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -30,9 +26,7 @@ import io.aiven.inkless.TimeUtils;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.Mockito.eq;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -86,12 +80,10 @@ public abstract class AbstractControlPlaneTest {
     void setupControlPlane(final TestInfo testInfo) {
         controlPlane = createControlPlane(testInfo);
 
-        verify(metadataView).subscribeToTopicMetadataChanges(eq(controlPlane));
-
-        final var delta = new MetadataDelta.Builder().setImage(MetadataImage.EMPTY).build();
-        delta.replay(new TopicRecord().setName(EXISTING_TOPIC_1).setTopicId(EXISTING_TOPIC_1_ID));
-        delta.replay(new PartitionRecord().setTopicId(EXISTING_TOPIC_1_ID).setPartitionId(EXISTING_TOPIC_1_ID_PARTITION.partition()));
-        controlPlane.onTopicMetadataChanges(delta.topicsDelta());
+        final Set<CreateTopicAndPartitionsRequest> createTopicAndPartitionsRequests = Set.of(
+            new CreateTopicAndPartitionsRequest(EXISTING_TOPIC_1_ID, EXISTING_TOPIC_1, 1)
+        );
+        controlPlane.createTopicAndPartitions(createTopicAndPartitionsRequests);
     }
 
     @Test
@@ -311,6 +303,61 @@ public abstract class AbstractControlPlaneTest {
     }
 
     @Test
+    void createTopicAndPartitions() {
+        final String newTopic1Name = "newTopic1";
+        final Uuid newTopic1Id = new Uuid(12345, 67890);
+        final String newTopic2Name = "newTopic2";
+        final Uuid newTopic2Id = new Uuid(88888, 99999);
+
+        when(metadataView.getTopicPartitions(newTopic1Name))
+            .thenReturn(Set.of(
+                new TopicPartition(newTopic1Name, 0),
+                new TopicPartition(newTopic1Name, 1)
+            ));
+        when(metadataView.getTopicPartitions(newTopic2Name))
+            .thenReturn(Set.of(
+                new TopicPartition(newTopic2Name, 0),
+                new TopicPartition(newTopic2Name, 1)
+            ));
+        when(metadataView.getTopicId(newTopic1Name))
+            .thenReturn(newTopic1Id);
+        when(metadataView.getTopicId(newTopic2Name))
+            .thenReturn(newTopic2Id);
+
+        controlPlane.createTopicAndPartitions(Set.of(
+            new CreateTopicAndPartitionsRequest(newTopic1Id, newTopic1Name, 1)
+        ));
+
+        // Produce some data to be sure it's not affected later.
+        final String objectKey = "a1";
+        controlPlane.commitFile(objectKey, BROKER_ID, FILE_SIZE,
+            List.of(
+                new CommitBatchRequest(new TopicPartition(newTopic1Name, 0), 1, (int) FILE_SIZE, 1, 1000, TimestampType.CREATE_TIME)
+            ));
+
+        final List<FindBatchRequest> findBatchRequests = List.of(new FindBatchRequest(new TopicIdPartition(newTopic1Id, 0, newTopic1Name), 0, Integer.MAX_VALUE));
+        final List<FindBatchResponse> findBatchResponsesBeforeDelete = controlPlane.findBatches(findBatchRequests, true, Integer.MAX_VALUE);
+
+        // Create new topic and partitions for the existing one.
+        controlPlane.createTopicAndPartitions(Set.of(
+            new CreateTopicAndPartitionsRequest(newTopic1Id, newTopic1Name, 2),
+            new CreateTopicAndPartitionsRequest(newTopic2Id, newTopic2Name, 2)
+        ));
+
+        final List<FindBatchResponse> findBatchResponsesAfterDelete = controlPlane.findBatches(findBatchRequests, true, Integer.MAX_VALUE);
+        assertThat(findBatchResponsesBeforeDelete).isEqualTo(findBatchResponsesAfterDelete);
+
+        // Nothing happens as this is idempotent
+        controlPlane.createTopicAndPartitions(Set.of(
+            new CreateTopicAndPartitionsRequest(newTopic1Id, newTopic1Name, 2),
+            new CreateTopicAndPartitionsRequest(newTopic2Id, newTopic2Name, 2)
+        ));
+
+        final List<FindBatchResponse> findBatchResponsesAfterDelete2 = controlPlane.findBatches(findBatchRequests, true, Integer.MAX_VALUE);
+        assertThat(findBatchResponsesAfterDelete2).isEqualTo(findBatchResponsesAfterDelete);
+    }
+
+    @Test
     void deleteTopic() {
         final String objectKey1 = "a1";
         final String objectKey2 = "a2";
@@ -327,10 +374,22 @@ public abstract class AbstractControlPlaneTest {
                 new CommitBatchRequest(new TopicPartition(EXISTING_TOPIC_2, 0), 1, file2Partition1Size, 2, 2000, TimestampType.CREATE_TIME)
             ));
 
+        final List<FindBatchRequest> findBatchRequests = List.of(new FindBatchRequest(EXISTING_TOPIC_2_ID_PARTITION, 0, Integer.MAX_VALUE));
+        final List<FindBatchResponse> findBatchResponsesBeforeDelete = controlPlane.findBatches(findBatchRequests, true, Integer.MAX_VALUE);
+
         time.sleep(1001);  // advance time
         controlPlane.deleteTopics(Set.of(EXISTING_TOPIC_1_ID, Uuid.ONE_UUID));
 
         // objectKey2 is kept alive by the second topic, which isn't deleted
+        assertThat(controlPlane.getFilesToDelete()).containsExactly(
+            new FileToDelete(objectKey1, TimeUtils.now(time))
+        );
+
+        final List<FindBatchResponse> findBatchResponsesAfterDelete = controlPlane.findBatches(findBatchRequests, true, Integer.MAX_VALUE);
+        assertThat(findBatchResponsesAfterDelete).isEqualTo(findBatchResponsesBeforeDelete);
+
+        // Nothing happens as it's idempotent.
+        controlPlane.deleteTopics(Set.of(EXISTING_TOPIC_1_ID, Uuid.ONE_UUID));
         assertThat(controlPlane.getFilesToDelete()).containsExactly(
             new FileToDelete(objectKey1, TimeUtils.now(time))
         );

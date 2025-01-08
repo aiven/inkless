@@ -17,7 +17,7 @@
 
 package kafka.server
 
-import io.aiven.inkless.control_plane.ControlPlane
+import io.aiven.inkless.control_plane.{ControlPlane, CreateTopicAndPartitionsRequest}
 
 import java.{lang, util}
 import java.nio.ByteBuffer
@@ -35,7 +35,7 @@ import org.apache.kafka.clients.admin.{AlterConfigOp, EndpointType}
 import org.apache.kafka.common.Uuid.ZERO_UUID
 import org.apache.kafka.common.acl.AclOperation.{ALTER, ALTER_CONFIGS, CLUSTER_ACTION, CREATE, CREATE_TOKENS, DELETE, DESCRIBE, DESCRIBE_CONFIGS}
 import org.apache.kafka.common.config.ConfigResource
-import org.apache.kafka.common.errors.{ApiException, ClusterAuthorizationException, InvalidRequestException, TopicDeletionDisabledException, UnsupportedVersionException}
+import org.apache.kafka.common.errors.{ApiException, ClusterAuthorizationException, InvalidRequestException, TopicDeletionDisabledException, UnknownServerException, UnsupportedVersionException}
 import org.apache.kafka.common.internals.FatalExitError
 import org.apache.kafka.common.internals.Topic
 import org.apache.kafka.common.message.AlterConfigsResponseData.{AlterConfigsResourceResponse => OldAlterConfigsResourceResponse}
@@ -61,6 +61,7 @@ import org.apache.kafka.common.security.auth.SecurityProtocol
 import org.apache.kafka.server.authorizer.Authorizer
 import org.apache.kafka.server.common.{ApiMessageAndVersion, RequestLocal}
 
+import java.time.Duration
 import scala.jdk.CollectionConverters._
 
 
@@ -349,7 +350,16 @@ class ControllerApis(
           }
         }
 
-        inklessControlPlane.deleteTopics(idToName.keySet())
+        // Deletes topics from the Inkless control plane before removing them from the Kafka quorum metadata.
+        // This ordering is crucial because the disappearance of the topics from the quorum metadata
+        // signals successful topic removal and is where retry attempts for this entire operation cease.
+        // If errors occur, the Inkless removal is retried, ensuring that the Inkless side is in sync
+        // with Kafka. The Inkless deletion is idempotent (provided topics with the same names aren't created in between).
+        val topicIdsToDeleteFromControlPlane = idToName.asScala
+          .filter { case (_, name) => inklessMetadataView.isInklessTopic(name) }
+          .map { case (topicId, _) => topicId }
+          .toSet.asJava
+        inklessControlPlane.deleteTopics(topicIdsToDeleteFromControlPlane)
 
         // Finally, the idToName map contains all the topics that we are authorized to delete.
         // Perform the deletion and create responses for each one.
@@ -449,8 +459,40 @@ class ControllerApis(
             setErrorMessage("Authorization failed."))
         }
       }
+
+      createTopicsInkless(response)
+
       response
     }
+  }
+
+  private def createTopicsInkless(response: CreateTopicsResponseData): Unit = {
+    val successfullyCreatedTopics = response.topics.asScala
+      // It's OK if we retry creating for already existing topics,
+      // this may save some trouble when Inkless creation failed for some reason and the user retries.
+      .filter(t => t.errorCode() == Errors.NONE.code() || t.errorCode() == Errors.TOPIC_ALREADY_EXISTS.code())
+
+    // We need to be sure the newly created topic exist in the metadata.
+    // As this is the same process, this should happen very quickly.
+    // We could have probably bound to the context deadline,
+    // but since Inkless operations themselves aren't time-bound now, this doesn't make much sense.
+    val timer = time.timer(Duration.ofSeconds(10))
+    while (timer.notExpired()
+      // `getTopicId` returns `ZERO_UUID` when not found
+      && successfullyCreatedTopics.exists {t => inklessMetadataView.getTopicId(t.name()) != t.topicId()}) {
+      timer.sleep(10)
+    }
+    if (timer.isExpired) {
+      // If after all this happens, we can not bother ourselves with proper fine-grained error responses
+      // and let the user retry.
+      throw new UnknownServerException("Could not find newly created topic metadata")
+    }
+
+    val createTopicRequests = successfullyCreatedTopics
+      .filter(t => inklessMetadataView.isInklessTopic(t.name()))
+      .map(t => new CreateTopicAndPartitionsRequest(t.topicId(), t.name(), t.numPartitions()))
+      .toSet.asJava
+    inklessControlPlane.createTopicAndPartitions(createTopicRequests)
   }
 
   def handleApiVersionsRequest(request: RequestChannel.Request): CompletableFuture[Unit] = {
@@ -862,9 +904,46 @@ class ControllerApis(
           setErrorCode(TOPIC_AUTHORIZATION_FAILED.code))
       }
     }
-    controller.createPartitions(context, topics, request.validateOnly).thenApply { results =>
+    controller.createPartitions(context, topics, request.validateOnly).thenCompose { results =>
       results.forEach(response => responses.add(response))
-      responses
+
+      createInklessPartitions(request.validateOnly, context, topics, results)
+        .thenApply(_ => responses)
+    }
+  }
+
+  private def createInklessPartitions(validateOnly: Boolean,
+                                      context: ControllerRequestContext,
+                                      topics: java.util.List[CreatePartitionsTopic],
+                                      results: java.util.List[CreatePartitionsTopicResult]): CompletableFuture[Unit] = {
+    if (validateOnly) {
+      return CompletableFuture.completedFuture(())
+    }
+
+    val successfulCreations = (topics.asScala zip results.asScala)
+      // It's OK if we retry creating for already existing topics,
+      // this may save some trouble when Inkless creation failed for some reason and the user retries.
+      .filter { case (_, res) => res.errorCode() == Errors.NONE.code() || res.errorCode() == Errors.TOPIC_ALREADY_EXISTS.code() }
+      // In contrast to the topic creation, we only create new partitions to existing topics.
+      // Hence, the topics themselves must be in the metadata already, no need to wait.
+      .filter { case (req, _) => inklessMetadataView.isInklessTopic(req.name()) }
+      .map { case (req, _) => req }
+      .toSet
+    val topicNames = successfulCreations.map(_.name()).toList.asJava
+    controller.findTopicIds(context, topicNames).thenApply { topicIds =>
+      val createPartitionRequests = successfulCreations.flatMap { req =>
+        val topicName = req.name()
+        val topicIdOrError = topicIds.get(topicName)
+        if (topicIdOrError.isError) {
+          // The chances for this are slim: only when someone concurrently deleted the topic
+          // right after the partitions were created in the quorum metadata.
+          logger.error("Error finding topic ID for topic {}: partitions will not be created", topicName)
+          None
+        } else {
+          Some(new CreateTopicAndPartitionsRequest(topicIdOrError.result(), req.name(), req.count()))
+        }
+      }
+      inklessControlPlane.createTopicAndPartitions(createPartitionRequests.asJava)
     }
   }
 

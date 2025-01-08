@@ -1,9 +1,7 @@
 // Copyright (c) 2024 Aiven, Helsinki, Finland. https://aiven.io/
 package io.aiven.inkless.control_plane.postgres;
 
-import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.utils.Time;
-import org.apache.kafka.image.TopicDelta;
 
 import com.zaxxer.hikari.HikariDataSource;
 
@@ -14,15 +12,15 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import java.util.Arrays;
-import java.util.Map;
+import java.util.Set;
 import java.util.function.Consumer;
 
 import io.aiven.inkless.TimeUtils;
 import io.aiven.inkless.common.UuidUtil;
-import io.aiven.inkless.control_plane.MetadataView;
+import io.aiven.inkless.control_plane.CreateTopicAndPartitionsRequest;
 
-public class TopicsCreateJob implements Runnable {
-    private static final Logger LOGGER = LoggerFactory.getLogger(TopicsCreateJob.class);
+public class TopicsAndPartitionsCreateJob implements Runnable {
+    private static final Logger LOGGER = LoggerFactory.getLogger(TopicsAndPartitionsCreateJob.class);
 
     private static final String INSERT_LOG_ROW_QUERY = """
         INSERT INTO logs (topic_id, partition, topic_name, log_start_offset, high_watermark)
@@ -31,20 +29,17 @@ public class TopicsCreateJob implements Runnable {
         """;
 
     private final Time time;
-    private final MetadataView metadataView;
     private final HikariDataSource hikariDataSource;
-    private final Map<Uuid, TopicDelta> changedTopics;
+    private final Set<CreateTopicAndPartitionsRequest> requests;
     private final Consumer<Long> durationCallback;
 
-    TopicsCreateJob(final Time time,
-                    final MetadataView metadataView,
-                    final HikariDataSource hikariDataSource,
-                    final Map<Uuid, TopicDelta> changedTopics,
-                    final Consumer<Long> durationCallback) {
+    TopicsAndPartitionsCreateJob(final Time time,
+                                 final HikariDataSource hikariDataSource,
+                                 final Set<CreateTopicAndPartitionsRequest> requests,
+                                 final Consumer<Long> durationCallback) {
         this.time = time;
-        this.metadataView = metadataView;
         this.hikariDataSource = hikariDataSource;
-        this.changedTopics = changedTopics;
+        this.requests = requests;
         this.durationCallback = durationCallback;
     }
 
@@ -96,18 +91,11 @@ public class TopicsCreateJob implements Runnable {
         // So it means we will see topic configs before any partition.
 
         try (final PreparedStatement preparedStatement = connection.prepareStatement(INSERT_LOG_ROW_QUERY)) {
-            for (final var topicEntry : changedTopics.entrySet()) {
-                final String topicName = topicEntry.getValue().name();
-
-                // Skip non-Inkless topics.
-                if (!metadataView.isInklessTopic(topicName)) {
-                    continue;
-                }
-
-                for (final var partitionEntry : topicEntry.getValue().newPartitions().entrySet()) {
-                    preparedStatement.setObject(1, UuidUtil.toJava(topicEntry.getValue().id()));
-                    preparedStatement.setInt(2, partitionEntry.getKey());
-                    preparedStatement.setString(3, topicName);
+            for (final var request : requests) {
+                for (int partition = 0; partition < request.numPartitions(); partition++) {
+                    preparedStatement.setObject(1, UuidUtil.toJava(request.topicId()));
+                    preparedStatement.setInt(2, partition);
+                    preparedStatement.setString(3, request.topicName());
                     // log_start_offset
                     preparedStatement.setLong(4, 0);
                     // high_watermark
