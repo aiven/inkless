@@ -19,7 +19,6 @@ public abstract class AbstractControlPlane implements ControlPlane {
                                 final MetadataView metadataView) {
         this.time = time;
         this.metadataView = metadataView;
-        metadataView.subscribeToTopicMetadataChanges(this);
     }
 
     @Override
