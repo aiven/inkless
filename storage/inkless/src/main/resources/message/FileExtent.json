@@ -1,0 +1,41 @@
+// Copyright (c) 2024 Aiven, Helsinki, Finland. https://aiven.io/
+{
+  "name": "FileExtent",
+  "type": "data",
+  "validVersions": "0",
+  "flexibleVersions": "0+",
+  "fields": [
+    {
+      "name": "Object",
+      "type": "string",
+      "versions": "0",
+      "about": "Object identifier"
+    },
+    {
+      "name": "Range",
+      "type": "ByteRange",
+      "versions": "0",
+      "about": "Range of bytes stored in the specified buffer",
+      "fields": [
+        {
+          "name": "Offset",
+          "type": "int64",
+          "versions": "0",
+          "about": "The index of the first byte in the object"
+        },
+        {
+          "name": "Length",
+          "type": "int64",
+          "versions": "0",
+          "about": "Number of bytes"
+        }
+      ]
+    },
+    {
+      "name": "Data",
+      "type": "bytes",
+      "versions": "0+",
+      "about": "Start offset  of the segment."
+    }
+  ]
+}
