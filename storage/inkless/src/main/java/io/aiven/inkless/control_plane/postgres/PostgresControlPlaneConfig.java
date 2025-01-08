@@ -7,7 +7,7 @@ import org.apache.kafka.common.config.types.Password;
 
 import java.util.Map;
 
-class PostgresControlPlaneConfig extends AbstractConfig {
+public class PostgresControlPlaneConfig extends AbstractConfig {
     public static final String CONNECTION_STRING_CONFIG = "connection.string";
     private static final String CONNECTION_STRING_DOC = "PostgreSQL connection string";
 
