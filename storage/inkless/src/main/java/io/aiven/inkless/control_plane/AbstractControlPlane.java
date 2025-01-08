@@ -50,11 +50,11 @@ public abstract class AbstractControlPlane implements ControlPlane {
     }
 
     private boolean partitionExistsInMetadataForCommitBatchRequest(final CommitBatchRequest request) {
-        final String topicName = request.topicPartition().topic();
+        final String topicName = request.topicIdPartition().topic();
         final Uuid topicId = metadataView.getTopicId(topicName);
         final Set<TopicPartition> partitions = metadataView.getTopicPartitions(topicName);
         return topicId != Uuid.ZERO_UUID
-            && partitions.contains(request.topicPartition());
+            && partitions.contains(request.topicIdPartition().topicPartition());
     }
 
     protected abstract Iterator<CommitBatchResponse> commitFileForExistingPartitions(

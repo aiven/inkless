@@ -42,6 +42,7 @@ public abstract class AbstractControlPlaneTest {
     static final String EXISTING_TOPIC_2 = "topic-existing-2";
     static final Uuid EXISTING_TOPIC_2_ID = new Uuid(20, 20);
     static final TopicIdPartition EXISTING_TOPIC_2_ID_PARTITION = new TopicIdPartition(EXISTING_TOPIC_2_ID, 0, EXISTING_TOPIC_2);
+    static final Uuid NONEXISTENT_TOPIC_ID = Uuid.ONE_UUID;
     static final String NONEXISTENT_TOPIC = "topic-nonexistent";
 
     @Mock
@@ -103,9 +104,9 @@ public abstract class AbstractControlPlaneTest {
             objectKey1, BROKER_ID,
             FILE_SIZE,
             List.of(
-                new CommitBatchRequest(new TopicPartition(EXISTING_TOPIC_1, 0), 1, 10, 10, 1000, TimestampType.CREATE_TIME),
-                new CommitBatchRequest(new TopicPartition(EXISTING_TOPIC_1, 1), 2, 10, 10, 1000, TimestampType.CREATE_TIME),
-                new CommitBatchRequest(new TopicPartition(NONEXISTENT_TOPIC, 0), 3, 10, 10, 1000, TimestampType.CREATE_TIME)
+                new CommitBatchRequest(new TopicIdPartition(EXISTING_TOPIC_1_ID, 0, EXISTING_TOPIC_1), 1, 10, 10, 1000, TimestampType.CREATE_TIME),
+                new CommitBatchRequest(new TopicIdPartition(EXISTING_TOPIC_1_ID, 1, EXISTING_TOPIC_1), 2, 10, 10, 1000, TimestampType.CREATE_TIME),
+                new CommitBatchRequest(new TopicIdPartition(NONEXISTENT_TOPIC_ID, 0, NONEXISTENT_TOPIC), 3, 10, 10, 1000, TimestampType.CREATE_TIME)
             )
         );
         assertThat(commitResponse1).containsExactly(
@@ -118,9 +119,9 @@ public abstract class AbstractControlPlaneTest {
             objectKey2, BROKER_ID,
             FILE_SIZE,
             List.of(
-                new CommitBatchRequest(new TopicPartition(EXISTING_TOPIC_1, 0), 100, 10, 10, 1000, TimestampType.CREATE_TIME),
-                new CommitBatchRequest(new TopicPartition(EXISTING_TOPIC_1, 1), 200, 10, 10, 2000, TimestampType.CREATE_TIME),
-                new CommitBatchRequest(new TopicPartition(NONEXISTENT_TOPIC, 0), 300, 10, 10, 3000, TimestampType.CREATE_TIME)
+                new CommitBatchRequest(new TopicIdPartition(EXISTING_TOPIC_1_ID, 0, EXISTING_TOPIC_1), 100, 10, 10, 1000, TimestampType.CREATE_TIME),
+                new CommitBatchRequest(new TopicIdPartition(EXISTING_TOPIC_1_ID, 1, EXISTING_TOPIC_1), 200, 10, 10, 2000, TimestampType.CREATE_TIME),
+                new CommitBatchRequest(new TopicIdPartition(NONEXISTENT_TOPIC_ID, 0, NONEXISTENT_TOPIC), 300, 10, 10, 3000, TimestampType.CREATE_TIME)
             )
         );
         assertThat(commitResponse2).containsExactly(
@@ -152,9 +153,9 @@ public abstract class AbstractControlPlaneTest {
         final int numberOfRecordsInBatch1 = 3;
         final int numberOfRecordsInBatch2 = 2;
         controlPlane.commitFile(objectKey1, BROKER_ID, FILE_SIZE,
-            List.of(new CommitBatchRequest(new TopicPartition(EXISTING_TOPIC_1, 0), 1, 10, numberOfRecordsInBatch1, 1000, TimestampType.CREATE_TIME)));
+            List.of(new CommitBatchRequest(new TopicIdPartition(EXISTING_TOPIC_1_ID, 0, EXISTING_TOPIC_1), 1, 10, numberOfRecordsInBatch1, 1000, TimestampType.CREATE_TIME)));
         controlPlane.commitFile(objectKey2, BROKER_ID, FILE_SIZE,
-            List.of(new CommitBatchRequest(new TopicPartition(EXISTING_TOPIC_1, 0), 100, 10, numberOfRecordsInBatch2, 2000, TimestampType.CREATE_TIME)));
+            List.of(new CommitBatchRequest(new TopicIdPartition(EXISTING_TOPIC_1_ID, 0, EXISTING_TOPIC_1), 100, 10, numberOfRecordsInBatch2, 2000, TimestampType.CREATE_TIME)));
 
         final long expectedLogStartOffset = 0;
         final long expectedHighWatermark = numberOfRecordsInBatch1 + numberOfRecordsInBatch2;
@@ -188,7 +189,7 @@ public abstract class AbstractControlPlaneTest {
         controlPlane.commitFile(
             objectKey, BROKER_ID, FILE_SIZE,
             List.of(
-                new CommitBatchRequest(new TopicPartition(EXISTING_TOPIC_1, 0), 11, 10, 10, 1000, TimestampType.CREATE_TIME)
+                new CommitBatchRequest(new TopicIdPartition(EXISTING_TOPIC_1_ID, 0, EXISTING_TOPIC_1), 11, 10, 10, 1000, TimestampType.CREATE_TIME)
             )
         );
 
@@ -224,7 +225,7 @@ public abstract class AbstractControlPlaneTest {
         controlPlane.commitFile(
             objectKey, BROKER_ID, FILE_SIZE,
             List.of(
-                new CommitBatchRequest(new TopicPartition(EXISTING_TOPIC_1, 0), 11, 10, 10, 1000, TimestampType.CREATE_TIME)
+                new CommitBatchRequest(new TopicIdPartition(EXISTING_TOPIC_1_ID, 0, EXISTING_TOPIC_1), 11, 10, 10, 1000, TimestampType.CREATE_TIME)
             )
         );
 
@@ -244,7 +245,7 @@ public abstract class AbstractControlPlaneTest {
         controlPlane.commitFile(
             objectKey, BROKER_ID, FILE_SIZE,
             List.of(
-                new CommitBatchRequest(new TopicPartition(EXISTING_TOPIC_1, 0), 11, 10, 10, 1000, TimestampType.CREATE_TIME)
+                new CommitBatchRequest(new TopicIdPartition(EXISTING_TOPIC_1_ID, 0, EXISTING_TOPIC_1), 11, 10, 10, 1000, TimestampType.CREATE_TIME)
             )
         );
 
@@ -264,7 +265,7 @@ public abstract class AbstractControlPlaneTest {
         controlPlane.commitFile(
             objectKey, BROKER_ID, FILE_SIZE,
             List.of(
-                new CommitBatchRequest(new TopicPartition(EXISTING_TOPIC_1, 0), 11, 10, 10, 1000, TimestampType.CREATE_TIME)
+                new CommitBatchRequest(new TopicIdPartition(EXISTING_TOPIC_1_ID, 0, EXISTING_TOPIC_1), 11, 10, 10, 1000, TimestampType.CREATE_TIME)
             )
         );
 
@@ -294,8 +295,8 @@ public abstract class AbstractControlPlaneTest {
 
         assertThatThrownBy(() -> controlPlane.commitFile(objectKey, BROKER_ID, FILE_SIZE,
             List.of(
-                new CommitBatchRequest(new TopicPartition(EXISTING_TOPIC_1, 0), 1, 10, 10, 1000, TimestampType.CREATE_TIME),
-                new CommitBatchRequest(new TopicPartition(EXISTING_TOPIC_1, 1), 2, 0, 10, 1000, TimestampType.CREATE_TIME)
+                new CommitBatchRequest(new TopicIdPartition(EXISTING_TOPIC_1_ID, 0, EXISTING_TOPIC_1), 1, 10, 10, 1000, TimestampType.CREATE_TIME),
+                new CommitBatchRequest(new TopicIdPartition(EXISTING_TOPIC_1_ID, 1, EXISTING_TOPIC_1), 2, 0, 10, 1000, TimestampType.CREATE_TIME)
             )
         ))
             .isInstanceOf(IllegalArgumentException.class)
@@ -332,7 +333,7 @@ public abstract class AbstractControlPlaneTest {
         final String objectKey = "a1";
         controlPlane.commitFile(objectKey, BROKER_ID, FILE_SIZE,
             List.of(
-                new CommitBatchRequest(new TopicPartition(newTopic1Name, 0), 1, (int) FILE_SIZE, 1, 1000, TimestampType.CREATE_TIME)
+                new CommitBatchRequest(new TopicIdPartition(newTopic1Id, 0, newTopic1Name), 1, (int) FILE_SIZE, 1, 1000, TimestampType.CREATE_TIME)
             ));
 
         final List<FindBatchRequest> findBatchRequests = List.of(new FindBatchRequest(new TopicIdPartition(newTopic1Id, 0, newTopic1Name), 0, Integer.MAX_VALUE));
@@ -364,14 +365,14 @@ public abstract class AbstractControlPlaneTest {
 
         controlPlane.commitFile(objectKey1, BROKER_ID, FILE_SIZE,
             List.of(
-                new CommitBatchRequest(new TopicPartition(EXISTING_TOPIC_1, 0), 1, (int) FILE_SIZE, 1, 1000, TimestampType.CREATE_TIME)
+                new CommitBatchRequest(new TopicIdPartition(EXISTING_TOPIC_1_ID, 0, EXISTING_TOPIC_1), 1, (int) FILE_SIZE, 1, 1000, TimestampType.CREATE_TIME)
             ));
         final int file2Partition0Size = (int) FILE_SIZE / 2;
         final int file2Partition1Size = (int) FILE_SIZE - file2Partition0Size;
         controlPlane.commitFile(objectKey2, BROKER_ID, FILE_SIZE,
             List.of(
-                new CommitBatchRequest(new TopicPartition(EXISTING_TOPIC_1, 0), 1, file2Partition0Size, 1, 1000, TimestampType.CREATE_TIME),
-                new CommitBatchRequest(new TopicPartition(EXISTING_TOPIC_2, 0), 1, file2Partition1Size, 2, 2000, TimestampType.CREATE_TIME)
+                new CommitBatchRequest(new TopicIdPartition(EXISTING_TOPIC_1_ID, 0, EXISTING_TOPIC_1), 1, file2Partition0Size, 1, 1000, TimestampType.CREATE_TIME),
+                new CommitBatchRequest(new TopicIdPartition(EXISTING_TOPIC_2_ID, 0, EXISTING_TOPIC_1), 1, file2Partition1Size, 2, 2000, TimestampType.CREATE_TIME)
             ));
 
         final List<FindBatchRequest> findBatchRequests = List.of(new FindBatchRequest(EXISTING_TOPIC_2_ID_PARTITION, 0, Integer.MAX_VALUE));

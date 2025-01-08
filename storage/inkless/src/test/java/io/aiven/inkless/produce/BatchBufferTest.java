@@ -1,7 +1,8 @@
 // Copyright (c) 2024 Aiven, Helsinki, Finland. https://aiven.io/
 package io.aiven.inkless.produce;
 
-import org.apache.kafka.common.TopicPartition;
+import org.apache.kafka.common.TopicIdPartition;
+import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.compress.Compression;
 import org.apache.kafka.common.record.MemoryRecords;
 import org.apache.kafka.common.record.MutableRecordBatch;
@@ -23,9 +24,13 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class BatchBufferTest {
-    private static final TopicPartition T0P0 = new TopicPartition("topic0", 0);
-    private static final TopicPartition T0P1 = new TopicPartition("topic0", 1);
-    private static final TopicPartition T1P0 = new TopicPartition("topic1", 0);
+    static final Uuid TOPIC_ID_0 = new Uuid(1000, 1000);
+    static final Uuid TOPIC_ID_1 = new Uuid(2000, 2000);
+    static final String TOPIC_0 = "topic0";
+    static final String TOPIC_1 = "topic1";
+    private static final TopicIdPartition T0P0 = new TopicIdPartition(TOPIC_ID_0, 0, TOPIC_0);
+    private static final TopicIdPartition T0P1 = new TopicIdPartition(TOPIC_ID_0, 1, TOPIC_0);
+    private static final TopicIdPartition T1P0 = new TopicIdPartition(TOPIC_ID_1, 0, TOPIC_1);
 
     @Test
     void totalSize() {

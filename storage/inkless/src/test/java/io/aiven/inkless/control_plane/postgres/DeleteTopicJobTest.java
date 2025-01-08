@@ -1,7 +1,7 @@
 // Copyright (c) 2024 Aiven, Helsinki, Finland. https://aiven.io/
 package io.aiven.inkless.control_plane.postgres;
 
-import org.apache.kafka.common.TopicPartition;
+import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.record.TimestampType;
 import org.apache.kafka.common.utils.Time;
@@ -39,10 +39,10 @@ class DeleteTopicJobTest extends SharedPostgreSQLTest {
     static final Uuid TOPIC_ID_0 = new Uuid(10, 12);
     static final Uuid TOPIC_ID_1 = new Uuid(555, 333);
     static final Uuid TOPIC_ID_2 = new Uuid(5555, 3333);
-    static final TopicPartition T0P0 = new TopicPartition(TOPIC_0, 0);
-    static final TopicPartition T0P1 = new TopicPartition(TOPIC_0, 1);
-    static final TopicPartition T1P0 = new TopicPartition(TOPIC_1, 0);
-    static final TopicPartition T2P0 = new TopicPartition(TOPIC_2, 0);
+    static final TopicIdPartition T0P0 = new TopicIdPartition(TOPIC_ID_0, 0, TOPIC_0);
+    static final TopicIdPartition T0P1 = new TopicIdPartition(TOPIC_ID_0, 1, TOPIC_0);
+    static final TopicIdPartition T1P0 = new TopicIdPartition(TOPIC_ID_1, 0, TOPIC_1);
+    static final TopicIdPartition T2P0 = new TopicIdPartition(TOPIC_ID_2, 0, TOPIC_2);
 
     @Mock
     Time time;
@@ -81,8 +81,8 @@ class DeleteTopicJobTest extends SharedPostgreSQLTest {
         new CommitFileJob(
             time, hikariDataSource, objectKey1, BROKER_ID, file1Size,
             List.of(
-                new CommitFileJob.CommitBatchRequestExtra(new CommitBatchRequest(T0P0, 0, file1Batch1Size, 12, 1000, TimestampType.CREATE_TIME), TOPIC_ID_0),
-                new CommitFileJob.CommitBatchRequestExtra(new CommitBatchRequest(T0P1, 0, file1Batch2Size, 12, 1000, TimestampType.CREATE_TIME), TOPIC_ID_0)
+                new CommitFileJob.CommitBatchRequestJson(new CommitBatchRequest(T0P0, 0, file1Batch1Size, 12, 1000, TimestampType.CREATE_TIME)),
+                new CommitFileJob.CommitBatchRequestJson(new CommitBatchRequest(T0P1, 0, file1Batch2Size, 12, 1000, TimestampType.CREATE_TIME))
             ), durationCallback
         ).call();
 
@@ -93,8 +93,8 @@ class DeleteTopicJobTest extends SharedPostgreSQLTest {
         new CommitFileJob(
             time, hikariDataSource, objectKey2, BROKER_ID, file2Size,
             List.of(
-                new CommitFileJob.CommitBatchRequestExtra(new CommitBatchRequest(T0P0, 0, file2Batch1Size, 12, 1000, TimestampType.CREATE_TIME), TOPIC_ID_0),
-                new CommitFileJob.CommitBatchRequestExtra(new CommitBatchRequest(T2P0, 0, file2Batch2Size, 12, 1000, TimestampType.CREATE_TIME), TOPIC_ID_2)
+                new CommitFileJob.CommitBatchRequestJson(new CommitBatchRequest(T0P0, 0, file2Batch1Size, 12, 1000, TimestampType.CREATE_TIME)),
+                new CommitFileJob.CommitBatchRequestJson(new CommitBatchRequest(T2P0, 0, file2Batch2Size, 12, 1000, TimestampType.CREATE_TIME))
             ), durationCallback
         ).call();
 
@@ -106,9 +106,9 @@ class DeleteTopicJobTest extends SharedPostgreSQLTest {
         new CommitFileJob(
             time, hikariDataSource, objectKey3, BROKER_ID, file3Size,
             List.of(
-                new CommitFileJob.CommitBatchRequestExtra(new CommitBatchRequest(T0P0, 0, file1Batch1Size, 12, 1000, TimestampType.CREATE_TIME), TOPIC_ID_0),
-                new CommitFileJob.CommitBatchRequestExtra(new CommitBatchRequest(T0P1, 0, file1Batch2Size, 12, 1000, TimestampType.CREATE_TIME), TOPIC_ID_0),
-                new CommitFileJob.CommitBatchRequestExtra(new CommitBatchRequest(T2P0, 0, file1Batch2Size, 12, 1000, TimestampType.CREATE_TIME), TOPIC_ID_2)
+                new CommitFileJob.CommitBatchRequestJson(new CommitBatchRequest(T0P0, 0, file1Batch1Size, 12, 1000, TimestampType.CREATE_TIME)),
+                new CommitFileJob.CommitBatchRequestJson(new CommitBatchRequest(T0P1, 0, file1Batch2Size, 12, 1000, TimestampType.CREATE_TIME)),
+                new CommitFileJob.CommitBatchRequestJson(new CommitBatchRequest(T2P0, 0, file1Batch2Size, 12, 1000, TimestampType.CREATE_TIME))
             ), durationCallback
         ).call();
 

@@ -71,10 +71,7 @@ public class InMemoryControlPlane extends AbstractControlPlane {
     private CommitBatchResponse commitFileForExistingPartition(final long now,
                                                                final FileInfo fileInfo,
                                                                final CommitBatchRequest request) {
-        final String topicName = request.topicPartition().topic();
-        final Uuid topicId = metadataView.getTopicId(topicName);
-
-        final TopicIdPartition topicIdPartition = new TopicIdPartition(topicId, request.topicPartition());
+        final TopicIdPartition topicIdPartition = request.topicIdPartition();
         final LogInfo logInfo = logs.get(topicIdPartition);
         final TreeMap<Long, BatchInfoInternal> coordinates = this.batches.get(topicIdPartition);
         // This can't really happen as non-existing partitions should be filtered out earlier.

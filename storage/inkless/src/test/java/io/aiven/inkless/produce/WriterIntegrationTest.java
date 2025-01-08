@@ -2,6 +2,7 @@
 package io.aiven.inkless.produce;
 
 import org.apache.kafka.admin.BrokerMetadata;
+import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.protocol.Errors;
@@ -53,9 +54,9 @@ class WriterIntegrationTest {
     static final String TOPIC_1 = "topic1";
     static final Uuid TOPIC_ID_0 = new Uuid(0, 1);
     static final Uuid TOPIC_ID_1 = new Uuid(0, 2);
-    static final TopicPartition T0P0 = new TopicPartition(TOPIC_0, 0);
-    static final TopicPartition T0P1 = new TopicPartition(TOPIC_0, 1);
-    static final TopicPartition T1P0 = new TopicPartition(TOPIC_1, 0);
+    static final TopicIdPartition T0P0 = new TopicIdPartition(TOPIC_ID_0, 0, TOPIC_0);
+    static final TopicIdPartition T0P1 = new TopicIdPartition(TOPIC_ID_0, 1, TOPIC_0);
+    static final TopicIdPartition T1P0 = new TopicIdPartition(TOPIC_ID_1, 0, TOPIC_1);
 
     static final Map<String, TimestampType> TIMESTAMP_TYPES = Map.of(
         TOPIC_0, TimestampType.CREATE_TIME,
@@ -72,7 +73,7 @@ class WriterIntegrationTest {
 
         @Override
         public Set<TopicPartition> getTopicPartitions(final String topicName) {
-            return Set.of(T0P0, T0P1, T1P0);
+            return Set.of(T0P0.topicPartition(), T0P1.topicPartition(), T1P0.topicPartition());
         }
 
         @Override
@@ -158,14 +159,14 @@ class WriterIntegrationTest {
             time.sleep(100);
 
             final var writeFuture1 = writer.write(Map.of(
-                T0P0, recordCreator.create(T0P0, 101),
-                T0P1, recordCreator.create(T0P1, 102),
-                T1P0, recordCreator.create(T1P0, 103)
+                T0P0, recordCreator.create(T0P0.topicPartition(), 101),
+                T0P1, recordCreator.create(T0P1.topicPartition(), 102),
+                T1P0, recordCreator.create(T1P0.topicPartition(), 103)
             ), TIMESTAMP_TYPES);
             final var writeFuture2 = writer.write(Map.of(
-                T0P0, recordCreator.create(T0P0, 11),
-                T0P1, recordCreator.create(T0P1, 12),
-                T1P0, recordCreator.create(T1P0, 13)
+                T0P0, recordCreator.create(T0P0.topicPartition(), 11),
+                T0P1, recordCreator.create(T0P1.topicPartition(), 12),
+                T1P0, recordCreator.create(T1P0.topicPartition(), 13)
             ), TIMESTAMP_TYPES);
             final var ts1 = time.milliseconds();
             final var result1 = writeFuture1.get(10, TimeUnit.SECONDS);
@@ -174,25 +175,25 @@ class WriterIntegrationTest {
             time.sleep(50);
 
             final var writeFuture3 = writer.write(Map.of(
-                T1P0, recordCreator.create(T1P0, 1)
+                T1P0, recordCreator.create(T1P0.topicPartition(), 1)
             ), TIMESTAMP_TYPES);
             final var ts2 = time.milliseconds();
             final var result3 = writeFuture3.get(10, TimeUnit.SECONDS);
 
             assertThat(result1).isEqualTo(Map.of(
-                T0P0, new PartitionResponse(Errors.NONE, 0, ts1, 0),
-                T0P1, new PartitionResponse(Errors.NONE, 0, ts1, 0),
-                T1P0, new PartitionResponse(Errors.NONE, 0, ts1, 0)
+                T0P0.topicPartition(), new PartitionResponse(Errors.NONE, 0, ts1, 0),
+                T0P1.topicPartition(), new PartitionResponse(Errors.NONE, 0, ts1, 0),
+                T1P0.topicPartition(), new PartitionResponse(Errors.NONE, 0, ts1, 0)
             ));
 
             assertThat(result2).isEqualTo(Map.of(
-                T0P0, new PartitionResponse(Errors.NONE, 101, ts1, 0),
-                T0P1, new PartitionResponse(Errors.NONE, 102, ts1, 0),
-                T1P0, new PartitionResponse(Errors.NONE, 103, ts1, 0)
+                T0P0.topicPartition(), new PartitionResponse(Errors.NONE, 101, ts1, 0),
+                T0P1.topicPartition(), new PartitionResponse(Errors.NONE, 102, ts1, 0),
+                T1P0.topicPartition(), new PartitionResponse(Errors.NONE, 103, ts1, 0)
             ));
 
             assertThat(result3).isEqualTo(Map.of(
-                T1P0, new PartitionResponse(Errors.NONE, 103 + 13, ts2, 0)
+                T1P0.topicPartition(), new PartitionResponse(Errors.NONE, 103 + 13, ts2, 0)
             ));
         }
     }

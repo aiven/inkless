@@ -1,7 +1,8 @@
 // Copyright (c) 2024 Aiven, Helsinki, Finland. https://aiven.io/
 package io.aiven.inkless.produce;
 
-import org.apache.kafka.common.TopicPartition;
+import org.apache.kafka.common.TopicIdPartition;
+import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.record.MemoryRecords;
 import org.apache.kafka.common.record.TimestampType;
 import org.apache.kafka.common.utils.Time;
@@ -40,10 +41,12 @@ import static org.mockito.Mockito.when;
 class WriterMockedTest {
     static final String TOPIC_0 = "topic0";
     static final String TOPIC_1 = "topic1";
-    static final TopicPartition T0P0 = new TopicPartition(TOPIC_0, 0);
-    static final TopicPartition T0P1 = new TopicPartition(TOPIC_0, 1);
-    static final TopicPartition T1P0 = new TopicPartition(TOPIC_1, 0);
-    static final TopicPartition T1P1 = new TopicPartition(TOPIC_1, 1);
+    static final Uuid TOPIC_ID_0 = new Uuid(0, 1);
+    static final Uuid TOPIC_ID_1 = new Uuid(0, 2);
+    static final TopicIdPartition T0P0 = new TopicIdPartition(TOPIC_ID_0, 0, TOPIC_0);
+    static final TopicIdPartition T0P1 = new TopicIdPartition(TOPIC_ID_0, 1, TOPIC_0);
+    static final TopicIdPartition T1P0 = new TopicIdPartition(TOPIC_ID_1, 0, TOPIC_1);
+    static final TopicIdPartition T1P1 = new TopicIdPartition(TOPIC_ID_1, 1, TOPIC_1);
 
     static final Map<String, TimestampType> TIMESTAMP_TYPES = Map.of(
         TOPIC_0, TimestampType.CREATE_TIME,
@@ -88,8 +91,8 @@ class WriterMockedTest {
         final Writer writer = new Writer(
             time, Duration.ofMillis(1), 8 * 1024, commitTickScheduler, fileCommitter, writerMetrics, brokerTopicMetricMarks);
 
-        final Map<TopicPartition, MemoryRecords> writeRequest = Map.of(
-            T0P0, recordCreator.create(T0P0, 100)
+        final Map<TopicIdPartition, MemoryRecords> writeRequest = Map.of(
+            T0P0, recordCreator.create(T0P0.topicPartition(), 100)
         );
         writer.write(writeRequest, TIMESTAMP_TYPES);
 
@@ -103,11 +106,11 @@ class WriterMockedTest {
         final Writer writer = new Writer(
             time, Duration.ofMillis(1), 15908, commitTickScheduler, fileCommitter, writerMetrics, brokerTopicMetricMarks);
 
-        final Map<TopicPartition, MemoryRecords> writeRequest = Map.of(
-            T0P0, recordCreator.create(T0P0, 100),
-            T0P1, recordCreator.create(T0P1, 100),
-            T1P0, recordCreator.create(T1P0, 100),
-            T1P1, recordCreator.create(T1P1, 100)
+        final Map<TopicIdPartition, MemoryRecords> writeRequest = Map.of(
+            T0P0, recordCreator.create(T0P0.topicPartition(), 100),
+            T0P1, recordCreator.create(T0P1.topicPartition(), 100),
+            T1P0, recordCreator.create(T1P0.topicPartition(), 100),
+            T1P1, recordCreator.create(T1P1.topicPartition(), 100)
         );
         assertThat(writer.write(writeRequest, TIMESTAMP_TYPES)).isNotCompleted();
 
@@ -123,17 +126,17 @@ class WriterMockedTest {
         final Writer writer = new Writer(
             time, Duration.ofMillis(1), 8 * 1024, commitTickScheduler, fileCommitter, writerMetrics, brokerTopicMetricMarks);
 
-        final Map<TopicPartition, MemoryRecords> writeRequest0 = Map.of(
-            T0P0, recordCreator.create(T0P0, 1),
-            T0P1, recordCreator.create(T0P1, 1),
-            T1P0, recordCreator.create(T1P0, 1),
-            T1P1, recordCreator.create(T1P1, 1)
+        final Map<TopicIdPartition, MemoryRecords> writeRequest0 = Map.of(
+            T0P0, recordCreator.create(T0P0.topicPartition(), 1),
+            T0P1, recordCreator.create(T0P1.topicPartition(), 1),
+            T1P0, recordCreator.create(T1P0.topicPartition(), 1),
+            T1P1, recordCreator.create(T1P1.topicPartition(), 1)
         );
-        final Map<TopicPartition, MemoryRecords> writeRequest1 = Map.of(
-            T0P0, recordCreator.create(T0P0, 100),
-            T0P1, recordCreator.create(T0P1, 100),
-            T1P0, recordCreator.create(T1P0, 100),
-            T1P1, recordCreator.create(T1P1, 100)
+        final Map<TopicIdPartition, MemoryRecords> writeRequest1 = Map.of(
+            T0P0, recordCreator.create(T0P0.topicPartition(), 100),
+            T0P1, recordCreator.create(T0P1.topicPartition(), 100),
+            T1P0, recordCreator.create(T1P0.topicPartition(), 100),
+            T1P1, recordCreator.create(T1P1.topicPartition(), 100)
         );
         assertThat(writer.write(writeRequest0, TIMESTAMP_TYPES)).isNotCompleted();
         assertThat(writer.write(writeRequest1, TIMESTAMP_TYPES)).isNotCompleted();
@@ -150,11 +153,11 @@ class WriterMockedTest {
         final Writer writer = new Writer(
             time, Duration.ofMillis(1), 8 * 1024, commitTickScheduler, fileCommitter, writerMetrics, brokerTopicMetricMarks);
 
-        final Map<TopicPartition, MemoryRecords> writeRequest = Map.of(
-            T0P0, recordCreator.create(T0P0, 1),
-            T0P1, recordCreator.create(T0P1, 1),
-            T1P0, recordCreator.create(T1P0, 1),
-            T1P1, recordCreator.create(T1P1, 1)
+        final Map<TopicIdPartition, MemoryRecords> writeRequest = Map.of(
+            T0P0, recordCreator.create(T0P0.topicPartition(), 1),
+            T0P1, recordCreator.create(T0P1.topicPartition(), 1),
+            T1P0, recordCreator.create(T1P0.topicPartition(), 1),
+            T1P1, recordCreator.create(T1P1.topicPartition(), 1)
         );
         assertThat(writer.write(writeRequest, TIMESTAMP_TYPES)).isNotCompleted();
 
@@ -171,11 +174,11 @@ class WriterMockedTest {
         final Writer writer = new Writer(
             time, Duration.ofMillis(1), 8 * 1024, commitTickScheduler, fileCommitter, writerMetrics, brokerTopicMetricMarks);
 
-        final Map<TopicPartition, MemoryRecords> writeRequest = Map.of(
-            T0P0, recordCreator.create(T0P0, 1),
-            T0P1, recordCreator.create(T0P1, 1),
-            T1P0, recordCreator.create(T1P0, 1),
-            T1P1, recordCreator.create(T1P1, 1)
+        final Map<TopicIdPartition, MemoryRecords> writeRequest = Map.of(
+            T0P0, recordCreator.create(T0P0.topicPartition(), 1),
+            T0P1, recordCreator.create(T0P1.topicPartition(), 1),
+            T1P0, recordCreator.create(T1P0.topicPartition(), 1),
+            T1P1, recordCreator.create(T1P1.topicPartition(), 1)
         );
         assertThat(writer.write(writeRequest, TIMESTAMP_TYPES)).isNotCompleted();
 
@@ -192,11 +195,11 @@ class WriterMockedTest {
         final Writer writer = new Writer(
             time, Duration.ofMillis(1), 8 * 1024, commitTickScheduler, fileCommitter, writerMetrics, brokerTopicMetricMarks);
 
-        final Map<TopicPartition, MemoryRecords> writeRequest = Map.of(
-            T0P0, recordCreator.create(T0P0, 100),
-            T0P1, recordCreator.create(T0P1, 100),
-            T1P0, recordCreator.create(T1P0, 100),
-            T1P1, recordCreator.create(T1P1, 100)
+        final Map<TopicIdPartition, MemoryRecords> writeRequest = Map.of(
+            T0P0, recordCreator.create(T0P0.topicPartition(), 100),
+            T0P1, recordCreator.create(T0P1.topicPartition(), 100),
+            T1P0, recordCreator.create(T1P0.topicPartition(), 100),
+            T1P1, recordCreator.create(T1P1.topicPartition(), 100)
         );
         assertThat(writer.write(writeRequest, TIMESTAMP_TYPES)).isNotCompleted();
 
@@ -259,7 +262,7 @@ class WriterMockedTest {
         reset(commitTickScheduler);
         reset(fileCommitter);
 
-        final var writeResult = writer.write(Map.of(T0P0, recordCreator.create(T0P0, 10)), TIMESTAMP_TYPES);
+        final var writeResult = writer.write(Map.of(T0P0, recordCreator.create(T0P0.topicPartition(), 10)), TIMESTAMP_TYPES);
 
         assertThat(writeResult).isCompletedExceptionally();
         assertThatThrownBy(writeResult::get)
@@ -279,11 +282,11 @@ class WriterMockedTest {
         final InterruptedException interruptedException = new InterruptedException();
         doThrow(interruptedException).when(fileCommitter).commit(any());
 
-        final Map<TopicPartition, MemoryRecords> writeRequest = Map.of(
-            T0P0, recordCreator.create(T0P0, 100),
-            T0P1, recordCreator.create(T0P1, 100),
-            T1P0, recordCreator.create(T1P0, 100),
-            T1P1, recordCreator.create(T1P1, 100)
+        final Map<TopicIdPartition, MemoryRecords> writeRequest = Map.of(
+            T0P0, recordCreator.create(T0P0.topicPartition(), 100),
+            T0P1, recordCreator.create(T0P1.topicPartition(), 100),
+            T1P0, recordCreator.create(T1P0.topicPartition(), 100),
+            T1P1, recordCreator.create(T1P1.topicPartition(), 100)
         );
 
         assertThatThrownBy(() -> writer.write(writeRequest, TIMESTAMP_TYPES))

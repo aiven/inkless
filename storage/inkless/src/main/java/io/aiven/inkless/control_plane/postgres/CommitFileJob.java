@@ -52,7 +52,7 @@ class CommitFileJob implements Callable<List<CommitBatchResponse>> {
     private final String objectKey;
     private final int uploaderBrokerId;
     private final long fileSize;
-    private final List<CommitBatchRequestExtra> requests;
+    private final List<CommitBatchRequestJson> requests;
     private final Consumer<Long> durationCallback;
 
     CommitFileJob(final Time time,
@@ -60,7 +60,7 @@ class CommitFileJob implements Callable<List<CommitBatchResponse>> {
                   final String objectKey,
                   final int uploaderBrokerId,
                   final long fileSize,
-                  final List<CommitBatchRequestExtra> requests,
+                  final List<CommitBatchRequestJson> requests,
                   final Consumer<Long> durationCallback) {
         this.time = time;
         this.hikariDataSource = hikariDataSource;
@@ -128,20 +128,21 @@ class CommitFileJob implements Callable<List<CommitBatchResponse>> {
                                                                   final ResultSet resultSet) throws SQLException {
         final List<CommitBatchResponse> responses = new ArrayList<>();
 
-        final Iterator<CommitBatchRequestExtra> iterator = requests.iterator();
+        final Iterator<CommitBatchRequestJson> iterator = requests.iterator();
         while (resultSet.next()) {
             if (!iterator.hasNext()) {
                 throw new RuntimeException("More records returned than expected");
             }
-            final CommitBatchRequestExtra request = iterator.next();
+            final CommitBatchRequestJson request = iterator.next();
 
-            final Uuid topicId = UuidUtil.fromJava(resultSet.getObject("topic_id", UUID.class));
+            final Uuid requestTopicId = UuidUtil.fromJava(request.topicId());
+            final Uuid resultTopicId = UuidUtil.fromJava(resultSet.getObject("topic_id", UUID.class));
             final int partition = resultSet.getInt("partition");
-            if (!topicId.equals(request.topicId()) || partition != request.partition()) {
+            if (!resultTopicId.equals(requestTopicId) || partition != request.partition()) {
                 throw new RuntimeException(String.format(
                     "Returned topic ID or partition doesn't match: expected %s-%d, got %s-%d",
                     request.topicId(), request.partition(),
-                    topicId, partition
+                    resultTopicId, partition
                 ));
             }
 
@@ -161,17 +162,15 @@ class CommitFileJob implements Callable<List<CommitBatchResponse>> {
         return responses;
     }
 
-    record CommitBatchRequestExtra(CommitBatchRequest request,
-                                   Uuid topicId) {
-
+    record CommitBatchRequestJson(CommitBatchRequest request) {
         @JsonProperty("topic_id")
-        UUID topicIdJson() {
-            return UuidUtil.toJava(topicId());
+        UUID topicId() {
+            return UuidUtil.toJava(request().topicIdPartition().topicId());
         }
 
         @JsonProperty("partition")
         int partition() {
-            return request().topicPartition().partition();
+            return request().topicIdPartition().partition();
         }
 
         @JsonProperty("byte_offset")
@@ -190,7 +189,7 @@ class CommitFileJob implements Callable<List<CommitBatchResponse>> {
         }
 
         @JsonProperty("timestamp_type")
-        short timestampTypeJson() {
+        short timestampType() {
             return (short) request().messageTimestampType().id;
         }
 

@@ -1,7 +1,9 @@
 // Copyright (c) 2024 Aiven, Helsinki, Finland. https://aiven.io/
 package io.aiven.inkless.produce;
 
+import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.TopicPartition;
+import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.compress.Compression;
 import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.record.MemoryRecords;
@@ -40,19 +42,23 @@ import static org.mockito.Mockito.when;
 class FileCommitJobTest {
     static final int BROKER_ID = 11;
 
-    static final TopicPartition T0P0 = new TopicPartition("topic0", 0);
-    static final TopicPartition T0P1 = new TopicPartition("topic0", 1);
-    static final TopicPartition T1P0 = new TopicPartition("topic1", 0);
+    static final Uuid TOPIC_ID_0 = new Uuid(1000, 1000);
+    static final Uuid TOPIC_ID_1 = new Uuid(2000, 2000);
+    static final String TOPIC_0 = "topic0";
+    static final String TOPIC_1 = "topic1";
+    private static final TopicIdPartition T0P0 = new TopicIdPartition(TOPIC_ID_0, 0, TOPIC_0);
+    private static final TopicIdPartition T0P1 = new TopicIdPartition(TOPIC_ID_0, 1, TOPIC_0);
+    private static final TopicIdPartition T1P0 = new TopicIdPartition(TOPIC_ID_1, 0, TOPIC_1);
 
-    static final Map<TopicPartition, MemoryRecords> REQUEST_0 = Map.of(
+    static final Map<TopicIdPartition, MemoryRecords> REQUEST_0 = Map.of(
         T0P0, MemoryRecords.withRecords(Compression.NONE, new SimpleRecord(new byte[10])),
         T0P1, MemoryRecords.withRecords(Compression.NONE, new SimpleRecord(new byte[10]))
     );
-    static final Map<TopicPartition, MemoryRecords> REQUEST_1 = Map.of(
+    static final Map<TopicIdPartition, MemoryRecords> REQUEST_1 = Map.of(
         T0P1, MemoryRecords.withRecords(Compression.NONE, new SimpleRecord(new byte[10])),
         T1P0, MemoryRecords.withRecords(Compression.NONE, new SimpleRecord(new byte[10]))
     );
-    static final Map<Integer, Map<TopicPartition, MemoryRecords>> REQUESTS = Map.of(
+    static final Map<Integer, Map<TopicIdPartition, MemoryRecords>> REQUESTS = Map.of(
         0, REQUEST_0,
         1, REQUEST_1
     );
@@ -101,12 +107,12 @@ class FileCommitJobTest {
         job.run();
 
         assertThat(awaitingFuturesByRequest.get(0)).isCompletedWithValue(Map.of(
-            T0P0, new PartitionResponse(Errors.NONE, 0, 10, 0),
-            T0P1, new PartitionResponse(Errors.INVALID_TOPIC_EXCEPTION, -1, -1, -1)
+            T0P0.topicPartition(), new PartitionResponse(Errors.NONE, 0, 10, 0),
+            T0P1.topicPartition(), new PartitionResponse(Errors.INVALID_TOPIC_EXCEPTION, -1, -1, -1)
         ));
         assertThat(awaitingFuturesByRequest.get(1)).isCompletedWithValue(Map.of(
-            T0P1, new PartitionResponse(Errors.NONE, 20, 10, 0),
-            T1P0, new PartitionResponse(Errors.NONE, 30, 10, 0)
+            T0P1.topicPartition(), new PartitionResponse(Errors.NONE, 20, 10, 0),
+            T1P0.topicPartition(), new PartitionResponse(Errors.NONE, 30, 10, 0)
         ));
         verify(commitTimeDurationCallback).accept(eq(10L));
     }
@@ -153,12 +159,12 @@ class FileCommitJobTest {
         job.run();
 
         assertThat(awaitingFuturesByRequest.get(0)).isCompletedWithValue(Map.of(
-            T0P0, new PartitionResponse(Errors.KAFKA_STORAGE_ERROR, "Error commiting data"),
-            T0P1, new PartitionResponse(Errors.KAFKA_STORAGE_ERROR, "Error commiting data")
+            T0P0.topicPartition(), new PartitionResponse(Errors.KAFKA_STORAGE_ERROR, "Error commiting data"),
+            T0P1.topicPartition(), new PartitionResponse(Errors.KAFKA_STORAGE_ERROR, "Error commiting data")
         ));
         assertThat(awaitingFuturesByRequest.get(1)).isCompletedWithValue(Map.of(
-            T0P1, new PartitionResponse(Errors.KAFKA_STORAGE_ERROR, "Error commiting data"),
-            T1P0, new PartitionResponse(Errors.KAFKA_STORAGE_ERROR, "Error commiting data")
+            T0P1.topicPartition(), new PartitionResponse(Errors.KAFKA_STORAGE_ERROR, "Error commiting data"),
+            T1P0.topicPartition(), new PartitionResponse(Errors.KAFKA_STORAGE_ERROR, "Error commiting data")
         ));
         verify(commitTimeDurationCallback).accept(eq(10L));
     }
