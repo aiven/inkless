@@ -348,6 +348,12 @@ org.apache.kafka.tools.ResetIntegrationWithSslTest:
 - testReprocessingFromScratchAfterResetWithIntermediateUserTopic
 - testReprocessingFromScratchAfterResetWithoutIntermediateUserTopic
 - testResetWhenInternalTopicsAreSpecified
+org.apache.kafka.tools.ShareConsumerPerformanceTest:
+- testClientIdOverride
+- testConfigBootStrapServer
+- testConfigWithUnrecognizedOption
+- testDefaultClientId
+- testHeaderMatchBody
 org.apache.kafka.tools.StreamsResetterTest:
 - shouldDeleteTopic
 - shouldDetermineInternalTopicBasedOnTopicName1

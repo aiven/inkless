@@ -2028,6 +2028,9 @@ org.apache.kafka.clients.consumer.internals.ShareConsumeRequestManagerTest:
 - testParseInvalidRecordBatch
 - testPendingCommitAsyncBeforeCommitSync
 - testPiggybackAcknowledgementsInFlight
+- testResultHandlerCompleteIfEmpty
+- testResultHandlerOnCommitAsync
+- testResultHandlerOnCommitSync
 - testRetryAcknowledgements
 - testRetryAcknowledgementsWithLeaderChange
 - testServerDisconnectedOnShareAcknowledge
