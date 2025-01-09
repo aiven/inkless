@@ -796,6 +796,12 @@ org.apache.kafka.coordinator.group.streams.StreamsGroupMemberTest:
 - testBuilderWithMemberIdIsNull
 - testBuilderWithMemberIsNull
 - testReturnUnmodifiableFields
+org.apache.kafka.coordinator.group.streams.StreamsTopologyTest:
+- fromRecordShouldCreateCorrectTopology
+- requiredTopicsShouldBeCorrect
+- subtopologiesMapShouldBeImmutable
+- subtopologiesMapShouldNotBeNull
+- topologyEpochShouldNotBeNegative
 org.apache.kafka.coordinator.group.streams.assignor.GroupSpecImplTest:
 - testMembers
 org.apache.kafka.coordinator.group.streams.assignor.MockAssignorTest:
@@ -830,6 +836,14 @@ org.apache.kafka.coordinator.group.streams.topics.ConfiguredTopologyTest:
 - testConstructorWithNullSubtopologies
 - testConstructorWithNullTopicConfigurationException
 - testIsReady
+org.apache.kafka.coordinator.group.streams.topics.RepartitionTopicsTest:
+- shouldNotSetupRepartitionTopicsWhenTopologyDoesNotContainAnyRepartitionTopics
+- shouldSetRepartitionTopicPartitionCountFromUpstreamExternalSourceTopic
+- shouldSetRepartitionTopicPartitionCountFromUpstreamInternalRepartitionSourceTopic
+- shouldSetupRepartitionTopics
+- shouldThrowStreamsInvalidTopologyExceptionIfPartitionCountCannotBeComputedForAllRepartitionTopicsDueToLoops
+- shouldThrowStreamsInvalidTopologyExceptionIfPartitionCountCannotBeComputedForAllRepartitionTopicsDueToMissingSinks
+- shouldThrowStreamsMissingSourceTopicsExceptionIfMissingSourceTopics
 org.apache.kafka.coordinator.group.streams.topics.TopicConfigurationExceptionTest:
 - testIncorrectlyPartitionedTopics
 - testMissingInternalTopics
