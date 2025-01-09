@@ -71,7 +71,7 @@ public class FetchCompleterJobTest {
     @Test
     public void testFetchWithoutCoordinates() {
         Map<TopicIdPartition, FetchRequest.PartitionData> fetchInfos = Map.of(
-                partition0, new FetchRequest.PartitionData(topicId, 0, 0, 1000, Optional.empty())
+            partition0, new FetchRequest.PartitionData(topicId, 0, 0, 1000, Optional.empty())
         );
         FetchCompleterJob job = new FetchCompleterJob(
             new MockTime(),
@@ -89,12 +89,12 @@ public class FetchCompleterJobTest {
     @Test
     public void testFetchWithoutBatches() {
         Map<TopicIdPartition, FetchRequest.PartitionData> fetchInfos = Map.of(
-                partition0, new FetchRequest.PartitionData(topicId, 0, 0, 1000, Optional.empty())
+            partition0, new FetchRequest.PartitionData(topicId, 0, 0, 1000, Optional.empty())
         );
         int logStartOffset = 0;
         int highWatermark = 0;
         Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of(
-                partition0, FindBatchResponse.success(Collections.emptyList(), logStartOffset, highWatermark)
+            partition0, FindBatchResponse.success(Collections.emptyList(), logStartOffset, highWatermark)
         );
         FetchCompleterJob job = new FetchCompleterJob(
             new MockTime(),
@@ -115,16 +115,16 @@ public class FetchCompleterJobTest {
     @Test
     public void testFetchWithoutFiles() {
         Map<TopicIdPartition, FetchRequest.PartitionData> fetchInfos = Map.of(
-                partition0, new FetchRequest.PartitionData(topicId, 0, 0, 1000, Optional.empty())
+            partition0, new FetchRequest.PartitionData(topicId, 0, 0, 1000, Optional.empty())
         );
         int logStartOffset = 0;
         long logAppendTimestamp = 10L;
         long maxBatchTimestamp = 20L;
         int highWatermark = 1;
         Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of(
-                partition0, FindBatchResponse.success(List.of(
-                        new BatchInfo(OBJECT_KEY_A_MAIN_PART, 0, 10, 0, 1, TimestampType.CREATE_TIME, logAppendTimestamp, maxBatchTimestamp)
-                ), logStartOffset, highWatermark)
+            partition0, FindBatchResponse.success(List.of(
+                BatchInfo.of(OBJECT_KEY_A_MAIN_PART, 0, 10, 0, 0, 0, logAppendTimestamp, maxBatchTimestamp, TimestampType.CREATE_TIME)
+            ), logStartOffset, highWatermark)
         );
         FetchCompleterJob job = new FetchCompleterJob(
             new MockTime(),
@@ -144,20 +144,20 @@ public class FetchCompleterJobTest {
         MemoryRecords records = MemoryRecords.withRecords(0L, Compression.NONE, new SimpleRecord((byte[]) null));
 
         Map<TopicIdPartition, FetchRequest.PartitionData> fetchInfos = Map.of(
-                partition0, new FetchRequest.PartitionData(topicId, 0, 0, 1000, Optional.empty())
+            partition0, new FetchRequest.PartitionData(topicId, 0, 0, 1000, Optional.empty())
         );
         int logStartOffset = 0;
         long logAppendTimestamp = 10L;
         long maxBatchTimestamp = 20L;
         int highWatermark = 1;
         Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of(
-                partition0, FindBatchResponse.success(List.of(
-                        new BatchInfo(OBJECT_KEY_A_MAIN_PART, 0, records.sizeInBytes(), 0, 1, TimestampType.CREATE_TIME, logAppendTimestamp, maxBatchTimestamp)
-                ), logStartOffset, highWatermark)
+            partition0, FindBatchResponse.success(List.of(
+                BatchInfo.of(OBJECT_KEY_A_MAIN_PART, 0, records.sizeInBytes(), 0, 0, 0, logAppendTimestamp, maxBatchTimestamp, TimestampType.CREATE_TIME)
+            ), logStartOffset, highWatermark)
         );
 
         List<Future<FileExtent>> files = Stream.of(
-                FileFetchJob.createFileExtent(OBJECT_KEY_A, new ByteRange(0, records.sizeInBytes()), records.buffer())
+            FileFetchJob.createFileExtent(OBJECT_KEY_A, new ByteRange(0, records.sizeInBytes()), records.buffer())
         ).map(CompletableFuture::completedFuture).collect(Collectors.toList());
         FetchCompleterJob job = new FetchCompleterJob(
             new MockTime(),
@@ -180,22 +180,22 @@ public class FetchCompleterJobTest {
         MemoryRecords records = MemoryRecords.withRecords(0L, Compression.NONE, new SimpleRecord((byte[]) null));
 
         Map<TopicIdPartition, FetchRequest.PartitionData> fetchInfos = Map.of(
-                partition0, new FetchRequest.PartitionData(topicId, 0, 0, 1000, Optional.empty())
+            partition0, new FetchRequest.PartitionData(topicId, 0, 0, 1000, Optional.empty())
         );
         int logStartOffset = 0;
         long logAppendTimestamp = 10L;
         long maxBatchTimestamp = 20L;
         int highWatermark = 1;
         Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of(
-                partition0, FindBatchResponse.success(List.of(
-                        new BatchInfo(OBJECT_KEY_A_MAIN_PART, 0, records.sizeInBytes(), 0, 1, TimestampType.CREATE_TIME, logAppendTimestamp, maxBatchTimestamp),
-                        new BatchInfo(OBJECT_KEY_B_MAIN_PART, 0, records.sizeInBytes(), 0, 1, TimestampType.CREATE_TIME, logAppendTimestamp, maxBatchTimestamp)
-                ), logStartOffset, highWatermark)
+            partition0, FindBatchResponse.success(List.of(
+                BatchInfo.of(OBJECT_KEY_A_MAIN_PART, 0, records.sizeInBytes(), 0, 0, 0, logAppendTimestamp, maxBatchTimestamp, TimestampType.CREATE_TIME),
+                BatchInfo.of(OBJECT_KEY_B_MAIN_PART, 0, records.sizeInBytes(), 0, 0, 0, logAppendTimestamp, maxBatchTimestamp, TimestampType.CREATE_TIME)
+            ), logStartOffset, highWatermark)
         );
 
         List<Future<FileExtent>> files = Stream.of(
-                FileFetchJob.createFileExtent(OBJECT_KEY_A, new ByteRange(0, records.sizeInBytes()), records.buffer()),
-                FileFetchJob.createFileExtent(OBJECT_KEY_B, new ByteRange(0, records.sizeInBytes()), records.buffer())
+            FileFetchJob.createFileExtent(OBJECT_KEY_A, new ByteRange(0, records.sizeInBytes()), records.buffer()),
+            FileFetchJob.createFileExtent(OBJECT_KEY_B, new ByteRange(0, records.sizeInBytes()), records.buffer())
         ).map(CompletableFuture::completedFuture).collect(Collectors.toList());
         FetchCompleterJob job = new FetchCompleterJob(
             new MockTime(),
@@ -225,29 +225,29 @@ public class FetchCompleterJobTest {
         concatenatedBuffer.put(recordsB.buffer());
 
         Map<TopicIdPartition, FetchRequest.PartitionData> fetchInfos = Map.of(
-                partition0, new FetchRequest.PartitionData(topicId, 0, 0, 1000, Optional.empty())
+            partition0, new FetchRequest.PartitionData(topicId, 0, 0, 1000, Optional.empty())
         );
         int logStartOffset = 0;
         long logAppendTimestamp = 10L;
         long maxBatchTimestamp = 10L;
         int highWatermark = 2;
         Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of(
-                partition0, FindBatchResponse.success(List.of(
-                        new BatchInfo(OBJECT_KEY_A_MAIN_PART, 0, recordsA.sizeInBytes(), 0, 1, TimestampType.CREATE_TIME, logAppendTimestamp, maxBatchTimestamp),
-                        new BatchInfo(OBJECT_KEY_A_MAIN_PART, recordsA.sizeInBytes(), recordsB.sizeInBytes(), 1, 1, TimestampType.CREATE_TIME, logAppendTimestamp, maxBatchTimestamp)
-                ), logStartOffset, highWatermark)
+            partition0, FindBatchResponse.success(List.of(
+                BatchInfo.of(OBJECT_KEY_A_MAIN_PART, 0, recordsA.sizeInBytes(), 0, 0, 0, logAppendTimestamp, maxBatchTimestamp, TimestampType.CREATE_TIME),
+                BatchInfo.of(OBJECT_KEY_A_MAIN_PART, recordsA.sizeInBytes(), recordsB.sizeInBytes(), 1, 0, 0, logAppendTimestamp, maxBatchTimestamp, TimestampType.CREATE_TIME)
+            ), logStartOffset, highWatermark)
         );
 
         List<Future<FileExtent>> files = Stream.of(
-                FileFetchJob.createFileExtent(OBJECT_KEY_A, new ByteRange(0, totalSize), concatenatedBuffer)
+            FileFetchJob.createFileExtent(OBJECT_KEY_A, new ByteRange(0, totalSize), concatenatedBuffer)
         ).map(CompletableFuture::completedFuture).collect(Collectors.toList());
         FetchCompleterJob job = new FetchCompleterJob(
-                new MockTime(),
-                OBJECT_KEY_CREATOR,
-                fetchInfos,
-                CompletableFuture.completedFuture(coordinates),
-                CompletableFuture.completedFuture(files),
-                durationMs -> {}
+            new MockTime(),
+            OBJECT_KEY_CREATOR,
+            fetchInfos,
+            CompletableFuture.completedFuture(coordinates),
+            CompletableFuture.completedFuture(files),
+            durationMs -> {}
         );
         Map<TopicIdPartition, FetchPartitionData> result = job.get();
         FetchPartitionData data = result.get(partition0);
@@ -259,6 +259,5 @@ public class FetchCompleterJobTest {
         assertEquals(ByteBuffer.wrap(firstValue), iterator.next().value());
         assertTrue(iterator.hasNext());
         assertEquals(ByteBuffer.wrap(secondValue), iterator.next().value());
-
     }
 }

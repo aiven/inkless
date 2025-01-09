@@ -75,7 +75,6 @@ jobs:
 
   test:
     needs: validate
-    if: ${{ ! needs.validate.outputs.is-draft }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false

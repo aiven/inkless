@@ -131,10 +131,10 @@ class ActiveFileTest {
         assertThat(result.awaitingFuturesByRequest().get(0)).isNotCompleted();
         assertThat(result.awaitingFuturesByRequest().get(1)).isNotCompleted();
         assertThat(result.commitBatchRequests()).containsExactly(
-            new CommitBatchRequest(T0P0, 0, 78, 1, 1000, TimestampType.CREATE_TIME),
-            new CommitBatchRequest(T0P1, 78, 78, 1, 2000, TimestampType.CREATE_TIME),
-            new CommitBatchRequest(T0P1, 156, 78, 1, 3000, TimestampType.CREATE_TIME),
-            new CommitBatchRequest(T1P0, 234, 78, 1, 4000, TimestampType.LOG_APPEND_TIME)
+            CommitBatchRequest.of(T0P0, 0, 78, 0, 0, 1000, TimestampType.CREATE_TIME),
+            CommitBatchRequest.of(T0P1, 78, 78, 0, 0, 2000, TimestampType.CREATE_TIME),
+            CommitBatchRequest.of(T0P1, 156, 78, 0, 0, 3000, TimestampType.CREATE_TIME),
+            CommitBatchRequest.of(T1P0, 234, 78, 0, 0, 4000, TimestampType.LOG_APPEND_TIME)
         );
         assertThat(result.requestIds()).containsExactly(0, 0, 1, 1);
         assertThat(result.data()).hasSize(312);

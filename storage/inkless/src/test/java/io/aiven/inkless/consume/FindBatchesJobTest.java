@@ -5,6 +5,7 @@ import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.record.TimestampType;
 import org.apache.kafka.common.requests.FetchRequest;
+import org.apache.kafka.common.utils.MockTime;
 import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.server.storage.log.FetchParams;
 
@@ -36,14 +37,12 @@ import static org.mockito.Mockito.when;
 @MockitoSettings(strictness = Strictness.STRICT_STUBS)
 public class FindBatchesJobTest {
 
-    @Mock
-    private Time time;
+    private final Time time = new MockTime();
+
     @Mock
     private ControlPlane controlPlane;
     @Mock
     private FetchParams params;
-    @Mock
-    private Map<TopicIdPartition, FetchRequest.PartitionData> fetchInfos;
 
     @Captor
     ArgumentCaptor<List<FindBatchRequest>> requestCaptor;
@@ -63,7 +62,7 @@ public class FindBatchesJobTest {
         int highWatermark = 1;
         Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of(
                 partition0, FindBatchResponse.success(List.of(
-                        new BatchInfo(OBJECT_KEY_MAIN_PART, 0, 10, 0, 1, TimestampType.CREATE_TIME, logAppendTimestamp, maxBatchTimestamp)
+                        BatchInfo.of(OBJECT_KEY_MAIN_PART, 0, 10, 0, 0, 0, logAppendTimestamp, maxBatchTimestamp, TimestampType.CREATE_TIME)
                 ), logStartOffset, highWatermark)
         );
         FindBatchesJob job = new FindBatchesJob(time, controlPlane, params, fetchInfos, durationMs -> { });

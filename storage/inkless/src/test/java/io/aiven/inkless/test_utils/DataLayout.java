@@ -111,15 +111,16 @@ public record DataLayout (
                 for (BatchData batch : file.batches()) {
                     long firstOffset = offsets.compute(batch.topicIdPartition(), (k, v) -> (v == null ? 0 : v) + batch.skippedOffsets());
                     byteOffset += batch.skippedBytes();
-                    BatchInfo batchInfo = new BatchInfo(
+                    BatchInfo batchInfo = BatchInfo.of(
                             file.objectId(),
                             byteOffset,
                             batch.batchSize(),
                             firstOffset,
-                            batch.recordCount(),
-                            batch.timestampType(),
+                            firstOffset,
+                            batch.recordCount() - 1, // calculate last offset
                             batch.appendTime(),
-                            batch.maxTimestamp()
+                            batch.maxTimestamp(),
+                            batch.timestampType()
                     );
                     data.put(batchInfo, batch.records());
                     offsets.compute(batch.topicIdPartition(), (k, v) -> (v == null ? 0 : v) + batch.recordCount());
