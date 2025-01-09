@@ -80,17 +80,18 @@ public class InMemoryControlPlane extends AbstractControlPlane {
         }
 
         final long firstOffset = logInfo.highWatermark;
-        logInfo.highWatermark += request.numberOfRecords();
-        final long lastOffset = logInfo.highWatermark - 1;
+        final long lastOffset = firstOffset + request.offsetDelta();
+        logInfo.highWatermark = lastOffset + 1;
         final BatchInfo batchInfo = new BatchInfo(
             fileInfo.objectKey,
             request.byteOffset(),
             request.size(),
             firstOffset,
-            request.numberOfRecords(),
-            request.messageTimestampType(),
+            request.baseOffset(),
+            request.lastOffset(),
             now,
-            request.batchMaxTimestamp()
+            request.batchMaxTimestamp(),
+            request.messageTimestampType()
         );
         coordinates.put(lastOffset, new BatchInfoInternal(batchInfo, fileInfo));
         return CommitBatchResponse.success(firstOffset, now, logInfo.logStartOffset);

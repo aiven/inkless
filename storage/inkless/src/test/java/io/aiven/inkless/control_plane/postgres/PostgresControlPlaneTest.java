@@ -8,7 +8,6 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import java.util.Map;
 
 import io.aiven.inkless.control_plane.AbstractControlPlaneTest;
-import io.aiven.inkless.control_plane.ControlPlane;
 import io.aiven.inkless.test_utils.PostgreSQLContainer;
 import io.aiven.inkless.test_utils.PostgreSQLTestContainer;
 
@@ -18,17 +17,17 @@ class PostgresControlPlaneTest extends AbstractControlPlaneTest {
     static PostgreSQLContainer pgContainer = PostgreSQLTestContainer.container();
 
     @Override
-    protected ControlPlane createControlPlane(final TestInfo testInfo) {
+    protected ControlPlaneAndConfigs createControlPlane(final TestInfo testInfo) {
         final var dbName = PostgreSQLContainer.dbNameFromTestInfo(testInfo);
 
         pgContainer.createDatabase(dbName);
 
         final var controlPlane = new PostgresControlPlane(time);
-        controlPlane.configure(Map.of(
+        final Map<String, String> configs = Map.of(
             "connection.string", pgContainer.getJdbcUrl(dbName),
             "username", pgContainer.getUsername(),
             "password", pgContainer.getPassword()
-        ));
-        return controlPlane;
+        );
+        return new ControlPlaneAndConfigs(controlPlane, configs);
     }
 }
