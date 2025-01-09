@@ -1,3 +1,14 @@
+<p align="center">
+<picture>
+  <source media="(prefers-color-scheme: light)" srcset="docs/images/kafka-logo-readme-light.svg">
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/kafka-logo-readme-dark.svg">
+  <img src="docs/images/kafka-logo-readme-light.svg" alt="Kafka Logo" width="50%"> 
+</picture>
+</p>
+
+[![CI](https://github.com/apache/kafka/actions/workflows/ci.yml/badge.svg?branch=trunk&event=push)](https://github.com/apache/kafka/actions/workflows/ci.yml?query=event%3Apush+branch%3Atrunk)
+[![Flaky Test Report](https://github.com/apache/kafka/actions/workflows/generate-reports.yml/badge.svg?branch=trunk&event=schedule)](https://github.com/apache/kafka/actions/workflows/generate-reports.yml?query=event%3Aschedule+branch%3Atrunk)
+
 Inkless for Apache Kafka
 ===
 See [Inkless](docs/inkless/README.md) specific documentation.
@@ -7,10 +18,9 @@ For Apache Kafka general information, keep reading.
 Apache Kafka
 =================
 
-[![CI](https://github.com/apache/kafka/actions/workflows/ci.yml/badge.svg?branch=trunk&event=push)](https://github.com/apache/kafka/actions/workflows/ci.yml?query=event%3Apush+branch%3Atrunk)
-[![Flaky Test Report](https://github.com/apache/kafka/actions/workflows/generate-reports.yml/badge.svg?branch=trunk&event=schedule)](https://github.com/apache/kafka/actions/workflows/generate-reports.yml?query=event%3Aschedule+branch%3Atrunk)
+[**Apache Kafka**](https://kafka.apache.org) is an open-source distributed event streaming platform used by thousands of
 
-See our [web site](https://kafka.apache.org) for details on the project.
+companies for high-performance data pipelines, streaming analytics, data integration, and mission-critical applications.
 
 You need to have [Java](http://www.oracle.com/technetwork/java/javase/downloads/index.html) installed.
 
