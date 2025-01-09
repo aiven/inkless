@@ -22,7 +22,6 @@ import io.aiven.inkless.control_plane.CreateTopicAndPartitionsRequest;
 import io.aiven.inkless.control_plane.FileToDelete;
 import io.aiven.inkless.control_plane.FindBatchRequest;
 import io.aiven.inkless.control_plane.FindBatchResponse;
-import io.aiven.inkless.control_plane.MetadataView;
 
 public class PostgresControlPlane extends AbstractControlPlane {
 
@@ -30,9 +29,8 @@ public class PostgresControlPlane extends AbstractControlPlane {
 
     private HikariDataSource hikariDataSource;
 
-    public PostgresControlPlane(final Time time,
-                                final MetadataView metadataView) {
-        super(time, metadataView);
+    public PostgresControlPlane(final Time time) {
+        super(time);
         this.metrics = new PostgresControlPlaneMetrics(time);
     }
 

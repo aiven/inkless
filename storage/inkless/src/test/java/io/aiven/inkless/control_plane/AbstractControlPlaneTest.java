@@ -2,7 +2,6 @@
 package io.aiven.inkless.control_plane;
 
 import org.apache.kafka.common.TopicIdPartition;
-import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.record.TimestampType;
@@ -18,16 +17,12 @@ import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 
 import java.util.List;
-import java.util.Properties;
 import java.util.Set;
 
 import io.aiven.inkless.TimeUtils;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
 // Leniency is fine in this class, otherwise there will be too much tailored mocking on metadataView.
@@ -47,31 +42,6 @@ public abstract class AbstractControlPlaneTest {
 
     @Mock
     protected Time time;
-
-    protected MetadataView metadataView;
-
-    @BeforeEach
-    void setup() {
-        metadataView = mock(MetadataView.class);
-        when(metadataView.getTopicPartitions(EXISTING_TOPIC_1))
-            .thenReturn(Set.of(new TopicPartition(EXISTING_TOPIC_1, 0)));
-        when(metadataView.getTopicPartitions(EXISTING_TOPIC_2))
-            .thenReturn(Set.of(new TopicPartition(EXISTING_TOPIC_2, 0)));
-        when(metadataView.getTopicId(EXISTING_TOPIC_1))
-            .thenReturn(EXISTING_TOPIC_1_ID);
-        when(metadataView.getTopicId(EXISTING_TOPIC_2))
-            .thenReturn(EXISTING_TOPIC_2_ID);
-        when(metadataView.getTopicPartitions(NONEXISTENT_TOPIC))
-            .thenReturn(Set.of());
-        when(metadataView.getTopicId(NONEXISTENT_TOPIC))
-            .thenReturn(Uuid.ZERO_UUID);
-        when(metadataView.getTopicConfig(EXISTING_TOPIC_1))
-            .thenReturn(new Properties());
-        when(metadataView.getTopicConfig(EXISTING_TOPIC_2))
-            .thenReturn(new Properties());
-        when(metadataView.isInklessTopic(anyString()))
-            .thenReturn(true);
-    }
 
     protected ControlPlane controlPlane;
 
@@ -183,42 +153,6 @@ public abstract class AbstractControlPlaneTest {
     }
 
     @Test
-    void topicDisappear() {
-        final String objectKey = "a";
-
-        controlPlane.commitFile(
-            objectKey, BROKER_ID, FILE_SIZE,
-            List.of(
-                new CommitBatchRequest(new TopicIdPartition(EXISTING_TOPIC_1_ID, 0, EXISTING_TOPIC_1), 11, 10, 10, 1000, TimestampType.CREATE_TIME)
-            )
-        );
-
-        final List<FindBatchResponse> findResponse1 = controlPlane.findBatches(
-            List.of(new FindBatchRequest(EXISTING_TOPIC_1_ID_PARTITION, 0, Integer.MAX_VALUE)),
-            true,
-            Integer.MAX_VALUE);
-        assertThat(findResponse1).containsExactly(
-            new FindBatchResponse(
-                Errors.NONE,
-                List.of(new BatchInfo(objectKey, 11, 10, 0, 10, TimestampType.CREATE_TIME, time.milliseconds(), 1000)),
-                0, 10)
-        );
-
-        // Make the topic "disappear".
-        when(metadataView.getTopicPartitions(EXISTING_TOPIC_1))
-            .thenReturn(Set.of());
-        when(metadataView.getTopicId(EXISTING_TOPIC_1))
-            .thenReturn(Uuid.ZERO_UUID);
-        final List<FindBatchResponse> findResponse2 = controlPlane.findBatches(
-            List.of(new FindBatchRequest(EXISTING_TOPIC_1_ID_PARTITION, 1, Integer.MAX_VALUE)),
-            true,
-            Integer.MAX_VALUE);
-        assertThat(findResponse2).containsExactly(
-            new FindBatchResponse(Errors.UNKNOWN_TOPIC_OR_PARTITION, null, -1, -1)
-        );
-    }
-
-    @Test
     void findEmptyBatchOnLastOffset() {
         final String objectKey = "a";
 
@@ -309,21 +243,6 @@ public abstract class AbstractControlPlaneTest {
         final Uuid newTopic1Id = new Uuid(12345, 67890);
         final String newTopic2Name = "newTopic2";
         final Uuid newTopic2Id = new Uuid(88888, 99999);
-
-        when(metadataView.getTopicPartitions(newTopic1Name))
-            .thenReturn(Set.of(
-                new TopicPartition(newTopic1Name, 0),
-                new TopicPartition(newTopic1Name, 1)
-            ));
-        when(metadataView.getTopicPartitions(newTopic2Name))
-            .thenReturn(Set.of(
-                new TopicPartition(newTopic2Name, 0),
-                new TopicPartition(newTopic2Name, 1)
-            ));
-        when(metadataView.getTopicId(newTopic1Name))
-            .thenReturn(newTopic1Id);
-        when(metadataView.getTopicId(newTopic2Name))
-            .thenReturn(newTopic2Id);
 
         controlPlane.createTopicAndPartitions(Set.of(
             new CreateTopicAndPartitionsRequest(newTopic1Id, newTopic1Name, 1)

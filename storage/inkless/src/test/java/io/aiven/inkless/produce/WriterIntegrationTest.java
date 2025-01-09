@@ -1,9 +1,7 @@
 // Copyright (c) 2024 Aiven, Helsinki, Finland. https://aiven.io/
 package io.aiven.inkless.produce;
 
-import org.apache.kafka.admin.BrokerMetadata;
 import org.apache.kafka.common.TopicIdPartition;
-import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.record.TimestampType;
@@ -22,9 +20,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.io.IOException;
 import java.time.Duration;
-import java.util.List;
 import java.util.Map;
-import java.util.Properties;
 import java.util.Set;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
@@ -33,7 +29,6 @@ import java.util.concurrent.TimeoutException;
 import io.aiven.inkless.common.PlainObjectKey;
 import io.aiven.inkless.control_plane.CreateTopicAndPartitionsRequest;
 import io.aiven.inkless.control_plane.InMemoryControlPlane;
-import io.aiven.inkless.control_plane.MetadataView;
 import io.aiven.inkless.storage_backend.s3.S3Storage;
 import io.aiven.inkless.test_utils.S3TestContainer;
 import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
@@ -64,40 +59,6 @@ class WriterIntegrationTest {
     );
 
     static final String BUCKET_NAME = "test-bucket";
-
-    static final MetadataView METADATA_VIEW = new MetadataView() {
-        @Override
-        public Iterable<BrokerMetadata> getAliveBrokers() {
-            return List.of();
-        }
-
-        @Override
-        public Set<TopicPartition> getTopicPartitions(final String topicName) {
-            return Set.of(T0P0.topicPartition(), T0P1.topicPartition(), T1P0.topicPartition());
-        }
-
-        @Override
-        public Uuid getTopicId(final String topicName) {
-            if (topicName.equals(T0P0.topic())) {
-                return TOPIC_ID_0;
-            } else if (topicName.equals(T1P0.topic())) {
-                return TOPIC_ID_1;
-            } else {
-                return null;
-            }
-        }
-
-        @Override
-        public boolean isInklessTopic(final String topicName) {
-            return true;
-        }
-
-        @Override
-        public Properties getTopicConfig(final String topicName) {
-            return new Properties();
-        }
-    };
-
     S3Storage storage;
 
     WriterTestUtils.RecordCreator recordCreator;
@@ -139,7 +100,7 @@ class WriterIntegrationTest {
     @Test
     void test() throws ExecutionException, InterruptedException, TimeoutException, IOException {
         final Time time = new MockTime();
-        final InMemoryControlPlane controlPlane = new InMemoryControlPlane(time, METADATA_VIEW);
+        final InMemoryControlPlane controlPlane = new InMemoryControlPlane(time);
 
         final Set<CreateTopicAndPartitionsRequest> createTopicAndPartitionsRequests = Set.of(
             new CreateTopicAndPartitionsRequest(TOPIC_ID_0, T0P0.topic(), 2),
