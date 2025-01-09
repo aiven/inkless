@@ -333,8 +333,17 @@ class BrokerServer(
       val defaultActionQueue = new DelayedActionQueue
 
       val inklessMetadataView = new InklessMetadataView(metadataCache)
-      val inklessSharedState = SharedState.initialize(time, config.brokerId, config.inklessConfig, inklessMetadataView, brokerTopicStats,
-        () => logManager.currentDefaultConfig)
+      val inklessSharedState = sharedServer.inklessControlPlane.map { controlPlane =>
+        SharedState.initialize(
+          time,
+          config.brokerId,
+          config.inklessConfig,
+          inklessMetadataView,
+          controlPlane,
+          brokerTopicStats,
+          () => logManager.currentDefaultConfig
+        )
+      }
 
       this._replicaManager = new ReplicaManager(
         config = config,
@@ -355,7 +364,7 @@ class BrokerServer(
         addPartitionsToTxnManager = Some(addPartitionsToTxnManager),
         directoryEventHandler = directoryEventHandler,
         defaultActionQueue = defaultActionQueue,
-        inklessSharedState = Some(inklessSharedState)
+        inklessSharedState = inklessSharedState
       )
 
       /* start token manager */
@@ -471,7 +480,7 @@ class BrokerServer(
         tokenManager = tokenManager,
         apiVersionManager = apiVersionManager,
         clientMetricsManager = clientMetricsManager,
-        inklessSharedState = Some(inklessSharedState))
+        inklessSharedState = inklessSharedState)
 
       dataPlaneRequestHandlerPool = new KafkaRequestHandlerPool(config.nodeId,
         socketServer.dataPlaneRequestChannel, dataPlaneRequestProcessor, time,

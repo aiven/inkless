@@ -79,7 +79,8 @@ class ControllerApis(
   val clusterId: String,
   val registrationsPublisher: ControllerRegistrationsPublisher,
   val apiVersionManager: ApiVersionManager,
-  val metadataCache: KRaftMetadataCache
+  val metadataCache: KRaftMetadataCache,
+  val inklessControlPlane: Option[ControlPlane] = None
 ) extends ApiRequestHandler with Logging {
 
   this.logIdent = s"[ControllerApis nodeId=${config.nodeId}] "
@@ -90,7 +91,6 @@ class ControllerApis(
   private val aclApis = new AclApis(authHelper, authorizer, requestHelper, "controller", config)
 
   private val inklessMetadataView = new InklessMetadataView(metadataCache)
-  private val inklessControlPlane = ControlPlane.create(config.inklessConfig, time, inklessMetadataView)
 
   def isClosed: Boolean = aclApis.isClosed
 
@@ -359,7 +359,7 @@ class ControllerApis(
           .filter { case (_, name) => inklessMetadataView.isInklessTopic(name) }
           .map { case (topicId, _) => topicId }
           .toSet.asJava
-        inklessControlPlane.deleteTopics(topicIdsToDeleteFromControlPlane)
+        inklessControlPlane.foreach { cp => cp.deleteTopics(topicIdsToDeleteFromControlPlane) }
 
         // Finally, the idToName map contains all the topics that we are authorized to delete.
         // Perform the deletion and create responses for each one.
@@ -492,7 +492,7 @@ class ControllerApis(
       .filter(t => inklessMetadataView.isInklessTopic(t.name()))
       .map(t => new CreateTopicAndPartitionsRequest(t.topicId(), t.name(), t.numPartitions()))
       .toSet.asJava
-    inklessControlPlane.createTopicAndPartitions(createTopicRequests)
+    inklessControlPlane.foreach{ cp => cp.createTopicAndPartitions(createTopicRequests) }
   }
 
   def handleApiVersionsRequest(request: RequestChannel.Request): CompletableFuture[Unit] = {
@@ -943,7 +943,7 @@ class ControllerApis(
           Some(new CreateTopicAndPartitionsRequest(topicIdOrError.result(), req.name(), req.count()))
         }
       }
-      inklessControlPlane.createTopicAndPartitions(createPartitionRequests.asJava)
+      inklessControlPlane.foreach{ cp => cp.createTopicAndPartitions(createPartitionRequests.asJava) }
     }
   }
 
