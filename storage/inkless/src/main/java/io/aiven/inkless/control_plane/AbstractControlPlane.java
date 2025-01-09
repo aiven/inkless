@@ -1,24 +1,18 @@
 // Copyright (c) 2024 Aiven, Helsinki, Finland. https://aiven.io/
 package io.aiven.inkless.control_plane;
 
-import org.apache.kafka.common.TopicPartition;
-import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.utils.Time;
 
 import java.util.Iterator;
 import java.util.List;
-import java.util.Set;
 import java.util.stream.Stream;
 
 
 public abstract class AbstractControlPlane implements ControlPlane {
     protected final Time time;
-    protected final MetadataView metadataView;
 
-    public AbstractControlPlane(final Time time,
-                                final MetadataView metadataView) {
+    public AbstractControlPlane(final Time time) {
         this.time = time;
-        this.metadataView = metadataView;
     }
 
     @Override
@@ -35,7 +29,7 @@ public abstract class AbstractControlPlane implements ControlPlane {
         }
 
         final SplitMapper<CommitBatchRequest, CommitBatchResponse> splitMapper = new SplitMapper<>(
-            batches, this::partitionExistsInMetadataForCommitBatchRequest
+            batches, request -> true
         );
 
         // Right away set answer for partitions not present in the metadata.
@@ -47,14 +41,6 @@ public abstract class AbstractControlPlane implements ControlPlane {
         splitMapper.setTrueOut(commitFileForExistingPartitions(objectKey, uploaderBrokerId, fileSize, splitMapper.getTrueIn()));
 
         return splitMapper.getOut();
-    }
-
-    private boolean partitionExistsInMetadataForCommitBatchRequest(final CommitBatchRequest request) {
-        final String topicName = request.topicIdPartition().topic();
-        final Uuid topicId = metadataView.getTopicId(topicName);
-        final Set<TopicPartition> partitions = metadataView.getTopicPartitions(topicName);
-        return topicId != Uuid.ZERO_UUID
-            && partitions.contains(request.topicIdPartition().topicPartition());
     }
 
     protected abstract Iterator<CommitBatchResponse> commitFileForExistingPartitions(
@@ -69,7 +55,7 @@ public abstract class AbstractControlPlane implements ControlPlane {
                                                             final boolean minOneMessage,
                                                             final int fetchMaxBytes) {
         final SplitMapper<FindBatchRequest, FindBatchResponse> splitMapper = new SplitMapper<>(
-            findBatchRequests, this::partitionExistsInMetadataForFindBatchRequest
+            findBatchRequests, findBatchRequest -> true
         );
 
         // Right away set answer for partitions not present in the metadata.
@@ -87,12 +73,4 @@ public abstract class AbstractControlPlane implements ControlPlane {
         final Stream<FindBatchRequest> requests,
         final boolean minOneMessage,
         final int fetchMaxBytes);
-
-    private boolean partitionExistsInMetadataForFindBatchRequest(final FindBatchRequest request) {
-        final String topicName = request.topicIdPartition().topic();
-        final Uuid topicId = metadataView.getTopicId(topicName);
-        final Set<TopicPartition> partitions = metadataView.getTopicPartitions(topicName);
-        return topicId.equals(request.topicIdPartition().topicId())
-            && partitions.contains(request.topicIdPartition().topicPartition());
-    }
 }

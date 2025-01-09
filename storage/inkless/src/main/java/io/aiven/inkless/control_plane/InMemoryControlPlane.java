@@ -29,9 +29,8 @@ public class InMemoryControlPlane extends AbstractControlPlane {
     private final List<FileToDeleteInternal> filesToDelete = new ArrayList<>();
     private final HashMap<TopicIdPartition, TreeMap<Long, BatchInfoInternal>> batches = new HashMap<>();
 
-    public InMemoryControlPlane(final Time time,
-                                final MetadataView metadataView) {
-        super(time, metadataView);
+    public InMemoryControlPlane(final Time time) {
+        super(time);
     }
 
     @Override
