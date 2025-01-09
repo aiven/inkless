@@ -181,8 +181,7 @@ public class FetchCompleterJob implements Supplier<Map<TopicIdPartition, FetchPa
                 MutableRecordBatch mutableRecordBatch = iterator.next();
 
                 // set last offset
-                long lastOffset = batch.recordOffset() + batch.numberOfRecords() - 1;
-                mutableRecordBatch.setLastOffset(lastOffset);
+                mutableRecordBatch.setLastOffset(batch.lastOffset());
 
                 // set log append timestamp
                 if (batch.timestampType() == TimestampType.LOG_APPEND_TIME) {

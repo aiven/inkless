@@ -84,91 +84,113 @@ public class FetchPlannerTest {
 
     @Test
     public void planSingleRequest() throws Exception {
-        assertBatchPlan(Map.of(
+        assertBatchPlan(
+            Map.of(
                 partition0, FindBatchResponse.success(List.of(
-                        new BatchInfo(OBJECT_KEY_A_MAIN_PART, 0, 10, 0, 1, TimestampType.CREATE_TIME, 10, 20)
+                    BatchInfo.of(OBJECT_KEY_A_MAIN_PART, 0, 10, 0, 0, 0, 10, 20, TimestampType.CREATE_TIME)
                 ), 0, 1)
-        ), Set.of(
+            ),
+            Set.of(
                 new CacheFetchJob(cache, OBJECT_KEY_A, requestRange, time, fetcher, durationMs -> {})
-        ));
+            )
+        );
     }
 
     @Test
     public void planRequestsForMultipleObjects() throws Exception {
-        assertBatchPlan(Map.of(
+        assertBatchPlan(
+            Map.of(
                 partition0, FindBatchResponse.success(List.of(
-                        new BatchInfo(OBJECT_KEY_A_MAIN_PART, 0, 10, 0, 1, TimestampType.CREATE_TIME, 10, 20),
-                        new BatchInfo(OBJECT_KEY_B_MAIN_PART, 0, 10, 1, 1, TimestampType.CREATE_TIME, 11, 21)
+                    BatchInfo.of(OBJECT_KEY_A_MAIN_PART, 0, 10, 0, 0, 0, 10, 20, TimestampType.CREATE_TIME),
+                    BatchInfo.of(OBJECT_KEY_B_MAIN_PART, 0, 10, 1, 0, 0, 11, 21, TimestampType.CREATE_TIME)
                 ), 0, 2)
-        ), Set.of(
+            ),
+            Set.of(
                 new CacheFetchJob(cache, OBJECT_KEY_A, requestRange, time, fetcher, durationMs -> {}),
                 new CacheFetchJob(cache, OBJECT_KEY_B, requestRange, time, fetcher, durationMs -> {})
-        ));
+            )
+        );
     }
 
     @Test
     public void planRequestsForMultiplePartitions() throws Exception {
-        assertBatchPlan(Map.of(
+        assertBatchPlan(
+            Map.of(
                 partition0, FindBatchResponse.success(List.of(
-                        new BatchInfo(OBJECT_KEY_A_MAIN_PART, 0, 10, 0, 1, TimestampType.CREATE_TIME, 10, 20)
-                ), 0, 1),
-                partition1, FindBatchResponse.success(List.of(
-                        new BatchInfo(OBJECT_KEY_B_MAIN_PART, 0, 10, 0, 1, TimestampType.CREATE_TIME, 11, 21)
+                    BatchInfo.of(OBJECT_KEY_A_MAIN_PART, 0, 10, 0, 0, 0, 10, 20, TimestampType.CREATE_TIME)
+                ), 0, 1),                                                                                  
+                partition1, FindBatchResponse.success(List.of(                                             
+                    BatchInfo.of(OBJECT_KEY_B_MAIN_PART, 0, 10, 0, 0, 0, 11, 21, TimestampType.CREATE_TIME)
                 ), 0, 1)
-        ), Set.of(
+            ),
+            Set.of(
                 new CacheFetchJob(cache, OBJECT_KEY_A, requestRange, time, fetcher, durationMs -> {}),
                 new CacheFetchJob(cache, OBJECT_KEY_B, requestRange, time, fetcher, durationMs -> {})
-        ));
+            )
+        );
     }
 
     @Test
     public void planMergedRequestsForSameObject() throws Exception {
-        assertBatchPlan(Map.of(
+        assertBatchPlan(
+            Map.of(
                 partition0, FindBatchResponse.success(List.of(
-                        new BatchInfo(OBJECT_KEY_A_MAIN_PART, 0, 10, 0, 1, TimestampType.CREATE_TIME, 10, 20)
-                ), 0, 1),
-                partition1, FindBatchResponse.success(List.of(
-                        new BatchInfo(OBJECT_KEY_A_MAIN_PART, 30, 10, 0, 1, TimestampType.CREATE_TIME, 11, 21)
+                    BatchInfo.of(OBJECT_KEY_A_MAIN_PART, 0, 10, 0, 0, 0, 10, 20, TimestampType.CREATE_TIME)
+                ), 0, 1),                                                                                   
+                partition1, FindBatchResponse.success(List.of(                                              
+                    BatchInfo.of(OBJECT_KEY_A_MAIN_PART, 30, 10, 0, 0, 0, 11, 21, TimestampType.CREATE_TIME)
                 ), 0,  1)
-                ), Set.of(
-                    new CacheFetchJob(cache, OBJECT_KEY_A, requestRange, time, fetcher, durationMs -> {})
-        ));
+            ),
+            Set.of(
+                new CacheFetchJob(cache, OBJECT_KEY_A, requestRange, time, fetcher, durationMs -> {
+                })
+            )
+        );
     }
 
     @Test
     public void planOffsetOutOfRange() throws Exception {
-        assertBatchPlan(Map.of(
+        assertBatchPlan(
+            Map.of(
                 partition0, FindBatchResponse.offsetOutOfRange(0, 1),
                 partition1, FindBatchResponse.success(List.of(
-                        new BatchInfo(OBJECT_KEY_B_MAIN_PART, 0, 10, 0, 1, TimestampType.CREATE_TIME, 11, 21)
+                    BatchInfo.of(OBJECT_KEY_B_MAIN_PART, 0, 10, 0, 0, 0, 11, 21, TimestampType.CREATE_TIME)
                 ), 0, 1)
-        ), Set.of(
+            ),
+            Set.of(
                 new CacheFetchJob(cache, OBJECT_KEY_B, requestRange, time, fetcher, durationMs -> {})
-        ));
+            )
+        );
     }
 
     @Test
     public void planUnknownTopicOrPartition() throws Exception {
-        assertBatchPlan(Map.of(
+        assertBatchPlan(
+            Map.of(
                 partition0, FindBatchResponse.unknownTopicOrPartition(),
                 partition1, FindBatchResponse.success(List.of(
-                        new BatchInfo(OBJECT_KEY_B_MAIN_PART, 0, 10, 0, 1, TimestampType.CREATE_TIME, 11, 21)
+                    BatchInfo.of(OBJECT_KEY_B_MAIN_PART, 0, 10, 0, 0, 0, 11, 21, TimestampType.CREATE_TIME)
                 ), 0, 1)
-        ), Set.of(
+            ),
+            Set.of(
                 new CacheFetchJob(cache, OBJECT_KEY_B, requestRange, time, fetcher, durationMs -> {})
-        ));
+            )
+        );
     }
 
     @Test
     public void planUnknownServerError() throws Exception {
-        assertBatchPlan(Map.of(
+        assertBatchPlan(
+            Map.of(
                 partition0, FindBatchResponse.unknownServerError(),
                 partition1, FindBatchResponse.success(List.of(
-                        new BatchInfo(OBJECT_KEY_B_MAIN_PART, 0, 10, 0, 1, TimestampType.CREATE_TIME, 11, 21)
+                    BatchInfo.of(OBJECT_KEY_B_MAIN_PART, 0, 10, 0, 0, 0, 11, 21, TimestampType.CREATE_TIME)
                 ), 0, 1)
-        ), Set.of(
+            ),
+            Set.of(
                 new CacheFetchJob(cache, OBJECT_KEY_B, requestRange, time, fetcher, durationMs -> {})
-        ));
+            )
+        );
     }
 
     private void assertBatchPlan(Map<TopicIdPartition, FindBatchResponse> coordinates, Set<CacheFetchJob> jobs) throws Exception {
@@ -191,5 +213,4 @@ public class FetchPlannerTest {
 
         assertEquals(jobs, new HashSet<>(submittedCallables.getAllValues()));
     }
-
 }

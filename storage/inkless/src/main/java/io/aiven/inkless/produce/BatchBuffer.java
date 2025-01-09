@@ -48,18 +48,7 @@ class BatchBuffer {
         final List<CommitBatchRequest> commitBatchRequests = new ArrayList<>();
         final List<Integer> requestIds = new ArrayList<>();
         for (final BatchHolder batchHolder : batches) {
-            final int byteOffset = byteBuffer.position();
-
-            commitBatchRequests.add(
-                new CommitBatchRequest(
-                    batchHolder.topicIdPartition(),
-                    byteOffset,
-                    batchHolder.batch.sizeInBytes(),
-                    batchHolder.numberOfRecords(),
-                    batchHolder.batchMaxTimestamp(),
-                    batchHolder.timestampType()
-                )
-            );
+            commitBatchRequests.add(batchHolder.toCommitBatchRequest(byteBuffer.position()));
             requestIds.add(batchHolder.requestId);
             batchHolder.batch.writeTo(byteBuffer);
         }
@@ -76,8 +65,16 @@ class BatchBuffer {
                                MutableRecordBatch batch,
                                TimestampType timestampType,
                                int requestId) {
-        long numberOfRecords() {
-            return batch.nextOffset() - batch.baseOffset();
+        CommitBatchRequest toCommitBatchRequest(final int byteOffset) {
+            return CommitBatchRequest.of(
+                topicIdPartition,
+                byteOffset,
+                batch.sizeInBytes(),
+                batch.baseOffset(),
+                batch.lastOffset(),
+                batchMaxTimestamp(),
+                timestampType
+            );
         }
 
         long batchMaxTimestamp() {

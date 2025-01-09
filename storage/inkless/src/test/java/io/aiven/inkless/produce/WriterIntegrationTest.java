@@ -101,6 +101,7 @@ class WriterIntegrationTest {
     void test() throws ExecutionException, InterruptedException, TimeoutException, IOException {
         final Time time = new MockTime();
         final InMemoryControlPlane controlPlane = new InMemoryControlPlane(time);
+        controlPlane.configure(Map.of());
 
         final Set<CreateTopicAndPartitionsRequest> createTopicAndPartitionsRequests = Set.of(
             new CreateTopicAndPartitionsRequest(TOPIC_ID_0, T0P0.topic(), 2),
