@@ -2796,11 +2796,6 @@ kafka.server.KafkaApisTest:
 - testElectLeadersForwarding
 - testEmptyIncrementalAlterConfigsRequestWithKRaft
 - testEmptyLegacyAlterConfigsRequestWithKRaft
-- testEnvelopeRequestHandlingAsController
-- testEnvelopeRequestNotAuthorized
-- testEnvelopeRequestNotControllerHandling
-- testEnvelopeRequestWithAlterConfigUnhandledError
-- testEnvelopeRequestWithNotFromPrivilegedListener
 - testExpireDelegationTokenWithForwarding
 - testFetchRequestErroneousPartitions
 - testFetchRequestV9WithNoLogConfig
@@ -2891,7 +2886,6 @@ kafka.server.KafkaApisTest:
 - testIncrementalAlterConfigsWithAuthorizer
 - testIncrementalClientMetricAlterConfigs
 - testIncrementalConsumerGroupAlterConfigs
-- testInvalidEnvelopeRequestWithNonForwardableAPI
 - testInvalidLegacyAlterConfigsRequestWithKRaft
 - testInvalidMetadataRequestReturnsError
 - testJoinGroupProtocolNameBackwardCompatibility
@@ -2954,8 +2948,6 @@ kafka.server.KafkaApisTest:
 - testRaftShouldAlwaysForwardRenewTokenRequest
 - testRaftShouldAlwaysForwardUpdateFeatures
 - testRaftShouldNeverHandleAlterPartitionRequest
-- testRaftShouldNeverHandleControlledShutdownRequest
-- testRaftShouldNeverHandleEnvelope
 - testReadCommittedConsumerListOffsetLatest
 - testReadShareGroupStateAuthorizationFailed
 - testReadShareGroupStateSuccess

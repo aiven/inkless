@@ -2566,6 +2566,7 @@ org.apache.kafka.clients.producer.internals.RecordAccumulatorTest:
 - testStressfulSituation
 - testUniformBuiltInPartitioner
 org.apache.kafka.clients.producer.internals.SenderTest:
+- senderThreadShouldNotGetStuckWhenThrottledAndAddingPartitionsToTxn
 - testAppendInExpiryCallback
 - testAwaitPendingRecordsBeforeCommittingTransaction
 - testBatchesDrainedWithOldProducerIdShouldSucceedOnSubsequentRetry
