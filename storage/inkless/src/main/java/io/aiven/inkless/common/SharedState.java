@@ -35,6 +35,7 @@ public record SharedState(
         int brokerId,
         InklessConfig config,
         MetadataView metadata,
+        ControlPlane controlPlane,
         BrokerTopicStats brokerTopicStats,
         Supplier<LogConfig> defaultTopicConfigs
     ) {
@@ -43,7 +44,7 @@ public record SharedState(
             brokerId,
             config,
             metadata,
-            ControlPlane.create(config, time),
+            controlPlane,
             config.storage(),
             ObjectKey.create(config.objectKeyPrefix(), config.objectKeyLogPrefixMasked()),
             new FixedBlockAlignment(config.fetchCacheBlockBytes()),

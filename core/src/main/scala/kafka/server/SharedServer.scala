@@ -17,6 +17,7 @@
 
 package kafka.server
 
+import io.aiven.inkless.control_plane.ControlPlane
 import kafka.metrics.KafkaMetricsReporter
 import kafka.raft.KafkaRaftManager
 import kafka.server.Server.MetricsPrefix
@@ -121,6 +122,8 @@ class SharedServer(
   @volatile var snapshotEmitter: SnapshotEmitter = _
   @volatile private var snapshotGenerator: SnapshotGenerator = _
   @volatile private var metadataLoaderMetrics: MetadataLoaderMetrics = _
+
+  @volatile var inklessControlPlane: Option[ControlPlane] = None
 
   def clusterId: String = metaPropsEnsemble.clusterId().get()
 
@@ -276,6 +279,8 @@ class SharedServer(
         if (sharedServerConfig.processRoles.contains(ProcessRole.ControllerRole)) {
           controllerServerMetrics = new ControllerMetadataMetrics(Optional.of(KafkaYammerMetrics.defaultRegistry()))
         }
+
+        inklessControlPlane = Some(ControlPlane.create(sharedServerConfig.inklessConfig, time))
 
         val _raftManager = new KafkaRaftManager[ApiMessageAndVersion](
           clusterId,
