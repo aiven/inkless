@@ -36,7 +36,7 @@ public class PostgreSQLContainer extends org.testcontainers.containers.PostgreSQ
                 PostgreSQLTestContainer.PASSWORD);
             final Statement statement = connection.createStatement()
         ) {
-            statement.execute("CREATE DATABASE " + dbName);
+            statement.execute("CREATE DATABASE \"" + dbName + "\"");
         } catch (final SQLException e) {
             throw new RuntimeException(e);
         }

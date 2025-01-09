@@ -27,9 +27,6 @@ CHECK (VALUE >= -1 AND VALUE <= 1);
 CREATE DOMAIN timestamp_t AS BIGINT NOT NULL
 CHECK (VALUE >= -1);
 
-CREATE DOMAIN number_of_records_t AS BIGINT NOT NULL  -- TODO replace with INT?
-CHECK (VALUE >= 0);
-
 CREATE TABLE logs (
     topic_id topic_id_t,
     partition partition_t,
@@ -74,10 +71,11 @@ CREATE TABLE batches (
     partition partition_t,
     base_offset offset_t,
     last_offset offset_t,
+    request_base_offset offset_t,
+    request_last_offset offset_t,
     file_id BIGINT NOT NULL,
     byte_offset byte_offset_t,
     byte_size byte_size_t,
-    number_of_records number_of_records_t,
     timestamp_type timestamp_type_t,
     log_append_timestamp timestamp_t,
     batch_max_timestamp timestamp_t,
@@ -125,7 +123,8 @@ BEGIN
                 partition partition_t,
                 byte_offset byte_offset_t,
                 byte_size byte_size_t,
-                number_of_records number_of_records_t,
+                request_base_offset offset_t,
+                request_last_offset offset_t,
                 timestamp_type timestamp_type_t,
                 batch_max_timestamp timestamp_t
             )
@@ -145,7 +144,7 @@ BEGIN
         assigned_offset = log.high_watermark;
 
         UPDATE logs
-        SET high_watermark = high_watermark + request.number_of_records
+        SET high_watermark = high_watermark + (request.request_last_offset - request.request_base_offset + 1)
         WHERE topic_id = request.topic_id
             AND partition = request.partition
         RETURNING high_watermark
@@ -155,8 +154,10 @@ BEGIN
             topic_id, partition,
             base_offset,
             last_offset,
+            request_base_offset,
+            request_last_offset,
             file_id,
-            byte_offset, byte_size, number_of_records,
+            byte_offset, byte_size,
             timestamp_type,
             log_append_timestamp,
             batch_max_timestamp
@@ -165,8 +166,9 @@ BEGIN
             request.topic_id, request.partition,
             assigned_offset,
             new_high_watermark - 1,
+            request.request_base_offset, request.request_last_offset,
             new_file_id,
-            request.byte_offset, request.byte_size, request.number_of_records,
+            request.byte_offset, request.byte_size,
             request.timestamp_type,
             (EXTRACT(EPOCH FROM now AT TIME ZONE 'UTC') * 1000)::BIGINT,
             request.batch_max_timestamp

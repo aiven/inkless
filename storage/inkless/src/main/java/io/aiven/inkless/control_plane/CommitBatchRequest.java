@@ -7,7 +7,23 @@ import org.apache.kafka.common.record.TimestampType;
 public record CommitBatchRequest(TopicIdPartition topicIdPartition,
                                  int byteOffset,
                                  int size,
-                                 long numberOfRecords,
+                                 long baseOffset,
+                                 long lastOffset,
                                  long batchMaxTimestamp,
                                  TimestampType messageTimestampType) {
+    public static CommitBatchRequest of(
+        TopicIdPartition topicIdPartition,
+        int byteOffset,
+        int size,
+        long baseOffset,
+        long lastOffset,
+        long batchMaxTimestamp,
+        TimestampType messageTimestampType
+    ) {
+        return new CommitBatchRequest(topicIdPartition, byteOffset, size, baseOffset, lastOffset, batchMaxTimestamp, messageTimestampType);
+    }
+
+    public int offsetDelta() {
+        return (int) (lastOffset - baseOffset);
+    }
 }

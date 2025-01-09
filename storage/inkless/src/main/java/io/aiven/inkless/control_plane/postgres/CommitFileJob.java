@@ -183,9 +183,14 @@ class CommitFileJob implements Callable<List<CommitBatchResponse>> {
             return request().size();
         }
 
-        @JsonProperty("number_of_records")
-        long numberOfRecords() {
-            return request().numberOfRecords();
+        @JsonProperty("request_base_offset")
+        long requestBaseOffset() {
+            return request().baseOffset();
+        }
+
+        @JsonProperty("request_last_offset")
+        long requestLastOffset() {
+            return request().lastOffset();
         }
 
         @JsonProperty("timestamp_type")
