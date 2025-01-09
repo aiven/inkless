@@ -3671,7 +3671,6 @@ org.apache.kafka.common.record.FileRecordsTest:
 - testConversion
 - testDownconversionAfterMessageFormatDowngrade
 - testFileSize
-- testFormatConversionWithNoMessages
 - testFormatConversionWithPartialMessage
 - testIterationDoesntChangePosition
 - testIterationOverPartialAndTruncation
@@ -3689,9 +3688,6 @@ org.apache.kafka.common.record.FileRecordsTest:
 - testTruncateIfSizeIsDifferentToTargetSize
 - testTruncateNotCalledIfSizeIsBiggerThanTargetSize
 - testTruncateNotCalledIfSizeIsSameAsTargetSize
-org.apache.kafka.common.record.LazyDownConversionRecordsTest:
-- testConversion
-- testConversionOfCommitMarker
 org.apache.kafka.common.record.LegacyRecordTest:
 - testChecksum
 - testEquality

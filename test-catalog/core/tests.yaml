@@ -306,6 +306,8 @@ kafka.api.ConsumerBounceTest:
 - testConsumptionWithBrokerFailures
 - testSeekAndCommitWithBrokerFailures
 - testSubscribeWhenTopicUnavailable
+kafka.api.ConsumerRebootstrapTest:
+- testRebootstrap
 kafka.api.ConsumerTopicCreationTest:
 - testAutoTopicCreation
 kafka.api.ConsumerWithLegacyMessageFormatIntegrationTest:
@@ -614,6 +616,8 @@ kafka.api.ProducerIdExpirationTest:
 - testDynamicProducerIdExpirationMs
 - testProducerIdExpirationWithNoTransactions
 - testTransactionAfterTransactionIdExpiresButProducerIdRemains
+kafka.api.ProducerRebootstrapTest:
+- testRebootstrap
 kafka.api.ProducerSendWhileDeletionTest:
 - testSendWithTopicDeletionMidWay
 kafka.api.RackAwareAutoTopicCreationTest:
@@ -1526,6 +1530,8 @@ kafka.log.LogCleanerManagerTest:
 kafka.log.LogCleanerParameterizedIntegrationTest:
 - cleanerConfigUpdateTest
 - cleanerTest
+- testCleanerWithMessageFormatV0V1V2
+- testCleaningNestedMessagesWithV0V1
 - testCleansCombinedCompactAndDeleteTopic
 kafka.log.LogCleanerTest:
 - testAbortMarkerRemoval
@@ -1761,6 +1767,7 @@ kafka.log.UnifiedLogTest:
 - testLastStableOffsetDoesNotExceedLogStartOffsetMidSegment
 - testLastStableOffsetWithMixedProducerData
 - testLeaderEpochCacheClearedAfterDowngradeInAppendedMessages
+- testLeaderEpochCacheCreatedAfterMessageFormatUpgrade
 - testLoadEmptyLog
 - testLoadPartitionDirWithNoSegmentsShouldNotThrow
 - testLoadingLogDeletesProducerStateSnapshotsPastLogEndOffset
@@ -3360,8 +3367,8 @@ kafka.server.ReplicaManagerTest:
 - testHighwaterMarkRelativeDirectoryMapping
 - testIllegalRequiredAcks
 - testInconsistentIdReturnsError
+- testMaybeAddLogDirFetchers
 - testMaybeAddLogDirFetchersPausingCleaning
-- testMaybeAddLogDirFetchersWithoutEpochCache
 - testNotCallStopPartitionsForNonTieredTopics
 - testOffsetOutOfRangeExceptionWhenFetchMessages
 - testOffsetOutOfRangeExceptionWhenReadFromLog
