@@ -2,7 +2,6 @@
 package io.aiven.inkless.control_plane.postgres;
 
 import org.apache.kafka.common.TopicIdPartition;
-import org.apache.kafka.common.record.TimestampType;
 import org.apache.kafka.common.utils.Time;
 
 import com.zaxxer.hikari.HikariDataSource;
@@ -33,7 +32,7 @@ class FindBatchesJob implements Callable<List<FindBatchResponse>> {
 
     private static final String SELECT_BATCHES = """
         SELECT b.base_offset, b.last_offset, f.object_key, b.byte_offset,
-            b.byte_size, b.number_of_records,
+            b.byte_size, b.request_base_offset, b.request_last_offset,
             b.timestamp_type, b.log_append_timestamp, b.batch_max_timestamp
         FROM batches AS b
             INNER JOIN files AS f ON b.file_id = f.file_id
@@ -149,10 +148,11 @@ class FindBatchesJob implements Callable<List<FindBatchResponse>> {
                         resultSet.getLong("byte_offset"),
                         resultSet.getLong("byte_size"),
                         resultSet.getLong("base_offset"),
-                        resultSet.getLong("number_of_records"),
-                        timestampTypeFromId(resultSet.getShort("timestamp_type")),
+                        resultSet.getLong("request_base_offset"),
+                        resultSet.getLong("request_last_offset"),
                         resultSet.getLong("log_append_timestamp"),
-                        resultSet.getLong("batch_max_timestamp")
+                        resultSet.getLong("batch_max_timestamp"),
+                        BatchInfo.timestampTypeFromId(resultSet.getShort("timestamp_type"))
                     );
                     batches.add(batch);
                     totalSize += batch.size();
@@ -176,14 +176,5 @@ class FindBatchesJob implements Callable<List<FindBatchResponse>> {
             .toList();
         return LogSelectQuery.execute(time, connection, tidps, false, getLogsDurationCallback).stream()
             .collect(Collectors.toMap(LogEntity::topicIdPartition, Function.identity()));
-    }
-
-    private TimestampType timestampTypeFromId(short id) {
-        return switch (id) {
-            case -1 -> TimestampType.NO_TIMESTAMP_TYPE;
-            case 0 -> TimestampType.CREATE_TIME;
-            case 1 -> TimestampType.LOG_APPEND_TIME;
-            default -> throw new IllegalStateException("Unexpected value: " + id);
-        };
     }
 }

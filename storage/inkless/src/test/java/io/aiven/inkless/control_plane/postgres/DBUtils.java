@@ -93,8 +93,9 @@ public class DBUtils {
                 final long fileId = resultSet.getLong("file_id");
                 final long byteOffset = resultSet.getLong("byte_offset");
                 final long byteSize = resultSet.getLong("byte_size");
-                final long numberOfRecords = resultSet.getLong("number_of_records");
-                result.add(new DBUtils.Batch(topicId, partition, baseOffset, lastOffset, fileId, byteOffset, byteSize, numberOfRecords));
+                final long requestBaseOffset = resultSet.getLong("request_base_offset");
+                final long requestLastOffset = resultSet.getLong("request_last_offset");
+                result.add(new DBUtils.Batch(topicId, partition, baseOffset, lastOffset, fileId, byteOffset, byteSize, requestBaseOffset, requestLastOffset));
             }
         } catch (final SQLException e) {
             throw new RuntimeException(e);
@@ -119,7 +120,8 @@ public class DBUtils {
                  long fileId,
                  long byteOffset,
                  long byteSize,
-                 long numberOfRecords) {
+                 long requestBaseOffset,
+                 long requestLastOffset) {
     }
 
     record FileToDelete(long id,

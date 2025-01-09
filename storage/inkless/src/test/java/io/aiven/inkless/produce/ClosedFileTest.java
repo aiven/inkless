@@ -62,7 +62,7 @@ class ClosedFileTest {
         assertThatThrownBy(() -> new ClosedFile(
             Instant.EPOCH,
             Map.of(), Map.of(),
-            List.of(new CommitBatchRequest(null, 0, 0, 0, 0, TimestampType.CREATE_TIME)),
+            List.of(CommitBatchRequest.of(null, 0, 0, 0, 0, 0, TimestampType.CREATE_TIME)),
             List.of(),
             new byte[1]))
             .isInstanceOf(IllegalArgumentException.class)

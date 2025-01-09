@@ -3,9 +3,11 @@ package io.aiven.inkless.control_plane;
 
 import org.junit.jupiter.api.TestInfo;
 
+import java.util.Map;
+
 class InMemoryControlPlaneTest extends AbstractControlPlaneTest {
     @Override
-    protected ControlPlane createControlPlane(final TestInfo testInfo) {
-        return new InMemoryControlPlane(time);
+    protected ControlPlaneAndConfigs createControlPlane(final TestInfo testInfo) {
+        return new ControlPlaneAndConfigs(new InMemoryControlPlane(time), Map.of());
     }
 }

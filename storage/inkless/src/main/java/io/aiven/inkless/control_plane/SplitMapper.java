@@ -85,7 +85,7 @@ public class SplitMapper<TIn, TOut> {
                 result.add(iter.next());
             } catch (final NoSuchElementException e) {
                 final String iterName = mark ? "True out" : "False out";
-                throw new IllegalStateException(iterName + " is exhausted");
+                throw new IllegalStateException(iterName + " is exhausted", e);
             }
         }
 
