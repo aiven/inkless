@@ -41,4 +41,25 @@ public interface ControlPlane extends Closeable, Configurable {
             throw new RuntimeException(e);
         }
     }
+
+    /**
+     * There are scenarios where Control Plane needs to be shared across Broker and Controller.
+     * This method provides a way to get the same instance of the control plane.
+     *
+     * @return Get a new or existing instance of the control plane.
+     */
+    static ControlPlane get(final InklessConfig config, final Time time) {
+        return ControlPlaneProvider.get(config, time);
+    }
+
+    class ControlPlaneProvider {
+        private static ControlPlane instance;
+
+        synchronized static ControlPlane get(final InklessConfig config, final Time time) {
+            if (instance == null) {
+                instance = ControlPlane.create(config, time);
+            }
+            return instance;
+        }
+    }
 }

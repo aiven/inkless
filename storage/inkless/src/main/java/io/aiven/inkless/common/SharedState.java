@@ -43,7 +43,7 @@ public record SharedState(
             brokerId,
             config,
             metadata,
-            ControlPlane.create(config, time),
+            ControlPlane.get(config, time),
             config.storage(),
             ObjectKey.create(config.objectKeyPrefix(), config.objectKeyLogPrefixMasked()),
             new FixedBlockAlignment(config.fetchCacheBlockBytes()),
