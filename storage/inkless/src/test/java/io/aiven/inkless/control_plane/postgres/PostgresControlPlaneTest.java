@@ -23,7 +23,7 @@ class PostgresControlPlaneTest extends AbstractControlPlaneTest {
 
         pgContainer.createDatabase(dbName);
 
-        final var controlPlane = new PostgresControlPlane(time, metadataView);
+        final var controlPlane = new PostgresControlPlane(time);
         controlPlane.configure(Map.of(
             "connection.string", pgContainer.getJdbcUrl(dbName),
             "username", pgContainer.getUsername(),

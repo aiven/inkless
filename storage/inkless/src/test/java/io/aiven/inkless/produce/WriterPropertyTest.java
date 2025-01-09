@@ -1,7 +1,6 @@
 // Copyright (c) 2024 Aiven, Helsinki, Finland. https://aiven.io/
 package io.aiven.inkless.produce;
 
-import org.apache.kafka.admin.BrokerMetadata;
 import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.Uuid;
@@ -41,7 +40,6 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.Properties;
 import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CompletableFuture;
@@ -52,13 +50,11 @@ import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
-import java.util.stream.Collectors;
 
 import io.aiven.inkless.common.PlainObjectKey;
 import io.aiven.inkless.control_plane.ControlPlane;
 import io.aiven.inkless.control_plane.CreateTopicAndPartitionsRequest;
 import io.aiven.inkless.control_plane.InMemoryControlPlane;
-import io.aiven.inkless.control_plane.MetadataView;
 import io.aiven.inkless.control_plane.postgres.PostgresControlPlane;
 import io.aiven.inkless.storage_backend.common.ObjectUploader;
 import io.aiven.inkless.storage_backend.common.StorageBackendException;
@@ -93,38 +89,6 @@ class WriterPropertyTest {
 
     private static final Set<TopicIdPartition> ALL_TPS = Set.of(T0P0, T0P1, T1P0, T1P1);
 
-    static final MetadataView METADATA_VIEW = new MetadataView() {
-        @Override
-        public Iterable<BrokerMetadata> getAliveBrokers() {
-            return List.of();
-        }
-
-        private final Map<String, Uuid> uuids = Map.of(
-            T0P0.topic(), TOPIC_ID_0,
-            T1P0.topic(), TOPIC_ID_1
-        );
-
-        @Override
-        public Set<TopicPartition> getTopicPartitions(final String topicName) {
-            return ALL_TPS.stream().map(TopicIdPartition::topicPartition).collect(Collectors.toSet());
-        }
-
-        @Override
-        public Uuid getTopicId(final String topicName) {
-            return uuids.get(topicName);
-        }
-
-        @Override
-        public boolean isInklessTopic(final String topicName) {
-            return true;
-        }
-
-        @Override
-        public Properties getTopicConfig(final String topicName) {
-            return new Properties();
-        }
-    };
-
     @BeforeContainer
     static void setUp() {
         pgContainer.start();
@@ -142,7 +106,7 @@ class WriterPropertyTest {
                                   @ForAll @IntRange(min = 10, max = 30) int uploadDurationAvg,
                                   @ForAll @IntRange(min = 5, max = 10) int commitDurationAvg,
                                   @ForAll @IntRange(min = 1, max = 1 * 1024) int maxBufferSize) throws Exception {
-        try (final ControlPlane controlPlane = new InMemoryControlPlane(new MockTime(0, 0, 0), METADATA_VIEW)) {
+        try (final ControlPlane controlPlane = new InMemoryControlPlane(new MockTime(0, 0, 0))) {
             controlPlane.configure(Map.of());
             test(requestCount, requestIntervalMsAvg, commitIntervalMsAvg, uploadDurationAvg, commitDurationAvg, maxBufferSize, controlPlane);
         }
@@ -173,7 +137,7 @@ class WriterPropertyTest {
             throw new RuntimeException(e);
         }
 
-        try (final ControlPlane controlPlane = new PostgresControlPlane(new MockTime(0, 0, 0), METADATA_VIEW)) {
+        try (final ControlPlane controlPlane = new PostgresControlPlane(new MockTime(0, 0, 0))) {
             controlPlane.configure(Map.of(
                 "connection.string", pgContainer.getJdbcUrl(dbName),
                 "username", pgContainer.getUsername(),

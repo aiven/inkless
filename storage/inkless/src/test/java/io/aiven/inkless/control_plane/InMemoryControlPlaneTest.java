@@ -6,6 +6,6 @@ import org.junit.jupiter.api.TestInfo;
 class InMemoryControlPlaneTest extends AbstractControlPlaneTest {
     @Override
     protected ControlPlane createControlPlane(final TestInfo testInfo) {
-        return new InMemoryControlPlane(time, metadataView);
+        return new InMemoryControlPlane(time);
     }
 }

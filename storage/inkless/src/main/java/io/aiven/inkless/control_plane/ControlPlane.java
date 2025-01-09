@@ -29,11 +29,11 @@ public interface ControlPlane extends Closeable, Configurable {
 
     List<FileToDelete> getFilesToDelete();
 
-    static ControlPlane create(final InklessConfig config, final Time time, final MetadataView metadata) {
+    static ControlPlane create(final InklessConfig config, final Time time) {
         final Class<ControlPlane> controlPlaneClass = config.controlPlaneClass();
         try {
-            final Constructor<ControlPlane> ctor = controlPlaneClass.getConstructor(Time.class, MetadataView.class);
-            final ControlPlane result = ctor.newInstance(time, metadata);
+            final Constructor<ControlPlane> ctor = controlPlaneClass.getConstructor(Time.class);
+            final ControlPlane result = ctor.newInstance(time);
             result.configure(config.controlPlaneConfig());
             return result;
         } catch (final NoSuchMethodException | InstantiationException | IllegalAccessException |

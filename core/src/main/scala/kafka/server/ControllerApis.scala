@@ -90,7 +90,7 @@ class ControllerApis(
   private val aclApis = new AclApis(authHelper, authorizer, requestHelper, "controller", config)
 
   private val inklessMetadataView = new InklessMetadataView(metadataCache)
-  private val inklessControlPlane = ControlPlane.create(config.inklessConfig, time, inklessMetadataView)
+  private val inklessControlPlane = ControlPlane.create(config.inklessConfig, time)
 
   def isClosed: Boolean = aclApis.isClosed
 
