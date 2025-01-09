@@ -12,7 +12,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.Closeable;
-import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalInt;
@@ -21,12 +20,15 @@ import java.util.function.Consumer;
 import java.util.stream.Collectors;
 
 import io.aiven.inkless.common.SharedState;
+import io.aiven.inkless.common.TopicTypeCounter;
 
 public class FetchInterceptor implements Closeable {
     private static final Logger LOGGER = LoggerFactory.getLogger(FetchInterceptor.class);
 
     private final SharedState state;
     private final Reader reader;
+
+    private final TopicTypeCounter topicTypeCounter;
 
     public FetchInterceptor(final SharedState state) {
         this(state, new Reader(state.time(), state.objectKeyCreator(), state.keyAlignmentStrategy(), state.cache(), state.controlPlane(), state.storage()));
@@ -35,14 +37,17 @@ public class FetchInterceptor implements Closeable {
     public FetchInterceptor(final SharedState state, final Reader reader) {
         this.state = state;
         this.reader = reader;
+
+        this.topicTypeCounter = new TopicTypeCounter(this.state.metadata());
     }
 
     public boolean intercept(final FetchParams params,
                              final Map<TopicIdPartition, FetchRequest.PartitionData> fetchInfos,
                              final Consumer<Map<TopicIdPartition, FetchPartitionData>> responseCallback) {
-
-        final EntrySeparationResult entrySeparationResult = separateEntries(fetchInfos);
-        if (entrySeparationResult.bothTypesPresent()) {
+        final TopicTypeCounter.Result countResult = topicTypeCounter.count(
+            fetchInfos.keySet().stream().map(TopicIdPartition::topicPartition).collect(Collectors.toSet())
+        );
+        if (countResult.bothTypesPresent()) {
             LOGGER.warn("Consuming from Inkless and class topic in same request isn't supported");
             final var response = fetchInfos.entrySet().stream()
                     .collect(Collectors.toMap(
@@ -56,7 +61,7 @@ public class FetchInterceptor implements Closeable {
         }
 
         // This request produces only to classic topics, don't intercept.
-        if (!entrySeparationResult.entitiesForNonInklessTopics.isEmpty()) {
+        if (countResult.noInkless()) {
             return false;
         }
 
@@ -77,29 +82,8 @@ public class FetchInterceptor implements Closeable {
         return true;
     }
 
-
-    private EntrySeparationResult separateEntries(final Map<TopicIdPartition, FetchRequest.PartitionData> entriesPerPartition) {
-        final Map<TopicIdPartition, FetchRequest.PartitionData> entitiesForInklessTopics = new HashMap<>();
-        final Map<TopicIdPartition, FetchRequest.PartitionData> entitiesForNonInklessTopics = new HashMap<>();
-        for (final var entry : entriesPerPartition.entrySet()) {
-            if (state.metadata().isInklessTopic(entry.getKey().topic())) {
-                entitiesForInklessTopics.put(entry.getKey(), entry.getValue());
-            } else {
-                entitiesForNonInklessTopics.put(entry.getKey(), entry.getValue());
-            }
-        }
-        return new EntrySeparationResult(entitiesForInklessTopics, entitiesForNonInklessTopics);
-    }
-
     @Override
     public void close() {
         reader.close();
-    }
-
-    private record EntrySeparationResult(Map<TopicIdPartition, FetchRequest.PartitionData> entitiesForInklessTopics,
-                                         Map<TopicIdPartition, FetchRequest.PartitionData> entitiesForNonInklessTopics) {
-        boolean bothTypesPresent() {
-            return !entitiesForInklessTopics.isEmpty() && !entitiesForNonInklessTopics.isEmpty();
-        }
     }
 }

@@ -144,6 +144,45 @@ public class InMemoryControlPlane extends AbstractControlPlane {
     }
 
     @Override
+    public List<DeleteRecordsResponse> deleteRecords(final List<DeleteRecordsRequest> requests) {
+        return requests.stream()
+            .map(this::deleteRecordsForPartition)
+            .toList();
+    }
+
+    private DeleteRecordsResponse deleteRecordsForPartition(final DeleteRecordsRequest request) {
+        final LogInfo logInfo = logs.get(request.topicIdPartition());
+        final TreeMap<Long, BatchInfoInternal> coordinates = this.batches.get(request.topicIdPartition());
+        // This can't really happen as non-existing partitions should be filtered out earlier.
+        if (logInfo == null || coordinates == null) {
+            LOGGER.warn("Unexpected non-existing partition {}", request.topicIdPartition());
+            return DeleteRecordsResponse.unknownTopicOrPartition();
+        }
+
+        final long convertedOffset = request.offset() == org.apache.kafka.common.requests.DeleteRecordsRequest.HIGH_WATERMARK
+            ? logInfo.highWatermark
+            : request.offset();
+        if (convertedOffset < 0 || convertedOffset > logInfo.highWatermark) {
+            return DeleteRecordsResponse.offsetOutOfRange();
+        }
+        if (convertedOffset > logInfo.logStartOffset) {
+            logInfo.logStartOffset = convertedOffset;
+        }
+
+        // coordinates.firstKey() is last offset in the batch
+        while (!coordinates.isEmpty() && coordinates.firstKey() < logInfo.logStartOffset) {
+            final BatchInfoInternal batchInfoInternal = coordinates.remove(coordinates.firstKey());
+            final FileInfo fileInfo = batchInfoInternal.fileInfo;
+            fileInfo.deleteBatch(batchInfoInternal.batchInfo);
+            if (fileInfo.allDeleted()) {
+                files.remove(fileInfo.objectKey);
+                filesToDelete.add(new FileToDeleteInternal(fileInfo, TimeUtils.now(time)));
+            }
+        }
+        return (DeleteRecordsResponse.success(logInfo.logStartOffset));
+    }
+
+    @Override
     public synchronized void deleteTopics(final Set<Uuid> topicIds) {
         // There may be some non-Inkless topics there, but they should be no-op.
 

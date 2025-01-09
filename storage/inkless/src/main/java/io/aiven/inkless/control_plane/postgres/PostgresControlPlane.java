@@ -19,6 +19,8 @@ import io.aiven.inkless.control_plane.AbstractControlPlane;
 import io.aiven.inkless.control_plane.CommitBatchRequest;
 import io.aiven.inkless.control_plane.CommitBatchResponse;
 import io.aiven.inkless.control_plane.CreateTopicAndPartitionsRequest;
+import io.aiven.inkless.control_plane.DeleteRecordsRequest;
+import io.aiven.inkless.control_plane.DeleteRecordsResponse;
 import io.aiven.inkless.control_plane.FileToDelete;
 import io.aiven.inkless.control_plane.FindBatchRequest;
 import io.aiven.inkless.control_plane.FindBatchResponse;
@@ -87,6 +89,12 @@ public class PostgresControlPlane extends AbstractControlPlane {
     public void deleteTopics(final Set<Uuid> topicIds) {
         final DeleteTopicJob job = new DeleteTopicJob(time, hikariDataSource, topicIds, metrics::onTopicDeleteCompleted);
         job.run();
+    }
+
+    @Override
+    public List<DeleteRecordsResponse> deleteRecords(final List<DeleteRecordsRequest> requests) {
+        final DeleteRecordsJob job = new DeleteRecordsJob(time, hikariDataSource, requests);
+        return job.call();
     }
 
     @Override

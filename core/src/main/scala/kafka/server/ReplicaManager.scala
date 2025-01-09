@@ -17,6 +17,7 @@
 package kafka.server
 
 import com.yammer.metrics.core.Meter
+import io.aiven.inkless.DeleteRecordsInterceptor
 import io.aiven.inkless.common.SharedState
 import io.aiven.inkless.consume.FetchInterceptor
 import io.aiven.inkless.produce.AppendInterceptor
@@ -326,6 +327,7 @@ class ReplicaManager(val config: KafkaConfig,
 
   private val inklessAppendInterceptor: Option[AppendInterceptor] = inklessSharedState.map(new AppendInterceptor(_))
   private val inklessFetchInterceptor: Option[FetchInterceptor] = inklessSharedState.map(new FetchInterceptor(_))
+  private val inklessDeleteRecordsInterceptor: Option[DeleteRecordsInterceptor] = inklessSharedState.map(new DeleteRecordsInterceptor(_))
 
   /* epoch of the controller that last changed the leader */
   @volatile private[server] var controllerEpoch: Int = KafkaController.InitialControllerEpoch
@@ -1381,6 +1383,12 @@ class ReplicaManager(val config: KafkaConfig,
   def deleteRecords(timeout: Long,
                     offsetPerPartition: Map[TopicPartition, Long],
                     responseCallback: Map[TopicPartition, DeleteRecordsPartitionResult] => Unit): Unit = {
+    if (inklessDeleteRecordsInterceptor.exists(_.intercept(
+      offsetPerPartition.view.mapValues(java.lang.Long.valueOf).toMap.asJava,
+      r => responseCallback(r.asScala)))) {
+      return
+    }
+
     val timeBeforeLocalDeleteRecords = time.milliseconds
     val localDeleteRecordsResults = deleteRecordsOnLocalLog(offsetPerPartition)
     debug("Delete records on local log in %d ms".format(time.milliseconds - timeBeforeLocalDeleteRecords))
