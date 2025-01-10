@@ -457,6 +457,7 @@ org.apache.kafka.clients.admin.internals.AdminFetchMetricsManagerTest:
 - testSingleNodeLatency
 org.apache.kafka.clients.admin.internals.AdminMetadataManagerTest:
 - testAuthenticationFailure
+- testAuthorizationFailure
 - testMetadataReady
 - testMetadataRefreshBackoff
 - testNeedsRebootstrap
@@ -3990,6 +3991,8 @@ org.apache.kafka.common.requests.RequestResponseTest:
 - testValidApiVersionsRequest
 - testValidTaggedFieldsWithSaslAuthenticateRequest
 - verifyFetchResponseFullWrites
+org.apache.kafka.common.requests.RequestUtilsTest:
+- testIsFatalException
 org.apache.kafka.common.requests.SyncGroupRequestTest:
 - testRequestVersionCompatibilityFailBuild
 org.apache.kafka.common.requests.TxnOffsetCommitRequestTest:
