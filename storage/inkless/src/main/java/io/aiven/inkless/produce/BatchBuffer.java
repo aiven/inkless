@@ -3,7 +3,6 @@ package io.aiven.inkless.produce;
 
 import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.record.MutableRecordBatch;
-import org.apache.kafka.common.record.TimestampType;
 
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
@@ -19,16 +18,16 @@ class BatchBuffer {
     private int totalSize = 0;
     private boolean closed = false;
 
-    void addBatch(final TopicIdPartition topicPartition, final TimestampType messageTimestampType,
-                  final MutableRecordBatch batch, final int requestId) {
+    void addBatch(final TopicIdPartition topicPartition,
+                  final MutableRecordBatch batch,
+                  final int requestId) {
         Objects.requireNonNull(topicPartition, "topicPartition cannot be null");
-        Objects.requireNonNull(messageTimestampType, "timestampType cannot be null");
         Objects.requireNonNull(batch, "batch cannot be null");
 
         if (closed) {
             throw new IllegalStateException("Already closed");
         }
-        final BatchHolder batchHolder = new BatchHolder(topicPartition, batch, messageTimestampType, requestId);
+        final BatchHolder batchHolder = new BatchHolder(topicPartition, batch, requestId);
         batches.add(batchHolder);
         totalSize += batch.sizeInBytes();
     }
@@ -63,7 +62,6 @@ class BatchBuffer {
 
     private record BatchHolder(TopicIdPartition topicIdPartition,
                                MutableRecordBatch batch,
-                               TimestampType timestampType,
                                int requestId) {
         CommitBatchRequest toCommitBatchRequest(final int byteOffset) {
             return CommitBatchRequest.of(
@@ -72,13 +70,9 @@ class BatchBuffer {
                 batch.sizeInBytes(),
                 batch.baseOffset(),
                 batch.lastOffset(),
-                batchMaxTimestamp(),
-                timestampType
+                batch.maxTimestamp(),
+                batch.timestampType()
             );
-        }
-
-        long batchMaxTimestamp() {
-            return batch.maxTimestamp();
         }
     }
 
