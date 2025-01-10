@@ -2387,6 +2387,8 @@ project(':storage:inkless') {
     implementation libs.awsskdS3
     implementation libs.metrics
     implementation libs.commonsIo
+    implementation libs.infinispan
+    compileOnly libs.infinispanAnnotations // Workaround for ISPN-12461
 
     testImplementation project(':clients').sourceSets.test.output.classesDirs
     testImplementation project(':test-common')
@@ -2919,6 +2921,8 @@ project(':streams:integration-tests') {
   }
 
   dependencies {
+    api libs.scalaLibrary
+
     testImplementation project(':clients').sourceSets.test.output
     testImplementation project(':group-coordinator')
     testImplementation project(':server')
