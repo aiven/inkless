@@ -105,10 +105,16 @@
       "id": 15,
       "options": {
         "legend": {
-          "calcs": [],
-          "displayMode": "list",
+          "calcs": [
+            "lastNotNull",
+            "max",
+            "mean"
+          ],
+          "displayMode": "table",
           "placement": "bottom",
-          "showLegend": true
+          "showLegend": true,
+          "sortBy": "Last *",
+          "sortDesc": true
         },
         "tooltip": {
           "mode": "single",
@@ -119,11 +125,11 @@
       "targets": [
         {
           "disableTextWrap": false,
-          "editorMode": "code",
-          "expr": "rate(kafka_network_requestmetrics_requestspersec{}[$__rate_interval])",
+          "editorMode": "builder",
+          "expr": "rate(kafka_network_requestmetrics_requestspersec{host=~\"$host\"}[$__rate_interval])",
           "fullMetaSearch": false,
           "includeNullMetadata": true,
-          "legendFormat": "{{request}} v{{version}}",
+          "legendFormat": "{{request}} v{{version}} @ {{host}}",
           "range": true,
           "refId": "A",
           "useBackend": false
@@ -217,8 +223,8 @@
       "targets": [
         {
           "disableTextWrap": false,
-          "editorMode": "code",
-          "expr": "rate(kafka_server_brokertopicmetrics_bytesinpersec{topic!=\"\"}[$__rate_interval])",
+          "editorMode": "builder",
+          "expr": "sum by(topic) (rate(kafka_server_brokertopicmetrics_bytesinpersec{topic!=\"\", host=~\"$host\"}[$__rate_interval]))",
           "fullMetaSearch": false,
           "includeNullMetadata": true,
           "legendFormat": "{{topic}}",
@@ -301,10 +307,16 @@
       "id": 18,
       "options": {
         "legend": {
-          "calcs": [],
-          "displayMode": "list",
+          "calcs": [
+            "lastNotNull",
+            "max",
+            "mean"
+          ],
+          "displayMode": "table",
           "placement": "bottom",
-          "showLegend": true
+          "showLegend": true,
+          "sortBy": "Last *",
+          "sortDesc": true
         },
         "tooltip": {
           "mode": "single",
@@ -315,11 +327,11 @@
       "targets": [
         {
           "disableTextWrap": false,
-          "editorMode": "code",
-          "expr": "rate(kafka_network_requestmetrics_requestspersec{request=\"Produce\"}[$__rate_interval])",
+          "editorMode": "builder",
+          "expr": "rate(kafka_network_requestmetrics_requestspersec{request=\"Produce\", host=~\"$host\"}[$__rate_interval])",
           "fullMetaSearch": false,
           "includeNullMetadata": true,
-          "legendFormat": "{{request}} v{{version}}",
+          "legendFormat": "{{request}} v{{version}} @ {{host}}",
           "range": true,
           "refId": "A",
           "useBackend": false
@@ -399,10 +411,16 @@
       "id": 19,
       "options": {
         "legend": {
-          "calcs": [],
-          "displayMode": "list",
+          "calcs": [
+            "lastNotNull",
+            "max",
+            "mean"
+          ],
+          "displayMode": "table",
           "placement": "bottom",
-          "showLegend": true
+          "showLegend": true,
+          "sortBy": "Last *",
+          "sortDesc": true
         },
         "tooltip": {
           "mode": "single",
@@ -413,11 +431,11 @@
       "targets": [
         {
           "disableTextWrap": false,
-          "editorMode": "code",
-          "expr": "rate(kafka_network_requestmetrics_requestspersec{request=\"FetchConsumer\"}[$__rate_interval])",
+          "editorMode": "builder",
+          "expr": "rate(kafka_network_requestmetrics_requestspersec{request=\"FetchConsumer\", host=~\"$host\"}[$__rate_interval])",
           "fullMetaSearch": false,
           "includeNullMetadata": true,
-          "legendFormat": "{{request}} v{{version}}",
+          "legendFormat": "{{request}} v{{version}} @ {{host}}",
           "range": true,
           "refId": "A",
           "useBackend": false
@@ -511,8 +529,8 @@
       "targets": [
         {
           "disableTextWrap": false,
-          "editorMode": "code",
-          "expr": "rate(kafka_server_brokertopicmetrics_bytesoutpersec{topic!=\"\"}[$__rate_interval])",
+          "editorMode": "builder",
+          "expr": "sum by(topic) (rate(kafka_server_brokertopicmetrics_bytesoutpersec{topic!=\"\", host=~\"$host\"}[$__rate_interval]))",
           "fullMetaSearch": false,
           "includeNullMetadata": true,
           "legendFormat": "{{topic}}",
@@ -631,10 +649,10 @@
           },
           "disableTextWrap": false,
           "editorMode": "builder",
-          "expr": "kafka_inkless_consume_inklessfetchmetrics_fetchtotaltime{quantile=\"$quantile\"}",
+          "expr": "kafka_inkless_consume_inklessfetchmetrics_fetchtotaltime{quantile=\"$quantile\", host=~\"$host\"}",
           "fullMetaSearch": false,
           "includeNullMetadata": true,
-          "legendFormat": "{{quantile}}",
+          "legendFormat": "{{quantile}}@{{host}}",
           "range": true,
           "refId": "A",
           "useBackend": false
@@ -737,10 +755,10 @@
           },
           "disableTextWrap": false,
           "editorMode": "builder",
-          "expr": "kafka_inkless_consume_inklessfetchmetrics_fetchfiletime{quantile=\"$quantile\"}",
+          "expr": "kafka_inkless_consume_inklessfetchmetrics_fetchfiletime{quantile=\"$quantile\", host=~\"$host\"}",
           "fullMetaSearch": false,
           "includeNullMetadata": true,
-          "legendFormat": "{{quantile}}",
+          "legendFormat": "{{quantile}}@{{host}}",
           "range": true,
           "refId": "A",
           "useBackend": false
@@ -843,10 +861,10 @@
           },
           "disableTextWrap": false,
           "editorMode": "builder",
-          "expr": "kafka_inkless_consume_inklessfetchmetrics_findbatchestime{quantile=\"$quantile\"}",
+          "expr": "kafka_inkless_consume_inklessfetchmetrics_findbatchestime{quantile=\"$quantile\", host=~\"$host\"}",
           "fullMetaSearch": false,
           "includeNullMetadata": true,
-          "legendFormat": "{{quantile}}",
+          "legendFormat": "{{quantile}}@{{host}}",
           "range": true,
           "refId": "A",
           "useBackend": false
@@ -949,10 +967,10 @@
           },
           "disableTextWrap": false,
           "editorMode": "builder",
-          "expr": "kafka_inkless_consume_inklessfetchmetrics_fetchplantime{quantile=\"$quantile\"}",
+          "expr": "kafka_inkless_consume_inklessfetchmetrics_fetchplantime{quantile=\"$quantile\", host=~\"$host\"}",
           "fullMetaSearch": false,
           "includeNullMetadata": true,
-          "legendFormat": "{{quantile}}",
+          "legendFormat": "{{quantile}}@{{host}}",
           "range": true,
           "refId": "A",
           "useBackend": false
@@ -1055,10 +1073,10 @@
           },
           "disableTextWrap": false,
           "editorMode": "builder",
-          "expr": "kafka_inkless_consume_inklessfetchmetrics_fetchcompletiontime{quantile=\"$quantile\"}",
+          "expr": "kafka_inkless_consume_inklessfetchmetrics_fetchcompletiontime{quantile=\"$quantile\", host=~\"$host\"}",
           "fullMetaSearch": false,
           "includeNullMetadata": true,
-          "legendFormat": "{{quantile}}",
+          "legendFormat": "{{quantile}}@{{host}}",
           "range": true,
           "refId": "A",
           "useBackend": false
@@ -1174,10 +1192,10 @@
           },
           "disableTextWrap": false,
           "editorMode": "builder",
-          "expr": "kafka_inkless_produce_filecommitter_filetotallifetime{quantile=\"$quantile\"}",
+          "expr": "kafka_inkless_produce_filecommitter_filetotallifetime{quantile=\"$quantile\", host=~\"$host\"}",
           "fullMetaSearch": false,
           "includeNullMetadata": true,
-          "legendFormat": "{{quantile}}",
+          "legendFormat": "{{quantile}}@{{host}}",
           "range": true,
           "refId": "A",
           "useBackend": false
@@ -1276,10 +1294,10 @@
         {
           "disableTextWrap": false,
           "editorMode": "builder",
-          "expr": "kafka_inkless_produce_filecommitter_filesize{quantile=\"$quantile\"}",
+          "expr": "kafka_inkless_produce_filecommitter_filesize{quantile=\"$quantile\", host=~\"$host\"}",
           "fullMetaSearch": false,
           "includeNullMetadata": true,
-          "legendFormat": "{{quantile}}",
+          "legendFormat": "{{quantile}}@{{host}}",
           "range": true,
           "refId": "A",
           "useBackend": false
@@ -1382,10 +1400,10 @@
           },
           "disableTextWrap": false,
           "editorMode": "builder",
-          "expr": "kafka_inkless_produce_filecommitter_fileuploadandcommittime{quantile=\"$quantile\"}",
+          "expr": "kafka_inkless_produce_filecommitter_fileuploadandcommittime{quantile=\"$quantile\", host=~\"$host\"}",
           "fullMetaSearch": false,
           "includeNullMetadata": true,
-          "legendFormat": "{{quantile}}",
+          "legendFormat": "{{quantile}}@{{host}}",
           "range": true,
           "refId": "A",
           "useBackend": false
@@ -1488,10 +1506,10 @@
           },
           "disableTextWrap": false,
           "editorMode": "builder",
-          "expr": "kafka_inkless_produce_filecommitter_fileuploadtime{quantile=\"$quantile\"}",
+          "expr": "kafka_inkless_produce_filecommitter_fileuploadtime{quantile=\"$quantile\", host=~\"$host\"}",
           "fullMetaSearch": false,
           "includeNullMetadata": true,
-          "legendFormat": "{{quantile}}",
+          "legendFormat": "{{quantile}}@{{host}}",
           "range": true,
           "refId": "A",
           "useBackend": false
@@ -1594,10 +1612,10 @@
           },
           "disableTextWrap": false,
           "editorMode": "builder",
-          "expr": "kafka_inkless_produce_filecommitter_filecommittime{quantile=\"$quantile\"}",
+          "expr": "kafka_inkless_produce_filecommitter_filecommittime{quantile=\"$quantile\", host=~\"$host\"}",
           "fullMetaSearch": false,
           "includeNullMetadata": true,
-          "legendFormat": "{{quantile}}",
+          "legendFormat": "{{quantile}}@{{host}}",
           "range": true,
           "refId": "A",
           "useBackend": false
@@ -1694,10 +1712,10 @@
         {
           "disableTextWrap": false,
           "editorMode": "builder",
-          "expr": "rate(io_aiven_inkless_produce_writermetrics_value[$__rate_interval])",
+          "expr": "rate(io_aiven_inkless_produce_writermetrics_value{host=~\"$host\"}[$__rate_interval])",
           "fullMetaSearch": false,
           "includeNullMetadata": true,
-          "legendFormat": "{{name}}",
+          "legendFormat": "{{name}}@{{host}}",
           "range": true,
           "refId": "A",
           "useBackend": false
@@ -1794,10 +1812,10 @@
         {
           "disableTextWrap": false,
           "editorMode": "builder",
-          "expr": "rate(io_aiven_inkless_produce_filecommitter_value{name=\"FileCommitRate\"}[$__rate_interval])",
+          "expr": "rate(io_aiven_inkless_produce_filecommitter_value{name=\"FileCommitRate\", host=~\"$host\"}[$__rate_interval])",
           "fullMetaSearch": false,
           "includeNullMetadata": true,
-          "legendFormat": "{{name}}",
+          "legendFormat": "{{name}}@{{host}}",
           "range": true,
           "refId": "A",
           "useBackend": false
@@ -1809,11 +1827,11 @@
           },
           "disableTextWrap": false,
           "editorMode": "builder",
-          "expr": "rate(io_aiven_inkless_produce_filecommitter_value{name=\"FileUploadRate\"}[$__rate_interval])",
+          "expr": "rate(io_aiven_inkless_produce_filecommitter_value{name=\"FileUploadRate\", host=~\"$host\"}[$__rate_interval])",
           "fullMetaSearch": false,
           "hide": false,
           "includeNullMetadata": true,
-          "legendFormat": "{{name}}",
+          "legendFormat": "{{name}}@{{broker}}",
           "range": true,
           "refId": "B",
           "useBackend": false
@@ -1896,7 +1914,7 @@
             "h": 8,
             "w": 12,
             "x": 0,
-            "y": 164
+            "y": 156
           },
           "id": 23,
           "options": {
@@ -1920,10 +1938,10 @@
             {
               "disableTextWrap": false,
               "editorMode": "builder",
-              "expr": "rate(aiven_inkless_server_s3_s3_client_metrics_put_object_requests[$__rate_interval])",
+              "expr": "rate(aiven_inkless_server_s3_s3_client_metrics_put_object_requests{host=~\"$host\"}[$__rate_interval])",
               "fullMetaSearch": false,
               "includeNullMetadata": true,
-              "legendFormat": "Value",
+              "legendFormat": "{{host}}",
               "range": true,
               "refId": "A",
               "useBackend": false
@@ -1996,7 +2014,7 @@
             "h": 8,
             "w": 12,
             "x": 12,
-            "y": 164
+            "y": 156
           },
           "id": 24,
           "options": {
@@ -2020,10 +2038,10 @@
             {
               "disableTextWrap": false,
               "editorMode": "builder",
-              "expr": "rate(aiven_inkless_server_s3_s3_client_metrics_get_object_requests[$__rate_interval])",
+              "expr": "rate(aiven_inkless_server_s3_s3_client_metrics_get_object_requests{host=~\"$host\"}[$__rate_interval])",
               "fullMetaSearch": false,
               "includeNullMetadata": true,
-              "legendFormat": "Value",
+              "legendFormat": "{{host}}",
               "range": true,
               "refId": "A",
               "useBackend": false
@@ -2108,7 +2126,7 @@
             "h": 8,
             "w": 8,
             "x": 0,
-            "y": 61
+            "y": 165
           },
           "id": 26,
           "options": {
@@ -2136,7 +2154,7 @@
               },
               "disableTextWrap": false,
               "editorMode": "builder",
-              "expr": "kafka_inkless_controlplane_postgrescontrolplane_commitfilequerytime{quantile=\"$quantile\"}",
+              "expr": "sum by(host) (kafka_inkless_controlplane_postgrescontrolplane_commitfilequerytime{quantile=\"$quantile\", host=~\"$host\"})",
               "fullMetaSearch": false,
               "includeNullMetadata": true,
               "legendFormat": "{{quantile}}",
@@ -2210,7 +2228,7 @@
             "h": 8,
             "w": 8,
             "x": 8,
-            "y": 61
+            "y": 165
           },
           "id": 27,
           "options": {
@@ -2238,10 +2256,10 @@
               },
               "disableTextWrap": false,
               "editorMode": "builder",
-              "expr": "kafka_inkless_controlplane_postgrescontrolplane_findbatchesquerytime{quantile=\"$quantile\"}",
+              "expr": "sum by(host) (kafka_inkless_controlplane_postgrescontrolplane_findbatchesquerytime{quantile=\"$quantile\", host=~\"$host\"})",
               "fullMetaSearch": false,
               "includeNullMetadata": true,
-              "legendFormat": "Find Batches {{quantile}}",
+              "legendFormat": "Find Batches {{quantile}}@{{host}}",
               "range": true,
               "refId": "A",
               "useBackend": false
@@ -2253,12 +2271,12 @@
               },
               "disableTextWrap": false,
               "editorMode": "builder",
-              "expr": "kafka_inkless_controlplane_postgrescontrolplane_getlogsquerytime{quantile=\"$quantile\"}",
+              "expr": "sum by(host) (kafka_inkless_controlplane_postgrescontrolplane_getlogsquerytime{quantile=\"$quantile\", host=~\"$host\"})",
               "fullMetaSearch": false,
               "hide": false,
               "includeNullMetadata": true,
               "instant": false,
-              "legendFormat": "Get Log {{quantile}}",
+              "legendFormat": "Get Log {{quantile}}@{{host}}",
               "range": true,
               "refId": "B",
               "useBackend": false
@@ -2329,7 +2347,7 @@
             "h": 8,
             "w": 8,
             "x": 16,
-            "y": 61
+            "y": 165
           },
           "id": 28,
           "options": {
@@ -2357,10 +2375,10 @@
               },
               "disableTextWrap": false,
               "editorMode": "builder",
-              "expr": "kafka_inkless_controlplane_postgres_postgrescontrolplane_topiccreatequerytime{quantile=\"$quantile\"}",
+              "expr": "sum by(host) (kafka_inkless_controlplane_postgrescontrolplane_topiccreatequerytime{quantile=\"$quantile\", host=~\"$host\"})",
               "fullMetaSearch": false,
               "includeNullMetadata": true,
-              "legendFormat": "Topic create {{quantile}}",
+              "legendFormat": "Topic create {{quantile}}@{{host}}",
               "range": true,
               "refId": "A",
               "useBackend": false
@@ -2372,12 +2390,12 @@
               },
               "disableTextWrap": false,
               "editorMode": "builder",
-              "expr": "kafka_inkless_controlplane_postgrescontrolplane_topicdeletequerytime{quantile=\"$quantile\"}",
+              "expr": "sum by(host) (kafka_inkless_controlplane_postgrescontrolplane_topicdeletequerytime{quantile=\"$quantile\", host=~\"$host\"})",
               "fullMetaSearch": false,
               "hide": false,
               "includeNullMetadata": true,
               "instant": false,
-              "legendFormat": "Topic delete {{quantile}}",
+              "legendFormat": "Topic delete {{quantile}}@{{host}}",
               "range": true,
               "refId": "B",
               "useBackend": false
@@ -2447,7 +2465,7 @@
             "h": 8,
             "w": 8,
             "x": 0,
-            "y": 69
+            "y": 173
           },
           "id": 29,
           "options": {
@@ -2475,7 +2493,7 @@
               },
               "disableTextWrap": false,
               "editorMode": "builder",
-              "expr": "rate(kafka_inkless_controlplane_postgrescontrolplane_commitfilequeryrate[$__rate_interval])",
+              "expr": "sum(rate(kafka_inkless_controlplane_postgrescontrolplane_commitfilequeryrate{host=~\"$host\"}[$__rate_interval]))",
               "fullMetaSearch": false,
               "includeNullMetadata": true,
               "legendFormat": "Commit File ops",
@@ -2548,7 +2566,7 @@
             "h": 8,
             "w": 8,
             "x": 8,
-            "y": 69
+            "y": 173
           },
           "id": 30,
           "options": {
@@ -2576,7 +2594,7 @@
               },
               "disableTextWrap": false,
               "editorMode": "builder",
-              "expr": "rate(kafka_inkless_controlplane_postgrescontrolplane_findbatchesqueryrate[$__rate_interval])",
+              "expr": "sum(rate(kafka_inkless_controlplane_postgrescontrolplane_findbatchesqueryrate{host=~\"$host\"}[$__rate_interval]))",
               "fullMetaSearch": false,
               "includeNullMetadata": true,
               "legendFormat": "Find Batches ops",
@@ -2591,7 +2609,7 @@
               },
               "disableTextWrap": false,
               "editorMode": "builder",
-              "expr": "rate(kafka_inkless_controlplane_postgrescontrolplane_getlogsqueryrate[$__rate_interval])",
+              "expr": "sum(rate(kafka_inkless_controlplane_postgrescontrolplane_getlogsqueryrate{host=~\"$host\"}[$__rate_interval]))",
               "fullMetaSearch": false,
               "hide": false,
               "includeNullMetadata": true,
@@ -2665,7 +2683,7 @@
             "h": 8,
             "w": 8,
             "x": 16,
-            "y": 69
+            "y": 173
           },
           "id": 31,
           "options": {
@@ -2693,7 +2711,7 @@
               },
               "disableTextWrap": false,
               "editorMode": "builder",
-              "expr": "rate(kafka_inkless_controlplane_postgrescontrolplane_topiccreatequeryrate[$__rate_interval])",
+              "expr": "sum(rate(kafka_inkless_controlplane_postgrescontrolplane_topiccreatequeryrate{host=~\"$host\"}[$__rate_interval]))",
               "fullMetaSearch": false,
               "includeNullMetadata": true,
               "legendFormat": "Create ops",
@@ -2708,7 +2726,7 @@
               },
               "disableTextWrap": false,
               "editorMode": "builder",
-              "expr": "rate(kafka_inkless_controlplane_postgrescontrolplane_topicdeletequeryrate[$__rate_interval])",
+              "expr": "sum(rate(kafka_inkless_controlplane_postgrescontrolplane_topicdeletequeryrate{host=~\"$host\"}[$__rate_interval]))",
               "fullMetaSearch": false,
               "hide": false,
               "includeNullMetadata": true,
@@ -2773,6 +2791,28 @@
         ],
         "query": "0.50, 0.75, 0.95, 0.98, 0.99, 0.999",
         "type": "custom"
+      },
+      {
+        "allValue": "(.+)",
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        },
+        "definition": "label_values(kafka_server_app_info_start_time_ms,host)",
+        "description": "",
+        "includeAll": true,
+        "label": "Host",
+        "name": "host",
+        "options": [],
+        "query": {
+          "qryType": 1,
+          "query": "label_values(kafka_server_app_info_start_time_ms,host)",
+          "refId": "PrometheusVariableQueryEditor-VariableQuery"
+        },
+        "refresh": 2,
+        "regex": "",
+        "sort": 2,
+        "type": "query"
       }
     ]
   },
