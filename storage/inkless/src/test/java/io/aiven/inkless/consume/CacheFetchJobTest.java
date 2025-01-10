@@ -83,5 +83,4 @@ public class CacheFetchJobTest {
                 durationMs -> {}, durationMs -> {}, hitBool -> {}, durationMs -> {});
     }
 
-
 }

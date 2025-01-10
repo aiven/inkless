@@ -120,7 +120,6 @@ public class InklessClusterTest extends SharedPostgreSQLTest {
         cluster.format();
         cluster.startup();
         cluster.waitForReadyBrokers();
-        System.out.printf("bootstrapServers: %s%n", cluster.bootstrapServers());
     }
 
     @AfterEach
