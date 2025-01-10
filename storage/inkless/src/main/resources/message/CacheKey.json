@@ -1,5 +1,6 @@
 // Copyright (c) 2024 Aiven, Helsinki, Finland. https://aiven.io/
 {
+  "apiKey": 1,
   "name": "CacheKey",
   "type": "data",
   "validVersions": "0",
