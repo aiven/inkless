@@ -19,6 +19,9 @@ public class InklessFetchMetrics {
     private static final String FETCH_TOTAL_TIME = "FetchTotalTime";
     private static final String FIND_BATCHES_TIME = "FindBatchesTime";
     private static final String FETCH_PLAN_TIME = "FetchPlanTime";
+    private static final String CACHE_QUERY_TIME = "CacheQueryTime";
+    private static final String CACHE_STORE_TIME = "CacheStoreTime";
+    private static final String CACHE_HIT_RATE = "CacheHitRate";
     private static final String FETCH_FILE_TIME = "FetchFileTime";
     private static final String FETCH_COMPLETION_TIME = "FetchCompletionTime";
 
@@ -28,6 +31,9 @@ public class InklessFetchMetrics {
     private final Histogram fetchTimeHistogram;
     private final Histogram findBatchesTimeHistogram;
     private final Histogram fetchPlanTimeHistogram;
+    private final Histogram cacheQueryTimeHistogram;
+    private final Histogram cacheStoreTimeHistogram;
+    private final Histogram cacheHitRate;
     private final Histogram fetchFileTimeHistogram;
     private final Histogram fetchCompletionTimeHistogram;
 
@@ -36,6 +42,9 @@ public class InklessFetchMetrics {
         fetchTimeHistogram = metricsGroup.newHistogram(FETCH_TOTAL_TIME, true, Map.of());
         findBatchesTimeHistogram = metricsGroup.newHistogram(FIND_BATCHES_TIME, true, Map.of());
         fetchPlanTimeHistogram = metricsGroup.newHistogram(FETCH_PLAN_TIME, true, Map.of());
+        cacheQueryTimeHistogram = metricsGroup.newHistogram(CACHE_QUERY_TIME, true, Map.of());
+        cacheStoreTimeHistogram = metricsGroup.newHistogram(CACHE_STORE_TIME, true, Map.of());
+        cacheHitRate = metricsGroup.newHistogram(CACHE_HIT_RATE, true, Map.of());
         fetchFileTimeHistogram = metricsGroup.newHistogram(FETCH_FILE_TIME, true, Map.of());
         fetchCompletionTimeHistogram = metricsGroup.newHistogram(FETCH_COMPLETION_TIME, true, Map.of());
     }
@@ -51,6 +60,18 @@ public class InklessFetchMetrics {
 
     public void fetchPlanFinished(final long durationMs) {
         fetchPlanTimeHistogram.update(durationMs);
+    }
+
+    public void cacheQueryFinished(final long durationMs) {
+        cacheQueryTimeHistogram.update(durationMs);
+    }
+
+    public void cacheStoreFinished(final long durationMs) {
+        cacheStoreTimeHistogram.update(durationMs);
+    }
+
+    public void cacheHit(final boolean hit) {
+        cacheHitRate.update(hit ? 1 : 0);
     }
 
     public void fetchFileFinished(final long durationMs) {

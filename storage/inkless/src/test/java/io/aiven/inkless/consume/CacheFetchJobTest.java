@@ -49,7 +49,7 @@ public class CacheFetchJobTest {
         when(fetcher.fetch(objectA, range)).thenReturn(new ByteArrayInputStream(array));
 
         ObjectCache cache = new NullCache();
-        CacheFetchJob cacheFetchJob = new CacheFetchJob(cache, objectA, range, time, fetcher, durationMs -> { });
+        CacheFetchJob cacheFetchJob = cacheFetchJob(cache, objectA, range);
         FileExtent actualFile = cacheFetchJob.call();
 
         assertThat(actualFile).isEqualTo(expectedFile);
@@ -67,11 +67,21 @@ public class CacheFetchJobTest {
 
         ObjectCache cache = new MemoryCache();
         cache.put(CacheFetchJob.createCacheKey(objectA, range), expectedFile);
-        CacheFetchJob cacheFetchJob = new CacheFetchJob(cache, objectA, range, time, fetcher, durationMs -> { });
+        CacheFetchJob cacheFetchJob = cacheFetchJob(cache, objectA, range);
         FileExtent actualFile = cacheFetchJob.call();
 
         assertThat(actualFile).isEqualTo(expectedFile);
         verifyNoInteractions(fetcher);
     }
+
+    private CacheFetchJob cacheFetchJob(
+            ObjectCache cache,
+            ObjectKey objectKey,
+            ByteRange byteRange
+    ) {
+        return new CacheFetchJob(cache, objectKey, byteRange, time, fetcher,
+                durationMs -> {}, durationMs -> {}, hitBool -> {}, durationMs -> {});
+    }
+
 
 }
