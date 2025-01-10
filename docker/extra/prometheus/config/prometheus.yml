@@ -10,3 +10,14 @@ scrape_configs:
   - job_name: 'kafka'
     static_configs:
     - targets: ['broker:7070']
+      labels:
+        host: 'broker'
+    - targets: ['broker2:7070']
+      labels:
+        host: 'broker2'
+    - targets: ['broker101:7070']
+      labels:
+        host: 'broker101'
+    - targets: ['broker102:7070']
+      labels:
+        host: 'broker102'
