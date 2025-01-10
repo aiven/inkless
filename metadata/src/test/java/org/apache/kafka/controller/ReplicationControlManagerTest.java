@@ -101,6 +101,7 @@ import org.apache.kafka.timeline.SnapshotRegistry;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.slf4j.Logger;
@@ -127,6 +128,7 @@ import java.util.stream.IntStream;
 import static java.util.Arrays.asList;
 import static java.util.Collections.singletonList;
 import static java.util.Collections.singletonMap;
+import static org.apache.kafka.common.config.TopicConfig.INKLESS_ENABLE_CONFIG;
 import static org.apache.kafka.common.config.TopicConfig.SEGMENT_BYTES_CONFIG;
 import static org.apache.kafka.common.protocol.Errors.ELECTION_NOT_NEEDED;
 import static org.apache.kafka.common.protocol.Errors.ELIGIBLE_LEADERS_NOT_AVAILABLE;
@@ -389,6 +391,29 @@ public class ReplicationControlManagerTest {
                 RegisterBrokerRecord brokerRecord = new RegisterBrokerRecord().
                     setBrokerEpoch(defaultBrokerEpoch(brokerId)).setBrokerId(brokerId).
                         setRack(null).setLogDirs(logDirs);
+                brokerRecord.endPoints().add(new RegisterBrokerRecord.BrokerEndpoint().
+                    setSecurityProtocol(SecurityProtocol.PLAINTEXT.id).
+                    setPort((short) 9092 + brokerId).
+                    setName("PLAINTEXT").
+                    setHost("localhost"));
+                replay(Collections.singletonList(new ApiMessageAndVersion(brokerRecord, (short) 3)));
+            }
+        }
+
+        @SuppressWarnings("unchecked")
+        void registerBrokersWithDirsAndRacks(Object... brokerIdsAndDirs) {
+            if (brokerIdsAndDirs.length % 2 != 0) {
+                throw new IllegalArgumentException("uneven number of arguments");
+            }
+            for (int i = 0; i < brokerIdsAndDirs.length / 3; i++) {
+                int brokerId = (int) brokerIdsAndDirs[i * 3];
+                List<Uuid> logDirs = (List<Uuid>) brokerIdsAndDirs[i * 3 + 1];
+                String rackId = String.valueOf(brokerIdsAndDirs[i * 3 + 2]);
+                RegisterBrokerRecord brokerRecord = new RegisterBrokerRecord().
+                    setBrokerEpoch(defaultBrokerEpoch(brokerId)).
+                    setBrokerId(brokerId).
+                    setRack(rackId).
+                    setLogDirs(logDirs);
                 brokerRecord.endPoints().add(new RegisterBrokerRecord.BrokerEndpoint().
                     setSecurityProtocol(SecurityProtocol.PLAINTEXT.id).
                     setPort((short) 9092 + brokerId).
@@ -671,6 +696,123 @@ public class ReplicationControlManagerTest {
                 setErrorCode(Errors.TOPIC_ALREADY_EXISTS.code()).
                 setErrorMessage("Topic 'foo' already exists."));
         assertEquals(expectedResponse4, result4.response());
+    }
+
+    @Test
+    public void testCreateInklessTopic() {
+        ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder().build();
+        ReplicationControlManager replicationControl = ctx.replicationControl;
+        // Given a kafka topic with inkless enabled
+        CreateTopicsRequestData request = new CreateTopicsRequestData();
+        CreateTopicsRequestData.CreatableTopicConfigCollection creatableTopicConfigs = new CreateTopicsRequestData.CreatableTopicConfigCollection();
+        creatableTopicConfigs.add(new CreateTopicsRequestData.CreatableTopicConfig()
+            .setName(INKLESS_ENABLE_CONFIG)
+            .setValue("true"));
+        request.topics().add(new CreatableTopic().setName("foo").
+            setNumPartitions(-1).setReplicationFactor((short) -1)
+            .setConfigs(creatableTopicConfigs));
+
+        // When creating a topic without brokers available
+        ControllerRequestContext requestContext = anonymousContextFor(ApiKeys.CREATE_TOPICS);
+        ControllerResult<CreateTopicsResponseData> result =
+            replicationControl.createTopics(requestContext, request, Collections.singleton("foo"));
+        // Then the topic creation should fail with BROKER_NOT_AVAILABLE error
+        CreateTopicsResponseData expectedResponse = new CreateTopicsResponseData();
+        expectedResponse.topics().add(new CreatableTopicResult().setName("foo").
+            setErrorCode(Errors.BROKER_NOT_AVAILABLE.code()).
+            setErrorMessage("No brokers available to create inkless topic."));
+        assertEquals(expectedResponse, withoutConfigs(result.response()));
+
+        // Given brokers are registered
+        ctx.registerBrokers(0, 1, 2);
+        ctx.unfenceBrokers(0);
+        ctx.inControlledShutdownBrokers(0);
+
+        // When creating a topic with inkless enabled
+        ControllerResult<CreateTopicsResponseData> result2 =
+            replicationControl.createTopics(requestContext, request, Collections.singleton("foo"));
+        // Then the topic creation should succeed, regardless of fenced brokers
+        CreateTopicsResponseData expectedResponse2 = new CreateTopicsResponseData();
+        expectedResponse2.topics().add(new CreatableTopicResult().setName("foo").
+            setNumPartitions(1).setReplicationFactor((short) 1).
+            setErrorMessage(null).setErrorCode((short) 0).
+            setTopicId(result2.response().topics().find("foo").topicId()));
+        assertEquals(expectedResponse2, withoutConfigs(result2.response()));
+
+        // Given all brokers unfenced
+        ctx.registerBrokers(0, 1, 2);
+        ctx.unfenceBrokers(0, 1, 2);
+
+        // When creating a topic with inkless enabled
+        ControllerResult<CreateTopicsResponseData> result3 =
+            replicationControl.createTopics(requestContext, request, Collections.singleton("foo"));
+        // Then the topic creation should succeed, regardless of the RF
+        CreateTopicsResponseData expectedResponse3 = new CreateTopicsResponseData();
+        expectedResponse3.topics().add(new CreatableTopicResult().setName("foo").
+            setNumPartitions(1).setReplicationFactor((short) 1).
+            setErrorMessage(null).setErrorCode((short) 0).
+            setTopicId(result3.response().topics().find("foo").topicId()));
+        assertEquals(expectedResponse3, withoutConfigs(result3.response()));
+
+        // Given the topic is registered
+        ctx.replay(result3.records());
+        assertEquals(
+            new PartitionRegistration.Builder().setReplicas(new int[] {0}).
+                setDirectories(new Uuid[] {
+                    Uuid.fromString("TESTBROKER00000DIRAAAA"),
+                }).
+                setIsr(new int[] {0})
+                .setLeader(0)
+                .setLeaderRecoveryState(LeaderRecoveryState.RECOVERED)
+                .setLeaderEpoch(0)
+                .setPartitionEpoch(0)
+                .build(),
+            replicationControl.getPartition(((TopicRecord) result3.records().get(0).message()).topicId(), 0));
+
+        // When creating a topic with inkless enabled and already exists
+        ControllerResult<CreateTopicsResponseData> result4 =
+            replicationControl.createTopics(requestContext, request, Collections.singleton("foo"));
+        CreateTopicsResponseData expectedResponse4 = new CreateTopicsResponseData();
+        // Then the topic creation should fail with TOPIC_ALREADY_EXISTS error
+        expectedResponse4.topics().add(new CreatableTopicResult().setName("foo").
+            setErrorCode(Errors.TOPIC_ALREADY_EXISTS.code()).
+            setErrorMessage("Topic 'foo' already exists."));
+        assertEquals(expectedResponse4, result4.response());
+    }
+
+    @ParameterizedTest
+    @CsvSource({
+        "1, -2, INVALID_REPLICATION_FACTOR",
+        "1, 0, INVALID_REPLICATION_FACTOR",
+        "1, 2, INVALID_REPLICATION_FACTOR",
+        "-2, 1, INVALID_PARTITIONS",
+        "0, 1, INVALID_PARTITIONS",
+    })
+    public void testCreateInklessTopicWithInvalidInput(int numPartitions, short replicationFactor, String expectedError) {
+        ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder().build();
+        ReplicationControlManager replicationControl = ctx.replicationControl;
+        ctx.registerBrokers(0, 1, 2);
+        ctx.unfenceBrokers(0, 1, 2);
+
+        ControllerRequestContext requestContext = anonymousContextFor(ApiKeys.CREATE_TOPICS);
+
+        CreateTopicsRequestData.CreatableTopicConfigCollection inklessConfig =
+            new CreateTopicsRequestData.CreatableTopicConfigCollection();
+        inklessConfig.add(
+            new CreateTopicsRequestData.CreatableTopicConfig()
+                .setName("inkless.enable")
+                .setValue("true")
+        );
+
+        CreateTopicsRequestData request1 = new CreateTopicsRequestData();
+        request1.topics().add(new CreatableTopic().setName("baz")
+            .setNumPartitions(numPartitions).setReplicationFactor(replicationFactor)
+            .setConfigs(inklessConfig));
+
+        ControllerResult<CreateTopicsResponseData> result1 =
+            replicationControl.createTopics(requestContext, request1, Collections.singleton("baz"));
+        assertEquals(Errors.valueOf(expectedError).code(), result1.response().topics().find("baz").errorCode());
+        assertEquals(Collections.emptyList(), result1.records());
     }
 
     @Test
