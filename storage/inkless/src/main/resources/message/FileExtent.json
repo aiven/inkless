@@ -1,5 +1,6 @@
 // Copyright (c) 2024 Aiven, Helsinki, Finland. https://aiven.io/
 {
+  "apiKey": 2,
   "name": "FileExtent",
   "type": "data",
   "validVersions": "0",
