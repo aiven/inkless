@@ -70,9 +70,9 @@ class ActiveFile {
             }
 
             for (final var batch : entry.getValue().batches()) {
-                batchValidator.validateAndMaybeSetMaxTimestamp(batch);
+                batchValidator.validateAndMaybeSetMaxTimestamp(batch, messageTimestampType);
 
-                buffer.addBatch(topicIdPartition, messageTimestampType, batch, requestId);
+                buffer.addBatch(topicIdPartition, batch, requestId);
 
                 brokerTopicMetricMarks.bytesInRateMark.accept(topicIdPartition.topic(), batch.sizeInBytes());
                 brokerTopicMetricMarks.messagesInRateMark.accept(topicIdPartition.topic(), batch.nextOffset() - batch.baseOffset());

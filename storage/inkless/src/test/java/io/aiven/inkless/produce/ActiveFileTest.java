@@ -7,6 +7,7 @@ import org.apache.kafka.common.compress.Compression;
 import org.apache.kafka.common.record.MemoryRecords;
 import org.apache.kafka.common.record.SimpleRecord;
 import org.apache.kafka.common.record.TimestampType;
+import org.apache.kafka.common.utils.MockTime;
 import org.apache.kafka.common.utils.Time;
 
 import org.junit.jupiter.api.Test;
@@ -109,7 +110,8 @@ class ActiveFileTest {
     @Test
     void closeNonEmpty() {
         final Instant start = Instant.ofEpochMilli(10);
-        final ActiveFile file = new ActiveFile(Time.SYSTEM, start);
+        final Time time = new MockTime();
+        final ActiveFile file = new ActiveFile(time, start);
         final Map<TopicIdPartition, MemoryRecords> request1 = Map.of(
             T0P0, MemoryRecords.withRecords(Compression.NONE, new SimpleRecord(1000, new byte[10])),
             T0P1, MemoryRecords.withRecords(Compression.NONE, new SimpleRecord(2000, new byte[10]))
@@ -134,7 +136,7 @@ class ActiveFileTest {
             CommitBatchRequest.of(T0P0, 0, 78, 0, 0, 1000, TimestampType.CREATE_TIME),
             CommitBatchRequest.of(T0P1, 78, 78, 0, 0, 2000, TimestampType.CREATE_TIME),
             CommitBatchRequest.of(T0P1, 156, 78, 0, 0, 3000, TimestampType.CREATE_TIME),
-            CommitBatchRequest.of(T1P0, 234, 78, 0, 0, 4000, TimestampType.LOG_APPEND_TIME)
+            CommitBatchRequest.of(T1P0, 234, 78, 0, 0, time.milliseconds(), TimestampType.LOG_APPEND_TIME)
         );
         assertThat(result.requestIds()).containsExactly(0, 0, 1, 1);
         assertThat(result.data()).hasSize(312);

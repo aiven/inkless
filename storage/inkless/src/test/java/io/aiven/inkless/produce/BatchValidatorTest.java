@@ -22,9 +22,13 @@ class BatchValidatorTest {
     @Test
     void failWhenBatchNull() {
         final BatchValidator batchValidator = new BatchValidator(Time.SYSTEM);
-        Assertions.assertThatThrownBy(() -> batchValidator.validateAndMaybeSetMaxTimestamp(null))
+        Assertions.assertThatThrownBy(() -> batchValidator.validateAndMaybeSetMaxTimestamp(null, TimestampType.CREATE_TIME))
             .isInstanceOf(NullPointerException.class)
             .hasMessage("batch cannot be null");
+        final MutableRecordBatch batch = createBatchWithTimeSpreadRecords(TimestampType.CREATE_TIME, new MockTime(), 1, "b", "c");
+        Assertions.assertThatThrownBy(() -> batchValidator.validateAndMaybeSetMaxTimestamp(batch, null))
+            .isInstanceOf(NullPointerException.class)
+            .hasMessage("timestampType cannot be null");
     }
 
     @Test
@@ -34,22 +38,23 @@ class BatchValidatorTest {
 
         // given a batch with records with increasing timestamps
         time.sleep(100);
-        final long craeteTimeBase = time.milliseconds();
+        final long createTimeBase = time.milliseconds();
         final MutableRecordBatch batch = createBatchWithTimeSpreadRecords(TimestampType.CREATE_TIME, time, 1, "b", "c");
+        final long expectedTime = createTimeBase + (batch.lastOffset() - batch.baseOffset() + 1);
         // the max time is mutated to force a new crc after update
         batch.setMaxTimestamp(TimestampType.CREATE_TIME, 0);
         final long previousChecksum = batch.checksum();
 
-        // when we validate the batch
+        // when we validate the batch a bit later
         time.sleep(100);
         final long validationTime = time.milliseconds();
-        batchValidator.validateAndMaybeSetMaxTimestamp(batch);
+        batchValidator.validateAndMaybeSetMaxTimestamp(batch, TimestampType.CREATE_TIME);
 
         // then the batch should have the max timestamp set to the last record timestamp
         assertThat(batch.timestampType()).isEqualTo(TimestampType.CREATE_TIME);
         assertThat(batch.maxTimestamp())
             .isNotEqualTo(validationTime)
-            .isEqualTo(craeteTimeBase + 2);
+            .isEqualTo(expectedTime);
         assertThat(batch.checksum()).isNotEqualTo(previousChecksum);
     }
 
@@ -60,22 +65,21 @@ class BatchValidatorTest {
 
         // given a batch with records with increasing timestamps
         time.sleep(100);
-        final MutableRecordBatch batch =
-            createBatchWithTimeSpreadRecords(TimestampType.LOG_APPEND_TIME, time, 10, "a", "b", "c");
-        // replace logAppendTime = System.currentMillis() set by MemoryRecords that could lead to flakiness
-        batch.setMaxTimestamp(TimestampType.LOG_APPEND_TIME, time.milliseconds());
+        final long createTimeBase = time.milliseconds();
+        final MutableRecordBatch batch = createBatchWithTimeSpreadRecords(TimestampType.LOG_APPEND_TIME, time, 10, "a", "b", "c");
         final long previousChecksum = batch.checksum();
 
         // when we validate the batch
         time.sleep(100);
         final long validationTime = time.milliseconds();
-        batchValidator.validateAndMaybeSetMaxTimestamp(batch);
+        batchValidator.validateAndMaybeSetMaxTimestamp(batch, TimestampType.LOG_APPEND_TIME);
 
-        // then the batch should have the max timestamp not updated (i.e. before validation time, CRC unchanged)
+        // then the batch should have the max timestamp update to current time (control plane should set the _right_ value on commit)
         assertThat(batch.timestampType()).isEqualTo(TimestampType.LOG_APPEND_TIME);
         assertThat(batch.maxTimestamp())
-            .isLessThan(validationTime);
-        assertThat(batch.checksum()).isEqualTo(previousChecksum);
+            .isGreaterThan(createTimeBase)
+            .isEqualTo(validationTime);
+        assertThat(batch.checksum()).isNotEqualTo(previousChecksum);
     }
 
     @Test
@@ -90,7 +94,7 @@ class BatchValidatorTest {
 
         // when we validate the batch
         time.sleep(100);
-        batchValidator.validateAndMaybeSetMaxTimestamp(batch);
+        batchValidator.validateAndMaybeSetMaxTimestamp(batch, TimestampType.CREATE_TIME);
 
         // then the batch should have the max timestamp set to NO_TIMESTAMP
         assertThat(batch).isNotNull();

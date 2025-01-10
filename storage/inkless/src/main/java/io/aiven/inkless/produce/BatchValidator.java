@@ -21,10 +21,9 @@ public class BatchValidator {
         this.time = time;
     }
 
-    public void validateAndMaybeSetMaxTimestamp(final MutableRecordBatch batch) {
+    public void validateAndMaybeSetMaxTimestamp(final MutableRecordBatch batch, TimestampType timestampType) {
         Objects.requireNonNull(batch, "batch cannot be null");
-
-        final TimestampType timestampType = batch.timestampType();
+        Objects.requireNonNull(timestampType, "timestampType cannot be null");
 
         long maxBatchTimestamp = RecordBatch.NO_TIMESTAMP;
 
@@ -35,6 +34,8 @@ public class BatchValidator {
 
         if (timestampType != TimestampType.LOG_APPEND_TIME)
             batch.setMaxTimestamp(timestampType, maxBatchTimestamp);
-        // else the append time is set by the control plane and updated on read time
+        else
+            batch.setMaxTimestamp(timestampType, time.milliseconds());
+            // the append time will be updated by the control plane and updated on read time
     }
 }
