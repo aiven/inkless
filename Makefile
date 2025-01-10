@@ -47,11 +47,13 @@ docker_build: build_release docker_build_prep
 .PHONY: fmt
 fmt:
 	./gradlew :core:spotlessJavaApply
+	./gradlew :metadata:spotlessJavaApply
 	./gradlew :storage:inkless:spotlessJavaApply
 
 .PHONY: test
 test:
 	./gradlew :storage:inkless:test :storage:inkless:integrationTest
+	./gradlew :metadata:test --tests "org.apache.kafka.controller.*"
 	./gradlew :core:test --tests "*Inkless*"
 
 .PHONY: pitest
