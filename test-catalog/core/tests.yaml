@@ -1127,7 +1127,7 @@ kafka.coordinator.group.GroupMetadataManagerTest:
 - testCommitOffsetFailure
 - testCommitOffsetPartialFailure
 - testCommitOffsetWhenCoordinatorHasMoved
-- testCurrentStateTimestampForAllGroupMetadataVersions
+- testCurrentStateTimestampForAllVersions
 - testDeserializeFutureGroupMetadataValue
 - testDeserializeFutureOffsetCommitValue
 - testDeserializeHighestSupportedGroupMetadataValueVersion
@@ -1176,7 +1176,6 @@ kafka.coordinator.group.GroupMetadataManagerTest:
 - testReadMessageKeyCanReadUnknownMessage
 - testSerdeOffsetCommitValue
 - testSerdeOffsetCommitValueWithExpireTimestamp
-- testSerdeOffsetCommitValueWithNoneExpireTimestamp
 - testSerializeGroupMetadataValueToHighestNonFlexibleVersion
 - testSerializeOffsetCommitValueToHighestNonFlexibleVersion
 - testShouldThrowExceptionForUnsupportedGroupMetadataVersion
@@ -1633,8 +1632,7 @@ kafka.log.LogLoaderTest:
 - testOverCompactedLogRecovery
 - testOverCompactedLogRecoveryMultiRecord
 - testOverCompactedLogRecoveryMultiRecordV1
-- testProducerSnapshotsRecoveryAfterUncleanShutdownCurrentMessageFormat
-- testProducerSnapshotsRecoveryAfterUncleanShutdownV1
+- testProducerSnapshotsRecoveryAfterUncleanShutdown
 - testRecoverAfterNonMonotonicCoordinatorEpochWrite
 - testRecoverLastSegmentWithNoSnapshots
 - testRecoverOnlyLastSegment
@@ -2181,7 +2179,6 @@ kafka.server.AbstractFetcherThreadTest:
 - testTruncateToEpochEndOffsetsDuringRemovePartitions
 - testTruncateToHighWatermarkDuringRemovePartitions
 - testTruncateToHighWatermarkIfLeaderEpochInfoNotAvailable
-- testTruncateToHighWatermarkIfLeaderEpochRequestNotSupported
 - testTruncation
 - testTruncationOnFetchSkippedIfPartitionRemoved
 - testTruncationSkippedIfNoEpochChange
@@ -2210,7 +2207,6 @@ kafka.server.AbstractFetcherThreadWithIbp26Test:
 - testTruncateToEpochEndOffsetsDuringRemovePartitions
 - testTruncateToHighWatermarkDuringRemovePartitions
 - testTruncateToHighWatermarkIfLeaderEpochInfoNotAvailable
-- testTruncateToHighWatermarkIfLeaderEpochRequestNotSupported
 - testTruncation
 - testTruncationSkippedIfNoEpochChange
 - testTruncationThrowsExceptionIfLeaderReturnsPartitionsNotRequestedInFetchEpochs
@@ -2236,7 +2232,6 @@ kafka.server.AlterPartitionManagerTest:
 - testNotLeaderOrFollower
 - testOneInFlight
 - testOverwriteWithinBatch
-- testPartialTopicIds
 - testPartitionMissingInResponse
 - testRetryOnAuthenticationFailure
 - testRetryOnUnsupportedVersionError
@@ -3016,7 +3011,6 @@ kafka.server.KafkaConfigTest:
 - testInvalidAuthorizerClassName
 - testInvalidCompressionType
 - testInvalidGzipCompressionLevel
-- testInvalidInterBrokerProtocolVersionKRaft
 - testInvalidInterBrokerSecurityProtocol
 - testInvalidLz4CompressionLevel
 - testInvalidQuorumVoterConfig

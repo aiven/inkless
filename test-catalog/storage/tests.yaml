@@ -254,7 +254,6 @@ org.apache.kafka.storage.internals.log.LogValidatorTest:
 - testRelativeOffsetAssignmentNonCompressedV2
 - testUnmatchedNumberOfRecords
 - testValidationOfBatchesWithNonSequentialInnerOffsets
-- testZStdCompressedWithUnavailableIBPVersion
 org.apache.kafka.storage.internals.log.OffsetIndexTest:
 - appendOutOfOrder
 - appendTooMany

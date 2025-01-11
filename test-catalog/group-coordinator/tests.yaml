@@ -36,6 +36,7 @@ org.apache.kafka.coordinator.group.GroupCoordinatorRecordHelpersTest:
 - testNewOffsetCommitRecordWithExpireTimestamp
 - testNewOffsetCommitTombstoneRecord
 - testNewShareGroupEpochTombstoneRecord
+- testOffsetCommitValueVersion
 org.apache.kafka.coordinator.group.GroupCoordinatorRecordSerdeTest:
 - testDeserialize
 - testDeserializeAllRecordTypes

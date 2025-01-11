@@ -3775,13 +3775,11 @@ org.apache.kafka.common.requests.AlterReplicaLogDirsResponseTest:
 org.apache.kafka.common.requests.ApiErrorTest:
 - fromThrowableShouldReturnCorrectError
 org.apache.kafka.common.requests.ApiVersionsResponseTest:
-- shouldCreateApiResponseOnlyWithKeysSupportedByMagicValue
 - shouldCreateApiResponseWithTelemetryWhenEnabled
 - shouldHaveCommonlyAgreedApiVersionResponseWithControllerOnForwardableAPIs
 - shouldHaveCorrectDefaultApiVersionsResponse
 - shouldNotCreateApiResponseWithTelemetryWhenDisabled
-- shouldReturnAllKeysWhenMagicIsCurrentValueAndThrottleMsIsDefaultThrottle
-- shouldReturnFeatureKeysWhenMagicIsCurrentValueAndThrottleMsIsDefaultThrottle
+- shouldReturnAllKeysWhenThrottleMsIsDefaultThrottle
 - testAlterV0Features
 - testIntersect
 - testMetadataQuorumApisAreDisabled
@@ -3916,8 +3914,8 @@ org.apache.kafka.common.requests.OffsetFetchResponseTest:
 - testUseDefaultLeaderEpochV0ToV7
 - testUseDefaultLeaderEpochV8
 org.apache.kafka.common.requests.OffsetsForLeaderEpochRequestTest:
-- testDefaultReplicaId
 - testForConsumerRequiresVersion3
+- testForFollower
 org.apache.kafka.common.requests.ProduceRequestTest:
 - shouldBeFlaggedAsIdempotentWhenIdempotentRecords
 - shouldBeFlaggedAsTransactionalWhenTransactionalRecords
