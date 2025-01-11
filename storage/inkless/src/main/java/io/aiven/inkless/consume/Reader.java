@@ -108,6 +108,9 @@ public class Reader implements AutoCloseable {
                 dataExecutor,
                 batchCoordinates,
                 fetchMetrics::fetchPlanFinished,
+                fetchMetrics::cacheQueryFinished,
+                fetchMetrics::cacheStoreFinished,
+                fetchMetrics::cacheHit,
                 fetchMetrics::fetchFileFinished
             )
         );

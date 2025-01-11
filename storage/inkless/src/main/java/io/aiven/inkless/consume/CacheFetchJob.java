@@ -7,6 +7,7 @@ import java.util.Objects;
 import java.util.concurrent.Callable;
 import java.util.function.Consumer;
 
+import io.aiven.inkless.TimeUtils;
 import io.aiven.inkless.cache.ObjectCache;
 import io.aiven.inkless.common.ByteRange;
 import io.aiven.inkless.common.ObjectKey;
@@ -17,6 +18,10 @@ import io.aiven.inkless.storage_backend.common.ObjectFetcher;
 public class CacheFetchJob implements Callable<FileExtent> {
 
     private final ObjectCache cache;
+    private final Time time;
+    private final Consumer<Long> cacheQueryDurationCallback;
+    private final Consumer<Boolean> cacheHitRateCallback;
+    private final Consumer<Long> cacheStoreDurationCallback;
     private final CacheKey key;
     private final FileFetchJob fallback;
 
@@ -26,9 +31,16 @@ public class CacheFetchJob implements Callable<FileExtent> {
             ByteRange byteRange,
             Time time,
             ObjectFetcher objectFetcher,
+            Consumer<Long> cacheQueryDurationCallback,
+            Consumer<Long> cacheStoreDurationCallback,
+            Consumer<Boolean> cacheHitRateCallback,
             Consumer<Long> fileFetchDurationCallback
     ) {
         this.cache = cache;
+        this.time = time;
+        this.cacheQueryDurationCallback = cacheQueryDurationCallback;
+        this.cacheStoreDurationCallback = cacheStoreDurationCallback;
+        this.cacheHitRateCallback = cacheHitRateCallback;
         this.key = createCacheKey(objectKey, byteRange);
         this.fallback = new FileFetchJob(time, objectFetcher, objectKey, byteRange, fileFetchDurationCallback);
     }
@@ -44,13 +56,16 @@ public class CacheFetchJob implements Callable<FileExtent> {
 
     @Override
     public FileExtent call() throws Exception {
-        FileExtent file = cache.get(key);
-        if (file == null) {
-            // cache miss
-            file = fallback.call();
-            cache.put(key, file);
+        FileExtent file = TimeUtils.measureDurationMs(time, () -> cache.get(key), cacheQueryDurationCallback);
+        cacheHitRateCallback.accept(file != null);
+        if (file != null) {
+            // cache hit
+            return file;
         }
-        return file;
+        // cache miss
+        FileExtent freshFile = fallback.call();
+        TimeUtils.measureDurationMs(time, () -> cache.put(key, freshFile), cacheStoreDurationCallback);
+        return freshFile;
     }
 
 
