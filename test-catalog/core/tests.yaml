@@ -774,6 +774,7 @@ kafka.api.TransactionsTest:
 - testCommitTransactionTimeout
 - testConsecutivelyRunInitTransactions
 - testDelayedFetchIncludesAbortedTransaction
+- testEmptyAbortAfterCommit
 - testFailureToFenceEpoch
 - testFencingOnAddPartitions
 - testFencingOnCommit
