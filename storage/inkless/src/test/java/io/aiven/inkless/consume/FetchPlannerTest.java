@@ -65,17 +65,7 @@ public class FetchPlannerTest {
     @Test
     public void planEmptyRequest() throws Exception {
         Map<TopicIdPartition, FindBatchResponse> coordinates = new HashMap<>();
-        FetchPlannerJob job = new FetchPlannerJob(
-            new MockTime(),
-            OBJECT_KEY_CREATOR,
-            keyAlignmentStrategy,
-            cache,
-            fetcher,
-            dataExecutor,
-            CompletableFuture.completedFuture(coordinates),
-            durationMs -> {},
-            durationMs -> {}
-        );
+        FetchPlannerJob job = fetchPlannerJob(coordinates);
 
         job.call();
 
@@ -91,7 +81,7 @@ public class FetchPlannerTest {
                 ), 0, 1)
             ),
             Set.of(
-                new CacheFetchJob(cache, OBJECT_KEY_A, requestRange, time, fetcher, durationMs -> {})
+                cacheFetchJob(OBJECT_KEY_A, requestRange)
             )
         );
     }
@@ -106,8 +96,8 @@ public class FetchPlannerTest {
                 ), 0, 2)
             ),
             Set.of(
-                new CacheFetchJob(cache, OBJECT_KEY_A, requestRange, time, fetcher, durationMs -> {}),
-                new CacheFetchJob(cache, OBJECT_KEY_B, requestRange, time, fetcher, durationMs -> {})
+                cacheFetchJob(OBJECT_KEY_A, requestRange),
+                cacheFetchJob(OBJECT_KEY_B, requestRange)
             )
         );
     }
@@ -124,8 +114,8 @@ public class FetchPlannerTest {
                 ), 0, 1)
             ),
             Set.of(
-                new CacheFetchJob(cache, OBJECT_KEY_A, requestRange, time, fetcher, durationMs -> {}),
-                new CacheFetchJob(cache, OBJECT_KEY_B, requestRange, time, fetcher, durationMs -> {})
+                cacheFetchJob(OBJECT_KEY_A, requestRange),
+                cacheFetchJob(OBJECT_KEY_B, requestRange)
             )
         );
     }
@@ -142,7 +132,7 @@ public class FetchPlannerTest {
                 ), 0,  1)
             ),
             Set.of(
-                new CacheFetchJob(cache, OBJECT_KEY_A, requestRange, time, fetcher, durationMs -> {})
+                cacheFetchJob(OBJECT_KEY_A, requestRange)
             )
         );
     }
@@ -157,7 +147,7 @@ public class FetchPlannerTest {
                 ), 0, 1)
             ),
             Set.of(
-                new CacheFetchJob(cache, OBJECT_KEY_B, requestRange, time, fetcher, durationMs -> {})
+                cacheFetchJob(OBJECT_KEY_B, requestRange)
             )
         );
     }
@@ -172,7 +162,7 @@ public class FetchPlannerTest {
                 ), 0, 1)
             ),
             Set.of(
-                new CacheFetchJob(cache, OBJECT_KEY_B, requestRange, time, fetcher, durationMs -> {})
+                cacheFetchJob(OBJECT_KEY_B, requestRange)
             )
         );
     }
@@ -187,26 +177,34 @@ public class FetchPlannerTest {
                 ), 0, 1)
             ),
             Set.of(
-                new CacheFetchJob(cache, OBJECT_KEY_B, requestRange, time, fetcher, durationMs -> {})
+                cacheFetchJob(OBJECT_KEY_B, requestRange)
             )
         );
+    }
+
+    private FetchPlannerJob fetchPlannerJob(
+            Map<TopicIdPartition, FindBatchResponse> batchCoordinatesFuture
+    ) {
+        return new FetchPlannerJob(
+                time, FetchPlannerTest.OBJECT_KEY_CREATOR, keyAlignmentStrategy,
+                cache, fetcher, dataExecutor, CompletableFuture.completedFuture(batchCoordinatesFuture),
+                durationMs -> {}, durationMs -> {}, durationMs -> {}, hitBool -> {}, durationMs -> {}
+        );
+    }
+
+    private CacheFetchJob cacheFetchJob(
+            ObjectKey objectKey,
+            ByteRange byteRange
+    ) {
+        return new CacheFetchJob(cache, objectKey, byteRange, time, fetcher,
+                durationMs -> {}, durationMs -> {}, hitBool -> {}, durationMs -> {});
     }
 
     private void assertBatchPlan(Map<TopicIdPartition, FindBatchResponse> coordinates, Set<CacheFetchJob> jobs) throws Exception {
         ArgumentCaptor<CacheFetchJob> submittedCallables = ArgumentCaptor.captor();
         when(dataExecutor.submit(submittedCallables.capture())).thenReturn(null);
 
-        FetchPlannerJob job = new FetchPlannerJob(
-            new MockTime(),
-            OBJECT_KEY_CREATOR,
-            keyAlignmentStrategy,
-            cache,
-            fetcher,
-            dataExecutor,
-            CompletableFuture.completedFuture(coordinates),
-            durationMs -> {},
-            durationMs -> {}
-        );
+        FetchPlannerJob job = fetchPlannerJob(coordinates);
 
         job.call();
 

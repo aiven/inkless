@@ -31,7 +31,10 @@ public class FetchPlannerJob implements Callable<List<Future<FileExtent>>> {
     private final ObjectFetcher objectFetcher;
     private final ExecutorService dataExecutor;
     private final Future<Map<TopicIdPartition, FindBatchResponse>> batchCoordinatesFuture;
-    private final Consumer<Long> durationCallback;
+    private final Consumer<Long> fetchPlanDurationCallback;
+    private final Consumer<Long> cacheQueryDurationCallback;
+    private final Consumer<Long> cacheStoreDurationCallback;
+    private final Consumer<Boolean> cacheHitRateCallback;
     private final Consumer<Long> fileFetchDurationCallback;
 
     public FetchPlannerJob(Time time,
@@ -41,8 +44,12 @@ public class FetchPlannerJob implements Callable<List<Future<FileExtent>>> {
                            ObjectFetcher objectFetcher,
                            ExecutorService dataExecutor,
                            Future<Map<TopicIdPartition, FindBatchResponse>> batchCoordinatesFuture,
-                           Consumer<Long> durationCallback,
-                           Consumer<Long> fileFetchDurationCallback) {
+                           Consumer<Long> fetchPlanDurationCallback,
+                           Consumer<Long> cacheQueryDurationCallback,
+                           Consumer<Long> cacheStoreDurationCallback,
+                           Consumer<Boolean> cacheHitRateCallback,
+                           Consumer<Long> fileFetchDurationCallback
+    ) {
         this.time = time;
         this.objectKeyCreator = objectKeyCreator;
         this.keyAlignment = keyAlignment;
@@ -50,13 +57,16 @@ public class FetchPlannerJob implements Callable<List<Future<FileExtent>>> {
         this.objectFetcher = objectFetcher;
         this.dataExecutor = dataExecutor;
         this.batchCoordinatesFuture = batchCoordinatesFuture;
-        this.durationCallback = durationCallback;
+        this.fetchPlanDurationCallback = fetchPlanDurationCallback;
+        this.cacheQueryDurationCallback = cacheQueryDurationCallback;
+        this.cacheStoreDurationCallback = cacheStoreDurationCallback;
+        this.cacheHitRateCallback = cacheHitRateCallback;
         this.fileFetchDurationCallback = fileFetchDurationCallback;
     }
 
     public List<Future<FileExtent>> call() throws Exception {
         final Map<TopicIdPartition, FindBatchResponse> batchCoordinates = batchCoordinatesFuture.get();
-        return TimeUtils.measureDurationMs(time, () -> doWork(batchCoordinates), durationCallback);
+        return TimeUtils.measureDurationMs(time, () -> doWork(batchCoordinates), fetchPlanDurationCallback);
     }
 
     private List<Future<FileExtent>> doWork(final Map<TopicIdPartition, FindBatchResponse> batchCoordinates) {
@@ -76,7 +86,8 @@ public class FetchPlannerJob implements Callable<List<Future<FileExtent>>> {
                 .flatMap(e -> keyAlignment.align(e.getValue())
                         .stream()
                         .map(byteRange ->
-                                new CacheFetchJob(cache, objectKeyCreator.create(e.getKey()), byteRange, time, objectFetcher, fileFetchDurationCallback)
+                                new CacheFetchJob(cache, objectKeyCreator.create(e.getKey()), byteRange, time, objectFetcher,
+                                        cacheQueryDurationCallback, cacheStoreDurationCallback, cacheHitRateCallback, fileFetchDurationCallback)
                         ))
                 .collect(Collectors.toList());
     }
