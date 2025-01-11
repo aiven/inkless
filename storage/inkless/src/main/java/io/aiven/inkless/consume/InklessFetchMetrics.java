@@ -5,12 +5,15 @@ import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.server.metrics.KafkaMetricsGroup;
 
 import com.groupcdg.pitest.annotations.CoverageIgnore;
+import com.yammer.metrics.core.Gauge;
 import com.yammer.metrics.core.Histogram;
+import com.yammer.metrics.core.Meter;
 
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.TimeUnit;
 
 import io.aiven.inkless.TimeUtils;
 
@@ -21,7 +24,9 @@ public class InklessFetchMetrics {
     private static final String FETCH_PLAN_TIME = "FetchPlanTime";
     private static final String CACHE_QUERY_TIME = "CacheQueryTime";
     private static final String CACHE_STORE_TIME = "CacheStoreTime";
-    private static final String CACHE_HIT_RATE = "CacheHitRate";
+    private static final String CACHE_HIT_COUNT = "CacheHitCount";
+    private static final String CACHE_MISS_COUNT = "CacheMissCount";
+    private static final String CACHE_HIT_RATIO = "CacheHitRatio";
     private static final String FETCH_FILE_TIME = "FetchFileTime";
     private static final String FETCH_COMPLETION_TIME = "FetchCompletionTime";
 
@@ -33,7 +38,9 @@ public class InklessFetchMetrics {
     private final Histogram fetchPlanTimeHistogram;
     private final Histogram cacheQueryTimeHistogram;
     private final Histogram cacheStoreTimeHistogram;
-    private final Histogram cacheHitRate;
+    private final Meter cacheHits;
+    private final Meter cacheMisses;
+    private final Gauge<Double> cacheHitRatio;
     private final Histogram fetchFileTimeHistogram;
     private final Histogram fetchCompletionTimeHistogram;
 
@@ -44,7 +51,9 @@ public class InklessFetchMetrics {
         fetchPlanTimeHistogram = metricsGroup.newHistogram(FETCH_PLAN_TIME, true, Map.of());
         cacheQueryTimeHistogram = metricsGroup.newHistogram(CACHE_QUERY_TIME, true, Map.of());
         cacheStoreTimeHistogram = metricsGroup.newHistogram(CACHE_STORE_TIME, true, Map.of());
-        cacheHitRate = metricsGroup.newHistogram(CACHE_HIT_RATE, true, Map.of());
+        cacheHits = metricsGroup.newMeter(CACHE_HIT_COUNT, "hits", TimeUnit.SECONDS, Map.of());
+        cacheMisses = metricsGroup.newMeter(CACHE_MISS_COUNT, "misses", TimeUnit.SECONDS, Map.of());
+        cacheHitRatio = metricsGroup.newGauge(CACHE_HIT_RATIO, () -> computeRatio(cacheHits, cacheMisses), Map.of());
         fetchFileTimeHistogram = metricsGroup.newHistogram(FETCH_FILE_TIME, true, Map.of());
         fetchCompletionTimeHistogram = metricsGroup.newHistogram(FETCH_COMPLETION_TIME, true, Map.of());
     }
@@ -71,7 +80,17 @@ public class InklessFetchMetrics {
     }
 
     public void cacheHit(final boolean hit) {
-        cacheHitRate.update(hit ? 1 : 0);
+        if (hit) {
+            cacheHits.count();
+        } else {
+            cacheMisses.count();
+        }
+    }
+
+    private static double computeRatio(Meter cacheHits, Meter cacheMisses) {
+        double hits = cacheHits.oneMinuteRate();
+        double misses = cacheMisses.oneMinuteRate();
+        return hits / Math.min(1, hits + misses);
     }
 
     public void fetchFileFinished(final long durationMs) {
