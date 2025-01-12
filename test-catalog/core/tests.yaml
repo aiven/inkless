@@ -2919,7 +2919,6 @@ kafka.server.KafkaApisTest:
 - testPushTelemetry
 - testPushTelemetryWithException
 - testRaftShouldAlwaysForwardAlterClientQuotasRequest
-- testRaftShouldAlwaysForwardAlterPartitionReassignmentsRequest
 - testRaftShouldAlwaysForwardCreateAcls
 - testRaftShouldAlwaysForwardCreatePartitionsRequest
 - testRaftShouldAlwaysForwardCreateTokenRequest
@@ -2928,7 +2927,6 @@ kafka.server.KafkaApisTest:
 - testRaftShouldAlwaysForwardDeleteTopicsRequest
 - testRaftShouldAlwaysForwardElectLeaders
 - testRaftShouldAlwaysForwardExpireTokenRequest
-- testRaftShouldAlwaysForwardListPartitionReassignments
 - testRaftShouldAlwaysForwardRenewTokenRequest
 - testRaftShouldAlwaysForwardUpdateFeatures
 - testRaftShouldNeverHandleAlterPartitionRequest
