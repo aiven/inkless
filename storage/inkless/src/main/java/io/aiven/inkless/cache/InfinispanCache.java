@@ -18,7 +18,7 @@ import io.aiven.inkless.generated.FileExtent;
 
 public class InfinispanCache implements ObjectCache, AutoCloseable {
 
-    // Length of time the object is "leased" to a
+    // Length of time the object is "leased" to the caller if not already present in the map
     private static final int CACHE_WRITE_LOCK_TIMEOUT_MS = 10000;
     private static final int CACHE_WRITE_BACKOFF_EXP_BASE = 2;
     private static final double CACHE_WRITE_BACKOFF_JITTER = 0.2;
