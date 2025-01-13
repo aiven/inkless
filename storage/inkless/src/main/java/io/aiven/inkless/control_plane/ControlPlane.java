@@ -25,6 +25,8 @@ public interface ControlPlane extends Closeable, Configurable {
 
     void createTopicAndPartitions(Set<CreateTopicAndPartitionsRequest> requests);
 
+    List<DeleteRecordsResponse> deleteRecords(List<DeleteRecordsRequest> requests);
+
     void deleteTopics(Set<Uuid> topicIds);
 
     List<FileToDelete> getFilesToDelete();
