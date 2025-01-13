@@ -143,6 +143,7 @@ public class S3StorageConfig extends AbstractConfig {
             );
     }
 
+    @SuppressWarnings({"this-escape"})
     public S3StorageConfig(final Map<String, ?> props) {
         super(configDef(), props);
         validate();
