@@ -12,6 +12,8 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInfo;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import java.io.IOException;
 import java.util.HashMap;
@@ -30,7 +32,8 @@ public abstract class AbstractControlPlaneTest {
 
     static final String EXISTING_TOPIC_1 = "topic-existing-1";
     static final Uuid EXISTING_TOPIC_1_ID = new Uuid(10, 10);
-    static final TopicIdPartition EXISTING_TOPIC_1_ID_PARTITION = new TopicIdPartition(EXISTING_TOPIC_1_ID, 0, EXISTING_TOPIC_1);
+    static final TopicIdPartition EXISTING_TOPIC_1_ID_PARTITION_0 = new TopicIdPartition(EXISTING_TOPIC_1_ID, 0, EXISTING_TOPIC_1);
+    static final TopicIdPartition EXISTING_TOPIC_1_ID_PARTITION_1 = new TopicIdPartition(EXISTING_TOPIC_1_ID, 1, EXISTING_TOPIC_1);
     static final String EXISTING_TOPIC_2 = "topic-existing-2";
     static final Uuid EXISTING_TOPIC_2_ID = new Uuid(20, 20);
     static final TopicIdPartition EXISTING_TOPIC_2_ID_PARTITION = new TopicIdPartition(EXISTING_TOPIC_2_ID, 0, EXISTING_TOPIC_2);
@@ -110,7 +113,7 @@ public abstract class AbstractControlPlaneTest {
 
         final List<FindBatchResponse> findResponse = controlPlane.findBatches(
             List.of(
-                new FindBatchRequest(EXISTING_TOPIC_1_ID_PARTITION, 11, Integer.MAX_VALUE),
+                new FindBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 11, Integer.MAX_VALUE),
                 new FindBatchRequest(new TopicIdPartition(EXISTING_TOPIC_1_ID, 1, EXISTING_TOPIC_1) , 11, Integer.MAX_VALUE),
                 new FindBatchRequest(new TopicIdPartition(Uuid.ONE_UUID, 0, NONEXISTENT_TOPIC), 11, Integer.MAX_VALUE)
             ), true, Integer.MAX_VALUE);
@@ -142,7 +145,7 @@ public abstract class AbstractControlPlaneTest {
 
         for (int offset = 0; offset < numberOfRecordsInBatch1; offset++) {
             final List<FindBatchResponse> findResponse = controlPlane.findBatches(
-                List.of(new FindBatchRequest(EXISTING_TOPIC_1_ID_PARTITION, offset, Integer.MAX_VALUE)), true, Integer.MAX_VALUE);
+                List.of(new FindBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_0, offset, Integer.MAX_VALUE)), true, Integer.MAX_VALUE);
             assertThat(findResponse).containsExactly(
                 new FindBatchResponse(Errors.NONE, List.of(
                     BatchInfo.of(objectKey1, 1, 10, 0, 0, numberOfRecordsInBatch1 - 1, expectedLogAppendTime, 1000, TimestampType.CREATE_TIME),
@@ -152,7 +155,7 @@ public abstract class AbstractControlPlaneTest {
         }
         for (int offset = numberOfRecordsInBatch1; offset < numberOfRecordsInBatch1 + numberOfRecordsInBatch2; offset++) {
             final List<FindBatchResponse> findResponse = controlPlane.findBatches(
-                List.of(new FindBatchRequest(EXISTING_TOPIC_1_ID_PARTITION, offset, Integer.MAX_VALUE)), true, Integer.MAX_VALUE);
+                List.of(new FindBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_0, offset, Integer.MAX_VALUE)), true, Integer.MAX_VALUE);
             assertThat(findResponse).containsExactly(
                 new FindBatchResponse(Errors.NONE, List.of(
                     BatchInfo.of(objectKey2, 100, 10, numberOfRecordsInBatch1, numberOfRecordsInBatch1, lastOffset, expectedLogAppendTime, 2000, TimestampType.CREATE_TIME)
@@ -173,7 +176,7 @@ public abstract class AbstractControlPlaneTest {
         );
 
         final List<FindBatchResponse> findResponse = controlPlane.findBatches(
-            List.of(new FindBatchRequest(EXISTING_TOPIC_1_ID_PARTITION, 10, Integer.MAX_VALUE)),
+            List.of(new FindBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 10, Integer.MAX_VALUE)),
             true,
             Integer.MAX_VALUE);
         assertThat(findResponse).containsExactly(
@@ -193,7 +196,7 @@ public abstract class AbstractControlPlaneTest {
         );
 
         final List<FindBatchResponse> findResponse = controlPlane.findBatches(
-            List.of(new FindBatchRequest(EXISTING_TOPIC_1_ID_PARTITION, 11, Integer.MAX_VALUE)),
+            List.of(new FindBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 11, Integer.MAX_VALUE)),
             true,
             Integer.MAX_VALUE);
         assertThat(findResponse).containsExactly(
@@ -213,7 +216,7 @@ public abstract class AbstractControlPlaneTest {
         );
 
         final List<FindBatchResponse> findResponse = controlPlane.findBatches(
-            List.of(new FindBatchRequest(EXISTING_TOPIC_1_ID_PARTITION, -1, Integer.MAX_VALUE)),
+            List.of(new FindBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_0, -1, Integer.MAX_VALUE)),
             true,
             Integer.MAX_VALUE);
         assertThat(findResponse).containsExactly(
@@ -224,7 +227,7 @@ public abstract class AbstractControlPlaneTest {
     @Test
     void findBeforeCommit() {
         final List<FindBatchResponse> findResponse = controlPlane.findBatches(
-            List.of(new FindBatchRequest(EXISTING_TOPIC_1_ID_PARTITION, 11, Integer.MAX_VALUE)),
+            List.of(new FindBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 11, Integer.MAX_VALUE)),
             true,
             Integer.MAX_VALUE);
         assertThat(findResponse).containsExactly(
@@ -322,6 +325,203 @@ public abstract class AbstractControlPlaneTest {
         assertThat(controlPlane.getFilesToDelete()).containsExactly(
             new FileToDelete(objectKey1, TimeUtils.now(time))
         );
+    }
+
+    @Test
+    void partiallyDeleteBatch() {
+        final String objectKey1 = "a1";
+
+        controlPlane.commitFile(
+            objectKey1, BROKER_ID, FILE_SIZE,
+            List.of(
+                CommitBatchRequest.of(EXISTING_TOPIC_1_ID_PARTITION_0, 1, (int) FILE_SIZE, 1, 10, 1000, TimestampType.CREATE_TIME)
+            )
+        );
+
+        final List<FindBatchResponse> findResponseBeforeDelete = controlPlane.findBatches(
+            List.of(new FindBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 0, Integer.MAX_VALUE)), true, Integer.MAX_VALUE);
+
+        final List<DeleteRecordsResponse> deleteRecordsResponses = controlPlane.deleteRecords(List.of(
+            new DeleteRecordsRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 3),
+            new DeleteRecordsRequest(new TopicIdPartition(NONEXISTENT_TOPIC_ID, 0, NONEXISTENT_TOPIC), 10)
+        ));
+        assertThat(deleteRecordsResponses).containsExactly(
+            DeleteRecordsResponse.success(3),
+            DeleteRecordsResponse.unknownTopicOrPartition()
+        );
+
+        final List<FindBatchResponse> findResponse = controlPlane.findBatches(
+            List.of(new FindBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 0, Integer.MAX_VALUE)), true, Integer.MAX_VALUE);
+
+        assertThat(findResponse).containsExactly(
+            new FindBatchResponse(Errors.NONE, findResponseBeforeDelete.get(0).batches(), 3, 10)
+        );
+        assertThat(controlPlane.getFilesToDelete()).isEmpty();
+    }
+
+    @Test
+    void fullyDeleteBatch() {
+        final String objectKey1 = "a1";
+        final String objectKey2 = "a2";
+        final String objectKey3 = "a3";
+
+        controlPlane.commitFile(
+            objectKey1, BROKER_ID, FILE_SIZE,
+            List.of(
+                CommitBatchRequest.of(EXISTING_TOPIC_1_ID_PARTITION_0, 1, (int) FILE_SIZE, 1, 10, 1000, TimestampType.CREATE_TIME)
+            )
+        );
+        controlPlane.commitFile(
+            objectKey2, BROKER_ID, FILE_SIZE,
+            List.of(
+                CommitBatchRequest.of(EXISTING_TOPIC_1_ID_PARTITION_0, 2, (int) FILE_SIZE, 1, 10, 2000, TimestampType.CREATE_TIME)
+            )
+        );
+        controlPlane.commitFile(
+            objectKey3, BROKER_ID, FILE_SIZE,
+            List.of(
+                CommitBatchRequest.of(EXISTING_TOPIC_1_ID_PARTITION_0, 3, (int) FILE_SIZE, 1, 10, 3000, TimestampType.CREATE_TIME)
+            )
+        );
+
+        final List<FindBatchResponse> findResponseBeforeDelete = controlPlane.findBatches(
+            List.of(new FindBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 0, Integer.MAX_VALUE)), true, Integer.MAX_VALUE);
+
+        final List<DeleteRecordsResponse> deleteRecordsResponses = controlPlane.deleteRecords(List.of(
+            new DeleteRecordsRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 19),
+            new DeleteRecordsRequest(new TopicIdPartition(NONEXISTENT_TOPIC_ID, 0, NONEXISTENT_TOPIC), 10)
+        ));
+        assertThat(deleteRecordsResponses).containsExactly(
+            DeleteRecordsResponse.success(19),
+            DeleteRecordsResponse.unknownTopicOrPartition()
+        );
+
+        final List<FindBatchResponse> findResponse = controlPlane.findBatches(
+            List.of(new FindBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 0, Integer.MAX_VALUE)), true, Integer.MAX_VALUE);
+
+        assertThat(findResponse).containsExactly(
+            new FindBatchResponse(Errors.NONE, List.of(
+                findResponseBeforeDelete.get(0).batches().get(1),
+                findResponseBeforeDelete.get(0).batches().get(2)
+            ), 19, 30)
+        );
+        assertThat(controlPlane.getFilesToDelete()).containsExactly(
+            new FileToDelete(objectKey1, TimeUtils.now(time))
+        );
+    }
+
+    @Test
+    void deleteUpToLogStartOffset() {
+        final String objectKey1 = "a1";
+
+        controlPlane.commitFile(
+            objectKey1, BROKER_ID, FILE_SIZE,
+            List.of(
+                CommitBatchRequest.of(EXISTING_TOPIC_1_ID_PARTITION_0, 1, (int) FILE_SIZE, 1, 10, 1000, TimestampType.CREATE_TIME)
+            )
+        );
+
+        final List<FindBatchResponse> findResponseBeforeDelete = controlPlane.findBatches(
+            List.of(new FindBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 0, Integer.MAX_VALUE)), true, Integer.MAX_VALUE);
+
+        final List<DeleteRecordsResponse> deleteRecordsResponses = controlPlane.deleteRecords(List.of(
+            new DeleteRecordsRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 0)
+        ));
+        assertThat(deleteRecordsResponses).containsExactly(
+            DeleteRecordsResponse.success(0)
+        );
+
+        final List<FindBatchResponse> findResponse = controlPlane.findBatches(
+            List.of(new FindBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 0, Integer.MAX_VALUE)), true, Integer.MAX_VALUE);
+        assertThat(findResponse).isEqualTo(findResponseBeforeDelete);
+
+        assertThat(controlPlane.getFilesToDelete()).isEmpty();
+    }
+
+    @Test
+    void deleteUpToHighWatermark() {
+        final String objectKey1 = "a1";
+
+        controlPlane.commitFile(
+            objectKey1, BROKER_ID, FILE_SIZE,
+            List.of(
+                CommitBatchRequest.of(EXISTING_TOPIC_1_ID_PARTITION_0, 1, (int) FILE_SIZE, 1, 10, 1000, TimestampType.CREATE_TIME)
+            )
+        );
+
+        final List<DeleteRecordsResponse> deleteRecordsResponses = controlPlane.deleteRecords(List.of(
+            new DeleteRecordsRequest(EXISTING_TOPIC_1_ID_PARTITION_0, org.apache.kafka.common.requests.DeleteRecordsRequest.HIGH_WATERMARK)
+        ));
+        assertThat(deleteRecordsResponses).containsExactly(
+            DeleteRecordsResponse.success(10)
+        );
+
+        final List<FindBatchResponse> findResponse = controlPlane.findBatches(
+            List.of(new FindBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 0, Integer.MAX_VALUE)), true, Integer.MAX_VALUE);
+        assertThat(findResponse).containsExactly(
+            new FindBatchResponse(Errors.NONE, List.of(), 10, 10)
+        );
+
+        assertThat(controlPlane.getFilesToDelete()).containsExactly(new FileToDelete(objectKey1, TimeUtils.now(time)));
+    }
+
+    @ParameterizedTest
+    @ValueSource(longs = {-2, 11})
+    void deleteOffsetOutOfRange(final long deleteOffset) {
+        final String objectKey1 = "a1";
+
+        controlPlane.commitFile(
+            objectKey1, BROKER_ID, FILE_SIZE,
+            List.of(
+                CommitBatchRequest.of(EXISTING_TOPIC_1_ID_PARTITION_0, 1, (int) FILE_SIZE, 1, 10, 1000, TimestampType.CREATE_TIME)
+            )
+        );
+
+        final List<FindBatchResponse> findResponseBeforeDelete = controlPlane.findBatches(
+            List.of(new FindBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 0, Integer.MAX_VALUE)), true, Integer.MAX_VALUE);
+
+        final List<DeleteRecordsResponse> deleteRecordsResponses = controlPlane.deleteRecords(List.of(
+            new DeleteRecordsRequest(EXISTING_TOPIC_1_ID_PARTITION_0, deleteOffset)
+        ));
+        assertThat(deleteRecordsResponses).containsExactly(
+            DeleteRecordsResponse.offsetOutOfRange()
+        );
+
+        final List<FindBatchResponse> findResponse = controlPlane.findBatches(
+            List.of(new FindBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 0, Integer.MAX_VALUE)), true, Integer.MAX_VALUE);
+        assertThat(findResponse).isEqualTo(findResponseBeforeDelete);
+
+        assertThat(controlPlane.getFilesToDelete()).isEmpty();
+    }
+
+    @Test
+    void fullyDeleteBatchFileNotAffectedIfThereAreOtherBatches() {
+        final String objectKey1 = "a1";
+
+        final int tp0BatchSize = (int) FILE_SIZE / 2;
+        final int tp1BatchSize = (int) FILE_SIZE - tp0BatchSize;
+        controlPlane.commitFile(
+            objectKey1, BROKER_ID, FILE_SIZE,
+            List.of(
+                CommitBatchRequest.of(EXISTING_TOPIC_1_ID_PARTITION_0, 1, tp0BatchSize, 1, 10, 1000, TimestampType.CREATE_TIME),
+                // This batch will keep the file alive after the other batch is deleted.
+                CommitBatchRequest.of(EXISTING_TOPIC_1_ID_PARTITION_1, 100, tp1BatchSize, 1, 2, 2000, TimestampType.CREATE_TIME)
+            )
+        );
+
+        final List<FindBatchResponse> findResponseBeforeDelete = controlPlane.findBatches(
+            List.of(new FindBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_1, 0, Integer.MAX_VALUE)), true, Integer.MAX_VALUE);
+
+        final List<DeleteRecordsResponse> deleteRecordsResponses = controlPlane.deleteRecords(List.of(
+            new DeleteRecordsRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 10)
+        ));
+        assertThat(deleteRecordsResponses).containsExactly(DeleteRecordsResponse.success(10));
+
+        final List<FindBatchResponse> findResponse = controlPlane.findBatches(
+            List.of(new FindBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_1, 0, Integer.MAX_VALUE)), true, Integer.MAX_VALUE);
+        assertThat(findResponse).isEqualTo(findResponseBeforeDelete);
+
+        assertThat(controlPlane.getFilesToDelete()).isEmpty();
     }
 
     public record ControlPlaneAndConfigs(ControlPlane controlPlane, Map<String, ?> configs) {
