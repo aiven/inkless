@@ -204,6 +204,79 @@ END;
 $$
 ;
 
+CREATE TYPE delete_records_response_v1_error_t AS ENUM (
+    'unknown_topic_or_partition', 'offset_out_of_range'
+);
+
+CREATE TYPE delete_records_response_v1 AS (
+    topic_id topic_id_t,
+    partition partition_t,
+    error delete_records_response_v1_error_t,
+    log_start_offset offset_nullable_t
+);
+
+CREATE FUNCTION delete_records_v1(
+    now TIMESTAMP WITH TIME ZONE,
+    requests JSONB
+)
+RETURNS SETOF delete_records_response_v1 LANGUAGE plpgsql VOLATILE AS $$
+DECLARE
+    request RECORD;
+    log RECORD;
+    converted_offset BIGINT = -1;
+BEGIN
+    FOR request IN
+        SELECT *
+        FROM jsonb_to_recordset(requests)
+            r(
+                topic_id topic_id_t,
+                partition partition_t,
+                "offset" BIGINT
+            )
+    LOOP
+        SELECT *
+        FROM logs
+        WHERE topic_id = request.topic_id
+            AND partition = request.partition
+        FOR UPDATE
+        INTO log;
+
+        IF NOT FOUND THEN
+            RETURN NEXT (request.topic_id, request.partition, 'unknown_topic_or_partition', NULL)::delete_records_response_v1;
+            CONTINUE;
+        END IF;
+
+        converted_offset = CASE
+            -- -1 = org.apache.kafka.common.requests.DeleteRecordsRequest.HIGH_WATERMARK
+            WHEN request.offset = -1 THEN log.high_watermark
+            ELSE request.offset
+        END;
+
+        IF converted_offset < 0 OR converted_offset > log.high_watermark THEN
+            RETURN NEXT (request.topic_id, request.partition, 'offset_out_of_range', NULL)::delete_records_response_v1;
+            CONTINUE;
+        END IF;
+
+        IF converted_offset > log.log_start_offset THEN
+            UPDATE logs
+            SET log_start_offset = converted_offset
+            WHERE topic_id = log.topic_id
+                AND partition = log.partition;
+            log.log_start_offset = converted_offset;
+        END IF;
+
+        PERFORM delete_batch_v1(now, batches.topic_id, batches.partition, batches.base_offset)
+        FROM batches
+        WHERE topic_id = log.topic_id
+            AND partition = log.partition
+            AND last_offset < log.log_start_offset;
+
+        RETURN NEXT (request.topic_id, request.partition, NULL, log.log_start_offset)::delete_records_response_v1;
+    END LOOP;
+END;
+$$
+;
+
 CREATE FUNCTION delete_batch_v1(
     now TIMESTAMP WITH TIME ZONE,
     arg_topic_id topic_id_t,

@@ -40,7 +40,6 @@ class FindBatchesJob implements Callable<List<FindBatchResponse>> {
             AND partition = ?
             AND last_offset >= ?  -- offset to find
             AND last_offset < ?   -- high watermark
-            AND base_offset >= ?  -- LSO
         ORDER BY base_offset
         """;
 
@@ -116,7 +115,7 @@ class FindBatchesJob implements Callable<List<FindBatchResponse>> {
             return FindBatchResponse.unknownTopicOrPartition();
         }
 
-        if (request.offset() < logEntity.logStartOffset()) {
+        if (request.offset() < 0) {
             LOGGER.debug("Invalid offset {} for {}", request.offset(), request.topicIdPartition());
             return FindBatchResponse.offsetOutOfRange(logEntity.logStartOffset(), logEntity.highWatermark());
         }
@@ -137,7 +136,6 @@ class FindBatchesJob implements Callable<List<FindBatchResponse>> {
             preparedStatement.setInt(2, request.topicIdPartition().partition());
             preparedStatement.setLong(3, request.offset());
             preparedStatement.setLong(4, logEntity.highWatermark());
-            preparedStatement.setLong(5, logEntity.logStartOffset());
 
             preparedStatement.setFetchSize(1000);  // fetch lazily
 

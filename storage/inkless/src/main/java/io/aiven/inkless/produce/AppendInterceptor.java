@@ -3,8 +3,6 @@ package io.aiven.inkless.produce;
 
 import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.TopicPartition;
-import org.apache.kafka.common.Uuid;
-import org.apache.kafka.common.errors.UnknownServerException;
 import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.record.MemoryRecords;
 import org.apache.kafka.common.record.TimestampType;
@@ -25,13 +23,16 @@ import java.util.function.Consumer;
 import java.util.stream.Collectors;
 
 import io.aiven.inkless.common.SharedState;
-import io.aiven.inkless.control_plane.MetadataView;
+import io.aiven.inkless.common.TopicIdEnricher;
+import io.aiven.inkless.common.TopicTypeCounter;
 
 public class AppendInterceptor implements Closeable {
     private static final Logger LOGGER = LoggerFactory.getLogger(AppendInterceptor.class);
 
     private final SharedState state;
     private final Writer writer;
+
+    private final TopicTypeCounter topicTypeCounter;
 
     @DoNotMutate
     @CoverageIgnore
@@ -58,6 +59,8 @@ public class AppendInterceptor implements Closeable {
                       final Writer writer) {
         this.state = state;
         this.writer = writer;
+
+        this.topicTypeCounter = new TopicTypeCounter(this.state.metadata());
     }
 
     /**
@@ -69,19 +72,15 @@ public class AppendInterceptor implements Closeable {
      */
     public boolean intercept(final Map<TopicPartition, MemoryRecords> entriesPerPartition,
                              final Consumer<Map<TopicPartition, PartitionResponse>> responseCallback) {
-        final EntryCountResult entryCountResult = countEntries(entriesPerPartition);
-        if (entryCountResult.bothTypesPresent()) {
+        final TopicTypeCounter.Result countResult = topicTypeCounter.count(entriesPerPartition.keySet());
+        if (countResult.bothTypesPresent()) {
             LOGGER.warn("Producing to Inkless and class topic in same request isn't supported");
-            final var response = entriesPerPartition.entrySet().stream()
-                .collect(Collectors.toMap(
-                    Map.Entry::getKey,
-                    ignored -> new PartitionResponse(Errors.INVALID_REQUEST)));
-            responseCallback.accept(response);
+            respondAllWithError(entriesPerPartition, responseCallback, Errors.INVALID_REQUEST);
             return true;
         }
 
         // This request produces only to classic topics, don't intercept.
-        if (entryCountResult.noInkless()) {
+        if (countResult.noInkless()) {
             return false;
         }
 
@@ -92,7 +91,14 @@ public class AppendInterceptor implements Closeable {
             return true;
         }
 
-        final Map<TopicIdPartition, MemoryRecords> entriesPerPartitionEnriched = enrichWithTopicId(entriesPerPartition);
+        final Map<TopicIdPartition, MemoryRecords> entriesPerPartitionEnriched;
+        try {
+            entriesPerPartitionEnriched = TopicIdEnricher.enrich(state.metadata(), entriesPerPartition);
+        } catch (final TopicIdEnricher.TopicIdNotFoundException e) {
+            LOGGER.error("Cannot find UUID for topic {}", e.topicName);
+            respondAllWithError(entriesPerPartition, responseCallback, Errors.UNKNOWN_SERVER_ERROR);
+            return true;
+        }
         // TODO use purgatory
         final var resultFuture = writer.write(entriesPerPartitionEnriched, getTimestampTypes(entriesPerPartition));
         resultFuture.whenComplete((result, e) -> {
@@ -106,34 +112,6 @@ public class AppendInterceptor implements Closeable {
         });
 
         return true;
-    }
-
-    private Map<TopicIdPartition, MemoryRecords> enrichWithTopicId(final Map<TopicPartition, MemoryRecords> entriesPerPartition) {
-        final MetadataView metadata = state.metadata();
-        final Map<TopicIdPartition, MemoryRecords> result = new HashMap<>();
-        for (final var entry : entriesPerPartition.entrySet()) {
-            final String topicName = entry.getKey().topic();
-            final Uuid topicId = metadata.getTopicId(topicName);
-            // This should not happen as the upstream code should check the topic exists.
-            if (topicId.equals(Uuid.ZERO_UUID)) {
-                throw new UnknownServerException("Cannot find UUID for topic " + topicName);
-            }
-            result.put(new TopicIdPartition(topicId, entry.getKey()), entry.getValue());
-        }
-        return result;
-    }
-
-    private EntryCountResult countEntries(final Map<TopicPartition, MemoryRecords> entriesPerPartition) {
-        int entitiesForInklessTopics = 0;
-        int entitiesForNonInklessTopics = 0;
-        for (final var entry : entriesPerPartition.entrySet()) {
-            if (state.metadata().isInklessTopic(entry.getKey().topic())) {
-                entitiesForInklessTopics += 1;
-            } else {
-                entitiesForNonInklessTopics += 1;
-            }
-        }
-        return new EntryCountResult(entitiesForInklessTopics, entitiesForNonInklessTopics);
     }
 
     private boolean rejectIdempotentProduce(final Map<TopicPartition, MemoryRecords> entriesPerPartition,
@@ -160,6 +138,16 @@ public class AppendInterceptor implements Closeable {
         }
     }
 
+    private void respondAllWithError(final Map<TopicPartition, MemoryRecords> entriesPerPartition,
+                                     final Consumer<Map<TopicPartition, PartitionResponse>> responseCallback,
+                                     final Errors error) {
+        final var response = entriesPerPartition.entrySet().stream()
+            .collect(Collectors.toMap(
+                Map.Entry::getKey,
+                ignored -> new PartitionResponse(error)));
+        responseCallback.accept(response);
+    }
+
     private Map<String, TimestampType> getTimestampTypes(final Map<TopicPartition, MemoryRecords> entriesPerPartition) {
         final Map<String, Object> defaultTopicConfigs = state.defaultTopicConfigs().get().originals();
         final Map<String, TimestampType> result = new HashMap<>();
@@ -173,16 +161,5 @@ public class AppendInterceptor implements Closeable {
     @Override
     public void close() throws IOException {
         writer.close();
-    }
-
-    private record EntryCountResult(int entityCountForInklessTopics,
-                                    int entityCountForNonInklessTopics) {
-        boolean bothTypesPresent() {
-            return entityCountForInklessTopics > 0 && entityCountForNonInklessTopics > 0;
-        }
-
-        boolean noInkless() {
-            return entityCountForInklessTopics == 0;
-        }
     }
 }
