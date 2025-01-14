@@ -6,46 +6,34 @@ import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.utils.MockTime;
 import org.apache.kafka.common.utils.Time;
 
+import org.jooq.DSLContext;
+import org.jooq.SQLDialect;
+import org.jooq.impl.DSL;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.Arguments;
-import org.junit.jupiter.params.provider.MethodSource;
-import org.mockito.ArgumentCaptor;
-import org.mockito.Captor;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 
 import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
 import java.util.List;
-import java.util.UUID;
-import java.util.stream.Stream;
+import java.util.function.Consumer;
 
-import io.aiven.inkless.common.UuidUtil;
+import io.aiven.inkless.test_utils.SharedPostgreSQLTest;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
+import static org.jooq.generated.Tables.LOGS;
+import static org.mockito.Mockito.mock;
 
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.STRICT_STUBS)
-class LogSelectQueryTest {
+class LogSelectQueryTest extends SharedPostgreSQLTest {
     @Mock
-    Connection connection;
-    @Mock
-    PreparedStatement preparedStatement;
-    @Mock
-    ResultSet resultSet;
-
-    @Captor
-    ArgumentCaptor<String> queryCaptor;
+    Consumer<Long> durationCallback;
 
     static final TopicIdPartition T0P0 = new TopicIdPartition(Uuid.ZERO_UUID, 0, "t0");
     static final TopicIdPartition T0P1 = new TopicIdPartition(Uuid.ZERO_UUID, 1, "t0");
@@ -59,7 +47,7 @@ class LogSelectQueryTest {
         }))
             .isInstanceOf(NullPointerException.class)
             .hasMessage("connection cannot be null");
-        assertThatThrownBy(() -> LogSelectQuery.execute(time, connection, null, false, durationMs -> {
+        assertThatThrownBy(() -> LogSelectQuery.execute(time, mock(Connection.class), null, false, durationMs -> {
         }))
             .isInstanceOf(NullPointerException.class)
             .hasMessage("topicIdAndPartitions cannot be null");
@@ -68,120 +56,64 @@ class LogSelectQueryTest {
     @Test
     void testEmpty() {
         final Time time = new MockTime();
-        assertThatThrownBy(() -> LogSelectQuery.execute(time, connection, List.of(), false, durationMs -> {
+        assertThatThrownBy(() -> LogSelectQuery.execute(time, mock(Connection.class), List.of(), false, durationMs -> {
         }))
             .isInstanceOf(IllegalArgumentException.class)
             .hasMessage("topicIdAndPartitions cannot be empty");
     }
 
     @ParameterizedTest
-    @MethodSource("testSingleTopicPartitionProvider")
-    void testSingleTopicPartition(final boolean forUpdate, final String expectedQuery) throws Exception {
+    @ValueSource(booleans = {true, false})
+    void testSingleTopicPartition(final boolean forUpdate) throws Exception {
         final Time time = new MockTime();
         final long logStartOffset = 1L;
         final long highWatermark = 2L;
 
-        when(connection.prepareStatement(anyString())).thenReturn(preparedStatement);
-        when(preparedStatement.executeQuery()).thenReturn(resultSet);
+        try (final Connection connection = hikariDataSource.getConnection()) {
+            final DSLContext ctx = DSL.using(connection, SQLDialect.POSTGRES);
+            ctx.insertInto(LOGS,
+                LOGS.TOPIC_ID, LOGS.PARTITION, LOGS.TOPIC_NAME, LOGS.LOG_START_OFFSET, LOGS.HIGH_WATERMARK
+            ).values(
+                T0P1.topicId(), T0P1.partition(), T0P1.topic(), logStartOffset, highWatermark
+            ).execute();
+            connection.commit();
+        }
 
-        when(resultSet.next()).thenReturn(true, false);
-
-        when(resultSet.getObject(eq("topic_id"), eq(UUID.class)))
-            .thenReturn(UuidUtil.toJava(T0P1.topicId()));
-        when(resultSet.getInt(eq("partition")))
-            .thenReturn(T0P1.partition());
-        when(resultSet.getString(eq("topic_name")))
-            .thenReturn(T0P1.topic());
-        when(resultSet.getLong(eq("log_start_offset")))
-            .thenReturn(logStartOffset);
-        when(resultSet.getLong(eq("high_watermark")))
-            .thenReturn(highWatermark);
-
-        final List<LogEntity> result = LogSelectQuery.execute(time, connection, List.of(T0P1), forUpdate, durationMs -> {
-        });
-        assertThat(result).containsExactlyInAnyOrder(
-            new LogEntity(T0P1.topicId(), T0P1.partition(), T0P1.topic(), logStartOffset, highWatermark));
-
-        verify(connection).prepareStatement(queryCaptor.capture());
-        assertThat(queryCaptor.getValue().trim()).isEqualTo(expectedQuery.trim());
-
-        verify(preparedStatement).setObject(eq(1), eq(UuidUtil.toJava(T0P1.topicId())));
-        verify(preparedStatement).setInt(eq(2), eq(T0P1.partition()));
-    }
-
-    static Stream<Arguments> testSingleTopicPartitionProvider() {
-        final String queryNotForUpdate = """
-        SELECT topic_id, partition, topic_name, log_start_offset, high_watermark
-        FROM logs
-        WHERE (topic_id = ? AND partition = ?)
-        """;
-        final String queryForUpdate = """
-        SELECT topic_id, partition, topic_name, log_start_offset, high_watermark
-        FROM logs
-        WHERE (topic_id = ? AND partition = ?)
-        FOR UPDATE
-        """;
-        return Stream.of(
-            Arguments.of(false, queryNotForUpdate),
-            Arguments.of(true, queryForUpdate)
-        );
+        try (final Connection connection = hikariDataSource.getConnection()) {
+            final List<LogEntity> result = LogSelectQuery.execute(
+                time, hikariDataSource.getConnection(), List.of(T0P1), forUpdate, durationCallback);
+            assertThat(result).containsExactlyInAnyOrder(
+                new LogEntity(T0P1.topicId(), T0P1.partition(), T0P1.topic(), logStartOffset, highWatermark));
+        }
     }
 
     @ParameterizedTest
-    @MethodSource("testMultipleTopicPartitionsProvider")
-    void testMultipleTopicPartitions(final boolean forUpdate, final String expectedQuery) throws Exception {
+    @ValueSource(booleans = {true, false})
+    void testMultipleTopicPartitions(final boolean forUpdate) throws Exception {
         final Time time = new MockTime();
         final long logStartOffset1 = 1L;
         final long highWatermark1 = 2L;
         final long logStartOffset2 = 10L;
         final long highWatermark2 = 20L;
 
-        when(connection.prepareStatement(anyString())).thenReturn(preparedStatement);
-        when(preparedStatement.executeQuery()).thenReturn(resultSet);
+        try (final Connection connection = hikariDataSource.getConnection()) {
+            final DSLContext ctx = DSL.using(connection, SQLDialect.POSTGRES);
+            ctx.insertInto(LOGS,
+                LOGS.TOPIC_ID, LOGS.PARTITION, LOGS.TOPIC_NAME, LOGS.LOG_START_OFFSET, LOGS.HIGH_WATERMARK
+            ).values(
+                T0P1.topicId(), T0P1.partition(), T0P1.topic(), logStartOffset1, highWatermark1
+            ).values(
+                T1P0.topicId(), T1P0.partition(), T1P0.topic(), logStartOffset2, highWatermark2
+            ).execute();
+            connection.commit();
+        }
 
-        when(resultSet.next()).thenReturn(true, true, false);
-
-        when(resultSet.getObject(eq("topic_id"), eq(UUID.class)))
-            .thenReturn(UuidUtil.toJava(T0P1.topicId()), UuidUtil.toJava(T1P0.topicId()));
-        when(resultSet.getInt(eq("partition")))
-            .thenReturn(T0P1.partition(), T1P0.partition());
-        when(resultSet.getString(eq("topic_name")))
-            .thenReturn(T0P1.topic(), T1P0.topic());
-        when(resultSet.getLong(eq("log_start_offset")))
-            .thenReturn(logStartOffset1, logStartOffset2);
-        when(resultSet.getLong(eq("high_watermark")))
-            .thenReturn(highWatermark1, highWatermark2);
-
-        final List<LogEntity> result = LogSelectQuery.execute(time, connection, List.of(T0P1, T1P0), forUpdate, durationMs -> {});
-        assertThat(result).containsExactlyInAnyOrder(
-            new LogEntity(T0P1.topicId(), T0P1.partition(), T0P1.topic(), logStartOffset1, highWatermark1),
-            new LogEntity(T1P0.topicId(), T1P0.partition(), T1P0.topic(), logStartOffset2, highWatermark2)
-        );
-
-        verify(connection).prepareStatement(queryCaptor.capture());
-        assertThat(queryCaptor.getValue().trim()).isEqualTo(expectedQuery.trim());
-
-        verify(preparedStatement).setObject(eq(1), eq(UuidUtil.toJava(T0P1.topicId())));
-        verify(preparedStatement).setInt(eq(2), eq(T0P1.partition()));
-        verify(preparedStatement).setObject(eq(3), eq(UuidUtil.toJava(T1P0.topicId())));
-        verify(preparedStatement).setInt(eq(4), eq(T1P0.partition()));
-    }
-
-    static Stream<Arguments> testMultipleTopicPartitionsProvider() {
-        final String queryNotForUpdate = """
-        SELECT topic_id, partition, topic_name, log_start_offset, high_watermark
-        FROM logs
-        WHERE (topic_id = ? AND partition = ?) OR (topic_id = ? AND partition = ?)
-        """;
-        final String queryForUpdate = """
-        SELECT topic_id, partition, topic_name, log_start_offset, high_watermark
-        FROM logs
-        WHERE (topic_id = ? AND partition = ?) OR (topic_id = ? AND partition = ?)
-        FOR UPDATE
-        """;
-        return Stream.of(
-            Arguments.of(false, queryNotForUpdate),
-            Arguments.of(true, queryForUpdate)
-        );
+        try (final Connection connection = hikariDataSource.getConnection()) {
+            final List<LogEntity> result = LogSelectQuery.execute(time, connection, List.of(T0P1, T1P0), forUpdate, durationCallback);
+            assertThat(result).containsExactlyInAnyOrder(
+                new LogEntity(T0P1.topicId(), T0P1.partition(), T0P1.topic(), logStartOffset1, highWatermark1),
+                new LogEntity(T1P0.topicId(), T1P0.partition(), T1P0.topic(), logStartOffset2, highWatermark2)
+            );
+        }
     }
 }

@@ -4,55 +4,41 @@ package io.aiven.inkless.control_plane.postgres;
 import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.utils.Time;
 
-import com.fasterxml.jackson.annotation.JsonProperty;
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.MapperFeature;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.json.JsonMapper;
 import com.zaxxer.hikari.HikariDataSource;
 
+import org.jooq.DSLContext;
+import org.jooq.SQLDialect;
+import org.jooq.generated.udt.CommitBatchResponseV1;
+import org.jooq.generated.udt.records.CommitBatchRequestV1Record;
+import org.jooq.generated.udt.records.CommitBatchResponseV1Record;
+import org.jooq.impl.DSL;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
-import java.util.UUID;
 import java.util.concurrent.Callable;
 import java.util.function.Consumer;
 
 import io.aiven.inkless.TimeUtils;
-import io.aiven.inkless.common.UuidUtil;
 import io.aiven.inkless.control_plane.CommitBatchRequest;
 import io.aiven.inkless.control_plane.CommitBatchResponse;
 
+import static org.jooq.generated.Tables.COMMIT_FILE_V1;
+
 class CommitFileJob implements Callable<List<CommitBatchResponse>> {
     private static final Logger LOGGER = LoggerFactory.getLogger(CommitFileJob.class);
-
-    private static final ObjectMapper MAPPER = JsonMapper.builder()
-        .disable(
-            MapperFeature.AUTO_DETECT_CREATORS,
-            MapperFeature.AUTO_DETECT_FIELDS,
-            MapperFeature.AUTO_DETECT_GETTERS,
-            MapperFeature.AUTO_DETECT_IS_GETTERS)
-        .build();
-
-    private static final String CALL_COMMIT_FUNCTION = """
-        SELECT topic_id, partition, log_exists, assigned_offset, log_start_offset
-        FROM commit_file_v1(?, ?, ?, ?, ?::JSONB)
-        """;
 
     private final Time time;
     private final HikariDataSource hikariDataSource;
     private final String objectKey;
     private final int uploaderBrokerId;
     private final long fileSize;
-    private final List<CommitBatchRequestJson> requests;
+    private final List<CommitBatchRequest> requests;
     private final Consumer<Long> durationCallback;
 
     CommitFileJob(final Time time,
@@ -60,7 +46,7 @@ class CommitFileJob implements Callable<List<CommitBatchResponse>> {
                   final String objectKey,
                   final int uploaderBrokerId,
                   final long fileSize,
-                  final List<CommitBatchRequestJson> requests,
+                  final List<CommitBatchRequest> requests,
                   final Consumer<Long> durationCallback) {
         this.time = time;
         this.hikariDataSource = hikariDataSource;
@@ -110,48 +96,67 @@ class CommitFileJob implements Callable<List<CommitBatchResponse>> {
     }
 
     private List<CommitBatchResponse> callCommitFunction(final Connection connection) throws SQLException {
+        final DSLContext ctx = DSL.using(connection, SQLDialect.POSTGRES);
         final Instant now = TimeUtils.now(time);
-        try (final PreparedStatement preparedStatement = connection.prepareStatement(CALL_COMMIT_FUNCTION)) {
-            preparedStatement.setString(1, objectKey);
-            preparedStatement.setInt(2, uploaderBrokerId);
-            preparedStatement.setLong(3, fileSize);
-            preparedStatement.setTimestamp(4, java.sql.Timestamp.from(now));
-            preparedStatement.setString(5, requestsAsJsonString());
 
-            try (final ResultSet resultSet = preparedStatement.executeQuery()) {
-                return processCommitFunctionResult(now.toEpochMilli(), resultSet);
-            }
-        }
+        final CommitBatchRequestV1Record[] jooqRequests = requests.stream().map(r ->
+            new CommitBatchRequestV1Record(
+                r.topicIdPartition().topicId(),
+                r.topicIdPartition().partition(),
+                (long) r.byteOffset(),
+                (long) r.size(),
+                r.baseOffset(),
+                r.lastOffset(),
+                r.messageTimestampType(),
+                r.batchMaxTimestamp()
+            )
+        ).toArray(CommitBatchRequestV1Record[]::new);
+
+        final List<CommitBatchResponseV1Record> functionResult = ctx.select(
+            CommitBatchResponseV1.TOPIC_ID,
+            CommitBatchResponseV1.PARTITION,
+            CommitBatchResponseV1.LOG_EXISTS,
+            CommitBatchResponseV1.ASSIGNED_OFFSET,
+            CommitBatchResponseV1.LOG_START_OFFSET
+        ).from(COMMIT_FILE_V1.call(
+            objectKey,
+            uploaderBrokerId,
+            fileSize,
+            now,
+            jooqRequests
+        )).fetchInto(CommitBatchResponseV1Record.class);
+        return processFunctionResult(now, functionResult);
     }
 
-    private List<CommitBatchResponse> processCommitFunctionResult(final long now,
-                                                                  final ResultSet resultSet) throws SQLException {
+    private List<CommitBatchResponse> processFunctionResult(final Instant now,
+                                                            final List<CommitBatchResponseV1Record> functionResult) {
         final List<CommitBatchResponse> responses = new ArrayList<>();
-
-        final Iterator<CommitBatchRequestJson> iterator = requests.iterator();
-        while (resultSet.next()) {
+        final Iterator<CommitBatchRequest> iterator = requests.iterator();
+        for (final var record : functionResult) {
             if (!iterator.hasNext()) {
                 throw new RuntimeException("More records returned than expected");
             }
-            final CommitBatchRequestJson request = iterator.next();
+            final CommitBatchRequest request = iterator.next();
 
-            final Uuid requestTopicId = UuidUtil.fromJava(request.topicId());
-            final Uuid resultTopicId = UuidUtil.fromJava(resultSet.getObject("topic_id", UUID.class));
-            final int partition = resultSet.getInt("partition");
-            if (!resultTopicId.equals(requestTopicId) || partition != request.partition()) {
+            // Sanity check to match returned and requested partitions (they should go in order). Maybe excessive?
+            final Uuid requestTopicId = request.topicIdPartition().topicId();
+            final int requestPartition = request.topicIdPartition().partition();
+            final Uuid resultTopicId = record.getTopicId();
+            final int resultPartition = record.get(CommitBatchResponseV1.PARTITION);
+            if (!resultTopicId.equals(requestTopicId) || resultPartition != requestPartition) {
                 throw new RuntimeException(String.format(
-                    "Returned topic ID or partition doesn't match: expected %s-%d, got %s-%d",
-                    request.topicId(), request.partition(),
-                    resultTopicId, partition
+                    "Returned topic ID or resultPartition doesn't match: expected %s-%d, got %s-%d",
+                    requestTopicId, requestPartition,
+                    resultTopicId, resultPartition
                 ));
             }
 
-            if (!resultSet.getBoolean("log_exists")) {
+            if (!record.get(CommitBatchResponseV1.LOG_EXISTS)) {
                 responses.add(CommitBatchResponse.unknownTopicOrPartition());
             } else {
-                final long assignedOffset = resultSet.getLong("assigned_offset");
-                final long logStartOffset = resultSet.getLong("log_start_offset");
-                responses.add(CommitBatchResponse.success(assignedOffset, now, logStartOffset));
+                final long assignedOffset = record.get(CommitBatchResponseV1.ASSIGNED_OFFSET);
+                final long logStartOffset = record.get(CommitBatchResponseV1.LOG_START_OFFSET);
+                responses.add(CommitBatchResponse.success(assignedOffset, now.toEpochMilli(), logStartOffset));
             }
         }
 
@@ -160,57 +165,5 @@ class CommitFileJob implements Callable<List<CommitBatchResponse>> {
         }
 
         return responses;
-    }
-
-    record CommitBatchRequestJson(CommitBatchRequest request) {
-        @JsonProperty("topic_id")
-        UUID topicId() {
-            return UuidUtil.toJava(request().topicIdPartition().topicId());
-        }
-
-        @JsonProperty("partition")
-        int partition() {
-            return request().topicIdPartition().partition();
-        }
-
-        @JsonProperty("byte_offset")
-        int byteOffset() {
-            return request().byteOffset();
-        }
-
-        @JsonProperty("byte_size")
-        int byteSize() {
-            return request().size();
-        }
-
-        @JsonProperty("request_base_offset")
-        long requestBaseOffset() {
-            return request().baseOffset();
-        }
-
-        @JsonProperty("request_last_offset")
-        long requestLastOffset() {
-            return request().lastOffset();
-        }
-
-        @JsonProperty("timestamp_type")
-        short timestampType() {
-            return (short) request().messageTimestampType().id;
-        }
-
-        @JsonProperty("batch_max_timestamp")
-        long batchMaxTimestamp() {
-            return request().batchMaxTimestamp();
-        }
-
-    }
-
-    private String requestsAsJsonString() {
-        try {
-            return MAPPER.writeValueAsString(requests);
-        } catch (final JsonProcessingException e) {
-            // We validate our JSONs in tests, so this should never happen.
-            throw new RuntimeException(e);
-        }
     }
 }

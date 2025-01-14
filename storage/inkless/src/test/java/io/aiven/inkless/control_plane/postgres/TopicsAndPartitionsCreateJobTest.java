@@ -4,6 +4,10 @@ package io.aiven.inkless.control_plane.postgres;
 import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.utils.Time;
 
+import org.jooq.DSLContext;
+import org.jooq.SQLDialect;
+import org.jooq.generated.tables.records.LogsRecord;
+import org.jooq.impl.DSL;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -11,15 +15,14 @@ import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 
 import java.sql.Connection;
-import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import java.util.Set;
 
-import io.aiven.inkless.common.UuidUtil;
 import io.aiven.inkless.control_plane.CreateTopicAndPartitionsRequest;
 import io.aiven.inkless.test_utils.SharedPostgreSQLTest;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.jooq.generated.Tables.LOGS;
 
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.STRICT_STUBS)
@@ -56,18 +59,18 @@ class TopicsAndPartitionsCreateJobTest extends SharedPostgreSQLTest {
         final TopicsAndPartitionsCreateJob job1 = new TopicsAndPartitionsCreateJob(Time.SYSTEM, hikariDataSource, createTopicAndPartitionsRequests, durationMs -> {});
         job1.run();
         assertThat(DBUtils.getAllLogs(hikariDataSource)).containsExactlyInAnyOrder(
-            new DBUtils.Log(TOPIC_ID1, 0, TOPIC_1, 0, 0),
-            new DBUtils.Log(TOPIC_ID1, 1, TOPIC_1, 0, 0),
-            new DBUtils.Log(TOPIC_ID2, 0, TOPIC_2, 0, 0)
+            new LogsRecord(TOPIC_ID1, 0, TOPIC_1, 0L, 0L),
+            new LogsRecord(TOPIC_ID1, 1, TOPIC_1, 0L, 0L),
+            new LogsRecord(TOPIC_ID2, 0, TOPIC_2, 0L, 0L)
         );
 
         // Repetition doesn't affect anything.
         final TopicsAndPartitionsCreateJob job2 = new TopicsAndPartitionsCreateJob(Time.SYSTEM, hikariDataSource, createTopicAndPartitionsRequests, durationMs -> {});
         job2.run();
         assertThat(DBUtils.getAllLogs(hikariDataSource)).containsExactlyInAnyOrder(
-                new DBUtils.Log(TOPIC_ID1, 0, TOPIC_1, 0, 0),
-                new DBUtils.Log(TOPIC_ID1, 1, TOPIC_1, 0, 0),
-                new DBUtils.Log(TOPIC_ID2, 0, TOPIC_2, 0, 0)
+                new LogsRecord(TOPIC_ID1, 0, TOPIC_1, 0L, 0L),
+                new LogsRecord(TOPIC_ID1, 1, TOPIC_1, 0L, 0L),
+                new LogsRecord(TOPIC_ID2, 0, TOPIC_2, 0L, 0L)
         );
     }
 
@@ -88,36 +91,24 @@ class TopicsAndPartitionsCreateJobTest extends SharedPostgreSQLTest {
         job2.run();
 
         assertThat(DBUtils.getAllLogs(hikariDataSource)).containsExactlyInAnyOrder(
-            new DBUtils.Log(TOPIC_ID1, 0, TOPIC_1, 0, 0),
-            new DBUtils.Log(TOPIC_ID1, 1, TOPIC_1, 0, 0),
-            new DBUtils.Log(TOPIC_ID2, 0, TOPIC_2, 0, 0),
-            new DBUtils.Log(TOPIC_ID2, 1, TOPIC_2, 0, 0)
+            new LogsRecord(TOPIC_ID1, 0, TOPIC_1, 0L, 0L),
+            new LogsRecord(TOPIC_ID1, 1, TOPIC_1, 0L, 0L),
+            new LogsRecord(TOPIC_ID2, 0, TOPIC_2, 0L, 0L),
+            new LogsRecord(TOPIC_ID2, 1, TOPIC_2, 0L, 0L)
         );
     }
 
     @Test
     void existingRecordsNotAffected() throws SQLException {
-        final String insert = """
-            INSERT INTO logs (topic_id, partition, topic_name, log_start_offset, high_watermark)
-            VALUES (?, ?, ?, ?, ?);
-            """;
-        try (final Connection connection = hikariDataSource.getConnection();
-             final PreparedStatement statement = connection.prepareStatement(insert)) {
-            statement.setObject(1, UuidUtil.toJava(TOPIC_ID1));
-            statement.setInt(2, 0);
-            statement.setString(3, TOPIC_1);
-            statement.setLong(4, 101);
-            statement.setLong(5, 201);
-            statement.addBatch();
-
-            statement.setObject(1, UuidUtil.toJava(TOPIC_ID2));
-            statement.setInt(2, 0);
-            statement.setString(3, TOPIC_2);
-            statement.setLong(4, 102);
-            statement.setLong(5, 202);
-            statement.addBatch();
-
-            statement.executeBatch();
+        try (final Connection connection = hikariDataSource.getConnection()) {
+            final DSLContext ctx = DSL.using(connection, SQLDialect.POSTGRES);
+            ctx.insertInto(LOGS,
+                LOGS.TOPIC_ID, LOGS.PARTITION, LOGS.TOPIC_NAME, LOGS.LOG_START_OFFSET, LOGS.HIGH_WATERMARK
+            ).values(
+                TOPIC_ID1, 0, TOPIC_1, 101L, 201L
+            ).values(
+                TOPIC_ID2, 0, TOPIC_2, 102L, 202L
+            ).execute();
             connection.commit();
         }
 
@@ -129,9 +120,9 @@ class TopicsAndPartitionsCreateJobTest extends SharedPostgreSQLTest {
         job1.run();
 
         assertThat(DBUtils.getAllLogs(hikariDataSource)).containsExactlyInAnyOrder(
-                new DBUtils.Log(TOPIC_ID1, 0, TOPIC_1, 101, 201),  // unaffected
-                new DBUtils.Log(TOPIC_ID1, 1, TOPIC_1, 0, 0),
-                new DBUtils.Log(TOPIC_ID2, 0, TOPIC_2, 102, 202)  // unaffected
+                new LogsRecord(TOPIC_ID1, 0, TOPIC_1, 101L, 201L),  // unaffected
+                new LogsRecord(TOPIC_ID1, 1, TOPIC_1, 0L, 0L),
+                new LogsRecord(TOPIC_ID2, 0, TOPIC_2, 102L, 202L)  // unaffected
         );
     }
 }
