@@ -32,6 +32,8 @@ public record SharedState(
 
     public static SharedState initialize(
         Time time,
+        String clusterId,
+        String rack,
         int brokerId,
         InklessConfig config,
         MetadataView metadata,
@@ -48,7 +50,7 @@ public record SharedState(
             config.storage(),
             ObjectKey.create(config.objectKeyPrefix(), config.objectKeyLogPrefixMasked()),
             new FixedBlockAlignment(config.fetchCacheBlockBytes()),
-            new InfinispanCache(time),
+            new InfinispanCache(time, clusterId, rack),
             brokerTopicStats,
             defaultTopicConfigs
         );
