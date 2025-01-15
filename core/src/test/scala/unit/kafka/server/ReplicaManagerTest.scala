@@ -2932,8 +2932,7 @@ class ReplicaManagerTest {
       producerIdExpirationCheckIntervalMs = 30000,
       leaderEpochCache = leaderEpochCache,
       producerStateManager = producerStateManager,
-      _topicId = topicId,
-      keepPartitionMetadataFile = true) {
+      _topicId = topicId) {
 
       override def endOffsetForEpoch(leaderEpoch: Int): Option[OffsetAndEpoch] = {
         assertEquals(leaderEpoch, leaderEpochFromLeader)
