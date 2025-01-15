@@ -2790,7 +2790,6 @@ kafka.server.KafkaApisTest:
 - testGetAcknowledgeBatchesFromShareAcknowledgeRequestError
 - testGetAcknowledgeBatchesFromShareFetchRequest
 - testGetAcknowledgeBatchesFromShareFetchRequestError
-- testGetAllTopicMetadataShouldNotCreateTopicOrReturnUnknownTopicPartition
 - testGetTelemetrySubscriptions
 - testGetTelemetrySubscriptionsWithException
 - testHandleAcknowledgementsInvalidAcknowledgementBatches
@@ -2931,7 +2930,6 @@ kafka.server.KafkaApisTest:
 - testSyncGroupProtocolTypeAndNameAreMandatorySinceV5
 - testTransactionalParametersSetCorrectly
 - testTxnOffsetCommitWithInvalidPartition
-- testUnauthorizedTopicMetadataRequest
 - testWriteShareGroupStateAuthorizationFailed
 - testWriteShareGroupStateSuccess
 - testWriteTxnMarkersShouldAllBeIncludedInTheResponse
