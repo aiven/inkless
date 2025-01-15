@@ -1258,7 +1258,10 @@ kafka.coordinator.group.MemberMetadataTest:
 - testMetadataRaisesOnUnsupportedProtocol
 - testVoteForPreferredProtocol
 - testVoteRaisesOnNoSupportedProtocols
-kafka.coordinator.transaction.ProducerIdsIntegrationTest:
+kafka.coordinator.transaction.ProducerIntegrationTest:
+- testTransactionWithAndWithoutSend
+- testTransactionWithInvalidSendAndEndTxnRequestSent
+- testTransactionWithSendOffset
 - testUniqueProducerIds
 kafka.coordinator.transaction.TransactionCoordinatorConcurrencyTest:
 - testConcurrentContinuingInitProducerIdRequests
@@ -3613,12 +3616,18 @@ kafka.server.share.SharePartitionTest:
 - testAcknowledgeWithAnotherMember
 - testAcknowledgeWithAnotherMemberRollbackBatchError
 - testAcknowledgeWithAnotherMemberRollbackSubsetError
+- testAcquireBatchSkipWithBatchSizeAndEndOffsetLargerThanFirstBatch
 - testAcquireMultipleRecords
 - testAcquireMultipleRecordsWithOverlapAndNewBatch
 - testAcquireReleasedRecord
 - testAcquireReleasedRecordMultipleBatches
 - testAcquireSameBatchAgain
+- testAcquireSingleBatchWithBatchSizeAndEndOffsetLargerThanBatchFirstOffset
 - testAcquireSingleRecord
+- testAcquireWithBatchSizeAndEndOffsetLargerThanBatchFirstOffset
+- testAcquireWithBatchSizeAndMaxFetchRecords
+- testAcquireWithBatchSizeAndMultipleBatches
+- testAcquireWithBatchSizeAndSingleBatch
 - testAcquireWithEmptyFetchRecords
 - testAcquireWithMaxFetchRecords
 - testAcquireWithMultipleBatchesAndMaxFetchRecords
