@@ -2756,7 +2756,6 @@ kafka.server.KafkaApisTest:
 - testAddPartitionsToTxnOperationNotAttempted
 - testAddPartitionsToTxnWithInvalidPartition
 - testAlterConfigsClientMetrics
-- testAlterConfigsWithAuthorizer
 - testAlterReplicaLogDirs
 - testBatchedAddPartitionsToTxnRequest
 - testConsumerGroupDescribe
@@ -2914,8 +2913,6 @@ kafka.server.KafkaApisTest:
 - testProduceResponseReplicaManagerLookupErrorOnNotLeaderOrFollower
 - testPushTelemetry
 - testPushTelemetryWithException
-- testRaftShouldAlwaysForwardCreateAcls
-- testRaftShouldAlwaysForwardDeleteAcls
 - testReadCommittedConsumerListOffsetLatest
 - testReadShareGroupStateAuthorizationFailed
 - testReadShareGroupStateSuccess
