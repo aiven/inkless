@@ -9773,34 +9773,6 @@ class KafkaApisTest extends Logging {
     assertEquals("Ongoing", transactionState.transactionState)
   }
 
-  private def createMockRequest(): RequestChannel.Request = {
-    val request: RequestChannel.Request = mock(classOf[RequestChannel.Request])
-    val requestHeader: RequestHeader = mock(classOf[RequestHeader])
-    when(request.header).thenReturn(requestHeader)
-    when(requestHeader.apiKey()).thenReturn(ApiKeys.values().head)
-    request
-  }
-
-  private def verifyShouldAlwaysForwardErrorMessage(handler: RequestChannel.Request => Unit): Unit = {
-    val request = createMockRequest()
-    val e = assertThrows(classOf[UnsupportedVersionException], () => handler(request))
-    assertEquals(KafkaApis.shouldAlwaysForward(request).getMessage, e.getMessage)
-  }
-
-  @Test
-  def testRaftShouldAlwaysForwardCreateAcls(): Unit = {
-    metadataCache = MetadataCache.kRaftMetadataCache(brokerId, () => KRaftVersion.KRAFT_VERSION_0)
-    kafkaApis = createKafkaApis(raftSupport = true)
-    verifyShouldAlwaysForwardErrorMessage(kafkaApis.handleCreateAcls)
-  }
-
-  @Test
-  def testRaftShouldAlwaysForwardDeleteAcls(): Unit = {
-    metadataCache = MetadataCache.kRaftMetadataCache(brokerId, () => KRaftVersion.KRAFT_VERSION_0)
-    kafkaApis = createKafkaApis(raftSupport = true)
-    verifyShouldAlwaysForwardErrorMessage(kafkaApis.handleDeleteAcls)
-  }
-
   @Test
   def testEmptyLegacyAlterConfigsRequestWithKRaft(): Unit = {
     val request = buildRequest(new AlterConfigsRequest(new AlterConfigsRequestData(), 1.toShort))
