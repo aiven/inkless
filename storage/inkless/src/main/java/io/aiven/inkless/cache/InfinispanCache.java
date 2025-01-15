@@ -28,9 +28,11 @@ public class InfinispanCache implements ObjectCache, AutoCloseable {
     private final DefaultCacheManager cacheManager;
     private final Cache<CacheKey, FileExtent> cache;
 
-    public InfinispanCache(Time time) {
+    public InfinispanCache(Time time, String clusterId, String rack) {
         this.time = time;
         GlobalConfigurationBuilder globalConfig = GlobalConfigurationBuilder.defaultClusteredBuilder();
+        globalConfig.transport()
+                .clusterName(clusterName(clusterId, rack));
         globalConfig.serialization()
                 .addContextInitializers()
                 .marshaller(new KafkaMarshaller())
@@ -42,6 +44,12 @@ public class InfinispanCache implements ObjectCache, AutoCloseable {
                 .withFlags(CacheContainerAdmin.AdminFlag.VOLATILE)
                 .getOrCreateCache("fileExtents", config.build());
         backoff = new ExponentialBackoff(1, CACHE_WRITE_BACKOFF_EXP_BASE, CACHE_WRITE_BACKOFF_EXP_BASE, CACHE_WRITE_BACKOFF_JITTER);
+    }
+
+    private static String clusterName(String clusterId, String rack) {
+        // To avoid cross-rack traffic, include rack in the cluster name
+        // Clusters with different names don't share data or storage
+        return "inkless-" + clusterId + (rack != null ? "-" + rack : "" );
     }
 
     @Override
