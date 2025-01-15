@@ -11,6 +11,7 @@ org.apache.kafka.common.test.api.ClusterTestExtensionsTest:
 - testClusterTestWithDisksPerBroker
 - testClusterTests
 - testControllerListenerName
+- testControllerRestart
 - testCreateDefaultProducerAndConsumer
 - testCreateProducerAndConsumer
 - testCreateTopic

@@ -920,6 +920,7 @@ org.apache.kafka.connect.runtime.isolation.PluginDescTest:
 - testPluginDescWithSystemClassLoader
 - testRegularPluginDesc
 org.apache.kafka.connect.runtime.isolation.PluginScannerTest:
+- testClasspathPluginIsAlsoLoadedInIsolation
 - testNonVersionedPluginHasUndefinedVersion
 - testScanningEmptyPluginPath
 - testScanningInvalidUberJar

@@ -2,6 +2,10 @@ org.apache.kafka.server.share.CachedSharePartitionTest:
 - testCachedSharePartitionEqualsAndHashCode
 org.apache.kafka.server.share.fetch.DelayedShareFetchKeyTest:
 - testDelayedShareFetchEqualsAndHashcode
+org.apache.kafka.server.share.fetch.PartitionMaxBytesStrategyTest:
+- testCheckValidArguments
+- testConstructor
+- testUniformStrategy
 org.apache.kafka.server.share.fetch.ShareFetchTest:
 - testErrorInAllPartitions
 - testErrorInAllPartitionsWithMultipleTopicIdPartitions
