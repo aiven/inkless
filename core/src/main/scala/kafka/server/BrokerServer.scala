@@ -336,6 +336,8 @@ class BrokerServer(
       val inklessSharedState = sharedServer.inklessControlPlane.map { controlPlane =>
         SharedState.initialize(
           time,
+          clusterId,
+          config.rack.orNull,
           config.brokerId,
           config.inklessConfig,
           inklessMetadataView,
