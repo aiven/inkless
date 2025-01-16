@@ -3,6 +3,11 @@ package io.aiven.inkless.control_plane.postgres;
 
 import org.apache.kafka.common.utils.Time;
 
+import org.jooq.DSLContext;
+import org.jooq.SQLDialect;
+import org.jooq.generated.enums.FileReasonT;
+import org.jooq.generated.enums.FileStateT;
+import org.jooq.impl.DSL;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -12,17 +17,15 @@ import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 
 import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.Instant;
 
-import io.aiven.inkless.control_plane.FileReason;
-import io.aiven.inkless.control_plane.FileState;
 import io.aiven.inkless.control_plane.FileToDelete;
 import io.aiven.inkless.test_utils.SharedPostgreSQLTest;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.jooq.generated.Tables.FILES;
+import static org.jooq.generated.Tables.FILES_TO_DELETE;
 
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.STRICT_STUBS)
@@ -40,34 +43,19 @@ class FindFilesToDeleteJobTest extends SharedPostgreSQLTest {
     @BeforeEach
     void insertFile() throws SQLException {
         try (final Connection connection = hikariDataSource.getConnection()) {
-            final String insertFileSql = """
-                INSERT INTO files(object_key, reason, state, uploader_broker_id, committed_at, size, used_size)
-                VALUES(?, ?::file_reason_t, ?::file_state_t, ?, ?, ?, ?)
-                RETURNING file_id
-                """;
-            try (final PreparedStatement preparedStatement = connection.prepareStatement(insertFileSql)) {
-                preparedStatement.setString(1, OBJECT_KEY);
-                preparedStatement.setString(2, FileReason.PRODUCE.name);
-                preparedStatement.setString(3, FileState.UPLOADED.name);
-                preparedStatement.setInt(4, BROKER_ID);
-                preparedStatement.setTimestamp(5, java.sql.Timestamp.from(COMMITTED_AT));
-                preparedStatement.setLong(6, 1000);
-                preparedStatement.setLong(7, 900);
-                try (final ResultSet resultSet = preparedStatement.executeQuery()) {
-                    resultSet.next();
-                    fileId = resultSet.getLong("file_id");
-                };
-            }
+            final DSLContext ctx = DSL.using(connection, SQLDialect.POSTGRES);
 
-            final String insertFileToDeleteSql = """
-                INSERT INTO files_to_delete(file_id, marked_for_deletion_at)
-                VALUES (?, ?)
-                """;
-            try (final PreparedStatement preparedStatement = connection.prepareStatement(insertFileToDeleteSql)) {
-                preparedStatement.setLong(1, fileId);
-                preparedStatement.setTimestamp(2, java.sql.Timestamp.from(MARKED_FOR_DELETION_AT));
-                preparedStatement.execute();
-            }
+            fileId = ctx.insertInto(FILES,
+                FILES.OBJECT_KEY, FILES.REASON, FILES.STATE, FILES.UPLOADER_BROKER_ID, FILES.COMMITTED_AT, FILES.SIZE, FILES.USED_SIZE
+            ).values(
+                OBJECT_KEY, FileReasonT.produce, FileStateT.uploaded, BROKER_ID, COMMITTED_AT, 1000L, 900L
+            ).returning(FILES.FILE_ID).fetchOne(FILES.FILE_ID);
+
+            ctx.insertInto(FILES_TO_DELETE,
+                FILES_TO_DELETE.FILE_ID, FILES_TO_DELETE.MARKED_FOR_DELETION_AT
+            ).values(
+                fileId, MARKED_FOR_DELETION_AT
+            ).execute();
 
             connection.commit();
         }

@@ -5,29 +5,24 @@ import org.apache.kafka.common.utils.Time;
 
 import com.zaxxer.hikari.HikariDataSource;
 
+import org.jooq.DSLContext;
+import org.jooq.SQLDialect;
+import org.jooq.impl.DSL;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
 import java.sql.SQLException;
-import java.time.Instant;
-import java.util.ArrayList;
 import java.util.List;
-import java.util.Objects;
 import java.util.concurrent.Callable;
 
 import io.aiven.inkless.control_plane.FileToDelete;
 
+import static org.jooq.generated.Tables.FILES;
+import static org.jooq.generated.Tables.FILES_TO_DELETE;
+
 public class FindFilesToDeleteJob implements Callable<List<FileToDelete>> {
     private static final Logger LOGGER = LoggerFactory.getLogger(FindFilesToDeleteJob.class);
-
-    private static final String SELECT_FILES_TO_DELETE = """
-        SELECT files.file_id, files.object_key, files_to_delete.marked_for_deletion_at
-        FROM files_to_delete
-            INNER JOIN files USING (file_id)
-        """;
 
     private final Time time;
     private final HikariDataSource hikariDataSource;
@@ -72,17 +67,20 @@ public class FindFilesToDeleteJob implements Callable<List<FileToDelete>> {
     }
 
     private List<FileToDelete> runWithConnection(final Connection connection) throws SQLException {
-        Objects.requireNonNull(connection, "connection cannot be null");
-        final List<FileToDelete> result = new ArrayList<>();
-        try (final PreparedStatement statement = connection.prepareStatement(SELECT_FILES_TO_DELETE)) {
-            try (final ResultSet resultSet = statement.executeQuery()) {
-                while (resultSet.next()) {
-                    final String objectKey = resultSet.getString("object_key");
-                    final Instant markedForDeletionAt = resultSet.getTimestamp("marked_for_deletion_at").toInstant();
-                    result.add(new FileToDelete(objectKey, markedForDeletionAt));
-                }
-            }
-        }
-        return result;
+        final DSLContext ctx = DSL.using(connection, SQLDialect.POSTGRES);
+
+        final var fetchResult = ctx.select(
+                FILES.FILE_ID,
+                FILES.OBJECT_KEY,
+                FILES_TO_DELETE.MARKED_FOR_DELETION_AT
+            ).from(FILES_TO_DELETE)
+            .innerJoin(FILES)
+            .using(FILES.FILE_ID)
+            .fetchStream();
+        return fetchResult.map(r -> new FileToDelete(
+                r.get(FILES.OBJECT_KEY),
+                r.get(FILES_TO_DELETE.MARKED_FOR_DELETION_AT)
+            ))
+            .toList();
     }
 }

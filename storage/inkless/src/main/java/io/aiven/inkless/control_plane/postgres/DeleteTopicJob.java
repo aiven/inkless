@@ -4,20 +4,20 @@ package io.aiven.inkless.control_plane.postgres;
 import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.utils.Time;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.MapperFeature;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.json.JsonMapper;
 import com.zaxxer.hikari.HikariDataSource;
 
+import org.jooq.DSLContext;
+import org.jooq.SQLDialect;
+import org.jooq.generated.Routines;
+import org.jooq.impl.DSL;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.sql.Connection;
-import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import java.time.Instant;
 import java.util.Set;
+import java.util.UUID;
 import java.util.function.Consumer;
 
 import io.aiven.inkless.TimeUtils;
@@ -25,18 +25,6 @@ import io.aiven.inkless.common.UuidUtil;
 
 class DeleteTopicJob implements Runnable {
     private static final Logger LOGGER = LoggerFactory.getLogger(DeleteTopicJob.class);
-
-    private static final ObjectMapper MAPPER = JsonMapper.builder()
-        .disable(
-            MapperFeature.AUTO_DETECT_CREATORS,
-            MapperFeature.AUTO_DETECT_FIELDS,
-            MapperFeature.AUTO_DETECT_GETTERS,
-            MapperFeature.AUTO_DETECT_IS_GETTERS)
-        .build();
-
-    private static final String CALL_DELETE_FUNCTION = """
-        SELECT delete_topic_v1(?, ?::JSONB)
-        """;
 
     private final Time time;
     private final HikariDataSource hikariDataSource;
@@ -91,21 +79,10 @@ class DeleteTopicJob implements Runnable {
         }
     }
 
-    private void callDeleteFunction(final Connection connection) throws SQLException {
+    private void callDeleteFunction(final Connection connection) {
+        final DSLContext ctx = DSL.using(connection, SQLDialect.POSTGRES);
         final Instant now = TimeUtils.now(time);
-        try (final PreparedStatement preparedStatement = connection.prepareStatement(CALL_DELETE_FUNCTION)) {
-            preparedStatement.setTimestamp(1, java.sql.Timestamp.from(now));
-            preparedStatement.setString(2, requestsAsJsonString());
-            preparedStatement.execute();
-        }
-    }
-
-    private String requestsAsJsonString() {
-        try {
-            return MAPPER.writeValueAsString(topicIds.stream().map(UuidUtil::toJava).toList());
-        } catch (final JsonProcessingException e) {
-            // We validate our JSONs in tests, so this should never happen.
-            throw new RuntimeException(e);
-        }
+        final UUID[] topicIds = this.topicIds.stream().map(UuidUtil::toJava).toArray(UUID[]::new);
+        Routines.deleteTopicV1(ctx.configuration(), now, topicIds);
     }
 }

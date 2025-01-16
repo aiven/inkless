@@ -5,28 +5,24 @@ import org.apache.kafka.common.utils.Time;
 
 import com.zaxxer.hikari.HikariDataSource;
 
+import org.jooq.DSLContext;
+import org.jooq.SQLDialect;
+import org.jooq.impl.DSL;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.sql.Connection;
-import java.sql.PreparedStatement;
 import java.sql.SQLException;
-import java.util.Arrays;
 import java.util.Set;
 import java.util.function.Consumer;
 
 import io.aiven.inkless.TimeUtils;
-import io.aiven.inkless.common.UuidUtil;
 import io.aiven.inkless.control_plane.CreateTopicAndPartitionsRequest;
+
+import static org.jooq.generated.Tables.LOGS;
 
 public class TopicsAndPartitionsCreateJob implements Runnable {
     private static final Logger LOGGER = LoggerFactory.getLogger(TopicsAndPartitionsCreateJob.class);
-
-    private static final String INSERT_LOG_ROW_QUERY = """
-        INSERT INTO logs (topic_id, partition, topic_name, log_start_offset, high_watermark)
-        VALUES (?, ?, ?, ?, ?)
-        ON CONFLICT DO NOTHING
-        """;
 
     private final Time time;
     private final HikariDataSource hikariDataSource;
@@ -90,26 +86,27 @@ public class TopicsAndPartitionsCreateJob implements Runnable {
         // It's ordered so that ConfigRecords go after TopicRecord but before PartitionRecord(s).
         // So it means we will see topic configs before any partition.
 
-        try (final PreparedStatement preparedStatement = connection.prepareStatement(INSERT_LOG_ROW_QUERY)) {
-            for (final var request : requests) {
-                for (int partition = 0; partition < request.numPartitions(); partition++) {
-                    preparedStatement.setObject(1, UuidUtil.toJava(request.topicId()));
-                    preparedStatement.setInt(2, partition);
-                    preparedStatement.setString(3, request.topicName());
-                    // log_start_offset
-                    preparedStatement.setLong(4, 0);
-                    // high_watermark
-                    preparedStatement.setLong(5, 0);
-                    preparedStatement.addBatch();
-                }
+        final DSLContext ctx = DSL.using(connection, SQLDialect.POSTGRES);
+        var insertStep = ctx.insertInto(LOGS,
+            LOGS.TOPIC_ID,
+            LOGS.PARTITION,
+            LOGS.TOPIC_NAME,
+            LOGS.LOG_START_OFFSET,
+            LOGS.HIGH_WATERMARK);
+        for (final var request : requests) {
+            for (int partition = 0; partition < request.numPartitions(); partition++) {
+                insertStep = insertStep.values(request.topicId(), partition, request.topicName(), 0L, 0L);
             }
-            final int[] batchResults = preparedStatement.executeBatch();
-            // This is not expected to happen, but checking just in case.
-            if (Arrays.stream(batchResults).asLongStream().anyMatch(l -> l != 0 && l != 1)) {
-                throw new RuntimeException("Unexpected executeBatch result");
-            }
-
-            connection.commit();
         }
+        final int rowsInserted = insertStep.onConflictDoNothing().execute();
+
+        // This is not expected to happen, but checking just in case.
+        final int maxInserts = requests.stream().mapToInt(CreateTopicAndPartitionsRequest::numPartitions).sum();
+        if (rowsInserted < 0 || rowsInserted > maxInserts) {
+            throw new RuntimeException(
+                String.format("Unexpected number of inserted rows: expected max %d, got %d", maxInserts, rowsInserted));
+        }
+
+        connection.commit();
     }
 }

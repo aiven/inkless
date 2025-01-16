@@ -14,7 +14,7 @@
 // limitations under the License.
 
 import org.ajoberstar.grgit.Grgit
-import org.gradle.api.JavaVersion
+import org.jooq.meta.jaxb.ForcedType
 
 import java.nio.charset.StandardCharsets
 
@@ -47,6 +47,7 @@ plugins {
   id 'com.diffplug.spotless' version "6.25.0"
 
   id 'info.solidsoft.pitest' version '1.15.0' apply false
+  id 'dev.monosoul.jooq-docker'  version "6.1.16" apply false
 }
 
 ext {
@@ -2390,6 +2391,8 @@ project(':storage:inkless') {
     generator
   }
 
+  apply plugin: 'dev.monosoul.jooq-docker'
+
   dependencies {
     api project(':clients')
     implementation project(':server-common')
@@ -2403,6 +2406,8 @@ project(':storage:inkless') {
     implementation libs.hikariCP
     implementation libs.flyway
     implementation libs.flywayPostgres
+    implementation libs.jooq
+    compileOnly libs.jooqMeta  // mostly to suppress compiler warnings, we don't use this at run time
     implementation libs.awsskdS3
     implementation libs.metrics
     implementation libs.commonsIo
@@ -2426,6 +2431,11 @@ project(':storage:inkless') {
     testRuntimeOnly libs.junitPlatformLauncher
 
     generator project(':generator')
+
+    jooqCodegen libs.jooq
+    jooqCodegen libs.jooqMeta
+    jooqCodegen libs.jooqCodegen
+    jooqCodegen libs.postgresql
   }
 
   task processMessages(type:JavaExec) {
@@ -2443,10 +2453,52 @@ project(':storage:inkless') {
     outputs.dir("${projectDir}/build/generated/main/java/io/aiven/inkless/generated")
   }
 
+  tasks {
+    generateJooqClasses {
+      withContainer {
+        image {
+          name = "postgres:17.2-alpine"
+        }
+      }
+
+      usingJavaConfig {
+        // Docs: https://www.jooq.org/doc/latest/manual/code-generation/codegen-advanced/codegen-config-database/codegen-database-forced-types/codegen-database-forced-types-converter/
+        database.withForcedTypes(
+                new ForcedType()
+                  .withName("UUID")
+                  .withUserType("org.apache.kafka.common.Uuid")
+                  .withIncludeExpression("TOPIC_ID")
+                  .withConverter("io.aiven.inkless.control_plane.postgres.converters.UUIDtoUuidConverter"),
+
+                new ForcedType()
+                  .withName("TIMESTAMP WITH TIME ZONE")
+                  .withUserType("java.time.Instant")
+                  .withIncludeExpression("NOW|.*_AT")
+                  .withConverter("io.aiven.inkless.control_plane.postgres.converters.OffsetDateTimeToInstantConverter"),
+
+                new ForcedType()
+                  .withName("TIMESTAMP_TYPE_T")
+                  .withUserType("org.apache.kafka.common.record.TimestampType")
+                  .withIncludeExpression("TIMESTAMP_TYPE")
+                  .withConverter("io.aiven.inkless.control_plane.postgres.converters.ShortToTimestampTypeConverter")
+        )
+      }
+      basePackageName.set("org.jooq.generated")
+      outputDirectory.set(project.layout.buildDirectory.dir("generated-jooq"))
+      includeFlywayTable.set(false)
+      outputSchemaToDefault.add("public")
+      inputs.dir("src/main/resources/db/migration")
+    }
+  }
+
   sourceSets {
     main {
       java {
-        srcDirs = ["src/main/java", "${projectDir}/build/generated/main/java"]
+        srcDirs = [
+                "src/main/java",
+                "${projectDir}/build/generated/main/java",
+                "${projectDir}/build/generated-jooq"
+        ]
       }
     }
     test {
@@ -2456,8 +2508,8 @@ project(':storage:inkless') {
     }
   }
 
-  compileJava.dependsOn 'processMessages'
-  srcJar.dependsOn 'processMessages'
+  compileJava.dependsOn('processMessages', 'generateJooqClasses')
+  srcJar.dependsOn('processMessages', 'generateJooqClasses')
 
   javadoc {
     enabled = false
