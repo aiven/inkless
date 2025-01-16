@@ -68,10 +68,9 @@ public class PostgresControlPlane extends AbstractControlPlane {
         final int uploaderBrokerId,
         final long fileSize,
         final Stream<CommitBatchRequest> requests) {
-        final var requestsJson = requests.map(CommitFileJob.CommitBatchRequestJson::new).toList();
         final CommitFileJob job = new CommitFileJob(
             time, hikariDataSource,
-            objectKey, uploaderBrokerId, fileSize, requestsJson,
+            objectKey, uploaderBrokerId, fileSize, requests.toList(),
             metrics::onCommitFileCompleted);
         return job.call().iterator();
     }

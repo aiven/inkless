@@ -87,6 +87,17 @@ CREATE TABLE batches (
 
 CREATE INDEX batches_by_last_offset_idx ON batches (topic_id, partition, last_offset);
 
+CREATE TYPE commit_batch_request_v1 AS (
+    topic_id topic_id_t,
+    partition partition_t,
+    byte_offset byte_offset_t,
+    byte_size byte_size_t,
+    request_base_offset offset_t,
+    request_last_offset offset_t,
+    timestamp_type timestamp_type_t,
+    batch_max_timestamp timestamp_t
+);
+
 CREATE TYPE commit_batch_response_v1 AS (
     topic_id topic_id_t,
     partition partition_t,
@@ -100,7 +111,7 @@ CREATE FUNCTION commit_file_v1(
     uploader_broker_id broker_id_t,
     file_size byte_size_t,
     now TIMESTAMP WITH TIME ZONE,
-    requests JSONB
+    requests commit_batch_request_v1[]
 )
 RETURNS SETOF commit_batch_response_v1 LANGUAGE plpgsql VOLATILE AS $$
 DECLARE
@@ -117,17 +128,7 @@ BEGIN
 
     FOR request IN
         SELECT *
-        FROM jsonb_to_recordset(requests)
-            r(
-                topic_id topic_id_t,
-                partition partition_t,
-                byte_offset byte_offset_t,
-                byte_size byte_size_t,
-                request_base_offset offset_t,
-                request_last_offset offset_t,
-                timestamp_type timestamp_type_t,
-                batch_max_timestamp timestamp_t
-            )
+        FROM unnest(requests)
     LOOP
         SELECT *
         FROM logs
@@ -182,17 +183,15 @@ $$
 
 CREATE FUNCTION delete_topic_v1(
     now TIMESTAMP WITH TIME ZONE,
-    arg_topic_ids JSONB
+    arg_topic_ids UUID[]
 )
 RETURNS VOID LANGUAGE plpgsql VOLATILE AS $$
 DECLARE
     log RECORD;
 BEGIN
     FOR log IN
-        WITH topic_ids AS
-            (SELECT value::uuid AS topic_id FROM jsonb_array_elements_text(arg_topic_ids))
         DELETE FROM logs
-        WHERE topic_id IN (SELECT topic_id FROM topic_ids)
+        WHERE topic_id = ANY(arg_topic_ids)
         RETURNING logs.*
     LOOP
         PERFORM delete_batch_v1(now, topic_id, partition, base_offset)
@@ -203,6 +202,12 @@ BEGIN
 END;
 $$
 ;
+
+CREATE TYPE delete_records_request_v1 AS (
+    topic_id topic_id_t,
+    partition partition_t,
+    "offset" BIGINT
+);
 
 CREATE TYPE delete_records_response_v1_error_t AS ENUM (
     'unknown_topic_or_partition', 'offset_out_of_range'
@@ -217,7 +222,7 @@ CREATE TYPE delete_records_response_v1 AS (
 
 CREATE FUNCTION delete_records_v1(
     now TIMESTAMP WITH TIME ZONE,
-    requests JSONB
+    requests delete_records_request_v1[]
 )
 RETURNS SETOF delete_records_response_v1 LANGUAGE plpgsql VOLATILE AS $$
 DECLARE
@@ -227,12 +232,7 @@ DECLARE
 BEGIN
     FOR request IN
         SELECT *
-        FROM jsonb_to_recordset(requests)
-            r(
-                topic_id topic_id_t,
-                partition partition_t,
-                "offset" BIGINT
-            )
+        FROM unnest(requests)
     LOOP
         SELECT *
         FROM logs

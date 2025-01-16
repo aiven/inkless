@@ -51,7 +51,7 @@ class FindBatchesJobTest extends SharedPostgreSQLTest {
         final CommitFileJob commitJob = new CommitFileJob(
             time, hikariDataSource, objectKey1, BROKER_ID, FILE_SIZE,
             List.of(
-                new CommitFileJob.CommitBatchRequestJson(CommitBatchRequest.of(T0P0, 0, 1234, 0, 11, 1000, TimestampType.CREATE_TIME))
+                CommitBatchRequest.of(T0P0, 0, 1234, 0, 11, 1000, TimestampType.CREATE_TIME)
             ),
             duration -> {}
         );

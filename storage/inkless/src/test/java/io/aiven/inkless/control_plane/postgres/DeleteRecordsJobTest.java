@@ -7,6 +7,12 @@ import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.record.TimestampType;
 import org.apache.kafka.common.utils.Time;
 
+import org.jooq.generated.enums.FileReasonT;
+import org.jooq.generated.enums.FileStateT;
+import org.jooq.generated.tables.records.BatchesRecord;
+import org.jooq.generated.tables.records.FilesRecord;
+import org.jooq.generated.tables.records.FilesToDeleteRecord;
+import org.jooq.generated.tables.records.LogsRecord;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -25,8 +31,6 @@ import io.aiven.inkless.control_plane.CommitBatchRequest;
 import io.aiven.inkless.control_plane.CreateTopicAndPartitionsRequest;
 import io.aiven.inkless.control_plane.DeleteRecordsRequest;
 import io.aiven.inkless.control_plane.DeleteRecordsResponse;
-import io.aiven.inkless.control_plane.FileReason;
-import io.aiven.inkless.control_plane.FileState;
 import io.aiven.inkless.test_utils.SharedPostgreSQLTest;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -83,8 +87,8 @@ class DeleteRecordsJobTest extends SharedPostgreSQLTest {
         new CommitFileJob(
             time, hikariDataSource, objectKey1, BROKER_ID, file1Size,
             List.of(
-                new CommitFileJob.CommitBatchRequestJson(CommitBatchRequest.of(T0P0, 0, file1Batch1Size, 0, 11, 1000,  TimestampType.CREATE_TIME)),
-                new CommitFileJob.CommitBatchRequestJson(CommitBatchRequest.of(T0P1, file1Batch1Size, file1Batch2Size, 0, 11, 1000, TimestampType.CREATE_TIME))
+                CommitBatchRequest.of(T0P0, 0, file1Batch1Size, 0, 11, 1000,  TimestampType.CREATE_TIME),
+                CommitBatchRequest.of(T0P1, file1Batch1Size, file1Batch2Size, 0, 11, 1000, TimestampType.CREATE_TIME)
             ), durationCallback
         ).call();
 
@@ -95,8 +99,8 @@ class DeleteRecordsJobTest extends SharedPostgreSQLTest {
         new CommitFileJob(
             time, hikariDataSource, objectKey2, BROKER_ID, file2Size,
             List.of(
-                new CommitFileJob.CommitBatchRequestJson(CommitBatchRequest.of(T0P0, 0, file2Batch1Size, 12, 23, 1000, TimestampType.CREATE_TIME)),
-                new CommitFileJob.CommitBatchRequestJson(CommitBatchRequest.of(T2P0, file2Batch1Size, file2Batch2Size, 0, 11, 1000, TimestampType.CREATE_TIME))
+                CommitBatchRequest.of(T0P0, 0, file2Batch1Size, 12, 23, 1000, TimestampType.CREATE_TIME),
+                CommitBatchRequest.of(T2P0, file2Batch1Size, file2Batch2Size, 0, 11, 1000, TimestampType.CREATE_TIME)
             ), durationCallback
         ).call();
 
@@ -108,9 +112,9 @@ class DeleteRecordsJobTest extends SharedPostgreSQLTest {
         new CommitFileJob(
             time, hikariDataSource, objectKey3, BROKER_ID, file3Size,
             List.of(
-                new CommitFileJob.CommitBatchRequestJson(CommitBatchRequest.of(T0P0, 0, file3Batch1Size, 24, 35, 1000, TimestampType.CREATE_TIME)),
-                new CommitFileJob.CommitBatchRequestJson(CommitBatchRequest.of(T0P1, file3Batch1Size, file3Batch2Size, 12, 23, 1000, TimestampType.CREATE_TIME)),
-                new CommitFileJob.CommitBatchRequestJson(CommitBatchRequest.of(T2P0, file3Batch1Size + file3Batch2Size, file3Batch3Size, 12, 23, 1000, TimestampType.CREATE_TIME))
+                CommitBatchRequest.of(T0P0, 0, file3Batch1Size, 24, 35, 1000, TimestampType.CREATE_TIME),
+                CommitBatchRequest.of(T0P1, file3Batch1Size, file3Batch2Size, 12, 23, 1000, TimestampType.CREATE_TIME),
+                CommitBatchRequest.of(T2P0, file3Batch1Size + file3Batch2Size, file3Batch3Size, 12, 23, 1000, TimestampType.CREATE_TIME)
             ), durationCallback
         ).call();
 
@@ -132,27 +136,27 @@ class DeleteRecordsJobTest extends SharedPostgreSQLTest {
         );
 
         assertThat(DBUtils.getAllLogs(hikariDataSource)).containsExactlyInAnyOrder(
-            new DBUtils.Log(TOPIC_ID_0, 0, TOPIC_0, 18, 36),
-            new DBUtils.Log(TOPIC_ID_0, 1, TOPIC_0, 24, 24),
-            new DBUtils.Log(TOPIC_ID_1, 0, TOPIC_1, 0, 0),
-            new DBUtils.Log(TOPIC_ID_2, 0, TOPIC_2, 0, 24)
+            new LogsRecord(TOPIC_ID_0, 0, TOPIC_0, 18L, 36L),
+            new LogsRecord(TOPIC_ID_0, 1, TOPIC_0, 24L, 24L),
+            new LogsRecord(TOPIC_ID_1, 0, TOPIC_1, 0L, 0L),
+            new LogsRecord(TOPIC_ID_2, 0, TOPIC_2, 0L, 24L)
         );
 
         assertThat(DBUtils.getAllBatches(hikariDataSource)).containsExactlyInAnyOrder(
-            new DBUtils.Batch(TOPIC_ID_0, 0, 12, 23, 2, 0, file1Batch1Size, 12, 23),
-            new DBUtils.Batch(TOPIC_ID_0, 0, 24, 35, 3, 0, file2Batch1Size, 24, 35),
-            new DBUtils.Batch(TOPIC_ID_2, 0, 0, 11, 2, file2Batch1Size, file2Batch2Size, 0, 11),
-            new DBUtils.Batch(TOPIC_ID_2, 0, 12, 23, 3, file3Batch3Size, file3Batch1Size + file3Batch2Size, 12, 23)
+            new BatchesRecord(TOPIC_ID_0, 0, 12L, 23L, 12L, 23L, 2L, 0L, (long) file1Batch1Size, TimestampType.CREATE_TIME, 0L, 1000L),
+            new BatchesRecord(TOPIC_ID_0, 0, 24L, 35L, 24L, 35L, 3L, 0L, (long) file2Batch1Size, TimestampType.CREATE_TIME, 0L, 1000L),
+            new BatchesRecord(TOPIC_ID_2, 0, 0L, 11L, 0L, 11L, 2L, (long) file2Batch1Size, (long) file2Batch2Size, TimestampType.CREATE_TIME, 0L, 1000L),
+            new BatchesRecord(TOPIC_ID_2, 0, 12L, 23L, 12L, 23L, 3L, (long) file3Batch3Size, (long) file3Batch1Size + file3Batch2Size, TimestampType.CREATE_TIME, 0L, 1000L)
         );
 
         // File 1 must be `deleting` because it contained only data from the fully truncated TOPIC_1.
         assertThat(DBUtils.getAllFiles(hikariDataSource)).containsExactlyInAnyOrder(
-            new DBUtils.File(1, objectKey1, FileReason.PRODUCE, FileState.DELETING, BROKER_ID, filesCommittedAt, file1Size, 0),
-            new DBUtils.File(2, objectKey2, FileReason.PRODUCE, FileState.UPLOADED, BROKER_ID, filesCommittedAt, file2Size, file2Size),  // not a single batch deleted from file 2
-            new DBUtils.File(3, objectKey3, FileReason.PRODUCE, FileState.UPLOADED, BROKER_ID, filesCommittedAt, file3Size, file3Size - file3Batch2Size)
+            new FilesRecord(1L, objectKey1, FileReasonT.produce, FileStateT.deleting, BROKER_ID, filesCommittedAt, (long) file1Size, 0L),
+            new FilesRecord(2L, objectKey2, FileReasonT.produce, FileStateT.uploaded, BROKER_ID, filesCommittedAt, (long) file2Size, (long) file2Size),  // not a single batch deleted from file 2
+            new FilesRecord(3L, objectKey3, FileReasonT.produce, FileStateT.uploaded, BROKER_ID, filesCommittedAt, (long) file3Size, (long) file3Size - file3Batch2Size)
         );
         assertThat(DBUtils.getAllFilesToDelete(hikariDataSource)).containsExactlyInAnyOrder(
-            new DBUtils.FileToDelete(1, topicsDeletedAt)
+            new FilesToDeleteRecord(1L, topicsDeletedAt)
         );
     }
 }
