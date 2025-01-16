@@ -110,3 +110,21 @@ org.apache.kafka.server.metrics.LinuxIoMetricsCollectorTest:
 - testUnableToReadNonexistentProcFile
 org.apache.kafka.server.quota.ThrottledChannelTest:
 - testThrottledChannelDelay
+org.apache.kafka.server.share.CachedSharePartitionTest:
+- testCachedSharePartitionEqualsAndHashCode
+org.apache.kafka.server.share.fetch.DelayedShareFetchKeyTest:
+- testDelayedShareFetchEqualsAndHashcode
+org.apache.kafka.server.share.fetch.PartitionMaxBytesStrategyTest:
+- testCheckValidArguments
+- testConstructor
+- testUniformStrategy
+org.apache.kafka.server.share.fetch.ShareFetchTest:
+- testErrorInAllPartitions
+- testErrorInAllPartitionsWithMultipleTopicIdPartitions
+- testFilterErroneousTopicPartitions
+org.apache.kafka.server.share.session.ShareSessionCacheTest:
+- testResizeCachedSessions
+- testShareSessionCache
+org.apache.kafka.server.share.session.ShareSessionTest:
+- testPartitionsToLogString
+- testPartitionsToLogStringEmpty
