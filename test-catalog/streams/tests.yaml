@@ -1379,7 +1379,9 @@ org.apache.kafka.streams.kstream.internals.SuppressScenarioTest:
 - shouldWorkBeforeGroupBy
 - shouldWorkBeforeJoinLeft
 - shouldWorkBeforeJoinRight
-- shouldWorkWithCogrouped
+- shouldWorkWithCogroupedSessionWindows
+- shouldWorkWithCogroupedSlidingWindows
+- shouldWorkWithCogroupedTimeWindows
 org.apache.kafka.streams.kstream.internals.SuppressTopologyTest:
 - shouldApplyNameToFinalSuppressionNode
 - shouldApplyNameToSuppressionNode
