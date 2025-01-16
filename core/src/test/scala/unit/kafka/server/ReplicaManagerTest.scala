@@ -2542,7 +2542,7 @@ class ReplicaManagerTest {
       verify(addPartitionsToTxnManager, times(0)).addOrVerifyTransaction(any(), any(), any(), any(), any(), any())
 
       // Dynamically enable verification.
-      config.dynamicConfig.initialize(None, None)
+      config.dynamicConfig.initialize(None)
       val props = new Properties()
       props.put(TransactionLogConfig.TRANSACTION_PARTITION_VERIFICATION_ENABLE_CONFIG, "true")
       config.dynamicConfig.updateBrokerConfig(config.brokerId, props)
@@ -2594,7 +2594,7 @@ class ReplicaManagerTest {
       assertEquals(verificationGuard, getVerificationGuard(replicaManager, tp0, producerId))
 
       // Disable verification
-      config.dynamicConfig.initialize(None, None)
+      config.dynamicConfig.initialize(None)
       val props = new Properties()
       props.put(TransactionLogConfig.TRANSACTION_PARTITION_VERIFICATION_ENABLE_CONFIG, "false")
       config.dynamicConfig.updateBrokerConfig(config.brokerId, props)

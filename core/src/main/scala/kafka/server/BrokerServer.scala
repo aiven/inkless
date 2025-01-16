@@ -194,7 +194,7 @@ class BrokerServer(
       info("Starting broker")
 
       val clientMetricsReceiverPlugin = new ClientMetricsReceiverPlugin()
-      config.dynamicConfig.initialize(zkClientOpt = None, Some(clientMetricsReceiverPlugin))
+      config.dynamicConfig.initialize(Some(clientMetricsReceiverPlugin))
 
       /* start scheduler */
       kafkaScheduler = new KafkaScheduler(config.backgroundThreads)
