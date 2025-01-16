@@ -19,7 +19,7 @@ package kafka.server
 import com.yammer.metrics.core.Meter
 import io.aiven.inkless.DeleteRecordsInterceptor
 import io.aiven.inkless.common.SharedState
-import io.aiven.inkless.consume.FetchInterceptor
+import io.aiven.inkless.consume.{FetchInterceptor, FetchOffsetInterceptor}
 import io.aiven.inkless.produce.AppendInterceptor
 import kafka.cluster.{Partition, PartitionListener}
 import kafka.controller.StateChangeLogger
@@ -315,6 +315,7 @@ class ReplicaManager(val config: KafkaConfig,
 
   private val inklessAppendInterceptor: Option[AppendInterceptor] = inklessSharedState.map(new AppendInterceptor(_))
   private val inklessFetchInterceptor: Option[FetchInterceptor] = inklessSharedState.map(new FetchInterceptor(_))
+  private val inklessFetchOffsetInterceptor: Option[FetchOffsetInterceptor] = inklessSharedState.map(new FetchOffsetInterceptor(_))
   private val inklessDeleteRecordsInterceptor: Option[DeleteRecordsInterceptor] = inklessSharedState.map(new DeleteRecordsInterceptor(_))
 
   /* epoch of the controller that last changed the leader */
@@ -1427,6 +1428,10 @@ class ReplicaManager(val config: KafkaConfig,
                   buildErrorResponse: (Errors, ListOffsetsPartition) => ListOffsetsPartitionResponse,
                   responseCallback: List[ListOffsetsTopicResponse] => Unit,
                   timeoutMs: Int = 0): Unit = {
+    if (inklessFetchOffsetInterceptor.exists(_.intercept(topics.asJava, duplicatePartitions.asJava, isolationLevel, (e, v) => buildErrorResponse(e, v), r => responseCallback(r.asScala.toList)))) {
+      return
+    }
+
     val statusByPartition = mutable.Map[TopicPartition, ListOffsetsPartitionStatus]()
     topics.foreach { topic =>
       topic.partitions.asScala.foreach { partition =>

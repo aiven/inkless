@@ -73,4 +73,24 @@ public abstract class AbstractControlPlane implements ControlPlane {
         final Stream<FindBatchRequest> requests,
         final boolean minOneMessage,
         final int fetchMaxBytes);
+
+    @Override
+    public synchronized List<ListOffsetsResponse> listOffsets(final List<ListOffsetsRequest> listOffsetsRequests) {
+        final SplitMapper<ListOffsetsRequest, ListOffsetsResponse> splitMapper = new SplitMapper<>(
+                listOffsetsRequests, findBatchRequest -> true
+        );
+
+        // Right away set answer for partitions not present in the metadata.
+        splitMapper.setFalseOut(
+                splitMapper.getFalseIn().map(r -> ListOffsetsResponse.unknownTopicOrPartition(r.topicIdPartition())).iterator()
+        );
+
+        // Process those partitions that are present in the metadata.
+        splitMapper.setTrueOut(listOffsetsForExistingPartitions(splitMapper.getTrueIn()));
+
+        return splitMapper.getOut();
+    }
+
+    protected abstract Iterator<ListOffsetsResponse> listOffsetsForExistingPartitions(
+            Stream<ListOffsetsRequest> trueIn);
 }
