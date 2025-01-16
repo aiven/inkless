@@ -10,10 +10,12 @@ integration.kafka.api.PlaintextConsumerCallbackTest:
 integration.kafka.server.DelayedFutureTest:
 - testDelayedFuture
 kafka.KafkaConfigTest:
+- testBrokerRequiredProperties
 - testBrokerRoleNodeIdValidation
 - testCombinedRoleNodeIdValidation
 - testConnectionsMaxReauthMsDefault
 - testConnectionsMaxReauthMsExplicit
+- testControllerRequiredProperties
 - testControllerRoleNodeIdValidation
 - testGetKafkaConfigFromArgs
 - testGetKafkaConfigFromArgsNonArgsAtTheBegging
@@ -2948,7 +2950,6 @@ kafka.server.KafkaConfigTest:
 - testConsumerGroupSessionTimeoutValidation
 - testControllerListenerDefinedForKRaftBroker
 - testControllerListenerDefinedForKRaftController
-- testControllerListenerNameDoesNotMapToPlaintextByDefaultForNonKRaft
 - testControllerListenerNameMapsToPlaintextByDefaultForKRaft
 - testControllerListenerNames
 - testControllerListenerNamesValidForKRaftControllerOnly
@@ -3402,7 +3403,6 @@ kafka.server.ServerShutdownTest:
 - testShutdownWithKRaftControllerUnavailable
 kafka.server.ServerTest:
 - testCreateSelfManagedKafkaMetricsContext
-- testCreateZkKafkaMetricsContext
 kafka.server.ShareFetchAcknowledgeRequestTest:
 - testShareAcknowledgeInitialRequestError
 - testShareAcknowledgeRequestInvalidShareSessionEpoch
