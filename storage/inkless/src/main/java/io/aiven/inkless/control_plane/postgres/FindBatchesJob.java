@@ -6,12 +6,13 @@ import org.apache.kafka.common.utils.Time;
 
 import com.zaxxer.hikari.HikariDataSource;
 
+import org.jooq.DSLContext;
+import org.jooq.SQLDialect;
+import org.jooq.impl.DSL;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
@@ -22,26 +23,15 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 
 import io.aiven.inkless.TimeUtils;
-import io.aiven.inkless.common.UuidUtil;
 import io.aiven.inkless.control_plane.BatchInfo;
 import io.aiven.inkless.control_plane.FindBatchRequest;
 import io.aiven.inkless.control_plane.FindBatchResponse;
 
+import static org.jooq.generated.Tables.BATCHES;
+import static org.jooq.generated.Tables.FILES;
+
 class FindBatchesJob implements Callable<List<FindBatchResponse>> {
     private static final Logger LOGGER = LoggerFactory.getLogger(FindBatchesJob.class);
-
-    private static final String SELECT_BATCHES = """
-        SELECT b.base_offset, b.last_offset, f.object_key, b.byte_offset,
-            b.byte_size, b.request_base_offset, b.request_last_offset,
-            b.timestamp_type, b.log_append_timestamp, b.batch_max_timestamp
-        FROM batches AS b
-            INNER JOIN files AS f ON b.file_id = f.file_id
-        WHERE topic_id = ?
-            AND partition = ?
-            AND last_offset >= ?  -- offset to find
-            AND last_offset < ?   -- high watermark
-        ORDER BY base_offset
-        """;
 
     private final Time time;
     private final HikariDataSource hikariDataSource;
@@ -124,43 +114,53 @@ class FindBatchesJob implements Callable<List<FindBatchResponse>> {
             return FindBatchResponse.offsetOutOfRange(logEntity.logStartOffset(), logEntity.highWatermark());
         }
 
-        return TimeUtils.measureDurationMs(time, ()->getBatchResponse(connection, request, logEntity), durationCallback);
+        final DSLContext ctx = DSL.using(connection, SQLDialect.POSTGRES);
+        return TimeUtils.measureDurationMs(time, () -> getBatchResponse(ctx, request, logEntity), durationCallback);
     }
 
-    private FindBatchResponse getBatchResponse(Connection connection, FindBatchRequest request, LogEntity logEntity) throws SQLException {
+    private FindBatchResponse getBatchResponse(final DSLContext ctx, final FindBatchRequest request, final LogEntity logEntity) throws SQLException {
+        final var select = ctx.select(
+                BATCHES.BASE_OFFSET,
+                BATCHES.LAST_OFFSET,
+                FILES.OBJECT_KEY,
+                BATCHES.BYTE_OFFSET,
+                BATCHES.BYTE_SIZE,
+                BATCHES.REQUEST_BASE_OFFSET,
+                BATCHES.REQUEST_LAST_OFFSET,
+                BATCHES.TIMESTAMP_TYPE,
+                BATCHES.LOG_APPEND_TIMESTAMP,
+                BATCHES.BATCH_MAX_TIMESTAMP
+            ).from(BATCHES)
+            .innerJoin(FILES).on(BATCHES.FILE_ID.eq(FILES.FILE_ID))
+            .where(BATCHES.TOPIC_ID.eq(request.topicIdPartition().topicId()))
+            .and(BATCHES.PARTITION.eq(request.topicIdPartition().partition()))
+            .and(BATCHES.LAST_OFFSET.ge(request.offset()))  // offset to find
+            .and(BATCHES.LAST_OFFSET.lt(logEntity.highWatermark()))
+            .orderBy(BATCHES.BASE_OFFSET);
+
         final List<BatchInfo> batches = new ArrayList<>();
         long totalSize = 0;
-
-        try (final PreparedStatement preparedStatement = connection.prepareStatement(SELECT_BATCHES)) {
-            preparedStatement.setObject(1, UuidUtil.toJava(request.topicIdPartition().topicId()));
-            preparedStatement.setInt(2, request.topicIdPartition().partition());
-            preparedStatement.setLong(3, request.offset());
-            preparedStatement.setLong(4, logEntity.highWatermark());
-
-            preparedStatement.setFetchSize(1000);  // fetch lazily
-
-            try (final ResultSet resultSet = preparedStatement.executeQuery()) {
-                while (resultSet.next()) {
-                    final BatchInfo batch = new BatchInfo(
-                        resultSet.getString("object_key"),
-                        resultSet.getLong("byte_offset"),
-                        resultSet.getLong("byte_size"),
-                        resultSet.getLong("base_offset"),
-                        resultSet.getLong("request_base_offset"),
-                        resultSet.getLong("request_last_offset"),
-                        resultSet.getLong("log_append_timestamp"),
-                        resultSet.getLong("batch_max_timestamp"),
-                        BatchInfo.timestampTypeFromId(resultSet.getShort("timestamp_type"))
-                    );
-                    batches.add(batch);
-                    totalSize += batch.size();
-                    if (totalSize > fetchMaxBytes) {
-                        break;
-                    }
+        try (final var cursor = select.fetchSize(1000).fetchLazy()) {
+            for (final var record : cursor) {
+                final BatchInfo batch = new BatchInfo(
+                    record.get(FILES.OBJECT_KEY),
+                    record.get(BATCHES.BYTE_OFFSET),
+                    record.get(BATCHES.BYTE_SIZE),
+                    record.get(BATCHES.BASE_OFFSET),
+                    record.get(BATCHES.REQUEST_BASE_OFFSET),
+                    record.get(BATCHES.REQUEST_LAST_OFFSET),
+                    record.get(BATCHES.LOG_APPEND_TIMESTAMP),
+                    record.get(BATCHES.BATCH_MAX_TIMESTAMP),
+                    record.get(BATCHES.TIMESTAMP_TYPE)
+                );
+                batches.add(batch);
+                totalSize += batch.size();
+                if (totalSize > fetchMaxBytes) {
+                    break;
                 }
+
             }
         }
-
         return FindBatchResponse.success(batches, logEntity.logStartOffset(), logEntity.highWatermark());
     }
 
