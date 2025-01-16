@@ -24,6 +24,8 @@ import io.aiven.inkless.control_plane.DeleteRecordsResponse;
 import io.aiven.inkless.control_plane.FileToDelete;
 import io.aiven.inkless.control_plane.FindBatchRequest;
 import io.aiven.inkless.control_plane.FindBatchResponse;
+import io.aiven.inkless.control_plane.ListOffsetsRequest;
+import io.aiven.inkless.control_plane.ListOffsetsResponse;
 
 public class PostgresControlPlane extends AbstractControlPlane {
 
@@ -83,6 +85,15 @@ public class PostgresControlPlane extends AbstractControlPlane {
             requests.toList(), minOneMessage, fetchMaxBytes,
             metrics::onFindBatchesCompleted, metrics::onGetLogsCompleted);
         return job.call().iterator();
+    }
+
+    @Override
+    protected Iterator<ListOffsetsResponse> listOffsetsForExistingPartitions(Stream<ListOffsetsRequest> requests) {
+            final ListOffsetsJob job = new ListOffsetsJob(
+                    time, hikariDataSource,
+                    requests.toList(),
+                    metrics::onGetLogsCompleted);
+            return job.call().iterator();
     }
 
     @Override
