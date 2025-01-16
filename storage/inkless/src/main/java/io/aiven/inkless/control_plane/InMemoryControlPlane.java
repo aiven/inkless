@@ -3,6 +3,7 @@ package io.aiven.inkless.control_plane;
 
 import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.Uuid;
+import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.utils.Time;
 
 import org.slf4j.Logger;
@@ -214,6 +215,31 @@ public class InMemoryControlPlane extends AbstractControlPlane {
         return filesToDelete.stream()
             .map(f -> new FileToDelete(f.fileInfo().objectKey, f.markedForDeletionAt()))
             .toList();
+    }
+
+    @Override
+    protected Iterator<ListOffsetsResponse> listOffsetsForExistingPartitions(Stream<ListOffsetsRequest> requests) {
+        return requests
+                .map(request -> listOffset(request, logs))
+                .iterator();
+    }
+
+    private ListOffsetsResponse listOffset(ListOffsetsRequest request, Map<TopicIdPartition, LogInfo> data) {
+        LogInfo logInfo = data.get(request.topicIdPartition());
+
+        if (logInfo == null) {
+            LOGGER.warn("Unexpected non-existing partition {}", request.topicIdPartition());
+            return ListOffsetsResponse.unknownTopicOrPartition(request.topicIdPartition());
+        }
+
+        long timestamp = request.timestamp();
+        if (timestamp == ListOffsetsRequest.EARLIEST_TIMESTAMP) {
+            return ListOffsetsResponse.success(request.topicIdPartition(), timestamp, logInfo.logStartOffset);
+        } else if (timestamp == ListOffsetsRequest.LATEST_TIMESTAMP) {
+            return ListOffsetsResponse.success(request.topicIdPartition(), timestamp, logInfo.logStartOffset);
+        }
+        LOGGER.error("listOffset request for timestamp {} in {} unsupported", timestamp, request.topicIdPartition());
+        return new ListOffsetsResponse(Errors.UNKNOWN_SERVER_ERROR, request.topicIdPartition(), -1, -1);
     }
 
     @Override

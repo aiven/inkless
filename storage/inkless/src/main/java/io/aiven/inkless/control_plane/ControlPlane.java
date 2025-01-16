@@ -31,6 +31,8 @@ public interface ControlPlane extends Closeable, Configurable {
 
     List<FileToDelete> getFilesToDelete();
 
+    List<ListOffsetsResponse> listOffsets(List<ListOffsetsRequest> requests);
+
     static ControlPlane create(final InklessConfig config, final Time time) {
         final Class<ControlPlane> controlPlaneClass = config.controlPlaneClass();
         try {
