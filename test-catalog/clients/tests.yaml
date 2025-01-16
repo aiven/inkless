@@ -2036,6 +2036,8 @@ org.apache.kafka.clients.consumer.internals.ShareConsumeRequestManagerTest:
 - testRetryAcknowledgementsWithLeaderChange
 - testServerDisconnectedOnShareAcknowledge
 - testShareFetchWithSubscriptionChange
+- testShareFetchWithSubscriptionChangeMultipleNodes
+- testShareFetchWithSubscriptionChangeMultipleNodesEmptyAcknowledgements
 - testUnauthorizedTopic
 - testUnknownTopicIdError
 - testWhenFetchResponseReturnsWithALeadershipChangeErrorAndNewLeaderInformation
