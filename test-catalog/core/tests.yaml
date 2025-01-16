@@ -1791,7 +1791,6 @@ kafka.log.UnifiedLogTest:
 - testMessageSizeCheckInAppendAsFollower
 - testMultipleProducerIdsPerMemoryRecord
 - testMultipleProducersWithDuplicatesInSingleAppend
-- testNoOpWhenKeepPartitionMetadataFileIsFalse
 - testNoOpWhenRemoteLogStorageIsDisabled
 - testNonSequentialAppend
 - testOffsetFromProducerSnapshotFile
