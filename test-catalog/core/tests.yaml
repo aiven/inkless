@@ -814,16 +814,6 @@ kafka.clients.consumer.ConsumerIntegrationTest:
 - testLeaderEpoch
 kafka.cluster.AssignmentStateTest:
 - testPartitionAssignmentStatus
-kafka.cluster.BrokerEndPointTest:
-- testFromJsonFutureVersion
-- testFromJsonV1
-- testFromJsonV2
-- testFromJsonV3
-- testFromJsonV4WithNoFeatures
-- testFromJsonV4WithNoRack
-- testFromJsonV4WithNullRack
-- testFromJsonV5
-- testHashAndEquals
 kafka.cluster.PartitionLockTest:
 - testAppendReplicaFetchWithSchedulerCheckForShrinkIsr
 - testAppendReplicaFetchWithUpdateIsr
