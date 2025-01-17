@@ -64,4 +64,27 @@ public class ControllerRequestContextUtil {
             partitionChangeQuotaApplier
         );
     }
+
+    // For inkless
+    public static ControllerRequestContext anonymousContextFor(ApiKeys apiKeys, String clientId) {
+        return anonymousContextFor(apiKeys, apiKeys.latestVersion(), clientId, __ -> { });
+    }
+
+    // For inkless
+    public static ControllerRequestContext anonymousContextFor(
+        ApiKeys apiKeys,
+        short version,
+        String clientId,
+        Consumer<Integer> partitionChangeQuotaApplier
+    ) {
+        return new ControllerRequestContext(
+            new RequestHeaderData()
+                .setRequestApiKey(apiKeys.id)
+                .setRequestApiVersion(version)
+                .setClientId(clientId),
+            KafkaPrincipal.ANONYMOUS,
+            OptionalLong.empty(),
+            partitionChangeQuotaApplier
+        );
+    }
 }
