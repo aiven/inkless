@@ -2666,12 +2666,6 @@ kafka.server.FetchSessionTest:
 - testToForgetPartitions
 - testUpdateAndGenerateResponseData
 - testZeroSizeFetchSession
-kafka.server.FinalizedFeatureCacheTest:
-- testClear
-- testEmpty
-- testUpdateOrThrowFailedDueToInvalidEpoch
-- testUpdateOrThrowFailedDueToInvalidFeatures
-- testUpdateOrThrowSuccess
 kafka.server.ForwardingManagerTest:
 - testFailedAuthentication
 - testForwardingManagerMetricsOnComplete
@@ -3126,21 +3120,13 @@ kafka.server.MetadataCacheTest:
 - getTopicMetadataPartitionListenerNotAvailableOnLeader
 - getTopicMetadataReplicaNotAvailable
 - getTopicMetadataWithNonSupportedSecurityProtocol
-- testCreateDeletionEntries
 - testGetAliveBrokersWithBrokerFenced
-- testGetClusterMetadataWithOfflineReplicas
 - testGetLiveBrokerEpoch
 - testGetOfflineReplicasConsidersDirAssignment
 - testGetPartitionInfo
 - testGetTopicMetadataForDescribeTopicPartitionsResponse
 - testIsBrokerFenced
 - testIsBrokerInControlledShutdown
-- testUpdateZkMetadataCacheViaHybridUMR
-- testUpdateZkMetadataCacheWithRecreatedTopic
-- transformUMRWithBuggySnapshot
-- transformUMRWithMissingBar
-- transformUMRWithNoChanges
-- transformUMRWithRecreatedBar
 kafka.server.MetadataRequestTest:
 - testAliveBrokersWithNoTopics
 - testAllTopicsRequest
