@@ -928,16 +928,16 @@ public class GroupMetadataManager {
     }
 
     /**
-     * Validates the online downgrade if a consumer member is fenced from the consumer group.
+     * Validates the online downgrade if consumer members are fenced from the consumer group.
      *
      * @param consumerGroup     The ConsumerGroup.
-     * @param fencedMemberId    The fenced member id.
+     * @param fencedMembers     The fenced members.
      * @return A boolean indicating whether it's valid to online downgrade the consumer group.
      */
-    private boolean validateOnlineDowngradeWithFencedMember(ConsumerGroup consumerGroup, String fencedMemberId) {
-        if (!consumerGroup.allMembersUseClassicProtocolExcept(fencedMemberId)) {
+    private boolean validateOnlineDowngradeWithFencedMembers(ConsumerGroup consumerGroup, Set<ConsumerGroupMember> fencedMembers) {
+        if (!consumerGroup.allMembersUseClassicProtocolExcept(fencedMembers)) {
             return false;
-        } else if (consumerGroup.numMembers() <= 1) {
+        } else if (consumerGroup.numMembers() - fencedMembers.size() <= 0) {
             log.debug("Skip downgrading the consumer group {} to classic group because it's empty.",
                 consumerGroup.groupId());
             return false;
@@ -945,7 +945,7 @@ public class GroupMetadataManager {
             log.info("Cannot downgrade consumer group {} to classic group because the online downgrade is disabled.",
                 consumerGroup.groupId());
             return false;
-        } else if (consumerGroup.numMembers() - 1 > config.classicGroupMaxSize()) {
+        } else if (consumerGroup.numMembers() - fencedMembers.size() > config.classicGroupMaxSize()) {
             log.info("Cannot downgrade consumer group {} to classic group because its group size is greater than classic group max size.",
                 consumerGroup.groupId());
             return false;
@@ -958,15 +958,15 @@ public class GroupMetadataManager {
      * static member is replaced by another new one uses the classic protocol.
      *
      * @param consumerGroup     The group to downgrade.
-     * @param replacedMemberId  The replaced member id.
+     * @param replacedMember    The replaced member.
      *
      * @return A boolean indicating whether it's valid to online downgrade the consumer group.
      */
-    private boolean validateOnlineDowngradeWithReplacedMemberId(
+    private boolean validateOnlineDowngradeWithReplacedMember(
         ConsumerGroup consumerGroup,
-        String replacedMemberId
+        ConsumerGroupMember replacedMember
     ) {
-        if (!consumerGroup.allMembersUseClassicProtocolExcept(replacedMemberId)) {
+        if (!consumerGroup.allMembersUseClassicProtocolExcept(replacedMember)) {
             return false;
         } else if (!config.consumerGroupMigrationPolicy().isDowngradeEnabled()) {
             log.info("Cannot downgrade consumer group {} to classic group because the online downgrade is disabled.",
@@ -984,27 +984,34 @@ public class GroupMetadataManager {
      * Creates a ClassicGroup corresponding to the given ConsumerGroup.
      *
      * @param consumerGroup     The converted ConsumerGroup.
-     * @param leavingMemberId   The leaving member that triggers the downgrade validation.
+     * @param leavingMembers    The leaving member(s) that triggered the downgrade validation.
      * @param joiningMember     The newly joined member if the downgrade is triggered by static member replacement.
+     *                          When not null, must have an instanceId that matches an existing member.
      * @param records           The record list to which the conversion records are added.
      */
     private void convertToClassicGroup(
         ConsumerGroup consumerGroup,
-        String leavingMemberId,
+        Set<ConsumerGroupMember> leavingMembers,
         ConsumerGroupMember joiningMember,
         List<CoordinatorRecord> records
     ) {
         if (joiningMember == null) {
             consumerGroup.createGroupTombstoneRecords(records);
         } else {
-            consumerGroup.createGroupTombstoneRecordsWithReplacedMember(records, leavingMemberId, joiningMember.memberId());
+            // We've already generated the records to replace replacedMember with joiningMember,
+            // so we need to tombstone joiningMember instead.
+            ConsumerGroupMember replacedMember = consumerGroup.staticMember(joiningMember.instanceId());
+            if (replacedMember == null) {
+                throw new IllegalArgumentException("joiningMember must be a static member when not null.");
+            }
+            consumerGroup.createGroupTombstoneRecordsWithReplacedMember(records, replacedMember.memberId(), joiningMember.memberId());
         }
 
         ClassicGroup classicGroup;
         try {
             classicGroup = ClassicGroup.fromConsumerGroup(
                 consumerGroup,
-                leavingMemberId,
+                leavingMembers,
                 joiningMember,
                 logContext,
                 time,
@@ -1950,13 +1957,13 @@ public class GroupMetadataManager {
 
         // 4. Maybe downgrade the consumer group if the last static member using the
         // consumer protocol is replaced by the joining static member.
-        String existingStaticMemberIdOrNull = group.staticMemberId(request.groupInstanceId());
-        boolean downgrade = existingStaticMemberIdOrNull != null &&
-            validateOnlineDowngradeWithReplacedMemberId(group, existingStaticMemberIdOrNull);
+        ConsumerGroupMember existingStaticMemberOrNull = group.staticMember(request.groupInstanceId());
+        boolean downgrade = existingStaticMemberOrNull != null &&
+            validateOnlineDowngradeWithReplacedMember(group, existingStaticMemberOrNull);
         if (downgrade) {
             convertToClassicGroup(
                 group,
-                existingStaticMemberIdOrNull,
+                Collections.emptySet(),
                 updatedMember,
                 records
             );
@@ -3001,17 +3008,47 @@ public class GroupMetadataManager {
         ConsumerGroupMember member,
         T response
     ) {
+        return consumerGroupFenceMembers(group, Set.of(member), response);
+    }
+
+    /**
+     * Fences members from a consumer group and maybe downgrade the consumer group to a classic group.
+     *
+     * @param group     The group.
+     * @param members   The members.
+     * @param response  The response of the CoordinatorResult.
+     *
+     * @return The CoordinatorResult to be applied.
+     */
+    private <T> CoordinatorResult<T, CoordinatorRecord> consumerGroupFenceMembers(
+        ConsumerGroup group,
+        Set<ConsumerGroupMember> members,
+        T response
+    ) {
+        if (members.isEmpty()) {
+            // No members to fence. Don't bump the group epoch.
+            return new CoordinatorResult<>(Collections.emptyList(), response);
+        }
+
         List<CoordinatorRecord> records = new ArrayList<>();
-        if (validateOnlineDowngradeWithFencedMember(group, member.memberId())) {
-            convertToClassicGroup(group, member.memberId(), null, records);
+        if (validateOnlineDowngradeWithFencedMembers(group, members)) {
+            convertToClassicGroup(group, members, null, records);
             return new CoordinatorResult<>(records, response, null, false);
         } else {
-            removeMember(records, group.groupId(), member.memberId());
-            maybeDeleteResolvedRegularExpression(records, group, member);
+            for (ConsumerGroupMember member : members) {
+                removeMember(records, group.groupId(), member.memberId());
+            }
 
-            // We update the subscription metadata without the leaving member.
+            // Check whether resolved regular expressions could be deleted.
+            Set<String> deletedRegexes = maybeDeleteResolvedRegularExpressions(
+                records,
+                group,
+                members
+            );
+
+            // We update the subscription metadata without the leaving members.
             Map<String, TopicMetadata> subscriptionMetadata = group.computeSubscriptionMetadata(
-                group.computeSubscribedTopicNames(member, null),
+                group.computeSubscribedTopicNamesWithoutDeletedMembers(members, deletedRegexes),
                 metadataImage.topics(),
                 metadataImage.cluster()
             );
@@ -3029,7 +3066,9 @@ public class GroupMetadataManager {
             records.add(newConsumerGroupEpochRecord(group.groupId(), groupEpoch));
             log.info("[GroupId {}] Bumped group epoch to {}.", group.groupId(), groupEpoch);
 
-            cancelTimers(group.groupId(), member.memberId());
+            for (ConsumerGroupMember member : members) {
+                cancelTimers(group.groupId(), member.memberId());
+            }
 
             return new CoordinatorResult<>(records, response);
         }
@@ -3109,27 +3148,6 @@ public class GroupMetadataManager {
             groupId,
             newMember
         ));
-    }
-
-    /**
-     * Maybe delete the resolved regular expression associated to the provided member if
-     * it was the last subscribed member to it.
-     *
-     * @param records   The record accumulator.
-     * @param group     The group.
-     * @param member    The member removed from the group.
-     */
-    private void maybeDeleteResolvedRegularExpression(
-        List<CoordinatorRecord> records,
-        ConsumerGroup group,
-        ConsumerGroupMember member
-    ) {
-        if (isNotEmpty(member.subscribedTopicRegex()) && group.numSubscribedMembers(member.subscribedTopicRegex()) == 1) {
-            records.add(newConsumerGroupRegularExpressionTombstone(
-                group.groupId(),
-                member.subscribedTopicRegex()
-            ));
-        }
     }
 
     /**
@@ -6043,7 +6061,6 @@ public class GroupMetadataManager {
         String groupId = group.groupId();
         List<MemberResponse> memberResponses = new ArrayList<>();
         Set<ConsumerGroupMember> validLeaveGroupMembers = new HashSet<>();
-        List<CoordinatorRecord> records = new ArrayList<>();
 
         for (MemberIdentity memberIdentity : request.members()) {
             String reason = memberIdentity.reason() != null ? memberIdentity.reason() : "not provided";
@@ -6071,9 +6088,6 @@ public class GroupMetadataManager {
                         groupId, memberIdentity.memberId(), memberIdentity.groupInstanceId(), reason);
                 }
 
-                removeMember(records, groupId, member.memberId());
-                cancelTimers(groupId, member.memberId());
-
                 memberResponses.add(
                     new MemberResponse()
                         .setMemberId(memberIdentity.memberId())
@@ -6091,33 +6105,7 @@ public class GroupMetadataManager {
             }
         }
 
-        if (!records.isEmpty()) {
-            // Check whether resolved regular expressions could be deleted.
-            Set<String> deletedRegexes = maybeDeleteResolvedRegularExpressions(
-                records,
-                group,
-                validLeaveGroupMembers
-            );
-
-            // Maybe update the subscription metadata.
-            Map<String, TopicMetadata> subscriptionMetadata = group.computeSubscriptionMetadata(
-                group.computeSubscribedTopicNamesWithoutDeletedMembers(validLeaveGroupMembers, deletedRegexes),
-                metadataImage.topics(),
-                metadataImage.cluster()
-            );
-
-            if (!subscriptionMetadata.equals(group.subscriptionMetadata())) {
-                log.info("[GroupId {}] Computed new subscription metadata: {}.",
-                    group.groupId(), subscriptionMetadata);
-                records.add(newConsumerGroupSubscriptionMetadataRecord(group.groupId(), subscriptionMetadata));
-            }
-
-            // Bump the group epoch.
-            records.add(newConsumerGroupEpochRecord(groupId, group.groupEpoch() + 1));
-            log.info("[GroupId {}] Bumped group epoch to {}.", groupId, group.groupEpoch() + 1);
-        }
-
-        return new CoordinatorResult<>(records, new LeaveGroupResponseData().setMembers(memberResponses));
+        return consumerGroupFenceMembers(group, validLeaveGroupMembers, new LeaveGroupResponseData().setMembers(memberResponses));
     }
 
     /**
