@@ -3,16 +3,10 @@ package io.aiven.inkless.control_plane.postgres;
 
 import org.apache.kafka.common.utils.Time;
 
-import com.zaxxer.hikari.HikariDataSource;
-
 import org.jooq.DSLContext;
-import org.jooq.SQLDialect;
-import org.jooq.impl.DSL;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.sql.Connection;
-import java.sql.SQLException;
 import java.util.List;
 import java.util.concurrent.Callable;
 
@@ -25,51 +19,25 @@ public class FindFilesToDeleteJob implements Callable<List<FileToDelete>> {
     private static final Logger LOGGER = LoggerFactory.getLogger(FindFilesToDeleteJob.class);
 
     private final Time time;
-    private final HikariDataSource hikariDataSource;
+    private final DSLContext jooqCtx;
 
-    public FindFilesToDeleteJob(final Time time, final HikariDataSource hikariDataSource) {
+    public FindFilesToDeleteJob(final Time time, final DSLContext jooqCtx) {
         this.time = time;
-        this.hikariDataSource = hikariDataSource;
+        this.jooqCtx = jooqCtx;
     }
 
     @Override
     public List<FileToDelete> call() {
-        // TODO add retry
         try {
             return runOnce();
-        } catch (final SQLException e) {
+        } catch (final Exception e) {
+            // TODO retry with backoff
             throw new RuntimeException(e);
         }
     }
 
-    private List<FileToDelete> runOnce() throws SQLException {
-        final Connection connection;
-        try {
-            connection = hikariDataSource.getConnection();
-            // Since we're calling a function here.
-            connection.setAutoCommit(true);
-        } catch (final SQLException e) {
-            LOGGER.error("Cannot get Postgres connection", e);
-            throw e;
-        }
-
-        try (connection) {
-            return runWithConnection(connection);
-        } catch (final Exception e) {
-            LOGGER.error("Error executing query", e);
-            try {
-                connection.rollback();
-            } catch (final SQLException ex) {
-                LOGGER.error("Error rolling back transaction", e);
-            }
-            throw e;
-        }
-    }
-
-    private List<FileToDelete> runWithConnection(final Connection connection) throws SQLException {
-        final DSLContext ctx = DSL.using(connection, SQLDialect.POSTGRES);
-
-        final var fetchResult = ctx.select(
+    private List<FileToDelete> runOnce() {
+        final var fetchResult = jooqCtx.select(
                 FILES.FILE_ID,
                 FILES.OBJECT_KEY,
                 FILES_TO_DELETE.MARKED_FOR_DELETION_AT

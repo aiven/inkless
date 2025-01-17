@@ -63,7 +63,7 @@ class FindFilesToDeleteJobTest extends SharedPostgreSQLTest {
 
     @Test
     void test() {
-        final FindFilesToDeleteJob job = new FindFilesToDeleteJob(time, hikariDataSource);
+        final FindFilesToDeleteJob job = new FindFilesToDeleteJob(time, jooqCtx);
         assertThat(job.call()).containsExactly(
             new FileToDelete(OBJECT_KEY, MARKED_FOR_DELETION_AT)
         );

@@ -41,7 +41,7 @@ class FindBatchesJobTest extends SharedPostgreSQLTest {
             new CreateTopicAndPartitionsRequest(TOPIC_ID_0, TOPIC_0, 2),
             new CreateTopicAndPartitionsRequest(TOPIC_ID_1, TOPIC_1, 1)
         );
-        new TopicsAndPartitionsCreateJob(Time.SYSTEM, hikariDataSource, createTopicAndPartitionsRequests, duration -> {}).run();
+        new TopicsAndPartitionsCreateJob(Time.SYSTEM, jooqCtx, createTopicAndPartitionsRequests, duration -> {}).run();
     }
 
     @Test
@@ -49,7 +49,7 @@ class FindBatchesJobTest extends SharedPostgreSQLTest {
         final String objectKey1 = "obj1";
 
         final CommitFileJob commitJob = new CommitFileJob(
-            time, hikariDataSource, objectKey1, BROKER_ID, FILE_SIZE,
+            time, jooqCtx, objectKey1, BROKER_ID, FILE_SIZE,
             List.of(
                 CommitBatchRequest.of(T0P0, 0, 1234, 0, 11, 1000, TimestampType.CREATE_TIME)
             ),
@@ -58,7 +58,7 @@ class FindBatchesJobTest extends SharedPostgreSQLTest {
         assertThat(commitJob.call()).isNotEmpty();
 
         final FindBatchesJob job = new FindBatchesJob(
-            time, hikariDataSource,
+            time, jooqCtx,
             List.of(
                 // This will produce a normal find result with some batches.
                 new FindBatchRequest(new TopicIdPartition(TOPIC_ID_0, 0, TOPIC_0), 0, 1000),
