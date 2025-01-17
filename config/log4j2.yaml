@@ -32,61 +32,6 @@ Configuration:
       PatternLayout:
         pattern: "${logPattern}"
 
-    RollingFile:
-      - name: KafkaAppender
-        fileName: "${sys:kafka.logs.dir}/server.log"
-        filePattern: "${sys:kafka.logs.dir}/server.log.%d{yyyy-MM-dd-HH}"
-        PatternLayout:
-          pattern: "${logPattern}"
-        TimeBasedTriggeringPolicy:
-          modulate: true
-          interval: 1
-      # State Change appender
-      - name: StateChangeAppender
-        fileName: "${sys:kafka.logs.dir}/state-change.log"
-        filePattern: "${sys:kafka.logs.dir}/stage-change.log.%d{yyyy-MM-dd-HH}"
-        PatternLayout:
-          pattern: "${logPattern}"
-        TimeBasedTriggeringPolicy:
-          modulate: true
-          interval: 1
-      # Request appender
-      - name: RequestAppender
-        fileName: "${sys:kafka.logs.dir}/kafka-request.log"
-        filePattern: "${sys:kafka.logs.dir}/kafka-request.log.%d{yyyy-MM-dd-HH}"
-        PatternLayout:
-          pattern: "${logPattern}"
-        TimeBasedTriggeringPolicy:
-          modulate: true
-          interval: 1
-      # Cleaner appender
-      - name: CleanerAppender
-        fileName: "${sys:kafka.logs.dir}/log-cleaner.log"
-        filePattern: "${sys:kafka.logs.dir}/log-cleaner.log.%d{yyyy-MM-dd-HH}"
-        PatternLayout:
-          pattern: "${logPattern}"
-        TimeBasedTriggeringPolicy:
-          modulate: true
-          interval: 1
-      # Controller appender
-      - name: ControllerAppender
-        fileName: "${sys:kafka.logs.dir}/controller.log"
-        filePattern: "${sys:kafka.logs.dir}/controller.log.%d{yyyy-MM-dd-HH}"
-        PatternLayout:
-          pattern: "${logPattern}"
-        TimeBasedTriggeringPolicy:
-          modulate: true
-          interval: 1
-      # Authorizer appender
-      - name: AuthorizerAppender
-        fileName: "${sys:kafka.logs.dir}/kafka-authorizer.log"
-        filePattern: "${sys:kafka.logs.dir}/kafka-authorizer.log.%d{yyyy-MM-dd-HH}"
-        PatternLayout:
-          pattern: "${logPattern}"
-        TimeBasedTriggeringPolicy:
-          modulate: true
-          interval: 1
-
   # Loggers configuration
   # See: https://logging.apache.org/log4j/2.x/manual/configuration.html#configuring-loggers
   Loggers:

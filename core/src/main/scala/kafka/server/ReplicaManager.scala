@@ -1789,6 +1789,22 @@ class ReplicaManager(val config: KafkaConfig,
     }
 
     def read(tp: TopicIdPartition, fetchInfo: PartitionData, limitBytes: Int, minOneMessage: Boolean): LogReadResult = {
+      if (tp.topic() == "t" && tp.partition() == 0) {
+        println(s"Fetching offset ${fetchInfo.fetchOffset}")
+
+        val records: Array[SimpleRecord] = (0L to fetchInfo.fetchOffset).map {i =>
+          new SimpleRecord(0, null, s"generated-value-${i}".getBytes)
+        }.toArray
+        val memoryRecords = MemoryRecords.withRecords(RecordBatch.CURRENT_MAGIC_VALUE, 0L, org.apache.kafka.common.compress.Compression.NONE, TimestampType.LOG_APPEND_TIME, records:_*)
+        return LogReadResult(
+          new FetchDataInfo(
+            new LogOffsetMetadata(fetchInfo.fetchOffset, 0L, fetchInfo.fetchOffset.asInstanceOf[Int]),
+            memoryRecords
+          ),
+          None, 100L, 0L, 99L, 0L, 0L, Some(99L), None)
+      }
+
+
       val offset = fetchInfo.fetchOffset
       val partitionFetchSize = fetchInfo.maxBytes
       val followerLogStartOffset = fetchInfo.logStartOffset
