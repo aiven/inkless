@@ -177,7 +177,9 @@ org.apache.kafka.storage.internals.log.LogSegmentTest:
 - testDeleteIfExistsWithGetParentIsNull
 - testFindOffsetByTimestamp
 - testGetFirstBatchTimestamp
+- testIndexForMultipleBatchesInMemoryRecords
 - testNextOffsetCalculation
+- testNonMonotonicTimestampForMultipleBatchesInMemoryRecords
 - testReadAfterLast
 - testReadBeforeFirstOffset
 - testReadFromGap
