@@ -2919,6 +2919,7 @@ kafka.server.KafkaApisTest:
 - testSyncGroupProtocolTypeAndNameAreMandatorySinceV5
 - testTransactionalParametersSetCorrectly
 - testTxnOffsetCommitWithInvalidPartition
+- testUnauthorizedTopicMetadataRequest
 - testWriteShareGroupStateAuthorizationFailed
 - testWriteShareGroupStateSuccess
 - testWriteTxnMarkersShouldAllBeIncludedInTheResponse
