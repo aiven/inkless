@@ -1564,6 +1564,7 @@ kafka.log.LogCleanerTest:
 - testLogToClean
 - testLogToCleanWithUncleanableSection
 - testMaxCleanTimeSecs
+- testMaxOverCleanerThreads
 - testMessageLargerThanMaxMessageSize
 - testMessageLargerThanMaxMessageSizeWithCorruptHeader
 - testMetricsActiveAfterReconfiguration
