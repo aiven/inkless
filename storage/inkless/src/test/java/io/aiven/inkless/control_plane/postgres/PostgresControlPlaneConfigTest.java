@@ -17,6 +17,23 @@ class PostgresControlPlaneConfigTest {
             Map.of(
                 "connection.string", "jdbc:postgresql://127.0.0.1:5432/inkless",
                 "username", "username",
+                "password", "password",
+                "file.merge.size.threshold.bytes", "1234"
+            )
+        );
+
+        assertThat(config.connectionString()).isEqualTo("jdbc:postgresql://127.0.0.1:5432/inkless");
+        assertThat(config.username()).isEqualTo("username");
+        assertThat(config.password()).isEqualTo("password");
+        assertThat(config.fileMergeSizeThresholdBytes()).isEqualTo(1234);
+    }
+
+    @Test
+    void minimalConfig() {
+        final var config = new PostgresControlPlaneConfig(
+            Map.of(
+                "connection.string", "jdbc:postgresql://127.0.0.1:5432/inkless",
+                "username", "username",
                 "password", "password"
             )
         );
@@ -24,6 +41,7 @@ class PostgresControlPlaneConfigTest {
         assertThat(config.connectionString()).isEqualTo("jdbc:postgresql://127.0.0.1:5432/inkless");
         assertThat(config.username()).isEqualTo("username");
         assertThat(config.password()).isEqualTo("password");
+        assertThat(config.fileMergeSizeThresholdBytes()).isEqualTo(100 * 1024 * 1024);
     }
 
     @Test
