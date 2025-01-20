@@ -30,13 +30,15 @@ public class InMemoryControlPlane extends AbstractControlPlane {
     private final List<FileToDeleteInternal> filesToDelete = new ArrayList<>();
     private final HashMap<TopicIdPartition, TreeMap<Long, BatchInfoInternal>> batches = new HashMap<>();
 
+    private InMemoryControlPlaneConfig controlPlaneConfig;
+
     public InMemoryControlPlane(final Time time) {
         super(time);
     }
 
     @Override
     public void configure(final Map<String, ?> configs) {
-        // Do nothing.
+        controlPlaneConfig = new InMemoryControlPlaneConfig(configs);
     }
 
     @Override

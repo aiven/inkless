@@ -1,13 +1,14 @@
 // Copyright (c) 2024 Aiven, Helsinki, Finland. https://aiven.io/
 package io.aiven.inkless.control_plane.postgres;
 
-import org.apache.kafka.common.config.AbstractConfig;
 import org.apache.kafka.common.config.ConfigDef;
 import org.apache.kafka.common.config.types.Password;
 
 import java.util.Map;
 
-public class PostgresControlPlaneConfig extends AbstractConfig {
+import io.aiven.inkless.control_plane.AbstractControlPlaneConfig;
+
+public class PostgresControlPlaneConfig extends AbstractControlPlaneConfig {
     public static final String CONNECTION_STRING_CONFIG = "connection.string";
     private static final String CONNECTION_STRING_DOC = "PostgreSQL connection string";
 
@@ -18,7 +19,7 @@ public class PostgresControlPlaneConfig extends AbstractConfig {
     private static final String PASSWORD_DOC = "Password";
 
     public static ConfigDef configDef() {
-        return new ConfigDef()
+        return baseConfigDef()
             .define(
                 CONNECTION_STRING_CONFIG,
                 ConfigDef.Type.STRING,
