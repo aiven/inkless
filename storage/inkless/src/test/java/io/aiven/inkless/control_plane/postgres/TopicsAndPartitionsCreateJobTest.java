@@ -34,7 +34,7 @@ class TopicsAndPartitionsCreateJobTest extends SharedPostgreSQLTest {
 
     @Test
     void empty() {
-        final TopicsAndPartitionsCreateJob job = new TopicsAndPartitionsCreateJob(Time.SYSTEM, hikariDataSource, Set.of(), durationMs -> {});
+        final TopicsAndPartitionsCreateJob job = new TopicsAndPartitionsCreateJob(Time.SYSTEM, jooqCtx, Set.of(), durationMs -> {});
         job.run();
         assertThat(DBUtils.getAllLogs(hikariDataSource)).isEmpty();
     }
@@ -45,7 +45,7 @@ class TopicsAndPartitionsCreateJobTest extends SharedPostgreSQLTest {
             new CreateTopicAndPartitionsRequest(TOPIC_ID1, TOPIC_1, 0),
             new CreateTopicAndPartitionsRequest(TOPIC_ID2, TOPIC_2, 0)
         );
-        final TopicsAndPartitionsCreateJob job = new TopicsAndPartitionsCreateJob(Time.SYSTEM, hikariDataSource, createTopicAndPartitionsRequests, durationMs -> {});
+        final TopicsAndPartitionsCreateJob job = new TopicsAndPartitionsCreateJob(Time.SYSTEM, jooqCtx, createTopicAndPartitionsRequests, durationMs -> {});
         job.run();
         assertThat(DBUtils.getAllLogs(hikariDataSource)).isEmpty();
     }
@@ -56,7 +56,7 @@ class TopicsAndPartitionsCreateJobTest extends SharedPostgreSQLTest {
             new CreateTopicAndPartitionsRequest(TOPIC_ID1, TOPIC_1, 2),
             new CreateTopicAndPartitionsRequest(TOPIC_ID2, TOPIC_2, 1)
         );
-        final TopicsAndPartitionsCreateJob job1 = new TopicsAndPartitionsCreateJob(Time.SYSTEM, hikariDataSource, createTopicAndPartitionsRequests, durationMs -> {});
+        final TopicsAndPartitionsCreateJob job1 = new TopicsAndPartitionsCreateJob(Time.SYSTEM, jooqCtx, createTopicAndPartitionsRequests, durationMs -> {});
         job1.run();
         assertThat(DBUtils.getAllLogs(hikariDataSource)).containsExactlyInAnyOrder(
             new LogsRecord(TOPIC_ID1, 0, TOPIC_1, 0L, 0L),
@@ -65,7 +65,7 @@ class TopicsAndPartitionsCreateJobTest extends SharedPostgreSQLTest {
         );
 
         // Repetition doesn't affect anything.
-        final TopicsAndPartitionsCreateJob job2 = new TopicsAndPartitionsCreateJob(Time.SYSTEM, hikariDataSource, createTopicAndPartitionsRequests, durationMs -> {});
+        final TopicsAndPartitionsCreateJob job2 = new TopicsAndPartitionsCreateJob(Time.SYSTEM, jooqCtx, createTopicAndPartitionsRequests, durationMs -> {});
         job2.run();
         assertThat(DBUtils.getAllLogs(hikariDataSource)).containsExactlyInAnyOrder(
                 new LogsRecord(TOPIC_ID1, 0, TOPIC_1, 0L, 0L),
@@ -80,14 +80,14 @@ class TopicsAndPartitionsCreateJobTest extends SharedPostgreSQLTest {
             new CreateTopicAndPartitionsRequest(TOPIC_ID1, TOPIC_1, 2),
             new CreateTopicAndPartitionsRequest(TOPIC_ID2, TOPIC_2, 1)
         );
-        final TopicsAndPartitionsCreateJob job1 = new TopicsAndPartitionsCreateJob(Time.SYSTEM, hikariDataSource, createTopicAndPartitionsRequests1, durationMs -> {});
+        final TopicsAndPartitionsCreateJob job1 = new TopicsAndPartitionsCreateJob(Time.SYSTEM, jooqCtx, createTopicAndPartitionsRequests1, durationMs -> {});
         job1.run();
 
         final Set<CreateTopicAndPartitionsRequest> createTopicAndPartitionsRequests2 = Set.of(
             new CreateTopicAndPartitionsRequest(TOPIC_ID1, TOPIC_1, 2),
             new CreateTopicAndPartitionsRequest(TOPIC_ID2, TOPIC_2, 2)
         );
-        final TopicsAndPartitionsCreateJob job2 = new TopicsAndPartitionsCreateJob(Time.SYSTEM, hikariDataSource, createTopicAndPartitionsRequests2, durationMs -> {});
+        final TopicsAndPartitionsCreateJob job2 = new TopicsAndPartitionsCreateJob(Time.SYSTEM, jooqCtx, createTopicAndPartitionsRequests2, durationMs -> {});
         job2.run();
 
         assertThat(DBUtils.getAllLogs(hikariDataSource)).containsExactlyInAnyOrder(
@@ -116,7 +116,7 @@ class TopicsAndPartitionsCreateJobTest extends SharedPostgreSQLTest {
             new CreateTopicAndPartitionsRequest(TOPIC_ID1, TOPIC_1, 2),
             new CreateTopicAndPartitionsRequest(TOPIC_ID2, TOPIC_2, 1)
         );
-        final TopicsAndPartitionsCreateJob job1 = new TopicsAndPartitionsCreateJob(Time.SYSTEM, hikariDataSource, createTopicAndPartitionsRequests, durationMs -> {});
+        final TopicsAndPartitionsCreateJob job1 = new TopicsAndPartitionsCreateJob(Time.SYSTEM, jooqCtx, createTopicAndPartitionsRequests, durationMs -> {});
         job1.run();
 
         assertThat(DBUtils.getAllLogs(hikariDataSource)).containsExactlyInAnyOrder(

@@ -4,19 +4,15 @@ package io.aiven.inkless.control_plane.postgres;
 import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.utils.Time;
 
-import com.zaxxer.hikari.HikariDataSource;
-
+import org.jooq.Configuration;
 import org.jooq.DSLContext;
-import org.jooq.SQLDialect;
 import org.jooq.generated.udt.CommitBatchResponseV1;
 import org.jooq.generated.udt.DeleteRecordsResponseV1;
 import org.jooq.generated.udt.records.DeleteRecordsRequestV1Record;
 import org.jooq.generated.udt.records.DeleteRecordsResponseV1Record;
-import org.jooq.impl.DSL;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.sql.Connection;
 import java.sql.SQLException;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -34,12 +30,12 @@ public class DeleteRecordsJob implements Callable<List<DeleteRecordsResponse>> {
     private static final Logger LOGGER = LoggerFactory.getLogger(DeleteRecordsJob.class);
 
     private final Time time;
-    private final HikariDataSource hikariDataSource;
+    private final DSLContext jooqCtx;
     private final List<DeleteRecordsRequest> requests;
 
-    public DeleteRecordsJob(final Time time, final HikariDataSource hikariDataSource, final List<DeleteRecordsRequest> requests) {
+    public DeleteRecordsJob(final Time time, final DSLContext jooqCtx, final List<DeleteRecordsRequest> requests) {
         this.time = time;
-        this.hikariDataSource = hikariDataSource;
+        this.jooqCtx = jooqCtx;
         this.requests = requests;
     }
 
@@ -49,57 +45,33 @@ public class DeleteRecordsJob implements Callable<List<DeleteRecordsResponse>> {
             return List.of();
         }
 
-        // TODO add retry (or not, let the consumers do this?)
         try {
             return runOnce();
         } catch (final Exception e) {
+            // TODO retry with backoff (or not, let the consumers do this?)
             throw new RuntimeException(e);
         }
     }
 
-    private List<DeleteRecordsResponse> runOnce() throws SQLException {
-        final Connection connection;
-        try {
-            connection = hikariDataSource.getConnection();
-            // Since we're calling a function here.
-            connection.setAutoCommit(true);
-        } catch (final SQLException e) {
-            LOGGER.error("Cannot get Postgres connection", e);
-            throw e;
-        }
+    private List<DeleteRecordsResponse> runOnce() {
+        return jooqCtx.transactionResult((final Configuration conf) -> {
+            final Instant now = TimeUtils.now(time);
+            final DeleteRecordsRequestV1Record[] jooqRequests = requests.stream().map(r ->
+                    new DeleteRecordsRequestV1Record(
+                        r.topicIdPartition().topicId(),
+                        r.topicIdPartition().partition(),
+                        r.offset()))
+                .toArray(DeleteRecordsRequestV1Record[]::new);
 
-        try (connection) {
-            return runWithConnection(connection);
-        } catch (final Exception e) {
-            LOGGER.error("Error executing query", e);
-            try {
-                connection.rollback();
-            } catch (final SQLException ex) {
-                LOGGER.error("Error rolling back transaction", e);
-            }
-            throw e;
-        }
-    }
-
-    private List<DeleteRecordsResponse> runWithConnection(final Connection connection) throws SQLException {
-        final DSLContext ctx = DSL.using(connection, SQLDialect.POSTGRES);
-
-        final Instant now = TimeUtils.now(time);
-        final DeleteRecordsRequestV1Record[] jooqRequests = requests.stream().map(r ->
-                new DeleteRecordsRequestV1Record(
-                    r.topicIdPartition().topicId(),
-                    r.topicIdPartition().partition(),
-                    r.offset()))
-            .toArray(DeleteRecordsRequestV1Record[]::new);
-
-        final List<DeleteRecordsResponseV1Record> functionResult = ctx.select(
-                DeleteRecordsResponseV1.TOPIC_ID,
-                DeleteRecordsResponseV1.PARTITION,
-                DeleteRecordsResponseV1.ERROR,
-                DeleteRecordsResponseV1.LOG_START_OFFSET
-            ).from(DELETE_RECORDS_V1.call(now, jooqRequests))
-            .fetchInto(DeleteRecordsResponseV1Record.class);
-        return processFunctionResult(functionResult);
+            final List<DeleteRecordsResponseV1Record> functionResult = conf.dsl().select(
+                    DeleteRecordsResponseV1.TOPIC_ID,
+                    DeleteRecordsResponseV1.PARTITION,
+                    DeleteRecordsResponseV1.ERROR,
+                    DeleteRecordsResponseV1.LOG_START_OFFSET
+                ).from(DELETE_RECORDS_V1.call(now, jooqRequests))
+                .fetchInto(DeleteRecordsResponseV1Record.class);
+            return processFunctionResult(functionResult);
+        });
     }
 
     private List<DeleteRecordsResponse> processFunctionResult(List<DeleteRecordsResponseV1Record> functionResult) throws SQLException {

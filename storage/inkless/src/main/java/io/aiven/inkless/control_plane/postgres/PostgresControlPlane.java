@@ -8,6 +8,10 @@ import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
 import com.zaxxer.hikari.util.IsolationLevel;
 
+import org.jooq.DSLContext;
+import org.jooq.SQLDialect;
+import org.jooq.impl.DSL;
+
 import java.io.IOException;
 import java.util.Iterator;
 import java.util.List;
@@ -32,6 +36,7 @@ public class PostgresControlPlane extends AbstractControlPlane {
     private final PostgresControlPlaneMetrics metrics;
 
     private HikariDataSource hikariDataSource;
+    private DSLContext jooqCtx;
 
     public PostgresControlPlane(final Time time) {
         super(time);
@@ -41,7 +46,7 @@ public class PostgresControlPlane extends AbstractControlPlane {
     @Override
     public void createTopicAndPartitions(final Set<CreateTopicAndPartitionsRequest> requests) {
         // Expected to be performed synchronously
-        new TopicsAndPartitionsCreateJob(time, hikariDataSource, requests, metrics::onTopicCreateCompleted).run();
+        new TopicsAndPartitionsCreateJob(time, jooqCtx, requests, metrics::onTopicCreateCompleted).run();
     }
 
     @Override
@@ -60,6 +65,7 @@ public class PostgresControlPlane extends AbstractControlPlane {
         config.setAutoCommit(false);
 
         hikariDataSource = new HikariDataSource(config);
+        jooqCtx = DSL.using(hikariDataSource, SQLDialect.POSTGRES);
     }
 
     @Override
@@ -69,7 +75,7 @@ public class PostgresControlPlane extends AbstractControlPlane {
         final long fileSize,
         final Stream<CommitBatchRequest> requests) {
         final CommitFileJob job = new CommitFileJob(
-            time, hikariDataSource,
+            time, jooqCtx,
             objectKey, uploaderBrokerId, fileSize, requests.toList(),
             metrics::onCommitFileCompleted);
         return job.call().iterator();
@@ -80,7 +86,7 @@ public class PostgresControlPlane extends AbstractControlPlane {
         final Stream<FindBatchRequest> requests,
         final boolean minOneMessage, final int fetchMaxBytes) {
         final FindBatchesJob job = new FindBatchesJob(
-            time, hikariDataSource,
+            time, jooqCtx,
             requests.toList(), minOneMessage, fetchMaxBytes,
             metrics::onFindBatchesCompleted, metrics::onGetLogsCompleted);
         return job.call().iterator();
@@ -89,7 +95,7 @@ public class PostgresControlPlane extends AbstractControlPlane {
     @Override
     protected Iterator<ListOffsetsResponse> listOffsetsForExistingPartitions(Stream<ListOffsetsRequest> requests) {
             final ListOffsetsJob job = new ListOffsetsJob(
-                    time, hikariDataSource,
+                    time, jooqCtx,
                     requests.toList(),
                     metrics::onGetLogsCompleted);
             return job.call().iterator();
@@ -97,19 +103,19 @@ public class PostgresControlPlane extends AbstractControlPlane {
 
     @Override
     public void deleteTopics(final Set<Uuid> topicIds) {
-        final DeleteTopicJob job = new DeleteTopicJob(time, hikariDataSource, topicIds, metrics::onTopicDeleteCompleted);
+        final DeleteTopicJob job = new DeleteTopicJob(time, jooqCtx, topicIds, metrics::onTopicDeleteCompleted);
         job.run();
     }
 
     @Override
     public List<DeleteRecordsResponse> deleteRecords(final List<DeleteRecordsRequest> requests) {
-        final DeleteRecordsJob job = new DeleteRecordsJob(time, hikariDataSource, requests);
+        final DeleteRecordsJob job = new DeleteRecordsJob(time, jooqCtx, requests);
         return job.call();
     }
 
     @Override
     public List<FileToDelete> getFilesToDelete() {
-        final FindFilesToDeleteJob job = new FindFilesToDeleteJob(time, hikariDataSource);
+        final FindFilesToDeleteJob job = new FindFilesToDeleteJob(time, jooqCtx);
         return job.call();
     }
 
