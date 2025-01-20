@@ -23,7 +23,6 @@ class InklessConfigTest {
         final InklessConfig config = new InklessConfig(new AbstractConfig(new ConfigDef(), Map.of(
             "inkless.control.plane.class", controlPlaneClass,
             "inkless.object.key.prefix", "prefix/",
-            "inkless.file.merge.size.threshold.bytes", "1234",
             "inkless.produce.commit.interval.ms", "100",
             "inkless.produce.buffer.max.bytes", "1024",
             "inkless.produce.max.upload.attempts", "5",
@@ -35,7 +34,6 @@ class InklessConfigTest {
         assertThat(config.controlPlaneClass()).isEqualTo(InMemoryControlPlane.class);
         assertThat(config.controlPlaneConfig()).isEqualTo(Map.of("class", controlPlaneClass));
         assertThat(config.objectKeyPrefix()).isEqualTo("prefix/");
-        assertThat(config.fileMergeSizeThresholdBytes()).isEqualTo(1234);
         assertThat(config.commitInterval()).isEqualTo(Duration.ofMillis(100));
         assertThat(config.produceBufferMaxBytes()).isEqualTo(1024);
         assertThat(config.produceMaxUploadAttempts()).isEqualTo(5);
@@ -56,7 +54,6 @@ class InklessConfigTest {
         );
         assertThat(config.controlPlaneClass()).isEqualTo(InMemoryControlPlane.class);
         assertThat(config.controlPlaneConfig()).isEqualTo(Map.of("class", controlPlaneClass));
-        assertThat(config.fileMergeSizeThresholdBytes()).isEqualTo(100 * 1024 * 1024);
         assertThat(config.objectKeyPrefix()).isEqualTo("");
         assertThat(config.commitInterval()).isEqualTo(Duration.ofMillis(250));
         assertThat(config.produceBufferMaxBytes()).isEqualTo(8 * 1024 * 1024);
@@ -74,7 +71,6 @@ class InklessConfigTest {
             Map.of(
                 "control.plane.class", controlPlaneClass,
                 "object.key.prefix", "prefix/",
-                "file.merge.size.threshold.bytes", "1234",
                 "produce.commit.interval.ms", "100",
                 "produce.buffer.max.bytes", "1024",
                 "produce.max.upload.attempts", "5",
@@ -86,7 +82,6 @@ class InklessConfigTest {
         );
         assertThat(config.controlPlaneClass()).isEqualTo(InMemoryControlPlane.class);
         assertThat(config.controlPlaneConfig()).isEqualTo(Map.of("class", controlPlaneClass));
-        assertThat(config.fileMergeSizeThresholdBytes()).isEqualTo(1234);
         assertThat(config.objectKeyPrefix()).isEqualTo("prefix/");
         assertThat(config.commitInterval()).isEqualTo(Duration.ofMillis(100));
         assertThat(config.produceBufferMaxBytes()).isEqualTo(1024);

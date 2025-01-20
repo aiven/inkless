@@ -29,9 +29,6 @@ public class InklessConfig extends AbstractConfig {
     public static final String OBJECT_KEY_LOG_PREFIX_MASKED_CONFIG = "object.key.log.prefix.masked";
     private static final String OBJECT_KEY_LOG_PREFIX_MASKED_DOC = "Whether to log full object key path, or mask the prefix.";
 
-    public static final String FILE_MERGE_SIZE_THRESHOLD_BYTES_CONFIG = "file.merge.size.threshold.bytes";
-    private static final String FILE_MERGE_SIZE_THRESHOLD_BYTES_DOC = "The total minimum volume of files to be merged together.";
-
     public static final String PRODUCE_PREFIX = "produce.";
 
     public static final String PRODUCE_COMMIT_INTERVAL_MS_CONFIG = PRODUCE_PREFIX + "commit.interval.ms";
@@ -97,14 +94,6 @@ public class InklessConfig extends AbstractConfig {
             false,
             ConfigDef.Importance.LOW,
             OBJECT_KEY_LOG_PREFIX_MASKED_DOC
-        );
-
-        configDef.define(
-            FILE_MERGE_SIZE_THRESHOLD_BYTES_CONFIG,
-            ConfigDef.Type.LONG,
-            100 * 1024 * 1024,
-            ConfigDef.Importance.MEDIUM,
-            FILE_MERGE_SIZE_THRESHOLD_BYTES_DOC
         );
 
         configDef.define(
@@ -203,10 +192,6 @@ public class InklessConfig extends AbstractConfig {
 
     public boolean objectKeyLogPrefixMasked() {
         return getBoolean(OBJECT_KEY_LOG_PREFIX_MASKED_CONFIG);
-    }
-
-    public long fileMergeSizeThresholdBytes() {
-        return getLong(FILE_MERGE_SIZE_THRESHOLD_BYTES_CONFIG);
     }
 
     public StorageBackend storage() {
