@@ -4,19 +4,14 @@ package io.aiven.inkless.control_plane.postgres;
 import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.utils.Time;
 
-import com.zaxxer.hikari.HikariDataSource;
-
+import org.jooq.Configuration;
 import org.jooq.DSLContext;
-import org.jooq.SQLDialect;
 import org.jooq.generated.udt.CommitBatchResponseV1;
 import org.jooq.generated.udt.records.CommitBatchRequestV1Record;
 import org.jooq.generated.udt.records.CommitBatchResponseV1Record;
-import org.jooq.impl.DSL;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.sql.Connection;
-import java.sql.SQLException;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Iterator;
@@ -34,7 +29,7 @@ class CommitFileJob implements Callable<List<CommitBatchResponse>> {
     private static final Logger LOGGER = LoggerFactory.getLogger(CommitFileJob.class);
 
     private final Time time;
-    private final HikariDataSource hikariDataSource;
+    private final DSLContext jooqCtx;
     private final String objectKey;
     private final int uploaderBrokerId;
     private final long fileSize;
@@ -42,14 +37,14 @@ class CommitFileJob implements Callable<List<CommitBatchResponse>> {
     private final Consumer<Long> durationCallback;
 
     CommitFileJob(final Time time,
-                  final HikariDataSource hikariDataSource,
+                  final DSLContext jooqCtx,
                   final String objectKey,
                   final int uploaderBrokerId,
                   final long fileSize,
                   final List<CommitBatchRequest> requests,
                   final Consumer<Long> durationCallback) {
         this.time = time;
-        this.hikariDataSource = hikariDataSource;
+        this.jooqCtx = jooqCtx;
         this.objectKey = objectKey;
         this.uploaderBrokerId = uploaderBrokerId;
         this.fileSize = fileSize;
@@ -63,69 +58,46 @@ class CommitFileJob implements Callable<List<CommitBatchResponse>> {
             return List.of();
         }
 
-        // TODO add retry
         try {
-            return runOnce();
+            return TimeUtils.measureDurationMs(time, this::runOnce, durationCallback);
         } catch (final Exception e) {
+            // TODO retry with backoff
             throw new RuntimeException(e);
         }
     }
 
-    private List<CommitBatchResponse> runOnce() throws Exception {
-        final Connection connection;
-        try {
-            connection = hikariDataSource.getConnection();
-            // Since we're calling a function here.
-            connection.setAutoCommit(true);
-        } catch (final SQLException e) {
-            LOGGER.error("Cannot get Postgres connection", e);
-            throw e;
-        }
+    private List<CommitBatchResponse> runOnce() {
+        return jooqCtx.transactionResult((final Configuration conf) -> {
+            final Instant now = TimeUtils.now(time);
 
-        try (connection) {
-            return TimeUtils.measureDurationMs(time, () -> callCommitFunction(connection), durationCallback);
-        } catch (final Exception e) {
-            LOGGER.error("Error executing query", e);
-            try {
-                connection.rollback();
-            } catch (final SQLException ex) {
-                LOGGER.error("Error rolling back transaction", e);
-            }
-            throw e;
-        }
-    }
+            final CommitBatchRequestV1Record[] jooqRequests = requests.stream().map(r ->
+                new CommitBatchRequestV1Record(
+                    r.topicIdPartition().topicId(),
+                    r.topicIdPartition().partition(),
+                    (long) r.byteOffset(),
+                    (long) r.size(),
+                    r.baseOffset(),
+                    r.lastOffset(),
+                    r.messageTimestampType(),
+                    r.batchMaxTimestamp()
+                )
+            ).toArray(CommitBatchRequestV1Record[]::new);
 
-    private List<CommitBatchResponse> callCommitFunction(final Connection connection) throws SQLException {
-        final DSLContext ctx = DSL.using(connection, SQLDialect.POSTGRES);
-        final Instant now = TimeUtils.now(time);
-
-        final CommitBatchRequestV1Record[] jooqRequests = requests.stream().map(r ->
-            new CommitBatchRequestV1Record(
-                r.topicIdPartition().topicId(),
-                r.topicIdPartition().partition(),
-                (long) r.byteOffset(),
-                (long) r.size(),
-                r.baseOffset(),
-                r.lastOffset(),
-                r.messageTimestampType(),
-                r.batchMaxTimestamp()
-            )
-        ).toArray(CommitBatchRequestV1Record[]::new);
-
-        final List<CommitBatchResponseV1Record> functionResult = ctx.select(
-            CommitBatchResponseV1.TOPIC_ID,
-            CommitBatchResponseV1.PARTITION,
-            CommitBatchResponseV1.LOG_EXISTS,
-            CommitBatchResponseV1.ASSIGNED_OFFSET,
-            CommitBatchResponseV1.LOG_START_OFFSET
-        ).from(COMMIT_FILE_V1.call(
-            objectKey,
-            uploaderBrokerId,
-            fileSize,
-            now,
-            jooqRequests
-        )).fetchInto(CommitBatchResponseV1Record.class);
-        return processFunctionResult(now, functionResult);
+            final List<CommitBatchResponseV1Record> functionResult = conf.dsl().select(
+                CommitBatchResponseV1.TOPIC_ID,
+                CommitBatchResponseV1.PARTITION,
+                CommitBatchResponseV1.LOG_EXISTS,
+                CommitBatchResponseV1.ASSIGNED_OFFSET,
+                CommitBatchResponseV1.LOG_START_OFFSET
+            ).from(COMMIT_FILE_V1.call(
+                objectKey,
+                uploaderBrokerId,
+                fileSize,
+                now,
+                jooqRequests
+            )).fetchInto(CommitBatchResponseV1Record.class);
+            return processFunctionResult(now, functionResult);
+        });
     }
 
     private List<CommitBatchResponse> processFunctionResult(final Instant now,

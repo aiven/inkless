@@ -5,13 +5,10 @@ import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.utils.Time;
 
-import com.zaxxer.hikari.HikariDataSource;
-
+import org.jooq.DSLContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.sql.Connection;
-import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -27,49 +24,29 @@ public class ListOffsetsJob implements Callable<List<ListOffsetsResponse>> {
     private static final Logger LOGGER = LoggerFactory.getLogger(ListOffsetsJob.class);
 
     private final Time time;
-    private final HikariDataSource hikariDataSource;
+    private final DSLContext jooqCtx;
     private final List<ListOffsetsRequest> requests;
     private final Consumer<Long> getLogsDurationCallback;
 
-    public ListOffsetsJob(Time time, HikariDataSource hikariDataSource, List<ListOffsetsRequest> requests, Consumer<Long> getLogsDurationCallback) {
+    public ListOffsetsJob(Time time, DSLContext jooqCtx, List<ListOffsetsRequest> requests, Consumer<Long> getLogsDurationCallback) {
         this.time = time;
-        this.hikariDataSource = hikariDataSource;
+        this.jooqCtx = jooqCtx;
         this.requests = requests;
         this.getLogsDurationCallback = getLogsDurationCallback;
     }
 
     @Override
     public List<ListOffsetsResponse> call() {
-        // TODO add retry (or not, let the consumers do this?)
         try {
             return runOnce();
         } catch (final Exception e) {
+            // TODO add retry with backoff (or not, let the consumers do this?)
             throw new RuntimeException(e);
         }
     }
 
     private List<ListOffsetsResponse> runOnce() throws Exception {
-        final Connection connection;
-        try {
-            connection = hikariDataSource.getConnection();
-            // Mind this read-only setting.
-            connection.setReadOnly(true);
-        } catch (final SQLException e) {
-            LOGGER.error("Cannot get Postgres connection", e);
-            throw e;
-        }
-
-        // No need to explicitly commit or rollback.
-        try (connection) {
-            return runWithConnection(connection);
-        } catch (final Exception e) {
-            LOGGER.error("Error executing query", e);
-            throw e;
-        }
-    }
-
-    private List<ListOffsetsResponse> runWithConnection(final Connection connection) throws Exception {
-        final Map<TopicIdPartition, LogEntity> logInfos = getLogInfos(connection);
+        final Map<TopicIdPartition, LogEntity> logInfos = getLogInfos(jooqCtx.dsl());
         final List<ListOffsetsResponse> result = new ArrayList<>();
         for (final ListOffsetsRequest request : requests) {
             result.add(listOffset(request, logInfos));
@@ -95,7 +72,7 @@ public class ListOffsetsJob implements Callable<List<ListOffsetsResponse>> {
         return new ListOffsetsResponse(Errors.UNKNOWN_SERVER_ERROR, request.topicIdPartition(), -1, -1);
     }
 
-    private Map<TopicIdPartition, LogEntity> getLogInfos(final Connection connection) throws Exception {
+    private Map<TopicIdPartition, LogEntity> getLogInfos(final DSLContext context) throws Exception {
         if (requests.isEmpty()) {
             return Map.of();
         }
@@ -103,7 +80,7 @@ public class ListOffsetsJob implements Callable<List<ListOffsetsResponse>> {
         final List<TopicIdPartition> tidps = requests.stream()
                 .map(ListOffsetsRequest::topicIdPartition)
                 .toList();
-        return LogSelectQuery.execute(time, connection, tidps, false, getLogsDurationCallback).stream()
+        return LogSelectQuery.execute(time, context, tidps, false, getLogsDurationCallback).stream()
                 .collect(Collectors.toMap(LogEntity::topicIdPartition, Function.identity()));
     }
 }

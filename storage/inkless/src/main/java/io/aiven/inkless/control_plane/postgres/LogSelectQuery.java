@@ -8,11 +8,8 @@ import org.apache.kafka.common.utils.Time;
 import org.jooq.Condition;
 import org.jooq.DSLContext;
 import org.jooq.Record5;
-import org.jooq.SQLDialect;
 import org.jooq.SelectConditionStep;
-import org.jooq.impl.DSL;
 
-import java.sql.Connection;
 import java.sql.SQLException;
 import java.util.Collection;
 import java.util.List;
@@ -27,28 +24,28 @@ import static org.jooq.generated.Tables.LOGS;
 class LogSelectQuery {
     static List<LogEntity> execute(
         final Time time,
-        final Connection connection,
+        final DSLContext jooqCtx,
         final Collection<TopicIdPartition> topicIdAndPartitions,
         final boolean forUpdate,
         final Consumer<Long> durationCallback
     ) throws Exception {
-        Objects.requireNonNull(connection, "connection cannot be null");
+        Objects.requireNonNull(jooqCtx, "jooqCtx cannot be null");
         Objects.requireNonNull(topicIdAndPartitions, "topicIdAndPartitions cannot be null");
         if (topicIdAndPartitions.isEmpty()) {
             throw new IllegalArgumentException("topicIdAndPartitions cannot be empty");
         }
 
-        return TimeUtils.measureDurationMs(time, ()  -> getLogEntities(connection, topicIdAndPartitions, forUpdate), durationCallback);
+        return TimeUtils.measureDurationMs(time, ()  -> getLogEntities(jooqCtx, topicIdAndPartitions, forUpdate), durationCallback);
     }
 
-    private static List<LogEntity> getLogEntities(Connection connection, Collection<TopicIdPartition> topicIdAndPartitions, boolean forUpdate) throws SQLException {
+    private static List<LogEntity> getLogEntities(final DSLContext jooqCtx,
+                                                  final Collection<TopicIdPartition> topicIdAndPartitions,
+                                                  final boolean forUpdate) throws SQLException {
         if (topicIdAndPartitions.isEmpty()) {
             return List.of();
         }
 
-        final DSLContext ctx = DSL.using(connection, SQLDialect.POSTGRES);
-
-        var select = ctx.select(
+        var select = jooqCtx.select(
             LOGS.TOPIC_ID,
             LOGS.PARTITION,
             LOGS.TOPIC_NAME,

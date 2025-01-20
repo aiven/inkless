@@ -46,8 +46,8 @@ class LogSelectQueryTest extends SharedPostgreSQLTest {
         assertThatThrownBy(() -> LogSelectQuery.execute(time, null, List.of(T0P0), false, durationMs -> {
         }))
             .isInstanceOf(NullPointerException.class)
-            .hasMessage("connection cannot be null");
-        assertThatThrownBy(() -> LogSelectQuery.execute(time, mock(Connection.class), null, false, durationMs -> {
+            .hasMessage("jooqCtx cannot be null");
+        assertThatThrownBy(() -> LogSelectQuery.execute(time, mock(DSLContext.class), null, false, durationMs -> {
         }))
             .isInstanceOf(NullPointerException.class)
             .hasMessage("topicIdAndPartitions cannot be null");
@@ -56,7 +56,7 @@ class LogSelectQueryTest extends SharedPostgreSQLTest {
     @Test
     void testEmpty() {
         final Time time = new MockTime();
-        assertThatThrownBy(() -> LogSelectQuery.execute(time, mock(Connection.class), List.of(), false, durationMs -> {
+        assertThatThrownBy(() -> LogSelectQuery.execute(time, mock(DSLContext.class), List.of(), false, durationMs -> {
         }))
             .isInstanceOf(IllegalArgumentException.class)
             .hasMessage("topicIdAndPartitions cannot be empty");
@@ -79,12 +79,10 @@ class LogSelectQueryTest extends SharedPostgreSQLTest {
             connection.commit();
         }
 
-        try (final Connection connection = hikariDataSource.getConnection()) {
-            final List<LogEntity> result = LogSelectQuery.execute(
-                time, hikariDataSource.getConnection(), List.of(T0P1), forUpdate, durationCallback);
-            assertThat(result).containsExactlyInAnyOrder(
-                new LogEntity(T0P1.topicId(), T0P1.partition(), T0P1.topic(), logStartOffset, highWatermark));
-        }
+        final List<LogEntity> result = LogSelectQuery.execute(
+            time, jooqCtx.dsl(), List.of(T0P1), forUpdate, durationCallback);
+        assertThat(result).containsExactlyInAnyOrder(
+            new LogEntity(T0P1.topicId(), T0P1.partition(), T0P1.topic(), logStartOffset, highWatermark));
     }
 
     @ParameterizedTest
@@ -108,12 +106,10 @@ class LogSelectQueryTest extends SharedPostgreSQLTest {
             connection.commit();
         }
 
-        try (final Connection connection = hikariDataSource.getConnection()) {
-            final List<LogEntity> result = LogSelectQuery.execute(time, connection, List.of(T0P1, T1P0), forUpdate, durationCallback);
-            assertThat(result).containsExactlyInAnyOrder(
-                new LogEntity(T0P1.topicId(), T0P1.partition(), T0P1.topic(), logStartOffset1, highWatermark1),
-                new LogEntity(T1P0.topicId(), T1P0.partition(), T1P0.topic(), logStartOffset2, highWatermark2)
-            );
-        }
+        final List<LogEntity> result = LogSelectQuery.execute(time, jooqCtx.dsl(), List.of(T0P1, T1P0), forUpdate, durationCallback);
+        assertThat(result).containsExactlyInAnyOrder(
+            new LogEntity(T0P1.topicId(), T0P1.partition(), T0P1.topic(), logStartOffset1, highWatermark1),
+            new LogEntity(T1P0.topicId(), T1P0.partition(), T1P0.topic(), logStartOffset2, highWatermark2)
+        );
     }
 }

@@ -51,7 +51,7 @@ class CommitFileJobTest extends SharedPostgreSQLTest {
             new CreateTopicAndPartitionsRequest(TOPIC_ID_0, TOPIC_0, 2),
             new CreateTopicAndPartitionsRequest(TOPIC_ID_1, TOPIC_1, 1)
         );
-        new TopicsAndPartitionsCreateJob(Time.SYSTEM, hikariDataSource, createTopicAndPartitionsRequests, duration -> {})
+        new TopicsAndPartitionsCreateJob(Time.SYSTEM, jooqCtx, createTopicAndPartitionsRequests, duration -> {})
             .run();
     }
 
@@ -61,7 +61,7 @@ class CommitFileJobTest extends SharedPostgreSQLTest {
 
         final CommitBatchRequest request1 = CommitBatchRequest.of(T0P1, 0, 100, 0, 14, 1000, TimestampType.CREATE_TIME);
         final CommitBatchRequest request2 = CommitBatchRequest.of(T1P0, 100, 50, 0, 26, 2000, TimestampType.LOG_APPEND_TIME);
-        final CommitFileJob job = new CommitFileJob(time, hikariDataSource, objectKey, BROKER_ID, FILE_SIZE, List.of(
+        final CommitFileJob job = new CommitFileJob(time, jooqCtx, objectKey, BROKER_ID, FILE_SIZE, List.of(
             request1,
             request2
         ), duration -> {});
@@ -100,7 +100,7 @@ class CommitFileJobTest extends SharedPostgreSQLTest {
         final long firstFileCommittedAt = time.milliseconds();
         final CommitBatchRequest request1 = CommitBatchRequest.of(T0P1, 0, 100, 0, 14, 1000, TimestampType.CREATE_TIME);
         final CommitBatchRequest request2 = CommitBatchRequest.of(T1P0, 100, 50, 0, 26, 2000, TimestampType.LOG_APPEND_TIME);
-        final CommitFileJob job1 = new CommitFileJob(time, hikariDataSource, objectKey1, BROKER_ID, FILE_SIZE, List.of(
+        final CommitFileJob job1 = new CommitFileJob(time, jooqCtx, objectKey1, BROKER_ID, FILE_SIZE, List.of(
             request1,
             request2
         ), duration -> {});
@@ -117,7 +117,7 @@ class CommitFileJobTest extends SharedPostgreSQLTest {
         final long secondFileCommittedAt = time.milliseconds();
         final CommitBatchRequest request3 = CommitBatchRequest.of(T0P0, 0, 111, 0, 158, 3000, TimestampType.CREATE_TIME);
         final CommitBatchRequest request4 = CommitBatchRequest.of(T0P1, 111, 222, 0, 244, 4000, TimestampType.CREATE_TIME);
-        final CommitFileJob job2 = new CommitFileJob(time, hikariDataSource, objectKey2, BROKER_ID, FILE_SIZE, List.of(
+        final CommitFileJob job2 = new CommitFileJob(time, jooqCtx, objectKey2, BROKER_ID, FILE_SIZE, List.of(
             request3,
             request4
         ), duration -> {});
@@ -160,7 +160,7 @@ class CommitFileJobTest extends SharedPostgreSQLTest {
         final var t1p1 = new TopicIdPartition(TOPIC_ID_1, 10, TOPIC_1);
         final CommitBatchRequest request1 = CommitBatchRequest.of(T0P1, 0, 100, 0, 14, 1000, TimestampType.CREATE_TIME);
         final CommitBatchRequest request2 = CommitBatchRequest.of(T1P0, 100, 50, 0, 26, 2000, TimestampType.LOG_APPEND_TIME);
-        final CommitFileJob job = new CommitFileJob(time, hikariDataSource, objectKey, BROKER_ID, FILE_SIZE, List.of(
+        final CommitFileJob job = new CommitFileJob(time, jooqCtx, objectKey, BROKER_ID, FILE_SIZE, List.of(
             request1,
             request2,
             CommitBatchRequest.of(t1p1, 150, 1243, 82, 100, 3000, TimestampType.LOG_APPEND_TIME)

@@ -5,6 +5,9 @@ import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
 
 import org.flywaydb.core.Flyway;
+import org.jooq.DSLContext;
+import org.jooq.SQLDialect;
+import org.jooq.impl.DSL;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.TestInfo;
 import org.testcontainers.junit.jupiter.Container;
@@ -17,6 +20,7 @@ public abstract class SharedPostgreSQLTest {
 
     protected String dbName;
     protected HikariDataSource hikariDataSource;
+    protected DSLContext jooqCtx;
 
     @BeforeEach
     void setupConnectionPool() {
@@ -26,6 +30,7 @@ public abstract class SharedPostgreSQLTest {
         config.setPassword(PostgreSQLTestContainer.PASSWORD);
         config.setAutoCommit(false);
         hikariDataSource = new HikariDataSource(config);
+        jooqCtx = DSL.using(hikariDataSource, SQLDialect.POSTGRES);
     }
 
     @BeforeEach

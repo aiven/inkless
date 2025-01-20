@@ -51,7 +51,7 @@ class DeleteTopicJobTest extends SharedPostgreSQLTest {
             new CreateTopicAndPartitionsRequest(TOPIC_ID_1, TOPIC_1, 1),
             new CreateTopicAndPartitionsRequest(TOPIC_ID_2, TOPIC_2, 1)
         );
-        new TopicsAndPartitionsCreateJob(Time.SYSTEM, hikariDataSource, createTopicAndPartitionsRequests, durationCallback)
+        new TopicsAndPartitionsCreateJob(Time.SYSTEM, jooqCtx, createTopicAndPartitionsRequests, durationCallback)
             .run();
     }
 
@@ -72,7 +72,7 @@ class DeleteTopicJobTest extends SharedPostgreSQLTest {
         final int file1Batch2Size = 2000;
         final int file1Size = file1Batch1Size + file1Batch2Size;
         new CommitFileJob(
-            time, hikariDataSource, objectKey1, BROKER_ID, file1Size,
+            time, jooqCtx, objectKey1, BROKER_ID, file1Size,
             List.of(
                 CommitBatchRequest.of(T0P0, 0, file1Batch1Size, 0, 11, 1000, TimestampType.CREATE_TIME),
                 CommitBatchRequest.of(T0P1, 0, file1Batch2Size, 0, 11, 1000, TimestampType.CREATE_TIME)
@@ -84,7 +84,7 @@ class DeleteTopicJobTest extends SharedPostgreSQLTest {
         final int file2Batch2Size = 2000;
         final int file2Size = file2Batch1Size + file2Batch2Size;
         new CommitFileJob(
-            time, hikariDataSource, objectKey2, BROKER_ID, file2Size,
+            time, jooqCtx, objectKey2, BROKER_ID, file2Size,
             List.of(
                 CommitBatchRequest.of(T0P0, 0, file2Batch1Size, 0, 11, 1000, TimestampType.CREATE_TIME),
                 CommitBatchRequest.of(T2P0, 0, file2Batch2Size, 0, 11, 1000, TimestampType.CREATE_TIME)
@@ -97,7 +97,7 @@ class DeleteTopicJobTest extends SharedPostgreSQLTest {
         final int file3Batch3Size = 3000;
         final int file3Size = file3Batch1Size + file3Batch2Size + file3Batch3Size;
         new CommitFileJob(
-            time, hikariDataSource, objectKey3, BROKER_ID, file3Size,
+            time, jooqCtx, objectKey3, BROKER_ID, file3Size,
             List.of(
                 CommitBatchRequest.of(T0P0, 0, file1Batch1Size, 0, 11, 1000, TimestampType.CREATE_TIME),
                 CommitBatchRequest.of(T0P1, 0, file1Batch2Size, 0, 11, 1000, TimestampType.CREATE_TIME),
@@ -108,7 +108,7 @@ class DeleteTopicJobTest extends SharedPostgreSQLTest {
         time.sleep(1000);  // advance time
         final Instant topicsDeletedAt = TimeUtils.now(time);
         final Uuid nonexistentTopicId = Uuid.ONE_UUID;
-        new DeleteTopicJob(time, hikariDataSource, Set.of(
+        new DeleteTopicJob(time, jooqCtx, Set.of(
             TOPIC_ID_0, TOPIC_ID_1, nonexistentTopicId
         ), durationCallback).run();
 

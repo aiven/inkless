@@ -4,16 +4,11 @@ package io.aiven.inkless.control_plane.postgres;
 import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.utils.Time;
 
-import com.zaxxer.hikari.HikariDataSource;
-
+import org.jooq.Configuration;
 import org.jooq.DSLContext;
-import org.jooq.SQLDialect;
-import org.jooq.impl.DSL;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.sql.Connection;
-import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -34,7 +29,7 @@ class FindBatchesJob implements Callable<List<FindBatchResponse>> {
     private static final Logger LOGGER = LoggerFactory.getLogger(FindBatchesJob.class);
 
     private final Time time;
-    private final HikariDataSource hikariDataSource;
+    private final DSLContext jooqCtx;
     private final List<FindBatchRequest> requests;
     private final boolean minOneMessage;
     private final int fetchMaxBytes;
@@ -42,14 +37,14 @@ class FindBatchesJob implements Callable<List<FindBatchResponse>> {
     private final Consumer<Long> getLogsDurationCallback;
 
     FindBatchesJob(final Time time,
-                   final HikariDataSource hikariDataSource,
+                   final DSLContext jooqCtx,
                    final List<FindBatchRequest> requests,
                    final boolean minOneMessage,
                    final int fetchMaxBytes,
                    final Consumer<Long> durationCallback,
                    final Consumer<Long> getLogsDurationCallback) {
         this.time = time;
-        this.hikariDataSource = hikariDataSource;
+        this.jooqCtx = jooqCtx;
         this.requests = requests;
         this.minOneMessage = minOneMessage;
         this.fetchMaxBytes = fetchMaxBytes;
@@ -59,46 +54,29 @@ class FindBatchesJob implements Callable<List<FindBatchResponse>> {
 
     @Override
     public List<FindBatchResponse> call() {
-        // TODO add retry (or not, let the consumers do this?)
         try {
             return runOnce();
         } catch (final Exception e) {
+            // TODO add retry with backoff (or not, let the consumers do this?)
             throw new RuntimeException(e);
         }
     }
 
-    private List<FindBatchResponse> runOnce() throws Exception {
-        final Connection connection;
-        try {
-            connection = hikariDataSource.getConnection();
-            // Mind this read-only setting.
-            connection.setReadOnly(true);
-        } catch (final SQLException e) {
-            LOGGER.error("Cannot get Postgres connection", e);
-            throw e;
-        }
-
-        // No need to explicitly commit or rollback.
-        try (connection) {
-            return runWithConnection(connection);
-        } catch (final Exception e) {
-            LOGGER.error("Error executing query", e);
-            throw e;
-        }
+    private List<FindBatchResponse> runOnce()  {
+        return jooqCtx.transactionResult((final Configuration conf) -> {
+            final DSLContext context = conf.dsl();
+            final Map<TopicIdPartition, LogEntity> logInfos = getLogInfos(context);
+            final List<FindBatchResponse> result = new ArrayList<>();
+            for (final FindBatchRequest request : requests) {
+                result.add(
+                    findBatchPerPartition(context, request, logInfos.get(request.topicIdPartition()))
+                );
+            }
+            return result;
+        });
     }
 
-    private List<FindBatchResponse> runWithConnection(final Connection connection) throws Exception {
-        final Map<TopicIdPartition, LogEntity> logInfos = getLogInfos(connection);
-        final List<FindBatchResponse> result = new ArrayList<>();
-        for (final FindBatchRequest request : requests) {
-            result.add(
-                findBatchPerPartition(connection, request, logInfos.get(request.topicIdPartition()))
-            );
-        }
-        return result;
-    }
-
-    private FindBatchResponse findBatchPerPartition(final Connection connection,
+    private FindBatchResponse findBatchPerPartition(final DSLContext context,
                                                     final FindBatchRequest request,
                                                     final LogEntity logEntity) throws Exception {
         if (logEntity == null) {
@@ -114,11 +92,10 @@ class FindBatchesJob implements Callable<List<FindBatchResponse>> {
             return FindBatchResponse.offsetOutOfRange(logEntity.logStartOffset(), logEntity.highWatermark());
         }
 
-        final DSLContext ctx = DSL.using(connection, SQLDialect.POSTGRES);
-        return TimeUtils.measureDurationMs(time, () -> getBatchResponse(ctx, request, logEntity), durationCallback);
+        return TimeUtils.measureDurationMs(time, () -> getBatchResponse(context, request, logEntity), durationCallback);
     }
 
-    private FindBatchResponse getBatchResponse(final DSLContext ctx, final FindBatchRequest request, final LogEntity logEntity) throws SQLException {
+    private FindBatchResponse getBatchResponse(final DSLContext ctx, final FindBatchRequest request, final LogEntity logEntity) {
         final var select = ctx.select(
                 BATCHES.BASE_OFFSET,
                 BATCHES.LAST_OFFSET,
@@ -164,7 +141,7 @@ class FindBatchesJob implements Callable<List<FindBatchResponse>> {
         return FindBatchResponse.success(batches, logEntity.logStartOffset(), logEntity.highWatermark());
     }
 
-    private Map<TopicIdPartition, LogEntity> getLogInfos(final Connection connection) throws Exception {
+    private Map<TopicIdPartition, LogEntity> getLogInfos(final DSLContext context) throws Exception {
         if (requests.isEmpty()) {
             return Map.of();
         }
@@ -172,7 +149,7 @@ class FindBatchesJob implements Callable<List<FindBatchResponse>> {
         final List<TopicIdPartition> tidps = requests.stream()
             .map(FindBatchRequest::topicIdPartition)
             .toList();
-        return LogSelectQuery.execute(time, connection, tidps, false, getLogsDurationCallback).stream()
+        return LogSelectQuery.execute(time, context, tidps, false, getLogsDurationCallback).stream()
             .collect(Collectors.toMap(LogEntity::topicIdPartition, Function.identity()));
     }
 }
