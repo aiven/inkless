@@ -112,6 +112,7 @@ public record DataLayout (
                     long firstOffset = offsets.compute(batch.topicIdPartition(), (k, v) -> (v == null ? 0 : v) + batch.skippedOffsets());
                     byteOffset += batch.skippedBytes();
                     BatchInfo batchInfo = BatchInfo.of(
+                            1L,
                             file.objectId(),
                             byteOffset,
                             batch.batchSize(),

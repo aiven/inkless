@@ -120,7 +120,7 @@ public abstract class AbstractControlPlaneTest {
         assertThat(findResponse).containsExactly(
             new FindBatchResponse(
                 Errors.NONE,
-                List.of(BatchInfo.of(objectKey2, 100, 10, 10, 1, 10, time.milliseconds(), 1000, TimestampType.CREATE_TIME)),
+                List.of(BatchInfo.of(2L, objectKey2, 100, 10, 10, 1, 10, time.milliseconds(), 1000, TimestampType.CREATE_TIME)),
                 0, 20),
             new FindBatchResponse(Errors.UNKNOWN_TOPIC_OR_PARTITION, null, -1, -1),
             new FindBatchResponse(Errors.UNKNOWN_TOPIC_OR_PARTITION, null, -1, -1)
@@ -148,8 +148,8 @@ public abstract class AbstractControlPlaneTest {
                 List.of(new FindBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_0, offset, Integer.MAX_VALUE)), true, Integer.MAX_VALUE);
             assertThat(findResponse).containsExactly(
                 new FindBatchResponse(Errors.NONE, List.of(
-                    BatchInfo.of(objectKey1, 1, 10, 0, 0, numberOfRecordsInBatch1 - 1, expectedLogAppendTime, 1000, TimestampType.CREATE_TIME),
-                    BatchInfo.of(objectKey2, 100, 10, numberOfRecordsInBatch1, numberOfRecordsInBatch1, lastOffset, expectedLogAppendTime, 2000, TimestampType.CREATE_TIME)
+                    BatchInfo.of(1L, objectKey1, 1, 10, 0, 0, numberOfRecordsInBatch1 - 1, expectedLogAppendTime, 1000, TimestampType.CREATE_TIME),
+                    BatchInfo.of(2L, objectKey2, 100, 10, numberOfRecordsInBatch1, numberOfRecordsInBatch1, lastOffset, expectedLogAppendTime, 2000, TimestampType.CREATE_TIME)
                 ), expectedLogStartOffset, expectedHighWatermark)
             );
         }
@@ -158,7 +158,7 @@ public abstract class AbstractControlPlaneTest {
                 List.of(new FindBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_0, offset, Integer.MAX_VALUE)), true, Integer.MAX_VALUE);
             assertThat(findResponse).containsExactly(
                 new FindBatchResponse(Errors.NONE, List.of(
-                    BatchInfo.of(objectKey2, 100, 10, numberOfRecordsInBatch1, numberOfRecordsInBatch1, lastOffset, expectedLogAppendTime, 2000, TimestampType.CREATE_TIME)
+                    BatchInfo.of(2L, objectKey2, 100, 10, numberOfRecordsInBatch1, numberOfRecordsInBatch1, lastOffset, expectedLogAppendTime, 2000, TimestampType.CREATE_TIME)
                 ), expectedLogStartOffset, expectedHighWatermark)
             );
         }

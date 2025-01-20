@@ -67,6 +67,7 @@ CREATE TABLE files_to_delete (
 );
 
 CREATE TABLE batches (
+    batch_id BIGSERIAL PRIMARY KEY,
     topic_id topic_id_t,
     partition partition_t,
     base_offset offset_t,
@@ -79,7 +80,6 @@ CREATE TABLE batches (
     timestamp_type timestamp_type_t,
     log_append_timestamp timestamp_t,
     batch_max_timestamp timestamp_t,
-    PRIMARY KEY(topic_id, partition, base_offset),
     CONSTRAINT fk_batches_logs FOREIGN KEY (topic_id, partition) REFERENCES logs(topic_id, partition)
         ON DELETE NO ACTION ON UPDATE CASCADE DEFERRABLE INITIALLY DEFERRED,  -- allow deleting logs before batches
     CONSTRAINT fk_batches_files FOREIGN KEY (file_id) REFERENCES files(file_id) ON DELETE RESTRICT ON UPDATE CASCADE

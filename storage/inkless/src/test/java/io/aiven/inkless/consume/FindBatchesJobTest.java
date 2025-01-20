@@ -62,7 +62,7 @@ public class FindBatchesJobTest {
         int highWatermark = 1;
         Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of(
                 partition0, FindBatchResponse.success(List.of(
-                        BatchInfo.of(OBJECT_KEY_MAIN_PART, 0, 10, 0, 0, 0, logAppendTimestamp, maxBatchTimestamp, TimestampType.CREATE_TIME)
+                        BatchInfo.of(1L, OBJECT_KEY_MAIN_PART, 0, 10, 0, 0, 0, logAppendTimestamp, maxBatchTimestamp, TimestampType.CREATE_TIME)
                 ), logStartOffset, highWatermark)
         );
         FindBatchesJob job = new FindBatchesJob(time, controlPlane, params, fetchInfos, durationMs -> { });

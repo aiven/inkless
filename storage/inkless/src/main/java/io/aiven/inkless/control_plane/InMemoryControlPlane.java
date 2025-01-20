@@ -18,6 +18,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Stream;
 
 import io.aiven.inkless.TimeUtils;
@@ -25,6 +26,7 @@ import io.aiven.inkless.TimeUtils;
 public class InMemoryControlPlane extends AbstractControlPlane {
     private static final Logger LOGGER = LoggerFactory.getLogger(InMemoryControlPlane.class);
 
+    private final AtomicLong batchIdCounter = new AtomicLong(0);
     private final Map<TopicIdPartition, LogInfo> logs = new HashMap<>();
     private final Map<String, FileInfo> files = new HashMap<>();
     private final List<FileToDeleteInternal> filesToDelete = new ArrayList<>();
@@ -86,6 +88,7 @@ public class InMemoryControlPlane extends AbstractControlPlane {
         final long lastOffset = firstOffset + request.offsetDelta();
         logInfo.highWatermark = lastOffset + 1;
         final BatchInfo batchInfo = new BatchInfo(
+            batchIdCounter.incrementAndGet(),
             fileInfo.objectKey,
             request.byteOffset(),
             request.size(),
