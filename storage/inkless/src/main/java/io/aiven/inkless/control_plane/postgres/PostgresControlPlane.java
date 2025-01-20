@@ -38,6 +38,8 @@ public class PostgresControlPlane extends AbstractControlPlane {
     private HikariDataSource hikariDataSource;
     private DSLContext jooqCtx;
 
+    private PostgresControlPlaneConfig controlPlaneConfig;
+
     public PostgresControlPlane(final Time time) {
         super(time);
         this.metrics = new PostgresControlPlaneMetrics(time);
@@ -51,7 +53,8 @@ public class PostgresControlPlane extends AbstractControlPlane {
 
     @Override
     public void configure(final Map<String, ?> configs) {
-        final PostgresControlPlaneConfig controlPlaneConfig = new PostgresControlPlaneConfig(configs);
+        controlPlaneConfig = new PostgresControlPlaneConfig(configs);
+
         Migrations.migrate(controlPlaneConfig);
 
         final HikariConfig config = new HikariConfig();
