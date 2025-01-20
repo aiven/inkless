@@ -2614,7 +2614,6 @@ kafka.server.DynamicConfigChangeUnitTest:
 - shouldParseWildcardReplicationQuotaProperties
 - testEnableRemoteLogStorageOnTopic
 - testEnableRemoteLogStorageOnTopicOnAlreadyEnabledTopic
-- testIpHandlerUnresolvableAddress
 kafka.server.EdgeCaseRequestTest:
 - testHeaderOnlyRequest
 - testInvalidApiKeyRequest
@@ -3504,6 +3503,8 @@ kafka.server.metadata.BrokerMetadataPublisherTest:
 - testGetTopicDelta
 - testNewImagePushedToGroupCoordinator
 - testReloadUpdatedFilesWithoutConfigChange
+kafka.server.metadata.ClientQuotaMetadataManagerTest:
+- testHandleIpQuota
 kafka.server.metadata.MockConfigRepositoryTest:
 - testEmptyRepository
 - testSetTopicConfig
