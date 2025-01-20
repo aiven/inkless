@@ -37,8 +37,8 @@ import io.aiven.inkless.cache.FixedBlockAlignment;
 import io.aiven.inkless.cache.KeyAlignmentStrategy;
 import io.aiven.inkless.cache.NullCache;
 import io.aiven.inkless.cache.ObjectCache;
+import io.aiven.inkless.common.ObjectKey;
 import io.aiven.inkless.common.ObjectKeyCreator;
-import io.aiven.inkless.common.PlainObjectKey;
 import io.aiven.inkless.common.SharedState;
 import io.aiven.inkless.config.InklessConfig;
 import io.aiven.inkless.control_plane.ControlPlane;
@@ -56,7 +56,7 @@ import static org.mockito.Mockito.when;
 @MockitoSettings(strictness = Strictness.STRICT_STUBS)
 public class FetchInterceptorTest {
     private static final int BROKER_ID = 11;
-    private static final ObjectKeyCreator OBJECT_KEY_CREATOR = PlainObjectKey.creator("");
+    private static final ObjectKeyCreator OBJECT_KEY_CREATOR = ObjectKey.creator("", false);
     private static final KeyAlignmentStrategy KEY_ALIGNMENT_STRATEGY = new FixedBlockAlignment(Integer.MAX_VALUE);
     private static final ObjectCache OBJECT_CACHE = new NullCache();
 

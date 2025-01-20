@@ -73,7 +73,7 @@ class FileCommitJobTest {
     static final byte[] DATA = new byte[10];
     static final long FILE_SIZE = DATA.length;
     static final String OBJECT_KEY_MAIN_PART = "obj";
-    static final ObjectKey OBJECT_KEY = new PlainObjectKey("", OBJECT_KEY_MAIN_PART);
+    static final ObjectKey OBJECT_KEY = PlainObjectKey.create("", OBJECT_KEY_MAIN_PART);
 
     @Mock
     Time time;

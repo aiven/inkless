@@ -3,23 +3,26 @@ package io.aiven.inkless.common;
 
 import java.util.Objects;
 
-public record PlainObjectKey(String prefix, String mainPath) implements ObjectKey {
+public record PlainObjectKey(Path path) implements ObjectKey {
     public PlainObjectKey {
-        Objects.requireNonNull(prefix, "prefix cannot be null");
-        Objects.requireNonNull(mainPath, "mainPath cannot be null");
+        Objects.requireNonNull(path, "path cannot be null");
+    }
+
+    public static PlainObjectKey create(String prefix, String mainPath) {
+        return new PlainObjectKey(Path.create(prefix, mainPath));
+    }
+
+    public static PlainObjectKey from(String value) {
+        return new PlainObjectKey(Path.from(value));
     }
 
     @Override
     public String value() {
-        return prefix + mainPath;
+        return path.value();
     }
 
     @Override
     public String toString() {
         return value();
-    }
-
-    public static ObjectKeyCreator creator(final String prefix) {
-        return (s) -> new PlainObjectKey(prefix, s);
     }
 }
