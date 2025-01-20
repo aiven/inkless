@@ -2905,6 +2905,8 @@ kafka.server.KafkaApisTest:
 - testReadCommittedConsumerListOffsetLatest
 - testReadShareGroupStateAuthorizationFailed
 - testReadShareGroupStateSuccess
+- testReadShareGroupStateSummaryAuthorizationFailed
+- testReadShareGroupStateSummarySuccess
 - testReadUncommittedConsumerListOffsetLatest
 - testReassignmentAndReplicationBytesOutRateWhenNotReassigning
 - testReassignmentAndReplicationBytesOutRateWhenReassigning

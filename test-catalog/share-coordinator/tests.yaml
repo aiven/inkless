@@ -27,8 +27,12 @@ org.apache.kafka.coordinator.share.ShareCoordinatorServiceTest:
 - testPartitionFor
 - testReadFutureReturnsError
 - testReadStateSuccess
+- testReadStateSummarySuccess
+- testReadStateSummaryValidationsError
+- testReadStateSummaryWhenNotStarted
 - testReadStateValidationsError
 - testReadStateWhenNotStarted
+- testReadSummaryFutureReturnsError
 - testRecordPruningTaskEmptyOffsetReturned
 - testRecordPruningTaskException
 - testRecordPruningTaskPeriodicityWithAllSuccess
@@ -51,6 +55,8 @@ org.apache.kafka.coordinator.share.ShareCoordinatorShardTest:
 - testReadStateLeaderEpochUpdateNoUpdate
 - testReadStateLeaderEpochUpdateSuccess
 - testReadStateSuccess
+- testReadStateSummaryInvalidRequestData
+- testReadStateSummarySuccess
 - testReplayWithShareSnapshot
 - testSubsequentWriteStateSnapshotEpochUpdatesSuccessfully
 - testWriteNullMetadataImage
