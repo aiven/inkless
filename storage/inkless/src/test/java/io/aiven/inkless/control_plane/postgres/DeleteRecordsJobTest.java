@@ -143,10 +143,10 @@ class DeleteRecordsJobTest extends SharedPostgreSQLTest {
         );
 
         assertThat(DBUtils.getAllBatches(hikariDataSource)).containsExactlyInAnyOrder(
-            new BatchesRecord(TOPIC_ID_0, 0, 12L, 23L, 12L, 23L, 2L, 0L, (long) file1Batch1Size, TimestampType.CREATE_TIME, 0L, 1000L),
-            new BatchesRecord(TOPIC_ID_0, 0, 24L, 35L, 24L, 35L, 3L, 0L, (long) file2Batch1Size, TimestampType.CREATE_TIME, 0L, 1000L),
-            new BatchesRecord(TOPIC_ID_2, 0, 0L, 11L, 0L, 11L, 2L, (long) file2Batch1Size, (long) file2Batch2Size, TimestampType.CREATE_TIME, 0L, 1000L),
-            new BatchesRecord(TOPIC_ID_2, 0, 12L, 23L, 12L, 23L, 3L, (long) file3Batch3Size, (long) file3Batch1Size + file3Batch2Size, TimestampType.CREATE_TIME, 0L, 1000L)
+            new BatchesRecord(3L, TOPIC_ID_0, 0, 12L, 23L, 12L, 23L, 2L, 0L, (long) file1Batch1Size, TimestampType.CREATE_TIME, 0L, 1000L),
+            new BatchesRecord(5L, TOPIC_ID_0, 0, 24L, 35L, 24L, 35L, 3L, 0L, (long) file2Batch1Size, TimestampType.CREATE_TIME, 0L, 1000L),
+            new BatchesRecord(4L, TOPIC_ID_2, 0, 0L, 11L, 0L, 11L, 2L, (long) file2Batch1Size, (long) file2Batch2Size, TimestampType.CREATE_TIME, 0L, 1000L),
+            new BatchesRecord(7L, TOPIC_ID_2, 0, 12L, 23L, 12L, 23L, 3L, (long) file3Batch3Size, (long) file3Batch1Size + file3Batch2Size, TimestampType.CREATE_TIME, 0L, 1000L)
         );
 
         // File 1 must be `deleting` because it contained only data from the fully truncated TOPIC_1.

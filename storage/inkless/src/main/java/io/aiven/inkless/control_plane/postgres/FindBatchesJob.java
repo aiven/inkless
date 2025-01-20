@@ -97,6 +97,7 @@ class FindBatchesJob implements Callable<List<FindBatchResponse>> {
 
     private FindBatchResponse getBatchResponse(final DSLContext ctx, final FindBatchRequest request, final LogEntity logEntity) {
         final var select = ctx.select(
+                BATCHES.BATCH_ID,
                 BATCHES.BASE_OFFSET,
                 BATCHES.LAST_OFFSET,
                 FILES.OBJECT_KEY,
@@ -120,6 +121,7 @@ class FindBatchesJob implements Callable<List<FindBatchResponse>> {
         try (final var cursor = select.fetchSize(1000).fetchLazy()) {
             for (final var record : cursor) {
                 final BatchInfo batch = new BatchInfo(
+                    record.get(BATCHES.BATCH_ID),
                     record.get(FILES.OBJECT_KEY),
                     record.get(BATCHES.BYTE_OFFSET),
                     record.get(BATCHES.BYTE_SIZE),

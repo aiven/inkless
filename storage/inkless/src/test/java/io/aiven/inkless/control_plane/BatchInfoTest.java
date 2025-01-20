@@ -11,6 +11,7 @@ class BatchInfoTest {
     @Test
     void testOffsets() {
         BatchInfo batchInfo = BatchInfo.of(
+            1L,
             "objectKey",
             0,
             10,
@@ -29,6 +30,7 @@ class BatchInfoTest {
     @Test
     void invalidRequestOffsets() {
         assertThatThrownBy(() -> BatchInfo.of(
+            1L,
             "objectKey",
             0,
             10,

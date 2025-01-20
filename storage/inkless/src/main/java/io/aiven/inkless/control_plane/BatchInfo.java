@@ -6,6 +6,7 @@ import org.apache.kafka.common.record.TimestampType;
 import io.aiven.inkless.common.ByteRange;
 
 public record BatchInfo(
+    long batchId,
     String objectKey,
     long byteOffset,
     long size,
@@ -24,6 +25,7 @@ public record BatchInfo(
     }
 
     public static BatchInfo of(
+        long batchId,
         String objectKey,
         long byteOffset,
         long size,
@@ -35,6 +37,7 @@ public record BatchInfo(
         TimestampType timestampType
     ) {
         return new BatchInfo(
+            batchId,
             objectKey,
             byteOffset,
             size,

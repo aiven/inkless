@@ -123,7 +123,7 @@ public class FetchCompleterJobTest {
         int highWatermark = 1;
         Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of(
             partition0, FindBatchResponse.success(List.of(
-                BatchInfo.of(OBJECT_KEY_A_MAIN_PART, 0, 10, 0, 0, 0, logAppendTimestamp, maxBatchTimestamp, TimestampType.CREATE_TIME)
+                BatchInfo.of(1L, OBJECT_KEY_A_MAIN_PART, 0, 10, 0, 0, 0, logAppendTimestamp, maxBatchTimestamp, TimestampType.CREATE_TIME)
             ), logStartOffset, highWatermark)
         );
         FetchCompleterJob job = new FetchCompleterJob(
@@ -152,7 +152,7 @@ public class FetchCompleterJobTest {
         int highWatermark = 1;
         Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of(
             partition0, FindBatchResponse.success(List.of(
-                BatchInfo.of(OBJECT_KEY_A_MAIN_PART, 0, records.sizeInBytes(), 0, 0, 0, logAppendTimestamp, maxBatchTimestamp, TimestampType.CREATE_TIME)
+                BatchInfo.of(1L, OBJECT_KEY_A_MAIN_PART, 0, records.sizeInBytes(), 0, 0, 0, logAppendTimestamp, maxBatchTimestamp, TimestampType.CREATE_TIME)
             ), logStartOffset, highWatermark)
         );
 
@@ -188,8 +188,8 @@ public class FetchCompleterJobTest {
         int highWatermark = 1;
         Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of(
             partition0, FindBatchResponse.success(List.of(
-                BatchInfo.of(OBJECT_KEY_A_MAIN_PART, 0, records.sizeInBytes(), 0, 0, 0, logAppendTimestamp, maxBatchTimestamp, TimestampType.CREATE_TIME),
-                BatchInfo.of(OBJECT_KEY_B_MAIN_PART, 0, records.sizeInBytes(), 0, 0, 0, logAppendTimestamp, maxBatchTimestamp, TimestampType.CREATE_TIME)
+                BatchInfo.of(1L, OBJECT_KEY_A_MAIN_PART, 0, records.sizeInBytes(), 0, 0, 0, logAppendTimestamp, maxBatchTimestamp, TimestampType.CREATE_TIME),
+                BatchInfo.of(2L, OBJECT_KEY_B_MAIN_PART, 0, records.sizeInBytes(), 0, 0, 0, logAppendTimestamp, maxBatchTimestamp, TimestampType.CREATE_TIME)
             ), logStartOffset, highWatermark)
         );
 
@@ -233,8 +233,8 @@ public class FetchCompleterJobTest {
         int highWatermark = 2;
         Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of(
             partition0, FindBatchResponse.success(List.of(
-                BatchInfo.of(OBJECT_KEY_A_MAIN_PART, 0, recordsA.sizeInBytes(), 0, 0, 0, logAppendTimestamp, maxBatchTimestamp, TimestampType.CREATE_TIME),
-                BatchInfo.of(OBJECT_KEY_A_MAIN_PART, recordsA.sizeInBytes(), recordsB.sizeInBytes(), 1, 0, 0, logAppendTimestamp, maxBatchTimestamp, TimestampType.CREATE_TIME)
+                BatchInfo.of(1L, OBJECT_KEY_A_MAIN_PART, 0, recordsA.sizeInBytes(), 0, 0, 0, logAppendTimestamp, maxBatchTimestamp, TimestampType.CREATE_TIME),
+                BatchInfo.of(2L, OBJECT_KEY_A_MAIN_PART, recordsA.sizeInBytes(), recordsB.sizeInBytes(), 1, 0, 0, logAppendTimestamp, maxBatchTimestamp, TimestampType.CREATE_TIME)
             ), logStartOffset, highWatermark)
         );
 
