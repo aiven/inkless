@@ -51,7 +51,7 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
-import io.aiven.inkless.common.PlainObjectKey;
+import io.aiven.inkless.common.ObjectKey;
 import io.aiven.inkless.control_plane.ControlPlane;
 import io.aiven.inkless.control_plane.CreateTopicAndPartitionsRequest;
 import io.aiven.inkless.control_plane.InMemoryControlPlane;
@@ -183,7 +183,7 @@ class WriterPropertyTest {
         final FileCommitter fileCommitter = new FileCommitter(
             11,
             controlPlane,
-            PlainObjectKey.creator(""),
+            ObjectKey.creator("", false),
             objectUploader,
             time,
             1,

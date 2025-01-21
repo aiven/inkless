@@ -42,12 +42,12 @@ import static org.mockito.Mockito.when;
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.STRICT_STUBS)
 public class FetchPlannerTest {
-    static final String OBJECT_KEY_PREFIX = "prefix/";
-    static final ObjectKeyCreator OBJECT_KEY_CREATOR = PlainObjectKey.creator(OBJECT_KEY_PREFIX);
+    static final String OBJECT_KEY_PREFIX = "prefix";
+    static final ObjectKeyCreator OBJECT_KEY_CREATOR = ObjectKey.creator(OBJECT_KEY_PREFIX, false);
     static final String OBJECT_KEY_A_MAIN_PART = "a";
     static final String OBJECT_KEY_B_MAIN_PART = "b";
-    static final ObjectKey OBJECT_KEY_A = new PlainObjectKey(OBJECT_KEY_PREFIX, OBJECT_KEY_A_MAIN_PART);
-    static final ObjectKey OBJECT_KEY_B = new PlainObjectKey(OBJECT_KEY_PREFIX, OBJECT_KEY_B_MAIN_PART);
+    static final ObjectKey OBJECT_KEY_A = PlainObjectKey.create(OBJECT_KEY_PREFIX, OBJECT_KEY_A_MAIN_PART);
+    static final ObjectKey OBJECT_KEY_B = PlainObjectKey.create(OBJECT_KEY_PREFIX, OBJECT_KEY_B_MAIN_PART);
 
     @Mock
     ObjectFetcher fetcher;
@@ -77,7 +77,7 @@ public class FetchPlannerTest {
         assertBatchPlan(
             Map.of(
                 partition0, FindBatchResponse.success(List.of(
-                    BatchInfo.of(1L, OBJECT_KEY_A_MAIN_PART, 0, 10, 0, 0, 0, 10, 20, TimestampType.CREATE_TIME)
+                    BatchInfo.of(1L, OBJECT_KEY_A.value(), 0, 10, 0, 0, 0, 10, 20, TimestampType.CREATE_TIME)
                 ), 0, 1)
             ),
             Set.of(
@@ -91,8 +91,8 @@ public class FetchPlannerTest {
         assertBatchPlan(
             Map.of(
                 partition0, FindBatchResponse.success(List.of(
-                    BatchInfo.of(1L, OBJECT_KEY_A_MAIN_PART, 0, 10, 0, 0, 0, 10, 20, TimestampType.CREATE_TIME),
-                    BatchInfo.of(2L, OBJECT_KEY_B_MAIN_PART, 0, 10, 1, 0, 0, 11, 21, TimestampType.CREATE_TIME)
+                    BatchInfo.of(1L, OBJECT_KEY_A.value(), 0, 10, 0, 0, 0, 10, 20, TimestampType.CREATE_TIME),
+                    BatchInfo.of(2L, OBJECT_KEY_B.value(), 0, 10, 1, 0, 0, 11, 21, TimestampType.CREATE_TIME)
                 ), 0, 2)
             ),
             Set.of(
@@ -107,10 +107,10 @@ public class FetchPlannerTest {
         assertBatchPlan(
             Map.of(
                 partition0, FindBatchResponse.success(List.of(
-                    BatchInfo.of(1L, OBJECT_KEY_A_MAIN_PART, 0, 10, 0, 0, 0, 10, 20, TimestampType.CREATE_TIME)
+                    BatchInfo.of(1L, OBJECT_KEY_A.value(), 0, 10, 0, 0, 0, 10, 20, TimestampType.CREATE_TIME)
                 ), 0, 1),                                                                                  
                 partition1, FindBatchResponse.success(List.of(                                             
-                    BatchInfo.of(2L, OBJECT_KEY_B_MAIN_PART, 0, 10, 0, 0, 0, 11, 21, TimestampType.CREATE_TIME)
+                    BatchInfo.of(2L, OBJECT_KEY_B.value(), 0, 10, 0, 0, 0, 11, 21, TimestampType.CREATE_TIME)
                 ), 0, 1)
             ),
             Set.of(
@@ -125,10 +125,10 @@ public class FetchPlannerTest {
         assertBatchPlan(
             Map.of(
                 partition0, FindBatchResponse.success(List.of(
-                    BatchInfo.of(1L, OBJECT_KEY_A_MAIN_PART, 0, 10, 0, 0, 0, 10, 20, TimestampType.CREATE_TIME)
+                    BatchInfo.of(1L, OBJECT_KEY_A.value(), 0, 10, 0, 0, 0, 10, 20, TimestampType.CREATE_TIME)
                 ), 0, 1),                                                                                   
                 partition1, FindBatchResponse.success(List.of(                                              
-                    BatchInfo.of(2L, OBJECT_KEY_A_MAIN_PART, 30, 10, 0, 0, 0, 11, 21, TimestampType.CREATE_TIME)
+                    BatchInfo.of(2L, OBJECT_KEY_A.value(), 30, 10, 0, 0, 0, 11, 21, TimestampType.CREATE_TIME)
                 ), 0,  1)
             ),
             Set.of(
@@ -143,7 +143,7 @@ public class FetchPlannerTest {
             Map.of(
                 partition0, FindBatchResponse.offsetOutOfRange(0, 1),
                 partition1, FindBatchResponse.success(List.of(
-                    BatchInfo.of(1L, OBJECT_KEY_B_MAIN_PART, 0, 10, 0, 0, 0, 11, 21, TimestampType.CREATE_TIME)
+                    BatchInfo.of(1L, OBJECT_KEY_B.value(), 0, 10, 0, 0, 0, 11, 21, TimestampType.CREATE_TIME)
                 ), 0, 1)
             ),
             Set.of(
@@ -158,7 +158,7 @@ public class FetchPlannerTest {
             Map.of(
                 partition0, FindBatchResponse.unknownTopicOrPartition(),
                 partition1, FindBatchResponse.success(List.of(
-                    BatchInfo.of(1L, OBJECT_KEY_B_MAIN_PART, 0, 10, 0, 0, 0, 11, 21, TimestampType.CREATE_TIME)
+                    BatchInfo.of(1L, OBJECT_KEY_B.value(), 0, 10, 0, 0, 0, 11, 21, TimestampType.CREATE_TIME)
                 ), 0, 1)
             ),
             Set.of(
@@ -173,7 +173,7 @@ public class FetchPlannerTest {
             Map.of(
                 partition0, FindBatchResponse.unknownServerError(),
                 partition1, FindBatchResponse.success(List.of(
-                    BatchInfo.of(1L, OBJECT_KEY_B_MAIN_PART, 0, 10, 0, 0, 0, 11, 21, TimestampType.CREATE_TIME)
+                    BatchInfo.of(1L, OBJECT_KEY_B.value(), 0, 10, 0, 0, 0, 11, 21, TimestampType.CREATE_TIME)
                 ), 0, 1)
             ),
             Set.of(

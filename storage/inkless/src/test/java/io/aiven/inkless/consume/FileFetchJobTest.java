@@ -32,7 +32,7 @@ public class FileFetchJobTest {
     ObjectFetcher fetcher;
 
     Time time = new MockTime();
-    ObjectKey objectA = new PlainObjectKey("a", "a");
+    ObjectKey objectA = PlainObjectKey.create("a", "a");
 
     @Test
     public void testOversizeFileFetch() {

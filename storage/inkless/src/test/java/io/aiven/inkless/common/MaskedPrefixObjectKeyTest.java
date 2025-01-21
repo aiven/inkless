@@ -9,27 +9,27 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class MaskedPrefixObjectKeyTest {
     @Test
     void notAllowNullPrefix() {
-        assertThatThrownBy(() -> new PlainObjectKey(null, "/mainPath"))
+        assertThatThrownBy(() -> PlainObjectKey.create(null, "name"))
             .isInstanceOf(NullPointerException.class)
             .hasMessage("prefix cannot be null");
     }
 
     @Test
     void notAllowNullMainPath() {
-        assertThatThrownBy(() -> new MaskedPrefixObjectKey("/prefix", null))
+        assertThatThrownBy(() -> MaskedPrefixObjectKey.create("prefix", null))
             .isInstanceOf(NullPointerException.class)
-            .hasMessage("mainPath cannot be null");
+            .hasMessage("name cannot be null");
     }
 
     @Test
     void value() {
-        assertThat(new MaskedPrefixObjectKey("/realPrefix", "/mainPath").value())
-            .isEqualTo("/realPrefix/mainPath");
+        assertThat(MaskedPrefixObjectKey.create("realPrefix", "name").value())
+            .isEqualTo("realPrefix/name");
     }
 
     @Test
     void testToString() {
-        assertThat(new MaskedPrefixObjectKey("/realPrefix", "/mainPath").toString())
-            .isEqualTo("<prefix>/mainPath");
+        assertThat(MaskedPrefixObjectKey.from("realPrefix/name").toString())
+            .isEqualTo("<prefix>/name");
     }
 }

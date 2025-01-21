@@ -24,7 +24,7 @@ public class InklessConfig extends AbstractConfig {
     private static final String CONTROL_PLANE_CLASS_DEFAULT = InMemoryControlPlane.class.getCanonicalName();
 
     public static final String OBJECT_KEY_PREFIX_CONFIG = "object.key.prefix";
-    private static final String OBJECT_KEY_PREFIX_DOC = "The object storage key prefix.";
+    private static final String OBJECT_KEY_PREFIX_DOC = "The object storage key prefix. It cannot start of finish with a slash.";
 
     public static final String OBJECT_KEY_LOG_PREFIX_MASKED_CONFIG = "object.key.log.prefix.masked";
     private static final String OBJECT_KEY_LOG_PREFIX_MASKED_DOC = "Whether to log full object key path, or mask the prefix.";

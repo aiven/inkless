@@ -48,7 +48,7 @@ public record SharedState(
             metadata,
             controlPlane,
             config.storage(),
-            ObjectKey.create(config.objectKeyPrefix(), config.objectKeyLogPrefixMasked()),
+            ObjectKey.creator(config.objectKeyPrefix(), config.objectKeyLogPrefixMasked()),
             new FixedBlockAlignment(config.fetchCacheBlockBytes()),
             new InfinispanCache(time, clusterId, rack),
             brokerTopicStats,

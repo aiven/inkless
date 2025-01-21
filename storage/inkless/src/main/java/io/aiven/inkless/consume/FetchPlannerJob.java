@@ -86,7 +86,7 @@ public class FetchPlannerJob implements Callable<List<Future<FileExtent>>> {
                 .flatMap(e -> keyAlignment.align(e.getValue())
                         .stream()
                         .map(byteRange ->
-                                new CacheFetchJob(cache, objectKeyCreator.create(e.getKey()), byteRange, time, objectFetcher,
+                                new CacheFetchJob(cache, objectKeyCreator.from(e.getKey()), byteRange, time, objectFetcher,
                                         cacheQueryDurationCallback, cacheStoreDurationCallback, cacheHitRateCallback, fileFetchDurationCallback)
                         ))
                 .collect(Collectors.toList());

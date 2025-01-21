@@ -44,12 +44,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.STRICT_STUBS)
 public class FetchCompleterJobTest {
-    static final String OBJECT_KEY_PREFIX = "prefix/";
-    static final ObjectKeyCreator OBJECT_KEY_CREATOR = PlainObjectKey.creator(OBJECT_KEY_PREFIX);
+    static final String OBJECT_KEY_PREFIX = "prefix";
+    static final ObjectKeyCreator OBJECT_KEY_CREATOR = ObjectKey.creator(OBJECT_KEY_PREFIX, false);
     static final String OBJECT_KEY_A_MAIN_PART = "a";
     static final String OBJECT_KEY_B_MAIN_PART = "b";
-    static final ObjectKey OBJECT_KEY_A = new PlainObjectKey(OBJECT_KEY_PREFIX, OBJECT_KEY_A_MAIN_PART);
-    static final ObjectKey OBJECT_KEY_B = new PlainObjectKey(OBJECT_KEY_PREFIX, OBJECT_KEY_B_MAIN_PART);
+    static final ObjectKey OBJECT_KEY_A = PlainObjectKey.create(OBJECT_KEY_PREFIX, OBJECT_KEY_A_MAIN_PART);
+    static final ObjectKey OBJECT_KEY_B = PlainObjectKey.create(OBJECT_KEY_PREFIX, OBJECT_KEY_B_MAIN_PART);
 
     Uuid topicId = Uuid.randomUuid();
     TopicIdPartition partition0 = new TopicIdPartition(topicId, 0, "inkless-topic");
@@ -152,7 +152,7 @@ public class FetchCompleterJobTest {
         int highWatermark = 1;
         Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of(
             partition0, FindBatchResponse.success(List.of(
-                BatchInfo.of(1L, OBJECT_KEY_A_MAIN_PART, 0, records.sizeInBytes(), 0, 0, 0, logAppendTimestamp, maxBatchTimestamp, TimestampType.CREATE_TIME)
+                BatchInfo.of(1L, OBJECT_KEY_A.value(), 0, records.sizeInBytes(), 0, 0, 0, logAppendTimestamp, maxBatchTimestamp, TimestampType.CREATE_TIME)
             ), logStartOffset, highWatermark)
         );
 
@@ -174,7 +174,6 @@ public class FetchCompleterJobTest {
         assertEquals(highWatermark, data.highWatermark);
     }
 
-
     @Test
     public void testFetchMultipleFiles() {
         MemoryRecords records = MemoryRecords.withRecords(0L, Compression.NONE, new SimpleRecord((byte[]) null));
@@ -188,8 +187,8 @@ public class FetchCompleterJobTest {
         int highWatermark = 1;
         Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of(
             partition0, FindBatchResponse.success(List.of(
-                BatchInfo.of(1L, OBJECT_KEY_A_MAIN_PART, 0, records.sizeInBytes(), 0, 0, 0, logAppendTimestamp, maxBatchTimestamp, TimestampType.CREATE_TIME),
-                BatchInfo.of(2L, OBJECT_KEY_B_MAIN_PART, 0, records.sizeInBytes(), 0, 0, 0, logAppendTimestamp, maxBatchTimestamp, TimestampType.CREATE_TIME)
+                BatchInfo.of(1L, OBJECT_KEY_A.value(), 0, records.sizeInBytes(), 0, 0, 0, logAppendTimestamp, maxBatchTimestamp, TimestampType.CREATE_TIME),
+                BatchInfo.of(2L, OBJECT_KEY_B.value(), 0, records.sizeInBytes(), 0, 0, 0, logAppendTimestamp, maxBatchTimestamp, TimestampType.CREATE_TIME)
             ), logStartOffset, highWatermark)
         );
 
@@ -233,8 +232,8 @@ public class FetchCompleterJobTest {
         int highWatermark = 2;
         Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of(
             partition0, FindBatchResponse.success(List.of(
-                BatchInfo.of(1L, OBJECT_KEY_A_MAIN_PART, 0, recordsA.sizeInBytes(), 0, 0, 0, logAppendTimestamp, maxBatchTimestamp, TimestampType.CREATE_TIME),
-                BatchInfo.of(2L, OBJECT_KEY_A_MAIN_PART, recordsA.sizeInBytes(), recordsB.sizeInBytes(), 1, 0, 0, logAppendTimestamp, maxBatchTimestamp, TimestampType.CREATE_TIME)
+                BatchInfo.of(1L, OBJECT_KEY_A.value(), 0, recordsA.sizeInBytes(), 0, 0, 0, logAppendTimestamp, maxBatchTimestamp, TimestampType.CREATE_TIME),
+                BatchInfo.of(2L, OBJECT_KEY_A.value(), recordsA.sizeInBytes(), recordsB.sizeInBytes(), 1, 0, 0, logAppendTimestamp, maxBatchTimestamp, TimestampType.CREATE_TIME)
             ), logStartOffset, highWatermark)
         );
 

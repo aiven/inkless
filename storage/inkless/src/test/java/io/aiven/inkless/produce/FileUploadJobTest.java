@@ -34,8 +34,18 @@ import static org.mockito.Mockito.when;
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.STRICT_STUBS)
 class FileUploadJobTest {
-    static final ObjectKey OBJECT_KEY = new PlainObjectKey("prefix/", "value");
-    static final ObjectKeyCreator OBJECT_KEY_CREATOR = s -> OBJECT_KEY;
+    static final ObjectKey OBJECT_KEY = PlainObjectKey.create("prefix", "value");
+    static final ObjectKeyCreator OBJECT_KEY_CREATOR = new ObjectKeyCreator("prefix") {
+        @Override
+        public ObjectKey from(String value) {
+            return OBJECT_KEY;
+        }
+
+        @Override
+        public ObjectKey create(String value) {
+            return OBJECT_KEY;
+        }
+    };
 
     @Mock
     ObjectUploader objectUploader;
