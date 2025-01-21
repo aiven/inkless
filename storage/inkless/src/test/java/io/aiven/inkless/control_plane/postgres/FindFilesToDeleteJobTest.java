@@ -5,7 +5,6 @@ import org.apache.kafka.common.utils.Time;
 
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
-import org.jooq.generated.enums.FileReasonT;
 import org.jooq.generated.enums.FileStateT;
 import org.jooq.impl.DSL;
 import org.junit.jupiter.api.BeforeEach;
@@ -20,6 +19,7 @@ import java.sql.Connection;
 import java.sql.SQLException;
 import java.time.Instant;
 
+import io.aiven.inkless.control_plane.FileReason;
 import io.aiven.inkless.control_plane.FileToDelete;
 import io.aiven.inkless.test_utils.SharedPostgreSQLTest;
 
@@ -48,7 +48,7 @@ class FindFilesToDeleteJobTest extends SharedPostgreSQLTest {
             fileId = ctx.insertInto(FILES,
                 FILES.OBJECT_KEY, FILES.REASON, FILES.STATE, FILES.UPLOADER_BROKER_ID, FILES.COMMITTED_AT, FILES.SIZE, FILES.USED_SIZE
             ).values(
-                OBJECT_KEY, FileReasonT.produce, FileStateT.uploaded, BROKER_ID, COMMITTED_AT, 1000L, 900L
+                OBJECT_KEY, FileReason.PRODUCE, FileStateT.uploaded, BROKER_ID, COMMITTED_AT, 1000L, 900L
             ).returning(FILES.FILE_ID).fetchOne(FILES.FILE_ID);
 
             ctx.insertInto(FILES_TO_DELETE,
