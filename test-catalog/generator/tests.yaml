@@ -33,6 +33,7 @@ org.apache.kafka.message.MessageGeneratorTest:
 - testCapitalizeFirst
 - testConstants
 - testFirstIsCapitalized
+- testGenerateAndWriteMessageClasses
 - testLowerCaseFirst
 - testToSnakeCase
 org.apache.kafka.message.StructRegistryTest:
@@ -40,6 +41,7 @@ org.apache.kafka.message.StructRegistryTest:
 - testDuplicateCommonStructError
 - testReSpecifiedCommonStructError
 - testSingleStruct
+- testValidVersionsIsNone
 org.apache.kafka.message.StructSpecTest:
 - testNamesMustBeUnique
 - testTagsMustBeUnique

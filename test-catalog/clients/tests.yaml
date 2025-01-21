@@ -3139,6 +3139,7 @@ org.apache.kafka.common.message.ApiMessageTypeTest:
 - testApiIdsArePositive
 - testFromApiKey
 - testHeaderVersion
+- testHeaderVersionWithNoValidVersion
 - testInvalidFromApiKey
 - testUniqueness
 org.apache.kafka.common.message.MessageTest:
@@ -3157,7 +3158,6 @@ org.apache.kafka.common.message.MessageTest:
 - testHeartbeatVersions
 - testJoinGroupRequestVersions
 - testJoinGroupResponseVersions
-- testLeaderAndIsrVersions
 - testLeaveGroupResponseVersions
 - testListOffsetsRequestVersions
 - testListOffsetsResponseVersions
@@ -3515,6 +3515,7 @@ org.apache.kafka.common.protocol.ApiKeysTest:
 - testApiScope
 - testForIdWithInvalidIdHigh
 - testForIdWithInvalidIdLow
+- testHasValidVersions
 - testHtmlOnlyHaveStableApi
 - testResponseThrottleTime
 org.apache.kafka.common.protocol.ByteBufferAccessorTest:
@@ -3541,6 +3542,8 @@ org.apache.kafka.common.protocol.MessageUtilTest:
 - testInvalidBinaryNode
 org.apache.kafka.common.protocol.ProtoUtilsTest:
 - testDelayedAllocationSchemaDetection
+org.apache.kafka.common.protocol.ProtocolTest:
+- testToHtml
 org.apache.kafka.common.protocol.SendBuilderTest:
 - testWriteByteBufferRespectsPosition
 - testZeroCopyByteBuffer
@@ -3798,9 +3801,6 @@ org.apache.kafka.common.requests.ConsumerGroupDescribeRequestTest:
 - testGetErrorResponse
 org.apache.kafka.common.requests.ConsumerGroupDescribeResponseTest:
 - testErrorCounts
-org.apache.kafka.common.requests.ControlledShutdownRequestTest:
-- testGetErrorResponse
-- testUnsupportedVersion
 org.apache.kafka.common.requests.CreateAclsRequestTest:
 - shouldRoundTripV1
 - shouldThrowOnIfUnknown
@@ -3951,7 +3951,6 @@ org.apache.kafka.common.requests.RequestHeaderTest:
 - parseHeaderWithNullClientId
 - testRequestHeaderV1
 - testRequestHeaderV2
-- testSerdeControlledShutdownV0
 - verifySizeMethodsReturnSameValue
 org.apache.kafka.common.requests.RequestResponseTest:
 - cannotUseFindCoordinatorV0ToFindTransactionCoordinator
