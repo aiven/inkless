@@ -3124,6 +3124,7 @@ kafka.server.MetadataCacheTest:
 - testGetLeaderAndIsr
 - testGetLiveBrokerEpoch
 - testGetOfflineReplicasConsidersDirAssignment
+- testGetPartitionReplicaEndpoints
 - testGetTopicMetadataForDescribeTopicPartitionsResponse
 - testIsBrokerFenced
 - testIsBrokerInControlledShutdown
