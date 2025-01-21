@@ -23,6 +23,7 @@ import io.aiven.inkless.control_plane.AbstractControlPlane;
 import io.aiven.inkless.control_plane.CommitBatchRequest;
 import io.aiven.inkless.control_plane.CommitBatchResponse;
 import io.aiven.inkless.control_plane.CreateTopicAndPartitionsRequest;
+import io.aiven.inkless.control_plane.DeleteFilesRequest;
 import io.aiven.inkless.control_plane.DeleteRecordsRequest;
 import io.aiven.inkless.control_plane.DeleteRecordsResponse;
 import io.aiven.inkless.control_plane.FileToDelete;
@@ -38,8 +39,6 @@ public class PostgresControlPlane extends AbstractControlPlane {
     private HikariDataSource hikariDataSource;
     private DSLContext jooqCtx;
 
-    private PostgresControlPlaneConfig controlPlaneConfig;
-
     public PostgresControlPlane(final Time time) {
         super(time);
         this.metrics = new PostgresControlPlaneMetrics(time);
@@ -53,7 +52,7 @@ public class PostgresControlPlane extends AbstractControlPlane {
 
     @Override
     public void configure(final Map<String, ?> configs) {
-        controlPlaneConfig = new PostgresControlPlaneConfig(configs);
+        final PostgresControlPlaneConfig controlPlaneConfig = new PostgresControlPlaneConfig(configs);
 
         Migrations.migrate(controlPlaneConfig);
 
@@ -120,6 +119,12 @@ public class PostgresControlPlane extends AbstractControlPlane {
     public List<FileToDelete> getFilesToDelete() {
         final FindFilesToDeleteJob job = new FindFilesToDeleteJob(time, jooqCtx);
         return job.call();
+    }
+
+    @Override
+    public void deleteFiles(DeleteFilesRequest request) {
+        final DeleteFilesJob job = new DeleteFilesJob(time, jooqCtx, request, metrics::onFilesDeleteCompleted);
+        job.run();
     }
 
     @Override

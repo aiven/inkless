@@ -29,7 +29,7 @@ public class InMemoryControlPlane extends AbstractControlPlane {
     private final AtomicLong batchIdCounter = new AtomicLong(0);
     private final Map<TopicIdPartition, LogInfo> logs = new HashMap<>();
     private final Map<String, FileInfo> files = new HashMap<>();
-    private final List<FileToDeleteInternal> filesToDelete = new ArrayList<>();
+    private final Map<String, FileToDeleteInternal> filesToDelete = new HashMap<>();
     private final HashMap<TopicIdPartition, TreeMap<Long, BatchInfoInternal>> batches = new HashMap<>();
 
     private InMemoryControlPlaneConfig controlPlaneConfig;
@@ -182,7 +182,7 @@ public class InMemoryControlPlane extends AbstractControlPlane {
             fileInfo.deleteBatch(batchInfoInternal.batchInfo);
             if (fileInfo.allDeleted()) {
                 files.remove(fileInfo.objectKey);
-                filesToDelete.add(new FileToDeleteInternal(fileInfo, TimeUtils.now(time)));
+                filesToDelete.put(fileInfo.objectKey, new FileToDeleteInternal(fileInfo, TimeUtils.now(time)));
             }
         }
         return (DeleteRecordsResponse.success(logInfo.logStartOffset));
@@ -209,7 +209,7 @@ public class InMemoryControlPlane extends AbstractControlPlane {
                 fileInfo.deleteBatch(batchInfoInternal.batchInfo);
                 if (fileInfo.allDeleted()) {
                     files.remove(fileInfo.objectKey);
-                    filesToDelete.add(new FileToDeleteInternal(fileInfo, TimeUtils.now(time)));
+                    filesToDelete.put(fileInfo.objectKey, new FileToDeleteInternal(fileInfo, TimeUtils.now(time)));
                 }
             }
         }
@@ -217,9 +217,17 @@ public class InMemoryControlPlane extends AbstractControlPlane {
 
     @Override
     public List<FileToDelete> getFilesToDelete() {
-        return filesToDelete.stream()
+        return filesToDelete.values().stream()
             .map(f -> new FileToDelete(f.fileInfo().objectKey, f.markedForDeletionAt()))
             .toList();
+    }
+
+    @Override
+    public synchronized void deleteFiles(DeleteFilesRequest request) {
+        for (final String objectKey : request.objectKeyPaths()) {
+            filesToDelete.remove(objectKey);
+            files.remove(objectKey);
+        }
     }
 
     @Override

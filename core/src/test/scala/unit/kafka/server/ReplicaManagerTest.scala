@@ -19,6 +19,7 @@ package kafka.server
 
 import com.yammer.metrics.core.{Gauge, Meter, Timer}
 import io.aiven.inkless.common.SharedState
+import io.aiven.inkless.config.InklessConfig
 import io.aiven.inkless.produce.AppendInterceptor
 import kafka.cluster.PartitionTest.MockPartitionListener
 import kafka.cluster.Partition
@@ -6900,6 +6901,7 @@ class ReplicaManagerTest {
       when(logManagerMock.liveLogDirs).thenReturn(Seq.empty)
       val sharedState = mock(classOf[SharedState])
       when(sharedState.time()).thenReturn(Time.SYSTEM)
+      when(sharedState.config()).thenReturn(new InklessConfig(new util.HashMap[String, Object]()))
 
       val logDirFailureChannel = new LogDirFailureChannel(config.logDirs.size)
 
