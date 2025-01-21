@@ -8,7 +8,6 @@ import org.apache.kafka.common.record.TimestampType;
 import org.apache.kafka.common.utils.MockTime;
 import org.apache.kafka.common.utils.Time;
 
-import org.jooq.generated.enums.FileReasonT;
 import org.jooq.generated.enums.FileStateT;
 import org.jooq.generated.tables.records.BatchesRecord;
 import org.jooq.generated.tables.records.FilesRecord;
@@ -24,6 +23,7 @@ import io.aiven.inkless.TimeUtils;
 import io.aiven.inkless.control_plane.CommitBatchRequest;
 import io.aiven.inkless.control_plane.CommitBatchResponse;
 import io.aiven.inkless.control_plane.CreateTopicAndPartitionsRequest;
+import io.aiven.inkless.control_plane.FileReason;
 import io.aiven.inkless.test_utils.SharedPostgreSQLTest;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -81,7 +81,7 @@ class CommitFileJobTest extends SharedPostgreSQLTest {
 
         assertThat(DBUtils.getAllFiles(hikariDataSource))
             .containsExactlyInAnyOrder(
-                new FilesRecord(EXPECTED_FILE_ID_1, "obj1", FileReasonT.produce, FileStateT.uploaded, BROKER_ID, TimeUtils.now(time), FILE_SIZE, FILE_SIZE)
+                new FilesRecord(EXPECTED_FILE_ID_1, "obj1", FileReason.PRODUCE, FileStateT.uploaded, BROKER_ID, TimeUtils.now(time), FILE_SIZE, FILE_SIZE)
             );
 
         assertThat(DBUtils.getAllBatches(hikariDataSource))
@@ -137,8 +137,8 @@ class CommitFileJobTest extends SharedPostgreSQLTest {
 
         assertThat(DBUtils.getAllFiles(hikariDataSource))
             .containsExactlyInAnyOrder(
-                new FilesRecord(EXPECTED_FILE_ID_1, "obj1", FileReasonT.produce, FileStateT.uploaded, BROKER_ID, time1, FILE_SIZE, FILE_SIZE),
-                new FilesRecord(EXPECTED_FILE_ID_2, "obj2", FileReasonT.produce, FileStateT.uploaded, BROKER_ID, time2, FILE_SIZE, FILE_SIZE)
+                new FilesRecord(EXPECTED_FILE_ID_1, "obj1", FileReason.PRODUCE, FileStateT.uploaded, BROKER_ID, time1, FILE_SIZE, FILE_SIZE),
+                new FilesRecord(EXPECTED_FILE_ID_2, "obj2", FileReason.PRODUCE, FileStateT.uploaded, BROKER_ID, time2, FILE_SIZE, FILE_SIZE)
             );
 
         assertThat(DBUtils.getAllBatches(hikariDataSource))
@@ -183,7 +183,7 @@ class CommitFileJobTest extends SharedPostgreSQLTest {
 
         assertThat(DBUtils.getAllFiles(hikariDataSource))
             .containsExactlyInAnyOrder(
-                new FilesRecord(EXPECTED_FILE_ID_1, "obj1", FileReasonT.produce, FileStateT.uploaded, BROKER_ID, TimeUtils.now(time), FILE_SIZE, FILE_SIZE)
+                new FilesRecord(EXPECTED_FILE_ID_1, "obj1", FileReason.PRODUCE, FileStateT.uploaded, BROKER_ID, TimeUtils.now(time), FILE_SIZE, FILE_SIZE)
             );
 
         assertThat(DBUtils.getAllBatches(hikariDataSource))

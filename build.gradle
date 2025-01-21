@@ -2418,7 +2418,13 @@ project(':storage:inkless') {
                   .withName("TIMESTAMP_TYPE_T")
                   .withUserType("org.apache.kafka.common.record.TimestampType")
                   .withIncludeExpression("TIMESTAMP_TYPE")
-                  .withConverter("io.aiven.inkless.control_plane.postgres.converters.ShortToTimestampTypeConverter")
+                  .withConverter("io.aiven.inkless.control_plane.postgres.converters.ShortToTimestampTypeConverter"),
+
+                new ForcedType()
+                  .withName("FILE_REASON_T")
+                  .withUserType("io.aiven.inkless.control_plane.FileReason")
+                  .withIncludeExpression("REASON")
+                  .withConverter("io.aiven.inkless.control_plane.postgres.converters.FileReasonTToFileReasonConverter")
         )
       }
       basePackageName.set("org.jooq.generated")
