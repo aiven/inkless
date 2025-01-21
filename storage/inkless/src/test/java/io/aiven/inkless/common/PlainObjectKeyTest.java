@@ -9,27 +9,27 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class PlainObjectKeyTest {
     @Test
     void notAllowNullPrefix() {
-        assertThatThrownBy(() -> new PlainObjectKey(null, "/suffix"))
+        assertThatThrownBy(() -> PlainObjectKey.create(null, "suffix"))
             .isInstanceOf(NullPointerException.class)
             .hasMessage("prefix cannot be null");
     }
 
     @Test
     void notAllowNullMainPath() {
-        assertThatThrownBy(() -> new PlainObjectKey("/prefix", null))
+        assertThatThrownBy(() -> PlainObjectKey.create("prefix", null))
             .isInstanceOf(NullPointerException.class)
-            .hasMessage("mainPath cannot be null");
+            .hasMessage("name cannot be null");
     }
 
     @Test
     void value() {
-        assertThat(new PlainObjectKey("/prefix", "/suffix").value())
-            .isEqualTo("/prefix/suffix");
+        assertThat(PlainObjectKey.create("prefix", "suffix").value())
+            .isEqualTo("prefix/suffix");
     }
 
     @Test
     void testToString() {
-        assertThat(new PlainObjectKey("/prefix", "/suffix").toString())
-            .isEqualTo("/prefix/suffix");
+        assertThat(PlainObjectKey.from("prefix/suffix").toString())
+            .isEqualTo("prefix/suffix");
     }
 }
