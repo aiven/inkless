@@ -356,7 +356,6 @@ org.apache.kafka.controller.metrics.ControllerMetricsChangesTest:
 - testHandleNewFencedBroker
 - testHandleNewTopic
 - testHandleNewUnfencedBroker
-- testHandleZkBroker
 - testInitialValues
 - testTopicChange
 org.apache.kafka.controller.metrics.QuorumControllerMetricsTest:

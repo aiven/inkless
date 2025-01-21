@@ -149,7 +149,6 @@ org.apache.kafka.coordinator.group.GroupCoordinatorShardTest:
 - testReplayShareGroupMetadata
 - testReplayShareGroupMetadataWithNullValue
 - testReplayTransactionalOffsetCommit
-- testReplayWithUnsupportedVersion
 - testScheduleClassicGroupSizeCounter
 - testScheduleCleanupGroupMetadata
 - testShareGroupHeartbeat

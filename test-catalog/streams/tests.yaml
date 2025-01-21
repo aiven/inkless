@@ -3407,6 +3407,7 @@ org.apache.kafka.streams.processor.internals.metrics.StreamsMetricsImplTest:
 - shouldAddSum
 - shouldAddThreadLevelImmutableMetric
 - shouldAddThreadLevelMutableMetric
+- shouldAddThreadLevelMutableMetricWithAdditionalTags
 - shouldAddTotalCountAndSumMetricsToSensor
 - shouldAddValue
 - shouldCleanupThreadLevelImmutableMetric
