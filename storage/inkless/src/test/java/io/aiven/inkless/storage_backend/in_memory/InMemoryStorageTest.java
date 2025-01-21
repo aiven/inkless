@@ -17,7 +17,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class InMemoryStorageTest {
-    static final PlainObjectKey OBJECT_KEY = new PlainObjectKey("a", "b");
+    static final PlainObjectKey OBJECT_KEY = PlainObjectKey.create("a", "b");
 
     @Test
     void uploadNulls() {
@@ -118,7 +118,7 @@ class InMemoryStorageTest {
         final InputStream fetch = storage.fetch(OBJECT_KEY, new ByteRange(1, 2));
         assertThat(fetch).hasBinaryContent(new byte[]{1, 2});
 
-        storage.delete(Set.of(OBJECT_KEY, new PlainObjectKey("un", "related")));
+        storage.delete(Set.of(OBJECT_KEY, PlainObjectKey.create("un", "related")));
 
         assertThatThrownBy(() -> storage.fetch(OBJECT_KEY, ByteRange.maxRange()))
             .isInstanceOf(KeyNotFoundException.class);

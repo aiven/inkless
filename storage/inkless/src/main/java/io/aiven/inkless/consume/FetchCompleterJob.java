@@ -154,7 +154,7 @@ public class FetchCompleterJob implements Supplier<Map<TopicIdPartition, FetchPa
     private List<MemoryRecords> extractRecords(FindBatchResponse metadata, Map<String, List<FileExtent>> allFiles) {
         List<MemoryRecords> foundRecords = new ArrayList<>();
         for (BatchInfo batch : metadata.batches()) {
-            List<FileExtent> files = allFiles.get(objectKeyCreator.create(batch.objectKey()).value());
+            List<FileExtent> files = allFiles.get(objectKeyCreator.from(batch.objectKey()).value());
             if (files == null || files.isEmpty()) {
                 // as soon as we encounter an error
                 return foundRecords;

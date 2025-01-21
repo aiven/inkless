@@ -3,23 +3,26 @@ package io.aiven.inkless.common;
 
 import java.util.Objects;
 
-public record MaskedPrefixObjectKey(String prefix, String mainPath) implements ObjectKey {
+public record MaskedPrefixObjectKey(ObjectKey.Path path) implements ObjectKey {
     public MaskedPrefixObjectKey {
-        Objects.requireNonNull(prefix, "prefix cannot be null");
-        Objects.requireNonNull(mainPath, "mainPath cannot be null");
+        Objects.requireNonNull(path, "path cannot be null");
+    }
+
+    public static MaskedPrefixObjectKey create(String prefix, String mainPath) {
+        return new MaskedPrefixObjectKey(Path.create(prefix, mainPath));
+    }
+
+    public static MaskedPrefixObjectKey from(String value) {
+        return new MaskedPrefixObjectKey(Path.from(value));
     }
 
     @Override
     public String value() {
-        return prefix + mainPath;
+        return path.value();
     }
 
     @Override
     public String toString() {
-        return "<prefix>" + mainPath;
-    }
-
-    public static ObjectKeyCreator creator(final String prefix) {
-        return (s) -> new MaskedPrefixObjectKey(prefix, s);
+        return "<prefix>/" + path.name();
     }
 }

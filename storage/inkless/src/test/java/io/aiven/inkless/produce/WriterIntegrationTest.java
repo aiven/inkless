@@ -26,7 +26,7 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
-import io.aiven.inkless.common.PlainObjectKey;
+import io.aiven.inkless.common.ObjectKey;
 import io.aiven.inkless.control_plane.CreateTopicAndPartitionsRequest;
 import io.aiven.inkless.control_plane.InMemoryControlPlane;
 import io.aiven.inkless.storage_backend.s3.S3Storage;
@@ -111,7 +111,7 @@ class WriterIntegrationTest {
 
         try (
             final Writer writer = new Writer(
-                time, 11, PlainObjectKey.creator(""), storage, controlPlane, Duration.ofMillis(10),
+                time, 11, ObjectKey.creator("", false), storage, controlPlane, Duration.ofMillis(10),
                 10 * 1024,
                 1,
                 Duration.ofMillis(10),

@@ -39,9 +39,20 @@ import static org.mockito.Mockito.when;
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.STRICT_STUBS)
 class FileCommitterTest {
+
     static final int BROKER_ID = 11;
-    static final ObjectKey OBJECT_KEY = new PlainObjectKey("prefix/", "value");
-    static final ObjectKeyCreator OBJECT_KEY_CREATOR = s -> OBJECT_KEY;
+    static final ObjectKey OBJECT_KEY = PlainObjectKey.create("prefix", "value");
+    static final ObjectKeyCreator OBJECT_KEY_CREATOR = new ObjectKeyCreator("prefix") {
+        @Override
+        public ObjectKey from(String value) {
+            return OBJECT_KEY;
+        }
+
+        @Override
+        public ObjectKey create(String value) {
+            return OBJECT_KEY;
+        }
+    };
     static final ClosedFile FILE = new ClosedFile(Instant.EPOCH, Map.of(), Map.of(), List.of(), List.of(), new byte[10]);
 
     @Mock
