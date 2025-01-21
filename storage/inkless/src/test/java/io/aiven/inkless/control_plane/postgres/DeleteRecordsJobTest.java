@@ -7,7 +7,6 @@ import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.record.TimestampType;
 import org.apache.kafka.common.utils.Time;
 
-import org.jooq.generated.enums.FileReasonT;
 import org.jooq.generated.enums.FileStateT;
 import org.jooq.generated.tables.records.BatchesRecord;
 import org.jooq.generated.tables.records.FilesRecord;
@@ -31,6 +30,7 @@ import io.aiven.inkless.control_plane.CommitBatchRequest;
 import io.aiven.inkless.control_plane.CreateTopicAndPartitionsRequest;
 import io.aiven.inkless.control_plane.DeleteRecordsRequest;
 import io.aiven.inkless.control_plane.DeleteRecordsResponse;
+import io.aiven.inkless.control_plane.FileReason;
 import io.aiven.inkless.test_utils.SharedPostgreSQLTest;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -151,9 +151,9 @@ class DeleteRecordsJobTest extends SharedPostgreSQLTest {
 
         // File 1 must be `deleting` because it contained only data from the fully truncated TOPIC_1.
         assertThat(DBUtils.getAllFiles(hikariDataSource)).containsExactlyInAnyOrder(
-            new FilesRecord(1L, objectKey1, FileReasonT.produce, FileStateT.deleting, BROKER_ID, filesCommittedAt, (long) file1Size, 0L),
-            new FilesRecord(2L, objectKey2, FileReasonT.produce, FileStateT.uploaded, BROKER_ID, filesCommittedAt, (long) file2Size, (long) file2Size),  // not a single batch deleted from file 2
-            new FilesRecord(3L, objectKey3, FileReasonT.produce, FileStateT.uploaded, BROKER_ID, filesCommittedAt, (long) file3Size, (long) file3Size - file3Batch2Size)
+            new FilesRecord(1L, objectKey1, FileReason.PRODUCE, FileStateT.deleting, BROKER_ID, filesCommittedAt, (long) file1Size, 0L),
+            new FilesRecord(2L, objectKey2, FileReason.PRODUCE, FileStateT.uploaded, BROKER_ID, filesCommittedAt, (long) file2Size, (long) file2Size),  // not a single batch deleted from file 2
+            new FilesRecord(3L, objectKey3, FileReason.PRODUCE, FileStateT.uploaded, BROKER_ID, filesCommittedAt, (long) file3Size, (long) file3Size - file3Batch2Size)
         );
         assertThat(DBUtils.getAllFilesToDelete(hikariDataSource)).containsExactlyInAnyOrder(
             new FilesToDeleteRecord(1L, topicsDeletedAt)

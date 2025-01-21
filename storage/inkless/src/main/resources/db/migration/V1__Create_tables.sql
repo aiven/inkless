@@ -39,7 +39,9 @@ CREATE TABLE logs (
 -- The reasons why a file on the remote storage exists.
 CREATE TYPE file_reason_t AS ENUM (
     -- Uploaded by a broker as the result of producing.
-    'produce'
+    'produce',
+    -- Uploaded by a broker as the result of merging.
+    'merge'
 );
 
 CREATE TYPE file_state_t AS ENUM (
