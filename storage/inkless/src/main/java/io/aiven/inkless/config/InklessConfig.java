@@ -60,6 +60,14 @@ public class InklessConfig extends AbstractConfig {
     private static final String CONSUME_CACHE_BLOCK_BYTES_DOC = "The number of bytes to fetch as a single block from object storage when serving fetch requests.";
     private static final int CONSUME_CACHE_BLOCK_BYTES_DEFAULT = 16 * 1024 * 1024;  // 16 MiB
 
+    public static final String FILE_CLEANER_INTERVAL_MS_CONFIG = "file.cleaner.interval.ms";
+    private static final String FILE_CLEANER_INTERVAL_MS_DOC = "The interval with which to clean up files marked for deletion.";
+    private static final int FILE_CLEANER_INTERVAL_MS_DEFAULT = 5 * 60 * 1000;  // 5 minute
+
+    public static final String FILE_CLEANER_RETENTION_PERIOD_MS_CONFIG = "file.cleaner.retention.period.ms";
+    private static final String FILE_CLEANER_RETENTION_PERIOD_MS_DOC = "The retention period for files marked for deletion.";
+    private static final int FILE_CLEANER_RETENTION_PERIOD_MS_DEFAULT = 10 * 60 * 1000;  // 10 minute
+
     public static ConfigDef configDef() {
         final ConfigDef configDef = new ConfigDef();
 
@@ -140,6 +148,24 @@ public class InklessConfig extends AbstractConfig {
                 CONSUME_CACHE_BLOCK_BYTES_DOC
         );
 
+        configDef.define(
+            FILE_CLEANER_INTERVAL_MS_CONFIG,
+            ConfigDef.Type.INT,
+            FILE_CLEANER_INTERVAL_MS_DEFAULT,
+            ConfigDef.Range.atLeast(1),
+            ConfigDef.Importance.LOW,
+            FILE_CLEANER_INTERVAL_MS_DOC
+        );
+
+        configDef.define(
+            FILE_CLEANER_RETENTION_PERIOD_MS_CONFIG,
+            ConfigDef.Type.INT,
+            FILE_CLEANER_RETENTION_PERIOD_MS_DEFAULT,
+            ConfigDef.Range.atLeast(1),
+            ConfigDef.Importance.LOW,
+            FILE_CLEANER_RETENTION_PERIOD_MS_DOC
+        );
+
         return configDef;
     }
 
@@ -147,8 +173,7 @@ public class InklessConfig extends AbstractConfig {
         this(config.originalsWithPrefix(InklessConfig.PREFIX));
     }
 
-    // Visible for testing
-    InklessConfig(final Map<String, ?> props) {
+    public InklessConfig(final Map<String, ?> props) {
         super(configDef(), props);
     }
 
@@ -193,5 +218,13 @@ public class InklessConfig extends AbstractConfig {
 
     public int fetchCacheBlockBytes() {
         return getInt(CONSUME_CACHE_BLOCK_BYTES_CONFIG);
+    }
+
+    public Duration fileCleanerInterval() {
+        return Duration.ofMillis(getInt(FILE_CLEANER_INTERVAL_MS_CONFIG));
+    }
+
+    public Duration fileCleanerRetentionPeriod() {
+        return Duration.ofMillis(getInt(FILE_CLEANER_RETENTION_PERIOD_MS_CONFIG));
     }
 }
