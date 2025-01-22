@@ -2169,6 +2169,29 @@ org.apache.kafka.clients.consumer.internals.ShareSessionHandlerTest:
 - testPartitionRemoval
 - testShareSession
 - testTopicIdReplaced
+org.apache.kafka.clients.consumer.internals.StreamsRebalanceDataTest:
+- assignmentShouldNotAcceptNulls
+- assignmentShouldNotBeModifiable
+- emptyAssignmentShouldNotBeModifiable
+- shouldCopyAssignment
+- shouldCopyEmptyAssignment
+- streamsRebalanceDataShouldBeConstructedWithEmptyAssignment
+- streamsRebalanceDataShouldNotAcceptNulls
+- streamsRebalanceDataShouldNotHaveModifiableSubtopologies
+- subtopologyShouldNotAcceptNulls
+- subtopologyShouldNotBeModifiable
+- taskIdShouldNotAcceptNulls
+- testAssignmentEqualsAndHashCode
+- testTaskIdCompareTo
+- testTaskIdEqualsAndHashCode
+- topicInfoShouldNotAcceptNulls
+org.apache.kafka.clients.consumer.internals.StreamsRebalanceEventsProcessorTest:
+- shouldInvokeOnAllTasksLostCallback
+- shouldInvokeOnTasksAssignedCallback
+- shouldInvokeOnTasksRevokedCallback
+- shouldReThrowErrorFromOnAllTasksLostCallbackAndPassErrorToBackground
+- shouldReThrowErrorFromOnTasksAssignedCallbackAndPassErrorToBackground
+- shouldReThrowErrorFromOnTasksRevokedCallbackAndPassErrorToBackground
 org.apache.kafka.clients.consumer.internals.SubscriptionStateTest:
 - cantAssignPartitionForUnmatchedPattern
 - cantAssignPartitionForUnsubscribedTopics
