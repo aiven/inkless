@@ -2097,8 +2097,6 @@ kafka.raft.RaftManagerTest:
 - testLogDirLockWhenBrokerOnlyWithSeparateMetadataDir
 - testLogDirLockWhenControllerOnly
 - testNodeIdPresent
-kafka.security.authorizer.AclEntryTest:
-- testAclJsonConversion
 kafka.security.authorizer.AuthorizerTest:
 - testAccessAllowedIfAllowAclExistsOnPrefixedResource
 - testAccessAllowedIfAllowAclExistsOnWildcardResource
@@ -2254,7 +2252,6 @@ kafka.server.ApiVersionManagerTest:
 - testControllerApiIntersection
 - testDisabledApis
 - testEnvelopeDisabledForKRaftBroker
-- testEnvelopeDisabledWhenForwardingManagerEmpty
 kafka.server.ApiVersionsRequestTest:
 - testApiVersionsRequest
 - testApiVersionsRequestIncludesUnreleasedApis
@@ -3824,12 +3821,6 @@ kafka.utils.CoreUtilsTest:
 - testReadBytes
 - testSwallow
 - testUrlSafeBase64EncodeUUID
-kafka.utils.JsonTest:
-- testEncodeAsBytes
-- testEncodeAsString
-- testJsonParse
-- testParseTo
-- testParseToWithInvalidJson
 kafka.utils.LoggingTest:
 - testLog4jControllerIsRegistered
 - testLogName
@@ -3848,26 +3839,6 @@ kafka.utils.SchedulerTest:
 - testReentrantTaskInMockScheduler
 - testRestart
 - testUnscheduleProducerTask
-kafka.utils.json.JsonValueTest:
-- testAsJsonArray
-- testAsJsonArrayOption
-- testAsJsonObject
-- testAsJsonObjectOption
-- testDecodeBoolean
-- testDecodeDouble
-- testDecodeInt
-- testDecodeLong
-- testDecodeMap
-- testDecodeOption
-- testDecodeSeq
-- testDecodeString
-- testJsonArrayIterator
-- testJsonObjectApply
-- testJsonObjectGet
-- testJsonObjectIterator
-- testJsonValueEquals
-- testJsonValueHashCode
-- testJsonValueToString
 unit.kafka.server.AllocateProducerIdsRequestTest:
 - testAllocateProducersIdSentToController
 - testAllocateProducersIdSentToNonController
