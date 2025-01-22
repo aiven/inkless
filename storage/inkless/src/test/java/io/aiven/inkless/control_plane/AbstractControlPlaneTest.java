@@ -524,6 +524,36 @@ public abstract class AbstractControlPlaneTest {
         assertThat(controlPlane.getFilesToDelete()).isEmpty();
     }
 
+    @Test
+    void deleteFiles() {
+        final String objectKey1 = "a1";
+        final String objectKey2 = "a2";
+
+        controlPlane.commitFile(objectKey1, BROKER_ID, FILE_SIZE,
+            List.of(
+                CommitBatchRequest.of(new TopicIdPartition(EXISTING_TOPIC_1_ID, 0, EXISTING_TOPIC_1), 1, (int) FILE_SIZE, 0, 0, 1000, TimestampType.CREATE_TIME)
+            ));
+        final int file2Partition0Size = (int) FILE_SIZE / 2;
+        final int file2Partition1Size = (int) FILE_SIZE - file2Partition0Size;
+        controlPlane.commitFile(objectKey2, BROKER_ID, FILE_SIZE,
+            List.of(
+                CommitBatchRequest.of(new TopicIdPartition(EXISTING_TOPIC_1_ID, 0, EXISTING_TOPIC_1), 1, file2Partition0Size, 0, 0, 1000, TimestampType.CREATE_TIME),
+                CommitBatchRequest.of(new TopicIdPartition(EXISTING_TOPIC_2_ID, 0, EXISTING_TOPIC_1), 1, file2Partition1Size, 1, 1, 2000, TimestampType.CREATE_TIME)
+            ));
+
+        time.sleep(1001);  // advance time
+        controlPlane.deleteTopics(Set.of(EXISTING_TOPIC_1_ID, Uuid.ONE_UUID));
+
+        // objectKey2 is kept alive by the second topic, which isn't deleted
+        assertThat(controlPlane.getFilesToDelete()).containsExactly(
+            new FileToDelete(objectKey1, TimeUtils.now(time))
+        );
+
+        // Delete files from Control Plane
+        controlPlane.deleteFiles(new DeleteFilesRequest(Set.of(objectKey1)));
+        assertThat(controlPlane.getFilesToDelete()).isEmpty();
+    }
+
     public record ControlPlaneAndConfigs(ControlPlane controlPlane, Map<String, ?> configs) {
     }
 }

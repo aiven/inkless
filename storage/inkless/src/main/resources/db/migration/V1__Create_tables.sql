@@ -305,13 +305,13 @@ BEGIN
     INTO new_used_size;
 
     IF new_used_size = 0 THEN
-        PERFORM delete_file_v1(now, l_file_id);
+        PERFORM mark_file_to_delete_v1(now, l_file_id);
     END IF;
 END;
 $$
 ;
 
-CREATE FUNCTION delete_file_v1(
+CREATE FUNCTION mark_file_to_delete_v1(
     now TIMESTAMP WITH TIME ZONE,
     arg_file_id BIGINT
 )
@@ -323,6 +323,30 @@ BEGIN
 
     INSERT INTO files_to_delete(file_id, marked_for_deletion_at)
     VALUES (arg_file_id, now);
+END;
+$$
+;
+
+CREATE FUNCTION delete_files_v1(
+    paths object_key_t[]
+)
+RETURNS VOID LANGUAGE plpgsql VOLATILE AS $$
+DECLARE
+    file RECORD;
+BEGIN
+    FOR file IN
+        SELECT *
+        FROM files
+        WHERE object_key = ANY(paths)
+            AND state = 'deleting'
+        FOR UPDATE
+    LOOP
+        DELETE FROM files_to_delete
+        WHERE file_id = file.file_id;
+
+        DELETE FROM files
+        WHERE file_id = file.file_id;
+    END LOOP;
 END;
 $$
 ;

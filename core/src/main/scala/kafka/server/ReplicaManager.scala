@@ -17,9 +17,9 @@
 package kafka.server
 
 import com.yammer.metrics.core.Meter
-import io.aiven.inkless.DeleteRecordsInterceptor
 import io.aiven.inkless.common.SharedState
 import io.aiven.inkless.consume.{FetchInterceptor, FetchOffsetInterceptor}
+import io.aiven.inkless.delete.{DeleteRecordsInterceptor, FileCleaner}
 import io.aiven.inkless.produce.AppendInterceptor
 import kafka.cluster.{Partition, PartitionListener}
 import kafka.controller.StateChangeLogger
@@ -317,6 +317,7 @@ class ReplicaManager(val config: KafkaConfig,
   private val inklessFetchInterceptor: Option[FetchInterceptor] = inklessSharedState.map(new FetchInterceptor(_))
   private val inklessFetchOffsetInterceptor: Option[FetchOffsetInterceptor] = inklessSharedState.map(new FetchOffsetInterceptor(_))
   private val inklessDeleteRecordsInterceptor: Option[DeleteRecordsInterceptor] = inklessSharedState.map(new DeleteRecordsInterceptor(_))
+  private val inklessFileCleaner: Option[FileCleaner] = inklessSharedState.map(new FileCleaner(_))
 
   /* epoch of the controller that last changed the leader */
   @volatile private[server] var controllerEpoch: Int = 0
@@ -403,6 +404,11 @@ class ReplicaManager(val config: KafkaConfig,
     logDirFailureHandler.start()
     addPartitionsToTxnManager.foreach(_.start())
     remoteLogManager.foreach(rlm => rlm.setDelayedOperationPurgatory(delayedRemoteListOffsetsPurgatory))
+
+    // Inkless threads
+    inklessSharedState.map { sharedState =>
+      scheduler.schedule("inkless-file-cleaner", () => inklessFileCleaner.foreach(_.run()), 0L, sharedState.config().fileCleanerInterval().toMillis)
+    }
   }
 
   private def maybeRemoveTopicMetrics(topic: String): Unit = {

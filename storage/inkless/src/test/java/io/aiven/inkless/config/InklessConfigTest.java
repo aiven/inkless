@@ -28,7 +28,9 @@ class InklessConfigTest {
             "inkless.produce.buffer.max.bytes", "1024",
             "inkless.produce.max.upload.attempts", "5",
             "inkless.produce.upload.backoff.ms", "30",
-            "inkless.storage.backend.class", ConfigTestStorageBackend.class.getCanonicalName()
+            "inkless.storage.backend.class", ConfigTestStorageBackend.class.getCanonicalName(),
+            "inkless.file.cleaner.interval.ms", "100",
+            "inkless.file.cleaner.retention.period.ms", "200"
         )));
         assertThat(config.controlPlaneClass()).isEqualTo(InMemoryControlPlane.class);
         assertThat(config.controlPlaneConfig()).isEqualTo(Map.of("class", controlPlaneClass));
@@ -38,6 +40,8 @@ class InklessConfigTest {
         assertThat(config.produceMaxUploadAttempts()).isEqualTo(5);
         assertThat(config.produceUploadBackoff()).isEqualTo(Duration.ofMillis(30));
         assertThat(config.storage()).isInstanceOf(ConfigTestStorageBackend.class);
+        assertThat(config.fileCleanerInterval()).isEqualTo(Duration.ofMillis(100));
+        assertThat(config.fileCleanerRetentionPeriod()).isEqualTo(Duration.ofMillis(200));
     }
 
     @Test
@@ -57,6 +61,8 @@ class InklessConfigTest {
         assertThat(config.produceMaxUploadAttempts()).isEqualTo(3);
         assertThat(config.produceUploadBackoff()).isEqualTo(Duration.ofMillis(10));
         assertThat(config.storage()).isInstanceOf(ConfigTestStorageBackend.class);
+        assertThat(config.fileCleanerInterval()).isEqualTo(Duration.ofMinutes(5));
+        assertThat(config.fileCleanerRetentionPeriod()).isEqualTo(Duration.ofMinutes(10));
     }
 
     @Test
@@ -70,7 +76,9 @@ class InklessConfigTest {
                 "produce.buffer.max.bytes", "1024",
                 "produce.max.upload.attempts", "5",
                 "produce.upload.backoff.ms", "30",
-                "storage.backend.class", ConfigTestStorageBackend.class.getCanonicalName()
+                "storage.backend.class", ConfigTestStorageBackend.class.getCanonicalName(),
+                "file.cleaner.interval.ms", "100",
+                "file.cleaner.retention.period.ms", "200"
             )
         );
         assertThat(config.controlPlaneClass()).isEqualTo(InMemoryControlPlane.class);
@@ -81,6 +89,8 @@ class InklessConfigTest {
         assertThat(config.produceMaxUploadAttempts()).isEqualTo(5);
         assertThat(config.produceUploadBackoff()).isEqualTo(Duration.ofMillis(30));
         assertThat(config.storage()).isInstanceOf(ConfigTestStorageBackend.class);
+        assertThat(config.fileCleanerInterval()).isEqualTo(Duration.ofMillis(100));
+        assertThat(config.fileCleanerRetentionPeriod()).isEqualTo(Duration.ofMillis(200));
     }
 
     @Test

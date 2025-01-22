@@ -1,5 +1,5 @@
 // Copyright (c) 2025 Aiven, Helsinki, Finland. https://aiven.io/
-package io.aiven.inkless;
+package io.aiven.inkless.delete;
 
 import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.TopicPartition;
