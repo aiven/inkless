@@ -30,6 +30,7 @@ org.apache.kafka.coordinator.common.runtime.CoordinatorRuntimeTest:
 - testCoordinatorExecutor
 - testEmptyBatch
 - testHighWatermarkUpdate
+- testHighWatermarkUpdateWithDeferredEventExceptions
 - testNonRetryableTimer
 - testOnNewMetadataImage
 - testPartitionLoadGeneratesSnapshotAtHighWatermark
@@ -61,6 +62,7 @@ org.apache.kafka.coordinator.common.runtime.CoordinatorRuntimeTest:
 - testScheduleTransactionalWriteOperationWithBatching
 - testScheduleUnloading
 - testScheduleUnloadingWhenContextDoesntExist
+- testScheduleUnloadingWithDeferredEventExceptions
 - testScheduleUnloadingWithEmptyEpoch
 - testScheduleUnloadingWithStalePartitionEpoch
 - testScheduleWriteAllOperation
