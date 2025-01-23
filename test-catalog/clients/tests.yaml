@@ -829,6 +829,9 @@ org.apache.kafka.clients.consumer.KafkaShareConsumerMetricsTest:
 - testShouldOnlyCallMetricReporterMetricChangeOnceWithExistingConsumerMetric
 - testUnregisteringCustomMetricsWithSameNameDoesntAffectConsumerMetrics
 - testUnregisteringNonexistingMetricsDoesntCauseError
+org.apache.kafka.clients.consumer.KafkaShareConsumerTest:
+- testVerifyFetchAndAcknowledgeSync
+- testVerifyHeartbeats
 org.apache.kafka.clients.consumer.MockConsumerTest:
 - endOffsetsShouldBeIdempotent
 - shouldNotClearRecordsForPausedPartitions
