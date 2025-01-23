@@ -23,7 +23,6 @@ class InklessConfigTest {
         final InklessConfig config = new InklessConfig(new AbstractConfig(new ConfigDef(), Map.of(
             "inkless.control.plane.class", controlPlaneClass,
             "inkless.object.key.prefix", "prefix/",
-            "inkless.file.merge.size.threshold.bytes", "1234",
             "inkless.produce.commit.interval.ms", "100",
             "inkless.produce.buffer.max.bytes", "1024",
             "inkless.produce.max.upload.attempts", "5",

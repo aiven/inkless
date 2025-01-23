@@ -26,11 +26,13 @@ import io.aiven.inkless.control_plane.CreateTopicAndPartitionsRequest;
 import io.aiven.inkless.control_plane.DeleteFilesRequest;
 import io.aiven.inkless.control_plane.DeleteRecordsRequest;
 import io.aiven.inkless.control_plane.DeleteRecordsResponse;
+import io.aiven.inkless.control_plane.FileMergeWorkItem;
 import io.aiven.inkless.control_plane.FileToDelete;
 import io.aiven.inkless.control_plane.FindBatchRequest;
 import io.aiven.inkless.control_plane.FindBatchResponse;
 import io.aiven.inkless.control_plane.ListOffsetsRequest;
 import io.aiven.inkless.control_plane.ListOffsetsResponse;
+import io.aiven.inkless.control_plane.MergedFileBatch;
 
 public class PostgresControlPlane extends AbstractControlPlane {
 
@@ -125,6 +127,20 @@ public class PostgresControlPlane extends AbstractControlPlane {
     public void deleteFiles(DeleteFilesRequest request) {
         final DeleteFilesJob job = new DeleteFilesJob(time, jooqCtx, request, metrics::onFilesDeleteCompleted);
         job.run();
+    }
+
+    @Override
+    public FileMergeWorkItem getFileMergeWorkItem() {
+        throw new RuntimeException("Not implemented");
+    }
+
+    @Override
+    public void commitFileMergeWorkItem(final long workItemId,
+                                        final String objectKey,
+                                        final int uploaderBrokerId,
+                                        final long fileSize,
+                                        final List<MergedFileBatch> batches) {
+        throw new RuntimeException("Not implemented");
     }
 
     @Override
