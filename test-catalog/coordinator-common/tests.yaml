@@ -64,6 +64,7 @@ org.apache.kafka.coordinator.common.runtime.CoordinatorRuntimeTest:
 - testScheduleUnloadingWhenContextDoesntExist
 - testScheduleUnloadingWithDeferredEventExceptions
 - testScheduleUnloadingWithEmptyEpoch
+- testScheduleUnloadingWithException
 - testScheduleUnloadingWithStalePartitionEpoch
 - testScheduleWriteAllOperation
 - testScheduleWriteOp

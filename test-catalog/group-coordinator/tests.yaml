@@ -782,10 +782,25 @@ org.apache.kafka.coordinator.group.modern.share.ShareGroupTest:
 - testValidateOffsetCommit
 - testValidateOffsetDelete
 - testValidateOffsetFetch
-org.apache.kafka.coordinator.group.streams.AssignmentTest:
-- testFromTargetAssignmentRecord
-- testReturnUnmodifiableTaskAssignments
-- testTasksCannotBeNull
+org.apache.kafka.coordinator.group.streams.CurrentAssignmentBuilderTest:
+- testRemainsInUnrevokedTasks
+- testStableToStable
+- testStableToStableAtTargetEpoch
+- testStableToStableWithNewTasks
+- testStableToUnreleasedTasks
+- testStableToUnreleasedTasksWithOwnedTasksNotHavingRevokedTasks
+- testStableToUnrevokedTasks
+- testStableToUnrevokedWithEmptyAssignment
+- testUnknownState
+- testUnreleasedTasksToStable
+- testUnreleasedTasksToStableWithNewTasks
+- testUnreleasedTasksToUnreleasedTasks
+- testUnreleasedTasksToUnreleasedTasksAnyActiveOwner
+- testUnreleasedTasksToUnreleasedTasksOtherUnreleasedTaskRole
+- testUnreleasedTasksToUnrevokedTasks
+- testUnrevokedTasksToStable
+- testUnrevokedTasksToUnreleasedTasks
+- testUnrevokedTasksToUnrevokedTasks
 org.apache.kafka.coordinator.group.streams.StreamsGroupMemberTest:
 - testAsStreamsGroupDescribeMember
 - testAsStreamsGroupDescribeWithTargetAssignmentNull
@@ -797,13 +812,20 @@ org.apache.kafka.coordinator.group.streams.StreamsGroupMemberTest:
 - testBuilderWithDefaults
 - testBuilderWithMemberIdIsNull
 - testBuilderWithMemberIsNull
-- testReturnUnmodifiableFields
+- testHasAssignedTasksChanged
 org.apache.kafka.coordinator.group.streams.StreamsTopologyTest:
 - fromRecordShouldCreateCorrectTopology
 - requiredTopicsShouldBeCorrect
 - subtopologiesMapShouldBeImmutable
 - subtopologiesMapShouldNotBeNull
 - topologyEpochShouldNotBeNegative
+org.apache.kafka.coordinator.group.streams.TasksTupleTest:
+- testContainsAny
+- testFromTargetAssignmentRecord
+- testIsEmpty
+- testMerge
+- testReturnUnmodifiableTaskAssignments
+- testTasksCannotBeNull
 org.apache.kafka.coordinator.group.streams.TopicMetadataTest:
 - testConstructor
 - testConstructorWithEmptyName
