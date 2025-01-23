@@ -10,16 +10,21 @@ import org.apache.kafka.common.utils.Time;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInfo;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
 import java.io.IOException;
+import java.time.Duration;
+import java.time.Instant;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 import io.aiven.inkless.TimeUtils;
 
@@ -36,9 +41,16 @@ public abstract class AbstractControlPlaneTest {
     static final TopicIdPartition EXISTING_TOPIC_1_ID_PARTITION_1 = new TopicIdPartition(EXISTING_TOPIC_1_ID, 1, EXISTING_TOPIC_1);
     static final String EXISTING_TOPIC_2 = "topic-existing-2";
     static final Uuid EXISTING_TOPIC_2_ID = new Uuid(20, 20);
-    static final TopicIdPartition EXISTING_TOPIC_2_ID_PARTITION = new TopicIdPartition(EXISTING_TOPIC_2_ID, 0, EXISTING_TOPIC_2);
+    static final TopicIdPartition EXISTING_TOPIC_2_ID_PARTITION_0 = new TopicIdPartition(EXISTING_TOPIC_2_ID, 0, EXISTING_TOPIC_2);
     static final Uuid NONEXISTENT_TOPIC_ID = Uuid.ONE_UUID;
     static final String NONEXISTENT_TOPIC = "topic-nonexistent";
+
+    protected static final long FILE_MERGE_SIZE_THRESHOLD = 100 * 1024 * 1024;
+    protected static final Duration FILE_MERGE_LOCK_PERIOD = Duration.ofHours(1);
+    protected static final Map<String, String> BASE_CONFIG = Map.of(
+        "file.merge.size.threshold.bytes", Long.toString(FILE_MERGE_SIZE_THRESHOLD),
+        "file.merge.lock.period.ms", Long.toString(FILE_MERGE_LOCK_PERIOD.toMillis())
+    );
 
     protected Time time = new MockTime();
 
@@ -58,7 +70,8 @@ public abstract class AbstractControlPlaneTest {
         configureControlPlane(controlPlane, controlPlaneAndConfigs.configs);
 
         final Set<CreateTopicAndPartitionsRequest> createTopicAndPartitionsRequests = Set.of(
-            new CreateTopicAndPartitionsRequest(EXISTING_TOPIC_1_ID, EXISTING_TOPIC_1, 1)
+            new CreateTopicAndPartitionsRequest(EXISTING_TOPIC_1_ID, EXISTING_TOPIC_1, 1),
+            new CreateTopicAndPartitionsRequest(EXISTING_TOPIC_2_ID, EXISTING_TOPIC_2, 1)
         );
         controlPlane.createTopicAndPartitions(createTopicAndPartitionsRequests);
     }
@@ -306,14 +319,14 @@ public abstract class AbstractControlPlaneTest {
                 CommitBatchRequest.of(new TopicIdPartition(EXISTING_TOPIC_2_ID, 0, EXISTING_TOPIC_1), 1, file2Partition1Size, 1, 1, 2000, TimestampType.CREATE_TIME)
             ));
 
-        final List<FindBatchRequest> findBatchRequests = List.of(new FindBatchRequest(EXISTING_TOPIC_2_ID_PARTITION, 0, Integer.MAX_VALUE));
+        final List<FindBatchRequest> findBatchRequests = List.of(new FindBatchRequest(EXISTING_TOPIC_2_ID_PARTITION_0, 0, Integer.MAX_VALUE));
         final List<FindBatchResponse> findBatchResponsesBeforeDelete = controlPlane.findBatches(findBatchRequests, true, Integer.MAX_VALUE);
 
         time.sleep(1001);  // advance time
         controlPlane.deleteTopics(Set.of(EXISTING_TOPIC_1_ID, Uuid.ONE_UUID));
 
         // objectKey2 is kept alive by the second topic, which isn't deleted
-        assertThat(controlPlane.getFilesToDelete()).containsExactly(
+        assertThat(controlPlane.getFilesToDelete()).containsExactlyInAnyOrder(
             new FileToDelete(objectKey1, TimeUtils.now(time))
         );
 
@@ -322,7 +335,7 @@ public abstract class AbstractControlPlaneTest {
 
         // Nothing happens as it's idempotent.
         controlPlane.deleteTopics(Set.of(EXISTING_TOPIC_1_ID, Uuid.ONE_UUID));
-        assertThat(controlPlane.getFilesToDelete()).containsExactly(
+        assertThat(controlPlane.getFilesToDelete()).containsExactlyInAnyOrder(
             new FileToDelete(objectKey1, TimeUtils.now(time))
         );
     }
@@ -405,7 +418,7 @@ public abstract class AbstractControlPlaneTest {
                 findResponseBeforeDelete.get(0).batches().get(2)
             ), 19, 30)
         );
-        assertThat(controlPlane.getFilesToDelete()).containsExactly(
+        assertThat(controlPlane.getFilesToDelete()).containsExactlyInAnyOrder(
             new FileToDelete(objectKey1, TimeUtils.now(time))
         );
     }
@@ -462,7 +475,7 @@ public abstract class AbstractControlPlaneTest {
             new FindBatchResponse(Errors.NONE, List.of(), 10, 10)
         );
 
-        assertThat(controlPlane.getFilesToDelete()).containsExactly(new FileToDelete(objectKey1, TimeUtils.now(time)));
+        assertThat(controlPlane.getFilesToDelete()).containsExactlyInAnyOrder(new FileToDelete(objectKey1, TimeUtils.now(time)));
     }
 
     @ParameterizedTest
@@ -552,6 +565,449 @@ public abstract class AbstractControlPlaneTest {
         // Delete files from Control Plane
         controlPlane.deleteFiles(new DeleteFilesRequest(Set.of(objectKey1)));
         assertThat(controlPlane.getFilesToDelete()).isEmpty();
+    }
+
+    @Nested
+    class GetFileMergeWorkItem {
+        @Test
+        void empty() {
+            assertThat(controlPlane.getFileMergeWorkItem()).isNull();
+            // Not a mistake, checking again, because the behavior may have changed.
+            assertThat(controlPlane.getFileMergeWorkItem()).isNull();
+        }
+
+        @Test
+        void notEnoughData() {
+            final long fileSize = FILE_MERGE_SIZE_THRESHOLD / 10;
+            for (int i = 0; i < 5; i++) {
+                controlPlane.commitFile(String.format("obj%d", i), i, fileSize,
+                    List.of(new CommitBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 0, (int) fileSize, 0, 100, 1000, TimestampType.CREATE_TIME))
+                );
+            }
+
+            assertThat(controlPlane.getFileMergeWorkItem()).isNull();
+            // Not a mistake, checking again, because the behavior may have changed.
+            assertThat(controlPlane.getFileMergeWorkItem()).isNull();
+        }
+
+        @Test
+        void enoughData() {
+            final long fileSize = FILE_MERGE_SIZE_THRESHOLD / 2;
+            final long committedAt = time.milliseconds();
+            controlPlane.commitFile("obj0", 1, fileSize,
+                List.of(new CommitBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 0, (int) fileSize, 0, 100, 1000, TimestampType.CREATE_TIME)));
+            controlPlane.commitFile("obj1", 2, fileSize,
+                List.of(new CommitBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 0, (int) fileSize, 0, 100, 2000, TimestampType.CREATE_TIME)));
+
+            final List<FileMergeWorkItem.File> expectedFiles = List.of(
+                new FileMergeWorkItem.File(1L, "obj0", fileSize, fileSize,
+                    List.of(new FileMergeWorkItem.Batch(1, EXISTING_TOPIC_1_ID_PARTITION_0, "obj0", 0, fileSize, 0, 0, 100, committedAt, 1000, TimestampType.CREATE_TIME))),
+                new FileMergeWorkItem.File(2L, "obj1", fileSize, fileSize,
+                    List.of(new FileMergeWorkItem.Batch(2, EXISTING_TOPIC_1_ID_PARTITION_0, "obj1", 0, fileSize, 101, 0, 100, committedAt, 2000, TimestampType.CREATE_TIME)))
+            );
+            assertThat(controlPlane.getFileMergeWorkItem())
+                .isEqualTo(new FileMergeWorkItem(1L, TimeUtils.now(time), expectedFiles));
+
+            // Not it should not return the same work item again, because the files are locked.
+            assertThat(controlPlane.getFileMergeWorkItem()).isNull();
+
+            time.sleep(FILE_MERGE_LOCK_PERIOD.toMillis());
+
+            // Wait for the lock period to end and try again.
+            assertThat(controlPlane.getFileMergeWorkItem())
+                .isEqualTo(new FileMergeWorkItem(2L, TimeUtils.now(time), expectedFiles));
+        }
+
+        @Test
+        void enoughDataForMultipleWorkItems() {
+            final long fileSize = FILE_MERGE_SIZE_THRESHOLD / 2;
+            final long committedAt = time.milliseconds();
+            // Commit 3 files, that's enough only for 1 merge work item.
+            controlPlane.commitFile("obj0", 1, fileSize,
+                List.of(new CommitBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 0, (int) fileSize, 0, 100, 1000, TimestampType.CREATE_TIME)));
+            controlPlane.commitFile("obj1", 2, fileSize,
+                List.of(new CommitBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 0, (int) fileSize, 0, 100, 2000, TimestampType.CREATE_TIME)));
+            controlPlane.commitFile("obj2", 3, fileSize,
+                List.of(new CommitBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 0, (int) fileSize, 0, 100, 3000, TimestampType.CREATE_TIME)));
+
+            // Get the merge work item.
+            final List<FileMergeWorkItem.File> expectedFiles1 = List.of(
+                new FileMergeWorkItem.File(1L, "obj0", fileSize, fileSize,
+                    List.of(new FileMergeWorkItem.Batch(1, EXISTING_TOPIC_1_ID_PARTITION_0, "obj0", 0, fileSize, 0, 0, 100, committedAt, 1000, TimestampType.CREATE_TIME))),
+                new FileMergeWorkItem.File(2L, "obj1", fileSize, fileSize,
+                    List.of(new FileMergeWorkItem.Batch(2, EXISTING_TOPIC_1_ID_PARTITION_0, "obj1", 0, fileSize, 101, 0, 100, committedAt, 2000, TimestampType.CREATE_TIME)))
+            );
+            assertThat(controlPlane.getFileMergeWorkItem())
+                .isEqualTo(new FileMergeWorkItem(1L, TimeUtils.now(time), expectedFiles1));
+
+            // Commit one more file.
+            controlPlane.commitFile("obj3", 1, fileSize,
+                List.of(new CommitBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 0, (int) fileSize, 0, 100, 4000, TimestampType.CREATE_TIME)));
+
+            // Now it's enough to have one more merge work item.
+            final List<FileMergeWorkItem.File> expectedFiles2 = List.of(
+                new FileMergeWorkItem.File(3L, "obj2", fileSize, fileSize,
+                    List.of(new FileMergeWorkItem.Batch(3, EXISTING_TOPIC_1_ID_PARTITION_0, "obj2", 0, fileSize, 202, 0, 100, committedAt, 3000, TimestampType.CREATE_TIME))),
+                new FileMergeWorkItem.File(4L, "obj3", fileSize, fileSize,
+                    List.of(new FileMergeWorkItem.Batch(4, EXISTING_TOPIC_1_ID_PARTITION_0, "obj3", 0, fileSize, 303, 0, 100, committedAt, 4000, TimestampType.CREATE_TIME)))
+            );
+            assertThat(controlPlane.getFileMergeWorkItem())
+                .isEqualTo(new FileMergeWorkItem(2L, TimeUtils.now(time), expectedFiles2));
+        }
+
+        @Test
+        void singleFileIsBiggerThanThreshold() {
+            // In practice, it doesn't make sense to have such small threshold, but still we need to verify this works.
+            final long fileSize = FILE_MERGE_SIZE_THRESHOLD;
+            final long committedAt = time.milliseconds();
+            controlPlane.commitFile("obj0", 0, fileSize,
+                List.of(new CommitBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 0, (int) fileSize, 0, 100, 1000, TimestampType.CREATE_TIME)));
+
+            final List<FileMergeWorkItem.File> expectedFiles = List.of(
+                new FileMergeWorkItem.File(1L, "obj0", fileSize, fileSize,
+                    List.of(new FileMergeWorkItem.Batch(1, EXISTING_TOPIC_1_ID_PARTITION_0, "obj0", 0, fileSize, 0, 0, 100, committedAt, 1000, TimestampType.CREATE_TIME)))
+            );
+            assertThat(controlPlane.getFileMergeWorkItem())
+                .isEqualTo(new FileMergeWorkItem(1L, TimeUtils.now(time), expectedFiles));
+        }
+
+        @Test
+        void mustSkipAlreadyMergedFiles() throws FileMergeWorkItemNotExist {
+            final long batchSize = FILE_MERGE_SIZE_THRESHOLD / 2;
+            final long committedAt = time.milliseconds();
+            // Commit 3 files, that's enough for 1 merge work items.
+            controlPlane.commitFile("obj0", 1, batchSize,
+                List.of(new CommitBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 0, (int) batchSize, 0, 100, 1000, TimestampType.CREATE_TIME)));
+            controlPlane.commitFile("obj1", 2, batchSize,
+                List.of(new CommitBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 0, (int) batchSize, 0, 100, 2000, TimestampType.CREATE_TIME)));
+            controlPlane.commitFile("obj2", 3, batchSize,
+                List.of(new CommitBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 0, (int) batchSize, 0, 100, 3000, TimestampType.CREATE_TIME)));
+
+            final List<FileMergeWorkItem.File> expectedFiles1 = List.of(
+                new FileMergeWorkItem.File(1L, "obj0", batchSize, batchSize,
+                    List.of(new FileMergeWorkItem.Batch(1, EXISTING_TOPIC_1_ID_PARTITION_0, "obj0", 0, batchSize, 0, 0, 100, committedAt, 1000, TimestampType.CREATE_TIME))),
+                new FileMergeWorkItem.File(2L, "obj1", batchSize, batchSize,
+                    List.of(new FileMergeWorkItem.Batch(2, EXISTING_TOPIC_1_ID_PARTITION_0, "obj1", 0, batchSize, 101, 0, 100, committedAt, 2000, TimestampType.CREATE_TIME)))
+            );
+            assertThat(controlPlane.getFileMergeWorkItem())
+                .isEqualTo(new FileMergeWorkItem(1L, TimeUtils.now(time), expectedFiles1));
+
+            // We intentionally make the batch size here smaller to make it fit into the following merging operation.
+            controlPlane.commitFileMergeWorkItem(1L, "obj_merged", 1, batchSize,
+                List.of(
+                    new MergedFileBatch(
+                        EXISTING_TOPIC_1_ID_PARTITION_0, 0, batchSize, 0, 0, 100, 1000, committedAt, TimestampType.CREATE_TIME, List.of(1L)
+                    ),
+                    new MergedFileBatch(
+                        EXISTING_TOPIC_1_ID_PARTITION_0, batchSize, batchSize + batchSize, 0, 101, 201, 2000, committedAt, TimestampType.CREATE_TIME, List.of(2L)
+                    )
+                )
+            );
+
+            // The already merged file must not be included into the merge operation and without it there's not enough data to merge.
+            assertThat(controlPlane.getFileMergeWorkItem()).isNull();
+
+            // Commit more files and try merging again.
+            controlPlane.commitFile("obj3", 1, batchSize,
+                List.of(new CommitBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 0, (int) batchSize, 0, 100, 4000, TimestampType.CREATE_TIME)));
+
+            // File 4 is the merged file, batches 4 and 5 are in it.
+            final List<FileMergeWorkItem.File> expectedFiles2= List.of(
+                new FileMergeWorkItem.File(3L, "obj2", batchSize, batchSize,
+                    List.of(new FileMergeWorkItem.Batch(3, EXISTING_TOPIC_1_ID_PARTITION_0, "obj2", 0, batchSize, 202, 0, 100, committedAt, 3000, TimestampType.CREATE_TIME))),
+                new FileMergeWorkItem.File(5L, "obj3", batchSize, batchSize,
+                    List.of(new FileMergeWorkItem.Batch(6, EXISTING_TOPIC_1_ID_PARTITION_0, "obj3", 0, batchSize, 303, 0, 100, committedAt, 4000, TimestampType.CREATE_TIME)))
+            );
+            assertThat(controlPlane.getFileMergeWorkItem())
+                .isEqualTo(new FileMergeWorkItem(2L, TimeUtils.now(time), expectedFiles2));
+        }
+    }
+
+    @Nested
+    class CommitFileMergeWorkItem {
+        @Test
+        void workItemNotExist() {
+            assertThatThrownBy(() -> controlPlane.commitFileMergeWorkItem(100, "obj", 1, 0, List.of()))
+                .isInstanceOf(FileMergeWorkItemNotExist.class)
+                .extracting("workItemId").isEqualTo(100L);
+        }
+
+        @Test
+        void batchWithoutParents() {
+            final long fileSize = FILE_MERGE_SIZE_THRESHOLD / 2;
+            controlPlane.commitFile("obj0", 1, fileSize,
+                List.of(new CommitBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 0, (int) fileSize, 0, 100, 1000, TimestampType.CREATE_TIME)));
+            controlPlane.commitFile("obj1", 2, fileSize,
+                List.of(new CommitBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 0, (int) fileSize, 0, 100, 2000, TimestampType.CREATE_TIME)));
+
+            final var workItemId = controlPlane.getFileMergeWorkItem().workItemId();
+
+            final var batch = new MergedFileBatch(EXISTING_TOPIC_1_ID_PARTITION_0, 0, fileSize, 0, 0, 0, 0, 0, TimestampType.CREATE_TIME, List.of());
+            assertThatThrownBy(() -> controlPlane.commitFileMergeWorkItem(workItemId, "obj", 1, 0, List.of(batch)))
+                .isInstanceOf(ControlPlaneException.class)
+                .hasMessage("Invalid parent batch count 0 in " + batch);
+        }
+
+        @Test
+        void batchWithTooManyParents() {
+            final long fileSize = FILE_MERGE_SIZE_THRESHOLD / 2;
+            controlPlane.commitFile("obj0", 1, fileSize,
+                List.of(new CommitBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 0, (int) fileSize, 0, 100, 1000, TimestampType.CREATE_TIME)));
+            controlPlane.commitFile("obj1", 2, fileSize,
+                List.of(new CommitBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 0, (int) fileSize, 0, 100, 2000, TimestampType.CREATE_TIME)));
+
+            final var workItemId = controlPlane.getFileMergeWorkItem().workItemId();
+
+            final var batch = new MergedFileBatch(EXISTING_TOPIC_1_ID_PARTITION_0, 0, fileSize, 0, 0, 0, 0, 0, TimestampType.CREATE_TIME,
+                List.of(1L, 2L));
+            assertThatThrownBy(() -> controlPlane.commitFileMergeWorkItem(workItemId, "obj", 1, 0, List.of(batch)))
+                .isInstanceOf(ControlPlaneException.class)
+                .hasMessage("Invalid parent batch count 2 in " + batch);
+        }
+
+        @Test
+        void batchIsNotPartOfWorkItem() {
+            final long fileSize = FILE_MERGE_SIZE_THRESHOLD / 2;
+            controlPlane.commitFile("obj0", 1, fileSize,
+                List.of(new CommitBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 0, (int) fileSize, 0, 100, 1000, TimestampType.CREATE_TIME)));
+            controlPlane.commitFile("obj1", 2, fileSize,
+                List.of(new CommitBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 0, (int) fileSize, 0, 100, 2000, TimestampType.CREATE_TIME)));
+            controlPlane.commitFile("obj2", 3, fileSize,
+                List.of(new CommitBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 0, (int) fileSize, 0, 100, 3000, TimestampType.CREATE_TIME)));
+
+            final FileMergeWorkItem fileMergeWorkItem = controlPlane.getFileMergeWorkItem();
+            assertThat(fileMergeWorkItem.files()).hasSize(2);
+
+            final var batch = new MergedFileBatch(EXISTING_TOPIC_1_ID_PARTITION_0, 0, fileSize, 0, 0, 0, 0, 0, TimestampType.CREATE_TIME,
+                List.of(3L));
+            assertThatThrownBy(() -> controlPlane.commitFileMergeWorkItem(fileMergeWorkItem.workItemId(), "obj", 1, 0, List.of(batch)))
+                .isInstanceOf(ControlPlaneException.class)
+                .hasMessage("Batch 3 is not part of work item in: " + batch);
+        }
+
+        @Test
+        void simpleManyPartitionMerge() {
+            controlPlane.createTopicAndPartitions(Set.of(
+                new CreateTopicAndPartitionsRequest(EXISTING_TOPIC_1_ID, EXISTING_TOPIC_1, 2)
+            ));
+
+            final long fileSize1 = FILE_MERGE_SIZE_THRESHOLD / 3 + 1;
+            final int file1Batch1Size = (int) fileSize1;
+
+            final long fileSize2 = fileSize1;
+            final int file2Batch1Size = (int) fileSize2 / 2;
+            final int file2Batch2Size = (int) fileSize2 - file2Batch1Size;
+
+            final long fileSize3 = FILE_MERGE_SIZE_THRESHOLD - fileSize1 - fileSize2;
+            final int file3Batch1Size = (int) fileSize3;
+
+            final long committedAt = time.milliseconds();
+            controlPlane.commitFile("obj1", 1, fileSize1,
+                List.of(new CommitBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 0, file1Batch1Size, 0, 100, 1000, TimestampType.CREATE_TIME)));
+            controlPlane.commitFile("obj2", 2, fileSize2,
+                List.of(
+                    new CommitBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 0, file2Batch1Size, 0, 100, 2000, TimestampType.LOG_APPEND_TIME),
+                    new CommitBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_1, file2Batch1Size, file2Batch2Size, 0, 50, 3000, TimestampType.CREATE_TIME)
+                ));
+            controlPlane.commitFile("obj3", 3, fileSize3,
+                List.of(
+                    new CommitBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_1, 0, file3Batch1Size, 0, 200, 4000, TimestampType.LOG_APPEND_TIME)
+                ));
+
+            time.sleep(1);
+            final Instant mergedAt = TimeUtils.now(time);
+            final var workItemId = controlPlane.getFileMergeWorkItem().workItemId();
+            final List<MergedFileBatch> mergedFileBatches = List.of(
+                new MergedFileBatch(EXISTING_TOPIC_1_ID_PARTITION_0, 0, file1Batch1Size, 0, 0, 100, 1000, committedAt, TimestampType.CREATE_TIME, List.of(1L)),
+                new MergedFileBatch(EXISTING_TOPIC_1_ID_PARTITION_0, fileSize1, file2Batch1Size, 100, 100, 150, 2000, committedAt, TimestampType.LOG_APPEND_TIME, List.of(2L)),
+                new MergedFileBatch(EXISTING_TOPIC_1_ID_PARTITION_1, fileSize1 + file2Batch1Size, file2Batch2Size, 0, 0, 50, 3000, committedAt, TimestampType.CREATE_TIME, List.of(3L)),
+                new MergedFileBatch(EXISTING_TOPIC_1_ID_PARTITION_1, fileSize1 + fileSize2, file3Batch1Size, 50, 50, 250, 4000, committedAt, TimestampType.CREATE_TIME, List.of(4L))
+            );
+            controlPlane.commitFileMergeWorkItem(workItemId, "obj_merged", 1, fileSize1 + fileSize2 + fileSize3, mergedFileBatches);
+
+            final var findBatchResult = controlPlane.findBatches(
+                List.of(
+                    new FindBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 0, Integer.MAX_VALUE),
+                    new FindBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_1, 0, Integer.MAX_VALUE)
+                ), true, Integer.MAX_VALUE);
+            assertThat(findBatchResult).containsExactly(
+                FindBatchResponse.success(List.of(
+                    BatchInfo.of(5L, "obj_merged", 0L, file1Batch1Size, 0L, 0L, 100L, committedAt, 1000L, TimestampType.CREATE_TIME),
+                    BatchInfo.of(6L, "obj_merged", file1Batch1Size, file2Batch1Size, 100L, 100L, 150L, committedAt, 2000L, TimestampType.LOG_APPEND_TIME)
+                ), 0, 202L),
+                FindBatchResponse.success(List.of(
+                    BatchInfo.of(7L, "obj_merged", fileSize1 + file2Batch1Size, file2Batch2Size, 0L, 0L, 50L, committedAt, 3000L, TimestampType.CREATE_TIME),
+                    BatchInfo.of(8L, "obj_merged", fileSize1 + fileSize2, file3Batch1Size, 50L, 50L, 250L, committedAt, 4000L, TimestampType.CREATE_TIME)
+                ), 0, 252L)
+            );
+
+            assertThat(controlPlane.getFilesToDelete()).containsExactlyInAnyOrder(
+                new FileToDelete("obj1", mergedAt),
+                new FileToDelete("obj2", mergedAt),
+                new FileToDelete("obj3", mergedAt)
+            );
+
+            // An attempt to commit again must be unsuccessful.
+            assertThatThrownBy(() -> controlPlane.commitFileMergeWorkItem(workItemId, "obj_merged", 1, fileSize1 + fileSize2 + fileSize3, mergedFileBatches))
+                .isInstanceOf(FileMergeWorkItemNotExist.class);
+        }
+
+        @ParameterizedTest
+        @ValueSource(booleans = {true, false})
+        void mergeAfterTopicWasDeleted(final boolean deletePhysicallyBeforeMerge) {
+            final long fileSize1 = FILE_MERGE_SIZE_THRESHOLD / 3 + 1;
+            final int file1Batch1Size = (int) fileSize1;
+
+            final long fileSize2 = fileSize1;
+            final int file2Batch1Size = (int) fileSize2 / 2;
+            final int file2Batch2Size = (int) fileSize2 - file2Batch1Size;
+
+            final long fileSize3 = FILE_MERGE_SIZE_THRESHOLD - fileSize1 - fileSize2;
+            final int file3Batch1Size = (int) fileSize3;
+
+            final long committedAt = time.milliseconds();
+            controlPlane.commitFile("obj1", 1, fileSize1,
+                List.of(new CommitBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 0, file1Batch1Size, 0, 100, 1000, TimestampType.CREATE_TIME)));
+            controlPlane.commitFile("obj2", 2, fileSize2,
+                List.of(
+                    new CommitBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 0, file2Batch1Size, 0, 100, 2000, TimestampType.LOG_APPEND_TIME),
+                    new CommitBatchRequest(EXISTING_TOPIC_2_ID_PARTITION_0, file2Batch1Size, file2Batch2Size, 0, 50, 3000, TimestampType.CREATE_TIME)
+                ));
+            controlPlane.commitFile("obj3", 3, fileSize3,
+                List.of(
+                    new CommitBatchRequest(EXISTING_TOPIC_2_ID_PARTITION_0, 0, file3Batch1Size, 0, 200, 4000, TimestampType.LOG_APPEND_TIME)
+                ));
+
+            final var workItemId = controlPlane.getFileMergeWorkItem().workItemId();
+
+            // Delete TOPIC_1.
+            time.sleep(1);
+            final Instant deletedAt = TimeUtils.now(time);
+            controlPlane.deleteTopics(Set.of(EXISTING_TOPIC_1_ID));
+            if (deletePhysicallyBeforeMerge) {
+                deleteAllFilesThatAreToBeDeleted();
+            }
+
+            // Now after the deletion, commit the merge result.
+            controlPlane.commitFileMergeWorkItem(workItemId, "obj_merged", 1, fileSize1 + fileSize2 + fileSize3, List.of(
+                new MergedFileBatch(EXISTING_TOPIC_1_ID_PARTITION_0, 0, file1Batch1Size, 0, 0, 100, 1000, committedAt, TimestampType.CREATE_TIME, List.of(1L)),
+                new MergedFileBatch(EXISTING_TOPIC_1_ID_PARTITION_0, fileSize1, file2Batch1Size, 100, 100, 150, 2000, committedAt, TimestampType.LOG_APPEND_TIME, List.of(2L)),
+                new MergedFileBatch(EXISTING_TOPIC_2_ID_PARTITION_0, fileSize1 + file2Batch1Size, file2Batch2Size, 0, 0, 50, 3000, committedAt, TimestampType.CREATE_TIME, List.of(3L)),
+                new MergedFileBatch(EXISTING_TOPIC_2_ID_PARTITION_0, fileSize1 + fileSize2, file3Batch1Size, 50, 50, 250, 4000, committedAt, TimestampType.CREATE_TIME, List.of(4L))
+            ));
+
+            // Obviously, the deleted topic should not be there, but the other one should be fully retrievable.
+            final var findBatchResult = controlPlane.findBatches(
+                List.of(
+                    new FindBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 0, Integer.MAX_VALUE),
+                    new FindBatchRequest(EXISTING_TOPIC_2_ID_PARTITION_0, 0, Integer.MAX_VALUE)
+                ), true, Integer.MAX_VALUE);
+            assertThat(findBatchResult).containsExactly(
+                FindBatchResponse.unknownTopicOrPartition(),
+                FindBatchResponse.success(List.of(
+                    BatchInfo.of(5L, "obj_merged", file1Batch1Size + file2Batch1Size, file2Batch2Size, 0L, 0L, 50L, committedAt, 3000L, TimestampType.CREATE_TIME),
+                    BatchInfo.of(6L, "obj_merged", fileSize1 + fileSize2, file3Batch1Size, 50L, 50L, 250L, committedAt, 4000L, TimestampType.CREATE_TIME)
+                ), 0, 252L)
+            );
+
+            final List<FileToDelete> expectedFilesToDelete = new ArrayList<>();
+            if (!deletePhysicallyBeforeMerge) {
+                expectedFilesToDelete.add(new FileToDelete("obj1", deletedAt));
+            }
+            expectedFilesToDelete.add(new FileToDelete("obj2", deletedAt));
+            expectedFilesToDelete.add(new FileToDelete("obj3", deletedAt));
+            assertThat(controlPlane.getFilesToDelete()).hasSameElementsAs(expectedFilesToDelete);
+        }
+
+        @ParameterizedTest
+        @ValueSource(booleans = {true, false})
+        void mergeAfterSomeBatchesWereDeletedButNotWholeTopic(final boolean deletePhysicallyBeforeMerge) {
+            final long fileSize = FILE_MERGE_SIZE_THRESHOLD / 2 + 1;
+            final long committedAt = time.milliseconds();
+            controlPlane.commitFile("obj1", 1, fileSize,
+                List.of(new CommitBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 0, (int) fileSize, 0, 100, 1000, TimestampType.CREATE_TIME)));
+            controlPlane.commitFile("obj2", 3, fileSize,
+                List.of(new CommitBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 0, (int) fileSize, 0, 200, 2000, TimestampType.LOG_APPEND_TIME)));
+
+            final var workItemId = controlPlane.getFileMergeWorkItem().workItemId();
+
+            // Delete some records (covering the 1st batch) from TOPIC_1.
+            time.sleep(1);
+            final Instant deletedAt = TimeUtils.now(time);
+            controlPlane.deleteRecords(List.of(new DeleteRecordsRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 110)));
+            if (deletePhysicallyBeforeMerge) {
+                deleteAllFilesThatAreToBeDeleted();
+            }
+
+            // Now after the deletion, commit the merge result.
+            controlPlane.commitFileMergeWorkItem(workItemId, "obj_merged", 1, fileSize * 2, List.of(
+                new MergedFileBatch(EXISTING_TOPIC_1_ID_PARTITION_0, 0, fileSize, 0, 0, 100, 1000, committedAt, TimestampType.CREATE_TIME, List.of(1L)),
+                new MergedFileBatch(EXISTING_TOPIC_1_ID_PARTITION_0, fileSize, fileSize, 100, 100, 200, 2000, committedAt, TimestampType.LOG_APPEND_TIME, List.of(2L))
+            ));
+
+            final var findBatchResult = controlPlane.findBatches(
+                List.of(new FindBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 0, Integer.MAX_VALUE)), true, Integer.MAX_VALUE);
+            assertThat(findBatchResult).containsExactly(
+                FindBatchResponse.success(List.of(
+                    BatchInfo.of(3L, "obj_merged", fileSize, fileSize, 100L, 100L, 200L, committedAt, 2000L, TimestampType.LOG_APPEND_TIME)
+                ), 110, 302L)
+            );
+
+            final List<FileToDelete> expectedFilesToDelete = new ArrayList<>();
+            if (!deletePhysicallyBeforeMerge) {
+                expectedFilesToDelete.add(new FileToDelete("obj1", deletedAt));
+            }
+            expectedFilesToDelete.add(new FileToDelete("obj2", deletedAt));
+            assertThat(controlPlane.getFilesToDelete()).hasSameElementsAs(expectedFilesToDelete);
+        }
+
+        @ParameterizedTest
+        @ValueSource(booleans = {true, false})
+        void mergeAfterAllBatchesWereDeleted(final boolean deletePhysicallyBeforeMerge) {
+            final long fileSize = FILE_MERGE_SIZE_THRESHOLD / 2;
+            final long committedAt = time.milliseconds();
+            controlPlane.commitFile("obj1", 1, fileSize,
+                List.of(new CommitBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 0, (int) fileSize, 0, 100, 1000, TimestampType.CREATE_TIME)));
+            controlPlane.commitFile("obj2", 2, fileSize,
+                List.of(new CommitBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 0, (int) fileSize, 0, 100, 2000, TimestampType.CREATE_TIME)));
+
+            time.sleep(1);
+            final Instant deletedAt = TimeUtils.now(time);
+            final var workItemId = controlPlane.getFileMergeWorkItem().workItemId();
+
+            controlPlane.deleteTopics(Set.of(EXISTING_TOPIC_1_ID));
+            if (deletePhysicallyBeforeMerge) {
+                deleteAllFilesThatAreToBeDeleted();
+            }
+
+            // Now after the deletion, commit the merge result.
+            time.sleep(1);
+            final Instant mergedAt = TimeUtils.now(time);
+            controlPlane.commitFileMergeWorkItem(workItemId, "obj_merged", 1, fileSize * 2, List.of(
+                new MergedFileBatch(EXISTING_TOPIC_1_ID_PARTITION_0, 0, fileSize, 0, 0, 100, 1000, committedAt, TimestampType.CREATE_TIME, List.of(1L)),
+                new MergedFileBatch(EXISTING_TOPIC_1_ID_PARTITION_0, fileSize, fileSize, 100, 100, 200, 2000, committedAt, TimestampType.LOG_APPEND_TIME, List.of(2L))
+            ));
+
+            final var findBatchResult = controlPlane.findBatches(
+                List.of(new FindBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 0, Integer.MAX_VALUE)), true, Integer.MAX_VALUE);
+            assertThat(findBatchResult).containsExactly(FindBatchResponse.unknownTopicOrPartition());
+
+            // Since the new merged file doesn't host any live batch, it should end up in files-to-delete as well.
+            final List<FileToDelete> expectedFilesToDelete = new ArrayList<>();
+            if (!deletePhysicallyBeforeMerge) {
+                expectedFilesToDelete.add(new FileToDelete("obj1", deletedAt));
+                expectedFilesToDelete.add(new FileToDelete("obj2", deletedAt));
+            }
+            expectedFilesToDelete.add(new FileToDelete("obj_merged", mergedAt));
+            assertThat(controlPlane.getFilesToDelete()).hasSameElementsAs(expectedFilesToDelete);
+        }
+
+        private void deleteAllFilesThatAreToBeDeleted() {
+            final Set<String> deletedObjectKeys = controlPlane.getFilesToDelete().stream()
+                .map(FileToDelete::objectKey)
+                .collect(Collectors.toSet());
+            controlPlane.deleteFiles(new DeleteFilesRequest(deletedObjectKeys));
+        }
     }
 
     public record ControlPlaneAndConfigs(ControlPlane controlPlane, Map<String, ?> configs) {
