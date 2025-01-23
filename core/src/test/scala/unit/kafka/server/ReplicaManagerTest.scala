@@ -2726,8 +2726,6 @@ class ReplicaManagerTest {
       "Fetch", timer, 0, false)
     val mockDeleteRecordsPurgatory = new DelayedOperationPurgatory[DelayedDeleteRecords](
       "DeleteRecords", timer, 0, false)
-    val mockElectLeaderPurgatory = new DelayedOperationPurgatory[DelayedElectLeader](
-      "ElectLeader", timer, 0, false)
     val mockRemoteFetchPurgatory = new DelayedOperationPurgatory[DelayedRemoteFetch](
       "RemoteFetch", timer, 0, false)
     val mockRemoteListOffsetsPurgatory = new DelayedOperationPurgatory[DelayedRemoteListOffsets](
@@ -2757,7 +2755,6 @@ class ReplicaManagerTest {
       delayedProducePurgatoryParam = Some(mockProducePurgatory),
       delayedFetchPurgatoryParam = Some(mockFetchPurgatory),
       delayedDeleteRecordsPurgatoryParam = Some(mockDeleteRecordsPurgatory),
-      delayedElectLeaderPurgatoryParam = Some(mockElectLeaderPurgatory),
       delayedRemoteFetchPurgatoryParam = Some(mockRemoteFetchPurgatory),
       delayedRemoteListOffsetsPurgatoryParam = Some(mockRemoteListOffsetsPurgatory),
       delayedShareFetchPurgatoryParam = Some(mockDelayedShareFetchPurgatory),
@@ -3153,8 +3150,6 @@ class ReplicaManagerTest {
       "Fetch", timer, 0, false)
     val mockDeleteRecordsPurgatory = new DelayedOperationPurgatory[DelayedDeleteRecords](
       "DeleteRecords", timer, 0, false)
-    val mockDelayedElectLeaderPurgatory = new DelayedOperationPurgatory[DelayedElectLeader](
-      "DelayedElectLeader", timer, 0, false)
     val mockDelayedRemoteFetchPurgatory = new DelayedOperationPurgatory[DelayedRemoteFetch](
       "DelayedRemoteFetch", timer, 0, false)
     val mockDelayedRemoteListOffsetsPurgatory = new DelayedOperationPurgatory[DelayedRemoteListOffsets](
@@ -3191,7 +3186,6 @@ class ReplicaManagerTest {
       delayedProducePurgatoryParam = Some(mockProducePurgatory),
       delayedFetchPurgatoryParam = Some(mockFetchPurgatory),
       delayedDeleteRecordsPurgatoryParam = Some(mockDeleteRecordsPurgatory),
-      delayedElectLeaderPurgatoryParam = Some(mockDelayedElectLeaderPurgatory),
       delayedRemoteFetchPurgatoryParam = Some(mockDelayedRemoteFetchPurgatory),
       delayedRemoteListOffsetsPurgatoryParam = Some(mockDelayedRemoteListOffsetsPurgatory),
       delayedShareFetchPurgatoryParam = Some(mockDelayedShareFetchPurgatory),
