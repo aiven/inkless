@@ -1786,6 +1786,7 @@ kafka.log.UnifiedLogTest:
 - testOffsetSnapshot
 - testOldProducerEpoch
 - testPeriodicProducerIdExpiration
+- testPreviousTransactionOngoing
 - testProducerExpireCheckAfterDelete
 - testProducerIdExpirationOnSegmentDeletion
 - testProducerIdMapOffsetUpdatedForNonIdempotentData
