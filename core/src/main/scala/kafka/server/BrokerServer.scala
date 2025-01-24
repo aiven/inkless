@@ -372,7 +372,6 @@ class BrokerServer(
 
       /* start token manager */
       tokenManager = new DelegationTokenManager(config, tokenCache, time)
-      tokenManager.startup()
 
       /* initializing the groupConfigManager */
       groupConfigManager = new GroupConfigManager(config.groupCoordinatorConfig.extractGroupConfigMap(config.shareGroupConfig))
@@ -804,9 +803,6 @@ class BrokerServer(
         CoreUtils.swallow(groupCoordinator.shutdown(), this)
       if (shareCoordinator.isDefined)
         CoreUtils.swallow(shareCoordinator.get.shutdown(), this)
-
-      if (tokenManager != null)
-        CoreUtils.swallow(tokenManager.shutdown(), this)
 
       if (assignmentsManager != null)
         CoreUtils.swallow(assignmentsManager.close(), this)
