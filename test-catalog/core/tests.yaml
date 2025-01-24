@@ -3099,8 +3099,6 @@ kafka.server.LogOffsetTest:
 - testFetchOffsetByTimestampForMaxTimestampAfterTruncate
 - testFetchOffsetByTimestampForMaxTimestampWithEmptyLog
 - testFetchOffsetByTimestampForMaxTimestampWithUnorderedTimestamps
-- testFetchOffsetsBeforeWithChangingSegmentSize
-- testFetchOffsetsBeforeWithChangingSegments
 - testGetOffsetsAfterDeleteRecords
 - testGetOffsetsBeforeEarliestTime
 - testGetOffsetsBeforeLatestTime
