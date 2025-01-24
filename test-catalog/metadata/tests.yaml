@@ -229,10 +229,12 @@ org.apache.kafka.controller.QuorumControllerTest:
 - testFatalMetadataReplayErrorOnActive
 - testFenceMultipleBrokers
 - testInsertBootstrapRecordsToEmptyLog
+- testMinIsrUpdateWithElr
 - testNoOpRecordWriteAfterTimeout
 - testRegisterBrokerKRaftVersions
 - testSnapshotSaveAndLoad
 - testTimeouts
+- testUncleanShutdownBrokerElrEnabled
 - testUncleanShutdownElrDisabled
 - testUnregisterBroker
 - testUpgradeFromPreProductionVersion
@@ -273,6 +275,7 @@ org.apache.kafka.controller.ReplicationControlManagerTest:
 - testEligibleLeaderReplicas_EffectiveMinIsr
 - testEligibleLeaderReplicas_ShrinkAndExpandIsr
 - testEligibleLeaderReplicas_UncleanShutdown
+- testElrsRemovedOnMinIsrUpdate
 - testExcessiveNumberOfTopicsCannotBeCreated
 - testExcessiveNumberOfTopicsCannotBeCreatedWithAssignments
 - testFenceMultipleBrokers
