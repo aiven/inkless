@@ -15,6 +15,7 @@ import java.util.List;
 import java.util.Set;
 
 import io.aiven.inkless.control_plane.BatchInfo;
+import io.aiven.inkless.control_plane.BatchMetadata;
 import io.aiven.inkless.control_plane.CommitBatchRequest;
 import io.aiven.inkless.control_plane.CreateTopicAndPartitionsRequest;
 import io.aiven.inkless.control_plane.FindBatchRequest;
@@ -73,7 +74,7 @@ class FindBatchesJobTest extends SharedPostgreSQLTest {
 
         assertThat(result).containsExactlyInAnyOrder(
             new FindBatchResponse(Errors.NONE, List.of(
-                BatchInfo.of(1L, objectKey1, 0, 1234, 0, 0, 11, time.milliseconds(), 1000, TimestampType.CREATE_TIME)
+                new BatchInfo(1L, objectKey1, new BatchMetadata(T0P0, 0, 1234, 0, 11, time.milliseconds(), 1000, TimestampType.CREATE_TIME))
             ), 0, 12),
             new FindBatchResponse(Errors.NONE, List.of(), 0, 0),
             new FindBatchResponse(Errors.OFFSET_OUT_OF_RANGE, null, 0, 0)

@@ -19,6 +19,7 @@ import java.util.stream.Collectors;
 
 import io.aiven.inkless.TimeUtils;
 import io.aiven.inkless.control_plane.BatchInfo;
+import io.aiven.inkless.control_plane.BatchMetadata;
 import io.aiven.inkless.control_plane.FindBatchRequest;
 import io.aiven.inkless.control_plane.FindBatchResponse;
 
@@ -103,8 +104,8 @@ class FindBatchesJob implements Callable<List<FindBatchResponse>> {
                 FILES.OBJECT_KEY,
                 BATCHES.BYTE_OFFSET,
                 BATCHES.BYTE_SIZE,
-                BATCHES.REQUEST_BASE_OFFSET,
-                BATCHES.REQUEST_LAST_OFFSET,
+                BATCHES.BASE_OFFSET,
+                BATCHES.LAST_OFFSET,
                 BATCHES.TIMESTAMP_TYPE,
                 BATCHES.LOG_APPEND_TIMESTAMP,
                 BATCHES.BATCH_MAX_TIMESTAMP
@@ -123,17 +124,19 @@ class FindBatchesJob implements Callable<List<FindBatchResponse>> {
                 final BatchInfo batch = new BatchInfo(
                     record.get(BATCHES.BATCH_ID),
                     record.get(FILES.OBJECT_KEY),
-                    record.get(BATCHES.BYTE_OFFSET),
-                    record.get(BATCHES.BYTE_SIZE),
-                    record.get(BATCHES.BASE_OFFSET),
-                    record.get(BATCHES.REQUEST_BASE_OFFSET),
-                    record.get(BATCHES.REQUEST_LAST_OFFSET),
-                    record.get(BATCHES.LOG_APPEND_TIMESTAMP),
-                    record.get(BATCHES.BATCH_MAX_TIMESTAMP),
-                    record.get(BATCHES.TIMESTAMP_TYPE)
+                    new BatchMetadata(
+                        request.topicIdPartition(),
+                        record.get(BATCHES.BYTE_OFFSET),
+                        record.get(BATCHES.BYTE_SIZE),
+                        record.get(BATCHES.BASE_OFFSET),
+                        record.get(BATCHES.LAST_OFFSET),
+                        record.get(BATCHES.LOG_APPEND_TIMESTAMP),
+                        record.get(BATCHES.BATCH_MAX_TIMESTAMP),
+                        record.get(BATCHES.TIMESTAMP_TYPE)
+                    )
                 );
                 batches.add(batch);
-                totalSize += batch.size();
+                totalSize += batch.metadata().size();
                 if (totalSize > fetchMaxBytes) {
                     break;
                 }

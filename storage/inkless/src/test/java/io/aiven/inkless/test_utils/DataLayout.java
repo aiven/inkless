@@ -28,6 +28,7 @@ import java.util.Set;
 import java.util.stream.Stream;
 
 import io.aiven.inkless.control_plane.BatchInfo;
+import io.aiven.inkless.control_plane.BatchMetadata;
 
 public record DataLayout (
         Map<BatchInfo, Records> data
@@ -111,17 +112,20 @@ public record DataLayout (
                 for (BatchData batch : file.batches()) {
                     long firstOffset = offsets.compute(batch.topicIdPartition(), (k, v) -> (v == null ? 0 : v) + batch.skippedOffsets());
                     byteOffset += batch.skippedBytes();
-                    BatchInfo batchInfo = BatchInfo.of(
-                            1L,
-                            file.objectId(),
+                    long lastOffset = firstOffset + batch.recordCount() - 1;
+                    BatchInfo batchInfo = new BatchInfo(
+                        1L,
+                        file.objectId(),
+                        BatchMetadata.of(
+                            batch.topicIdPartition,
                             byteOffset,
                             batch.batchSize(),
                             firstOffset,
-                            firstOffset,
-                            batch.recordCount() - 1, // calculate last offset
+                            lastOffset,
                             batch.appendTime(),
                             batch.maxTimestamp(),
                             batch.timestampType()
+                        )
                     );
                     data.put(batchInfo, batch.records());
                     offsets.compute(batch.topicIdPartition(), (k, v) -> (v == null ? 0 : v) + batch.recordCount());

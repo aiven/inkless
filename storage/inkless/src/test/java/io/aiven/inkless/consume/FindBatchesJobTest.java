@@ -24,6 +24,7 @@ import java.util.Map;
 import java.util.Optional;
 
 import io.aiven.inkless.control_plane.BatchInfo;
+import io.aiven.inkless.control_plane.BatchMetadata;
 import io.aiven.inkless.control_plane.ControlPlane;
 import io.aiven.inkless.control_plane.FindBatchRequest;
 import io.aiven.inkless.control_plane.FindBatchResponse;
@@ -54,18 +55,18 @@ public class FindBatchesJobTest {
     @Test
     public void findSingleBatch() throws Exception {
         Map<TopicIdPartition, FetchRequest.PartitionData> fetchInfos = Map.of(
-                partition0, new FetchRequest.PartitionData(topicId, 0, 0, 1000, Optional.empty())
+            partition0, new FetchRequest.PartitionData(topicId, 0, 0, 1000, Optional.empty())
         );
         int logStartOffset = 0;
         long logAppendTimestamp = 10L;
         long maxBatchTimestamp = 20L;
         int highWatermark = 1;
         Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of(
-                partition0, FindBatchResponse.success(List.of(
-                        BatchInfo.of(1L, OBJECT_KEY_MAIN_PART, 0, 10, 0, 0, 0, logAppendTimestamp, maxBatchTimestamp, TimestampType.CREATE_TIME)
-                ), logStartOffset, highWatermark)
+            partition0, FindBatchResponse.success(List.of(
+                new BatchInfo(1L, OBJECT_KEY_MAIN_PART, BatchMetadata.of(partition0, 0, 10, 0, 0, logAppendTimestamp, maxBatchTimestamp, TimestampType.CREATE_TIME))
+            ), logStartOffset, highWatermark)
         );
-        FindBatchesJob job = new FindBatchesJob(time, controlPlane, params, fetchInfos, durationMs -> { });
+        FindBatchesJob job = new FindBatchesJob(time, controlPlane, params, fetchInfos, durationMs -> {});
         when(controlPlane.findBatches(requestCaptor.capture(), anyBoolean(), anyInt())).thenReturn(new ArrayList<>(coordinates.values()));
         Map<TopicIdPartition, FindBatchResponse> result = job.call();
 

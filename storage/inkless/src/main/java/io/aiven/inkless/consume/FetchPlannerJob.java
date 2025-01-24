@@ -80,7 +80,7 @@ public class FetchPlannerJob implements Callable<List<Future<FileExtent>>> {
                 .map(FindBatchResponse::batches)
                 .flatMap(List::stream)
                 // Merge batch requests
-                .collect(Collectors.groupingBy(BatchInfo::objectKey, Collectors.mapping(BatchInfo::range, Collectors.toList())))
+                .collect(Collectors.groupingBy(BatchInfo::objectKey, Collectors.mapping(b -> b.metadata().range(), Collectors.toList())))
                 .entrySet()
                 .stream()
                 .flatMap(e -> keyAlignment.align(e.getValue())
