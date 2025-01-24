@@ -44,7 +44,6 @@ org.apache.kafka.server.common.FeatureTest:
 - testValidateWithNonExistentLatestProduction
 org.apache.kafka.server.common.FinalizedFeaturesTest:
 - testKRaftModeFeatures
-- testZkModeFeatures
 org.apache.kafka.server.common.KRaftVersionTest:
 - tesVotersRecordVersion
 - testBootstrapMetadataVersion
