@@ -86,8 +86,8 @@ class CommitFileJobTest extends SharedPostgreSQLTest {
 
         assertThat(DBUtils.getAllBatches(hikariDataSource))
             .containsExactlyInAnyOrder(
-                new BatchesRecord(1L, TOPIC_ID_0, 1, 0L, 14L, 0L, 14L, EXPECTED_FILE_ID_1, 0L, 100L, TimestampType.CREATE_TIME, time.milliseconds(), 1000L),
-                new BatchesRecord(2L, TOPIC_ID_1, 0, 0L, 26L, 0L, 26L, EXPECTED_FILE_ID_1, 100L, 50L, TimestampType.LOG_APPEND_TIME, time.milliseconds(), 2000L)
+                new BatchesRecord(1L, TOPIC_ID_0, 1, 0L, 14L, EXPECTED_FILE_ID_1, 0L, 100L, TimestampType.CREATE_TIME, time.milliseconds(), 1000L),
+                new BatchesRecord(2L, TOPIC_ID_1, 0, 0L, 26L, EXPECTED_FILE_ID_1, 100L, 50L, TimestampType.LOG_APPEND_TIME, time.milliseconds(), 2000L)
             );
     }
 
@@ -144,11 +144,11 @@ class CommitFileJobTest extends SharedPostgreSQLTest {
         assertThat(DBUtils.getAllBatches(hikariDataSource))
             .containsExactlyInAnyOrder(
                 // first pair
-                new BatchesRecord(1L, TOPIC_ID_0, 1, 0L, 14L, 0L, 14L, EXPECTED_FILE_ID_1, 0L, 100L, TimestampType.CREATE_TIME, firstFileCommittedAt, 1000L),
-                new BatchesRecord(2L, TOPIC_ID_1, 0, 0L, 26L, 0L, 26L, EXPECTED_FILE_ID_1, 100L, 50L, TimestampType.LOG_APPEND_TIME, firstFileCommittedAt, 2000L),
+                new BatchesRecord(1L, TOPIC_ID_0, 1, 0L, 14L, EXPECTED_FILE_ID_1, 0L, 100L, TimestampType.CREATE_TIME, firstFileCommittedAt, 1000L),
+                new BatchesRecord(2L, TOPIC_ID_1, 0, 0L, 26L, EXPECTED_FILE_ID_1, 100L, 50L, TimestampType.LOG_APPEND_TIME, firstFileCommittedAt, 2000L),
                 // second pair
-                new BatchesRecord(3L, TOPIC_ID_0, 0, 0L, 158L, 0L, 158L, EXPECTED_FILE_ID_2, 0L, 111L, TimestampType.CREATE_TIME, secondFileCommittedAt, 3000L),
-                new BatchesRecord(4L, TOPIC_ID_0, 1, 15L, 15L + 245 - 1, 0L, 244L, EXPECTED_FILE_ID_2, 111L, 222L, TimestampType.CREATE_TIME, secondFileCommittedAt, 4000L)
+                new BatchesRecord(3L, TOPIC_ID_0, 0, 0L, 158L, EXPECTED_FILE_ID_2, 0L, 111L, TimestampType.CREATE_TIME, secondFileCommittedAt, 3000L),
+                new BatchesRecord(4L, TOPIC_ID_0, 1, 15L, 15L + 245 - 1, EXPECTED_FILE_ID_2, 111L, 222L, TimestampType.CREATE_TIME, secondFileCommittedAt, 4000L)
             );
     }
 
@@ -188,8 +188,8 @@ class CommitFileJobTest extends SharedPostgreSQLTest {
 
         assertThat(DBUtils.getAllBatches(hikariDataSource))
             .containsExactlyInAnyOrder(
-                new BatchesRecord(1L, TOPIC_ID_0, 1, 0L, 14L, 0L, 14L, EXPECTED_FILE_ID_1, 0L, 100L, TimestampType.CREATE_TIME, time.milliseconds(), 1000L),
-                new BatchesRecord(2L, TOPIC_ID_1, 0, 0L, 26L, 0L, 26L, EXPECTED_FILE_ID_1, 100L, 50L, TimestampType.LOG_APPEND_TIME, time.milliseconds(), 2000L)
+                new BatchesRecord(1L, TOPIC_ID_0, 1, 0L, 14L, EXPECTED_FILE_ID_1, 0L, 100L, TimestampType.CREATE_TIME, time.milliseconds(), 1000L),
+                new BatchesRecord(2L, TOPIC_ID_1, 0, 0L, 26L, EXPECTED_FILE_ID_1, 100L, 50L, TimestampType.LOG_APPEND_TIME, time.milliseconds(), 2000L)
             );
     }
 }

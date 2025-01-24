@@ -35,6 +35,7 @@ import io.aiven.inkless.common.ObjectKey;
 import io.aiven.inkless.common.ObjectKeyCreator;
 import io.aiven.inkless.common.PlainObjectKey;
 import io.aiven.inkless.control_plane.BatchInfo;
+import io.aiven.inkless.control_plane.BatchMetadata;
 import io.aiven.inkless.control_plane.FindBatchResponse;
 import io.aiven.inkless.generated.FileExtent;
 
@@ -123,7 +124,7 @@ public class FetchCompleterJobTest {
         int highWatermark = 1;
         Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of(
             partition0, FindBatchResponse.success(List.of(
-                BatchInfo.of(1L, OBJECT_KEY_A_MAIN_PART, 0, 10, 0, 0, 0, logAppendTimestamp, maxBatchTimestamp, TimestampType.CREATE_TIME)
+                new BatchInfo(1L, OBJECT_KEY_A_MAIN_PART, BatchMetadata.of(partition0, 0, 10, 0, 0, logAppendTimestamp, maxBatchTimestamp, TimestampType.CREATE_TIME))
             ), logStartOffset, highWatermark)
         );
         FetchCompleterJob job = new FetchCompleterJob(
@@ -152,7 +153,7 @@ public class FetchCompleterJobTest {
         int highWatermark = 1;
         Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of(
             partition0, FindBatchResponse.success(List.of(
-                BatchInfo.of(1L, OBJECT_KEY_A.value(), 0, records.sizeInBytes(), 0, 0, 0, logAppendTimestamp, maxBatchTimestamp, TimestampType.CREATE_TIME)
+                new BatchInfo(1L, OBJECT_KEY_A.value(), BatchMetadata.of(partition0, 0, records.sizeInBytes(), 0, 0, logAppendTimestamp, maxBatchTimestamp, TimestampType.CREATE_TIME))
             ), logStartOffset, highWatermark)
         );
 
@@ -187,8 +188,8 @@ public class FetchCompleterJobTest {
         int highWatermark = 1;
         Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of(
             partition0, FindBatchResponse.success(List.of(
-                BatchInfo.of(1L, OBJECT_KEY_A.value(), 0, records.sizeInBytes(), 0, 0, 0, logAppendTimestamp, maxBatchTimestamp, TimestampType.CREATE_TIME),
-                BatchInfo.of(2L, OBJECT_KEY_B.value(), 0, records.sizeInBytes(), 0, 0, 0, logAppendTimestamp, maxBatchTimestamp, TimestampType.CREATE_TIME)
+                new BatchInfo(1L, OBJECT_KEY_A.value(), BatchMetadata.of(partition0, 0, records.sizeInBytes(), 0, 0, logAppendTimestamp, maxBatchTimestamp, TimestampType.CREATE_TIME)),
+                new BatchInfo(2L, OBJECT_KEY_B.value(), BatchMetadata.of(partition0, 0, records.sizeInBytes(), 0, 0, logAppendTimestamp, maxBatchTimestamp, TimestampType.CREATE_TIME))
             ), logStartOffset, highWatermark)
         );
 
@@ -232,8 +233,8 @@ public class FetchCompleterJobTest {
         int highWatermark = 2;
         Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of(
             partition0, FindBatchResponse.success(List.of(
-                BatchInfo.of(1L, OBJECT_KEY_A.value(), 0, recordsA.sizeInBytes(), 0, 0, 0, logAppendTimestamp, maxBatchTimestamp, TimestampType.CREATE_TIME),
-                BatchInfo.of(2L, OBJECT_KEY_A.value(), recordsA.sizeInBytes(), recordsB.sizeInBytes(), 1, 0, 0, logAppendTimestamp, maxBatchTimestamp, TimestampType.CREATE_TIME)
+                new BatchInfo(1L, OBJECT_KEY_A.value(), BatchMetadata.of(partition0, 0, recordsA.sizeInBytes(), 0, 0, logAppendTimestamp, maxBatchTimestamp, TimestampType.CREATE_TIME)),
+                new BatchInfo(2L, OBJECT_KEY_A.value(), BatchMetadata.of(partition0, recordsA.sizeInBytes(), recordsB.sizeInBytes(), 1, 1, logAppendTimestamp, maxBatchTimestamp, TimestampType.CREATE_TIME))
             ), logStartOffset, highWatermark)
         );
 
