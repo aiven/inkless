@@ -10,11 +10,11 @@ import org.apache.kafka.common.record.SimpleRecord;
 import java.util.HashMap;
 import java.util.Map;
 
-class WriterTestUtils {
-    static class RecordCreator {
+public class WriterTestUtils {
+    public static class RecordCreator {
         final Map<TopicPartition, Integer> counters = new HashMap<>();
 
-        MemoryRecords create(final TopicPartition tp, int count) {
+        public MemoryRecords create(final TopicPartition tp, int count) {
             counters.putIfAbsent(tp, 0);
 
             final int start = counters.get(tp);

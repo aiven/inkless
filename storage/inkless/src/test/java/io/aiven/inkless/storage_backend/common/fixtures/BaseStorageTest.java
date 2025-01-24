@@ -82,6 +82,17 @@ public abstract class BaseStorageTest {
     }
 
     @Test
+    void testFetchWithoutRange() throws IOException, StorageBackendException {
+        final StorageBackend storage = storage();
+        final String content = "AABBBBAA";
+        storage.upload(TOPIC_PARTITION_SEGMENT_KEY, content.getBytes());
+
+        try (final InputStream fetch = storage.fetch(TOPIC_PARTITION_SEGMENT_KEY, null)) {
+            assertThat(fetch).hasContent(content);
+        }
+    }
+
+    @Test
     void testFetchWithOffsetRange() throws IOException, StorageBackendException {
         final StorageBackend storage = storage();
         final String content = "AABBBBAA";
