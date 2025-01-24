@@ -541,8 +541,7 @@ class KRaftMetadataCache(
     }
     new FinalizedFeatures(image.features().metadataVersion(),
       finalizedFeatures,
-      image.highestOffsetAndEpoch().offset,
-      true)
+      image.highestOffsetAndEpoch().offset)
   }
 
   override def isInklessTopic(topic: String): Boolean = {
