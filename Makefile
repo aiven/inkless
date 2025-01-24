@@ -19,6 +19,10 @@ local_destroy:
 
 VERSION := 4.0.0-inkless-SNAPSHOT
 
+.PHONY: build
+build:
+	./gradlew :core:build :storage:inkless:build :metadata:build -x test
+
 core/build/distributions/kafka_2.13-$(VERSION).tgz:
 	./gradlew releaseTarGz
 
