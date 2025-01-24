@@ -3812,8 +3812,8 @@ org.apache.kafka.common.requests.ApiVersionsResponseTest:
 - shouldNotCreateApiResponseWithTelemetryWhenDisabled
 - shouldReturnAllKeysWhenThrottleMsIsDefaultThrottle
 - testAlterV0Features
+- testBrokerApisAreEnabled
 - testIntersect
-- testMetadataQuorumApisAreDisabled
 org.apache.kafka.common.requests.BrokerRegistrationRequestTest:
 - testAlterFeaturesWithMinVersion0BeforeV4
 - testBasicBuild

@@ -1,12 +1,34 @@
-org.apache.kafka.common.test.junit.AutoQuarantinedTestFilterTest:
-- testEmptyCatalog
-- testLoadCatalog
-- testMissingCatalog
-org.apache.kafka.common.test.junit.QuarantinedPostDiscoveryFilterTest:
-- testExistingTestFlaky
-- testExistingTestNonFlaky
-- testNewTest
-- testNoCatalogQuarantinedTest
-- testQuarantinedExistingTestFlaky
-- testQuarantinedExistingTestNonFlaky
-- testQuarantinedNewTest
+org.apache.kafka.common.test.KafkaClusterTestKitTest:
+- testCreateClusterAndCloseWithMultipleLogDirs
+- testCreateClusterWithBadNumDisksThrows
+- testCreateClusterWithBadNumOfBrokers
+- testCreateClusterWithBadNumOfControllers
+- testCreateClusterWithBadPerServerProperties
+- testCreateClusterWithSpecificBaseDir
+- testExposedFaultHandlers
+org.apache.kafka.common.test.KafkaClusterThreadFactoryTest:
+- testGetThreadIds
+org.apache.kafka.common.test.TestKitNodeTest:
+- testListenerName
+- testSecurityProtocol
+org.apache.kafka.common.test.junit.ClusterTestExtensionsTest:
+- testClusterAliveBrokers
+- testClusterTemplate
+- testClusterTest
+- testClusterTestWithDisksPerBroker
+- testClusterTests
+- testControllerListenerName
+- testControllerRestart
+- testCreateDefaultProducerAndConsumer
+- testCreateProducerAndConsumer
+- testCreateTopic
+- testDefaults
+- testNoAutoStart
+- testNotSupportedNewGroupProtocols
+- testSaslPlaintext
+- testSaslPlaintextWithController
+- testShutdownAndSyncMetadata
+- testSupportedNewGroupProtocols
+- testVerifyTopicDeletion
+org.apache.kafka.common.test.junit.ClusterTestExtensionsUnitTest:
+- testProcessClusterTemplate

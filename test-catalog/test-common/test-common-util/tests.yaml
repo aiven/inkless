@@ -1,0 +1,12 @@
+org.apache.kafka.common.test.junit.AutoQuarantinedTestFilterTest:
+- testEmptyCatalog
+- testLoadCatalog
+- testMissingCatalog
+org.apache.kafka.common.test.junit.QuarantinedPostDiscoveryFilterTest:
+- testExistingTestFlaky
+- testExistingTestNonFlaky
+- testNewTest
+- testNoCatalogQuarantinedTest
+- testQuarantinedExistingTestFlaky
+- testQuarantinedExistingTestNonFlaky
+- testQuarantinedNewTest

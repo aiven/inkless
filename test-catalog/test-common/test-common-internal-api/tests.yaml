@@ -1,0 +1,9 @@
+org.apache.kafka.common.test.api.ClusterConfigTest:
+- testBrokerLessThanZero
+- testControllersLessThanZero
+- testCopy
+- testDisksPerBrokerIsZero
+- testDisplayTags
+org.apache.kafka.common.test.api.DetectThreadLeakTest:
+- testDetectThreadLeakWithOverrideExpectedThreadNames
+- testThreadLeak
