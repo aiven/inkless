@@ -99,14 +99,16 @@ public class InMemoryControlPlane extends AbstractControlPlane {
         final BatchInfo batchInfo = new BatchInfo(
             batchIdCounter.incrementAndGet(),
             fileInfo.objectKey,
-            request.byteOffset(),
-            request.size(),
-            firstOffset,
-            request.baseOffset(),
-            request.lastOffset(),
-            now,
-            request.batchMaxTimestamp(),
-            request.messageTimestampType()
+            new BatchMetadata(
+                topicIdPartition,
+                request.byteOffset(),
+                request.size(),
+                firstOffset,
+                lastOffset,
+                now,
+                request.batchMaxTimestamp(),
+                request.messageTimestampType()
+            )
         );
         coordinates.put(lastOffset, new BatchInfoInternal(batchInfo, fileInfo));
         return CommitBatchResponse.success(firstOffset, now, logInfo.logStartOffset);
@@ -150,7 +152,7 @@ public class InMemoryControlPlane extends AbstractControlPlane {
         for (Long batchOffset : coordinates.navigableKeySet().tailSet(request.offset())) {
             BatchInfo batch = coordinates.get(batchOffset).batchInfo();
             batches.add(batch);
-            totalSize += batch.size();
+            totalSize += batch.metadata().size();
             if (totalSize > fetchMaxBytes) {
                 break;
             }
@@ -188,7 +190,7 @@ public class InMemoryControlPlane extends AbstractControlPlane {
         while (!coordinates.isEmpty() && coordinates.firstKey() < logInfo.logStartOffset) {
             final BatchInfoInternal batchInfoInternal = coordinates.remove(coordinates.firstKey());
             final FileInfo fileInfo = batchInfoInternal.fileInfo;
-            fileInfo.deleteBatch(batchInfoInternal.batchInfo.size());
+            fileInfo.deleteBatch(batchInfoInternal.batchInfo.metadata().size());
             if (fileInfo.allDeleted()) {
                 files.remove(fileInfo.objectKey);
                 filesToDelete.put(fileInfo.objectKey, new FileToDeleteInternal(fileInfo, TimeUtils.now(time)));
@@ -215,7 +217,7 @@ public class InMemoryControlPlane extends AbstractControlPlane {
             for (final var entry : coordinates.entrySet()) {
                 final BatchInfoInternal batchInfoInternal = entry.getValue();
                 final FileInfo fileInfo = batchInfoInternal.fileInfo;
-                fileInfo.deleteBatch(batchInfoInternal.batchInfo.size());
+                fileInfo.deleteBatch(batchInfoInternal.batchInfo.metadata().size());
                 if (fileInfo.allDeleted()) {
                     files.remove(fileInfo.objectKey);
                     filesToDelete.put(fileInfo.objectKey, new FileToDeleteInternal(fileInfo, TimeUtils.now(time)));
@@ -324,27 +326,14 @@ public class InMemoryControlPlane extends AbstractControlPlane {
         }
     }
 
-    private List<FileMergeWorkItem.Batch> batchesFromFileToMerge(final FileInfo fileInfo) {
-        final List<FileMergeWorkItem.Batch> result = new ArrayList<>();
+    private List<BatchInfo> batchesFromFileToMerge(final FileInfo fileInfo) {
+        final List<BatchInfo> result = new ArrayList<>();
 
         for (final var coordinatesEntry : this.batches.entrySet()) {
-            final TopicIdPartition topicIdPartition = coordinatesEntry.getKey();
             for (final var batchInfoInternal : coordinatesEntry.getValue().values()) {
                 if (batchInfoInternal.fileInfo == fileInfo) {
                     final BatchInfo batchInfo = batchInfoInternal.batchInfo;
-                    result.add(new FileMergeWorkItem.Batch(
-                        batchInfo.batchId(),
-                        topicIdPartition,
-                        batchInfo.objectKey(),
-                        batchInfo.byteOffset(),
-                        batchInfo.size(),
-                        batchInfo.recordOffset(),
-                        batchInfo.requestBaseOffset(),
-                        batchInfo.requestLastOffset(),
-                        batchInfo.logAppendTimestamp(),
-                        batchInfo.batchMaxTimestamp(),
-                        batchInfo.timestampType()
-                    ));
+                    result.add(batchInfo);
                 }
             }
         }
@@ -383,7 +372,7 @@ public class InMemoryControlPlane extends AbstractControlPlane {
 
             // Check the parent batches: if they exist, they must be part of this work item (through their files).
             final Set<Long> parentBatches = new HashSet<>(mergedFileBatch.parentBatches());
-            final TreeMap<Long, BatchInfoInternal> coordinates = this.batches.get(mergedFileBatch.topicIdPartition());
+            final TreeMap<Long, BatchInfoInternal> coordinates = this.batches.get(mergedFileBatch.metadata().topicIdPartition());
             if (coordinates != null) {
                 final var parentBatchesFound = coordinates.values().stream()
                     .filter(b -> parentBatches.contains(b.batchInfo.batchId()))
@@ -418,10 +407,10 @@ public class InMemoryControlPlane extends AbstractControlPlane {
 
         // Delete the old batches and insert the new one.
         for (final MergedFileBatch batch : batches) {
-            final TreeMap<Long, BatchInfoInternal> coordinates = this.batches.get(batch.topicIdPartition());
+            final TreeMap<Long, BatchInfoInternal> coordinates = this.batches.get(batch.metadata().topicIdPartition());
             // Probably the partition was deleted -- skip the new batch (exclude it from the file too).
             if (coordinates == null) {
-                mergedFile.deleteBatch(batch.size());
+                mergedFile.deleteBatch(batch.metadata().size());
                 continue;
             }
 
@@ -432,23 +421,16 @@ public class InMemoryControlPlane extends AbstractControlPlane {
                 .findFirst();
             // Probably the parent batch was deleted -- skip the new batch (exclude it from the file too).
             if (parentBatchFound.isEmpty()) {
-                mergedFile.deleteBatch(batch.size());
+                mergedFile.deleteBatch(batch.metadata().size());
                 continue;
             }
             coordinates.remove(parentBatchFound.get().getKey());
 
-            coordinates.put(batch.lastOffset(), new BatchInfoInternal(
+            coordinates.put(batch.metadata().lastOffset(), new BatchInfoInternal(
                 new BatchInfo(
                     batchIdCounter.incrementAndGet(),
                     objectKey,
-                    batch.byteOffset(),
-                    batch.size(),
-                    batch.firstOffset(),
-                    batch.baseOffset(),
-                    batch.lastOffset(),
-                    batch.logAppendTimestamp(),
-                    batch.batchMaxTimestamp(),
-                    batch.messageTimestampType()
+                    batch.metadata()
                 ),
                 mergedFile
             ));

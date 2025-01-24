@@ -2,6 +2,7 @@
 package io.aiven.inkless.control_plane;
 
 import org.apache.kafka.common.TopicIdPartition;
+import org.apache.kafka.common.record.RecordBatch;
 import org.apache.kafka.common.record.TimestampType;
 
 public record CommitBatchRequest(TopicIdPartition topicIdPartition,
@@ -11,6 +12,21 @@ public record CommitBatchRequest(TopicIdPartition topicIdPartition,
                                  long lastOffset,
                                  long batchMaxTimestamp,
                                  TimestampType messageTimestampType) {
+    public static CommitBatchRequest of(
+        TopicIdPartition topicIdPartition,
+        int byteOffset,
+        RecordBatch batch
+    ) {
+        return new CommitBatchRequest(
+            topicIdPartition,
+            byteOffset,
+            batch.sizeInBytes(),
+            batch.baseOffset(), batch.lastOffset(),
+            batch.maxTimestamp(), batch.timestampType()
+        );
+    }
+
+    // Accessible for testing
     public static CommitBatchRequest of(
         TopicIdPartition topicIdPartition,
         int byteOffset,

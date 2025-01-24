@@ -171,8 +171,8 @@ public class FetchCompleterJob implements Supplier<Map<TopicIdPartition, FetchPa
     private static MemoryRecords constructRecordsFromFile(BatchInfo batch, List<FileExtent> files) {
         for (FileExtent file : files) {
             // TODO INK-77: A single batch may be broken up across multiple FileExtents
-            if (new ByteRange(file.range().offset(), file.range().length()).contains(batch.range())) {
-                ByteBuffer buffer = ByteBuffer.wrap(file.data()).slice(Math.toIntExact(batch.byteOffset() - file.range().offset()), Math.toIntExact(batch.size()));
+            if (new ByteRange(file.range().offset(), file.range().length()).contains(batch.metadata().range())) {
+                ByteBuffer buffer = ByteBuffer.wrap(file.data()).slice(Math.toIntExact(batch.metadata().byteOffset() - file.range().offset()), Math.toIntExact(batch.metadata().size()));
                 MemoryRecords records = MemoryRecords.readableRecords(buffer);
                 Iterator<MutableRecordBatch> iterator = records.batches().iterator();
                 if (!iterator.hasNext()) {
@@ -181,11 +181,11 @@ public class FetchCompleterJob implements Supplier<Map<TopicIdPartition, FetchPa
                 MutableRecordBatch mutableRecordBatch = iterator.next();
 
                 // set last offset
-                mutableRecordBatch.setLastOffset(batch.lastOffset());
+                mutableRecordBatch.setLastOffset(batch.metadata().lastOffset());
 
                 // set log append timestamp
-                if (batch.timestampType() == TimestampType.LOG_APPEND_TIME) {
-                    mutableRecordBatch.setMaxTimestamp(TimestampType.LOG_APPEND_TIME, batch.logAppendTimestamp());
+                if (batch.metadata().timestampType() == TimestampType.LOG_APPEND_TIME) {
+                    mutableRecordBatch.setMaxTimestamp(TimestampType.LOG_APPEND_TIME, batch.metadata().logAppendTimestamp());
                 }
                 
                 if (iterator.hasNext()) {
