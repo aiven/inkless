@@ -3118,12 +3118,12 @@ kafka.server.MetadataCacheTest:
 - getTopicMetadataPartitionListenerNotAvailableOnLeader
 - getTopicMetadataReplicaNotAvailable
 - getTopicMetadataWithNonSupportedSecurityProtocol
+- testDescribeTopicResponse
 - testGetAliveBrokersWithBrokerFenced
 - testGetLeaderAndIsr
 - testGetLiveBrokerEpoch
 - testGetOfflineReplicasConsidersDirAssignment
 - testGetPartitionReplicaEndpoints
-- testGetTopicMetadataForDescribeTopicPartitionsResponse
 - testIsBrokerFenced
 - testIsBrokerInControlledShutdown
 kafka.server.MetadataRequestTest:
@@ -3356,7 +3356,7 @@ kafka.server.ServerShutdownTest:
 - testNoCleanShutdownAfterFailedStartupDueToCorruptLogs
 - testShutdownWithKRaftControllerUnavailable
 kafka.server.ServerTest:
-- testCreateSelfManagedKafkaMetricsContext
+- testCreateKafkaMetricsContext
 kafka.server.ShareFetchAcknowledgeRequestTest:
 - testShareAcknowledgeInitialRequestError
 - testShareAcknowledgeRequestInvalidShareSessionEpoch
