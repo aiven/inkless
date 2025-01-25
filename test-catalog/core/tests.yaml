@@ -1592,7 +1592,6 @@ kafka.log.LogConfigTest:
 - testEnableRemoteLogStorageOnCompactedTopic
 - testFromPropsInvalid
 - testGetConfigValue
-- testInValidRemoteConfigsInZK
 - testInvalidCompactionLagConfig
 - testInvalidLocalLogRetentionProps
 - testKafkaConfigToProps
