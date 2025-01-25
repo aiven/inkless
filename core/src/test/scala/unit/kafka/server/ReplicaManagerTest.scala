@@ -2720,6 +2720,7 @@ class ReplicaManagerTest {
         thenReturn(Map(leaderBrokerId -> new Node(leaderBrokerId, "host1", 9092, "rack-a"),
           followerBrokerId -> new Node(followerBrokerId, "host2", 9092, "rack-b")).toMap)
     when(metadataCache.metadataVersion()).thenReturn(config.interBrokerProtocolVersion)
+    when(metadataCache.getAliveBrokerEpoch(leaderBrokerId)).thenReturn(Some(brokerEpoch))
     val mockProducePurgatory = new DelayedOperationPurgatory[DelayedProduce](
       "Produce", timer, 0, false)
     val mockFetchPurgatory = new DelayedOperationPurgatory[DelayedFetch](
@@ -3144,6 +3145,7 @@ class ReplicaManagerTest {
     when(metadataCache.topicIdsToNames()).thenReturn(topicNames.asJava)
     when(metadataCache.metadataVersion()).thenReturn(config.interBrokerProtocolVersion)
     mockGetAliveBrokerFunctions(metadataCache, aliveBrokers)
+    when(metadataCache.getAliveBrokerEpoch(brokerId+1)).thenReturn(Some(brokerEpoch))
     val mockProducePurgatory = new DelayedOperationPurgatory[DelayedProduce](
       "Produce", timer, 0, false)
     val mockFetchPurgatory = new DelayedOperationPurgatory[DelayedFetch](
