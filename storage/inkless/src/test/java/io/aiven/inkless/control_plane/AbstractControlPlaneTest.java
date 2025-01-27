@@ -1007,6 +1007,41 @@ public abstract class AbstractControlPlaneTest {
         }
     }
 
+    @Nested
+    class ReleaseFileMergeWorkItem {
+        @Test
+        void workItemNotExist() {
+            assertThatThrownBy(() -> controlPlane.releaseFileMergeWorkItem(100))
+                .isInstanceOf(FileMergeWorkItemNotExist.class)
+                .extracting("workItemId").isEqualTo(100L);
+        }
+
+        @Test
+        void workItemWillBeReturnedAfterReleasing() {
+            final long fileSize = FILE_MERGE_SIZE_THRESHOLD + 1;
+            final long committedAt = time.milliseconds();
+            controlPlane.commitFile("obj0", 1, fileSize,
+                List.of(new CommitBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 0, (int) fileSize, 0, 100, 1000, TimestampType.CREATE_TIME)));
+
+            final List<FileMergeWorkItem.File> expectedFiles = List.of(
+                new FileMergeWorkItem.File(1L, "obj0", fileSize, fileSize,
+                    List.of(new BatchInfo(1, "obj0", BatchMetadata.of(EXISTING_TOPIC_1_ID_PARTITION_0, 0, fileSize, 0, 100, committedAt, 1000, TimestampType.CREATE_TIME)))
+                )
+            );
+            assertThat(controlPlane.getFileMergeWorkItem())
+                .isEqualTo(new FileMergeWorkItem(1L, TimeUtils.now(time), expectedFiles));
+
+            // Now it should not return the same work item again, because the files are locked.
+            assertThat(controlPlane.getFileMergeWorkItem()).isNull();
+
+            // After releasing, the work item must be returnable again.
+            controlPlane.releaseFileMergeWorkItem(1L);
+            time.sleep(10);
+            assertThat(controlPlane.getFileMergeWorkItem())
+                .isEqualTo(new FileMergeWorkItem(2L, TimeUtils.now(time), expectedFiles));
+        }
+    }
+
     public record ControlPlaneAndConfigs(ControlPlane controlPlane, Map<String, ?> configs) {
     }
 }

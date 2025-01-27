@@ -43,6 +43,8 @@ public interface ControlPlane extends Closeable, Configurable {
                                  long fileSize,
                                  List<MergedFileBatch> batches);
 
+    void releaseFileMergeWorkItem(long workItemId);
+
     static ControlPlane create(final InklessConfig config, final Time time) {
         final Class<ControlPlane> controlPlaneClass = config.controlPlaneClass();
         try {

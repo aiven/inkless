@@ -41,4 +41,7 @@ class PostgresControlPlaneTest extends AbstractControlPlaneTest {
     @Nested
     class CommitFileMergeWorkItem {
     }
+    @Nested
+    class ReleaseFileMergeWorkItem {
+    }
 }
