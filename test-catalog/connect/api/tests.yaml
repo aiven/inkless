@@ -133,6 +133,7 @@ org.apache.kafka.connect.data.TimestampTest:
 - testToLogical
 - testToLogicalInvalidSchema
 org.apache.kafka.connect.data.ValuesTest:
+- avoidCpuAndMemoryIssuesConvertingExtremeBigDecimals
 - canConsume
 - shouldConsumeMultipleTokens
 - shouldConvertBooleanValues
