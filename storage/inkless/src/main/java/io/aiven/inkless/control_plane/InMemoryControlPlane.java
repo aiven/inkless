@@ -445,6 +445,14 @@ public class InMemoryControlPlane extends AbstractControlPlane {
     }
 
     @Override
+    public synchronized void releaseFileMergeWorkItem(final long workItemId) {
+        final FileMergeWorkItem workItem = fileMergeWorkItems.remove(workItemId);
+        if (workItem == null) {
+            throw new FileMergeWorkItemNotExist(workItemId);
+        }
+    }
+
+    @Override
     public void close() throws IOException {
         // Do nothing.
     }

@@ -144,6 +144,11 @@ public class PostgresControlPlane extends AbstractControlPlane {
     }
 
     @Override
+    public void releaseFileMergeWorkItem(final long workItemId) {
+        throw new RuntimeException("Not implemented");
+    }
+
+    @Override
     public void close() throws IOException {
         hikariDataSource.close();
     }
