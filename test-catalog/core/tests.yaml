@@ -3709,6 +3709,7 @@ kafka.test.api.ShareConsumerTest:
 - testAcknowledgementCommitCallbackThrowsException
 - testAcknowledgementSentOnSubscriptionChange
 - testAcquisitionLockTimeoutOnConsumer
+- testComplexShareConsumer
 - testConsumerCloseInGroupSequential
 - testControlRecordsSkipped
 - testExplicitAcknowledgeCommitSuccess
@@ -3740,6 +3741,7 @@ kafka.test.api.ShareConsumerTest:
 - testShareAutoOffsetResetEarliest
 - testShareAutoOffsetResetEarliestAfterLsoMovement
 - testShareAutoOffsetResetMultipleGroupsWithDifferentValue
+- testShareConsumerAfterCoordinatorMovement
 - testSubscribeAndPollNoRecords
 - testSubscribeOnInvalidTopicThrowsInvalidTopicException
 - testSubscribePollSubscribe
