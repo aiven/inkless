@@ -26,12 +26,14 @@ public class FixedBlockAlignment implements KeyAlignmentStrategy {
         }
         HashSet<ByteRange> keys = new HashSet<>();
         for (ByteRange requestRange : ranges) {
-            // Rely on integer division to align ranges within some offset.
-            long firstOffset = blockSize * (requestRange.offset() / blockSize);
-            ByteRange blockRange = new ByteRange(firstOffset, blockSize);
-            if (blockRange.contains(requestRange)) {
-                keys.add(blockRange);
-            } else {
+            // Rely on integer division to map bytes to blocks.
+            long firstBlock = requestRange.offset() / blockSize;
+            long lastBlock = requestRange.endOffset() / blockSize;
+            // Iterate over the set of blocks which cover the requested range.
+            for (long blockIndex = firstBlock; blockIndex <= lastBlock; blockIndex++) {
+                keys.add(new ByteRange(blockSize * blockIndex, blockSize));
+            }
+            if (firstBlock != lastBlock) {
                 // TODO INK-77: For ranges which cross multiple blocks, issue multiple requests and concatenate them later.
                 keys.add(requestRange);
             }

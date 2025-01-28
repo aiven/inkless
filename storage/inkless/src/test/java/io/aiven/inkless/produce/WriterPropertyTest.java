@@ -51,6 +51,10 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
+import io.aiven.inkless.cache.FixedBlockAlignment;
+import io.aiven.inkless.cache.KeyAlignmentStrategy;
+import io.aiven.inkless.cache.NullCache;
+import io.aiven.inkless.cache.ObjectCache;
 import io.aiven.inkless.common.ObjectKey;
 import io.aiven.inkless.control_plane.ControlPlane;
 import io.aiven.inkless.control_plane.CreateTopicAndPartitionsRequest;
@@ -81,6 +85,8 @@ class WriterPropertyTest {
     private static final TopicIdPartition T0P1 = new TopicIdPartition(TOPIC_ID_0, 1, TOPIC_0);
     private static final TopicIdPartition T1P0 = new TopicIdPartition(TOPIC_ID_1, 0, TOPIC_1);
     private static final TopicIdPartition T1P1 = new TopicIdPartition(TOPIC_ID_1, 1, TOPIC_1);
+    static final KeyAlignmentStrategy KEY_ALIGNMENT_STRATEGY = new FixedBlockAlignment(Integer.MAX_VALUE);
+    static final ObjectCache OBJECT_CACHE = new NullCache();
 
     static final Map<String, TimestampType> TIMESTAMP_TYPES = Map.of(
         TOPIC_0, TimestampType.CREATE_TIME,
@@ -105,10 +111,11 @@ class WriterPropertyTest {
                                   @ForAll @IntRange(min = 1, max = 100) int commitIntervalMsAvg,
                                   @ForAll @IntRange(min = 10, max = 30) int uploadDurationAvg,
                                   @ForAll @IntRange(min = 5, max = 10) int commitDurationAvg,
+                                  @ForAll @IntRange(min = 5, max = 10) int cacheStoreAvg,
                                   @ForAll @IntRange(min = 1, max = 1 * 1024) int maxBufferSize) throws Exception {
         try (final ControlPlane controlPlane = new InMemoryControlPlane(new MockTime(0, 0, 0))) {
             controlPlane.configure(Map.of());
-            test(requestCount, requestIntervalMsAvg, commitIntervalMsAvg, uploadDurationAvg, commitDurationAvg, maxBufferSize, controlPlane);
+            test(requestCount, requestIntervalMsAvg, commitIntervalMsAvg, uploadDurationAvg, commitDurationAvg, cacheStoreAvg, maxBufferSize, controlPlane);
         }
     }
 
@@ -119,6 +126,7 @@ class WriterPropertyTest {
                                   @ForAll @IntRange(min = 1, max = 100) int commitIntervalMsAvg,
                                   @ForAll @IntRange(min = 10, max = 30) int uploadDurationAvg,
                                   @ForAll @IntRange(min = 5, max = 10) int commitDurationAvg,
+                                  @ForAll @IntRange(min = 5, max = 10) int cacheStoreAvg,
                                   @ForAll @IntRange(min = 1, max = 1 * 1024) int maxBufferSize) throws Exception {
         String dbName = "test-" + requestCount
             + "-" + requestIntervalMsAvg
@@ -144,7 +152,7 @@ class WriterPropertyTest {
                 "password", pgContainer.getPassword()
             ));
 
-            test(requestCount, requestIntervalMsAvg, commitIntervalMsAvg, uploadDurationAvg, commitDurationAvg, maxBufferSize, controlPlane);
+            test(requestCount, requestIntervalMsAvg, commitIntervalMsAvg, uploadDurationAvg, commitDurationAvg, cacheStoreAvg, maxBufferSize, controlPlane);
         }
     }
 
@@ -153,6 +161,7 @@ class WriterPropertyTest {
               final int commitIntervalMsAvg,
               final int uploadDurationAvg,
               final int commitDurationAvg,
+              final int cacheStoreDurationAvg,
               final int maxBufferSize,
               final ControlPlane controlPlane) throws InterruptedException, ExecutionException, StorageBackendException {
         final Set<CreateTopicAndPartitionsRequest> createTopicAndPartitionsRequests = Set.of(
@@ -180,16 +189,27 @@ class WriterPropertyTest {
                 Instant.ofEpochMilli(time.milliseconds()),
                 Arbitraries.longs().between(commitDurationAvg - 2, commitDurationAvg + 2))
         );
+        final CacheStoreHandler cacheStoreHandler = new CacheStoreHandler(
+                uploaderHandler,
+                new MockExecutorServiceWithFutureSupport(),
+                new Timer("cacheStore",
+                        time,
+                        Instant.ofEpochMilli(time.milliseconds()),
+                        Arbitraries.longs().between(cacheStoreDurationAvg - 2, cacheStoreDurationAvg + 2))
+        );
         final FileCommitter fileCommitter = new FileCommitter(
             11,
             controlPlane,
             ObjectKey.creator("", false),
             objectUploader,
+            KEY_ALIGNMENT_STRATEGY,
+            OBJECT_CACHE,
             time,
             1,
             Duration.ZERO,
             uploaderHandler.executorService,
             committerHandler.executorService,
+            cacheStoreHandler.executorService,
             mock(FileCommitterMetrics.class)
         );
 
@@ -553,6 +573,31 @@ class WriterPropertyTest {
         private final Timer timer;
 
         private CommitterHandler(final UploaderHandler uploaderHandler,
+                                 final MockExecutorService executorService,
+                                 final Timer timer) {
+            this.uploaderHandler = uploaderHandler;
+            this.executorService = executorService;
+            this.timer = timer;
+        }
+
+        void maybeRunNext() throws InterruptedException {
+            if (!timer.happensNow()) {
+                return;
+            }
+            if (!uploaderHandler.oldestFutureIsDone()) {
+                // Otherwise it'd block indefinitely.
+                return;
+            }
+            executorService.runNextIfExists();
+        }
+    }
+
+    private static class CacheStoreHandler {
+        private final UploaderHandler uploaderHandler;
+        private final MockExecutorService executorService;
+        private final Timer timer;
+
+        private CacheStoreHandler(final UploaderHandler uploaderHandler,
                                  final MockExecutorService executorService,
                                  final Timer timer) {
             this.uploaderHandler = uploaderHandler;

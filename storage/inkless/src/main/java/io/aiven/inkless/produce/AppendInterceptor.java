@@ -44,6 +44,8 @@ public class AppendInterceptor implements Closeable {
                 state.brokerId(),
                 state.objectKeyCreator(),
                 state.storage(),
+                state.keyAlignmentStrategy(),
+                state.cache(),
                 state.controlPlane(),
                 state.config().commitInterval(),
                 state.config().produceBufferMaxBytes(),
