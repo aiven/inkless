@@ -26,6 +26,7 @@ class FileCommitterMetrics implements Closeable {
     private static final String FILE_UPLOAD_RATE = "FileUploadRate";
     private static final String FILE_COMMIT_TIME = "FileCommitTime";
     private static final String FILE_COMMIT_RATE = "FileCommitRate";
+    private static final String CACHE_STORE_TIME = "CacheStoreTime";
     private static final String COMMIT_QUEUE_FILES = "CommitQueueFiles";
     private static final String COMMIT_QUEUE_BYTES = "CommitQueueBytes";
     private static final String FILE_SIZE = "FileSize";
@@ -38,6 +39,7 @@ class FileCommitterMetrics implements Closeable {
     private final Histogram fileUploadTimeHistogram;
     private final Histogram fileCommitTimeHistogram;
     private final Histogram fileSizeHistogram;
+    private final Histogram cacheStoreTimeHistogram;
     private final LongAdder fileUploadRate = new LongAdder();
     private final LongAdder fileCommitRate = new LongAdder();
 
@@ -50,6 +52,7 @@ class FileCommitterMetrics implements Closeable {
         fileCommitTimeHistogram = metricsGroup.newHistogram(FILE_COMMIT_TIME, true, Map.of());
         metricsGroup.newGauge(FILE_COMMIT_RATE, fileCommitRate::intValue);
         fileSizeHistogram = metricsGroup.newHistogram(FILE_SIZE, true, Map.of());
+        cacheStoreTimeHistogram = metricsGroup.newHistogram(CACHE_STORE_TIME, true, Map.of());
     }
 
     void initTotalFilesInProgressMetric(final Supplier<Integer> supplier) {
@@ -78,6 +81,10 @@ class FileCommitterMetrics implements Closeable {
         final Instant now = TimeUtils.durationMeasurementNow(time);
         fileTotalLifeTimeHistogram.update(Duration.between(fileStart, now).toMillis());
         fileUploadAndCommitTimeHistogram.update(Duration.between(uploadAndCommitStart, now).toMillis());
+    }
+
+    void cacheStoreFinished(final long durationMs) {
+        cacheStoreTimeHistogram.update(durationMs);
     }
 
     @Override

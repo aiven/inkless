@@ -30,6 +30,8 @@ import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 
 import io.aiven.inkless.TimeUtils;
+import io.aiven.inkless.cache.KeyAlignmentStrategy;
+import io.aiven.inkless.cache.ObjectCache;
 import io.aiven.inkless.common.InklessThreadFactory;
 import io.aiven.inkless.common.ObjectKeyCreator;
 import io.aiven.inkless.control_plane.ControlPlane;
@@ -67,6 +69,8 @@ class Writer implements Closeable {
            final int brokerId,
            final ObjectKeyCreator objectKeyCreator,
            final ObjectUploader objectUploader,
+           final KeyAlignmentStrategy keyAlignmentStrategy,
+           final ObjectCache objectCache,
            final ControlPlane controlPlane,
            final Duration commitInterval,
            final int maxBufferSize,
@@ -78,7 +82,10 @@ class Writer implements Closeable {
             commitInterval,
             maxBufferSize,
             Executors.newScheduledThreadPool(1, new InklessThreadFactory("inkless-file-commit-ticker-", true)),
-            new FileCommitter(brokerId, controlPlane, objectKeyCreator, objectUploader, time, maxFileUploadAttempts, fileUploadRetryBackoff),
+            new FileCommitter(
+                    brokerId, controlPlane, objectKeyCreator, objectUploader,
+                    keyAlignmentStrategy, objectCache, time,
+                    maxFileUploadAttempts, fileUploadRetryBackoff),
             new WriterMetrics(time),
             new BrokerTopicMetricMarks(brokerTopicStats)
         );
