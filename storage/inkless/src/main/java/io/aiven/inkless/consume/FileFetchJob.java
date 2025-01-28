@@ -36,10 +36,7 @@ public class FileFetchJob implements Callable<FileExtent> {
         this.key = key;
         this.range = range;
         this.durationCallback = durationCallback;
-        if (range.size() > Integer.MAX_VALUE) {
-            throw new IllegalArgumentException("Cannot fetch size " + range.size() + " more than " + Integer.MAX_VALUE);
-        }
-        this.size = (int) range.size();
+        this.size = range.bufferSize();
     }
 
     // visible for testing
