@@ -1,6 +1,10 @@
 // Copyright (c) 2024 Aiven, Helsinki, Finland. https://aiven.io/
 package io.aiven.inkless.produce;
 
+import io.aiven.inkless.cache.FixedBlockAlignment;
+import io.aiven.inkless.cache.KeyAlignmentStrategy;
+import io.aiven.inkless.cache.NullCache;
+import io.aiven.inkless.cache.ObjectCache;
 import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.protocol.Errors;
@@ -52,6 +56,8 @@ class WriterIntegrationTest {
     static final TopicIdPartition T0P0 = new TopicIdPartition(TOPIC_ID_0, 0, TOPIC_0);
     static final TopicIdPartition T0P1 = new TopicIdPartition(TOPIC_ID_0, 1, TOPIC_0);
     static final TopicIdPartition T1P0 = new TopicIdPartition(TOPIC_ID_1, 0, TOPIC_1);
+    static final KeyAlignmentStrategy KEY_ALIGNMENT_STRATEGY = new FixedBlockAlignment(Integer.MAX_VALUE);
+    static final ObjectCache OBJECT_CACHE = new NullCache();
 
     static final Map<String, TimestampType> TIMESTAMP_TYPES = Map.of(
         TOPIC_0, TimestampType.CREATE_TIME,
@@ -111,7 +117,9 @@ class WriterIntegrationTest {
 
         try (
             final Writer writer = new Writer(
-                time, 11, ObjectKey.creator("", false), storage, controlPlane, Duration.ofMillis(10),
+                time, 11, ObjectKey.creator("", false), storage,
+                KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE,
+                controlPlane, Duration.ofMillis(10),
                 10 * 1024,
                 1,
                 Duration.ofMillis(10),

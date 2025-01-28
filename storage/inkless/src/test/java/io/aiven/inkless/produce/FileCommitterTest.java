@@ -1,6 +1,10 @@
 // Copyright (c) 2024 Aiven, Helsinki, Finland. https://aiven.io/
 package io.aiven.inkless.produce;
 
+import io.aiven.inkless.cache.FixedBlockAlignment;
+import io.aiven.inkless.cache.KeyAlignmentStrategy;
+import io.aiven.inkless.cache.NullCache;
+import io.aiven.inkless.cache.ObjectCache;
 import org.apache.kafka.common.utils.Time;
 
 import org.junit.jupiter.api.Test;
@@ -54,6 +58,8 @@ class FileCommitterTest {
         }
     };
     static final ClosedFile FILE = new ClosedFile(Instant.EPOCH, Map.of(), Map.of(), List.of(), List.of(), new byte[10]);
+    static final KeyAlignmentStrategy KEY_ALIGNMENT_STRATEGY = new FixedBlockAlignment(Integer.MAX_VALUE);
+    static final ObjectCache OBJECT_CACHE = new NullCache();
 
     @Mock
     ControlPlane controlPlane;
@@ -65,6 +71,8 @@ class FileCommitterTest {
     ExecutorService executorServiceUpload;
     @Mock
     ExecutorService executorServiceCommit;
+    @Mock
+    ExecutorService executorServiceCacheStore;
     @Mock
     FileCommitterMetrics metrics;
 
@@ -86,8 +94,11 @@ class FileCommitterTest {
             .thenReturn(uploadFuture);
 
         final FileCommitter committer = new FileCommitter(
-            BROKER_ID, controlPlane, OBJECT_KEY_CREATOR, objectUploader, time, 3, Duration.ofMillis(100),
-            executorServiceUpload, executorServiceCommit, metrics);
+                BROKER_ID, controlPlane, OBJECT_KEY_CREATOR, objectUploader,
+                KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, time,
+                3, Duration.ofMillis(100),
+                executorServiceUpload, executorServiceCommit, executorServiceCacheStore,
+                metrics);
 
         verify(metrics).initTotalFilesInProgressMetric(any());
         verify(metrics).initTotalBytesInProgressMetric(any());
@@ -132,8 +143,11 @@ class FileCommitterTest {
             .thenReturn(uploadFuture);
 
         final FileCommitter committer = new FileCommitter(
-            11, controlPlane, OBJECT_KEY_CREATOR, objectUploader, time, 3, Duration.ofMillis(100),
-            executorServiceUpload, executorServiceCommit, metrics);
+                BROKER_ID, controlPlane, OBJECT_KEY_CREATOR, objectUploader,
+                KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, time,
+                3, Duration.ofMillis(100),
+                executorServiceUpload, executorServiceCommit, executorServiceCacheStore,
+                metrics);
 
         assertThat(committer.totalFilesInProgress()).isZero();
         assertThat(committer.totalBytesInProgress()).isZero();
@@ -165,8 +179,10 @@ class FileCommitterTest {
     @Test
     void close() throws IOException {
         final FileCommitter committer = new FileCommitter(
-            11, controlPlane, OBJECT_KEY_CREATOR, objectUploader, time, 3, Duration.ofMillis(100),
-            executorServiceUpload, executorServiceCommit, metrics);
+                BROKER_ID, controlPlane, OBJECT_KEY_CREATOR, objectUploader,
+                KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, time,
+                3, Duration.ofMillis(100),
+                executorServiceUpload, executorServiceCommit, executorServiceCacheStore, metrics);
 
         committer.close();
 
@@ -178,45 +194,91 @@ class FileCommitterTest {
     @Test
     void constructorInvalidArguments() {
         assertThatThrownBy(() ->
-            new FileCommitter(BROKER_ID, null, OBJECT_KEY_CREATOR, objectUploader, time, 100, Duration.ofMillis(1)))
+            new FileCommitter(
+                    BROKER_ID, null, OBJECT_KEY_CREATOR,
+                    objectUploader, KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, time,
+                    100, Duration.ofMillis(1)))
             .isInstanceOf(NullPointerException.class)
             .hasMessage("controlPlane cannot be null");
         assertThatThrownBy(() ->
-            new FileCommitter(BROKER_ID, controlPlane, null, objectUploader, time, 100, Duration.ofMillis(1)))
+            new FileCommitter(
+                    BROKER_ID, controlPlane, null, objectUploader,
+                    KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, time,
+                    100, Duration.ofMillis(1)))
             .isInstanceOf(NullPointerException.class)
             .hasMessage("objectKeyCreator cannot be null");
         assertThatThrownBy(() ->
-            new FileCommitter(BROKER_ID, controlPlane, OBJECT_KEY_CREATOR, null, time, 100, Duration.ofMillis(1)))
+            new FileCommitter(
+                    BROKER_ID, controlPlane, OBJECT_KEY_CREATOR, null,
+                    KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, time,
+                    100, Duration.ofMillis(1)))
             .isInstanceOf(NullPointerException.class)
             .hasMessage("objectUploader cannot be null");
         assertThatThrownBy(() ->
-            new FileCommitter(BROKER_ID, controlPlane, OBJECT_KEY_CREATOR, objectUploader, null, 100, Duration.ofMillis(1)))
+            new FileCommitter(
+                    BROKER_ID, controlPlane, OBJECT_KEY_CREATOR, objectUploader,
+                    null, OBJECT_CACHE, time,
+                    100, Duration.ofMillis(1)))
+            .isInstanceOf(NullPointerException.class)
+            .hasMessage("keyAlignmentStrategy cannot be null");
+        assertThatThrownBy(() ->
+            new FileCommitter(
+                    BROKER_ID, controlPlane, OBJECT_KEY_CREATOR, objectUploader,
+                    KEY_ALIGNMENT_STRATEGY, null, time,
+                    100, Duration.ofMillis(1)))
+            .isInstanceOf(NullPointerException.class)
+            .hasMessage("objectCache cannot be null");
+        assertThatThrownBy(() ->
+            new FileCommitter(
+                    BROKER_ID, controlPlane, OBJECT_KEY_CREATOR, objectUploader,
+                    KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, null,
+                    100, Duration.ofMillis(1)))
             .isInstanceOf(NullPointerException.class)
             .hasMessage("time cannot be null");
         assertThatThrownBy(() ->
-            new FileCommitter(BROKER_ID, controlPlane, OBJECT_KEY_CREATOR, objectUploader, time, 0, Duration.ofMillis(1)))
+            new FileCommitter(
+                    BROKER_ID, controlPlane, OBJECT_KEY_CREATOR, objectUploader,
+                    KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, time,
+                    0, Duration.ofMillis(1)))
             .isInstanceOf(IllegalArgumentException.class)
             .hasMessage("maxFileUploadAttempts must be positive");
         assertThatThrownBy(() ->
-            new FileCommitter(BROKER_ID, controlPlane, OBJECT_KEY_CREATOR, objectUploader, time, 100, null))
+            new FileCommitter(
+                    BROKER_ID, controlPlane, OBJECT_KEY_CREATOR, objectUploader,
+                    KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, time,
+                    100, null))
             .isInstanceOf(NullPointerException.class)
             .hasMessage("fileUploadRetryBackoff cannot be null");
         assertThatThrownBy(() ->
             new FileCommitter(
-                BROKER_ID, controlPlane, OBJECT_KEY_CREATOR, objectUploader, time, 3, Duration.ofMillis(100),
-                null, executorServiceCommit, metrics))
+                    BROKER_ID, controlPlane, OBJECT_KEY_CREATOR, objectUploader,
+                    KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, time,
+                    3, Duration.ofMillis(100),
+                    null, executorServiceCommit, executorServiceCacheStore, metrics))
             .isInstanceOf(NullPointerException.class)
             .hasMessage("executorServiceUpload cannot be null");
         assertThatThrownBy(() ->
             new FileCommitter(
-                BROKER_ID, controlPlane, OBJECT_KEY_CREATOR, objectUploader, time, 3, Duration.ofMillis(100),
-                executorServiceUpload, null, metrics))
+                    BROKER_ID, controlPlane, OBJECT_KEY_CREATOR, objectUploader,
+                    KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, time,
+                    3, Duration.ofMillis(100),
+                    executorServiceUpload, null, executorServiceCacheStore, metrics))
             .isInstanceOf(NullPointerException.class)
             .hasMessage("executorServiceCommit cannot be null");
         assertThatThrownBy(() ->
             new FileCommitter(
-                BROKER_ID, controlPlane, OBJECT_KEY_CREATOR, objectUploader, time, 3, Duration.ofMillis(100),
-                executorServiceUpload, executorServiceCommit, null))
+                    BROKER_ID, controlPlane, OBJECT_KEY_CREATOR, objectUploader,
+                    KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, time,
+                    3, Duration.ofMillis(100),
+                    executorServiceUpload, executorServiceCommit, null, metrics))
+            .isInstanceOf(NullPointerException.class)
+            .hasMessage("executorServiceCacheStore cannot be null");
+        assertThatThrownBy(() ->
+            new FileCommitter(
+                    BROKER_ID, controlPlane, OBJECT_KEY_CREATOR, objectUploader,
+                    KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, time,
+                    3, Duration.ofMillis(100),
+                    executorServiceUpload, executorServiceCommit, executorServiceCacheStore, null))
             .isInstanceOf(NullPointerException.class)
             .hasMessage("metrics cannot be null");
     }
@@ -224,8 +286,10 @@ class FileCommitterTest {
     @Test
     void commitNull() {
         final FileCommitter committer = new FileCommitter(
-            BROKER_ID, controlPlane, OBJECT_KEY_CREATOR, objectUploader, time, 3, Duration.ofMillis(100),
-            executorServiceUpload, executorServiceCommit, metrics);
+                BROKER_ID, controlPlane, OBJECT_KEY_CREATOR, objectUploader,
+                KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE,
+                time, 3, Duration.ofMillis(100),
+                executorServiceUpload, executorServiceCommit, executorServiceCacheStore, metrics);
         assertThatThrownBy(() -> committer.commit(null))
             .isInstanceOf(NullPointerException.class)
             .hasMessage("file cannot be null");

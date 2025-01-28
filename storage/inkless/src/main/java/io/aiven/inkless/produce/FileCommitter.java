@@ -1,6 +1,8 @@
 // Copyright (c) 2024 Aiven, Helsinki, Finland. https://aiven.io/
 package io.aiven.inkless.produce;
 
+import io.aiven.inkless.cache.KeyAlignmentStrategy;
+import io.aiven.inkless.cache.ObjectCache;
 import org.apache.kafka.common.utils.Time;
 
 import com.groupcdg.pitest.annotations.DoNotMutate;
@@ -44,11 +46,14 @@ class FileCommitter implements Closeable {
     private final ControlPlane controlPlane;
     private final ObjectKeyCreator objectKeyCreator;
     private final ObjectUploader objectUploader;
+    private final KeyAlignmentStrategy keyAlignmentStrategy;
+    private final ObjectCache objectCache;
     private final Time time;
     private final int maxFileUploadAttempts;
     private final Duration fileUploadRetryBackoff;
     private final ExecutorService executorServiceUpload;
     private final ExecutorService executorServiceCommit;
+    private final ExecutorService executorServiceCacheStore;
 
     private final AtomicInteger totalFilesInProgress = new AtomicInteger(0);
     private final AtomicInteger totalBytesInProgress = new AtomicInteger(0);
@@ -58,13 +63,16 @@ class FileCommitter implements Closeable {
                   final ControlPlane controlPlane,
                   final ObjectKeyCreator objectKeyCreator,
                   final ObjectUploader objectUploader,
+                  final KeyAlignmentStrategy keyAlignmentStrategy,
+                  final ObjectCache objectCache,
                   final Time time,
                   final int maxFileUploadAttempts,
                   final Duration fileUploadRetryBackoff) {
-        this(brokerId, controlPlane, objectKeyCreator, objectUploader, time, maxFileUploadAttempts, fileUploadRetryBackoff,
+        this(brokerId, controlPlane, objectKeyCreator, objectUploader, keyAlignmentStrategy, objectCache, time, maxFileUploadAttempts, fileUploadRetryBackoff,
             Executors.newCachedThreadPool(new InklessThreadFactory("inkless-file-uploader-", false)),
             // It must be single-thread to preserve the commit order.
             Executors.newSingleThreadExecutor(new InklessThreadFactory("inkless-file-uploader-finisher-", false)),
+            Executors.newCachedThreadPool(new InklessThreadFactory("inkless-file-cache-store-", false)),
             new FileCommitterMetrics(time)
         );
     }
@@ -74,16 +82,21 @@ class FileCommitter implements Closeable {
                   final ControlPlane controlPlane,
                   final ObjectKeyCreator objectKeyCreator,
                   final ObjectUploader objectUploader,
+                  final KeyAlignmentStrategy keyAlignmentStrategy,
+                  final ObjectCache objectCache,
                   final Time time,
                   final int maxFileUploadAttempts,
                   final Duration fileUploadRetryBackoff,
                   final ExecutorService executorServiceUpload,
                   final ExecutorService executorServiceCommit,
+                  final ExecutorService executorServiceCacheStore,
                   final FileCommitterMetrics metrics) {
         this.brokerId = brokerId;
         this.controlPlane = Objects.requireNonNull(controlPlane, "controlPlane cannot be null");
         this.objectKeyCreator = Objects.requireNonNull(objectKeyCreator, "objectKeyCreator cannot be null");
         this.objectUploader = Objects.requireNonNull(objectUploader, "objectUploader cannot be null");
+        this.objectCache = Objects.requireNonNull(objectCache, "objectCache cannot be null");
+        this.keyAlignmentStrategy = Objects.requireNonNull(keyAlignmentStrategy, "keyAlignmentStrategy cannot be null");
         this.time = Objects.requireNonNull(time, "time cannot be null");
         if (maxFileUploadAttempts <= 0) {
             throw new IllegalArgumentException("maxFileUploadAttempts must be positive");
@@ -95,6 +108,8 @@ class FileCommitter implements Closeable {
             "executorServiceUpload cannot be null");
         this.executorServiceCommit = Objects.requireNonNull(executorServiceCommit,
             "executorServiceCommit cannot be null");
+        this.executorServiceCacheStore = Objects.requireNonNull(executorServiceCacheStore,
+                "executorServiceCacheStore cannot be null");
 
         this.metrics = Objects.requireNonNull(metrics, "metrics cannot be null");
         // Can't do this in the FileCommitterMetrics constructor, so initializing this way.
@@ -129,6 +144,9 @@ class FileCommitter implements Closeable {
                     totalBytesInProgress.addAndGet(-file.size());
                     metrics.fileFinished(file.start(), uploadAndCommitStart);
                 });
+            final CacheStoreJob cacheStoreJob =
+                    new CacheStoreJob(time, objectCache, keyAlignmentStrategy, file.data(), uploadFuture, metrics::cacheStoreFinished);
+            executorServiceCacheStore.submit(cacheStoreJob);
         } finally {
             lock.unlock();
         }

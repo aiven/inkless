@@ -1,6 +1,8 @@
 // Copyright (c) 2024 Aiven, Helsinki, Finland. https://aiven.io/
 package io.aiven.inkless.produce;
 
+import io.aiven.inkless.cache.KeyAlignmentStrategy;
+import io.aiven.inkless.cache.ObjectCache;
 import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.record.MemoryRecords;
@@ -67,6 +69,8 @@ class Writer implements Closeable {
            final int brokerId,
            final ObjectKeyCreator objectKeyCreator,
            final ObjectUploader objectUploader,
+           final KeyAlignmentStrategy keyAlignmentStrategy,
+           final ObjectCache objectCache,
            final ControlPlane controlPlane,
            final Duration commitInterval,
            final int maxBufferSize,
@@ -78,7 +82,10 @@ class Writer implements Closeable {
             commitInterval,
             maxBufferSize,
             Executors.newScheduledThreadPool(1, new InklessThreadFactory("inkless-file-commit-ticker-", true)),
-            new FileCommitter(brokerId, controlPlane, objectKeyCreator, objectUploader, time, maxFileUploadAttempts, fileUploadRetryBackoff),
+            new FileCommitter(
+                    brokerId, controlPlane, objectKeyCreator, objectUploader,
+                    keyAlignmentStrategy, objectCache, time,
+                    maxFileUploadAttempts, fileUploadRetryBackoff),
             new WriterMetrics(time),
             new BrokerTopicMetricMarks(brokerTopicStats)
         );
