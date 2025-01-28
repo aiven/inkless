@@ -1,10 +1,6 @@
 // Copyright (c) 2024 Aiven, Helsinki, Finland. https://aiven.io/
 package io.aiven.inkless.produce;
 
-import io.aiven.inkless.cache.FixedBlockAlignment;
-import io.aiven.inkless.cache.KeyAlignmentStrategy;
-import io.aiven.inkless.cache.NullCache;
-import io.aiven.inkless.cache.ObjectCache;
 import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.protocol.Errors;
@@ -30,6 +26,10 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
+import io.aiven.inkless.cache.FixedBlockAlignment;
+import io.aiven.inkless.cache.KeyAlignmentStrategy;
+import io.aiven.inkless.cache.NullCache;
+import io.aiven.inkless.cache.ObjectCache;
 import io.aiven.inkless.common.ObjectKey;
 import io.aiven.inkless.control_plane.CreateTopicAndPartitionsRequest;
 import io.aiven.inkless.control_plane.InMemoryControlPlane;

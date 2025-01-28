@@ -1,10 +1,6 @@
 // Copyright (c) 2024 Aiven, Helsinki, Finland. https://aiven.io/
 package io.aiven.inkless.produce;
 
-import io.aiven.inkless.cache.FixedBlockAlignment;
-import io.aiven.inkless.cache.KeyAlignmentStrategy;
-import io.aiven.inkless.cache.NullCache;
-import io.aiven.inkless.cache.ObjectCache;
 import org.apache.kafka.common.utils.Time;
 
 import org.junit.jupiter.api.Test;
@@ -25,6 +21,10 @@ import java.util.concurrent.Callable;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 
+import io.aiven.inkless.cache.FixedBlockAlignment;
+import io.aiven.inkless.cache.KeyAlignmentStrategy;
+import io.aiven.inkless.cache.NullCache;
+import io.aiven.inkless.cache.ObjectCache;
 import io.aiven.inkless.common.ObjectKey;
 import io.aiven.inkless.common.ObjectKeyCreator;
 import io.aiven.inkless.common.PlainObjectKey;

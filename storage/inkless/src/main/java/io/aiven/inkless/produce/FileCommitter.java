@@ -1,8 +1,6 @@
 // Copyright (c) 2024 Aiven, Helsinki, Finland. https://aiven.io/
 package io.aiven.inkless.produce;
 
-import io.aiven.inkless.cache.KeyAlignmentStrategy;
-import io.aiven.inkless.cache.ObjectCache;
 import org.apache.kafka.common.utils.Time;
 
 import com.groupcdg.pitest.annotations.DoNotMutate;
@@ -24,6 +22,8 @@ import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 
 import io.aiven.inkless.TimeUtils;
+import io.aiven.inkless.cache.KeyAlignmentStrategy;
+import io.aiven.inkless.cache.ObjectCache;
 import io.aiven.inkless.common.InklessThreadFactory;
 import io.aiven.inkless.common.ObjectKey;
 import io.aiven.inkless.common.ObjectKeyCreator;

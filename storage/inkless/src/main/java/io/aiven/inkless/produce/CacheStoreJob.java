@@ -1,6 +1,13 @@
 // Copyright (c) 2024 Aiven, Helsinki, Finland. https://aiven.io/
 package io.aiven.inkless.produce;
 
+import org.apache.kafka.common.utils.Time;
+
+import java.util.Collections;
+import java.util.Set;
+import java.util.concurrent.Future;
+import java.util.function.Consumer;
+
 import io.aiven.inkless.TimeUtils;
 import io.aiven.inkless.cache.KeyAlignmentStrategy;
 import io.aiven.inkless.cache.ObjectCache;
@@ -8,12 +15,6 @@ import io.aiven.inkless.common.ByteRange;
 import io.aiven.inkless.common.ObjectKey;
 import io.aiven.inkless.generated.CacheKey;
 import io.aiven.inkless.generated.FileExtent;
-import org.apache.kafka.common.utils.Time;
-
-import java.util.Collections;
-import java.util.Set;
-import java.util.concurrent.Future;
-import java.util.function.Consumer;
 
 public class CacheStoreJob implements Runnable {
 
