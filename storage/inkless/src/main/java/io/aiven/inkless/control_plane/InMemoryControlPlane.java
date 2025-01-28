@@ -37,7 +37,11 @@ public class InMemoryControlPlane extends AbstractControlPlane {
     // LinkedHashMap to preserve the insertion order, to select files for merging in order.
     private final LinkedHashMap<String, FileInfo> files = new LinkedHashMap<>();
     private final Map<String, FileToDeleteInternal> filesToDelete = new HashMap<>();
-    private final HashMap<TopicIdPartition, TreeMap<Long, BatchInfoInternal>> batches = new HashMap<>();
+    // Maps the last offset to the batch id.
+    private final HashMap<TopicIdPartition, TreeMap<Long, Long>> batchCoordinates = new HashMap<>();
+    private final HashMap<Long, BatchInfoInternal> batches = new HashMap<>();
+    // The key is the file ID.
+    private final Map<Long, List<Long>> fileToBatch = new HashMap<>();
     // The key is the ID.
     private final Map<Long, FileMergeWorkItem> fileMergeWorkItems = new HashMap<>();
 
@@ -61,7 +65,7 @@ public class InMemoryControlPlane extends AbstractControlPlane {
 
                 LOGGER.info("Creating {}", topicIdPartition);
                 logs.putIfAbsent(topicIdPartition, new LogInfo());
-                batches.putIfAbsent(topicIdPartition, new TreeMap<>());
+                batchCoordinates.putIfAbsent(topicIdPartition, new TreeMap<>());
             }
         }
     }
@@ -86,7 +90,7 @@ public class InMemoryControlPlane extends AbstractControlPlane {
                                                                final CommitBatchRequest request) {
         final TopicIdPartition topicIdPartition = request.topicIdPartition();
         final LogInfo logInfo = logs.get(topicIdPartition);
-        final TreeMap<Long, BatchInfoInternal> coordinates = this.batches.get(topicIdPartition);
+        final TreeMap<Long, Long> coordinates = batchCoordinates.get(topicIdPartition);
         // This can't really happen as non-existing partitions should be filtered out earlier.
         if (logInfo == null || coordinates == null) {
             LOGGER.warn("Unexpected non-existing partition {}", topicIdPartition);
@@ -110,7 +114,7 @@ public class InMemoryControlPlane extends AbstractControlPlane {
                 request.messageTimestampType()
             )
         );
-        coordinates.put(lastOffset, new BatchInfoInternal(batchInfo, fileInfo));
+        putBatchAndFiles(batchInfo, fileInfo);
         return CommitBatchResponse.success(firstOffset, now, logInfo.logStartOffset);
     }
 
@@ -129,7 +133,7 @@ public class InMemoryControlPlane extends AbstractControlPlane {
                                                               final boolean minOneMessage,
                                                               final int fetchMaxBytes) {
         final LogInfo logInfo = logs.get(request.topicIdPartition());
-        final TreeMap<Long, BatchInfoInternal> coordinates = batches.get(request.topicIdPartition());
+        final TreeMap<Long, Long> coordinates = batchCoordinates.get(request.topicIdPartition());
         // This can't really happen as non-existing partitions should be filtered out earlier.
         if (logInfo == null || coordinates == null) {
             LOGGER.warn("Unexpected non-existing partition {}", request.topicIdPartition());
@@ -147,17 +151,17 @@ public class InMemoryControlPlane extends AbstractControlPlane {
             return FindBatchResponse.offsetOutOfRange(logInfo.logStartOffset, logInfo.highWatermark);
         }
 
-        List<BatchInfo> batches = new ArrayList<>();
+        List<BatchInfo> found = new ArrayList<>();
         long totalSize = 0;
         for (Long batchOffset : coordinates.navigableKeySet().tailSet(request.offset())) {
-            BatchInfo batch = coordinates.get(batchOffset).batchInfo();
-            batches.add(batch);
+            BatchInfo batch = batches.get(coordinates.get(batchOffset)).batchInfo();
+            found.add(batch);
             totalSize += batch.metadata().size();
             if (totalSize > fetchMaxBytes) {
                 break;
             }
         }
-        return FindBatchResponse.success(batches, logInfo.logStartOffset, logInfo.highWatermark);
+        return FindBatchResponse.success(found, logInfo.logStartOffset, logInfo.highWatermark);
     }
 
     @Override
@@ -169,7 +173,7 @@ public class InMemoryControlPlane extends AbstractControlPlane {
 
     private DeleteRecordsResponse deleteRecordsForPartition(final DeleteRecordsRequest request) {
         final LogInfo logInfo = logs.get(request.topicIdPartition());
-        final TreeMap<Long, BatchInfoInternal> coordinates = this.batches.get(request.topicIdPartition());
+        final TreeMap<Long, Long> coordinates = batchCoordinates.get(request.topicIdPartition());
         // This can't really happen as non-existing partitions should be filtered out earlier.
         if (logInfo == null || coordinates == null) {
             LOGGER.warn("Unexpected non-existing partition {}", request.topicIdPartition());
@@ -188,13 +192,8 @@ public class InMemoryControlPlane extends AbstractControlPlane {
 
         // coordinates.firstKey() is last offset in the batch
         while (!coordinates.isEmpty() && coordinates.firstKey() < logInfo.logStartOffset) {
-            final BatchInfoInternal batchInfoInternal = coordinates.remove(coordinates.firstKey());
-            final FileInfo fileInfo = batchInfoInternal.fileInfo;
-            fileInfo.deleteBatch(batchInfoInternal.batchInfo.metadata().size());
-            if (fileInfo.allDeleted()) {
-                files.remove(fileInfo.objectKey);
-                filesToDelete.put(fileInfo.objectKey, new FileToDeleteInternal(fileInfo, TimeUtils.now(time)));
-            }
+            final Long batchId = coordinates.remove(coordinates.firstKey());
+            removeBatchAndMaybeFiles(batchId);
         }
         return (DeleteRecordsResponse.success(logInfo.logStartOffset));
     }
@@ -209,19 +208,14 @@ public class InMemoryControlPlane extends AbstractControlPlane {
         for (final TopicIdPartition topicIdPartition : partitionsToDelete) {
             LOGGER.info("Deleting {}", topicIdPartition);
             logs.remove(topicIdPartition);
-            final TreeMap<Long, BatchInfoInternal> coordinates = batches.remove(topicIdPartition);
+            final TreeMap<Long, Long> coordinates = batchCoordinates.remove(topicIdPartition);
             if (coordinates == null) {
                 continue;
             }
 
             for (final var entry : coordinates.entrySet()) {
-                final BatchInfoInternal batchInfoInternal = entry.getValue();
-                final FileInfo fileInfo = batchInfoInternal.fileInfo;
-                fileInfo.deleteBatch(batchInfoInternal.batchInfo.metadata().size());
-                if (fileInfo.allDeleted()) {
-                    files.remove(fileInfo.objectKey);
-                    filesToDelete.put(fileInfo.objectKey, new FileToDeleteInternal(fileInfo, TimeUtils.now(time)));
-                }
+                final Long batchId = entry.getValue();
+                removeBatchAndMaybeFiles(batchId);
             }
         }
     }
@@ -308,7 +302,11 @@ public class InMemoryControlPlane extends AbstractControlPlane {
             mergeableFiles.add(new FileMergeWorkItem.File(
                 fileInfo.fileId,
                 fileInfo.objectKey,
-                batchesFromFileToMerge(fileInfo)
+                fileToBatch.get(fileInfo.fileId)
+                    .stream()
+                    .map(batches::get)
+                    .map(BatchInfoInternal::batchInfo)
+                    .toList()
             ));
             totalMergeableSize += fileInfo.fileSize;
         }
@@ -324,29 +322,12 @@ public class InMemoryControlPlane extends AbstractControlPlane {
         }
     }
 
-    private List<BatchInfo> batchesFromFileToMerge(final FileInfo fileInfo) {
-        final List<BatchInfo> result = new ArrayList<>();
-
-        for (final var coordinatesEntry : this.batches.entrySet()) {
-            for (final var batchInfoInternal : coordinatesEntry.getValue().values()) {
-                if (batchInfoInternal.fileInfo == fileInfo) {
-                    final BatchInfo batchInfo = batchInfoInternal.batchInfo;
-                    result.add(batchInfo);
-                }
-            }
-        }
-
-        return result;
-    }
-
     @Override
     public synchronized void commitFileMergeWorkItem(final long workItemId,
                                                      final String objectKey,
                                                      final int uploaderBrokerId,
                                                      final long fileSize,
-                                                     final List<MergedFileBatch> batches) {
-        final Instant now = TimeUtils.now(time);
-
+                                                     final List<MergedFileBatch> mergedFileBatches) {
         final FileMergeWorkItem workItem = fileMergeWorkItems.get(workItemId);
         if (workItem == null) {
             throw new FileMergeWorkItemNotExist(workItemId);
@@ -357,7 +338,7 @@ public class InMemoryControlPlane extends AbstractControlPlane {
             .collect(Collectors.toSet());
 
         // Before we start doing modifications, verify we can finish them without errors.
-        for (final MergedFileBatch mergedFileBatch : batches) {
+        for (final MergedFileBatch mergedFileBatch : mergedFileBatches) {
             // We don't support compaction or concatenation yet, so the only correct number of parent batches is 1.
             if (mergedFileBatch.parentBatches().size() != 1) {
                 throw new ControlPlaneException(
@@ -370,10 +351,11 @@ public class InMemoryControlPlane extends AbstractControlPlane {
 
             // Check the parent batches: if they exist, they must be part of this work item (through their files).
             final Set<Long> parentBatches = new HashSet<>(mergedFileBatch.parentBatches());
-            final TreeMap<Long, BatchInfoInternal> coordinates = this.batches.get(mergedFileBatch.metadata().topicIdPartition());
+            final TreeMap<Long, Long> coordinates = batchCoordinates.get(mergedFileBatch.metadata().topicIdPartition());
             if (coordinates != null) {
-                final var parentBatchesFound = coordinates.values().stream()
-                    .filter(b -> parentBatches.contains(b.batchInfo.batchId()))
+                final var parentBatchesFound = parentBatches.stream()
+                    .filter(batches::containsKey)
+                    .map(batches::get)
                     .toList();
                 for (final var parentBatch : parentBatchesFound) {
                     if (!workItemFileIds.contains(parentBatch.fileInfo.fileId)) {
@@ -389,56 +371,57 @@ public class InMemoryControlPlane extends AbstractControlPlane {
         fileMergeWorkItems.remove(workItemId);
 
         // Delete the old file and insert the new ones.
-        final Set<Long> currentFilesToDelete = this.filesToDelete.values().stream().map(fd -> fd.fileInfo().fileId).collect(Collectors.toSet());
+        final Set<Long> currentFilesToDelete = this.filesToDelete.values().stream()
+            .map(fd -> fd.fileInfo().fileId)
+            .collect(Collectors.toSet());
         for (final var oldFile : workItem.files()) {
             // A file may be already deleted.
             if (!currentFilesToDelete.contains(oldFile.fileId())) {
                 final FileInfo oldFileInfo = this.files.remove(oldFile.objectKey());
                 // It may be also already physically deleted, without any trace in `files` or `filesToDelete`.
                 if (oldFileInfo != null) {
-                    filesToDelete.put(oldFileInfo.objectKey, new FileToDeleteInternal(oldFileInfo, now));
+                    filesToDelete.put(oldFileInfo.objectKey, new FileToDeleteInternal(oldFileInfo, TimeUtils.now(time)));
                 }
             }
         }
         final FileInfo mergedFile = new FileInfo(fileIdCounter.incrementAndGet(), objectKey, FileReason.MERGE, uploaderBrokerId, fileSize);
-        this.files.put(objectKey, mergedFile);
 
         // Delete the old batches and insert the new one.
-        for (final MergedFileBatch batch : batches) {
-            final TreeMap<Long, BatchInfoInternal> coordinates = this.batches.get(batch.metadata().topicIdPartition());
+        for (final MergedFileBatch batch : mergedFileBatches) {
+            final TreeMap<Long, Long> coordinates = batchCoordinates.get(batch.metadata().topicIdPartition());
             // Probably the partition was deleted -- skip the new batch (exclude it from the file too).
             if (coordinates == null) {
-                mergedFile.deleteBatch(batch.metadata().size());
                 continue;
             }
 
             // We now support only a single parent batch now.
             final Set<Long> parentBatches = new HashSet<>(batch.parentBatches());
-            final Optional<Map.Entry<Long, BatchInfoInternal>> parentBatchFound = coordinates.entrySet().stream()
-                .filter(kv -> parentBatches.contains(kv.getValue().batchInfo.batchId()))
+            final Optional<Map.Entry<Long, Long>> parentBatchFound = coordinates.entrySet().stream()
+                .filter(kv -> parentBatches.contains(kv.getValue()))
                 .findFirst();
             // Probably the parent batch was deleted -- skip the new batch (exclude it from the file too).
             if (parentBatchFound.isEmpty()) {
-                mergedFile.deleteBatch(batch.metadata().size());
                 continue;
             }
-            coordinates.remove(parentBatchFound.get().getKey());
 
-            coordinates.put(batch.metadata().lastOffset(), new BatchInfoInternal(
-                new BatchInfo(
-                    batchIdCounter.incrementAndGet(),
-                    objectKey,
-                    batch.metadata()
-                ),
-                mergedFile
-            ));
+            for (Long oldBatchId: parentBatches) {
+                final BatchInfoInternal oldBatchInfoInternal = removeBatchAndMaybeFiles(oldBatchId);
+                final BatchInfo batchInfo = oldBatchInfoInternal.batchInfo;
+                batchCoordinates.get(batchInfo.metadata().topicIdPartition()).remove(batchInfo.metadata().lastOffset());
+            }
+
+            final long batchId = batchIdCounter.incrementAndGet();
+            final BatchInfo batchInfo = new BatchInfo(batchId, objectKey, batch.metadata());
+            putBatchAndFiles(batchInfo, mergedFile);
         }
 
-        // It may happen that the new file is absolutely empty after taking into account all the deleted batches.
-        // In this case, delete it as well.
-        if (mergedFile.usedSize <= 0) {
-            final FileInfo mergedFileInfo = this.files.remove(mergedFile.objectKey);
-            filesToDelete.put(mergedFile.objectKey, new FileToDeleteInternal(mergedFileInfo, now));
+        final List<Long> batchesOnFile = fileToBatch.getOrDefault(mergedFile.fileId, List.of());
+        if (batchesOnFile.isEmpty()) {
+            // It may happen that the new file is absolutely empty after taking into account all the deleted batches.
+            // In this case, delete it as well.
+            filesToDelete.put(mergedFile.objectKey, new FileToDeleteInternal(mergedFile, TimeUtils.now(time)));
+        } else {
+            this.files.put(objectKey, mergedFile);
         }
     }
 
@@ -455,6 +438,25 @@ public class InMemoryControlPlane extends AbstractControlPlane {
         // Do nothing.
     }
 
+    private void putBatchAndFiles(final BatchInfo batchInfo, final FileInfo fileInfo) {
+        batchCoordinates.get(batchInfo.metadata().topicIdPartition()).put(batchInfo.metadata().lastOffset(), batchInfo.batchId());
+        batches.put(batchInfo.batchId(), new BatchInfoInternal(batchInfo, fileInfo));
+        fileToBatch.computeIfAbsent(fileInfo.fileId, k -> new ArrayList<>()).add(batchInfo.batchId());
+    }
+
+    private BatchInfoInternal removeBatchAndMaybeFiles(Long batchId) {
+        final BatchInfoInternal batchInfoInternal = batches.remove(batchId);
+        final FileInfo fileInfo = batchInfoInternal.fileInfo;
+        final List<Long> batches = fileToBatch.get(fileInfo.fileId);
+        batches.remove(batchId);
+        if (batches.isEmpty()) {
+            files.remove(fileInfo.objectKey);
+            filesToDelete.put(fileInfo.objectKey, new FileToDeleteInternal(fileInfo, TimeUtils.now(time)));
+            fileToBatch.remove(fileInfo.fileId);
+        }
+        return batchInfoInternal;
+    }
+
     private static class LogInfo {
         long logStartOffset = 0;
         long highWatermark = 0;
@@ -466,7 +468,6 @@ public class InMemoryControlPlane extends AbstractControlPlane {
         final FileReason fileReason;
         final int uploaderBrokerId;
         final long fileSize;
-        long usedSize;
 
         private FileInfo(final long fileId,
                          final String objectKey,
@@ -478,19 +479,6 @@ public class InMemoryControlPlane extends AbstractControlPlane {
             this.fileReason = fileReason;
             this.uploaderBrokerId = uploaderBrokerId;
             this.fileSize = fileSize;
-            this.usedSize = fileSize;
-        }
-
-        private void deleteBatch(final long batchSize) {
-            final long newUsedSize = usedSize - batchSize;
-            if (newUsedSize < 0) {
-                throw new IllegalStateException("newUsedSize < 0: " + newUsedSize);
-            }
-            this.usedSize = newUsedSize;
-        }
-
-        private boolean allDeleted() {
-            return this.usedSize == 0;
         }
     }
 
