@@ -3,13 +3,20 @@ package io.aiven.inkless.storage_backend.s3;
 
 import org.junit.jupiter.api.Test;
 
+import java.lang.reflect.Field;
 import java.net.URI;
 import java.time.Duration;
 import java.util.Map;
 
 import software.amazon.awssdk.auth.credentials.DefaultCredentialsProvider;
 import software.amazon.awssdk.auth.credentials.EnvironmentVariableCredentialsProvider;
+import software.amazon.awssdk.core.client.config.SdkClientConfiguration;
+import software.amazon.awssdk.core.client.config.SdkClientOption;
+import software.amazon.awssdk.http.SdkHttpClient;
+import software.amazon.awssdk.http.SdkHttpConfigurationOption;
 import software.amazon.awssdk.regions.Region;
+import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.utils.AttributeMap;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -32,6 +39,9 @@ class S3ClientBuilderTest {
             .allSatisfy(metricPublisher -> assertThat(metricPublisher).isInstanceOf(MetricCollector.class));
         assertThat(clientConfiguration.overrideConfiguration().apiCallTimeout()).isEmpty();
         assertThat(clientConfiguration.overrideConfiguration().apiCallAttemptTimeout()).isEmpty();
+
+        final AttributeMap resolvedOptions = getInternalHttpClientResolvedOptions(s3Client);
+        assertThat(resolvedOptions.get(SdkHttpConfigurationOption.TRUST_ALL_CERTIFICATES)).isFalse();
     }
 
     @Test
@@ -55,6 +65,9 @@ class S3ClientBuilderTest {
         assertThat(clientConfiguration.overrideConfiguration().metricPublishers()).hasSize(1);
         assertThat(clientConfiguration.overrideConfiguration().metricPublishers()).element(0)
             .isInstanceOf(MetricCollector.class);
+
+        final AttributeMap resolvedOptions = getInternalHttpClientResolvedOptions(s3Client);
+        assertThat(resolvedOptions.get(SdkHttpConfigurationOption.TRUST_ALL_CERTIFICATES)).isFalse();
     }
 
     @Test
@@ -80,6 +93,9 @@ class S3ClientBuilderTest {
         assertThat(clientConfiguration.overrideConfiguration().metricPublishers()).hasSize(1);
         assertThat(clientConfiguration.overrideConfiguration().metricPublishers()).element(0)
             .isInstanceOf(MetricCollector.class);
+
+        final AttributeMap resolvedOptions = getInternalHttpClientResolvedOptions(s3Client);
+        assertThat(resolvedOptions.get(SdkHttpConfigurationOption.TRUST_ALL_CERTIFICATES)).isFalse();
     }
 
     @Test
@@ -105,6 +121,9 @@ class S3ClientBuilderTest {
             .allSatisfy(metricPublisher -> assertThat(metricPublisher).isInstanceOf(MetricCollector.class));
         assertThat(clientConfiguration.overrideConfiguration().apiCallTimeout()).isEmpty();
         assertThat(clientConfiguration.overrideConfiguration().apiCallAttemptTimeout()).isEmpty();
+
+        final AttributeMap resolvedOptions = getInternalHttpClientResolvedOptions(s3Client);
+        assertThat(resolvedOptions.get(SdkHttpConfigurationOption.TRUST_ALL_CERTIFICATES)).isTrue();
     }
 
     @Test
@@ -125,5 +144,25 @@ class S3ClientBuilderTest {
         assertThat(clientConfiguration.overrideConfiguration().apiCallTimeout()).hasValue(Duration.ofMillis(5000));
         assertThat(clientConfiguration.overrideConfiguration().apiCallAttemptTimeout())
             .hasValue(Duration.ofMillis(1000));
+
+        final AttributeMap resolvedOptions = getInternalHttpClientResolvedOptions(s3Client);
+        assertThat(resolvedOptions.get(SdkHttpConfigurationOption.TRUST_ALL_CERTIFICATES)).isFalse();
+    }
+
+    private static AttributeMap getInternalHttpClientResolvedOptions(final S3Client s3Client) {
+        try {
+            final Field clientConfigurationField = s3Client.getClass().getDeclaredField("clientConfiguration");
+            clientConfigurationField.setAccessible(true);
+            final SdkClientConfiguration sdkClientConfiguration = (SdkClientConfiguration) clientConfigurationField.get(s3Client);
+            final SdkHttpClient httpClient = sdkClientConfiguration.option(SdkClientOption.CONFIGURED_SYNC_HTTP_CLIENT);
+            final Field delegateField = httpClient.getClass().getDeclaredField("delegate");
+            delegateField.setAccessible(true);
+            final SdkHttpClient httpClientDelegate = (SdkHttpClient) delegateField.get(httpClient);
+            final Field resolvedOptionsField = httpClientDelegate.getClass().getDeclaredField("resolvedOptions");
+            resolvedOptionsField.setAccessible(true);
+            return (AttributeMap) resolvedOptionsField.get(httpClientDelegate);
+        } catch (final NoSuchFieldException | IllegalAccessException e) {
+            throw new RuntimeException(e);
+        }
     }
 }
