@@ -20,6 +20,7 @@ import com.yammer.metrics.core.Meter
 import io.aiven.inkless.common.SharedState
 import io.aiven.inkless.consume.{FetchInterceptor, FetchOffsetInterceptor}
 import io.aiven.inkless.delete.{DeleteRecordsInterceptor, FileCleaner}
+import io.aiven.inkless.merge.FileMerger
 import io.aiven.inkless.produce.AppendInterceptor
 import kafka.cluster.{Partition, PartitionListener}
 import kafka.controller.StateChangeLogger
@@ -318,6 +319,7 @@ class ReplicaManager(val config: KafkaConfig,
   private val inklessFetchOffsetInterceptor: Option[FetchOffsetInterceptor] = inklessSharedState.map(new FetchOffsetInterceptor(_))
   private val inklessDeleteRecordsInterceptor: Option[DeleteRecordsInterceptor] = inklessSharedState.map(new DeleteRecordsInterceptor(_))
   private val inklessFileCleaner: Option[FileCleaner] = inklessSharedState.map(new FileCleaner(_))
+  private val inklessFileMerger: Option[FileMerger] = inklessSharedState.map(new FileMerger(_))
 
   /* epoch of the controller that last changed the leader */
   @volatile private[server] var controllerEpoch: Int = 0
@@ -408,6 +410,9 @@ class ReplicaManager(val config: KafkaConfig,
     // Inkless threads
     inklessSharedState.map { sharedState =>
       scheduler.schedule("inkless-file-cleaner", () => inklessFileCleaner.foreach(_.run()), 0L, sharedState.config().fileCleanerInterval().toMillis)
+
+      // There are internal delays in case of errors or absence of work items, no need for extra delays here.
+      scheduler.schedule("inkless-file-merger", () => inklessFileMerger.foreach(_.run()), 1L, 1L)
     }
   }
 
