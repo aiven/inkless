@@ -2751,6 +2751,8 @@ kafka.server.KafkaApisTest:
 - testConsumerGroupHeartbeatRequestAuthorizationFailed
 - testConsumerGroupHeartbeatRequestFutureFailed
 - testConsumerGroupHeartbeatReturnsUnsupportedVersion
+- testDeleteShareGroupStateAuthorizationFailed
+- testDeleteShareGroupStateSuccess
 - testDescribeClusterRequest
 - testDescribeConfigsClientMetrics
 - testDescribeConfigsConsumerGroup
@@ -3518,6 +3520,7 @@ kafka.server.share.SharePartitionManagerTest:
 - testCachedTopicPartitionsWithNoTopicPartitions
 - testCloseSharePartitionManager
 - testDelayedInitializationShouldCompleteFetchRequest
+- testFetchMessagesRotatePartitions
 - testGetErroneousAndValidTopicIdPartitions
 - testListenerRegistration
 - testMultipleConcurrentShareFetches

@@ -10,6 +10,7 @@ org.apache.kafka.coordinator.share.ShareCoordinatorOffsetsManagerTest:
 - testUpdateStateRedundantState
 org.apache.kafka.coordinator.share.ShareCoordinatorRecordHelpersTest:
 - testNewShareSnapshotRecord
+- testNewShareStateTombstoneRecord
 - testNewShareUpdateRecord
 org.apache.kafka.coordinator.share.ShareCoordinatorRecordSerdeTest:
 - testDeserialize
@@ -24,6 +25,10 @@ org.apache.kafka.coordinator.share.ShareCoordinatorRecordSerdeTest:
 - testSerializeNullValue
 - testSerializeValue
 org.apache.kafka.coordinator.share.ShareCoordinatorServiceTest:
+- testDeleteFutureReturnsError
+- testDeleteStateSuccess
+- testDeleteStateValidationsError
+- testDeleteStateWhenNotStarted
 - testPartitionFor
 - testReadFutureReturnsError
 - testReadStateSuccess
@@ -47,6 +52,12 @@ org.apache.kafka.coordinator.share.ShareCoordinatorServiceTest:
 - testWriteStateValidationsError
 - testWriteStateWhenNotStarted
 org.apache.kafka.coordinator.share.ShareCoordinatorShardTest:
+- testDeleteNullMetadataImage
+- testDeletePartitionIdNonExistentInMetadataImage
+- testDeleteStateFirstRecordDeleteSuccess
+- testDeleteStateInvalidRequestData
+- testDeleteStateSuccess
+- testDeleteTopicIdNonExistentInMetadataImage
 - testLastRedundantOffset
 - testNonSequentialBatchUpdates
 - testReadNullMetadataImage
