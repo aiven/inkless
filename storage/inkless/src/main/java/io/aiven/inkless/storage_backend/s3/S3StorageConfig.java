@@ -22,6 +22,8 @@ import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.utils.builder.Buildable;
 
+import static org.apache.kafka.common.config.ConfigDef.Range.atLeast;
+
 public class S3StorageConfig extends AbstractConfig {
 
     public static final String S3_BUCKET_NAME_CONFIG = "s3.bucket.name";
@@ -52,12 +54,17 @@ public class S3StorageConfig extends AbstractConfig {
     public static final String AWS_SECRET_ACCESS_KEY_CONFIG = "aws.secret.access.key";
     private static final String AWS_SECRET_ACCESS_KEY_DOC = "AWS secret access key. "
         + "To be used when static credentials are provided.";
+
     public static final String AWS_CERTIFICATE_CHECK_ENABLED_CONFIG = "aws.certificate.check.enabled";
     private static final String AWS_CERTIFICATE_CHECK_ENABLED_DOC =
         "This property is used to enable SSL certificate checking for AWS services. "
             + "When set to \"false\", the SSL certificate checking for AWS services will be bypassed. "
             + "Use with caution and always only in a test environment, as disabling certificate lead the storage "
             + "to be vulnerable to man-in-the-middle attacks.";
+
+    public static final String AWS_HTTP_MAX_CONNECTIONS_CONFIG = "aws.http.max.connections";
+    private static final String AWS_HTTP_MAX_CONNECTIONS_DOC =
+        "This max number of HTTP connections to keep in the client pool.";
 
     public static final String AWS_CHECKSUM_CHECK_ENABLED_CONFIG = "aws.checksum.check.enabled";
     private static final String AWS_CHECKSUM_CHECK_ENABLED_DOC =
@@ -134,6 +141,13 @@ public class S3StorageConfig extends AbstractConfig {
                 true,
                 ConfigDef.Importance.LOW,
                 AWS_CERTIFICATE_CHECK_ENABLED_DOC
+            )
+            .define(AWS_HTTP_MAX_CONNECTIONS_CONFIG,
+                ConfigDef.Type.INT,
+                150,
+                atLeast(50),
+                ConfigDef.Importance.LOW,
+                AWS_HTTP_MAX_CONNECTIONS_DOC
             )
             .define(AWS_CHECKSUM_CHECK_ENABLED_CONFIG,
                 ConfigDef.Type.BOOLEAN,
@@ -215,6 +229,10 @@ public class S3StorageConfig extends AbstractConfig {
 
     public Boolean certificateCheckEnabled() {
         return getBoolean(AWS_CERTIFICATE_CHECK_ENABLED_CONFIG);
+    }
+
+    public int httpMaxConnections() {
+        return getInt(AWS_HTTP_MAX_CONNECTIONS_CONFIG);
     }
 
     public Boolean checksumCheckEnabled() {

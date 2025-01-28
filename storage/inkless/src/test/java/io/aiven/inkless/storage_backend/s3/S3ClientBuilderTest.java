@@ -42,6 +42,7 @@ class S3ClientBuilderTest {
 
         final AttributeMap resolvedOptions = getInternalHttpClientResolvedOptions(s3Client);
         assertThat(resolvedOptions.get(SdkHttpConfigurationOption.TRUST_ALL_CERTIFICATES)).isFalse();
+        assertThat(resolvedOptions.get(SdkHttpConfigurationOption.MAX_CONNECTIONS)).isEqualTo(150);
     }
 
     @Test
@@ -68,6 +69,7 @@ class S3ClientBuilderTest {
 
         final AttributeMap resolvedOptions = getInternalHttpClientResolvedOptions(s3Client);
         assertThat(resolvedOptions.get(SdkHttpConfigurationOption.TRUST_ALL_CERTIFICATES)).isFalse();
+        assertThat(resolvedOptions.get(SdkHttpConfigurationOption.MAX_CONNECTIONS)).isEqualTo(150);
     }
 
     @Test
@@ -96,6 +98,7 @@ class S3ClientBuilderTest {
 
         final AttributeMap resolvedOptions = getInternalHttpClientResolvedOptions(s3Client);
         assertThat(resolvedOptions.get(SdkHttpConfigurationOption.TRUST_ALL_CERTIFICATES)).isFalse();
+        assertThat(resolvedOptions.get(SdkHttpConfigurationOption.MAX_CONNECTIONS)).isEqualTo(150);
     }
 
     @Test
@@ -110,6 +113,7 @@ class S3ClientBuilderTest {
             "aws.access.key.id", username,
             "aws.secret.access.key", password,
             "aws.certificate.check.enabled", "false",
+            "aws.http.max.connections", "200",
             "aws.checksum.check.enabled", "true");
 
         final var config = new S3StorageConfig(configs);
@@ -124,6 +128,7 @@ class S3ClientBuilderTest {
 
         final AttributeMap resolvedOptions = getInternalHttpClientResolvedOptions(s3Client);
         assertThat(resolvedOptions.get(SdkHttpConfigurationOption.TRUST_ALL_CERTIFICATES)).isTrue();
+        assertThat(resolvedOptions.get(SdkHttpConfigurationOption.MAX_CONNECTIONS)).isEqualTo(200);
     }
 
     @Test
@@ -147,6 +152,7 @@ class S3ClientBuilderTest {
 
         final AttributeMap resolvedOptions = getInternalHttpClientResolvedOptions(s3Client);
         assertThat(resolvedOptions.get(SdkHttpConfigurationOption.TRUST_ALL_CERTIFICATES)).isFalse();
+        assertThat(resolvedOptions.get(SdkHttpConfigurationOption.MAX_CONNECTIONS)).isEqualTo(150);
     }
 
     private static AttributeMap getInternalHttpClientResolvedOptions(final S3Client s3Client) {
