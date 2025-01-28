@@ -22,16 +22,14 @@ class S3ClientBuilder {
             s3ClientBuilder.forcePathStyle(config.pathStyleAccessEnabled());
         }
 
+        final AttributeMap.Builder httpClientAttributeBuilder = AttributeMap.builder();
+        httpClientAttributeBuilder.put(SdkHttpConfigurationOption.MAX_CONNECTIONS, config.httpMaxConnections());
         if (!config.certificateCheckEnabled()) {
-            s3ClientBuilder.httpClient(
-                new DefaultSdkHttpClientBuilder()
-                    .buildWithDefaults(
-                        AttributeMap.builder()
-                            .put(SdkHttpConfigurationOption.TRUST_ALL_CERTIFICATES, true)
-                            .build()
-                    )
-            );
+            httpClientAttributeBuilder.put(SdkHttpConfigurationOption.TRUST_ALL_CERTIFICATES, true);
         }
+        s3ClientBuilder.httpClient(
+            new DefaultSdkHttpClientBuilder().buildWithDefaults(httpClientAttributeBuilder.build())
+        );
 
         s3ClientBuilder.serviceConfiguration(builder ->
             builder.checksumValidationEnabled(config.checksumCheckEnabled()));
