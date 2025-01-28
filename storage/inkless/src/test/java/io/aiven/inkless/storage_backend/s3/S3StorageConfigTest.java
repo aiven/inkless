@@ -37,6 +37,7 @@ class S3StorageConfigTest {
         assertThat(config.credentialsProvider()).isNull();
         assertThat(config.pathStyleAccessEnabled()).isNull();
         assertThat(config.certificateCheckEnabled()).isTrue();
+        assertThat(config.httpMaxConnections()).isEqualTo(150);
         assertThat(config.checksumCheckEnabled()).isFalse();
         assertThat(config.region()).isEqualTo(TEST_REGION);
         assertThat(config.s3ServiceEndpoint()).isNull();
@@ -59,6 +60,8 @@ class S3StorageConfigTest {
         assertThat(config.credentialsProvider()).isNull();
         assertThat(config.getBoolean(S3StorageConfig.S3_PATH_STYLE_ENABLED_CONFIG)).isTrue();
         assertThat(config.pathStyleAccessEnabled()).isTrue();
+        assertThat(config.certificateCheckEnabled()).isTrue();
+        assertThat(config.httpMaxConnections()).isEqualTo(150);
         assertThat(config.region()).isEqualTo(TEST_REGION);
         assertThat(config.s3ServiceEndpoint()).extracting(URI::getHost).isEqualTo("minio");
         assertThat(config.apiCallTimeout()).isNull();
@@ -81,6 +84,8 @@ class S3StorageConfigTest {
 
         assertThat(config.bucketName()).isEqualTo(BUCKET_NAME);
         assertThat(config.pathStyleAccessEnabled()).isFalse();
+        assertThat(config.certificateCheckEnabled()).isTrue();
+        assertThat(config.httpMaxConnections()).isEqualTo(150);
         assertThat(config.credentialsProvider()).isInstanceOf(customCredentialsProvider);
         assertThat(config.region()).isEqualTo(TEST_REGION);
         assertThat(config.s3ServiceEndpoint()).extracting(URI::getHost).isEqualTo("minio");
@@ -101,6 +106,7 @@ class S3StorageConfigTest {
             "aws.access.key.id", username,
             "aws.secret.access.key", password,
             "aws.certificate.check.enabled", "false",
+            "aws.http.max.connections", "200",
             "aws.checksum.check.enabled", "true");
 
         final var config = new S3StorageConfig(configs);
@@ -111,6 +117,7 @@ class S3StorageConfigTest {
         assertThat(config.getPassword("aws.access.key.id").value()).isEqualTo(username);
         assertThat(config.getPassword("aws.secret.access.key").value()).isEqualTo(password);
         assertThat(config.certificateCheckEnabled()).isFalse();
+        assertThat(config.httpMaxConnections()).isEqualTo(200);
         assertThat(config.checksumCheckEnabled()).isTrue();
 
         final AwsCredentialsProvider credentialsProvider = config.credentialsProvider();
