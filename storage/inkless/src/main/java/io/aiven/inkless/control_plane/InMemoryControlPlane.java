@@ -308,8 +308,6 @@ public class InMemoryControlPlane extends AbstractControlPlane {
             mergeableFiles.add(new FileMergeWorkItem.File(
                 fileInfo.fileId,
                 fileInfo.objectKey,
-                fileInfo.fileSize,
-                fileInfo.usedSize,
                 batchesFromFileToMerge(fileInfo)
             ));
             totalMergeableSize += fileInfo.fileSize;

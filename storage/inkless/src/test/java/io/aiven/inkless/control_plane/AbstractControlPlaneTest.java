@@ -603,9 +603,9 @@ public abstract class AbstractControlPlaneTest {
                 List.of(new CommitBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 0, (int) fileSize, 0, 100, 2000, TimestampType.CREATE_TIME)));
 
             final List<FileMergeWorkItem.File> expectedFiles = List.of(
-                new FileMergeWorkItem.File(1L, "obj0", fileSize, fileSize,
+                new FileMergeWorkItem.File(1L, "obj0",
                     List.of(new BatchInfo(1, "obj0", BatchMetadata.of(EXISTING_TOPIC_1_ID_PARTITION_0, 0, fileSize, 0, 100, committedAt, 1000, TimestampType.CREATE_TIME)))),
-                new FileMergeWorkItem.File(2L, "obj1", fileSize, fileSize,
+                new FileMergeWorkItem.File(2L, "obj1",
                     List.of(new BatchInfo(2, "obj1", BatchMetadata.of(EXISTING_TOPIC_1_ID_PARTITION_0, 0, fileSize, 101, 201, committedAt, 2000, TimestampType.CREATE_TIME)))
                 )
             );
@@ -636,9 +636,9 @@ public abstract class AbstractControlPlaneTest {
 
             // Get the merge work item.
             final List<FileMergeWorkItem.File> expectedFiles1 = List.of(
-                new FileMergeWorkItem.File(1L, "obj0", fileSize, fileSize,
+                new FileMergeWorkItem.File(1L, "obj0",
                     List.of(new BatchInfo(1, "obj0", BatchMetadata.of(EXISTING_TOPIC_1_ID_PARTITION_0, 0, fileSize, 0, 100, committedAt, 1000, TimestampType.CREATE_TIME)))),
-                new FileMergeWorkItem.File(2L, "obj1", fileSize, fileSize,
+                new FileMergeWorkItem.File(2L, "obj1",
                     List.of(new BatchInfo(2, "obj1", BatchMetadata.of(EXISTING_TOPIC_1_ID_PARTITION_0, 0, fileSize, 101, 201, committedAt, 2000, TimestampType.CREATE_TIME))))
             );
             assertThat(controlPlane.getFileMergeWorkItem())
@@ -650,9 +650,9 @@ public abstract class AbstractControlPlaneTest {
 
             // Now it's enough to have one more merge work item.
             final List<FileMergeWorkItem.File> expectedFiles2 = List.of(
-                new FileMergeWorkItem.File(3L, "obj2", fileSize, fileSize,
+                new FileMergeWorkItem.File(3L, "obj2",
                     List.of(new BatchInfo(3, "obj2", BatchMetadata.of(EXISTING_TOPIC_1_ID_PARTITION_0, 0, fileSize, 202, 302, committedAt, 3000, TimestampType.CREATE_TIME)))),
-                new FileMergeWorkItem.File(4L, "obj3", fileSize, fileSize,
+                new FileMergeWorkItem.File(4L, "obj3",
                     List.of(new BatchInfo(4, "obj3", BatchMetadata.of(EXISTING_TOPIC_1_ID_PARTITION_0, 0, fileSize, 303, 403, committedAt, 4000, TimestampType.CREATE_TIME))))
             );
             assertThat(controlPlane.getFileMergeWorkItem())
@@ -668,7 +668,7 @@ public abstract class AbstractControlPlaneTest {
                 List.of(new CommitBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 0, (int) fileSize, 0, 100, 1000, TimestampType.CREATE_TIME)));
 
             final List<FileMergeWorkItem.File> expectedFiles = List.of(
-                new FileMergeWorkItem.File(1L, "obj0", fileSize, fileSize,
+                new FileMergeWorkItem.File(1L, "obj0",
                     List.of(new BatchInfo(1, "obj0", BatchMetadata.of(EXISTING_TOPIC_1_ID_PARTITION_0, 0, fileSize, 0, 100, committedAt, 1000, TimestampType.CREATE_TIME))))
             );
             assertThat(controlPlane.getFileMergeWorkItem())
@@ -688,9 +688,9 @@ public abstract class AbstractControlPlaneTest {
                 List.of(new CommitBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 0, (int) batchSize, 0, 100, 3000, TimestampType.CREATE_TIME)));
 
             final List<FileMergeWorkItem.File> expectedFiles1 = List.of(
-                new FileMergeWorkItem.File(1L, "obj0", batchSize, batchSize,
+                new FileMergeWorkItem.File(1L, "obj0",
                     List.of(new BatchInfo(1, "obj0", BatchMetadata.of(EXISTING_TOPIC_1_ID_PARTITION_0, 0, batchSize, 0, 100, committedAt, 1000, TimestampType.CREATE_TIME)))),
-                new FileMergeWorkItem.File(2L, "obj1", batchSize, batchSize,
+                new FileMergeWorkItem.File(2L, "obj1",
                     List.of(new BatchInfo(2, "obj1", BatchMetadata.of(EXISTING_TOPIC_1_ID_PARTITION_0, 0, batchSize, 101, 201, committedAt, 2000, TimestampType.CREATE_TIME))))
             );
             assertThat(controlPlane.getFileMergeWorkItem())
@@ -713,9 +713,9 @@ public abstract class AbstractControlPlaneTest {
 
             // File 4 is the merged file, batches 4 and 5 are in it.
             final List<FileMergeWorkItem.File> expectedFiles2= List.of(
-                new FileMergeWorkItem.File(3L, "obj2", batchSize, batchSize,
+                new FileMergeWorkItem.File(3L, "obj2",
                     List.of(new BatchInfo(3, "obj2", BatchMetadata.of(EXISTING_TOPIC_1_ID_PARTITION_0, 0, batchSize, 202, 302, committedAt, 3000, TimestampType.CREATE_TIME)))),
-                new FileMergeWorkItem.File(5L, "obj3", batchSize, batchSize,
+                new FileMergeWorkItem.File(5L, "obj3",
                     List.of(new BatchInfo(6, "obj3", BatchMetadata.of(EXISTING_TOPIC_1_ID_PARTITION_0, 0, batchSize, 303, 403, committedAt, 4000, TimestampType.CREATE_TIME))))
             );
             assertThat(controlPlane.getFileMergeWorkItem())
@@ -1027,7 +1027,7 @@ public abstract class AbstractControlPlaneTest {
                 List.of(new CommitBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 0, (int) fileSize, 0, 100, 1000, TimestampType.CREATE_TIME)));
 
             final List<FileMergeWorkItem.File> expectedFiles = List.of(
-                new FileMergeWorkItem.File(1L, "obj0", fileSize, fileSize,
+                new FileMergeWorkItem.File(1L, "obj0",
                     List.of(new BatchInfo(1, "obj0", BatchMetadata.of(EXISTING_TOPIC_1_ID_PARTITION_0, 0, fileSize, 0, 100, committedAt, 1000, TimestampType.CREATE_TIME)))
                 )
             );
