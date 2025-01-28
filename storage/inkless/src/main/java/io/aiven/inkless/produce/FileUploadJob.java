@@ -22,7 +22,7 @@ import io.aiven.inkless.storage_backend.common.StorageBackendTimeoutException;
 /**
  * The job of uploading a file to the object storage.
  */
-class FileUploadJob implements Callable<ObjectKey> {
+public class FileUploadJob implements Callable<ObjectKey> {
     private static final Logger LOGGER = LoggerFactory.getLogger(FileUploadJob.class);
 
     private final ObjectKeyCreator objectKeyCreator;
@@ -33,7 +33,7 @@ class FileUploadJob implements Callable<ObjectKey> {
     private final byte[] data;
     private final Consumer<Long> durationCallback;
 
-    FileUploadJob(final ObjectKeyCreator objectKeyCreator,
+    public FileUploadJob(final ObjectKeyCreator objectKeyCreator,
                   final ObjectUploader objectUploader,
                   final Time time,
                   final int attempts,

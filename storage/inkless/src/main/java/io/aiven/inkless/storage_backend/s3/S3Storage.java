@@ -61,14 +61,17 @@ public class S3Storage implements StorageBackend {
     @Override
     public InputStream fetch(final ObjectKey key, final ByteRange range) throws StorageBackendException {
         try {
-            if (range.empty()) {
+            if (range != null && range.empty()) {
                 return InputStream.nullInputStream();
             }
 
-            final GetObjectRequest getRequest = GetObjectRequest.builder()
+            var builder = GetObjectRequest.builder()
                 .bucket(bucketName)
-                .key(key.value())
-                .range(formatRange(range))
+                .key(key.value());
+            if (range != null) {
+                builder = builder.range(formatRange(range));
+            }
+            final GetObjectRequest getRequest = builder
                 .build();
             return s3Client.getObject(getRequest);
         } catch (final AwsServiceException e) {
