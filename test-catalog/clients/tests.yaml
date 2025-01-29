@@ -3913,7 +3913,8 @@ org.apache.kafka.common.requests.ListOffsetsRequestTest:
 - testListOffsetsRequestOldestVersion
 - testToListOffsetsTopics
 org.apache.kafka.common.requests.MetadataRequestTest:
-- testEmptyMeansEmptyForAllVersions
+- testEmptyMeansAllTopicsV0
+- testEmptyMeansEmptyForVersionsAboveV0
 - testMetadataRequestVersion
 - testTopicIdAndNullTopicNameRequests
 - testTopicIdWithZeroUuid
