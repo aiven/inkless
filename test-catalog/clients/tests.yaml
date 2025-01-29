@@ -2423,6 +2423,7 @@ org.apache.kafka.clients.producer.KafkaProducerTest:
 - testTopicNotExistingInMetadata
 - testTopicRefreshInMetadata
 - testTransactionV2Produce
+- testTransactionV2ProduceWithConcurrentTransactionError
 - testTransactionalMethodThrowsWhenSenderClosed
 - testUnSubscribingNonExisingMetricsDoesntCauseError
 - testUnsubscribingCustomMetricWithSameNameAsExistingMetricDoesntAffectProducerMetric

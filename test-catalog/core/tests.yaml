@@ -3263,6 +3263,7 @@ kafka.server.ReplicaManagerTest:
 - testClearPurgatoryOnBecomingFollower
 - testDefaultReplicaSelector
 - testDelayedFetchIncludesAbortedTransactions
+- testDelayedShareFetchPurgatoryOperationExpiration
 - testDeleteRecordsInternalTopicDeleteAllowed
 - testDeleteRecordsInternalTopicDeleteDisallowed
 - testDeltaFollowerRemovedTopic
@@ -3334,7 +3335,8 @@ kafka.server.ReplicaManagerTest:
 - testTransactionVerificationGuardOnMultiplePartitions
 - testTransactionVerificationWhenNotLeader
 - testUnknownReplicaSelector
-- testVerificationErrorConversions
+- testVerificationErrorConversionsTV1
+- testVerificationErrorConversionsTV2
 - testVerificationForTransactionalPartitionsOnly
 kafka.server.ReplicationQuotaManagerTest:
 - shouldExceedQuotaThenReturnBackBelowBoundAsTimePasses

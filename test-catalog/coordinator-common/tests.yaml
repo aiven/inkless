@@ -97,6 +97,9 @@ org.apache.kafka.coordinator.common.runtime.HdrHistogramTest:
 - testHistogramDataReset
 - testLatestHistogramRace
 - testMax
+- testRecordLimit
+org.apache.kafka.coordinator.common.runtime.KafkaMetricHistogramTest:
+- testStats
 org.apache.kafka.coordinator.common.runtime.MultiThreadedEventProcessorTest:
 - testCreateAndClose
 - testEventsAreDrainedWhenClosed
