@@ -245,6 +245,7 @@ kafka.api.AuthorizerIntegrationTest:
 - testDescribeGroupConfigsWithoutDescribeAcl
 - testDescribeTopicAclWithOperationAll
 - testDescribeTopicConfigsAclWithOperationAll
+- testFetchConsumerRequest
 - testFetchFollowerRequest
 - testHostAddressBasedAcls
 - testIdempotentProducerNoIdempotentWriteAclInInitProducerId
