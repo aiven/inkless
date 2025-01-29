@@ -2926,7 +2926,6 @@ kafka.server.KafkaApisTest:
 - testWriteShareGroupStateSuccess
 - testWriteTxnMarkersShouldAllBeIncludedInTheResponse
 kafka.server.KafkaConfigTest:
-- testAcceptsLargeNodeIdForRaftBasedCase
 - testAdvertiseConfigured
 - testAdvertiseDefaults
 - testAdvertisedListenersAllowedForKRaftControllerOnlyRole
@@ -2999,8 +2998,8 @@ kafka.server.KafkaConfigTest:
 - testPopulateSynonymsOnMapWithoutBrokerId
 - testPopulateSynonymsOnMapWithoutNodeId
 - testPortInQuorumVotersNotRequiredToMatchFirstControllerListenerPortForThisKRaftController
+- testRejectsNegativeNodeId
 - testRejectsNegativeNodeIdForRaftBasedBrokerCaseWithAutoGenEnabled
-- testRejectsNegativeNodeIdForRaftBasedCaseWithAutoGenDisabled
 - testRejectsNegativeNodeIdForRaftBasedControllerCaseWithAutoGenEnabled
 - testSaslJwksEndpointRetryDefaults
 - testSeparateControllerListenerDefinedForKRaftBrokerController

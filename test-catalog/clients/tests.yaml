@@ -1496,6 +1496,7 @@ org.apache.kafka.clients.consumer.internals.CoordinatorRequestManagerTest:
 - testNetworkTimeout
 - testNullGroupIdShouldThrow
 - testPropagateAndBackoffAfterFatalError
+- testSignalOnClose
 - testSuccessfulResponse
 org.apache.kafka.clients.consumer.internals.EagerConsumerCoordinatorTest:
 - shouldLoseAllOwnedPartitionsBeforeRejoiningAfterDroppingOutOfTheGroup
