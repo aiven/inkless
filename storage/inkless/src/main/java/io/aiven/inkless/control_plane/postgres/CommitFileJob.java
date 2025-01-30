@@ -136,10 +136,13 @@ class CommitFileJob implements Callable<List<CommitBatchResponse>> {
                 case nonexistent_log:
                     yield CommitBatchResponse.unknownTopicOrPartition();
                 case invalid_producer_epoch:
+                    LOGGER.error("Invalid producer epoch for request: {}", request);
                     yield CommitBatchResponse.invalidProducerEpoch();
                 case sequence_out_of_order:
+                    LOGGER.error("Sequence out of order for request: {}", request);
                     yield CommitBatchResponse.sequenceOutOfOrder(request);
                 case duplicate_batch:
+                    LOGGER.debug("Duplicate batch for request: {}", request);
                     yield CommitBatchResponse.ofDuplicate(
                         record.getAssignedBaseOffset(),
                         record.getBatchTimestamp(),
