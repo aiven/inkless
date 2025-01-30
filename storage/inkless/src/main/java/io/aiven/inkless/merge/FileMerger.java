@@ -159,7 +159,11 @@ public class FileMerger implements Runnable {
                         parentBatch.metadata().lastOffset(),
                         parentBatch.metadata().logAppendTimestamp(),
                         parentBatch.metadata().batchMaxTimestamp(),
-                        parentBatch.metadata().timestampType()
+                        parentBatch.metadata().timestampType(),
+                        parentBatch.metadata().producerId(),
+                        parentBatch.metadata().producerEpoch(),
+                        parentBatch.metadata().baseSequence(),
+                        parentBatch.metadata().lastSequence()
                     ),
                     List.of(parentBatch.batchId())
                 ));

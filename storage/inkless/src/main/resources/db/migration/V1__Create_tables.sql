@@ -27,6 +27,15 @@ CHECK (VALUE >= -1 AND VALUE <= 1);
 CREATE DOMAIN timestamp_t AS BIGINT NOT NULL
 CHECK (VALUE >= -1);
 
+CREATE DOMAIN producer_id_t AS BIGINT NOT NULL
+CHECK (VALUE >= -1);
+
+CREATE DOMAIN producer_epoch_t AS SMALLINT NOT NULL
+CHECK (VALUE >= -1);
+
+CREATE DOMAIN sequence_t AS INT NOT NULL
+CHECK (VALUE >= -1);
+
 CREATE TABLE logs (
     topic_id topic_id_t,
     partition partition_t,
@@ -80,6 +89,10 @@ CREATE TABLE batches (
     timestamp_type timestamp_type_t,
     log_append_timestamp timestamp_t,
     batch_max_timestamp timestamp_t,
+    producer_id producer_id_t,
+    producer_epoch producer_epoch_t,
+    base_sequence sequence_t,
+    last_sequence sequence_t,
     CONSTRAINT fk_batches_logs FOREIGN KEY (topic_id, partition) REFERENCES logs(topic_id, partition)
         ON DELETE NO ACTION ON UPDATE CASCADE DEFERRABLE INITIALLY DEFERRED,  -- allow deleting logs before batches
     CONSTRAINT fk_batches_files FOREIGN KEY (file_id) REFERENCES files(file_id) ON DELETE RESTRICT ON UPDATE CASCADE
@@ -95,15 +108,31 @@ CREATE TYPE commit_batch_request_v1 AS (
     base_offset offset_t,
     last_offset offset_t,
     timestamp_type timestamp_type_t,
-    batch_max_timestamp timestamp_t
+    batch_max_timestamp timestamp_t,
+    producer_id producer_id_t,
+    producer_epoch producer_epoch_t,
+    base_sequence sequence_t,
+    last_sequence sequence_t
+);
+
+CREATE INDEX batches_by_producer_idx ON batches (producer_id, producer_epoch);
+
+CREATE TYPE commit_batch_response_v1_error AS ENUM (
+    'none',
+    -- errors
+    'nonexistent_log',
+    'invalid_producer_epoch',
+    'sequence_out_of_order',
+    'duplicate_batch'
 );
 
 CREATE TYPE commit_batch_response_v1 AS (
     topic_id topic_id_t,
     partition partition_t,
-    log_exists BOOLEAN,
-    assigned_offset offset_nullable_t,
-    log_start_offset offset_nullable_t
+    log_start_offset offset_nullable_t,
+    assigned_base_offset offset_nullable_t,
+    batch_timestamp timestamp_t,
+    error commit_batch_response_v1_error
 );
 
 CREATE FUNCTION commit_file_v1(
@@ -118,6 +147,7 @@ DECLARE
     new_file_id BIGINT;
     request RECORD;
     log RECORD;
+    duplicate RECORD;
     assigned_offset offset_nullable_t;
     new_high_watermark offset_nullable_t;
 BEGIN
@@ -138,8 +168,80 @@ BEGIN
         INTO log;
 
         IF NOT FOUND THEN
-            RETURN NEXT (request.topic_id, request.partition, FALSE, NULL, NULL)::commit_batch_response_v1;
+            RETURN NEXT (request.topic_id, request.partition, NULL, NULL, -1, 'nonexistent_log')::commit_batch_response_v1;
             CONTINUE;
+        END IF;
+
+        -- Validate that the new request base sequence is not larger than the previous batch last sequence
+        IF request.producer_id > -1 AND request.producer_epoch > -1
+        THEN
+            -- If there are previous batches for the producer, check that the producer epoch is not smaller than the last batch
+             IF EXISTS (
+                SELECT 1
+                FROM batches
+                WHERE topic_id = request.topic_id
+                    AND partition = request.partition
+                    AND producer_id = request.producer_id
+                    AND producer_epoch > request.producer_epoch
+             ) THEN
+                RETURN NEXT (request.topic_id, request.partition, NULL, NULL, -1, 'invalid_producer_epoch')::commit_batch_response_v1;
+                CONTINUE;
+             END IF;
+            -- If there are previous batches for the producer
+            IF EXISTS (
+                SELECT 1
+                FROM batches
+                WHERE topic_id = request.topic_id
+                    AND partition = request.partition
+                    AND producer_id = request.producer_id
+                    AND producer_epoch = request.producer_epoch
+            ) THEN
+                -- Check for duplicates
+                SELECT *
+                FROM batches
+                WHERE topic_id = request.topic_id
+                    AND partition = request.partition
+                    AND producer_id = request.producer_id
+                    AND producer_epoch = request.producer_epoch
+                    AND base_sequence = request.base_sequence
+                    AND last_sequence = request.last_sequence
+                INTO duplicate;
+                IF FOUND THEN
+                    RETURN NEXT (request.topic_id, request.partition, log.log_start_offset, duplicate.base_offset, duplicate.batch_max_timestamp, 'duplicate_batch')::commit_batch_response_v1;
+                    CONTINUE;
+                END IF;
+                -- Check that the sequence is not out of order
+                IF EXISTS (
+                    SELECT 1
+                    FROM batches
+                    WHERE topic_id = request.topic_id
+                        AND partition = request.partition
+                        AND producer_id = request.producer_id
+                        AND producer_epoch = request.producer_epoch
+                        AND last_sequence = (
+                            SELECT MAX(last_sequence)
+                            FROM batches
+                            WHERE topic_id = request.topic_id
+                                AND partition = request.partition
+                                AND producer_id = request.producer_id
+                                AND producer_epoch = request.producer_epoch
+                        )
+                        -- sequence is out of order if the base sequence is not a continuation of the last sequence
+                        AND request.base_sequence - 1 != last_sequence
+                        -- if end of int32 range, the base sequence must be 0 and the last sequence must be 2147483647
+                        AND NOT (request.base_sequence = 0 AND last_sequence = 2147483647)
+                ) THEN
+                    RETURN NEXT (request.topic_id, request.partition, NULL, NULL, -1, 'sequence_out_of_order')::commit_batch_response_v1;
+                    CONTINUE;
+                END IF;
+            ELSE
+                -- If there are no previous batches for the producer, the base sequence must be 0
+                IF request.base_sequence != 0
+                THEN
+                    RETURN NEXT (request.topic_id, request.partition, NULL, NULL, -1, 'sequence_out_of_order')::commit_batch_response_v1;
+                    CONTINUE;
+                END IF;
+            END IF;
         END IF;
 
         assigned_offset = log.high_watermark;
@@ -157,9 +259,8 @@ BEGIN
             last_offset,
             file_id,
             byte_offset, byte_size,
-            timestamp_type,
-            log_append_timestamp,
-            batch_max_timestamp
+            timestamp_type, log_append_timestamp, batch_max_timestamp,
+            producer_id, producer_epoch, base_sequence, last_sequence
         )
         VALUES (
             request.topic_id, request.partition,
@@ -169,10 +270,11 @@ BEGIN
             request.byte_offset, request.byte_size,
             request.timestamp_type,
             (EXTRACT(EPOCH FROM now AT TIME ZONE 'UTC') * 1000)::BIGINT,
-            request.batch_max_timestamp
+            request.batch_max_timestamp,
+            request.producer_id, request.producer_epoch, request.base_sequence, request.last_sequence
         );
 
-        RETURN NEXT (request.topic_id, request.partition, TRUE, assigned_offset, log.log_start_offset)::commit_batch_response_v1;
+        RETURN NEXT (request.topic_id, request.partition, log.log_start_offset, assigned_offset, request.batch_max_timestamp, 'none')::commit_batch_response_v1;
     END LOOP;
 END;
 $$

@@ -117,7 +117,7 @@ class FileMergerMockedTest {
         final byte[] file1Batch1 = generateData(file1Batch1Size, "file1Batch1");
 
         final FileMergeWorkItem.File file1InWorkItem = new FileMergeWorkItem.File(file1Id, obj1, file1Size, file1UsedSize, List.of(
-            new BatchInfo(batch1Id, obj1, new BatchMetadata(T1P0, 0, file1Batch1Size, 1L, 11L, 1L, 2L, TimestampType.CREATE_TIME))
+            new BatchInfo(batch1Id, obj1, BatchMetadata.of(T1P0, 0, file1Batch1Size, 1L, 11L, 1L, 2L, TimestampType.CREATE_TIME))
         ));
 
         final MockInputStream file1 = new MockInputStream(file1Size);
@@ -128,7 +128,7 @@ class FileMergerMockedTest {
 
         final long expectedMergedFileSize = file1UsedSize;
         final List<MergedFileBatch> expectedMergedFileBatches = List.of(
-            new MergedFileBatch(new BatchMetadata(T1P0, 0, file1Batch1Size, 1L, 11L, 1L, 2L, TimestampType.CREATE_TIME), List.of(batch1Id))
+            new MergedFileBatch(BatchMetadata.of(T1P0, 0, file1Batch1Size, 1L, 11L, 1L, 2L, TimestampType.CREATE_TIME), List.of(batch1Id))
         );
         final byte[] expectedUploadBuffer = file1Batch1;
 
@@ -157,7 +157,7 @@ class FileMergerMockedTest {
         "false, true",
         "false, false"
     })
-    void twoFilesWithGaps(final boolean directFileOrder, final boolean directBatchOrder) throws IOException, StorageBackendException {
+    void twoFilesWithGaps(final boolean directFileOrder, final boolean directBatchOrder) throws StorageBackendException {
         when(inklessConfig.produceMaxUploadAttempts()).thenReturn(1);
         when(inklessConfig.produceUploadBackoff()).thenReturn(Duration.ZERO);
         when(inklessConfig.storage()).thenReturn(storage);
@@ -188,8 +188,8 @@ class FileMergerMockedTest {
         final byte[] file1Batch1 = generateData(file1Batch1Size, "file1Batch1");
         final byte[] file1Batch2 = generateData(file1Batch2Size, "file1Batch2");
 
-        final BatchInfo file1Batch1InWorkItem = new BatchInfo(batch1Id, obj1, new BatchMetadata(T1P0, file1Gap1Size, file1Batch1Size, 1L, 11L, 1L, 2L, TimestampType.CREATE_TIME));
-        final BatchInfo file1Batch2InWorkItem = new BatchInfo(batch2Id, obj1, new BatchMetadata(T1P1, file1Gap1Size + file1Batch1Size + file1Gap2Size, file1Batch2Size, 100L, 123L, 100L, 200L, TimestampType.LOG_APPEND_TIME));
+        final BatchInfo file1Batch1InWorkItem = new BatchInfo(batch1Id, obj1, BatchMetadata.of(T1P0, file1Gap1Size, file1Batch1Size, 1L, 11L, 1L, 2L, TimestampType.CREATE_TIME));
+        final BatchInfo file1Batch2InWorkItem = new BatchInfo(batch2Id, obj1, BatchMetadata.of(T1P1, file1Gap1Size + file1Batch1Size + file1Gap2Size, file1Batch2Size, 100L, 123L, 100L, 200L, TimestampType.LOG_APPEND_TIME));
         final List<BatchInfo> file1Batches = directBatchOrder
             ? List.of(file1Batch1InWorkItem, file1Batch2InWorkItem)
             : List.of(file1Batch2InWorkItem, file1Batch1InWorkItem);
@@ -215,8 +215,8 @@ class FileMergerMockedTest {
         final byte[] file2Batch1 = generateData(file2Batch1Size, "file2Batch1");
         final byte[] file2Batch2 = generateData(file2Batch2Size, "file2Batch2");
 
-        final BatchInfo file2Batch1InWorkItem = new BatchInfo(batch3Id, obj2, new BatchMetadata(T0P0, 0, file2Batch1Size, 1000L, 1010L, 1000L, 2000L, TimestampType.LOG_APPEND_TIME));
-        final BatchInfo file2Batch2InWorkItem = new BatchInfo(batch4Id, obj2, new BatchMetadata(T1P1, file2Batch1Size + file2Gap1Size, file2Batch2Size, 10000L, 10100L, 10000L, 20000L, TimestampType.CREATE_TIME));
+        final BatchInfo file2Batch1InWorkItem = new BatchInfo(batch3Id, obj2, BatchMetadata.of(T0P0, 0, file2Batch1Size, 1000L, 1010L, 1000L, 2000L, TimestampType.LOG_APPEND_TIME));
+        final BatchInfo file2Batch2InWorkItem = new BatchInfo(batch4Id, obj2, BatchMetadata.of(T1P1, file2Batch1Size + file2Gap1Size, file2Batch2Size, 10000L, 10100L, 10000L, 20000L, TimestampType.CREATE_TIME));
         final List<BatchInfo> file2Batches = directBatchOrder
             ? List.of(file2Batch1InWorkItem, file2Batch2InWorkItem)
             : List.of(file2Batch2InWorkItem, file2Batch1InWorkItem);
@@ -236,10 +236,10 @@ class FileMergerMockedTest {
         // 3. The batch content matches.
         final long expectedMergedFileSize = file1UsedSize + file2UsedSize;
         final List<MergedFileBatch> expectedMergedFileBatches = List.of(
-            new MergedFileBatch(new BatchMetadata(T0P0, 0, file2Batch1Size, 1000L, 1010L, 1000L, 2000L, TimestampType.LOG_APPEND_TIME), List.of(batch3Id)),
-            new MergedFileBatch(new BatchMetadata(T1P0, file2Batch1Size, file1Batch1Size, 1L, 11L, 1L, 2L, TimestampType.CREATE_TIME), List.of(batch1Id)),
-            new MergedFileBatch(new BatchMetadata(T1P1, file2Batch1Size + file1Batch1Size, file1Batch2Size, 100L, 123L, 100L, 200L, TimestampType.LOG_APPEND_TIME), List.of(batch2Id)),
-            new MergedFileBatch(new BatchMetadata(T1P1, file2Batch1Size + file1Batch1Size + file1Batch2Size, file2Batch2Size, 10000L, 10100L, 10000L, 20000L, TimestampType.CREATE_TIME), List.of(batch4Id))
+            new MergedFileBatch(BatchMetadata.of(T0P0, 0, file2Batch1Size, 1000L, 1010L, 1000L, 2000L, TimestampType.LOG_APPEND_TIME), List.of(batch3Id)),
+            new MergedFileBatch(BatchMetadata.of(T1P0, file2Batch1Size, file1Batch1Size, 1L, 11L, 1L, 2L, TimestampType.CREATE_TIME), List.of(batch1Id)),
+            new MergedFileBatch(BatchMetadata.of(T1P1, file2Batch1Size + file1Batch1Size, file1Batch2Size, 100L, 123L, 100L, 200L, TimestampType.LOG_APPEND_TIME), List.of(batch2Id)),
+            new MergedFileBatch(BatchMetadata.of(T1P1, file2Batch1Size + file1Batch1Size + file1Batch2Size, file2Batch2Size, 10000L, 10100L, 10000L, 20000L, TimestampType.CREATE_TIME), List.of(batch4Id))
         );
         // T0P0, T1P0, T1P1, T1P1
         final byte[] expectedUploadBuffer = concat(file2Batch1, file1Batch1, file1Batch2, file2Batch2);
@@ -292,7 +292,7 @@ class FileMergerMockedTest {
         bindFilesToObjectNames(Map.of(obj1, file1));
 
         final FileMergeWorkItem.File file1InWorkItem = new FileMergeWorkItem.File(1, obj1, 10, 10, List.of(
-            new BatchInfo(batch1Id, obj1, new BatchMetadata(T1P0, 0, 10, 1L, 11L, 1L, 2L, TimestampType.CREATE_TIME))
+            new BatchInfo(batch1Id, obj1, BatchMetadata.of(T1P0, 0, 10, 1L, 11L, 1L, 2L, TimestampType.CREATE_TIME))
         ));
         when(controlPlane.getFileMergeWorkItem()).thenReturn(
             new FileMergeWorkItem(WORK_ITEM_ID, Instant.ofEpochMilli(1234), List.of(file1InWorkItem))
@@ -329,7 +329,7 @@ class FileMergerMockedTest {
         bindFilesToObjectNames(Map.of(obj1, file1));
 
         final FileMergeWorkItem.File file1InWorkItem = new FileMergeWorkItem.File(file1Id, obj1, file1Size, file1UsedSize, List.of(
-            new BatchInfo(batch1Id, obj1, new BatchMetadata(T1P0, 0, file1Batch1Size, 1L, 11L, 1L, 2L, TimestampType.CREATE_TIME))
+            new BatchInfo(batch1Id, obj1, BatchMetadata.of(T1P0, 0, file1Batch1Size, 1L, 11L, 1L, 2L, TimestampType.CREATE_TIME))
         ));
         when(controlPlane.getFileMergeWorkItem()).thenReturn(
             new FileMergeWorkItem(WORK_ITEM_ID, Instant.ofEpochMilli(1234), List.of(file1InWorkItem))
@@ -368,7 +368,7 @@ class FileMergerMockedTest {
         bindFilesToObjectNames(Map.of(obj1, file1));
 
         final FileMergeWorkItem.File file1InWorkItem = new FileMergeWorkItem.File(file1Id, obj1, file1Size, file1UsedSize, List.of(
-            new BatchInfo(batch1Id, obj1, new BatchMetadata(T1P0, 0, file1Batch1Size, 1L, 11L, 1L, 2L, TimestampType.CREATE_TIME))
+            new BatchInfo(batch1Id, obj1, BatchMetadata.of(T1P0, 0, file1Batch1Size, 1L, 11L, 1L, 2L, TimestampType.CREATE_TIME))
         ));
         when(controlPlane.getFileMergeWorkItem()).thenReturn(
             new FileMergeWorkItem(WORK_ITEM_ID, Instant.ofEpochMilli(1234), List.of(file1InWorkItem))

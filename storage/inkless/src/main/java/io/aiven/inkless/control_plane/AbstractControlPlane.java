@@ -1,12 +1,12 @@
 // Copyright (c) 2024 Aiven, Helsinki, Finland. https://aiven.io/
 package io.aiven.inkless.control_plane;
 
+import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.utils.Time;
 
 import java.util.Iterator;
 import java.util.List;
 import java.util.stream.Stream;
-
 
 public abstract class AbstractControlPlane implements ControlPlane {
     protected final Time time;
@@ -28,22 +28,31 @@ public abstract class AbstractControlPlane implements ControlPlane {
             }
         }
 
-        final SplitMapper<CommitBatchRequest, CommitBatchResponse> splitMapper = new SplitMapper<>(
-            batches, request -> true
-        );
+        final SplitMapper<CommitBatchRequest, CommitBatchResponse> splitMapper = new SplitMapper<>(batches, this::isValidRequest);
 
-        // Right away set answer for partitions not present in the metadata.
+        // Right away set answer for invalid requests
         splitMapper.setFalseOut(
-            splitMapper.getFalseIn().map(r -> CommitBatchResponse.unknownTopicOrPartition()).iterator()
+            splitMapper.getFalseIn()
+                .map(this::responseOnInvalidRequest)
+                .iterator()
         );
 
-        // Process those partitions that are present in the metadata.
-        splitMapper.setTrueOut(commitFileForExistingPartitions(objectKey, uploaderBrokerId, fileSize, splitMapper.getTrueIn()));
+        // Process those valid ones
+        splitMapper.setTrueOut(commitFileForValidRequests(objectKey, uploaderBrokerId, fileSize, splitMapper.getTrueIn()));
 
         return splitMapper.getOut();
     }
 
-    protected abstract Iterator<CommitBatchResponse> commitFileForExistingPartitions(
+    private boolean isValidRequest(final CommitBatchRequest request) {
+        return request.topicIdPartition().topicId() != Uuid.ZERO_UUID;
+    }
+
+    private CommitBatchResponse responseOnInvalidRequest(CommitBatchRequest r) {
+        // Invalid requests: unknown topic/partition
+        return CommitBatchResponse.unknownTopicOrPartition();
+    }
+
+    protected abstract Iterator<CommitBatchResponse> commitFileForValidRequests(
         final String objectKey,
         final int uploaderBrokerId,
         final long fileSize,

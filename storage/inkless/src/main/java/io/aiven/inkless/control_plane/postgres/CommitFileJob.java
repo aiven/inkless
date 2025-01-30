@@ -79,16 +79,21 @@ class CommitFileJob implements Callable<List<CommitBatchResponse>> {
                     r.baseOffset(),
                     r.lastOffset(),
                     r.messageTimestampType(),
-                    r.batchMaxTimestamp()
+                    r.batchMaxTimestamp(),
+                    r.producerId(),
+                    r.producerEpoch(),
+                    r.baseSequence(),
+                    r.lastSequence()
                 )
             ).toArray(CommitBatchRequestV1Record[]::new);
 
             final List<CommitBatchResponseV1Record> functionResult = conf.dsl().select(
                 CommitBatchResponseV1.TOPIC_ID,
                 CommitBatchResponseV1.PARTITION,
-                CommitBatchResponseV1.LOG_EXISTS,
-                CommitBatchResponseV1.ASSIGNED_OFFSET,
-                CommitBatchResponseV1.LOG_START_OFFSET
+                CommitBatchResponseV1.LOG_START_OFFSET,
+                CommitBatchResponseV1.ASSIGNED_BASE_OFFSET,
+                CommitBatchResponseV1.BATCH_TIMESTAMP,
+                CommitBatchResponseV1.ERROR
             ).from(COMMIT_FILE_V1.call(
                 objectKey,
                 uploaderBrokerId,
@@ -123,13 +128,29 @@ class CommitFileJob implements Callable<List<CommitBatchResponse>> {
                 ));
             }
 
-            if (!record.get(CommitBatchResponseV1.LOG_EXISTS)) {
-                responses.add(CommitBatchResponse.unknownTopicOrPartition());
-            } else {
-                final long assignedOffset = record.get(CommitBatchResponseV1.ASSIGNED_OFFSET);
-                final long logStartOffset = record.get(CommitBatchResponseV1.LOG_START_OFFSET);
-                responses.add(CommitBatchResponse.success(assignedOffset, now.toEpochMilli(), logStartOffset));
-            }
+            final var response = switch (record.getError()) {
+                case none:
+                    final long assignedOffset = record.getAssignedBaseOffset();
+                    final long logStartOffset = record.getLogStartOffset();
+                    yield CommitBatchResponse.success(assignedOffset, now.toEpochMilli(), logStartOffset, request);
+                case nonexistent_log:
+                    yield CommitBatchResponse.unknownTopicOrPartition();
+                case invalid_producer_epoch:
+                    LOGGER.error("Invalid producer epoch for request: {}", request);
+                    yield CommitBatchResponse.invalidProducerEpoch();
+                case sequence_out_of_order:
+                    LOGGER.error("Sequence out of order for request: {}", request);
+                    yield CommitBatchResponse.sequenceOutOfOrder(request);
+                case duplicate_batch:
+                    LOGGER.debug("Duplicate batch for request: {}", request);
+                    yield CommitBatchResponse.ofDuplicate(
+                        record.getAssignedBaseOffset(),
+                        record.getBatchTimestamp(),
+                        record.getLogStartOffset()
+                    );
+            };
+
+            responses.add(response);
         }
 
         if (iterator.hasNext()) {
