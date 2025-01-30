@@ -13,10 +13,14 @@ import org.apache.kafka.common.utils.MockTime;
 import org.apache.kafka.common.utils.Time;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 
 import java.nio.ByteBuffer;
 import java.util.Arrays;
 import java.util.Iterator;
+import java.util.stream.Stream;
 
 import io.aiven.inkless.control_plane.CommitBatchRequest;
 
@@ -65,22 +69,34 @@ class BatchBufferTest {
         assertThat(result.data()).isEmpty();
     }
 
-    @Test
-    void singleBatch() {
+    public static Stream<Arguments> singleBatchParams() {
         final Time time = new MockTime();
+        return Stream.of(
+            Arguments.of(
+                createBatch(TimestampType.CREATE_TIME, time, T0P0 + "-0", T0P0 + "-1", T0P0 + "-2"),
+                CommitBatchRequest.of(T0P0, 0, 181, 19, 21, time.milliseconds(), TimestampType.CREATE_TIME)
+            ),
+            Arguments.of(
+                createIdempotentBatch(time, T0P0 + "-0", T0P0 + "-1", T0P0 + "-2"),
+                CommitBatchRequest.idempotent(T0P0, 0, 181, 19, 21, time.milliseconds(), TimestampType.CREATE_TIME, 1, (short) 1, 1, 3)
+            )
+        );
+    }
+
+    @ParameterizedTest
+    @MethodSource("singleBatchParams")
+    void singleBatch(MutableRecordBatch batch, CommitBatchRequest expectedRequest) {
         final BatchBuffer buffer = new BatchBuffer();
 
-        final MutableRecordBatch batch = createBatch(TimestampType.CREATE_TIME, time, T0P0 + "-0", T0P0 + "-1", T0P0 + "-2");
         final byte[] beforeAdding = batchToBytes(batch);
         buffer.addBatch(T0P0, batch, 0);
 
         final BatchBuffer.CloseResult result = buffer.close();
-        assertThat(result.commitBatchRequests()).containsExactly(
-            CommitBatchRequest.of(T0P0, 0, batch.sizeInBytes(), 19, 21, time.milliseconds(), TimestampType.CREATE_TIME)
-        );
+        assertThat(result.commitBatchRequests()).containsExactly(expectedRequest);
         assertThat(result.requestIds()).containsExactly(0);
         assertThat(result.data()).containsExactly(batchToBytes(batch));
         assertThat(result.data()).containsExactly(beforeAdding);
+        assertThat(batch.hasProducerId()).isEqualTo(expectedRequest.hasProducerId());
     }
 
     @Test
@@ -170,10 +186,8 @@ class BatchBufferTest {
             .hasMessage("Already closed");
     }
 
-    MutableRecordBatch createBatch(TimestampType timestampType, Time time, String... content) {
-        final SimpleRecord[] simpleRecords = Arrays.stream(content)
-            .map(c -> new SimpleRecord(time.milliseconds(), c.getBytes()))
-            .toArray(SimpleRecord[]::new);
+    static MutableRecordBatch createBatch(TimestampType timestampType, Time time, String... content) {
+        final SimpleRecord[] simpleRecords = simpleRecords(time, content);
         final int initialOffset = 19;  // some non-zero number
         final MemoryRecords records = MemoryRecords.withRecords(RecordBatch.CURRENT_MAGIC_VALUE, initialOffset, Compression.NONE, timestampType, simpleRecords);
         final Iterator<MutableRecordBatch> iterator = records.batches().iterator();
@@ -186,6 +200,23 @@ class BatchBufferTest {
             batch.setMaxTimestamp(timestampType, time.milliseconds());
         }
         return batch;
+    }
+
+    static MutableRecordBatch createIdempotentBatch(Time time, String... content) {
+        final SimpleRecord[] simpleRecords = simpleRecords(time, content);
+        final int initialOffset = 19;  // some non-zero number
+        final MemoryRecords records = MemoryRecords.withIdempotentRecords(RecordBatch.CURRENT_MAGIC_VALUE, initialOffset, Compression.NONE, 1L, (short) 1, 1, 1, simpleRecords);
+        final Iterator<MutableRecordBatch> iterator = records.batches().iterator();
+        if (!iterator.hasNext()) {
+            return null;
+        }
+        return iterator.next();
+    }
+
+    private static SimpleRecord [] simpleRecords(Time time, String[] content) {
+        return Arrays.stream(content)
+            .map(c -> new SimpleRecord(time.milliseconds(), c.getBytes()))
+            .toArray(SimpleRecord[]::new);
     }
 
     byte[] batchToBytes(final RecordBatch batch) {

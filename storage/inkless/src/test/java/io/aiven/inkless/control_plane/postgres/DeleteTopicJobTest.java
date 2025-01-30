@@ -3,6 +3,7 @@ package io.aiven.inkless.control_plane.postgres;
 
 import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.Uuid;
+import org.apache.kafka.common.record.RecordBatch;
 import org.apache.kafka.common.record.TimestampType;
 import org.apache.kafka.common.utils.MockTime;
 import org.apache.kafka.common.utils.Time;
@@ -119,8 +120,10 @@ class DeleteTopicJobTest extends SharedPostgreSQLTest {
 
         // The batches of the deleted topics must be gone, i.e. only TOPIC_2 remains.
         assertThat(DBUtils.getAllBatches(hikariDataSource)).containsExactlyInAnyOrder(
-            new BatchesRecord(4L, TOPIC_ID_2, 0, 0L, 11L, 2L, 0L, 2000L, TimestampType.CREATE_TIME, filesCommittedAt.toEpochMilli(), 1000L),
-            new BatchesRecord(7L, TOPIC_ID_2, 0, 12L, 23L, 3L, 0L, 2000L, TimestampType.CREATE_TIME, filesCommittedAt.toEpochMilli(), 1000L)
+            new BatchesRecord(4L, TOPIC_ID_2, 0, 0L, 11L, 2L, 0L, 2000L, TimestampType.CREATE_TIME, filesCommittedAt.toEpochMilli(), 1000L,
+                RecordBatch.NO_PRODUCER_ID, RecordBatch.NO_PRODUCER_EPOCH, RecordBatch.NO_SEQUENCE, RecordBatch.NO_SEQUENCE),
+            new BatchesRecord(7L, TOPIC_ID_2, 0, 12L, 23L, 3L, 0L, 2000L, TimestampType.CREATE_TIME, filesCommittedAt.toEpochMilli(), 1000L,
+                RecordBatch.NO_PRODUCER_ID, RecordBatch.NO_PRODUCER_EPOCH, RecordBatch.NO_SEQUENCE, RecordBatch.NO_SEQUENCE)
         );
 
         // File 1 must be `deleting` because it contained only data from the deleted TOPIC_1.

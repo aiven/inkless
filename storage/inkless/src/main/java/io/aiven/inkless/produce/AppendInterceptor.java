@@ -87,9 +87,7 @@ public class AppendInterceptor implements Closeable {
         }
 
         // This automatically reject transactional produce with this check.
-        // However, it's likely that we allow idempotent produce earlier than we allow transactions.
-        // Remember to adjust the code and tests accordingly!
-        if (rejectIdempotentProduce(entriesPerPartition, responseCallback)) {
+        if (rejectTransactionalProduce(entriesPerPartition, responseCallback)) {
             return true;
         }
 
@@ -116,11 +114,11 @@ public class AppendInterceptor implements Closeable {
         return true;
     }
 
-    private boolean rejectIdempotentProduce(final Map<TopicPartition, MemoryRecords> entriesPerPartition,
-                                            final Consumer<Map<TopicPartition, PartitionResponse>> responseCallback) {
+    private boolean rejectTransactionalProduce(final Map<TopicPartition, MemoryRecords> entriesPerPartition,
+                                               final Consumer<Map<TopicPartition, PartitionResponse>> responseCallback) {
         boolean atLeastBatchHasProducerId = entriesPerPartition.values().stream().anyMatch(records -> {
             for (final var batch : records.batches()) {
-                if (batch.hasProducerId()) {
+                if (batch.hasProducerId() && batch.isTransactional()) {
                     return true;
                 }
             }
@@ -128,7 +126,7 @@ public class AppendInterceptor implements Closeable {
         });
 
         if (atLeastBatchHasProducerId) {
-            LOGGER.warn("Idempotent produce found, rejecting request");
+            LOGGER.warn("Transactional produce found, rejecting request");
             final var result = entriesPerPartition.entrySet().stream()
                 .collect(Collectors.toMap(
                     Map.Entry::getKey,
