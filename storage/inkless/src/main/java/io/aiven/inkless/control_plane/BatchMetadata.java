@@ -2,6 +2,7 @@
 package io.aiven.inkless.control_plane;
 
 import org.apache.kafka.common.TopicIdPartition;
+import org.apache.kafka.common.record.RecordBatch;
 import org.apache.kafka.common.record.TimestampType;
 
 import io.aiven.inkless.common.ByteRange;
@@ -14,7 +15,11 @@ public record BatchMetadata (
     long lastOffset,
     long logAppendTimestamp,
     long batchMaxTimestamp,
-    TimestampType timestampType
+    TimestampType timestampType,
+    long producerId,
+    short producerEpoch,
+    int baseSequence,
+    int lastSequence
 ) {
     public BatchMetadata {
         if (lastOffset < baseOffset) {
@@ -42,7 +47,11 @@ public record BatchMetadata (
             lastOffset,
             logAppendTimestamp,
             batchMaxTimestamp,
-            timestampType
+            timestampType,
+            RecordBatch.NO_PRODUCER_ID,
+            RecordBatch.NO_PRODUCER_EPOCH,
+            RecordBatch.NO_SEQUENCE,
+            RecordBatch.NO_SEQUENCE
         );
     }
 

@@ -98,7 +98,7 @@ class FileCommitJob implements Runnable {
                 commitBatchRequest.topicIdPartition().topicPartition(),
                 new ProduceResponse.PartitionResponse(
                     commitBatchResponse.errors(),
-                    commitBatchResponse.assignedOffset(),
+                    commitBatchResponse.assignedBaseOffset(),
                     commitBatchResponse.logAppendTime(),
                     commitBatchResponse.logStartOffset()
                 )

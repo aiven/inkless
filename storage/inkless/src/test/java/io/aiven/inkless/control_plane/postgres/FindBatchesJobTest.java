@@ -74,7 +74,7 @@ class FindBatchesJobTest extends SharedPostgreSQLTest {
 
         assertThat(result).containsExactlyInAnyOrder(
             new FindBatchResponse(Errors.NONE, List.of(
-                new BatchInfo(1L, objectKey1, new BatchMetadata(T0P0, 0, 1234, 0, 11, time.milliseconds(), 1000, TimestampType.CREATE_TIME))
+                new BatchInfo(1L, objectKey1, BatchMetadata.of(T0P0, 0, 1234, 0, 11, time.milliseconds(), 1000, TimestampType.CREATE_TIME))
             ), 0, 12),
             new FindBatchResponse(Errors.NONE, List.of(), 0, 0),
             new FindBatchResponse(Errors.OFFSET_OUT_OF_RANGE, null, 0, 0)

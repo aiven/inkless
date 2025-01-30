@@ -11,7 +11,12 @@ public record CommitBatchRequest(TopicIdPartition topicIdPartition,
                                  long baseOffset,
                                  long lastOffset,
                                  long batchMaxTimestamp,
-                                 TimestampType messageTimestampType) {
+                                 TimestampType messageTimestampType,
+                                 long producerId,
+                                 short producerEpoch,
+                                 int baseSequence,
+                                 int lastSequence) {
+
     public static CommitBatchRequest of(
         TopicIdPartition topicIdPartition,
         int byteOffset,
@@ -22,7 +27,9 @@ public record CommitBatchRequest(TopicIdPartition topicIdPartition,
             byteOffset,
             batch.sizeInBytes(),
             batch.baseOffset(), batch.lastOffset(),
-            batch.maxTimestamp(), batch.timestampType()
+            batch.maxTimestamp(), batch.timestampType(),
+            batch.producerId(), batch.producerEpoch(),
+            batch.baseSequence(), batch.lastSequence()
         );
     }
 
@@ -36,7 +43,30 @@ public record CommitBatchRequest(TopicIdPartition topicIdPartition,
         long batchMaxTimestamp,
         TimestampType messageTimestampType
     ) {
-        return new CommitBatchRequest(topicIdPartition, byteOffset, size, baseOffset, lastOffset, batchMaxTimestamp, messageTimestampType);
+        return new CommitBatchRequest(topicIdPartition, byteOffset, size, baseOffset, lastOffset, batchMaxTimestamp, messageTimestampType,
+            RecordBatch.NO_PRODUCER_ID, RecordBatch.NO_PRODUCER_EPOCH, RecordBatch.NO_SEQUENCE, RecordBatch.NO_SEQUENCE);
+    }
+
+    // Visible for testing
+    public static CommitBatchRequest idempotent(
+        TopicIdPartition topicIdPartition,
+        int byteOffset,
+        int size,
+        long baseOffset,
+        long lastOffset,
+        long batchMaxTimestamp,
+        TimestampType messageTimestampType,
+        long producerId,
+        short producerEpoch,
+        int baseSequence,
+        int lastSequence
+    ) {
+        return new CommitBatchRequest(topicIdPartition, byteOffset, size, baseOffset, lastOffset, batchMaxTimestamp, messageTimestampType,
+            producerId, producerEpoch, baseSequence, lastSequence);
+    }
+
+    public boolean hasProducerId() {
+        return producerId > RecordBatch.NO_PRODUCER_ID;
     }
 
     public int offsetDelta() {

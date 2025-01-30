@@ -50,6 +50,8 @@ services:
 
       # JMX
       KAFKA_JMX_PORT: 9999
+      # Increase the heap size
+      KAFKA_HEAP_OPTS: "-Xmx2G -Xms2G"
       EXTRA_ARGS: -javaagent:/opt/prometheus-jmx-exporter/jmx_prometheus_javaagent.jar=7070:/opt/prometheus-jmx-exporter/kafka.yml
     volumes:
       - ./../../../extra/prometheus-jmx-exporter:/opt/prometheus-jmx-exporter
