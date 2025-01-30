@@ -1157,6 +1157,7 @@ org.apache.kafka.clients.consumer.internals.CommitRequestManagerTest:
 - testPollEnsureEmptyPendingRequestAfterPoll
 - testPollEnsureManualCommitSent
 - testPollSkipIfCoordinatorUnknown
+- testPollWithFatalErrorShouldFailAllUnsentRequests
 - testSignalClose
 - testSuccessfulOffsetFetch
 - testSyncOffsetFetchFailsWithStaleEpochAndNotRetriedIfMemberNotInGroupAnymore
@@ -1489,14 +1490,14 @@ org.apache.kafka.clients.consumer.internals.CooperativeConsumerCoordinatorTest:
 - testWakeupDuringJoin
 - testWakeupFromAssignmentCallback
 org.apache.kafka.clients.consumer.internals.CoordinatorRequestManagerTest:
+- testBackoffAfterFatalError
 - testBackoffAfterRetriableFailure
+- testClearFatalErrorWhenReceivingSuccessfulResponse
 - testFindCoordinatorResponseVersions
 - testMarkCoordinatorUnknown
 - testMarkCoordinatorUnknownLoggingAccuracy
 - testNetworkTimeout
 - testNullGroupIdShouldThrow
-- testPropagateAndBackoffAfterFatalError
-- testSignalOnClose
 - testSuccessfulResponse
 org.apache.kafka.clients.consumer.internals.EagerConsumerCoordinatorTest:
 - shouldLoseAllOwnedPartitionsBeforeRejoiningAfterDroppingOutOfTheGroup
