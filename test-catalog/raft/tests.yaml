@@ -156,6 +156,7 @@ org.apache.kafka.raft.KafkaRaftClientReconfigTest:
 - testFollowerSendsUpdateVoterWhenDifferent
 - testHandleBeginQuorumRequestMoreEndpoints
 - testLeaderDoesNotBootstrapRecordsWithKraftVersion0
+- testLeaderMetricsAreReset
 - testLeaderUpdatesVoter
 - testLeaderWritesBootstrapRecords
 - testObserverDiscoversLeaderWithUnknownVoters
@@ -650,6 +651,8 @@ org.apache.kafka.raft.internals.KafkaRaftMetricsTest:
 - shouldRecordPollIdleRatio
 - shouldRecordRate
 - shouldRecordVoterQuorumState
+- testLeaderMetrics
+- testNumberOfVoters
 org.apache.kafka.raft.internals.MemoryBatchReaderTest:
 - testIteration
 org.apache.kafka.raft.internals.RecordsBatchReaderTest:

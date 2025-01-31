@@ -2058,6 +2058,9 @@ kafka.network.SocketServerTest:
 - testUnmuteChannelWithBufferedReceives
 - testZeroMaxConnectionsPerIp
 - tooBigRequestIsRejected
+kafka.raft.DefaultExternalKRaftMetricsTest:
+- testDefaultExternalKRaftMetrics
+- testEmptyDefaultExternalKRaftMetrics
 kafka.raft.KafkaMetadataLogTest:
 - testAdvanceLogStartOffsetAfterCleaning
 - testCleanupOlderSnapshots

@@ -84,6 +84,7 @@ org.apache.kafka.server.ClientMetricsManagerTest:
 - testUpdateSubscriptionWithNullProperties
 - testUpdateSubscriptionWithPropertiesDeletion
 org.apache.kafka.server.metrics.BrokerServerMetricsTest:
+- testIgnoredStaticVoters
 - testLastAppliedRecordOffset
 - testLastAppliedRecordTimestamp
 - testMetadataApplyErrorCount

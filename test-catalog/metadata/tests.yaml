@@ -347,6 +347,7 @@ org.apache.kafka.controller.metrics.ControllerMetadataMetricsTest:
 - testFencedBrokerMetric
 - testGlobalPartitionCountMetric
 - testGlobalTopicCountMetric
+- testIgnoredStaticVoters
 - testMetadataErrorCount
 - testMetricNames
 - testOfflinePartitionCountMetric
