@@ -4272,6 +4272,7 @@ org.apache.kafka.common.security.oauthbearer.internals.secured.AccessTokenRetrie
 - testConfigureRefreshingFileAccessTokenRetriever
 - testConfigureRefreshingFileAccessTokenRetrieverWithInvalidDirectory
 - testConfigureRefreshingFileAccessTokenRetrieverWithInvalidFile
+- testSaslOauthbearerTokenEndpointUrlIsNotAllowed
 - testUrlencodeHeader
 org.apache.kafka.common.security.oauthbearer.internals.secured.AccessTokenValidatorFactoryTest:
 - testConfigureThrowsExceptionOnAccessTokenValidatorClose
@@ -4306,6 +4307,7 @@ org.apache.kafka.common.security.oauthbearer.internals.secured.ConfigurationUtil
 - testFileUnreadable
 - testFileWhitespace
 - testFileWithSuperfluousWhitespace
+- testThrowIfURLIsNotAllowed
 - testUrl
 - testUrlCaseInsensitivity
 - testUrlEmptyString
@@ -4370,6 +4372,11 @@ org.apache.kafka.common.security.oauthbearer.internals.secured.ValidatorAccessTo
 - testNull
 - testRsaEncryptionAlgorithm
 - testWhitespace
+org.apache.kafka.common.security.oauthbearer.internals.secured.VerificationKeyResolverFactoryTest:
+- testConfigureRefreshingFileVerificationKeyResolver
+- testConfigureRefreshingFileVerificationKeyResolverWithInvalidDirectory
+- testConfigureRefreshingFileVerificationKeyResolverWithInvalidFile
+- testSaslOauthbearerTokenEndpointUrlIsNotAllowed
 org.apache.kafka.common.security.oauthbearer.internals.unsecured.OAuthBearerScopeUtilsTest:
 - invalidScope
 - validScope
