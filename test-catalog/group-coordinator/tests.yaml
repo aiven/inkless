@@ -10,6 +10,7 @@ org.apache.kafka.coordinator.group.GroupConfigTest:
 - testValidShareAutoOffsetResetValues
 org.apache.kafka.coordinator.group.GroupCoordinatorConfigTest:
 - testConfigs
+- testConsumerGroupAssignorsDefault
 - testInvalidConfigs
 org.apache.kafka.coordinator.group.GroupCoordinatorRecordHelpersTest:
 - testEmptyGroupMetadataRecord
