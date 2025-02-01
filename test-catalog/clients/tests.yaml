@@ -3733,6 +3733,7 @@ org.apache.kafka.common.record.FileRecordsTest:
 - testRead
 - testSearch
 - testSearchForTimestamp
+- testSliceForAlreadySlicedFileRecords
 - testSliceSizeLimitWithConcurrentWrite
 - testTruncate
 - testTruncateIfSizeIsDifferentToTargetSize
