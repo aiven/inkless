@@ -1985,6 +1985,7 @@ kafka.network.DynamicConnectionQuotaTest:
 kafka.network.DynamicNumNetworkThreadsTest:
 - testDynamicNumNetworkThreads
 kafka.network.ProcessorTest:
+- testParseRequestHeaderForProduceV0ToV2
 - testParseRequestHeaderWithDisabledApiVersion
 - testParseRequestHeaderWithUnsupportedApi
 - testParseRequestHeaderWithUnsupportedApiVersion

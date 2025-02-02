@@ -3969,6 +3969,7 @@ org.apache.kafka.common.requests.ProduceRequestTest:
 - shouldNotBeFlaggedAsIdempotentWhenRecordsNotIdempotent
 - shouldNotBeFlaggedAsTransactionalWhenNoRecords
 - testBuildWithCurrentMessageFormat
+- testBuilderOldestAndLatestAllowed
 - testMixedIdempotentData
 - testMixedTransactionalData
 - testV3AndAboveCannotHaveNoRecordBatches
