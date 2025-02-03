@@ -76,6 +76,14 @@ public class PostgresControlPlane extends AbstractControlPlane {
         config.setAutoCommit(false);
 
         hikariDataSource = new HikariDataSource(config);
+
+        // Avoid merger/cleaner waiting on class loading deadlocks between threads
+        try {
+            Class.forName("org.jooq.generated.DefaultSchema");
+        } catch (final ClassNotFoundException e) {
+            throw new RuntimeException(e);
+        }
+
         jooqCtx = DSL.using(hikariDataSource, SQLDialect.POSTGRES);
     }
 
