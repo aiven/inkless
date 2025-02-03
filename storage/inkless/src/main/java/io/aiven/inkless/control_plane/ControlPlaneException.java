@@ -5,4 +5,8 @@ public class ControlPlaneException extends RuntimeException {
     public ControlPlaneException(final String message) {
         super(message);
     }
+
+    public ControlPlaneException(final String message, final Throwable cause) {
+        super(message, cause);
+    }
 }
