@@ -439,7 +439,7 @@ class ReplicaManager(val config: KafkaConfig,
       scheduler.schedule("inkless-file-cleaner", () => inklessFileCleaner.foreach(_.run()), 0L, sharedState.config().fileCleanerInterval().toMillis)
 
       // There are internal delays in case of errors or absence of work items, no need for extra delays here.
-      scheduler.schedule("inkless-file-merger", () => inklessFileMerger.foreach(_.run()), 1L, 1L)
+      scheduler.schedule("inkless-file-merger", () => inklessFileMerger.foreach(_.run()), 0L, sharedState.config().fileMergerInterval().toMillis)
     }
   }
 

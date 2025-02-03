@@ -29,7 +29,8 @@ class InklessConfigTest {
             "inkless.produce.upload.backoff.ms", "30",
             "inkless.storage.backend.class", ConfigTestStorageBackend.class.getCanonicalName(),
             "inkless.file.cleaner.interval.ms", "100",
-            "inkless.file.cleaner.retention.period.ms", "200"
+            "inkless.file.cleaner.retention.period.ms", "200",
+            "inkless.file.merger.interval.ms", "100"
         )));
         assertThat(config.controlPlaneClass()).isEqualTo(InMemoryControlPlane.class);
         assertThat(config.controlPlaneConfig()).isEqualTo(Map.of("class", controlPlaneClass));
@@ -41,6 +42,7 @@ class InklessConfigTest {
         assertThat(config.storage()).isInstanceOf(ConfigTestStorageBackend.class);
         assertThat(config.fileCleanerInterval()).isEqualTo(Duration.ofMillis(100));
         assertThat(config.fileCleanerRetentionPeriod()).isEqualTo(Duration.ofMillis(200));
+        assertThat(config.fileMergerInterval()).isEqualTo(Duration.ofMillis(100));
     }
 
     @Test
@@ -62,6 +64,7 @@ class InklessConfigTest {
         assertThat(config.storage()).isInstanceOf(ConfigTestStorageBackend.class);
         assertThat(config.fileCleanerInterval()).isEqualTo(Duration.ofMinutes(5));
         assertThat(config.fileCleanerRetentionPeriod()).isEqualTo(Duration.ofMinutes(10));
+        assertThat(config.fileMergerInterval()).isEqualTo(Duration.ofMinutes(1));
     }
 
     @Test
@@ -77,7 +80,8 @@ class InklessConfigTest {
                 "produce.upload.backoff.ms", "30",
                 "storage.backend.class", ConfigTestStorageBackend.class.getCanonicalName(),
                 "file.cleaner.interval.ms", "100",
-                "file.cleaner.retention.period.ms", "200"
+                "file.cleaner.retention.period.ms", "200",
+                "file.merger.interval.ms", "100"
             )
         );
         assertThat(config.controlPlaneClass()).isEqualTo(InMemoryControlPlane.class);
@@ -90,6 +94,7 @@ class InklessConfigTest {
         assertThat(config.storage()).isInstanceOf(ConfigTestStorageBackend.class);
         assertThat(config.fileCleanerInterval()).isEqualTo(Duration.ofMillis(100));
         assertThat(config.fileCleanerRetentionPeriod()).isEqualTo(Duration.ofMillis(200));
+        assertThat(config.fileMergerInterval()).isEqualTo(Duration.ofMillis(100));
     }
 
     @Test
