@@ -862,6 +862,17 @@ org.apache.kafka.coordinator.group.streams.StreamsTopologyTest:
 - subtopologiesMapShouldBeImmutable
 - subtopologiesMapShouldNotBeNull
 - topologyEpochShouldNotBeNegative
+org.apache.kafka.coordinator.group.streams.TargetAssignmentBuilderTest:
+- testAssignmentHasNotChanged
+- testAssignmentSwapped
+- testBuildEmptyAssignmentWhenTopologyNotReady
+- testCreateAssignmentMemberSpec
+- testDeleteMember
+- testEmpty
+- testNewMember
+- testPartialAssignmentUpdate
+- testReplaceStaticMember
+- testUpdateMember
 org.apache.kafka.coordinator.group.streams.TasksTupleTest:
 - testContainsAny
 - testFromTargetAssignmentRecord
@@ -879,6 +890,15 @@ org.apache.kafka.coordinator.group.streams.TopicMetadataTest:
 - testConstructorWithZeroNumPartitions
 - testConstructorWithZeroUuid
 - testFromRecord
+org.apache.kafka.coordinator.group.streams.TopologyMetadataTest:
+- testIsStateful
+- testIsStatefulThrowsExceptionWhenSubtopologyIdDoesNotExist
+- testMaxNumInputPartitions
+- testMaxNumInputPartitionsThrowsExceptionWhenSubtopologyContainsNoSourceTopics
+- testMaxNumInputPartitionsThrowsExceptionWhenSubtopologyIdDoesNotExist
+- testSubtopologies
+- testTopicMetadata
+- testTopology
 org.apache.kafka.coordinator.group.streams.assignor.GroupSpecImplTest:
 - testMembers
 org.apache.kafka.coordinator.group.streams.assignor.MockAssignorTest:

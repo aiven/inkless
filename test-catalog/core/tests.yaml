@@ -3314,7 +3314,6 @@ kafka.server.ReplicaManagerTest:
 - testPartitionListener
 - testPartitionMarkedOfflineIfLogCantBeCreated
 - testPartitionMetadataFile
-- testPartitionMetadataFileCreatedWithExistingLog
 - testPartitionMetadataFileNotCreated
 - testPartitionsWithLateTransactionsCount
 - testPreVerificationError
