@@ -1952,7 +1952,6 @@ kafka.metrics.MetricsTest:
 - testKRaftControllerMetrics
 - testLinuxIoMetrics
 - testMetricsReporterAfterDeletingTopic
-- testSessionExpireListenerMetrics
 - testUpdateJMXFilter
 - testWindowsStyleTagNames
 - testYammerMetricsCountMetric
@@ -3358,6 +3357,10 @@ kafka.server.RequestQuotaTest:
 - testResponseThrottleTimeWhenBothProduceAndRequestQuotasViolated
 - testUnauthorizedThrottle
 - testUnthrottledClient
+kafka.server.SaslApiVersionsRequestTest:
+- testApiVersionsRequestAfterSaslHandshakeRequest
+- testApiVersionsRequestBeforeSaslHandshakeRequest
+- testApiVersionsRequestWithUnsupportedVersion
 kafka.server.ServerMetricsTest:
 - testMetricsConfig
 kafka.server.ServerShutdownTest:
