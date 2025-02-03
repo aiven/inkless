@@ -172,7 +172,7 @@ public class FetchCompleterJob implements Supplier<Map<TopicIdPartition, FetchPa
         for (FileExtent file : files) {
             // TODO INK-77: A single batch may be broken up across multiple FileExtents
             if (new ByteRange(file.range().offset(), file.range().length()).contains(batch.metadata().range())) {
-                ByteBuffer buffer = ByteBuffer.wrap(file.data()).slice(Math.toIntExact(batch.metadata().byteOffset() - file.range().offset()), Math.toIntExact(batch.metadata().size()));
+                ByteBuffer buffer = ByteBuffer.wrap(file.data()).slice(Math.toIntExact(batch.metadata().byteOffset() - file.range().offset()), Math.toIntExact(batch.metadata().byteSize()));
                 MemoryRecords records = MemoryRecords.readableRecords(buffer);
                 Iterator<MutableRecordBatch> iterator = records.batches().iterator();
                 if (!iterator.hasNext()) {
