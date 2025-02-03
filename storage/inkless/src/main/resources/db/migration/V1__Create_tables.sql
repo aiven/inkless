@@ -438,12 +438,401 @@ BEGIN
             AND state = 'deleting'
         FOR UPDATE
     LOOP
+        DELETE FROM file_merge_work_item_files
+        WHERE file_id = file.file_id;
+
         DELETE FROM files_to_delete
         WHERE file_id = file.file_id;
 
         DELETE FROM files
         WHERE file_id = file.file_id;
     END LOOP;
+END;
+$$
+;
+
+CREATE TABLE file_merge_work_items (
+    work_item_id BIGSERIAL PRIMARY KEY,
+    created_at TIMESTAMP WITH TIME ZONE
+);
+
+CREATE TABLE file_merge_work_item_files (
+    work_item_id BIGINT REFERENCES file_merge_work_items(work_item_id),
+    file_id BIGINT REFERENCES files(file_id),
+    PRIMARY KEY (work_item_id, file_id)
+);
+
+CREATE TYPE batch_metadata_v1 AS (
+    topic_id topic_id_t,
+    topic_name topic_name_t,
+    partition partition_t,
+
+    byte_offset byte_offset_t,
+    byte_size byte_size_t,
+    base_offset offset_t,
+    last_offset offset_t,
+    log_append_timestamp timestamp_t,
+    batch_max_timestamp timestamp_t,
+    timestamp_type timestamp_type_t,
+
+    producer_id producer_id_t,
+    producer_epoch producer_epoch_t,
+    base_sequence sequence_t,
+    last_sequence sequence_t
+);
+
+CREATE TYPE file_merge_work_item_response_v1_batch AS (
+    batch_id BIGINT,
+    object_key object_key_t,
+    metadata batch_metadata_v1
+);
+
+CREATE TYPE file_merge_work_item_response_v1_file AS (
+    file_id BIGINT,
+    object_key object_key_t,
+    size byte_size_t,
+    used_size byte_size_t,
+    batches file_merge_work_item_response_v1_batch[]
+);
+
+CREATE TYPE file_merge_work_item_response_v1 AS (
+    work_item_id BIGINT,
+    created_at TIMESTAMP WITH TIME ZONE,
+    file_ids file_merge_work_item_response_v1_file[]
+);
+
+CREATE FUNCTION get_file_merge_work_item_v1(
+    now TIMESTAMP WITH TIME ZONE,
+    expiration_interval INTERVAL,
+    merge_file_size_threshold byte_size_t
+)
+RETURNS SETOF file_merge_work_item_response_v1 LANGUAGE plpgsql VOLATILE AS $$
+DECLARE
+    expired_work_item RECORD;
+    file_ids BIGINT[];
+    new_work_item_id BIGINT;
+    existing_file_id BIGINT;
+BEGIN
+    -- Delete any expired work items
+    FOR expired_work_item IN
+        SELECT *
+        FROM file_merge_work_items
+        WHERE created_at <= now - expiration_interval
+    LOOP
+        DELETE FROM file_merge_work_item_files
+        WHERE work_item_id = expired_work_item.work_item_id;
+
+        DELETE FROM file_merge_work_items
+        WHERE work_item_id = expired_work_item.work_item_id;
+    END LOOP;
+
+    -- Identify files to merge based on threshold size
+    WITH file_candidates AS (
+    SELECT
+        file_id,
+        committed_at,
+        size
+    FROM files
+    WHERE state = 'uploaded'
+        AND reason != 'merge'
+        AND NOT EXISTS (
+            SELECT 1
+            FROM file_merge_work_item_files
+            WHERE file_id = files.file_id
+        )
+    ),
+    running_sums AS (
+        SELECT
+            file_id,
+            size,
+            SUM(size) OVER (
+                ORDER BY committed_at, file_id
+                ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+            ) as cumulative_size,
+            SUM(size) OVER (
+                ORDER BY committed_at, file_id
+                ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
+            ) as previous_sum
+        FROM file_candidates
+    ),
+    threshold_point AS (
+        SELECT MIN(file_id) as last_file_id
+        FROM running_sums
+        WHERE cumulative_size >= merge_file_size_threshold
+    )
+    SELECT array_agg(rs.file_id ORDER BY rs.file_id)
+    INTO file_ids
+    FROM running_sums rs
+    WHERE rs.file_id <= (SELECT last_file_id FROM threshold_point);
+
+    -- Return if no files to merge
+    IF file_ids IS NULL OR array_length(file_ids, 1) = 0 THEN
+        RETURN;
+    END IF;
+
+    -- Create new work item
+    INSERT INTO file_merge_work_items(created_at)
+    VALUES (now)
+    RETURNING work_item_id
+    INTO new_work_item_id;
+
+    -- Add files to work item
+    FOREACH existing_file_id IN ARRAY file_ids
+    LOOP
+        INSERT INTO file_merge_work_item_files(work_item_id, file_id)
+        VALUES (new_work_item_id, existing_file_id);
+    END LOOP;
+
+    -- Return work item
+    RETURN NEXT (
+        new_work_item_id,
+        now,
+        ARRAY(
+            SELECT (
+                f.file_id,
+                files.object_key,
+                files.size,
+                files.used_size,
+                ARRAY(
+                    SELECT (
+                        batches.batch_id,
+                        files.object_key,
+                        (
+                            logs.topic_id,
+                            logs.topic_name,
+                            batches.partition,
+
+                            batches.byte_offset,
+                            batches.byte_size,
+                            batches.base_offset,
+                            batches.last_offset,
+                            batches.log_append_timestamp,
+                            batches.batch_max_timestamp,
+                            batches.timestamp_type,
+                            batches.producer_id,
+                            batches.producer_epoch,
+                            batches.base_sequence,
+                            batches.last_sequence
+                        )::batch_metadata_v1
+                    )::file_merge_work_item_response_v1_batch
+                    FROM batches
+                        JOIN files ON batches.file_id = files.file_id
+                        JOIN logs ON batches.topic_id = logs.topic_id AND batches.partition = logs.partition
+                    WHERE batches.file_id = f.file_id
+                )
+            )::file_merge_work_item_response_v1_file
+            FROM unnest(file_ids) AS f(file_id)
+            JOIN files ON f.file_id = files.file_id
+        )
+    )::file_merge_work_item_response_v1;
+END;
+$$
+;
+
+CREATE TYPE commit_file_merge_work_item_v1_batch AS (
+    metadata batch_metadata_v1,
+    parent_batch_ids BIGINT[]
+);
+
+CREATE TYPE commit_file_merge_work_item_v1_error AS ENUM (
+    'none',
+    'file_merge_work_item_not_found',
+    'invalid_parent_batch_count',
+    'batch_not_part_of_work_item'
+);
+
+
+CREATE TYPE commit_file_merge_work_item_v1_response AS (
+    error commit_file_merge_work_item_v1_error,
+    error_batch commit_file_merge_work_item_v1_batch
+);
+
+CREATE FUNCTION commit_file_merge_work_item_v1(
+    now TIMESTAMP WITH TIME ZONE,
+    existing_work_item_id BIGINT,
+    object_key object_key_t,
+    uploader_broker_id broker_id_t,
+    file_size byte_size_t,
+    merge_file_batches commit_file_merge_work_item_v1_batch[]
+)
+RETURNS commit_file_merge_work_item_v1_response LANGUAGE plpgsql VOLATILE AS $$
+DECLARE
+    work_item RECORD;
+    new_file_id BIGINT;
+    found_batches_size BIGINT;
+    work_item_file RECORD;
+    merge_file_batch commit_file_merge_work_item_v1_batch;
+BEGIN
+    -- check that the work item exists
+    SELECT * FROM file_merge_work_items
+    WHERE work_item_id = existing_work_item_id
+    FOR UPDATE
+    INTO work_item;
+
+    IF NOT FOUND THEN
+        RETURN ROW('file_merge_work_item_not_found'::commit_file_merge_work_item_v1_error, NULL)::commit_file_merge_work_item_v1_response;
+    END IF;
+
+    -- check that the number of parent batches is 1 (limitation of the current implementation)
+    FOR merge_file_batch IN
+        SELECT *
+        FROM unnest(merge_file_batches) b
+    LOOP
+        IF array_length(merge_file_batch.parent_batch_ids, 1) IS NULL OR array_length(merge_file_batch.parent_batch_ids, 1) != 1 THEN
+            RETURN ROW('invalid_parent_batch_count'::commit_file_merge_work_item_v1_error, merge_file_batch)::commit_file_merge_work_item_v1_response;
+        END IF;
+    END LOOP;
+
+    -- filter merge_file_batches to only include the ones where logs exist
+    merge_file_batches := ARRAY(
+        SELECT b
+        FROM unnest(merge_file_batches) b
+        JOIN batches ON b.parent_batch_ids[1] = batches.batch_id
+        JOIN logs ON batches.topic_id = logs.topic_id AND batches.partition = logs.partition
+    );
+
+    -- check if the found batch file id is part of the work item
+    SELECT SUM(batches.byte_size)
+    FROM batches
+    WHERE EXISTS (
+        SELECT 1
+        FROM unnest(merge_file_batches) b
+        WHERE batch_id = ANY(b.parent_batch_ids)
+    )
+    INTO found_batches_size;
+
+    IF found_batches_size IS NULL THEN
+        -- insert new empty file
+        INSERT INTO files (object_key, reason, state, uploader_broker_id, committed_at, size, used_size)
+        VALUES (object_key, 'merge', 'uploaded', uploader_broker_id, now, 0, 0)
+        RETURNING file_id
+        INTO new_file_id;
+        PERFORM mark_file_to_delete_v1(now, new_file_id);
+
+        -- delete work item
+        PERFORM release_file_merge_work_item_v1(existing_work_item_id);
+
+        RETURN ROW('none'::commit_file_merge_work_item_v1_error, NULL)::commit_file_merge_work_item_v1_response;
+    END IF;
+
+    -- check that all parent batch files are part of work item files
+    FOR merge_file_batch IN
+        SELECT *
+        FROM unnest(merge_file_batches) b
+        WHERE NOT EXISTS (
+            SELECT 1
+            FROM file_merge_work_item_files
+                JOIN batches ON file_merge_work_item_files.file_id = batches.file_id
+            WHERE work_item_id = existing_work_item_id
+                AND batch_id = ANY(b.parent_batch_ids)
+        )
+    LOOP
+        RETURN ROW('batch_not_part_of_work_item'::commit_file_merge_work_item_v1_error, merge_file_batch)::commit_file_merge_work_item_v1_response;
+    END LOOP;
+
+    -- delete old files
+    FOR work_item_file IN
+        SELECT file_id
+        FROM file_merge_work_item_files AS f
+        WHERE work_item_id = existing_work_item_id
+            AND NOT EXISTS (
+                SELECT 1
+                FROM files_to_delete
+                WHERE file_id = f.file_id
+            )
+    LOOP
+        PERFORM mark_file_to_delete_v1(now, work_item_file.file_id);
+    END LOOP;
+
+    -- insert new file
+    INSERT INTO files (object_key, reason, state, uploader_broker_id, committed_at, size, used_size)
+    VALUES (object_key, 'merge', 'uploaded', uploader_broker_id, now, file_size, found_batches_size)
+    RETURNING file_id
+    INTO new_file_id;
+
+    -- delete old batches
+    DELETE FROM batches
+    WHERE EXISTS (
+        SELECT 1
+        FROM unnest(merge_file_batches) b
+        WHERE batch_id = ANY(b.parent_batch_ids)
+    );
+
+    -- insert new batches
+    INSERT INTO batches (
+        topic_id, partition,
+        base_offset,
+        last_offset,
+        file_id,
+        byte_offset, byte_size,
+        log_append_timestamp,
+        batch_max_timestamp,
+        timestamp_type,
+        producer_id,
+        producer_epoch,
+        base_sequence,
+        last_sequence
+    )
+    SELECT DISTINCT
+        (unnest(merge_file_batches)).metadata.topic_id,
+        (unnest(merge_file_batches)).metadata.partition,
+        (unnest(merge_file_batches)).metadata.base_offset,
+        (unnest(merge_file_batches)).metadata.last_offset,
+        new_file_id,
+        (unnest(merge_file_batches)).metadata.byte_offset,
+        (unnest(merge_file_batches)).metadata.byte_size,
+        (unnest(merge_file_batches)).metadata.log_append_timestamp,
+        (unnest(merge_file_batches)).metadata.batch_max_timestamp,
+        (unnest(merge_file_batches)).metadata.timestamp_type,
+        (unnest(merge_file_batches)).metadata.producer_id,
+        (unnest(merge_file_batches)).metadata.producer_epoch,
+        (unnest(merge_file_batches)).metadata.base_sequence,
+        (unnest(merge_file_batches)).metadata.last_sequence
+    FROM unnest(merge_file_batches)
+    ORDER BY (unnest(merge_file_batches)).metadata.topic_id,
+        (unnest(merge_file_batches)).metadata.partition,
+        (unnest(merge_file_batches)).metadata.base_offset;
+
+    -- delete work item
+    PERFORM release_file_merge_work_item_v1(existing_work_item_id);
+
+    RETURN ROW('none'::commit_file_merge_work_item_v1_error, NULL)::commit_file_merge_work_item_v1_response;
+END;
+$$
+;
+
+CREATE TYPE release_file_merge_work_item_v1_error AS ENUM (
+    'none',
+    'file_merge_work_item_not_found'
+);
+
+CREATE TYPE release_file_merge_work_item_v1_response AS (
+    error release_file_merge_work_item_v1_error
+);
+
+CREATE FUNCTION release_file_merge_work_item_v1(
+    existing_work_item_id BIGINT
+)
+RETURNS release_file_merge_work_item_v1_response LANGUAGE plpgsql VOLATILE AS $$
+DECLARE
+    work_item RECORD;
+BEGIN
+    SELECT * FROM file_merge_work_items
+    WHERE work_item_id = existing_work_item_id
+    FOR UPDATE
+    INTO work_item;
+
+    IF NOT FOUND THEN
+        RETURN ROW('file_merge_work_item_not_found'::release_file_merge_work_item_v1_error)::release_file_merge_work_item_v1_response;
+    END IF;
+
+    DELETE FROM file_merge_work_item_files
+    WHERE work_item_id = existing_work_item_id;
+
+    DELETE FROM file_merge_work_items
+    WHERE work_item_id = existing_work_item_id;
+
+    RETURN ROW('none'::release_file_merge_work_item_v1_error)::release_file_merge_work_item_v1_response;
 END;
 $$
 ;

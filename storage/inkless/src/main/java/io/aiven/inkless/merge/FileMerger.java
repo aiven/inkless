@@ -140,7 +140,7 @@ public class FileMerger implements Runnable {
                     throw new RuntimeException("Desynchronization between batches and files");
                 }
 
-                final long batchSize = parentBatch.metadata().size();
+                final long batchSize = parentBatch.metadata().byteSize();
                 final byte[] readBytes = bf.inputStreamWithPosition.inputStream.readNBytes((int) batchSize);
                 if (readBytes.length < batchSize) {
                     throw new RuntimeException("Desynchronization between batches and files");

@@ -854,7 +854,7 @@ public abstract class AbstractControlPlaneTest {
                 List.of(3L));
             assertThatThrownBy(() -> controlPlane.commitFileMergeWorkItem(fileMergeWorkItem.workItemId(), "obj", 1, 0, List.of(batch)))
                 .isInstanceOf(ControlPlaneException.class)
-                .hasMessage("Batch 3 is not part of work item in: " + batch);
+                .hasMessage("Batch 3 is not part of work item in " + batch);
         }
 
         @Test
