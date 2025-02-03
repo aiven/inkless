@@ -151,8 +151,8 @@ org.apache.kafka.coordinator.group.GroupCoordinatorShardTest:
 - testReplayShareGroupMetadata
 - testReplayShareGroupMetadataWithNullValue
 - testReplayTransactionalOffsetCommit
-- testScheduleClassicGroupSizeCounter
 - testScheduleCleanupGroupMetadata
+- testScheduleGroupSizeCounter
 - testShareGroupHeartbeat
 org.apache.kafka.coordinator.group.GroupMetadataManagerTest:
 - testClassicGroupCompletedRebalanceSensor
@@ -300,9 +300,6 @@ org.apache.kafka.coordinator.group.GroupMetadataManagerTest:
 - testNewMemberTimeoutCompletion
 - testNoConversionWhenSizeExceedsClassicMaxGroupSize
 - testNoGroupEpochBumpWhenStaticMemberTemporarilyLeaves
-- testOnClassicGroupStateTransitionOnLoading
-- testOnConsumerGroupStateTransition
-- testOnConsumerGroupStateTransitionOnLoading
 - testOnLoaded
 - testOnLoadedExceedGroupMaxSizeTriggersRebalance
 - testOnLoadedSchedulesClassicGroupMemberHeartbeats
@@ -416,7 +413,7 @@ org.apache.kafka.coordinator.group.GroupMetadataManagerTest:
 - testSyncGroupSucceedWhenProtocolTypeAndNameAreNotProvided
 - testUnknownGroupId
 - testUnknownMemberIdJoinsConsumerGroup
-- testUpdateClassicGroupSizeCounter
+- testUpdateGroupSizeCounter
 - testUpdatingSubscriptionTriggersNewTargetAssignment
 - testValidHeartbeat
 - testValidLeaveGroup
@@ -628,7 +625,6 @@ org.apache.kafka.coordinator.group.classic.ClassicGroupTest:
 - testValidateOffsetCommit
 - testValidateOffsetDelete
 org.apache.kafka.coordinator.group.metrics.GroupCoordinatorMetricsShardTest:
-- testConsumerGroupStateTransitionMetrics
 - testTimelineGaugeCounters
 org.apache.kafka.coordinator.group.metrics.GroupCoordinatorMetricsTest:
 - aggregateShards
@@ -717,7 +713,6 @@ org.apache.kafka.coordinator.group.modern.consumer.ConsumerGroupTest:
 - testRemoveMember
 - testRemovePartitionEpochs
 - testRemoveStaticMember
-- testStateTransitionMetrics
 - testSubscribedRegularExpressionCount
 - testSubscriptionType
 - testUpdateAndRemoveRegularExpression
