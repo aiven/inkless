@@ -206,7 +206,7 @@ public class InMemoryControlPlane extends AbstractControlPlane {
         for (Long batchOffset : coordinates.navigableKeySet().tailSet(request.offset())) {
             BatchInfo batch = coordinates.get(batchOffset).batchInfo();
             batches.add(batch);
-            totalSize += batch.metadata().size();
+            totalSize += batch.metadata().byteSize();
             if (totalSize > fetchMaxBytes) {
                 break;
             }
@@ -244,7 +244,7 @@ public class InMemoryControlPlane extends AbstractControlPlane {
         while (!coordinates.isEmpty() && coordinates.firstKey() < logInfo.logStartOffset) {
             final BatchInfoInternal batchInfoInternal = coordinates.remove(coordinates.firstKey());
             final FileInfo fileInfo = batchInfoInternal.fileInfo;
-            fileInfo.deleteBatch(batchInfoInternal.batchInfo.metadata().size());
+            fileInfo.deleteBatch(batchInfoInternal.batchInfo.metadata().byteSize());
             if (fileInfo.allDeleted()) {
                 files.remove(fileInfo.objectKey);
                 filesToDelete.put(fileInfo.objectKey, new FileToDeleteInternal(fileInfo, TimeUtils.now(time)));
@@ -271,7 +271,7 @@ public class InMemoryControlPlane extends AbstractControlPlane {
             for (final var entry : coordinates.entrySet()) {
                 final BatchInfoInternal batchInfoInternal = entry.getValue();
                 final FileInfo fileInfo = batchInfoInternal.fileInfo;
-                fileInfo.deleteBatch(batchInfoInternal.batchInfo.metadata().size());
+                fileInfo.deleteBatch(batchInfoInternal.batchInfo.metadata().byteSize());
                 if (fileInfo.allDeleted()) {
                     files.remove(fileInfo.objectKey);
                     filesToDelete.put(fileInfo.objectKey, new FileToDeleteInternal(fileInfo, TimeUtils.now(time)));
@@ -434,7 +434,7 @@ public class InMemoryControlPlane extends AbstractControlPlane {
                 for (final var parentBatch : parentBatchesFound) {
                     if (!workItemFileIds.contains(parentBatch.fileInfo.fileId)) {
                         throw new ControlPlaneException(
-                            String.format("Batch %d is not part of work item in: %s",
+                            String.format("Batch %d is not part of work item in %s",
                                 parentBatch.batchInfo.batchId(), mergedFileBatch));
                     }
                 }
@@ -464,7 +464,7 @@ public class InMemoryControlPlane extends AbstractControlPlane {
             final TreeMap<Long, BatchInfoInternal> coordinates = this.batches.get(batch.metadata().topicIdPartition());
             // Probably the partition was deleted -- skip the new batch (exclude it from the file too).
             if (coordinates == null) {
-                mergedFile.deleteBatch(batch.metadata().size());
+                mergedFile.deleteBatch(batch.metadata().byteSize());
                 continue;
             }
 
@@ -475,7 +475,7 @@ public class InMemoryControlPlane extends AbstractControlPlane {
                 .findFirst();
             // Probably the parent batch was deleted -- skip the new batch (exclude it from the file too).
             if (parentBatchFound.isEmpty()) {
-                mergedFile.deleteBatch(batch.metadata().size());
+                mergedFile.deleteBatch(batch.metadata().byteSize());
                 continue;
             }
             coordinates.remove(parentBatchFound.get().getKey());

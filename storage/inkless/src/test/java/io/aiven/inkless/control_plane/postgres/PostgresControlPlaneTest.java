@@ -1,7 +1,6 @@
 // Copyright (c) 2024 Aiven, Helsinki, Finland. https://aiven.io/
 package io.aiven.inkless.control_plane.postgres;
 
-import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.TestInfo;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -32,16 +31,5 @@ class PostgresControlPlaneTest extends AbstractControlPlaneTest {
             "password", pgContainer.getPassword()
         ));
         return new ControlPlaneAndConfigs(controlPlane, configs);
-    }
-
-    // Remove when merging is implemented in PostgresControlPlane
-    @Nested
-    class GetFileMergeWorkItem {
-    }
-    @Nested
-    class CommitFileMergeWorkItem {
-    }
-    @Nested
-    class ReleaseFileMergeWorkItem {
     }
 }
