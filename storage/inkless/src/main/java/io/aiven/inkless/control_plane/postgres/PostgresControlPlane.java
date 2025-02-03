@@ -1,6 +1,7 @@
 // Copyright (c) 2024 Aiven, Helsinki, Finland. https://aiven.io/
 package io.aiven.inkless.control_plane.postgres;
 
+import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.utils.Time;
 
@@ -10,9 +11,12 @@ import com.zaxxer.hikari.util.IsolationLevel;
 
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
+import org.jooq.generated.udt.records.CommitFileMergeWorkItemV1BatchRecord;
+import org.jooq.generated.udt.records.CommitFileMergeWorkItemV1ResponseRecord;
 import org.jooq.impl.DSL;
 
 import java.io.IOException;
+import java.util.Arrays;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
@@ -20,6 +24,7 @@ import java.util.Set;
 import java.util.stream.Stream;
 
 import io.aiven.inkless.control_plane.AbstractControlPlane;
+import io.aiven.inkless.control_plane.BatchMetadata;
 import io.aiven.inkless.control_plane.CommitBatchRequest;
 import io.aiven.inkless.control_plane.CommitBatchResponse;
 import io.aiven.inkless.control_plane.ControlPlaneException;
@@ -28,6 +33,7 @@ import io.aiven.inkless.control_plane.DeleteFilesRequest;
 import io.aiven.inkless.control_plane.DeleteRecordsRequest;
 import io.aiven.inkless.control_plane.DeleteRecordsResponse;
 import io.aiven.inkless.control_plane.FileMergeWorkItem;
+import io.aiven.inkless.control_plane.FileMergeWorkItemNotExist;
 import io.aiven.inkless.control_plane.FileToDelete;
 import io.aiven.inkless.control_plane.FindBatchRequest;
 import io.aiven.inkless.control_plane.FindBatchResponse;
@@ -40,6 +46,7 @@ public class PostgresControlPlane extends AbstractControlPlane {
 
     private HikariDataSource hikariDataSource;
     private DSLContext jooqCtx;
+    private PostgresControlPlaneConfig controlPlaneConfig;
 
     public PostgresControlPlane(final Time time) {
         super(time);
@@ -54,7 +61,7 @@ public class PostgresControlPlane extends AbstractControlPlane {
 
     @Override
     public void configure(final Map<String, ?> configs) {
-        final PostgresControlPlaneConfig controlPlaneConfig = new PostgresControlPlaneConfig(configs);
+        controlPlaneConfig = new PostgresControlPlaneConfig(configs);
 
         Migrations.migrate(controlPlaneConfig);
 
@@ -139,7 +146,13 @@ public class PostgresControlPlane extends AbstractControlPlane {
 
     @Override
     public FileMergeWorkItem getFileMergeWorkItem() {
-        throw new RuntimeException("Not implemented");
+        final GetFileMergeWorkItemJob job = new GetFileMergeWorkItemJob(
+            time,
+            controlPlaneConfig.fileMergeLockPeriod(),
+            controlPlaneConfig.fileMergeSizeThresholdBytes(),
+            jooqCtx
+        );
+        return job.call();
     }
 
     @Override
@@ -148,12 +161,78 @@ public class PostgresControlPlane extends AbstractControlPlane {
                                         final int uploaderBrokerId,
                                         final long fileSize,
                                         final List<MergedFileBatch> batches) {
-        throw new RuntimeException("Not implemented");
+        final CommitFileMergeWorkItemJob job = new CommitFileMergeWorkItemJob(
+            time,
+            workItemId,
+            objectKey,
+            uploaderBrokerId,
+            fileSize,
+            batches,
+            jooqCtx
+        );
+        final var result = job.call();
+        switch (result.getError()) {
+            case none:
+                break;
+            case file_merge_work_item_not_found:
+                throw new FileMergeWorkItemNotExist(workItemId);
+            case invalid_parent_batch_count: {
+                final MergedFileBatch mergedFileBatch = getMergedFileBatch(result);
+                throw new ControlPlaneException(
+                    String.format("Invalid parent batch count %d in %s",
+                        mergedFileBatch.parentBatches().size(),
+                        mergedFileBatch
+                    )
+                );
+            }
+            case batch_not_part_of_work_item: {
+                final MergedFileBatch mergedFileBatch = getMergedFileBatch(result);
+                throw new ControlPlaneException(
+                    String.format(
+                        "Batch %d is not part of work item in %s",
+                            mergedFileBatch.parentBatches().get(0),
+                            mergedFileBatch
+                        )
+                );
+            }
+        }
+    }
+
+    private static MergedFileBatch getMergedFileBatch(CommitFileMergeWorkItemV1ResponseRecord result) {
+        final CommitFileMergeWorkItemV1BatchRecord errorBatch = result.getErrorBatch();
+        return new MergedFileBatch(
+            new BatchMetadata(
+                new TopicIdPartition(
+                    errorBatch.getMetadata().getTopicId(),
+                    errorBatch.getMetadata().getPartition(),
+                    errorBatch.getMetadata().getTopicName()
+                ),
+                errorBatch.getMetadata().getByteOffset(),
+                errorBatch.getMetadata().getByteSize(),
+                errorBatch.getMetadata().getBaseOffset(),
+                errorBatch.getMetadata().getLastOffset(),
+                errorBatch.getMetadata().getLogAppendTimestamp(),
+                errorBatch.getMetadata().getBatchMaxTimestamp(),
+                errorBatch.getMetadata().getTimestampType(),
+                errorBatch.getMetadata().getProducerId(),
+                errorBatch.getMetadata().getProducerEpoch(),
+                errorBatch.getMetadata().getBaseSequence(),
+                errorBatch.getMetadata().getLastSequence()
+            ),
+            Arrays.asList(errorBatch.getParentBatchIds())
+        );
     }
 
     @Override
     public void releaseFileMergeWorkItem(final long workItemId) {
-        throw new RuntimeException("Not implemented");
+        final ReleaseFileMergeWorkItemJob job = new ReleaseFileMergeWorkItemJob(workItemId, jooqCtx);
+        final var result = job.call();
+        switch (result.getError()) {
+            case none:
+                break;
+            case file_merge_work_item_not_found:
+                throw new FileMergeWorkItemNotExist(workItemId);
+        }
     }
 
     @Override

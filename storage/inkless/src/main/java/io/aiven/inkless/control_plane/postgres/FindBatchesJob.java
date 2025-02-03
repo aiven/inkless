@@ -144,7 +144,7 @@ class FindBatchesJob implements Callable<List<FindBatchResponse>> {
                     )
                 );
                 batches.add(batch);
-                totalSize += batch.metadata().size();
+                totalSize += batch.metadata().byteSize();
                 if (totalSize > fetchMaxBytes) {
                     break;
                 }

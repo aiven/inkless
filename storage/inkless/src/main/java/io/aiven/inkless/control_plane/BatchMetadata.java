@@ -10,7 +10,7 @@ import io.aiven.inkless.common.ByteRange;
 public record BatchMetadata (
     TopicIdPartition topicIdPartition,
     long byteOffset,
-    long size,
+    long byteSize,
     long baseOffset,
     long lastOffset,
     long logAppendTimestamp,
@@ -32,7 +32,7 @@ public record BatchMetadata (
     public static BatchMetadata of(
         TopicIdPartition topicIdPartition,
         long byteOffset,
-        long size,
+        long byteSize,
         long baseOffset,
         long lastOffset,
         long logAppendTimestamp,
@@ -42,7 +42,7 @@ public record BatchMetadata (
         return new BatchMetadata(
             topicIdPartition,
             byteOffset,
-            size,
+            byteSize,
             baseOffset,
             lastOffset,
             logAppendTimestamp,
@@ -56,6 +56,6 @@ public record BatchMetadata (
     }
 
     public ByteRange range() {
-        return new ByteRange(byteOffset, size);
+        return new ByteRange(byteOffset, byteSize);
     }
 }
