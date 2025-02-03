@@ -434,7 +434,7 @@ public class InMemoryControlPlane extends AbstractControlPlane {
                 for (final var parentBatch : parentBatchesFound) {
                     if (!workItemFileIds.contains(parentBatch.fileInfo.fileId)) {
                         throw new ControlPlaneException(
-                            String.format("Batch %d is not part of work item in: %s",
+                            String.format("Batch %d is not part of work item in %s",
                                 parentBatch.batchInfo.batchId(), mergedFileBatch));
                     }
                 }
