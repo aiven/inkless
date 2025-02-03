@@ -15,6 +15,7 @@ import io.aiven.inkless.common.ObjectKey;
 import io.aiven.inkless.common.ObjectKeyCreator;
 import io.aiven.inkless.common.SharedState;
 import io.aiven.inkless.control_plane.ControlPlane;
+import io.aiven.inkless.control_plane.ControlPlaneException;
 import io.aiven.inkless.control_plane.DeleteFilesRequest;
 import io.aiven.inkless.control_plane.FileToDelete;
 import io.aiven.inkless.storage_backend.common.StorageBackend;
@@ -60,10 +61,10 @@ public class FileCleaner implements Runnable {
             LOGGER.info("Running file cleaner at {}", now);
 
             // find all files that are marked for deletion
-            final Set<String> objectKeyPaths = controlPlane.getFilesToDelete()
-                .stream()
+            final Set<String> objectKeyPaths = controlPlane.getFilesToDelete().stream()
                 .filter(f -> Duration.between(f.markedForDeletionAt(), now).compareTo(retentionPeriod) > 0)
-                .map(FileToDelete::objectKey).collect(Collectors.toSet());
+                .map(FileToDelete::objectKey)
+                .collect(Collectors.toSet());
             if (objectKeyPaths.isEmpty()) {
                 LOGGER.info("No files to delete");
                 return;
@@ -79,8 +80,7 @@ public class FileCleaner implements Runnable {
             controlPlane.deleteFiles(request);
 
             LOGGER.info("Deleted {} files", objectKeyPaths.size());
-            // TODO add control-plane exception handling to always retry
-        } catch (StorageBackendException e) {
+        } catch (StorageBackendException | ControlPlaneException e) {
             LOGGER.warn("Failed to delete files", e);
         }
     }
