@@ -22,6 +22,7 @@ import java.util.stream.Stream;
 import io.aiven.inkless.control_plane.AbstractControlPlane;
 import io.aiven.inkless.control_plane.CommitBatchRequest;
 import io.aiven.inkless.control_plane.CommitBatchResponse;
+import io.aiven.inkless.control_plane.ControlPlaneException;
 import io.aiven.inkless.control_plane.CreateTopicAndPartitionsRequest;
 import io.aiven.inkless.control_plane.DeleteFilesRequest;
 import io.aiven.inkless.control_plane.DeleteRecordsRequest;
@@ -118,14 +119,22 @@ public class PostgresControlPlane extends AbstractControlPlane {
 
     @Override
     public List<FileToDelete> getFilesToDelete() {
-        final FindFilesToDeleteJob job = new FindFilesToDeleteJob(time, jooqCtx);
-        return job.call();
+        try {
+            final FindFilesToDeleteJob job = new FindFilesToDeleteJob(time, jooqCtx);
+            return job.call();
+        } catch (final Exception e) {
+            throw new ControlPlaneException("Failed to get files to delete", e);
+        }
     }
 
     @Override
     public void deleteFiles(DeleteFilesRequest request) {
-        final DeleteFilesJob job = new DeleteFilesJob(time, jooqCtx, request, metrics::onFilesDeleteCompleted);
-        job.run();
+        try {
+            final DeleteFilesJob job = new DeleteFilesJob(time, jooqCtx, request, metrics::onFilesDeleteCompleted);
+            job.run();
+        } catch (final Exception e) {
+            throw new ControlPlaneException("Failed to delete files", e);
+        }
     }
 
     @Override
