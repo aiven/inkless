@@ -98,6 +98,14 @@ public class InklessClusterTest extends SharedPostgreSQLTest {
             s3Client.createBucket(CreateBucketRequest.builder().bucket(bucketName).build());
         }
 
+        // Avoid merger/cleaner waiting on class loading deadlocks between brokers
+        try {
+            Class.forName("org.jooq.generated.DefaultSchema");
+        } catch (final ClassNotFoundException e) {
+            throw new RuntimeException(e);
+        }
+
+
         cluster = new KafkaClusterTestKit.Builder(new TestKitNodes.Builder()
                 .setCombined(true)
                 .setNumBrokerNodes(2)
