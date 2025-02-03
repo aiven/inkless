@@ -62,11 +62,15 @@ public class InklessConfig extends AbstractConfig {
 
     public static final String FILE_CLEANER_INTERVAL_MS_CONFIG = "file.cleaner.interval.ms";
     private static final String FILE_CLEANER_INTERVAL_MS_DOC = "The interval with which to clean up files marked for deletion.";
-    private static final int FILE_CLEANER_INTERVAL_MS_DEFAULT = 5 * 60 * 1000;  // 5 minute
+    private static final int FILE_CLEANER_INTERVAL_MS_DEFAULT = 5 * 60 * 1000;  // 5 minutes
 
     public static final String FILE_CLEANER_RETENTION_PERIOD_MS_CONFIG = "file.cleaner.retention.period.ms";
     private static final String FILE_CLEANER_RETENTION_PERIOD_MS_DOC = "The retention period for files marked for deletion.";
-    private static final int FILE_CLEANER_RETENTION_PERIOD_MS_DEFAULT = 10 * 60 * 1000;  // 10 minute
+    private static final int FILE_CLEANER_RETENTION_PERIOD_MS_DEFAULT = 10 * 60 * 1000;  // 10 minutes
+
+    public static final String FILE_MERGER_INTERVAL_MS_CONFIG = "file.merger.interval.ms";
+    private static final String FILE_MERGER_INTERVAL_MS_DOC = "The interval with which to merge files.";
+    private static final int FILE_MERGER_INTERVAL_MS_DEFAULT = 60 * 1000;  // 1 minute
 
     public static ConfigDef configDef() {
         final ConfigDef configDef = new ConfigDef();
@@ -166,6 +170,15 @@ public class InklessConfig extends AbstractConfig {
             FILE_CLEANER_RETENTION_PERIOD_MS_DOC
         );
 
+        configDef.define(
+            FILE_MERGER_INTERVAL_MS_CONFIG,
+            ConfigDef.Type.INT,
+            FILE_MERGER_INTERVAL_MS_DEFAULT,
+            ConfigDef.Range.atLeast(1),
+            ConfigDef.Importance.LOW,
+            FILE_MERGER_INTERVAL_MS_DOC
+        );
+
         return configDef;
     }
 
@@ -226,5 +239,9 @@ public class InklessConfig extends AbstractConfig {
 
     public Duration fileCleanerRetentionPeriod() {
         return Duration.ofMillis(getInt(FILE_CLEANER_RETENTION_PERIOD_MS_CONFIG));
+    }
+
+    public Duration fileMergerInterval() {
+        return Duration.ofMillis(getInt(FILE_MERGER_INTERVAL_MS_CONFIG));
     }
 }
