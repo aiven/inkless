@@ -68,6 +68,7 @@ org.apache.kafka.controller.ClusterControlManagerTest:
 - testHasOnlineDir
 - testPlaceReplicas
 - testReRegistrationAndBrokerEpoch
+- testReRegistrationWithCleanShutdownDetection
 - testRegisterBrokerRecordVersion
 - testRegisterControlWithOlderMetadataVersion
 - testRegisterWithDuplicateDirectoryId
@@ -274,6 +275,7 @@ org.apache.kafka.controller.ReplicationControlManagerTest:
 - testEligibleLeaderReplicas_DeleteTopic
 - testEligibleLeaderReplicas_EffectiveMinIsr
 - testEligibleLeaderReplicas_ShrinkAndExpandIsr
+- testEligibleLeaderReplicas_ShrinkToEmptyIsr
 - testEligibleLeaderReplicas_UncleanShutdown
 - testElrsRemovedOnMinIsrUpdate
 - testElrsRemovedShouldNotBumpPartitionEpochIfNoChange

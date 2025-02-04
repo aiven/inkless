@@ -3477,6 +3477,11 @@ kafka.server.epoch.OffsetsForLeaderEpochTest:
 kafka.server.handlers.DescribeTopicPartitionsRequestHandlerTest:
 - testDescribeTopicPartitionsRequest
 - testDescribeTopicPartitionsRequestWithEdgeCases
+kafka.server.integration.EligibleLeaderReplicasIntegrationTest:
+- testElrMemberCanBeElected
+- testElrMemberShouldBeKickOutWhenUncleanShutdown
+- testHighWatermarkShouldNotAdvanceIfUnderMinIsr
+- testLastKnownLeaderShouldBeElectedIfEmptyElr
 kafka.server.logger.RuntimeLoggerManagerTest:
 - testOperationNotAllowed
 - testValidateBogusLogLevelNameNotAllowed
