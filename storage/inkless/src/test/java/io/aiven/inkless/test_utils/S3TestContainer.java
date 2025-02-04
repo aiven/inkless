@@ -5,9 +5,13 @@ import org.testcontainers.containers.localstack.LocalStackContainer;
 import org.testcontainers.utility.DockerImageName;
 
 public final class S3TestContainer {
-    public static LocalStackContainer container() {
+    public static LocalStackContainer localstack() {
         return new LocalStackContainer(
             DockerImageName.parse("localstack/localstack:3.8.1")
         ).withServices(LocalStackContainer.Service.S3);
+    }
+
+    public static MinioContainer minio() {
+        return new MinioContainer();
     }
 }

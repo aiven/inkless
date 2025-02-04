@@ -1,5 +1,5 @@
 // Copyright (c) 2025 Aiven, Helsinki, Finland. https://aiven.io/
-package io.aiven.inkless.merge;
+package io.aiven.inkless.delete;
 
 import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.TopicPartition;
@@ -10,6 +10,7 @@ import org.apache.kafka.common.record.MemoryRecords;
 import org.apache.kafka.common.record.RecordBatch;
 import org.apache.kafka.common.requests.FetchRequest;
 import org.apache.kafka.common.requests.ProduceResponse;
+import org.apache.kafka.common.utils.MockTime;
 import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.server.storage.log.FetchIsolation;
 import org.apache.kafka.server.storage.log.FetchParams;
@@ -30,7 +31,6 @@ import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.testcontainers.containers.localstack.LocalStackContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
@@ -58,8 +58,6 @@ import io.aiven.inkless.config.InklessConfig;
 import io.aiven.inkless.consume.FetchInterceptor;
 import io.aiven.inkless.control_plane.ControlPlane;
 import io.aiven.inkless.control_plane.CreateTopicAndPartitionsRequest;
-import io.aiven.inkless.control_plane.DeleteFilesRequest;
-import io.aiven.inkless.control_plane.FileToDelete;
 import io.aiven.inkless.control_plane.FindBatchRequest;
 import io.aiven.inkless.control_plane.FindBatchResponse;
 import io.aiven.inkless.control_plane.InMemoryControlPlane;
@@ -67,18 +65,12 @@ import io.aiven.inkless.control_plane.MetadataView;
 import io.aiven.inkless.produce.AppendInterceptor;
 import io.aiven.inkless.produce.WriterTestUtils;
 import io.aiven.inkless.storage_backend.s3.S3Storage;
+import io.aiven.inkless.test_utils.MinioContainer;
 import io.aiven.inkless.test_utils.S3TestContainer;
-import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
-import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
-import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.CreateBucketRequest;
-import software.amazon.awssdk.services.s3.model.Delete;
-import software.amazon.awssdk.services.s3.model.DeleteObjectsRequest;
-import software.amazon.awssdk.services.s3.model.DeleteObjectsResponse;
 import software.amazon.awssdk.services.s3.model.ListObjectsV2Request;
 import software.amazon.awssdk.services.s3.model.ListObjectsV2Response;
-import software.amazon.awssdk.services.s3.model.ObjectIdentifier;
 import software.amazon.awssdk.services.s3.model.S3Object;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -90,11 +82,11 @@ import static org.testcontainers.shaded.org.awaitility.Awaitility.await;
 @MockitoSettings(strictness = Strictness.STRICT_STUBS)
 @Testcontainers
 @Tag("integration")
-class FileMergerIntegrationTest {
-    private static final Logger LOGGER = LoggerFactory.getLogger(FileMergerIntegrationTest.class);
+class FileCleanerIntegrationTest {
+    private static final Logger LOGGER = LoggerFactory.getLogger(FileCleanerIntegrationTest.class);
 
     @Container
-    static final LocalStackContainer LOCALSTACK = S3TestContainer.localstack();
+    static final MinioContainer MINIO = S3TestContainer.minio();
 
     static final int BROKER_ID = 1;
 
@@ -108,10 +100,9 @@ class FileMergerIntegrationTest {
     );
     static final int PARTITIONS_PER_TOPIC = 10;
     // increase when ci is beefier
-    static final int WRITE_ITERATIONS = 500;
+    static final int WRITE_ITERATIONS = 1200;
     static final String BUCKET_NAME = "test-bucket";
     static final long MAX_UPLOAD_FILE_SIZE = 10 * 1024;
-    static final long FILE_MERGE_THRESHOLD = 20 * MAX_UPLOAD_FILE_SIZE;
     static final short FETCH_VERSION = ApiMessageType.FETCH.highestSupportedVersion(true);
 
     static final List<TopicIdPartition> ALL_TOPIC_ID_PARTITIONS = TOPICS.entrySet().stream().flatMap(kv ->
@@ -121,27 +112,18 @@ class FileMergerIntegrationTest {
 
     static S3Client s3Client;
 
-    @Mock
-    Time time;
+    Time time = new MockTime();
     @Mock
     MetadataView metadataView;
     @Mock
     Supplier<LogConfig> defaultTopicConfigs;
 
+    ControlPlane controlPlane;
+    SharedState sharedState;
+
     @BeforeAll
     static void setupS3() {
-        final var clientBuilder = S3Client.builder();
-        clientBuilder.region(Region.of(LOCALSTACK.getRegion()))
-            .endpointOverride(LOCALSTACK.getEndpointOverride(LocalStackContainer.Service.S3))
-            .credentialsProvider(
-                StaticCredentialsProvider.create(
-                    AwsBasicCredentials.create(
-                        LOCALSTACK.getAccessKey(),
-                        LOCALSTACK.getSecretKey()
-                    )
-                )
-            );
-        s3Client = clientBuilder.build();
+        s3Client = MINIO.getS3Client();
         s3Client.createBucket(CreateBucketRequest.builder().bucket(BUCKET_NAME).build());
     }
 
@@ -149,9 +131,6 @@ class FileMergerIntegrationTest {
     static void tearDownS3() {
         s3Client.close();
     }
-
-    ControlPlane controlPlane;
-    SharedState sharedState;
 
     @BeforeEach
     void setup() {
@@ -163,9 +142,7 @@ class FileMergerIntegrationTest {
         when(defaultTopicConfigs.get()).thenReturn(new LogConfig(Map.of()));
 
         controlPlane = new InMemoryControlPlane(time);
-        controlPlane.configure(Map.of(
-            "file.merge.size.threshold.bytes", Long.toString(FILE_MERGE_THRESHOLD)
-        ));
+        controlPlane.configure(Map.of());
 
         final Map<String, String> config = new HashMap<>();
         config.put("control.plane.class", InMemoryControlPlane.class.getCanonicalName());
@@ -174,11 +151,12 @@ class FileMergerIntegrationTest {
         config.put("produce.buffer.max.bytes", Long.toString(MAX_UPLOAD_FILE_SIZE));
         config.put("storage.backend.class", S3Storage.class.getCanonicalName());
         config.put("storage.s3.bucket.name", BUCKET_NAME);
-        config.put("storage.s3.region", LOCALSTACK.getRegion());
-        config.put("storage.s3.endpoint.url", LOCALSTACK.getEndpointOverride(LocalStackContainer.Service.S3).toString());
-        config.put("storage.aws.access.key.id", LOCALSTACK.getAccessKey());
-        config.put("storage.aws.secret.access.key", LOCALSTACK.getSecretKey());
+        config.put("storage.s3.region", MINIO.getRegion());
+        config.put("storage.s3.endpoint.url", MINIO.getEndpoint());
+        config.put("storage.aws.access.key.id", MINIO.getAccessKey());
+        config.put("storage.aws.secret.access.key", MINIO.getSecretKey());
         config.put("storage.s3.path.style.access.enabled", "true");
+        config.put("file.cleaner.retention.period.ms", Long.toString(Duration.ofSeconds(1).toMillis()));
         final InklessConfig inklessConfig = new InklessConfig(config);
 
         sharedState = SharedState.initialize(time, "cluster-id", "az1", BROKER_ID, inklessConfig,
@@ -201,7 +179,7 @@ class FileMergerIntegrationTest {
 
         final AppendInterceptor appendInterceptor = new AppendInterceptor(sharedState);
         final FetchInterceptor fetchInterceptor = new FetchInterceptor(sharedState);
-        final FileMerger fileMerger = new FileMerger(sharedState);
+        final FileCleaner fileCleaner = new FileCleaner(sharedState);
 
         // Write a bunch of records.
         writeRecords(appendInterceptor);
@@ -220,24 +198,17 @@ class FileMergerIntegrationTest {
             }
         }
         final List<S3Object> files1 = getFiles();
+        assertThat(files1).size().isGreaterThan(1000);
 
-        // Merge and delete old files while possible.
-        int deletedPreviousIteration = Integer.MAX_VALUE;
-        while (deletedPreviousIteration > 0) {
-            fileMerger.run();
-            deletedPreviousIteration = deleteFilesToBeDeleted(controlPlane);
-        }
+        controlPlane.deleteTopics(Set.of(TOPIC_ID_0, TOPIC_ID_1));
 
-        final List<S3Object> files2 = getFiles();
+        time.sleep(Duration.ofSeconds(2).toMillis());
 
-        // After merging, there should be fewer files.
-        assertThat(files2.size()).isLessThan(files1.size());
+        assertThat(controlPlane.getFilesToDelete().size()).isEqualTo(files1.size());
 
-        // However, the watermarks and records should be exactly as before.
-        final Map<TopicIdPartition, Long> highWatermarks2 = getHighWatermarks(controlPlane);
-        assertThat(highWatermarks2).isEqualTo(highWatermarks1);
-        final Map<TopicIdPartition, List<RecordBatch>> batches2 = read(fetchInterceptor, highWatermarks2);
-        assertThat(batches2).isEqualTo(batches1);
+        fileCleaner.run();
+
+        assertThat(controlPlane.getFilesToDelete().size()).isZero();
     }
 
     private void createTopics(final ControlPlane controlPlane) {
@@ -363,26 +334,5 @@ class FileMergerIntegrationTest {
             result.addAll(response.contents());
         }
         return result;
-    }
-
-    private int deleteFilesToBeDeleted(final ControlPlane controlPlane) {
-        final List<FileToDelete> filesToDelete = controlPlane.getFilesToDelete();
-        if (filesToDelete.isEmpty()) {
-            return 0;
-        }
-
-        final List<ObjectIdentifier> objectIdentifiers = filesToDelete.stream()
-            .map(f -> ObjectIdentifier.builder().key(f.objectKey()).build())
-            .toList();
-        final DeleteObjectsRequest deleteObjectsRequest = DeleteObjectsRequest.builder()
-            .bucket(BUCKET_NAME)
-            .delete(Delete.builder().objects(objectIdentifiers).build())
-            .build();
-        final DeleteObjectsResponse deleteObjectsResponse = s3Client.deleteObjects(deleteObjectsRequest);
-        assertThat(deleteObjectsResponse.errors()).isEmpty();
-
-        controlPlane.deleteFiles(new DeleteFilesRequest(filesToDelete.stream().map(FileToDelete::objectKey).collect(Collectors.toSet())));
-
-        return filesToDelete.size();
     }
 }
