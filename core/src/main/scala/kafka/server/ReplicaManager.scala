@@ -2597,6 +2597,7 @@ class ReplicaManager(val config: KafkaConfig,
     addPartitionsToTxnManager.foreach(_.shutdown())
     inklessAppendInterceptor.foreach(_.close())
     inklessFetchInterceptor.foreach(_.close())
+    inklessSharedState.foreach(_.close())
     info("Shut down completely")
   }
 
