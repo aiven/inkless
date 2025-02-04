@@ -4,6 +4,8 @@ package io.aiven.inkless.storage_backend.s3;
 import com.groupcdg.pitest.annotations.CoverageIgnore;
 
 import java.io.InputStream;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -25,6 +27,7 @@ import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.Delete;
 import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
 import software.amazon.awssdk.services.s3.model.DeleteObjectsRequest;
+import software.amazon.awssdk.services.s3.model.DeleteObjectsResponse;
 import software.amazon.awssdk.services.s3.model.GetObjectRequest;
 import software.amazon.awssdk.services.s3.model.ObjectIdentifier;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
@@ -32,6 +35,7 @@ import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 @CoverageIgnore  // tested on integration level
 public class S3Storage implements StorageBackend {
 
+    public static final int MAX_DELETE_KEYS_LIMIT = 1000;
     private S3Client s3Client;
     private String bucketName;
 
@@ -108,16 +112,31 @@ public class S3Storage implements StorageBackend {
 
     @Override
     public void delete(final Set<ObjectKey> keys) throws StorageBackendException {
+        final List<ObjectKey> objectKeys = new ArrayList<>(keys);
         try {
-            final Set<ObjectIdentifier> ids = keys.stream()
-                .map(k -> ObjectIdentifier.builder().key(k.value()).build())
-                .collect(Collectors.toSet());
-            final Delete delete = Delete.builder().objects(ids).build();
-            final DeleteObjectsRequest deleteObjectsRequest = DeleteObjectsRequest.builder()
-                .bucket(bucketName)
-                .delete(delete)
-                .build();
-            s3Client.deleteObjects(deleteObjectsRequest);
+            for (int i = 0; i < objectKeys.size(); i += MAX_DELETE_KEYS_LIMIT) {
+                final var batch = objectKeys.subList(
+                    i,
+                    Math.min(i + MAX_DELETE_KEYS_LIMIT, objectKeys.size())
+                );
+
+                final Set<ObjectIdentifier> ids = batch.stream()
+                    .map(k -> ObjectIdentifier.builder().key(k.value()).build())
+                    .collect(Collectors.toSet());
+                final Delete delete = Delete.builder().objects(ids).build();
+                final DeleteObjectsRequest deleteObjectsRequest = DeleteObjectsRequest.builder()
+                    .bucket(bucketName)
+                    .delete(delete)
+                    .build();
+                final DeleteObjectsResponse response = s3Client.deleteObjects(deleteObjectsRequest);
+
+                if (!response.errors().isEmpty()) {
+                    final var errors = response.errors().stream()
+                        .map(e -> String.format("Error %s: %s (%s)", e.key(), e.message(), e.code()))
+                        .collect(Collectors.joining(", "));
+                    throw new StorageBackendException("Failed to delete keys " + keys + ": " + errors);
+                }
+            }
         } catch (final ApiCallTimeoutException | ApiCallAttemptTimeoutException e) {
             throw new StorageBackendTimeoutException("Failed to delete keys " + keys, e);
         } catch (final SdkException e) {
