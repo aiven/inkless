@@ -543,9 +543,9 @@ org.apache.kafka.streams.kstream.SessionWindowsTest:
 - equalsAndHashcodeShouldBeValidForPositiveCases
 - gracePeriodShouldEnforceBoundaries
 - noGraceAPIShouldNotSetGracePeriod
+- sessionGapCanBeZero
+- sessionGapCannotBeNegative
 - shouldSetWindowGap
-- windowSizeMustNotBeNegative
-- windowSizeMustNotBeZero
 - withGraceAPIShouldSetGracePeriod
 org.apache.kafka.streams.kstream.SlidingWindowsTest:
 - equalsAndHashcodeShouldBeValidForPositiveCases
@@ -738,6 +738,7 @@ org.apache.kafka.streams.kstream.internals.InternalStreamsBuilderTest:
 - testNewName
 - testNewStoreName
 org.apache.kafka.streams.kstream.internals.KGroupedStreamImplTest:
+- sessionGapOfZeroShouldOnlyPutRecordsWithSameTsIntoSameSession
 - shouldAcceptNullStoreNameWhenAggregatingSessionWindows
 - shouldAggregateAndMaterializeResults
 - shouldAggregateSessionWindows
