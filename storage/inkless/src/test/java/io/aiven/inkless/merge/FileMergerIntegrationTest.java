@@ -94,7 +94,7 @@ class FileMergerIntegrationTest {
     private static final Logger LOGGER = LoggerFactory.getLogger(FileMergerIntegrationTest.class);
 
     @Container
-    static final LocalStackContainer LOCALSTACK = S3TestContainer.container();
+    static final LocalStackContainer LOCALSTACK = S3TestContainer.localstack();
 
     static final int BROKER_ID = 1;
 
