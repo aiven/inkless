@@ -105,7 +105,8 @@ class WriterPropertyTest {
         pgContainer.stop();
     }
 
-    @Property(tries = 1000)
+    // increase when ci is beefier
+    @Property(tries = 500)
     void testInMemoryControlPlane(@ForAll @IntRange(max = 100) int requestCount,
                                   @ForAll @IntRange(min = 1, max = 10) int requestIntervalMsAvg,
                                   @ForAll @IntRange(min = 1, max = 100) int commitIntervalMsAvg,

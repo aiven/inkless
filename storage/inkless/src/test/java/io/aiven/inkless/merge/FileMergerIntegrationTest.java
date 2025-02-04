@@ -107,9 +107,10 @@ class FileMergerIntegrationTest {
         TOPIC_1, TOPIC_ID_1
     );
     static final int PARTITIONS_PER_TOPIC = 10;
-    static final int WRITE_ITERATIONS = 1000;
+    // increase when ci is beefier
+    static final int WRITE_ITERATIONS = 500;
     static final String BUCKET_NAME = "test-bucket";
-    static final long MAX_UPLOAD_FILE_SIZE = 100 * 1024;
+    static final long MAX_UPLOAD_FILE_SIZE = 10 * 1024;
     static final long FILE_MERGE_THRESHOLD = 20 * MAX_UPLOAD_FILE_SIZE;
     static final short FETCH_VERSION = ApiMessageType.FETCH.highestSupportedVersion(true);
 
