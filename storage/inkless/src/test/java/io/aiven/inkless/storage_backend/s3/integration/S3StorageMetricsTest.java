@@ -36,7 +36,7 @@ import static org.assertj.core.api.InstanceOfAssertFactories.DOUBLE;
 class S3StorageMetricsTest {
 
     @Container
-    private static final LocalStackContainer LOCALSTACK = S3TestContainer.container();
+    private static final LocalStackContainer LOCALSTACK = S3TestContainer.localstack();
 
     private static final MBeanServer MBEAN_SERVER = ManagementFactory.getPlatformMBeanServer();
 

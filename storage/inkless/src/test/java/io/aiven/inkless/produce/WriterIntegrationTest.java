@@ -47,7 +47,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 @Tag("integration")
 class WriterIntegrationTest {
     @Container
-    static final LocalStackContainer LOCALSTACK = S3TestContainer.container();
+    static final LocalStackContainer LOCALSTACK = S3TestContainer.localstack();
 
     static final String TOPIC_0 = "topic0";
     static final String TOPIC_1 = "topic1";

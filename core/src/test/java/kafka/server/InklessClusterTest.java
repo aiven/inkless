@@ -80,7 +80,7 @@ public class InklessClusterTest extends SharedPostgreSQLTest {
     private static final Logger log = LoggerFactory.getLogger(InklessClusterTest.class);
 
     @Container
-    private static final LocalStackContainer LOCALSTACK = S3TestContainer.container();
+    private static final LocalStackContainer LOCALSTACK = S3TestContainer.localstack();
     private KafkaClusterTestKit cluster;
 
     @BeforeEach

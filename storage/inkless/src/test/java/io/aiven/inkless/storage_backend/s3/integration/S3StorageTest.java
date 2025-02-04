@@ -27,7 +27,7 @@ import software.amazon.awssdk.services.s3.model.CreateBucketRequest;
 @Tag("integration")
 public class S3StorageTest extends BaseStorageTest {
     @Container
-    private static final LocalStackContainer LOCALSTACK = S3TestContainer.container();
+    private static final LocalStackContainer LOCALSTACK = S3TestContainer.localstack();
 
     private static S3Client s3Client;
     private String bucketName;
