@@ -31,7 +31,7 @@ import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.STRICT_STUBS)
-class FileCleanerTest {
+class FileCleanerMockedTest {
     public static final Duration RETENTION_PERIOD = Duration.ofMinutes(10);
     Time time = new MockTime();
     
