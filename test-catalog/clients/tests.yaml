@@ -215,6 +215,7 @@ org.apache.kafka.clients.admin.KafkaAdminClientTest:
 - testCloseAdminClientInCallback
 - testConnectionFailureOnMetadataUpdate
 - testCreateAcls
+- testCreateAclsToController
 - testCreatePartitions
 - testCreatePartitionsDontRetryThrottlingExceptionWhenDisabled
 - testCreatePartitionsRetryThrottlingExceptionWhenEnabled
@@ -230,6 +231,7 @@ org.apache.kafka.clients.admin.KafkaAdminClientTest:
 - testDefaultApiTimeoutAndRequestTimeoutConflicts
 - testDefaultApiTimeoutOverride
 - testDeleteAcls
+- testDeleteAclsToController
 - testDeleteConsumerGroupOffsets
 - testDeleteConsumerGroupOffsetsFindCoordinatorNonRetriableErrors
 - testDeleteConsumerGroupOffsetsFindCoordinatorRetriableErrors
@@ -310,6 +312,7 @@ org.apache.kafka.clients.admin.KafkaAdminClientTest:
 - testGetOrCreateListValue
 - testGetSubLevelError
 - testIncrementalAlterConfigs
+- testIncrementalAlterConfigsToController
 - testInvalidTopicNames
 - testListClientMetricsResources
 - testListClientMetricsResourcesEmpty

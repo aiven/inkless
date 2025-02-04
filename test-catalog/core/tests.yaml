@@ -2716,6 +2716,7 @@ kafka.server.KRaftClusterTest:
 - testCreatePartitions
 - testDefaultClientQuotas
 - testDescribeQuorumRequestToBrokers
+- testDescribeQuorumRequestToControllers
 - testDirectToControllerCommunicationFailsOnOlderMetadataVersion
 - testIncreaseNumIoThreads
 - testIncrementalAlterConfigs
