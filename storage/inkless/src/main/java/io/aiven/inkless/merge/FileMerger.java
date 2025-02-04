@@ -11,6 +11,7 @@ import org.slf4j.LoggerFactory;
 import java.io.ByteArrayOutputStream;
 import java.io.EOFException;
 import java.io.InputStream;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -29,6 +30,7 @@ import io.aiven.inkless.control_plane.FileMergeWorkItem;
 import io.aiven.inkless.control_plane.MergedFileBatch;
 import io.aiven.inkless.produce.FileUploadJob;
 import io.aiven.inkless.storage_backend.common.StorageBackend;
+import io.aiven.inkless.storage_backend.common.StorageBackendException;
 
 public class FileMerger implements Runnable {
     private static final Logger LOGGER = LoggerFactory.getLogger(FileMerger.class);
@@ -68,9 +70,10 @@ public class FileMerger implements Runnable {
         try {
             final FileMergeWorkItem workItem = controlPlane.getFileMergeWorkItem();
             if (workItem == null) {
-                final long sleepDuration = noWorkBackoffSupplier.get();
-                LOGGER.debug("No file merge work items, sleeping for {}", sleepDuration);
-                time.sleep(sleepDuration);
+                final long sleepMillis = noWorkBackoffSupplier.get();
+                final Duration sleepDuration = Duration.ofMillis(sleepMillis);
+                LOGGER.info("No file merge work items, sleeping for {}", sleepDuration);
+                time.sleep(sleepMillis);
             } else {
                 try {
                     runWithWorkItem(workItem);
@@ -90,7 +93,7 @@ public class FileMerger implements Runnable {
             attempts.set(0);
         } catch (final Exception e) {
             final long backoff = errorBackoff.backoff(attempts.incrementAndGet());
-            LOGGER.error("Error while merging files, waiting for {} ms", backoff, e);
+            LOGGER.error("Error while merging files, waiting for {}", Duration.ofMillis(backoff), e);
             time.sleep(backoff);
         }
     }
@@ -98,20 +101,22 @@ public class FileMerger implements Runnable {
     private void runWithWorkItem(final FileMergeWorkItem workItem) throws Exception {
         LOGGER.info("Work item received, merging {} files", workItem.files().size());
 
-        // One InputStream per file.
-        // Note that BoundedInputStream is by default unbound, we use it only for counting the current position.
-        final List<InputStream> inputStreams = new ArrayList<>();
+        // Collect all the involved batches into one bag.
+        final List<BatchAndStream> batches = new ArrayList<>();
         try {
-            // Open the InputStream for each file.
-            // Collect all the involved batches into one bag.
-            final List<BatchAndStream> batches = new ArrayList<>();
+            // Collect InputStream supplier for each file, to avoid opening all of them at once.
             for (final var file : workItem.files()) {
                 final ObjectKey objectKey = objectKeyCreator.from(file.objectKey());
 
-                final InputStream inputStream = storage.fetch(objectKey, null);
-                inputStreams.add(inputStream);
+                final Supplier<InputStream> inputStream = () -> {
+                    try {
+                        return storage.fetch(objectKey, null);
+                    } catch (StorageBackendException e) {
+                        throw new RuntimeException(e);
+                    }
+                };
 
-                final var inputStreamWithPosition = new InputStreamWithPosition(inputStream);
+                final var inputStreamWithPosition = new InputStreamWithPosition(inputStream, file.size());
 
                 for (final var batch : file.batches()) {
                     batches.add(new BatchAndStream(batch, inputStreamWithPosition));
@@ -127,11 +132,13 @@ public class FileMerger implements Runnable {
             for (final BatchAndStream bf : batches) {
                 final BatchInfo parentBatch = bf.batch;
 
+                // ignore auto closing of the input stream, we'll close them manually
+                final InputStream inputStream = bf.inputStreamWithPosition.inputStream();
                 if (bf.inputStreamWithPosition.position() < parentBatch.metadata().byteOffset()) {
                     // We're facing a gap, need to fast-forward.
                     final long gapSize = parentBatch.metadata().byteOffset() - bf.inputStreamWithPosition.position();
                     try {
-                        bf.inputStreamWithPosition.inputStream.skipNBytes(gapSize);
+                        inputStream.skipNBytes(gapSize);
                     } catch (final EOFException e) {
                         throw new RuntimeException("Desynchronization between batches and files");
                     }
@@ -141,12 +148,14 @@ public class FileMerger implements Runnable {
                 }
 
                 final long batchSize = parentBatch.metadata().byteSize();
-                final byte[] readBytes = bf.inputStreamWithPosition.inputStream.readNBytes((int) batchSize);
+                final byte[] readBytes = inputStream.readNBytes((int) batchSize);
                 if (readBytes.length < batchSize) {
                     throw new RuntimeException("Desynchronization between batches and files");
                 }
                 outputStream.writeBytes(readBytes);
                 bf.inputStreamWithPosition.advance(batchSize);
+
+                bf.inputStreamWithPosition.closeIfFullyRead();
 
                 final long offset = fileSize;
                 fileSize += batchSize;
@@ -184,19 +193,25 @@ public class FileMerger implements Runnable {
                 fileSize,
                 mergedFileBatches
             );
+            LOGGER.info("Merged {} files into {}", workItem.files().size(), objectKey);
         } finally {
-            for (final InputStream inputStream : inputStreams) {
-                Utils.closeQuietly(inputStream, "object storage input stream");
+            for (final var batch : batches) {
+                batch.inputStreamWithPosition.forceClose();
             }
         }
     }
 
+    // One InputStream per file.
+    // Note that BoundedInputStream is by default unbound, we use it only for counting the current position.
     private static class InputStreamWithPosition {
-        final InputStream inputStream;
+        private final Supplier<InputStream> inputStreamSupplier;
+        private final long size;
         private long position = 0;
+        private InputStream source = null;
 
-        private InputStreamWithPosition(final InputStream inputStream) {
-            this.inputStream = inputStream;
+        private InputStreamWithPosition(final Supplier<InputStream> inputStreamSupplier, final long size) {
+            this.inputStreamSupplier = inputStreamSupplier;
+            this.size = size;
         }
 
         long position() {
@@ -205,6 +220,27 @@ public class FileMerger implements Runnable {
 
         void advance(final long offset) {
             this.position += offset;
+        }
+
+        public InputStream inputStream() {
+            if (source == null) {
+                source = inputStreamSupplier.get();
+            }
+            return source;
+        }
+
+        public void closeIfFullyRead() {
+            if (position >= size) close();
+        }
+
+        public void forceClose() {
+            if (position < size) close();
+        }
+
+        private void close() {
+            if (source != null) {
+                Utils.closeQuietly(source, "object storage input stream");
+            }
         }
     }
 

@@ -33,7 +33,6 @@ import org.testcontainers.containers.localstack.LocalStackContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
-import java.io.IOException;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -65,7 +64,6 @@ import io.aiven.inkless.control_plane.InMemoryControlPlane;
 import io.aiven.inkless.control_plane.MetadataView;
 import io.aiven.inkless.produce.AppendInterceptor;
 import io.aiven.inkless.produce.WriterTestUtils;
-import io.aiven.inkless.storage_backend.common.StorageBackendException;
 import io.aiven.inkless.storage_backend.s3.S3Storage;
 import io.aiven.inkless.test_utils.S3TestContainer;
 import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
@@ -160,7 +158,7 @@ class FileMergerIntegrationTest {
     }
 
     @Test
-    void test() throws InterruptedException, IOException, StorageBackendException {
+    void test() throws Exception {
         final ControlPlane controlPlane = new InMemoryControlPlane(time);
         controlPlane.configure(Map.of(
             "file.merge.size.threshold.bytes", Long.toString(FILE_MERGE_THRESHOLD)
