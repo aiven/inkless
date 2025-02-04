@@ -1,6 +1,8 @@
 // Copyright (c) 2024 Aiven, Helsinki, Finland. https://aiven.io/
 package io.aiven.inkless.cache;
 
+import java.io.IOException;
+
 import io.aiven.inkless.generated.CacheKey;
 import io.aiven.inkless.generated.FileExtent;
 
@@ -25,5 +27,10 @@ public class NullCache implements ObjectCache {
     @Override
     public long size() {
         return 0;
+    }
+
+    @Override
+    public void close() throws IOException {
+        // no-op
     }
 }
