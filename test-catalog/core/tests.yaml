@@ -527,6 +527,7 @@ kafka.api.PlaintextConsumerSubscriptionTest:
 - testRe2JPatternExpandSubscription
 - testRe2JPatternSubscription
 - testRe2JPatternSubscriptionAndTopicSubscription
+- testRe2JPatternSubscriptionFetch
 - testRe2JPatternSubscriptionInvalidRegex
 - testShrinkingTopicSubscriptions
 - testSubscribeInvalidTopicCanClose
