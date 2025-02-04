@@ -12,12 +12,13 @@ import org.infinispan.configuration.cache.ConfigurationBuilder;
 import org.infinispan.configuration.global.GlobalConfigurationBuilder;
 import org.infinispan.manager.DefaultCacheManager;
 
+import java.io.IOException;
 import java.util.concurrent.TimeUnit;
 
 import io.aiven.inkless.generated.CacheKey;
 import io.aiven.inkless.generated.FileExtent;
 
-public class InfinispanCache implements ObjectCache, AutoCloseable {
+public class InfinispanCache implements ObjectCache {
 
     // Length of time the object is "leased" to the caller if not already present in the map
     private static final int CACHE_WRITE_LOCK_TIMEOUT_MS = 10000;
@@ -92,7 +93,8 @@ public class InfinispanCache implements ObjectCache, AutoCloseable {
     }
 
     @Override
-    public void close() throws Exception {
+    public void close() throws IOException {
+        cache.clear();
         cacheManager.close();
     }
 }
