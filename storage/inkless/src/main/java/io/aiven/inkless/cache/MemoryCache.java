@@ -4,6 +4,8 @@ package io.aiven.inkless.cache;
 import org.apache.kafka.common.cache.Cache;
 import org.apache.kafka.common.cache.LRUCache;
 
+import java.io.IOException;
+
 import io.aiven.inkless.generated.CacheKey;
 import io.aiven.inkless.generated.FileExtent;
 
@@ -28,5 +30,10 @@ public class MemoryCache implements ObjectCache {
     @Override
     public long size() {
         return backingCache.size();
+    }
+
+    @Override
+    public void close() throws IOException {
+        // no-op
     }
 }

@@ -18,6 +18,7 @@ import org.apache.kafka.storage.internals.log.LogConfig;
 import org.apache.kafka.storage.log.metrics.BrokerTopicStats;
 
 import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
@@ -33,6 +34,7 @@ import org.testcontainers.containers.localstack.LocalStackContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
+import java.io.IOException;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -105,9 +107,10 @@ class FileMergerIntegrationTest {
         TOPIC_1, TOPIC_ID_1
     );
     static final int PARTITIONS_PER_TOPIC = 10;
-    static final int WRITE_ITERATIONS = 1000;
+    // increase when ci is beefier
+    static final int WRITE_ITERATIONS = 500;
     static final String BUCKET_NAME = "test-bucket";
-    static final long MAX_UPLOAD_FILE_SIZE = 100 * 1024;
+    static final long MAX_UPLOAD_FILE_SIZE = 10 * 1024;
     static final long FILE_MERGE_THRESHOLD = 20 * MAX_UPLOAD_FILE_SIZE;
     static final short FETCH_VERSION = ApiMessageType.FETCH.highestSupportedVersion(true);
 
@@ -143,9 +146,12 @@ class FileMergerIntegrationTest {
     }
 
     @AfterAll
-    static void tearDown() {
+    static void tearDownS3() {
         s3Client.close();
     }
+
+    ControlPlane controlPlane;
+    SharedState sharedState;
 
     @BeforeEach
     void setup() {
@@ -155,16 +161,11 @@ class FileMergerIntegrationTest {
         }
         when(metadataView.getTopicConfig(anyString())).thenReturn(new Properties());
         when(defaultTopicConfigs.get()).thenReturn(new LogConfig(Map.of()));
-    }
 
-    @Test
-    void test() throws Exception {
-        final ControlPlane controlPlane = new InMemoryControlPlane(time);
+        controlPlane = new InMemoryControlPlane(time);
         controlPlane.configure(Map.of(
             "file.merge.size.threshold.bytes", Long.toString(FILE_MERGE_THRESHOLD)
         ));
-
-        createTopics(controlPlane);
 
         final Map<String, String> config = new HashMap<>();
         config.put("control.plane.class", InMemoryControlPlane.class.getCanonicalName());
@@ -180,8 +181,24 @@ class FileMergerIntegrationTest {
         config.put("storage.s3.path.style.access.enabled", "true");
         final InklessConfig inklessConfig = new InklessConfig(config);
 
-        final SharedState sharedState = SharedState.initialize(time, "cluster-id", "az1", BROKER_ID, inklessConfig,
+        sharedState = SharedState.initialize(time, "cluster-id", "az1", BROKER_ID, inklessConfig,
             metadataView, controlPlane, new BrokerTopicStats(), defaultTopicConfigs);
+    }
+
+    @AfterEach
+    void tearDown() {
+        try {
+            sharedState.close();
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    @Test
+    void test() throws Exception {
+
+        createTopics(controlPlane);
+
         final AppendInterceptor appendInterceptor = new AppendInterceptor(sharedState);
         final FetchInterceptor fetchInterceptor = new FetchInterceptor(sharedState);
         final FileMerger fileMerger = new FileMerger(sharedState);

@@ -5,6 +5,8 @@ import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.storage.internals.log.LogConfig;
 import org.apache.kafka.storage.log.metrics.BrokerTopicStats;
 
+import java.io.Closeable;
+import java.io.IOException;
 import java.util.function.Supplier;
 
 import io.aiven.inkless.cache.FixedBlockAlignment;
@@ -28,7 +30,7 @@ public record SharedState(
         ObjectCache cache,
         BrokerTopicStats brokerTopicStats,
         Supplier<LogConfig> defaultTopicConfigs
-) {
+) implements Closeable {
 
     public static SharedState initialize(
         Time time,
@@ -54,5 +56,15 @@ public record SharedState(
             brokerTopicStats,
             defaultTopicConfigs
         );
+    }
+
+    @Override
+    public void close() throws IOException {
+        try {
+            cache.close();
+            controlPlane.close();
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
     }
 }
