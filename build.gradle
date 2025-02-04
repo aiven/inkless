@@ -1577,7 +1577,7 @@ project(':test-common:test-common-util') {
   }
 
   dependencies {
-    implementation libs.junitPlatformLanucher
+    implementation libs.junitPlatformLauncher
     implementation libs.junitJupiterApi
     implementation libs.junitJupiter
     implementation libs.slf4jApi

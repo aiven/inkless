@@ -260,7 +260,7 @@ public class ReplicationControlManagerTest {
                 setSessionTimeoutNs(TimeUnit.MILLISECONDS.convert(BROKER_SESSION_TIMEOUT_MS, TimeUnit.NANOSECONDS)).
                 setReplicaPlacer(new StripedReplicaPlacer(random)).
                 setFeatureControlManager(featureControl).
-                setBrokerUncleanShutdownHandler(this::handleUncleanBrokerShutdown).
+                setBrokerShutdownHandler(this::handleBrokerShutdown).
                 build();
             this.configurationControl = new ConfigurationControlManager.Builder().
                 setSnapshotRegistry(snapshotRegistry).
@@ -283,8 +283,8 @@ public class ReplicationControlManagerTest {
             clusterControl.activate();
         }
 
-        void handleUncleanBrokerShutdown(int brokerId, List<ApiMessageAndVersion> records) {
-            replicationControl.handleBrokerUncleanShutdown(brokerId, records);
+        void handleBrokerShutdown(int brokerId, boolean isCleanShutdown, List<ApiMessageAndVersion> records) {
+            replicationControl.handleBrokerShutdown(brokerId, isCleanShutdown, records);
         }
 
         CreatableTopicResult createTestTopic(String name,
@@ -413,33 +413,10 @@ public class ReplicationControlManagerTest {
             }
         }
 
-        @SuppressWarnings("unchecked")
-        void registerBrokersWithDirsAndRacks(Object... brokerIdsAndDirs) {
-            if (brokerIdsAndDirs.length % 2 != 0) {
-                throw new IllegalArgumentException("uneven number of arguments");
-            }
-            for (int i = 0; i < brokerIdsAndDirs.length / 3; i++) {
-                int brokerId = (int) brokerIdsAndDirs[i * 3];
-                List<Uuid> logDirs = (List<Uuid>) brokerIdsAndDirs[i * 3 + 1];
-                String rackId = String.valueOf(brokerIdsAndDirs[i * 3 + 2]);
-                RegisterBrokerRecord brokerRecord = new RegisterBrokerRecord().
-                    setBrokerEpoch(defaultBrokerEpoch(brokerId)).
-                    setBrokerId(brokerId).
-                    setRack(rackId).
-                    setLogDirs(logDirs);
-                brokerRecord.endPoints().add(new RegisterBrokerRecord.BrokerEndpoint().
-                    setSecurityProtocol(SecurityProtocol.PLAINTEXT.id).
-                    setPort((short) 9092 + brokerId).
-                    setName("PLAINTEXT").
-                    setHost("localhost"));
-                replay(Collections.singletonList(new ApiMessageAndVersion(brokerRecord, (short) 3)));
-            }
-        }
-
-        void handleBrokersUncleanShutdown(Integer... brokerIds) {
+        void handleBrokersShutdown(boolean isCleanShutdown, Integer... brokerIds) {
             List<ApiMessageAndVersion> records = new ArrayList<>();
             for (int brokerId : brokerIds) {
-                replicationControl.handleBrokerUncleanShutdown(brokerId, records);
+                replicationControl.handleBrokerShutdown(brokerId, isCleanShutdown, records);
             }
             replay(records);
         }
@@ -1212,6 +1189,34 @@ public class ReplicationControlManagerTest {
     }
 
     @Test
+    public void testEligibleLeaderReplicas_ShrinkToEmptyIsr() {
+        ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder().setIsElrEnabled(true).build();
+        ReplicationControlManager replicationControl = ctx.replicationControl;
+        ctx.registerBrokers(0, 1, 2);
+        ctx.unfenceBrokers(0, 1, 2);
+        CreatableTopicResult createTopicResult = ctx.createTestTopic("foo",
+            new int[][] {new int[] {0, 1, 2}});
+
+        TopicIdPartition topicIdPartition = new TopicIdPartition(createTopicResult.topicId(), 0);
+        assertEquals(OptionalInt.of(0), ctx.currentLeader(topicIdPartition));
+        ctx.alterTopicConfig("foo", TopicConfig.MIN_IN_SYNC_REPLICAS_CONFIG, "3");
+
+        // Change ISR to {0}.
+        ctx.fenceBrokers(Set.of(1, 2));
+        PartitionRegistration partition = replicationControl.getPartition(topicIdPartition.topicId(), topicIdPartition.partitionId());
+        assertArrayEquals(new int[]{1, 2}, partition.elr, partition.toString());
+        assertArrayEquals(new int[]{}, partition.lastKnownElr, partition.toString());
+
+        // Clean shutdown the broker
+        ctx.handleBrokersShutdown(true, 0);
+
+        partition = replicationControl.getPartition(topicIdPartition.topicId(), topicIdPartition.partitionId());
+        assertArrayEquals(new int[]{0, 1, 2}, partition.elr, partition.toString());
+        assertArrayEquals(new int[]{0}, partition.lastKnownElr, partition.toString());
+        assertEquals(0, partition.isr.length);
+    }
+
+    @Test
     public void testEligibleLeaderReplicas_BrokerFence() {
         ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder().setIsElrEnabled(true).build();
         ReplicationControlManager replicationControl = ctx.replicationControl;
@@ -1345,13 +1350,13 @@ public class ReplicationControlManagerTest {
         assertArrayEquals(new int[]{}, partition.lastKnownElr, partition.toString());
 
         // An unclean shutdown ELR member should be kicked out of ELR.
-        ctx.handleBrokersUncleanShutdown(3);
+        ctx.handleBrokersShutdown(false, 3);
         partition = replicationControl.getPartition(topicIdPartition.topicId(), topicIdPartition.partitionId());
         assertArrayEquals(new int[]{2}, partition.elr, partition.toString());
         assertArrayEquals(new int[]{}, partition.lastKnownElr, partition.toString());
 
         // An unclean shutdown last ISR member should be recognized as the last known leader.
-        ctx.handleBrokersUncleanShutdown(0);
+        ctx.handleBrokersShutdown(false, 0);
         partition = replicationControl.getPartition(topicIdPartition.topicId(), topicIdPartition.partitionId());
         assertArrayEquals(new int[]{2}, partition.elr, partition.toString());
         assertArrayEquals(new int[]{0}, partition.lastKnownElr, partition.toString());
