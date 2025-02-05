@@ -1722,6 +1722,7 @@ kafka.log.UnifiedLogTest:
 - testAppendWithNoTimestamp
 - testAppendWithOutOfOrderOffsetsThrowsException
 - testAsyncDelete
+- testBackgroundDeletionWithIOException
 - testBuildTimeIndexWhenNotAssigningOffsets
 - testCannotDeleteSegmentsAtOrAboveHighWatermark
 - testCannotIncrementLogStartOffsetPastHighWatermark
@@ -1739,6 +1740,7 @@ kafka.log.UnifiedLogTest:
 - testDuplicateAppendToFollower
 - testDuplicateAppends
 - testEmptyTransactionStillClearsVerificationGuard
+- testEnableRemoteLogStorageOnCompactedTopics
 - testEnablingVerificationWhenRequestIsAtLogLayer
 - testEndTxnWithFencedProducerEpoch
 - testFetchLatestTieredTimestampNoRemoteStorage
@@ -1785,6 +1787,7 @@ kafka.log.UnifiedLogTest:
 - testMessageSizeCheckInAppendAsFollower
 - testMultipleProducerIdsPerMemoryRecord
 - testMultipleProducersWithDuplicatesInSingleAppend
+- testNextTransactionVerificationGuardNotCleared
 - testNoOpWhenRemoteLogStorageIsDisabled
 - testNonSequentialAppend
 - testOffsetFromProducerSnapshotFile
