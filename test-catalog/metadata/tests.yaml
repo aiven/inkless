@@ -675,6 +675,9 @@ org.apache.kafka.metadata.MetadataRecordSerdeTest:
 - testParsingUnsupportedApiKey
 - testParsingVersionTooLarge
 - testSerde
+org.apache.kafka.metadata.MockConfigRepositoryTest:
+- testEmptyRepository
+- testSetTopicConfig
 org.apache.kafka.metadata.OptionalStringComparatorTest:
 - testComparisons
 org.apache.kafka.metadata.PartitionRegistrationTest:

@@ -3501,9 +3501,6 @@ kafka.server.metadata.BrokerMetadataPublisherTest:
 - testReloadUpdatedFilesWithoutConfigChange
 kafka.server.metadata.ClientQuotaMetadataManagerTest:
 - testHandleIpQuota
-kafka.server.metadata.MockConfigRepositoryTest:
-- testEmptyRepository
-- testSetTopicConfig
 kafka.server.share.DelayedShareFetchTest:
 - testCombineLogReadResponse
 - testDelayedShareFetchTryCompleteReturnsFalseDueToNonAcquirablePartitions
