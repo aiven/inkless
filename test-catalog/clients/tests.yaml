@@ -2,6 +2,7 @@ org.apache.kafka.clients.ApiVersionsTest:
 - testFinalizedFeaturesUpdate
 org.apache.kafka.clients.ClientUtilsTest:
 - testFilterPreferredAddresses
+- testInvalidBrokerAddress
 - testInvalidConfig
 - testInvalidPort
 - testNoPort
@@ -10,6 +11,7 @@ org.apache.kafka.clients.ClientUtilsTest:
 - testParseAndValidateAddressesWithReverseLookup
 - testResolveDnsLookup
 - testResolveUnknownHostException
+- testValidBrokerAddress
 org.apache.kafka.clients.ClusterConnectionStatesTest:
 - testAuthorizationFailed
 - testClusterConnectionStateChanges
