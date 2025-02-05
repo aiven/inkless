@@ -63,7 +63,7 @@ class InklessConfigTest {
         assertThat(config.produceUploadBackoff()).isEqualTo(Duration.ofMillis(10));
         assertThat(config.storage()).isInstanceOf(ConfigTestStorageBackend.class);
         assertThat(config.fileCleanerInterval()).isEqualTo(Duration.ofMinutes(5));
-        assertThat(config.fileCleanerRetentionPeriod()).isEqualTo(Duration.ofMinutes(10));
+        assertThat(config.fileCleanerRetentionPeriod()).isEqualTo(Duration.ofMinutes(1));
         assertThat(config.fileMergerInterval()).isEqualTo(Duration.ofMinutes(1));
     }
 

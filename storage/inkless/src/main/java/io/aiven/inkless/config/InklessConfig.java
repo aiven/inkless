@@ -66,7 +66,7 @@ public class InklessConfig extends AbstractConfig {
 
     public static final String FILE_CLEANER_RETENTION_PERIOD_MS_CONFIG = "file.cleaner.retention.period.ms";
     private static final String FILE_CLEANER_RETENTION_PERIOD_MS_DOC = "The retention period for files marked for deletion.";
-    private static final int FILE_CLEANER_RETENTION_PERIOD_MS_DEFAULT = 10 * 60 * 1000;  // 10 minutes
+    private static final int FILE_CLEANER_RETENTION_PERIOD_MS_DEFAULT = 60 * 1000;  // 1 minute
 
     public static final String FILE_MERGER_INTERVAL_MS_CONFIG = "file.merger.interval.ms";
     private static final String FILE_MERGER_INTERVAL_MS_DOC = "The interval with which to merge files.";
