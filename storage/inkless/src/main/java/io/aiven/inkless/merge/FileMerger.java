@@ -43,6 +43,7 @@ public class FileMerger implements Runnable {
     private final ObjectKeyCreator objectKeyCreator;
     private final ExponentialBackoff errorBackoff = new ExponentialBackoff(100, 2, 60 * 1000, 0.2);
     private final Supplier<Long> noWorkBackoffSupplier;
+    private final FileMergerMetrics metrics;
 
     /**
      * The counter of merging attempts.
@@ -56,6 +57,7 @@ public class FileMerger implements Runnable {
         this.controlPlane = sharedState.controlPlane();
         this.storage = config.storage();
         this.objectKeyCreator = sharedState.objectKeyCreator();
+        this.metrics = new FileMergerMetrics();
 
         // This backoff is needed only for jitter, there's no exponent in it.
         final int noWorkBackoffDuration = 10 * 1000;
@@ -76,9 +78,18 @@ public class FileMerger implements Runnable {
                 time.sleep(sleepMillis);
             } else {
                 try {
-                    runWithWorkItem(workItem);
+                    metrics.recordFileMergeStarted();
+                    TimeUtils.measureDurationMs(time, () -> {
+                        try {
+                            runWithWorkItem(workItem);
+                        } catch (Exception e) {
+                            throw new RuntimeException(e);
+                        }
+                    }, metrics::recordFileMergeTotalTime);
+                    metrics.recordFileMergeCompleted(workItem.files().size());
                 } catch (final Exception e1) {
                     LOGGER.error("Error merging files, trying to release work item", e1);
+                    metrics.recordFileMergeError();
                     try {
                         controlPlane.releaseFileMergeWorkItem(workItem.workItemId());
                     } catch (final Exception e2) {
@@ -178,13 +189,13 @@ public class FileMerger implements Runnable {
                 ));
             }
 
-            final ObjectKey objectKey = new FileUploadJob(objectKeyCreator, storage, time,
+            final ObjectKey objectKey = new FileUploadJob(
+                objectKeyCreator, storage, time,
                 config.produceMaxUploadAttempts(),
                 config.produceUploadBackoff(),
                 outputStream.toByteArray(),
-                ignored -> {
-                })
-                .call();
+                metrics::recordFileUploadTime
+            ).call();
 
             controlPlane.commitFileMergeWorkItem(
                 workItem.workItemId(),
