@@ -238,6 +238,10 @@ org.apache.kafka.server.record.BrokerCompressionTypeTest:
 - testTargetCompressionType
 org.apache.kafka.server.share.persister.DefaultStatePersisterTest:
 - testDefaultPersisterClose
+- testDeleteStateResponseToResultFailedFuture
+- testDeleteStateResponseToResultPartialResults
+- testDeleteStateSuccess
+- testDeleteStateValidate
 - testReadStateResponseToResultFailedFuture
 - testReadStateResponseToResultPartialResults
 - testReadStateSuccess
@@ -251,6 +255,13 @@ org.apache.kafka.server.share.persister.DefaultStatePersisterTest:
 - testWriteStateSuccess
 - testWriteStateValidate
 org.apache.kafka.server.share.persister.PersisterStateManagerTest:
+- testDeleteStateRequestBatchingWithCoordinatorNodeLookup
+- testDeleteStateRequestCoordinatorFoundOnRetry
+- testDeleteStateRequestCoordinatorFoundSuccessfully
+- testDeleteStateRequestFailedMaxRetriesExhausted
+- testDeleteStateRequestRetryWithNotCoordinatorSuccessfulOnRetry
+- testDeleteStateRequestWithCoordinatorNodeLookup
+- testDeleteStateRequestWithRetryAndCoordinatorNodeLookup
 - testFindCoordinatorAttemptsExhausted
 - testFindCoordinatorFatalError
 - testFindCoordinatorSuccess

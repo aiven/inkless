@@ -936,6 +936,7 @@ kafka.coordinator.group.GroupCoordinatorAdapterTest:
 - testDeleteGroups
 - testDeleteOffsetsWithGroupLevelError
 - testDescribeGroup
+- testDescribeShareGroupOffsets
 - testFetchAllOffsets
 - testFetchOffsets
 - testHeartbeat
@@ -2769,6 +2770,9 @@ kafka.server.KafkaApisTest:
 - testDescribeConfigsWithAuthorizer
 - testDescribeProducers
 - testDescribeQuorumForwardedForKRaftClusters
+- testDescribeShareGroupOffsetsRequestSuccess
+- testDescribeShareGroupOffsetsRequestsAuthorizationFailed
+- testDescribeShareGroupOffsetsReturnsUnsupportedVersion
 - testDescribeTransactions
 - testDescribeTransactionsFiltersUnauthorizedTopics
 - testElectLeadersForwarding
@@ -3603,6 +3607,17 @@ kafka.server.share.SharePartitionTest:
 - testAcknowledgeWithAnotherMemberRollbackBatchError
 - testAcknowledgeWithAnotherMemberRollbackSubsetError
 - testAcquireBatchSkipWithBatchSizeAndEndOffsetLargerThanFirstBatch
+- testAcquireCachedStateGapInBetweenOverlapsWithActualPartitionGap
+- testAcquireCachedStateInitialGapMatchesWithActualPartitionGap
+- testAcquireCachedStateInitialGapOverlapsWithActualPartitionGap
+- testAcquireGapAtBeginningAndFetchedRecordsEndJustBeforeGap
+- testAcquireGapAtBeginningAndFetchedRecordsIncludeGapOffsetsAtEnd
+- testAcquireGapAtBeginningAndFetchedRecordsOverlapInFlightAvailableBatches
+- testAcquireGapAtBeginningAndFetchedRecordsOverlapInFlightBatches
+- testAcquireGapAtBeginningAndFetchedRecordsOverlapMultipleInFlightBatches
+- testAcquireGapAtBeginningAndRecordsFetchedFromGap
+- testAcquireMaxFetchRecordsExceededAfterAcquiringGaps
+- testAcquireMaxFetchRecordsExceededBeforeAcquiringGaps
 - testAcquireMultipleRecords
 - testAcquireMultipleRecordsWithOverlapAndNewBatch
 - testAcquireReleasedRecord
@@ -3610,6 +3625,10 @@ kafka.server.share.SharePartitionTest:
 - testAcquireSameBatchAgain
 - testAcquireSingleBatchWithBatchSizeAndEndOffsetLargerThanBatchFirstOffset
 - testAcquireSingleRecord
+- testAcquireWhenCachedStateContainsGapsAndRecordsFetchedFromNonGapOffset
+- testAcquireWhenRecordsFetchedAfterGapsAreFetched
+- testAcquireWhenRecordsFetchedFromGapAndMaxFetchRecordsIsExceeded
+- testAcquireWhenRecordsFetchedFromGapAndPartitionContainsNaturalGaps
 - testAcquireWithBatchSizeAndEndOffsetLargerThanBatchFirstOffset
 - testAcquireWithBatchSizeAndMaxFetchRecords
 - testAcquireWithBatchSizeAndMultipleBatches
@@ -3646,6 +3665,7 @@ kafka.server.share.SharePartitionTest:
 - testCanAcquireRecordsWithCachedDataAndLimitNotReached
 - testCanAcquireRecordsWithCachedDataAndLimitReached
 - testCanAcquireRecordsWithEmptyCache
+- testFindLastOffsetAcknowledgedWhenGapAtBeginning
 - testLsoMovementAheadOfEndOffset
 - testLsoMovementAheadOfEndOffsetPostAcknowledgment
 - testLsoMovementForArchivingBatches
@@ -3679,6 +3699,10 @@ kafka.server.share.SharePartitionTest:
 - testMaybeInitializeFetchOffsetForLatestTimestampThrowsError
 - testMaybeInitializeSharePartitionAgain
 - testMaybeInitializeSharePartitionAgainConcurrentRequests
+- testMaybeInitializeStateBatchesWithGapAtBeginning
+- testMaybeInitializeStateBatchesWithGapNotAtBeginning
+- testMaybeInitializeStateBatchesWithMultipleGaps
+- testMaybeInitializeStateBatchesWithoutGaps
 - testMaybeInitializeWhenReadStateRpcReturnsZeroAvailableRecords
 - testMaybeInitializeWithEmptyStateBatches
 - testMaybeInitializeWithEmptyTopicsData
@@ -3690,6 +3714,7 @@ kafka.server.share.SharePartitionTest:
 - testMaybeInitializeWithNullResponse
 - testMaybeInitializeWithNullTopicsData
 - testMaybeInitializeWithReadException
+- testMaybeUpdateCachedStateGapAfterLastOffsetAcknowledged
 - testMaybeUpdateCachedStateMultipleAcquisitionsAndAcknowledgements
 - testMaybeUpdateCachedStateWhenAcknowledgementTypeAccept
 - testMaybeUpdateCachedStateWhenAcknowledgementTypeReject

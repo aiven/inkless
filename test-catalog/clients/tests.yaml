@@ -353,6 +353,9 @@ org.apache.kafka.clients.admin.KafkaAdminClientTest:
 - testListOffsetsWithLeaderChange
 - testListOffsetsWithMultiplePartitionsLeaderChange
 - testListPartitionReassignments
+- testListShareGroupOffsets
+- testListShareGroupOffsetsOptionsWithBatchedApi
+- testListShareGroupOffsetsWithErrorInOnePartition
 - testListShareGroups
 - testListShareGroupsMetadataFailure
 - testListShareGroupsWithStates
