@@ -28,6 +28,7 @@ import java.util.stream.Stream;
 
 import io.aiven.inkless.TimeUtils;
 
+// TODO: in-memory control plane is using synchronous operations. It could be improved by using finer-grained locks if needed later.
 public class InMemoryControlPlane extends AbstractControlPlane {
     private static final Logger LOGGER = LoggerFactory.getLogger(InMemoryControlPlane.class);
 
@@ -83,7 +84,7 @@ public class InMemoryControlPlane extends AbstractControlPlane {
             .iterator();
     }
 
-    private CommitBatchResponse commitFileForValidRequest(
+    private synchronized CommitBatchResponse commitFileForValidRequest(
         final long now,
         final FileInfo fileInfo,
         final CommitBatchRequest request
@@ -180,8 +181,10 @@ public class InMemoryControlPlane extends AbstractControlPlane {
             .iterator();
     }
 
-    private FindBatchResponse findBatchesForExistingPartition(final FindBatchRequest request,
-                                                              final int fetchMaxBytes) {
+    private synchronized FindBatchResponse findBatchesForExistingPartition(
+        final FindBatchRequest request,
+        final int fetchMaxBytes
+    ) {
         final LogInfo logInfo = logs.get(request.topicIdPartition());
         final TreeMap<Long, BatchInfoInternal> coordinates = batches.get(request.topicIdPartition());
         // This can't really happen as non-existing partitions should be filtered out earlier.
