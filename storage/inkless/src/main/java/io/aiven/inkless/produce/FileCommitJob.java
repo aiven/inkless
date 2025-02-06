@@ -19,6 +19,8 @@ import java.util.stream.Collectors;
 import io.aiven.inkless.TimeUtils;
 import io.aiven.inkless.common.ObjectKey;
 import io.aiven.inkless.control_plane.ControlPlane;
+import io.aiven.inkless.storage_backend.common.ObjectDeleter;
+import io.aiven.inkless.storage_backend.common.StorageBackendException;
 
 /**
  * The job of committing the already uploaded file to the control plane.
@@ -33,6 +35,7 @@ class FileCommitJob implements Runnable {
     private final Future<ObjectKey> uploadFuture;
     private final Time time;
     private final ControlPlane controlPlane;
+    private final ObjectDeleter objectDeleter;
     private final Consumer<Long> durationCallback;
 
     FileCommitJob(final int brokerId,
@@ -40,12 +43,14 @@ class FileCommitJob implements Runnable {
                   final Future<ObjectKey> uploadFuture,
                   final Time time,
                   final ControlPlane controlPlane,
+                  final ObjectDeleter objectDeleter,
                   final Consumer<Long> durationCallback) {
         this.brokerId = brokerId;
         this.file = file;
         this.uploadFuture = uploadFuture;
         this.controlPlane = controlPlane;
         this.time = time;
+        this.objectDeleter = objectDeleter;
         this.durationCallback = durationCallback;
     }
 
@@ -71,7 +76,17 @@ class FileCommitJob implements Runnable {
     private void doCommit(final UploadResult result) {
         if (result.objectKey != null) {
             LOGGER.debug("Uploaded {} successfully, committing", result.objectKey);
-            finishCommitSuccessfully(result.objectKey);
+            try {
+                finishCommitSuccessfully(result.objectKey);
+            } catch (final Exception e) {
+                LOGGER.error("Error commiting data, attempting to remove the uploaded file {}", result.objectKey, e);
+                try {
+                    objectDeleter.delete(result.objectKey);
+                } catch (final StorageBackendException e2) {
+                    LOGGER.error("Error removing the uploaded file {}", result.objectKey, e2);
+                }
+                finishCommitWithError();
+            }
         } else {
             LOGGER.error("Upload failed: {}", result.uploadError.getMessage());
             finishCommitWithError();

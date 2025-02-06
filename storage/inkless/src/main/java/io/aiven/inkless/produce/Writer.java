@@ -35,7 +35,7 @@ import io.aiven.inkless.cache.ObjectCache;
 import io.aiven.inkless.common.InklessThreadFactory;
 import io.aiven.inkless.common.ObjectKeyCreator;
 import io.aiven.inkless.control_plane.ControlPlane;
-import io.aiven.inkless.storage_backend.common.ObjectUploader;
+import io.aiven.inkless.storage_backend.common.StorageBackend;
 
 /**
  * The entry point for Inkless writing.
@@ -68,7 +68,7 @@ class Writer implements Closeable {
     Writer(final Time time,
            final int brokerId,
            final ObjectKeyCreator objectKeyCreator,
-           final ObjectUploader objectUploader,
+           final StorageBackend storage,
            final KeyAlignmentStrategy keyAlignmentStrategy,
            final ObjectCache objectCache,
            final ControlPlane controlPlane,
@@ -83,7 +83,7 @@ class Writer implements Closeable {
             maxBufferSize,
             Executors.newScheduledThreadPool(1, new InklessThreadFactory("inkless-file-commit-ticker-", true)),
             new FileCommitter(
-                    brokerId, controlPlane, objectKeyCreator, objectUploader,
+                    brokerId, controlPlane, objectKeyCreator, storage,
                     keyAlignmentStrategy, objectCache, time,
                     maxFileUploadAttempts, fileUploadRetryBackoff),
             new WriterMetrics(time),
