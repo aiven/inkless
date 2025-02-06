@@ -29,7 +29,9 @@ import io.aiven.inkless.common.ObjectKey;
 import io.aiven.inkless.common.PlainObjectKey;
 import io.aiven.inkless.control_plane.CommitBatchRequest;
 import io.aiven.inkless.control_plane.CommitBatchResponse;
+import io.aiven.inkless.control_plane.ControlPlaneException;
 import io.aiven.inkless.control_plane.InMemoryControlPlane;
+import io.aiven.inkless.storage_backend.common.ObjectDeleter;
 import io.aiven.inkless.storage_backend.common.StorageBackendException;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -80,6 +82,8 @@ class FileCommitJobTest {
     @Mock
     InMemoryControlPlane controlPlane;
     @Mock
+    ObjectDeleter objectDeleter;
+    @Mock
     Consumer<Long> commitTimeDurationCallback;
 
     @Test
@@ -102,7 +106,7 @@ class FileCommitJobTest {
 
         final ClosedFile file = new ClosedFile(Instant.EPOCH, REQUESTS, awaitingFuturesByRequest, COMMIT_BATCH_REQUESTS, REQUEST_IDS, DATA);
         final CompletableFuture<ObjectKey> uploadFuture = CompletableFuture.completedFuture(OBJECT_KEY);
-        final FileCommitJob job = new FileCommitJob(BROKER_ID, file, uploadFuture, time, controlPlane, commitTimeDurationCallback);
+        final FileCommitJob job = new FileCommitJob(BROKER_ID, file, uploadFuture, time, controlPlane, objectDeleter, commitTimeDurationCallback);
 
         job.run();
 
@@ -134,7 +138,7 @@ class FileCommitJobTest {
 
         final ClosedFile file = new ClosedFile(Instant.EPOCH, REQUESTS, awaitingFuturesByRequest, COMMIT_BATCH_REQUESTS, REQUEST_IDS, DATA);
         final CompletableFuture<ObjectKey> uploadFuture = CompletableFuture.completedFuture(OBJECT_KEY);
-        final FileCommitJob job = new FileCommitJob(BROKER_ID, file, uploadFuture, time, controlPlane, commitTimeDurationCallback);
+        final FileCommitJob job = new FileCommitJob(BROKER_ID, file, uploadFuture, time, controlPlane, objectDeleter, commitTimeDurationCallback);
 
         job.run();
 
@@ -154,7 +158,7 @@ class FileCommitJobTest {
 
         final ClosedFile file = new ClosedFile(Instant.EPOCH, REQUESTS, awaitingFuturesByRequest, COMMIT_BATCH_REQUESTS, REQUEST_IDS, DATA);
         final CompletableFuture<ObjectKey> uploadFuture = CompletableFuture.failedFuture(new StorageBackendException("test"));
-        final FileCommitJob job = new FileCommitJob(BROKER_ID, file, uploadFuture, time, controlPlane, commitTimeDurationCallback);
+        final FileCommitJob job = new FileCommitJob(BROKER_ID, file, uploadFuture, time, controlPlane, objectDeleter, commitTimeDurationCallback);
 
         job.run();
 
@@ -167,5 +171,32 @@ class FileCommitJobTest {
             T1P0.topicPartition(), new PartitionResponse(Errors.KAFKA_STORAGE_ERROR, "Error commiting data")
         ));
         verify(commitTimeDurationCallback).accept(eq(10L));
+    }
+
+    @Test
+    void deleteObjectWhenFailureOnCommit() throws Exception {
+        final Map<Integer, CompletableFuture<Map<TopicPartition, PartitionResponse>>> awaitingFuturesByRequest = Map.of(
+            0, new CompletableFuture<>(),
+            1, new CompletableFuture<>()
+        );
+
+        when(controlPlane.commitFile(eq(OBJECT_KEY_MAIN_PART), eq(BROKER_ID), eq(FILE_SIZE), eq(COMMIT_BATCH_REQUESTS)))
+            .thenThrow(new ControlPlaneException("test"));
+
+        final ClosedFile file = new ClosedFile(Instant.EPOCH, REQUESTS, awaitingFuturesByRequest, COMMIT_BATCH_REQUESTS, REQUEST_IDS, DATA);
+        final CompletableFuture<ObjectKey> uploadFuture = CompletableFuture.completedFuture(OBJECT_KEY);
+        final FileCommitJob job = new FileCommitJob(BROKER_ID, file, uploadFuture, time, controlPlane, objectDeleter, commitTimeDurationCallback);
+
+        job.run();
+
+        verify(objectDeleter).delete(eq(OBJECT_KEY));
+        assertThat(awaitingFuturesByRequest.get(0)).isCompletedWithValue(Map.of(
+            T0P0.topicPartition(), new PartitionResponse(Errors.KAFKA_STORAGE_ERROR, "Error commiting data"),
+            T0P1.topicPartition(), new PartitionResponse(Errors.KAFKA_STORAGE_ERROR, "Error commiting data")
+        ));
+        assertThat(awaitingFuturesByRequest.get(1)).isCompletedWithValue(Map.of(
+            T0P1.topicPartition(), new PartitionResponse(Errors.KAFKA_STORAGE_ERROR, "Error commiting data"),
+            T1P0.topicPartition(), new PartitionResponse(Errors.KAFKA_STORAGE_ERROR, "Error commiting data")
+        ));
     }
 }
