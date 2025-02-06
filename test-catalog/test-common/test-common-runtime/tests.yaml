@@ -12,6 +12,7 @@ org.apache.kafka.common.test.TestKitNodeTest:
 - testListenerName
 - testSecurityProtocol
 org.apache.kafka.common.test.junit.ClusterTestExtensionsTest:
+- testBrokerRestart
 - testClusterAliveBrokers
 - testClusterTemplate
 - testClusterTest
