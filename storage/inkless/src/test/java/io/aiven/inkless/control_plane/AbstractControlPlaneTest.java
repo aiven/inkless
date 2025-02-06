@@ -802,6 +802,10 @@ public abstract class AbstractControlPlaneTest {
             assertThatThrownBy(() -> controlPlane.commitFileMergeWorkItem(100, "obj", 1, 0, List.of()))
                 .isInstanceOf(FileMergeWorkItemNotExist.class)
                 .extracting("workItemId").isEqualTo(100L);
+
+            // not expecting to delete any files on this scenario
+            final var filesToDelete = controlPlane.getFilesToDelete();
+            assertThat(filesToDelete).isEmpty();
         }
 
         @Test
@@ -818,6 +822,10 @@ public abstract class AbstractControlPlaneTest {
             assertThatThrownBy(() -> controlPlane.commitFileMergeWorkItem(workItemId, "obj", 1, 0, List.of(batch)))
                 .isInstanceOf(ControlPlaneException.class)
                 .hasMessage("Invalid parent batch count 0 in " + batch);
+
+            assertThat(controlPlane.getFilesToDelete()).containsExactly(
+                new FileToDelete("obj", TimeUtils.now(time))
+            );
         }
 
         @Test
@@ -835,6 +843,10 @@ public abstract class AbstractControlPlaneTest {
             assertThatThrownBy(() -> controlPlane.commitFileMergeWorkItem(workItemId, "obj", 1, 0, List.of(batch)))
                 .isInstanceOf(ControlPlaneException.class)
                 .hasMessage("Invalid parent batch count 2 in " + batch);
+
+            assertThat(controlPlane.getFilesToDelete()).containsExactly(
+                new FileToDelete("obj", TimeUtils.now(time))
+            );
         }
 
         @Test
@@ -855,6 +867,10 @@ public abstract class AbstractControlPlaneTest {
             assertThatThrownBy(() -> controlPlane.commitFileMergeWorkItem(fileMergeWorkItem.workItemId(), "obj", 1, 0, List.of(batch)))
                 .isInstanceOf(ControlPlaneException.class)
                 .hasMessage("Batch 3 is not part of work item in " + batch);
+
+            assertThat(controlPlane.getFilesToDelete()).containsExactly(
+                new FileToDelete("obj", TimeUtils.now(time))
+            );
         }
 
         @Test
@@ -922,6 +938,13 @@ public abstract class AbstractControlPlaneTest {
             // An attempt to commit again must be unsuccessful.
             assertThatThrownBy(() -> controlPlane.commitFileMergeWorkItem(workItemId, "obj_merged", 1, fileSize1 + fileSize2 + fileSize3, mergedFileBatches))
                 .isInstanceOf(FileMergeWorkItemNotExist.class);
+
+            // not expecting to delete any files on this scenario
+            assertThat(controlPlane.getFilesToDelete()).containsExactlyInAnyOrder(
+                new FileToDelete("obj1", mergedAt),
+                new FileToDelete("obj2", mergedAt),
+                new FileToDelete("obj3", mergedAt)
+            );
         }
 
         @ParameterizedTest

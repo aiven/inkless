@@ -670,6 +670,9 @@ BEGIN
     INTO work_item;
 
     IF NOT FOUND THEN
+        -- do not remove the file if this condition is hit because it may be a retry from a valid work item
+        -- only delete the object key when a failure condition is found
+
         RETURN ROW('file_merge_work_item_not_found'::commit_file_merge_work_item_v1_error, NULL)::commit_file_merge_work_item_v1_response;
     END IF;
 
@@ -679,6 +682,13 @@ BEGIN
         FROM unnest(merge_file_batches) b
     LOOP
         IF array_length(merge_file_batch.parent_batch_ids, 1) IS NULL OR array_length(merge_file_batch.parent_batch_ids, 1) != 1 THEN
+            -- insert new empty file to be deleted
+            INSERT INTO files (object_key, reason, state, uploader_broker_id, committed_at, size, used_size)
+            VALUES (object_key, 'merge', 'uploaded', uploader_broker_id, now, 0, 0)
+            RETURNING file_id
+            INTO new_file_id;
+            PERFORM mark_file_to_delete_v1(now, new_file_id);
+
             RETURN ROW('invalid_parent_batch_count'::commit_file_merge_work_item_v1_error, merge_file_batch)::commit_file_merge_work_item_v1_response;
         END IF;
     END LOOP;
@@ -727,6 +737,13 @@ BEGIN
                 AND batch_id = ANY(b.parent_batch_ids)
         )
     LOOP
+        -- insert new empty file to be deleted
+        INSERT INTO files (object_key, reason, state, uploader_broker_id, committed_at, size, used_size)
+        VALUES (object_key, 'merge', 'uploaded', uploader_broker_id, now, 0, 0)
+        RETURNING file_id
+        INTO new_file_id;
+        PERFORM mark_file_to_delete_v1(now, new_file_id);
+
         RETURN ROW('batch_not_part_of_work_item'::commit_file_merge_work_item_v1_error, merge_file_batch)::commit_file_merge_work_item_v1_response;
     END LOOP;
 

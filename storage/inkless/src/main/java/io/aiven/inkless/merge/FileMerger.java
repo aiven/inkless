@@ -197,13 +197,24 @@ public class FileMerger implements Runnable {
                 metrics::recordFileUploadTime
             ).call();
 
-            controlPlane.commitFileMergeWorkItem(
-                workItem.workItemId(),
-                objectKey.value(),
-                brokerId,
-                fileSize,
-                mergedFileBatches
-            );
+            try {
+                controlPlane.commitFileMergeWorkItem(
+                    workItem.workItemId(),
+                    objectKey.value(),
+                    brokerId,
+                    fileSize,
+                    mergedFileBatches
+                );
+            } catch (final Exception e) {
+                LOGGER.error("Error committing merged file, attempting to remove the uploaded file {}", objectKey, e);
+                try {
+                    storage.delete(objectKey);
+                } catch (final StorageBackendException e2) {
+                    LOGGER.error("Error removing the uploaded file {}", objectKey, e2);
+                }
+                // The original exception will be thrown.
+                throw e;
+            }
             LOGGER.info("Merged {} files into {}", workItem.files().size(), objectKey);
         } finally {
             for (final var batch : batches) {

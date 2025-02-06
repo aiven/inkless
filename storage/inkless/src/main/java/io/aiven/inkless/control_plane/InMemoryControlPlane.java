@@ -405,6 +405,9 @@ public class InMemoryControlPlane extends AbstractControlPlane {
 
         final FileMergeWorkItem workItem = fileMergeWorkItems.get(workItemId);
         if (workItem == null) {
+            // Do not delete the file here, it may be a retry of a successful commit.
+            // Only delete the file if a failure condition is found.
+
             throw new FileMergeWorkItemNotExist(workItemId);
         }
 
@@ -416,6 +419,8 @@ public class InMemoryControlPlane extends AbstractControlPlane {
         for (final MergedFileBatch mergedFileBatch : batches) {
             // We don't support compaction or concatenation yet, so the only correct number of parent batches is 1.
             if (mergedFileBatch.parentBatches().size() != 1) {
+                markFileToDelete(objectKey, uploaderBrokerId, now);
+
                 throw new ControlPlaneException(
                     String.format("Invalid parent batch count %d in %s",
                         mergedFileBatch.parentBatches().size(),
@@ -433,6 +438,8 @@ public class InMemoryControlPlane extends AbstractControlPlane {
                     .toList();
                 for (final var parentBatch : parentBatchesFound) {
                     if (!workItemFileIds.contains(parentBatch.fileInfo.fileId)) {
+                        markFileToDelete(objectKey, uploaderBrokerId, now);
+
                         throw new ControlPlaneException(
                             String.format("Batch %d is not part of work item in %s",
                                 parentBatch.batchInfo.batchId(), mergedFileBatch));
@@ -496,6 +503,11 @@ public class InMemoryControlPlane extends AbstractControlPlane {
             final FileInfo mergedFileInfo = this.files.remove(mergedFile.objectKey);
             filesToDelete.put(mergedFile.objectKey, new FileToDeleteInternal(mergedFileInfo, now));
         }
+    }
+
+    private void markFileToDelete(final String objectKey, final int uploaderBrokerId, final Instant now) {
+        final FileInfo fileInfo = new FileInfo(fileIdCounter.incrementAndGet(), objectKey, FileReason.MERGE, uploaderBrokerId, 0);
+        filesToDelete.put(fileInfo.objectKey, new FileToDeleteInternal(fileInfo, now));
     }
 
     @Override
