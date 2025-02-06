@@ -30,7 +30,6 @@ import io.aiven.inkless.control_plane.FindBatchRequest;
 import io.aiven.inkless.control_plane.FindBatchResponse;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.when;
 
@@ -67,7 +66,7 @@ public class FindBatchesJobTest {
             ), logStartOffset, highWatermark)
         );
         FindBatchesJob job = new FindBatchesJob(time, controlPlane, params, fetchInfos, durationMs -> {});
-        when(controlPlane.findBatches(requestCaptor.capture(), anyBoolean(), anyInt())).thenReturn(new ArrayList<>(coordinates.values()));
+        when(controlPlane.findBatches(requestCaptor.capture(), anyInt())).thenReturn(new ArrayList<>(coordinates.values()));
         Map<TopicIdPartition, FindBatchResponse> result = job.call();
 
         assertThat(result).isEqualTo(coordinates);

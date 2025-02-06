@@ -49,7 +49,7 @@ public class FindBatchesJob implements Callable<Map<TopicIdPartition, FindBatchR
             requests.add(new FindBatchRequest(fetchInfo.getKey(), fetchInfo.getValue().fetchOffset, fetchInfo.getValue().maxBytes));
         }
 
-        List<FindBatchResponse> responses = controlPlane.findBatches(requests, false, params.maxBytes);
+        List<FindBatchResponse> responses = controlPlane.findBatches(requests, params.maxBytes);
 
         Map<TopicIdPartition, FindBatchResponse> out = new HashMap<>();
         for (int i = 0; i < requests.size(); i++) {

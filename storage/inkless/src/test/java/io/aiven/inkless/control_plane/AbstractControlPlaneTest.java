@@ -136,7 +136,7 @@ public abstract class AbstractControlPlaneTest {
                 new FindBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 11, Integer.MAX_VALUE),
                 new FindBatchRequest(new TopicIdPartition(EXISTING_TOPIC_1_ID, EXISTING_TOPIC_1_PARTITIONS + 1, EXISTING_TOPIC_1) , 11, Integer.MAX_VALUE),
                 new FindBatchRequest(new TopicIdPartition(Uuid.ONE_UUID, 0, NONEXISTENT_TOPIC), 11, Integer.MAX_VALUE)
-            ), true, Integer.MAX_VALUE);
+            ), Integer.MAX_VALUE);
         assertThat(findResponse).containsExactly(
             new FindBatchResponse(
                 Errors.NONE,
@@ -165,7 +165,7 @@ public abstract class AbstractControlPlaneTest {
 
         for (int offset = 0; offset < numberOfRecordsInBatch1; offset++) {
             final List<FindBatchResponse> findResponse = controlPlane.findBatches(
-                List.of(new FindBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_0, offset, Integer.MAX_VALUE)), true, Integer.MAX_VALUE);
+                List.of(new FindBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_0, offset, Integer.MAX_VALUE)), Integer.MAX_VALUE);
             assertThat(findResponse).containsExactly(
                 new FindBatchResponse(Errors.NONE, List.of(
                     new BatchInfo(1L, objectKey1, BatchMetadata.of(EXISTING_TOPIC_1_ID_PARTITION_0, 1, 10, 0, numberOfRecordsInBatch1 - 1, expectedLogAppendTime, 1000, TimestampType.CREATE_TIME)),
@@ -175,7 +175,7 @@ public abstract class AbstractControlPlaneTest {
         }
         for (int offset = numberOfRecordsInBatch1; offset < numberOfRecordsInBatch1 + numberOfRecordsInBatch2; offset++) {
             final List<FindBatchResponse> findResponse = controlPlane.findBatches(
-                List.of(new FindBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_0, offset, Integer.MAX_VALUE)), true, Integer.MAX_VALUE);
+                List.of(new FindBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_0, offset, Integer.MAX_VALUE)), Integer.MAX_VALUE);
             assertThat(findResponse).containsExactly(
                 new FindBatchResponse(Errors.NONE, List.of(
                     new BatchInfo(2L, objectKey2, BatchMetadata.of(EXISTING_TOPIC_1_ID_PARTITION_0, 100, 10, numberOfRecordsInBatch1, lastOffset, expectedLogAppendTime, 2000, TimestampType.CREATE_TIME))
@@ -197,7 +197,7 @@ public abstract class AbstractControlPlaneTest {
 
         final List<FindBatchResponse> findResponse = controlPlane.findBatches(
             List.of(new FindBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 10, Integer.MAX_VALUE)),
-            true,
+
             Integer.MAX_VALUE);
         assertThat(findResponse).containsExactly(
             new FindBatchResponse(Errors.NONE, List.of(), 0, 10)
@@ -217,7 +217,6 @@ public abstract class AbstractControlPlaneTest {
 
         final List<FindBatchResponse> findResponse = controlPlane.findBatches(
             List.of(new FindBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 11, Integer.MAX_VALUE)),
-            true,
             Integer.MAX_VALUE);
         assertThat(findResponse).containsExactly(
             new FindBatchResponse(Errors.OFFSET_OUT_OF_RANGE, null, 0, 10)
@@ -237,7 +236,6 @@ public abstract class AbstractControlPlaneTest {
 
         final List<FindBatchResponse> findResponse = controlPlane.findBatches(
             List.of(new FindBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_0, -1, Integer.MAX_VALUE)),
-            true,
             Integer.MAX_VALUE);
         assertThat(findResponse).containsExactly(
             new FindBatchResponse(Errors.OFFSET_OUT_OF_RANGE, null, 0, 10)
@@ -248,7 +246,6 @@ public abstract class AbstractControlPlaneTest {
     void findBeforeCommit() {
         final List<FindBatchResponse> findResponse = controlPlane.findBatches(
             List.of(new FindBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 11, Integer.MAX_VALUE)),
-            true,
             Integer.MAX_VALUE);
         assertThat(findResponse).containsExactly(
             new FindBatchResponse(Errors.OFFSET_OUT_OF_RANGE, null, 0, 0)
@@ -288,7 +285,7 @@ public abstract class AbstractControlPlaneTest {
             ));
 
         final List<FindBatchRequest> findBatchRequests = List.of(new FindBatchRequest(new TopicIdPartition(newTopic1Id, 0, newTopic1Name), 0, Integer.MAX_VALUE));
-        final List<FindBatchResponse> findBatchResponsesBeforeDelete = controlPlane.findBatches(findBatchRequests, true, Integer.MAX_VALUE);
+        final List<FindBatchResponse> findBatchResponsesBeforeDelete = controlPlane.findBatches(findBatchRequests, Integer.MAX_VALUE);
 
         // Create new topic and partitions for the existing one.
         controlPlane.createTopicAndPartitions(Set.of(
@@ -296,7 +293,7 @@ public abstract class AbstractControlPlaneTest {
             new CreateTopicAndPartitionsRequest(newTopic2Id, newTopic2Name, 2)
         ));
 
-        final List<FindBatchResponse> findBatchResponsesAfterDelete = controlPlane.findBatches(findBatchRequests, true, Integer.MAX_VALUE);
+        final List<FindBatchResponse> findBatchResponsesAfterDelete = controlPlane.findBatches(findBatchRequests, Integer.MAX_VALUE);
         assertThat(findBatchResponsesBeforeDelete).isEqualTo(findBatchResponsesAfterDelete);
 
         // Nothing happens as this is idempotent
@@ -305,7 +302,7 @@ public abstract class AbstractControlPlaneTest {
             new CreateTopicAndPartitionsRequest(newTopic2Id, newTopic2Name, 2)
         ));
 
-        final List<FindBatchResponse> findBatchResponsesAfterDelete2 = controlPlane.findBatches(findBatchRequests, true, Integer.MAX_VALUE);
+        final List<FindBatchResponse> findBatchResponsesAfterDelete2 = controlPlane.findBatches(findBatchRequests, Integer.MAX_VALUE);
         assertThat(findBatchResponsesAfterDelete2).isEqualTo(findBatchResponsesAfterDelete);
     }
 
@@ -327,7 +324,7 @@ public abstract class AbstractControlPlaneTest {
             ));
 
         final List<FindBatchRequest> findBatchRequests = List.of(new FindBatchRequest(EXISTING_TOPIC_2_ID_PARTITION_0, 0, Integer.MAX_VALUE));
-        final List<FindBatchResponse> findBatchResponsesBeforeDelete = controlPlane.findBatches(findBatchRequests, true, Integer.MAX_VALUE);
+        final List<FindBatchResponse> findBatchResponsesBeforeDelete = controlPlane.findBatches(findBatchRequests, Integer.MAX_VALUE);
 
         time.sleep(1001);  // advance time
         controlPlane.deleteTopics(Set.of(EXISTING_TOPIC_1_ID, Uuid.ONE_UUID));
@@ -337,7 +334,7 @@ public abstract class AbstractControlPlaneTest {
             new FileToDelete(objectKey1, TimeUtils.now(time))
         );
 
-        final List<FindBatchResponse> findBatchResponsesAfterDelete = controlPlane.findBatches(findBatchRequests, true, Integer.MAX_VALUE);
+        final List<FindBatchResponse> findBatchResponsesAfterDelete = controlPlane.findBatches(findBatchRequests, Integer.MAX_VALUE);
         assertThat(findBatchResponsesAfterDelete).isEqualTo(findBatchResponsesBeforeDelete);
 
         // Nothing happens as it's idempotent.
@@ -359,7 +356,7 @@ public abstract class AbstractControlPlaneTest {
         );
 
         final List<FindBatchResponse> findResponseBeforeDelete = controlPlane.findBatches(
-            List.of(new FindBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 0, Integer.MAX_VALUE)), true, Integer.MAX_VALUE);
+            List.of(new FindBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 0, Integer.MAX_VALUE)), Integer.MAX_VALUE);
 
         final List<DeleteRecordsResponse> deleteRecordsResponses = controlPlane.deleteRecords(List.of(
             new DeleteRecordsRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 3),
@@ -371,7 +368,7 @@ public abstract class AbstractControlPlaneTest {
         );
 
         final List<FindBatchResponse> findResponse = controlPlane.findBatches(
-            List.of(new FindBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 0, Integer.MAX_VALUE)), true, Integer.MAX_VALUE);
+            List.of(new FindBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 0, Integer.MAX_VALUE)), Integer.MAX_VALUE);
 
         assertThat(findResponse).containsExactly(
             new FindBatchResponse(Errors.NONE, findResponseBeforeDelete.get(0).batches(), 3, 10)
@@ -405,7 +402,7 @@ public abstract class AbstractControlPlaneTest {
         );
 
         final List<FindBatchResponse> findResponseBeforeDelete = controlPlane.findBatches(
-            List.of(new FindBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 0, Integer.MAX_VALUE)), true, Integer.MAX_VALUE);
+            List.of(new FindBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 0, Integer.MAX_VALUE)), Integer.MAX_VALUE);
 
         final List<DeleteRecordsResponse> deleteRecordsResponses = controlPlane.deleteRecords(List.of(
             new DeleteRecordsRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 19),
@@ -417,7 +414,7 @@ public abstract class AbstractControlPlaneTest {
         );
 
         final List<FindBatchResponse> findResponse = controlPlane.findBatches(
-            List.of(new FindBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 0, Integer.MAX_VALUE)), true, Integer.MAX_VALUE);
+            List.of(new FindBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 0, Integer.MAX_VALUE)), Integer.MAX_VALUE);
 
         assertThat(findResponse).containsExactly(
             new FindBatchResponse(Errors.NONE, List.of(
@@ -442,7 +439,7 @@ public abstract class AbstractControlPlaneTest {
         );
 
         final List<FindBatchResponse> findResponseBeforeDelete = controlPlane.findBatches(
-            List.of(new FindBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 0, Integer.MAX_VALUE)), true, Integer.MAX_VALUE);
+            List.of(new FindBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 0, Integer.MAX_VALUE)), Integer.MAX_VALUE);
 
         final List<DeleteRecordsResponse> deleteRecordsResponses = controlPlane.deleteRecords(List.of(
             new DeleteRecordsRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 0)
@@ -452,7 +449,7 @@ public abstract class AbstractControlPlaneTest {
         );
 
         final List<FindBatchResponse> findResponse = controlPlane.findBatches(
-            List.of(new FindBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 0, Integer.MAX_VALUE)), true, Integer.MAX_VALUE);
+            List.of(new FindBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 0, Integer.MAX_VALUE)), Integer.MAX_VALUE);
         assertThat(findResponse).isEqualTo(findResponseBeforeDelete);
 
         assertThat(controlPlane.getFilesToDelete()).isEmpty();
@@ -477,7 +474,7 @@ public abstract class AbstractControlPlaneTest {
         );
 
         final List<FindBatchResponse> findResponse = controlPlane.findBatches(
-            List.of(new FindBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 0, Integer.MAX_VALUE)), true, Integer.MAX_VALUE);
+            List.of(new FindBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 0, Integer.MAX_VALUE)), Integer.MAX_VALUE);
         assertThat(findResponse).containsExactly(
             new FindBatchResponse(Errors.NONE, List.of(), 10, 10)
         );
@@ -498,7 +495,7 @@ public abstract class AbstractControlPlaneTest {
         );
 
         final List<FindBatchResponse> findResponseBeforeDelete = controlPlane.findBatches(
-            List.of(new FindBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 0, Integer.MAX_VALUE)), true, Integer.MAX_VALUE);
+            List.of(new FindBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 0, Integer.MAX_VALUE)), Integer.MAX_VALUE);
 
         final List<DeleteRecordsResponse> deleteRecordsResponses = controlPlane.deleteRecords(List.of(
             new DeleteRecordsRequest(EXISTING_TOPIC_1_ID_PARTITION_0, deleteOffset)
@@ -508,7 +505,7 @@ public abstract class AbstractControlPlaneTest {
         );
 
         final List<FindBatchResponse> findResponse = controlPlane.findBatches(
-            List.of(new FindBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 0, Integer.MAX_VALUE)), true, Integer.MAX_VALUE);
+            List.of(new FindBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 0, Integer.MAX_VALUE)), Integer.MAX_VALUE);
         assertThat(findResponse).isEqualTo(findResponseBeforeDelete);
 
         assertThat(controlPlane.getFilesToDelete()).isEmpty();
@@ -530,7 +527,7 @@ public abstract class AbstractControlPlaneTest {
         );
 
         final List<FindBatchResponse> findResponseBeforeDelete = controlPlane.findBatches(
-            List.of(new FindBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_1, 0, Integer.MAX_VALUE)), true, Integer.MAX_VALUE);
+            List.of(new FindBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_1, 0, Integer.MAX_VALUE)), Integer.MAX_VALUE);
 
         final List<DeleteRecordsResponse> deleteRecordsResponses = controlPlane.deleteRecords(List.of(
             new DeleteRecordsRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 10)
@@ -538,7 +535,7 @@ public abstract class AbstractControlPlaneTest {
         assertThat(deleteRecordsResponses).containsExactly(DeleteRecordsResponse.success(10));
 
         final List<FindBatchResponse> findResponse = controlPlane.findBatches(
-            List.of(new FindBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_1, 0, Integer.MAX_VALUE)), true, Integer.MAX_VALUE);
+            List.of(new FindBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_1, 0, Integer.MAX_VALUE)), Integer.MAX_VALUE);
         assertThat(findResponse).isEqualTo(findResponseBeforeDelete);
 
         assertThat(controlPlane.getFilesToDelete()).isEmpty();
@@ -741,7 +738,6 @@ public abstract class AbstractControlPlaneTest {
 
         final List<FindBatchResponse> findResponse = controlPlane.findBatches(
             List.of(new FindBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 0, Integer.MAX_VALUE)),
-            true,
             Integer.MAX_VALUE);
         assertThat(findResponse).containsExactly(
             new FindBatchResponse(
@@ -917,7 +913,7 @@ public abstract class AbstractControlPlaneTest {
                 List.of(
                     new FindBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 0, Integer.MAX_VALUE),
                     new FindBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_1, 0, Integer.MAX_VALUE)
-                ), true, Integer.MAX_VALUE);
+                ), Integer.MAX_VALUE);
             assertThat(findBatchResult).containsExactly(
                 FindBatchResponse.success(List.of(
                     new BatchInfo(5L, "obj_merged", BatchMetadata.of(EXISTING_TOPIC_1_ID_PARTITION_0, 0L, file1Batch1Size, 0L, 100L, committedAt, 1000L, TimestampType.CREATE_TIME)),
@@ -996,7 +992,7 @@ public abstract class AbstractControlPlaneTest {
                 List.of(
                     new FindBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 0, Integer.MAX_VALUE),
                     new FindBatchRequest(EXISTING_TOPIC_2_ID_PARTITION_0, 0, Integer.MAX_VALUE)
-                ), true, Integer.MAX_VALUE);
+                ), Integer.MAX_VALUE);
             assertThat(findBatchResult).containsExactly(
                 FindBatchResponse.unknownTopicOrPartition(),
                 FindBatchResponse.success(List.of(
@@ -1041,7 +1037,7 @@ public abstract class AbstractControlPlaneTest {
             ));
 
             final var findBatchResult = controlPlane.findBatches(
-                List.of(new FindBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 0, Integer.MAX_VALUE)), true, Integer.MAX_VALUE);
+                List.of(new FindBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 0, Integer.MAX_VALUE)), Integer.MAX_VALUE);
             assertThat(findBatchResult).containsExactly(
                 FindBatchResponse.success(List.of(
                     new BatchInfo(3L, "obj_merged", BatchMetadata.of(EXISTING_TOPIC_1_ID_PARTITION_0, fileSize, fileSize, 100L, 200L, committedAt, 2000L, TimestampType.LOG_APPEND_TIME))
@@ -1084,7 +1080,7 @@ public abstract class AbstractControlPlaneTest {
             ));
 
             final var findBatchResult = controlPlane.findBatches(
-                List.of(new FindBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 0, Integer.MAX_VALUE)), true, Integer.MAX_VALUE);
+                List.of(new FindBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 0, Integer.MAX_VALUE)), Integer.MAX_VALUE);
             assertThat(findBatchResult).containsExactly(FindBatchResponse.unknownTopicOrPartition());
 
             // Since the new merged file doesn't host any live batch, it should end up in files-to-delete as well.

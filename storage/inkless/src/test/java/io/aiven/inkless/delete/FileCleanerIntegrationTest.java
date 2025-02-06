@@ -244,7 +244,7 @@ class FileCleanerIntegrationTest {
         final List<FindBatchRequest> findBatchRequests = ALL_TOPIC_ID_PARTITIONS.stream()
             .map(tidp -> new FindBatchRequest(tidp, 0, Integer.MAX_VALUE))
             .toList();
-        final List<FindBatchResponse> findBatchResponses = controlPlane.findBatches(findBatchRequests, true, Integer.MAX_VALUE);
+        final List<FindBatchResponse> findBatchResponses = controlPlane.findBatches(findBatchRequests, Integer.MAX_VALUE);
 
         final Map<TopicIdPartition, Long> result = new HashMap<>();
         for (int i = 0; i < findBatchResponses.size(); i++) {
