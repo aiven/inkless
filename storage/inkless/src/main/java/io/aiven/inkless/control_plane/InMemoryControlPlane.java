@@ -28,6 +28,7 @@ import java.util.stream.Stream;
 
 import io.aiven.inkless.TimeUtils;
 
+// TODO: in-memory control plane is using synchronous operations. It could be improved by using finer-grained locks if needed later.
 public class InMemoryControlPlane extends AbstractControlPlane {
     private static final Logger LOGGER = LoggerFactory.getLogger(InMemoryControlPlane.class);
 
@@ -83,9 +84,11 @@ public class InMemoryControlPlane extends AbstractControlPlane {
             .iterator();
     }
 
-    private CommitBatchResponse commitFileForValidRequest(final long now,
-                                                          final FileInfo fileInfo,
-                                                          final CommitBatchRequest request) {
+    private synchronized CommitBatchResponse commitFileForValidRequest(
+        final long now,
+        final FileInfo fileInfo,
+        final CommitBatchRequest request
+    ) {
         final TopicIdPartition topicIdPartition = request.topicIdPartition();
         final LogInfo logInfo = logs.get(topicIdPartition);
         final TreeMap<Long, BatchInfoInternal> coordinates = this.batches.get(topicIdPartition);
@@ -171,17 +174,17 @@ public class InMemoryControlPlane extends AbstractControlPlane {
     @Override
     protected Iterator<FindBatchResponse> findBatchesForExistingPartitions(
         final Stream<FindBatchRequest> requests,
-        final boolean minOneMessage,
         final int fetchMaxBytes
     ) {
         return requests
-            .map(request -> findBatchesForExistingPartition(request, minOneMessage, fetchMaxBytes))
+            .map(request -> findBatchesForExistingPartition(request, fetchMaxBytes))
             .iterator();
     }
 
-    private FindBatchResponse findBatchesForExistingPartition(final FindBatchRequest request,
-                                                              final boolean minOneMessage,
-                                                              final int fetchMaxBytes) {
+    private synchronized FindBatchResponse findBatchesForExistingPartition(
+        final FindBatchRequest request,
+        final int fetchMaxBytes
+    ) {
         final LogInfo logInfo = logs.get(request.topicIdPartition());
         final TreeMap<Long, BatchInfoInternal> coordinates = batches.get(request.topicIdPartition());
         // This can't really happen as non-existing partitions should be filtered out earlier.
