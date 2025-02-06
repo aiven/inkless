@@ -32,6 +32,7 @@ import java.util.List;
 import java.util.Map;
 
 import io.aiven.inkless.common.ObjectKey;
+import io.aiven.inkless.common.PlainObjectKey;
 import io.aiven.inkless.common.SharedState;
 import io.aiven.inkless.config.InklessConfig;
 import io.aiven.inkless.control_plane.BatchInfo;
@@ -279,7 +280,7 @@ class FileMergerMockedTest {
     }
 
     @Test
-    void errorInReading() throws IOException {
+    void errorInReading() throws Exception {
         when(inklessConfig.storage()).thenReturn(storage);
 
         final String obj1 = "obj1";
@@ -305,10 +306,13 @@ class FileMergerMockedTest {
         verify(controlPlane, never()).commitFileMergeWorkItem(anyLong(), anyString(), anyInt(), anyLong(), any());
         verify(time).sleep(longThat(l -> l >= 50));
         verify(file1).close();
+
+        verify(storage, never()).upload(any(ObjectKey.class), any());
+        verify(storage, never()).delete(any(ObjectKey.class));
     }
 
     @Test
-    void errorInWriting() throws StorageBackendException {
+    void errorInWriting() throws Exception {
         when(inklessConfig.storage()).thenReturn(storage);
         when(inklessConfig.produceMaxUploadAttempts()).thenReturn(1);
         when(inklessConfig.produceUploadBackoff()).thenReturn(Duration.ZERO);
@@ -344,10 +348,13 @@ class FileMergerMockedTest {
         verify(controlPlane, never()).commitFileMergeWorkItem(anyLong(), anyString(), anyInt(), anyLong(), any());
         verify(time).sleep(longThat(l -> l >= 50));
         file1.assertClosedAndDataFullyConsumed();
+
+        verify(storage).fetch(PlainObjectKey.create("", obj1), null);
+        verify(storage, never()).delete(any(ObjectKey.class));
     }
 
     @Test
-    void errorInCommitting() {
+    void errorInCommitting() throws Exception {
         when(inklessConfig.storage()).thenReturn(storage);
         when(inklessConfig.produceMaxUploadAttempts()).thenReturn(1);
         when(inklessConfig.produceUploadBackoff()).thenReturn(Duration.ZERO);
@@ -382,6 +389,9 @@ class FileMergerMockedTest {
         verify(controlPlane).releaseFileMergeWorkItem(eq(WORK_ITEM_ID));
         verify(time).sleep(longThat(l -> l >= 50));
         file1.assertClosedAndDataFullyConsumed();
+
+        verify(storage).upload(objectKeyCaptor.capture(), any());
+        verify(storage).delete(objectKeyCaptor.getValue());
     }
 
     private byte[] generateData(final int size, final String signature) {

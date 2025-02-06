@@ -60,7 +60,7 @@ import io.aiven.inkless.control_plane.ControlPlane;
 import io.aiven.inkless.control_plane.CreateTopicAndPartitionsRequest;
 import io.aiven.inkless.control_plane.InMemoryControlPlane;
 import io.aiven.inkless.control_plane.postgres.PostgresControlPlane;
-import io.aiven.inkless.storage_backend.common.ObjectUploader;
+import io.aiven.inkless.storage_backend.common.StorageBackend;
 import io.aiven.inkless.storage_backend.common.StorageBackendException;
 import io.aiven.inkless.test_utils.PostgreSQLContainer;
 import io.aiven.inkless.test_utils.PostgreSQLTestContainer;
@@ -174,7 +174,7 @@ class WriterPropertyTest {
         Statistics.label("requestCount").collect(requestCount);
         final MockTime time = new MockTime(0, 0, 0);
 
-        final ObjectUploader objectUploader = mock(ObjectUploader.class);
+        final StorageBackend storage = mock(StorageBackend.class);
         final UploaderHandler uploaderHandler = new UploaderHandler(
             new MockExecutorServiceWithFutureSupport(),
             new Timer("upload",
@@ -202,7 +202,7 @@ class WriterPropertyTest {
             11,
             controlPlane,
             ObjectKey.creator("", false),
-            objectUploader,
+            storage,
             KEY_ALIGNMENT_STRATEGY,
             OBJECT_CACHE,
             time,
@@ -258,9 +258,9 @@ class WriterPropertyTest {
         requester.checkResponses();
 
         if (requestCount > 0) {
-            verify(objectUploader, atLeast(1)).upload(any(), any());
+            verify(storage, atLeast(1)).upload(any(), any());
         }
-        final Collection<Invocation> uploadInvocations = mockingDetails(objectUploader).getInvocations();
+        final Collection<Invocation> uploadInvocations = mockingDetails(storage).getInvocations();
         Statistics.label("files").collect(uploadInvocations.size());
         for (final Invocation invocation : uploadInvocations) {
             final byte[] uploadedBytes = invocation.getArgument(1);
