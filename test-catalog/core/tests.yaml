@@ -2316,7 +2316,6 @@ kafka.server.BrokerRegistrationRequestTest:
 - testRegisterZkWith33Controller
 kafka.server.ClientQuotaManagerTest:
 - testClientIdNotSanitized
-- testClientIdQuotaParsing
 - testExpireQuotaSensors
 - testExpireThrottleTimeSensor
 - testGetMaxValueInQuotaWindowWithNonDefaultQuotaWindow
@@ -2325,9 +2324,6 @@ kafka.server.ClientQuotaManagerTest:
 - testSetAndRemoveDefaultUserQuota
 - testSetAndRemoveUserClientQuota
 - testSetAndRemoveUserQuota
-- testUserClientIdQuotaParsing
-- testUserClientQuotaParsingIdWithDefaultClientIdQuota
-- testUserQuotaParsing
 - testUserQuotaParsingWithDefaultClientIdQuota
 kafka.server.ClientQuotasRequestTest:
 - testAlterClientQuotasBadIp
@@ -2338,7 +2334,6 @@ kafka.server.ClientQuotasRequestTest:
 - testAlterIpQuotasRequest
 - testClientQuotasSanitized
 - testClientQuotasUnsupportedEntityTypes
-- testClientQuotasWithDefaultName
 - testDescribeClientQuotasInvalidFilterCombination
 - testDescribeClientQuotasMatchExact
 - testDescribeClientQuotasMatchPartial
@@ -3507,6 +3502,7 @@ kafka.server.metadata.BrokerMetadataPublisherTest:
 - testReloadUpdatedFilesWithoutConfigChange
 kafka.server.metadata.ClientQuotaMetadataManagerTest:
 - testHandleIpQuota
+- testTransferToClientQuotaEntity
 kafka.server.share.DelayedShareFetchTest:
 - testCombineLogReadResponse
 - testDelayedShareFetchTryCompleteReturnsFalseDueToNonAcquirablePartitions
