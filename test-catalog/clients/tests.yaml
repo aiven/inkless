@@ -2056,6 +2056,8 @@ org.apache.kafka.clients.consumer.internals.ShareConsumeRequestManagerTest:
 - testUnauthorizedTopic
 - testUnknownTopicIdError
 - testWhenFetchResponseReturnsWithALeadershipChangeErrorAndNewLeaderInformation
+- testWhenLeadershipChangeBetweenShareFetchRequests
+- testWhenLeadershipChangedAfterDisconnected
 - testWhenShareFetchResponseReturnsALeadershipChangeErrorButNoNewLeaderInformation
 org.apache.kafka.clients.consumer.internals.ShareConsumerImplTest:
 - testAcknowledgementCommitCallbackRegistrationEvent
@@ -2181,6 +2183,7 @@ org.apache.kafka.clients.consumer.internals.ShareSessionHandlerTest:
 - testAddNewIdAfterTopicRemovedFromSession
 - testForgottenPartitions
 - testNextAcknowledgementsClearedOnInvalidRequest
+- testPartitionForgottenOnAcknowledgeOnly
 - testPartitionRemoval
 - testShareSession
 - testTopicIdReplaced
