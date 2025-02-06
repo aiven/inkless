@@ -18,7 +18,7 @@ For Apache Kafka general information, keep reading.
 Apache Kafka
 =================
 
-[**Apache Kafka**](https://kafka.apache.org) is an open-source distributed event streaming platform used by thousands of
+[**Apache Kafka**](https://kafka.apache.org) is an open-source distributed event streaming platform used by thousands of companies for high-performance data pipelines, streaming analytics, data integration, and mission-critical applications.
 
 companies for high-performance data pipelines, streaming analytics, data integration, and mission-critical applications.
 
