@@ -2934,6 +2934,7 @@ kafka.server.KafkaApisTest:
 - testWriteShareGroupStateSuccess
 - testWriteTxnMarkersShouldAllBeIncludedInTheResponse
 kafka.server.KafkaConfigTest:
+- testAcceptsLargeId
 - testAdvertiseConfigured
 - testAdvertiseDefaults
 - testAdvertisedListenersAllowedForKRaftControllerOnlyRole
@@ -2967,7 +2968,6 @@ kafka.server.KafkaConfigTest:
 - testFromPropsInvalid
 - testGroupCoordinatorRebalanceProtocols
 - testIPv4AndIPv6SamePortListeners
-- testIgnoreUserInterBrokerProtocolVersionKRaft
 - testInterBrokerListenerNameAndSecurityProtocolSet
 - testInterBrokerListenerNameMissingFromListenerSecurityProtocolMap
 - testInvalidAdvertisedListenersProtocol
@@ -3006,9 +3006,8 @@ kafka.server.KafkaConfigTest:
 - testPopulateSynonymsOnMapWithoutBrokerId
 - testPopulateSynonymsOnMapWithoutNodeId
 - testPortInQuorumVotersNotRequiredToMatchFirstControllerListenerPortForThisKRaftController
+- testRejectsNegativeBrokerId
 - testRejectsNegativeNodeId
-- testRejectsNegativeNodeIdForRaftBasedBrokerCaseWithAutoGenEnabled
-- testRejectsNegativeNodeIdForRaftBasedControllerCaseWithAutoGenEnabled
 - testSaslJwksEndpointRetryDefaults
 - testSeparateControllerListenerDefinedForKRaftBrokerController
 - testShareGroupHeartbeatIntervalValidation
@@ -3023,14 +3022,13 @@ kafka.server.KafkaConfigTest:
 - testValidCompressionType
 - testValidQuorumVotersParsingWithIpAddress
 - testValidQuorumVotersParsingWithMultipleHost
-- testVersionConfiguration
 kafka.server.KafkaMetricReporterExceptionHandlingTest:
 - testBothReportersAreInvoked
 kafka.server.KafkaMetricsReporterTest:
 - testMetricsContextNamespacePresent
 kafka.server.KafkaRaftServerTest:
-- testKRaftUpdateWithIBP
-- testKRaftUpdateWithoutIBP
+- testKRaftUpdate
+- testKRaftUpdateAt3_3_IV1
 - testLoadMetaPropertiesWithInconsistentNodeId
 - testLoadPropertiesWithInconsistentClusterIds
 - testStartupDoesNotFailIfDataDirIsOffline
@@ -3845,7 +3843,6 @@ kafka.tools.StorageToolTest:
 - testFormatWithReleaseVersion
 - testFormatWithReleaseVersionAndKRaftVersion
 - testFormatWithReleaseVersionAsFeature
-- testFormatWithReleaseVersionDefault
 - testFormatWithReleaseVersionDefaultAndReleaseVersion
 - testFormatWithStandaloneFlag
 - testFormatWithStandaloneFlagAndInitialControllersFlagFails

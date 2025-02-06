@@ -685,7 +685,6 @@ org.apache.kafka.tools.reassign.ReassignPartitionsCommandTest:
 - testLogDirReassignment
 - testProduceAndConsumeWithReassignmentInProgress
 - testReassignment
-- testReassignmentCompletionDuringPartialUpgrade
 - testReassignmentWithAlterPartitionDisabled
 - testThrottledReassignment
 org.apache.kafka.tools.reassign.ReassignPartitionsUnitTest:
