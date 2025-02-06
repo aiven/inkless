@@ -16,10 +16,12 @@ public abstract class AbstractControlPlane implements ControlPlane {
     }
 
     @Override
-    public synchronized List<CommitBatchResponse> commitFile(final String objectKey,
-                                                             final int uploaderBrokerId,
-                                                             final long fileSize,
-                                                             final List<CommitBatchRequest> batches) {
+    public List<CommitBatchResponse> commitFile(
+        final String objectKey,
+        final int uploaderBrokerId,
+        final long fileSize,
+        final List<CommitBatchRequest> batches
+    ) {
         // Real-life batches cannot be empty, even if they have 0 records
         // Checking this just as an assertion.
         for (final CommitBatchRequest batch : batches) {
@@ -60,9 +62,10 @@ public abstract class AbstractControlPlane implements ControlPlane {
     );
 
     @Override
-    public synchronized List<FindBatchResponse> findBatches(final List<FindBatchRequest> findBatchRequests,
-                                                            final boolean minOneMessage,
-                                                            final int fetchMaxBytes) {
+    public List<FindBatchResponse> findBatches(
+        final List<FindBatchRequest> findBatchRequests,
+        final int fetchMaxBytes
+    ) {
         final SplitMapper<FindBatchRequest, FindBatchResponse> splitMapper = new SplitMapper<>(
             findBatchRequests, findBatchRequest -> true
         );
@@ -73,15 +76,15 @@ public abstract class AbstractControlPlane implements ControlPlane {
         );
 
         // Process those partitions that are present in the metadata.
-        splitMapper.setTrueOut(findBatchesForExistingPartitions(splitMapper.getTrueIn(), minOneMessage, fetchMaxBytes));
+        splitMapper.setTrueOut(findBatchesForExistingPartitions(splitMapper.getTrueIn(), fetchMaxBytes));
 
         return splitMapper.getOut();
     }
 
     protected abstract Iterator<FindBatchResponse> findBatchesForExistingPartitions(
         final Stream<FindBatchRequest> requests,
-        final boolean minOneMessage,
-        final int fetchMaxBytes);
+        final int fetchMaxBytes
+    );
 
     @Override
     public synchronized List<ListOffsetsResponse> listOffsets(final List<ListOffsetsRequest> listOffsetsRequests) {
@@ -91,7 +94,9 @@ public abstract class AbstractControlPlane implements ControlPlane {
 
         // Right away set answer for partitions not present in the metadata.
         splitMapper.setFalseOut(
-                splitMapper.getFalseIn().map(r -> ListOffsetsResponse.unknownTopicOrPartition(r.topicIdPartition())).iterator()
+                splitMapper.getFalseIn()
+                    .map(r -> ListOffsetsResponse.unknownTopicOrPartition(r.topicIdPartition()))
+                    .iterator()
         );
 
         // Process those partitions that are present in the metadata.

@@ -68,7 +68,7 @@ class FindBatchesJobTest extends SharedPostgreSQLTest {
                 // This will result in the out-of-range error.
                 new FindBatchRequest(new TopicIdPartition(TOPIC_ID_1, 0, TOPIC_1), 10, 1000)
             ),
-            true, 2000,
+            2000,
             duration -> {}, duration -> {});
         final List<FindBatchResponse> result = job.call();
 
