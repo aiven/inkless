@@ -146,6 +146,10 @@ kafka.admin.DeleteTopicTest:
 - testPartitionReassignmentDuringDeleteTopic
 - testRecreateTopicAfterDeletion
 - testResumeDeleteTopicWithRecoveredFollower
+kafka.admin.DescribeAuthorizedOperationsTest:
+- testClusterAuthorizedOperations
+- testConsumerGroupAuthorizedOperations
+- testTopicAuthorizedOperations
 kafka.admin.ListOffsetsIntegrationTest:
 - testListMaxTimestampWithEmptyLog
 - testThreeCompressedRecordsInOneBatch
