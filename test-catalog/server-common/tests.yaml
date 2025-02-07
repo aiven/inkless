@@ -263,8 +263,11 @@ org.apache.kafka.server.share.persister.PersisterStateManagerTest:
 - testDeleteStateRequestWithCoordinatorNodeLookup
 - testDeleteStateRequestWithRetryAndCoordinatorNodeLookup
 - testFindCoordinatorAttemptsExhausted
+- testFindCoordinatorDisconnect
 - testFindCoordinatorFatalError
+- testFindCoordinatorNullResponse
 - testFindCoordinatorSuccess
+- testNetworkErrorHandling
 - testPersisterStateManagerClose
 - testReadStateRequestCoordinatorFoundOnRetry
 - testReadStateRequestCoordinatorFoundSuccessfully
