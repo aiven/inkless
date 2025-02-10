@@ -1817,7 +1817,7 @@ project(':examples') {
   }
 
   checkstyle {
-    configProperties = checkstyleConfigProperties("import-control-core.xml")
+    configProperties = checkstyleConfigProperties("import-control-examples.xml")
   }
 }
 
