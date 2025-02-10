@@ -320,6 +320,8 @@ kafka.api.ConsumerTopicCreationTest:
 kafka.api.ConsumerWithLegacyMessageFormatIntegrationTest:
 - testEarliestOrLatestOffsets
 - testOffsetsForTimes
+kafka.api.CustomQuotaCallbackTest:
+- testCustomQuotaCallback
 kafka.api.DelegationTokenEndToEndAuthorizationTest:
 - testCreateUserWithDelegationToken
 - testNoConsumeWithDescribeAclViaAssign
@@ -3756,6 +3758,8 @@ kafka.server.share.SharePartitionTest:
 - testWriteShareGroupStateWithNullResponse
 - testWriteShareGroupStateWithNullTopicsData
 - testWriteShareGroupStateWithWriteException
+kafka.test.api.CustomQuotaCallbackTest:
+- testCustomQuotaCallbackWithControllerServer
 kafka.test.api.ShareConsumerTest:
 - testAcknowledgementCommitCallbackCallsShareConsumerDisallowed
 - testAcknowledgementCommitCallbackCallsShareConsumerWakeup
