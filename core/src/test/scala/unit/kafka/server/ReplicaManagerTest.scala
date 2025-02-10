@@ -277,7 +277,7 @@ class ReplicaManagerTest {
     val logManager = TestUtils.createLogManager(config.logDirs.map(new File(_)), new LogConfig(new Properties()))
     val metadataCache: MetadataCache = mock(classOf[MetadataCache])
     mockGetAliveBrokerFunctions(metadataCache, Seq(new Node(0, "host0", 0)))
-    when(metadataCache.metadataVersion()).thenReturn(config.interBrokerProtocolVersion)
+    when(metadataCache.metadataVersion()).thenReturn(MetadataVersion.MINIMUM_KRAFT_VERSION)
     val rm = new ReplicaManager(
       metrics = metrics,
       config = config,
@@ -339,7 +339,7 @@ class ReplicaManagerTest {
     val spyLogManager = spy(logManager)
     val metadataCache: MetadataCache = mock(classOf[MetadataCache])
     mockGetAliveBrokerFunctions(metadataCache, Seq(new Node(0, "host0", 0)))
-    when(metadataCache.metadataVersion()).thenReturn(config.interBrokerProtocolVersion)
+    when(metadataCache.metadataVersion()).thenReturn(MetadataVersion.MINIMUM_KRAFT_VERSION)
     val tp0 = new TopicPartition(topic, 0)
     val uuid = Uuid.randomUuid()
     val rm = new ReplicaManager(
@@ -412,7 +412,7 @@ class ReplicaManagerTest {
     val aliveBrokers = Seq(new Node(0, "host0", 0), new Node(1, "host1", 1))
     val metadataCache: MetadataCache = mock(classOf[MetadataCache])
     mockGetAliveBrokerFunctions(metadataCache, aliveBrokers)
-    when(metadataCache.metadataVersion()).thenReturn(config.interBrokerProtocolVersion)
+    when(metadataCache.metadataVersion()).thenReturn(MetadataVersion.MINIMUM_KRAFT_VERSION)
     val rm = new ReplicaManager(
       metrics = metrics,
       config = config,
@@ -2770,7 +2770,7 @@ class ReplicaManagerTest {
       any[TopicPartition], any[ListenerName])).
         thenReturn(Map(leaderBrokerId -> new Node(leaderBrokerId, "host1", 9092, "rack-a"),
           followerBrokerId -> new Node(followerBrokerId, "host2", 9092, "rack-b")).toMap)
-    when(metadataCache.metadataVersion()).thenReturn(config.interBrokerProtocolVersion)
+    when(metadataCache.metadataVersion()).thenReturn(MetadataVersion.MINIMUM_KRAFT_VERSION)
     when(metadataCache.getAliveBrokerEpoch(leaderBrokerId)).thenReturn(Some(brokerEpoch))
     val mockProducePurgatory = new DelayedOperationPurgatory[DelayedProduce](
       "Produce", timer, 0, false)
@@ -2824,9 +2824,9 @@ class ReplicaManagerTest {
               s"fetcherId=$fetcherId] ")
             val fetchSessionHandler = new FetchSessionHandler(logContext, sourceBroker.id)
             val leader = new RemoteLeaderEndPoint(logContext.logPrefix, blockingSend, fetchSessionHandler, rm.config,
-              rm, quotaManager.follower, () => rm.config.interBrokerProtocolVersion, () => 1)
+              rm, quotaManager.follower, () => MetadataVersion.MINIMUM_KRAFT_VERSION, () => 1)
             new ReplicaFetcherThread(s"ReplicaFetcherThread-$fetcherId", leader, rm.config, failedPartitions, rm,
-              quotaManager.follower, logContext.logPrefix, () => rm.config.interBrokerProtocolVersion) {
+              quotaManager.follower, logContext.logPrefix, () => MetadataVersion.MINIMUM_KRAFT_VERSION) {
               override def doWork(): Unit = {
                 // In case the thread starts before the partition is added by AbstractFetcherManager,
                 // add it here (it's a no-op if already added)
@@ -3200,7 +3200,7 @@ class ReplicaManagerTest {
     when(metadataCache.topicIdInfo()).thenReturn((topicIds.asJava, topicNames.asJava))
     when(metadataCache.topicNamesToIds()).thenReturn(topicIds.asJava)
     when(metadataCache.topicIdsToNames()).thenReturn(topicNames.asJava)
-    when(metadataCache.metadataVersion()).thenReturn(config.interBrokerProtocolVersion)
+    when(metadataCache.metadataVersion()).thenReturn(MetadataVersion.MINIMUM_KRAFT_VERSION)
     mockGetAliveBrokerFunctions(metadataCache, aliveBrokers)
     when(metadataCache.getAliveBrokerEpoch(brokerId+1)).thenReturn(Some(brokerEpoch))
     val mockProducePurgatory = new DelayedOperationPurgatory[DelayedProduce](
@@ -3289,7 +3289,7 @@ class ReplicaManagerTest {
                 leader.setReplicaPartitionStateCallback(tp => PartitionState(leaderEpoch = 0))
 
                 val fetcher = new ReplicaFetcherThread(threadName, leader, config, failedPartitions, replicaManager,
-                  quotaManager, "", () => config.interBrokerProtocolVersion)
+                  quotaManager, "", () => MetadataVersion.MINIMUM_KRAFT_VERSION)
 
                 val initialFetchState = InitialFetchState(
                   topicId = Some(Uuid.randomUuid()),
@@ -3536,8 +3536,8 @@ class ReplicaManagerTest {
     val aliveBrokers = Seq(new Node(0, "host0", 0), new Node(1, "host1", 1))
     mockGetAliveBrokerFunctions(metadataCache0, aliveBrokers)
     mockGetAliveBrokerFunctions(metadataCache1, aliveBrokers)
-    when(metadataCache0.metadataVersion()).thenReturn(config0.interBrokerProtocolVersion)
-    when(metadataCache1.metadataVersion()).thenReturn(config1.interBrokerProtocolVersion)
+    when(metadataCache0.metadataVersion()).thenReturn(MetadataVersion.MINIMUM_KRAFT_VERSION)
+    when(metadataCache1.metadataVersion()).thenReturn(MetadataVersion.MINIMUM_KRAFT_VERSION)
 
     // each replica manager is for a broker
     val rm0 = new ReplicaManager(
