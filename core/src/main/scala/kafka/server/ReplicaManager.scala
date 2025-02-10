@@ -21,6 +21,7 @@ import io.aiven.inkless.common.SharedState
 import io.aiven.inkless.consume.{FetchInterceptor, FetchOffsetInterceptor}
 import io.aiven.inkless.delete.{DeleteRecordsInterceptor, FileCleaner}
 import io.aiven.inkless.merge.FileMerger
+import io.aiven.inkless.network.InklessConnectionUpgradeTracker
 import io.aiven.inkless.produce.AppendInterceptor
 import kafka.cluster.{Partition, PartitionListener}
 import kafka.controller.{KafkaController, StateChangeLogger}
@@ -332,6 +333,7 @@ class ReplicaManager(val config: KafkaConfig,
   private val inklessDeleteRecordsInterceptor: Option[DeleteRecordsInterceptor] = inklessSharedState.map(new DeleteRecordsInterceptor(_))
   private val inklessFileCleaner: Option[FileCleaner] = inklessSharedState.map(new FileCleaner(_))
   private val inklessFileMerger: Option[FileMerger] = inklessSharedState.map(new FileMerger(_))
+  private val inklessConnectionUpgradeTracker: Option[InklessConnectionUpgradeTracker] = inklessSharedState.map(_.inklessConnectionUpgradeTracker())
 
   /* epoch of the controller that last changed the leader */
   @volatile private[server] var controllerEpoch: Int = KafkaController.InitialControllerEpoch
@@ -828,13 +830,19 @@ class ReplicaManager(val config: KafkaConfig,
                     recordValidationStatsCallback: Map[TopicPartition, RecordValidationStats] => Unit = _ => (),
                     requestLocal: RequestLocal = RequestLocal.noCaching,
                     actionQueue: ActionQueue = this.defaultActionQueue,
-                    verificationGuards: Map[TopicPartition, VerificationGuard] = Map.empty): Unit = {
+                    verificationGuards: Map[TopicPartition, VerificationGuard] = Map.empty,
+                    connectionIdAndCorrelationId: Option[(String, Int)] = None): Unit = {
     if (!isValidRequiredAcks(requiredAcks)) {
       sendInvalidRequiredAcksResponse(entriesPerPartition, responseCallback)
       return
     }
 
     if (inklessAppendInterceptor.exists(_.intercept(entriesPerPartition.asJava, r => responseCallback(r.asScala)))) {
+      inklessConnectionUpgradeTracker.foreach(tr =>
+        connectionIdAndCorrelationId.foreach { case (connectionId, correlationId) =>
+          tr.upgradeConnection(connectionId, correlationId)
+        }
+      )
       return
     }
 
@@ -890,7 +898,8 @@ class ReplicaManager(val config: KafkaConfig,
                           recordValidationStatsCallback: Map[TopicPartition, RecordValidationStats] => Unit = _ => (),
                           requestLocal: RequestLocal = RequestLocal.noCaching,
                           actionQueue: ActionQueue = this.defaultActionQueue,
-                          transactionSupportedOperation: TransactionSupportedOperation): Unit = {
+                          transactionSupportedOperation: TransactionSupportedOperation,
+                          connectionIdAndCorrelationId: Option[(String, Int)] = None): Unit = {
 
     val transactionalProducerInfo = mutable.HashSet[(Long, Short)]()
     val topicPartitionBatchInfo = mutable.Map[TopicPartition, Int]()
@@ -949,7 +958,8 @@ class ReplicaManager(val config: KafkaConfig,
         recordValidationStatsCallback = recordValidationStatsCallback,
         requestLocal = newRequestLocal,
         actionQueue = actionQueue,
-        verificationGuards = verificationGuards
+        verificationGuards = verificationGuards,
+        connectionIdAndCorrelationId = connectionIdAndCorrelationId,
       )
     }
 

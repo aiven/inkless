@@ -16,6 +16,7 @@ import io.aiven.inkless.cache.ObjectCache;
 import io.aiven.inkless.config.InklessConfig;
 import io.aiven.inkless.control_plane.ControlPlane;
 import io.aiven.inkless.control_plane.MetadataView;
+import io.aiven.inkless.network.InklessConnectionUpgradeTracker;
 import io.aiven.inkless.storage_backend.common.StorageBackend;
 
 public record SharedState(
@@ -29,7 +30,8 @@ public record SharedState(
         KeyAlignmentStrategy keyAlignmentStrategy,
         ObjectCache cache,
         BrokerTopicStats brokerTopicStats,
-        Supplier<LogConfig> defaultTopicConfigs
+        Supplier<LogConfig> defaultTopicConfigs,
+        InklessConnectionUpgradeTracker inklessConnectionUpgradeTracker
 ) implements Closeable {
 
     public static SharedState initialize(
@@ -41,7 +43,8 @@ public record SharedState(
         MetadataView metadata,
         ControlPlane controlPlane,
         BrokerTopicStats brokerTopicStats,
-        Supplier<LogConfig> defaultTopicConfigs
+        Supplier<LogConfig> defaultTopicConfigs,
+        InklessConnectionUpgradeTracker inklessConnectionUpgradeTracker
     ) {
         return new SharedState(
             time,
@@ -54,7 +57,8 @@ public record SharedState(
             new FixedBlockAlignment(config.fetchCacheBlockBytes()),
             new InfinispanCache(time, clusterId, rack),
             brokerTopicStats,
-            defaultTopicConfigs
+            defaultTopicConfigs,
+            inklessConnectionUpgradeTracker
         );
     }
 

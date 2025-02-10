@@ -18,6 +18,7 @@
 package kafka.server
 
 import io.aiven.inkless.common.SharedState
+import io.aiven.inkless.network.InklessConnectionUpgradeTracker
 import kafka.coordinator.group.{CoordinatorLoaderImpl, CoordinatorPartitionWriter, GroupCoordinatorAdapter}
 import kafka.coordinator.transaction.TransactionCoordinator
 import kafka.log.LogManager
@@ -262,6 +263,23 @@ class BrokerServer(
         Some(clientMetricsManager)
       )
 
+      val inklessMetadataView = new InklessMetadataView(metadataCache)
+      val inklessConnectionUpgradeTracker = new InklessConnectionUpgradeTracker(inklessMetadataView)
+      val inklessSharedState = sharedServer.inklessControlPlane.map { controlPlane =>
+        SharedState.initialize(
+          time,
+          clusterId,
+          config.rack.orNull,
+          config.brokerId,
+          config.inklessConfig,
+          inklessMetadataView,
+          controlPlane,
+          brokerTopicStats,
+          () => logManager.currentDefaultConfig,
+          inklessConnectionUpgradeTracker
+        )
+      }
+
       val connectionDisconnectListeners = Seq(clientMetricsManager.connectionDisconnectListener())
       // Create and start the socket server acceptor threads so that the bound port is known.
       // Delay starting processors until the end of the initialization sequence to ensure
@@ -272,7 +290,8 @@ class BrokerServer(
         credentialProvider,
         apiVersionManager,
         sharedServer.socketFactory,
-        connectionDisconnectListeners)
+        connectionDisconnectListeners,
+        Some(inklessConnectionUpgradeTracker))
 
       clientQuotaMetadataManager = new ClientQuotaMetadataManager(quotaManagers, socketServer.connectionQuotas)
 
@@ -334,21 +353,6 @@ class BrokerServer(
        * TODO: move this action queue to handle thread so we can simplify concurrency handling
        */
       val defaultActionQueue = new DelayedActionQueue
-
-      val inklessMetadataView = new InklessMetadataView(metadataCache)
-      val inklessSharedState = sharedServer.inklessControlPlane.map { controlPlane =>
-        SharedState.initialize(
-          time,
-          clusterId,
-          config.rack.orNull,
-          config.brokerId,
-          config.inklessConfig,
-          inklessMetadataView,
-          controlPlane,
-          brokerTopicStats,
-          () => logManager.currentDefaultConfig
-        )
-      }
 
       this._replicaManager = new ReplicaManager(
         config = config,
