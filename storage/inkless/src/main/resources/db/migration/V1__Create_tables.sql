@@ -413,13 +413,22 @@ CREATE FUNCTION mark_file_to_delete_v1(
     arg_file_id BIGINT
 )
 RETURNS VOID LANGUAGE plpgsql VOLATILE AS $$
+DECLARE
+    file RECORD;
 BEGIN
+    -- Lock the files row first
+    SELECT * FROM files
+    WHERE file_id = arg_file_id
+    FOR UPDATE
+    INTO file;
+
     UPDATE files
     SET state = 'deleting'
     WHERE file_id = arg_file_id;
 
     INSERT INTO files_to_delete(file_id, marked_for_deletion_at)
-    VALUES (arg_file_id, now);
+    VALUES (arg_file_id, now)
+    ON CONFLICT (file_id) DO NOTHING;
 END;
 $$
 ;
