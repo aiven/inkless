@@ -3352,12 +3352,10 @@ kafka.server.ReplicationQuotaManagerTest:
 - shouldSupportWildcardThrottledReplicas
 - shouldThrottleOnlyDefinedReplicas
 kafka.server.ReplicationQuotasTest:
-- initializationError
 - shouldBootstrapTwoBrokersWithFollowerThrottle
 - shouldBootstrapTwoBrokersWithLeaderThrottle
 - shouldThrottleOldSegments
 kafka.server.RequestQuotaTest:
-- initializationError
 - testExemptRequestTime
 - testResponseThrottleTime
 - testResponseThrottleTimeWhenBothFetchAndRequestQuotasViolated
