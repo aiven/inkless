@@ -3118,7 +3118,14 @@ class KafkaApis(val requestChannel: RequestChannel,
   def handleReadShareGroupStateRequest(request: RequestChannel.Request): CompletableFuture[Unit] = {
     val readShareGroupStateRequest = request.body[ReadShareGroupStateRequest]
 
-    authHelper.authorizeClusterOperation(request, CLUSTER_ACTION)
+    if (!authorizeClusterOperation(request, CLUSTER_ACTION)) {
+      requestHelper.sendMaybeThrottle(request, new ReadShareGroupStateResponse(
+        ReadShareGroupStateResponse.toGlobalErrorResponse(
+          readShareGroupStateRequest.data(),
+          Errors.CLUSTER_AUTHORIZATION_FAILED
+        )))
+      return CompletableFuture.completedFuture[Unit](())
+    }
 
     shareCoordinator match {
       case None => requestHelper.sendResponseMaybeThrottle(request, requestThrottleMs =>
@@ -3137,19 +3144,26 @@ class KafkaApis(val requestChannel: RequestChannel,
   }
 
   def handleWriteShareGroupStateRequest(request: RequestChannel.Request): CompletableFuture[Unit] = {
-    val writeShareRequest = request.body[WriteShareGroupStateRequest]
+    val writeShareGroupStateRequest = request.body[WriteShareGroupStateRequest]
 
-    authHelper.authorizeClusterOperation(request, CLUSTER_ACTION)
+    if (!authorizeClusterOperation(request, CLUSTER_ACTION)) {
+      requestHelper.sendMaybeThrottle(request, new WriteShareGroupStateResponse(
+        WriteShareGroupStateResponse.toGlobalErrorResponse(
+          writeShareGroupStateRequest.data(),
+          Errors.CLUSTER_AUTHORIZATION_FAILED
+        )))
+      return CompletableFuture.completedFuture[Unit](())
+    }
 
     shareCoordinator match {
       case None => requestHelper.sendResponseMaybeThrottle(request, requestThrottleMs =>
-        writeShareRequest.getErrorResponse(requestThrottleMs,
+        writeShareGroupStateRequest.getErrorResponse(requestThrottleMs,
           new ApiException("Share coordinator is not enabled.")))
         CompletableFuture.completedFuture[Unit](())
-      case Some(coordinator) => coordinator.writeState(request.context, writeShareRequest.data)
+      case Some(coordinator) => coordinator.writeState(request.context, writeShareGroupStateRequest.data)
         .handle[Unit] { (response, exception) =>
           if (exception != null) {
-            requestHelper.sendMaybeThrottle(request, writeShareRequest.getErrorResponse(exception))
+            requestHelper.sendMaybeThrottle(request, writeShareGroupStateRequest.getErrorResponse(exception))
           } else {
             requestHelper.sendMaybeThrottle(request, new WriteShareGroupStateResponse(response))
           }
@@ -3157,14 +3171,23 @@ class KafkaApis(val requestChannel: RequestChannel,
     }
   }
 
-  def handleDeleteShareGroupStateRequest(request: RequestChannel.Request): Unit = {
+  def handleDeleteShareGroupStateRequest(request: RequestChannel.Request): CompletableFuture[Unit] = {
     val deleteShareGroupStateRequest = request.body[DeleteShareGroupStateRequest]
-    authHelper.authorizeClusterOperation(request, CLUSTER_ACTION)
+
+    if (!authorizeClusterOperation(request, CLUSTER_ACTION)) {
+      requestHelper.sendMaybeThrottle(request, new DeleteShareGroupStateResponse(
+        DeleteShareGroupStateResponse.toGlobalErrorResponse(
+          deleteShareGroupStateRequest.data(),
+          Errors.CLUSTER_AUTHORIZATION_FAILED
+        )))
+      return CompletableFuture.completedFuture[Unit](())
+    }
 
     shareCoordinator match {
       case None => requestHelper.sendResponseMaybeThrottle(request, requestThrottleMs =>
         deleteShareGroupStateRequest.getErrorResponse(requestThrottleMs,
           new ApiException("Share coordinator is not enabled.")))
+        CompletableFuture.completedFuture[Unit](())
 
       case Some(coordinator) => coordinator.deleteState(request.context, deleteShareGroupStateRequest.data)
         .handle[Unit] { (response, exception) =>
@@ -3177,9 +3200,17 @@ class KafkaApis(val requestChannel: RequestChannel,
     }
   }
 
-  def handleReadShareGroupStateSummaryRequest(request: RequestChannel.Request): Unit = {
+  def handleReadShareGroupStateSummaryRequest(request: RequestChannel.Request): CompletableFuture[Unit] = {
     val readShareGroupStateSummaryRequest = request.body[ReadShareGroupStateSummaryRequest]
-    authHelper.authorizeClusterOperation(request, CLUSTER_ACTION)
+
+    if (!authorizeClusterOperation(request, CLUSTER_ACTION)) {
+      requestHelper.sendMaybeThrottle(request, new ReadShareGroupStateSummaryResponse(
+        ReadShareGroupStateSummaryResponse.toGlobalErrorResponse(
+          readShareGroupStateSummaryRequest.data(),
+          Errors.CLUSTER_AUTHORIZATION_FAILED
+        )))
+      return CompletableFuture.completedFuture[Unit](())
+    }
 
     shareCoordinator match {
       case None => requestHelper.sendResponseMaybeThrottle(request, requestThrottleMs =>
@@ -3490,6 +3521,10 @@ class KafkaApis(val requestChannel: RequestChannel,
       request.messageConversionsTimeNanos = conversionStats.conversionTimeNanos
     }
     request.temporaryMemoryBytes = conversionStats.temporaryMemoryBytes
+  }
+
+  def authorizeClusterOperation(request: RequestChannel.Request, operation: AclOperation): Boolean = {
+    authHelper.authorize(request.context, operation, CLUSTER, CLUSTER_NAME)
   }
 }
 
