@@ -186,6 +186,10 @@ org.apache.kafka.connect.integration.InternalTopicsIntegrationTest:
 - testFailToCreateInternalTopicsWithMoreReplicasThanBrokers
 - testFailToStartWhenInternalTopicsAreNotCompacted
 - testStartWhenInternalTopicsCreatedManuallyWithCompactForBrokersDefaultCleanupPolicy
+org.apache.kafka.connect.integration.MonitorableSinkIntegrationTest:
+- testMonitorableSinkConnectorAndTask
+org.apache.kafka.connect.integration.MonitorableSourceIntegrationTest:
+- testMonitorableSourceConnectorAndTask
 org.apache.kafka.connect.integration.OffsetsApiIntegrationTest:
 - testAlterOffsetsNonExistentConnector
 - testAlterOffsetsNonStoppedConnector
@@ -262,6 +266,7 @@ org.apache.kafka.connect.runtime.AbstractHerderTest:
 - testBuildRestartPlanForConnectorAndTasks
 - testBuildRestartPlanForNoRestart
 - testBuildRestartPlanForUnknownConnector
+- testClientConfigOverridePolicyWithMetrics
 - testConfigProviderRegex
 - testConfigValidationAllOverride
 - testConfigValidationEmptyConfig
@@ -329,6 +334,7 @@ org.apache.kafka.connect.runtime.AbstractWorkerSourceTaskTest:
 - testTopicCreateWhenTopicExists
 - testTopicDescribeFails
 org.apache.kafka.connect.runtime.ConnectMetricsTest:
+- testConnectorPluginMetrics
 - testDisableJmxReporter
 - testExplicitlyEnableJmxReporter
 - testGettingGroupMultipleTimes
@@ -340,6 +346,11 @@ org.apache.kafka.connect.runtime.ConnectMetricsTest:
 - testMetricReporters
 - testRecreateWithClose
 - testRecreateWithoutClose
+- testTaskPluginMetrics
+- testWrapConverter
+- testWrapHeaderConverter
+- testWrapPredicate
+- testWrapTransformation
 org.apache.kafka.connect.runtime.ConnectorConfigTest:
 - abstractKeyValueTransform
 - abstractPredicate
@@ -1009,6 +1020,7 @@ org.apache.kafka.connect.runtime.rest.ConnectRestServerTest:
 - testDisableAdminEndpoint
 - testIndependentAdminEndpoint
 - testLoggerEndpointWithDefaults
+- testMonitorableConnectRestExtension
 - testOptionsDoesNotIncludeWadlOutput
 - testRequestLogs
 - testStandaloneConfig
