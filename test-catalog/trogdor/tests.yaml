@@ -98,6 +98,7 @@ org.apache.kafka.trogdor.workload.PayloadGeneratorTest:
 - testUniformRandomPayloadGenerator
 - testUniformRandomPayloadGeneratorPaddingBytes
 org.apache.kafka.trogdor.workload.ShareConsumeBenchSpecTest:
+- testDefaultShareGroupName
 - testExpandTopicNames
 - testInvalidNameRaisesException
 org.apache.kafka.trogdor.workload.ThrottleTest:
