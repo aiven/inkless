@@ -357,6 +357,8 @@ org.apache.kafka.storage.internals.log.TransactionIndexTest:
 - testSanityCheck
 - testTruncate
 - testUpdateParentDir
+org.apache.kafka.storage.internals.log.UnifiedLogTest:
+- testOffsetFromProducerSnapshotFile
 org.apache.kafka.storage.internals.log.VerificationGuardTest:
 - testEqualsAndHashCode
 - testVerify

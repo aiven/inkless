@@ -1797,7 +1797,6 @@ kafka.log.UnifiedLogTest:
 - testNextTransactionVerificationGuardNotCleared
 - testNoOpWhenRemoteLogStorageIsDisabled
 - testNonSequentialAppend
-- testOffsetFromProducerSnapshotFile
 - testOffsetSnapshot
 - testOldProducerEpoch
 - testPeriodicProducerIdExpiration
