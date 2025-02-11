@@ -2959,7 +2959,6 @@ kafka.server.KafkaConfigTest:
 - testControllerQuorumVoterStringsToNodes
 - testCustomMetadataLogDir
 - testDefaultCompressionType
-- testDefaultInterBrokerProtocolVersionKRaft
 - testDefaultMetadataLogDir
 - testDistinctControllerAndAdvertisedListenersAllowedForKRaftBroker
 - testDuplicateListeners
