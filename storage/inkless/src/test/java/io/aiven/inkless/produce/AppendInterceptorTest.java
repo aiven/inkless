@@ -224,6 +224,21 @@ public class AppendInterceptorTest {
     }
 
     @Test
+    public void emptyRequests() {
+        final AppendInterceptor interceptor = new AppendInterceptor(
+            new SharedState(time, BROKER_ID, inklessConfig, metadataView, controlPlane, storageBackend,
+                OBJECT_KEY_CREATOR, KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, brokerTopicStats, DEFAULT_TOPIC_CONFIGS), writer);
+
+        final Map<TopicPartition, MemoryRecords> entriesPerPartition = Map.of();
+
+        final boolean result = interceptor.intercept(entriesPerPartition, responseCallback);
+        assertThat(result).isFalse();
+
+        verify(responseCallback, never()).accept(any());
+        verify(writer, never()).write(any(), anyMap());
+    }
+
+    @Test
     public void acceptNonIdempotentNotTransactionalProduceForInklessTopics() {
         final Map<TopicPartition, MemoryRecords> entriesPerPartition = Map.of(
             new TopicPartition("inkless", 0),

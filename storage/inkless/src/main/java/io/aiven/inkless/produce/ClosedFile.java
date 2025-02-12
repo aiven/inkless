@@ -38,9 +38,17 @@ record ClosedFile(Instant start,
         }
 
         Objects.requireNonNull(data, "data cannot be null");
+
+        if (commitBatchRequests.isEmpty() != (data.length == 0)) {
+            throw new IllegalArgumentException("data must be empty if commitBatchRequests is empty");
+        }
     }
 
     int size() {
         return data.length;
+    }
+
+    public boolean isEmpty() {
+        return data.length == 0;
     }
 }

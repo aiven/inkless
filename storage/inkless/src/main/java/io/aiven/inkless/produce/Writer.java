@@ -119,6 +119,10 @@ class Writer implements Closeable {
         Objects.requireNonNull(entriesPerPartition, "entriesPerPartition cannot be null");
         Objects.requireNonNull(timestampTypes, "timestampTypes cannot be null");
 
+        if (entriesPerPartition.isEmpty()) {
+            throw new IllegalArgumentException("entriesPerPartition cannot be empty");
+        }
+
         // TODO add back pressure
 
         lock.lock();
@@ -191,7 +195,13 @@ class Writer implements Closeable {
         this.activeFile = new ActiveFile(time, brokerTopicMetricMarks);
 
         try {
-            this.fileCommitter.commit(prevActiveFile.close());
+            final ClosedFile closedFile = prevActiveFile.close();
+            if (closedFile.isEmpty()) {
+                LOGGER.debug("Active file is empty, skipping rotation");
+                return;
+            }
+
+            this.fileCommitter.commit(closedFile);
             // mark metrics that the file is committed
             if (openedAt != null) {
                 writerMetrics.fileRotated(openedAt);
