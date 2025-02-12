@@ -385,6 +385,10 @@ class SharedServer(
         CoreUtils.swallow(raftManager.shutdown(), this)
         raftManager = null
       }
+
+      // Inkless
+      inklessControlPlane.foreach(Utils.closeQuietly(_, "inkless control plane"))
+
       Utils.closeQuietly(controllerServerMetrics, "controller server metrics")
       controllerServerMetrics = null
       Utils.closeQuietly(brokerMetrics, "broker metrics")
