@@ -2026,9 +2026,11 @@ org.apache.kafka.clients.consumer.internals.ShareConsumeRequestManagerTest:
 - testBatchingAcknowledgeRequestStates
 - testCallbackHandlerConfig
 - testCloseShouldBeIdempotent
+- testCloseWithSubscriptionChange
 - testCommitAsync
 - testCommitAsyncWithSubscriptionChange
 - testCommitSync
+- testCommitSyncWithSubscriptionChange
 - testCorruptMessageError
 - testFetchDisconnected
 - testFetchError
@@ -2038,6 +2040,9 @@ org.apache.kafka.clients.consumer.internals.ShareConsumeRequestManagerTest:
 - testHandleFetchResponseError
 - testHeaders
 - testInvalidDefaultRecordBatch
+- testLeadershipChangeAfterFetchBeforeClose
+- testLeadershipChangeAfterFetchBeforeCommitAsync
+- testLeadershipChangeAfterFetchBeforeCommitSync
 - testMultipleFetches
 - testMultipleTopicsFetch
 - testMultipleTopicsFetchError
