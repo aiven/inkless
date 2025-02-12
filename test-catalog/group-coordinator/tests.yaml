@@ -864,6 +864,35 @@ org.apache.kafka.coordinator.group.streams.StreamsGroupMemberTest:
 - testBuilderWithMemberIdIsNull
 - testBuilderWithMemberIsNull
 - testHasAssignedTasksChanged
+org.apache.kafka.coordinator.group.streams.StreamsGroupTest:
+- testAddTaskProcessIds
+- testAsDescribedGroup
+- testAsListedGroup
+- testComputePartitionMetadata
+- testCreateGroupTombstoneRecords
+- testDeletingMemberRemovesProcessId
+- testGetOrCreateMember
+- testGetStaticMemberByInstanceId
+- testGroupState
+- testIsInStatesCaseInsensitiveAndUnderscored
+- testIsSubscribedToTopic
+- testMetadataRefreshDeadline
+- testNoStaticMember
+- testOffsetExpirationCondition
+- testRemoveMember
+- testRemoveStaticMember
+- testRemoveTaskProcessIds
+- testSetPartitionMetadataUpdatesStateAndConfiguredTopology
+- testSetTopologyUpdatesStateAndConfiguredTopology
+- testStateTransitionMetrics
+- testUpdateMember
+- testUpdatingMemberUpdatesProcessId
+- testUpdatingMemberUpdatesTaskProcessIdWhenPartitionIsNotReleased
+- testUpdatingMemberUpdatesTaskProcessIdWhenPartitionIsReassignedBeforeBeingRevoked
+- testValidateDeleteGroup
+- testValidateOffsetCommit
+- testValidateOffsetFetch
+- testValidateTransactionalOffsetCommit
 org.apache.kafka.coordinator.group.streams.StreamsTopologyTest:
 - fromRecordShouldCreateCorrectTopology
 - requiredTopicsShouldBeCorrect
@@ -893,7 +922,6 @@ org.apache.kafka.coordinator.group.streams.TopicMetadataTest:
 - testConstructorWithEmptyName
 - testConstructorWithNegativeNumPartitions
 - testConstructorWithNullName
-- testConstructorWithNullPartitionRacks
 - testConstructorWithNullUuid
 - testConstructorWithZeroNumPartitions
 - testConstructorWithZeroUuid
