@@ -105,6 +105,7 @@ class ActiveFileTest {
             .ignoringFields("data")
             .isEqualTo(new ClosedFile(start, Map.of(), Map.of(), List.of(), List.of(), new byte[0]));
         assertThat(result.data()).isEmpty();
+        assertThat(result.isEmpty()).isTrue();
     }
 
     @Test
@@ -140,5 +141,6 @@ class ActiveFileTest {
         );
         assertThat(result.requestIds()).containsExactly(0, 0, 1, 1);
         assertThat(result.data()).hasSize(312);
+        assertThat(result.isEmpty()).isFalse();
     }
 }

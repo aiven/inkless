@@ -1,6 +1,7 @@
 // Copyright (c) 2024 Aiven, Helsinki, Finland. https://aiven.io/
 package io.aiven.inkless.produce;
 
+import org.apache.kafka.common.record.TimestampType;
 import org.apache.kafka.common.utils.Time;
 
 import org.junit.jupiter.api.Test;
@@ -28,6 +29,7 @@ import io.aiven.inkless.cache.ObjectCache;
 import io.aiven.inkless.common.ObjectKey;
 import io.aiven.inkless.common.ObjectKeyCreator;
 import io.aiven.inkless.common.PlainObjectKey;
+import io.aiven.inkless.control_plane.CommitBatchRequest;
 import io.aiven.inkless.control_plane.ControlPlane;
 import io.aiven.inkless.storage_backend.common.StorageBackend;
 import io.aiven.inkless.storage_backend.common.StorageBackendException;
@@ -57,7 +59,10 @@ class FileCommitterTest {
             return OBJECT_KEY;
         }
     };
-    static final ClosedFile FILE = new ClosedFile(Instant.EPOCH, Map.of(), Map.of(), List.of(), List.of(), new byte[10]);
+    static final ClosedFile FILE = new ClosedFile(Instant.EPOCH, Map.of(), Map.of(),
+            List.of(CommitBatchRequest.of(null, 0, 0, 0, 0, 0, TimestampType.CREATE_TIME)),
+            List.of(1),
+            new byte[10]);
     static final KeyAlignmentStrategy KEY_ALIGNMENT_STRATEGY = new FixedBlockAlignment(Integer.MAX_VALUE);
     static final ObjectCache OBJECT_CACHE = new NullCache();
 

@@ -91,6 +91,14 @@ public class AppendInterceptor implements Closeable {
             return true;
         }
 
+        if (entriesPerPartition.isEmpty()) {
+            // Empty produce request are expected to be filtered out at the KafkaApis level.
+            // adding for safety.
+            LOGGER.warn("Empty produce request");
+            responseCallback.accept(Map.of());
+            return true;
+        }
+
         final Map<TopicIdPartition, MemoryRecords> entriesPerPartitionEnriched;
         try {
             entriesPerPartitionEnriched = TopicIdEnricher.enrich(state.metadata(), entriesPerPartition);
