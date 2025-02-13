@@ -151,14 +151,14 @@ class WriterIntegrationTest {
             final var result3 = writeFuture3.get(10, TimeUnit.SECONDS);
 
             assertThat(result1).isEqualTo(Map.of(
-                T0P0.topicPartition(), new PartitionResponse(Errors.NONE, 0, ts1, 0),
-                T0P1.topicPartition(), new PartitionResponse(Errors.NONE, 0, ts1, 0),
+                T0P0.topicPartition(), new PartitionResponse(Errors.NONE, 0, -1, 0),
+                T0P1.topicPartition(), new PartitionResponse(Errors.NONE, 0, -1, 0),
                 T1P0.topicPartition(), new PartitionResponse(Errors.NONE, 0, ts1, 0)
             ));
 
             assertThat(result2).isEqualTo(Map.of(
-                T0P0.topicPartition(), new PartitionResponse(Errors.NONE, 101, ts1, 0),
-                T0P1.topicPartition(), new PartitionResponse(Errors.NONE, 102, ts1, 0),
+                T0P0.topicPartition(), new PartitionResponse(Errors.NONE, 101, -1, 0),
+                T0P1.topicPartition(), new PartitionResponse(Errors.NONE, 102, -1, 0),
                 T1P0.topicPartition(), new PartitionResponse(Errors.NONE, 103, ts1, 0)
             ));
 
