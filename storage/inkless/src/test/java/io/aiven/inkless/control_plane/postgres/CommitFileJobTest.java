@@ -12,10 +12,14 @@ import org.jooq.generated.enums.FileStateT;
 import org.jooq.generated.tables.records.BatchesRecord;
 import org.jooq.generated.tables.records.FilesRecord;
 import org.jooq.generated.tables.records.LogsRecord;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.TestInfo;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
+import org.testcontainers.junit.jupiter.Container;
+import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.time.Instant;
 import java.util.List;
@@ -26,11 +30,16 @@ import io.aiven.inkless.control_plane.CommitBatchRequest;
 import io.aiven.inkless.control_plane.CommitBatchResponse;
 import io.aiven.inkless.control_plane.CreateTopicAndPartitionsRequest;
 import io.aiven.inkless.control_plane.FileReason;
-import io.aiven.inkless.test_utils.SharedPostgreSQLTest;
+import io.aiven.inkless.test_utils.InklessPostgreSQLContainer;
+import io.aiven.inkless.test_utils.PostgreSQLTestContainer;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-class CommitFileJobTest extends SharedPostgreSQLTest {
+@Testcontainers
+class CommitFileJobTest {
+    @Container
+    static final InklessPostgreSQLContainer pgContainer = PostgreSQLTestContainer.container();
+    
     static final int BROKER_ID = 11;
     static final long FILE_SIZE = 123456789;
 
@@ -48,13 +57,21 @@ class CommitFileJobTest extends SharedPostgreSQLTest {
     Time time = new MockTime();
 
     @BeforeEach
-    void createTopics() {
+    void setUp(final TestInfo testInfo) {
+        pgContainer.createDatabase(testInfo);
+        pgContainer.migrate();
+
         final Set<CreateTopicAndPartitionsRequest> createTopicAndPartitionsRequests = Set.of(
             new CreateTopicAndPartitionsRequest(TOPIC_ID_0, TOPIC_0, 2),
             new CreateTopicAndPartitionsRequest(TOPIC_ID_1, TOPIC_1, 1)
         );
-        new TopicsAndPartitionsCreateJob(Time.SYSTEM, jooqCtx, createTopicAndPartitionsRequests, duration -> {})
+        new TopicsAndPartitionsCreateJob(Time.SYSTEM, pgContainer.getJooqCtx(), createTopicAndPartitionsRequests, duration -> {})
             .run();
+    }
+
+    @AfterEach
+    void tearDown() {
+        pgContainer.tearDown();
     }
 
     @Test
@@ -63,7 +80,7 @@ class CommitFileJobTest extends SharedPostgreSQLTest {
 
         final CommitBatchRequest request1 = CommitBatchRequest.of(T0P1, 0, 100, 0, 14, 1000, TimestampType.CREATE_TIME);
         final CommitBatchRequest request2 = CommitBatchRequest.of(T1P0, 100, 50, 0, 26, 2000, TimestampType.LOG_APPEND_TIME);
-        final CommitFileJob job = new CommitFileJob(time, jooqCtx, objectKey, BROKER_ID, FILE_SIZE, List.of(
+        final CommitFileJob job = new CommitFileJob(time, pgContainer.getJooqCtx(), objectKey, BROKER_ID, FILE_SIZE, List.of(
             request1,
             request2
         ), duration -> {});
@@ -74,19 +91,19 @@ class CommitFileJobTest extends SharedPostgreSQLTest {
             CommitBatchResponse.success(0, time.milliseconds(), 0, request2)
         );
 
-        assertThat(DBUtils.getAllLogs(hikariDataSource))
+        assertThat(DBUtils.getAllLogs(pgContainer.getDataSource()))
             .containsExactlyInAnyOrder(
                 new LogsRecord(TOPIC_ID_0, 0, TOPIC_0, 0L, 0L),
                 new LogsRecord(TOPIC_ID_0, 1, TOPIC_0, 0L, 15L),
                 new LogsRecord(TOPIC_ID_1, 0, TOPIC_1, 0L, 27L)
             );
 
-        assertThat(DBUtils.getAllFiles(hikariDataSource))
+        assertThat(DBUtils.getAllFiles(pgContainer.getDataSource()))
             .containsExactlyInAnyOrder(
                 new FilesRecord(EXPECTED_FILE_ID_1, "obj1", FileReason.PRODUCE, FileStateT.uploaded, BROKER_ID, TimeUtils.now(time), FILE_SIZE, FILE_SIZE)
             );
 
-        assertThat(DBUtils.getAllBatches(hikariDataSource))
+        assertThat(DBUtils.getAllBatches(pgContainer.getDataSource()))
             .containsExactlyInAnyOrder(
                 new BatchesRecord(1L, TOPIC_ID_0, 1, 0L, 14L, EXPECTED_FILE_ID_1, 0L, 100L, TimestampType.CREATE_TIME, time.milliseconds(), 1000L,
                     RecordBatch.NO_PRODUCER_ID, RecordBatch.NO_PRODUCER_EPOCH, RecordBatch.NO_SEQUENCE, RecordBatch.NO_SEQUENCE),
@@ -104,7 +121,7 @@ class CommitFileJobTest extends SharedPostgreSQLTest {
         final long firstFileCommittedAt = time.milliseconds();
         final CommitBatchRequest request1 = CommitBatchRequest.of(T0P1, 0, 100, 0, 14, 1000, TimestampType.CREATE_TIME);
         final CommitBatchRequest request2 = CommitBatchRequest.of(T1P0, 100, 50, 0, 26, 2000, TimestampType.LOG_APPEND_TIME);
-        final CommitFileJob job1 = new CommitFileJob(time, jooqCtx, objectKey1, BROKER_ID, FILE_SIZE, List.of(
+        final CommitFileJob job1 = new CommitFileJob(time, pgContainer.getJooqCtx(), objectKey1, BROKER_ID, FILE_SIZE, List.of(
             request1,
             request2
         ), duration -> {});
@@ -121,7 +138,7 @@ class CommitFileJobTest extends SharedPostgreSQLTest {
         final long secondFileCommittedAt = time.milliseconds();
         final CommitBatchRequest request3 = CommitBatchRequest.of(T0P0, 0, 111, 0, 158, 3000, TimestampType.CREATE_TIME);
         final CommitBatchRequest request4 = CommitBatchRequest.of(T0P1, 111, 222, 0, 244, 4000, TimestampType.CREATE_TIME);
-        final CommitFileJob job2 = new CommitFileJob(time, jooqCtx, objectKey2, BROKER_ID, FILE_SIZE, List.of(
+        final CommitFileJob job2 = new CommitFileJob(time, pgContainer.getJooqCtx(), objectKey2, BROKER_ID, FILE_SIZE, List.of(
             request3,
             request4
         ), duration -> {});
@@ -132,20 +149,20 @@ class CommitFileJobTest extends SharedPostgreSQLTest {
             CommitBatchResponse.success(15, secondFileCommittedAt, 0, request4)
         );
 
-        assertThat(DBUtils.getAllLogs(hikariDataSource))
+        assertThat(DBUtils.getAllLogs(pgContainer.getDataSource()))
             .containsExactlyInAnyOrder(
                 new LogsRecord(TOPIC_ID_0, 0, TOPIC_0, 0L, 159L),
                 new LogsRecord(TOPIC_ID_0, 1, TOPIC_0, 0L, 15L + 245),
                 new LogsRecord(TOPIC_ID_1, 0, TOPIC_1, 0L, 27L)
             );
 
-        assertThat(DBUtils.getAllFiles(hikariDataSource))
+        assertThat(DBUtils.getAllFiles(pgContainer.getDataSource()))
             .containsExactlyInAnyOrder(
                 new FilesRecord(EXPECTED_FILE_ID_1, "obj1", FileReason.PRODUCE, FileStateT.uploaded, BROKER_ID, time1, FILE_SIZE, FILE_SIZE),
                 new FilesRecord(EXPECTED_FILE_ID_2, "obj2", FileReason.PRODUCE, FileStateT.uploaded, BROKER_ID, time2, FILE_SIZE, FILE_SIZE)
             );
 
-        assertThat(DBUtils.getAllBatches(hikariDataSource))
+        assertThat(DBUtils.getAllBatches(pgContainer.getDataSource()))
             .containsExactlyInAnyOrder(
                 // first pair
                 new BatchesRecord(1L, TOPIC_ID_0, 1, 0L, 14L, EXPECTED_FILE_ID_1, 0L, 100L, TimestampType.CREATE_TIME, firstFileCommittedAt, 1000L,
@@ -168,7 +185,7 @@ class CommitFileJobTest extends SharedPostgreSQLTest {
         final var t1p1 = new TopicIdPartition(TOPIC_ID_1, 10, TOPIC_1);
         final CommitBatchRequest request1 = CommitBatchRequest.of(T0P1, 0, 100, 0, 14, 1000, TimestampType.CREATE_TIME);
         final CommitBatchRequest request2 = CommitBatchRequest.of(T1P0, 100, 50, 0, 26, 2000, TimestampType.LOG_APPEND_TIME);
-        final CommitFileJob job = new CommitFileJob(time, jooqCtx, objectKey, BROKER_ID, FILE_SIZE, List.of(
+        final CommitFileJob job = new CommitFileJob(time, pgContainer.getJooqCtx(), objectKey, BROKER_ID, FILE_SIZE, List.of(
             request1,
             request2,
             CommitBatchRequest.of(t1p1, 150, 1243, 82, 100, 3000, TimestampType.LOG_APPEND_TIME)
@@ -182,19 +199,19 @@ class CommitFileJobTest extends SharedPostgreSQLTest {
             CommitBatchResponse.unknownTopicOrPartition()
         );
 
-        assertThat(DBUtils.getAllLogs(hikariDataSource))
+        assertThat(DBUtils.getAllLogs(pgContainer.getDataSource()))
             .containsExactlyInAnyOrder(
                 new LogsRecord(TOPIC_ID_0, 0, TOPIC_0, 0L, 0L),
                 new LogsRecord(TOPIC_ID_0, 1, TOPIC_0, 0L, 15L),
                 new LogsRecord(TOPIC_ID_1, 0, TOPIC_1, 0L, 27L)
             );
 
-        assertThat(DBUtils.getAllFiles(hikariDataSource))
+        assertThat(DBUtils.getAllFiles(pgContainer.getDataSource()))
             .containsExactlyInAnyOrder(
                 new FilesRecord(EXPECTED_FILE_ID_1, "obj1", FileReason.PRODUCE, FileStateT.uploaded, BROKER_ID, TimeUtils.now(time), FILE_SIZE, FILE_SIZE)
             );
 
-        assertThat(DBUtils.getAllBatches(hikariDataSource))
+        assertThat(DBUtils.getAllBatches(pgContainer.getDataSource()))
             .containsExactlyInAnyOrder(
                 new BatchesRecord(1L, TOPIC_ID_0, 1, 0L, 14L, EXPECTED_FILE_ID_1, 0L, 100L, TimestampType.CREATE_TIME, time.milliseconds(), 1000L,
                     RecordBatch.NO_PRODUCER_ID, RecordBatch.NO_PRODUCER_EPOCH, RecordBatch.NO_SEQUENCE, RecordBatch.NO_SEQUENCE),
@@ -209,7 +226,7 @@ class CommitFileJobTest extends SharedPostgreSQLTest {
 
         final CommitBatchRequest request1 = CommitBatchRequest.idempotent(T0P1, 0, 100, 0, 14, 1000, TimestampType.CREATE_TIME, 1L, (short) 3, 0, 14);
         final CommitBatchRequest request2 = CommitBatchRequest.idempotent(T1P0, 100, 50, 0, 26, 2000, TimestampType.LOG_APPEND_TIME, 1L, (short) 3, 0, 26);
-        final CommitFileJob job = new CommitFileJob(time, jooqCtx, objectKey, BROKER_ID, FILE_SIZE, List.of(request1, request2), duration -> {
+        final CommitFileJob job = new CommitFileJob(time, pgContainer.getJooqCtx(), objectKey, BROKER_ID, FILE_SIZE, List.of(request1, request2), duration -> {
         });
         final List<CommitBatchResponse> result = job.call();
 
@@ -218,19 +235,19 @@ class CommitFileJobTest extends SharedPostgreSQLTest {
             CommitBatchResponse.success(0, time.milliseconds(), 0, request2)
         );
 
-        assertThat(DBUtils.getAllLogs(hikariDataSource))
+        assertThat(DBUtils.getAllLogs(pgContainer.getDataSource()))
             .containsExactlyInAnyOrder(
                 new LogsRecord(TOPIC_ID_0, 0, TOPIC_0, 0L, 0L),
                 new LogsRecord(TOPIC_ID_0, 1, TOPIC_0, 0L, 15L),
                 new LogsRecord(TOPIC_ID_1, 0, TOPIC_1, 0L, 27L)
             );
 
-        assertThat(DBUtils.getAllFiles(hikariDataSource))
+        assertThat(DBUtils.getAllFiles(pgContainer.getDataSource()))
             .containsExactlyInAnyOrder(
                 new FilesRecord(EXPECTED_FILE_ID_1, "obj1", FileReason.PRODUCE, FileStateT.uploaded, BROKER_ID, TimeUtils.now(time), FILE_SIZE, FILE_SIZE)
             );
 
-        assertThat(DBUtils.getAllBatches(hikariDataSource))
+        assertThat(DBUtils.getAllBatches(pgContainer.getDataSource()))
             .containsExactlyInAnyOrder(
                 new BatchesRecord(1L, TOPIC_ID_0, 1, 0L, 14L, EXPECTED_FILE_ID_1, 0L, 100L, TimestampType.CREATE_TIME, time.milliseconds(), 1000L,
                     1L, (short) 3, 0, 14),
@@ -245,7 +262,7 @@ class CommitFileJobTest extends SharedPostgreSQLTest {
 
         final CommitBatchRequest request1 = CommitBatchRequest.idempotent(T0P1, 0, 100, 0, 14, 1000, TimestampType.CREATE_TIME, 1L, (short) 3, 0, 14);
         final CommitBatchRequest request2 = CommitBatchRequest.idempotent(T0P1, 100, 50, 15, 26, 2000, TimestampType.LOG_APPEND_TIME, 1L, (short) 3, 15, 26);
-        final CommitFileJob job = new CommitFileJob(time, jooqCtx, objectKey, BROKER_ID, FILE_SIZE, List.of(request1, request2), duration -> {
+        final CommitFileJob job = new CommitFileJob(time, pgContainer.getJooqCtx(), objectKey, BROKER_ID, FILE_SIZE, List.of(request1, request2), duration -> {
         });
         final List<CommitBatchResponse> result = job.call();
 
@@ -254,19 +271,19 @@ class CommitFileJobTest extends SharedPostgreSQLTest {
             CommitBatchResponse.success(15, time.milliseconds(), 0, request2)
         );
 
-        assertThat(DBUtils.getAllLogs(hikariDataSource))
+        assertThat(DBUtils.getAllLogs(pgContainer.getDataSource()))
             .containsExactlyInAnyOrder(
                 new LogsRecord(TOPIC_ID_0, 0, TOPIC_0, 0L, 0L),
                 new LogsRecord(TOPIC_ID_0, 1, TOPIC_0, 0L, 27L),
                 new LogsRecord(TOPIC_ID_1, 0, TOPIC_1, 0L, 0L)
             );
 
-        assertThat(DBUtils.getAllFiles(hikariDataSource))
+        assertThat(DBUtils.getAllFiles(pgContainer.getDataSource()))
             .containsExactlyInAnyOrder(
                 new FilesRecord(EXPECTED_FILE_ID_1, "obj1", FileReason.PRODUCE, FileStateT.uploaded, BROKER_ID, TimeUtils.now(time), FILE_SIZE, FILE_SIZE)
             );
 
-        assertThat(DBUtils.getAllBatches(hikariDataSource))
+        assertThat(DBUtils.getAllBatches(pgContainer.getDataSource()))
             .containsExactlyInAnyOrder(
                 new BatchesRecord(1L, TOPIC_ID_0, 1, 0L, 14L, EXPECTED_FILE_ID_1, 0L, 100L, TimestampType.CREATE_TIME, time.milliseconds(), 1000L,
                     1L, (short) 3, 0, 14),
@@ -288,7 +305,7 @@ class CommitFileJobTest extends SharedPostgreSQLTest {
 
         final CommitBatchRequest request1 = CommitBatchRequest.idempotent(T0P1, 0, 100, 0, 14, 1000, TimestampType.CREATE_TIME, 1L, (short) 3, 0, lastBatchSequence);
         final CommitBatchRequest request2 = CommitBatchRequest.idempotent(T0P1, 100, 50, 0, 26, 2000, TimestampType.LOG_APPEND_TIME, 1L, (short) 3, firstBatchSequence, 26);
-        final CommitFileJob job = new CommitFileJob(time, jooqCtx, objectKey, BROKER_ID, FILE_SIZE, List.of(request1, request2), duration -> {
+        final CommitFileJob job = new CommitFileJob(time, pgContainer.getJooqCtx(), objectKey, BROKER_ID, FILE_SIZE, List.of(request1, request2), duration -> {
         });
         final List<CommitBatchResponse> result = job.call();
 
@@ -297,19 +314,19 @@ class CommitFileJobTest extends SharedPostgreSQLTest {
             CommitBatchResponse.sequenceOutOfOrder(request2)
         );
 
-        assertThat(DBUtils.getAllLogs(hikariDataSource))
+        assertThat(DBUtils.getAllLogs(pgContainer.getDataSource()))
             .containsExactlyInAnyOrder(
                 new LogsRecord(TOPIC_ID_0, 0, TOPIC_0, 0L, 0L),
                 new LogsRecord(TOPIC_ID_0, 1, TOPIC_0, 0L, 15L),
                 new LogsRecord(TOPIC_ID_1, 0, TOPIC_1, 0L, 0L)
             );
 
-        assertThat(DBUtils.getAllFiles(hikariDataSource))
+        assertThat(DBUtils.getAllFiles(pgContainer.getDataSource()))
             .containsExactlyInAnyOrder(
                 new FilesRecord(EXPECTED_FILE_ID_1, "obj1", FileReason.PRODUCE, FileStateT.uploaded, BROKER_ID, TimeUtils.now(time), FILE_SIZE, FILE_SIZE)
             );
 
-        assertThat(DBUtils.getAllBatches(hikariDataSource))
+        assertThat(DBUtils.getAllBatches(pgContainer.getDataSource()))
             .containsExactlyInAnyOrder(
                 new BatchesRecord(1L, TOPIC_ID_0, 1, 0L, 14L, EXPECTED_FILE_ID_1, 0L, 100L, TimestampType.CREATE_TIME, time.milliseconds(), 1000L,
                     1L, (short) 3, 0, lastBatchSequence)
@@ -321,7 +338,7 @@ class CommitFileJobTest extends SharedPostgreSQLTest {
         final String objectKey = "obj1";
 
         final CommitBatchRequest request1 = CommitBatchRequest.idempotent(T0P1, 0, 100, 0, 14, 1000, TimestampType.CREATE_TIME, 1L, (short) 2, 1, 15);
-        final CommitFileJob job = new CommitFileJob(time, jooqCtx, objectKey, BROKER_ID, FILE_SIZE, List.of(request1), duration -> {
+        final CommitFileJob job = new CommitFileJob(time, pgContainer.getJooqCtx(), objectKey, BROKER_ID, FILE_SIZE, List.of(request1), duration -> {
         });
         final List<CommitBatchResponse> result = job.call();
 
@@ -329,18 +346,18 @@ class CommitFileJobTest extends SharedPostgreSQLTest {
             CommitBatchResponse.sequenceOutOfOrder(request1)
         );
 
-        assertThat(DBUtils.getAllLogs(hikariDataSource))
+        assertThat(DBUtils.getAllLogs(pgContainer.getDataSource()))
             .containsExactlyInAnyOrder(
                 new LogsRecord(TOPIC_ID_0, 0, TOPIC_0, 0L, 0L),
                 new LogsRecord(TOPIC_ID_0, 1, TOPIC_0, 0L, 0L),
                 new LogsRecord(TOPIC_ID_1, 0, TOPIC_1, 0L, 0L)
             );
 
-        assertThat(DBUtils.getAllFiles(hikariDataSource))
+        assertThat(DBUtils.getAllFiles(pgContainer.getDataSource()))
             .containsExactlyInAnyOrder(
                 new FilesRecord(EXPECTED_FILE_ID_1, "obj1", FileReason.PRODUCE, FileStateT.uploaded, BROKER_ID, TimeUtils.now(time), FILE_SIZE, FILE_SIZE)
             );
-        assertThat(DBUtils.getAllBatches(hikariDataSource)).isEmpty();
+        assertThat(DBUtils.getAllBatches(pgContainer.getDataSource())).isEmpty();
     }
 
     @Test
@@ -349,7 +366,7 @@ class CommitFileJobTest extends SharedPostgreSQLTest {
 
         final CommitBatchRequest request1 = CommitBatchRequest.idempotent(T0P1, 0, 100, 0, 14, 1000, TimestampType.CREATE_TIME, 1L, (short) 3, 0, 14);
         final CommitBatchRequest request2 = CommitBatchRequest.idempotent(T0P1, 100, 50, 0, 26, 2000, TimestampType.LOG_APPEND_TIME, 1L, (short) 2, 15, 26);
-        final CommitFileJob job = new CommitFileJob(time, jooqCtx, objectKey, BROKER_ID, FILE_SIZE, List.of(request1, request2), duration -> {
+        final CommitFileJob job = new CommitFileJob(time, pgContainer.getJooqCtx(), objectKey, BROKER_ID, FILE_SIZE, List.of(request1, request2), duration -> {
         });
         final List<CommitBatchResponse> result = job.call();
 
@@ -358,19 +375,19 @@ class CommitFileJobTest extends SharedPostgreSQLTest {
             CommitBatchResponse.invalidProducerEpoch()
         );
 
-        assertThat(DBUtils.getAllLogs(hikariDataSource))
+        assertThat(DBUtils.getAllLogs(pgContainer.getDataSource()))
             .containsExactlyInAnyOrder(
                 new LogsRecord(TOPIC_ID_0, 0, TOPIC_0, 0L, 0L),
                 new LogsRecord(TOPIC_ID_0, 1, TOPIC_0, 0L, 15L),
                 new LogsRecord(TOPIC_ID_1, 0, TOPIC_1, 0L, 0L)
             );
 
-        assertThat(DBUtils.getAllFiles(hikariDataSource))
+        assertThat(DBUtils.getAllFiles(pgContainer.getDataSource()))
             .containsExactlyInAnyOrder(
                 new FilesRecord(EXPECTED_FILE_ID_1, "obj1", FileReason.PRODUCE, FileStateT.uploaded, BROKER_ID, TimeUtils.now(time), FILE_SIZE, FILE_SIZE)
             );
 
-        assertThat(DBUtils.getAllBatches(hikariDataSource))
+        assertThat(DBUtils.getAllBatches(pgContainer.getDataSource()))
             .containsExactlyInAnyOrder(
                 new BatchesRecord(1L, TOPIC_ID_0, 1, 0L, 14L, EXPECTED_FILE_ID_1, 0L, 100L, TimestampType.CREATE_TIME, time.milliseconds(), 1000L,
                     1L, (short) 3, 0, 14)

@@ -28,10 +28,6 @@ import org.junit.jupiter.api.Tag;
 import org.mockito.invocation.Invocation;
 import org.testcontainers.junit.jupiter.Container;
 
-import java.sql.Connection;
-import java.sql.DriverManager;
-import java.sql.SQLException;
-import java.sql.Statement;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -62,7 +58,7 @@ import io.aiven.inkless.control_plane.InMemoryControlPlane;
 import io.aiven.inkless.control_plane.postgres.PostgresControlPlane;
 import io.aiven.inkless.storage_backend.common.StorageBackend;
 import io.aiven.inkless.storage_backend.common.StorageBackendException;
-import io.aiven.inkless.test_utils.PostgreSQLContainer;
+import io.aiven.inkless.test_utils.InklessPostgreSQLContainer;
 import io.aiven.inkless.test_utils.PostgreSQLTestContainer;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -75,7 +71,7 @@ import static org.mockito.Mockito.verify;
 @Tag("integration")
 class WriterPropertyTest {
     @Container
-    private static final PostgreSQLContainer pgContainer = PostgreSQLTestContainer.container();
+    private static final InklessPostgreSQLContainer pgContainer = PostgreSQLTestContainer.container();
 
     private static final String TOPIC_0 = "topic0";
     private static final String TOPIC_1 = "topic1";
@@ -138,17 +134,11 @@ class WriterPropertyTest {
             + "_" + TestUtils.randomString(5);
         dbName = dbName.toLowerCase();
 
-        try (final Connection connection = DriverManager.getConnection(
-            pgContainer.getJdbcUrl(), PostgreSQLTestContainer.USERNAME, PostgreSQLTestContainer.PASSWORD);
-             final Statement statement = connection.createStatement()) {
-            statement.execute("CREATE DATABASE \"" + dbName + "\"");
-        } catch (final SQLException e) {
-            throw new RuntimeException(e);
-        }
+        pgContainer.createDatabase(dbName);
 
         try (final ControlPlane controlPlane = new PostgresControlPlane(new MockTime(0, 0, 0))) {
             controlPlane.configure(Map.of(
-                "connection.string", pgContainer.getJdbcUrl(dbName),
+                "connection.string", pgContainer.getUserJdbcUrl(),
                 "username", pgContainer.getUsername(),
                 "password", pgContainer.getPassword()
             ));
