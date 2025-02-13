@@ -620,31 +620,36 @@ class WriterPropertyTest {
 
     private Arbitrary<Map<TopicIdPartition, MemoryRecords>> requests() {
         final Arbitrary<MemoryRecords> memoryRecordsArbitrary = memoryRecords();
-        return Arbitraries.subsetOf(ALL_TPS).map(tps -> {
-            final Map<TopicIdPartition, MemoryRecords> result = new HashMap<>();
-            for (final TopicIdPartition tp : tps) {
-                result.put(tp, memoryRecordsArbitrary.sample());
-            }
-            return result;
-        });
+        return Arbitraries.subsetOf(ALL_TPS)
+            // Empty requests are not allowed at the writer level. They are filtered out at the KafkaApis level.
+            .ofMinSize(1)
+            .map(tps -> {
+                final Map<TopicIdPartition, MemoryRecords> result = new HashMap<>();
+                for (final TopicIdPartition tp : tps) {
+                    result.put(tp, memoryRecordsArbitrary.sample());
+                }
+                return result;
+            });
     }
 
     private Arbitrary<MemoryRecords> memoryRecords() {
         final Arbitrary<byte[]> keyOrValueArbitrary = recordKeyOrValue();
 
-        return Arbitraries.integers().between(1, 100).map(recordCount -> {
-            final SimpleRecord[] records = new SimpleRecord[recordCount];
-            for (int i = 0; i < recordCount; i++) {
-                records[i] = new SimpleRecord(0, keyOrValueArbitrary.sample(), keyOrValueArbitrary.sample());
-            }
-            return MemoryRecords.withRecords(Compression.NONE, records);
-        });
+        return Arbitraries.integers()
+            .between(1, 100)
+            .map(recordCount -> {
+                final SimpleRecord[] records = new SimpleRecord[recordCount];
+                for (int i = 0; i < recordCount; i++) {
+                    records[i] = new SimpleRecord(0, keyOrValueArbitrary.sample(), keyOrValueArbitrary.sample());
+                }
+                return MemoryRecords.withRecords(Compression.NONE, records);
+            });
     }
 
     private Arbitrary<byte[]> recordKeyOrValue() {
         return Arbitraries.bytes()
             .array(byte[].class)
-            .ofMinSize(0)
+            .ofMinSize(1)
             .ofMaxSize(100);
     }
 }

@@ -334,4 +334,13 @@ class WriterMockedTest {
             .isInstanceOf(NullPointerException.class)
             .hasMessage("timestampTypes cannot be null");
     }
+
+    @Test
+    void writeEmptyRequests() {
+        final Writer writer = new Writer(time, Duration.ofMillis(1), 8 * 1024, commitTickScheduler, fileCommitter, writerMetrics, brokerTopicMetricMarks);
+
+        assertThatThrownBy(() -> writer.write(Map.of(), TIMESTAMP_TYPES))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessage("entriesPerPartition cannot be empty");
+    }
 }
