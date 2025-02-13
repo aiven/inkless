@@ -57,7 +57,8 @@ class PlaintextProducerSendTest extends BaseProducerSendTest {
       lingerMs = Int.MaxValue,
       deliveryTimeoutMs = Int.MaxValue,
       batchSize = 0)
-    sendAndVerify(producer)
+    // default timeout is not enough for the 100 requests
+    sendAndVerify(producer, timeoutMs = 60_000)
   }
 
   @Timeout(value = 15, unit = TimeUnit.SECONDS, threadMode = Timeout.ThreadMode.SEPARATE_THREAD)
