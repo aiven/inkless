@@ -94,10 +94,10 @@ class FileCommitJobTest {
         );
 
         final List<CommitBatchResponse> commitBatchResponses = List.of(
-            CommitBatchResponse.of(Errors.NONE, 0, 10, 0),
+            CommitBatchResponse.success(0, 10, 0, COMMIT_BATCH_REQUESTS.get(0)),
             CommitBatchResponse.of(Errors.INVALID_TOPIC_EXCEPTION, -1, -1, -1),  // some arbitrary uploadError
-            CommitBatchResponse.of(Errors.NONE, 20, 10, 0),
-            CommitBatchResponse.of(Errors.NONE, 30, 10, 0)
+            CommitBatchResponse.success(20, 10, 0, COMMIT_BATCH_REQUESTS.get(2)),
+            CommitBatchResponse.success(30, 10, 0, COMMIT_BATCH_REQUESTS.get(3))
         );
 
         when(controlPlane.commitFile(eq(OBJECT_KEY_MAIN_PART), eq(BROKER_ID), eq(FILE_SIZE), eq(COMMIT_BATCH_REQUESTS)))
@@ -111,11 +111,11 @@ class FileCommitJobTest {
         job.run();
 
         assertThat(awaitingFuturesByRequest.get(0)).isCompletedWithValue(Map.of(
-            T0P0.topicPartition(), new PartitionResponse(Errors.NONE, 0, 10, 0),
+            T0P0.topicPartition(), new PartitionResponse(Errors.NONE, 0, -1, 0),
             T0P1.topicPartition(), new PartitionResponse(Errors.INVALID_TOPIC_EXCEPTION, -1, -1, -1)
         ));
         assertThat(awaitingFuturesByRequest.get(1)).isCompletedWithValue(Map.of(
-            T0P1.topicPartition(), new PartitionResponse(Errors.NONE, 20, 10, 0),
+            T0P1.topicPartition(), new PartitionResponse(Errors.NONE, 20, -1, 0),
             T1P0.topicPartition(), new PartitionResponse(Errors.NONE, 30, 10, 0)
         ));
         verify(commitTimeDurationCallback).accept(eq(10L));

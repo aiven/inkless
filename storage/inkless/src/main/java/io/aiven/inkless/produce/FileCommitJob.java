@@ -3,6 +3,8 @@ package io.aiven.inkless.produce;
 
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.protocol.Errors;
+import org.apache.kafka.common.record.RecordBatch;
+import org.apache.kafka.common.record.TimestampType;
 import org.apache.kafka.common.requests.ProduceResponse;
 import org.apache.kafka.common.utils.Time;
 
@@ -18,6 +20,7 @@ import java.util.stream.Collectors;
 
 import io.aiven.inkless.TimeUtils;
 import io.aiven.inkless.common.ObjectKey;
+import io.aiven.inkless.control_plane.CommitBatchResponse;
 import io.aiven.inkless.control_plane.ControlPlane;
 import io.aiven.inkless.storage_backend.common.ObjectDeleter;
 import io.aiven.inkless.storage_backend.common.StorageBackendException;
@@ -109,14 +112,10 @@ class FileCommitJob implements Runnable {
 
             final var commitBatchRequest = file.commitBatchRequests().get(i);
             final var commitBatchResponse = commitBatchResponses.get(i);
+
             result.put(
                 commitBatchRequest.topicIdPartition().topicPartition(),
-                new ProduceResponse.PartitionResponse(
-                    commitBatchResponse.errors(),
-                    commitBatchResponse.assignedBaseOffset(),
-                    commitBatchResponse.logAppendTime(),
-                    commitBatchResponse.logStartOffset()
-                )
+                partitionResponse(commitBatchResponse)
             );
         }
 
@@ -124,6 +123,24 @@ class FileCommitJob implements Runnable {
             final var result = resultsPerRequest.get(entry.getKey());
             entry.getValue().complete(result);
         }
+    }
+
+    private static ProduceResponse.PartitionResponse partitionResponse(CommitBatchResponse response) {
+        // Producer expects logAppendTime to be NO_TIMESTAMP if the message timestamp type is CREATE_TIME.
+        final long logAppendTime;
+        if (response.request() != null) {
+            logAppendTime = response.request().messageTimestampType() == TimestampType.LOG_APPEND_TIME
+                ? response.logAppendTime()
+                : RecordBatch.NO_TIMESTAMP;
+        } else {
+            logAppendTime = RecordBatch.NO_TIMESTAMP;
+        }
+        return new ProduceResponse.PartitionResponse(
+            response.errors(),
+            response.assignedBaseOffset(),
+            logAppendTime,
+            response.logStartOffset()
+        );
     }
 
     private void finishCommitWithError() {
