@@ -354,6 +354,8 @@ org.apache.kafka.clients.admin.KafkaAdminClientTest:
 - testListOffsetsWithMultiplePartitionsLeaderChange
 - testListPartitionReassignments
 - testListShareGroupOffsets
+- testListShareGroupOffsetsEmpty
+- testListShareGroupOffsetsMultipleGroups
 - testListShareGroupOffsetsOptionsWithBatchedApi
 - testListShareGroupOffsetsWithErrorInOnePartition
 - testListShareGroups
@@ -1733,6 +1735,14 @@ org.apache.kafka.clients.consumer.internals.FetchRequestManagerTest:
 - testFetchOnPausedPartition
 - testFetchPositionAfterException
 - testFetchRequestInternalError
+- testFetchRequestWithBufferedPartitionMissingLeader
+- testFetchRequestWithBufferedPartitionMissingPosition
+- testFetchRequestWithBufferedPartitionNotAssigned
+- testFetchRequestWithBufferedPartitionPaused
+- testFetchRequestWithBufferedPartitionPendingAssignment
+- testFetchRequestWithBufferedPartitionPendingRevocation
+- testFetchRequestWithBufferedPartitionResetOffset
+- testFetchRequestWithBufferedPartitions
 - testFetchResponseMetrics
 - testFetchResponseMetricsWithOnePartitionAtTheWrongOffset
 - testFetchResponseMetricsWithOnePartitionError

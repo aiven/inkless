@@ -2770,6 +2770,8 @@ kafka.server.KafkaApisTest:
 - testDescribeConfigsWithAuthorizer
 - testDescribeProducers
 - testDescribeQuorumForwardedForKRaftClusters
+- testDescribeShareGroupOffsetsRequestEmptyGroupsSuccess
+- testDescribeShareGroupOffsetsRequestEmptyTopicsSuccess
 - testDescribeShareGroupOffsetsRequestSuccess
 - testDescribeShareGroupOffsetsRequestsAuthorizationFailed
 - testDescribeShareGroupOffsetsReturnsUnsupportedVersion
@@ -3337,6 +3339,7 @@ kafka.server.ReplicaManagerTest:
 - testReplicaSelector
 - testReplicasAreStoppedWhileInControlledShutdown
 - testSuccessfulBuildRemoteLogAuxStateMetrics
+- testTransactionAddPartitionRetry
 - testTransactionVerificationBlocksOutOfOrderSequence
 - testTransactionVerificationDynamicDisablement
 - testTransactionVerificationFlow
