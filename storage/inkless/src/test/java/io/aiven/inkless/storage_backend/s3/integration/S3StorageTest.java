@@ -6,7 +6,6 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.TestInfo;
-import org.testcontainers.containers.localstack.LocalStackContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
@@ -16,10 +15,8 @@ import io.aiven.inkless.storage_backend.common.StorageBackend;
 import io.aiven.inkless.storage_backend.common.fixtures.BaseStorageTest;
 import io.aiven.inkless.storage_backend.common.fixtures.TestUtils;
 import io.aiven.inkless.storage_backend.s3.S3Storage;
+import io.aiven.inkless.test_utils.MinioContainer;
 import io.aiven.inkless.test_utils.S3TestContainer;
-import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
-import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
-import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.CreateBucketRequest;
 
@@ -27,25 +24,14 @@ import software.amazon.awssdk.services.s3.model.CreateBucketRequest;
 @Tag("integration")
 public class S3StorageTest extends BaseStorageTest {
     @Container
-    private static final LocalStackContainer LOCALSTACK = S3TestContainer.localstack();
+    private static final MinioContainer S3_CONTAINER = S3TestContainer.minio();
 
     private static S3Client s3Client;
     private String bucketName;
 
     @BeforeAll
     static void setUpClass() {
-        s3Client = S3Client.builder()
-            .region(Region.of(LOCALSTACK.getRegion()))
-            .endpointOverride(LOCALSTACK.getEndpointOverride(LocalStackContainer.Service.S3))
-            .credentialsProvider(
-                StaticCredentialsProvider.create(
-                    AwsBasicCredentials.create(
-                        LOCALSTACK.getAccessKey(),
-                        LOCALSTACK.getSecretKey()
-                    )
-                )
-            )
-            .build();
+        s3Client = S3_CONTAINER.getS3Client();
     }
 
     @BeforeEach
@@ -66,10 +52,10 @@ public class S3StorageTest extends BaseStorageTest {
         final S3Storage s3Storage = new S3Storage();
         final Map<String, Object> configs = Map.of(
             "s3.bucket.name", bucketName,
-            "s3.region", LOCALSTACK.getRegion(),
-            "s3.endpoint.url", LOCALSTACK.getEndpointOverride(LocalStackContainer.Service.S3).toString(),
-            "aws.access.key.id", LOCALSTACK.getAccessKey(),
-            "aws.secret.access.key", LOCALSTACK.getSecretKey(),
+            "s3.region", S3_CONTAINER.getRegion(),
+            "s3.endpoint.url", S3_CONTAINER.getEndpoint(),
+            "aws.access.key.id", S3_CONTAINER.getAccessKey(),
+            "aws.secret.access.key", S3_CONTAINER.getSecretKey(),
             "s3.path.style.access.enabled", true
         );
         s3Storage.configure(configs);
