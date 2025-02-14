@@ -3563,6 +3563,7 @@ kafka.server.share.SharePartitionManagerTest:
 - testNewContextReturnsFinalContextError
 - testNewContextReturnsFinalContextWithRequestData
 - testNewContextReturnsFinalContextWithoutRequestData
+- testPartitionLoadTimeMetricWithMultiplePartitions
 - testPendingInitializationShouldCompleteFetchRequest
 - testReleaseSessionCompletesDelayedShareFetchRequest
 - testReleaseSessionDoesNotCompleteDelayedShareFetchRequest

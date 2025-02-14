@@ -410,6 +410,7 @@ org.apache.kafka.image.DelegationTokenImageTest:
 org.apache.kafka.image.FeaturesImageTest:
 - testApplyDelta1
 - testApplyDelta2
+- testElrEnabled
 - testEmpty
 - testEmptyImageRoundTrip
 - testImage1RoundTrip
@@ -581,8 +582,10 @@ org.apache.kafka.image.writer.ImageReWriterTest:
 - testWrite
 - testWriteAfterClose
 org.apache.kafka.image.writer.ImageWriterOptionsTest:
+- testConstructionWithImage
 - testDefaultLossHandler
 - testHandleLoss
+- testSetEligibleLeaderReplicasEnabled
 - testSetMetadataVersion
 org.apache.kafka.image.writer.RaftSnapshotWriterTest:
 - testCloseWithoutFreeze
