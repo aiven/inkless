@@ -40,6 +40,7 @@ import org.apache.kafka.common.test.TestKitNodes;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.TestInfo;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
@@ -62,9 +63,9 @@ import io.aiven.inkless.control_plane.postgres.PostgresControlPlane;
 import io.aiven.inkless.control_plane.postgres.PostgresControlPlaneConfig;
 import io.aiven.inkless.storage_backend.s3.S3Storage;
 import io.aiven.inkless.storage_backend.s3.S3StorageConfig;
+import io.aiven.inkless.test_utils.InklessPostgreSQLContainer;
 import io.aiven.inkless.test_utils.PostgreSQLTestContainer;
 import io.aiven.inkless.test_utils.S3TestContainer;
-import io.aiven.inkless.test_utils.SharedPostgreSQLTest;
 import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
 import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
 import software.amazon.awssdk.regions.Region;
@@ -75,7 +76,9 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 @Testcontainers
-public class InklessClusterTest extends SharedPostgreSQLTest {
+public class InklessClusterTest {
+    @Container
+    protected static InklessPostgreSQLContainer pgContainer = PostgreSQLTestContainer.container();
 
     private static final Logger log = LoggerFactory.getLogger(InklessClusterTest.class);
 
@@ -84,7 +87,7 @@ public class InklessClusterTest extends SharedPostgreSQLTest {
     private KafkaClusterTestKit cluster;
 
     @BeforeEach
-    public void setup() throws Exception {
+    public void setup(final TestInfo testInfo) throws Exception {
         final String bucketName = "inkless";
         try (S3Client s3Client = S3Client.builder()
             .region(Region.of(LOCALSTACK.getRegion()))
@@ -98,25 +101,29 @@ public class InklessClusterTest extends SharedPostgreSQLTest {
             s3Client.createBucket(CreateBucketRequest.builder().bucket(bucketName).build());
         }
 
-        cluster = new KafkaClusterTestKit.Builder(new TestKitNodes.Builder()
-                .setCombined(true)
-                .setNumBrokerNodes(2)
-                .setNumControllerNodes(1)
-                .build())
-                .setConfigProp(InklessConfig.PREFIX + InklessConfig.CONTROL_PLANE_CLASS_CONFIG, PostgresControlPlane.class.getName())
-                .setConfigProp(InklessConfig.PREFIX + InklessConfig.STORAGE_BACKEND_CLASS_CONFIG, S3Storage.class.getName())
-                .setConfigProp(InklessConfig.PREFIX + InklessConfig.STORAGE_PREFIX + S3StorageConfig.S3_BUCKET_NAME_CONFIG, bucketName)
-                .setConfigProp(InklessConfig.PREFIX + InklessConfig.STORAGE_PREFIX + S3StorageConfig.S3_REGION_CONFIG, LOCALSTACK.getRegion())
-                // Localstack
-                .setConfigProp(InklessConfig.PREFIX + InklessConfig.STORAGE_PREFIX + S3StorageConfig.S3_ENDPOINT_URL_CONFIG, LOCALSTACK.getEndpointOverride(LocalStackContainer.Service.S3).toString())
-                .setConfigProp(InklessConfig.PREFIX + InklessConfig.STORAGE_PREFIX + S3StorageConfig.S3_PATH_STYLE_ENABLED_CONFIG, "true")
-                .setConfigProp(InklessConfig.PREFIX + InklessConfig.STORAGE_PREFIX + S3StorageConfig.AWS_ACCESS_KEY_ID_CONFIG, LOCALSTACK.getAccessKey())
-                .setConfigProp(InklessConfig.PREFIX + InklessConfig.STORAGE_PREFIX + S3StorageConfig.AWS_SECRET_ACCESS_KEY_CONFIG, LOCALSTACK.getSecretKey())
-                .setConfigProp(InklessConfig.PREFIX + InklessConfig.STORAGE_PREFIX + S3StorageConfig.AWS_SECRET_ACCESS_KEY_CONFIG, LOCALSTACK.getSecretKey())
-                .setConfigProp(InklessConfig.PREFIX + InklessConfig.CONTROL_PLANE_PREFIX + PostgresControlPlaneConfig.CONNECTION_STRING_CONFIG, pgContainer.getJdbcUrl(dbName))
-                .setConfigProp(InklessConfig.PREFIX + InklessConfig.CONTROL_PLANE_PREFIX + PostgresControlPlaneConfig.USERNAME_CONFIG, PostgreSQLTestContainer.USERNAME)
-                .setConfigProp(InklessConfig.PREFIX + InklessConfig.CONTROL_PLANE_PREFIX + PostgresControlPlaneConfig.PASSWORD_CONFIG, PostgreSQLTestContainer.PASSWORD)
-                .build();
+        pgContainer.createDatabase(testInfo);
+
+        final TestKitNodes nodes = new TestKitNodes.Builder()
+            .setCombined(true)
+            .setNumBrokerNodes(2)
+            .setNumControllerNodes(1)
+            .build();
+        cluster = new KafkaClusterTestKit.Builder(nodes)
+            // PG control plane config
+            .setConfigProp(InklessConfig.PREFIX + InklessConfig.CONTROL_PLANE_CLASS_CONFIG, PostgresControlPlane.class.getName())
+            .setConfigProp(InklessConfig.PREFIX + InklessConfig.CONTROL_PLANE_PREFIX + PostgresControlPlaneConfig.CONNECTION_STRING_CONFIG, pgContainer.getJdbcUrl())
+            .setConfigProp(InklessConfig.PREFIX + InklessConfig.CONTROL_PLANE_PREFIX + PostgresControlPlaneConfig.USERNAME_CONFIG, PostgreSQLTestContainer.USERNAME)
+            .setConfigProp(InklessConfig.PREFIX + InklessConfig.CONTROL_PLANE_PREFIX + PostgresControlPlaneConfig.PASSWORD_CONFIG, PostgreSQLTestContainer.PASSWORD)
+            // S3 storage config
+            .setConfigProp(InklessConfig.PREFIX + InklessConfig.STORAGE_BACKEND_CLASS_CONFIG, S3Storage.class.getName())
+            .setConfigProp(InklessConfig.PREFIX + InklessConfig.STORAGE_PREFIX + S3StorageConfig.S3_BUCKET_NAME_CONFIG, bucketName)
+            .setConfigProp(InklessConfig.PREFIX + InklessConfig.STORAGE_PREFIX + S3StorageConfig.S3_REGION_CONFIG, LOCALSTACK.getRegion())
+            .setConfigProp(InklessConfig.PREFIX + InklessConfig.STORAGE_PREFIX + S3StorageConfig.S3_ENDPOINT_URL_CONFIG, LOCALSTACK.getEndpointOverride(LocalStackContainer.Service.S3).toString())
+            .setConfigProp(InklessConfig.PREFIX + InklessConfig.STORAGE_PREFIX + S3StorageConfig.S3_PATH_STYLE_ENABLED_CONFIG, "true")
+            .setConfigProp(InklessConfig.PREFIX + InklessConfig.STORAGE_PREFIX + S3StorageConfig.AWS_ACCESS_KEY_ID_CONFIG, LOCALSTACK.getAccessKey())
+            .setConfigProp(InklessConfig.PREFIX + InklessConfig.STORAGE_PREFIX + S3StorageConfig.AWS_SECRET_ACCESS_KEY_CONFIG, LOCALSTACK.getSecretKey())
+            .setConfigProp(InklessConfig.PREFIX + InklessConfig.STORAGE_PREFIX + S3StorageConfig.AWS_SECRET_ACCESS_KEY_CONFIG, LOCALSTACK.getSecretKey())
+            .build();
         cluster.format();
         cluster.startup();
         cluster.waitForReadyBrokers();
