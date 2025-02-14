@@ -186,6 +186,8 @@ abstract class QuorumTestHarness extends Logging {
 
   val faultHandler = faultHandlerFactory.faultHandler
 
+  def baseProps(): Properties = new Properties()
+
   // Note: according to the junit documentation: "JUnit Jupiter does not guarantee the execution
   // order of multiple @BeforeEach methods that are declared within a single test class or test
   // interface." Therefore, if you have things you would like to do before each test case runs, it
@@ -218,7 +220,7 @@ abstract class QuorumTestHarness extends Logging {
       .map(_.toString)
       .getOrElse("[unspecified]")
     info(s"Running KRAFT test $name")
-    implementation = newKRaftQuorum(testInfo)
+    implementation = newKRaftQuorum(testInfo, baseProps())
   }
 
   def createBroker(
@@ -237,10 +239,6 @@ abstract class QuorumTestHarness extends Logging {
   }
 
   def addFormatterSettings(formatter: Formatter): Unit = {}
-
-  private def newKRaftQuorum(testInfo: TestInfo): KRaftQuorumImplementation = {
-    newKRaftQuorum(testInfo, new Properties())
-  }
 
   protected def extraControllerSecurityProtocols(): Seq[SecurityProtocol] = {
     Seq.empty
