@@ -30,7 +30,6 @@ import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.testcontainers.containers.localstack.LocalStackContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
@@ -67,12 +66,9 @@ import io.aiven.inkless.control_plane.MetadataView;
 import io.aiven.inkless.produce.AppendInterceptor;
 import io.aiven.inkless.produce.WriterTestUtils;
 import io.aiven.inkless.storage_backend.s3.S3Storage;
+import io.aiven.inkless.test_utils.MinioContainer;
 import io.aiven.inkless.test_utils.S3TestContainer;
-import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
-import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
-import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.s3.S3Client;
-import software.amazon.awssdk.services.s3.model.CreateBucketRequest;
 import software.amazon.awssdk.services.s3.model.Delete;
 import software.amazon.awssdk.services.s3.model.DeleteObjectsRequest;
 import software.amazon.awssdk.services.s3.model.DeleteObjectsResponse;
@@ -94,7 +90,7 @@ class FileMergerIntegrationTest {
     private static final Logger LOGGER = LoggerFactory.getLogger(FileMergerIntegrationTest.class);
 
     @Container
-    static final LocalStackContainer LOCALSTACK = S3TestContainer.localstack();
+    static final MinioContainer S3_CONTAINER = S3TestContainer.minio();
 
     static final int BROKER_ID = 1;
 
@@ -130,19 +126,8 @@ class FileMergerIntegrationTest {
 
     @BeforeAll
     static void setupS3() {
-        final var clientBuilder = S3Client.builder();
-        clientBuilder.region(Region.of(LOCALSTACK.getRegion()))
-            .endpointOverride(LOCALSTACK.getEndpointOverride(LocalStackContainer.Service.S3))
-            .credentialsProvider(
-                StaticCredentialsProvider.create(
-                    AwsBasicCredentials.create(
-                        LOCALSTACK.getAccessKey(),
-                        LOCALSTACK.getSecretKey()
-                    )
-                )
-            );
-        s3Client = clientBuilder.build();
-        s3Client.createBucket(CreateBucketRequest.builder().bucket(BUCKET_NAME).build());
+        s3Client = S3_CONTAINER.getS3Client();
+        S3_CONTAINER.createBucket(BUCKET_NAME);
     }
 
     @AfterAll
@@ -174,10 +159,10 @@ class FileMergerIntegrationTest {
         config.put("produce.buffer.max.bytes", Long.toString(MAX_UPLOAD_FILE_SIZE));
         config.put("storage.backend.class", S3Storage.class.getCanonicalName());
         config.put("storage.s3.bucket.name", BUCKET_NAME);
-        config.put("storage.s3.region", LOCALSTACK.getRegion());
-        config.put("storage.s3.endpoint.url", LOCALSTACK.getEndpointOverride(LocalStackContainer.Service.S3).toString());
-        config.put("storage.aws.access.key.id", LOCALSTACK.getAccessKey());
-        config.put("storage.aws.secret.access.key", LOCALSTACK.getSecretKey());
+        config.put("storage.s3.region", S3_CONTAINER.getRegion());
+        config.put("storage.s3.endpoint.url", S3_CONTAINER.getEndpoint());
+        config.put("storage.aws.access.key.id", S3_CONTAINER.getAccessKey());
+        config.put("storage.aws.secret.access.key", S3_CONTAINER.getSecretKey());
         config.put("storage.s3.path.style.access.enabled", "true");
         final InklessConfig inklessConfig = new InklessConfig(config);
 
