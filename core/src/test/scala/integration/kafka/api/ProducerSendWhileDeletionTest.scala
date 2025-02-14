@@ -31,7 +31,7 @@ import java.util.Optional
 import scala.jdk.CollectionConverters._
 
 
-class ProducerSendWhileDeletionTest extends IntegrationTestHarness {
+class ProducerSendWhileDeletionTest extends InklessIntegrationTestHarness {
   val producerCount: Int = 1
   val brokerCount: Int = 2
   val defaultLingerMs: Int = 5;

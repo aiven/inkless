@@ -355,6 +355,58 @@ object TestUtils extends Logging {
     result.topicId(topic).get()
   }
 
+  def createInklessTopicWithAdmin[B <: KafkaBroker](admin: Admin,
+                                                    topic: String,
+                                                    brokers: Seq[B],
+                                                    controllers: Seq[ControllerServer],
+                                                    numPartitions: Int = 1,
+                                                    replicaAssignment: collection.Map[Int, Seq[Int]] = Map.empty,
+                                                    topicConfig: Properties = new Properties,
+                                                   ): scala.collection.immutable.Map[Int, Int] = {
+    val effectiveNumPartitions = if (replicaAssignment.isEmpty) {
+      numPartitions
+    } else {
+      replicaAssignment.size
+    }
+
+    def isTopicExistsAndHasSameNumPartitionsAndReplicationFactor(cause: Throwable): Boolean = {
+      cause != null &&
+        cause.isInstanceOf[TopicExistsException] &&
+        // wait until all partitions metadata are propagated before verifying partitions number and replication factor
+        waitForAllPartitionsMetadata(brokers, topic, effectiveNumPartitions).nonEmpty &&
+        topicHasSameNumPartitionsAndReplicationFactor(admin, topic, effectiveNumPartitions, 1)
+    }
+
+    if (!topicConfig.getOrDefault("cleanup.policy", "").equals("compact")) {
+      topicConfig.put("inkless.enable", "true")
+    }
+
+    try {
+      createTopicWithAdminRaw(
+        admin,
+        topic,
+        numPartitions,
+        1,
+        replicaAssignment,
+        topicConfig
+      )
+    } catch {
+      case e: ExecutionException =>
+        if (!isTopicExistsAndHasSameNumPartitionsAndReplicationFactor(e.getCause)) {
+          throw e
+        }
+    }
+
+    // wait until we've propagated all partitions metadata to all brokers
+    val allPartitionsMetadata = waitForAllPartitionsMetadata(brokers, topic, effectiveNumPartitions)
+    controllers.foreach(controller => ensureConsistentKRaftMetadata(brokers, controller))
+
+    (0 until effectiveNumPartitions).map { i =>
+      i -> allPartitionsMetadata.get(new TopicPartition(topic, i)).map(_.leader()).getOrElse(
+        throw new IllegalStateException(s"Cannot get the partition leader for topic: $topic, partition: $i in server metadata cache"))
+    }.toMap
+  }
+
   def createTopicWithAdmin[B <: KafkaBroker](
     admin: Admin,
     topic: String,
