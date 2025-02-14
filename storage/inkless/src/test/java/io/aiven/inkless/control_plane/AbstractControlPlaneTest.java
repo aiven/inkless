@@ -59,6 +59,7 @@ public abstract class AbstractControlPlaneTest {
     protected ControlPlane controlPlane;
 
     protected abstract ControlPlaneAndConfigs createControlPlane(final TestInfo testInfo);
+    protected abstract void tearDownControlPlane() throws IOException;
 
     static void configureControlPlane(ControlPlane controlPlane, Map<String, ?> configs) {
         Map<String, Object> override = new HashMap<>(configs);
@@ -81,7 +82,7 @@ public abstract class AbstractControlPlaneTest {
 
     @AfterEach
     void tearDown() throws IOException {
-        controlPlane.close();
+        tearDownControlPlane();
     }
 
     @Test

@@ -8,8 +8,12 @@ import org.apache.kafka.common.record.TimestampType;
 import org.apache.kafka.common.utils.MockTime;
 import org.apache.kafka.common.utils.Time;
 
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.TestInfo;
+import org.testcontainers.junit.jupiter.Container;
+import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.util.List;
 import java.util.Set;
@@ -20,11 +24,16 @@ import io.aiven.inkless.control_plane.CommitBatchRequest;
 import io.aiven.inkless.control_plane.CreateTopicAndPartitionsRequest;
 import io.aiven.inkless.control_plane.FindBatchRequest;
 import io.aiven.inkless.control_plane.FindBatchResponse;
-import io.aiven.inkless.test_utils.SharedPostgreSQLTest;
+import io.aiven.inkless.test_utils.InklessPostgreSQLContainer;
+import io.aiven.inkless.test_utils.PostgreSQLTestContainer;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-class FindBatchesJobTest extends SharedPostgreSQLTest {
+@Testcontainers
+class FindBatchesJobTest {
+    @Container
+    static final InklessPostgreSQLContainer pgContainer = PostgreSQLTestContainer.container();
+    
     static final int BROKER_ID = 11;
     static final long FILE_SIZE = 123456;
 
@@ -37,12 +46,20 @@ class FindBatchesJobTest extends SharedPostgreSQLTest {
     Time time = new MockTime();
 
     @BeforeEach
-    void createTopics() {
+    void setUp(final TestInfo testInfo) {
+        pgContainer.createDatabase(testInfo);
+        pgContainer.migrate();
+
         final Set<CreateTopicAndPartitionsRequest> createTopicAndPartitionsRequests = Set.of(
             new CreateTopicAndPartitionsRequest(TOPIC_ID_0, TOPIC_0, 2),
             new CreateTopicAndPartitionsRequest(TOPIC_ID_1, TOPIC_1, 1)
         );
-        new TopicsAndPartitionsCreateJob(Time.SYSTEM, jooqCtx, createTopicAndPartitionsRequests, duration -> {}).run();
+        new TopicsAndPartitionsCreateJob(Time.SYSTEM, pgContainer.getJooqCtx(), createTopicAndPartitionsRequests, duration -> {}).run();
+    }
+
+    @AfterEach
+    void tearDown() {
+        pgContainer.tearDown();
     }
 
     @Test
@@ -50,7 +67,7 @@ class FindBatchesJobTest extends SharedPostgreSQLTest {
         final String objectKey1 = "obj1";
 
         final CommitFileJob commitJob = new CommitFileJob(
-            time, jooqCtx, objectKey1, BROKER_ID, FILE_SIZE,
+            time, pgContainer.getJooqCtx(), objectKey1, BROKER_ID, FILE_SIZE,
             List.of(
                 CommitBatchRequest.of(T0P0, 0, 1234, 0, 11, 1000, TimestampType.CREATE_TIME)
             ),
@@ -59,7 +76,7 @@ class FindBatchesJobTest extends SharedPostgreSQLTest {
         assertThat(commitJob.call()).isNotEmpty();
 
         final FindBatchesJob job = new FindBatchesJob(
-            time, jooqCtx,
+            time, pgContainer.getJooqCtx(),
             List.of(
                 // This will produce a normal find result with some batches.
                 new FindBatchRequest(new TopicIdPartition(TOPIC_ID_0, 0, TOPIC_0), 0, 1000),

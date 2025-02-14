@@ -9,4 +9,9 @@ class InMemoryControlPlaneTest extends AbstractControlPlaneTest {
     protected ControlPlaneAndConfigs createControlPlane(final TestInfo testInfo) {
         return new ControlPlaneAndConfigs(new InMemoryControlPlane(time), BASE_CONFIG);
     }
+
+    @Override
+    protected void tearDownControlPlane() {
+        // no-op
+    }
 }

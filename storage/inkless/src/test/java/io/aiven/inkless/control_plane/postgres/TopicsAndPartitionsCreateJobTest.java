@@ -8,35 +8,56 @@ import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
 import org.jooq.generated.tables.records.LogsRecord;
 import org.jooq.impl.DSL;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.TestInfo;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
+import org.testcontainers.junit.jupiter.Container;
+import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.util.Set;
 
 import io.aiven.inkless.control_plane.CreateTopicAndPartitionsRequest;
-import io.aiven.inkless.test_utils.SharedPostgreSQLTest;
+import io.aiven.inkless.test_utils.InklessPostgreSQLContainer;
+import io.aiven.inkless.test_utils.PostgreSQLTestContainer;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.jooq.generated.Tables.LOGS;
 
+@Testcontainers
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.STRICT_STUBS)
-class TopicsAndPartitionsCreateJobTest extends SharedPostgreSQLTest {
+class TopicsAndPartitionsCreateJobTest {
+    @Container
+    static final InklessPostgreSQLContainer pgContainer = PostgreSQLTestContainer.container();
+    
     static final String TOPIC_1 = "topic1";
     static final String TOPIC_2 = "topic2";
     static final Uuid TOPIC_ID1 = new Uuid(10, 12);
     static final Uuid TOPIC_ID2 = new Uuid(555, 333);
 
+    @BeforeEach
+    void setUp(final TestInfo testInfo) {
+        pgContainer.createDatabase(testInfo);
+        pgContainer.migrate();
+    }
+
+    @AfterEach
+    void tearDown() {
+        pgContainer.tearDown();
+    }
+
     @Test
     void empty() {
-        final TopicsAndPartitionsCreateJob job = new TopicsAndPartitionsCreateJob(Time.SYSTEM, jooqCtx, Set.of(), durationMs -> {});
+        final TopicsAndPartitionsCreateJob job = new TopicsAndPartitionsCreateJob(Time.SYSTEM, pgContainer.getJooqCtx(), Set.of(), durationMs -> {});
         job.run();
-        assertThat(DBUtils.getAllLogs(hikariDataSource)).isEmpty();
+        assertThat(DBUtils.getAllLogs(pgContainer.getDataSource())).isEmpty();
     }
 
     @Test
@@ -45,9 +66,9 @@ class TopicsAndPartitionsCreateJobTest extends SharedPostgreSQLTest {
             new CreateTopicAndPartitionsRequest(TOPIC_ID1, TOPIC_1, 0),
             new CreateTopicAndPartitionsRequest(TOPIC_ID2, TOPIC_2, 0)
         );
-        final TopicsAndPartitionsCreateJob job = new TopicsAndPartitionsCreateJob(Time.SYSTEM, jooqCtx, createTopicAndPartitionsRequests, durationMs -> {});
+        final TopicsAndPartitionsCreateJob job = new TopicsAndPartitionsCreateJob(Time.SYSTEM, pgContainer.getJooqCtx(), createTopicAndPartitionsRequests, durationMs -> {});
         job.run();
-        assertThat(DBUtils.getAllLogs(hikariDataSource)).isEmpty();
+        assertThat(DBUtils.getAllLogs(pgContainer.getDataSource())).isEmpty();
     }
 
     @Test
@@ -56,18 +77,18 @@ class TopicsAndPartitionsCreateJobTest extends SharedPostgreSQLTest {
             new CreateTopicAndPartitionsRequest(TOPIC_ID1, TOPIC_1, 2),
             new CreateTopicAndPartitionsRequest(TOPIC_ID2, TOPIC_2, 1)
         );
-        final TopicsAndPartitionsCreateJob job1 = new TopicsAndPartitionsCreateJob(Time.SYSTEM, jooqCtx, createTopicAndPartitionsRequests, durationMs -> {});
+        final TopicsAndPartitionsCreateJob job1 = new TopicsAndPartitionsCreateJob(Time.SYSTEM, pgContainer.getJooqCtx(), createTopicAndPartitionsRequests, durationMs -> {});
         job1.run();
-        assertThat(DBUtils.getAllLogs(hikariDataSource)).containsExactlyInAnyOrder(
+        assertThat(DBUtils.getAllLogs(pgContainer.getDataSource())).containsExactlyInAnyOrder(
             new LogsRecord(TOPIC_ID1, 0, TOPIC_1, 0L, 0L),
             new LogsRecord(TOPIC_ID1, 1, TOPIC_1, 0L, 0L),
             new LogsRecord(TOPIC_ID2, 0, TOPIC_2, 0L, 0L)
         );
 
         // Repetition doesn't affect anything.
-        final TopicsAndPartitionsCreateJob job2 = new TopicsAndPartitionsCreateJob(Time.SYSTEM, jooqCtx, createTopicAndPartitionsRequests, durationMs -> {});
+        final TopicsAndPartitionsCreateJob job2 = new TopicsAndPartitionsCreateJob(Time.SYSTEM, pgContainer.getJooqCtx(), createTopicAndPartitionsRequests, durationMs -> {});
         job2.run();
-        assertThat(DBUtils.getAllLogs(hikariDataSource)).containsExactlyInAnyOrder(
+        assertThat(DBUtils.getAllLogs(pgContainer.getDataSource())).containsExactlyInAnyOrder(
                 new LogsRecord(TOPIC_ID1, 0, TOPIC_1, 0L, 0L),
                 new LogsRecord(TOPIC_ID1, 1, TOPIC_1, 0L, 0L),
                 new LogsRecord(TOPIC_ID2, 0, TOPIC_2, 0L, 0L)
@@ -80,17 +101,17 @@ class TopicsAndPartitionsCreateJobTest extends SharedPostgreSQLTest {
             new CreateTopicAndPartitionsRequest(TOPIC_ID1, TOPIC_1, 2),
             new CreateTopicAndPartitionsRequest(TOPIC_ID2, TOPIC_2, 1)
         );
-        final TopicsAndPartitionsCreateJob job1 = new TopicsAndPartitionsCreateJob(Time.SYSTEM, jooqCtx, createTopicAndPartitionsRequests1, durationMs -> {});
+        final TopicsAndPartitionsCreateJob job1 = new TopicsAndPartitionsCreateJob(Time.SYSTEM, pgContainer.getJooqCtx(), createTopicAndPartitionsRequests1, durationMs -> {});
         job1.run();
 
         final Set<CreateTopicAndPartitionsRequest> createTopicAndPartitionsRequests2 = Set.of(
             new CreateTopicAndPartitionsRequest(TOPIC_ID1, TOPIC_1, 2),
             new CreateTopicAndPartitionsRequest(TOPIC_ID2, TOPIC_2, 2)
         );
-        final TopicsAndPartitionsCreateJob job2 = new TopicsAndPartitionsCreateJob(Time.SYSTEM, jooqCtx, createTopicAndPartitionsRequests2, durationMs -> {});
+        final TopicsAndPartitionsCreateJob job2 = new TopicsAndPartitionsCreateJob(Time.SYSTEM, pgContainer.getJooqCtx(), createTopicAndPartitionsRequests2, durationMs -> {});
         job2.run();
 
-        assertThat(DBUtils.getAllLogs(hikariDataSource)).containsExactlyInAnyOrder(
+        assertThat(DBUtils.getAllLogs(pgContainer.getDataSource())).containsExactlyInAnyOrder(
             new LogsRecord(TOPIC_ID1, 0, TOPIC_1, 0L, 0L),
             new LogsRecord(TOPIC_ID1, 1, TOPIC_1, 0L, 0L),
             new LogsRecord(TOPIC_ID2, 0, TOPIC_2, 0L, 0L),
@@ -100,7 +121,7 @@ class TopicsAndPartitionsCreateJobTest extends SharedPostgreSQLTest {
 
     @Test
     void existingRecordsNotAffected() throws SQLException {
-        try (final Connection connection = hikariDataSource.getConnection()) {
+        try (final Connection connection = pgContainer.getDataSource().getConnection()) {
             final DSLContext ctx = DSL.using(connection, SQLDialect.POSTGRES);
             ctx.insertInto(LOGS,
                 LOGS.TOPIC_ID, LOGS.PARTITION, LOGS.TOPIC_NAME, LOGS.LOG_START_OFFSET, LOGS.HIGH_WATERMARK
@@ -116,10 +137,10 @@ class TopicsAndPartitionsCreateJobTest extends SharedPostgreSQLTest {
             new CreateTopicAndPartitionsRequest(TOPIC_ID1, TOPIC_1, 2),
             new CreateTopicAndPartitionsRequest(TOPIC_ID2, TOPIC_2, 1)
         );
-        final TopicsAndPartitionsCreateJob job1 = new TopicsAndPartitionsCreateJob(Time.SYSTEM, jooqCtx, createTopicAndPartitionsRequests, durationMs -> {});
+        final TopicsAndPartitionsCreateJob job1 = new TopicsAndPartitionsCreateJob(Time.SYSTEM, pgContainer.getJooqCtx(), createTopicAndPartitionsRequests, durationMs -> {});
         job1.run();
 
-        assertThat(DBUtils.getAllLogs(hikariDataSource)).containsExactlyInAnyOrder(
+        assertThat(DBUtils.getAllLogs(pgContainer.getDataSource())).containsExactlyInAnyOrder(
                 new LogsRecord(TOPIC_ID1, 0, TOPIC_1, 101L, 201L),  // unaffected
                 new LogsRecord(TOPIC_ID1, 1, TOPIC_1, 0L, 0L),
                 new LogsRecord(TOPIC_ID2, 0, TOPIC_2, 102L, 202L)  // unaffected
