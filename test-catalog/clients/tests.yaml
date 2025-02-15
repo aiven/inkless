@@ -201,6 +201,8 @@ org.apache.kafka.clients.admin.KafkaAdminClientTest:
 - testAlterReplicaLogDirsPartialResponse
 - testAlterReplicaLogDirsSuccess
 - testAlterReplicaLogDirsUnrequested
+- testAlterShareGroupOffsets
+- testAlterShareGroupOffsetsWithErrorInOnePartition
 - testAlterUserScramCredentials
 - testAlterUserScramCredentialsUnknownMechanism
 - testBatchedListConsumerGroupOffsets
