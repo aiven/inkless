@@ -523,6 +523,8 @@ org.apache.kafka.image.node.ConfigurationImageNodeTest:
 org.apache.kafka.image.node.ConfigurationsImageNodeTest:
 - testNodeChildNameParsing
 - testNodeChildNames
+org.apache.kafka.image.node.MetadataImageNodeTest:
+- shouldGetAclsImageNode
 org.apache.kafka.image.node.ScramCredentialDataNodeTest:
 - testPrintRedacted
 - testPrintUnredacted
