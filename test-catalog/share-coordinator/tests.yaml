@@ -45,6 +45,7 @@ org.apache.kafka.coordinator.share.ShareCoordinatorServiceTest:
 - testRecordPruningTaskRepeatedSameOffsetForTopic
 - testRecordPruningTaskRetriesRepeatedSameOffsetForTopic
 - testRecordPruningTaskSuccess
+- testShareStateTopicConfigs
 - testStartupShutdown
 - testTopicPartitionFor
 - testWriteFutureReturnsError
