@@ -3715,7 +3715,7 @@ kafka.server.share.SharePartitionTest:
 - testMaybeInitializeWithInvalidPartitionResponse
 - testMaybeInitializeWithInvalidStartOffsetStateBatches
 - testMaybeInitializeWithInvalidTopicIdResponse
-- testMaybeInitializeWithNoOpShareStatePersister
+- testMaybeInitializeWithNoOpStatePersister
 - testMaybeInitializeWithNullResponse
 - testMaybeInitializeWithNullTopicsData
 - testMaybeInitializeWithReadException
@@ -3757,7 +3757,7 @@ kafka.server.share.SharePartitionTest:
 - testWriteShareGroupState
 - testWriteShareGroupStateFailure
 - testWriteShareGroupStateWithInvalidTopicsData
-- testWriteShareGroupStateWithNoOpShareStatePersister
+- testWriteShareGroupStateWithNoOpStatePersister
 - testWriteShareGroupStateWithNullResponse
 - testWriteShareGroupStateWithNullTopicsData
 - testWriteShareGroupStateWithWriteException

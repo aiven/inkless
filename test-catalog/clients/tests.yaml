@@ -2204,6 +2204,12 @@ org.apache.kafka.clients.consumer.internals.ShareSessionHandlerTest:
 - testPartitionRemoval
 - testShareSession
 - testTopicIdReplaced
+org.apache.kafka.clients.consumer.internals.StreamsGroupHeartbeatRequestManagerTest:
+- testConstructWithNullCoordinatorRequestManager
+- testConstructWithNullMembershipManager
+- testConstructWithNullMetrics
+- testConstructWithNullStreamsRebalanceData
+- testSendingFullHeartbeatRequest
 org.apache.kafka.clients.consumer.internals.StreamsMembershipManagerTest:
 - testActiveTasksAreNullInHeartbeatResponse
 - testConsumerPollWhenNotJoining
@@ -2288,8 +2294,13 @@ org.apache.kafka.clients.consumer.internals.StreamsRebalanceDataTest:
 - shouldCopyAssignment
 - shouldCopyEmptyAssignment
 - streamsRebalanceDataShouldBeConstructedWithEmptyAssignment
-- streamsRebalanceDataShouldNotAcceptNulls
-- streamsRebalanceDataShouldNotHaveModifiableSubtopologies
+- streamsRebalanceDataShouldBeConstructedWithEmptyPartitionsByHost
+- streamsRebalanceDataShouldBeConstructedWithShutDownRequestedSetFalse
+- streamsRebalanceDataShouldNotAcceptNullClientTags
+- streamsRebalanceDataShouldNotAcceptNullHostInfo
+- streamsRebalanceDataShouldNotAcceptNullProcessId
+- streamsRebalanceDataShouldNotAcceptNullSubtopologies
+- streamsRebalanceDataShouldNotHaveModifiableSubtopologiesAndClientTags
 - subtopologyShouldNotAcceptNulls
 - subtopologyShouldNotBeModifiable
 - taskIdShouldNotAcceptNulls
