@@ -65,7 +65,6 @@ versions += [
   commonsIo: "2.14.0", // ZooKeeper dependency. Do not use, this is going away. // TODO: Inkless: using it on in-mem storage, check if possible to remove/replace
   commonsValidator: "1.9.0",
   classgraph: "4.8.173",
-  dropwizardMetrics: "4.1.12.1",
   gradle: "8.10.2",
   grgit: "4.1.1",
   httpclient: "4.5.14",
@@ -233,7 +232,6 @@ libs += [
   log4j2Core: "org.apache.logging.log4j:log4j-core:$versions.log4j2",
   lz4: "org.lz4:lz4-java:$versions.lz4",
   metrics: "com.yammer.metrics:metrics-core:$versions.metrics",
-  dropwizardMetrics: "io.dropwizard.metrics:metrics-core:$versions.dropwizardMetrics",
   mockitoCore: "org.mockito:mockito-core:$versions.mockito",
   mockitoJunitJupiter: "org.mockito:mockito-junit-jupiter:$versions.mockito",
   pcollections: "org.pcollections:pcollections:$versions.pcollections",
