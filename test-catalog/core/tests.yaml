@@ -1861,6 +1861,7 @@ kafka.log.remote.RemoteIndexCacheTest:
 - testConcurrentRemoveReadForCache
 - testCorrectnessForCacheAndIndexFilesWhenResizeCache
 - testCorruptCacheIndexFileExistsButNotInCache
+- testDeleteInvalidIndexFilesOnInit
 - testFetchIndexForMissingTransactionIndex
 - testFetchIndexFromRemoteStorage
 - testGetIndexAfterCacheClose
