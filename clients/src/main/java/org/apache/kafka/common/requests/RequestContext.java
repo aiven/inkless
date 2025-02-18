@@ -45,6 +45,8 @@ public class RequestContext implements AuthorizableRequestContext {
     public final boolean fromPrivilegedListener;
     public final Optional<KafkaPrincipalSerde> principalSerde;
 
+    public boolean shouldMute = true;
+
     public RequestContext(RequestHeader header,
                           String connectionId,
                           InetAddress clientAddress,
@@ -205,6 +207,10 @@ public class RequestContext implements AuthorizableRequestContext {
         return header.correlationId();
     }
 
+    public void disableMuting() {
+        this.shouldMute = false;
+    }
+
     @Override
     public String toString() {
         return "RequestContext(" +
@@ -217,6 +223,7 @@ public class RequestContext implements AuthorizableRequestContext {
             ", clientInformation=" + clientInformation +
             ", fromPrivilegedListener=" + fromPrivilegedListener +
             ", principalSerde=" + principalSerde +
+            ", shouldMute=" + shouldMute +
             ')';
     }
 }

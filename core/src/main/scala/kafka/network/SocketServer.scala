@@ -37,7 +37,7 @@ import org.apache.kafka.common.errors.{InvalidRequestException, UnsupportedVersi
 import org.apache.kafka.common.memory.{MemoryPool, SimpleMemoryPool}
 import org.apache.kafka.common.metrics._
 import org.apache.kafka.common.metrics.stats.{Avg, CumulativeSum, Meter, Rate}
-import org.apache.kafka.common.network.KafkaChannel.ChannelMuteEvent
+import org.apache.kafka.common.network.KafkaChannel.{ChannelMuteEvent, ChannelMuteState}
 import org.apache.kafka.common.network.{ChannelBuilder, ChannelBuilders, ClientInformation, KafkaChannel, ListenerName, ListenerReconfigurable, NetworkSend, Selectable, Send, ServerConnectionId, Selector => KSelector}
 import org.apache.kafka.common.protocol.ApiKeys
 import org.apache.kafka.common.requests.{ApiVersionsRequest, RequestContext, RequestHeader}
@@ -870,6 +870,8 @@ private[kafka] class Processor(
   private val expiredConnectionsKilledCountMetricName = metrics.metricName("expired-connections-killed-count", MetricsGroup, metricTags)
   metrics.addMetric(expiredConnectionsKilledCountMetricName, expiredConnectionsKilledCount)
 
+  private var inklessSendQueueByChannel: immutable.Map[String, ProduceSendQueue] = immutable.Map.empty
+
   private[network] val selector = createSelector(
     ChannelBuilders.serverChannelBuilder(
       listenerName,
@@ -972,7 +974,13 @@ private[kafka] class Processor(
             tryUnmuteChannel(channelId)
 
           case response: SendResponse =>
-            sendResponse(response, response.responseSend)
+            if (response.request.context.shouldMute) {
+              sendResponse(response, response.responseSend)
+            } else {
+              val connectionId = response.request.context.connectionId
+              val sendQueue = inklessSendQueueByChannel(connectionId)
+              sendQueue.update(response)
+            }
           case response: CloseConnectionResponse =>
             updateRequestMetrics(response)
             trace("Closing socket connection actively according to the response code.")
@@ -990,6 +998,19 @@ private[kafka] class Processor(
       } catch {
         case e: Throwable =>
           processChannelException(channelId, s"Exception while processing response for $channelId", e)
+      }
+    }
+
+    // Process responses for Inkless upgraded connections.
+    for ((connectionId, queue) <- inklessSendQueueByChannel) {
+      openOrClosingChannel(connectionId) match {
+        case Some(channel) =>
+          if (queue.nextReady() && !channel.hasSend) {
+            val response = queue.take()
+            sendResponse(response, response.responseSend)
+          }
+        case None =>
+          inklessSendQueueByChannel -= connectionId
       }
     }
   }
@@ -1058,9 +1079,21 @@ private[kafka] class Processor(
                       apiVersionsRequest.data.clientSoftwareVersion))
                   }
                 }
+
+                if (!channel.shouldMuteForRequest(header.apiKey())) {
+                  req.context.disableMuting()
+
+                  if (!inklessSendQueueByChannel.contains(connectionId)) {
+                    inklessSendQueueByChannel += connectionId -> new ProduceSendQueue()
+                  }
+                  inklessSendQueueByChannel.get(connectionId).foreach(_.prepare(req.context.correlationId()))
+                }
+
                 requestChannel.sendRequest(req)
-                selector.mute(connectionId)
-                handleChannelMuteEvent(connectionId, ChannelMuteEvent.REQUEST_RECEIVED)
+                if (req.context.shouldMute) {
+                  selector.mute(connectionId)
+                  handleChannelMuteEvent(connectionId, ChannelMuteEvent.REQUEST_RECEIVED)
+                }
               }
             }
           case None =>
@@ -1089,10 +1122,21 @@ private[kafka] class Processor(
         response.onComplete.foreach(onComplete => onComplete(send))
         updateRequestMetrics(response)
 
-        // Try unmuting the channel. If there was no quota violation and the channel has not been throttled,
-        // it will be unmuted immediately. If the channel has been throttled, it will unmuted only if the throttling
-        // delay has already passed by now.
-        handleChannelMuteEvent(send.destinationId, ChannelMuteEvent.RESPONSE_SENT)
+        if (response.request.context.shouldMute) {
+          // Try unmuting the channel. If there was no quota violation and the channel has not been throttled,
+          // it will be unmuted immediately. If the channel has been throttled, it will unmuted only if the throttling
+          // delay has already passed by now.
+          handleChannelMuteEvent(send.destinationId, ChannelMuteEvent.RESPONSE_SENT)
+        } else {
+          openOrClosingChannel(send.destinationId).foreach { channel =>
+            channel.requestCompleted(response.request.header.apiKey())
+            // Imitate muting to prevent illegal state errors when `tryUnmuteChannel` is called.
+            if (channel.muteState() == ChannelMuteState.MUTED_AND_RESPONSE_PENDING) {
+              handleChannelMuteEvent(send.destinationId, ChannelMuteEvent.RESPONSE_SENT)
+            }
+            selector.mute(channel.id)
+          }
+        }
         tryUnmuteChannel(send.destinationId)
       } catch {
         case e: Throwable => processChannelException(send.destinationId,
