@@ -19,6 +19,7 @@ package org.apache.kafka.common.network;
 import org.apache.kafka.common.errors.AuthenticationException;
 import org.apache.kafka.common.errors.SslAuthenticationException;
 import org.apache.kafka.common.memory.MemoryPool;
+import org.apache.kafka.common.protocol.ApiKeys;
 import org.apache.kafka.common.security.auth.KafkaPrincipal;
 import org.apache.kafka.common.security.auth.KafkaPrincipalSerde;
 import org.apache.kafka.common.utils.Utils;
@@ -30,6 +31,7 @@ import java.net.SocketAddress;
 import java.nio.channels.SelectionKey;
 import java.nio.channels.SocketChannel;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
 
 /**
@@ -134,6 +136,10 @@ public class KafkaChannel implements AutoCloseable {
     private int successfulAuthentications;
     private boolean midWrite;
     private long lastReauthenticationStartNanos;
+
+    // TODO make configurable
+    private static final int MAX_UNMUTED_PRODUCE_REQUESTS = 5;
+    private final AtomicInteger inFlightProduceRequests = new AtomicInteger(0);
 
     public KafkaChannel(String id, TransportLayer transportLayer, Supplier<Authenticator> authenticatorCreator,
                         int maxReceiveSize, MemoryPool memoryPool, ChannelMetadataRegistry metadataRegistry) {
@@ -680,5 +686,18 @@ public class KafkaChannel implements AutoCloseable {
 
     public ChannelMetadataRegistry channelMetadataRegistry() {
         return metadataRegistry;
+    }
+
+    public boolean shouldMuteForRequest(ApiKeys apiKey) {
+        if (apiKey == ApiKeys.PRODUCE) {
+            return inFlightProduceRequests.incrementAndGet() > MAX_UNMUTED_PRODUCE_REQUESTS;
+        }
+        return true;  // Always mute for other request types
+    }
+
+    public void requestCompleted(ApiKeys apiKey) {
+        if (apiKey == ApiKeys.PRODUCE) {
+            inFlightProduceRequests.decrementAndGet();
+        }
     }
 }
