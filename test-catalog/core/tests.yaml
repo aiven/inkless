@@ -3548,6 +3548,7 @@ kafka.server.share.SharePartitionManagerTest:
 - testAcknowledgeEmptyPartitionCacheMap
 - testAcknowledgeIncorrectGroupId
 - testAcknowledgeIncorrectMemberId
+- testAcknowledgeIndividualOffsets
 - testAcknowledgeMultiplePartition
 - testAcknowledgeSinglePartition
 - testCachedTopicPartitionsForValidShareSessions
