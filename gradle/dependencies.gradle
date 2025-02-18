@@ -56,10 +56,7 @@ versions += [
   assertj: "3.26.3",
   awssdk: "2.29.6",
   bcpkix: "1.78.1",
-  // Version >=3.1.2 includes an improvement to prevent hash DOS attacks,
-  // but currently, tests are failing in >=3.1.2. Therefore, we are temporarily using version 3.1.1.
-  // The failing tests should be fixed under KAFKA-18089, allowing us to upgrade to >=3.1.2.
-  caffeine: "3.1.1",
+  caffeine: "3.1.8",
   bndlib: "7.0.0",
   checkstyle: project.hasProperty('checkstyleVersion') ? checkstyleVersion : "10.20.2",
   commonsIo: "2.14.0", // ZooKeeper dependency. Do not use, this is going away. // TODO: Inkless: using it on in-mem storage, check if possible to remove/replace
