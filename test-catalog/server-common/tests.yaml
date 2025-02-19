@@ -56,13 +56,10 @@ org.apache.kafka.server.common.MetadataVersionTest:
 - assertLatestProductionIsLessThanLatest
 - assertLatestProductionIsProduction
 - testDirectoryAssignmentSupported
+- testFeatureLevels
 - testFromVersionString
 - testIsDelegationTokenSupported
 - testIsElrSupported
-- testIsInControlledShutdownStateSupported
-- testKRaftFeatureLevelsAtAndAfter3_0_IV1
-- testKRaftFeatureLevelsBefore3_0_IV1
-- testKRaftVersions
 - testListOffsetsValueVersion
 - testMetadataChanged
 - testPartitionChangeRecordVersion

@@ -2700,7 +2700,6 @@ kafka.server.KRaftClusterTest:
 - testCreateClusterAndRestartBrokerNode
 - testCreateClusterAndRestartControllerNode
 - testCreateClusterAndWaitForBrokerInRunningState
-- testCreateClusterInvalidMetadataVersion
 - testCreateClusterWithAdvertisedHostAndPortDifferentFromSocketServer
 - testCreateClusterWithAdvertisedPortZero
 - testCreatePartitions
@@ -3019,7 +3018,7 @@ kafka.server.KafkaMetricsReporterTest:
 - testMetricsContextNamespacePresent
 kafka.server.KafkaRaftServerTest:
 - testKRaftUpdate
-- testKRaftUpdateAt3_3_IV1
+- testKRaftUpdateAt3_3_IV3
 - testLoadMetaPropertiesWithInconsistentNodeId
 - testLoadPropertiesWithInconsistentClusterIds
 - testStartupDoesNotFailIfDataDirIsOffline
