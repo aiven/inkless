@@ -213,6 +213,7 @@ org.apache.kafka.streams.StreamsConfigTest:
 - shouldGetDefaultValueProcessingExceptionHandler
 - shouldGetEmptyMapIfClientTagsAreNotSet
 - shouldNotEnableAnyOptimizationsWithNoOptimizationConfig
+- shouldNotLeakInternalDocMembers
 - shouldNotOverrideUserConfigCommitIntervalMsIfExactlyOnceV2Enabled
 - shouldNotOverrideUserConfigRetriesIfExactlyV2OnceEnabled
 - shouldNotSetEnableMetricCollectionByDefault
