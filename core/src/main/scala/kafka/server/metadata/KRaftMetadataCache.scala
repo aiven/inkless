@@ -514,7 +514,7 @@ class KRaftMetadataCache(
     _currentImage.scram().describe(request)
   }
 
-  override def metadataVersion(): MetadataVersion = _currentImage.features().metadataVersion()
+  override def metadataVersion(): MetadataVersion = _currentImage.features().metadataVersionOrThrow()
 
   override def features(): FinalizedFeatures = {
     val image = _currentImage
@@ -523,7 +523,8 @@ class KRaftMetadataCache(
     if (kraftVersionLevel > 0) {
       finalizedFeatures.put(KRaftVersion.FEATURE_NAME, kraftVersionLevel)
     }
-    new FinalizedFeatures(image.features().metadataVersion(),
+    new FinalizedFeatures(
+      image.features().metadataVersionOrThrow(),
       finalizedFeatures,
       image.highestOffsetAndEpoch().offset)
   }
