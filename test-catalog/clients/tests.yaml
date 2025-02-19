@@ -896,6 +896,8 @@ org.apache.kafka.clients.consumer.RoundRobinAssignorTest:
 - testTwoConsumersOneTopicTwoPartitions
 - testTwoDynamicConsumersTwoTopicsSixPartitions
 - testTwoStaticConsumersTwoTopicsSixPartitions
+org.apache.kafka.clients.consumer.ShareConsumerConfigTest:
+- testUnsupportedShareConsumerConfigs
 org.apache.kafka.clients.consumer.StickyAssignorTest:
 - testAddRemoveConsumerOneTopic
 - testAddRemoveTopicTwoConsumers
