@@ -1144,13 +1144,11 @@ org.apache.kafka.clients.consumer.internals.CommitRequestManagerTest:
 - testAutocommitInterceptorsNotInvokedOnError
 - testCommitAsync
 - testCommitAsyncFailsWithRetriableOnCoordinatorDisconnected
-- testCommitAsyncWithEmptyAllConsumedOffsets
 - testCommitAsyncWithEmptyOffsets
 - testCommitSync
 - testCommitSyncFailsWithCommitFailedExceptionIfUnknownMemberId
 - testCommitSyncFailsWithCommitFailedExceptionOnStaleMemberEpoch
 - testCommitSyncRetriedAfterExpectedRetriableException
-- testCommitSyncWithEmptyAllConsumedOffsets
 - testCommitSyncWithEmptyOffsets
 - testEnsureBackoffRetryOnOffsetCommitRequestTimeout
 - testEnsureCommitSensorRecordsMetric
@@ -1272,6 +1270,7 @@ org.apache.kafka.clients.consumer.internals.ConsumerMembershipManagerTest:
 - testOnPartitionsLostNoError
 - testOnSubscriptionUpdatedDoesNotTransitionToJoiningIfInGroup
 - testOnSubscriptionUpdatedTransitionsToJoiningOnPollIfNotInGroup
+- testPollMustCallsMaybeReconcileWithFalse
 - testRebalanceMetricsForMultipleReconciliations
 - testRebalanceMetricsOnFailedRebalance
 - testRebalanceMetricsOnSuccessfulRebalance
@@ -2421,8 +2420,9 @@ org.apache.kafka.clients.consumer.internals.events.ApplicationEventProcessorTest
 - testApplicationEventIsProcessed
 - testAssignmentChangeEvent
 - testAssignmentChangeEventWithException
+- testAsyncCommitEvent
+- testAsyncCommitEventWithEmptyOffsets
 - testAsyncCommitEventWithException
-- testAsyncCommitEventWithOffsets
 - testAsyncCommitEventWithoutCommitRequestManager
 - testFetchCommittedOffsetsEvent
 - testListOffsetsEventIsProcessed
@@ -2436,6 +2436,7 @@ org.apache.kafka.clients.consumer.internals.events.ApplicationEventProcessorTest
 - testSeekUnvalidatedEvent
 - testSeekUnvalidatedEventWithException
 - testSyncCommitEvent
+- testSyncCommitEventWithEmptyOffsets
 - testSyncCommitEventWithException
 - testSyncCommitEventWithoutCommitRequestManager
 - testTopicPatternSubscriptionChangeEvent

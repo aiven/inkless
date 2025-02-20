@@ -535,6 +535,14 @@ org.apache.kafka.raft.QuorumStateTest:
 - testUnattachedVotedToUnattachedVoted
 - testUnattachedWithLeaderNoEndpointToAndFromProspective
 - testUnattachedWithLeaderToProspective
+org.apache.kafka.raft.RaftEventSimulationTest:
+- canElectInitialLeader
+- canElectNewLeaderAfterOldLeaderFailure
+- canElectNewLeaderAfterOldLeaderPartitionedAway
+- canMakeProgressAfterBackToBackLeaderFailures
+- canMakeProgressIfMajorityIsReachable
+- canRecoverAfterAllNodesKilled
+- canRecoverFromSingleNodeCommittedDataLoss
 org.apache.kafka.raft.RaftUtilTest:
 - testErrorResponse
 - testFetchRequestV17Compatibility
@@ -655,7 +663,10 @@ org.apache.kafka.raft.internals.RecordsIteratorTest:
 - testControlRecordIterationWithKraftVersion0
 - testControlRecordIterationWithKraftVersion1
 - testControlRecordTypeValues
+- testCrcValidation
 - testEmptyRecords
+- testFileRecords
+- testMemoryRecords
 - testWithAllSupportedControlRecords
 org.apache.kafka.raft.internals.ThresholdPurgatoryTest:
 - testCompleteAll
