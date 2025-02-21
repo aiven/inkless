@@ -16,14 +16,24 @@
  */
 package org.apache.kafka.storage.internals.log;
 
+import org.apache.kafka.common.InvalidRecordException;
+import org.apache.kafka.common.OffsetsOutOfOrderException;
 import org.apache.kafka.common.TopicPartition;
+import org.apache.kafka.common.errors.CorruptRecordException;
+import org.apache.kafka.common.errors.RecordTooLargeException;
+import org.apache.kafka.common.record.CompressionType;
 import org.apache.kafka.common.record.FileRecords;
+import org.apache.kafka.common.record.MemoryRecords;
+import org.apache.kafka.common.record.MutableRecordBatch;
+import org.apache.kafka.common.record.Record;
 import org.apache.kafka.common.record.RecordBatch;
+import org.apache.kafka.common.record.RecordValidationStats;
 import org.apache.kafka.common.record.RecordVersion;
 import org.apache.kafka.common.record.Records;
 import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.common.utils.Utils;
 import org.apache.kafka.server.util.Scheduler;
+import org.apache.kafka.storage.log.metrics.BrokerTopicStats;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -31,10 +41,14 @@ import org.slf4j.LoggerFactory;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.OptionalInt;
+import java.util.stream.Collectors;
+import java.util.stream.StreamSupport;
 
 public class UnifiedLog {
 
@@ -205,5 +219,126 @@ public class UnifiedLog {
             producerStateManager.clearVerificationStateEntry(producerId);
         }
         return completedTxn;
+    }
+
+    /**
+     * Validate the following:
+     * <ol>
+     * <li> each message matches its CRC
+     * <li> each message size is valid (if ignoreRecordSize is false)
+     * <li> that the sequence numbers of the incoming record batches are consistent with the existing state and with each other
+     * <li> that the offsets are monotonically increasing (if requireOffsetsMonotonic is true)
+     * </ol>
+     * <p>
+     * Also compute the following quantities:
+     * <ol>
+     * <li> First offset in the message set
+     * <li> Last offset in the message set
+     * <li> Number of messages
+     * <li> Number of valid bytes
+     * <li> Whether the offsets are monotonically increasing
+     * <li> Whether any compression codec is used (if many are used, then the last one is given)
+     * </ol>
+     */
+    public static LogAppendInfo analyzeAndValidateRecords(
+        TopicPartition topicPartition,
+        MemoryRecords records,
+        LogConfig config,
+        long logStartOffset,
+        AppendOrigin origin,
+        boolean ignoreRecordSize,
+        boolean requireOffsetsMonotonic,
+        int leaderEpoch,
+        BrokerTopicStats brokerTopicStats
+    ) {
+        var validBytesCount = 0;
+        var firstOffset = LocalLog.UNKNOWN_OFFSET;
+        var lastOffset = -1L;
+        var lastLeaderEpoch = RecordBatch.NO_PARTITION_LEADER_EPOCH;
+        var sourceCompression = CompressionType.NONE;
+        var monotonic = true;
+        var maxTimestamp = RecordBatch.NO_TIMESTAMP;
+        var shallowOffsetOfMaxTimestamp = -1L;
+        boolean readFirstMessage = false;
+        var lastOffsetOfFirstBatch = -1L;
+
+        for (MutableRecordBatch batch : records.batches()) {
+            if (origin == AppendOrigin.RAFT_LEADER && batch.partitionLeaderEpoch() != leaderEpoch) {
+                throw new InvalidRecordException("Append from Raft leader did not set the batch epoch correctly");
+            }
+
+            // we only validate V2 and higher to avoid potential compatibility issues with older clients
+            if (batch.magic() >= RecordBatch.MAGIC_VALUE_V2 && origin == AppendOrigin.CLIENT && batch.baseOffset() != 0)
+                throw new InvalidRecordException(("The baseOffset of the record batch in the append to %s should " +
+                    "be 0, but it is %d").formatted(topicPartition, batch.baseOffset()));
+
+            // update the first offset if on the first message. For magic versions older than 2, we use the last offset
+            // to avoid the need to decompress the data (the last offset can be obtained directly from the wrapper message).
+            // For magic version 2, we can get the first offset directly from the batch header.
+            // When appending to the leader, we will update LogAppendInfo.baseOffset with the correct value. In the follower
+            // case, validation will be more lenient.
+            // Also indicate whether we have the accurate first offset or not
+            if (!readFirstMessage) {
+                if (batch.magic() >= RecordBatch.MAGIC_VALUE_V2)
+                    firstOffset = batch.baseOffset();
+                lastOffsetOfFirstBatch = batch.lastOffset();
+                readFirstMessage = true;
+            }
+
+            // check that offsets are monotonically increasing
+            if (lastOffset >= batch.lastOffset())
+                monotonic = false;
+
+            // update the last offset seen
+            lastOffset = batch.lastOffset();
+            lastLeaderEpoch = batch.partitionLeaderEpoch();
+
+            // Check if the message sizes are valid.
+            final var batchSize = batch.sizeInBytes();
+            if (!ignoreRecordSize && batchSize > config.maxMessageSize()) {
+                 brokerTopicStats.topicStats(topicPartition.topic()).bytesRejectedRate().mark(records.sizeInBytes());
+                 brokerTopicStats.allTopicsStats().bytesRejectedRate().mark(records.sizeInBytes());
+                throw new RecordTooLargeException(
+                    ("The record batch size in the append to %s is %d bytes " +
+                        "which exceeds the maximum configured value of %d.")
+                        .formatted(topicPartition, batchSize, config.maxMessageSize()));
+            }
+
+            // check the validity of the message by checking CRC
+            if (!batch.isValid()) {
+                 brokerTopicStats.allTopicsStats().invalidMessageCrcRecordsPerSec().mark();
+                throw new CorruptRecordException("Record is corrupt (stored crc = %s) in topic partition %s."
+                    .formatted(batch.checksum(), topicPartition));
+            }
+
+            if (batch.maxTimestamp() > maxTimestamp) {
+                maxTimestamp = batch.maxTimestamp();
+                shallowOffsetOfMaxTimestamp = lastOffset;
+            }
+
+            validBytesCount += batchSize;
+
+            var batchCompression = CompressionType.forId(batch.compressionType().id);
+            // sourceCompression is only used on the leader path, which only contains one batch if version is v2 or messages are compressed
+            if (batchCompression != CompressionType.NONE)
+                sourceCompression = batchCompression;
+        }
+
+        if (requireOffsetsMonotonic && !monotonic)
+            throw new OffsetsOutOfOrderException("Out of order offsets found in append to %s: ".formatted(topicPartition) +
+                StreamSupport.stream(records.records().spliterator(), false)
+                    .map(Record::offset)
+                    .map(String::valueOf)
+                    .collect(Collectors.joining(",")));
+
+        final OptionalInt lastLeaderEpochOpt;
+        if (lastLeaderEpoch != RecordBatch.NO_PARTITION_LEADER_EPOCH)
+            lastLeaderEpochOpt = OptionalInt.of(lastLeaderEpoch);
+        else
+            lastLeaderEpochOpt = OptionalInt.empty();
+
+        return new LogAppendInfo(firstOffset, lastOffset, lastLeaderEpochOpt, maxTimestamp, shallowOffsetOfMaxTimestamp,
+            RecordBatch.NO_TIMESTAMP, logStartOffset, RecordValidationStats.EMPTY, sourceCompression,
+            validBytesCount, lastOffsetOfFirstBatch, Collections.emptyList(), LeaderHwChange.NONE);
     }
 }
