@@ -7,6 +7,7 @@ import org.apache.kafka.common.record.MemoryRecords;
 import org.apache.kafka.common.record.TimestampType;
 import org.apache.kafka.common.requests.ProduceResponse.PartitionResponse;
 import org.apache.kafka.common.utils.Time;
+import org.apache.kafka.storage.log.metrics.BrokerTopicStats;
 
 import java.time.Instant;
 import java.util.HashMap;
@@ -32,14 +33,14 @@ class ActiveFile {
     private final Map<Integer, Map<TopicIdPartition, MemoryRecords>> originalRequests = new HashMap<>();
     private final Map<Integer, CompletableFuture<Map<TopicPartition, PartitionResponse>>> awaitingFuturesByRequest = new HashMap<>();
 
-    private final BrokerTopicMetricMarks brokerTopicMetricMarks;
+    private final BrokerTopicStats brokerTopicStats;
 
     ActiveFile(final Time time,
-               final BrokerTopicMetricMarks brokerTopicMetricMarks) {
+               final BrokerTopicStats brokerTopicStats) {
         this.buffer = new BatchBuffer();
         this.batchValidator = new BatchValidator(time);
         this.start = TimeUtils.durationMeasurementNow(time);
-        this.brokerTopicMetricMarks = brokerTopicMetricMarks;
+        this.brokerTopicStats = brokerTopicStats;
     }
 
     // For testing
@@ -47,7 +48,7 @@ class ActiveFile {
         this.buffer = new BatchBuffer();
         this.batchValidator = new BatchValidator(time);
         this.start = start;
-        this.brokerTopicMetricMarks = new BrokerTopicMetricMarks();
+        this.brokerTopicStats = new BrokerTopicStats();
     }
 
     CompletableFuture<Map<TopicPartition, PartitionResponse>> add(
@@ -61,9 +62,10 @@ class ActiveFile {
         originalRequests.put(requestId, entriesPerPartition);
 
         for (final var entry : entriesPerPartition.entrySet()) {
-            final String topic = entry.getKey().topic();
-            brokerTopicMetricMarks.requestRateMark.accept(topic);
             final TopicIdPartition topicIdPartition = entry.getKey();
+            brokerTopicStats.topicStats(topicIdPartition.topic()).totalProduceRequestRate().mark();
+            brokerTopicStats.allTopicsStats().totalProduceRequestRate().mark();
+
             final TimestampType messageTimestampType = timestampTypes.get(topicIdPartition.topic());
             if (messageTimestampType == null) {
                 throw new IllegalArgumentException("Timestamp type not provided for topic " + topicIdPartition.topic());
@@ -74,8 +76,12 @@ class ActiveFile {
 
                 buffer.addBatch(topicIdPartition, batch, requestId);
 
-                brokerTopicMetricMarks.bytesInRateMark.accept(topicIdPartition.topic(), batch.sizeInBytes());
-                brokerTopicMetricMarks.messagesInRateMark.accept(topicIdPartition.topic(), batch.nextOffset() - batch.baseOffset());
+                brokerTopicStats.topicStats(topicIdPartition.topic()).bytesInRate().mark(batch.sizeInBytes());
+                brokerTopicStats.allTopicsStats().bytesInRate().mark(batch.sizeInBytes());
+
+                final long numMessages = batch.nextOffset() - batch.baseOffset();
+                brokerTopicStats.topicStats(topicIdPartition.topic()).messagesInRate().mark(numMessages);
+                brokerTopicStats.allTopicsStats().messagesInRate().mark(numMessages);
             }
         }
 
