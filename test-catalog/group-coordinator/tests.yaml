@@ -74,6 +74,11 @@ org.apache.kafka.coordinator.group.GroupCoordinatorServiceTest:
 - testDeleteOffsetsInvalidGroupId
 - testDeleteOffsetsWhenNotStarted
 - testDeleteOffsetsWithException
+- testDeleteShareGroupCoordinatorGeneralWriteError
+- testDeleteShareGroupCoordinatorShareSpecificWriteError
+- testDeleteShareGroupNotEmptyError
+- testDeleteShareGroupPersisterError
+- testDeleteWithShareGroups
 - testDescribeGroupCoordinatorLoadInProgress
 - testDescribeGroups
 - testDescribeGroupsInvalidGroupId
@@ -177,6 +182,8 @@ org.apache.kafka.coordinator.group.GroupCoordinatorShardTest:
 - testScheduleCleanupGroupMetadata
 - testScheduleGroupSizeCounter
 - testShareGroupHeartbeat
+- testSharePartitionDeleteRequests
+- testSharePartitionDeleteRequestsNonEmptyShareGroup
 org.apache.kafka.coordinator.group.GroupMetadataManagerTest:
 - testClassicGroupCompletedRebalanceSensor
 - testClassicGroupDelete
@@ -404,6 +411,7 @@ org.apache.kafka.coordinator.group.GroupMetadataManagerTest:
 - testShareGroupStates
 - testShareGroupUnknownGroupId
 - testShareGroupUnknownMemberIdJoins
+- testSharePartitionDeleteRequest
 - testShouldThrowFencedInstanceIdExceptionWhenStaticMemberWithDifferentMemberIdJoins
 - testShouldThrowFencedInstanceIdExceptionWhenStaticMemberWithDifferentMemberIdLeaves
 - testShouldThrowUnknownMemberIdExceptionWhenUnknownStaticMemberLeaves
