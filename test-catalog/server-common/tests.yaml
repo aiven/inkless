@@ -35,6 +35,7 @@ org.apache.kafka.server.common.FeatureTest:
 - testLatestProductionIsOneOfFeatureValues
 - testUnstableTestVersion
 - testV0SupportedInEarliestMV
+- testValidateEligibleLeaderReplicasVersion
 - testValidateVersionAllFeatures
 - testValidateWithDefaultValueDependencyAheadOfItsDefaultLevel
 - testValidateWithDependencyNotProductionReady

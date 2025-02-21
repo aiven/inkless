@@ -82,6 +82,7 @@ org.apache.kafka.controller.ClusterControlManagerTest:
 - testReplayRegisterBrokerRecord
 - testUnregister
 org.apache.kafka.controller.ConfigurationControlManagerTest:
+- testElrUpgrade
 - testIncrementalAlterConfig
 - testIncrementalAlterConfigs
 - testIncrementalAlterConfigsWithPolicy
@@ -864,6 +865,7 @@ org.apache.kafka.metadata.properties.PropertiesUtilsTest:
 org.apache.kafka.metadata.storage.FormatterTest:
 - testDirectories
 - testFeatureFlag
+- testFormatElrEnabledWithMetadataVersions
 - testFormatWithInitialVoters
 - testFormatWithInitialVotersFailsWithOlderKraftVersion
 - testFormatWithInitialVotersFailsWithOlderMetadataVersion
