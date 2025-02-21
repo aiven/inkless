@@ -60,7 +60,7 @@ class Writer implements Closeable {
     private final ScheduledExecutorService commitTickScheduler;
     private boolean closed = false;
     private final WriterMetrics writerMetrics;
-    private final BrokerTopicMetricMarks brokerTopicMetricMarks;
+    private final BrokerTopicStats brokerTopicStats;
     private Instant openedAt;
     private ScheduledFuture<?> scheduledTick;
 
@@ -87,7 +87,7 @@ class Writer implements Closeable {
                     keyAlignmentStrategy, objectCache, time,
                     maxFileUploadAttempts, fileUploadRetryBackoff),
             new WriterMetrics(time),
-            new BrokerTopicMetricMarks(brokerTopicStats)
+            brokerTopicStats
         );
     }
 
@@ -98,7 +98,7 @@ class Writer implements Closeable {
            final ScheduledExecutorService commitTickScheduler,
            final FileCommitter fileCommitter,
            final WriterMetrics writerMetrics,
-           final BrokerTopicMetricMarks brokerTopicMetricMarks) {
+           final BrokerTopicStats brokerTopicStats) {
         this.time = Objects.requireNonNull(time, "time cannot be null");
         this.commitInterval = Objects.requireNonNull(commitInterval, "commitInterval cannot be null");
         if (maxBufferSize <= 0) {
@@ -108,8 +108,8 @@ class Writer implements Closeable {
         this.commitTickScheduler = Objects.requireNonNull(commitTickScheduler, "commitTickScheduler cannot be null");
         this.fileCommitter = Objects.requireNonNull(fileCommitter, "fileCommitter cannot be null");
         this.writerMetrics = Objects.requireNonNull(writerMetrics, "writerMetrics cannot be null");
-        this.brokerTopicMetricMarks = brokerTopicMetricMarks;
-        this.activeFile = new ActiveFile(time, brokerTopicMetricMarks);
+        this.brokerTopicStats = brokerTopicStats;
+        this.activeFile = new ActiveFile(time, brokerTopicStats);
     }
 
     CompletableFuture<Map<TopicPartition, PartitionResponse>> write(
@@ -192,7 +192,7 @@ class Writer implements Closeable {
     private void rotateFile(final boolean swallowInterrupted) {
         LOGGER.debug("Rotating active file");
         final ActiveFile prevActiveFile = this.activeFile;
-        this.activeFile = new ActiveFile(time, brokerTopicMetricMarks);
+        this.activeFile = new ActiveFile(time, brokerTopicStats);
 
         try {
             final ClosedFile closedFile = prevActiveFile.close();
