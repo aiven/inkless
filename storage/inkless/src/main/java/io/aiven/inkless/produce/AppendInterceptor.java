@@ -5,7 +5,6 @@ import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.record.MemoryRecords;
-import org.apache.kafka.common.record.TimestampType;
 import org.apache.kafka.common.requests.ProduceResponse.PartitionResponse;
 import org.apache.kafka.storage.internals.log.LogConfig;
 
@@ -108,7 +107,7 @@ public class AppendInterceptor implements Closeable {
             return true;
         }
         // TODO use purgatory
-        final var resultFuture = writer.write(entriesPerPartitionEnriched, getTimestampTypes(entriesPerPartition));
+        final var resultFuture = writer.write(entriesPerPartitionEnriched, getLogConfigs(entriesPerPartition));
         resultFuture.whenComplete((result, e) -> {
             if (result == null) {
                 // We don't really expect this future to fail, but in case it does...
@@ -156,12 +155,12 @@ public class AppendInterceptor implements Closeable {
         responseCallback.accept(response);
     }
 
-    private Map<String, TimestampType> getTimestampTypes(final Map<TopicPartition, MemoryRecords> entriesPerPartition) {
+    private Map<String, LogConfig> getLogConfigs(final Map<TopicPartition, MemoryRecords> entriesPerPartition) {
         final Map<String, Object> defaultTopicConfigs = state.defaultTopicConfigs().get().originals();
-        final Map<String, TimestampType> result = new HashMap<>();
+        final Map<String, LogConfig> result = new HashMap<>();
         for (final TopicPartition tp : entriesPerPartition.keySet()) {
             final var overrides = state.metadata().getTopicConfig(tp.topic());
-            result.put(tp.topic(), LogConfig.fromProps(defaultTopicConfigs, overrides).messageTimestampType);
+            result.put(tp.topic(), LogConfig.fromProps(defaultTopicConfigs, overrides));
         }
         return result;
     }
