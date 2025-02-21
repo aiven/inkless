@@ -29,6 +29,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 
+import io.aiven.inkless.FutureUtils;
 import io.aiven.inkless.TimeUtils;
 import io.aiven.inkless.cache.KeyAlignmentStrategy;
 import io.aiven.inkless.cache.ObjectCache;
@@ -147,7 +148,7 @@ class Writer implements Closeable {
                 this.scheduledTick = commitTickScheduler.schedule(this::tick, commitInterval.toMillis(), TimeUnit.MILLISECONDS);
             }
 
-            return result;
+            return FutureUtils.combineMapOfFutures(result);
         } finally {
             lock.unlock();
         }

@@ -16,7 +16,7 @@ import io.aiven.inkless.control_plane.CommitBatchRequest;
 
 record ClosedFile(Instant start,
                   Map<Integer, Map<TopicIdPartition, MemoryRecords>> originalRequests,
-                  Map<Integer, CompletableFuture<Map<TopicPartition, PartitionResponse>>> awaitingFuturesByRequest,
+                  Map<Integer, Map<TopicPartition, CompletableFuture<PartitionResponse>>> awaitingFuturesByRequest,
                   List<CommitBatchRequest> commitBatchRequests,
                   List<Integer> requestIds,
                   byte[] data) {

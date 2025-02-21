@@ -16,6 +16,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 
+import io.aiven.inkless.FutureUtils;
 import io.aiven.inkless.control_plane.CommitBatchRequest;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -54,7 +55,7 @@ class ActiveFileTest {
         final var result = file.add(Map.of(
             T0P0, MemoryRecords.withRecords(Compression.NONE, new SimpleRecord(new byte[10]))
         ), TIMESTAMP_TYPES);
-        assertThat(result).isNotCompleted();
+        assertThat(FutureUtils.combineMapOfFutures(result)).isNotCompleted();
     }
 
     @Test
@@ -131,8 +132,8 @@ class ActiveFileTest {
         assertThat(result.originalRequests())
             .isEqualTo(Map.of(0, request1, 1, request2));
         assertThat(result.awaitingFuturesByRequest()).hasSize(2);
-        assertThat(result.awaitingFuturesByRequest().get(0)).isNotCompleted();
-        assertThat(result.awaitingFuturesByRequest().get(1)).isNotCompleted();
+        assertThat(FutureUtils.combineMapOfFutures(result.awaitingFuturesByRequest().get(0))).isNotCompleted();
+        assertThat(FutureUtils.combineMapOfFutures(result.awaitingFuturesByRequest().get(1))).isNotCompleted();
         assertThat(result.commitBatchRequests()).containsExactly(
             CommitBatchRequest.of(T0P0, 0, 78, 0, 0, 1000, TimestampType.CREATE_TIME),
             CommitBatchRequest.of(T0P1, 78, 78, 0, 0, 2000, TimestampType.CREATE_TIME),

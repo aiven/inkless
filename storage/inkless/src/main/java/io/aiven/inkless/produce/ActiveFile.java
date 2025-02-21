@@ -31,7 +31,7 @@ class ActiveFile {
     private final BatchValidator batchValidator;
 
     private final Map<Integer, Map<TopicIdPartition, MemoryRecords>> originalRequests = new HashMap<>();
-    private final Map<Integer, CompletableFuture<Map<TopicPartition, PartitionResponse>>> awaitingFuturesByRequest = new HashMap<>();
+    private final Map<Integer, Map<TopicPartition, CompletableFuture<PartitionResponse>>> awaitingFuturesByRequest = new HashMap<>();
 
     private final BrokerTopicStats brokerTopicStats;
 
@@ -51,7 +51,7 @@ class ActiveFile {
         this.brokerTopicStats = new BrokerTopicStats();
     }
 
-    CompletableFuture<Map<TopicPartition, PartitionResponse>> add(
+    Map<TopicPartition, CompletableFuture<PartitionResponse>> add(
         final Map<TopicIdPartition, MemoryRecords> entriesPerPartition,
         final Map<String, TimestampType> timestampTypes
     ) {
@@ -60,6 +60,8 @@ class ActiveFile {
 
         requestId += 1;
         originalRequests.put(requestId, entriesPerPartition);
+
+        final Map<TopicPartition, CompletableFuture<PartitionResponse>> result = new HashMap<>();
 
         for (final var entry : entriesPerPartition.entrySet()) {
             final TopicIdPartition topicIdPartition = entry.getKey();
@@ -83,9 +85,10 @@ class ActiveFile {
                 brokerTopicStats.topicStats(topicIdPartition.topic()).messagesInRate().mark(numMessages);
                 brokerTopicStats.allTopicsStats().messagesInRate().mark(numMessages);
             }
+
+            result.put(topicIdPartition.topicPartition(), new CompletableFuture<>());
         }
 
-        final CompletableFuture<Map<TopicPartition, PartitionResponse>> result = new CompletableFuture<>();
         awaitingFuturesByRequest.put(requestId, result);
 
         return result;

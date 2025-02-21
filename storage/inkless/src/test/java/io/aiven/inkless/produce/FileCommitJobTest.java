@@ -25,6 +25,7 @@ import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.Consumer;
 
+import io.aiven.inkless.FutureUtils;
 import io.aiven.inkless.common.ObjectKey;
 import io.aiven.inkless.common.PlainObjectKey;
 import io.aiven.inkless.control_plane.CommitBatchRequest;
@@ -88,9 +89,9 @@ class FileCommitJobTest {
 
     @Test
     void commitFinishedSuccessfully() {
-        final Map<Integer, CompletableFuture<Map<TopicPartition, PartitionResponse>>> awaitingFuturesByRequest = Map.of(
-            0, new CompletableFuture<>(),
-            1, new CompletableFuture<>()
+        final Map<Integer, Map<TopicPartition, CompletableFuture<PartitionResponse>>> awaitingFuturesByRequest = Map.of(
+            0, Map.of(T0P0.topicPartition(), new CompletableFuture<>(), T0P1.topicPartition(), new CompletableFuture<>()),
+            1, Map.of(T0P1.topicPartition(), new CompletableFuture<>(), T1P0.topicPartition(), new CompletableFuture<>())
         );
 
         final List<CommitBatchResponse> commitBatchResponses = List.of(
@@ -110,11 +111,11 @@ class FileCommitJobTest {
 
         job.run();
 
-        assertThat(awaitingFuturesByRequest.get(0)).isCompletedWithValue(Map.of(
+        assertThat(FutureUtils.combineMapOfFutures(awaitingFuturesByRequest.get(0))).isCompletedWithValue(Map.of(
             T0P0.topicPartition(), new PartitionResponse(Errors.NONE, 0, -1, 0),
             T0P1.topicPartition(), new PartitionResponse(Errors.INVALID_TOPIC_EXCEPTION, -1, -1, -1)
         ));
-        assertThat(awaitingFuturesByRequest.get(1)).isCompletedWithValue(Map.of(
+        assertThat(FutureUtils.combineMapOfFutures(awaitingFuturesByRequest.get(1))).isCompletedWithValue(Map.of(
             T0P1.topicPartition(), new PartitionResponse(Errors.NONE, 20, -1, 0),
             T1P0.topicPartition(), new PartitionResponse(Errors.NONE, 30, 10, 0)
         ));
@@ -125,9 +126,9 @@ class FileCommitJobTest {
     void commitFinishedSuccessfullyZeroBatches() {
         // We sent two requests, both without any batch.
 
-        final Map<Integer, CompletableFuture<Map<TopicPartition, PartitionResponse>>> awaitingFuturesByRequest = Map.of(
-            0, new CompletableFuture<>(),
-            1, new CompletableFuture<>()
+        final Map<Integer, Map<TopicPartition, CompletableFuture<PartitionResponse>>> awaitingFuturesByRequest = Map.of(
+            0, Map.of(),
+            1, Map.of()
         );
 
         final List<CommitBatchResponse> commitBatchResponses = List.of();
@@ -142,16 +143,16 @@ class FileCommitJobTest {
 
         job.run();
 
-        assertThat(awaitingFuturesByRequest.get(0)).isCompletedWithValue(Map.of());
-        assertThat(awaitingFuturesByRequest.get(1)).isCompletedWithValue(Map.of());
+        assertThat(FutureUtils.combineMapOfFutures(awaitingFuturesByRequest.get(0))).isCompletedWithValue(Map.of());
+        assertThat(FutureUtils.combineMapOfFutures(awaitingFuturesByRequest.get(1))).isCompletedWithValue(Map.of());
         verify(commitTimeDurationCallback).accept(eq(10L));
     }
 
     @Test
     void commitFinishedWithError() {
-        final Map<Integer, CompletableFuture<Map<TopicPartition, PartitionResponse>>> awaitingFuturesByRequest = Map.of(
-            0, new CompletableFuture<>(),
-            1, new CompletableFuture<>()
+        final Map<Integer, Map<TopicPartition, CompletableFuture<PartitionResponse>>> awaitingFuturesByRequest = Map.of(
+            0, Map.of(T0P0.topicPartition(), new CompletableFuture<>(), T0P1.topicPartition(), new CompletableFuture<>()),
+            1, Map.of(T0P1.topicPartition(), new CompletableFuture<>(), T1P0.topicPartition(), new CompletableFuture<>())
         );
 
         when(time.nanoseconds()).thenReturn(10_000_000L, 20_000_000L);
@@ -162,11 +163,11 @@ class FileCommitJobTest {
 
         job.run();
 
-        assertThat(awaitingFuturesByRequest.get(0)).isCompletedWithValue(Map.of(
+        assertThat(FutureUtils.combineMapOfFutures(awaitingFuturesByRequest.get(0))).isCompletedWithValue(Map.of(
             T0P0.topicPartition(), new PartitionResponse(Errors.KAFKA_STORAGE_ERROR, "Error commiting data"),
             T0P1.topicPartition(), new PartitionResponse(Errors.KAFKA_STORAGE_ERROR, "Error commiting data")
         ));
-        assertThat(awaitingFuturesByRequest.get(1)).isCompletedWithValue(Map.of(
+        assertThat(FutureUtils.combineMapOfFutures(awaitingFuturesByRequest.get(1))).isCompletedWithValue(Map.of(
             T0P1.topicPartition(), new PartitionResponse(Errors.KAFKA_STORAGE_ERROR, "Error commiting data"),
             T1P0.topicPartition(), new PartitionResponse(Errors.KAFKA_STORAGE_ERROR, "Error commiting data")
         ));
@@ -175,9 +176,9 @@ class FileCommitJobTest {
 
     @Test
     void deleteObjectWhenFailureOnCommit() throws Exception {
-        final Map<Integer, CompletableFuture<Map<TopicPartition, PartitionResponse>>> awaitingFuturesByRequest = Map.of(
-            0, new CompletableFuture<>(),
-            1, new CompletableFuture<>()
+        final Map<Integer, Map<TopicPartition, CompletableFuture<PartitionResponse>>> awaitingFuturesByRequest = Map.of(
+            0, Map.of(T0P0.topicPartition(), new CompletableFuture<>(), T0P1.topicPartition(), new CompletableFuture<>()),
+            1, Map.of(T0P1.topicPartition(), new CompletableFuture<>(), T1P0.topicPartition(), new CompletableFuture<>())
         );
 
         when(controlPlane.commitFile(eq(OBJECT_KEY_MAIN_PART), eq(BROKER_ID), eq(FILE_SIZE), eq(COMMIT_BATCH_REQUESTS)))
@@ -190,11 +191,11 @@ class FileCommitJobTest {
         job.run();
 
         verify(objectDeleter).delete(eq(OBJECT_KEY));
-        assertThat(awaitingFuturesByRequest.get(0)).isCompletedWithValue(Map.of(
+        assertThat(FutureUtils.combineMapOfFutures(awaitingFuturesByRequest.get(0))).isCompletedWithValue(Map.of(
             T0P0.topicPartition(), new PartitionResponse(Errors.KAFKA_STORAGE_ERROR, "Error commiting data"),
             T0P1.topicPartition(), new PartitionResponse(Errors.KAFKA_STORAGE_ERROR, "Error commiting data")
         ));
-        assertThat(awaitingFuturesByRequest.get(1)).isCompletedWithValue(Map.of(
+        assertThat(FutureUtils.combineMapOfFutures(awaitingFuturesByRequest.get(1))).isCompletedWithValue(Map.of(
             T0P1.topicPartition(), new PartitionResponse(Errors.KAFKA_STORAGE_ERROR, "Error commiting data"),
             T1P0.topicPartition(), new PartitionResponse(Errors.KAFKA_STORAGE_ERROR, "Error commiting data")
         ));

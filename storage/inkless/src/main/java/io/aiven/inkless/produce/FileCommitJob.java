@@ -121,7 +121,13 @@ class FileCommitJob implements Runnable {
 
         for (final var entry : file.awaitingFuturesByRequest().entrySet()) {
             final var result = resultsPerRequest.get(entry.getKey());
-            entry.getValue().complete(result);
+            for (final var inner: entry.getValue().entrySet()) {
+                final var future = inner.getValue();
+                // Future might be completed if the request was rejected when validating record batches.
+                if (!future.isDone()) {
+                    future.complete(result.get(inner.getKey()));
+                }
+            }
         }
     }
 
@@ -150,7 +156,9 @@ class FileCommitJob implements Runnable {
                 .collect(Collectors.toMap(
                     kv -> kv.getKey().topicPartition(),
                     ignore -> new ProduceResponse.PartitionResponse(Errors.KAFKA_STORAGE_ERROR, "Error commiting data")));
-            entry.getValue().complete(result);
+            for (final var inner : entry.getValue().entrySet()) {
+                inner.getValue().complete(result.get(inner.getKey()));
+            }
         }
     }
 
