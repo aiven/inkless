@@ -3839,9 +3839,7 @@ org.apache.kafka.common.record.FileRecordsTest:
 - testAppendProtectsFromOverflow
 - testBytesLengthOfWriteTo
 - testConversion
-- testDownconversionAfterMessageFormatDowngrade
 - testFileSize
-- testFormatConversionWithPartialMessage
 - testIterationDoesntChangePosition
 - testIterationOverPartialAndTruncation
 - testIteratorWithLimits
@@ -3866,8 +3864,6 @@ org.apache.kafka.common.record.LegacyRecordTest:
 org.apache.kafka.common.record.MemoryRecordsBuilderTest:
 - buildUsingCreateTime
 - buildUsingLogAppendTime
-- convertToV1WithMixedV0AndV2Data
-- convertV2ToV1UsingMixedCreateAndLogAppendTime
 - shouldResetBufferToInitialPositionOnAbort
 - shouldThrowIllegalStateExceptionOnAppendWhenAborted
 - shouldThrowIllegalStateExceptionOnAppendWhenClosed
