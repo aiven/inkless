@@ -29,6 +29,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 
+import io.aiven.inkless.FutureUtils;
 import io.aiven.inkless.TimeUtils;
 import io.aiven.inkless.cache.KeyAlignmentStrategy;
 import io.aiven.inkless.cache.ObjectCache;
@@ -151,7 +152,10 @@ class Writer implements Closeable {
                 this.scheduledTick = commitTickScheduler.schedule(this::tick, commitInterval.toMillis(), TimeUnit.MILLISECONDS);
             }
 
-            return result;
+            // Combine partition futures into a single future
+            // Each partition future may fail independently, but the result should be a PartitionResponse including the error
+            // If there is an unexpected failure, the whole future fails, causing the request to fail.
+            return FutureUtils.combineMapOfFutures(result);
         } finally {
             lock.unlock();
         }

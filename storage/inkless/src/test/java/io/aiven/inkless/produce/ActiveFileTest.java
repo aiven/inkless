@@ -5,9 +5,11 @@ import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.compress.Compression;
 import org.apache.kafka.common.config.TopicConfig;
+import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.record.MemoryRecords;
 import org.apache.kafka.common.record.SimpleRecord;
 import org.apache.kafka.common.record.TimestampType;
+import org.apache.kafka.common.requests.ProduceResponse.PartitionResponse;
 import org.apache.kafka.common.utils.MockTime;
 import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.storage.internals.log.LogConfig;
@@ -18,6 +20,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 
+import io.aiven.inkless.FutureUtils;
 import io.aiven.inkless.control_plane.CommitBatchRequest;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -60,7 +63,7 @@ class ActiveFileTest {
         final var result = file.add(Map.of(
             T0P0, MemoryRecords.withRecords(Compression.NONE, new SimpleRecord(new byte[10]))
         ), TOPIC_CONFIGS);
-        assertThat(result).isNotCompleted();
+        assertThat(FutureUtils.combineMapOfFutures(result)).isNotCompleted();
     }
 
     @Test
@@ -75,16 +78,34 @@ class ActiveFileTest {
     }
 
     @Test
-    void empty() {
+    void isEmpty() {
         final ActiveFile file = new ActiveFile(Time.SYSTEM, Instant.EPOCH);
 
         assertThat(file.isEmpty()).isTrue();
 
+        // then when adding records
         file.add(Map.of(
             T0P0, MemoryRecords.withRecords(Compression.NONE, new SimpleRecord(new byte[10]))
         ), TOPIC_CONFIGS);
 
+        // is not empty anymore
         assertThat(file.isEmpty()).isFalse();
+    }
+
+    @Test
+    void emptyRecords() {
+        final ActiveFile file = new ActiveFile(Time.SYSTEM, Instant.EPOCH);
+
+        // when adding empty records
+        file.add(Map.of(T0P0, MemoryRecords.EMPTY), TOPIC_CONFIGS);
+
+        assertThat(file.isEmpty()).isFalse();
+
+        final var result = file.close();
+
+        // then the result is completed
+        assertThat(result.allFuturesByRequest().get(0).get(T0P0.topicPartition()))
+            .isCompletedWithValue(new PartitionResponse(Errors.NONE));
     }
 
     @Test
@@ -136,9 +157,9 @@ class ActiveFileTest {
             .isEqualTo(start);
         assertThat(result.originalRequests())
             .isEqualTo(Map.of(0, request1, 1, request2));
-        assertThat(result.awaitingFuturesByRequest()).hasSize(2);
-        assertThat(result.awaitingFuturesByRequest().get(0)).isNotCompleted();
-        assertThat(result.awaitingFuturesByRequest().get(1)).isNotCompleted();
+        assertThat(result.allFuturesByRequest()).hasSize(2);
+        assertThat(FutureUtils.combineMapOfFutures(result.allFuturesByRequest().get(0))).isNotCompleted();
+        assertThat(FutureUtils.combineMapOfFutures(result.allFuturesByRequest().get(1))).isNotCompleted();
         assertThat(result.commitBatchRequests()).containsExactly(
             CommitBatchRequest.of(T0P0, 0, 78, 0, 0, 1000, TimestampType.CREATE_TIME),
             CommitBatchRequest.of(T0P1, 78, 78, 0, 0, 2000, TimestampType.CREATE_TIME),

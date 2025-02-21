@@ -33,7 +33,7 @@ class ClosedFileTest {
     void awaitingFuturesByRequestNull() {
         assertThatThrownBy(() -> new ClosedFile(Instant.EPOCH, Map.of(), null, List.of(), List.of(), new byte[1]))
             .isInstanceOf(NullPointerException.class)
-            .hasMessage("awaitingFuturesByRequest cannot be null");
+            .hasMessage("allFuturesByRequest cannot be null");
     }
 
     @Test
@@ -54,7 +54,7 @@ class ClosedFileTest {
     void differentLengths1() {
         assertThatThrownBy(() -> new ClosedFile(Instant.EPOCH, Map.of(1, Map.of()), Map.of(), List.of(), List.of(),new byte[1]))
             .isInstanceOf(IllegalArgumentException.class)
-            .hasMessage("originalRequests and awaitingFuturesByRequest must be of same size");
+            .hasMessage("originalRequests and allFuturesByRequest must be of same size");
     }
 
     @Test

@@ -11,25 +11,27 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
+import java.util.stream.Collectors;
 
 import io.aiven.inkless.control_plane.CommitBatchRequest;
 
 record ClosedFile(Instant start,
                   Map<Integer, Map<TopicIdPartition, MemoryRecords>> originalRequests,
-                  Map<Integer, CompletableFuture<Map<TopicPartition, PartitionResponse>>> awaitingFuturesByRequest,
+                  // Keeps pending and completed request futures to build the final response per request
+                  Map<Integer, Map<TopicPartition, CompletableFuture<PartitionResponse>>> allFuturesByRequest,
                   List<CommitBatchRequest> commitBatchRequests,
                   List<Integer> requestIds,
                   byte[] data) {
     ClosedFile {
         Objects.requireNonNull(start, "start cannot be null");
         Objects.requireNonNull(originalRequests, "originalRequests cannot be null");
-        Objects.requireNonNull(awaitingFuturesByRequest, "awaitingFuturesByRequest cannot be null");
+        Objects.requireNonNull(allFuturesByRequest, "allFuturesByRequest cannot be null");
         Objects.requireNonNull(commitBatchRequests, "commitBatchRequests cannot be null");
         Objects.requireNonNull(requestIds, "requestIds cannot be null");
 
-        if (originalRequests.size() != awaitingFuturesByRequest.size()) {
+        if (originalRequests.size() != allFuturesByRequest.size()) {
             throw new IllegalArgumentException(
-                "originalRequests and awaitingFuturesByRequest must be of same size");
+                "originalRequests and allFuturesByRequest must be of same size");
         }
 
         if (commitBatchRequests.size() != requestIds.size()) {
@@ -42,6 +44,20 @@ record ClosedFile(Instant start,
         if (commitBatchRequests.isEmpty() != (data.length == 0)) {
             throw new IllegalArgumentException("data must be empty if commitBatchRequests is empty");
         }
+    }
+
+
+    Map<Integer, Map<TopicPartition, CompletableFuture<PartitionResponse>>> validatedFutures() {
+        // filter out already completed futures that may have failed validation
+        return allFuturesByRequest.entrySet()
+            .stream()
+            .map(entry ->
+                Map.entry(entry.getKey(), entry.getValue().entrySet()
+                    .stream()
+                    .filter(inner -> !inner.getValue().isDone())
+                    .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue)))
+            )
+            .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
     }
 
     int size() {

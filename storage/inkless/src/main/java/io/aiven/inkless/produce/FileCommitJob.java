@@ -102,7 +102,7 @@ class FileCommitJob implements Runnable {
 
         // Each request must have a response.
         final Map<Integer, Map<TopicPartition, ProduceResponse.PartitionResponse>> resultsPerRequest = file
-            .awaitingFuturesByRequest()
+            .allFuturesByRequest()
             .entrySet().stream()
             .collect(Collectors.toMap(Map.Entry::getKey, ignore -> new HashMap<>()));
 
@@ -119,9 +119,17 @@ class FileCommitJob implements Runnable {
             );
         }
 
-        for (final var entry : file.awaitingFuturesByRequest().entrySet()) {
+        for (final var entry : file.validatedFutures().entrySet()) {
             final var result = resultsPerRequest.get(entry.getKey());
-            entry.getValue().complete(result);
+            for (final var inner: entry.getValue().entrySet()) {
+                final var future = inner.getValue();
+                if (future.isDone()) {
+                    // This should never happen. Adding for safety.
+                    throw new RuntimeException("Future already completed");
+                }
+
+                future.complete(result.get(inner.getKey()));
+            }
         }
     }
 
@@ -144,13 +152,15 @@ class FileCommitJob implements Runnable {
     }
 
     private void finishCommitWithError() {
-        for (final var entry : file.awaitingFuturesByRequest().entrySet()) {
+        for (final var entry : file.validatedFutures().entrySet()) {
             final var originalRequest = file.originalRequests().get(entry.getKey());
             final var result = originalRequest.entrySet().stream()
                 .collect(Collectors.toMap(
                     kv -> kv.getKey().topicPartition(),
                     ignore -> new ProduceResponse.PartitionResponse(Errors.KAFKA_STORAGE_ERROR, "Error commiting data")));
-            entry.getValue().complete(result);
+            for (final var inner : entry.getValue().entrySet()) {
+                inner.getValue().complete(result.get(inner.getKey()));
+            }
         }
     }
 

@@ -127,7 +127,7 @@ class WriterMockedTest {
         verify(fileCommitter).commit(closedFileCaptor.capture());
         assertThat(closedFileCaptor.getValue().start()).isEqualTo(Instant.ofEpochMilli(10));
         assertThat(closedFileCaptor.getValue().originalRequests()).isEqualTo(Map.of(0, writeRequest));
-        assertThat(closedFileCaptor.getValue().awaitingFuturesByRequest()).hasSize(1);
+        assertThat(closedFileCaptor.getValue().allFuturesByRequest()).hasSize(1);
     }
 
     @Test
@@ -154,7 +154,7 @@ class WriterMockedTest {
         verify(fileCommitter).commit(closedFileCaptor.capture());
         assertThat(closedFileCaptor.getValue().originalRequests())
             .isEqualTo(Map.of(0, writeRequest0, 1, writeRequest1));
-        assertThat(closedFileCaptor.getValue().awaitingFuturesByRequest()).hasSize(2);
+        assertThat(closedFileCaptor.getValue().allFuturesByRequest()).hasSize(2);
     }
 
     @Test
@@ -175,7 +175,7 @@ class WriterMockedTest {
         verify(fileCommitter).commit(closedFileCaptor.capture());
         assertThat(closedFileCaptor.getValue().originalRequests())
             .isEqualTo(Map.of(0, writeRequest));
-        assertThat(closedFileCaptor.getValue().awaitingFuturesByRequest()).hasSize(1);
+        assertThat(closedFileCaptor.getValue().allFuturesByRequest()).hasSize(1);
     }
 
     @Test
@@ -196,7 +196,7 @@ class WriterMockedTest {
         verify(fileCommitter).commit(closedFileCaptor.capture());
         assertThat(closedFileCaptor.getValue().originalRequests())
             .isEqualTo(Map.of(0, writeRequest));
-        assertThat(closedFileCaptor.getValue().awaitingFuturesByRequest()).hasSize(1);
+        assertThat(closedFileCaptor.getValue().allFuturesByRequest()).hasSize(1);
     }
 
     @Test
@@ -218,7 +218,7 @@ class WriterMockedTest {
 
         verify(fileCommitter).commit(closedFileCaptor.capture());
         assertThat(closedFileCaptor.getValue().originalRequests()).isEqualTo(Map.of(0, writeRequest));
-        assertThat(closedFileCaptor.getValue().awaitingFuturesByRequest()).hasSize(1);
+        assertThat(closedFileCaptor.getValue().allFuturesByRequest()).hasSize(1);
     }
 
     @Test
