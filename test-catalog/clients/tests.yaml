@@ -530,6 +530,12 @@ org.apache.kafka.clients.admin.internals.DeleteRecordsHandlerTest:
 - testHandleSuccessfulResponse
 - testHandleUnexpectedPartitionErrorResponse
 - testMixedResponse
+org.apache.kafka.clients.admin.internals.DeleteShareGroupsHandlerTest:
+- testBuildRequest
+- testFailedHandleResponse
+- testRetriableHandleResponse
+- testSuccessfulHandleResponse
+- testUnmappedHandleResponse
 org.apache.kafka.clients.admin.internals.DescribeConsumerGroupsHandlerTest:
 - testBuildRequestWithMultipleGroupTypes
 - testFailedHandleClassicGroupResponse
