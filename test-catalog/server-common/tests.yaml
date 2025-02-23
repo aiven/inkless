@@ -240,6 +240,10 @@ org.apache.kafka.server.share.persister.DefaultStatePersisterTest:
 - testDeleteStateResponseToResultPartialResults
 - testDeleteStateSuccess
 - testDeleteStateValidate
+- testInitializeStateResponseToResultFailedFuture
+- testInitializeStateResponseToResultPartialResults
+- testInitializeStateSuccess
+- testInitializeStateValidate
 - testReadStateResponseToResultFailedFuture
 - testReadStateResponseToResultPartialResults
 - testReadStateSuccess
@@ -265,6 +269,13 @@ org.apache.kafka.server.share.persister.PersisterStateManagerTest:
 - testFindCoordinatorFatalError
 - testFindCoordinatorNullResponse
 - testFindCoordinatorSuccess
+- testInitializeStateRequestBatchingWithCoordinatorNodeLookup
+- testInitializeStateRequestCoordinatorFoundOnRetry
+- testInitializeStateRequestCoordinatorFoundSuccessfully
+- testInitializeStateRequestFailedMaxRetriesExhausted
+- testInitializeStateRequestRetryWithNotCoordinatorSuccessfulOnRetry
+- testInitializeStateRequestWithCoordinatorNodeLookup
+- testInitializeStateRequestWithRetryAndCoordinatorNodeLookup
 - testNetworkErrorHandling
 - testPersisterStateManagerClose
 - testReadStateRequestCoordinatorFoundOnRetry
