@@ -12,6 +12,7 @@ import org.apache.kafka.common.record.TimestampType;
 import org.apache.kafka.common.requests.ProduceResponse;
 import org.apache.kafka.common.utils.MockTime;
 import org.apache.kafka.common.utils.Time;
+import org.apache.kafka.storage.log.metrics.BrokerTopicStats;
 import org.apache.kafka.test.TestUtils;
 
 import net.jqwik.api.Arbitraries;
@@ -211,7 +212,7 @@ class WriterPropertyTest {
             mock(ScheduledExecutorService.class),
             fileCommitter,
             mock(WriterMetrics.class),
-            new BrokerTopicMetricMarks()
+            new BrokerTopicStats()
         );
 
         final Arbitrary<Map<TopicIdPartition, MemoryRecords>> requestArbitrary = requests();
