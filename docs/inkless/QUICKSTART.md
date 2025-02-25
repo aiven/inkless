@@ -1,8 +1,6 @@
-# Inkless Kafka
+# Quickstart
 
-## How to run
-
-### Run Kafka from Intellij
+## Run Kafka from Intellij
 
 Adjust the module `:server` libraries to include Reload4j:
 

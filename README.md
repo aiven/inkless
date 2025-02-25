@@ -1,3 +1,9 @@
+Inkless for Apache Kafka
+===
+See [Inkless](docs/inkless/README.md) specific documentation.
+
+For Apache Kafka general information, keep reading.
+
 Apache Kafka
 =================
 
