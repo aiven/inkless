@@ -20,9 +20,11 @@ import org.junit.jupiter.params.provider.MethodSource;
 import java.nio.ByteBuffer;
 import java.util.Arrays;
 import java.util.Iterator;
+import java.util.List;
 import java.util.stream.Stream;
 
 import io.aiven.inkless.control_plane.CommitBatchRequest;
+import io.aiven.inkless.control_plane.CommitBatchRequestContext;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -59,13 +61,11 @@ class BatchBufferTest {
         final BatchBuffer buffer = new BatchBuffer();
 
         BatchBuffer.CloseResult result = buffer.close();
-        assertThat(result.commitBatchRequests()).isEmpty();
-        assertThat(result.requestIds()).isEmpty();
+        assertThat(result.commitBatchRequestContexts()).isEmpty();
         assertThat(result.data()).isEmpty();
 
         result = buffer.close();
-        assertThat(result.commitBatchRequests()).isEmpty();
-        assertThat(result.requestIds()).isEmpty();
+        assertThat(result.commitBatchRequestContexts()).isEmpty();
         assertThat(result.data()).isEmpty();
     }
 
@@ -74,29 +74,30 @@ class BatchBufferTest {
         return Stream.of(
             Arguments.of(
                 createBatch(TimestampType.CREATE_TIME, time, T0P0 + "-0", T0P0 + "-1", T0P0 + "-2"),
-                CommitBatchRequest.of(T0P0, 0, 181, 19, 21, time.milliseconds(), TimestampType.CREATE_TIME)
+                List.of(new CommitBatchRequestContext(0, T0P0.topicPartition(), CommitBatchRequest.of(T0P0, 0, 181, 19, 21, time.milliseconds(), TimestampType.CREATE_TIME))),
+                false
             ),
             Arguments.of(
                 createIdempotentBatch(time, T0P0 + "-0", T0P0 + "-1", T0P0 + "-2"),
-                CommitBatchRequest.idempotent(T0P0, 0, 181, 19, 21, time.milliseconds(), TimestampType.CREATE_TIME, 1, (short) 1, 1, 3)
+                List.of(new CommitBatchRequestContext(0, T0P0.topicPartition(), CommitBatchRequest.idempotent(T0P0, 0, 181, 19, 21, time.milliseconds(), TimestampType.CREATE_TIME, 1, (short) 1, 1, 3))),
+                true
             )
         );
     }
 
     @ParameterizedTest
     @MethodSource("singleBatchParams")
-    void singleBatch(MutableRecordBatch batch, CommitBatchRequest expectedRequest) {
+    void singleBatch(MutableRecordBatch batch, List<CommitBatchRequestContext> expectedRequest, boolean hasProducerId) {
         final BatchBuffer buffer = new BatchBuffer();
 
         final byte[] beforeAdding = batchToBytes(batch);
         buffer.addBatch(T0P0, batch, 0);
 
         final BatchBuffer.CloseResult result = buffer.close();
-        assertThat(result.commitBatchRequests()).containsExactly(expectedRequest);
-        assertThat(result.requestIds()).containsExactly(0);
+        assertThat(result.commitBatchRequestContexts()).containsExactlyElementsOf(expectedRequest);
         assertThat(result.data()).containsExactly(batchToBytes(batch));
         assertThat(result.data()).containsExactly(beforeAdding);
-        assertThat(batch.hasProducerId()).isEqualTo(expectedRequest.hasProducerId());
+        assertThat(batch.hasProducerId()).isEqualTo(hasProducerId);
     }
 
     @Test
@@ -131,21 +132,25 @@ class BatchBufferTest {
 
         // Here batches are sorted.
         final BatchBuffer.CloseResult result = buffer.close();
-        assertThat(result.commitBatchRequests()).containsExactly(
-            CommitBatchRequest.of(T0P0, 0, batchSize, 19, 19, time.milliseconds(), TimestampType.CREATE_TIME),
-            CommitBatchRequest.of(T0P0, batchSize, batchSize, 19, 19, time.milliseconds(), TimestampType.CREATE_TIME),
-            CommitBatchRequest.of(T0P0, batchSize * 2, batchSize, 19, 19, time.milliseconds(), TimestampType.CREATE_TIME),
-            CommitBatchRequest.of(T0P1, batchSize * 3, batchSize, 19, 19, time.milliseconds(), TimestampType.LOG_APPEND_TIME),
-            CommitBatchRequest.of(T0P1, batchSize * 4, batchSize, 19, 19, time.milliseconds(), TimestampType.LOG_APPEND_TIME),
-            CommitBatchRequest.of(T0P1, batchSize * 5, batchSize, 19, 19, time.milliseconds(), TimestampType.LOG_APPEND_TIME),
-            CommitBatchRequest.of(T1P0, batchSize * 6, batchSize, 19, 19, time.milliseconds(), TimestampType.LOG_APPEND_TIME),
-            CommitBatchRequest.of(T1P0, batchSize * 7, batchSize, 19, 19, time.milliseconds(), TimestampType.LOG_APPEND_TIME),
-            CommitBatchRequest.of(T1P0, batchSize * 8, batchSize, 19, 19, time.milliseconds(), TimestampType.LOG_APPEND_TIME)
-        );
-        assertThat(result.requestIds()).containsExactly(
-            0, 0, 1,
-            1, 2, 2,
-            0, 1, 2
+        assertThat(result.commitBatchRequestContexts()).containsExactly(
+            new CommitBatchRequestContext(0, T0P0.topicPartition(),
+                CommitBatchRequest.of(T0P0, 0, batchSize, 19, 19, time.milliseconds(), TimestampType.CREATE_TIME)),
+            new CommitBatchRequestContext(0, T0P0.topicPartition(),
+                CommitBatchRequest.of(T0P0, batchSize, batchSize, 19, 19, time.milliseconds(), TimestampType.CREATE_TIME)),
+            new CommitBatchRequestContext(1, T0P0.topicPartition(),
+                CommitBatchRequest.of(T0P0, batchSize * 2, batchSize, 19, 19, time.milliseconds(), TimestampType.CREATE_TIME)),
+            new CommitBatchRequestContext(1, T0P1.topicPartition(),
+                CommitBatchRequest.of(T0P1, batchSize * 3, batchSize, 19, 19, time.milliseconds(), TimestampType.LOG_APPEND_TIME)),
+            new CommitBatchRequestContext(2, T0P1.topicPartition(),
+                CommitBatchRequest.of(T0P1, batchSize * 4, batchSize, 19, 19, time.milliseconds(), TimestampType.LOG_APPEND_TIME)),
+            new CommitBatchRequestContext(2, T0P1.topicPartition(),
+                CommitBatchRequest.of(T0P1, batchSize * 5, batchSize, 19, 19, time.milliseconds(), TimestampType.LOG_APPEND_TIME)),
+            new CommitBatchRequestContext(0, T1P0.topicPartition(),
+                CommitBatchRequest.of(T1P0, batchSize * 6, batchSize, 19, 19, time.milliseconds(), TimestampType.LOG_APPEND_TIME)),
+            new CommitBatchRequestContext(1, T1P0.topicPartition(),
+                CommitBatchRequest.of(T1P0, batchSize * 7, batchSize, 19, 19, time.milliseconds(), TimestampType.LOG_APPEND_TIME)),
+            new CommitBatchRequestContext(2, T1P0.topicPartition(),
+                CommitBatchRequest.of(T1P0, batchSize * 8, batchSize, 19, 19, time.milliseconds(), TimestampType.LOG_APPEND_TIME))
         );
 
         // Here batch data are sorted too.
@@ -174,11 +179,10 @@ class BatchBufferTest {
         final MutableRecordBatch batch1 = createBatch(TimestampType.LOG_APPEND_TIME, time, T0P0 + "-0");
         buffer.addBatch(T0P0, batch1, 0);
         final BatchBuffer.CloseResult result1 = buffer.close();
-        assertThat(result1.commitBatchRequests()).containsExactly(
-            CommitBatchRequest.of(T0P0, 0, batch1.sizeInBytes(), 19, 19, time.milliseconds(), TimestampType.LOG_APPEND_TIME)
+        assertThat(result1.commitBatchRequestContexts()).containsExactly(
+            new CommitBatchRequestContext(0, T0P0.topicPartition(), CommitBatchRequest.of(T0P0, 0, batch1.sizeInBytes(), 19, 19, time.milliseconds(), TimestampType.LOG_APPEND_TIME))
         );
         assertThat(result1.data()).containsExactly(batchToBytes(batch1));
-        assertThat(result1.requestIds()).containsExactly(0);
 
         final MutableRecordBatch batch2 = createBatch(TimestampType.CREATE_TIME, time, T1P0 + "-0-longer");
         assertThatThrownBy(() -> buffer.addBatch(T1P0, batch2, 1))

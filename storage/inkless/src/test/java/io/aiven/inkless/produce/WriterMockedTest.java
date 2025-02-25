@@ -126,7 +126,6 @@ class WriterMockedTest {
         // As we wrote too much, commit must be triggered.
         verify(fileCommitter).commit(closedFileCaptor.capture());
         assertThat(closedFileCaptor.getValue().start()).isEqualTo(Instant.ofEpochMilli(10));
-        assertThat(closedFileCaptor.getValue().originalRequests()).isEqualTo(Map.of(0, writeRequest));
         assertThat(closedFileCaptor.getValue().allFuturesByRequest()).hasSize(1);
     }
 
@@ -152,8 +151,6 @@ class WriterMockedTest {
 
         // As we wrote too much, commit must be triggered.
         verify(fileCommitter).commit(closedFileCaptor.capture());
-        assertThat(closedFileCaptor.getValue().originalRequests())
-            .isEqualTo(Map.of(0, writeRequest0, 1, writeRequest1));
         assertThat(closedFileCaptor.getValue().allFuturesByRequest()).hasSize(2);
     }
 
@@ -173,8 +170,6 @@ class WriterMockedTest {
         writer.tick();
 
         verify(fileCommitter).commit(closedFileCaptor.capture());
-        assertThat(closedFileCaptor.getValue().originalRequests())
-            .isEqualTo(Map.of(0, writeRequest));
         assertThat(closedFileCaptor.getValue().allFuturesByRequest()).hasSize(1);
     }
 
@@ -194,8 +189,6 @@ class WriterMockedTest {
         writer.close();
 
         verify(fileCommitter).commit(closedFileCaptor.capture());
-        assertThat(closedFileCaptor.getValue().originalRequests())
-            .isEqualTo(Map.of(0, writeRequest));
         assertThat(closedFileCaptor.getValue().allFuturesByRequest()).hasSize(1);
     }
 
@@ -217,7 +210,6 @@ class WriterMockedTest {
         assertThat(writer.write(writeRequest, TOPIC_CONFIGS)).isNotCompleted();
 
         verify(fileCommitter).commit(closedFileCaptor.capture());
-        assertThat(closedFileCaptor.getValue().originalRequests()).isEqualTo(Map.of(0, writeRequest));
         assertThat(closedFileCaptor.getValue().allFuturesByRequest()).hasSize(1);
     }
 

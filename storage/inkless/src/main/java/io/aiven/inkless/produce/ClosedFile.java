@@ -1,100 +1,78 @@
 // Copyright (c) 2024 Aiven, Helsinki, Finland. https://aiven.io/
 package io.aiven.inkless.produce;
 
-import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.TopicPartition;
-import org.apache.kafka.common.record.MemoryRecords;
 import org.apache.kafka.common.requests.ProduceResponse.PartitionResponse;
 
 import java.time.Instant;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
-import java.util.stream.Collectors;
 
-import io.aiven.inkless.control_plane.CommitBatchRequest;
+import io.aiven.inkless.control_plane.CommitBatchRequestContext;
 
 final class ClosedFile {
     private final Instant start;
-    private final Map<Integer, Map<TopicIdPartition, MemoryRecords>> originalRequests;
+    // Keeps pending and completed request futures to build the final response per request
     private final Map<Integer, Map<TopicPartition, CompletableFuture<PartitionResponse>>> allFuturesByRequest;
     private final Map<Integer, Map<TopicPartition, CompletableFuture<PartitionResponse>>> validatedFutures;
-    private final List<CommitBatchRequest> commitBatchRequests;
-    private final List<Integer> requestIds;
+    // List is required to maintain the order of incoming requests and define the response order
+    private final List<CommitBatchRequestContext> commitBatchRequestContexts;
     private final byte[] data;
 
     ClosedFile(
         Instant start,
-        Map<Integer, Map<TopicIdPartition, MemoryRecords>> originalRequests,
         Map<Integer, Map<TopicPartition, CompletableFuture<PartitionResponse>>> allFuturesByRequest,
-        List<CommitBatchRequest> commitBatchRequests,
-        List<Integer> requestIds,
+        List<CommitBatchRequestContext> commitBatchRequestContexts,
         byte[] data
     ) {
         Objects.requireNonNull(start, "start cannot be null");
-        Objects.requireNonNull(originalRequests, "originalRequests cannot be null");
         Objects.requireNonNull(allFuturesByRequest, "allFuturesByRequest cannot be null");
-        Objects.requireNonNull(commitBatchRequests, "commitBatchRequests cannot be null");
-        Objects.requireNonNull(requestIds, "requestIds cannot be null");
+        Objects.requireNonNull(commitBatchRequestContexts, "commitBatchRequestContexts cannot be null");
 
-        if (originalRequests.size() != allFuturesByRequest.size()) {
-            throw new IllegalArgumentException(
-                "originalRequests and allFuturesByRequest must be of same size");
-        }
-
-        if (commitBatchRequests.size() != requestIds.size()) {
-            throw new IllegalArgumentException(
-                "commitBatchRequests and requestIds must be of same size");
+        // Ensure that requests to be processed have a proper pending future to be completed
+        final var validatedFutures = new HashMap<Integer, Map<TopicPartition, CompletableFuture<PartitionResponse>>>();
+        for (final var request: commitBatchRequestContexts) {
+            final var futuresPerRequest = allFuturesByRequest.get(request.requestId());
+            if (futuresPerRequest == null) {
+                throw new IllegalArgumentException("Request ID %s not found in validated futures".formatted(request.requestId()));
+            }
+            final var future = futuresPerRequest.get(request.topicPartition());
+            if (future == null) {
+                throw new IllegalArgumentException("Topic partition %s not found in validated futures for request ID %s".formatted(request.topicPartition(), request.requestId()));
+            }
+            if (future.isDone()) {
+                throw new IllegalStateException("Future for topic partition %s in request ID %s is already completed".formatted(request.topicPartition(), request.requestId()));
+            } else {
+                validatedFutures.computeIfAbsent(request.requestId(), k -> new HashMap<>())
+                    .put(request.topicPartition(), future);
+            }
         }
 
         Objects.requireNonNull(data, "data cannot be null");
 
-        if (commitBatchRequests.isEmpty() != (data.length == 0)) {
-            throw new IllegalArgumentException("data must be empty if commitBatchRequests is empty");
+        if (commitBatchRequestContexts.isEmpty() != (data.length == 0)) {
+            throw new IllegalArgumentException("data must be empty if commitBatchRequestContexts is empty");
         }
         this.start = start;
-        this.originalRequests = originalRequests;
         this.allFuturesByRequest = allFuturesByRequest;
-        this.validatedFutures = buildValidatedFutures(allFuturesByRequest);
-        this.commitBatchRequests = commitBatchRequests;
-        this.requestIds = requestIds;
+        this.validatedFutures = validatedFutures;
+        this.commitBatchRequestContexts = commitBatchRequestContexts;
         this.data = data;
-    }
-
-    private static Map<Integer, Map<TopicPartition, CompletableFuture<PartitionResponse>>> buildValidatedFutures(
-        Map<Integer, Map<TopicPartition, CompletableFuture<PartitionResponse>>> allFuturesByRequest
-    ) {
-        // filter out already completed futures that may have failed validation
-        return allFuturesByRequest.entrySet()
-            .stream()
-            .map(entry ->
-                Map.entry(entry.getKey(), entry.getValue().entrySet()
-                    .stream()
-                    .filter(inner -> !inner.getValue().isDone())
-                    .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue)))
-            )
-            .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
     }
 
     public Instant start() {
         return start;
     }
 
-    public Map<Integer, Map<TopicIdPartition, MemoryRecords>> originalRequests() {
-        return originalRequests;
-    }
-
     public Map<Integer, Map<TopicPartition, CompletableFuture<PartitionResponse>>> allFuturesByRequest() {
         return allFuturesByRequest;
     }
 
-    public List<CommitBatchRequest> commitBatchRequests() {
-        return commitBatchRequests;
-    }
-
-    public List<Integer> requestIds() {
-        return requestIds;
+    public List<CommitBatchRequestContext> commitBatchRequestContexts() {
+        return commitBatchRequestContexts;
     }
 
     public byte[] data() {
@@ -119,25 +97,21 @@ final class ClosedFile {
         if (obj == null || obj.getClass() != this.getClass()) return false;
         var that = (ClosedFile) obj;
         return Objects.equals(this.start, that.start) &&
-            Objects.equals(this.originalRequests, that.originalRequests) &&
             Objects.equals(this.allFuturesByRequest, that.allFuturesByRequest) &&
-            Objects.equals(this.commitBatchRequests, that.commitBatchRequests) &&
-            Objects.equals(this.requestIds, that.requestIds);
+            Objects.equals(this.commitBatchRequestContexts, that.commitBatchRequestContexts);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(start, originalRequests, allFuturesByRequest, commitBatchRequests, requestIds);
+        return Objects.hash(start, allFuturesByRequest, commitBatchRequestContexts);
     }
 
     @Override
     public String toString() {
         return "ClosedFile[" +
             "start=" + start + ", " +
-            "originalRequests=" + originalRequests + ", " +
             "allFuturesByRequest=" + allFuturesByRequest + ", " +
-            "commitBatchRequests=" + commitBatchRequests + ", " +
-            "requestIds=" + requestIds + ", " +
+            "commitBatchRequestContexts=" + commitBatchRequestContexts + ", " +
             "data=(length:" + data.length + ")]";
     }
 

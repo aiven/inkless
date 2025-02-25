@@ -11,6 +11,7 @@ import java.util.List;
 import java.util.Objects;
 
 import io.aiven.inkless.control_plane.CommitBatchRequest;
+import io.aiven.inkless.control_plane.CommitBatchRequestContext;
 
 class BatchBuffer {
     private final List<BatchHolder> batches = new ArrayList<>();
@@ -44,22 +45,24 @@ class BatchBuffer {
 
         final ByteBuffer byteBuffer = ByteBuffer.allocate(totalSize);
 
-        final List<CommitBatchRequest> commitBatchRequests = new ArrayList<>();
-        final List<Integer> requestIds = new ArrayList<>();
+        final List<CommitBatchRequestContext> commitBatchRequests = new ArrayList<>(batches.size());
         for (final BatchHolder batchHolder : batches) {
             commitBatchRequests.add(
-                CommitBatchRequest.of(
-                    batchHolder.topicIdPartition(),
-                    byteBuffer.position(),
-                    batchHolder.batch
+                new CommitBatchRequestContext(
+                    batchHolder.requestId(),
+                    batchHolder.topicIdPartition().topicPartition(),
+                    CommitBatchRequest.of(
+                        batchHolder.topicIdPartition(),
+                        byteBuffer.position(),
+                        batchHolder.batch
+                    )
                 )
             );
-            requestIds.add(batchHolder.requestId);
             batchHolder.batch.writeTo(byteBuffer);
         }
 
         closed = true;
-        return new CloseResult(commitBatchRequests, requestIds, byteBuffer.array());
+        return new CloseResult(commitBatchRequests, byteBuffer.array());
     }
 
     int totalSize() {
@@ -74,11 +77,8 @@ class BatchBuffer {
     /**
      * The result of closing a batch buffer.
      *
-     * @param commitBatchRequests commit batch requests matching in order the batches in {@code data}.
-     * @param requestIds          produce request IDs matching in order the batches in {@code data}.
+     * @param commitBatchRequestContexts commit batch requests matching in order the batches in {@code data}.
      */
-    record CloseResult(List<CommitBatchRequest> commitBatchRequests,
-                       List<Integer> requestIds,
-                       byte[] data) {
+    record CloseResult(List<CommitBatchRequestContext> commitBatchRequestContexts, byte[] data) {
     }
 }

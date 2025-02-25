@@ -1,6 +1,9 @@
 // Copyright (c) 2024 Aiven, Helsinki, Finland. https://aiven.io/
 package io.aiven.inkless.produce;
 
+import org.apache.kafka.common.TopicIdPartition;
+import org.apache.kafka.common.TopicPartition;
+import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.record.TimestampType;
 import org.apache.kafka.common.utils.Time;
 
@@ -30,6 +33,7 @@ import io.aiven.inkless.common.ObjectKey;
 import io.aiven.inkless.common.ObjectKeyCreator;
 import io.aiven.inkless.common.PlainObjectKey;
 import io.aiven.inkless.control_plane.CommitBatchRequest;
+import io.aiven.inkless.control_plane.CommitBatchRequestContext;
 import io.aiven.inkless.control_plane.ControlPlane;
 import io.aiven.inkless.storage_backend.common.StorageBackend;
 import io.aiven.inkless.storage_backend.common.StorageBackendException;
@@ -59,10 +63,15 @@ class FileCommitterTest {
             return OBJECT_KEY;
         }
     };
-    static final ClosedFile FILE = new ClosedFile(Instant.EPOCH, Map.of(), Map.of(),
-            List.of(CommitBatchRequest.of(null, 0, 0, 0, 0, 0, TimestampType.CREATE_TIME)),
-            List.of(1),
-            new byte[10]);
+    static final TopicPartition TOPIC_PARTITION = new TopicPartition("t", 0);
+    static final TopicIdPartition TOPIC_ID_PARTITION = new TopicIdPartition(Uuid.randomUuid(), TOPIC_PARTITION);
+
+    static final ClosedFile FILE = new ClosedFile(
+        Instant.EPOCH,
+        Map.of(1, Map.of(TOPIC_PARTITION, new CompletableFuture<>())),
+        List.of(new CommitBatchRequestContext(1, TOPIC_PARTITION, CommitBatchRequest.of(TOPIC_ID_PARTITION, 0, 0, 0, 0, 0, TimestampType.CREATE_TIME))),
+        new byte[10]
+    );
     static final KeyAlignmentStrategy KEY_ALIGNMENT_STRATEGY = new FixedBlockAlignment(Integer.MAX_VALUE);
     static final ObjectCache OBJECT_CACHE = new NullCache();
 

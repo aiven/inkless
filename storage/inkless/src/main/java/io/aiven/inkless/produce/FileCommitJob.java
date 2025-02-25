@@ -1,25 +1,22 @@
 // Copyright (c) 2024 Aiven, Helsinki, Finland. https://aiven.io/
 package io.aiven.inkless.produce;
 
-import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.record.RecordBatch;
 import org.apache.kafka.common.record.TimestampType;
-import org.apache.kafka.common.requests.ProduceResponse;
+import org.apache.kafka.common.requests.ProduceResponse.PartitionResponse;
 import org.apache.kafka.common.utils.Time;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.util.HashMap;
-import java.util.Map;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
 import java.util.function.Consumer;
-import java.util.stream.Collectors;
 
 import io.aiven.inkless.TimeUtils;
 import io.aiven.inkless.common.ObjectKey;
+import io.aiven.inkless.control_plane.CommitBatchRequestContext;
 import io.aiven.inkless.control_plane.CommitBatchResponse;
 import io.aiven.inkless.control_plane.ControlPlane;
 import io.aiven.inkless.control_plane.ControlPlaneException;
@@ -102,47 +99,31 @@ class FileCommitJob implements Runnable {
     }
 
     private boolean finishCommitSuccessfully(final ObjectKey objectKey) {
-        final var commitBatchResponses = controlPlane.commitFile(objectKey.value(), brokerId, file.size(), file.commitBatchRequests());
+        final var requestContexts = file.commitBatchRequestContexts();
+        final var requests = requestContexts.stream().map(CommitBatchRequestContext::request).toList();
+        final var commitBatchResponses = controlPlane.commitFile(objectKey.value(), brokerId, file.size(), requests);
         LOGGER.debug("Committed successfully");
-
-        // Each request must have a response.
-        final Map<Integer, Map<TopicPartition, ProduceResponse.PartitionResponse>> resultsPerRequest = file
-            .allFuturesByRequest()
-            .entrySet().stream()
-            .collect(Collectors.toMap(Map.Entry::getKey, ignore -> new HashMap<>()));
-
-        for (int i = 0; i < commitBatchResponses.size(); i++) {
-            final int requestId = file.requestIds().get(i);
-            final var result = resultsPerRequest.computeIfAbsent(requestId, ignore -> new HashMap<>());
-
-            final var commitBatchRequest = file.commitBatchRequests().get(i);
-            final var commitBatchResponse = commitBatchResponses.get(i);
-
-            result.put(
-                commitBatchRequest.topicIdPartition().topicPartition(),
-                partitionResponse(commitBatchResponse)
-            );
-        }
 
         // All validated futures must be completed with a response built when commiting the file.
         boolean allCompleted = true;
-        for (final var entry : file.validatedFutures().entrySet()) {
-            final var result = resultsPerRequest.get(entry.getKey());
-            for (final var inner: entry.getValue().entrySet()) {
-                final var completed = inner.getValue().complete(result.get(inner.getKey()));
-                if (!completed) {
-                    // This should not happen, but if it does, it's a bug.
-                    // Completing all futures before throwing an exception is important to avoid leaving the futures uncompleted.
-                    LOGGER.error("The future for this request {} topic-partition {} is already completed", entry.getKey(), inner.getKey());
-                    allCompleted = false;
-                }
+        for (int i = 0; i < commitBatchResponses.size(); i++) {
+            final var requestCtx = requestContexts.get(i);
+            final var response = commitBatchResponses.get(i);
+
+            final var future = file.validatedFutures().get(requestCtx.requestId()).get(requestCtx.topicPartition());
+            final var completed = future.complete(partitionResponse(response));
+            if (!completed) {
+                // This should not happen, but if it does, it's a bug.
+                // Completing all futures before throwing an exception is important to avoid leaving the futures uncompleted.
+                LOGGER.error("The future for this request {} topic-partition {} is already completed", requestCtx.requestId(), requestCtx.topicPartition());
+                allCompleted = false;
             }
         }
 
         return allCompleted;
     }
 
-    private static ProduceResponse.PartitionResponse partitionResponse(CommitBatchResponse response) {
+    private static PartitionResponse partitionResponse(CommitBatchResponse response) {
         // Producer expects logAppendTime to be NO_TIMESTAMP if the message timestamp type is CREATE_TIME.
         final long logAppendTime;
         if (response.request() != null) {
@@ -152,7 +133,7 @@ class FileCommitJob implements Runnable {
         } else {
             logAppendTime = RecordBatch.NO_TIMESTAMP;
         }
-        return new ProduceResponse.PartitionResponse(
+        return new PartitionResponse(
             response.errors(),
             response.assignedBaseOffset(),
             logAppendTime,
@@ -162,13 +143,9 @@ class FileCommitJob implements Runnable {
 
     private void finishCommitWithError() {
         for (final var entry : file.validatedFutures().entrySet()) {
-            final var originalRequest = file.originalRequests().get(entry.getKey());
-            final var result = originalRequest.entrySet().stream()
-                .collect(Collectors.toMap(
-                    kv -> kv.getKey().topicPartition(),
-                    ignore -> new ProduceResponse.PartitionResponse(Errors.KAFKA_STORAGE_ERROR, "Error commiting data")));
             for (final var inner : entry.getValue().entrySet()) {
-                inner.getValue().complete(result.get(inner.getKey()));
+                final var errorResponse = new PartitionResponse(Errors.KAFKA_STORAGE_ERROR, "Error commiting data");
+                inner.getValue().complete(errorResponse);
             }
         }
     }

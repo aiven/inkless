@@ -4,10 +4,7 @@ package io.aiven.inkless.produce;
 import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.Uuid;
-import org.apache.kafka.common.compress.Compression;
 import org.apache.kafka.common.protocol.Errors;
-import org.apache.kafka.common.record.MemoryRecords;
-import org.apache.kafka.common.record.SimpleRecord;
 import org.apache.kafka.common.record.TimestampType;
 import org.apache.kafka.common.requests.ProduceResponse.PartitionResponse;
 import org.apache.kafka.common.utils.Time;
@@ -29,6 +26,7 @@ import io.aiven.inkless.FutureUtils;
 import io.aiven.inkless.common.ObjectKey;
 import io.aiven.inkless.common.PlainObjectKey;
 import io.aiven.inkless.control_plane.CommitBatchRequest;
+import io.aiven.inkless.control_plane.CommitBatchRequestContext;
 import io.aiven.inkless.control_plane.CommitBatchResponse;
 import io.aiven.inkless.control_plane.ControlPlaneException;
 import io.aiven.inkless.control_plane.InMemoryControlPlane;
@@ -37,6 +35,7 @@ import io.aiven.inkless.storage_backend.common.StorageBackendException;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -54,25 +53,18 @@ class FileCommitJobTest {
     private static final TopicIdPartition T0P1 = new TopicIdPartition(TOPIC_ID_0, 1, TOPIC_0);
     private static final TopicIdPartition T1P0 = new TopicIdPartition(TOPIC_ID_1, 0, TOPIC_1);
 
-    static final Map<TopicIdPartition, MemoryRecords> REQUEST_0 = Map.of(
-        T0P0, MemoryRecords.withRecords(Compression.NONE, new SimpleRecord(new byte[10])),
-        T0P1, MemoryRecords.withRecords(Compression.NONE, new SimpleRecord(new byte[10]))
-    );
-    static final Map<TopicIdPartition, MemoryRecords> REQUEST_1 = Map.of(
-        T0P1, MemoryRecords.withRecords(Compression.NONE, new SimpleRecord(new byte[10])),
-        T1P0, MemoryRecords.withRecords(Compression.NONE, new SimpleRecord(new byte[10]))
-    );
-    static final Map<Integer, Map<TopicIdPartition, MemoryRecords>> REQUESTS = Map.of(
-        0, REQUEST_0,
-        1, REQUEST_1
-    );
     static final List<CommitBatchRequest> COMMIT_BATCH_REQUESTS = List.of(
         CommitBatchRequest.of(T0P0, 0, 100, 0, 9, 1000, TimestampType.CREATE_TIME),
         CommitBatchRequest.of(T0P1, 100, 100, 0, 9, 1000, TimestampType.CREATE_TIME),
         CommitBatchRequest.of(T0P1, 200, 100, 0, 9, 1000, TimestampType.CREATE_TIME),
         CommitBatchRequest.of(T1P0, 300, 100, 0, 9, 1000, TimestampType.LOG_APPEND_TIME)
     );
-    static final List<Integer> REQUEST_IDS = List.of(0, 0, 1, 1);
+    static final List<CommitBatchRequestContext> COMMIT_BATCH_REQUESTS_BY_REQUEST = List.of(
+        new CommitBatchRequestContext(0, T0P0.topicPartition(), COMMIT_BATCH_REQUESTS.get(0)),
+        new CommitBatchRequestContext(0, T0P1.topicPartition(), COMMIT_BATCH_REQUESTS.get(1)),
+        new CommitBatchRequestContext(1, T0P1.topicPartition(), COMMIT_BATCH_REQUESTS.get(2)),
+        new CommitBatchRequestContext(1, T1P0.topicPartition(), COMMIT_BATCH_REQUESTS.get(3))
+    );
 
     static final byte[] DATA = new byte[10];
     static final long FILE_SIZE = DATA.length;
@@ -90,7 +82,7 @@ class FileCommitJobTest {
 
     @Test
     void commitFinishedSuccessfully() {
-        final Map<Integer, Map<TopicPartition, CompletableFuture<PartitionResponse>>> awaitingFuturesByRequest = Map.of(
+        final Map<Integer, Map<TopicPartition, CompletableFuture<PartitionResponse>>> allFuturesByRequest = Map.of(
             0, Map.of(T0P0.topicPartition(), new CompletableFuture<>(), T0P1.topicPartition(), new CompletableFuture<>()),
             1, Map.of(T0P1.topicPartition(), new CompletableFuture<>(), T1P0.topicPartition(), new CompletableFuture<>())
         );
@@ -102,21 +94,21 @@ class FileCommitJobTest {
             CommitBatchResponse.success(30, 10, 0, COMMIT_BATCH_REQUESTS.get(3))
         );
 
-        when(controlPlane.commitFile(eq(OBJECT_KEY_MAIN_PART), eq(BROKER_ID), eq(FILE_SIZE), eq(COMMIT_BATCH_REQUESTS)))
+        when(controlPlane.commitFile(eq(OBJECT_KEY_MAIN_PART), eq(BROKER_ID), eq(FILE_SIZE), anyList()))
             .thenReturn(commitBatchResponses);
         when(time.nanoseconds()).thenReturn(10_000_000L, 20_000_000L);
 
-        final ClosedFile file = new ClosedFile(Instant.EPOCH, REQUESTS, awaitingFuturesByRequest, COMMIT_BATCH_REQUESTS, REQUEST_IDS, DATA);
+        final ClosedFile file = new ClosedFile(Instant.EPOCH, allFuturesByRequest, COMMIT_BATCH_REQUESTS_BY_REQUEST, DATA);
         final CompletableFuture<ObjectKey> uploadFuture = CompletableFuture.completedFuture(OBJECT_KEY);
         final FileCommitJob job = new FileCommitJob(BROKER_ID, file, uploadFuture, time, controlPlane, objectDeleter, commitTimeDurationCallback);
 
         job.run();
 
-        assertThat(FutureUtils.combineMapOfFutures(awaitingFuturesByRequest.get(0))).isCompletedWithValue(Map.of(
+        assertThat(FutureUtils.combineMapOfFutures(allFuturesByRequest.get(0))).isCompletedWithValue(Map.of(
             T0P0.topicPartition(), new PartitionResponse(Errors.NONE, 0, -1, 0),
             T0P1.topicPartition(), new PartitionResponse(Errors.INVALID_TOPIC_EXCEPTION, -1, -1, -1)
         ));
-        assertThat(FutureUtils.combineMapOfFutures(awaitingFuturesByRequest.get(1))).isCompletedWithValue(Map.of(
+        assertThat(FutureUtils.combineMapOfFutures(allFuturesByRequest.get(1))).isCompletedWithValue(Map.of(
             T0P1.topicPartition(), new PartitionResponse(Errors.NONE, 20, -1, 0),
             T1P0.topicPartition(), new PartitionResponse(Errors.NONE, 30, 10, 0)
         ));
@@ -138,7 +130,7 @@ class FileCommitJobTest {
             .thenReturn(commitBatchResponses);
         when(time.nanoseconds()).thenReturn(10_000_000L, 20_000_000L);
 
-        final ClosedFile file = new ClosedFile(Instant.EPOCH, REQUESTS, awaitingFuturesByRequest, COMMIT_BATCH_REQUESTS, REQUEST_IDS, DATA);
+        final ClosedFile file = new ClosedFile(Instant.EPOCH, awaitingFuturesByRequest, List.of(), new byte[0]);
         final CompletableFuture<ObjectKey> uploadFuture = CompletableFuture.completedFuture(OBJECT_KEY);
         final FileCommitJob job = new FileCommitJob(BROKER_ID, file, uploadFuture, time, controlPlane, objectDeleter, commitTimeDurationCallback);
 
@@ -158,7 +150,7 @@ class FileCommitJobTest {
 
         when(time.nanoseconds()).thenReturn(10_000_000L, 20_000_000L);
 
-        final ClosedFile file = new ClosedFile(Instant.EPOCH, REQUESTS, awaitingFuturesByRequest, COMMIT_BATCH_REQUESTS, REQUEST_IDS, DATA);
+        final ClosedFile file = new ClosedFile(Instant.EPOCH, awaitingFuturesByRequest, COMMIT_BATCH_REQUESTS_BY_REQUEST, DATA);
         final CompletableFuture<ObjectKey> uploadFuture = CompletableFuture.failedFuture(new StorageBackendException("test"));
         final FileCommitJob job = new FileCommitJob(BROKER_ID, file, uploadFuture, time, controlPlane, objectDeleter, commitTimeDurationCallback);
 
@@ -185,7 +177,7 @@ class FileCommitJobTest {
         when(controlPlane.commitFile(eq(OBJECT_KEY_MAIN_PART), eq(BROKER_ID), eq(FILE_SIZE), eq(COMMIT_BATCH_REQUESTS)))
             .thenThrow(new ControlPlaneException("test"));
 
-        final ClosedFile file = new ClosedFile(Instant.EPOCH, REQUESTS, awaitingFuturesByRequest, COMMIT_BATCH_REQUESTS, REQUEST_IDS, DATA);
+        final ClosedFile file = new ClosedFile(Instant.EPOCH, awaitingFuturesByRequest, COMMIT_BATCH_REQUESTS_BY_REQUEST, DATA);
         final CompletableFuture<ObjectKey> uploadFuture = CompletableFuture.completedFuture(OBJECT_KEY);
         final FileCommitJob job = new FileCommitJob(BROKER_ID, file, uploadFuture, time, controlPlane, objectDeleter, commitTimeDurationCallback);
 
@@ -206,7 +198,7 @@ class FileCommitJobTest {
     void failIfFutureAlreadyCompleted() {
         final var future0 = new CompletableFuture<PartitionResponse>();
         final var future1 = new CompletableFuture<PartitionResponse>();
-        final Map<Integer, Map<TopicPartition, CompletableFuture<PartitionResponse>>> awaitingFuturesByRequest = Map.of(
+        final Map<Integer, Map<TopicPartition, CompletableFuture<PartitionResponse>>> allFuturesByRequest = Map.of(
             0, Map.of(T0P0.topicPartition(), new CompletableFuture<>(), T0P1.topicPartition(), future0),
             1, Map.of(T0P1.topicPartition(), new CompletableFuture<>(), T1P0.topicPartition(), future1)
         );
@@ -222,7 +214,7 @@ class FileCommitJobTest {
             .thenReturn(commitBatchResponses);
         when(time.nanoseconds()).thenReturn(10_000_000L, 20_000_000L);
 
-        final ClosedFile file = new ClosedFile(Instant.EPOCH, REQUESTS, awaitingFuturesByRequest, COMMIT_BATCH_REQUESTS, REQUEST_IDS, DATA);
+        final ClosedFile file = new ClosedFile(Instant.EPOCH, allFuturesByRequest, COMMIT_BATCH_REQUESTS_BY_REQUEST, DATA);
         final CompletableFuture<ObjectKey> uploadFuture = CompletableFuture.completedFuture(OBJECT_KEY);
         final FileCommitJob job = new FileCommitJob(BROKER_ID, file, uploadFuture, time, controlPlane, objectDeleter, commitTimeDurationCallback);
 

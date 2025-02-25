@@ -32,7 +32,6 @@ class ActiveFile {
     private final BatchBuffer buffer;
     private final BatchValidator batchValidator;
 
-    private final Map<Integer, Map<TopicIdPartition, MemoryRecords>> originalRequests = new HashMap<>();
     private final Map<Integer, Map<TopicPartition, CompletableFuture<PartitionResponse>>> allFuturesByRequest = new HashMap<>();
 
     private final BrokerTopicStats brokerTopicStats;
@@ -64,7 +63,6 @@ class ActiveFile {
         Objects.requireNonNull(topicConfigs, "topicConfigs cannot be null");
 
         requestId += 1;
-        originalRequests.put(requestId, entriesPerPartition);
 
         final Map<TopicPartition, CompletableFuture<PartitionResponse>> result = new HashMap<>();
 
@@ -118,10 +116,8 @@ class ActiveFile {
         BatchBuffer.CloseResult closeResult = buffer.close();
         return new ClosedFile(
             start,
-            originalRequests,
             allFuturesByRequest,
-            closeResult.commitBatchRequests(),
-            closeResult.requestIds(),
+            closeResult.commitBatchRequestContexts(),
             closeResult.data()
         );
     }

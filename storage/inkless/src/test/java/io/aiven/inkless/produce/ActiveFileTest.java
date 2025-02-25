@@ -22,6 +22,7 @@ import java.util.Map;
 
 import io.aiven.inkless.FutureUtils;
 import io.aiven.inkless.control_plane.CommitBatchRequest;
+import io.aiven.inkless.control_plane.CommitBatchRequestContext;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -130,7 +131,7 @@ class ActiveFileTest {
         assertThat(result)
             .usingRecursiveComparison()
             .ignoringFields("data")
-            .isEqualTo(new ClosedFile(start, Map.of(), Map.of(), List.of(), List.of(), new byte[0]));
+            .isEqualTo(new ClosedFile(start, Map.of(), List.of(), new byte[0]));
         assertThat(result.data()).isEmpty();
         assertThat(result.isEmpty()).isTrue();
     }
@@ -155,18 +156,15 @@ class ActiveFileTest {
 
         assertThat(result.start())
             .isEqualTo(start);
-        assertThat(result.originalRequests())
-            .isEqualTo(Map.of(0, request1, 1, request2));
         assertThat(result.allFuturesByRequest()).hasSize(2);
         assertThat(FutureUtils.combineMapOfFutures(result.allFuturesByRequest().get(0))).isNotCompleted();
         assertThat(FutureUtils.combineMapOfFutures(result.allFuturesByRequest().get(1))).isNotCompleted();
-        assertThat(result.commitBatchRequests()).containsExactly(
-            CommitBatchRequest.of(T0P0, 0, 78, 0, 0, 1000, TimestampType.CREATE_TIME),
-            CommitBatchRequest.of(T0P1, 78, 78, 0, 0, 2000, TimestampType.CREATE_TIME),
-            CommitBatchRequest.of(T0P1, 156, 78, 0, 0, 3000, TimestampType.CREATE_TIME),
-            CommitBatchRequest.of(T1P0, 234, 78, 0, 0, time.milliseconds(), TimestampType.LOG_APPEND_TIME)
+        assertThat(result.commitBatchRequestContexts()).containsExactly(
+            new CommitBatchRequestContext(0, T0P0.topicPartition(), CommitBatchRequest.of(T0P0, 0, 78, 0, 0, 1000, TimestampType.CREATE_TIME)),
+            new CommitBatchRequestContext(0, T0P1.topicPartition(), CommitBatchRequest.of(T0P1, 78, 78, 0, 0, 2000, TimestampType.CREATE_TIME)),
+            new CommitBatchRequestContext(1, T0P1.topicPartition(), CommitBatchRequest.of(T0P1, 156, 78, 0, 0, 3000, TimestampType.CREATE_TIME)),
+            new CommitBatchRequestContext(1, T1P0.topicPartition(), CommitBatchRequest.of(T1P0, 234, 78, 0, 0, time.milliseconds(), TimestampType.LOG_APPEND_TIME))
         );
-        assertThat(result.requestIds()).containsExactly(0, 0, 1, 1);
         assertThat(result.data()).hasSize(312);
         assertThat(result.isEmpty()).isFalse();
     }
