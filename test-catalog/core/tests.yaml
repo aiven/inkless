@@ -141,6 +141,8 @@ kafka.admin.ListOffsetsIntegrationTest:
 - testThreeNonCompressedRecordsInSeparateBatch
 - testThreeRecordsInOneBatchHavingDifferentCompressionTypeWithServer
 - testThreeRecordsInSeparateBatchHavingDifferentCompressionTypeWithServer
+kafka.admin.RackAwareAutoTopicCreationTest:
+- testAutoCreateTopic
 kafka.admin.RemoteTopicCrudTest:
 - testClusterWideDisablementOfTieredStorageWithEnabledTieredTopic
 - testClusterWithoutTieredStorageStartsSuccessfullyIfTopicWithTieringDisabled
@@ -614,8 +616,6 @@ kafka.api.ProducerRebootstrapTest:
 - testRebootstrap
 kafka.api.ProducerSendWhileDeletionTest:
 - testSendWithTopicDeletionMidWay
-kafka.api.RackAwareAutoTopicCreationTest:
-- testAutoCreateTopic
 kafka.api.SaslClientsWithInvalidCredentialsTest:
 - testConsumerWithAuthenticationFailure
 - testKafkaAdminClientWithAuthenticationFailure
