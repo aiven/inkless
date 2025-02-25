@@ -543,6 +543,8 @@ org.apache.kafka.raft.RaftEventSimulationTest:
 - canMakeProgressIfMajorityIsReachable
 - canRecoverAfterAllNodesKilled
 - canRecoverFromSingleNodeCommittedDataLoss
+- leadershipAssignedOnlyOnceWithNetworkPartitionIfThereExistsMajority
+- leadershipWillNotChangeDuringNetworkPartitionIfMajorityStillReachable
 org.apache.kafka.raft.RaftUtilTest:
 - testErrorResponse
 - testFetchRequestV17Compatibility

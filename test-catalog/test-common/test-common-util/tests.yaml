@@ -1,12 +1,15 @@
-org.apache.kafka.common.test.junit.AutoQuarantinedTestFilterTest:
+org.apache.kafka.common.test.junit.CatalogTestFilterTest:
 - testEmptyCatalog
 - testLoadCatalog
 - testMissingCatalog
-org.apache.kafka.common.test.junit.QuarantinedPostDiscoveryFilterTest:
-- testExistingTestFlaky
+org.apache.kafka.common.test.junit.KafkaPostDiscoveryFilterTest:
+- testExcludeExistingNonFlaky
+- testExcludeFlaky
+- testExcludeFlakyAndNew
 - testExistingTestNonFlaky
-- testNewTest
-- testNoCatalogQuarantinedTest
-- testQuarantinedExistingTestFlaky
-- testQuarantinedExistingTestNonFlaky
-- testQuarantinedNewTest
+- testIncludeAutoQuarantinedAndFlaky
+- testIncludeAutoQuarantinedNoFlaky
+- testIncludeExistingFlaky
+- testNoCatalogRunFlakyTests
+- testNoCatalogRunMainTests
+- testNoCatalogRunNewTest
