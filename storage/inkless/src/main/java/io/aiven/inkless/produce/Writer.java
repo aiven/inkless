@@ -4,10 +4,10 @@ package io.aiven.inkless.produce;
 import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.record.MemoryRecords;
-import org.apache.kafka.common.record.TimestampType;
 import org.apache.kafka.common.requests.ProduceResponse.PartitionResponse;
 import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.common.utils.Utils;
+import org.apache.kafka.storage.internals.log.LogConfig;
 import org.apache.kafka.storage.log.metrics.BrokerTopicStats;
 
 import com.groupcdg.pitest.annotations.DoNotMutate;
@@ -114,13 +114,17 @@ class Writer implements Closeable {
 
     CompletableFuture<Map<TopicPartition, PartitionResponse>> write(
         final Map<TopicIdPartition, MemoryRecords> entriesPerPartition,
-        final Map<String, TimestampType> timestampTypes
+        final Map<String, LogConfig> topicConfigs
     ) {
         Objects.requireNonNull(entriesPerPartition, "entriesPerPartition cannot be null");
-        Objects.requireNonNull(timestampTypes, "timestampTypes cannot be null");
+        Objects.requireNonNull(topicConfigs, "topicConfigs cannot be null");
 
         if (entriesPerPartition.isEmpty()) {
             throw new IllegalArgumentException("entriesPerPartition cannot be empty");
+        }
+
+        if (entriesPerPartition.keySet().stream().map(TopicIdPartition::topic).distinct().noneMatch(topicConfigs::containsKey)) {
+            throw new IllegalArgumentException("Configs are not including all the topics requested");
         }
 
         // TODO add back pressure
@@ -135,7 +139,7 @@ class Writer implements Closeable {
                 openedAt = TimeUtils.durationMeasurementNow(time);
             }
 
-            final var result = this.activeFile.add(entriesPerPartition, timestampTypes);
+            final var result = this.activeFile.add(entriesPerPartition, topicConfigs);
             writerMetrics.requestAdded();
             if (this.activeFile.size() >= maxBufferSize) {
                 if (this.scheduledTick != null) {

@@ -5,6 +5,7 @@ import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.compress.Compression;
+import org.apache.kafka.common.config.TopicConfig;
 import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.record.MemoryRecords;
 import org.apache.kafka.common.record.SimpleRecord;
@@ -12,6 +13,7 @@ import org.apache.kafka.common.record.TimestampType;
 import org.apache.kafka.common.requests.ProduceResponse;
 import org.apache.kafka.common.utils.MockTime;
 import org.apache.kafka.common.utils.Time;
+import org.apache.kafka.storage.internals.log.LogConfig;
 import org.apache.kafka.storage.log.metrics.BrokerTopicStats;
 import org.apache.kafka.test.TestUtils;
 
@@ -85,10 +87,14 @@ class WriterPropertyTest {
     static final KeyAlignmentStrategy KEY_ALIGNMENT_STRATEGY = new FixedBlockAlignment(Integer.MAX_VALUE);
     static final ObjectCache OBJECT_CACHE = new NullCache();
 
-    static final Map<String, TimestampType> TIMESTAMP_TYPES = Map.of(
-        TOPIC_0, TimestampType.CREATE_TIME,
-        TOPIC_1, TimestampType.LOG_APPEND_TIME
+    static final Map<String, LogConfig> TOPIC_CONFIGS = Map.of(
+        TOPIC_0, logConfig(Map.of(TopicConfig.MESSAGE_TIMESTAMP_TYPE_CONFIG, TimestampType.CREATE_TIME.name)),
+        TOPIC_1, logConfig(Map.of(TopicConfig.MESSAGE_TIMESTAMP_TYPE_CONFIG, TimestampType.LOG_APPEND_TIME.name))
     );
+
+    static LogConfig logConfig(Map<String, ?> config) {
+        return new LogConfig(config);
+    }
 
     private static final Set<TopicIdPartition> ALL_TPS = Set.of(T0P0, T0P1, T1P0, T1P1);
 
@@ -329,7 +335,7 @@ class WriterPropertyTest {
                     sentRequests.computeIfAbsent(entry.getKey(), ignore -> new ArrayList<>())
                         .add(entry.getValue());
                 }
-                final var responseFuture = writer.write(request, TIMESTAMP_TYPES);
+                final var responseFuture = writer.write(request, TOPIC_CONFIGS);
                 waitingResponseFutures.add(responseFuture);
                 requestCount += 1;
             }

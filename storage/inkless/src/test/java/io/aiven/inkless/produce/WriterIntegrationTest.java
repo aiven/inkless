@@ -3,11 +3,13 @@ package io.aiven.inkless.produce;
 
 import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.Uuid;
+import org.apache.kafka.common.config.TopicConfig;
 import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.record.TimestampType;
 import org.apache.kafka.common.requests.ProduceResponse.PartitionResponse;
 import org.apache.kafka.common.utils.MockTime;
 import org.apache.kafka.common.utils.Time;
+import org.apache.kafka.storage.internals.log.LogConfig;
 import org.apache.kafka.storage.log.metrics.BrokerTopicStats;
 
 import org.junit.jupiter.api.BeforeAll;
@@ -54,10 +56,14 @@ class WriterIntegrationTest {
     static final KeyAlignmentStrategy KEY_ALIGNMENT_STRATEGY = new FixedBlockAlignment(Integer.MAX_VALUE);
     static final ObjectCache OBJECT_CACHE = new NullCache();
 
-    static final Map<String, TimestampType> TIMESTAMP_TYPES = Map.of(
-        TOPIC_0, TimestampType.CREATE_TIME,
-        TOPIC_1, TimestampType.LOG_APPEND_TIME
+    static final Map<String, LogConfig> TOPIC_CONFIGS = Map.of(
+        TOPIC_0, logConfig(Map.of(TopicConfig.MESSAGE_TIMESTAMP_TYPE_CONFIG, TimestampType.CREATE_TIME.name)),
+        TOPIC_1, logConfig(Map.of(TopicConfig.MESSAGE_TIMESTAMP_TYPE_CONFIG, TimestampType.LOG_APPEND_TIME.name))
     );
+
+    static LogConfig logConfig(Map<String, ?> config) {
+        return new LogConfig(config);
+    }
 
     static final String BUCKET_NAME = "test-bucket";
     S3Storage storage;
@@ -114,12 +120,12 @@ class WriterIntegrationTest {
                 T0P0, recordCreator.create(T0P0.topicPartition(), 101),
                 T0P1, recordCreator.create(T0P1.topicPartition(), 102),
                 T1P0, recordCreator.create(T1P0.topicPartition(), 103)
-            ), TIMESTAMP_TYPES);
+            ), TOPIC_CONFIGS);
             final var writeFuture2 = writer.write(Map.of(
                 T0P0, recordCreator.create(T0P0.topicPartition(), 11),
                 T0P1, recordCreator.create(T0P1.topicPartition(), 12),
                 T1P0, recordCreator.create(T1P0.topicPartition(), 13)
-            ), TIMESTAMP_TYPES);
+            ), TOPIC_CONFIGS);
             final var ts1 = time.milliseconds();
             final var result1 = writeFuture1.get(10, TimeUnit.SECONDS);
             final var result2 = writeFuture2.get(10, TimeUnit.SECONDS);
@@ -128,7 +134,7 @@ class WriterIntegrationTest {
 
             final var writeFuture3 = writer.write(Map.of(
                 T1P0, recordCreator.create(T1P0.topicPartition(), 1)
-            ), TIMESTAMP_TYPES);
+            ), TOPIC_CONFIGS);
             final var ts2 = time.milliseconds();
             final var result3 = writeFuture3.get(10, TimeUnit.SECONDS);
 
