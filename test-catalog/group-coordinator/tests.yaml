@@ -590,13 +590,17 @@ org.apache.kafka.coordinator.group.assignor.RangeSetTest:
 - testToString
 - testUnsupportedOperations
 org.apache.kafka.coordinator.group.assignor.SimpleAssignorTest:
+- testAssignWithCurrentAssignmentHeterogeneous
+- testAssignWithCurrentAssignmentHomogeneous
 - testAssignWithEmptyMembers
 - testAssignWithNoSubscribedTopic
 - testAssignWithOneMemberNoAssignedTopicHeterogeneous
 - testAssignWithSubscribedToNonExistentTopic
 - testAssignWithThreeMembersThreeTopicsHeterogeneous
 - testAssignWithTwoMembersAndTwoTopicsHomogeneous
+- testMemberHashAssignment
 - testName
+- testRoundRobinAssignment
 org.apache.kafka.coordinator.group.assignor.UniformHeterogeneousAssignmentBuilderTest:
 - testFirstAssignmentNumMembersGreaterThanTotalNumPartitions
 - testFirstAssignmentTwoMembersTwoTopics
