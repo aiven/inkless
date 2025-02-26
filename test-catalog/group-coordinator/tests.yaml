@@ -126,6 +126,13 @@ org.apache.kafka.coordinator.group.GroupCoordinatorServiceTest:
 - testShareGroupHeartbeatWhenNotStarted
 - testShareGroupHeartbeatWithException
 - testStartupShutdown
+- testStreamsGroupDescribe
+- testStreamsGroupDescribeCoordinatorLoadInProgress
+- testStreamsGroupDescribeCoordinatorNotActive
+- testStreamsGroupDescribeInvalidGroupId
+- testStreamsGroupHeartbeat
+- testStreamsGroupHeartbeatWhenNotStarted
+- testStreamsGroupHeartbeatWithException
 - testSyncGroup
 - testSyncGroupInvalidGroupId
 - testSyncGroupWhenNotStarted
@@ -184,6 +191,7 @@ org.apache.kafka.coordinator.group.GroupCoordinatorShardTest:
 - testShareGroupHeartbeat
 - testSharePartitionDeleteRequests
 - testSharePartitionDeleteRequestsNonEmptyShareGroup
+- testStreamsGroupHeartbeat
 org.apache.kafka.coordinator.group.GroupMetadataManagerTest:
 - testClassicGroupCompletedRebalanceSensor
 - testClassicGroupDelete
@@ -451,6 +459,9 @@ org.apache.kafka.coordinator.group.GroupMetadataManagerTest:
 - testStaticMembersLeaveUnknownGroup
 - testStaticMembersUnknownInstanceBatchLeaveGroup
 - testStaticMembersValidBatchLeaveGroup
+- testStreamsGroupDescribeBeforeAndAfterCommittingOffset
+- testStreamsGroupDescribeNoErrors
+- testStreamsGroupDescribeWithErrors
 - testSubscriptionMetadataRefreshedAfterGroupIsLoaded
 - testSubscriptionMetadataRefreshedAgainAfterWriteFailure
 - testSyncGroupAsLeaderAppendFailureTransformsError

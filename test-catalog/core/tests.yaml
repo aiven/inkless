@@ -936,6 +936,7 @@ kafka.coordinator.group.GroupCoordinatorAdapterTest:
 - testListGroups
 - testOnTransactionCompletedWithUnexpectedException
 - testShareGroupDescribe
+- testStreamsGroupHeartbeat
 - testSyncGroup
 kafka.coordinator.group.GroupCoordinatorConcurrencyTest:
 - testConcurrentGoodPathSequence
@@ -2899,6 +2900,17 @@ kafka.server.KafkaApisTest:
 - testShareGroupHeartbeatRequestFutureFailed
 - testShareGroupHeartbeatReturnsUnsupportedVersion
 - testSizeOfThrottledPartitions
+- testStreamsGroupDescribe
+- testStreamsGroupDescribeAuthorizationFailed
+- testStreamsGroupDescribeFutureFailed
+- testStreamsGroupDescribeReturnsUnsupportedVersion
+- testStreamsGroupHeartbeatRequest
+- testStreamsGroupHeartbeatRequestAuthorizationFailed
+- testStreamsGroupHeartbeatRequestFutureFailed
+- testStreamsGroupHeartbeatRequestInternalTopicNames
+- testStreamsGroupHeartbeatRequestInvalidTopicNames
+- testStreamsGroupHeartbeatRequestProtocolDisabled
+- testStreamsGroupHeartbeatReturnsUnsupportedVersion
 - testSyncGroupProtocolTypeAndNameAreMandatorySinceV5
 - testTransactionalParametersSetCorrectly
 - testTxnOffsetCommitWithInvalidPartition
