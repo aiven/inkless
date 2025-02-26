@@ -36,6 +36,7 @@ import io.aiven.inkless.storage_backend.common.ObjectDeleter;
 import io.aiven.inkless.storage_backend.common.StorageBackendException;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -199,5 +200,43 @@ class FileCommitJobTest {
             T0P1.topicPartition(), new PartitionResponse(Errors.KAFKA_STORAGE_ERROR, "Error commiting data"),
             T1P0.topicPartition(), new PartitionResponse(Errors.KAFKA_STORAGE_ERROR, "Error commiting data")
         ));
+    }
+
+    @Test
+    void failIfFutureAlreadyCompleted() {
+        final var future0 = new CompletableFuture<PartitionResponse>();
+        final var future1 = new CompletableFuture<PartitionResponse>();
+        final Map<Integer, Map<TopicPartition, CompletableFuture<PartitionResponse>>> awaitingFuturesByRequest = Map.of(
+            0, Map.of(T0P0.topicPartition(), new CompletableFuture<>(), T0P1.topicPartition(), future0),
+            1, Map.of(T0P1.topicPartition(), new CompletableFuture<>(), T1P0.topicPartition(), future1)
+        );
+
+        final List<CommitBatchResponse> commitBatchResponses = List.of(
+            CommitBatchResponse.success(0, 10, 0, COMMIT_BATCH_REQUESTS.get(0)),
+            CommitBatchResponse.of(Errors.INVALID_TOPIC_EXCEPTION, -1, -1, -1),  // some arbitrary uploadError
+            CommitBatchResponse.success(20, 10, 0, COMMIT_BATCH_REQUESTS.get(2)),
+            CommitBatchResponse.success(30, 10, 0, COMMIT_BATCH_REQUESTS.get(3))
+        );
+
+        when(controlPlane.commitFile(eq(OBJECT_KEY_MAIN_PART), eq(BROKER_ID), eq(FILE_SIZE), eq(COMMIT_BATCH_REQUESTS)))
+            .thenReturn(commitBatchResponses);
+        when(time.nanoseconds()).thenReturn(10_000_000L, 20_000_000L);
+
+        final ClosedFile file = new ClosedFile(Instant.EPOCH, REQUESTS, awaitingFuturesByRequest, COMMIT_BATCH_REQUESTS, REQUEST_IDS, DATA);
+        final CompletableFuture<ObjectKey> uploadFuture = CompletableFuture.completedFuture(OBJECT_KEY);
+        final FileCommitJob job = new FileCommitJob(BROKER_ID, file, uploadFuture, time, controlPlane, objectDeleter, commitTimeDurationCallback);
+
+        // When the future is already completed
+        future1.complete(new PartitionResponse(Errors.KAFKA_STORAGE_ERROR));
+        // Then the job should fail
+        assertThatThrownBy(job::run)
+            .isInstanceOf(RuntimeException.class)
+            .cause()
+            .isInstanceOf(ControlPlaneException.class)
+            .hasMessage("Not all futures were completed by commit job for file " + file);
+        // and all other futures should be completed
+        assertThat(future0).isCompleted();
+
+        verify(commitTimeDurationCallback).accept(eq(10L));
     }
 }

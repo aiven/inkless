@@ -22,6 +22,7 @@ import io.aiven.inkless.TimeUtils;
 import io.aiven.inkless.common.ObjectKey;
 import io.aiven.inkless.control_plane.CommitBatchResponse;
 import io.aiven.inkless.control_plane.ControlPlane;
+import io.aiven.inkless.control_plane.ControlPlaneException;
 import io.aiven.inkless.storage_backend.common.ObjectDeleter;
 import io.aiven.inkless.storage_backend.common.StorageBackendException;
 
@@ -79,8 +80,9 @@ class FileCommitJob implements Runnable {
     private void doCommit(final UploadResult result) {
         if (result.objectKey != null) {
             LOGGER.debug("Uploaded {} successfully, committing", result.objectKey);
+            boolean allFuturesCompleted = true;
             try {
-                finishCommitSuccessfully(result.objectKey);
+                allFuturesCompleted = finishCommitSuccessfully(result.objectKey);
             } catch (final Exception e) {
                 LOGGER.error("Error commiting data, attempting to remove the uploaded file {}", result.objectKey, e);
                 try {
@@ -90,13 +92,16 @@ class FileCommitJob implements Runnable {
                 }
                 finishCommitWithError();
             }
+            if (!allFuturesCompleted) {
+                throw new ControlPlaneException("Not all futures were completed by commit job for file %s".formatted(file));
+            }
         } else {
             LOGGER.error("Upload failed: {}", result.uploadError.getMessage());
             finishCommitWithError();
         }
     }
 
-    private void finishCommitSuccessfully(final ObjectKey objectKey) {
+    private boolean finishCommitSuccessfully(final ObjectKey objectKey) {
         final var commitBatchResponses = controlPlane.commitFile(objectKey.value(), brokerId, file.size(), file.commitBatchRequests());
         LOGGER.debug("Committed successfully");
 
@@ -119,18 +124,22 @@ class FileCommitJob implements Runnable {
             );
         }
 
+        // All validated futures must be completed with a response built when commiting the file.
+        boolean allCompleted = true;
         for (final var entry : file.validatedFutures().entrySet()) {
             final var result = resultsPerRequest.get(entry.getKey());
             for (final var inner: entry.getValue().entrySet()) {
-                final var future = inner.getValue();
-                if (future.isDone()) {
-                    // This should never happen. Adding for safety.
-                    throw new RuntimeException("Future already completed");
+                final var completed = inner.getValue().complete(result.get(inner.getKey()));
+                if (!completed) {
+                    // This should not happen, but if it does, it's a bug.
+                    // Completing all futures before throwing an exception is important to avoid leaving the futures uncompleted.
+                    LOGGER.error("The future for this request {} topic-partition {} is already completed", entry.getKey(), inner.getKey());
+                    allCompleted = false;
                 }
-
-                future.complete(result.get(inner.getKey()));
             }
         }
+
+        return allCompleted;
     }
 
     private static ProduceResponse.PartitionResponse partitionResponse(CommitBatchResponse response) {
