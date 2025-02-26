@@ -4,11 +4,13 @@ package io.aiven.inkless.produce;
 import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.compress.Compression;
+import org.apache.kafka.common.config.TopicConfig;
 import org.apache.kafka.common.record.MemoryRecords;
 import org.apache.kafka.common.record.SimpleRecord;
 import org.apache.kafka.common.record.TimestampType;
 import org.apache.kafka.common.utils.MockTime;
 import org.apache.kafka.common.utils.Time;
+import org.apache.kafka.storage.internals.log.LogConfig;
 
 import org.junit.jupiter.api.Test;
 
@@ -30,21 +32,25 @@ class ActiveFileTest {
     static final TopicIdPartition T0P1 = new TopicIdPartition(TOPIC_ID_0, 1, TOPIC_0);
     static final TopicIdPartition T1P0 = new TopicIdPartition(TOPIC_ID_1, 0, TOPIC_1);
 
-    static final Map<String, TimestampType> TIMESTAMP_TYPES = Map.of(
-        TOPIC_0, TimestampType.CREATE_TIME,
-        TOPIC_1, TimestampType.LOG_APPEND_TIME
+    static final Map<String, LogConfig> TOPIC_CONFIGS = Map.of(
+        TOPIC_0, logConfig(Map.of(TopicConfig.MESSAGE_TIMESTAMP_TYPE_CONFIG, TimestampType.CREATE_TIME.name)),
+        TOPIC_1, logConfig(Map.of(TopicConfig.MESSAGE_TIMESTAMP_TYPE_CONFIG, TimestampType.LOG_APPEND_TIME.name))
     );
+
+    static LogConfig logConfig(Map<String, Object> config) {
+        return new LogConfig(config);
+    }
 
     @Test
     void addNull() {
         final ActiveFile file = new ActiveFile(Time.SYSTEM, Instant.EPOCH);
 
-        assertThatThrownBy(() -> file.add(null, TIMESTAMP_TYPES))
+        assertThatThrownBy(() -> file.add(null, TOPIC_CONFIGS))
             .isInstanceOf(NullPointerException.class)
             .hasMessage("entriesPerPartition cannot be null");
         assertThatThrownBy(() -> file.add(Map.of(), null))
             .isInstanceOf(NullPointerException.class)
-            .hasMessage("timestampTypes cannot be null");
+            .hasMessage("topicConfigs cannot be null");
     }
 
     @Test
@@ -53,19 +59,19 @@ class ActiveFileTest {
 
         final var result = file.add(Map.of(
             T0P0, MemoryRecords.withRecords(Compression.NONE, new SimpleRecord(new byte[10]))
-        ), TIMESTAMP_TYPES);
+        ), TOPIC_CONFIGS);
         assertThat(result).isNotCompleted();
     }
 
     @Test
-    void addWithoutTimestampType() {
+    void addWithoutConfig() {
         final ActiveFile file = new ActiveFile(Time.SYSTEM, Instant.EPOCH);
 
         assertThatThrownBy(() -> file.add(Map.of(
             T0P0, MemoryRecords.withRecords(Compression.NONE, new SimpleRecord(new byte[10]))
         ), Map.of()))
             .isInstanceOf(IllegalArgumentException.class)
-            .hasMessage("Timestamp type not provided for topic " + TOPIC_0);
+            .hasMessage("Config not provided for topic " + TOPIC_0);
     }
 
     @Test
@@ -76,7 +82,7 @@ class ActiveFileTest {
 
         file.add(Map.of(
             T0P0, MemoryRecords.withRecords(Compression.NONE, new SimpleRecord(new byte[10]))
-        ), TIMESTAMP_TYPES);
+        ), TOPIC_CONFIGS);
 
         assertThat(file.isEmpty()).isFalse();
     }
@@ -89,7 +95,7 @@ class ActiveFileTest {
 
         file.add(Map.of(
             T0P0, MemoryRecords.withRecords(Compression.NONE, new SimpleRecord(new byte[10]))
-        ), TIMESTAMP_TYPES);
+        ), TOPIC_CONFIGS);
 
         assertThat(file.size()).isEqualTo(78);
     }
@@ -117,12 +123,12 @@ class ActiveFileTest {
             T0P0, MemoryRecords.withRecords(Compression.NONE, new SimpleRecord(1000, new byte[10])),
             T0P1, MemoryRecords.withRecords(Compression.NONE, new SimpleRecord(2000, new byte[10]))
         );
-        file.add(request1, TIMESTAMP_TYPES);
+        file.add(request1, TOPIC_CONFIGS);
         final Map<TopicIdPartition, MemoryRecords> request2 = Map.of(
             T0P1, MemoryRecords.withRecords(Compression.NONE, new SimpleRecord(3000, new byte[10])),
             T1P0, MemoryRecords.withRecords(Compression.NONE, new SimpleRecord(4000, new byte[10]))
         );
-        file.add(request2, TIMESTAMP_TYPES);
+        file.add(request2, TOPIC_CONFIGS);
 
         final ClosedFile result = file.close();
 
