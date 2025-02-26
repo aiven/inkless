@@ -108,6 +108,10 @@ org.apache.kafka.raft.KafkaNetworkChannelTest:
 org.apache.kafka.raft.KafkaRaftClientDriverTest:
 - testShutdown
 - testUncaughtException
+org.apache.kafka.raft.KafkaRaftClientFetchTest:
+- testInvalidMemoryRecords
+- testRandomRecords
+- testReplicationOfHigherPartitionLeaderEpoch
 org.apache.kafka.raft.KafkaRaftClientPreVoteTest:
 - testFollowerGrantsPreVoteIfHasNotFetchedYet
 - testHandleInvalidPreVoteRequestWithOlderEpoch
@@ -390,8 +394,11 @@ org.apache.kafka.raft.MockLogTest:
 - testEmptyAppendNotAllowed
 - testEndOffsetForEpoch
 - testFailToIncreaseLogStartPastHighWatermark
+- testInvalidLeaderEpoch
+- testInvalidMemoryRecords
 - testMetadataValidation
 - testMonotonicEpochStartOffset
+- testRandomRecords
 - testReadMissingSnapshot
 - testReadOutOfRangeOffset
 - testReadRecords

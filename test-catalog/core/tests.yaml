@@ -1752,6 +1752,8 @@ kafka.log.UnifiedLogTest:
 - testIncrementLocalLogStartOffsetAfterLocalLogDeletion
 - testIndexResizingAtTruncation
 - testInitializationOfProducerSnapshotsUpgradePath
+- testInvalidLeaderEpoch
+- testInvalidMemoryRecords
 - testLastStableOffsetDoesNotExceedLogStartOffsetAfterSegmentDeletion
 - testLastStableOffsetDoesNotExceedLogStartOffsetMidSegment
 - testLastStableOffsetWithMixedProducerData
@@ -1791,6 +1793,7 @@ kafka.log.UnifiedLogTest:
 - testProducerIdMapTruncateTo
 - testProducerIdMapTruncateToWithNoSnapshots
 - testProducerSnapshotAfterSegmentRollOnAppend
+- testRandomRecords
 - testReadAtLogGap
 - testReadCommittedWithConcurrentHighWatermarkUpdates
 - testReadOutOfRange
@@ -2074,8 +2077,12 @@ kafka.raft.KafkaMetadataLogTest:
 - testDeleteNonExistentSnapshot
 - testDeleteSnapshots
 - testDoesntTruncateFully
+- testEmptyAppendNotAllowed
 - testHighWatermarkOffsetMetadata
+- testInvalidLeaderEpoch
+- testInvalidMemoryRecords
 - testMaxBatchSize
+- testRandomRecords
 - testReadMissingSnapshot
 - testSegmentsLessThanLatestSnapshot
 - testSnapshotDeletionWithInvalidSnapshotState
@@ -2164,6 +2171,7 @@ kafka.server.AbstractFetcherThreadTest:
 - testMetricsRemovedOnShutdown
 - testParameterizedLeaderEpochChangeDuringFetchEpochsFromLeader
 - testPartitionsInError
+- testReplicateBatchesUpToLeaderEpoch
 - testRetryAfterUnknownLeaderEpochInLatestOffsetFetch
 - testSimpleFetch
 - testTruncateOnFetchDoesNotProcessPartitionData
