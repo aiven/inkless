@@ -7,6 +7,7 @@ import org.apache.kafka.common.record.MemoryRecords;
 import org.apache.kafka.common.record.TimestampType;
 import org.apache.kafka.common.requests.ProduceResponse.PartitionResponse;
 import org.apache.kafka.common.utils.Time;
+import org.apache.kafka.storage.internals.log.LogConfig;
 import org.apache.kafka.storage.log.metrics.BrokerTopicStats;
 
 import java.time.Instant;
@@ -53,10 +54,10 @@ class ActiveFile {
 
     CompletableFuture<Map<TopicPartition, PartitionResponse>> add(
         final Map<TopicIdPartition, MemoryRecords> entriesPerPartition,
-        final Map<String, TimestampType> timestampTypes
+        final Map<String, LogConfig> topicConfigs
     ) {
         Objects.requireNonNull(entriesPerPartition, "entriesPerPartition cannot be null");
-        Objects.requireNonNull(timestampTypes, "timestampTypes cannot be null");
+        Objects.requireNonNull(topicConfigs, "topicConfigs cannot be null");
 
         requestId += 1;
         originalRequests.put(requestId, entriesPerPartition);
@@ -66,10 +67,11 @@ class ActiveFile {
             brokerTopicStats.topicStats(topicIdPartition.topic()).totalProduceRequestRate().mark();
             brokerTopicStats.allTopicsStats().totalProduceRequestRate().mark();
 
-            final TimestampType messageTimestampType = timestampTypes.get(topicIdPartition.topic());
-            if (messageTimestampType == null) {
-                throw new IllegalArgumentException("Timestamp type not provided for topic " + topicIdPartition.topic());
+            final LogConfig config = topicConfigs.get(topicIdPartition.topic());
+            if (config == null) {
+                throw new IllegalArgumentException("Config not provided for topic " + topicIdPartition.topic());
             }
+            final TimestampType messageTimestampType = config.messageTimestampType;
 
             for (final var batch : entry.getValue().batches()) {
                 batchValidator.validateAndMaybeSetMaxTimestamp(batch, messageTimestampType);
