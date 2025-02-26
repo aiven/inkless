@@ -65,23 +65,20 @@ public class FixedBlockAlignmentTest {
         ));
     }
 
-    // TODO INK-77: irregular-sized byte ranges should not be emitted
     @Test
     public void testRangeOverMultipleBlocks() {
         assertRanges(maxBlockSize, List.of(
                 new ByteRange(Integer.MAX_VALUE - 10L, 20)
         ), Set.of(
                 new ByteRange(0, Integer.MAX_VALUE),
-                new ByteRange(Integer.MAX_VALUE, Integer.MAX_VALUE),
-                new ByteRange(Integer.MAX_VALUE - 10L, 20)
+                new ByteRange(Integer.MAX_VALUE, Integer.MAX_VALUE)
         ));
         assertRanges(kilobyteBlockSize, List.of(
                 new ByteRange(990, 1020)
         ), Set.of(
                 new ByteRange(0, 1000),
                 new ByteRange(1000, 1000),
-                new ByteRange(2000, 1000),
-                new ByteRange(990, 1020)
+                new ByteRange(2000, 1000)
         ));
     }
 
