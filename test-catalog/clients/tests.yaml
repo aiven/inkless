@@ -3079,6 +3079,7 @@ org.apache.kafka.common.config.AbstractConfigTest:
 - testAutoConfigResolutionWithMissingConfigKey
 - testAutoConfigResolutionWithMissingConfigProvider
 - testAutoConfigResolutionWithMultipleConfigProviders
+- testAutomaticConfigProvidersWithFullClassName
 - testClassConfigs
 - testConfigProviderConfigurationWithConfigParams
 - testConfigProvidersPropsAsParam
