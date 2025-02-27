@@ -143,9 +143,7 @@ public class InklessTopicCreator {
         for (Map.Entry<Integer, PartitionRegistration> partEntry : newParts.entrySet()) {
             int partitionIndex = partEntry.getKey();
             PartitionRegistration info = partEntry.getValue();
-            records.add(info.toRecord(topicId, partitionIndex, new ImageWriterOptions.Builder().
-                setMetadataVersion(featureControl.metadataVersion()).
-                build()));
+            records.add(info.toRecord(topicId, partitionIndex, new ImageWriterOptions.Builder(featureControl.metadataVersion()).build()));
         }
         return ApiError.NONE;
     }
