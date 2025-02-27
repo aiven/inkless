@@ -45,7 +45,7 @@ public class FileFetchJob implements Callable<FileExtent> {
                 .setObject(object.value())
                 .setRange(new FileExtent.ByteRange()
                         .setOffset(byteRange.offset())
-                        .setLength(byteRange.size()))
+                        .setLength(buffer.limit()))
                 .setData(buffer.array());
     }
 
