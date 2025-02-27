@@ -17,6 +17,8 @@
 
 package kafka.network
 
+import io.aiven.inkless.network.InklessConnectionUpgradeTracker
+
 import java.io.IOException
 import java.net._
 import java.nio.ByteBuffer
@@ -37,7 +39,7 @@ import org.apache.kafka.common.errors.InvalidRequestException
 import org.apache.kafka.common.memory.{MemoryPool, SimpleMemoryPool}
 import org.apache.kafka.common.metrics._
 import org.apache.kafka.common.metrics.stats.{Avg, CumulativeSum, Meter, Rate}
-import org.apache.kafka.common.network.KafkaChannel.ChannelMuteEvent
+import org.apache.kafka.common.network.KafkaChannel.{ChannelMuteEvent, ChannelMuteState}
 import org.apache.kafka.common.network.{ChannelBuilder, ChannelBuilders, ClientInformation, KafkaChannel, ListenerName, ListenerReconfigurable, NetworkSend, Selectable, Send, ServerConnectionId, Selector => KSelector}
 import org.apache.kafka.common.protocol.ApiKeys
 import org.apache.kafka.common.requests.{ApiVersionsRequest, RequestContext, RequestHeader}
@@ -84,7 +86,8 @@ class SocketServer(
   val credentialProvider: CredentialProvider,
   val apiVersionManager: ApiVersionManager,
   val socketFactory: ServerSocketFactory = ServerSocketFactory.INSTANCE,
-  val connectionDisconnectListeners: Seq[ConnectionDisconnectListener] = Seq.empty
+  val connectionDisconnectListeners: Seq[ConnectionDisconnectListener] = Seq.empty,
+  val inklessConnectionUpgradeTracker: Option[InklessConnectionUpgradeTracker] = None
 ) extends Logging with BrokerReconfigurable {
 
   private val metricsGroup = new KafkaMetricsGroup(this.getClass)
@@ -274,11 +277,11 @@ class SocketServer(
   private def endpoints = config.listeners.map(l => l.listenerName -> l).toMap
 
   protected def createDataPlaneAcceptor(endPoint: EndPoint, isPrivilegedListener: Boolean, requestChannel: RequestChannel): DataPlaneAcceptor = {
-    new DataPlaneAcceptor(this, endPoint, config, nodeId, connectionQuotas, time, isPrivilegedListener, requestChannel, metrics, credentialProvider, logContext, memoryPool, apiVersionManager)
+    new DataPlaneAcceptor(this, endPoint, config, nodeId, connectionQuotas, time, isPrivilegedListener, requestChannel, metrics, credentialProvider, logContext, memoryPool, apiVersionManager, inklessConnectionUpgradeTracker)
   }
 
   private def createControlPlaneAcceptor(endPoint: EndPoint, requestChannel: RequestChannel): ControlPlaneAcceptor = {
-    new ControlPlaneAcceptor(this, endPoint, config, nodeId, connectionQuotas, time, requestChannel, metrics, credentialProvider, logContext, memoryPool, apiVersionManager)
+    new ControlPlaneAcceptor(this, endPoint, config, nodeId, connectionQuotas, time, requestChannel, metrics, credentialProvider, logContext, memoryPool, apiVersionManager, inklessConnectionUpgradeTracker)
   }
 
   /**
@@ -442,7 +445,8 @@ class DataPlaneAcceptor(socketServer: SocketServer,
                         credentialProvider: CredentialProvider,
                         logContext: LogContext,
                         memoryPool: MemoryPool,
-                        apiVersionManager: ApiVersionManager)
+                        apiVersionManager: ApiVersionManager,
+                        inklessConnectionUpgradeTracker: Option[InklessConnectionUpgradeTracker] = None)
   extends Acceptor(socketServer,
                    endPoint,
                    config,
@@ -455,7 +459,8 @@ class DataPlaneAcceptor(socketServer: SocketServer,
                    credentialProvider,
                    logContext,
                    memoryPool,
-                   apiVersionManager) with ListenerReconfigurable {
+                   apiVersionManager,
+                   inklessConnectionUpgradeTracker) with ListenerReconfigurable {
 
   override def metricPrefix(): String = DataPlaneAcceptor.MetricPrefix
   override def threadPrefix(): String = DataPlaneAcceptor.ThreadPrefix
@@ -544,7 +549,8 @@ class ControlPlaneAcceptor(socketServer: SocketServer,
                            credentialProvider: CredentialProvider,
                            logContext: LogContext,
                            memoryPool: MemoryPool,
-                           apiVersionManager: ApiVersionManager)
+                           apiVersionManager: ApiVersionManager,
+                           inklessConnectionUpgradeTracker: Option[InklessConnectionUpgradeTracker] = None)
   extends Acceptor(socketServer,
                    endPoint,
                    config,
@@ -557,7 +563,8 @@ class ControlPlaneAcceptor(socketServer: SocketServer,
                    credentialProvider,
                    logContext,
                    memoryPool,
-                   apiVersionManager) {
+                   apiVersionManager,
+                   inklessConnectionUpgradeTracker) {
 
   override def metricPrefix(): String = ControlPlaneAcceptor.MetricPrefix
   override def threadPrefix(): String = ControlPlaneAcceptor.ThreadPrefix
@@ -579,7 +586,8 @@ private[kafka] abstract class Acceptor(val socketServer: SocketServer,
                                        credentialProvider: CredentialProvider,
                                        logContext: LogContext,
                                        memoryPool: MemoryPool,
-                                       apiVersionManager: ApiVersionManager)
+                                       apiVersionManager: ApiVersionManager,
+                                       inklessConnectionUpgradeTracker: Option[InklessConnectionUpgradeTracker] = None)
   extends Runnable with Logging {
 
   private val metricsGroup = new KafkaMetricsGroup(this.getClass)
@@ -879,7 +887,8 @@ private[kafka] abstract class Acceptor(val socketServer: SocketServer,
                   isPrivilegedListener,
                   apiVersionManager,
                   name,
-                  connectionDisconnectListeners)
+                  connectionDisconnectListeners,
+                  inklessConnectionUpgradeTracker)
   }
 }
 
@@ -919,7 +928,8 @@ private[kafka] class Processor(
   isPrivilegedListener: Boolean,
   apiVersionManager: ApiVersionManager,
   threadName: String,
-  connectionDisconnectListeners: Seq[ConnectionDisconnectListener]
+  connectionDisconnectListeners: Seq[ConnectionDisconnectListener],
+  inklessConnectionUpgradeTracker: Option[InklessConnectionUpgradeTracker] = None
 ) extends Runnable with Logging {
   private val metricsGroup = new KafkaMetricsGroup(this.getClass)
 
@@ -990,6 +1000,8 @@ private[kafka] class Processor(
   // closed, connection ids are not reused while requests from the closed connection are being processed.
   private var nextConnectionIndex = 0
 
+  private var inklessSendQueueByChannel: immutable.Map[String, InklessSendQueue] = immutable.Map.empty
+
   override def run(): Unit = {
     try {
       while (shouldRun.get()) {
@@ -1052,7 +1064,17 @@ private[kafka] class Processor(
             tryUnmuteChannel(channelId)
 
           case response: SendResponse =>
-            sendResponse(response, response.responseSend)
+            val connectionId = response.request.context.connectionId
+            val upgradedConnection = inklessConnectionUpgradeTracker.nonEmpty && inklessConnectionUpgradeTracker.get.isConnectionUpgraded(connectionId)
+            if (upgradedConnection) {
+              val connectionId = response.request.context.connectionId
+              if (!inklessSendQueueByChannel.contains(connectionId)) {
+                inklessSendQueueByChannel += connectionId -> new InklessSendQueue(inklessConnectionUpgradeTracker.get.upgradeCorrelationId(connectionId))
+              }
+              inklessSendQueueByChannel(connectionId).add(response)
+            } else {
+              sendResponse(response, response.responseSend)
+            }
           case response: CloseConnectionResponse =>
             updateRequestMetrics(response)
             trace("Closing socket connection actively according to the response code.")
@@ -1070,6 +1092,20 @@ private[kafka] class Processor(
       } catch {
         case e: Throwable =>
           processChannelException(channelId, s"Exception while processing response for $channelId", e)
+      }
+    }
+
+    // Process responses for Inkless upgraded connections.
+    for ((connectionId, queue) <- inklessSendQueueByChannel) {
+      openOrClosingChannel(connectionId) match {
+        case Some(channel) =>
+          if (queue.nextReady() && !channel.hasSend) {
+            val response = queue.take()
+            sendResponse(response, response.responseSend)
+          }
+
+        case None =>
+          inklessSendQueueByChannel -= connectionId
       }
     }
   }
@@ -1148,8 +1184,11 @@ private[kafka] class Processor(
                   }
                 }
                 requestChannel.sendRequest(req)
-                selector.mute(connectionId)
-                handleChannelMuteEvent(connectionId, ChannelMuteEvent.REQUEST_RECEIVED)
+                val upgradedConnection = inklessConnectionUpgradeTracker.nonEmpty && inklessConnectionUpgradeTracker.get.isConnectionUpgraded(connectionId)
+                if (!upgradedConnection) {
+                  selector.mute(connectionId)
+                  handleChannelMuteEvent(connectionId, ChannelMuteEvent.REQUEST_RECEIVED)
+                }
               }
             }
           case None =>
@@ -1181,7 +1220,19 @@ private[kafka] class Processor(
         // Try unmuting the channel. If there was no quota violation and the channel has not been throttled,
         // it will be unmuted immediately. If the channel has been throttled, it will unmuted only if the throttling
         // delay has already passed by now.
-        handleChannelMuteEvent(send.destinationId, ChannelMuteEvent.RESPONSE_SENT)
+        val connectionId = response.request.context.connectionId()
+        val upgradedConnection = inklessConnectionUpgradeTracker.nonEmpty && inklessConnectionUpgradeTracker.get.isConnectionUpgraded(connectionId)
+        if (upgradedConnection) {
+          openOrClosingChannel(connectionId).foreach{ channel =>
+            // Imitate muting to prevent illegal state errors when `tryUnmuteChannel` is called.
+            if (channel.muteState() == ChannelMuteState.MUTED_AND_RESPONSE_PENDING) {
+              handleChannelMuteEvent(send.destinationId, ChannelMuteEvent.RESPONSE_SENT)
+            }
+            selector.mute(channel.id)
+          }
+        } else {
+          handleChannelMuteEvent(send.destinationId, ChannelMuteEvent.RESPONSE_SENT)
+        }
         tryUnmuteChannel(send.destinationId)
       } catch {
         case e: Throwable => processChannelException(send.destinationId,

@@ -189,6 +189,13 @@ class KafkaApis(val requestChannel: RequestChannel,
       requestHelper.handleError(request, e)
     }
 
+    if (inklessSharedState.forall(st => st.inklessConnectionUpgradeTracker().isConnectionUpgraded(request.context.connectionId()))
+      && request.header.apiKey != ApiKeys.PRODUCE) {
+      logger.error("Received unexpected request with API key {} in Inkless-upgraded connection", request.header.apiKey)
+      handleError(new RuntimeException())
+      return
+    }
+
     try {
       trace(s"Handling request:${request.requestDesc(true)} from connection ${request.context.connectionId};" +
         s"securityProtocol:${request.context.securityProtocol},principal:${request.context.principal}")
@@ -757,7 +764,8 @@ class KafkaApis(val requestChannel: RequestChannel,
         responseCallback = sendResponseCallback,
         recordValidationStatsCallback = processingStatsCallback,
         requestLocal = requestLocal,
-        transactionSupportedOperation = transactionSupportedOperation)
+        transactionSupportedOperation = transactionSupportedOperation,
+        connectionIdAndCorrelationId = Some((request.context.connectionId(), request.header.correlationId())))
 
       // if the request is put into the purgatory, it will have a held reference and hence cannot be garbage collected;
       // hence we clear its data here in order to let GC reclaim its memory since it is already appended to log
