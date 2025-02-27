@@ -33,10 +33,6 @@ public class FixedBlockAlignment implements KeyAlignmentStrategy {
             for (long blockIndex = firstBlock; blockIndex <= lastBlock; blockIndex++) {
                 keys.add(new ByteRange(blockSize * blockIndex, blockSize));
             }
-            if (firstBlock != lastBlock) {
-                // TODO INK-77: For ranges which cross multiple blocks, issue multiple requests and concatenate them later.
-                keys.add(requestRange);
-            }
         }
         return Collections.unmodifiableSet(keys);
     }
