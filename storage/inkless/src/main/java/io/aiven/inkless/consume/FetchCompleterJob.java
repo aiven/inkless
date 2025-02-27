@@ -168,36 +168,55 @@ public class FetchCompleterJob implements Supplier<Map<TopicIdPartition, FetchPa
         return foundRecords;
     }
 
+    private static MemoryRecords createMemoryRecords(ByteBuffer buffer, BatchInfo batch) {
+        MemoryRecords records = MemoryRecords.readableRecords(buffer);
+        Iterator<MutableRecordBatch> iterator = records.batches().iterator();
+        if (!iterator.hasNext()) {
+            throw new IllegalStateException("Backing file should have at least one batch");
+        }
+        MutableRecordBatch mutableRecordBatch = iterator.next();
+
+        // set last offset
+        mutableRecordBatch.setLastOffset(batch.metadata().lastOffset());
+
+        // set log append timestamp
+        if (batch.metadata().timestampType() == TimestampType.LOG_APPEND_TIME) {
+            mutableRecordBatch.setMaxTimestamp(TimestampType.LOG_APPEND_TIME, batch.metadata().logAppendTimestamp());
+        }
+
+        if (iterator.hasNext()) {
+            // TODO: support concatenating multiple batches into a single BatchInfo
+            throw new IllegalStateException("Backing file should have at only one batch");
+        }
+
+        return records;
+    }
+
     private static MemoryRecords constructRecordsFromFile(BatchInfo batch, List<FileExtent> files) {
+        final long batchSize = batch.metadata().byteSize();
+        final long batchOffset = batch.metadata().byteOffset();
+        ByteBuffer buffer = null;
         for (FileExtent file : files) {
-            // TODO INK-77: A single batch may be broken up across multiple FileExtents
+            final long fileOffset = file.range().offset();
             if (new ByteRange(file.range().offset(), file.range().length()).contains(batch.metadata().range())) {
-                final int index = Math.toIntExact(batch.metadata().byteOffset() - file.range().offset());
-                final int length = Math.toIntExact(batch.metadata().byteSize());
-                ByteBuffer buffer = ByteBuffer.wrap(file.data()).slice(index, length);
-                MemoryRecords records = MemoryRecords.readableRecords(buffer);
-                Iterator<MutableRecordBatch> iterator = records.batches().iterator();
-                if (!iterator.hasNext()) {
-                    throw new IllegalStateException("Backing file should have at least one batch");
+                // Batch is fully contained by the file
+                final int index = Math.toIntExact(batchOffset - fileOffset);
+                final int length = Math.toIntExact(batchSize);
+                return createMemoryRecords(ByteBuffer.wrap(file.data()).slice(index, length), batch);
+            } else {
+                // Batch is split into multiple files
+                if (buffer == null) {
+                    buffer = ByteBuffer.allocate(Math.toIntExact(batchSize));
                 }
-                MutableRecordBatch mutableRecordBatch = iterator.next();
-
-                // set last offset
-                mutableRecordBatch.setLastOffset(batch.metadata().lastOffset());
-
-                // set log append timestamp
-                if (batch.metadata().timestampType() == TimestampType.LOG_APPEND_TIME) {
-                    mutableRecordBatch.setMaxTimestamp(TimestampType.LOG_APPEND_TIME, batch.metadata().logAppendTimestamp());
-                }
-                
-                if (iterator.hasNext()) {
-                    // TODO: support concatenating multiple batches into a single BatchInfo
-                    throw new IllegalStateException("Backing file should have at only one batch");
-                }
-
-                return records;
+                buffer.position(Math.toIntExact(fileOffset));
+                buffer.put(file.data());
             }
         }
-        return null;
+        if (buffer == null) {
+            return null;
+        }
+        buffer.position(0);
+        return createMemoryRecords(buffer, batch);
     }
+
 }
