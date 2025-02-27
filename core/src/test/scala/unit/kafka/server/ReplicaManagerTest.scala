@@ -6252,7 +6252,6 @@ class ReplicaManagerTest {
         logDirFailureChannel = logDirFailureChannel,
         alterPartitionManager = alterPartitionManager,
         threadNamePrefix = Option(this.getClass.getName),
-        zkClient = None,
         inklessSharedState = Some(sharedState),
       )
     }

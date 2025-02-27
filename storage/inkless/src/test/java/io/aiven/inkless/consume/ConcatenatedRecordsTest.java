@@ -50,7 +50,6 @@ class ConcatenatedRecordsTest {
 
         assertFalse(records.batches().iterator().hasNext());
         assertFalse(records.batchIterator().hasNext());
-        assertThrows(UnsupportedOperationException.class, () -> records.downConvert((byte) 1, 0, null));
 
         assertEquals(0, records.writeTo(channel, 0, 1));
         assertEquals(0, records.sizeInBytes());
@@ -62,7 +61,6 @@ class ConcatenatedRecordsTest {
 
         assertFalse(records.batches().iterator().hasNext());
         assertFalse(records.batchIterator().hasNext());
-        assertThrows(UnsupportedOperationException.class, () -> records.downConvert((byte) 1, 0, null));
 
         assertEquals(0, records.writeTo(channel, 0, 1));
         assertEquals(0, records.sizeInBytes());
@@ -75,7 +73,6 @@ class ConcatenatedRecordsTest {
 
         assertTrue(records.batches().iterator().hasNext());
         assertTrue(records.batchIterator().hasNext());
-        assertThrows(UnsupportedOperationException.class, () -> records.downConvert((byte) 1, 0, null));
 
         setupChannel(1000);
         assertEquals(backingRecords.writeTo(channel, 0, 1), records.writeTo(channel, 0, 1));
@@ -89,7 +86,6 @@ class ConcatenatedRecordsTest {
 
         assertTrue(records.batches().iterator().hasNext());
         assertTrue(records.batchIterator().hasNext());
-        assertThrows(UnsupportedOperationException.class, () -> records.downConvert((byte) 1, 0, null));
 
         setupChannel(1000);
         assertEquals(backingRecords.writeTo(channel, 0, 1), records.writeTo(channel, 0, 1));

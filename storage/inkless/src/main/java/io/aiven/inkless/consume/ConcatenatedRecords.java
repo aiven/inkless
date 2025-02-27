@@ -3,13 +3,10 @@ package io.aiven.inkless.consume;
 
 import org.apache.kafka.common.network.TransferableChannel;
 import org.apache.kafka.common.record.AbstractRecords;
-import org.apache.kafka.common.record.ConvertedRecords;
 import org.apache.kafka.common.record.MemoryRecords;
 import org.apache.kafka.common.record.MutableRecordBatch;
-import org.apache.kafka.common.record.Records;
 import org.apache.kafka.common.utils.AbstractIterator;
 import org.apache.kafka.common.utils.FlattenedIterator;
-import org.apache.kafka.common.utils.Time;
 
 import java.io.IOException;
 import java.util.List;
@@ -37,11 +34,6 @@ public class ConcatenatedRecords extends AbstractRecords {
     @Override
     public AbstractIterator<MutableRecordBatch> batchIterator() {
         return new FlattenedIterator<>(backingRecords.iterator(), MemoryRecords::batchIterator);
-    }
-
-    @Override
-    public ConvertedRecords<? extends Records> downConvert(byte toMagic, long firstOffset, Time time) {
-        throw new UnsupportedOperationException("Unable to downConvert concatenated records");
     }
 
     @Override

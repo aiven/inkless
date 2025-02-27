@@ -979,7 +979,7 @@ class KafkaApis(val requestChannel: RequestChannel,
     val response = describeTopicPartitionsRequestHandler.handleDescribeTopicPartitionsRequest(request)
     trace("Sending topic partitions metadata %s for correlation id %d to client %s".format(response.topics().asScala.mkString(","),
       request.header.correlationId, request.header.clientId))
-    nklessTopicMetadataTransformer.transformDescribeTopicResponse(request.header.clientId, response)
+    inklessTopicMetadataTransformer.transformDescribeTopicResponse(request.header.clientId, response)
 
     requestHelper.sendResponseMaybeThrottle(request, requestThrottleMs => {
       response.setThrottleTimeMs(requestThrottleMs)

@@ -2473,26 +2473,25 @@ project(':storage:inkless') {
     }
   }
 
-// FIXME enable pitest that got broken while rebasing upstream
-//
-//  apply plugin: 'info.solidsoft.pitest'
-//  apply plugin: 'info.solidsoft.pitest.aggregator'
-//
-//  pitest {
-//    //adds dependency to org.pitest:pitest-junit5-plugin and sets "testPlugin" to "junit5"
-//    junit5PluginVersion = '1.2.1'
-//    pitestVersion = '1.17.1'
-//    targetClasses.add("io.aiven.inkless.*")
-//    excludedTestClasses.add("*io.aiven.inkless.storage_backend.s3.integration.*")
-//    excludedTestClasses.add("*io.aiven.inkless.produce.WriterIntegrationTest")
-//    excludedTestClasses.add("*io.aiven.inkless.produce.WriterPropertyTest")
-//    excludedTestClasses.add("*io.aiven.inkless.control_plane.postgres.*")
-//    targetTests.add("io.aiven.inkless.*")
-//    threads = Runtime.getRuntime().availableProcessors()
-//    outputFormats.addAll('XML', 'HTML')
-//    mutators.add('ALL')
-//    exportLineCoverage = true
-//  }
+  apply plugin: 'info.solidsoft.pitest'
+  apply plugin: 'info.solidsoft.pitest.aggregator'
+
+  pitest {
+    //adds dependency to org.pitest:pitest-junit5-plugin and sets "testPlugin" to "junit5"
+    junit5PluginVersion = '1.2.2'
+    addJUnitPlatformLauncher = false
+    pitestVersion = '1.17.1'
+    targetClasses.add("io.aiven.inkless.*")
+    excludedTestClasses.add("*io.aiven.inkless.storage_backend.s3.integration.*")
+    excludedTestClasses.add("*io.aiven.inkless.produce.WriterIntegrationTest")
+    excludedTestClasses.add("*io.aiven.inkless.produce.WriterPropertyTest")
+    excludedTestClasses.add("*io.aiven.inkless.control_plane.postgres.*")
+    targetTests.add("io.aiven.inkless.*")
+    threads = Runtime.getRuntime().availableProcessors()
+    outputFormats.addAll('XML', 'HTML')
+    mutators.add('ALL')
+    exportLineCoverage = true
+  }
 }
 
 project(':tools:tools-api') {
