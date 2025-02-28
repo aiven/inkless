@@ -51,6 +51,7 @@ org.apache.kafka.server.log.remote.metadata.storage.RemoteLogSegmentLifecycleTes
 org.apache.kafka.server.log.remote.metadata.storage.TopicBasedRemoteLogMetadataManagerConfigTest:
 - testCommonProducerConsumerOverridesConfig
 - testValidConfig
+- verifyToStringRedactsSensitiveConfigurations
 org.apache.kafka.server.log.remote.metadata.storage.TopicBasedRemoteLogMetadataManagerMultipleSubscriptionsTest:
 - testMultiplePartitionSubscriptions
 org.apache.kafka.server.log.remote.metadata.storage.TopicBasedRemoteLogMetadataManagerRestartTest:

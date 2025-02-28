@@ -12,7 +12,7 @@ org.apache.kafka.controller.ActivationRecordsGeneratorTest:
 - testActivationMessageForEmptyLogAtMv3_4
 - testActivationMessageForEmptyLogAtMv3_6
 - testActivationMessageForEmptyLogAtMv3_6WithTransaction
-- testActivationMessageForEmptyLogAtMv3_6WithTransactionAndElr
+- testActivationMessageForEmptyLogAtMv4_0WithTransactionAndElr
 org.apache.kafka.controller.BrokerHeartbeatManagerTest:
 - testCalculateNextBrokerState
 - testControlledShutdownOffsetIsOnlyUpdatedOnce
