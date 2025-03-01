@@ -42,6 +42,7 @@ kafka.admin.ClientTelemetryTest:
 - testIntervalMsParser
 - testMetrics
 kafka.admin.ConfigCommandIntegrationTest:
+- testAddConfigKeyValuesUsingCommand
 - testAlterReadOnlyConfigInKRaftThenShouldFail
 - testClientMetricsConfigUpdate
 - testDynamicBrokerConfigUpdateUsingKraft
