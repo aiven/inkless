@@ -1,19 +1,11 @@
 #!/usr/bin/env python
 
-# Run these first:
-# curl https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/index.json > services.json
-# curl https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonS3/current/us-east-1/index.json > us-east-1/s3.json
-# curl https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/current/us-east-1/index.json > us-east-1/ec2.json
-
-# Copy the "Network Specifications" table from https://docs.aws.amazon.com/ec2/latest/instancetypes/gp.html#gp_network to network-specs.tsv
-# And then call ./estimator.py us-east-1
-
-
 import argparse
 import csv
 import json
 import math
 import pathlib
+from bs4 import BeautifulSoup
 
 HRS_TO_SECS = 3600
 SECS_TO_MONTH = 1.0/(60 * 60 * 24 * 30)
@@ -106,6 +98,8 @@ def _simulate(
 
     # Assume all transfers are symmetric, and budget double the network capacity.
     producer_bytes_per_sec_per_broker = 2 * network_capacity_bytes_per_sec_per_broker / transfer_count
+    # TODO: remove hardcoded total producer throughput
+    producer_bytes_per_sec_per_broker = 10_000_000 / brokers_per_cluster
 
     bytes_per_sec_per_cluster = producer_bytes_per_sec_per_broker * brokers_per_cluster
     bytes_per_hour_per_cluster = HRS_TO_SECS * bytes_per_sec_per_cluster
@@ -207,17 +201,22 @@ class InvalidHardware(RuntimeError):
 
 class Estimator:
     def __init__(self, region, show_errors):
+        base_path = pathlib.Path("published/aws/")
         self.region = region
         self.show_errors = show_errors
-        with open(pathlib.Path(region).joinpath("ec2.json")) as ec2_file:
+        with open(base_path.joinpath(region).joinpath("ec2.json")) as ec2_file:
             self.ec2 = json.load(ec2_file)
-        with open(pathlib.Path(region).joinpath("s3.json")) as s3_file:
+        with open(base_path.joinpath(region).joinpath("s3.json")) as s3_file:
             self.s3 = json.load(s3_file)
-        with open(pathlib.Path(region).joinpath("network-specs.tsv")) as network_file:
-            self.network = self._parse_network_specs(network_file)
+        with open(base_path.joinpath("instance-types.html")) as instance_types_file:
+            self.network = self._parse_network_specs(BeautifulSoup(instance_types_file, 'html.parser'))
 
         self.currencies = ["USD"]
         # This is an utter hack because there doesn't appear to be a programmatic association here.
+        self.region_prefix = {
+            "us-east-1": "",
+            "eu-central-1": "EUC1-",
+        }[region]
         self.s3_price_tiers = {
             "Standard": ("Requests-Tier1", "Requests-Tier2"),
             "Intelligent-Tiering": ("Requests-INT-Tier1", "Requests-INT-Tier2"),
@@ -249,13 +248,15 @@ class Estimator:
                 # Take the baseline as the maximum, because we're looking for steady-state behavior.
                 return float(baseline_burst_bandwidth[0]) * 1e9 / 8
             raise RuntimeError("Unknown baseline burst column value " + string)
-
+        network_table = network_file.find(id="gp_network").find_next_sibling(class_="table-container").div.table.find_all("tr")
         network = {}
-        for row in csv.reader(network_file, delimiter="\t"):
-            if len(row) != 9:
+        for row in network_table:
+            if len(row.find_all("td")) != 9:
                 continue
-            instance_type = row[0].split(" ")[0]  # Some have notes attached, split those from the instance types
-            network[instance_type] = parse_baseline_bandwidth(row[1])
+            first_col = row.find("td")
+            instance_type = first_col.next_element.string.replace(" ", "")
+            bandwidth = first_col.next_sibling.next_sibling.next_element.string
+            network[instance_type] = parse_baseline_bandwidth(bandwidth)
         return network
 
     def ebs_storage_types(self):
@@ -310,7 +311,7 @@ class Estimator:
     def find_product(self, data, family, criteria):
         found = self.find_products(data, family, criteria)
         if len(found) != 1:
-            raise RuntimeError("Criteria " + str(criteria) + " matches multiple products: " + _summarize_objects(found))
+            raise RuntimeError("Criteria " + str(criteria) + " matches products: " + _summarize_objects(found))
         return found[0]
 
     def _run_price_fns(
@@ -329,21 +330,21 @@ class Estimator:
     ):
         row = [""] * 8  # Preallocate array
         row.extend(values)
-        for brokers_per_cluster in [1e1, 1e2]:
+        for brokers_per_cluster in [6]:
             row[0] = str(brokers_per_cluster)
-            for replication_factor in [1, 3]:
+            for replication_factor in [3]:
                 row[1] = str(replication_factor)
-                for hot_set_retention_hours in [1e0, 1e2]:  # ~1hr, ~1wk
+                for hot_set_retention_hours in [1e0]:  # ~1hr, ~1wk
                     row[2] = str(hot_set_retention_hours)
                     for hot_set_bytes_per_block in [1e4, 1e5, 5e5, 1e6, 2e6, 4e6, 8e6, 64e6]:
                         row[3] = str(hot_set_bytes_per_block)
-                        for hot_set_consumer_count in [1, 3, 10]:
+                        for hot_set_consumer_count in [3]:
                             row[4] = str(hot_set_consumer_count)
-                            for archive_retention_hours in [0, 1e3, 1e4, 1e5]:  # ~1 month, ~1 year, ~10 year
+                            for archive_retention_hours in [0]:  # ~1 month, ~1 year, ~10 year
                                 row[5] = str(archive_retention_hours)
                                 for archive_bytes_per_block in [1e9]:
                                     row[6] = str(archive_bytes_per_block)
-                                    for archive_consumer_count in [0, 1e0]:
+                                    for archive_consumer_count in [0]:
                                         row[7] = str(archive_consumer_count)
                                         try:
                                             res = _simulate(
@@ -401,15 +402,16 @@ class Estimator:
         archive_type = "Intelligent-Tiering"
         archive_storage_price_fn = self.s3_storage_price(archive_type)
         archive_io_price_fn = self.s3_iops_price(archive_type)
-        for instance_type in ["m6a.large", "m6a.48xlarge"]:
+        for instance_type in ["m7i.xlarge"]:
             instance_price_fn = self.ec2_instance_price(instance_type)
+            fixed_instance_price_fn = self.ec2_instance_price("m7i.large")
             network_capacity_fn = self.ec2_network_capacity(instance_type)
             network_price_fn = self.ec2_network_price()
             for storage_type in ["standard", "sc1", "st1", "gp2", "gp3", "io1", "io2"]:
                 self._run_price_fns(
                     ["traditional", instance_type, "ebs-standard" if storage_type == "standard" else storage_type, archive_type],
                     reduced_durability_fn=self.ebs_durability(storage_type),
-                    fixed_instance_price_fn=instance_price_fn,
+                    fixed_instance_price_fn=fixed_instance_price_fn,
                     variable_instance_price_fn=instance_price_fn,
                     network_total_fn=lambda traditional, inkless: traditional,
                     network_capacity_fn=network_capacity_fn,
@@ -424,7 +426,7 @@ class Estimator:
                 self._run_price_fns(
                     ["unoptimized", instance_type, "ebs-standard" if storage_type == "standard" else storage_type, archive_type],
                     reduced_durability_fn=self.ebs_durability(storage_type),
-                    fixed_instance_price_fn=instance_price_fn,
+                    fixed_instance_price_fn=fixed_instance_price_fn,
                     variable_instance_price_fn=instance_price_fn,
                     network_total_fn=lambda traditional, inkless: traditional,
                     network_capacity_fn=network_capacity_fn,
@@ -436,11 +438,11 @@ class Estimator:
                     archive_io_price_fn=archive_io_price_fn
                 )
 
-            for s3_class in ["Standard", "Intelligent-Tiering", "Express One Zone"]:
+            for s3_class in ["Standard", "Intelligent-Tiering"]:
                 self._run_price_fns(
                     ["inkless", instance_type, "s3-standard" if s3_class == "Standard" else s3_class, archive_type],
                     reduced_durability_fn=self.s3_durability(s3_class),
-                    fixed_instance_price_fn=instance_price_fn,
+                    fixed_instance_price_fn=fixed_instance_price_fn,
                     variable_instance_price_fn=instance_price_fn,
                     network_total_fn=lambda traditional, inkless: inkless,
                     network_capacity_fn=network_capacity_fn,
@@ -454,7 +456,7 @@ class Estimator:
     def ec2_instance_price(self, instance_type):
         sku, product = self.find_product(self.ec2, "Compute Instance", {
             "instanceType": instance_type,
-            "usagetype": "DedicatedUsage:" + instance_type,
+            "usagetype": self.region_prefix + "DedicatedUsage:" + instance_type,
             "operatingSystem": "Linux",
             "preInstalledSw": "NA"
         })
@@ -651,7 +653,7 @@ class Estimator:
     def _s3_storage_price(self, reduced_durability, rate):
         def _compute(broker_count, redundancy, bytes_total):
             duplication = redundancy if reduced_durability else 1
-            return self.calculate_cost(rate, ["GB-Mo"], duplication * bytes_total * BYTES_TO_GB)
+            return self.calculate_cost(rate, ["Gigabyte Month", "GB-Mo"], duplication * bytes_total * BYTES_TO_GB)
         return _compute
 
     def s3_iops_price(self, s3_class):
@@ -671,8 +673,8 @@ class Estimator:
         if s3_class not in self.s3_price_tiers:
             raise RuntimeError("Missing API price usage type for " + s3_class)
         tier_1_usage_type, tier_2_usage_type = self.s3_price_tiers[s3_class]
-        tier_1_rate = usage_type_to_rate(tier_1_usage_type)
-        tier_2_rate = usage_type_to_rate(tier_2_usage_type)
+        tier_1_rate = usage_type_to_rate(self.region_prefix + tier_1_usage_type)
+        tier_2_rate = usage_type_to_rate(self.region_prefix + tier_2_usage_type)
         reduced_durability = self.s3_durability(s3_class)()
 
         def _compute(broker_count, redundancy, request_size, write_iops, read_iops, delete_iops):

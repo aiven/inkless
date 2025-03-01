@@ -1,3 +1,4 @@
-services.json
-*/
-*.tsv
+published/
+measured/
+filtered/
+output/

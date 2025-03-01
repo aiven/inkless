@@ -1,0 +1,5 @@
+beautifulsoup4==4.13.3
+matplotlib==3.10.1
+pandas==2.2.3
+pyarrow==19.0.0
+python_dateutil==2.8.2
