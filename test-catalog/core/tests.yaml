@@ -3518,6 +3518,7 @@ kafka.server.share.DelayedShareFetchTest:
 - testForceCompleteTriggersDelayedActionsQueue
 - testLocksReleasedAcquireException
 - testLocksReleasedForCompletedFetch
+- testOnCompleteExecutionOnTimeout
 - testPartitionMaxBytesFromUniformStrategyInCombineLogReadResponse
 - testPartitionMaxBytesFromUniformStrategyWhenAllPartitionsAreAcquirable
 - testPartitionMaxBytesFromUniformStrategyWhenFewPartitionsAreAcquirable
