@@ -2260,6 +2260,18 @@ kafka.server.AuthHelperTest:
 - testComputeDescribeClusterResponseV1WithUnknownEndpointType
 - testComputeDescribeClusterResponseWhereControllerIsNotFound
 - testFilterByAuthorized
+kafka.server.AutoTopicCreationManagerTest:
+- testCreateNonInternalTopic
+- testCreateOffsetTopic
+- testCreateShareStateTopic
+- testCreateStreamsInternalTopics
+- testCreateStreamsInternalTopicsPassesPrincipal
+- testCreateStreamsInternalTopicsWithDefaultConfig
+- testCreateStreamsInternalTopicsWithEmptyTopics
+- testCreateTxnTopic
+- testTopicCreationWithMetadataContextNoRetryUponUnsupportedVersion
+- testTopicCreationWithMetadataContextPassPrincipal
+- testTopicCreationWithMetadataContextWhenPrincipalSerdeNotDefined
 kafka.server.BootstrapControllersIntegrationTest:
 - testAcls
 - testAclsByControllers
@@ -2917,6 +2929,8 @@ kafka.server.KafkaApisTest:
 - testStreamsGroupHeartbeatRequestInternalTopicNames
 - testStreamsGroupHeartbeatRequestInvalidTopicNames
 - testStreamsGroupHeartbeatRequestProtocolDisabled
+- testStreamsGroupHeartbeatRequestWithInternalTopicsToCreate
+- testStreamsGroupHeartbeatRequestWithInternalTopicsToCreateMissingCreateACL
 - testStreamsGroupHeartbeatReturnsUnsupportedVersion
 - testSyncGroupProtocolTypeAndNameAreMandatorySinceV5
 - testTransactionalParametersSetCorrectly

@@ -1886,6 +1886,12 @@ org.apache.kafka.clients.consumer.internals.FetcherTest:
 - testUpdatePositionWithLastRecordMissingFromBatch
 - testWhenFetchResponseReturnsALeaderShipChangeErrorAndNewLeaderInformation
 - testWhenFetchResponseReturnsALeaderShipChangeErrorButNoNewLeaderInformation
+org.apache.kafka.clients.consumer.internals.HeartbeatRequestStateTest:
+- testCanSendRequestAndTimeToNextHeartbeatMs
+- testOnFailedAttempt
+- testResetTimer
+- testUpdateHeartbeatIntervalMs
+- testUpdateHeartbeatIntervalMsWithSameInterval
 org.apache.kafka.clients.consumer.internals.HeartbeatTest:
 - testPollTimeout
 - testResetSession
@@ -2090,6 +2096,7 @@ org.apache.kafka.clients.consumer.internals.ShareConsumerImplTest:
 - testAcknowledgementCommitCallbackRegistrationEvent
 - testAcknowledgementCommitCallbackRegistrationEvent_Null
 - testBackgroundError
+- testCloseWithTopicAuthorizationException
 - testCompleteQuietly
 - testEnsurePollEventSentOnConsumerPoll
 - testFailConstructor
@@ -2109,6 +2116,7 @@ org.apache.kafka.clients.consumer.internals.ShareConsumerImplTest:
 - testSubscriptionOnNullTopic
 - testSuccessfulStartupShutdown
 - testUnsubscribeGeneratesUnsubscribeEvent
+- testUnsubscribeWithTopicAuthorizationException
 - testVerifyApplicationEventOnShutdown
 - testWakeupAfterEmptyFetch
 - testWakeupAfterNonEmptyFetch
