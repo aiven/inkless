@@ -1299,6 +1299,7 @@ org.apache.kafka.streams.kstream.internals.KTableSourceTest:
 org.apache.kafka.streams.kstream.internals.KTableTransformValuesTest:
 - shouldCalculateCorrectOldValuesIfMaterializedEvenIfStateful
 - shouldCalculateCorrectOldValuesIfNotStatefulEvenIfNotMaterialized
+- shouldCalculateCorrectOldValuesIfNotStatefulEvenNotMaterializedNoQueryableName
 - shouldCloseParentGetterClose
 - shouldCloseTransformerOnGetterClose
 - shouldCloseTransformerOnProcessorClose
