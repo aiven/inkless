@@ -329,7 +329,8 @@ class FileMergerIntegrationTest {
             tidp -> tidp,
             tidp -> new FetchRequest.PartitionData(TOPIC_ID_0, fetchPositions.get(tidp), 0, 1024 * 1024, Optional.empty())
         ));
-        assertThat(fetchInterceptor.intercept(params, fetchInfos, responseCallback)).isTrue();
+
+        assertThat(fetchInterceptor.intercept(params, fetchInfos, responseCallback, res -> {})).isTrue();
         callbackCalled.await();
 
         if (inconsistentOffset.get()) {

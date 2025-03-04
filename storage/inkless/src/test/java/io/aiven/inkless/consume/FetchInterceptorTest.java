@@ -3,9 +3,11 @@ package io.aiven.inkless.consume;
 
 import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.Uuid;
+import org.apache.kafka.common.compress.Compression;
 import org.apache.kafka.common.message.ApiMessageType;
 import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.record.MemoryRecords;
+import org.apache.kafka.common.record.SimpleRecord;
 import org.apache.kafka.common.requests.FetchRequest;
 import org.apache.kafka.common.utils.MockTime;
 import org.apache.kafka.common.utils.Time;
@@ -72,6 +74,8 @@ public class FetchInterceptorTest {
     @Mock
     Consumer<Map<TopicIdPartition, FetchPartitionData>> responseCallback;
     @Mock
+    Consumer<Void> delayCallback;
+    @Mock
     BrokerTopicStats brokerTopicStats;
     @Mock
     Reader reader;
@@ -109,7 +113,7 @@ public class FetchInterceptorTest {
                     new FetchRequest.PartitionData(classicUuid, 0, 0, 1024, Optional.empty())
             );
 
-            final boolean result = interceptor.intercept(params, fetchInfos, responseCallback);
+            final boolean result = interceptor.intercept(params, fetchInfos, responseCallback, delayCallback);
             assertThat(result).isTrue();
         }
 
@@ -138,7 +142,7 @@ public class FetchInterceptorTest {
                     new FetchRequest.PartitionData(classicUuid, 0, 0, 1024, Optional.empty())
             );
 
-            final boolean result = interceptor.intercept(params, fetchInfos, responseCallback);
+            final boolean result = interceptor.intercept(params, fetchInfos, responseCallback, delayCallback);
             assertThat(result).isFalse();
             verify(responseCallback, never()).accept(any());
         }
@@ -159,7 +163,7 @@ public class FetchInterceptorTest {
                     new FetchRequest.PartitionData(inklessUuid, 0, 0, 1024, Optional.empty())
             );
 
-            final boolean result = interceptor.intercept(params, fetchInfos, responseCallback);
+            final boolean result = interceptor.intercept(params, fetchInfos, responseCallback, delayCallback);
             assertThat(result).isTrue();
         }
         verify(responseCallback).accept(resultCaptor.capture());
@@ -181,7 +185,7 @@ public class FetchInterceptorTest {
                         Errors.NONE,
                         -1,
                         -1,
-                        MemoryRecords.EMPTY,
+                        MemoryRecords.withRecords(Compression.NONE, new SimpleRecord("message".getBytes())),
                         Optional.empty(),
                         OptionalLong.empty(),
                         Optional.empty(),
@@ -201,11 +205,47 @@ public class FetchInterceptorTest {
                     new FetchRequest.PartitionData(inklessUuid, 0, 0, 1024, Optional.empty())
             );
 
-            final boolean result = interceptor.intercept(params, fetchInfos, responseCallback);
+            final boolean result = interceptor.intercept(params, fetchInfos, responseCallback, delayCallback);
             assertThat(result).isTrue();
         }
         verify(responseCallback).accept(resultCaptor.capture());
+        verify(delayCallback, never()).accept(any());
         assertThat(resultCaptor.getValue()).isSameAs(value);
     }
 
+    @Test
+    public void readerFutureSuccessEmpty() {
+        when(metadataView.isInklessTopic(eq("inkless"))).thenReturn(true);
+        final Map<TopicIdPartition, FetchPartitionData> value = Map.of(
+            new TopicIdPartition(inklessUuid, 0, "inkless"),
+            new FetchPartitionData(
+                Errors.NONE,
+                -1,
+                -1,
+                MemoryRecords.EMPTY,
+                Optional.empty(),
+                OptionalLong.empty(),
+                Optional.empty(),
+                OptionalInt.empty(),
+                false
+            )
+        );
+        when(reader.fetch(any(), any())).thenReturn(CompletableFuture.completedFuture(value));
+        try (FetchInterceptor interceptor = new FetchInterceptor(sharedState, reader)) {
+
+            final FetchParams params = new FetchParams(fetchVersion,
+                -1, -1, -1, -1, -1,
+                FetchIsolation.LOG_END, Optional.empty());
+
+            final Map<TopicIdPartition, FetchRequest.PartitionData> fetchInfos = Map.of(
+                new TopicIdPartition(inklessUuid, 0, "inkless"),
+                new FetchRequest.PartitionData(inklessUuid, 0, 0, 1024, Optional.empty())
+            );
+
+            final boolean result = interceptor.intercept(params, fetchInfos, responseCallback, delayCallback);
+            assertThat(result).isTrue();
+        }
+        verify(responseCallback, never()).accept(any());
+        verify(delayCallback).accept(null);
+    }
 }

@@ -106,7 +106,6 @@ public class AppendInterceptor implements Closeable {
             respondAllWithError(entriesPerPartition, responseCallback, Errors.UNKNOWN_SERVER_ERROR);
             return true;
         }
-        // TODO use purgatory
         final var resultFuture = writer.write(entriesPerPartitionEnriched, getLogConfigs(entriesPerPartition));
         resultFuture.whenComplete((result, e) -> {
             if (result == null) {

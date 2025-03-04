@@ -680,7 +680,24 @@ class ReplicaManager(val config: KafkaConfig,
       return
     }
 
-    if (inklessAppendInterceptor.exists(_.intercept(entriesPerPartition.asJava, r => responseCallback(r.asScala)))) {
+    def respCallback(result: Map[TopicPartition, PartitionResponse]): Unit = {
+      val appendResults = new mutable.HashMap[TopicOptionalIdPartition, LogAppendResult]
+      result.foreach {
+        case (tp, _) => {
+          // Consider every successful produce request as if it increased the high watermark. This is a simplification
+          // that will always result in the attempt to complete the delayed operations.
+          // The current implementation does not take into account that other brokers might have performed appends
+          // that would unblock delayed operations in the purgatories of this broker.
+          val logAppendInfo = LogAppendInfo.UNKNOWN_LOG_APPEND_INFO.copy(LeaderHwChange.INCREASED)
+          val logAppendResult =  LogAppendResult(logAppendInfo, None, hasCustomErrorMessage = false)
+          appendResults += (new TopicOptionalIdPartition(Optional.empty(), tp) -> logAppendResult)
+        }
+      }
+      addCompletePurgatoryAction(actionQueue, appendResults)
+      responseCallback(result)
+    }
+
+    if (inklessAppendInterceptor.exists(_.intercept(entriesPerPartition.asJava, r => respCallback(r.asScala)))) {
       return
     }
 
@@ -1624,8 +1641,32 @@ class ReplicaManager(val config: KafkaConfig,
                     fetchInfos: Seq[(TopicIdPartition, PartitionData)],
                     quota: ReplicaQuota,
                     responseCallback: Seq[(TopicIdPartition, FetchPartitionData)] => Unit): Unit = {
+    def delayFetch() = {
+      val fetchPartitionStatus = fetchInfos.map {
+        case (k, partitionData) =>
+          k -> FetchPartitionStatus(new LogOffsetMetadata(partitionData.fetchOffset), partitionData)
+      }
 
-    if (inklessFetchInterceptor.exists(_.intercept(params, fetchInfos.toMap.asJava, r => responseCallback(r.asScala.toSeq)))) {
+      val delayedFetch = new DelayedFetch(
+        params = params,
+        fetchPartitionStatus = fetchPartitionStatus,
+        replicaManager = this,
+        quota = quota,
+        responseCallback = responseCallback
+      )
+
+      val delayedFetchKeys = fetchPartitionStatus.map { case (tp, _) => new TopicPartitionOperationKey(tp) }.toList
+      delayedFetchPurgatory.tryCompleteElseWatch(delayedFetch, delayedFetchKeys.asJava)
+    }
+
+    if (inklessFetchInterceptor.exists(
+      _.intercept(
+        params,
+        fetchInfos.toMap.asJava,
+        r => responseCallback(r.asScala.toSeq),
+        _ => delayFetch()
+      )
+    )) {
       return
     }
 
