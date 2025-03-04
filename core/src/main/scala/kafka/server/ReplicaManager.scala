@@ -680,7 +680,21 @@ class ReplicaManager(val config: KafkaConfig,
       return
     }
 
-    if (inklessAppendInterceptor.exists(_.intercept(entriesPerPartition.asJava, r => responseCallback(r.asScala)))) {
+    def respCallback(result: Map[TopicPartition, PartitionResponse]): Unit = {
+      val appendResults = new mutable.HashMap[TopicOptionalIdPartition, LogAppendResult]
+      result.foreach {
+        case (tp, _) => {
+          // TODO: understand how to check whether high watermark has increased or not
+          val logAppendInfo = LogAppendInfo.UNKNOWN_LOG_APPEND_INFO.copy(LeaderHwChange.INCREASED)
+          val logAppendResult =  LogAppendResult(logAppendInfo, None, hasCustomErrorMessage = false)
+          appendResults += (new TopicOptionalIdPartition(Optional.empty(), tp) -> logAppendResult)
+        }
+      }
+      addCompletePurgatoryAction(actionQueue, appendResults)
+      responseCallback(result)
+    }
+
+    if (inklessAppendInterceptor.exists(_.intercept(entriesPerPartition.asJava, r => respCallback(r.asScala)))) {
       return
     }
 
@@ -693,7 +707,6 @@ class ReplicaManager(val config: KafkaConfig,
 
     val produceStatus = buildProducePartitionStatus(localProduceResults)
 
-    // TODO add the same for interceptor
     addCompletePurgatoryAction(actionQueue, localProduceResultsWithTopicId)
     recordValidationStatsCallback(localProduceResults.map { case (k, v) =>
       k -> v.info.recordValidationStats
