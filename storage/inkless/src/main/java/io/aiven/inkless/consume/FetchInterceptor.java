@@ -43,7 +43,8 @@ public class FetchInterceptor implements Closeable {
 
     public boolean intercept(final FetchParams params,
                              final Map<TopicIdPartition, FetchRequest.PartitionData> fetchInfos,
-                             final Consumer<Map<TopicIdPartition, FetchPartitionData>> responseCallback) {
+                             final Consumer<Map<TopicIdPartition, FetchPartitionData>> responseCallback,
+                             final Consumer<Void> delayCallback) {
         final TopicTypeCounter.Result countResult = topicTypeCounter.count(
             fetchInfos.keySet().stream().map(TopicIdPartition::topicPartition).collect(Collectors.toSet())
         );
@@ -76,7 +77,14 @@ public class FetchInterceptor implements Closeable {
                 result = fetchInfos.entrySet().stream()
                         .collect(Collectors.toMap(Map.Entry::getKey, ignore -> error));
             }
-            responseCallback.accept(result);
+            int totalSize = result.values().stream()
+                .mapToInt(fetchPartitionData -> fetchPartitionData.records.sizeInBytes())
+                .sum();
+            if (totalSize == 0) {
+                delayCallback.accept(null);
+            } else {
+                responseCallback.accept(result);
+            }
         });
 
         return true;

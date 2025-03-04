@@ -693,6 +693,7 @@ class ReplicaManager(val config: KafkaConfig,
 
     val produceStatus = buildProducePartitionStatus(localProduceResults)
 
+    // TODO add the same for interceptor
     addCompletePurgatoryAction(actionQueue, localProduceResultsWithTopicId)
     recordValidationStatsCallback(localProduceResults.map { case (k, v) =>
       k -> v.info.recordValidationStats
@@ -1624,8 +1625,32 @@ class ReplicaManager(val config: KafkaConfig,
                     fetchInfos: Seq[(TopicIdPartition, PartitionData)],
                     quota: ReplicaQuota,
                     responseCallback: Seq[(TopicIdPartition, FetchPartitionData)] => Unit): Unit = {
+    def delayFetch() = {
+      val fetchPartitionStatus = fetchInfos.map {
+        case (k, partitionData) =>
+          k -> FetchPartitionStatus(new LogOffsetMetadata(partitionData.fetchOffset), partitionData)
+      }
 
-    if (inklessFetchInterceptor.exists(_.intercept(params, fetchInfos.toMap.asJava, r => responseCallback(r.asScala.toSeq)))) {
+      val delayedFetch = new DelayedFetch(
+        params = params,
+        fetchPartitionStatus = fetchPartitionStatus,
+        replicaManager = this,
+        quota = quota,
+        responseCallback = responseCallback
+      )
+
+      val delayedFetchKeys = fetchPartitionStatus.map { case (tp, _) => new TopicPartitionOperationKey(tp) }.toList
+      delayedFetchPurgatory.tryCompleteElseWatch(delayedFetch, delayedFetchKeys.asJava)
+    }
+
+    if (inklessFetchInterceptor.exists(
+      _.intercept(
+        params,
+        fetchInfos.toMap.asJava,
+        r => responseCallback(r.asScala.toSeq),
+        _ => delayFetch()
+      )
+    )) {
       return
     }
 
