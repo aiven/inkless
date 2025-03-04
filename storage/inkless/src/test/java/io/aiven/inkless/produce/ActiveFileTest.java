@@ -12,6 +12,7 @@ import org.apache.kafka.common.record.TimestampType;
 import org.apache.kafka.common.requests.ProduceResponse.PartitionResponse;
 import org.apache.kafka.common.utils.MockTime;
 import org.apache.kafka.common.utils.Time;
+import org.apache.kafka.server.common.RequestLocal;
 import org.apache.kafka.storage.internals.log.LogConfig;
 
 import org.junit.jupiter.api.Test;
@@ -49,12 +50,15 @@ class ActiveFileTest {
     void addNull() {
         final ActiveFile file = new ActiveFile(Time.SYSTEM, Instant.EPOCH);
 
-        assertThatThrownBy(() -> file.add(null, TOPIC_CONFIGS))
+        assertThatThrownBy(() -> file.add(null, TOPIC_CONFIGS, RequestLocal.noCaching()))
             .isInstanceOf(NullPointerException.class)
             .hasMessage("entriesPerPartition cannot be null");
-        assertThatThrownBy(() -> file.add(Map.of(), null))
+        assertThatThrownBy(() -> file.add(Map.of(), null, RequestLocal.noCaching()))
             .isInstanceOf(NullPointerException.class)
             .hasMessage("topicConfigs cannot be null");
+        assertThatThrownBy(() -> file.add(Map.of(), TOPIC_CONFIGS, null))
+            .isInstanceOf(NullPointerException.class)
+            .hasMessage("requestLocal cannot be null");
     }
 
     @Test
@@ -63,7 +67,7 @@ class ActiveFileTest {
 
         final var result = file.add(Map.of(
             T0P0, MemoryRecords.withRecords(Compression.NONE, new SimpleRecord(new byte[10]))
-        ), TOPIC_CONFIGS);
+        ), TOPIC_CONFIGS, RequestLocal.noCaching());
         assertThat(FutureUtils.combineMapOfFutures(result)).isNotCompleted();
     }
 
@@ -73,7 +77,7 @@ class ActiveFileTest {
 
         assertThatThrownBy(() -> file.add(Map.of(
             T0P0, MemoryRecords.withRecords(Compression.NONE, new SimpleRecord(new byte[10]))
-        ), Map.of()))
+        ), Map.of(), RequestLocal.noCaching()))
             .isInstanceOf(IllegalArgumentException.class)
             .hasMessage("Config not provided for topic " + TOPIC_0);
     }
@@ -87,7 +91,7 @@ class ActiveFileTest {
         // then when adding records
         file.add(Map.of(
             T0P0, MemoryRecords.withRecords(Compression.NONE, new SimpleRecord(new byte[10]))
-        ), TOPIC_CONFIGS);
+        ), TOPIC_CONFIGS, RequestLocal.noCaching());
 
         // is not empty anymore
         assertThat(file.isEmpty()).isFalse();
@@ -98,7 +102,7 @@ class ActiveFileTest {
         final ActiveFile file = new ActiveFile(Time.SYSTEM, Instant.EPOCH);
 
         // when adding empty records
-        file.add(Map.of(T0P0, MemoryRecords.EMPTY), TOPIC_CONFIGS);
+        file.add(Map.of(T0P0, MemoryRecords.EMPTY), TOPIC_CONFIGS, RequestLocal.noCaching());
 
         assertThat(file.isEmpty()).isFalse();
 
@@ -117,7 +121,7 @@ class ActiveFileTest {
 
         file.add(Map.of(
             T0P0, MemoryRecords.withRecords(Compression.NONE, new SimpleRecord(new byte[10]))
-        ), TOPIC_CONFIGS);
+        ), TOPIC_CONFIGS, RequestLocal.noCaching());
 
         assertThat(file.size()).isEqualTo(78);
     }
@@ -145,12 +149,12 @@ class ActiveFileTest {
             T0P0, MemoryRecords.withRecords(Compression.NONE, new SimpleRecord(1000, new byte[10])),
             T0P1, MemoryRecords.withRecords(Compression.NONE, new SimpleRecord(2000, new byte[10]))
         );
-        file.add(request1, TOPIC_CONFIGS);
+        file.add(request1, TOPIC_CONFIGS, RequestLocal.noCaching());
         final Map<TopicIdPartition, MemoryRecords> request2 = Map.of(
             T0P1, MemoryRecords.withRecords(Compression.NONE, new SimpleRecord(3000, new byte[10])),
             T1P0, MemoryRecords.withRecords(Compression.NONE, new SimpleRecord(4000, new byte[10]))
         );
-        file.add(request2, TOPIC_CONFIGS);
+        file.add(request2, TOPIC_CONFIGS, RequestLocal.noCaching());
 
         final ClosedFile result = file.close();
 

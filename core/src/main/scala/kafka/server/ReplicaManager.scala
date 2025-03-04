@@ -680,7 +680,7 @@ class ReplicaManager(val config: KafkaConfig,
       return
     }
 
-    if (inklessAppendInterceptor.exists(_.intercept(entriesPerPartition.asJava, r => responseCallback(r.asScala)))) {
+    if (inklessAppendInterceptor.exists(_.intercept(entriesPerPartition.asJava, r => responseCallback(r.asScala), requestLocal))) {
       return
     }
 
