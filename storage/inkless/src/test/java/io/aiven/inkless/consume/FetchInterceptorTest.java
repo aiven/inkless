@@ -109,8 +109,7 @@ public class FetchInterceptorTest {
                     new FetchRequest.PartitionData(classicUuid, 0, 0, 1024, Optional.empty())
             );
 
-            final Consumer<Void> delayCallback = res -> {};
-            final boolean result = interceptor.intercept(params, fetchInfos, responseCallback, delayCallback);
+            final boolean result = interceptor.intercept(params, fetchInfos, responseCallback, res -> {});
             assertThat(result).isTrue();
         }
 
@@ -139,8 +138,7 @@ public class FetchInterceptorTest {
                     new FetchRequest.PartitionData(classicUuid, 0, 0, 1024, Optional.empty())
             );
 
-            final Consumer<Void> delayCallback = res -> {};
-            final boolean result = interceptor.intercept(params, fetchInfos, responseCallback, delayCallback);
+            final boolean result = interceptor.intercept(params, fetchInfos, responseCallback, res -> {});
             assertThat(result).isFalse();
             verify(responseCallback, never()).accept(any());
         }
@@ -161,8 +159,7 @@ public class FetchInterceptorTest {
                     new FetchRequest.PartitionData(inklessUuid, 0, 0, 1024, Optional.empty())
             );
 
-            final Consumer<Void> delayCallback = res -> {};
-            final boolean result = interceptor.intercept(params, fetchInfos, responseCallback, delayCallback);
+            final boolean result = interceptor.intercept(params, fetchInfos, responseCallback, res -> {});
             assertThat(result).isTrue();
         }
         verify(responseCallback).accept(resultCaptor.capture());
@@ -204,8 +201,7 @@ public class FetchInterceptorTest {
                     new FetchRequest.PartitionData(inklessUuid, 0, 0, 1024, Optional.empty())
             );
 
-            final Consumer<Void> delayCallback = res -> {};
-            final boolean result = interceptor.intercept(params, fetchInfos, responseCallback, delayCallback);
+            final boolean result = interceptor.intercept(params, fetchInfos, responseCallback, res -> {});
             assertThat(result).isTrue();
         }
         verify(responseCallback).accept(resultCaptor.capture());

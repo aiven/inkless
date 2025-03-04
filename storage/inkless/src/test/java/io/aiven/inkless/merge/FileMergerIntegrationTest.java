@@ -330,8 +330,7 @@ class FileMergerIntegrationTest {
             tidp -> new FetchRequest.PartitionData(TOPIC_ID_0, fetchPositions.get(tidp), 0, 1024 * 1024, Optional.empty())
         ));
 
-        final Consumer<Void> delayCallback = res -> {};
-        assertThat(fetchInterceptor.intercept(params, fetchInfos, responseCallback, delayCallback)).isTrue();
+        assertThat(fetchInterceptor.intercept(params, fetchInfos, responseCallback, res -> {})).isTrue();
         callbackCalled.await();
 
         if (inconsistentOffset.get()) {
