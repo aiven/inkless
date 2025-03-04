@@ -30,7 +30,7 @@ public class FutureUtils {
             .toList();
 
         return CompletableFuture
-            .allOf(entryFutures.toArray(new CompletableFuture[0]))
+            .allOf(entryFutures.toArray(CompletableFuture[]::new))
             .thenApply(v -> entryFutures.stream()
                 .map(future -> {
                     try {
