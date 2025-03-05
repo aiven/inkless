@@ -14,12 +14,15 @@
 # limitations under the License.
 
 name: Flaky Test Report
+
+# Inkless: disable flaky test report schedule runs
+disabled: true
+
 on:
   workflow_dispatch:      # Let us run manually
 
-  # Inkless: disable flaky test report schedule runs
-  # schedule:
-  #   - cron: '0 6 * * *'   # Run daily at 6am UTC
+  schedule:
+    - cron: '0 6 * * *'   # Run daily at 6am UTC
 
 jobs:
   flaky-test-report:
