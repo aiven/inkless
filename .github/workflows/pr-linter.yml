@@ -15,6 +15,9 @@
 
 name: Pull Request Linter
 
+# Inkless does not follow upstream PR naming pattern
+disabled: true
+
 on:
   workflow_run:
     workflows: [ Pull Request Reviewed ]
