@@ -17,8 +17,9 @@ name: Flaky Test Report
 on:
   workflow_dispatch:      # Let us run manually
 
-  schedule:
-    - cron: '0 6 * * *'   # Run daily at 6am UTC
+  # Inkless: disable flaky test report schedule runs
+  # schedule:
+  #   - cron: '0 6 * * *'   # Run daily at 6am UTC
 
 jobs:
   flaky-test-report:
