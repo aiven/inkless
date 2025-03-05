@@ -688,6 +688,7 @@ org.apache.kafka.tools.reassign.ReassignPartitionsCommandTest:
 - testCancellationWithAddingReplicaInIsr
 - testCancellationWithBootstrapController
 - testCancellationWithBootstrapServer
+- testDisallowReplicationFactorChange
 - testGenerateAssignmentWithBootstrapServer
 - testHighWaterMarkAfterPartitionReassignment
 - testLogDirReassignment

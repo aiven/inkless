@@ -3840,11 +3840,14 @@ org.apache.kafka.common.record.DefaultRecordTest:
 - testUnderflowReadingTimestamp
 - testUnderflowReadingVarlong
 org.apache.kafka.common.record.EndTransactionMarkerTest:
+- testBackwardDeserializeCompatibility
 - testCannotDeserializeUnknownControlType
 - testDeserializeNewerVersion
-- testIllegalNegativeVersion
-- testNotEnoughBytes
+- testEndTxnMarkerValueSize
+- testForwardDeserializeCompatibility
+- testIllegalVersion
 - testSerde
+- testSerializeAndDeserialize
 - testUnknownControlTypeNotAllowed
 org.apache.kafka.common.record.FileLogInputStreamTest:
 - testBatchIterationIncompleteBatch

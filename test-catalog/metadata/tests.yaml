@@ -246,6 +246,7 @@ org.apache.kafka.controller.QuorumFeaturesTest:
 - testLocalSupportedFeature
 - testReasonNotSupported
 org.apache.kafka.controller.ReplicationControlManagerTest:
+- testAlterPartitionDisallowReplicationFactorChange
 - testAlterPartitionHandleUnknownTopicIdOrName
 - testAlterPartitionShouldRejectBrokersWithStaleEpoch
 - testAlterPartitionShouldRejectFencedBrokers
@@ -266,6 +267,7 @@ org.apache.kafka.controller.ReplicationControlManagerTest:
 - testCreateTopicsWithValidateOnlyFlag
 - testDeleteTopics
 - testDeleteTopicsWithMutationQuotaExceeded
+- testDisallowReplicationFactorChangeNoEffectWhenCancelAlterPartition
 - testDuplicateTopicIdReplay
 - testElectPreferredLeaders
 - testElectUncleanLeaders_WithoutElr
