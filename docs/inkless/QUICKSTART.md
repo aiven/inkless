@@ -2,18 +2,36 @@
 
 ## Run Kafka from Intellij
 
-Adjust the module `:server` libraries to include Reload4j:
+Adjust the module `:core` libraries to include log4j release libraries:
 
 ```diff
 diff --git a/build.gradle b/build.gradle
---- a/build.gradle	(revision 7efc6203bae3754d96b5aa678e2f38c8db40fd61)
-+++ b/build.gradle	(date 1740171633116)
-@@ -944,7 +944,8 @@
- 
--    compileOnly libs.reload4j
-+    implementation libs.reload4j
-+    implementation libs.slf4jReload4j
+--- a/build.gradle	(revision 9fca1c41bda4f1442df495278d01347eb9927e5d)
++++ b/build.gradle	(date 1741171600475)
+@@ -992,7 +992,7 @@
+}
+
+dependencies {
+-    releaseOnly log4jReleaseLibs
++    implementation log4jReleaseLibs
+     // `core` is often used in users' tests, define the following dependencies as `api` for backwards compatibility
+     // even though the `core` module doesn't expose any public API
+     api project(':clients')
 ```
+
+Backend services:
+Start MinIO in the background:
+
+```shell
+make local_minio
+# docker-compose up -d minio
+```
+
+> [!NOTE]
+> If running Postgres as Control-Plane backend:
+> ```shell
+> docker-compose up -d postgres
+> ```
 
 There are 2 Kafka configurations, one to use the in-memory Control-Plane `config/inkless/single-broker-0.properties` and another to use Postgres as Control-Plane `config/inkless/single-broker-pg-0.properties`.
 
@@ -37,17 +55,29 @@ Setup Kafka run configuration on Intellij:
 8. Use Java 17
 9. Set the JVM arguments to `-Dlog4j.configuration=file:config/inkless/log4j.properties`
 
-Backend services: 
-Start MinIO in the background:
+At this point all should be ready to run the Intellij configuration.
+
+Create topic:
 
 ```shell
-docker-compose up -d minio
+make create_topic ARGS=t1
 ```
 
-> [!NOTE]
-> If running Postgres as Control-Plane backend:
-> ```shell
-> docker-compose up -d postgres
-> ```
+Produce some messages:
 
-At this point all should be ready to run the Intellij configuration.
+```shell
+bin/kafka-producer-perf-test.sh \
+  --record-size 1000 --num-records 1000000 --throughput -1 \
+  --producer-props bootstrap.servers=127.0.0.1:9092 batch.size=1048576 linger.ms=100 \
+  --topic t1
+```
+
+Consume messages:
+
+```shell
+bin/kafka-consumer-perf-test.sh --bootstrap-server 127.0.0.1:9092 \
+  --messages 1000000 --from-latest \
+  --topic t1
+```
+
+Check MinIO for remote files on `http://localhost:9000/browse/inkless/` (`minioadmin:minioadmin`)
