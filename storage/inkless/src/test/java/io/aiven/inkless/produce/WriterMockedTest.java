@@ -25,6 +25,7 @@ import org.apache.kafka.common.record.MemoryRecords;
 import org.apache.kafka.common.record.SimpleRecord;
 import org.apache.kafka.common.record.TimestampType;
 import org.apache.kafka.common.utils.Time;
+import org.apache.kafka.server.common.RequestLocal;
 import org.apache.kafka.storage.internals.log.LogConfig;
 import org.apache.kafka.storage.log.metrics.BrokerTopicStats;
 
@@ -73,6 +74,7 @@ class WriterMockedTest {
         TOPIC_0, logConfig(Map.of(TopicConfig.MESSAGE_TIMESTAMP_TYPE_CONFIG, TimestampType.CREATE_TIME.name)),
         TOPIC_1, logConfig(Map.of(TopicConfig.MESSAGE_TIMESTAMP_TYPE_CONFIG, TimestampType.LOG_APPEND_TIME.name))
     );
+    static final RequestLocal REQUEST_LOCAL = RequestLocal.noCaching();
 
     static LogConfig logConfig(Map<String, ?> config) {
         return new LogConfig(config);
@@ -119,7 +121,7 @@ class WriterMockedTest {
         final Map<TopicIdPartition, MemoryRecords> writeRequest = Map.of(
             T0P0, recordCreator.create(T0P0.topicPartition(), 100)
         );
-        writer.write(writeRequest, TOPIC_CONFIGS);
+        writer.write(writeRequest, TOPIC_CONFIGS, REQUEST_LOCAL);
 
         verify(commitTickScheduler).schedule(any(Runnable.class), eq(1L), eq(TimeUnit.MILLISECONDS));
     }
@@ -137,7 +139,7 @@ class WriterMockedTest {
             T1P0, recordCreator.create(T1P0.topicPartition(), 100),
             T1P1, recordCreator.create(T1P1.topicPartition(), 100)
         );
-        assertThat(writer.write(writeRequest, TOPIC_CONFIGS)).isNotCompleted();
+        assertThat(writer.write(writeRequest, TOPIC_CONFIGS, REQUEST_LOCAL)).isNotCompleted();
 
         // As we wrote too much, commit must be triggered.
         verify(fileCommitter).commit(closedFileCaptor.capture());
@@ -163,8 +165,8 @@ class WriterMockedTest {
             T1P0, recordCreator.create(T1P0.topicPartition(), 100),
             T1P1, recordCreator.create(T1P1.topicPartition(), 100)
         );
-        assertThat(writer.write(writeRequest0, TOPIC_CONFIGS)).isNotCompleted();
-        assertThat(writer.write(writeRequest1, TOPIC_CONFIGS)).isNotCompleted();
+        assertThat(writer.write(writeRequest0, TOPIC_CONFIGS, REQUEST_LOCAL)).isNotCompleted();
+        assertThat(writer.write(writeRequest1, TOPIC_CONFIGS, REQUEST_LOCAL)).isNotCompleted();
 
         // As we wrote too much, commit must be triggered.
         verify(fileCommitter).commit(closedFileCaptor.capture());
@@ -184,7 +186,7 @@ class WriterMockedTest {
             T1P0, recordCreator.create(T1P0.topicPartition(), 1),
             T1P1, recordCreator.create(T1P1.topicPartition(), 1)
         );
-        assertThat(writer.write(writeRequest, TOPIC_CONFIGS)).isNotCompleted();
+        assertThat(writer.write(writeRequest, TOPIC_CONFIGS, REQUEST_LOCAL)).isNotCompleted();
 
         writer.tick();
 
@@ -205,7 +207,7 @@ class WriterMockedTest {
             T1P0, recordCreator.create(T1P0.topicPartition(), 1),
             T1P1, recordCreator.create(T1P1.topicPartition(), 1)
         );
-        assertThat(writer.write(writeRequest, TOPIC_CONFIGS)).isNotCompleted();
+        assertThat(writer.write(writeRequest, TOPIC_CONFIGS, REQUEST_LOCAL)).isNotCompleted();
 
         writer.close();
 
@@ -220,20 +222,26 @@ class WriterMockedTest {
         final Writer writer = new Writer(
             time, Duration.ofMillis(1), 8 * 1024, commitTickScheduler, fileCommitter, writerMetrics, brokerTopicStats);
 
-        final Map<TopicIdPartition, MemoryRecords> writeRequest = Map.of(
+        final Map<TopicIdPartition, MemoryRecords> writeRequest0 = Map.of(
             T0P0, recordCreator.create(T0P0.topicPartition(), 100),
             T0P1, recordCreator.create(T0P1.topicPartition(), 100),
             T1P0, recordCreator.create(T1P0.topicPartition(), 100),
             T1P1, recordCreator.create(T1P1.topicPartition(), 100)
         );
-        assertThat(writer.write(writeRequest, TOPIC_CONFIGS)).isNotCompleted();
+        assertThat(writer.write(writeRequest0, TOPIC_CONFIGS, REQUEST_LOCAL)).isNotCompleted();
 
         reset(fileCommitter);
 
-        assertThat(writer.write(writeRequest, TOPIC_CONFIGS)).isNotCompleted();
+        final Map<TopicIdPartition, MemoryRecords> writeRequest1 = Map.of(
+            T0P0, recordCreator.create(T0P0.topicPartition(), 100),
+            T0P1, recordCreator.create(T0P1.topicPartition(), 100),
+            T1P0, recordCreator.create(T1P0.topicPartition(), 100),
+            T1P1, recordCreator.create(T1P1.topicPartition(), 100)
+        );
+        assertThat(writer.write(writeRequest1, TOPIC_CONFIGS, REQUEST_LOCAL)).isNotCompleted();
 
         verify(fileCommitter).commit(closedFileCaptor.capture());
-        assertThat(closedFileCaptor.getValue().originalRequests()).isEqualTo(Map.of(0, writeRequest));
+        assertThat(closedFileCaptor.getValue().originalRequests()).isEqualTo(Map.of(0, writeRequest1));
         assertThat(closedFileCaptor.getValue().awaitingFuturesByRequest()).hasSize(1);
     }
 
@@ -287,7 +295,7 @@ class WriterMockedTest {
         reset(commitTickScheduler);
         reset(fileCommitter);
 
-        final var writeResult = writer.write(Map.of(T0P0, recordCreator.create(T0P0.topicPartition(), 10)), TOPIC_CONFIGS);
+        final var writeResult = writer.write(Map.of(T0P0, recordCreator.create(T0P0.topicPartition(), 10)), TOPIC_CONFIGS, REQUEST_LOCAL);
 
         assertThat(writeResult).isCompletedExceptionally();
         assertThatThrownBy(writeResult::get)
@@ -314,7 +322,7 @@ class WriterMockedTest {
             T1P1, recordCreator.create(T1P1.topicPartition(), 100)
         );
 
-        assertThatThrownBy(() -> writer.write(writeRequest, TOPIC_CONFIGS))
+        assertThatThrownBy(() -> writer.write(writeRequest, TOPIC_CONFIGS, REQUEST_LOCAL))
             .hasRootCause(interruptedException);
 
         // Shutdown happens.
@@ -352,19 +360,22 @@ class WriterMockedTest {
     void writeNull() {
         final Writer writer = new Writer(time, Duration.ofMillis(1), 8 * 1024, commitTickScheduler, fileCommitter, writerMetrics, brokerTopicStats);
 
-        assertThatThrownBy(() -> writer.write(null, TOPIC_CONFIGS))
+        assertThatThrownBy(() -> writer.write(null, TOPIC_CONFIGS, REQUEST_LOCAL))
             .isInstanceOf(NullPointerException.class)
             .hasMessage("entriesPerPartition cannot be null");
-        assertThatThrownBy(() -> writer.write(Map.of(), null))
+        assertThatThrownBy(() -> writer.write(Map.of(), null, REQUEST_LOCAL))
             .isInstanceOf(NullPointerException.class)
             .hasMessage("topicConfigs cannot be null");
+        assertThatThrownBy(() -> writer.write(Map.of(), TOPIC_CONFIGS, null))
+            .isInstanceOf(NullPointerException.class)
+            .hasMessage("requestLocal cannot be null");
     }
 
     @Test
     void writeEmptyRequests() {
         final Writer writer = new Writer(time, Duration.ofMillis(1), 8 * 1024, commitTickScheduler, fileCommitter, writerMetrics, brokerTopicStats);
 
-        assertThatThrownBy(() -> writer.write(Map.of(), TOPIC_CONFIGS))
+        assertThatThrownBy(() -> writer.write(Map.of(), TOPIC_CONFIGS, REQUEST_LOCAL))
             .isInstanceOf(IllegalArgumentException.class)
             .hasMessage("entriesPerPartition cannot be empty");
     }
@@ -373,7 +384,7 @@ class WriterMockedTest {
     void entriesTopicConfigMismatch() {
         final Writer writer = new Writer(time, Duration.ofMillis(1), 8 * 1024, commitTickScheduler, fileCommitter, writerMetrics, brokerTopicStats);
 
-        assertThatThrownBy(() -> writer.write(Map.of(T0P0, MemoryRecords.withRecords(Compression.NONE, new SimpleRecord(new byte[10]))), Map.of(TOPIC_1, new LogConfig(Map.of()))))
+        assertThatThrownBy(() -> writer.write(Map.of(T0P0, MemoryRecords.withRecords(Compression.NONE, new SimpleRecord(new byte[10]))), Map.of(TOPIC_1, new LogConfig(Map.of())), REQUEST_LOCAL))
             .isInstanceOf(IllegalArgumentException.class)
             .hasMessage("Configs are not including all the topics requested");
     }

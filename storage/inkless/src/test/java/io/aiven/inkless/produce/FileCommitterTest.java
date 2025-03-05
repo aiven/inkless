@@ -17,6 +17,9 @@
  */
 package io.aiven.inkless.produce;
 
+import org.apache.kafka.common.TopicIdPartition;
+import org.apache.kafka.common.Uuid;
+import org.apache.kafka.common.record.MemoryRecords;
 import org.apache.kafka.common.record.TimestampType;
 import org.apache.kafka.common.utils.Time;
 
@@ -75,9 +78,14 @@ class FileCommitterTest {
             return OBJECT_KEY;
         }
     };
-    static final ClosedFile FILE = new ClosedFile(Instant.EPOCH, Map.of(), Map.of(),
-            List.of(CommitBatchRequest.of(1, null, 0, 0, 0, 0, 0, TimestampType.CREATE_TIME)),
-            new byte[10]);
+    static final TopicIdPartition TID0P0 = new TopicIdPartition(Uuid.randomUuid(), 0, "t0");
+    static final ClosedFile FILE = new ClosedFile(
+        Instant.EPOCH,
+        Map.of(1, Map.of(TID0P0, MemoryRecords.EMPTY)),
+        Map.of(1, new CompletableFuture<>()),
+        Map.of(),
+        List.of(CommitBatchRequest.of(1, TID0P0, 0, 0, 0, 0, 0, TimestampType.CREATE_TIME)),
+        new byte[10]);
     static final KeyAlignmentStrategy KEY_ALIGNMENT_STRATEGY = new FixedBlockAlignment(Integer.MAX_VALUE);
     static final ObjectCache OBJECT_CACHE = new NullCache();
 

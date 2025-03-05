@@ -25,6 +25,7 @@ import org.apache.kafka.common.record.TimestampType;
 import org.apache.kafka.common.requests.ProduceResponse.PartitionResponse;
 import org.apache.kafka.common.utils.MockTime;
 import org.apache.kafka.common.utils.Time;
+import org.apache.kafka.server.common.RequestLocal;
 import org.apache.kafka.storage.internals.log.LogConfig;
 import org.apache.kafka.storage.log.metrics.BrokerTopicStats;
 
@@ -76,6 +77,7 @@ class WriterIntegrationTest {
         TOPIC_0, logConfig(Map.of(TopicConfig.MESSAGE_TIMESTAMP_TYPE_CONFIG, TimestampType.CREATE_TIME.name)),
         TOPIC_1, logConfig(Map.of(TopicConfig.MESSAGE_TIMESTAMP_TYPE_CONFIG, TimestampType.LOG_APPEND_TIME.name))
     );
+    static final RequestLocal REQUEST_LOCAL = RequestLocal.noCaching();
 
     static LogConfig logConfig(Map<String, ?> config) {
         return new LogConfig(config);
@@ -136,12 +138,12 @@ class WriterIntegrationTest {
                 T0P0, recordCreator.create(T0P0.topicPartition(), 101),
                 T0P1, recordCreator.create(T0P1.topicPartition(), 102),
                 T1P0, recordCreator.create(T1P0.topicPartition(), 103)
-            ), TOPIC_CONFIGS);
+            ), TOPIC_CONFIGS, REQUEST_LOCAL);
             final var writeFuture2 = writer.write(Map.of(
                 T0P0, recordCreator.create(T0P0.topicPartition(), 11),
                 T0P1, recordCreator.create(T0P1.topicPartition(), 12),
                 T1P0, recordCreator.create(T1P0.topicPartition(), 13)
-            ), TOPIC_CONFIGS);
+            ), TOPIC_CONFIGS, REQUEST_LOCAL);
             final var ts1 = time.milliseconds();
             final var result1 = writeFuture1.get(10, TimeUnit.SECONDS);
             final var result2 = writeFuture2.get(10, TimeUnit.SECONDS);
@@ -150,7 +152,7 @@ class WriterIntegrationTest {
 
             final var writeFuture3 = writer.write(Map.of(
                 T1P0, recordCreator.create(T1P0.topicPartition(), 1)
-            ), TOPIC_CONFIGS);
+            ), TOPIC_CONFIGS, REQUEST_LOCAL);
             final var ts2 = time.milliseconds();
             final var result3 = writeFuture3.get(10, TimeUnit.SECONDS);
 

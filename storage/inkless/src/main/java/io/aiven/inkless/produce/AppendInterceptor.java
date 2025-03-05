@@ -22,6 +22,7 @@ import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.record.MemoryRecords;
 import org.apache.kafka.common.requests.ProduceResponse.PartitionResponse;
+import org.apache.kafka.server.common.RequestLocal;
 import org.apache.kafka.storage.internals.log.LogConfig;
 
 import com.groupcdg.pitest.annotations.CoverageIgnore;
@@ -88,7 +89,8 @@ public class AppendInterceptor implements Closeable {
      * @return {@code true} if interception happened
      */
     public boolean intercept(final Map<TopicPartition, MemoryRecords> entriesPerPartition,
-                             final Consumer<Map<TopicPartition, PartitionResponse>> responseCallback) {
+                             final Consumer<Map<TopicPartition, PartitionResponse>> responseCallback,
+                             final RequestLocal requestLocal) {
         final TopicTypeCounter.Result countResult = topicTypeCounter.count(entriesPerPartition.keySet());
         if (countResult.bothTypesPresent()) {
             LOGGER.warn("Producing to Inkless and class topic in same request isn't supported");
@@ -122,7 +124,7 @@ public class AppendInterceptor implements Closeable {
             respondAllWithError(entriesPerPartition, responseCallback, Errors.UNKNOWN_SERVER_ERROR);
             return true;
         }
-        final var resultFuture = writer.write(entriesPerPartitionEnriched, getLogConfigs(entriesPerPartition));
+        final var resultFuture = writer.write(entriesPerPartitionEnriched, getLogConfigs(entriesPerPartition), requestLocal);
         resultFuture.whenComplete((result, e) -> {
             if (result == null) {
                 // We don't really expect this future to fail, but in case it does...

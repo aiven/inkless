@@ -27,23 +27,56 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
+import java.util.stream.Collectors;
 
 import io.aiven.inkless.control_plane.CommitBatchRequest;
 
+/**
+ * A closed file that contains all the information needed to commit the file to the control plane.
+ *
+ * <p>Original requests must match the commit batch requests and invalid responses to ensure that all batches are accounted for.
+ * <p>Awaiting futures by request must match the original requests, so a future is hold per request.
+ *
+ * @param start The time when the file was closed.
+ * @param originalRequests The original requests that were sent to the broker, by request id.
+ * @param awaitingFuturesByRequest The futures that are awaiting a response from the broker, by request id.
+ * @param invalidResponseByRequest The invalid responses after validating the request that will not be sent to the remote storage, by request id.
+ * @param commitBatchRequests The commit batch requests that will be sent to the remote storage.
+ * @param data concatenated data of all the valid batches.
+ */
 record ClosedFile(Instant start,
                   Map<Integer, Map<TopicIdPartition, MemoryRecords>> originalRequests,
                   Map<Integer, CompletableFuture<Map<TopicPartition, PartitionResponse>>> awaitingFuturesByRequest,
+                  Map<Integer, Map<TopicPartition, PartitionResponse>> invalidResponseByRequest,
                   List<CommitBatchRequest> commitBatchRequests,
                   byte[] data) {
     ClosedFile {
         Objects.requireNonNull(start, "start cannot be null");
         Objects.requireNonNull(originalRequests, "originalRequests cannot be null");
         Objects.requireNonNull(awaitingFuturesByRequest, "awaitingFuturesByRequest cannot be null");
+        Objects.requireNonNull(invalidResponseByRequest, "invalidResponseByRequest cannot be null");
         Objects.requireNonNull(commitBatchRequests, "commitBatchRequests cannot be null");
 
         if (originalRequests.size() != awaitingFuturesByRequest.size()) {
             throw new IllegalArgumentException(
                 "originalRequests and awaitingFuturesByRequest must be of same size");
+        }
+
+        if (originalRequests.values().stream().mapToInt(Map::size).sum() != commitBatchRequests.size() + invalidResponseByRequest.values().stream().mapToInt(Map::size).sum()) {
+            throw new IllegalArgumentException("commitBatchRequests and invalidResponseByRequest must match the originalRequests size");
+        }
+
+        final var validCommitRequestsById = commitBatchRequests.stream()
+            .collect(Collectors.groupingBy(CommitBatchRequest::requestId));
+
+        for (final var entry : originalRequests.entrySet()) {
+            final var requestId = entry.getKey();
+            final var requests = entry.getValue();
+            final var validCommitRequests = validCommitRequestsById.getOrDefault(requestId, List.of()).size();
+            final var invalidResponses = invalidResponseByRequest.getOrDefault(requestId, Map.of()).size();
+            if (requests.size() != validCommitRequests + invalidResponses) {
+                throw new IllegalArgumentException("commitBatchRequests and invalidResponseByRequest must match the originalRequests size for request id " + requestId);
+            }
         }
 
         Objects.requireNonNull(data, "data cannot be null");

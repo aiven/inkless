@@ -27,6 +27,7 @@ import org.apache.kafka.common.record.TimestampType;
 import org.apache.kafka.common.requests.ProduceResponse.PartitionResponse;
 import org.apache.kafka.common.utils.MockTime;
 import org.apache.kafka.common.utils.Time;
+import org.apache.kafka.server.common.RequestLocal;
 import org.apache.kafka.storage.internals.log.LogConfig;
 import org.apache.kafka.storage.log.metrics.BrokerTopicStats;
 
@@ -77,6 +78,7 @@ public class AppendInterceptorTest {
     static final Supplier<LogConfig> DEFAULT_TOPIC_CONFIGS = () -> new LogConfig(Map.of());
 
     Time time = new MockTime();
+    RequestLocal requestLocal = RequestLocal.noCaching();
     @Mock
     InklessConfig inklessConfig;
     @Mock
@@ -142,7 +144,7 @@ public class AppendInterceptorTest {
             MemoryRecords.withRecords(Compression.NONE, new SimpleRecord("first message".getBytes()))
         );
 
-        final boolean result = interceptor.intercept(entriesPerPartition, responseCallback);
+        final boolean result = interceptor.intercept(entriesPerPartition, responseCallback, requestLocal);
         assertThat(result).isTrue();
 
         verify(responseCallback).accept(resultCaptor.capture());
@@ -152,7 +154,7 @@ public class AppendInterceptorTest {
             new TopicPartition("non_inkless", 0),
             new PartitionResponse(Errors.INVALID_REQUEST)
         ));
-        verify(writer, never()).write(any(), anyMap());
+        verify(writer, never()).write(any(), anyMap(), any());
     }
 
     @Test
@@ -167,10 +169,10 @@ public class AppendInterceptorTest {
             MemoryRecords.withRecords(Compression.NONE, new SimpleRecord("first message".getBytes()))
         );
 
-        final boolean result = interceptor.intercept(entriesPerPartition, responseCallback);
+        final boolean result = interceptor.intercept(entriesPerPartition, responseCallback, requestLocal);
         assertThat(result).isFalse();
         verify(responseCallback, never()).accept(any());
-        verify(writer, never()).write(any(), anyMap());
+        verify(writer, never()).write(any(), anyMap(), any());
     }
 
     @Test
@@ -185,11 +187,11 @@ public class AppendInterceptorTest {
             RECORDS_WITH_PRODUCER_ID
         );
 
-        final boolean result = interceptor.intercept(entriesPerPartition, responseCallback);
+        final boolean result = interceptor.intercept(entriesPerPartition, responseCallback, requestLocal);
         assertThat(result).isFalse();
 
         verify(responseCallback, never()).accept(any());
-        verify(writer, never()).write(any(), anyMap());
+        verify(writer, never()).write(any(), anyMap(), any());
     }
 
     @Test
@@ -207,7 +209,7 @@ public class AppendInterceptorTest {
             TRANSACTIONAL_RECORDS
         );
 
-        final boolean result = interceptor.intercept(entriesPerPartition, responseCallback);
+        final boolean result = interceptor.intercept(entriesPerPartition, responseCallback, requestLocal);
         assertThat(result).isTrue();
 
         verify(responseCallback).accept(resultCaptor.capture());
@@ -217,7 +219,7 @@ public class AppendInterceptorTest {
             new TopicPartition("inkless2", 0),
             new PartitionResponse(Errors.INVALID_REQUEST)
         ));
-        verify(writer, never()).write(any(), anyMap());
+        verify(writer, never()).write(any(), anyMap(), any());
     }
 
     @Test
@@ -232,11 +234,11 @@ public class AppendInterceptorTest {
             RECORDS_WITH_PRODUCER_ID
         );
 
-        final boolean result = interceptor.intercept(entriesPerPartition, responseCallback);
+        final boolean result = interceptor.intercept(entriesPerPartition, responseCallback, requestLocal);
         assertThat(result).isFalse();
 
         verify(responseCallback, never()).accept(any());
-        verify(writer, never()).write(any(), anyMap());
+        verify(writer, never()).write(any(), anyMap(), any());
     }
 
     @Test
@@ -247,11 +249,11 @@ public class AppendInterceptorTest {
 
         final Map<TopicPartition, MemoryRecords> entriesPerPartition = Map.of();
 
-        final boolean result = interceptor.intercept(entriesPerPartition, responseCallback);
+        final boolean result = interceptor.intercept(entriesPerPartition, responseCallback, requestLocal);
         assertThat(result).isFalse();
 
         verify(responseCallback, never()).accept(any());
-        verify(writer, never()).write(any(), anyMap());
+        verify(writer, never()).write(any(), anyMap(), any());
     }
 
     @Test
@@ -264,7 +266,7 @@ public class AppendInterceptorTest {
         final var writeResult = Map.of(
             new TopicPartition("inkless", 0), new PartitionResponse(Errors.NONE)
         );
-        when(writer.write(any(), anyMap())).thenReturn(
+        when(writer.write(any(), anyMap(), any())).thenReturn(
             CompletableFuture.completedFuture(writeResult)
         );
 
@@ -275,7 +277,7 @@ public class AppendInterceptorTest {
             new SharedState(time, BROKER_ID, inklessConfig, metadataView, controlPlane, storageBackend,
                 OBJECT_KEY_CREATOR, KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, brokerTopicStats, DEFAULT_TOPIC_CONFIGS), writer);
 
-        final boolean result = interceptor.intercept(entriesPerPartition, responseCallback);
+        final boolean result = interceptor.intercept(entriesPerPartition, responseCallback, requestLocal);
         assertThat(result).isTrue();
 
         verify(responseCallback).accept(eq(writeResult));
@@ -289,7 +291,7 @@ public class AppendInterceptorTest {
         );
 
         final Exception exception = new Exception("test");
-        when(writer.write(any(), anyMap())).thenReturn(
+        when(writer.write(any(), anyMap(), any())).thenReturn(
             CompletableFuture.failedFuture(exception)
         );
 
@@ -300,7 +302,7 @@ public class AppendInterceptorTest {
             new SharedState(time, BROKER_ID, inklessConfig, metadataView, controlPlane, storageBackend,
                 OBJECT_KEY_CREATOR, KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, brokerTopicStats, DEFAULT_TOPIC_CONFIGS), writer);
 
-        final boolean result = interceptor.intercept(entriesPerPartition, responseCallback);
+        final boolean result = interceptor.intercept(entriesPerPartition, responseCallback, requestLocal);
         assertThat(result).isTrue();
 
         final var expectedResult = Map.of(

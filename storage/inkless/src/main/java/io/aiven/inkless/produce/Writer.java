@@ -23,6 +23,7 @@ import org.apache.kafka.common.record.MemoryRecords;
 import org.apache.kafka.common.requests.ProduceResponse.PartitionResponse;
 import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.common.utils.Utils;
+import org.apache.kafka.server.common.RequestLocal;
 import org.apache.kafka.storage.internals.log.LogConfig;
 import org.apache.kafka.storage.log.metrics.BrokerTopicStats;
 
@@ -130,10 +131,12 @@ class Writer implements Closeable {
 
     CompletableFuture<Map<TopicPartition, PartitionResponse>> write(
         final Map<TopicIdPartition, MemoryRecords> entriesPerPartition,
-        final Map<String, LogConfig> topicConfigs
+        final Map<String, LogConfig> topicConfigs,
+        final RequestLocal requestLocal
     ) {
         Objects.requireNonNull(entriesPerPartition, "entriesPerPartition cannot be null");
         Objects.requireNonNull(topicConfigs, "topicConfigs cannot be null");
+        Objects.requireNonNull(requestLocal, "requestLocal cannot be null");
 
         if (entriesPerPartition.isEmpty()) {
             throw new IllegalArgumentException("entriesPerPartition cannot be empty");
@@ -155,7 +158,7 @@ class Writer implements Closeable {
                 openedAt = TimeUtils.durationMeasurementNow(time);
             }
 
-            final var result = this.activeFile.add(entriesPerPartition, topicConfigs);
+            final var result = this.activeFile.add(entriesPerPartition, topicConfigs, requestLocal);
             writerMetrics.requestAdded();
             if (this.activeFile.size() >= maxBufferSize) {
                 if (this.scheduledTick != null) {

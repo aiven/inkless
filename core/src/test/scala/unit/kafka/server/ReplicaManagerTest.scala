@@ -6208,7 +6208,7 @@ class ReplicaManagerTest {
     def testAppendInterceptorIsHonored(interceptorResult: Boolean, expectedCallbackTimes: Int): Unit = {
       val appendInterceptorCtorMockInitializer: MockedConstruction.MockInitializer[AppendInterceptor] = {
         case (mock, _) =>
-          when(mock.intercept(any(), any())).thenReturn(interceptorResult)
+          when(mock.intercept(any(), any(), any())).thenReturn(interceptorResult)
       }
       val appendInterceptorCtor = mockConstruction(classOf[AppendInterceptor], appendInterceptorCtorMockInitializer)
       val replicaManager = try {

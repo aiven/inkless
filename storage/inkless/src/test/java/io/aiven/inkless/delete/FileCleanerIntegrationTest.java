@@ -28,6 +28,7 @@ import org.apache.kafka.common.requests.FetchRequest;
 import org.apache.kafka.common.requests.ProduceResponse;
 import org.apache.kafka.common.utils.MockTime;
 import org.apache.kafka.common.utils.Time;
+import org.apache.kafka.server.common.RequestLocal;
 import org.apache.kafka.server.storage.log.FetchIsolation;
 import org.apache.kafka.server.storage.log.FetchParams;
 import org.apache.kafka.server.storage.log.FetchPartitionData;
@@ -248,7 +249,7 @@ class FileCleanerIntegrationTest {
                     records.put(tidp.topicPartition(), recordCreator.create(tidp.topicPartition(), i));
                 }
             }
-            assertThat(appendInterceptor.intercept(records, responseCallback)).isTrue();
+            assertThat(appendInterceptor.intercept(records, responseCallback, RequestLocal.noCaching())).isTrue();
         }
 
         await().atMost(Duration.ofSeconds(60))

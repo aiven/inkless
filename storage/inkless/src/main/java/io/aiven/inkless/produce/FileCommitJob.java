@@ -131,6 +131,7 @@ class FileCommitJob implements Runnable {
                 commitBatchRequest.topicIdPartition().topicPartition(),
                 partitionResponse(commitBatchResponse)
             );
+            result.putAll(file.invalidResponseByRequest().getOrDefault(commitBatchRequest.requestId(), Map.of()));
         }
 
         for (final var entry : file.awaitingFuturesByRequest().entrySet()) {
