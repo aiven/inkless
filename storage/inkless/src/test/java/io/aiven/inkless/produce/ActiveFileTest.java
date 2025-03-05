@@ -109,7 +109,7 @@ class ActiveFileTest {
         assertThat(result)
             .usingRecursiveComparison()
             .ignoringFields("data")
-            .isEqualTo(new ClosedFile(start, Map.of(), Map.of(), List.of(), List.of(), new byte[0]));
+            .isEqualTo(new ClosedFile(start, Map.of(), Map.of(), List.of(), new byte[0]));
         assertThat(result.data()).isEmpty();
         assertThat(result.isEmpty()).isTrue();
     }
@@ -140,12 +140,11 @@ class ActiveFileTest {
         assertThat(result.awaitingFuturesByRequest().get(0)).isNotCompleted();
         assertThat(result.awaitingFuturesByRequest().get(1)).isNotCompleted();
         assertThat(result.commitBatchRequests()).containsExactly(
-            CommitBatchRequest.of(T0P0, 0, 78, 0, 0, 1000, TimestampType.CREATE_TIME),
-            CommitBatchRequest.of(T0P1, 78, 78, 0, 0, 2000, TimestampType.CREATE_TIME),
-            CommitBatchRequest.of(T0P1, 156, 78, 0, 0, 3000, TimestampType.CREATE_TIME),
-            CommitBatchRequest.of(T1P0, 234, 78, 0, 0, time.milliseconds(), TimestampType.LOG_APPEND_TIME)
+            CommitBatchRequest.of(0, T0P0, 0, 78, 0, 0, 1000, TimestampType.CREATE_TIME),
+            CommitBatchRequest.of(0, T0P1, 78, 78, 0, 0, 2000, TimestampType.CREATE_TIME),
+            CommitBatchRequest.of(1, T0P1, 156, 78, 0, 0, 3000, TimestampType.CREATE_TIME),
+            CommitBatchRequest.of(1, T1P0, 234, 78, 0, 0, time.milliseconds(), TimestampType.LOG_APPEND_TIME)
         );
-        assertThat(result.requestIds()).containsExactly(0, 0, 1, 1);
         assertThat(result.data()).hasSize(312);
         assertThat(result.isEmpty()).isFalse();
     }

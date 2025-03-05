@@ -107,10 +107,8 @@ class FileCommitJob implements Runnable {
             .collect(Collectors.toMap(Map.Entry::getKey, ignore -> new HashMap<>()));
 
         for (int i = 0; i < commitBatchResponses.size(); i++) {
-            final int requestId = file.requestIds().get(i);
-            final var result = resultsPerRequest.computeIfAbsent(requestId, ignore -> new HashMap<>());
-
             final var commitBatchRequest = file.commitBatchRequests().get(i);
+            final var result = resultsPerRequest.computeIfAbsent(commitBatchRequest.requestId(), ignore -> new HashMap<>());
             final var commitBatchResponse = commitBatchResponses.get(i);
 
             result.put(

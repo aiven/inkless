@@ -92,8 +92,8 @@ class DeleteTopicJobTest {
         new CommitFileJob(
             time, pgContainer.getJooqCtx(), objectKey1, BROKER_ID, file1Size,
             List.of(
-                CommitBatchRequest.of(T0P0, 0, file1Batch1Size, 0, 11, 1000, TimestampType.CREATE_TIME),
-                CommitBatchRequest.of(T0P1, 0, file1Batch2Size, 0, 11, 1000, TimestampType.CREATE_TIME)
+                CommitBatchRequest.of(0, T0P0, 0, file1Batch1Size, 0, 11, 1000, TimestampType.CREATE_TIME),
+                CommitBatchRequest.of(0, T0P1, 0, file1Batch2Size, 0, 11, 1000, TimestampType.CREATE_TIME)
             ), durationCallback
         ).call();
 
@@ -104,8 +104,8 @@ class DeleteTopicJobTest {
         new CommitFileJob(
             time, pgContainer.getJooqCtx(), objectKey2, BROKER_ID, file2Size,
             List.of(
-                CommitBatchRequest.of(T0P0, 0, file2Batch1Size, 0, 11, 1000, TimestampType.CREATE_TIME),
-                CommitBatchRequest.of(T2P0, 0, file2Batch2Size, 0, 11, 1000, TimestampType.CREATE_TIME)
+                CommitBatchRequest.of(0, T0P0, 0, file2Batch1Size, 0, 11, 1000, TimestampType.CREATE_TIME),
+                CommitBatchRequest.of(0, T2P0, 0, file2Batch2Size, 0, 11, 1000, TimestampType.CREATE_TIME)
             ), durationCallback
         ).call();
 
@@ -117,9 +117,9 @@ class DeleteTopicJobTest {
         new CommitFileJob(
             time, pgContainer.getJooqCtx(), objectKey3, BROKER_ID, file3Size,
             List.of(
-                CommitBatchRequest.of(T0P0, 0, file1Batch1Size, 0, 11, 1000, TimestampType.CREATE_TIME),
-                CommitBatchRequest.of(T0P1, 0, file1Batch2Size, 0, 11, 1000, TimestampType.CREATE_TIME),
-                CommitBatchRequest.of(T2P0, 0, file1Batch2Size, 0, 11, 1000, TimestampType.CREATE_TIME)
+                CommitBatchRequest.of(0, T0P0, 0, file1Batch1Size, 0, 11, 1000, TimestampType.CREATE_TIME),
+                CommitBatchRequest.of(0, T0P1, 0, file1Batch2Size, 0, 11, 1000, TimestampType.CREATE_TIME),
+                CommitBatchRequest.of(0, T2P0, 0, file1Batch2Size, 0, 11, 1000, TimestampType.CREATE_TIME)
             ), durationCallback
         ).call();
 

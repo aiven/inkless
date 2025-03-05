@@ -108,7 +108,6 @@ class ActiveFile {
             originalRequests,
             awaitingFuturesByRequest,
             closeResult.commitBatchRequests(),
-            closeResult.requestIds(),
             closeResult.data()
         );
     }

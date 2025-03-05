@@ -45,21 +45,20 @@ class BatchBuffer {
         final ByteBuffer byteBuffer = ByteBuffer.allocate(totalSize);
 
         final List<CommitBatchRequest> commitBatchRequests = new ArrayList<>();
-        final List<Integer> requestIds = new ArrayList<>();
         for (final BatchHolder batchHolder : batches) {
             commitBatchRequests.add(
                 CommitBatchRequest.of(
+                    batchHolder.requestId,
                     batchHolder.topicIdPartition(),
                     byteBuffer.position(),
                     batchHolder.batch
                 )
             );
-            requestIds.add(batchHolder.requestId);
             batchHolder.batch.writeTo(byteBuffer);
         }
 
         closed = true;
-        return new CloseResult(commitBatchRequests, requestIds, byteBuffer.array());
+        return new CloseResult(commitBatchRequests, byteBuffer.array());
     }
 
     int totalSize() {
@@ -75,10 +74,8 @@ class BatchBuffer {
      * The result of closing a batch buffer.
      *
      * @param commitBatchRequests commit batch requests matching in order the batches in {@code data}.
-     * @param requestIds          produce request IDs matching in order the batches in {@code data}.
      */
     record CloseResult(List<CommitBatchRequest> commitBatchRequests,
-                       List<Integer> requestIds,
                        byte[] data) {
     }
 }

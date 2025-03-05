@@ -98,16 +98,16 @@ public abstract class AbstractControlPlaneTest {
         final String objectKey1 = "a1";
         final String objectKey2 = "a2";
 
-        final CommitBatchRequest successfulRequest1 = CommitBatchRequest.of(new TopicIdPartition(EXISTING_TOPIC_1_ID, 0, EXISTING_TOPIC_1), 1, 10, 1, 10, 1000, TimestampType.CREATE_TIME);
+        final CommitBatchRequest successfulRequest1 = CommitBatchRequest.of(0, new TopicIdPartition(EXISTING_TOPIC_1_ID, 0, EXISTING_TOPIC_1), 1, 10, 1, 10, 1000, TimestampType.CREATE_TIME);
         final List<CommitBatchResponse> commitResponse1 = controlPlane.commitFile(
             objectKey1, BROKER_ID,
             FILE_SIZE,
             List.of(
                 successfulRequest1,
                 // non-existing partition
-                CommitBatchRequest.of(new TopicIdPartition(EXISTING_TOPIC_1_ID, EXISTING_TOPIC_1_PARTITIONS + 1, EXISTING_TOPIC_1), 2, 10, 1, 10, 1000, TimestampType.CREATE_TIME),
+                CommitBatchRequest.of(0, new TopicIdPartition(EXISTING_TOPIC_1_ID, EXISTING_TOPIC_1_PARTITIONS + 1, EXISTING_TOPIC_1), 2, 10, 1, 10, 1000, TimestampType.CREATE_TIME),
                 // non-existing topic
-                CommitBatchRequest.of(new TopicIdPartition(NONEXISTENT_TOPIC_ID, 0, NONEXISTENT_TOPIC), 3, 10, 1, 10, 1000, TimestampType.CREATE_TIME)
+                CommitBatchRequest.of(0, new TopicIdPartition(NONEXISTENT_TOPIC_ID, 0, NONEXISTENT_TOPIC), 3, 10, 1, 10, 1000, TimestampType.CREATE_TIME)
             )
         );
         assertThat(commitResponse1).containsExactly(
@@ -116,14 +116,14 @@ public abstract class AbstractControlPlaneTest {
             CommitBatchResponse.of(Errors.UNKNOWN_TOPIC_OR_PARTITION, -1, -1, -1)
         );
 
-        final CommitBatchRequest successfulRequest2 = CommitBatchRequest.of(new TopicIdPartition(EXISTING_TOPIC_1_ID, 0, EXISTING_TOPIC_1), 100, 10, 1, 10, 1000, TimestampType.CREATE_TIME);
+        final CommitBatchRequest successfulRequest2 = CommitBatchRequest.of(0, new TopicIdPartition(EXISTING_TOPIC_1_ID, 0, EXISTING_TOPIC_1), 100, 10, 1, 10, 1000, TimestampType.CREATE_TIME);
         final List<CommitBatchResponse> commitResponse2 = controlPlane.commitFile(
             objectKey2, BROKER_ID,
             FILE_SIZE,
             List.of(
                 successfulRequest2,
-                CommitBatchRequest.of(new TopicIdPartition(EXISTING_TOPIC_1_ID, EXISTING_TOPIC_1_PARTITIONS + 1, EXISTING_TOPIC_1), 200, 10, 1, 10, 2000, TimestampType.CREATE_TIME),
-                CommitBatchRequest.of(new TopicIdPartition(NONEXISTENT_TOPIC_ID, 0, NONEXISTENT_TOPIC), 300, 10, 1, 10, 3000, TimestampType.CREATE_TIME)
+                CommitBatchRequest.of(0, new TopicIdPartition(EXISTING_TOPIC_1_ID, EXISTING_TOPIC_1_PARTITIONS + 1, EXISTING_TOPIC_1), 200, 10, 1, 10, 2000, TimestampType.CREATE_TIME),
+                CommitBatchRequest.of(0, new TopicIdPartition(NONEXISTENT_TOPIC_ID, 0, NONEXISTENT_TOPIC), 300, 10, 1, 10, 3000, TimestampType.CREATE_TIME)
             )
         );
         assertThat(commitResponse2).containsExactly(
@@ -155,10 +155,10 @@ public abstract class AbstractControlPlaneTest {
         final int numberOfRecordsInBatch1 = 3;
         final int numberOfRecordsInBatch2 = 2;
         controlPlane.commitFile(objectKey1, BROKER_ID, FILE_SIZE,
-            List.of(CommitBatchRequest.of(new TopicIdPartition(EXISTING_TOPIC_1_ID, 0, EXISTING_TOPIC_1), 1, 10, 0, numberOfRecordsInBatch1 - 1, 1000, TimestampType.CREATE_TIME)));
+            List.of(CommitBatchRequest.of(0, new TopicIdPartition(EXISTING_TOPIC_1_ID, 0, EXISTING_TOPIC_1), 1, 10, 0, numberOfRecordsInBatch1 - 1, 1000, TimestampType.CREATE_TIME)));
         final int lastOffset = numberOfRecordsInBatch1 + numberOfRecordsInBatch2 - 1;
         controlPlane.commitFile(objectKey2, BROKER_ID, FILE_SIZE,
-            List.of(CommitBatchRequest.of(new TopicIdPartition(EXISTING_TOPIC_1_ID, 0, EXISTING_TOPIC_1), 100, 10, numberOfRecordsInBatch1, lastOffset, 2000, TimestampType.CREATE_TIME)));
+            List.of(CommitBatchRequest.of(0, new TopicIdPartition(EXISTING_TOPIC_1_ID, 0, EXISTING_TOPIC_1), 100, 10, numberOfRecordsInBatch1, lastOffset, 2000, TimestampType.CREATE_TIME)));
 
         final long expectedLogStartOffset = 0;
         final long expectedHighWatermark = numberOfRecordsInBatch1 + numberOfRecordsInBatch2;
@@ -192,7 +192,7 @@ public abstract class AbstractControlPlaneTest {
         controlPlane.commitFile(
             objectKey, BROKER_ID, FILE_SIZE,
             List.of(
-                CommitBatchRequest.of(new TopicIdPartition(EXISTING_TOPIC_1_ID, 0, EXISTING_TOPIC_1), 11, 10, 1, 10, 1000, TimestampType.CREATE_TIME)
+                CommitBatchRequest.of(0, new TopicIdPartition(EXISTING_TOPIC_1_ID, 0, EXISTING_TOPIC_1), 11, 10, 1, 10, 1000, TimestampType.CREATE_TIME)
             )
         );
 
@@ -212,7 +212,7 @@ public abstract class AbstractControlPlaneTest {
         controlPlane.commitFile(
             objectKey, BROKER_ID, FILE_SIZE,
             List.of(
-                CommitBatchRequest.of(new TopicIdPartition(EXISTING_TOPIC_1_ID, 0, EXISTING_TOPIC_1), 11, 10, 1, 10, 1000, TimestampType.CREATE_TIME)
+                CommitBatchRequest.of(0, new TopicIdPartition(EXISTING_TOPIC_1_ID, 0, EXISTING_TOPIC_1), 11, 10, 1, 10, 1000, TimestampType.CREATE_TIME)
             )
         );
 
@@ -231,7 +231,7 @@ public abstract class AbstractControlPlaneTest {
         controlPlane.commitFile(
             objectKey, BROKER_ID, FILE_SIZE,
             List.of(
-                CommitBatchRequest.of(new TopicIdPartition(EXISTING_TOPIC_1_ID, 0, EXISTING_TOPIC_1), 11, 10, 1, 10, 1000, TimestampType.CREATE_TIME)
+                CommitBatchRequest.of(0, new TopicIdPartition(EXISTING_TOPIC_1_ID, 0, EXISTING_TOPIC_1), 11, 10, 1, 10, 1000, TimestampType.CREATE_TIME)
             )
         );
 
@@ -259,8 +259,8 @@ public abstract class AbstractControlPlaneTest {
 
         assertThatThrownBy(() -> controlPlane.commitFile(objectKey, BROKER_ID, FILE_SIZE,
             List.of(
-                CommitBatchRequest.of(new TopicIdPartition(EXISTING_TOPIC_1_ID, 0, EXISTING_TOPIC_1), 1, 10, 10, 19, 1000, TimestampType.CREATE_TIME),
-                CommitBatchRequest.of(new TopicIdPartition(EXISTING_TOPIC_1_ID, 1, EXISTING_TOPIC_1), 2, 0, 10, 19, 1000, TimestampType.CREATE_TIME)
+                CommitBatchRequest.of(0, new TopicIdPartition(EXISTING_TOPIC_1_ID, 0, EXISTING_TOPIC_1), 1, 10, 10, 19, 1000, TimestampType.CREATE_TIME),
+                CommitBatchRequest.of(0, new TopicIdPartition(EXISTING_TOPIC_1_ID, 1, EXISTING_TOPIC_1), 2, 0, 10, 19, 1000, TimestampType.CREATE_TIME)
             )
         ))
             .isInstanceOf(IllegalArgumentException.class)
@@ -282,7 +282,7 @@ public abstract class AbstractControlPlaneTest {
         final String objectKey = "a1";
         controlPlane.commitFile(objectKey, BROKER_ID, FILE_SIZE,
             List.of(
-                CommitBatchRequest.of(new TopicIdPartition(newTopic1Id, 0, newTopic1Name), 1, (int) FILE_SIZE, 0, 0, 1000, TimestampType.CREATE_TIME)
+                CommitBatchRequest.of(0, new TopicIdPartition(newTopic1Id, 0, newTopic1Name), 1, (int) FILE_SIZE, 0, 0, 1000, TimestampType.CREATE_TIME)
             ));
 
         final List<FindBatchRequest> findBatchRequests = List.of(new FindBatchRequest(new TopicIdPartition(newTopic1Id, 0, newTopic1Name), 0, Integer.MAX_VALUE));
@@ -314,14 +314,14 @@ public abstract class AbstractControlPlaneTest {
 
         controlPlane.commitFile(objectKey1, BROKER_ID, FILE_SIZE,
             List.of(
-                CommitBatchRequest.of(new TopicIdPartition(EXISTING_TOPIC_1_ID, 0, EXISTING_TOPIC_1), 1, (int) FILE_SIZE, 0, 0, 1000, TimestampType.CREATE_TIME)
+                CommitBatchRequest.of(0, new TopicIdPartition(EXISTING_TOPIC_1_ID, 0, EXISTING_TOPIC_1), 1, (int) FILE_SIZE, 0, 0, 1000, TimestampType.CREATE_TIME)
             ));
         final int file2Partition0Size = (int) FILE_SIZE / 2;
         final int file2Partition1Size = (int) FILE_SIZE - file2Partition0Size;
         controlPlane.commitFile(objectKey2, BROKER_ID, FILE_SIZE,
             List.of(
-                CommitBatchRequest.of(new TopicIdPartition(EXISTING_TOPIC_1_ID, 0, EXISTING_TOPIC_1), 1, file2Partition0Size, 0, 0, 1000, TimestampType.CREATE_TIME),
-                CommitBatchRequest.of(new TopicIdPartition(EXISTING_TOPIC_2_ID, 0, EXISTING_TOPIC_2), 1, file2Partition1Size, 1, 1, 2000, TimestampType.CREATE_TIME)
+                CommitBatchRequest.of(0, new TopicIdPartition(EXISTING_TOPIC_1_ID, 0, EXISTING_TOPIC_1), 1, file2Partition0Size, 0, 0, 1000, TimestampType.CREATE_TIME),
+                CommitBatchRequest.of(0, new TopicIdPartition(EXISTING_TOPIC_2_ID, 0, EXISTING_TOPIC_2), 1, file2Partition1Size, 1, 1, 2000, TimestampType.CREATE_TIME)
             ));
 
         final List<FindBatchRequest> findBatchRequests = List.of(new FindBatchRequest(EXISTING_TOPIC_2_ID_PARTITION_0, 0, Integer.MAX_VALUE));
@@ -352,7 +352,7 @@ public abstract class AbstractControlPlaneTest {
         controlPlane.commitFile(
             objectKey1, BROKER_ID, FILE_SIZE,
             List.of(
-                CommitBatchRequest.of(EXISTING_TOPIC_1_ID_PARTITION_0, 1, (int) FILE_SIZE, 1, 10, 1000, TimestampType.CREATE_TIME)
+                CommitBatchRequest.of(0, EXISTING_TOPIC_1_ID_PARTITION_0, 1, (int) FILE_SIZE, 1, 10, 1000, TimestampType.CREATE_TIME)
             )
         );
 
@@ -386,19 +386,19 @@ public abstract class AbstractControlPlaneTest {
         controlPlane.commitFile(
             objectKey1, BROKER_ID, FILE_SIZE,
             List.of(
-                CommitBatchRequest.of(EXISTING_TOPIC_1_ID_PARTITION_0, 1, (int) FILE_SIZE, 1, 10, 1000, TimestampType.CREATE_TIME)
+                CommitBatchRequest.of(0, EXISTING_TOPIC_1_ID_PARTITION_0, 1, (int) FILE_SIZE, 1, 10, 1000, TimestampType.CREATE_TIME)
             )
         );
         controlPlane.commitFile(
             objectKey2, BROKER_ID, FILE_SIZE,
             List.of(
-                CommitBatchRequest.of(EXISTING_TOPIC_1_ID_PARTITION_0, 2, (int) FILE_SIZE, 1, 10, 2000, TimestampType.CREATE_TIME)
+                CommitBatchRequest.of(0, EXISTING_TOPIC_1_ID_PARTITION_0, 2, (int) FILE_SIZE, 1, 10, 2000, TimestampType.CREATE_TIME)
             )
         );
         controlPlane.commitFile(
             objectKey3, BROKER_ID, FILE_SIZE,
             List.of(
-                CommitBatchRequest.of(EXISTING_TOPIC_1_ID_PARTITION_0, 3, (int) FILE_SIZE, 1, 10, 3000, TimestampType.CREATE_TIME)
+                CommitBatchRequest.of(0, EXISTING_TOPIC_1_ID_PARTITION_0, 3, (int) FILE_SIZE, 1, 10, 3000, TimestampType.CREATE_TIME)
             )
         );
 
@@ -435,7 +435,7 @@ public abstract class AbstractControlPlaneTest {
         controlPlane.commitFile(
             objectKey1, BROKER_ID, FILE_SIZE,
             List.of(
-                CommitBatchRequest.of(EXISTING_TOPIC_1_ID_PARTITION_0, 1, (int) FILE_SIZE, 1, 10, 1000, TimestampType.CREATE_TIME)
+                CommitBatchRequest.of(0, EXISTING_TOPIC_1_ID_PARTITION_0, 1, (int) FILE_SIZE, 1, 10, 1000, TimestampType.CREATE_TIME)
             )
         );
 
@@ -463,7 +463,7 @@ public abstract class AbstractControlPlaneTest {
         controlPlane.commitFile(
             objectKey1, BROKER_ID, FILE_SIZE,
             List.of(
-                CommitBatchRequest.of(EXISTING_TOPIC_1_ID_PARTITION_0, 1, (int) FILE_SIZE, 1, 10, 1000, TimestampType.CREATE_TIME)
+                CommitBatchRequest.of(0, EXISTING_TOPIC_1_ID_PARTITION_0, 1, (int) FILE_SIZE, 1, 10, 1000, TimestampType.CREATE_TIME)
             )
         );
 
@@ -491,7 +491,7 @@ public abstract class AbstractControlPlaneTest {
         controlPlane.commitFile(
             objectKey1, BROKER_ID, FILE_SIZE,
             List.of(
-                CommitBatchRequest.of(EXISTING_TOPIC_1_ID_PARTITION_0, 1, (int) FILE_SIZE, 1, 10, 1000, TimestampType.CREATE_TIME)
+                CommitBatchRequest.of(0, EXISTING_TOPIC_1_ID_PARTITION_0, 1, (int) FILE_SIZE, 1, 10, 1000, TimestampType.CREATE_TIME)
             )
         );
 
@@ -521,9 +521,9 @@ public abstract class AbstractControlPlaneTest {
         controlPlane.commitFile(
             objectKey1, BROKER_ID, FILE_SIZE,
             List.of(
-                CommitBatchRequest.of(EXISTING_TOPIC_1_ID_PARTITION_0, 1, tp0BatchSize, 1, 10, 1000, TimestampType.CREATE_TIME),
+                CommitBatchRequest.of(0, EXISTING_TOPIC_1_ID_PARTITION_0, 1, tp0BatchSize, 1, 10, 1000, TimestampType.CREATE_TIME),
                 // This batch will keep the file alive after the other batch is deleted.
-                CommitBatchRequest.of(EXISTING_TOPIC_1_ID_PARTITION_1, 100, tp1BatchSize, 1, 2, 2000, TimestampType.CREATE_TIME)
+                CommitBatchRequest.of(0, EXISTING_TOPIC_1_ID_PARTITION_1, 100, tp1BatchSize, 1, 2, 2000, TimestampType.CREATE_TIME)
             )
         );
 
@@ -549,14 +549,14 @@ public abstract class AbstractControlPlaneTest {
 
         controlPlane.commitFile(objectKey1, BROKER_ID, FILE_SIZE,
             List.of(
-                CommitBatchRequest.of(new TopicIdPartition(EXISTING_TOPIC_1_ID, 0, EXISTING_TOPIC_1), 1, (int) FILE_SIZE, 0, 0, 1000, TimestampType.CREATE_TIME)
+                CommitBatchRequest.of(0, new TopicIdPartition(EXISTING_TOPIC_1_ID, 0, EXISTING_TOPIC_1), 1, (int) FILE_SIZE, 0, 0, 1000, TimestampType.CREATE_TIME)
             ));
         final int file2Partition0Size = (int) FILE_SIZE / 2;
         final int file2Partition1Size = (int) FILE_SIZE - file2Partition0Size;
         controlPlane.commitFile(objectKey2, BROKER_ID, FILE_SIZE,
             List.of(
-                CommitBatchRequest.of(new TopicIdPartition(EXISTING_TOPIC_1_ID, 0, EXISTING_TOPIC_1), 1, file2Partition0Size, 0, 0, 1000, TimestampType.CREATE_TIME),
-                CommitBatchRequest.of(new TopicIdPartition(EXISTING_TOPIC_2_ID, 0, EXISTING_TOPIC_2), 1, file2Partition1Size, 1, 1, 2000, TimestampType.CREATE_TIME)
+                CommitBatchRequest.of(0, new TopicIdPartition(EXISTING_TOPIC_1_ID, 0, EXISTING_TOPIC_1), 1, file2Partition0Size, 0, 0, 1000, TimestampType.CREATE_TIME),
+                CommitBatchRequest.of(0, new TopicIdPartition(EXISTING_TOPIC_2_ID, 0, EXISTING_TOPIC_2), 1, file2Partition1Size, 1, 1, 2000, TimestampType.CREATE_TIME)
             ));
 
         time.sleep(1001);  // advance time
@@ -586,7 +586,7 @@ public abstract class AbstractControlPlaneTest {
             final long fileSize = FILE_MERGE_SIZE_THRESHOLD / 10;
             for (int i = 0; i < 5; i++) {
                 controlPlane.commitFile(String.format("obj%d", i), i, fileSize,
-                    List.of(CommitBatchRequest.of(EXISTING_TOPIC_1_ID_PARTITION_0, 0, (int) fileSize, 0, 100, 1000, TimestampType.CREATE_TIME))
+                    List.of(CommitBatchRequest.of(0, EXISTING_TOPIC_1_ID_PARTITION_0, 0, (int) fileSize, 0, 100, 1000, TimestampType.CREATE_TIME))
                 );
             }
 
@@ -600,9 +600,9 @@ public abstract class AbstractControlPlaneTest {
             final long fileSize = FILE_MERGE_SIZE_THRESHOLD / 2;
             final long committedAt = time.milliseconds();
             controlPlane.commitFile("obj0", 1, fileSize,
-                List.of(CommitBatchRequest.of(EXISTING_TOPIC_1_ID_PARTITION_0, 0, (int) fileSize, 0, 100, 1000, TimestampType.CREATE_TIME)));
+                List.of(CommitBatchRequest.of(0, EXISTING_TOPIC_1_ID_PARTITION_0, 0, (int) fileSize, 0, 100, 1000, TimestampType.CREATE_TIME)));
             controlPlane.commitFile("obj1", 2, fileSize,
-                List.of(CommitBatchRequest.of(EXISTING_TOPIC_1_ID_PARTITION_0, 0, (int) fileSize, 0, 100, 2000, TimestampType.CREATE_TIME)));
+                List.of(CommitBatchRequest.of(0, EXISTING_TOPIC_1_ID_PARTITION_0, 0, (int) fileSize, 0, 100, 2000, TimestampType.CREATE_TIME)));
 
             final List<FileMergeWorkItem.File> expectedFiles = List.of(
                 new FileMergeWorkItem.File(1L, "obj0", fileSize, fileSize,
@@ -630,11 +630,11 @@ public abstract class AbstractControlPlaneTest {
             final long committedAt = time.milliseconds();
             // Commit 3 files, that's enough only for 1 merge work item.
             controlPlane.commitFile("obj0", 1, fileSize,
-                List.of(CommitBatchRequest.of(EXISTING_TOPIC_1_ID_PARTITION_0, 0, (int) fileSize, 0, 100, 1000, TimestampType.CREATE_TIME)));
+                List.of(CommitBatchRequest.of(0, EXISTING_TOPIC_1_ID_PARTITION_0, 0, (int) fileSize, 0, 100, 1000, TimestampType.CREATE_TIME)));
             controlPlane.commitFile("obj1", 2, fileSize,
-                List.of(CommitBatchRequest.of(EXISTING_TOPIC_1_ID_PARTITION_0, 0, (int) fileSize, 0, 100, 2000, TimestampType.CREATE_TIME)));
+                List.of(CommitBatchRequest.of(0, EXISTING_TOPIC_1_ID_PARTITION_0, 0, (int) fileSize, 0, 100, 2000, TimestampType.CREATE_TIME)));
             controlPlane.commitFile("obj2", 3, fileSize,
-                List.of(CommitBatchRequest.of(EXISTING_TOPIC_1_ID_PARTITION_0, 0, (int) fileSize, 0, 100, 3000, TimestampType.CREATE_TIME)));
+                List.of(CommitBatchRequest.of(0, EXISTING_TOPIC_1_ID_PARTITION_0, 0, (int) fileSize, 0, 100, 3000, TimestampType.CREATE_TIME)));
 
             // Get the merge work item.
             final List<FileMergeWorkItem.File> expectedFiles1 = List.of(
@@ -648,7 +648,7 @@ public abstract class AbstractControlPlaneTest {
 
             // Commit one more file.
             controlPlane.commitFile("obj3", 1, fileSize,
-                List.of(CommitBatchRequest.of(EXISTING_TOPIC_1_ID_PARTITION_0, 0, (int) fileSize, 0, 100, 4000, TimestampType.CREATE_TIME)));
+                List.of(CommitBatchRequest.of(0, EXISTING_TOPIC_1_ID_PARTITION_0, 0, (int) fileSize, 0, 100, 4000, TimestampType.CREATE_TIME)));
 
             // Now it's enough to have one more merge work item.
             final List<FileMergeWorkItem.File> expectedFiles2 = List.of(
@@ -667,7 +667,7 @@ public abstract class AbstractControlPlaneTest {
             final long fileSize = FILE_MERGE_SIZE_THRESHOLD;
             final long committedAt = time.milliseconds();
             controlPlane.commitFile("obj0", 0, fileSize,
-                List.of(CommitBatchRequest.of(EXISTING_TOPIC_1_ID_PARTITION_0, 0, (int) fileSize, 0, 100, 1000, TimestampType.CREATE_TIME)));
+                List.of(CommitBatchRequest.of(0, EXISTING_TOPIC_1_ID_PARTITION_0, 0, (int) fileSize, 0, 100, 1000, TimestampType.CREATE_TIME)));
 
             final List<FileMergeWorkItem.File> expectedFiles = List.of(
                 new FileMergeWorkItem.File(1L, "obj0", fileSize, fileSize,
@@ -683,11 +683,11 @@ public abstract class AbstractControlPlaneTest {
             final long committedAt = time.milliseconds();
             // Commit 3 files, that's enough for 1 merge work items.
             controlPlane.commitFile("obj0", 1, batchSize,
-                List.of(CommitBatchRequest.of(EXISTING_TOPIC_1_ID_PARTITION_0, 0, (int) batchSize, 0, 100, 1000, TimestampType.CREATE_TIME)));
+                List.of(CommitBatchRequest.of(0, EXISTING_TOPIC_1_ID_PARTITION_0, 0, (int) batchSize, 0, 100, 1000, TimestampType.CREATE_TIME)));
             controlPlane.commitFile("obj1", 2, batchSize,
-                List.of(CommitBatchRequest.of(EXISTING_TOPIC_1_ID_PARTITION_0, 0, (int) batchSize, 0, 100, 2000, TimestampType.CREATE_TIME)));
+                List.of(CommitBatchRequest.of(0, EXISTING_TOPIC_1_ID_PARTITION_0, 0, (int) batchSize, 0, 100, 2000, TimestampType.CREATE_TIME)));
             controlPlane.commitFile("obj2", 3, batchSize,
-                List.of(CommitBatchRequest.of(EXISTING_TOPIC_1_ID_PARTITION_0, 0, (int) batchSize, 0, 100, 3000, TimestampType.CREATE_TIME)));
+                List.of(CommitBatchRequest.of(0, EXISTING_TOPIC_1_ID_PARTITION_0, 0, (int) batchSize, 0, 100, 3000, TimestampType.CREATE_TIME)));
 
             final List<FileMergeWorkItem.File> expectedFiles1 = List.of(
                 new FileMergeWorkItem.File(1L, "obj0", batchSize, batchSize,
@@ -711,7 +711,7 @@ public abstract class AbstractControlPlaneTest {
 
             // Commit more files and try merging again.
             controlPlane.commitFile("obj3", 1, batchSize,
-                List.of(CommitBatchRequest.of(EXISTING_TOPIC_1_ID_PARTITION_0, 0, (int) batchSize, 0, 100, 4000, TimestampType.CREATE_TIME)));
+                List.of(CommitBatchRequest.of(0, EXISTING_TOPIC_1_ID_PARTITION_0, 0, (int) batchSize, 0, 100, 4000, TimestampType.CREATE_TIME)));
 
             // File 4 is the merged file, batches 4 and 5 are in it.
             final List<FileMergeWorkItem.File> expectedFiles2= List.of(
@@ -727,7 +727,7 @@ public abstract class AbstractControlPlaneTest {
 
     @Test
     void testCommitDuplicates() {
-        final CommitBatchRequest request = CommitBatchRequest.idempotent(EXISTING_TOPIC_1_ID_PARTITION_0, 1, 10, 10, 19, time.milliseconds(), TimestampType.CREATE_TIME, 1L, (short) 3, 0, 9);
+        final CommitBatchRequest request = CommitBatchRequest.idempotent(0, EXISTING_TOPIC_1_ID_PARTITION_0, 1, 10, 10, 19, time.milliseconds(), TimestampType.CREATE_TIME, 1L, (short) 3, 0, 9);
         final CommitBatchResponse response = controlPlane.commitFile("a", BROKER_ID, FILE_SIZE, List.of(request)).get(0);
 
         assertThat(response)
@@ -754,7 +754,7 @@ public abstract class AbstractControlPlaneTest {
 
     @Test
     void testOutOfOrderNewEpoch() {
-        final CommitBatchRequest request = CommitBatchRequest.idempotent(EXISTING_TOPIC_1_ID_PARTITION_0, 1, 10, 10, 19, time.milliseconds(), TimestampType.CREATE_TIME, 1L, (short) 3, 1, 10);
+        final CommitBatchRequest request = CommitBatchRequest.idempotent(0, EXISTING_TOPIC_1_ID_PARTITION_0, 1, 10, 10, 19, time.milliseconds(), TimestampType.CREATE_TIME, 1L, (short) 3, 1, 10);
         final CommitBatchResponse response = controlPlane.commitFile("a", BROKER_ID, FILE_SIZE, List.of(request)).get(0);
 
         assertThat(response)
@@ -772,8 +772,8 @@ public abstract class AbstractControlPlaneTest {
     })
         // 15 is the first sequence number for the second batch
     void testOutOfOrderSequence(final int lastSeq, final int nextSeq) {
-        final CommitBatchRequest request0 = CommitBatchRequest.idempotent(EXISTING_TOPIC_1_ID_PARTITION_0, 1, 10, 0, 10, time.milliseconds(), TimestampType.CREATE_TIME, 1L, (short) 3, 0, lastSeq);
-        final CommitBatchRequest request1 = CommitBatchRequest.idempotent(EXISTING_TOPIC_1_ID_PARTITION_0, 2, 10, 0, 20, time.milliseconds(), TimestampType.CREATE_TIME, 1L, (short) 3, nextSeq, nextSeq + 10);
+        final CommitBatchRequest request0 = CommitBatchRequest.idempotent(0, EXISTING_TOPIC_1_ID_PARTITION_0, 1, 10, 0, 10, time.milliseconds(), TimestampType.CREATE_TIME, 1L, (short) 3, 0, lastSeq);
+        final CommitBatchRequest request1 = CommitBatchRequest.idempotent(0, EXISTING_TOPIC_1_ID_PARTITION_0, 2, 10, 0, 20, time.milliseconds(), TimestampType.CREATE_TIME, 1L, (short) 3, nextSeq, nextSeq + 10);
         final List<CommitBatchResponse> responses = controlPlane.commitFile("a", BROKER_ID, FILE_SIZE, List.of(request0, request1));
 
         assertThat(responses)
@@ -783,8 +783,8 @@ public abstract class AbstractControlPlaneTest {
 
     @Test
     void testInvalidProducerEpoch() {
-        final CommitBatchRequest request0 = CommitBatchRequest.idempotent(EXISTING_TOPIC_1_ID_PARTITION_0, 1, 10, 10, 24, time.milliseconds(), TimestampType.CREATE_TIME, 1L, (short) 3, 0, 14);
-        final CommitBatchRequest request1 = CommitBatchRequest.idempotent(EXISTING_TOPIC_1_ID_PARTITION_0, 2, 10, 25, 35, time.milliseconds(), TimestampType.CREATE_TIME, 1L, (short) 2, 15, 25);
+        final CommitBatchRequest request0 = CommitBatchRequest.idempotent(0, EXISTING_TOPIC_1_ID_PARTITION_0, 1, 10, 10, 24, time.milliseconds(), TimestampType.CREATE_TIME, 1L, (short) 3, 0, 14);
+        final CommitBatchRequest request1 = CommitBatchRequest.idempotent(0, EXISTING_TOPIC_1_ID_PARTITION_0, 2, 10, 25, 35, time.milliseconds(), TimestampType.CREATE_TIME, 1L, (short) 2, 15, 25);
         final List<CommitBatchResponse> responses = controlPlane.commitFile("a", BROKER_ID, FILE_SIZE, List.of(request0, request1));
 
         assertThat(responses)
@@ -809,9 +809,9 @@ public abstract class AbstractControlPlaneTest {
         void batchWithoutParents() {
             final long fileSize = FILE_MERGE_SIZE_THRESHOLD / 2;
             controlPlane.commitFile("obj0", 1, fileSize,
-                List.of(CommitBatchRequest.of(EXISTING_TOPIC_1_ID_PARTITION_0, 0, (int) fileSize, 0, 100, 1000, TimestampType.CREATE_TIME)));
+                List.of(CommitBatchRequest.of(0, EXISTING_TOPIC_1_ID_PARTITION_0, 0, (int) fileSize, 0, 100, 1000, TimestampType.CREATE_TIME)));
             controlPlane.commitFile("obj1", 2, fileSize,
-                List.of(CommitBatchRequest.of(EXISTING_TOPIC_1_ID_PARTITION_0, 0, (int) fileSize, 0, 100, 2000, TimestampType.CREATE_TIME)));
+                List.of(CommitBatchRequest.of(0, EXISTING_TOPIC_1_ID_PARTITION_0, 0, (int) fileSize, 0, 100, 2000, TimestampType.CREATE_TIME)));
 
             final var workItemId = controlPlane.getFileMergeWorkItem().workItemId();
 
@@ -829,9 +829,9 @@ public abstract class AbstractControlPlaneTest {
         void batchWithTooManyParents() {
             final long fileSize = FILE_MERGE_SIZE_THRESHOLD / 2;
             controlPlane.commitFile("obj0", 1, fileSize,
-                List.of(CommitBatchRequest.of(EXISTING_TOPIC_1_ID_PARTITION_0, 0, (int) fileSize, 0, 100, 1000, TimestampType.CREATE_TIME)));
+                List.of(CommitBatchRequest.of(0, EXISTING_TOPIC_1_ID_PARTITION_0, 0, (int) fileSize, 0, 100, 1000, TimestampType.CREATE_TIME)));
             controlPlane.commitFile("obj1", 2, fileSize,
-                List.of(CommitBatchRequest.of(EXISTING_TOPIC_1_ID_PARTITION_0, 0, (int) fileSize, 0, 100, 2000, TimestampType.CREATE_TIME)));
+                List.of(CommitBatchRequest.of(0, EXISTING_TOPIC_1_ID_PARTITION_0, 0, (int) fileSize, 0, 100, 2000, TimestampType.CREATE_TIME)));
 
             final var workItemId = controlPlane.getFileMergeWorkItem().workItemId();
 
@@ -850,11 +850,11 @@ public abstract class AbstractControlPlaneTest {
         void batchIsNotPartOfWorkItem() {
             final long fileSize = FILE_MERGE_SIZE_THRESHOLD / 2;
             controlPlane.commitFile("obj0", 1, fileSize,
-                List.of(CommitBatchRequest.of(EXISTING_TOPIC_1_ID_PARTITION_0, 0, (int) fileSize, 0, 100, 1000, TimestampType.CREATE_TIME)));
+                List.of(CommitBatchRequest.of(0, EXISTING_TOPIC_1_ID_PARTITION_0, 0, (int) fileSize, 0, 100, 1000, TimestampType.CREATE_TIME)));
             controlPlane.commitFile("obj1", 2, fileSize,
-                List.of(CommitBatchRequest.of(EXISTING_TOPIC_1_ID_PARTITION_0, 0, (int) fileSize, 0, 100, 2000, TimestampType.CREATE_TIME)));
+                List.of(CommitBatchRequest.of(0, EXISTING_TOPIC_1_ID_PARTITION_0, 0, (int) fileSize, 0, 100, 2000, TimestampType.CREATE_TIME)));
             controlPlane.commitFile("obj2", 3, fileSize,
-                List.of(CommitBatchRequest.of(EXISTING_TOPIC_1_ID_PARTITION_0, 0, (int) fileSize, 0, 100, 3000, TimestampType.CREATE_TIME)));
+                List.of(CommitBatchRequest.of(0, EXISTING_TOPIC_1_ID_PARTITION_0, 0, (int) fileSize, 0, 100, 3000, TimestampType.CREATE_TIME)));
 
             final FileMergeWorkItem fileMergeWorkItem = controlPlane.getFileMergeWorkItem();
             assertThat(fileMergeWorkItem.files()).hasSize(2);
@@ -888,15 +888,15 @@ public abstract class AbstractControlPlaneTest {
 
             final long committedAt = time.milliseconds();
             controlPlane.commitFile("obj1", 1, fileSize1,
-                List.of(CommitBatchRequest.of(EXISTING_TOPIC_1_ID_PARTITION_0, 0, file1Batch1Size, 0, 100, 1000, TimestampType.CREATE_TIME)));
+                List.of(CommitBatchRequest.of(0, EXISTING_TOPIC_1_ID_PARTITION_0, 0, file1Batch1Size, 0, 100, 1000, TimestampType.CREATE_TIME)));
             controlPlane.commitFile("obj2", 2, fileSize2,
                 List.of(
-                    CommitBatchRequest.of(EXISTING_TOPIC_1_ID_PARTITION_0, 0, file2Batch1Size, 0, 100, 2000, TimestampType.LOG_APPEND_TIME),
-                    CommitBatchRequest.of(EXISTING_TOPIC_1_ID_PARTITION_1, file2Batch1Size, file2Batch2Size, 0, 50, 3000, TimestampType.CREATE_TIME)
+                    CommitBatchRequest.of(0, EXISTING_TOPIC_1_ID_PARTITION_0, 0, file2Batch1Size, 0, 100, 2000, TimestampType.LOG_APPEND_TIME),
+                    CommitBatchRequest.of(0, EXISTING_TOPIC_1_ID_PARTITION_1, file2Batch1Size, file2Batch2Size, 0, 50, 3000, TimestampType.CREATE_TIME)
                 ));
             controlPlane.commitFile("obj3", 3, fileSize3,
                 List.of(
-                    CommitBatchRequest.of(EXISTING_TOPIC_1_ID_PARTITION_1, 0, file3Batch1Size, 0, 200, 4000, TimestampType.LOG_APPEND_TIME)
+                    CommitBatchRequest.of(0, EXISTING_TOPIC_1_ID_PARTITION_1, 0, file3Batch1Size, 0, 200, 4000, TimestampType.LOG_APPEND_TIME)
                 ));
 
             time.sleep(1);
@@ -959,15 +959,15 @@ public abstract class AbstractControlPlaneTest {
 
             final long committedAt = time.milliseconds();
             controlPlane.commitFile("obj1", 1, fileSize1,
-                List.of(CommitBatchRequest.of(EXISTING_TOPIC_1_ID_PARTITION_0, 0, file1Batch1Size, 0, 100, 1000, TimestampType.CREATE_TIME)));
+                List.of(CommitBatchRequest.of(0, EXISTING_TOPIC_1_ID_PARTITION_0, 0, file1Batch1Size, 0, 100, 1000, TimestampType.CREATE_TIME)));
             controlPlane.commitFile("obj2", 2, fileSize2,
                 List.of(
-                    CommitBatchRequest.of(EXISTING_TOPIC_1_ID_PARTITION_0, 0, file2Batch1Size, 0, 100, 2000, TimestampType.LOG_APPEND_TIME),
-                    CommitBatchRequest.of(EXISTING_TOPIC_2_ID_PARTITION_0, file2Batch1Size, file2Batch2Size, 0, 50, 3000, TimestampType.CREATE_TIME)
+                    CommitBatchRequest.of(0, EXISTING_TOPIC_1_ID_PARTITION_0, 0, file2Batch1Size, 0, 100, 2000, TimestampType.LOG_APPEND_TIME),
+                    CommitBatchRequest.of(0, EXISTING_TOPIC_2_ID_PARTITION_0, file2Batch1Size, file2Batch2Size, 0, 50, 3000, TimestampType.CREATE_TIME)
                 ));
             controlPlane.commitFile("obj3", 3, fileSize3,
                 List.of(
-                    CommitBatchRequest.of(EXISTING_TOPIC_2_ID_PARTITION_0, 0, file3Batch1Size, 0, 200, 4000, TimestampType.LOG_APPEND_TIME)
+                    CommitBatchRequest.of(0, EXISTING_TOPIC_2_ID_PARTITION_0, 0, file3Batch1Size, 0, 200, 4000, TimestampType.LOG_APPEND_TIME)
                 ));
 
             final var workItemId = controlPlane.getFileMergeWorkItem().workItemId();
@@ -1017,9 +1017,9 @@ public abstract class AbstractControlPlaneTest {
             final long fileSize = FILE_MERGE_SIZE_THRESHOLD / 2 + 1;
             final long committedAt = time.milliseconds();
             controlPlane.commitFile("obj1", 1, fileSize,
-                List.of(CommitBatchRequest.of(EXISTING_TOPIC_1_ID_PARTITION_0, 0, (int) fileSize, 0, 100, 1000, TimestampType.CREATE_TIME)));
+                List.of(CommitBatchRequest.of(0, EXISTING_TOPIC_1_ID_PARTITION_0, 0, (int) fileSize, 0, 100, 1000, TimestampType.CREATE_TIME)));
             controlPlane.commitFile("obj2", 3, fileSize,
-                List.of(CommitBatchRequest.of(EXISTING_TOPIC_1_ID_PARTITION_0, 0, (int) fileSize, 0, 200, 2000, TimestampType.LOG_APPEND_TIME)));
+                List.of(CommitBatchRequest.of(0, EXISTING_TOPIC_1_ID_PARTITION_0, 0, (int) fileSize, 0, 200, 2000, TimestampType.LOG_APPEND_TIME)));
 
             final var workItemId = controlPlane.getFileMergeWorkItem().workItemId();
 
@@ -1059,9 +1059,9 @@ public abstract class AbstractControlPlaneTest {
             final long fileSize = FILE_MERGE_SIZE_THRESHOLD / 2;
             final long committedAt = time.milliseconds();
             controlPlane.commitFile("obj1", 1, fileSize,
-                List.of(CommitBatchRequest.of(EXISTING_TOPIC_1_ID_PARTITION_0, 0, (int) fileSize, 0, 100, 1000, TimestampType.CREATE_TIME)));
+                List.of(CommitBatchRequest.of(0, EXISTING_TOPIC_1_ID_PARTITION_0, 0, (int) fileSize, 0, 100, 1000, TimestampType.CREATE_TIME)));
             controlPlane.commitFile("obj2", 2, fileSize,
-                List.of(CommitBatchRequest.of(EXISTING_TOPIC_1_ID_PARTITION_0, 0, (int) fileSize, 0, 100, 2000, TimestampType.CREATE_TIME)));
+                List.of(CommitBatchRequest.of(0, EXISTING_TOPIC_1_ID_PARTITION_0, 0, (int) fileSize, 0, 100, 2000, TimestampType.CREATE_TIME)));
 
             time.sleep(1);
             final Instant deletedAt = TimeUtils.now(time);
@@ -1116,7 +1116,7 @@ public abstract class AbstractControlPlaneTest {
             final long fileSize = FILE_MERGE_SIZE_THRESHOLD + 1;
             final long committedAt = time.milliseconds();
             controlPlane.commitFile("obj0", 1, fileSize,
-                List.of(CommitBatchRequest.of(EXISTING_TOPIC_1_ID_PARTITION_0, 0, (int) fileSize, 0, 100, 1000, TimestampType.CREATE_TIME)));
+                List.of(CommitBatchRequest.of(0, EXISTING_TOPIC_1_ID_PARTITION_0, 0, (int) fileSize, 0, 100, 1000, TimestampType.CREATE_TIME)));
 
             final List<FileMergeWorkItem.File> expectedFiles = List.of(
                 new FileMergeWorkItem.File(1L, "obj0", fileSize, fileSize,

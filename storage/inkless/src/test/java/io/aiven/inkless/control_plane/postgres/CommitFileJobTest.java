@@ -78,8 +78,8 @@ class CommitFileJobTest {
     void simpleCommit() {
         final String objectKey = "obj1";
 
-        final CommitBatchRequest request1 = CommitBatchRequest.of(T0P1, 0, 100, 0, 14, 1000, TimestampType.CREATE_TIME);
-        final CommitBatchRequest request2 = CommitBatchRequest.of(T1P0, 100, 50, 0, 26, 2000, TimestampType.LOG_APPEND_TIME);
+        final CommitBatchRequest request1 = CommitBatchRequest.of(0, T0P1, 0, 100, 0, 14, 1000, TimestampType.CREATE_TIME);
+        final CommitBatchRequest request2 = CommitBatchRequest.of(0, T1P0, 100, 50, 0, 26, 2000, TimestampType.LOG_APPEND_TIME);
         final CommitFileJob job = new CommitFileJob(time, pgContainer.getJooqCtx(), objectKey, BROKER_ID, FILE_SIZE, List.of(
             request1,
             request2
@@ -119,8 +119,8 @@ class CommitFileJobTest {
         final Instant time1 = TimeUtils.now(time);
 
         final long firstFileCommittedAt = time.milliseconds();
-        final CommitBatchRequest request1 = CommitBatchRequest.of(T0P1, 0, 100, 0, 14, 1000, TimestampType.CREATE_TIME);
-        final CommitBatchRequest request2 = CommitBatchRequest.of(T1P0, 100, 50, 0, 26, 2000, TimestampType.LOG_APPEND_TIME);
+        final CommitBatchRequest request1 = CommitBatchRequest.of(0, T0P1, 0, 100, 0, 14, 1000, TimestampType.CREATE_TIME);
+        final CommitBatchRequest request2 = CommitBatchRequest.of(0, T1P0, 100, 50, 0, 26, 2000, TimestampType.LOG_APPEND_TIME);
         final CommitFileJob job1 = new CommitFileJob(time, pgContainer.getJooqCtx(), objectKey1, BROKER_ID, FILE_SIZE, List.of(
             request1,
             request2
@@ -136,8 +136,8 @@ class CommitFileJobTest {
         final Instant time2 = TimeUtils.now(time);
 
         final long secondFileCommittedAt = time.milliseconds();
-        final CommitBatchRequest request3 = CommitBatchRequest.of(T0P0, 0, 111, 0, 158, 3000, TimestampType.CREATE_TIME);
-        final CommitBatchRequest request4 = CommitBatchRequest.of(T0P1, 111, 222, 0, 244, 4000, TimestampType.CREATE_TIME);
+        final CommitBatchRequest request3 = CommitBatchRequest.of(0, T0P0, 0, 111, 0, 158, 3000, TimestampType.CREATE_TIME);
+        final CommitBatchRequest request4 = CommitBatchRequest.of(0, T0P1, 111, 222, 0, 244, 4000, TimestampType.CREATE_TIME);
         final CommitFileJob job2 = new CommitFileJob(time, pgContainer.getJooqCtx(), objectKey2, BROKER_ID, FILE_SIZE, List.of(
             request3,
             request4
@@ -183,12 +183,12 @@ class CommitFileJobTest {
 
         // Non-existent partition.
         final var t1p1 = new TopicIdPartition(TOPIC_ID_1, 10, TOPIC_1);
-        final CommitBatchRequest request1 = CommitBatchRequest.of(T0P1, 0, 100, 0, 14, 1000, TimestampType.CREATE_TIME);
-        final CommitBatchRequest request2 = CommitBatchRequest.of(T1P0, 100, 50, 0, 26, 2000, TimestampType.LOG_APPEND_TIME);
+        final CommitBatchRequest request1 = CommitBatchRequest.of(0, T0P1, 0, 100, 0, 14, 1000, TimestampType.CREATE_TIME);
+        final CommitBatchRequest request2 = CommitBatchRequest.of(0, T1P0, 100, 50, 0, 26, 2000, TimestampType.LOG_APPEND_TIME);
         final CommitFileJob job = new CommitFileJob(time, pgContainer.getJooqCtx(), objectKey, BROKER_ID, FILE_SIZE, List.of(
             request1,
             request2,
-            CommitBatchRequest.of(t1p1, 150, 1243, 82, 100, 3000, TimestampType.LOG_APPEND_TIME)
+            CommitBatchRequest.of(0, t1p1, 150, 1243, 82, 100, 3000, TimestampType.LOG_APPEND_TIME)
         ), duration -> {});
 
         final List<CommitBatchResponse> result = job.call();
@@ -224,8 +224,8 @@ class CommitFileJobTest {
     void simpleIdempotentCommit() {
         final String objectKey = "obj1";
 
-        final CommitBatchRequest request1 = CommitBatchRequest.idempotent(T0P1, 0, 100, 0, 14, 1000, TimestampType.CREATE_TIME, 1L, (short) 3, 0, 14);
-        final CommitBatchRequest request2 = CommitBatchRequest.idempotent(T1P0, 100, 50, 0, 26, 2000, TimestampType.LOG_APPEND_TIME, 1L, (short) 3, 0, 26);
+        final CommitBatchRequest request1 = CommitBatchRequest.idempotent(0, T0P1, 0, 100, 0, 14, 1000, TimestampType.CREATE_TIME, 1L, (short) 3, 0, 14);
+        final CommitBatchRequest request2 = CommitBatchRequest.idempotent(0, T1P0, 100, 50, 0, 26, 2000, TimestampType.LOG_APPEND_TIME, 1L, (short) 3, 0, 26);
         final CommitFileJob job = new CommitFileJob(time, pgContainer.getJooqCtx(), objectKey, BROKER_ID, FILE_SIZE, List.of(request1, request2), duration -> {
         });
         final List<CommitBatchResponse> result = job.call();
@@ -260,8 +260,8 @@ class CommitFileJobTest {
     void inSequenceCommit() {
         final String objectKey = "obj1";
 
-        final CommitBatchRequest request1 = CommitBatchRequest.idempotent(T0P1, 0, 100, 0, 14, 1000, TimestampType.CREATE_TIME, 1L, (short) 3, 0, 14);
-        final CommitBatchRequest request2 = CommitBatchRequest.idempotent(T0P1, 100, 50, 15, 26, 2000, TimestampType.LOG_APPEND_TIME, 1L, (short) 3, 15, 26);
+        final CommitBatchRequest request1 = CommitBatchRequest.idempotent(0, T0P1, 0, 100, 0, 14, 1000, TimestampType.CREATE_TIME, 1L, (short) 3, 0, 14);
+        final CommitBatchRequest request2 = CommitBatchRequest.idempotent(0, T0P1, 100, 50, 15, 26, 2000, TimestampType.LOG_APPEND_TIME, 1L, (short) 3, 15, 26);
         final CommitFileJob job = new CommitFileJob(time, pgContainer.getJooqCtx(), objectKey, BROKER_ID, FILE_SIZE, List.of(request1, request2), duration -> {
         });
         final List<CommitBatchResponse> result = job.call();
@@ -303,8 +303,8 @@ class CommitFileJobTest {
     void outOfOrderCommit(int lastBatchSequence, int firstBatchSequence) {
         final String objectKey = "obj1";
 
-        final CommitBatchRequest request1 = CommitBatchRequest.idempotent(T0P1, 0, 100, 0, 14, 1000, TimestampType.CREATE_TIME, 1L, (short) 3, 0, lastBatchSequence);
-        final CommitBatchRequest request2 = CommitBatchRequest.idempotent(T0P1, 100, 50, 0, 26, 2000, TimestampType.LOG_APPEND_TIME, 1L, (short) 3, firstBatchSequence, 26);
+        final CommitBatchRequest request1 = CommitBatchRequest.idempotent(0, T0P1, 0, 100, 0, 14, 1000, TimestampType.CREATE_TIME, 1L, (short) 3, 0, lastBatchSequence);
+        final CommitBatchRequest request2 = CommitBatchRequest.idempotent(0, T0P1, 100, 50, 0, 26, 2000, TimestampType.LOG_APPEND_TIME, 1L, (short) 3, firstBatchSequence, 26);
         final CommitFileJob job = new CommitFileJob(time, pgContainer.getJooqCtx(), objectKey, BROKER_ID, FILE_SIZE, List.of(request1, request2), duration -> {
         });
         final List<CommitBatchResponse> result = job.call();
@@ -337,7 +337,7 @@ class CommitFileJobTest {
     void outOfOrderCommitNewEpoch() {
         final String objectKey = "obj1";
 
-        final CommitBatchRequest request1 = CommitBatchRequest.idempotent(T0P1, 0, 100, 0, 14, 1000, TimestampType.CREATE_TIME, 1L, (short) 2, 1, 15);
+        final CommitBatchRequest request1 = CommitBatchRequest.idempotent(0, T0P1, 0, 100, 0, 14, 1000, TimestampType.CREATE_TIME, 1L, (short) 2, 1, 15);
         final CommitFileJob job = new CommitFileJob(time, pgContainer.getJooqCtx(), objectKey, BROKER_ID, FILE_SIZE, List.of(request1), duration -> {
         });
         final List<CommitBatchResponse> result = job.call();
@@ -364,8 +364,8 @@ class CommitFileJobTest {
     void invalidProducerEpoch() {
         final String objectKey = "obj1";
 
-        final CommitBatchRequest request1 = CommitBatchRequest.idempotent(T0P1, 0, 100, 0, 14, 1000, TimestampType.CREATE_TIME, 1L, (short) 3, 0, 14);
-        final CommitBatchRequest request2 = CommitBatchRequest.idempotent(T0P1, 100, 50, 0, 26, 2000, TimestampType.LOG_APPEND_TIME, 1L, (short) 2, 15, 26);
+        final CommitBatchRequest request1 = CommitBatchRequest.idempotent(0, T0P1, 0, 100, 0, 14, 1000, TimestampType.CREATE_TIME, 1L, (short) 3, 0, 14);
+        final CommitBatchRequest request2 = CommitBatchRequest.idempotent(0, T0P1, 100, 50, 0, 26, 2000, TimestampType.LOG_APPEND_TIME, 1L, (short) 2, 15, 26);
         final CommitFileJob job = new CommitFileJob(time, pgContainer.getJooqCtx(), objectKey, BROKER_ID, FILE_SIZE, List.of(request1, request2), duration -> {
         });
         final List<CommitBatchResponse> result = job.call();

@@ -104,8 +104,8 @@ class DeleteRecordsJobTest {
         new CommitFileJob(
             time, pgContainer.getJooqCtx(), objectKey1, BROKER_ID, file1Size,
             List.of(
-                CommitBatchRequest.of(T0P0, 0, file1Batch1Size, 0, 11, 1000,  TimestampType.CREATE_TIME),
-                CommitBatchRequest.of(T0P1, file1Batch1Size, file1Batch2Size, 0, 11, 1000, TimestampType.CREATE_TIME)
+                CommitBatchRequest.of(0, T0P0, 0, file1Batch1Size, 0, 11, 1000,  TimestampType.CREATE_TIME),
+                CommitBatchRequest.of(0, T0P1, file1Batch1Size, file1Batch2Size, 0, 11, 1000, TimestampType.CREATE_TIME)
             ), durationCallback
         ).call();
 
@@ -116,8 +116,8 @@ class DeleteRecordsJobTest {
         new CommitFileJob(
             time, pgContainer.getJooqCtx(), objectKey2, BROKER_ID, file2Size,
             List.of(
-                CommitBatchRequest.of(T0P0, 0, file2Batch1Size, 12, 23, 1000, TimestampType.CREATE_TIME),
-                CommitBatchRequest.of(T2P0, file2Batch1Size, file2Batch2Size, 0, 11, 1000, TimestampType.CREATE_TIME)
+                CommitBatchRequest.of(0, T0P0, 0, file2Batch1Size, 12, 23, 1000, TimestampType.CREATE_TIME),
+                CommitBatchRequest.of(0, T2P0, file2Batch1Size, file2Batch2Size, 0, 11, 1000, TimestampType.CREATE_TIME)
             ), durationCallback
         ).call();
 
@@ -129,9 +129,9 @@ class DeleteRecordsJobTest {
         new CommitFileJob(
             time, pgContainer.getJooqCtx(), objectKey3, BROKER_ID, file3Size,
             List.of(
-                CommitBatchRequest.of(T0P0, 0, file3Batch1Size, 24, 35, 1000, TimestampType.CREATE_TIME),
-                CommitBatchRequest.of(T0P1, file3Batch1Size, file3Batch2Size, 12, 23, 1000, TimestampType.CREATE_TIME),
-                CommitBatchRequest.of(T2P0, file3Batch1Size + file3Batch2Size, file3Batch3Size, 12, 23, 1000, TimestampType.CREATE_TIME)
+                CommitBatchRequest.of(0, T0P0, 0, file3Batch1Size, 24, 35, 1000, TimestampType.CREATE_TIME),
+                CommitBatchRequest.of(0, T0P1, file3Batch1Size, file3Batch2Size, 12, 23, 1000, TimestampType.CREATE_TIME),
+                CommitBatchRequest.of(0, T2P0, file3Batch1Size + file3Batch2Size, file3Batch3Size, 12, 23, 1000, TimestampType.CREATE_TIME)
             ), durationCallback
         ).call();
 

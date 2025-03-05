@@ -60,8 +60,7 @@ class FileCommitterTest {
         }
     };
     static final ClosedFile FILE = new ClosedFile(Instant.EPOCH, Map.of(), Map.of(),
-            List.of(CommitBatchRequest.of(null, 0, 0, 0, 0, 0, TimestampType.CREATE_TIME)),
-            List.of(1),
+            List.of(CommitBatchRequest.of(1, null, 0, 0, 0, 0, 0, TimestampType.CREATE_TIME)),
             new byte[10]);
     static final KeyAlignmentStrategy KEY_ALIGNMENT_STRATEGY = new FixedBlockAlignment(Integer.MAX_VALUE);
     static final ObjectCache OBJECT_CACHE = new NullCache();

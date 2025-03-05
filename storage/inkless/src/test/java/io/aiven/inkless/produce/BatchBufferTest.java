@@ -60,12 +60,10 @@ class BatchBufferTest {
 
         BatchBuffer.CloseResult result = buffer.close();
         assertThat(result.commitBatchRequests()).isEmpty();
-        assertThat(result.requestIds()).isEmpty();
         assertThat(result.data()).isEmpty();
 
         result = buffer.close();
         assertThat(result.commitBatchRequests()).isEmpty();
-        assertThat(result.requestIds()).isEmpty();
         assertThat(result.data()).isEmpty();
     }
 
@@ -74,11 +72,11 @@ class BatchBufferTest {
         return Stream.of(
             Arguments.of(
                 createBatch(TimestampType.CREATE_TIME, time, T0P0 + "-0", T0P0 + "-1", T0P0 + "-2"),
-                CommitBatchRequest.of(T0P0, 0, 181, 19, 21, time.milliseconds(), TimestampType.CREATE_TIME)
+                CommitBatchRequest.of(0, T0P0, 0, 181, 19, 21, time.milliseconds(), TimestampType.CREATE_TIME)
             ),
             Arguments.of(
                 createIdempotentBatch(time, T0P0 + "-0", T0P0 + "-1", T0P0 + "-2"),
-                CommitBatchRequest.idempotent(T0P0, 0, 181, 19, 21, time.milliseconds(), TimestampType.CREATE_TIME, 1, (short) 1, 1, 3)
+                CommitBatchRequest.idempotent(0, T0P0, 0, 181, 19, 21, time.milliseconds(), TimestampType.CREATE_TIME, 1, (short) 1, 1, 3)
             )
         );
     }
@@ -93,7 +91,6 @@ class BatchBufferTest {
 
         final BatchBuffer.CloseResult result = buffer.close();
         assertThat(result.commitBatchRequests()).containsExactly(expectedRequest);
-        assertThat(result.requestIds()).containsExactly(0);
         assertThat(result.data()).containsExactly(batchToBytes(batch));
         assertThat(result.data()).containsExactly(beforeAdding);
         assertThat(batch.hasProducerId()).isEqualTo(expectedRequest.hasProducerId());
@@ -132,20 +129,15 @@ class BatchBufferTest {
         // Here batches are sorted.
         final BatchBuffer.CloseResult result = buffer.close();
         assertThat(result.commitBatchRequests()).containsExactly(
-            CommitBatchRequest.of(T0P0, 0, batchSize, 19, 19, time.milliseconds(), TimestampType.CREATE_TIME),
-            CommitBatchRequest.of(T0P0, batchSize, batchSize, 19, 19, time.milliseconds(), TimestampType.CREATE_TIME),
-            CommitBatchRequest.of(T0P0, batchSize * 2, batchSize, 19, 19, time.milliseconds(), TimestampType.CREATE_TIME),
-            CommitBatchRequest.of(T0P1, batchSize * 3, batchSize, 19, 19, time.milliseconds(), TimestampType.LOG_APPEND_TIME),
-            CommitBatchRequest.of(T0P1, batchSize * 4, batchSize, 19, 19, time.milliseconds(), TimestampType.LOG_APPEND_TIME),
-            CommitBatchRequest.of(T0P1, batchSize * 5, batchSize, 19, 19, time.milliseconds(), TimestampType.LOG_APPEND_TIME),
-            CommitBatchRequest.of(T1P0, batchSize * 6, batchSize, 19, 19, time.milliseconds(), TimestampType.LOG_APPEND_TIME),
-            CommitBatchRequest.of(T1P0, batchSize * 7, batchSize, 19, 19, time.milliseconds(), TimestampType.LOG_APPEND_TIME),
-            CommitBatchRequest.of(T1P0, batchSize * 8, batchSize, 19, 19, time.milliseconds(), TimestampType.LOG_APPEND_TIME)
-        );
-        assertThat(result.requestIds()).containsExactly(
-            0, 0, 1,
-            1, 2, 2,
-            0, 1, 2
+            CommitBatchRequest.of(0, T0P0, 0, batchSize, 19, 19, time.milliseconds(), TimestampType.CREATE_TIME),
+            CommitBatchRequest.of(0, T0P0, batchSize, batchSize, 19, 19, time.milliseconds(), TimestampType.CREATE_TIME),
+            CommitBatchRequest.of(1, T0P0, batchSize * 2, batchSize, 19, 19, time.milliseconds(), TimestampType.CREATE_TIME),
+            CommitBatchRequest.of(1, T0P1, batchSize * 3, batchSize, 19, 19, time.milliseconds(), TimestampType.LOG_APPEND_TIME),
+            CommitBatchRequest.of(2, T0P1, batchSize * 4, batchSize, 19, 19, time.milliseconds(), TimestampType.LOG_APPEND_TIME),
+            CommitBatchRequest.of(2, T0P1, batchSize * 5, batchSize, 19, 19, time.milliseconds(), TimestampType.LOG_APPEND_TIME),
+            CommitBatchRequest.of(0, T1P0, batchSize * 6, batchSize, 19, 19, time.milliseconds(), TimestampType.LOG_APPEND_TIME),
+            CommitBatchRequest.of(1, T1P0, batchSize * 7, batchSize, 19, 19, time.milliseconds(), TimestampType.LOG_APPEND_TIME),
+            CommitBatchRequest.of(2, T1P0, batchSize * 8, batchSize, 19, 19, time.milliseconds(), TimestampType.LOG_APPEND_TIME)
         );
 
         // Here batch data are sorted too.
@@ -175,10 +167,9 @@ class BatchBufferTest {
         buffer.addBatch(T0P0, batch1, 0);
         final BatchBuffer.CloseResult result1 = buffer.close();
         assertThat(result1.commitBatchRequests()).containsExactly(
-            CommitBatchRequest.of(T0P0, 0, batch1.sizeInBytes(), 19, 19, time.milliseconds(), TimestampType.LOG_APPEND_TIME)
+            CommitBatchRequest.of(0, T0P0, 0, batch1.sizeInBytes(), 19, 19, time.milliseconds(), TimestampType.LOG_APPEND_TIME)
         );
         assertThat(result1.data()).containsExactly(batchToBytes(batch1));
-        assertThat(result1.requestIds()).containsExactly(0);
 
         final MutableRecordBatch batch2 = createBatch(TimestampType.CREATE_TIME, time, T1P0 + "-0-longer");
         assertThatThrownBy(() -> buffer.addBatch(T1P0, batch2, 1))

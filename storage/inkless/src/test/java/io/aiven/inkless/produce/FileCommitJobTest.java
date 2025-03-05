@@ -65,12 +65,11 @@ class FileCommitJobTest {
         1, REQUEST_1
     );
     static final List<CommitBatchRequest> COMMIT_BATCH_REQUESTS = List.of(
-        CommitBatchRequest.of(T0P0, 0, 100, 0, 9, 1000, TimestampType.CREATE_TIME),
-        CommitBatchRequest.of(T0P1, 100, 100, 0, 9, 1000, TimestampType.CREATE_TIME),
-        CommitBatchRequest.of(T0P1, 200, 100, 0, 9, 1000, TimestampType.CREATE_TIME),
-        CommitBatchRequest.of(T1P0, 300, 100, 0, 9, 1000, TimestampType.LOG_APPEND_TIME)
+        CommitBatchRequest.of(0, T0P0, 0, 100, 0, 9, 1000, TimestampType.CREATE_TIME),
+        CommitBatchRequest.of(0, T0P1, 100, 100, 0, 9, 1000, TimestampType.CREATE_TIME),
+        CommitBatchRequest.of(1, T0P1, 200, 100, 0, 9, 1000, TimestampType.CREATE_TIME),
+        CommitBatchRequest.of(1, T1P0, 300, 100, 0, 9, 1000, TimestampType.LOG_APPEND_TIME)
     );
-    static final List<Integer> REQUEST_IDS = List.of(0, 0, 1, 1);
 
     static final byte[] DATA = new byte[10];
     static final long FILE_SIZE = DATA.length;
@@ -104,7 +103,7 @@ class FileCommitJobTest {
             .thenReturn(commitBatchResponses);
         when(time.nanoseconds()).thenReturn(10_000_000L, 20_000_000L);
 
-        final ClosedFile file = new ClosedFile(Instant.EPOCH, REQUESTS, awaitingFuturesByRequest, COMMIT_BATCH_REQUESTS, REQUEST_IDS, DATA);
+        final ClosedFile file = new ClosedFile(Instant.EPOCH, REQUESTS, awaitingFuturesByRequest, COMMIT_BATCH_REQUESTS, DATA);
         final CompletableFuture<ObjectKey> uploadFuture = CompletableFuture.completedFuture(OBJECT_KEY);
         final FileCommitJob job = new FileCommitJob(BROKER_ID, file, uploadFuture, time, controlPlane, objectDeleter, commitTimeDurationCallback);
 
@@ -136,7 +135,7 @@ class FileCommitJobTest {
             .thenReturn(commitBatchResponses);
         when(time.nanoseconds()).thenReturn(10_000_000L, 20_000_000L);
 
-        final ClosedFile file = new ClosedFile(Instant.EPOCH, REQUESTS, awaitingFuturesByRequest, COMMIT_BATCH_REQUESTS, REQUEST_IDS, DATA);
+        final ClosedFile file = new ClosedFile(Instant.EPOCH, REQUESTS, awaitingFuturesByRequest, COMMIT_BATCH_REQUESTS, DATA);
         final CompletableFuture<ObjectKey> uploadFuture = CompletableFuture.completedFuture(OBJECT_KEY);
         final FileCommitJob job = new FileCommitJob(BROKER_ID, file, uploadFuture, time, controlPlane, objectDeleter, commitTimeDurationCallback);
 
@@ -156,7 +155,7 @@ class FileCommitJobTest {
 
         when(time.nanoseconds()).thenReturn(10_000_000L, 20_000_000L);
 
-        final ClosedFile file = new ClosedFile(Instant.EPOCH, REQUESTS, awaitingFuturesByRequest, COMMIT_BATCH_REQUESTS, REQUEST_IDS, DATA);
+        final ClosedFile file = new ClosedFile(Instant.EPOCH, REQUESTS, awaitingFuturesByRequest, COMMIT_BATCH_REQUESTS, DATA);
         final CompletableFuture<ObjectKey> uploadFuture = CompletableFuture.failedFuture(new StorageBackendException("test"));
         final FileCommitJob job = new FileCommitJob(BROKER_ID, file, uploadFuture, time, controlPlane, objectDeleter, commitTimeDurationCallback);
 
@@ -183,7 +182,7 @@ class FileCommitJobTest {
         when(controlPlane.commitFile(eq(OBJECT_KEY_MAIN_PART), eq(BROKER_ID), eq(FILE_SIZE), eq(COMMIT_BATCH_REQUESTS)))
             .thenThrow(new ControlPlaneException("test"));
 
-        final ClosedFile file = new ClosedFile(Instant.EPOCH, REQUESTS, awaitingFuturesByRequest, COMMIT_BATCH_REQUESTS, REQUEST_IDS, DATA);
+        final ClosedFile file = new ClosedFile(Instant.EPOCH, REQUESTS, awaitingFuturesByRequest, COMMIT_BATCH_REQUESTS, DATA);
         final CompletableFuture<ObjectKey> uploadFuture = CompletableFuture.completedFuture(OBJECT_KEY);
         final FileCommitJob job = new FileCommitJob(BROKER_ID, file, uploadFuture, time, controlPlane, objectDeleter, commitTimeDurationCallback);
 

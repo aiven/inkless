@@ -69,7 +69,7 @@ class FindBatchesJobTest {
         final CommitFileJob commitJob = new CommitFileJob(
             time, pgContainer.getJooqCtx(), objectKey1, BROKER_ID, FILE_SIZE,
             List.of(
-                CommitBatchRequest.of(T0P0, 0, 1234, 0, 11, 1000, TimestampType.CREATE_TIME)
+                CommitBatchRequest.of(0, T0P0, 0, 1234, 0, 11, 1000, TimestampType.CREATE_TIME)
             ),
             duration -> {}
         );
