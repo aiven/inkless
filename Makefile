@@ -20,7 +20,7 @@ local_destroy:
 	docker compose down
 	rm -rf ./_data
 
-VERSION := 4.0.0-inkless-SNAPSHOT
+VERSION := 4.1.0-inkless-SNAPSHOT
 
 .PHONY: build
 build:
