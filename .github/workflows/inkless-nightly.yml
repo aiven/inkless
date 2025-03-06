@@ -59,7 +59,7 @@ jobs:
           :storage:inkless:test :storage:inkless:integrationTest && \
           ./gradlew :metadata:test --tests "org.apache.kafka.controller.*" && \
           ./gradlew :core:test --tests "*Inkless*" && \
-          ./gradlew :core:test --tests "*ProducerSend*"
+          ./gradlew :core:test --tests "kafka.api.*Producer*Test"
           exitcode="$?"
           echo "exitcode=$exitcode" >> $GITHUB_OUTPUT
       - name: Archive JUnit HTML reports

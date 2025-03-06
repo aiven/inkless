@@ -67,6 +67,10 @@ test:
 pitest:
 	./gradlew :storage:inkless:pitest
 
+.PHONY: integration_test
+integration_test_core:
+	./gradlew :core:test --tests "kafka.api.*Producer*Test" --max-workers 1
+
 .PHONY: clean
 clean:
 	./gradlew clean
