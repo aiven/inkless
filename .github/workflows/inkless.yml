@@ -51,6 +51,17 @@ jobs:
         # --no-scan:      For public fork PRs, we won't attempt to publish the scan
         run: |
           ./gradlew --build-cache --info $SCAN_ARG :core:check :storage:inkless:check -x test -x rat
+      - name: Check for uncommitted changes
+        run: |
+          if [[ -n $(git status -s) ]]; then
+            echo "There are uncommitted changes after the task:"
+            git status -s
+            echo "There are uncommitted changes on generated classes (e.g. jooq). Please commit and push them."
+            exit 1
+          else
+            echo "No changes detected."
+          fi
+        shell: bash
       - name: Archive check reports
         if: always()
         uses: actions/upload-artifact@v4
