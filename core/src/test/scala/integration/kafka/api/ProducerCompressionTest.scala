@@ -28,7 +28,7 @@ import org.apache.kafka.common.network.ListenerName
 import org.apache.kafka.common.security.auth.SecurityProtocol
 import org.apache.kafka.common.serialization.ByteArraySerializer
 import org.junit.jupiter.api.Assertions._
-import org.junit.jupiter.api.{AfterEach, BeforeEach, TestInfo}
+import org.junit.jupiter.api.{AfterEach, BeforeEach, Tag, TestInfo}
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.CsvSource
 
@@ -37,6 +37,7 @@ import java.util.{Collections, Properties}
 import scala.collection.mutable.ListBuffer
 import scala.util.Random
 
+@Tag("inkless")
 class ProducerCompressionTest extends QuorumTestHarness {
 
   private val brokerId = 0
@@ -48,7 +49,7 @@ class ProducerCompressionTest extends QuorumTestHarness {
   @BeforeEach
   override def setUp(testInfo: TestInfo): Unit = {
     super.setUp(testInfo)
-    val props = TestUtils.createBrokerConfig(brokerId)
+    val props = TestUtils.createBrokerConfig(brokerId, inklessMode = inklessMode)
     broker = createBroker(new KafkaConfig(props))
   }
 
@@ -91,7 +92,7 @@ class ProducerCompressionTest extends QuorumTestHarness {
       val admin = TestUtils.createAdminClient(Seq(broker),
         ListenerName.forSecurityProtocol(SecurityProtocol.PLAINTEXT))
       try {
-        TestUtils.createTopicWithAdmin(admin, topic, Seq(broker), controllerServers)
+        TestUtils.createInklessTopicWithAdmin(admin, topic, Seq(broker), controllerServers)
       } finally {
         admin.close()
       }
