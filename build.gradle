@@ -839,7 +839,7 @@ subprojects {
   apply plugin: 'com.diffplug.spotless'
   spotless {
     java {
-      targetExclude('**/generated/**/*.java','**/generated-test/**/*.java')
+      targetExclude('**/generated/**/*.java','**/generated-test/**/*.java', '**/generated-jooq/**/*.java')
       importOrder('kafka', 'org.apache.kafka', 'com', 'net', 'org', 'java', 'javax', '', '\\#')
       removeUnusedImports()
     }
@@ -2571,7 +2571,7 @@ project(':storage:inkless') {
         )
       }
       basePackageName.set("org.jooq.generated")
-      outputDirectory.set(project.layout.buildDirectory.dir("generated-jooq"))
+      outputDirectory.set(project.layout.projectDirectory.dir("src/main/generated-jooq"))
       includeFlywayTable.set(false)
       outputSchemaToDefault.add("public")
       inputs.dir("src/main/resources/db/migration")
@@ -2584,7 +2584,7 @@ project(':storage:inkless') {
         srcDirs = [
                 "src/main/java",
                 "${projectDir}/build/generated/main/java",
-                "${projectDir}/build/generated-jooq"
+                "${projectDir}/src/main/generated-jooq"
         ]
       }
     }
