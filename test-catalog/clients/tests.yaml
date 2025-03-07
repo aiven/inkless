@@ -306,6 +306,7 @@ org.apache.kafka.clients.admin.KafkaAdminClientTest:
 - testDescribeMultipleClassicGroups
 - testDescribeMultipleConsumerGroups
 - testDescribeMultipleShareGroups
+- testDescribeMultipleStreamsGroups
 - testDescribeNonConsumerGroups
 - testDescribeOldAndNewConsumerGroups
 - testDescribeProducers
@@ -317,6 +318,8 @@ org.apache.kafka.clients.admin.KafkaAdminClientTest:
 - testDescribeShareGroups
 - testDescribeShareGroupsGroupIdNotFound
 - testDescribeShareGroupsWithAuthorizedOperationsOmitted
+- testDescribeStreamsGroups
+- testDescribeStreamsGroupsWithAuthorizedOperationsOmitted
 - testDescribeTopicPartitionsApiWithAuthorizedOps
 - testDescribeTopicPartitionsApiWithoutAuthorizedOps
 - testDescribeTopicsByIds
