@@ -86,21 +86,24 @@ public class InMemoryControlPlane extends AbstractControlPlane {
     }
 
     @Override
-    protected Iterator<CommitBatchResponse> commitFileForValidRequests(
+    protected synchronized Iterator<CommitBatchResponse> commitFileForValidRequests(
         final String objectKey,
         final int uploaderBrokerId,
         final long fileSize,
         final Stream<CommitBatchRequest> requests
     ) {
-        final long now = time.milliseconds();
-        final FileInfo fileInfo = new FileInfo(fileIdCounter.incrementAndGet(), objectKey, FileReason.PRODUCE, uploaderBrokerId, fileSize);
-        files.put(objectKey, fileInfo);
-        return requests
-            .map(request -> commitFileForValidRequest(now, fileInfo, request))
-            .iterator();
+        try {
+            final long now = time.milliseconds();
+            final FileInfo fileInfo = new FileInfo(fileIdCounter.incrementAndGet(), objectKey, FileReason.PRODUCE, uploaderBrokerId, fileSize);
+            final List<CommitBatchResponse> responses = requests.map(request -> commitFileForValidRequest(now, fileInfo, request)).toList();
+            files.put(objectKey, fileInfo);
+            return responses.iterator();
+        } catch (final RuntimeException e) {
+            throw new ControlPlaneException("Error when committing requests", e);
+        }
     }
 
-    private synchronized CommitBatchResponse commitFileForValidRequest(
+    private CommitBatchResponse commitFileForValidRequest(
         final long now,
         final FileInfo fileInfo,
         final CommitBatchRequest request

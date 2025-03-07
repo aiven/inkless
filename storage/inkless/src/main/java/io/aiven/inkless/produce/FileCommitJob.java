@@ -38,6 +38,7 @@ import io.aiven.inkless.TimeUtils;
 import io.aiven.inkless.common.ObjectKey;
 import io.aiven.inkless.control_plane.CommitBatchResponse;
 import io.aiven.inkless.control_plane.ControlPlane;
+import io.aiven.inkless.control_plane.ControlPlaneException;
 import io.aiven.inkless.storage_backend.common.ObjectDeleter;
 import io.aiven.inkless.storage_backend.common.StorageBackendException;
 
@@ -98,11 +99,14 @@ class FileCommitJob implements Runnable {
             try {
                 finishCommitSuccessfully(result.objectKey);
             } catch (final Exception e) {
-                LOGGER.error("Error commiting data, attempting to remove the uploaded file {}", result.objectKey, e);
-                try {
-                    objectDeleter.delete(result.objectKey);
-                } catch (final StorageBackendException e2) {
-                    LOGGER.error("Error removing the uploaded file {}", result.objectKey, e2);
+                if (e instanceof ControlPlaneException) {
+                    // only attempt to remove the uploaded file if it is a control plane error
+                    LOGGER.error("Error commiting data, attempting to remove the uploaded file {}", result.objectKey, e);
+                    try {
+                        objectDeleter.delete(result.objectKey);
+                    } catch (final StorageBackendException e2) {
+                        LOGGER.error("Error removing the uploaded file {}", result.objectKey, e2);
+                    }
                 }
                 finishCommitWithError();
             }

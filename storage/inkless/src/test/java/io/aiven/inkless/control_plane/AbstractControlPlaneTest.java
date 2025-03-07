@@ -279,7 +279,7 @@ public abstract class AbstractControlPlaneTest {
                 CommitBatchRequest.of(0, new TopicIdPartition(EXISTING_TOPIC_1_ID, 1, EXISTING_TOPIC_1), 2, 0, 10, 19, 1000, TimestampType.CREATE_TIME)
             )
         ))
-            .isInstanceOf(IllegalArgumentException.class)
+            .isInstanceOf(ControlPlaneException.class)
             .hasMessage("Batches with size 0 are not allowed");
     }
 

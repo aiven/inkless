@@ -38,6 +38,7 @@ import java.util.function.Consumer;
 import io.aiven.inkless.TimeUtils;
 import io.aiven.inkless.control_plane.CommitBatchRequest;
 import io.aiven.inkless.control_plane.CommitBatchResponse;
+import io.aiven.inkless.control_plane.ControlPlaneException;
 
 import static org.jooq.generated.Tables.COMMIT_FILE_V1;
 
@@ -84,40 +85,44 @@ class CommitFileJob implements Callable<List<CommitBatchResponse>> {
 
     private List<CommitBatchResponse> runOnce() {
         return jooqCtx.transactionResult((final Configuration conf) -> {
-            final Instant now = TimeUtils.now(time);
+            try {
+                final Instant now = TimeUtils.now(time);
 
-            final CommitBatchRequestV1Record[] jooqRequests = requests.stream().map(r ->
-                new CommitBatchRequestV1Record(
-                    r.topicIdPartition().topicId(),
-                    r.topicIdPartition().partition(),
-                    (long) r.byteOffset(),
-                    (long) r.size(),
-                    r.baseOffset(),
-                    r.lastOffset(),
-                    r.messageTimestampType(),
-                    r.batchMaxTimestamp(),
-                    r.producerId(),
-                    r.producerEpoch(),
-                    r.baseSequence(),
-                    r.lastSequence()
-                )
-            ).toArray(CommitBatchRequestV1Record[]::new);
+                final CommitBatchRequestV1Record[] jooqRequests = requests.stream().map(r ->
+                    new CommitBatchRequestV1Record(
+                        r.topicIdPartition().topicId(),
+                        r.topicIdPartition().partition(),
+                        (long) r.byteOffset(),
+                        (long) r.size(),
+                        r.baseOffset(),
+                        r.lastOffset(),
+                        r.messageTimestampType(),
+                        r.batchMaxTimestamp(),
+                        r.producerId(),
+                        r.producerEpoch(),
+                        r.baseSequence(),
+                        r.lastSequence()
+                    )
+                ).toArray(CommitBatchRequestV1Record[]::new);
 
-            final List<CommitBatchResponseV1Record> functionResult = conf.dsl().select(
-                CommitBatchResponseV1.TOPIC_ID,
-                CommitBatchResponseV1.PARTITION,
-                CommitBatchResponseV1.LOG_START_OFFSET,
-                CommitBatchResponseV1.ASSIGNED_BASE_OFFSET,
-                CommitBatchResponseV1.BATCH_TIMESTAMP,
-                CommitBatchResponseV1.ERROR
-            ).from(COMMIT_FILE_V1.call(
-                objectKey,
-                uploaderBrokerId,
-                fileSize,
-                now,
-                jooqRequests
-            )).fetchInto(CommitBatchResponseV1Record.class);
-            return processFunctionResult(now, functionResult);
+                final List<CommitBatchResponseV1Record> functionResult = conf.dsl().select(
+                    CommitBatchResponseV1.TOPIC_ID,
+                    CommitBatchResponseV1.PARTITION,
+                    CommitBatchResponseV1.LOG_START_OFFSET,
+                    CommitBatchResponseV1.ASSIGNED_BASE_OFFSET,
+                    CommitBatchResponseV1.BATCH_TIMESTAMP,
+                    CommitBatchResponseV1.ERROR
+                ).from(COMMIT_FILE_V1.call(
+                    objectKey,
+                    uploaderBrokerId,
+                    fileSize,
+                    now,
+                    jooqRequests
+                )).fetchInto(CommitBatchResponseV1Record.class);
+                return processFunctionResult(now, functionResult);
+            } catch (RuntimeException e) {
+                throw new ControlPlaneException("Error committing file", e);
+            }
         });
     }
 
