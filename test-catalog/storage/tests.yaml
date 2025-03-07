@@ -345,6 +345,8 @@ org.apache.kafka.storage.internals.log.TimeIndexTest:
 - testTruncate
 org.apache.kafka.storage.internals.log.TransactionIndexTest:
 - testAbortedTxnSerde
+- testAppendAndCollectAfterClose
+- testAppendAndCollectAfterInterrupted
 - testCollectAbortedTransactions
 - testDeleteIfExists
 - testFlush
