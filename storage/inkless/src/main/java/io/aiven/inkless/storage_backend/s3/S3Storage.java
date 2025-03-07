@@ -19,6 +19,7 @@ package io.aiven.inkless.storage_backend.s3;
 
 import com.groupcdg.pitest.annotations.CoverageIgnore;
 
+import java.io.IOException;
 import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.List;
@@ -74,6 +75,17 @@ public class S3Storage implements StorageBackend {
         } catch (final ApiCallTimeoutException | ApiCallAttemptTimeoutException e) {
             throw new StorageBackendTimeoutException("Failed to upload " + key, e);
         } catch (final SdkException e) {
+            throw new StorageBackendException("Failed to upload " + key, e);
+        }
+    }
+
+    @Override
+    public void upload(final ObjectKey key, final InputStream inputStream) throws StorageBackendException {
+        final var partSize = 5 * 1024 * 1024; // TODO make it configurable
+        final var out =  new S3MultiPartOutputStream(bucketName, key, partSize, s3Client);
+        try (out) {
+            inputStream.transferTo(out);
+        } catch (final IOException e) {
             throw new StorageBackendException("Failed to upload " + key, e);
         }
     }

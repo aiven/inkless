@@ -323,7 +323,7 @@ class FileMergerMockedTest {
         verify(time).sleep(longThat(l -> l >= 50));
         verify(file1).close();
 
-        verify(storage, never()).upload(any(ObjectKey.class), any());
+        verify(storage, never()).upload(any(ObjectKey.class), any(byte[].class));
         verify(storage, never()).delete(any(ObjectKey.class));
     }
 
@@ -355,7 +355,7 @@ class FileMergerMockedTest {
             new FileMergeWorkItem(WORK_ITEM_ID, Instant.ofEpochMilli(1234), List.of(file1InWorkItem))
         );
         Mockito.doThrow(new StorageBackendException("test"))
-            .when(storage).upload(any(), any());
+            .when(storage).upload(any(), any(byte[].class));
 
         final FileMerger fileMerger = new FileMerger(sharedState);
         fileMerger.run();
@@ -406,7 +406,7 @@ class FileMergerMockedTest {
         verify(time).sleep(longThat(l -> l >= 50));
         file1.assertClosedAndDataFullyConsumed();
 
-        verify(storage).upload(objectKeyCaptor.capture(), any());
+        verify(storage).upload(objectKeyCaptor.capture(), any(byte[].class));
         verify(storage).delete(objectKeyCaptor.getValue());
     }
 

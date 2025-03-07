@@ -271,7 +271,7 @@ class WriterPropertyTest {
         requester.checkResponses();
 
         if (requestCount > 0) {
-            verify(storage, atLeast(1)).upload(any(), any());
+            verify(storage, atLeast(1)).upload(any(), any(byte[].class));
         }
         final Collection<Invocation> uploadInvocations = mockingDetails(storage).getInvocations();
         Statistics.label("files").collect(uploadInvocations.size());

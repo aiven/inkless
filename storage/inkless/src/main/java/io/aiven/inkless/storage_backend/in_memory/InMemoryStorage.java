@@ -20,6 +20,8 @@ package io.aiven.inkless.storage_backend.in_memory;
 import org.apache.commons.io.input.BoundedInputStream;
 
 import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
 import java.io.InputStream;
 import java.util.Map;
 import java.util.Objects;
@@ -51,6 +53,23 @@ public class InMemoryStorage implements StorageBackend {
         Objects.requireNonNull(key, "key cannot be null");
         Objects.requireNonNull(data, "data cannot be null");
         storage.put(key, data);
+    }
+
+    @Override
+    public void upload(final ObjectKey key, final InputStream inputStream) throws StorageBackendException {
+        ByteArrayOutputStream byteArrayOutputStream = new ByteArrayOutputStream();
+        var buffer = new byte[1024]; // TODO fix
+        int bytesRead;
+
+        try {
+            while ((bytesRead = inputStream.read(buffer)) != -1) {
+                byteArrayOutputStream.write(buffer, 0, bytesRead);
+            }
+        } catch (final IOException e) {
+            throw new StorageBackendException("Failed to upload " + key, e);
+        }
+
+        storage.put(key, byteArrayOutputStream.toByteArray());
     }
 
     @Override
