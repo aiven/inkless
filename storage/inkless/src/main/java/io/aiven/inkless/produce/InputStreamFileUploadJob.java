@@ -19,6 +19,7 @@ package io.aiven.inkless.produce;
 
 import org.apache.kafka.common.utils.Time;
 
+import java.io.InputStream;
 import java.time.Duration;
 import java.util.Objects;
 import java.util.function.Consumer;
@@ -29,27 +30,31 @@ import io.aiven.inkless.storage_backend.common.ObjectUploader;
 import io.aiven.inkless.storage_backend.common.StorageBackendException;
 
 /**
- * The job of uploading a file to the object storage.
+ * The job of uploading a file to the object storage through an input stream.
  */
-public class FileUploadJob extends AbstractFileUploadJob  {
+public class InputStreamFileUploadJob extends AbstractFileUploadJob {
     private final ObjectUploader objectUploader;
-    private final byte[] data;
+    private final InputStream data;
+    private final long length;
 
-    public FileUploadJob(final ObjectKeyCreator objectKeyCreator,
-                                  final ObjectUploader objectUploader,
-                                  final Time time,
-                                  final int attempts,
-                                  final Duration retryBackoff,
-                                  final byte[] data,
-                                  final Consumer<Long> durationCallback) {
+
+    public InputStreamFileUploadJob(final ObjectKeyCreator objectKeyCreator,
+                                    final ObjectUploader objectUploader,
+                                    final Time time,
+                                    final int attempts,
+                                    final Duration retryBackoff,
+                                    final InputStream data,
+                                    final long length,
+                                    final Consumer<Long> durationCallback) {
         super(objectKeyCreator, time, attempts, retryBackoff, durationCallback);
         this.objectUploader = Objects.requireNonNull(objectUploader, "objectUploader cannot be null");
         this.data = Objects.requireNonNull(data, "data cannot be null");
+        this.length = length;
     }
 
 
     @Override
     void upload(ObjectKey objectKey) throws StorageBackendException {
-        objectUploader.upload(objectKey, data);
+        objectUploader.upload(objectKey, data, length);
     }
 }

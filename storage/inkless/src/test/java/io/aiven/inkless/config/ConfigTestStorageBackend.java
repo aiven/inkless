@@ -50,4 +50,8 @@ public class ConfigTestStorageBackend implements StorageBackend {
     @Override
     public void upload(ObjectKey key, byte[] data) throws StorageBackendException {
     }
+
+    @Override
+    public void upload(ObjectKey key, InputStream data, long length) throws StorageBackendException {
+    }
 }

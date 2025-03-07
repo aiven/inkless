@@ -78,6 +78,21 @@ public class S3Storage implements StorageBackend {
         }
     }
 
+    public void upload(final ObjectKey key, final InputStream data, final long length) throws StorageBackendException {
+        final PutObjectRequest putObjectRequest = PutObjectRequest.builder()
+            .bucket(bucketName)
+            .key(key.value())
+            .build();
+        final RequestBody requestBody = RequestBody.fromInputStream(data, length);
+        try {
+            s3Client.putObject(putObjectRequest, requestBody);
+        } catch (final ApiCallTimeoutException | ApiCallAttemptTimeoutException e) {
+            throw new StorageBackendTimeoutException("Failed to upload " + key, e);
+        } catch (final SdkException e) {
+            throw new StorageBackendException("Failed to upload " + key, e);
+        }
+    }
+
     @Override
     public InputStream fetch(final ObjectKey key, final ByteRange range) throws StorageBackendException {
         try {

@@ -41,7 +41,7 @@ class InMemoryStorageTest {
         assertThatThrownBy(() -> storage.upload(null, new byte[0]))
             .isInstanceOf(NullPointerException.class)
             .hasMessage("key cannot be null");
-        assertThatThrownBy(() -> storage.upload(OBJECT_KEY, null))
+        assertThatThrownBy(() -> storage.upload(OBJECT_KEY, (byte[]) null))
             .isInstanceOf(NullPointerException.class)
             .hasMessage("data cannot be null");
     }
