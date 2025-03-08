@@ -2700,6 +2700,7 @@ kafka.server.KRaftClusterTest:
 - testCreateClusterWithAdvertisedPortZero
 - testCreatePartitions
 - testDefaultClientQuotas
+- testDescribeKRaftVersion
 - testDescribeQuorumRequestToBrokers
 - testDescribeQuorumRequestToControllers
 - testDirectToControllerCommunicationFailsOnOlderMetadataVersion
