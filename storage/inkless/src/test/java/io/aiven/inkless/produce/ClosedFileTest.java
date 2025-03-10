@@ -103,7 +103,7 @@ class ClosedFileTest {
             new byte[0])
         )
             .isInstanceOf(IllegalArgumentException.class)
-            .hasMessage("data must be empty if commitBatchRequests is empty");
+            .hasMessage("No corresponding valid or invalid response found for partition t0-0 in request 1");
     }
 
     @Test
@@ -118,8 +118,7 @@ class ClosedFileTest {
     }
 
     @Test
-    void moreCommitRequestsThanOriginalRequest() {
-        // 1 valid, 1 invalid > 1 original
+    void originalRequestWithValidAndInvalidCollections() {
         assertThatThrownBy(() ->
             new ClosedFile(Instant.EPOCH,
                 Map.of(1, Map.of(TID0P0, MemoryRecords.EMPTY)),
@@ -128,20 +127,32 @@ class ClosedFileTest {
                 Map.of(1, Map.of(T0P0, new PartitionResponse(Errors.KAFKA_STORAGE_ERROR))),
                 new byte[10]).size())
             .isInstanceOf(IllegalArgumentException.class)
-            .hasMessage("commitBatchRequests and invalidResponseByRequest must match the originalRequests size");
+            .hasMessage("Partition t0-0 in request 1 found in both valid and invalid collections");
     }
 
     @Test
-    void mismatchCommitRequestsWithOriginalRequestsPerId() {
-        // valid with id 1, invalid with id 2 = 1 original with id 1
+    void originalRequestNotFoundOnValidOrInvalidCollections() {
         assertThatThrownBy(() ->
             new ClosedFile(Instant.EPOCH,
                 Map.of(1, Map.of(TID0P0, MemoryRecords.EMPTY)),
                 Map.of(1, new CompletableFuture<>()),
-                List.of(),
-                Map.of(2, Map.of(T0P0, new PartitionResponse(Errors.KAFKA_STORAGE_ERROR))),
+                List.of(), // no commit request
+                Map.of(2, Map.of(T0P0, new PartitionResponse(Errors.KAFKA_STORAGE_ERROR))), // invalid with different request ID
                 new byte[10]).size())
             .isInstanceOf(IllegalArgumentException.class)
-            .hasMessage("commitBatchRequests and invalidResponseByRequest must match the originalRequests size for request id 1");
+            .hasMessage("No corresponding valid or invalid response found for partition t0-0 in request 1");
+    }
+
+    @Test
+    void moreOutputPartitionsThanOriginalRequest() {
+        assertThatThrownBy(() ->
+            new ClosedFile(Instant.EPOCH,
+                Map.of(1, Map.of(TID0P0, MemoryRecords.EMPTY)),
+                Map.of(1, new CompletableFuture<>()),
+                List.of(CommitBatchRequest.of(1, TID0P0, 0, 0, 0, 0, 0, TimestampType.CREATE_TIME)),
+                Map.of(1, Map.of(new TopicPartition("t0", 1), new PartitionResponse(Errors.KAFKA_STORAGE_ERROR))), // another partition
+                new byte[10]).size())
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessage("Total number of valid and invalid responses doesn't match original requests for request id 1");
     }
 }
