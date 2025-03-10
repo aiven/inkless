@@ -133,7 +133,7 @@ class ActiveFileTest {
         assertThat(result)
             .usingRecursiveComparison()
             .ignoringFields("data")
-            .isEqualTo(new ClosedFile(start, Map.of(), Map.of(), Map.of(), List.of(), new byte[0]));
+            .isEqualTo(new ClosedFile(start, Map.of(), Map.of(), List.of(), Map.of(), new byte[0]));
         assertThat(result.data()).isEmpty();
         assertThat(result.isEmpty()).isTrue();
     }
