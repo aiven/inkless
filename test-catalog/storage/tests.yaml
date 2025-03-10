@@ -349,6 +349,7 @@ org.apache.kafka.storage.internals.log.TransactionIndexTest:
 - testAppendAndCollectAfterInterrupted
 - testCollectAbortedTransactions
 - testDeleteIfExists
+- testDoNotCreateFileUntilNeeded
 - testFlush
 - testIsEmptyWhenFileDoesNotExist
 - testIsEmptyWhenFileIsEmpty
