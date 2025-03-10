@@ -24,15 +24,15 @@ import io.aiven.inkless.control_plane.CommitBatchRequest;
  * @param start The time when the file was closed.
  * @param originalRequests The original requests that were sent to the broker, by request id.
  * @param awaitingFuturesByRequest The futures that are awaiting a response from the broker, by request id.
- * @param invalidResponseByRequest The invalid responses after validating the request that will not be sent to the remote storage, by request id.
  * @param commitBatchRequests The commit batch requests that will be sent to the remote storage.
+ * @param invalidResponseByRequest The invalid responses after validating the request that will not be sent to the remote storage, by request id.
  * @param data concatenated data of all the valid batches.
  */
 record ClosedFile(Instant start,
                   Map<Integer, Map<TopicIdPartition, MemoryRecords>> originalRequests,
                   Map<Integer, CompletableFuture<Map<TopicPartition, PartitionResponse>>> awaitingFuturesByRequest,
-                  Map<Integer, Map<TopicPartition, PartitionResponse>> invalidResponseByRequest,
                   List<CommitBatchRequest> commitBatchRequests,
+                  Map<Integer, Map<TopicPartition, PartitionResponse>> invalidResponseByRequest,
                   byte[] data) {
     ClosedFile {
         Objects.requireNonNull(start, "start cannot be null");

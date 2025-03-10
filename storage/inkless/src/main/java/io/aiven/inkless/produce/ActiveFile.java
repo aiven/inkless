@@ -237,8 +237,8 @@ class ActiveFile {
             start,
             originalRequests,
             awaitingFuturesByRequest,
-            invalidBatchesByRequest,
             closeResult.commitBatchRequests(),
+            invalidBatchesByRequest,
             closeResult.data()
         );
     }

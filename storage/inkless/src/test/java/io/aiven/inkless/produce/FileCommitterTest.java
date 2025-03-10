@@ -67,8 +67,8 @@ class FileCommitterTest {
         Instant.EPOCH,
         Map.of(1, Map.of(TID0P0, MemoryRecords.EMPTY)),
         Map.of(1, new CompletableFuture<>()),
-        Map.of(),
         List.of(CommitBatchRequest.of(1, TID0P0, 0, 0, 0, 0, 0, TimestampType.CREATE_TIME)),
+        Map.of(),
         new byte[10]);
     static final KeyAlignmentStrategy KEY_ALIGNMENT_STRATEGY = new FixedBlockAlignment(Integer.MAX_VALUE);
     static final ObjectCache OBJECT_CACHE = new NullCache();
