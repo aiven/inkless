@@ -38,33 +38,62 @@ record ClosedFile(Instant start,
         Objects.requireNonNull(start, "start cannot be null");
         Objects.requireNonNull(originalRequests, "originalRequests cannot be null");
         Objects.requireNonNull(awaitingFuturesByRequest, "awaitingFuturesByRequest cannot be null");
-        Objects.requireNonNull(invalidResponseByRequest, "invalidResponseByRequest cannot be null");
         Objects.requireNonNull(commitBatchRequests, "commitBatchRequests cannot be null");
+        Objects.requireNonNull(invalidResponseByRequest, "invalidResponseByRequest cannot be null");
+        Objects.requireNonNull(data, "data cannot be null");
 
+        // Validate request maps have matching sizes
         if (originalRequests.size() != awaitingFuturesByRequest.size()) {
             throw new IllegalArgumentException(
                 "originalRequests and awaitingFuturesByRequest must be of same size");
         }
 
-        if (originalRequests.values().stream().mapToInt(Map::size).sum() != commitBatchRequests.size() + invalidResponseByRequest.values().stream().mapToInt(Map::size).sum()) {
-            throw new IllegalArgumentException("commitBatchRequests and invalidResponseByRequest must match the originalRequests size");
-        }
-
+        // Map commit requests by requestId for faster lookup
         final var validCommitRequestsById = commitBatchRequests.stream()
             .collect(Collectors.groupingBy(CommitBatchRequest::requestId));
 
+        // Validate each requestId separately
         for (final var entry : originalRequests.entrySet()) {
             final var requestId = entry.getKey();
-            final var requests = entry.getValue();
-            final var validCommitRequests = validCommitRequestsById.getOrDefault(requestId, List.of()).size();
-            final var invalidResponses = invalidResponseByRequest.getOrDefault(requestId, Map.of()).size();
-            if (requests.size() != validCommitRequests + invalidResponses) {
-                throw new IllegalArgumentException("commitBatchRequests and invalidResponseByRequest must match the originalRequests size for request id " + requestId);
+            final var originalTopicPartitions = entry.getValue().keySet();
+
+            // Get valid requests for this requestId
+            final var validCommitRequests = validCommitRequestsById.getOrDefault(requestId, List.of())
+                .stream()
+                .map(CommitBatchRequest::topicIdPartition)
+                .collect(Collectors.toSet());
+
+            // Get invalid responses for this requestId
+            final var invalidResponses = invalidResponseByRequest.getOrDefault(requestId, Map.of()).keySet();
+
+            // For each original partition, verify it exists in either valid or invalid collections
+            for (final var originalPartition : originalTopicPartitions) {
+                final var topicPartition = originalPartition.topicPartition();
+                boolean foundInValid = validCommitRequests.contains(originalPartition);
+                boolean foundInInvalid = invalidResponses.contains(topicPartition);
+
+                if (!foundInValid && !foundInInvalid) {
+                    throw new IllegalArgumentException(
+                        "No corresponding valid or invalid response found for partition " +
+                            topicPartition + " in request " + requestId);
+                }
+
+                if (foundInValid && foundInInvalid) {
+                    throw new IllegalArgumentException(
+                        "Partition " + topicPartition + " in request " + requestId +
+                            " found in both valid and invalid collections");
+                }
+            }
+
+            // Verify no extra entries in valid or invalid collections
+            if (originalTopicPartitions.size() != validCommitRequests.size() + invalidResponses.size()) {
+                throw new IllegalArgumentException(
+                    "Total number of valid and invalid responses doesn't match original requests " +
+                        "for request id " + requestId);
             }
         }
 
-        Objects.requireNonNull(data, "data cannot be null");
-
+        // Validate data consistency
         if (commitBatchRequests.isEmpty() != (data.length == 0)) {
             throw new IllegalArgumentException("data must be empty if commitBatchRequests is empty");
         }
