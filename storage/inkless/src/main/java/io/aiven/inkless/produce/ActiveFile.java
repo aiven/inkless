@@ -1,6 +1,7 @@
 // Copyright (c) 2024 Aiven, Helsinki, Finland. https://aiven.io/
 package io.aiven.inkless.produce;
 
+import io.aiven.inkless.control_plane.CommitBatchRequest;
 import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.compress.Compression;
@@ -31,6 +32,7 @@ import org.slf4j.LoggerFactory;
 
 import java.time.Instant;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
@@ -210,6 +212,7 @@ class ActiveFile {
 
         final CompletableFuture<Map<TopicPartition, PartitionResponse>> result = new CompletableFuture<>();
         awaitingFuturesByRequest.put(requestId, result);
+        final var appendRequest = new ClosedFile.Entry(entriesPerPartition, List.of(), invalidBatches, result);
 
         return result;
     }
@@ -233,12 +236,22 @@ class ActiveFile {
 
     ClosedFile close() {
         final BatchBuffer.CloseResult closeResult = buffer.close();
+        final List<CommitBatchRequest> commitBatchRequests = closeResult.commitBatchRequests();
         return new ClosedFile(
             start,
-            originalRequests,
-            awaitingFuturesByRequest,
-            closeResult.commitBatchRequests(),
-            invalidBatchesByRequest,
+            originalRequests.entrySet()
+                .stream()
+                .map((entry) ->
+                    new ClosedFile.Entry(
+                        entry.getValue(),
+                        commitBatchRequests.stream()
+                            .filter(request -> request.requestId() == entry.getKey())
+                            .toList(),
+                        invalidBatchesByRequest.get(entry.getKey()),
+                        awaitingFuturesByRequest.get(entry.getKey())
+                    )
+                )
+                .toList(),
             closeResult.data()
         );
     }
