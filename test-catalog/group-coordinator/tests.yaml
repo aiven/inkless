@@ -342,6 +342,9 @@ org.apache.kafka.coordinator.group.GroupMetadataManagerTest:
 - testOnLoaded
 - testOnLoadedExceedGroupMaxSizeTriggersRebalance
 - testOnLoadedSchedulesClassicGroupMemberHeartbeats
+- testOnLoadedSessionTimeoutExpiration
+- testOnLoadedSessionTimeoutExpirationForShareMember
+- testOnLoadedWithShareGroup
 - testOnLoadedWithStreamsGroup
 - testOnNewMetadataImage
 - testOnNewMetadataImageWithEmptyDelta
@@ -404,6 +407,7 @@ org.apache.kafka.coordinator.group.GroupMetadataManagerTest:
 - testResolvedRegularExpressionsRemovedWhenMembersLeaveOrFenced
 - testSecondMemberPartiallyJoinAndTimeout
 - testSessionTimeoutExpiration
+- testSessionTimeoutExpirationForShareMember
 - testSessionTimeoutExpirationStaticMember
 - testSessionTimeoutLifecycle
 - testShareGroupDelete

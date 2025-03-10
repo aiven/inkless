@@ -1161,6 +1161,10 @@ org.apache.kafka.clients.consumer.internals.AutoOffsetResetStrategyTest:
 - testValidator
 org.apache.kafka.clients.consumer.internals.BackgroundEventHandlerTest:
 - testRecordBackgroundEventQueueSize
+org.apache.kafka.clients.consumer.internals.BaseHeartbeatThreadTest:
+- testIsClosed
+- testIsEnabled
+- testIsFailed
 org.apache.kafka.clients.consumer.internals.CommitRequestManagerTest:
 - testAsyncAutocommitNotRetriedAfterException
 - testAsyncCommitWhileCoordinatorUnknownIsSentOutWhenCoordinatorDiscovered
