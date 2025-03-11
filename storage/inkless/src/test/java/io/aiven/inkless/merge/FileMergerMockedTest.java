@@ -27,9 +27,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.CsvSource;
-import org.junit.jupiter.params.provider.MethodSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Captor;
 import org.mockito.Mock;
@@ -48,7 +47,6 @@ import java.time.Instant;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
-import java.util.stream.Stream;
 
 import io.aiven.inkless.common.ObjectKey;
 import io.aiven.inkless.common.PlainObjectKey;
@@ -92,7 +90,6 @@ class FileMergerMockedTest {
     static final Uuid TOPIC_ID_0 = new Uuid(0, 1);
     static final Uuid TOPIC_ID_1 = new Uuid(0, 2);
     static final TopicIdPartition T0P0 = new TopicIdPartition(TOPIC_ID_0, 0, TOPIC_0);
-    static final TopicIdPartition T0P1 = new TopicIdPartition(TOPIC_ID_0, 1, TOPIC_0);
     static final TopicIdPartition T1P0 = new TopicIdPartition(TOPIC_ID_1, 0, TOPIC_1);
     static final TopicIdPartition T1P1 = new TopicIdPartition(TOPIC_ID_1, 1, TOPIC_1);
 
@@ -373,16 +370,9 @@ class FileMergerMockedTest {
         verify(storage, never()).delete(any(ObjectKey.class));
     }
 
-    public static Stream<Arguments> controlPlaneExceptions() {
-        return Stream.of(
-            Arguments.of(new ControlPlaneException("test"), true),
-            Arguments.of(new RuntimeException("test"), false)
-        );
-    }
-
     @ParameterizedTest
-    @MethodSource("controlPlaneExceptions")
-    void errorInCommitting(Exception e, boolean triggersDeletion) throws Exception {
+    @ValueSource(booleans = {true, false})
+    void errorInCommittingFromControlPlane(boolean isSafeToDelete) throws Exception {
         when(inklessConfig.storage()).thenReturn(storage);
         when(inklessConfig.produceMaxUploadAttempts()).thenReturn(1);
         when(inklessConfig.produceUploadBackoff()).thenReturn(Duration.ZERO);
@@ -405,10 +395,50 @@ class FileMergerMockedTest {
         final FileMergeWorkItem.File file1InWorkItem = new FileMergeWorkItem.File(file1Id, obj1, file1Size, file1UsedSize, List.of(
             new BatchInfo(batch1Id, obj1, BatchMetadata.of(T1P0, 0, file1Batch1Size, 1L, 11L, 1L, 2L, TimestampType.CREATE_TIME))
         ));
-        when(controlPlane.getFileMergeWorkItem()).thenReturn(
-            new FileMergeWorkItem(WORK_ITEM_ID, Instant.ofEpochMilli(1234), List.of(file1InWorkItem))
-        );
-        doThrow(e)
+        when(controlPlane.getFileMergeWorkItem())
+            .thenReturn(new FileMergeWorkItem(WORK_ITEM_ID, Instant.ofEpochMilli(1234), List.of(file1InWorkItem)));
+        doThrow(new ControlPlaneException("test"))
+            .when(controlPlane).commitFileMergeWorkItem(anyLong(), anyString(), anyInt(), anyLong(), any());
+        when(controlPlane.isSafeToDelete(anyString())).thenReturn(isSafeToDelete);
+
+        final FileMerger fileMerger = new FileMerger(sharedState);
+        fileMerger.run();
+
+        verify(controlPlane).releaseFileMergeWorkItem(eq(WORK_ITEM_ID));
+        verify(time).sleep(longThat(l -> l >= 50));
+        file1.assertClosedAndDataFullyConsumed();
+
+        verify(storage).upload(objectKeyCaptor.capture(), any());
+        verify(storage, times(isSafeToDelete ? 1 : 0)).delete(objectKeyCaptor.getValue());
+    }
+
+    @Test
+    void errorInCommittingNotFromControlPlane() throws Exception {
+        when(inklessConfig.storage()).thenReturn(storage);
+        when(inklessConfig.produceMaxUploadAttempts()).thenReturn(1);
+        when(inklessConfig.produceUploadBackoff()).thenReturn(Duration.ZERO);
+
+        final String obj1 = "obj1";
+
+        final long file1Id = 1;
+        final long batch1Id = 1;
+
+        final int file1Batch1Size = 100;
+        final int file1Size = file1Batch1Size;
+        final int file1UsedSize = file1Size;
+        final byte[] file1Batch1 = generateData(file1Batch1Size, "file1Batch1");
+
+        final MockInputStream file1 = new MockInputStream(file1Size);
+        file1.addBatch(file1Batch1);
+        file1.finishBuilding();
+        bindFilesToObjectNames(Map.of(obj1, file1));
+
+        final FileMergeWorkItem.File file1InWorkItem = new FileMergeWorkItem.File(file1Id, obj1, file1Size, file1UsedSize, List.of(
+            new BatchInfo(batch1Id, obj1, BatchMetadata.of(T1P0, 0, file1Batch1Size, 1L, 11L, 1L, 2L, TimestampType.CREATE_TIME))
+        ));
+        when(controlPlane.getFileMergeWorkItem())
+            .thenReturn(new FileMergeWorkItem(WORK_ITEM_ID, Instant.ofEpochMilli(1234), List.of(file1InWorkItem)));
+        doThrow(new RuntimeException("test"))
             .when(controlPlane).commitFileMergeWorkItem(anyLong(), anyString(), anyInt(), anyLong(), any());
 
         final FileMerger fileMerger = new FileMerger(sharedState);
@@ -419,7 +449,7 @@ class FileMergerMockedTest {
         file1.assertClosedAndDataFullyConsumed();
 
         verify(storage).upload(objectKeyCaptor.capture(), any());
-        verify(storage, times(triggersDeletion ? 1 : 0)).delete(objectKeyCaptor.getValue());
+        verify(storage, never()).delete(objectKeyCaptor.getValue());
     }
 
     private byte[] generateData(final int size, final String signature) {

@@ -588,6 +588,21 @@ public abstract class AbstractControlPlaneTest {
         assertThat(controlPlane.getFilesToDelete()).isEmpty();
     }
 
+    @Test
+    void isSafeToDeleteFile() {
+        assertThat(controlPlane.isSafeToDelete("test")).isTrue();
+    }
+
+    @Test
+    void isNotSafeToDeleteFile() {
+        final String objectKey = "test";
+        controlPlane.commitFile(objectKey, BROKER_ID, FILE_SIZE,
+            List.of(
+                CommitBatchRequest.of(0, new TopicIdPartition(EXISTING_TOPIC_1_ID, 0, EXISTING_TOPIC_1), 1, (int) FILE_SIZE, 0, 0, 1000, TimestampType.CREATE_TIME)
+            ));
+        assertThat(controlPlane.isSafeToDelete(objectKey)).isFalse();
+    }
+
     @Nested
     class GetFileMergeWorkItem {
         @Test

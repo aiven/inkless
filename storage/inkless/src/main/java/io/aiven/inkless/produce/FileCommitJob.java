@@ -100,12 +100,16 @@ class FileCommitJob implements Runnable {
                 finishCommitSuccessfully(result.objectKey);
             } catch (final Exception e) {
                 if (e instanceof ControlPlaneException) {
-                    // only attempt to remove the uploaded file if it is a control plane error
-                    LOGGER.error("Error commiting data, attempting to remove the uploaded file {}", result.objectKey, e);
-                    try {
-                        objectDeleter.delete(result.objectKey);
-                    } catch (final StorageBackendException e2) {
-                        LOGGER.error("Error removing the uploaded file {}", result.objectKey, e2);
+                    if (controlPlane.isSafeToDelete(result.objectKey.value())) {
+                        // only attempt to remove the uploaded file if it is a control plane error
+                        LOGGER.error("Error commiting data, attempting to remove the uploaded file {}", result.objectKey, e);
+                        try {
+                            objectDeleter.delete(result.objectKey);
+                        } catch (final StorageBackendException e2) {
+                            LOGGER.error("Error removing the uploaded file {}", result.objectKey, e2);
+                        }
+                    } else {
+                        LOGGER.error("Error commiting data, but not removing the uploaded file {} as it is referenced", result.objectKey, e);
                     }
                 }
                 finishCommitWithError();

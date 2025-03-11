@@ -53,6 +53,7 @@ public class InMemoryControlPlane extends AbstractControlPlane {
     private final AtomicLong fileMergeWorkItemIdCounter = new AtomicLong(0);
     private final Map<TopicIdPartition, LogInfo> logs = new HashMap<>();
     // LinkedHashMap to preserve the insertion order, to select files for merging in order.
+    // The key is the object key.
     private final LinkedHashMap<String, FileInfo> files = new LinkedHashMap<>();
     private final Map<String, FileToDeleteInternal> filesToDelete = new HashMap<>();
     private final HashMap<TopicIdPartition, TreeMap<Long, BatchInfoInternal>> batches = new HashMap<>();
@@ -538,6 +539,11 @@ public class InMemoryControlPlane extends AbstractControlPlane {
         if (workItem == null) {
             throw new FileMergeWorkItemNotExist(workItemId);
         }
+    }
+
+    @Override
+    public boolean isSafeToDelete(String objectKeyPath) {
+        return !files.containsKey(objectKeyPath);
     }
 
     @Override

@@ -224,12 +224,16 @@ public class FileMerger implements Runnable {
                 );
             } catch (final Exception e) {
                 if (e instanceof ControlPlaneException) {
-                    // only attempt to remove the uploaded file if it is a control plane error
-                    LOGGER.error("Error committing merged file, attempting to remove the uploaded file {}", objectKey, e);
-                    try {
-                        storage.delete(objectKey);
-                    } catch (final StorageBackendException e2) {
-                        LOGGER.error("Error removing the uploaded file {}", objectKey, e2);
+                    if (controlPlane.isSafeToDelete(objectKey.value())) {
+                        // only attempt to remove the uploaded file if it is a control plane error
+                        LOGGER.error("Error committing merged file, attempting to remove the uploaded file {}", objectKey, e);
+                        try {
+                            storage.delete(objectKey);
+                        } catch (final StorageBackendException e2) {
+                            LOGGER.error("Error removing the uploaded file {}", objectKey, e2);
+                        }
+                    } else {
+                        LOGGER.error("Error committing merged file, but not safe to delete the uploaded file {} as it is referenced", objectKey, e);
                     }
                 }
                 // The original exception will be thrown.

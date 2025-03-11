@@ -72,4 +72,6 @@ public interface ControlPlane extends Closeable, Configurable {
             throw new RuntimeException(e);
         }
     }
+
+    boolean isSafeToDelete(String objectKeyPath);
 }

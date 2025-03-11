@@ -261,6 +261,16 @@ public class PostgresControlPlane extends AbstractControlPlane {
     }
 
     @Override
+    public boolean isSafeToDelete(String objectKeyPath) {
+        try {
+            final SafeDeleteCheckJob job = new SafeDeleteCheckJob(jooqCtx, objectKeyPath);
+            return job.call();
+        } catch (Exception e) {
+            throw new ControlPlaneException("Error when checking if safe to delete file " + objectKeyPath, e);
+        }
+    }
+
+    @Override
     public void close() throws IOException {
         hikariDataSource.close();
     }
