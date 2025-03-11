@@ -31,7 +31,6 @@ import org.junit.jupiter.params.provider.CsvSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Captor;
 import org.mockito.Mock;
-import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
@@ -68,6 +67,7 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.longThat;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -102,8 +102,6 @@ class FileMergerMockedTest {
     StorageBackend storage;
     @Captor
     ArgumentCaptor<ObjectKey> objectKeyCaptor;
-    @Captor
-    ArgumentCaptor<byte[]> uploadedFileCaptor;
     @Captor
     ArgumentCaptor<Long> sleepCaptor;
 
@@ -141,6 +139,12 @@ class FileMergerMockedTest {
         file1.addBatch(file1Batch1);
         file1.finishBuilding();
 
+        var out = new ByteArrayOutputStream();
+        doAnswer(i -> {
+            final MergeBatchInputStream data = i.getArgument(1, MergeBatchInputStream.class);
+            data.transferTo(out);
+            return null;
+        }).when(storage).upload(any(ObjectKey.class), any(MergeBatchInputStream.class));
         bindFilesToObjectNames(Map.of(obj1, file1));
 
         final long expectedMergedFileSize = file1UsedSize;
@@ -156,9 +160,8 @@ class FileMergerMockedTest {
         final FileMerger fileMerger = new FileMerger(sharedState);
         fileMerger.run();
 
-        verify(storage).upload(objectKeyCaptor.capture(), uploadedFileCaptor.capture());
-
-        assertThat(uploadedFileCaptor.getValue()).isEqualTo(expectedUploadBuffer);
+        verify(storage).upload(objectKeyCaptor.capture(), any(MergeBatchInputStream.class));
+        assertThat(out.toByteArray()).isEqualTo(expectedUploadBuffer);
 
         verify(controlPlane).commitFileMergeWorkItem(eq(WORK_ITEM_ID), eq(objectKeyCaptor.getValue().value()), eq(BROKER_ID), eq(expectedMergedFileSize),
             eq(expectedMergedFileBatches)
@@ -245,6 +248,12 @@ class FileMergerMockedTest {
         file2.addBatch(file2Batch2);
         file2.finishBuilding();
 
+        var out = new ByteArrayOutputStream();
+        doAnswer(i -> {
+            final MergeBatchInputStream data = i.getArgument(1, MergeBatchInputStream.class);
+            data.transferTo(out);
+            return null;
+        }).when(storage).upload(any(ObjectKey.class), any(MergeBatchInputStream.class));
         bindFilesToObjectNames(Map.of(obj1, file1, obj2, file2));
 
         // What we expect in the end:
@@ -271,9 +280,8 @@ class FileMergerMockedTest {
         final FileMerger fileMerger = new FileMerger(sharedState);
         fileMerger.run();
 
-        verify(storage).upload(objectKeyCaptor.capture(), uploadedFileCaptor.capture());
-
-        assertThat(uploadedFileCaptor.getValue()).isEqualTo(expectedUploadBuffer);
+        assertThat(out.toByteArray()).isEqualTo(expectedUploadBuffer);
+        verify(storage).upload(objectKeyCaptor.capture(), any(MergeBatchInputStream.class));
 
         verify(controlPlane).commitFileMergeWorkItem(eq(WORK_ITEM_ID), eq(objectKeyCaptor.getValue().value()), eq(BROKER_ID), eq(expectedMergedFileSize),
             eq(expectedMergedFileBatches)
@@ -298,6 +306,7 @@ class FileMergerMockedTest {
     @Test
     void errorInReading() throws Exception {
         when(inklessConfig.storage()).thenReturn(storage);
+        when(inklessConfig.produceMaxUploadAttempts()).thenReturn(1);
 
         final String obj1 = "obj1";
         final long batch1Id = 1;
@@ -306,6 +315,11 @@ class FileMergerMockedTest {
         when(file1.readNBytes(anyInt()))
             .thenThrow(new IOException("test"));
 
+        doAnswer(i -> {
+            final MergeBatchInputStream data = i.getArgument(1, MergeBatchInputStream.class);
+            data.transferTo(new ByteArrayOutputStream());
+            return null;
+        }).when(storage).upload(any(ObjectKey.class), any(MergeBatchInputStream.class));
         bindFilesToObjectNames(Map.of(obj1, file1));
 
         final FileMergeWorkItem.File file1InWorkItem = new FileMergeWorkItem.File(1, obj1, 10, 10, List.of(
@@ -323,7 +337,7 @@ class FileMergerMockedTest {
         verify(time).sleep(longThat(l -> l >= 50));
         verify(file1).close();
 
-        verify(storage, never()).upload(any(ObjectKey.class), any(byte[].class));
+        verify(storage).upload(any(ObjectKey.class), any(MergeBatchInputStream.class));
         verify(storage, never()).delete(any(ObjectKey.class));
     }
 
@@ -346,6 +360,12 @@ class FileMergerMockedTest {
         final MockInputStream file1 = new MockInputStream(file1Size);
         file1.addBatch(file1Batch1);
         file1.finishBuilding();
+
+        doAnswer(i -> {
+            final MergeBatchInputStream data = i.getArgument(1, MergeBatchInputStream.class);
+            data.transferTo(new ByteArrayOutputStream());
+            throw new StorageBackendException("test");
+        }).when(storage).upload(any(ObjectKey.class), any(MergeBatchInputStream.class));
         bindFilesToObjectNames(Map.of(obj1, file1));
 
         final FileMergeWorkItem.File file1InWorkItem = new FileMergeWorkItem.File(file1Id, obj1, file1Size, file1UsedSize, List.of(
@@ -354,8 +374,6 @@ class FileMergerMockedTest {
         when(controlPlane.getFileMergeWorkItem()).thenReturn(
             new FileMergeWorkItem(WORK_ITEM_ID, Instant.ofEpochMilli(1234), List.of(file1InWorkItem))
         );
-        Mockito.doThrow(new StorageBackendException("test"))
-            .when(storage).upload(any(), any(byte[].class));
 
         final FileMerger fileMerger = new FileMerger(sharedState);
         fileMerger.run();
@@ -388,6 +406,11 @@ class FileMergerMockedTest {
         final MockInputStream file1 = new MockInputStream(file1Size);
         file1.addBatch(file1Batch1);
         file1.finishBuilding();
+        doAnswer(i -> {
+            final MergeBatchInputStream data = i.getArgument(1, MergeBatchInputStream.class);
+            data.transferTo(new ByteArrayOutputStream());
+            return null;
+        }).when(storage).upload(any(ObjectKey.class), any(MergeBatchInputStream.class));
         bindFilesToObjectNames(Map.of(obj1, file1));
 
         final FileMergeWorkItem.File file1InWorkItem = new FileMergeWorkItem.File(file1Id, obj1, file1Size, file1UsedSize, List.of(
@@ -406,7 +429,7 @@ class FileMergerMockedTest {
         verify(time).sleep(longThat(l -> l >= 50));
         file1.assertClosedAndDataFullyConsumed();
 
-        verify(storage).upload(objectKeyCaptor.capture(), any(byte[].class));
+        verify(storage).upload(objectKeyCaptor.capture(), any(MergeBatchInputStream.class));
         verify(storage).delete(objectKeyCaptor.getValue());
     }
 

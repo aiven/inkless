@@ -17,11 +17,10 @@
  */
 package io.aiven.inkless.storage_backend.common;
 
-import java.io.InputStream;
-
 import io.aiven.inkless.common.ObjectKey;
+import io.aiven.inkless.merge.MergeBatchInputStream;
 
 public interface ObjectUploader {
     void upload(ObjectKey key, byte[] data) throws StorageBackendException;
-    void upload(ObjectKey key, InputStream data) throws StorageBackendException;
+    void upload(ObjectKey key, MergeBatchInputStream data) throws StorageBackendException;
 }

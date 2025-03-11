@@ -30,6 +30,7 @@ import java.util.concurrent.ConcurrentHashMap;
 
 import io.aiven.inkless.common.ByteRange;
 import io.aiven.inkless.common.ObjectKey;
+import io.aiven.inkless.merge.MergeBatchInputStream;
 import io.aiven.inkless.storage_backend.common.InvalidRangeException;
 import io.aiven.inkless.storage_backend.common.KeyNotFoundException;
 import io.aiven.inkless.storage_backend.common.StorageBackend;
@@ -56,15 +57,10 @@ public class InMemoryStorage implements StorageBackend {
     }
 
     @Override
-    public void upload(final ObjectKey key, final InputStream inputStream) throws StorageBackendException {
+    public void upload(final ObjectKey key, final MergeBatchInputStream inputStream) throws StorageBackendException {
         ByteArrayOutputStream byteArrayOutputStream = new ByteArrayOutputStream();
-        var buffer = new byte[1024]; // TODO fix
-        int bytesRead;
-
         try {
-            while ((bytesRead = inputStream.read(buffer)) != -1) {
-                byteArrayOutputStream.write(buffer, 0, bytesRead);
-            }
+            inputStream.transferTo(byteArrayOutputStream);
         } catch (final IOException e) {
             throw new StorageBackendException("Failed to upload " + key, e);
         }

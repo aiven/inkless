@@ -1,20 +1,4 @@
-/*
- * Inkless
- * Copyright (C) 2024 - 2025 Aiven OY
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Affero General Public License for more details.
- *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
- */
+// Copyright (c) 2024 Aiven, Helsinki, Finland. https://aiven.io/
 package io.aiven.inkless.produce;
 
 import org.apache.kafka.common.Uuid;
@@ -31,6 +15,7 @@ import java.util.function.Consumer;
 import io.aiven.inkless.TimeUtils;
 import io.aiven.inkless.common.ObjectKey;
 import io.aiven.inkless.common.ObjectKeyCreator;
+import io.aiven.inkless.merge.MergeBatchInputStream;
 import io.aiven.inkless.storage_backend.common.ObjectUploader;
 import io.aiven.inkless.storage_backend.common.StorageBackendException;
 import io.aiven.inkless.storage_backend.common.StorageBackendTimeoutException;
@@ -38,24 +23,24 @@ import io.aiven.inkless.storage_backend.common.StorageBackendTimeoutException;
 /**
  * The job of uploading a file to the object storage.
  */
-public class FileUploadJob implements Callable<ObjectKey> {
-    private static final Logger LOGGER = LoggerFactory.getLogger(FileUploadJob.class);
+public class MultiPartFileUploadJob implements Callable<ObjectKey> {
+    private static final Logger LOGGER = LoggerFactory.getLogger(MultiPartFileUploadJob.class);
 
     private final ObjectKeyCreator objectKeyCreator;
     private final ObjectUploader objectUploader;
     private final Time time;
     private final int attempts;
     private final Duration retryBackoff;
-    private final byte[] data;
+    private final MergeBatchInputStream data;
     private final Consumer<Long> durationCallback;
 
-    public FileUploadJob(final ObjectKeyCreator objectKeyCreator,
-                  final ObjectUploader objectUploader,
-                  final Time time,
-                  final int attempts,
-                  final Duration retryBackoff,
-                  final byte[] data,
-                  final Consumer<Long> durationCallback) {
+    public MultiPartFileUploadJob(final ObjectKeyCreator objectKeyCreator,
+                                  final ObjectUploader objectUploader,
+                                  final Time time,
+                                  final int attempts,
+                                  final Duration retryBackoff,
+                                  final MergeBatchInputStream data,
+                                  final Consumer<Long> durationCallback) {
         this.objectKeyCreator = Objects.requireNonNull(objectKeyCreator, "objectKeyCreator cannot be null");
         this.objectUploader = Objects.requireNonNull(objectUploader, "objectUploader cannot be null");
         this.time = Objects.requireNonNull(time, "time cannot be null");
@@ -73,7 +58,7 @@ public class FileUploadJob implements Callable<ObjectKey> {
         return TimeUtils.measureDurationMs(time, this::callInternal, durationCallback);
     }
 
-    ObjectKey callInternal() throws Exception {
+    private ObjectKey callInternal() throws Exception {
         final ObjectKey objectKey;
         final Exception uploadError;
         try {
@@ -91,7 +76,7 @@ public class FileUploadJob implements Callable<ObjectKey> {
         }
     }
 
-    private Exception uploadWithRetry(final ObjectKey objectKey, final byte[] data) {
+    private Exception uploadWithRetry(final ObjectKey objectKey, final MergeBatchInputStream data) {
         LOGGER.debug("Uploading {}", objectKey);
         Exception error = null;
         for (int attempt = 0; attempt < attempts; attempt++) {

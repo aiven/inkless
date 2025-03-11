@@ -19,17 +19,13 @@ package io.aiven.inkless.merge;
 
 import org.apache.kafka.common.utils.ExponentialBackoff;
 import org.apache.kafka.common.utils.Time;
-import org.apache.kafka.common.utils.Utils;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.ByteArrayOutputStream;
-import java.io.EOFException;
 import java.io.InputStream;
 import java.time.Duration;
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
@@ -39,12 +35,11 @@ import io.aiven.inkless.common.ObjectKey;
 import io.aiven.inkless.common.ObjectKeyCreator;
 import io.aiven.inkless.common.SharedState;
 import io.aiven.inkless.config.InklessConfig;
-import io.aiven.inkless.control_plane.BatchInfo;
 import io.aiven.inkless.control_plane.BatchMetadata;
 import io.aiven.inkless.control_plane.ControlPlane;
 import io.aiven.inkless.control_plane.FileMergeWorkItem;
 import io.aiven.inkless.control_plane.MergedFileBatch;
-import io.aiven.inkless.produce.FileUploadJob;
+import io.aiven.inkless.produce.MultiPartFileUploadJob;
 import io.aiven.inkless.storage_backend.common.StorageBackend;
 import io.aiven.inkless.storage_backend.common.StorageBackendException;
 
@@ -130,6 +125,7 @@ public class FileMerger implements Runnable {
 
         // Collect all the involved batches into one bag.
         final List<BatchAndStream> batches = new ArrayList<>();
+        MergeBatchInputStream mergeBatchInputStream = null;
         try {
             // Collect InputStream supplier for each file, to avoid opening all of them at once.
             for (final var file : workItem.files()) {
@@ -152,64 +148,37 @@ public class FileMerger implements Runnable {
             // Order batches as we want them in the output file.
             batches.sort(BatchAndStream.TOPIC_ID_PARTITION_BASE_OFFSET_COMPARATOR);
 
-            // `close` is no-op for ByteArrayOutputStream, we can skip closing it.
-            final ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
             final List<MergedFileBatch> mergedFileBatches = new ArrayList<>();
             long fileSize = 0;
             for (final BatchAndStream bf : batches) {
-                final BatchInfo parentBatch = bf.batch;
-
-                // ignore auto closing of the input stream, we'll close them manually
-                final InputStream inputStream = bf.inputStreamWithPosition.inputStream();
-                if (bf.inputStreamWithPosition.position() < parentBatch.metadata().byteOffset()) {
-                    // We're facing a gap, need to fast-forward.
-                    final long gapSize = parentBatch.metadata().byteOffset() - bf.inputStreamWithPosition.position();
-                    try {
-                        inputStream.skipNBytes(gapSize);
-                    } catch (final EOFException e) {
-                        throw new RuntimeException("Desynchronization between batches and files");
-                    }
-                    bf.inputStreamWithPosition.advance(gapSize);
-                } else if (bf.inputStreamWithPosition.position() > parentBatch.metadata().byteOffset()) {
-                    throw new RuntimeException("Desynchronization between batches and files");
-                }
-
-                final long batchSize = parentBatch.metadata().byteSize();
-                final byte[] readBytes = inputStream.readNBytes((int) batchSize);
-                if (readBytes.length < batchSize) {
-                    throw new RuntimeException("Desynchronization between batches and files");
-                }
-                outputStream.writeBytes(readBytes);
-                bf.inputStreamWithPosition.advance(batchSize);
-
-                bf.inputStreamWithPosition.closeIfFullyRead();
-
-                final long offset = fileSize;
-                fileSize += batchSize;
+                var batchSize = bf.getLength();
                 mergedFileBatches.add(new MergedFileBatch(
                     new BatchMetadata(
-                        parentBatch.metadata().topicIdPartition(),
-                        offset,
+                        bf.getParentBatch().metadata().topicIdPartition(),
+                        fileSize,
                         batchSize,
-                        parentBatch.metadata().baseOffset(),
-                        parentBatch.metadata().lastOffset(),
-                        parentBatch.metadata().logAppendTimestamp(),
-                        parentBatch.metadata().batchMaxTimestamp(),
-                        parentBatch.metadata().timestampType(),
-                        parentBatch.metadata().producerId(),
-                        parentBatch.metadata().producerEpoch(),
-                        parentBatch.metadata().baseSequence(),
-                        parentBatch.metadata().lastSequence()
+                        bf.getParentBatch().metadata().baseOffset(),
+                        bf.getParentBatch().metadata().lastOffset(),
+                        bf.getParentBatch().metadata().logAppendTimestamp(),
+                        bf.getParentBatch().metadata().batchMaxTimestamp(),
+                        bf.getParentBatch().metadata().timestampType(),
+                        bf.getParentBatch().metadata().producerId(),
+                        bf.getParentBatch().metadata().producerEpoch(),
+                        bf.getParentBatch().metadata().baseSequence(),
+                        bf.getParentBatch().metadata().lastSequence()
                     ),
-                    List.of(parentBatch.batchId())
+                    List.of(bf.getParentBatch().batchId())
                 ));
+                fileSize += batchSize;
             }
 
-            final ObjectKey objectKey = new FileUploadJob(
+            mergeBatchInputStream = new MergeBatchInputStream(batches);
+
+            final ObjectKey objectKey = new MultiPartFileUploadJob(
                 objectKeyCreator, storage, time,
                 config.produceMaxUploadAttempts(),
                 config.produceUploadBackoff(),
-                outputStream.toByteArray(),
+                mergeBatchInputStream,
                 metrics::recordFileUploadTime
             ).call();
 
@@ -233,71 +202,10 @@ public class FileMerger implements Runnable {
             }
             LOGGER.info("Merged {} files into {}", workItem.files().size(), objectKey);
         } finally {
-            for (final var batch : batches) {
-                batch.inputStreamWithPosition.forceClose();
+            if (mergeBatchInputStream != null) {
+                mergeBatchInputStream.close();
             }
         }
     }
 
-    // One InputStream per file.
-    // Note that BoundedInputStream is by default unbound, we use it only for counting the current position.
-    private static class InputStreamWithPosition {
-        private final Supplier<InputStream> inputStreamSupplier;
-        private final long size;
-        private long position = 0;
-        private InputStream source = null;
-
-        private InputStreamWithPosition(final Supplier<InputStream> inputStreamSupplier, final long size) {
-            this.inputStreamSupplier = inputStreamSupplier;
-            this.size = size;
-        }
-
-        long position() {
-            return position;
-        }
-
-        void advance(final long offset) {
-            this.position += offset;
-        }
-
-        public InputStream inputStream() {
-            if (source == null) {
-                source = inputStreamSupplier.get();
-            }
-            return source;
-        }
-
-        public void closeIfFullyRead() {
-            if (position >= size) close();
-        }
-
-        public void forceClose() {
-            if (position < size) close();
-        }
-
-        private void close() {
-            if (source != null) {
-                Utils.closeQuietly(source, "object storage input stream");
-            }
-        }
-    }
-
-    private record BatchAndStream(BatchInfo batch,
-                                  InputStreamWithPosition inputStreamWithPosition) {
-        /**
-         * The comparator that sorts batches by the following criteria (in order):
-         * <ol>
-         *     <li>Topic ID.</li>
-         *     <li>Partition.</li>
-         *     <li>Base offset.</li>
-         * </ol>
-         */
-        static final Comparator<BatchAndStream> TOPIC_ID_PARTITION_BASE_OFFSET_COMPARATOR;
-        static {
-            final Comparator<BatchAndStream> topicIdComparator = Comparator.comparing(bf -> bf.batch.metadata().topicIdPartition().topicId());
-            final Comparator<BatchAndStream> partitionComparator = Comparator.comparing(bf -> bf.batch.metadata().topicIdPartition().partition());
-            final Comparator<BatchAndStream> offsetComparator = Comparator.comparing(bf -> bf.batch.metadata().baseOffset());
-            TOPIC_ID_PARTITION_BASE_OFFSET_COMPARATOR = topicIdComparator.thenComparing(partitionComparator).thenComparing(offsetComparator);
-        }
-    }
 }
