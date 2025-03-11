@@ -17,6 +17,7 @@
 package kafka.utils
 
 import com.yammer.metrics.core.{Histogram, Meter}
+import io.aiven.inkless.test_utils.{InklessPostgreSQLContainer, MinioContainer}
 import kafka.log.LogManager
 import kafka.network.RequestChannel
 import kafka.security.JaasTestUtils
@@ -160,13 +161,14 @@ object TestUtils extends Logging {
     numPartitions: Int = 1,
     defaultReplicationFactor: Short = 1,
     startingIdNumber: Int = 0,
-    enableFetchFromFollower: Boolean = false): Seq[Properties] = {
+    enableFetchFromFollower: Boolean = false,
+    inklessMode: Option[InklessMode] = None): Seq[Properties] = {
     val endingIdNumber = startingIdNumber + numConfigs - 1
     (startingIdNumber to endingIdNumber).map { node =>
       createBrokerConfig(node, enableControlledShutdown, enableDeleteTopic, RandomPort,
         interBrokerSecurityProtocol, trustStoreFile, saslProperties, enablePlaintext = enablePlaintext, enableSsl = enableSsl,
         enableSaslPlaintext = enableSaslPlaintext, enableSaslSsl = enableSaslSsl, rack = rackInfo.get(node), logDirCount = logDirCount, enableToken = enableToken,
-        numPartitions = numPartitions, defaultReplicationFactor = defaultReplicationFactor, enableFetchFromFollower = enableFetchFromFollower)
+        numPartitions = numPartitions, defaultReplicationFactor = defaultReplicationFactor, enableFetchFromFollower = enableFetchFromFollower, inklessMode = inklessMode)
     }
   }
 
@@ -229,7 +231,8 @@ object TestUtils extends Logging {
                          enableToken: Boolean = false,
                          numPartitions: Int = 1,
                          defaultReplicationFactor: Short = 1,
-                         enableFetchFromFollower: Boolean = false): Properties = {
+                         enableFetchFromFollower: Boolean = false,
+                         inklessMode: Option[InklessMode] = None): Properties = {
     def shouldEnable(protocol: SecurityProtocol) = interBrokerSecurityProtocol.fold(false)(_ == protocol)
 
     val protocolAndPorts = ArrayBuffer[(SecurityProtocol, Int)]()
@@ -310,6 +313,10 @@ object TestUtils extends Logging {
     if (enableFetchFromFollower) {
       props.put(ServerConfigs.BROKER_RACK_CONFIG, nodeId.toString)
       props.put(ReplicationConfigs.REPLICA_SELECTOR_CLASS_CONFIG, "org.apache.kafka.common.replica.RackAwareReplicaSelector")
+    }
+
+    inklessMode.foreach { mode =>
+      mode.inklessConfigs(props)
     }
     props
   }
@@ -1569,6 +1576,28 @@ object TestUtils extends Logging {
 
     override def onTimeout(): Unit = {
       timedOut.set(true)
+    }
+  }
+
+  class InklessMode(val pgContainer: InklessPostgreSQLContainer, val minioContainer: MinioContainer) {
+    def inklessConfigs(props: Properties): Unit = {
+      inklessControlPlaneConfig(props)
+      // Storage: S3
+      props.put("inkless.storage.backend.class", "io.aiven.inkless.storage_backend.s3.S3Storage")
+      props.put("inkless.storage.s3.bucket.name", minioContainer.getBucketName)
+      props.put("inkless.storage.s3.region", minioContainer.getRegion)
+      props.put("inkless.storage.s3.endpoint.url", minioContainer.getEndpoint)
+      props.put("inkless.storage.s3.path.style.access.enabled", "true")
+      props.put("inkless.storage.aws.access.key.id", minioContainer.getAccessKey)
+      props.put("inkless.storage.aws.secret.access.key", minioContainer.getSecretKey)
+    }
+
+    def inklessControlPlaneConfig(props: Properties): Unit = {
+      // Control plane: Postgres
+      props.put("inkless.control.plane.class", "io.aiven.inkless.control_plane.postgres.PostgresControlPlane")
+      props.put("inkless.control.plane.connection.string", pgContainer.getUserJdbcUrl)
+      props.put("inkless.control.plane.username", pgContainer.getUsername)
+      props.put("inkless.control.plane.password", pgContainer.getPassword)
     }
   }
 }

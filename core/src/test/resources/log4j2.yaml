@@ -36,3 +36,6 @@ Configuration:
 
       - name: org.apache.kafka
         level: WARN
+
+      - name: io.aiven.inkless
+        level: DEBUG

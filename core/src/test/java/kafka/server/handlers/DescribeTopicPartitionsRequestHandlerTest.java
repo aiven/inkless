@@ -537,7 +537,8 @@ class DescribeTopicPartitionsRequestHandlerTest {
             false,
             1,
             (short) 1,
-            false);
+            false,
+            scala.Option.empty());
         properties.put(KRaftConfigs.NODE_ID_CONFIG, Integer.toString(brokerId));
         properties.put(KRaftConfigs.PROCESS_ROLES_CONFIG, "broker");
         int voterId = brokerId + 1;

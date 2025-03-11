@@ -106,7 +106,8 @@ public class EligibleLeaderReplicasIntegrationTest extends KafkaServerTestHarnes
             1,
             (short) 4,
             0,
-            false
+            false,
+            scala.Option.empty()
         )));
         List<KafkaConfig> configs = new ArrayList<>();
         for (Properties props : brokerConfigs) {
