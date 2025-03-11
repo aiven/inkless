@@ -23,7 +23,6 @@ import java.util.Set;
 
 import io.aiven.inkless.common.ByteRange;
 import io.aiven.inkless.common.ObjectKey;
-import io.aiven.inkless.merge.MergeBatchInputStream;
 import io.aiven.inkless.storage_backend.common.StorageBackend;
 import io.aiven.inkless.storage_backend.common.StorageBackendException;
 
@@ -53,6 +52,6 @@ public class ConfigTestStorageBackend implements StorageBackend {
     }
 
     @Override
-    public void upload(ObjectKey key, MergeBatchInputStream data) throws StorageBackendException {
+    public void uploadMultiPart(ObjectKey key, InputStream data) throws StorageBackendException {
     }
 }

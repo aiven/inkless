@@ -29,7 +29,6 @@ import java.util.stream.Collectors;
 
 import io.aiven.inkless.common.ByteRange;
 import io.aiven.inkless.common.ObjectKey;
-import io.aiven.inkless.merge.MergeBatchInputStream;
 import io.aiven.inkless.storage_backend.common.InvalidRangeException;
 import io.aiven.inkless.storage_backend.common.KeyNotFoundException;
 import io.aiven.inkless.storage_backend.common.StorageBackend;
@@ -81,7 +80,7 @@ public class S3Storage implements StorageBackend {
     }
 
     @Override
-    public void upload(final ObjectKey key, final MergeBatchInputStream inputStream) throws StorageBackendException {
+    public void uploadMultiPart(final ObjectKey key, final InputStream inputStream) throws StorageBackendException {
         final var partSize = 5 * 1024 * 1024; // TODO make it configurable
         final var out = new S3MultiPartOutputStream(bucketName, key, partSize, s3Client);
         try (out) {

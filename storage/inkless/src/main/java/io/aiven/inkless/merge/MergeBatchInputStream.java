@@ -1,12 +1,13 @@
 package io.aiven.inkless.merge;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.OutputStream;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 
-public class MergeBatchInputStream {
+public class MergeBatchInputStream extends InputStream {
 
     private final List<BatchAndStream> batchAndStreams;
     private boolean closed = false;
@@ -33,6 +34,16 @@ public class MergeBatchInputStream {
         return transferred;
     }
 
+
+    @Override
+    public int read() throws IOException {
+        throw new UnsupportedOperationException("MergeBatchInputStream only supports transfer to OutputStream");
+    }
+
+    @Override
+    public int read(byte[] b, int off, int len) throws IOException {
+        throw new UnsupportedOperationException("MergeBatchInputStream only supports transfer to OutputStream");
+    }
 
     public void close() throws IOException {
         if (closed) { return; }
