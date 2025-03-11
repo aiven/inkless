@@ -617,6 +617,8 @@ org.apache.kafka.coordinator.group.assignor.SimpleAssignorTest:
 - testMemberHashAssignment
 - testName
 - testRoundRobinAssignment
+- testRoundRobinAssignmentWithCount
+- testRoundRobinAssignmentWithCountTooManyPartitions
 org.apache.kafka.coordinator.group.assignor.UniformHeterogeneousAssignmentBuilderTest:
 - testFirstAssignmentNumMembersGreaterThanTotalNumPartitions
 - testFirstAssignmentTwoMembersTwoTopics
