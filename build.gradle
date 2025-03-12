@@ -1013,7 +1013,7 @@ project(':core') {
   }
 
   dependencies {
-    releaseOnly log4jReleaseLibs
+    implementation log4jReleaseLibs
     // `core` is often used in users' tests, define the following dependencies as `api` for backwards compatibility
     // even though the `core` module doesn't expose any public API
     api project(':clients')

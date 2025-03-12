@@ -68,6 +68,7 @@ import org.apache.kafka.common.metadata.DelegationTokenRecord;
 import org.apache.kafka.common.metadata.EndTransactionRecord;
 import org.apache.kafka.common.metadata.FeatureLevelRecord;
 import org.apache.kafka.common.metadata.FenceBrokerRecord;
+import org.apache.kafka.common.metadata.InklessTestRecord;
 import org.apache.kafka.common.metadata.MetadataRecordType;
 import org.apache.kafka.common.metadata.NoOpRecord;
 import org.apache.kafka.common.metadata.PartitionChangeRecord;
@@ -127,6 +128,7 @@ import org.apache.kafka.timeline.SnapshotRegistry;
 
 import org.slf4j.Logger;
 
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.EnumSet;
 import java.util.HashMap;
@@ -140,7 +142,10 @@ import java.util.OptionalLong;
 import java.util.Random;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Supplier;
@@ -1292,6 +1297,10 @@ public final class QuorumController implements Controller {
             case CLEAR_ELR_RECORD:
                 replicationControl.replay((ClearElrRecord) message);
                 break;
+            case INKLESS_TEST_RECORD:
+                final InklessTestRecord record = (InklessTestRecord) message;
+                log.error("Replaying INKLESS_TEST_RECORD {}", record.counter());
+                break;
             default:
                 throw new RuntimeException("Unhandled record type " + type);
         }
@@ -1621,7 +1630,28 @@ public final class QuorumController implements Controller {
             build();
         log.info("Creating new QuorumController with clusterId {}", clusterId);
         this.raftClient.register(metaLogListener);
+
+
+        scheduledExecutorService.scheduleWithFixedDelay(() -> {
+            if (!isActiveController()) {
+                return;
+            }
+            log.error("Appending test events");
+            appendWriteEvent("testEvents", OptionalLong.empty(),
+                () -> {
+                    final List<ApiMessageAndVersion> records = new ArrayList<>();
+                    for (int i = 0; i < 30; i++) {
+                        records.add(new ApiMessageAndVersion(new InklessTestRecord()
+                            .setCounter(testCounter.getAndIncrement())
+                            .setOpaqueData(new byte[100 * 1024]), (short) 0));
+                    }
+                    return ControllerResult.atomicOf(records, "rrr");
+                });
+        }, 250, 250, MILLISECONDS);
     }
+
+    private final AtomicLong testCounter = new AtomicLong();
+    private final ScheduledExecutorService scheduledExecutorService = Executors.newSingleThreadScheduledExecutor();
 
     /**
      * Register the writeNoOpRecord task.
