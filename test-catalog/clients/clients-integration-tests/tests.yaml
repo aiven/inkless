@@ -1,0 +1,4 @@
+org.apache.kafka.clients.admin.AdminFenceProducersTest:
+- testFenceAfterProducerCommit
+- testFenceBeforeProducerCommit
+- testFenceProducerTimeoutMs

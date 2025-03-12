@@ -33,10 +33,6 @@ kafka.admin.AddPartitionsTest:
 - testReplicaPlacementAllServers
 - testReplicaPlacementPartialServers
 - testWrongReplicaCount
-kafka.admin.AdminFenceProducersTest:
-- testFenceAfterProducerCommit
-- testFenceBeforeProducerCommit
-- testFenceProducerTimeoutMs
 kafka.admin.ClientTelemetryTest:
 - testClientInstanceId
 - testIntervalMsParser
