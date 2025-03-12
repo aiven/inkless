@@ -443,6 +443,8 @@ org.apache.kafka.raft.ProspectiveStateTest:
 - testThreeNodeQuorumVoteRejected
 - testTwoNodeQuorumVoteGranted
 - testTwoNodeQuorumVoteRejected
+org.apache.kafka.raft.QuorumConfigTest:
+- testIllegalConfig
 org.apache.kafka.raft.QuorumStateTest:
 - testCanBecomeFollowerOfNonVoter
 - testCandidateToAnyStateLowerEpoch
