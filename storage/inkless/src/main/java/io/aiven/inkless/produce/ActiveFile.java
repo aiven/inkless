@@ -23,11 +23,11 @@ import org.apache.kafka.common.compress.Compression;
 import org.apache.kafka.common.errors.CorruptRecordException;
 import org.apache.kafka.common.errors.InvalidProducerEpochException;
 import org.apache.kafka.common.errors.KafkaStorageException;
-import org.apache.kafka.common.errors.RecordBatchTooLargeException;
 import org.apache.kafka.common.errors.RecordTooLargeException;
 import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.record.MemoryRecords;
 import org.apache.kafka.common.record.RecordBatch;
+import org.apache.kafka.common.record.TimestampType;
 import org.apache.kafka.common.requests.ProduceResponse;
 import org.apache.kafka.common.requests.ProduceResponse.PartitionResponse;
 import org.apache.kafka.common.utils.PrimitiveRef;
@@ -55,6 +55,7 @@ import io.aiven.inkless.TimeUtils;
 
 import static io.aiven.inkless.produce.UnifiedLog.analyzeAndValidateRecords;
 import static io.aiven.inkless.produce.UnifiedLog.trimInvalidBytes;
+import static org.apache.kafka.storage.internals.log.UnifiedLog.UNKNOWN_OFFSET;
 import static org.apache.kafka.storage.internals.log.UnifiedLog.newValidatorMetricsRecorder;
 
 /**
@@ -65,9 +66,6 @@ import static org.apache.kafka.storage.internals.log.UnifiedLog.newValidatorMetr
 class ActiveFile {
     private static final Logger LOGGER = LoggerFactory.getLogger(ActiveFile.class);
 
-    // Different from UnifiedLog, log start offset is set on the ControlPlane side
-    // Using an undefined value to fulfill the validations requirements
-    public static final int UNKNOWN_LOG_START_OFFSET = -1;
     // for inkless the origin is always client
     public static final AppendOrigin APPEND_ORIGIN = AppendOrigin.CLIENT;
     // Using 0 as for inkless the leader epoch is not used
@@ -105,6 +103,7 @@ class ActiveFile {
         this.validatorMetricsRecorder = newValidatorMetricsRecorder(brokerTopicStats.allTopicsStats());
     }
 
+    // Eventually this could be refactored to be included within ReplicaManager as it shares a lot of similarities
     CompletableFuture<Map<TopicPartition, PartitionResponse>> add(
         final Map<TopicIdPartition, MemoryRecords> entriesPerPartition,
         final Map<String, LogConfig> topicConfigs,
@@ -133,77 +132,20 @@ class ActiveFile {
 
                 final MemoryRecords records = entry.getValue();
 
-                final LogAppendInfo appendInfo = analyzeAndValidateRecords(
-                    topicIdPartition.topicPartition(),
-                    config,
-                    records,
-                    UNKNOWN_LOG_START_OFFSET,
-                    APPEND_ORIGIN,
-                    false,
-                    true, // ensures that offsets across batches on the same partition grow monotonically
-                    LEADER_EPOCH,
-                    brokerTopicStats);
+                final LogAppendInfo appendInfo = validateAndAppendBatch(topicIdPartition, config, records, invalidBatches, requestLocal);
 
-                if (appendInfo.validBytes() <= 0) {
-                    // Reply with empty response for empty batches
-                    invalidBatches.put(topicIdPartition.topicPartition(), new PartitionResponse(Errors.NONE));
-                } else {
-                    MemoryRecords validRecords = trimInvalidBytes(topicIdPartition.topicPartition(), records, appendInfo);
-
-                    // Use the requested log start offset as this value will be updated on the Control Plane anyway
-                    final PrimitiveRef.LongRef offset = PrimitiveRef.ofLong(appendInfo.firstOffset());
-                    final Compression targetCompression = BrokerCompressionType.targetCompression(config.compression, appendInfo.sourceCompression());
-
-                    final LogValidator validator = new LogValidator(
-                        validRecords,
-                        topicIdPartition.topicPartition(),
-                        time,
-                        appendInfo.sourceCompression(),
-                        targetCompression,
-                        config.compact,
-                        RecordBatch.CURRENT_MAGIC_VALUE,
-                        config.messageTimestampType,
-                        config.messageTimestampBeforeMaxMs,
-                        config.messageTimestampAfterMaxMs,
-                        LEADER_EPOCH,
-                        APPEND_ORIGIN
-                    );
-                    LogValidator.ValidationResult validateAndOffsetAssignResult = validator.validateMessagesAndAssignOffsets(
-                        offset,
-                        validatorMetricsRecorder,
-                        requestLocal.bufferSupplier()
-                    );
-
-                    validRecords = validateAndOffsetAssignResult.validatedRecords;
-                    // No need to update the appendInfo as it is not passed back
-
-                    // re-validate message sizes if there's a possibility that they have changed (due to re-compression or message
-                    // format conversion)
-                    if (validateAndOffsetAssignResult.messageSizeMaybeChanged) {
-                        validRecords.batches().forEach(batch -> {
-                            if (batch.sizeInBytes() > config.maxMessageSize()) {
-                                // we record the original message set size instead of the trimmed size
-                                // to be consistent with pre-compression bytesRejectedRate recording
-                                brokerTopicStats.topicStats(topicIdPartition.topicPartition().topic()).bytesRejectedRate().mark(records.sizeInBytes());
-                                brokerTopicStats.allTopicsStats().bytesRejectedRate().mark(records.sizeInBytes());
-                                throw new RecordTooLargeException("Message batch size is " + batch.sizeInBytes() + " bytes in append to" +
-                                    "partition " + topicIdPartition.topicPartition() + " which exceeds the maximum configured size of " + config.maxMessageSize() + ".");
-                            }
-                        });
-                    }
-
-                    // Ignore batch size validation against segment size as it does not apply to inkless
-
-                    // add batches to the buffer
-                    validRecords.batches().forEach(batch -> buffer.addBatch(topicIdPartition, batch, requestId));
-
-                    // update stats for successfully appended bytes and messages as bytesInRate and messageInRate
-                    brokerTopicStats.topicStats(topicIdPartition.topic()).bytesInRate().mark(records.sizeInBytes());
-                    brokerTopicStats.allTopicsStats().bytesInRate().mark(records.sizeInBytes());
-                    brokerTopicStats.topicStats(topicIdPartition.topic()).messagesInRate().mark(appendInfo.numMessages());
-                    brokerTopicStats.allTopicsStats().messagesInRate().mark(appendInfo.numMessages());
-                }
-            } catch (RecordBatchTooLargeException | CorruptRecordException | KafkaStorageException e) {
+                // update stats for successfully appended bytes and messages as bytesInRate and messageInRate
+                brokerTopicStats.topicStats(topicIdPartition.topic()).bytesInRate().mark(records.sizeInBytes());
+                brokerTopicStats.allTopicsStats().bytesInRate().mark(records.sizeInBytes());
+                brokerTopicStats.topicStats(topicIdPartition.topic()).messagesInRate().mark(appendInfo.numMessages());
+                brokerTopicStats.allTopicsStats().messagesInRate().mark(appendInfo.numMessages());
+            // case e@ (_: UnknownTopicOrPartitionException |  // Handled earlier
+            //          _: NotLeaderOrFollowerException | // Not relevant for inkless
+            //          _: RecordTooLargeException |
+            //          _: RecordBatchTooLargeException | // validation ignored during validation
+            //          _: CorruptRecordException |
+            //          _: KafkaStorageException) =>
+            } catch (RecordTooLargeException | CorruptRecordException | KafkaStorageException e) {
                 // NOTE: Failed produce requests metric is not incremented for known exceptions
                 // it is supposed to indicate un-expected failures of a broker in handling a produce request
                 invalidBatches.put(topicIdPartition.topicPartition(), new PartitionResponse(Errors.forException(e)));
@@ -228,6 +170,94 @@ class ActiveFile {
         awaitingFuturesByRequest.put(requestId, result);
 
         return result;
+    }
+
+    // Similar to UnifiedLog.append(...)
+    private LogAppendInfo validateAndAppendBatch(
+        final TopicIdPartition topicIdPartition,
+        final LogConfig config,
+        final MemoryRecords records,
+        final Map<TopicPartition, PartitionResponse> invalidBatches,
+        final RequestLocal requestLocal
+    ) {
+        final LogAppendInfo appendInfo = analyzeAndValidateRecords(
+            topicIdPartition.topicPartition(),
+            config,
+            records,
+            UNKNOWN_OFFSET, // set on control-plane, use unknown value to fulfill validation requirements
+            APPEND_ORIGIN,
+            false,
+            true, // ensures that offsets across batches on the same partition grow monotonically
+            LEADER_EPOCH,
+            brokerTopicStats);
+
+        if (appendInfo.validBytes() <= 0) {
+            // Reply with empty response for empty batches
+            invalidBatches.put(topicIdPartition.topicPartition(), new PartitionResponse(Errors.NONE));
+        } else {
+            MemoryRecords validRecords = trimInvalidBytes(topicIdPartition.topicPartition(), records, appendInfo);
+
+            // Use the requested log start offset as this value will be updated on the Control Plane anyway
+            final PrimitiveRef.LongRef offset = PrimitiveRef.ofLong(appendInfo.firstOffset());
+            final Compression targetCompression = BrokerCompressionType.targetCompression(config.compression, appendInfo.sourceCompression());
+
+            final LogValidator validator = new LogValidator(
+                validRecords,
+                topicIdPartition.topicPartition(),
+                time,
+                appendInfo.sourceCompression(),
+                targetCompression,
+                config.compact,
+                RecordBatch.CURRENT_MAGIC_VALUE,
+                config.messageTimestampType,
+                config.messageTimestampBeforeMaxMs,
+                config.messageTimestampAfterMaxMs,
+                LEADER_EPOCH,
+                APPEND_ORIGIN
+            );
+            LogValidator.ValidationResult validateAndOffsetAssignResult = validator.validateMessagesAndAssignOffsets(
+                offset,
+                validatorMetricsRecorder,
+                requestLocal.bufferSupplier()
+            );
+
+            validRecords = validateAndOffsetAssignResult.validatedRecords;
+            appendInfo.setMaxTimestamp(validateAndOffsetAssignResult.maxTimestampMs);
+            appendInfo.setLastOffset(offset.value - 1);
+            appendInfo.setRecordValidationStats(validateAndOffsetAssignResult.recordValidationStats);
+            if (config.messageTimestampType == TimestampType.LOG_APPEND_TIME) {
+                appendInfo.setLogAppendTime(validateAndOffsetAssignResult.logAppendTimeMs);
+            }
+
+            // re-validate message sizes if there's a possibility that they have changed (due to re-compression or message
+            // format conversion)
+            if (validateAndOffsetAssignResult.messageSizeMaybeChanged) {
+                validRecords.batches().forEach(batch -> {
+                    if (batch.sizeInBytes() > config.maxMessageSize()) {
+                        // we record the original message set size instead of the trimmed size
+                        // to be consistent with pre-compression bytesRejectedRate recording
+                        brokerTopicStats.topicStats(topicIdPartition.topicPartition().topic()).bytesRejectedRate().mark(records.sizeInBytes());
+                        brokerTopicStats.allTopicsStats().bytesRejectedRate().mark(records.sizeInBytes());
+                        throw new RecordTooLargeException("Message batch size is " + batch.sizeInBytes() + " bytes in append to" +
+                            "partition " + topicIdPartition.topicPartition() + " which exceeds the maximum configured size of " + config.maxMessageSize() + ".");
+                    }
+                });
+            }
+
+            // Ignore batch size validation against segment size as it does not apply to inkless
+            // if (validRecords.sizeInBytes() > config.segmentSize) {
+            //     throw new RecordBatchTooLargeException("Message batch size is " + validRecords.sizeInBytes() + " bytes in append " +
+            //         "to partition " + topicIdPartition.topicPartition() + ", which exceeds the maximum configured segment size of " + config.segmentSize + ".");
+            // }
+
+            // after this point it comes the log-file specific, leader epoch, and duplication checks that are not relevant when appending to inkless
+            // as batches go to the buffer instead of the log file
+            // and idempotency is checked on the control plane
+
+            // add batches to the buffer
+            validRecords.batches().forEach(batch -> buffer.addBatch(topicIdPartition, batch, requestId));
+        }
+        return appendInfo;
     }
 
     private void processFailedRecords(TopicPartition topicPartition, Throwable t) {

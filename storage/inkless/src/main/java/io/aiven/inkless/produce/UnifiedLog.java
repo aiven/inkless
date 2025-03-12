@@ -68,14 +68,14 @@ class UnifiedLog {
      * </ol>
      */
     static LogAppendInfo analyzeAndValidateRecords(TopicPartition topicPartition,
-                                                          LogConfig config,
-                                                          MemoryRecords records,
-                                                          long logStartOffset,
-                                                          AppendOrigin origin,
-                                                          boolean ignoreRecordSize,
-                                                          boolean requireOffsetsMonotonic,
-                                                          int leaderEpoch,
-                                                          BrokerTopicStats brokerTopicStats) {
+                                                   LogConfig config,
+                                                   MemoryRecords records,
+                                                   long logStartOffset,
+                                                   AppendOrigin origin,
+                                                   boolean ignoreRecordSize,
+                                                   boolean requireOffsetsMonotonic,
+                                                   int leaderEpoch,
+                                                   BrokerTopicStats brokerTopicStats) {
         int validBytesCount = 0;
         long firstOffset = LocalLog.UNKNOWN_OFFSET;
         long lastOffset = -1L;
