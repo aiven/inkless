@@ -589,8 +589,8 @@ public abstract class AbstractControlPlaneTest {
     }
 
     @Test
-    void isSafeToDeleteFile() {
-        assertThat(controlPlane.isSafeToDelete("test")).isTrue();
+    void isSafeToDeleteFileFile() {
+        assertThat(controlPlane.isSafeToDeleteFile("test")).isTrue();
     }
 
     @Test
@@ -600,7 +600,7 @@ public abstract class AbstractControlPlaneTest {
             List.of(
                 CommitBatchRequest.of(0, new TopicIdPartition(EXISTING_TOPIC_1_ID, 0, EXISTING_TOPIC_1), 1, (int) FILE_SIZE, 0, 0, 1000, TimestampType.CREATE_TIME)
             ));
-        assertThat(controlPlane.isSafeToDelete(objectKey)).isFalse();
+        assertThat(controlPlane.isSafeToDeleteFile(objectKey)).isFalse();
     }
 
     @Nested

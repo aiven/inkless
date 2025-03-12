@@ -542,7 +542,7 @@ public class InMemoryControlPlane extends AbstractControlPlane {
     }
 
     @Override
-    public boolean isSafeToDelete(String objectKeyPath) {
+    public boolean isSafeToDeleteFile(String objectKeyPath) {
         return !files.containsKey(objectKeyPath);
     }
 

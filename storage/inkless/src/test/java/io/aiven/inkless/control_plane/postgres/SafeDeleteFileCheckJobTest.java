@@ -39,7 +39,7 @@ import io.aiven.inkless.test_utils.PostgreSQLTestContainer;
 import static org.assertj.core.api.Assertions.assertThat;
 
 @Testcontainers
-class SafeDeleteCheckJobTest {
+class SafeDeleteFileCheckJobTest {
     @Container
     static final InklessPostgreSQLContainer pgContainer = PostgreSQLTestContainer.container();
     static final int BROKER_ID = 11;
@@ -64,7 +64,7 @@ class SafeDeleteCheckJobTest {
 
     @Test
     void isSafeToDelete() throws Exception {
-        final SafeDeleteCheckJob job = new SafeDeleteCheckJob(pgContainer.getJooqCtx(), "test");
+        final SafeDeleteFileCheckJob job = new SafeDeleteFileCheckJob(pgContainer.getJooqCtx(), "test");
         assertThat(job.call()).isTrue();
     }
 
@@ -83,7 +83,7 @@ class SafeDeleteCheckJobTest {
             duration -> {}
         ).call();
 
-        final SafeDeleteCheckJob job = new SafeDeleteCheckJob(pgContainer.getJooqCtx(), objectKey);
+        final SafeDeleteFileCheckJob job = new SafeDeleteFileCheckJob(pgContainer.getJooqCtx(), objectKey);
         assertThat(job.call()).isFalse();
     }
 }

@@ -27,14 +27,13 @@ import static org.jooq.generated.tables.Files.FILES;
 /**
  * The job of ensuring an object key is not referenced by any file, so it can be safely deleted.
  */
-public class SafeDeleteCheckJob implements Callable<Boolean> {
+public class SafeDeleteFileCheckJob implements Callable<Boolean> {
     private final DSLContext jooqCtx;
 
     final String objectKeyPath;
 
-
-    public SafeDeleteCheckJob(final DSLContext jooqCtx,
-                              final String objectKeyPath) {
+    public SafeDeleteFileCheckJob(final DSLContext jooqCtx,
+                                  final String objectKeyPath) {
         this.jooqCtx = jooqCtx;
         this.objectKeyPath = objectKeyPath;
     }

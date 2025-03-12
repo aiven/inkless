@@ -399,7 +399,7 @@ class FileMergerMockedTest {
             .thenReturn(new FileMergeWorkItem(WORK_ITEM_ID, Instant.ofEpochMilli(1234), List.of(file1InWorkItem)));
         doThrow(new ControlPlaneException("test"))
             .when(controlPlane).commitFileMergeWorkItem(anyLong(), anyString(), anyInt(), anyLong(), any());
-        when(controlPlane.isSafeToDelete(anyString())).thenReturn(isSafeToDelete);
+        when(controlPlane.isSafeToDeleteFile(anyString())).thenReturn(isSafeToDelete);
 
         final FileMerger fileMerger = new FileMerger(sharedState);
         fileMerger.run();
