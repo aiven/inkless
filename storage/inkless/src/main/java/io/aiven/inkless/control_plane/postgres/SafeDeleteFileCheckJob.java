@@ -58,6 +58,7 @@ public class SafeDeleteFileCheckJob implements Callable<Boolean> {
                 .select(FILES.FILE_ID)
                 .from(FILES)
                 .where(FILES.OBJECT_KEY.eq(objectKeyPath))
+                .forShare()
                 .fetch()
                 .isEmpty()
         );
