@@ -90,6 +90,26 @@ services:
       exit 0;
       "
 
+  fake-gcs-server:
+    image: fsouza/fake-gcs-server
+    ports:
+      - "4443:4443"
+    command: -scheme http -log-level debug
+
+  gcs-create_bucket:
+    image: curlimages/curl
+    restart: "no"
+    depends_on:
+      - fake-gcs-server
+    entrypoint: >
+      /bin/sh -c "
+      curl -v -X PUT http://fake-gcs-server:4443/_internal/config -H \"Content-Type: application/json\" -d 
+      '{\"externalUrl\": \"http://fake-gcs-server:4443\"}';
+      curl -v -X POST http://fake-gcs-server:4443/storage/v1/b?project=test-project -H \"Content-Type: application/json\" 
+      -d '{\"name\": \"inkless\"}';
+      exit 0;
+      "
+
   # Monitoring
   prometheus:
     image: prom/prometheus:latest

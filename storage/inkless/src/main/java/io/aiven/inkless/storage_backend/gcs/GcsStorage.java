@@ -1,0 +1,150 @@
+/*
+ * Inkless
+ * Copyright (C) 2024 - 2025 Aiven OY
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
+
+package io.aiven.inkless.storage_backend.gcs;
+
+import com.google.cloud.BaseServiceException;
+import com.google.cloud.ReadChannel;
+import com.google.cloud.http.HttpTransportOptions;
+import com.google.cloud.storage.Blob;
+import com.google.cloud.storage.BlobId;
+import com.google.cloud.storage.BlobInfo;
+import com.google.cloud.storage.Storage;
+import com.google.cloud.storage.StorageOptions;
+import com.groupcdg.pitest.annotations.CoverageIgnore;
+
+import java.io.IOException;
+import java.io.InputStream;
+import java.nio.channels.Channels;
+import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
+
+import io.aiven.inkless.common.ByteRange;
+import io.aiven.inkless.common.ObjectKey;
+import io.aiven.inkless.storage_backend.common.InvalidRangeException;
+import io.aiven.inkless.storage_backend.common.KeyNotFoundException;
+import io.aiven.inkless.storage_backend.common.StorageBackend;
+import io.aiven.inkless.storage_backend.common.StorageBackendException;
+
+@CoverageIgnore  // tested on integration level
+public class GcsStorage implements StorageBackend {
+    private Storage storage;
+    private String bucketName;
+
+    @Override
+    public void configure(final Map<String, ?> configs) {
+        final GcsStorageConfig config = new GcsStorageConfig(configs);
+        this.bucketName = config.bucketName();
+
+        final HttpTransportOptions.Builder httpTransportOptionsBuilder = HttpTransportOptions.newBuilder();
+
+        final StorageOptions.Builder builder = StorageOptions.newBuilder()
+            .setCredentials(config.credentials())
+            .setTransportOptions(new MetricCollector().httpTransportOptions(httpTransportOptionsBuilder));
+        if (config.endpointUrl() != null) {
+            builder.setHost(config.endpointUrl());
+        }
+        storage = builder.build().getService();
+    }
+
+    @Override
+    public void upload(final ObjectKey key, final byte[] data) throws StorageBackendException {
+        try {
+            final BlobInfo blobInfo = BlobInfo.newBuilder(this.bucketName, key.value()).build();
+            storage.create(blobInfo, data);
+        } catch (final BaseServiceException e) {
+            throw new StorageBackendException("Failed to upload " + key, e);
+        }
+    }
+
+    @Override
+    public void delete(final ObjectKey key) throws StorageBackendException {
+        try {
+            storage.delete(this.bucketName, key.value());
+        } catch (final BaseServiceException e) {
+            throw new StorageBackendException("Failed to delete " + key, e);
+        }
+    }
+
+    @Override
+    public void delete(final Set<ObjectKey> keys) throws StorageBackendException {
+        try {
+            final Set<BlobId> ids = keys.stream()
+                    .map(k -> BlobId.of(this.bucketName,k.value()))
+                    .collect(Collectors.toSet());
+
+            storage.delete(ids);
+        } catch (final BaseServiceException e) {
+            throw new StorageBackendException("Failed to delete " + keys, e);
+        }
+    }
+
+    @Override
+    public InputStream fetch(ObjectKey key, ByteRange range) throws StorageBackendException {
+        try {
+            if (range != null && range.empty()) {
+                return InputStream.nullInputStream();
+            }
+
+            final Blob blob = getBlob(key);
+
+            if (range != null && range.offset() >= blob.getSize()) {
+                throw new InvalidRangeException("Range start position " + range.offset()
+                    + " is outside file content. file size = " + blob.getSize());
+            }
+
+            final ReadChannel reader = blob.reader();
+            if (range != null) {
+                reader.limit(range.endOffset() + 1);
+                reader.seek(range.offset());
+            }
+            return Channels.newInputStream(reader);
+        } catch (final IOException e) {
+            throw new StorageBackendException("Failed to fetch " + key, e);
+        } catch (final BaseServiceException e) {
+            if (e.getCode() == 404) {
+                // https://cloud.google.com/storage/docs/json_api/v1/status-codes#404_Not_Found
+                throw new KeyNotFoundException(this, key, e);
+            } else if (e.getCode() == 416) {
+                // https://cloud.google.com/storage/docs/json_api/v1/status-codes#416_Requested_Range_Not_Satisfiable
+                throw new InvalidRangeException("Invalid range " + range, e);
+            } else {
+                throw new StorageBackendException("Failed to fetch " + key, e);
+            }
+        }
+    }
+
+    private Blob getBlob(final ObjectKey key) throws KeyNotFoundException {
+        // Unfortunately, it seems Google will do two a separate (HEAD-like) call to get blob metadata.
+        // Since the blobs are immutable in tiered storage, we can consider caching them locally
+        // to avoid the extra round trip.
+        final Blob blob = storage.get(this.bucketName, key.value());
+        if (blob == null) {
+            throw new KeyNotFoundException(this, key);
+        }
+        return blob;
+    }
+
+    @Override
+    public String toString() {
+        return "GCSStorage{"
+            + "bucketName='" + bucketName + '\''
+            + '}';
+    }
+}
