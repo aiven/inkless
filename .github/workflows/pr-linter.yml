@@ -15,9 +15,6 @@
 
 name: Pull Request Linter
 
-# Inkless does not follow upstream PR naming pattern
-disabled: true
-
 on:
   workflow_run:
     workflows: [ Pull Request Reviewed ]
@@ -26,7 +23,7 @@ on:
 
 jobs:
   lint-pr:
-    if: github.event.workflow_run.conclusion == 'success'
+    if: false
     runs-on: ubuntu-latest
     steps:
       - name: Env
