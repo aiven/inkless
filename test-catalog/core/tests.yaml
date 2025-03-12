@@ -3307,7 +3307,6 @@ kafka.server.ShareFetchAcknowledgeRequestTest:
 - testShareAcknowledgeRequestSuccessAccept
 - testShareAcknowledgeRequestSuccessReject
 - testShareAcknowledgeRequestSuccessRelease
-- testShareFetchBrokerDoesNotRespectPartitionsSizeLimit
 - testShareFetchInitialEpochWithAcknowledgements
 - testShareFetchRequestForgetTopicPartitions
 - testShareFetchRequestInvalidShareSessionEpoch
@@ -3486,7 +3485,7 @@ kafka.server.share.SharePartitionManagerTest:
 - testMultipleConcurrentShareFetches
 - testMultipleSequentialShareFetches
 - testNewContext
-- testNewContextReturnsFinalContextError
+- testNewContextReturnsFinalContextWhenTopicPartitionsArePresentInRequestData
 - testNewContextReturnsFinalContextWithRequestData
 - testNewContextReturnsFinalContextWithoutRequestData
 - testPartitionLoadTimeMetricWithMultiplePartitions
@@ -3732,6 +3731,7 @@ kafka.test.api.ShareConsumerTest:
 - testMultipleConsumersInMultipleGroupsConcurrentConsumption
 - testMultipleConsumersWithDifferentGroupIds
 - testPollNoSubscribeFails
+- testPollRecordsGreaterThanMaxBytes
 - testPollThrowsInterruptExceptionIfInterrupted
 - testShareAutoOffsetResetByDuration
 - testShareAutoOffsetResetByDurationInvalidFormat
