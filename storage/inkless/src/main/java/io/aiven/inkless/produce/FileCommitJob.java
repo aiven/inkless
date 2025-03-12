@@ -100,23 +100,35 @@ class FileCommitJob implements Runnable {
                 finishCommitSuccessfully(result.objectKey);
             } catch (final Exception e) {
                 if (e instanceof ControlPlaneException) {
-                    if (controlPlane.isSafeToDelete(result.objectKey.value())) {
-                        // only attempt to remove the uploaded file if it is a control plane error
-                        LOGGER.error("Error commiting data, attempting to remove the uploaded file {}", result.objectKey, e);
-                        try {
-                            objectDeleter.delete(result.objectKey);
-                        } catch (final StorageBackendException e2) {
-                            LOGGER.error("Error removing the uploaded file {}", result.objectKey, e2);
-                        }
-                    } else {
-                        LOGGER.error("Error commiting data, but not removing the uploaded file {} as it is referenced", result.objectKey, e);
-                    }
+                    // only attempt to remove the uploaded file if it is a control plane error
+                    tryDeleteFile(result.objectKey(), e);
                 }
                 finishCommitWithError();
             }
         } else {
             LOGGER.error("Upload failed: {}", result.uploadError.getMessage());
             finishCommitWithError();
+        }
+    }
+
+    private void tryDeleteFile(ObjectKey objectKey, Exception e) {
+        boolean safeToDeleteFile;
+        try {
+            safeToDeleteFile = controlPlane.isSafeToDeleteFile(objectKey.value());
+        } catch (final ControlPlaneException cpe) {
+            LOGGER.error("Error checking if it is safe to delete the uploaded file {}", objectKey, cpe);
+            safeToDeleteFile = false;
+        }
+
+        if (safeToDeleteFile) {
+            LOGGER.error("Error commiting data, attempting to remove the uploaded file {}", objectKey, e);
+            try {
+                objectDeleter.delete(objectKey);
+            } catch (final StorageBackendException e2) {
+                LOGGER.error("Error removing the uploaded file {}", objectKey, e2);
+            }
+        } else {
+            LOGGER.error("Error commiting data, but not removing the uploaded file {} as it is not safe", objectKey, e);
         }
     }
 
