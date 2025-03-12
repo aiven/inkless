@@ -257,6 +257,9 @@ public final class MetadataDelta {
             case REGISTER_CONTROLLER_RECORD:
                 replay((RegisterControllerRecord) record);
                 break;
+            case INKLESS_TEST_RECORD:
+                //
+                break;
             default:
                 throw new RuntimeException("Unknown metadata record type " + type);
         }
