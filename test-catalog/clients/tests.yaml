@@ -3269,6 +3269,8 @@ org.apache.kafka.common.config.provider.FileConfigProviderTest:
 - testNullPathWithKey
 - testServiceLoaderDiscovery
 org.apache.kafka.common.errors.TransactionExceptionHierarchyTest:
+- testRefreshRetriableException
+- testRefreshRetriableExceptionHierarchy
 - testRetriableExceptionHierarchy
 org.apache.kafka.common.feature.FeaturesTest:
 - testEmptyFeatures
