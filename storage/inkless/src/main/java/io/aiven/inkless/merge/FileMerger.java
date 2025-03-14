@@ -42,7 +42,6 @@ import io.aiven.inkless.config.InklessConfig;
 import io.aiven.inkless.control_plane.BatchInfo;
 import io.aiven.inkless.control_plane.BatchMetadata;
 import io.aiven.inkless.control_plane.ControlPlane;
-import io.aiven.inkless.control_plane.ControlPlaneException;
 import io.aiven.inkless.control_plane.FileMergeWorkItem;
 import io.aiven.inkless.control_plane.MergedFileBatch;
 import io.aiven.inkless.produce.FileUploadJob;
@@ -223,9 +222,11 @@ public class FileMerger implements Runnable {
                     mergedFileBatches
                 );
             } catch (final Exception e) {
-                if (e instanceof ControlPlaneException) {
-                    // only attempt to remove the uploaded file if it is a control plane error
-                    tryDeleteFile(objectKey, e);
+                LOGGER.error("Error committing merged file, attempting to remove the uploaded file {}", objectKey, e);
+                try {
+                    storage.delete(objectKey);
+                } catch (final StorageBackendException e2) {
+                    LOGGER.error("Error removing the uploaded file {}", objectKey, e2);
                 }
                 // The original exception will be thrown.
                 throw e;
@@ -235,27 +236,6 @@ public class FileMerger implements Runnable {
             for (final var batch : batches) {
                 batch.inputStreamWithPosition.forceClose();
             }
-        }
-    }
-
-    private void tryDeleteFile(ObjectKey objectKey, Exception e) {
-        boolean safeToDeleteFile;
-        try {
-            safeToDeleteFile = controlPlane.isSafeToDeleteFile(objectKey.value());
-        } catch (final ControlPlaneException cpe) {
-            LOGGER.error("Error checking if it is safe to delete the uploaded file {}", objectKey, cpe);
-            safeToDeleteFile = false;
-        }
-
-        if (safeToDeleteFile) {
-            LOGGER.error("Error committing merged file, attempting to remove the uploaded file {}", objectKey, e);
-            try {
-                storage.delete(objectKey);
-            } catch (final StorageBackendException e2) {
-                LOGGER.error("Error removing the uploaded file {}", objectKey, e2);
-            }
-        } else {
-            LOGGER.error("Error committing merged file, but not safe to delete the uploaded file {} as it is not safe", objectKey, e);
         }
     }
 

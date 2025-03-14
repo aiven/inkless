@@ -279,7 +279,7 @@ public abstract class AbstractControlPlaneTest {
                 CommitBatchRequest.of(0, new TopicIdPartition(EXISTING_TOPIC_1_ID, 1, EXISTING_TOPIC_1), 2, 0, 10, 19, 1000, TimestampType.CREATE_TIME)
             )
         ))
-            .isInstanceOf(ControlPlaneException.class)
+            .isInstanceOf(IllegalArgumentException.class)
             .hasMessage("Batches with size 0 are not allowed");
     }
 
@@ -586,21 +586,6 @@ public abstract class AbstractControlPlaneTest {
         // Delete files from Control Plane
         controlPlane.deleteFiles(new DeleteFilesRequest(Set.of(objectKey1)));
         assertThat(controlPlane.getFilesToDelete()).isEmpty();
-    }
-
-    @Test
-    void isSafeToDeleteFileFile() {
-        assertThat(controlPlane.isSafeToDeleteFile("test")).isTrue();
-    }
-
-    @Test
-    void isNotSafeToDeleteFile() {
-        final String objectKey = "test";
-        controlPlane.commitFile(objectKey, BROKER_ID, FILE_SIZE,
-            List.of(
-                CommitBatchRequest.of(0, new TopicIdPartition(EXISTING_TOPIC_1_ID, 0, EXISTING_TOPIC_1), 1, (int) FILE_SIZE, 0, 0, 1000, TimestampType.CREATE_TIME)
-            ));
-        assertThat(controlPlane.isSafeToDeleteFile(objectKey)).isFalse();
     }
 
     @Nested
