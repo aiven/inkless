@@ -3815,12 +3815,8 @@ kafka.tools.StorageToolTest:
 - testVersionMappingWithNoReleaseVersion
 - testVersionMappingWithValidReleaseVersion
 kafka.utils.CoreUtilsTest:
-- testAbs
-- testGenerateUuidAsBase64
 - testInLock
-- testReadBytes
 - testSwallow
-- testUrlSafeBase64EncodeUUID
 kafka.utils.LoggingTest:
 - testLog4jControllerIsRegistered
 - testLogName

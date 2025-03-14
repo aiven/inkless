@@ -26,6 +26,7 @@ org.apache.kafka.streams.integration.EosIntegrationTest:
 - shouldCheckpointRestoredOffsetsWhenClosingCleanDuringRestoringStateUpdaterDisabled
 - shouldCheckpointRestoredOffsetsWhenClosingCleanDuringRestoringStateUpdaterEnabled
 - shouldCommitCorrectOffsetIfInputTopicIsTransactional
+- shouldNotCommitActiveTasksWithPendingInputIfRevokedTaskDidNotMakeProgress
 - shouldNotViolateEosIfOneTaskFails
 - shouldNotViolateEosIfOneTaskFailsWithState
 - shouldNotViolateEosIfOneTaskGetsFencedUsingIsolatedAppInstances
@@ -208,6 +209,8 @@ org.apache.kafka.streams.integration.QueryableStateIntegrationTest:
 - shouldRejectWronglyTypedStore
 org.apache.kafka.streams.integration.RangeQueryIntegrationTest:
 - testStoreConfig
+org.apache.kafka.streams.integration.RebalanceIntegrationTest:
+- shouldCommitAllTasksIfRevokedTaskTriggerPunctuation
 org.apache.kafka.streams.integration.RegexSourceIntegrationTest:
 - shouldAddStateStoreToRegexDefinedSource
 - testMultipleConsumersCanReadFromPartitionedTopic

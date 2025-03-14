@@ -115,14 +115,14 @@ org.apache.kafka.controller.FeatureControlManagerTest:
 - testCannotUpgradeToLowerVersion
 - testCannotUseSafeDowngradeIfMetadataChanged
 - testCreateFeatureLevelRecords
+- testMetadataVersion
 - testReplay
+- testReplayKraftVersionFeatureLevel
 - testReplayRecords
 - testUnsafeDowngradeIsTemporarilyDisabled
 - testUpdateFeatures
 - testUpdateFeaturesErrorCases
 - testUpgradeElrFeatureLevel
-org.apache.kafka.controller.LogReplayTrackerTest:
-- testEmpty
 org.apache.kafka.controller.OffsetControlManagerTest:
 - testAbortTransactionRecordNotAllowedInSnapshot
 - testActivate
@@ -409,6 +409,7 @@ org.apache.kafka.image.DelegationTokenImageTest:
 - testImage1WithInvalidIBP
 - testImage2RoundTrip
 org.apache.kafka.image.FeaturesDeltaTest:
+- testReplayKraftVersionFeatureLevel
 - testReplayWithUnsupportedFeatureLevel
 org.apache.kafka.image.FeaturesImageTest:
 - testApplyDelta1
