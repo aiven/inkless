@@ -17,9 +17,8 @@
  */
 package io.aiven.inkless.merge;
 
-import java.io.IOException;
-import org.apache.kafka.common.utils.Utils;
 
+import java.io.IOException;
 import java.io.InputStream;
 import java.util.function.Supplier;
 

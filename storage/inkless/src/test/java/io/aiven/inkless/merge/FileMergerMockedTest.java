@@ -20,7 +20,6 @@ package io.aiven.inkless.merge;
 import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.record.TimestampType;
-import org.apache.kafka.common.utils.ByteBufferInputStream;
 import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.storage.log.metrics.BrokerTopicStats;
 
@@ -41,10 +40,8 @@ import org.testcontainers.shaded.com.google.common.base.Supplier;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.nio.ByteBuffer;
 import java.time.Duration;
 import java.time.Instant;
-import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 
@@ -131,7 +128,7 @@ class FileMergerMockedTest {
         final int file1Batch1Size = 100;
         final int file1Size = file1Batch1Size;
         final int file1UsedSize = file1Size;
-        final byte[] file1Batch1 = generateData(file1Batch1Size, "file1Batch1");
+        final byte[] file1Batch1 = MockInputStream.generateData(file1Batch1Size, "file1Batch1");
 
         final FileMergeWorkItem.File file1InWorkItem = new FileMergeWorkItem.File(file1Id, obj1, file1Size, file1UsedSize, List.of(
             new BatchInfo(batch1Id, obj1, BatchMetadata.of(T1P0, 0, file1Batch1Size, 1L, 11L, 1L, 2L, TimestampType.CREATE_TIME))
@@ -207,8 +204,8 @@ class FileMergerMockedTest {
         final int file1Gap3Size = 1200;
         final int file1Size = file1Gap1Size + file1Batch1Size + file1Gap2Size + file1Batch2Size + file1Gap3Size;
         final int file1UsedSize = file1Batch1Size + file1Batch2Size;
-        final byte[] file1Batch1 = generateData(file1Batch1Size, "file1Batch1");
-        final byte[] file1Batch2 = generateData(file1Batch2Size, "file1Batch2");
+        final byte[] file1Batch1 = MockInputStream.generateData(file1Batch1Size, "file1Batch1");
+        final byte[] file1Batch2 = MockInputStream.generateData(file1Batch2Size, "file1Batch2");
 
         final BatchInfo file1Batch1InWorkItem = new BatchInfo(batch1Id, obj1, BatchMetadata.of(T1P0, file1Gap1Size, file1Batch1Size, 1L, 11L, 1L, 2L, TimestampType.CREATE_TIME));
         final BatchInfo file1Batch2InWorkItem = new BatchInfo(batch2Id, obj1, BatchMetadata.of(T1P1, file1Gap1Size + file1Batch1Size + file1Gap2Size, file1Batch2Size, 100L, 123L, 100L, 200L, TimestampType.LOG_APPEND_TIME));
@@ -234,8 +231,8 @@ class FileMergerMockedTest {
         final int file2Batch2Size = 210;
         final int file2Size = file2Batch1Size + file2Gap1Size + file2Batch2Size;
         final int file2UsedSize = file2Batch1Size + file2Batch2Size;
-        final byte[] file2Batch1 = generateData(file2Batch1Size, "file2Batch1");
-        final byte[] file2Batch2 = generateData(file2Batch2Size, "file2Batch2");
+        final byte[] file2Batch1 = MockInputStream.generateData(file2Batch1Size, "file2Batch1");
+        final byte[] file2Batch2 = MockInputStream.generateData(file2Batch2Size, "file2Batch2");
 
         final BatchInfo file2Batch1InWorkItem = new BatchInfo(batch3Id, obj2, BatchMetadata.of(T0P0, 0, file2Batch1Size, 1000L, 1010L, 1000L, 2000L, TimestampType.LOG_APPEND_TIME));
         final BatchInfo file2Batch2InWorkItem = new BatchInfo(batch4Id, obj2, BatchMetadata.of(T1P1, file2Batch1Size + file2Gap1Size, file2Batch2Size, 10000L, 10100L, 10000L, 20000L, TimestampType.CREATE_TIME));
@@ -357,7 +354,7 @@ class FileMergerMockedTest {
         final int file1Batch1Size = 100;
         final int file1Size = file1Batch1Size;
         final int file1UsedSize = file1Size;
-        final byte[] file1Batch1 = generateData(file1Batch1Size, "file1Batch1");
+        final byte[] file1Batch1 = MockInputStream.generateData(file1Batch1Size, "file1Batch1");
 
         final MockInputStream file1 = new MockInputStream(file1Size);
         file1.addBatch(file1Batch1);
@@ -404,7 +401,7 @@ class FileMergerMockedTest {
         final int file1Batch1Size = 100;
         final int file1Size = file1Batch1Size;
         final int file1UsedSize = file1Size;
-        final byte[] file1Batch1 = generateData(file1Batch1Size, "file1Batch1");
+        final byte[] file1Batch1 = MockInputStream.generateData(file1Batch1Size, "file1Batch1");
 
         final MockInputStream file1 = new MockInputStream(file1Size);
         file1.addBatch(file1Batch1);
@@ -450,7 +447,7 @@ class FileMergerMockedTest {
         final int file1Batch1Size = 100;
         final int file1Size = file1Batch1Size;
         final int file1UsedSize = file1Size;
-        final byte[] file1Batch1 = generateData(file1Batch1Size, "file1Batch1");
+        final byte[] file1Batch1 = MockInputStream.generateData(file1Batch1Size, "file1Batch1");
 
         final MockInputStream file1 = new MockInputStream(file1Size);
         file1.addBatch(file1Batch1);
@@ -481,18 +478,7 @@ class FileMergerMockedTest {
         verify(storage, never()).delete(objectKeyCaptor.getValue());
     }
 
-    private byte[] generateData(final int size, final String signature) {
-        final byte[] signatureBytes = signature.getBytes();
-        final ByteBuffer buffer = ByteBuffer.allocate(size);
-        while (buffer.position() < size) {
-            if (signatureBytes.length <= buffer.remaining()) {
-                buffer.put(signatureBytes);
-            } else {
-                buffer.put(Arrays.copyOf(signatureBytes, buffer.remaining()));
-            }
-        }
-        return buffer.array();
-    }
+
 
     private void bindFilesToObjectNames(final Map<String, InputStream> files) {
         try {
@@ -521,73 +507,4 @@ class FileMergerMockedTest {
         }
     }
 
-    private static class MockInputStream extends InputStream {
-        private boolean isBuilding = true;
-        private final ByteBuffer buffer;
-        private boolean wasClosed = false;
-        private Integer endGap = null;  // possible gap in the very end of file
-        private ByteBufferInputStream stream = null;
-
-        MockInputStream(final int size) {
-            buffer = ByteBuffer.allocate(size);
-        }
-
-        void addBatch(final byte[] data) {
-            if (!isBuilding) {
-                throw new IllegalStateException();
-            }
-            buffer.put(data);
-            endGap = null;
-        }
-
-        void addGap(final int size) {
-            if (!isBuilding) {
-                throw new IllegalStateException();
-            }
-            buffer.put(new byte[size]);
-            endGap = size;
-        }
-
-        void finishBuilding() {
-            if (!isBuilding) {
-                throw new IllegalStateException();
-            }
-            isBuilding = false;
-            buffer.position(0);
-            stream = new ByteBufferInputStream(buffer);
-        }
-
-        @Override
-        public void skipNBytes(final long n) {
-            if (isBuilding) {
-                throw new IllegalStateException();
-            }
-            buffer.position(buffer.position() + (int) n);
-        }
-
-        @Override
-        public int read() {
-            return stream.read();
-        }
-
-        @Override
-        public void close() throws IOException {
-            if (isBuilding) {
-                throw new IllegalStateException();
-            }
-            if (wasClosed) {
-                throw new IllegalStateException();
-            }
-            if (endGap != null) {
-                buffer.position(buffer.position() + endGap);
-            }
-            stream.close();
-            wasClosed = true;
-        }
-
-        void assertClosedAndDataFullyConsumed() {
-            assertThat(wasClosed).isTrue();
-            assertThat(buffer.position()).isEqualTo(buffer.capacity());
-        }
-    }
 }
