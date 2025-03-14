@@ -25,8 +25,6 @@ import org.slf4j.LoggerFactory;
 
 import java.io.InputStream;
 import java.time.Duration;
-import java.util.ArrayList;
-import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
 
@@ -35,11 +33,9 @@ import io.aiven.inkless.common.ObjectKey;
 import io.aiven.inkless.common.ObjectKeyCreator;
 import io.aiven.inkless.common.SharedState;
 import io.aiven.inkless.config.InklessConfig;
-import io.aiven.inkless.control_plane.BatchMetadata;
 import io.aiven.inkless.control_plane.ControlPlane;
 import io.aiven.inkless.control_plane.ControlPlaneException;
 import io.aiven.inkless.control_plane.FileMergeWorkItem;
-import io.aiven.inkless.control_plane.MergedFileBatch;
 import io.aiven.inkless.produce.FileUploadJob;
 import io.aiven.inkless.storage_backend.common.StorageBackend;
 import io.aiven.inkless.storage_backend.common.StorageBackendException;
@@ -124,63 +120,34 @@ public class FileMerger implements Runnable {
     private void runWithWorkItem(final FileMergeWorkItem workItem) throws Exception {
         LOGGER.info("Work item received, merging {} files", workItem.files().size());
 
-        // Collect all the involved batches into one bag.
-        final List<BatchAndStream> batches = new ArrayList<>();
-        MergeBatchesInputStream mergeBatchesInputStream = null;
-        try {
-            // Collect InputStream supplier for each file, to avoid opening all of them at once.
-            for (final var file : workItem.files()) {
-                final ObjectKey objectKey = objectKeyCreator.from(file.objectKey());
+        var builder = new MergeBatchesInputStream.Builder();
+        // Collect InputStream supplier for each file, to avoid opening all of them at once.
+        for (final var file : workItem.files()) {
+            final ObjectKey objectKey = objectKeyCreator.from(file.objectKey());
 
-                final Supplier<InputStream> inputStream = () -> {
-                    try {
-                        return storage.fetch(objectKey, null);
-                    } catch (StorageBackendException e) {
-                        throw new RuntimeException(e);
-                    }
-                };
-
-                final var inputStreamWithPosition = new InputStreamWithPosition(inputStream, file.size());
-
-                for (final var batch : file.batches()) {
-                    batches.add(new BatchAndStream(batch, inputStreamWithPosition));
+            final Supplier<InputStream> inputStream = () -> {
+                try {
+                    return storage.fetch(objectKey, null);
+                } catch (StorageBackendException e) {
+                    throw new RuntimeException(e);
                 }
-            }
-            // Order batches as we want them in the output file.
-            batches.sort(BatchAndStream.TOPIC_ID_PARTITION_BASE_OFFSET_COMPARATOR);
+            };
 
-            final List<MergedFileBatch> mergedFileBatches = new ArrayList<>();
-            long fileSize = 0;
-            for (final BatchAndStream bf : batches) {
-                var batchSize = bf.length();
-                mergedFileBatches.add(new MergedFileBatch(
-                    new BatchMetadata(
-                        bf.getParentBatch().metadata().topicIdPartition(),
-                        fileSize,
-                        batchSize,
-                        bf.getParentBatch().metadata().baseOffset(),
-                        bf.getParentBatch().metadata().lastOffset(),
-                        bf.getParentBatch().metadata().logAppendTimestamp(),
-                        bf.getParentBatch().metadata().batchMaxTimestamp(),
-                        bf.getParentBatch().metadata().timestampType(),
-                        bf.getParentBatch().metadata().producerId(),
-                        bf.getParentBatch().metadata().producerEpoch(),
-                        bf.getParentBatch().metadata().baseSequence(),
-                        bf.getParentBatch().metadata().lastSequence()
-                    ),
-                    List.of(bf.getParentBatch().batchId())
-                ));
-                fileSize += batchSize;
-            }
+            final var inputStreamWithPosition = new InputStreamWithPosition(inputStream, file.size());
 
-            mergeBatchesInputStream = new MergeBatchesInputStream(batches);
+            for (final var batch : file.batches()) {
+                builder.addBatch(new BatchAndStream(batch, inputStreamWithPosition));
+            }
+        }
+        try (MergeBatchesInputStream mergeBatchesInputStream = builder.build()) {
+            var mergeMetadata = mergeBatchesInputStream.mergeMetadata();
 
             final ObjectKey objectKey = new FileUploadJob(
                 objectKeyCreator, storage, time,
                 config.produceMaxUploadAttempts(),
                 config.produceUploadBackoff(),
                 mergeBatchesInputStream,
-                fileSize,
+                mergeMetadata.mergedFileSize(),
                 metrics::recordFileUploadTime
             ).call();
 
@@ -189,8 +156,8 @@ public class FileMerger implements Runnable {
                     workItem.workItemId(),
                     objectKey.value(),
                     brokerId,
-                    fileSize,
-                    mergedFileBatches
+                    mergeMetadata.mergedFileSize(),
+                    mergeMetadata.mergedFileBatch()
                 );
             } catch (final Exception e) {
                 if (e instanceof ControlPlaneException) {
@@ -201,10 +168,6 @@ public class FileMerger implements Runnable {
                 throw e;
             }
             LOGGER.info("Merged {} files into {}", workItem.files().size(), objectKey);
-        } finally {
-            if (mergeBatchesInputStream != null) {
-                mergeBatchesInputStream.close();
-            }
         }
     }
     private void tryDeleteFile(ObjectKey objectKey, Exception e) {

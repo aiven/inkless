@@ -17,13 +17,12 @@
  */
 package io.aiven.inkless.merge;
 
+import java.io.IOException;
 import org.apache.kafka.common.utils.Utils;
 
 import java.io.InputStream;
 import java.util.function.Supplier;
 
-// One InputStream per file.
-// Note that BoundedInputStream is by default unbound, we use it only for counting the current position.
 public class InputStreamWithPosition {
     private final Supplier<InputStream> inputStreamSupplier;
     private final long size;
@@ -39,18 +38,30 @@ public class InputStreamWithPosition {
         return position;
     }
 
-    void advance(final long offset) {
+    void skipNBytes(final long offset) throws IOException {
+        if (source == null) {
+            throw new IllegalStateException("Stream is closed");
+        }
+        this.source.skipNBytes(offset);
         this.position += offset;
     }
 
-    public InputStream inputStream() {
+    int read(byte[] b, int off, int len) throws IOException {
+        if (source == null) {
+            throw new IllegalStateException("Stream is closed");
+        }
+        var bytesRead = this.source.read(b, off, len);
+        this.position += bytesRead;
+        return bytesRead;
+    }
+
+    public void open() {
         if (source == null) {
             source = inputStreamSupplier.get();
         }
-        return source;
     }
 
-    public boolean closeIfFullyRead() {
+    public boolean closeIfFullyRead() throws IOException {
         if (position >= size) {
             close();
             return true;
@@ -58,15 +69,10 @@ public class InputStreamWithPosition {
         return false;
     }
 
-    public void forceClose() {
-        if (position < size) {
-            close();
-        }
-    }
-
-    private void close() {
+    public void close() throws IOException {
         if (source != null) {
-            Utils.closeQuietly(source, "object storage input stream");
+            source.close();
         }
+        source = null;
     }
 }

@@ -19,6 +19,5 @@ package io.aiven.inkless.storage_backend.common;
 
 import org.apache.kafka.common.Configurable;
 
-public abstract class StorageBackend extends ObjectUploader
-    implements Configurable, ObjectFetcher, ObjectDeleter {
+public interface StorageBackend extends Configurable, ObjectUploader, ObjectFetcher, ObjectDeleter {
 }

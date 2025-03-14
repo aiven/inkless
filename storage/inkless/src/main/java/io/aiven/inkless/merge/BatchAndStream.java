@@ -20,35 +20,30 @@ package io.aiven.inkless.merge;
 
 import java.io.EOFException;
 import java.io.IOException;
-import java.io.InputStream;
 import java.util.Comparator;
 
 import io.aiven.inkless.control_plane.BatchInfo;
 
 public class BatchAndStream {
-    private final long offset;
-    private final long length;
-    private int bytesRead = 0;
     private final InputStreamWithPosition inputStreamWithPosition;
     private final BatchInfo batch;
+    private int bytesRead = 0;
 
     public BatchAndStream(BatchInfo batch,
                           InputStreamWithPosition inputStreamWithPosition) {
-        this.offset = batch.metadata().byteOffset();
-        this.length = batch.metadata().byteSize();
         this.batch = batch;
         this.inputStreamWithPosition = inputStreamWithPosition;
     }
 
-    public long length() {
-        return length;
+    public long batchLength() {
+        return batch.metadata().byteSize();
     }
 
-    public long offset() {
-        return offset;
+    private long batchStartOffset() {
+        return batch.metadata().byteOffset();
     }
 
-    public BatchInfo getParentBatch() {
+    public BatchInfo parentBatch() {
         return batch;
     }
 
@@ -64,49 +59,45 @@ public class BatchAndStream {
 
     static {
         final Comparator<BatchAndStream> topicIdComparator =
-            Comparator.comparing(bf -> bf.getParentBatch().metadata().topicIdPartition().topicId());
+            Comparator.comparing(bf -> bf.parentBatch().metadata().topicIdPartition().topicId());
         final Comparator<BatchAndStream> partitionComparator =
-            Comparator.comparing(bf -> bf.getParentBatch().metadata().topicIdPartition().partition());
+            Comparator.comparing(bf -> bf.parentBatch().metadata().topicIdPartition().partition());
         final Comparator<BatchAndStream> offsetComparator =
-            Comparator.comparing(bf -> bf.getParentBatch().metadata().baseOffset());
+            Comparator.comparing(bf -> bf.parentBatch().metadata().baseOffset());
         TOPIC_ID_PARTITION_BASE_OFFSET_COMPARATOR =
             topicIdComparator.thenComparing(partitionComparator).thenComparing(offsetComparator);
     }
 
     public int read(byte[] b, int off, int nBytesToRead) throws IOException {
-        if (bytesRead == length) {
+        if (bytesRead == batchLength()) {
             return -1;
-        } else if (bytesRead > length) {
+        } else if (bytesRead > batchLength()) {
             throw new RuntimeException("Desynchronization between batches and files");
         }
 
-        // ignore auto closing of the input stream, we'll close them manually
-        final InputStream inputStream = inputStreamWithPosition.inputStream();
-        if (inputStreamWithPosition.position() < offset) {
+        inputStreamWithPosition.open();
+        if (inputStreamWithPosition.position() < batchStartOffset()) {
             // We're facing a gap, need to fast-forward.
-            final long gapSize = offset - inputStreamWithPosition.position();
+            final long gapSize = batchStartOffset() - inputStreamWithPosition.position();
             try {
-                inputStream.skipNBytes(gapSize);
+                inputStreamWithPosition.skipNBytes(gapSize);
             } catch (final EOFException e) {
                 throw new RuntimeException("Desynchronization between batches and files");
             }
-            inputStreamWithPosition.advance(gapSize);
         }
 
-        final var actualAmountOfBytesToRead = Math.toIntExact(Math.min(nBytesToRead, length - bytesRead));
-        final var read = inputStream.read(b, off, actualAmountOfBytesToRead);
+        final var actualAmountOfBytesToRead = Math.toIntExact(Math.min(nBytesToRead, batchLength() - bytesRead));
+        final var read = inputStreamWithPosition.read(b, off, actualAmountOfBytesToRead);
         bytesRead += read;
 
-        inputStreamWithPosition.advance(read);
-
-        if (inputStreamWithPosition.closeIfFullyRead() && bytesRead != length) {
+        if (inputStreamWithPosition.closeIfFullyRead() && bytesRead != batchLength()) {
             throw new RuntimeException("Desynchronization between batches and files");
         }
 
         return read;
     }
 
-    public void forceClose() {
-        inputStreamWithPosition.forceClose();
+    public void close() throws IOException {
+        inputStreamWithPosition.close();
     }
 }

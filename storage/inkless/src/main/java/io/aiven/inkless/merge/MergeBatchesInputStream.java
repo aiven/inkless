@@ -22,33 +22,72 @@ import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.List;
 
+import io.aiven.inkless.control_plane.BatchMetadata;
+import io.aiven.inkless.control_plane.MergedFileBatch;
+
 public class MergeBatchesInputStream extends InputStream {
 
+    public record MergeMetadata(List<MergedFileBatch> mergedFileBatch, long mergedFileSize) {}
+
     private final List<BatchAndStream> batchAndStreams;
+    private final MergeMetadata mergeMetadata;
     private boolean closed = false;
     private int currentStream = 0;
 
-    public MergeBatchesInputStream(List<BatchAndStream> streams) {
-        if (streams == null || streams.isEmpty()) {
-            throw new IllegalArgumentException("streams cannot be null or empty");
+
+    public static class Builder {
+        private final List<BatchAndStream> batchAndStreams;
+
+        public Builder() {
+            this.batchAndStreams = new ArrayList<>();
         }
-        this.batchAndStreams = new ArrayList<>(streams);
+
+        public Builder addBatch(final BatchAndStream batchAndStream) {
+            this.batchAndStreams.add(batchAndStream);
+            return this;
+        }
+        public MergeBatchesInputStream build() {
+            batchAndStreams.sort(BatchAndStream.TOPIC_ID_PARTITION_BASE_OFFSET_COMPARATOR);
+            final List<MergedFileBatch> mergedFileBatches = new ArrayList<>();
+            long fileSize = 0;
+            for (final BatchAndStream bf : batchAndStreams) {
+                var batchSize = bf.batchLength();
+                mergedFileBatches.add(new MergedFileBatch(
+                    new BatchMetadata(
+                        bf.parentBatch().metadata().topicIdPartition(),
+                        fileSize,
+                        batchSize,
+                        bf.parentBatch().metadata().baseOffset(),
+                        bf.parentBatch().metadata().lastOffset(),
+                        bf.parentBatch().metadata().logAppendTimestamp(),
+                        bf.parentBatch().metadata().batchMaxTimestamp(),
+                        bf.parentBatch().metadata().timestampType(),
+                        bf.parentBatch().metadata().producerId(),
+                        bf.parentBatch().metadata().producerEpoch(),
+                        bf.parentBatch().metadata().baseSequence(),
+                        bf.parentBatch().metadata().lastSequence()
+                    ),
+                    List.of(bf.parentBatch().batchId())
+                ));
+                fileSize += batchSize;
+            }
+            final var mergeMetadata = new MergeMetadata(mergedFileBatches, fileSize);
+            return new MergeBatchesInputStream(batchAndStreams, mergeMetadata);
+        }
     }
 
-    @Override
-    public int read() throws IOException {
-        byte[] b = new byte[1];
-        int bytesRead = read(b, 0, 1);
-        if (bytesRead == -1) {
-            return -1;
-        } else {
-            return b[0] & 0xFF;
-        }
+    private MergeBatchesInputStream(List<BatchAndStream> batchAndStreams, MergeMetadata mergeMetadata) {
+        this.batchAndStreams = batchAndStreams;
+        this.mergeMetadata = mergeMetadata;
+    }
+
+    public MergeMetadata mergeMetadata() {
+        return mergeMetadata;
     }
 
     @Override
     public int read(byte[] b, int off, int len) throws IOException {
-        if (currentStream >= batchAndStreams.size()) {
+        if (currentStream >= batchAndStreams.size() || closed) {
             return -1;
         }
         BatchAndStream stream;
@@ -78,10 +117,15 @@ public class MergeBatchesInputStream extends InputStream {
         return totalRead;
     }
 
+    @Override
+    public int read() throws IOException {
+        throw new UnsupportedOperationException("Reading a single byte is not supported");
+    }
+
     public void close() throws IOException {
         if (closed) { return; }
         for (var stream : batchAndStreams) {
-            stream.forceClose();
+            stream.close();
         }
         closed = true;
     }
