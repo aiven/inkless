@@ -1078,14 +1078,14 @@ public class UnifiedLog implements AutoCloseable {
         // This will ensure that any log data can be recovered with the correct topic ID in the case of failure.
         maybeFlushMetadataFile();
 
-        LogAppendInfo appendInfo = analyzeAndValidateRecords(records, origin, ignoreRecordSize, !validateAndAssignOffsets, leaderEpoch);
+        LogAppendInfo appendInfo = analyzeAndValidateRecords(topicPartition, config(), records, logStartOffset, origin, ignoreRecordSize, !validateAndAssignOffsets, leaderEpoch, logger, brokerTopicStats);
 
         // return if we have no valid messages or if this is a duplicate of the last appended entry
         if (appendInfo.validBytes() <= 0) {
             return appendInfo;
         } else {
             // trim any invalid bytes or partial messages before appending it to the on-disk log
-            final MemoryRecords trimmedRecords = trimInvalidBytes(records, appendInfo);
+            final MemoryRecords trimmedRecords = trimInvalidBytes(topicPartition, records, appendInfo);
             // they are valid, insert them in the log
             synchronized (lock)  {
                 return maybeHandleIOException(
@@ -1420,11 +1420,16 @@ public class UnifiedLog implements AutoCloseable {
      * <li> Whether any compression codec is used (if many are used, then the last one is given)
      * </ol>
      */
-    private LogAppendInfo analyzeAndValidateRecords(MemoryRecords records,
-                                                    AppendOrigin origin,
-                                                    boolean ignoreRecordSize,
-                                                    boolean requireOffsetsMonotonic,
-                                                    int leaderEpoch) {
+    public static LogAppendInfo analyzeAndValidateRecords(TopicPartition topicPartition,
+                                                          LogConfig config,
+                                                          MemoryRecords records,
+                                                          long logStartOffset,
+                                                          AppendOrigin origin,
+                                                          boolean ignoreRecordSize,
+                                                          boolean requireOffsetsMonotonic,
+                                                          int leaderEpoch,
+                                                          Logger logger,
+                                                          BrokerTopicStats brokerTopicStats) {
         int validBytesCount = 0;
         long firstOffset = UnifiedLog.UNKNOWN_OFFSET;
         long lastOffset = -1L;
@@ -1482,11 +1487,11 @@ public class UnifiedLog implements AutoCloseable {
 
                 // Check if the message sizes are valid.
                 int batchSize = batch.sizeInBytes();
-                if (!ignoreRecordSize && batchSize > config().maxMessageSize()) {
+                if (!ignoreRecordSize && batchSize > config.maxMessageSize()) {
                     brokerTopicStats.topicStats(topicPartition.topic()).bytesRejectedRate().mark(records.sizeInBytes());
                     brokerTopicStats.allTopicsStats().bytesRejectedRate().mark(records.sizeInBytes());
                     throw new RecordTooLargeException("The record batch size in the append to " + topicPartition + " is " + batchSize + " bytes " +
-                            "which exceeds the maximum configured value of " + config().maxMessageSize() + ").");
+                            "which exceeds the maximum configured value of " + config.maxMessageSize() + ").");
                 }
 
                 // check the validity of the message by checking CRC
@@ -1534,7 +1539,7 @@ public class UnifiedLog implements AutoCloseable {
      * @return true if the append reason is replication and the batch's partition leader epoch is
      *         greater than the specified leaderEpoch, otherwise false
      */
-    private boolean hasHigherPartitionLeaderEpoch(RecordBatch batch, AppendOrigin origin, int leaderEpoch) {
+    private static boolean hasHigherPartitionLeaderEpoch(RecordBatch batch, AppendOrigin origin, int leaderEpoch) {
         return origin == AppendOrigin.REPLICATION
                 && batch.partitionLeaderEpoch() != RecordBatch.NO_PARTITION_LEADER_EPOCH
                 && batch.partitionLeaderEpoch() > leaderEpoch;
@@ -1547,7 +1552,7 @@ public class UnifiedLog implements AutoCloseable {
      * @param info The general information of the message set
      * @return A trimmed message set. This may be the same as what was passed in, or it may not.
      */
-    private MemoryRecords trimInvalidBytes(MemoryRecords records, LogAppendInfo info) {
+    public static MemoryRecords trimInvalidBytes(TopicPartition topicPartition, MemoryRecords records, LogAppendInfo info) {
         int validBytes = info.validBytes();
         if (validBytes < 0) {
             throw new CorruptRecordException("Cannot append record batch with illegal length " + validBytes + " to " +
