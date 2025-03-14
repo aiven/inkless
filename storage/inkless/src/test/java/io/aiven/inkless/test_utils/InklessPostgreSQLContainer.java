@@ -35,6 +35,9 @@ import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.concurrent.TimeUnit;
+
+import static org.testcontainers.shaded.org.awaitility.Awaitility.await;
 
 public class InklessPostgreSQLContainer extends PostgreSQLContainer<InklessPostgreSQLContainer> {
     private static final Logger LOGGER = LoggerFactory.getLogger(InklessPostgreSQLContainer.class);
@@ -52,8 +55,28 @@ public class InklessPostgreSQLContainer extends PostgreSQLContainer<InklessPostg
         createDatabase(dbName);
     }
 
+    private void ensureDatabaseIsReady() {
+        // Ensure database is ready
+        await()
+            .atMost(30, TimeUnit.SECONDS)
+            .pollInterval(1, TimeUnit.SECONDS)
+            .until(() -> {
+                try (Connection conn = DriverManager.getConnection(
+                    getJdbcUrl(),
+                    PostgreSQLTestContainer.USERNAME,
+                    PostgreSQLTestContainer.PASSWORD);
+                     Statement stmt = conn.createStatement()) {
+                    stmt.execute("SELECT 1");
+                    return true;
+                } catch (Exception e) {
+                    return false;
+                }
+            });
+    }
+
     // synchronized to not give PG a reason to complain about too many simultaneous connections.
     public synchronized void createDatabase(final String databaseName) {
+        ensureDatabaseIsReady();
         userDatabaseName = databaseName;
         try (
             final Connection connection = DriverManager.getConnection(
