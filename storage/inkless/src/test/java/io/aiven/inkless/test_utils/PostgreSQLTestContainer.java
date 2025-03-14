@@ -26,7 +26,7 @@ public class PostgreSQLTestContainer {
     public static InklessPostgreSQLContainer container() {
         return new InklessPostgreSQLContainer("postgres:17.2")
             .withUsername(USERNAME)
-            .withUsername(PASSWORD)
+            .withPassword(PASSWORD)
             .waitingFor(Wait.forListeningPort());
     }
 }
