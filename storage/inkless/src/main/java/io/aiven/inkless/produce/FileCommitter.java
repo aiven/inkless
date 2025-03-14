@@ -142,7 +142,7 @@ class FileCommitter implements Closeable {
             // Start uploading and add to the commit queue (as Runnable).
             // This ensures files are uploaded in concurrently, but committed to the control plane sequentially,
             // because `executorServiceCommit` is single-threaded.
-            final FileUploadJob uploadJob = new FileUploadJob(
+            final FileUploadJob uploadJob = FileUploadJob.createFromByteArray(
                 objectKeyCreator,
                 storage,
                 time,

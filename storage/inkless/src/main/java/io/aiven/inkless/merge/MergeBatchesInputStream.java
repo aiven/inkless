@@ -37,7 +37,13 @@ public class MergeBatchesInputStream extends InputStream {
 
     @Override
     public int read() throws IOException {
-        throw new UnsupportedOperationException("MergeBatchInputStream only supports transfer to OutputStream");
+        byte[] b = new byte[1];
+        int bytesRead = read(b, 0, 1);
+        if (bytesRead == -1) {
+            return -1;
+        } else {
+            return b[0] & 0xFF;
+        }
     }
 
     @Override

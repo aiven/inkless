@@ -40,7 +40,7 @@ import io.aiven.inkless.control_plane.ControlPlane;
 import io.aiven.inkless.control_plane.ControlPlaneException;
 import io.aiven.inkless.control_plane.FileMergeWorkItem;
 import io.aiven.inkless.control_plane.MergedFileBatch;
-import io.aiven.inkless.produce.InputStreamFileUploadJob;
+import io.aiven.inkless.produce.FileUploadJob;
 import io.aiven.inkless.storage_backend.common.StorageBackend;
 import io.aiven.inkless.storage_backend.common.StorageBackendException;
 
@@ -175,7 +175,7 @@ public class FileMerger implements Runnable {
 
             mergeBatchesInputStream = new MergeBatchesInputStream(batches);
 
-            final ObjectKey objectKey = new InputStreamFileUploadJob(
+            final ObjectKey objectKey = new FileUploadJob(
                 objectKeyCreator, storage, time,
                 config.produceMaxUploadAttempts(),
                 config.produceUploadBackoff(),

@@ -23,6 +23,7 @@ import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -49,7 +50,7 @@ import software.amazon.awssdk.services.s3.model.ObjectIdentifier;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 
 @CoverageIgnore  // tested on integration level
-public class S3Storage implements StorageBackend {
+public class S3Storage extends StorageBackend {
 
     public static final int MAX_DELETE_KEYS_LIMIT = 1000;
     private S3Client s3Client;
@@ -62,28 +63,14 @@ public class S3Storage implements StorageBackend {
         this.bucketName = config.bucketName();
     }
 
-    @Override
-    public void upload(final ObjectKey key, final byte[] data) throws StorageBackendException {
+    public void upload(final ObjectKey key, final InputStream inputStream, final long length) throws StorageBackendException {
+        Objects.requireNonNull(key, "key cannot be null");
+        Objects.requireNonNull(inputStream, "inputStream cannot be null");
         final PutObjectRequest putObjectRequest = PutObjectRequest.builder()
             .bucket(bucketName)
             .key(key.value())
             .build();
-        final RequestBody requestBody = RequestBody.fromBytes(data);
-        try {
-            s3Client.putObject(putObjectRequest, requestBody);
-        } catch (final ApiCallTimeoutException | ApiCallAttemptTimeoutException e) {
-            throw new StorageBackendTimeoutException("Failed to upload " + key, e);
-        } catch (final SdkException e) {
-            throw new StorageBackendException("Failed to upload " + key, e);
-        }
-    }
-
-    public void upload(final ObjectKey key, final InputStream data, final long length) throws StorageBackendException {
-        final PutObjectRequest putObjectRequest = PutObjectRequest.builder()
-            .bucket(bucketName)
-            .key(key.value())
-            .build();
-        final RequestBody requestBody = RequestBody.fromInputStream(data, length);
+        final RequestBody requestBody = RequestBody.fromInputStream(inputStream, length);
         try {
             s3Client.putObject(putObjectRequest, requestBody);
         } catch (final ApiCallTimeoutException | ApiCallAttemptTimeoutException e) {

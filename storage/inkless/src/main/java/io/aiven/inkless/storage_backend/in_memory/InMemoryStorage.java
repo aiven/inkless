@@ -40,7 +40,7 @@ import io.aiven.inkless.storage_backend.common.StorageBackendException;
  *
  * <p>Useful for testing.
  */
-public class InMemoryStorage implements StorageBackend {
+public class InMemoryStorage extends StorageBackend {
     private final ConcurrentHashMap<ObjectKey, byte[]> storage = new ConcurrentHashMap<>();
 
     @Override
@@ -49,14 +49,9 @@ public class InMemoryStorage implements StorageBackend {
     }
 
     @Override
-    public void upload(final ObjectKey key, final byte[] data) throws StorageBackendException {
-        Objects.requireNonNull(key, "key cannot be null");
-        Objects.requireNonNull(data, "data cannot be null");
-        storage.put(key, data);
-    }
-
-    @Override
     public void upload(final ObjectKey key, final InputStream inputStream, final long length) throws StorageBackendException {
+        Objects.requireNonNull(key, "key cannot be null");
+        Objects.requireNonNull(inputStream, "inputStream cannot be null");
         ByteArrayOutputStream byteArrayOutputStream = new ByteArrayOutputStream();
         try {
             inputStream.transferTo(byteArrayOutputStream);

@@ -17,11 +17,21 @@
  */
 package io.aiven.inkless.storage_backend.common;
 
+import java.io.ByteArrayInputStream;
 import java.io.InputStream;
+import java.util.Objects;
 
 import io.aiven.inkless.common.ObjectKey;
 
-public interface ObjectUploader {
-    void upload(ObjectKey key, byte[] data) throws StorageBackendException;
-    void upload(ObjectKey key, InputStream data, long length) throws StorageBackendException;
+public abstract class ObjectUploader {
+
+    public abstract void upload(ObjectKey key, InputStream inputStream, long length) throws StorageBackendException;
+
+    public void upload(ObjectKey key, byte[] data) throws StorageBackendException {
+        Objects.requireNonNull(key, "key cannot be null");
+        Objects.requireNonNull(data, "data cannot be null");
+        var inputStream = new ByteArrayInputStream(data);
+        upload(key, inputStream, data.length);
+    }
+
 }

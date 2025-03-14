@@ -26,7 +26,7 @@ import io.aiven.inkless.common.ObjectKey;
 import io.aiven.inkless.storage_backend.common.StorageBackend;
 import io.aiven.inkless.storage_backend.common.StorageBackendException;
 
-public class ConfigTestStorageBackend implements StorageBackend {
+public class ConfigTestStorageBackend extends StorageBackend {
     public Map<String, ?> passedConfig = null;
 
     @Override
@@ -45,10 +45,6 @@ public class ConfigTestStorageBackend implements StorageBackend {
     @Override
     public InputStream fetch(ObjectKey key, ByteRange range) throws StorageBackendException {
         return null;
-    }
-
-    @Override
-    public void upload(ObjectKey key, byte[] data) throws StorageBackendException {
     }
 
     @Override

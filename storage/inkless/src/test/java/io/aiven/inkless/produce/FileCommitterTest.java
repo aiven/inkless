@@ -33,6 +33,7 @@ import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
@@ -113,7 +114,7 @@ class FileCommitterTest {
     @SuppressWarnings("unchecked")
     void success() throws Exception {
         doNothing()
-            .when(storage).upload(eq(OBJECT_KEY), eq(FILE.data()));
+            .when(storage).upload(eq(OBJECT_KEY), any(InputStream.class), eq((long) FILE.data().length));
 
         when(time.nanoseconds()).thenReturn(10_000_000L);
 
@@ -162,7 +163,7 @@ class FileCommitterTest {
     @SuppressWarnings("unchecked")
     void commitFailed() throws Exception {
         doNothing()
-            .when(storage).upload(eq(OBJECT_KEY), eq(FILE.data()));
+            .when(storage).upload(eq(OBJECT_KEY), any(InputStream.class), eq((long) FILE.data().length));
 
         when(time.nanoseconds()).thenReturn(10_000_000L);
 
