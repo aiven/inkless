@@ -4218,6 +4218,7 @@ org.apache.kafka.common.requests.RequestResponseTest:
 - testSerializeWithHeader
 - testSerializeWithInconsistentHeaderApiKey
 - testSerializeWithInconsistentHeaderVersion
+- testUnregisterBrokerResponseWithUnknownServerError
 - testValidApiVersionsRequest
 - testValidTaggedFieldsWithSaslAuthenticateRequest
 - verifyFetchResponseFullWrites

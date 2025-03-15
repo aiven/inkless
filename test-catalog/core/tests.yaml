@@ -3690,8 +3690,6 @@ kafka.server.share.SharePartitionTest:
 - testWriteShareGroupStateWithNullResponse
 - testWriteShareGroupStateWithNullTopicsData
 - testWriteShareGroupStateWithWriteException
-kafka.test.api.AdminClientRebootstrapTest:
-- testRebootstrap
 kafka.test.api.CustomQuotaCallbackTest:
 - testCustomQuotaCallbackWithControllerServer
 kafka.test.api.ShareConsumerTest:
