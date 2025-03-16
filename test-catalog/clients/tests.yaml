@@ -2256,6 +2256,14 @@ org.apache.kafka.clients.consumer.internals.ShareSessionHandlerTest:
 - testShareSession
 - testTopicIdReplaced
 org.apache.kafka.clients.consumer.internals.StreamsGroupHeartbeatRequestManagerTest:
+- testBuildingHeartbeatAssignmentSentWhenChanged
+- testBuildingHeartbeatClientTagsSentWhenJoining
+- testBuildingHeartbeatEndpointSentWhenJoining
+- testBuildingHeartbeatProcessIdSentWhenJoining
+- testBuildingHeartbeatRequestFieldsThatAreAlwaysSent
+- testBuildingHeartbeatRequestRebalanceTimeoutSentWhenJoining
+- testBuildingHeartbeatRequestTopologySentWhenJoining
+- testBuildingHeartbeatShutdownRequested
 - testConstructWithNullBackgroundEventHandler
 - testConstructWithNullCoordinatorRequestManager
 - testConstructWithNullMembershipManager
@@ -2267,10 +2275,11 @@ org.apache.kafka.clients.consumer.internals.StreamsGroupHeartbeatRequestManagerT
 - testNotSendingHeartbeatIfMemberIsJoiningOrAcknowledgingWhenHeartbeatInFlight
 - testNotSendingLeaveHeartbeatIfPollTimerExpiredAndMemberIsLeaving
 - testPropagateCoordinatorFatalErrorToApplicationThread
-- testSendingFullHeartbeatRequest
+- testResettingHeartbeatState
 - testSendingHeartbeatIfHeartbeatCanBeSent
 - testSendingHeartbeatIfMemberIsJoiningOrAcknowledging
 - testSendingHeartbeatIfMemberIsLeaving
+- testSendingHeartbeatRequest
 - testSendingLeaveHeartbeatIfPollTimerExpired
 - testSendingLeaveHeartbeatRequestWhenPollTimerExpired
 org.apache.kafka.clients.consumer.internals.StreamsMembershipManagerTest:
