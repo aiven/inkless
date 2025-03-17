@@ -311,6 +311,7 @@ kafka.api.PlaintextAdminIntegrationTest:
 - testCreatePartitionWithOptionRetryOnQuotaViolation
 - testCreatePartitions
 - testCreateTopicsReturnsConfigs
+- testDefaultNameQuotaIsNotEqualToDefaultQuota
 - testDelayedClose
 - testDeleteConsumerGroupOffsets
 - testDeleteRecordsAfterCorruptRecords
@@ -2191,6 +2192,7 @@ kafka.server.BootstrapControllersIntegrationTest:
 - testAlterReassignmentsWithBootstrapControllers
 - testDescribeCluster
 - testDescribeClusterByControllers
+- testDescribeConfigs
 - testDescribeFeatures
 - testDescribeFeaturesByControllers
 - testDescribeMetadataQuorum
