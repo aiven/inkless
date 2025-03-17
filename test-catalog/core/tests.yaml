@@ -3053,7 +3053,6 @@ kafka.server.MetadataCacheTest:
 - getTopicMetadataReplicaNotAvailable
 - getTopicMetadataWithNonSupportedSecurityProtocol
 - testDescribeTopicResponse
-- testGetAliveBrokersWithBrokerFenced
 - testGetLeaderAndIsr
 - testGetLiveBrokerEpoch
 - testGetOfflineReplicasConsidersDirAssignment
