@@ -90,7 +90,10 @@ public class BatchAndStream {
         final var read = inputStreamWithPosition.read(b, off, actualAmountOfBytesToRead);
         bytesRead += read;
 
-        if (inputStreamWithPosition.closeIfFullyRead() && bytesRead != batchLength()) {
+        if (
+            inputStreamWithPosition.closeIfFullyRead() && bytesRead != batchLength() ||
+            inputStreamWithPosition.position() < batchStartOffset()
+        ) {
             throw new RuntimeException("Desynchronization between batches and files");
         }
 
