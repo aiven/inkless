@@ -2487,6 +2487,7 @@ kafka.server.DynamicBrokerReconfigurationTest:
 - testLogCleanerConfig
 - testMetricsReporterUpdate
 - testReconfigureRemovedListener
+- testServersCanStartWithInvalidStaticConfigsAndValidDynamicConfigs
 - testSocketServerConfigTest
 - testThreadPoolResize
 - testTransactionVerificationEnable
