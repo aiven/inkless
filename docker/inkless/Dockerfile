@@ -22,7 +22,7 @@ FROM eclipse-temurin:21-jre-alpine AS build-jsa
 
 USER root
 
-ENV KAFKA_VERSION=4.0.0-inkless-SNAPSHOT
+ENV KAFKA_VERSION=4.1.0-inkless-SNAPSHOT
 
 COPY ./resources/distributions/kafka_2.13-$KAFKA_VERSION.tgz /kafka.tgz
 COPY jsa_launch /etc/kafka/docker/jsa_launch
@@ -47,7 +47,7 @@ USER root
 
 ARG build_date
 
-ENV KAFKA_VERSION=4.0.0-inkless-SNAPSHOT
+ENV KAFKA_VERSION=4.1.0-inkless-SNAPSHOT
 
 COPY ./resources/distributions/kafka_2.13-$KAFKA_VERSION.tgz /kafka.tgz
 
@@ -69,9 +69,8 @@ RUN set -eux ; \
     chown appuser:appuser -R /usr/logs /opt/kafka /mnt/shared/config; \
     chown appuser:root -R /var/lib/kafka /etc/kafka/secrets /etc/kafka; \
     chmod -R ug+w /etc/kafka /var/lib/kafka /etc/kafka/secrets; \
-    cp /opt/kafka/config/log4j.properties /etc/kafka/docker/log4j.properties; \
-    cp /opt/kafka/config/tools-log4j.properties /etc/kafka/docker/tools-log4j.properties; \
-    cp /opt/kafka/config/kraft/server.properties /etc/kafka/docker/server.properties; \
+    cp /opt/kafka/config/log4j2.yaml /etc/kafka/docker/log4j2.yaml; \
+    cp /opt/kafka/config/tools-log4j2.yaml /etc/kafka/docker/tools-log4j2.yaml; \
     apk del wget gpg gpg-agent; \
     apk cache clean;
 
