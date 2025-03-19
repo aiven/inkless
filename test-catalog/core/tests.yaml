@@ -33,26 +33,6 @@ kafka.admin.AddPartitionsTest:
 - testReplicaPlacementAllServers
 - testReplicaPlacementPartialServers
 - testWrongReplicaCount
-kafka.admin.ClientTelemetryTest:
-- testClientInstanceId
-- testIntervalMsParser
-- testMetrics
-kafka.admin.DeleteTopicTest:
-- testAddPartitionDuringDeleteTopic
-- testDeleteNonExistingTopic
-- testDeleteTopicAlreadyMarkedAsDeleted
-- testDeleteTopicDuringAddPartition
-- testDeleteTopicWithAllAliveReplicas
-- testDeleteTopicWithCleaner
-- testDisableDeleteTopic
-- testIncreasePartitionCountDuringDeleteTopic
-- testPartitionReassignmentDuringDeleteTopic
-- testRecreateTopicAfterDeletion
-- testResumeDeleteTopicWithRecoveredFollower
-kafka.admin.DescribeAuthorizedOperationsTest:
-- testClusterAuthorizedOperations
-- testConsumerGroupAuthorizedOperations
-- testTopicAuthorizedOperations
 kafka.admin.ListOffsetsIntegrationTest:
 - testListMaxTimestampWithEmptyLog
 - testThreeCompressedRecordsInOneBatch
@@ -61,8 +41,6 @@ kafka.admin.ListOffsetsIntegrationTest:
 - testThreeNonCompressedRecordsInSeparateBatch
 - testThreeRecordsInOneBatchHavingDifferentCompressionTypeWithServer
 - testThreeRecordsInSeparateBatchHavingDifferentCompressionTypeWithServer
-kafka.admin.RackAwareAutoTopicCreationTest:
-- testAutoCreateTopic
 kafka.admin.RemoteTopicCrudTest:
 - testClusterWideDisablementOfTieredStorageWithEnabledTieredTopic
 - testClusterWithoutTieredStorageStartsSuccessfullyIfTopicWithTieringDisabled
@@ -716,13 +694,6 @@ kafka.api.UserQuotaTest:
 - testThrottledRequest
 kafka.api.test.ProducerCompressionTest:
 - testCompression
-kafka.clients.consumer.ConsumerIntegrationTest:
-- testAsyncConsumerWithOldGroupCoordinator
-- testFetchPartitionsAfterFailedListenerWithGroupProtocolClassic
-- testFetchPartitionsAfterFailedListenerWithGroupProtocolConsumer
-- testFetchPartitionsWithAlwaysFailedListenerWithGroupProtocolClassic
-- testFetchPartitionsWithAlwaysFailedListenerWithGroupProtocolConsumer
-- testLeaderEpoch
 kafka.cluster.AssignmentStateTest:
 - testPartitionAssignmentStatus
 kafka.cluster.PartitionLockTest:
@@ -2188,24 +2159,6 @@ kafka.server.AutoTopicCreationManagerTest:
 - testTopicCreationWithMetadataContextNoRetryUponUnsupportedVersion
 - testTopicCreationWithMetadataContextPassPrincipal
 - testTopicCreationWithMetadataContextWhenPrincipalSerdeNotDefined
-kafka.server.BootstrapControllersIntegrationTest:
-- testAcls
-- testAclsByControllers
-- testAlterReassignmentsWithBootstrapControllers
-- testDescribeCluster
-- testDescribeClusterByControllers
-- testDescribeConfigs
-- testDescribeFeatures
-- testDescribeFeaturesByControllers
-- testDescribeMetadataQuorum
-- testDescribeMetadataQuorumByControllers
-- testIncrementalAlterConfigs
-- testIncrementalAlterConfigsByControllers
-- testPutBrokersInBootstrapControllersConfig
-- testPutControllersInBootstrapBrokersConfig
-- testUpdateFeatures
-- testUpdateFeaturesByControllers
-- testUsingBootstrapControllersOnUnsupportedAdminApi
 kafka.server.BrokerLifecycleManagerTest:
 - testAlwaysSendsAccumulatedOfflineDirs
 - testControlledShutdown
@@ -3032,8 +2985,6 @@ kafka.server.LogDirFailureTest:
 - testProduceErrorFromFailureOnCheckpoint
 - testProduceErrorFromFailureOnLogRoll
 - testReplicaFetcherThreadAfterLogDirFailureOnFollower
-kafka.server.LogManagerIntegrationTest:
-- testRestartBrokerNoErrorIfMissingPartitionMetadata
 kafka.server.LogOffsetTest:
 - testEmptyLogsGetOffsets
 - testFetchOffsetByTimestampForMaxTimestampAfterTruncate
@@ -3694,8 +3645,6 @@ kafka.server.share.SharePartitionTest:
 - testWriteShareGroupStateWithNullResponse
 - testWriteShareGroupStateWithNullTopicsData
 - testWriteShareGroupStateWithWriteException
-kafka.test.api.CustomQuotaCallbackTest:
-- testCustomQuotaCallbackWithControllerServer
 kafka.tools.DumpLogSegmentsTest:
 - testBatchAndRecordMetadataOutput
 - testDumpEmptyIndex

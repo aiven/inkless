@@ -5,9 +5,38 @@ org.apache.kafka.clients.admin.AdminFenceProducersTest:
 - testFenceAfterProducerCommit
 - testFenceBeforeProducerCommit
 - testFenceProducerTimeoutMs
+org.apache.kafka.clients.admin.ClientTelemetryTest:
+- testClientInstanceId
+- testIntervalMsParser
+- testMetrics
+org.apache.kafka.clients.admin.DeleteTopicTest:
+- testAddPartitionDuringDeleteTopic
+- testDeleteNonExistingTopic
+- testDeleteTopicAlreadyMarkedAsDeleted
+- testDeleteTopicDuringAddPartition
+- testDeleteTopicWithAllAliveReplicas
+- testDeleteTopicWithCleaner
+- testDisableDeleteTopic
+- testIncreasePartitionCountDuringDeleteTopic
+- testPartitionReassignmentDuringDeleteTopic
+- testRecreateTopicAfterDeletion
+- testResumeDeleteTopicWithRecoveredFollower
+org.apache.kafka.clients.admin.DescribeAuthorizedOperationsTest:
+- testClusterAuthorizedOperations
+- testConsumerGroupAuthorizedOperations
+- testTopicAuthorizedOperations
+org.apache.kafka.clients.admin.RackAwareAutoTopicCreationTest:
+- testAutoCreateTopic
 org.apache.kafka.clients.admin.StaticBrokerConfigTest:
 - testTopicConfigsGetImpactedIfStaticConfigsAddToBroker
 - testTopicConfigsGetImpactedIfStaticConfigsAddToController
+org.apache.kafka.clients.consumer.ConsumerIntegrationTest:
+- testAsyncConsumerWithOldGroupCoordinator
+- testFetchPartitionsAfterFailedListenerWithGroupProtocolClassic
+- testFetchPartitionsAfterFailedListenerWithGroupProtocolConsumer
+- testFetchPartitionsWithAlwaysFailedListenerWithGroupProtocolClassic
+- testFetchPartitionsWithAlwaysFailedListenerWithGroupProtocolConsumer
+- testLeaderEpoch
 org.apache.kafka.clients.consumer.ShareConsumerTest:
 - testAcknowledgementCommitCallbackCallsShareConsumerDisallowed
 - testAcknowledgementCommitCallbackCallsShareConsumerWakeup
@@ -65,3 +94,5 @@ org.apache.kafka.clients.consumer.ShareConsumerTest:
 - testSubscriptionAndPollMultiple
 - testSubscriptionFollowedByTopicCreation
 - testWakeupWithFetchedRecordsAvailable
+org.apache.kafka.server.quota.CustomQuotaCallbackTest:
+- testCustomQuotaCallbackWithControllerServer

@@ -42,6 +42,24 @@ org.apache.kafka.server.AssignmentsManagerTest:
 - testStartAndShutdown
 - testSuccessfulAssignment
 - testUnSuccessfulRequestCausesRetransmission
+org.apache.kafka.server.BootstrapControllersIntegrationTest:
+- testAcls
+- testAclsByControllers
+- testAlterReassignmentsWithBootstrapControllers
+- testDescribeCluster
+- testDescribeClusterByControllers
+- testDescribeConfigs
+- testDescribeFeatures
+- testDescribeFeaturesByControllers
+- testDescribeMetadataQuorum
+- testDescribeMetadataQuorumByControllers
+- testIncrementalAlterConfigs
+- testIncrementalAlterConfigsByControllers
+- testPutBrokersInBootstrapControllersConfig
+- testPutControllersInBootstrapBrokersConfig
+- testUpdateFeatures
+- testUpdateFeaturesByControllers
+- testUsingBootstrapControllersOnUnsupportedAdminApi
 org.apache.kafka.server.BrokerFeaturesTest:
 - ensureDefaultSupportedFeaturesRangeMaxNotZero
 - testCompatibleFeatures
@@ -83,6 +101,8 @@ org.apache.kafka.server.ClientMetricsManagerTest:
 - testUpdateSubscriptionWithInvalidMetricsProperties
 - testUpdateSubscriptionWithNullProperties
 - testUpdateSubscriptionWithPropertiesDeletion
+org.apache.kafka.server.LogManagerIntegrationTest:
+- testRestartBrokerNoErrorIfMissingPartitionMetadata
 org.apache.kafka.server.metrics.BrokerServerMetricsTest:
 - testIgnoredStaticVoters
 - testLastAppliedRecordOffset
