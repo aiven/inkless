@@ -40,9 +40,9 @@ docker_build_prep:
 	  pip install -r requirements.txt
 
 # download prometheus jmx exporter
-docker/extra/prometheus-jmx-javaagent/jmx_prometheus_javaagent.jar:
-	mkdir -p prometheus-jmx-javaagent
-	curl -o docker/extra/prometheus-jmx-javaagent/jmx_prometheus_javaagent.jar \
+docker/extra/prometheus-jmx-exporter/jmx_prometheus_javaagent.jar:
+	mkdir -p prometheus-jmx-exporter
+	curl -o docker/extra/prometheus-jmx-exporter/jmx_prometheus_javaagent.jar \
 	  https://repo1.maven.org/maven2/io/prometheus/jmx/jmx_prometheus_javaagent/1.0.1/jmx_prometheus_javaagent-1.0.1.jar
 
 .PHONY: docker_build
