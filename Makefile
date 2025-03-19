@@ -41,7 +41,7 @@ docker_build_prep:
 
 # download prometheus jmx exporter
 docker/extra/prometheus-jmx-exporter/jmx_prometheus_javaagent.jar:
-	mkdir -p prometheus-jmx-exporter
+	mkdir -p docker/extra/prometheus-jmx-exporter
 	curl -o docker/extra/prometheus-jmx-exporter/jmx_prometheus_javaagent.jar \
 	  https://repo1.maven.org/maven2/io/prometheus/jmx/jmx_prometheus_javaagent/1.0.1/jmx_prometheus_javaagent-1.0.1.jar
 
