@@ -25,6 +25,15 @@ import io.aiven.inkless.common.ObjectKey;
 
 public interface ObjectUploader {
 
+    /**
+     * Uploads an object to object storage.
+     * An exception must be thrown in case the number of bytes streamed from {@code inputStream}
+     * is different from {@code length}.
+     * @param key                      key of the object to upload.
+     * @param inputStream              data of the object that will be uploaded.
+     * @param length                   length of the data that will be uploaded.
+     * @throws StorageBackendException if there are errors during the upload.
+     */
     void upload(ObjectKey key, InputStream inputStream, long length) throws StorageBackendException;
 
     default void upload(ObjectKey key, byte[] data) throws StorageBackendException {
