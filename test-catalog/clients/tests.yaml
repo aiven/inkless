@@ -3928,6 +3928,13 @@ org.apache.kafka.common.record.FileRecordsTest:
 - testPreallocateTrue
 - testRead
 - testSearch
+- testSearchForOffsetFromPosition1
+- testSearchForOffsetFromPosition2
+- testSearchForOffsetFromPosition3
+- testSearchForOffsetFromPosition4
+- testSearchForOffsetFromPosition5
+- testSearchForOffsetFromPosition6
+- testSearchForOffsetFromPosition7
 - testSearchForTimestamp
 - testSliceForAlreadySlicedFileRecords
 - testSliceSizeLimitWithConcurrentWrite
