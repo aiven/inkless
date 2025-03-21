@@ -355,6 +355,7 @@ org.apache.kafka.controller.metrics.ControllerMetadataMetricsTest:
 - testMetricNames
 - testOfflinePartitionCountMetric
 - testPreferredReplicaImbalanceCountMetric
+- testUpdateElectionFromEligibleLeaderReplicasCount
 - testUpdateUncleanLeaderElection
 org.apache.kafka.controller.metrics.ControllerMetricsChangesTest:
 - testDelta
@@ -697,6 +698,7 @@ org.apache.kafka.metadata.PartitionRegistrationTest:
 - testBuilderThrowsIllegalStateExceptionWhenMissingReplicas
 - testDirectories
 - testElectionWasClean
+- testEligibleLeaderReplicasElection
 - testMergePartitionChangeRecordWithReassignmentData
 - testMigratingRecordDirectories
 - testPartitionControlInfoMergeAndDiff
