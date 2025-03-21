@@ -31,7 +31,7 @@ org.apache.kafka.clients.admin.StaticBrokerConfigTest:
 - testTopicConfigsGetImpactedIfStaticConfigsAddToBroker
 - testTopicConfigsGetImpactedIfStaticConfigsAddToController
 org.apache.kafka.clients.consumer.ConsumerIntegrationTest:
-- testAsyncConsumerWithOldGroupCoordinator
+- testAsyncConsumerWithConsumerProtocolDisabled
 - testFetchPartitionsAfterFailedListenerWithGroupProtocolClassic
 - testFetchPartitionsAfterFailedListenerWithGroupProtocolConsumer
 - testFetchPartitionsWithAlwaysFailedListenerWithGroupProtocolClassic
