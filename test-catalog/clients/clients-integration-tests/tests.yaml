@@ -1,6 +1,8 @@
 org.apache.kafka.clients.ClientRebootstrapTest:
 - testAdminRebootstrap
 - testAdminRebootstrapDisabled
+- testProducerRebootstrap
+- testProducerRebootstrapDisabled
 org.apache.kafka.clients.admin.AdminFenceProducersTest:
 - testFenceAfterProducerCommit
 - testFenceBeforeProducerCommit
