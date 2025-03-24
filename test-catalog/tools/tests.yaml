@@ -25,6 +25,7 @@ org.apache.kafka.tools.BrokerApiVersionsCommandTest:
 org.apache.kafka.tools.ClientMetricsCommandTest:
 - testAlter
 - testAlterGenerateName
+- testAlterResetConfigs
 - testDelete
 - testDescribe
 - testDescribeAll
@@ -32,6 +33,7 @@ org.apache.kafka.tools.ClientMetricsCommandTest:
 - testListFailsWithUnsupportedVersionException
 - testOptionsAlterAllOptionsSucceeds
 - testOptionsAlterGenerateNameSucceeds
+- testOptionsAlterInvalidInterval
 - testOptionsAlterNoNameFails
 - testOptionsAlterWithNameSucceeds
 - testOptionsDeleteNoNameFails
