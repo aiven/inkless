@@ -3156,6 +3156,7 @@ org.apache.kafka.common.config.AbstractConfigTest:
 - testOriginalsWithConfigProvidersPropsExcluded
 - testOriginalsWithConfigProvidersPropsIncluded
 - testOriginalsWithPrefix
+- testPreprocessConfig
 - testUnusedConfigs
 - testValuesWithPrefixAllOrNothing
 - testValuesWithPrefixOverride
