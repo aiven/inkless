@@ -2275,6 +2275,10 @@ org.apache.kafka.clients.consumer.internals.StreamsGroupHeartbeatRequestManagerT
 - testFencedMemberOrUnknownMemberIdErrorResponse
 - testGroupAuthorizationFailedErrorResponse
 - testKnownFatalErrorResponse
+- testMaximumTimeToWaitPollTimerExpired
+- testMaximumTimeToWaitSelectingMinimumWaitTime
+- testMaximumTimeToWaitWhenHeartbeatShouldBeNotSentImmediately
+- testMaximumTimeToWaitWhenHeartbeatShouldBeSentImmediately
 - testNoHeartbeatIfCoordinatorUnknown
 - testNoHeartbeatIfHeartbeatSkipped
 - testNotCoordinatorAndCoordinatorNotAvailableErrorResponse
@@ -2282,6 +2286,8 @@ org.apache.kafka.clients.consumer.internals.StreamsGroupHeartbeatRequestManagerT
 - testNotSendingHeartbeatIfMemberIsJoiningOrAcknowledgingWhenHeartbeatInFlight
 - testNotSendingLeaveHeartbeatIfPollTimerExpiredAndMemberIsLeaving
 - testOtherErrorResponse
+- testPollOnCloseWhenIsLeaving
+- testPollOnCloseWhenIsNotLeaving
 - testPropagateCoordinatorFatalErrorToApplicationThread
 - testResettingHeartbeatState
 - testSendingHeartbeatIfHeartbeatCanBeSent
