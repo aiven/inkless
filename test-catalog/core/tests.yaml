@@ -2316,6 +2316,7 @@ kafka.server.KafkaApisTest:
 - testFindCoordinatorNotEnoughBrokersForTxnTopic
 - testFindCoordinatorTooOldForShareStateTopic
 - testFindCoordinatorWithInvalidSharePartitionKey
+- testFindCoordinatorWithValidSharePartitionKey
 - testGetAcknowledgeBatchesFromShareAcknowledgeRequest
 - testGetAcknowledgeBatchesFromShareAcknowledgeRequestError
 - testGetAcknowledgeBatchesFromShareFetchRequest

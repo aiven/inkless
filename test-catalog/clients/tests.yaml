@@ -2269,11 +2269,19 @@ org.apache.kafka.clients.consumer.internals.StreamsGroupHeartbeatRequestManagerT
 - testConstructWithNullMembershipManager
 - testConstructWithNullMetrics
 - testConstructWithNullStreamsRebalanceData
+- testCoordinatorDisconnectFailureWhileSending
+- testCoordinatorLoadInProgressErrorResponse
+- testFatalFailureWhileSending
+- testFencedMemberOrUnknownMemberIdErrorResponse
+- testGroupAuthorizationFailedErrorResponse
+- testKnownFatalErrorResponse
 - testNoHeartbeatIfCoordinatorUnknown
 - testNoHeartbeatIfHeartbeatSkipped
+- testNotCoordinatorAndCoordinatorNotAvailableErrorResponse
 - testNotSendingHeartbeatIfHeartbeatCannotBeSent
 - testNotSendingHeartbeatIfMemberIsJoiningOrAcknowledgingWhenHeartbeatInFlight
 - testNotSendingLeaveHeartbeatIfPollTimerExpiredAndMemberIsLeaving
+- testOtherErrorResponse
 - testPropagateCoordinatorFatalErrorToApplicationThread
 - testResettingHeartbeatState
 - testSendingHeartbeatIfHeartbeatCanBeSent
@@ -2282,6 +2290,8 @@ org.apache.kafka.clients.consumer.internals.StreamsGroupHeartbeatRequestManagerT
 - testSendingHeartbeatRequest
 - testSendingLeaveHeartbeatIfPollTimerExpired
 - testSendingLeaveHeartbeatRequestWhenPollTimerExpired
+- testTopicAuthorizationFailedErrorResponse
+- testUnsupportedVersionFailureWhileSending
 org.apache.kafka.clients.consumer.internals.StreamsMembershipManagerTest:
 - testActiveTasksAreNullInHeartbeatResponse
 - testConsumerPollWhenNotJoining
@@ -2303,14 +2313,13 @@ org.apache.kafka.clients.consumer.internals.StreamsMembershipManagerTest:
 - testOnFencedWhenInPrepareLeaving
 - testOnFencedWhenInReconciling
 - testOnFencedWhenInStable
+- testOnHeartbeatFailure
 - testOnHeartbeatFailureAfterLeaveRequestGenerated
-- testOnHeartbeatFatalFailure
 - testOnHeartbeatRequestGeneratedWhenInAcknowledgingAndNewTargetAssignment
 - testOnHeartbeatRequestGeneratedWhenInAcknowleding
 - testOnHeartbeatRequestGeneratedWhenInLeaving
 - testOnHeartbeatRequestGeneratedWhenInLeavingAndPollTimerExpired
 - testOnHeartbeatRequestSkippedWhenInLeaving
-- testOnHeartbeatRetriableFailure
 - testOnHeartbeatSuccessWhenInFatal
 - testOnHeartbeatSuccessWhenInFenced
 - testOnHeartbeatSuccessWhenInLeaving
