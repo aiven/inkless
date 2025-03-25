@@ -1,0 +1,45 @@
+services:
+  broker:
+    environment:
+      KAFKA_INKLESS_STORAGE_BACKEND_CLASS: "io.aiven.inkless.storage_backend.gcs.GcsStorage"
+      KAFKA_INKLESS_STORAGE_GCS_BUCKET_NAME: "inkless"
+      KAFKA_INKLESS_STORAGE_GCS_CREDENTIALS_DEFAULT: "false"
+      KAFKA_INKLESS_STORAGE_GCS_ENDPOINT_URL: "http://storage:4443"
+    depends_on:
+     - configure_storage
+     - postgres
+     - storage
+
+
+  # Should be used when Inkless broker is running in docker compose to adjust the hostname for resumable uploads.
+  # In the case of local/dev setup when broker is running locally outside the container,
+  # the externalUrl should stay the default.
+  configure_storage:
+    image: curlimages/curl
+    restart: "no"
+    depends_on:
+      - storage
+    entrypoint: >
+      /bin/sh -c "
+      curl -v -X PUT http://storage:4443/_internal/config -H \"Content-Type: application/json\" -d
+      '{\"externalUrl\": \"http://storage:4443\"}';
+      exit 0;
+      "
+
+  storage:
+    image: fsouza/fake-gcs-server
+    ports:
+      - "4443:4443"
+    command: -scheme http -log-level debug
+
+  create_bucket:
+    image: curlimages/curl
+    restart: "no"
+    depends_on:
+      - storage
+    entrypoint:  >
+      /bin/sh -c "
+      curl -v -X POST http://storage:4443/storage/v1/b?project=test-project -H \"Content-Type: application/json\"
+      -d '{\"name\": \"inkless\"}';
+      exit 0;
+      "

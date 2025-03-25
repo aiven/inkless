@@ -64,11 +64,11 @@ public class GcsStorage implements StorageBackend {
     }
 
     @Override
-    public void upload(final ObjectKey key, final byte[] data) throws StorageBackendException {
+    public void upload(final ObjectKey key, final InputStream inputStream, final long length) throws StorageBackendException {
         try {
             final BlobInfo blobInfo = BlobInfo.newBuilder(this.bucketName, key.value()).build();
-            storage.create(blobInfo, data);
-        } catch (final BaseServiceException e) {
+            storage.createFrom(blobInfo, inputStream);
+        } catch (final IOException | BaseServiceException e) {
             throw new StorageBackendException("Failed to upload " + key, e);
         }
     }
@@ -131,9 +131,6 @@ public class GcsStorage implements StorageBackend {
     }
 
     private Blob getBlob(final ObjectKey key) throws KeyNotFoundException {
-        // Unfortunately, it seems Google will do two a separate (HEAD-like) call to get blob metadata.
-        // Since the blobs are immutable in tiered storage, we can consider caching them locally
-        // to avoid the extra round trip.
         final Blob blob = storage.get(this.bucketName, key.value());
         if (blob == null) {
             throw new KeyNotFoundException(this, key);

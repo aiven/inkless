@@ -3,7 +3,11 @@ all: clean fmt test pitest
 
 .PHONY: local_minio
 local_minio:
-	docker compose up -d minio minio-create_bucket
+	docker compose -f docker-compose.yml -f docker-compose.minio.yml up -d create_bucket
+
+.PHONY: local_gcs
+local_gcs:
+	docker compose -f docker-compose.yml -f docker-compose.gcs.yml up -d create_bucket
 
 .PHONY: bucket
 bucket:
@@ -17,7 +21,7 @@ kafka_storage_format:
 
 .PHONY: local_destroy
 local_destroy:
-	docker compose down
+	docker compose down --remove-orphans
 	rm -rf ./_data
 
 VERSION := 4.1.0-inkless-SNAPSHOT
