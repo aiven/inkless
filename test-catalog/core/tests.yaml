@@ -194,8 +194,6 @@ kafka.api.ConsumerBounceTest:
 - testConsumptionWithBrokerFailures
 - testSeekAndCommitWithBrokerFailures
 - testSubscribeWhenTopicUnavailable
-kafka.api.ConsumerRebootstrapTest:
-- testRebootstrap
 kafka.api.ConsumerTopicCreationTest:
 - testAutoTopicCreation
 kafka.api.ConsumerWithLegacyMessageFormatIntegrationTest:
