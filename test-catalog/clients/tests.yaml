@@ -2112,9 +2112,12 @@ org.apache.kafka.clients.consumer.internals.ShareConsumeRequestManagerTest:
 - testResultHandlerOnCommitAsync
 - testResultHandlerOnCommitSync
 - testRetryAcknowledgements
+- testRetryAcknowledgementsMultipleCommitAsync
+- testRetryAcknowledgementsMultipleCommitSync
 - testRetryAcknowledgementsWithLeaderChange
 - testServerDisconnectedOnShareAcknowledge
 - testShareAcknowledgeInvalidResponse
+- testShareFetchAndCloseMultipleNodes
 - testShareFetchInvalidResponse
 - testShareFetchWithSubscriptionChange
 - testShareFetchWithSubscriptionChangeMultipleNodes
