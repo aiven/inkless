@@ -26,6 +26,7 @@ import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.ConsumerRecords;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
+import org.apache.kafka.clients.consumer.internals.AutoOffsetResetStrategy;
 import org.apache.kafka.clients.producer.KafkaProducer;
 import org.apache.kafka.clients.producer.Producer;
 import org.apache.kafka.clients.producer.ProducerConfig;
@@ -179,8 +180,11 @@ public class InklessClusterTest {
     }
 
     private static void consume(TimestampType timestampType, Map<String, Object> clientConfigs, String topicName, long now, int numRecords) {
+        final Map<String, Object> consumerConfigs = new HashMap<>(clientConfigs);
+        // by default is latest and nothing would get consumed.
+        consumerConfigs.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, AutoOffsetResetStrategy.EARLIEST.name());
         int recordsConsumed = 0;
-        try (Consumer<byte[], byte[]> consumer = new KafkaConsumer<>(clientConfigs)) {
+        try (Consumer<byte[], byte[]> consumer = new KafkaConsumer<>(consumerConfigs)) {
             consumer.assign(Collections.singletonList(new TopicPartition(topicName, 0)));
             ConsumerRecords<byte[], byte[]> poll = consumer.poll(Duration.ofSeconds(30));
             for (ConsumerRecord<byte[], byte[]> record : poll) {

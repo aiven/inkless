@@ -82,7 +82,7 @@ public class ListOffsetsJob implements Callable<List<ListOffsetsResponse>> {
         if (timestamp == ListOffsetsRequest.EARLIEST_TIMESTAMP) {
             return ListOffsetsResponse.success(request.topicIdPartition(), timestamp, logInfo.logStartOffset());
         } else if (timestamp == ListOffsetsRequest.LATEST_TIMESTAMP) {
-            return ListOffsetsResponse.success(request.topicIdPartition(), timestamp, logInfo.logStartOffset());
+            return ListOffsetsResponse.success(request.topicIdPartition(), timestamp, logInfo.highWatermark());
         }
         LOGGER.error("listOffset request for timestamp {} in {} unsupported", timestamp, request.topicIdPartition());
         return new ListOffsetsResponse(Errors.UNKNOWN_SERVER_ERROR, request.topicIdPartition(), -1, -1);
