@@ -595,13 +595,13 @@ org.apache.kafka.tools.consumer.ConsoleShareConsumerTest:
 org.apache.kafka.tools.consumer.DefaultMessageFormatterTest:
 - testDefaultMessageFormatter
 org.apache.kafka.tools.consumer.GroupMetadataMessageFormatterTest:
-- testTransactionLogMessageFormatter
+- testMessageFormatter
 org.apache.kafka.tools.consumer.NoOpMessageFormatterTest:
 - testNoOpMessageFormatter
 org.apache.kafka.tools.consumer.OffsetMessageFormatterTest:
-- testTransactionLogMessageFormatter
+- testMessageFormatter
 org.apache.kafka.tools.consumer.TransactionLogMessageFormatterTest:
-- testTransactionLogMessageFormatter
+- testMessageFormatter
 org.apache.kafka.tools.consumer.group.AuthorizerIntegrationTest:
 - testDescribeGroupCliWithGroupDescribe
 org.apache.kafka.tools.consumer.group.ConsumerGroupCommandTest:
