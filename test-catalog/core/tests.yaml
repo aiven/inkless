@@ -2800,6 +2800,7 @@ kafka.server.ReplicaManagerQuotasTest:
 kafka.server.ReplicaManagerTest:
 - checkRemoveMetricsCountMatchRegisterCount
 - testActiveProducerState
+- testAppendRecordsToLeader
 - testApplyDeltaShouldHandleReplicaAssignedToLostDirectory
 - testApplyDeltaShouldHandleReplicaAssignedToOnlineDirectory
 - testApplyDeltaShouldHandleReplicaAssignedToUnassignedDirectory
