@@ -38,6 +38,7 @@ org.apache.kafka.coordinator.group.GroupCoordinatorRecordHelpersTest:
 - testNewOffsetCommitRecordWithExpireTimestamp
 - testNewOffsetCommitTombstoneRecord
 - testNewShareGroupEpochTombstoneRecord
+- testNewShareGroupPartitionMetadataRecord
 - testOffsetCommitValueVersion
 org.apache.kafka.coordinator.group.GroupCoordinatorRecordSerdeTest:
 - testDeserialize
@@ -118,6 +119,10 @@ org.apache.kafka.coordinator.group.GroupCoordinatorServiceTest:
 - testOnResignation
 - testOnResignationWithEmptyLeaderEpoch
 - testPartitionFor
+- testPersisterInitializeFailure
+- testPersisterInitializeGroupInitializeFailure
+- testPersisterInitializePartialFailure
+- testPersisterInitializeSuccess
 - testShareGroupDescribe
 - testShareGroupDescribeCoordinatorLoadInProgress
 - testShareGroupDescribeCoordinatorNotActive
@@ -415,8 +420,11 @@ org.apache.kafka.coordinator.group.GroupMetadataManagerTest:
 - testShareGroupDescribeOnConsumerGroup
 - testShareGroupDescribeRequest
 - testShareGroupDynamicConfigs
+- testShareGroupHeartbeatInitializeOnPartitionUpdate
 - testShareGroupHeartbeatOnConsumerGroup
 - testShareGroupHeartbeatRequestValidation
+- testShareGroupInitializeEmptyMap
+- testShareGroupInitializeSuccess
 - testShareGroupLeavingMemberBumpsGroupEpoch
 - testShareGroupMemberIdGeneration
 - testShareGroupMemberJoinsEmptyGroupWithAssignments
@@ -467,6 +475,7 @@ org.apache.kafka.coordinator.group.GroupMetadataManagerTest:
 - testStreamsGroupDescribeBeforeAndAfterCommittingOffset
 - testStreamsGroupDescribeNoErrors
 - testStreamsGroupDescribeWithErrors
+- testSubscribedTopicsChangeMap
 - testSubscriptionMetadataRefreshedAfterGroupIsLoaded
 - testSubscriptionMetadataRefreshedAgainAfterWriteFailure
 - testSyncGroupAsLeaderAppendFailureTransformsError
@@ -712,6 +721,7 @@ org.apache.kafka.coordinator.group.modern.AssignmentTest:
 - testFromTargetAssignmentRecord
 - testPartitionsCannotBeNull
 org.apache.kafka.coordinator.group.modern.SubscribedTopicMetadataTest:
+- testAssignablePartitions
 - testAttribute
 - testEquals
 - testNumberOfPartitions
