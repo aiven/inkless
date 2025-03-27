@@ -15,9 +15,6 @@
 
 name: Flaky Test Report
 
-# Inkless: disable flaky test report schedule runs
-disabled: true
-
 on:
   workflow_dispatch:      # Let us run manually
 
