@@ -34,6 +34,8 @@ object TestInfoUtils {
   
   final val TestWithParameterizedQuorumAndGroupProtocolNames = "{displayName}.quorum={0}.groupProtocol={1}"
 
+  final val TestWithParameterizedQuorumAndGroupProtocolNamesAndTopicType = "{displayName}.quorum={0}.groupProtocol={1}.topicType={2}"
+
   final val TestWithParameterizedGroupProtocolNames = "{displayName}.groupProtocol={0}"
 
   def isShareGroupTest(testInfo: TestInfo): Boolean = {
@@ -47,6 +49,15 @@ object TestInfoUtils {
       Some(GroupProtocol.CONSUMER)
     else
       None
+  }
+
+  def topicTypeSpecified(testInfo: TestInfo): String = {
+    if (testInfo.getDisplayName.contains("topicType=classic"))
+      "classic"
+    else if (testInfo.getDisplayName.contains("topicType=inkless"))
+      "inkless"
+    else
+      "classic" // default
   }
 
   /**

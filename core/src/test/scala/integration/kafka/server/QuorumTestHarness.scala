@@ -49,8 +49,9 @@ import org.apache.kafka.server.config.{KRaftConfigs, ServerConfigs, ServerLogCon
 import org.apache.kafka.server.fault.{FaultHandler, MockFaultHandler}
 import org.apache.kafka.server.util.timer.SystemTimer
 import org.junit.jupiter.api.Assertions._
+import org.junit.jupiter.api.extension.ExtensionContext
 import org.junit.jupiter.api.{AfterAll, AfterEach, BeforeAll, BeforeEach, Tag, TestInfo}
-import org.junit.jupiter.params.provider.Arguments
+import org.junit.jupiter.params.provider.{Arguments, ArgumentsProvider}
 
 import java.nio.file.{Files, Paths}
 import scala.collection.Seq
@@ -169,6 +170,10 @@ abstract class QuorumTestHarness extends Logging {
 
   def maybeGroupProtocolSpecified(): Option[GroupProtocol] = {
     TestInfoUtils.maybeGroupProtocolSpecified(testInfo)
+  }
+
+  def topicTypeSpecified(): String = {
+    TestInfoUtils.topicTypeSpecified(testInfo)
   }
 
   def groupProtocolFromTestParameters(): GroupProtocol = {
@@ -471,5 +476,39 @@ object QuorumTestHarness {
     stream.Stream.of(
       Arguments.of("kraft", GroupProtocol.CONSUMER.name.toLowerCase(Locale.ROOT))
     )
+  }
+}
+
+import java.util.stream.Stream
+
+// Instead of updating getTestQuorumAndGroupProtocolParametersAll with topic type,
+// had to replace with ArgumentsProvider instead to be able to enable inkless at a class level
+// but disable it at a method level.
+// This was not possible with MethodSource as it only has a class level annotation.
+class QuorumAndGroupProtocolAndMaybeTopicTypeProvider extends ArgumentsProvider {
+  override def provideArguments(context: ExtensionContext): Stream[_ <: Arguments] = {
+    val hasInklessTag = context.getTestMethod
+      .filter(method => method.isAnnotationPresent(classOf[Tag]) &&
+        method.getAnnotation(classOf[Tag]).value().contains("inkless"))
+      .isPresent || context.getTags.contains("inkless")
+
+    val hasNoInklessTag = context.getTestMethod
+      .filter(method => method.isAnnotationPresent(classOf[Tag]) &&
+        method.getAnnotation(classOf[Tag]).value().contains("noinkless"))
+      .isPresent || context.getTags.contains("noinkless")
+
+    if (hasInklessTag && !hasNoInklessTag) {
+      Stream.of(
+        Arguments.of("kraft", GroupProtocol.CLASSIC.name.toLowerCase(Locale.ROOT), "classic"),
+        Arguments.of("kraft", GroupProtocol.CONSUMER.name.toLowerCase(Locale.ROOT), "classic"),
+        Arguments.of("kraft", GroupProtocol.CLASSIC.name.toLowerCase(Locale.ROOT), "inkless"),
+        Arguments.of("kraft", GroupProtocol.CONSUMER.name.toLowerCase(Locale.ROOT), "inkless")
+      )
+    } else {
+      Stream.of(
+        Arguments.of("kraft", GroupProtocol.CLASSIC.name.toLowerCase(Locale.ROOT), "classic"),
+        Arguments.of("kraft", GroupProtocol.CONSUMER.name.toLowerCase(Locale.ROOT), "classic")
+      )
+    }
   }
 }

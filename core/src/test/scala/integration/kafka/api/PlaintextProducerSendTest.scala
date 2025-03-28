@@ -17,6 +17,8 @@
 
 package kafka.api
 
+import kafka.server.QuorumAndGroupProtocolAndMaybeTopicTypeProvider
+
 import java.util.{Locale, Properties}
 import java.util.concurrent.{ExecutionException, Future, TimeUnit}
 import kafka.utils.{TestInfoUtils, TestUtils}
@@ -28,18 +30,19 @@ import org.apache.kafka.common.record.{DefaultRecord, DefaultRecordBatch, Record
 import org.apache.kafka.common.serialization.ByteArraySerializer
 import org.apache.kafka.storage.internals.log.LogConfig
 import org.junit.jupiter.api.Assertions._
-import org.junit.jupiter.api.Timeout
+import org.junit.jupiter.api.{Tag, Timeout}
 import org.junit.jupiter.params.ParameterizedTest
-import org.junit.jupiter.params.provider.{Arguments, MethodSource}
+import org.junit.jupiter.params.provider.{Arguments, ArgumentsSource, MethodSource}
 
 import java.nio.charset.StandardCharsets
 
 
+@Tag("inkless")
 class PlaintextProducerSendTest extends BaseProducerSendTest {
 
-  @ParameterizedTest(name = TestInfoUtils.TestWithParameterizedQuorumAndGroupProtocolNames)
-  @MethodSource(Array("getTestQuorumAndGroupProtocolParametersAll"))
-  def testWrongSerializer(quorum: String, groupProtocol: String): Unit = {
+  @ParameterizedTest(name = TestInfoUtils.TestWithParameterizedQuorumAndGroupProtocolNamesAndTopicType)
+  @ArgumentsSource(classOf[QuorumAndGroupProtocolAndMaybeTopicTypeProvider])
+  def testWrongSerializer(quorum: String, groupProtocol: String, topicType: String): Unit = {
     val producerProps = new Properties()
     producerProps.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers())
     producerProps.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, "org.apache.kafka.common.serialization.StringSerializer")
@@ -49,21 +52,21 @@ class PlaintextProducerSendTest extends BaseProducerSendTest {
     assertThrows(classOf[SerializationException], () => producer.send(record))
   }
 
-  @ParameterizedTest(name = TestInfoUtils.TestWithParameterizedQuorumAndGroupProtocolNames)
-  @MethodSource(Array("getTestQuorumAndGroupProtocolParametersAll"))
-  def testBatchSizeZero(quorum: String, groupProtocol: String): Unit = {
+  @ParameterizedTest(name = TestInfoUtils.TestWithParameterizedQuorumAndGroupProtocolNamesAndTopicType)
+  @ArgumentsSource(classOf[QuorumAndGroupProtocolAndMaybeTopicTypeProvider])
+  def testBatchSizeZero(quorum: String, groupProtocol: String, topicType: String): Unit = {
     val producer = createProducer(
       lingerMs = Int.MaxValue,
       deliveryTimeoutMs = Int.MaxValue,
       batchSize = 0)
-    // default timeout is not enough for the 100 requests
+    // inkless: default timeout is not enough for the 100 requests
     sendAndVerify(producer, timeoutMs = 60_000)
   }
 
   @Timeout(value = 15, unit = TimeUnit.SECONDS, threadMode = Timeout.ThreadMode.SEPARATE_THREAD)
-  @ParameterizedTest(name = TestInfoUtils.TestWithParameterizedQuorumAndGroupProtocolNames)
-  @MethodSource(Array("getTestQuorumAndGroupProtocolParametersAll"))
-  def testBatchSizeZeroNoPartitionNoRecordKey(quorum: String, groupProtocol: String): Unit = {
+  @ParameterizedTest(name = TestInfoUtils.TestWithParameterizedQuorumAndGroupProtocolNamesAndTopicType)
+  @ArgumentsSource(classOf[QuorumAndGroupProtocolAndMaybeTopicTypeProvider])
+  def testBatchSizeZeroNoPartitionNoRecordKey(quorum: String, groupProtocol: String, topicType: String): Unit = {
     val producer = createProducer(batchSize = 0)
     val numRecords = 10
     try {
@@ -84,9 +87,9 @@ class PlaintextProducerSendTest extends BaseProducerSendTest {
     }
   }
 
-  @ParameterizedTest(name = TestInfoUtils.TestWithParameterizedQuorumAndGroupProtocolNames)
-  @MethodSource(Array("getTestQuorumAndGroupProtocolParametersAll"))
-  def testSendCompressedMessageWithLogAppendTime(quorum: String, groupProtocol: String): Unit = {
+  @ParameterizedTest(name = TestInfoUtils.TestWithParameterizedQuorumAndGroupProtocolNamesAndTopicType)
+  @ArgumentsSource(classOf[QuorumAndGroupProtocolAndMaybeTopicTypeProvider])
+  def testSendCompressedMessageWithLogAppendTime(quorum: String, groupProtocol: String, topicType: String): Unit = {
     val producer = createProducer(
       compressionType = "gzip",
       lingerMs = Int.MaxValue,
@@ -94,9 +97,9 @@ class PlaintextProducerSendTest extends BaseProducerSendTest {
     sendAndVerifyTimestamp(producer, TimestampType.LOG_APPEND_TIME)
   }
 
-  @ParameterizedTest(name = TestInfoUtils.TestWithParameterizedQuorumAndGroupProtocolNames)
-  @MethodSource(Array("getTestQuorumAndGroupProtocolParametersAll"))
-  def testSendNonCompressedMessageWithLogAppendTime(quorum: String, groupProtocol: String): Unit = {
+  @ParameterizedTest(name = TestInfoUtils.TestWithParameterizedQuorumAndGroupProtocolNamesAndTopicType)
+  @ArgumentsSource(classOf[QuorumAndGroupProtocolAndMaybeTopicTypeProvider])
+  def testSendNonCompressedMessageWithLogAppendTime(quorum: String, groupProtocol: String, topicType: String): Unit = {
     val producer = createProducer(lingerMs = Int.MaxValue, deliveryTimeoutMs = Int.MaxValue)
     sendAndVerifyTimestamp(producer, TimestampType.LOG_APPEND_TIME)
   }
@@ -106,9 +109,9 @@ class PlaintextProducerSendTest extends BaseProducerSendTest {
    *
    * The topic should be created upon sending the first message
    */
-  @ParameterizedTest(name = TestInfoUtils.TestWithParameterizedQuorumAndGroupProtocolNames)
-  @MethodSource(Array("getTestQuorumAndGroupProtocolParametersAll"))
-  def testAutoCreateTopic(quorum: String, groupProtocol: String): Unit = {
+  @ParameterizedTest(name = TestInfoUtils.TestWithParameterizedQuorumAndGroupProtocolNamesAndTopicType)
+  @ArgumentsSource(classOf[QuorumAndGroupProtocolAndMaybeTopicTypeProvider])
+  def testAutoCreateTopic(quorum: String, groupProtocol: String, topicType: String): Unit = {
     val producer = createProducer()
     try {
       // Send a message to auto-create the topic
@@ -122,9 +125,9 @@ class PlaintextProducerSendTest extends BaseProducerSendTest {
     }
   }
 
-  @ParameterizedTest(name = TestInfoUtils.TestWithParameterizedQuorumAndGroupProtocolNames)
+  @ParameterizedTest(name = TestInfoUtils.TestWithParameterizedQuorumAndGroupProtocolNamesAndTopicType)
   @MethodSource(Array("quorumAndTimestampConfigProvider"))
-  def testSendWithInvalidBeforeAndAfterTimestamp(quorum: String, groupProtocol: String, messageTimeStampConfig: String, recordTimestamp: Long): Unit = {
+  def testSendWithInvalidBeforeAndAfterTimestamp(quorum: String, groupProtocol: String, messageTimeStampConfig: String, recordTimestamp: Long, topicType: String): Unit = {
     val topicProps = new Properties()
     // set the TopicConfig for timestamp validation to have 1 minute threshold. Note that recordTimestamp has 5 minutes diff
     val oneMinuteInMs: Long = 1 * 60 * 60 * 1000L
@@ -151,9 +154,9 @@ class PlaintextProducerSendTest extends BaseProducerSendTest {
     }
   }
 
-  @ParameterizedTest(name = TestInfoUtils.TestWithParameterizedQuorumAndGroupProtocolNames)
+  @ParameterizedTest(name = TestInfoUtils.TestWithParameterizedQuorumAndGroupProtocolNamesAndTopicType)
   @MethodSource(Array("quorumAndTimestampConfigProvider"))
-  def testValidBeforeAndAfterTimestampsAtThreshold(quorum: String, groupProtocol: String, messageTimeStampConfig: String, recordTimestamp: Long): Unit = {
+  def testValidBeforeAndAfterTimestampsAtThreshold(quorum: String, groupProtocol: String, messageTimeStampConfig: String, recordTimestamp: Long, topicType: String): Unit = {
     val topicProps = new Properties()
 
     // set the TopicConfig for timestamp validation to be the same as the record timestamp
@@ -171,9 +174,9 @@ class PlaintextProducerSendTest extends BaseProducerSendTest {
     compressedProducer.close()
   }
 
-  @ParameterizedTest(name = TestInfoUtils.TestWithParameterizedQuorumAndGroupProtocolNames)
+  @ParameterizedTest(name = TestInfoUtils.TestWithParameterizedQuorumAndGroupProtocolNamesAndTopicType)
   @MethodSource(Array("quorumAndTimestampConfigProvider"))
-  def testValidBeforeAndAfterTimestampsWithinThreshold(quorum: String, groupProtocol: String, messageTimeStampConfig: String, recordTimestamp: Long): Unit = {
+  def testValidBeforeAndAfterTimestampsWithinThreshold(quorum: String, groupProtocol: String, messageTimeStampConfig: String, recordTimestamp: Long, topicType: String): Unit = {
     val topicProps = new Properties()
 
     // set the TopicConfig for timestamp validation to have 10 minute threshold. Note that recordTimestamp has 5 minutes diff
@@ -195,9 +198,9 @@ class PlaintextProducerSendTest extends BaseProducerSendTest {
   // Test that producer with max.block.ms=0 can be used to send in non-blocking mode
   // where requests are failed immediately without blocking if metadata is not available
   // or buffer is full.
-  @ParameterizedTest(name = TestInfoUtils.TestWithParameterizedQuorumAndGroupProtocolNames)
-  @MethodSource(Array("getTestQuorumAndGroupProtocolParametersAll"))
-  def testNonBlockingProducer(quorum: String, groupProtocol: String): Unit = {
+  @ParameterizedTest(name = TestInfoUtils.TestWithParameterizedQuorumAndGroupProtocolNamesAndTopicType)
+  @ArgumentsSource(classOf[QuorumAndGroupProtocolAndMaybeTopicTypeProvider])
+  def testNonBlockingProducer(quorum: String, groupProtocol: String, topicType: String): Unit = {
 
     def send(producer: KafkaProducer[Array[Byte],Array[Byte]]): Future[RecordMetadata] = {
       producer.send(new ProducerRecord(topic, 0, "key".getBytes, new Array[Byte](1000)))
@@ -251,9 +254,9 @@ class PlaintextProducerSendTest extends BaseProducerSendTest {
     verifySendSuccess(future2)               // previous batch should be completed and sent now
   }
 
-  @ParameterizedTest(name = TestInfoUtils.TestWithParameterizedQuorumAndGroupProtocolNames)
-  @MethodSource(Array("getTestQuorumAndGroupProtocolParametersAll"))
-  def testSendRecordBatchWithMaxRequestSizeAndHigher(quorum: String, groupProtocol: String): Unit = {
+  @ParameterizedTest(name = TestInfoUtils.TestWithParameterizedQuorumAndGroupProtocolNamesAndTopicType)
+  @ArgumentsSource(classOf[QuorumAndGroupProtocolAndMaybeTopicTypeProvider])
+  def testSendRecordBatchWithMaxRequestSizeAndHigher(quorum: String, groupProtocol: String, topicType: String): Unit = {
     val producerProps = new Properties()
     producerProps.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers())
     val producer = registerProducer(new KafkaProducer(producerProps, new ByteArraySerializer, new ByteArraySerializer))
@@ -281,8 +284,10 @@ object PlaintextProducerSendTest {
     val fiveMinutesInMs: Long = 5 * 60 * 60 * 1000L
     val data = new java.util.ArrayList[Arguments]()
     for (groupProtocol <- GroupProtocol.values().map(gp => gp.name.toLowerCase(Locale.ROOT))) {
-      data.add(Arguments.of("kraft", groupProtocol, TopicConfig.MESSAGE_TIMESTAMP_BEFORE_MAX_MS_CONFIG, Long.box(now - fiveMinutesInMs)))
-      data.add(Arguments.of("kraft", groupProtocol, TopicConfig.MESSAGE_TIMESTAMP_AFTER_MAX_MS_CONFIG, Long.box(now + fiveMinutesInMs)))
+      data.add(Arguments.of("kraft", groupProtocol, TopicConfig.MESSAGE_TIMESTAMP_BEFORE_MAX_MS_CONFIG, Long.box(now - fiveMinutesInMs), "classic"))
+      data.add(Arguments.of("kraft", groupProtocol, TopicConfig.MESSAGE_TIMESTAMP_AFTER_MAX_MS_CONFIG, Long.box(now + fiveMinutesInMs), "classic"))
+      data.add(Arguments.of("kraft", groupProtocol, TopicConfig.MESSAGE_TIMESTAMP_BEFORE_MAX_MS_CONFIG, Long.box(now - fiveMinutesInMs), "inkless"))
+      data.add(Arguments.of("kraft", groupProtocol, TopicConfig.MESSAGE_TIMESTAMP_AFTER_MAX_MS_CONFIG, Long.box(now + fiveMinutesInMs), "inkless"))
     }
     data.stream()
   }

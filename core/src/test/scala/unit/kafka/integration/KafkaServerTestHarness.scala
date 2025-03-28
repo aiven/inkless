@@ -167,6 +167,14 @@ abstract class KafkaServerTestHarness extends QuorumTestHarness {
     listenerName: ListenerName = listenerName,
     adminClientConfig: Properties = new Properties
   ): scala.collection.immutable.Map[Int, Int] = {
+    var innerReplicationFactor = replicationFactor
+    val innerTopicConfig = new Properties()
+    innerTopicConfig.putAll(topicConfig)
+    if (topicTypeSpecified() == "inkless") {
+      innerTopicConfig.put("inkless.enable", "true")
+      innerReplicationFactor = 1
+    }
+
     Using.resource(createAdminClient(brokers, listenerName, adminClientConfig)) { admin =>
       TestUtils.createTopicWithAdmin(
         admin = admin,
@@ -174,8 +182,8 @@ abstract class KafkaServerTestHarness extends QuorumTestHarness {
         brokers = brokers,
         controllers = controllerServers,
         numPartitions = numPartitions,
-        replicationFactor = replicationFactor,
-        topicConfig = topicConfig
+        replicationFactor = innerReplicationFactor,
+        topicConfig = innerTopicConfig
       )
     }
   }
