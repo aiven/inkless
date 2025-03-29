@@ -1,3 +1,6 @@
+org.apache.kafka.server.log.LogAppendTimeTest:
+- testProduceConsumeWithConfigOnBroker
+- testProduceConsumeWithConfigOnTopic
 org.apache.kafka.server.log.remote.metadata.storage.ClassLoaderAwareRemoteLogMetadataManagerTest:
 - testWithClassLoader
 org.apache.kafka.server.log.remote.metadata.storage.ConsumerTaskTest:

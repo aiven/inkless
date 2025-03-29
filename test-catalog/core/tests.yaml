@@ -260,8 +260,6 @@ kafka.api.GroupEndToEndAuthorizationTest:
 - testProduceConsumeWithPrefixedAcls
 - testProduceConsumeWithWildcardAcls
 - testTwoConsumersWithDifferentSaslCredentials
-kafka.api.LogAppendTimeTest:
-- testProduceConsume
 kafka.api.MetricsTest:
 - testMetrics
 kafka.api.PlaintextAdminIntegrationTest:
