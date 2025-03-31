@@ -337,6 +337,7 @@ org.apache.kafka.coordinator.group.GroupMetadataManagerTest:
 - testListGroups
 - testMemberIdGeneration
 - testMemberJoinsEmptyConsumerGroup
+- testMemberJoinsEmptyStreamsGroup
 - testNewJoiningMemberTriggersNewTargetAssignment
 - testNewMemberFailureAfterJoinGroupCompletion
 - testNewMemberIsRejectedWithMaximumMembersIsReached
@@ -475,6 +476,22 @@ org.apache.kafka.coordinator.group.GroupMetadataManagerTest:
 - testStreamsGroupDescribeBeforeAndAfterCommittingOffset
 - testStreamsGroupDescribeNoErrors
 - testStreamsGroupDescribeWithErrors
+- testStreamsGroupHeartbeatPartialResponseWhenNothingChanges
+- testStreamsGroupMemberEpochValidation
+- testStreamsHeartbeatRequestValidation
+- testStreamsLeavingMemberRemovesMemberAndBumpsGroupEpoch
+- testStreamsNewJoiningMemberTriggersNewTargetAssignment
+- testStreamsPartitionMetadataRefreshedAfterGroupIsLoaded
+- testStreamsPartitionMetadataRefreshedAgainAfterWriteFailure
+- testStreamsRebalanceTimeoutExpiration
+- testStreamsRebalanceTimeoutLifecycle
+- testStreamsReconciliationProcess
+- testStreamsSessionTimeoutExpiration
+- testStreamsSessionTimeoutLifecycle
+- testStreamsStreamsGroupStates
+- testStreamsTaskAssignorExceptionOnRegularHeartbeat
+- testStreamsUpdatingMemberMetadataTriggersNewTargetAssignment
+- testStreamsUpdatingPartitionMetadataTriggersNewTargetAssignment
 - testSubscribedTopicsChangeMap
 - testSubscriptionMetadataRefreshedAfterGroupIsLoaded
 - testSubscriptionMetadataRefreshedAgainAfterWriteFailure
@@ -491,6 +508,8 @@ org.apache.kafka.coordinator.group.GroupMetadataManagerTest:
 - testSyncGroupSucceedWhenProtocolTypeAndNameAreNotProvided
 - testUnknownGroupId
 - testUnknownMemberIdJoinsConsumerGroup
+- testUnknownMemberIdJoinsStreamsGroup
+- testUnknownStreamsGroupId
 - testUpdateGroupSizeCounter
 - testUpdateStreamsGroupSizeCounter
 - testUpdatingSubscriptionTriggersNewTargetAssignment
@@ -949,7 +968,9 @@ org.apache.kafka.coordinator.group.streams.StreamsGroupTest:
 - testComputePartitionMetadata
 - testCreateGroupTombstoneRecords
 - testDeletingMemberRemovesProcessId
-- testGetOrCreateMember
+- testGetMemberOrThrow
+- testGetOrCreateDefaultMember
+- testGetOrCreateUninitializedMember
 - testGetStaticMemberByInstanceId
 - testGroupState
 - testIsInStatesCaseInsensitiveAndUnderscored
@@ -972,6 +993,7 @@ org.apache.kafka.coordinator.group.streams.StreamsGroupTest:
 - testValidateOffsetFetch
 - testValidateTransactionalOffsetCommit
 org.apache.kafka.coordinator.group.streams.StreamsTopologyTest:
+- fromHeartbeatRequestShouldCreateCorrectTopology
 - fromRecordShouldCreateCorrectTopology
 - requiredTopicsShouldBeCorrect
 - subtopologiesMapShouldBeImmutable
