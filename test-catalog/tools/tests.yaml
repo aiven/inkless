@@ -731,7 +731,7 @@ org.apache.kafka.tools.consumer.group.ShareGroupCommandTest:
 - testListWithUnrecognizedOption
 - testPrintEmptyGroupState
 org.apache.kafka.tools.consumer.group.share.ShareGroupStateMessageFormatterTest:
-- testShareGroupStateMessageFormatter
+- testMessageFormatter
 - testShareGroupStateMessageFormatterException
 org.apache.kafka.tools.filter.TopicFilterTest:
 - testIncludeLists
