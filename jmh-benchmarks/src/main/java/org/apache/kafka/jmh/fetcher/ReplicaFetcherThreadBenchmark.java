@@ -123,7 +123,7 @@ public class ReplicaFetcherThreadBenchmark {
         KafkaConfig config =  KafkaConfig.fromProps(TestUtils.createBrokerConfig(
             0, true, true, 9092, Option.empty(), Option.empty(),
             Option.empty(), true, false, 0, false, 0, false, 0, Option.empty(), 1, true, 1,
-            (short) 1, false));
+            (short) 1, false, Option.empty()));
         LogConfig logConfig = createLogConfig();
 
         BrokerTopicStats brokerTopicStats = new BrokerTopicStats(false);
