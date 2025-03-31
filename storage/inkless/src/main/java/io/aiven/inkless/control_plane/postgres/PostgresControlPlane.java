@@ -17,6 +17,7 @@
  */
 package io.aiven.inkless.control_plane.postgres;
 
+import io.aiven.inkless.common.ObjectFormat;
 import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.utils.Time;
@@ -106,12 +107,13 @@ public class PostgresControlPlane extends AbstractControlPlane {
     @Override
     protected Iterator<CommitBatchResponse> commitFileForValidRequests(
         final String objectKey,
+        final ObjectFormat format,
         final int uploaderBrokerId,
         final long fileSize,
         final Stream<CommitBatchRequest> requests) {
         final CommitFileJob job = new CommitFileJob(
             time, jooqCtx,
-            objectKey, uploaderBrokerId, fileSize, requests.toList(),
+            objectKey, format, uploaderBrokerId, fileSize, requests.toList(),
             metrics::onCommitFileCompleted);
         return job.call().iterator();
     }
@@ -181,15 +183,18 @@ public class PostgresControlPlane extends AbstractControlPlane {
     }
 
     @Override
-    public void commitFileMergeWorkItem(final long workItemId,
-                                        final String objectKey,
-                                        final int uploaderBrokerId,
-                                        final long fileSize,
-                                        final List<MergedFileBatch> batches) {
+    public void commitFileMergeWorkItem(
+            final long workItemId,
+            final String objectKey,
+            final ObjectFormat format,
+            final int uploaderBrokerId,
+            final long fileSize,
+            final List<MergedFileBatch> batches) {
         final CommitFileMergeWorkItemJob job = new CommitFileMergeWorkItemJob(
             time,
             workItemId,
             objectKey,
+            format,
             uploaderBrokerId,
             fileSize,
             batches,
@@ -227,6 +232,7 @@ public class PostgresControlPlane extends AbstractControlPlane {
         final CommitFileMergeWorkItemV1BatchRecord errorBatch = result.getErrorBatch();
         return new MergedFileBatch(
             new BatchMetadata(
+                errorBatch.getMetadata().getMagic().byteValue(),
                 new TopicIdPartition(
                     errorBatch.getMetadata().getTopicId(),
                     errorBatch.getMetadata().getPartition(),

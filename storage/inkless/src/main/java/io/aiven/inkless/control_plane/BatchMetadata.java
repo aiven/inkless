@@ -24,6 +24,7 @@ import org.apache.kafka.common.record.TimestampType;
 import io.aiven.inkless.common.ByteRange;
 
 public record BatchMetadata (
+    byte magic,
     TopicIdPartition topicIdPartition,
     long byteOffset,
     long byteSize,
@@ -56,6 +57,7 @@ public record BatchMetadata (
         TimestampType timestampType
     ) {
         return new BatchMetadata(
+            RecordBatch.CURRENT_MAGIC_VALUE,
             topicIdPartition,
             byteOffset,
             byteSize,

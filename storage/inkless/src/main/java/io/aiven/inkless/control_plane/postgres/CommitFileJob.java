@@ -17,6 +17,7 @@
  */
 package io.aiven.inkless.control_plane.postgres;
 
+import io.aiven.inkless.common.ObjectFormat;
 import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.utils.Time;
 
@@ -48,6 +49,7 @@ class CommitFileJob implements Callable<List<CommitBatchResponse>> {
     private final Time time;
     private final DSLContext jooqCtx;
     private final String objectKey;
+    private final ObjectFormat format;
     private final int uploaderBrokerId;
     private final long fileSize;
     private final List<CommitBatchRequest> requests;
@@ -56,6 +58,7 @@ class CommitFileJob implements Callable<List<CommitBatchResponse>> {
     CommitFileJob(final Time time,
                   final DSLContext jooqCtx,
                   final String objectKey,
+                  final ObjectFormat format,
                   final int uploaderBrokerId,
                   final long fileSize,
                   final List<CommitBatchRequest> requests,
@@ -63,6 +66,7 @@ class CommitFileJob implements Callable<List<CommitBatchResponse>> {
         this.time = time;
         this.jooqCtx = jooqCtx;
         this.objectKey = objectKey;
+        this.format = format;
         this.uploaderBrokerId = uploaderBrokerId;
         this.fileSize = fileSize;
         this.requests = requests;
@@ -90,6 +94,7 @@ class CommitFileJob implements Callable<List<CommitBatchResponse>> {
 
                 final CommitBatchRequestV1Record[] jooqRequests = requests.stream().map(r ->
                     new CommitBatchRequestV1Record(
+                        (short) r.magic(),
                         r.topicIdPartition().topicId(),
                         r.topicIdPartition().partition(),
                         (long) r.byteOffset(),
@@ -114,6 +119,7 @@ class CommitFileJob implements Callable<List<CommitBatchResponse>> {
                     CommitBatchResponseV1.ERROR
                 ).from(COMMIT_FILE_V1.call(
                     objectKey,
+                    (short) format.id,
                     uploaderBrokerId,
                     fileSize,
                     now,

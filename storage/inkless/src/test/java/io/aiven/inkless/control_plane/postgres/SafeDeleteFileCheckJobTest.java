@@ -17,6 +17,7 @@
  */
 package io.aiven.inkless.control_plane.postgres;
 
+import io.aiven.inkless.common.ObjectFormat;
 import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.record.TimestampType;
@@ -75,7 +76,7 @@ class SafeDeleteFileCheckJobTest {
         final int file1Size = file1Batch1Size + file1Batch2Size;
         final String objectKey = "test";
         new CommitFileJob(
-            time, pgContainer.getJooqCtx(), objectKey, BROKER_ID, file1Size,
+            time, pgContainer.getJooqCtx(), objectKey, ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, BROKER_ID, file1Size,
             List.of(
                 CommitBatchRequest.of(0, T0P0, 0, file1Batch1Size, 0, 11, 1000, TimestampType.CREATE_TIME),
                 CommitBatchRequest.of(0, T0P1, 0, file1Batch2Size, 0, 11, 1000, TimestampType.CREATE_TIME)

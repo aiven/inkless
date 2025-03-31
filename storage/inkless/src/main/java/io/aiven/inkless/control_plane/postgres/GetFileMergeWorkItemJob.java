@@ -17,6 +17,7 @@
  */
 package io.aiven.inkless.control_plane.postgres;
 
+import io.aiven.inkless.common.ObjectFormat;
 import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.utils.Time;
@@ -99,6 +100,7 @@ public class GetFileMergeWorkItemJob implements Callable<FileMergeWorkItem> {
                         new FileMergeWorkItem.File(
                             r.getFileId(),
                             r.getObjectKey(),
+                            ObjectFormat.forId(r.getFormat().byteValue()),
                             r.getSize(),
                             r.getUsedSize(),
                             Arrays.stream(r.getBatches())
@@ -107,6 +109,7 @@ public class GetFileMergeWorkItemJob implements Callable<FileMergeWorkItem> {
                                         return new BatchInfo(
                                             b.getBatchId(), b.getObjectKey(),
                                             new BatchMetadata(
+                                                m.getMagic().byteValue(),
                                                 new TopicIdPartition(m.getTopicId(), new TopicPartition(m.getTopicName(), m.getPartition())),
                                                 m.getByteOffset(),
                                                 m.getByteSize(),

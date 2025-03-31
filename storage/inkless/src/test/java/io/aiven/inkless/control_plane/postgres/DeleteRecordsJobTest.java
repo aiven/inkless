@@ -17,6 +17,7 @@
  */
 package io.aiven.inkless.control_plane.postgres;
 
+import io.aiven.inkless.common.ObjectFormat;
 import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.protocol.Errors;
@@ -63,7 +64,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 class DeleteRecordsJobTest {
     @Container
     static final InklessPostgreSQLContainer pgContainer = PostgreSQLTestContainer.container();
-    
+
+    static final short FORMAT = ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT.id;
+    static final short MAGIC = RecordBatch.CURRENT_MAGIC_VALUE;
     static final int BROKER_ID = 11;
 
     static final String TOPIC_0 = "topic0";
@@ -118,7 +121,7 @@ class DeleteRecordsJobTest {
         final int file1Batch2Size = 2000;
         final int file1Size = file1Batch1Size + file1Batch2Size;
         new CommitFileJob(
-            time, pgContainer.getJooqCtx(), objectKey1, BROKER_ID, file1Size,
+            time, pgContainer.getJooqCtx(), objectKey1, ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, BROKER_ID, file1Size,
             List.of(
                 CommitBatchRequest.of(0, T0P0, 0, file1Batch1Size, 0, 11, 1000,  TimestampType.CREATE_TIME),
                 CommitBatchRequest.of(0, T0P1, file1Batch1Size, file1Batch2Size, 0, 11, 1000, TimestampType.CREATE_TIME)
@@ -130,7 +133,7 @@ class DeleteRecordsJobTest {
         final int file2Batch2Size = 2000;
         final int file2Size = file2Batch1Size + file2Batch2Size;
         new CommitFileJob(
-            time, pgContainer.getJooqCtx(), objectKey2, BROKER_ID, file2Size,
+            time, pgContainer.getJooqCtx(), objectKey2, ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, BROKER_ID, file2Size,
             List.of(
                 CommitBatchRequest.of(0, T0P0, 0, file2Batch1Size, 12, 23, 1000, TimestampType.CREATE_TIME),
                 CommitBatchRequest.of(0, T2P0, file2Batch1Size, file2Batch2Size, 0, 11, 1000, TimestampType.CREATE_TIME)
@@ -143,7 +146,7 @@ class DeleteRecordsJobTest {
         final int file3Batch3Size = 3000;
         final int file3Size = file3Batch1Size + file3Batch2Size + file3Batch3Size;
         new CommitFileJob(
-            time, pgContainer.getJooqCtx(), objectKey3, BROKER_ID, file3Size,
+            time, pgContainer.getJooqCtx(), objectKey3, ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, BROKER_ID, file3Size,
             List.of(
                 CommitBatchRequest.of(0, T0P0, 0, file3Batch1Size, 24, 35, 1000, TimestampType.CREATE_TIME),
                 CommitBatchRequest.of(0, T0P1, file3Batch1Size, file3Batch2Size, 12, 23, 1000, TimestampType.CREATE_TIME),
@@ -176,21 +179,21 @@ class DeleteRecordsJobTest {
         );
 
         assertThat(DBUtils.getAllBatches(pgContainer.getDataSource())).containsExactlyInAnyOrder(
-            new BatchesRecord(3L, TOPIC_ID_0, 0, 12L, 23L, 2L, 0L, (long) file1Batch1Size, TimestampType.CREATE_TIME, 0L, 1000L,
+            new BatchesRecord(3L, MAGIC, TOPIC_ID_0, 0, 12L, 23L, 2L, 0L, (long) file1Batch1Size, TimestampType.CREATE_TIME, 0L, 1000L,
                 RecordBatch.NO_PRODUCER_ID, RecordBatch.NO_PRODUCER_EPOCH, RecordBatch.NO_SEQUENCE, RecordBatch.NO_SEQUENCE),
-            new BatchesRecord(5L, TOPIC_ID_0, 0, 24L, 35L, 3L, 0L, (long) file2Batch1Size, TimestampType.CREATE_TIME, 0L, 1000L,
+            new BatchesRecord(5L, MAGIC, TOPIC_ID_0, 0, 24L, 35L, 3L, 0L, (long) file2Batch1Size, TimestampType.CREATE_TIME, 0L, 1000L,
                 RecordBatch.NO_PRODUCER_ID, RecordBatch.NO_PRODUCER_EPOCH, RecordBatch.NO_SEQUENCE, RecordBatch.NO_SEQUENCE),
-            new BatchesRecord(4L, TOPIC_ID_2, 0, 0L, 11L, 2L, (long) file2Batch1Size, (long) file2Batch2Size, TimestampType.CREATE_TIME, 0L, 1000L,
+            new BatchesRecord(4L, MAGIC, TOPIC_ID_2, 0, 0L, 11L, 2L, (long) file2Batch1Size, (long) file2Batch2Size, TimestampType.CREATE_TIME, 0L, 1000L,
                 RecordBatch.NO_PRODUCER_ID, RecordBatch.NO_PRODUCER_EPOCH, RecordBatch.NO_SEQUENCE, RecordBatch.NO_SEQUENCE),
-            new BatchesRecord(7L, TOPIC_ID_2, 0, 12L, 23L, 3L, (long) file3Batch3Size, (long) file3Batch1Size + file3Batch2Size, TimestampType.CREATE_TIME, 0L, 1000L,
+            new BatchesRecord(7L, MAGIC, TOPIC_ID_2, 0, 12L, 23L, 3L, (long) file3Batch3Size, (long) file3Batch1Size + file3Batch2Size, TimestampType.CREATE_TIME, 0L, 1000L,
                 RecordBatch.NO_PRODUCER_ID, RecordBatch.NO_PRODUCER_EPOCH, RecordBatch.NO_SEQUENCE, RecordBatch.NO_SEQUENCE)
         );
 
         // File 1 must be `deleting` because it contained only data from the fully truncated TOPIC_1.
         assertThat(DBUtils.getAllFiles(pgContainer.getDataSource())).containsExactlyInAnyOrder(
-            new FilesRecord(1L, objectKey1, FileReason.PRODUCE, FileStateT.deleting, BROKER_ID, filesCommittedAt, (long) file1Size, 0L),
-            new FilesRecord(2L, objectKey2, FileReason.PRODUCE, FileStateT.uploaded, BROKER_ID, filesCommittedAt, (long) file2Size, (long) file2Size),  // not a single batch deleted from file 2
-            new FilesRecord(3L, objectKey3, FileReason.PRODUCE, FileStateT.uploaded, BROKER_ID, filesCommittedAt, (long) file3Size, (long) file3Size - file3Batch2Size)
+            new FilesRecord(1L, objectKey1, FORMAT, FileReason.PRODUCE, FileStateT.deleting, BROKER_ID, filesCommittedAt, (long) file1Size, 0L),
+            new FilesRecord(2L, objectKey2, FORMAT, FileReason.PRODUCE, FileStateT.uploaded, BROKER_ID, filesCommittedAt, (long) file2Size, (long) file2Size),  // not a single batch deleted from file 2
+            new FilesRecord(3L, objectKey3, FORMAT, FileReason.PRODUCE, FileStateT.uploaded, BROKER_ID, filesCommittedAt, (long) file3Size, (long) file3Size - file3Batch2Size)
         );
         assertThat(DBUtils.getAllFilesToDelete(pgContainer.getDataSource())).containsExactlyInAnyOrder(
             new FilesToDeleteRecord(1L, topicsDeletedAt)

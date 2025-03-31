@@ -17,6 +17,7 @@
  */
 package io.aiven.inkless.control_plane;
 
+import io.aiven.inkless.common.ObjectFormat;
 import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.utils.Time;
 
@@ -34,6 +35,7 @@ public abstract class AbstractControlPlane implements ControlPlane {
     @Override
     public List<CommitBatchResponse> commitFile(
         final String objectKey,
+        final ObjectFormat format,
         final int uploaderBrokerId,
         final long fileSize,
         final List<CommitBatchRequest> batches
@@ -56,7 +58,7 @@ public abstract class AbstractControlPlane implements ControlPlane {
         );
 
         // Process those valid ones
-        splitMapper.setTrueOut(commitFileForValidRequests(objectKey, uploaderBrokerId, fileSize, splitMapper.getTrueIn()));
+        splitMapper.setTrueOut(commitFileForValidRequests(objectKey, format, uploaderBrokerId, fileSize, splitMapper.getTrueIn()));
 
         return splitMapper.getOut();
     }
@@ -72,6 +74,7 @@ public abstract class AbstractControlPlane implements ControlPlane {
 
     protected abstract Iterator<CommitBatchResponse> commitFileForValidRequests(
         final String objectKey,
+        final ObjectFormat format,
         final int uploaderBrokerId,
         final long fileSize,
         final Stream<CommitBatchRequest> requests

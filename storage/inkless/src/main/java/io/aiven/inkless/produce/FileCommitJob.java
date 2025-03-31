@@ -17,6 +17,7 @@
  */
 package io.aiven.inkless.produce;
 
+import io.aiven.inkless.common.ObjectFormat;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.record.RecordBatch;
@@ -85,6 +86,7 @@ class FileCommitJob implements Runnable {
             final ObjectKey objectKey = uploadFuture.get();
             return new UploadResult(objectKey, null);
         } catch (final ExecutionException e) {
+            LOGGER.error("Failed upload", e);
             return new UploadResult(null, e.getCause());
         } catch (final InterruptedException e) {
             // This is not expected as we try to shut down the executor gracefully.
@@ -99,6 +101,7 @@ class FileCommitJob implements Runnable {
             try {
                 finishCommitSuccessfully(result.objectKey);
             } catch (final Exception e) {
+                LOGGER.error("Commit failed", e);
                 if (e instanceof ControlPlaneException) {
                     // only attempt to remove the uploaded file if it is a control plane error
                     tryDeleteFile(result.objectKey(), e);
@@ -133,7 +136,7 @@ class FileCommitJob implements Runnable {
     }
 
     private void finishCommitSuccessfully(final ObjectKey objectKey) {
-        final var commitBatchResponses = controlPlane.commitFile(objectKey.value(), brokerId, file.size(), file.commitBatchRequests());
+        final var commitBatchResponses = controlPlane.commitFile(objectKey.value(), ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, brokerId, file.size(), file.commitBatchRequests());
         LOGGER.debug("Committed successfully");
 
         // Each request must have a response.

@@ -17,6 +17,7 @@
  */
 package io.aiven.inkless.merge;
 
+import io.aiven.inkless.common.ObjectFormat;
 import org.apache.kafka.common.utils.ExponentialBackoff;
 import org.apache.kafka.common.utils.Time;
 
@@ -155,6 +156,7 @@ public class FileMerger implements Runnable {
                 controlPlane.commitFileMergeWorkItem(
                     workItem.workItemId(),
                     objectKey.value(),
+                    ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT,
                     brokerId,
                     mergeMetadata.mergedFileSize(),
                     mergeMetadata.mergedFileBatch()
