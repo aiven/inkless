@@ -98,7 +98,7 @@ public class FetchInterceptor implements Closeable {
             int totalSize = result.values().stream()
                 .mapToInt(fetchPartitionData -> fetchPartitionData.records.sizeInBytes())
                 .sum();
-            if (totalSize == 0) {
+            if (totalSize <= params.minBytes) {
                 delayCallback.accept(null);
             } else {
                 responseCallback.accept(result);

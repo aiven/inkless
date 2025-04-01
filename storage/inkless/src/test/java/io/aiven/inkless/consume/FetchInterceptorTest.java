@@ -250,7 +250,7 @@ public class FetchInterceptorTest {
         try (FetchInterceptor interceptor = new FetchInterceptor(sharedState, reader)) {
 
             final FetchParams params = new FetchParams(fetchVersion,
-                -1, -1, -1, -1,
+                -1, -1, 100, -1,
                 FetchIsolation.LOG_END, Optional.empty());
 
             final Map<TopicIdPartition, FetchRequest.PartitionData> fetchInfos = Map.of(
