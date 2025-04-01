@@ -2094,6 +2094,7 @@ org.apache.kafka.clients.consumer.internals.ShareConsumeRequestManagerTest:
 - testFetchError
 - testFetchNormal
 - testFetchWithAcquiredRecords
+- testFetchWithControlRecords
 - testFetchWithLastRecordMissingFromBatch
 - testHandleFetchResponseError
 - testHeaders
@@ -2134,6 +2135,7 @@ org.apache.kafka.clients.consumer.internals.ShareConsumerImplTest:
 - testBackgroundError
 - testCloseWithTopicAuthorizationException
 - testCompleteQuietly
+- testControlRecordsOnEmptyFetch
 - testEnsurePollEventSentOnConsumerPoll
 - testFailConstructor
 - testFailOnClosedConsumer
