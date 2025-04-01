@@ -17,7 +17,6 @@
  */
 package io.aiven.inkless.merge;
 
-import io.aiven.inkless.common.ObjectFormat;
 import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.record.TimestampType;
@@ -46,6 +45,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 
+import io.aiven.inkless.common.ObjectFormat;
 import io.aiven.inkless.common.ObjectKey;
 import io.aiven.inkless.common.PlainObjectKey;
 import io.aiven.inkless.common.SharedState;

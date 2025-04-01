@@ -17,7 +17,6 @@
  */
 package io.aiven.inkless.control_plane.postgres;
 
-import io.aiven.inkless.common.ObjectFormat;
 import org.apache.kafka.common.utils.Time;
 
 import org.jooq.Configuration;
@@ -32,6 +31,7 @@ import java.util.List;
 import java.util.concurrent.Callable;
 
 import io.aiven.inkless.TimeUtils;
+import io.aiven.inkless.common.ObjectFormat;
 import io.aiven.inkless.control_plane.MergedFileBatch;
 
 public class CommitFileMergeWorkItemJob implements Callable<CommitFileMergeWorkItemV1ResponseRecord> {

@@ -17,7 +17,6 @@
  */
 package io.aiven.inkless.control_plane;
 
-import io.aiven.inkless.common.ObjectFormat;
 import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.protocol.Errors;
@@ -46,6 +45,7 @@ import java.util.Set;
 import java.util.stream.Collectors;
 
 import io.aiven.inkless.TimeUtils;
+import io.aiven.inkless.common.ObjectFormat;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;

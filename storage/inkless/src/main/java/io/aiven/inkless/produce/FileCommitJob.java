@@ -17,7 +17,6 @@
  */
 package io.aiven.inkless.produce;
 
-import io.aiven.inkless.common.ObjectFormat;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.record.RecordBatch;
@@ -36,6 +35,7 @@ import java.util.function.Consumer;
 import java.util.stream.Collectors;
 
 import io.aiven.inkless.TimeUtils;
+import io.aiven.inkless.common.ObjectFormat;
 import io.aiven.inkless.common.ObjectKey;
 import io.aiven.inkless.control_plane.CommitBatchResponse;
 import io.aiven.inkless.control_plane.ControlPlane;

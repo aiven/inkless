@@ -17,7 +17,6 @@
  */
 package io.aiven.inkless.control_plane.postgres;
 
-import io.aiven.inkless.common.ObjectFormat;
 import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.record.RecordBatch;
@@ -43,6 +42,7 @@ import java.util.List;
 import java.util.Set;
 
 import io.aiven.inkless.TimeUtils;
+import io.aiven.inkless.common.ObjectFormat;
 import io.aiven.inkless.control_plane.CommitBatchRequest;
 import io.aiven.inkless.control_plane.CommitBatchResponse;
 import io.aiven.inkless.control_plane.CreateTopicAndPartitionsRequest;

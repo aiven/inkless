@@ -17,7 +17,6 @@
  */
 package io.aiven.inkless.produce;
 
-import io.aiven.inkless.common.ObjectFormat;
 import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.Uuid;
@@ -44,6 +43,7 @@ import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.Consumer;
 
+import io.aiven.inkless.common.ObjectFormat;
 import io.aiven.inkless.common.ObjectKey;
 import io.aiven.inkless.common.PlainObjectKey;
 import io.aiven.inkless.control_plane.CommitBatchRequest;

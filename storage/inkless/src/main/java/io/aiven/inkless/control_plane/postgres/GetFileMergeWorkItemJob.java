@@ -17,7 +17,6 @@
  */
 package io.aiven.inkless.control_plane.postgres;
 
-import io.aiven.inkless.common.ObjectFormat;
 import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.utils.Time;
@@ -35,6 +34,7 @@ import java.util.List;
 import java.util.concurrent.Callable;
 
 import io.aiven.inkless.TimeUtils;
+import io.aiven.inkless.common.ObjectFormat;
 import io.aiven.inkless.control_plane.BatchInfo;
 import io.aiven.inkless.control_plane.BatchMetadata;
 import io.aiven.inkless.control_plane.FileMergeWorkItem;

@@ -17,10 +17,10 @@
  */
 package io.aiven.inkless.control_plane;
 
-import io.aiven.inkless.common.ObjectFormat;
-
 import java.time.Instant;
 import java.util.List;
+
+import io.aiven.inkless.common.ObjectFormat;
 
 public record FileMergeWorkItem(long workItemId,
                                 Instant createdAt,

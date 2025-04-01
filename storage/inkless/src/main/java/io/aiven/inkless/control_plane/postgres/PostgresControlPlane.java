@@ -17,7 +17,6 @@
  */
 package io.aiven.inkless.control_plane.postgres;
 
-import io.aiven.inkless.common.ObjectFormat;
 import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.utils.Time;
@@ -40,6 +39,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.stream.Stream;
 
+import io.aiven.inkless.common.ObjectFormat;
 import io.aiven.inkless.control_plane.AbstractControlPlane;
 import io.aiven.inkless.control_plane.BatchMetadata;
 import io.aiven.inkless.control_plane.CommitBatchRequest;

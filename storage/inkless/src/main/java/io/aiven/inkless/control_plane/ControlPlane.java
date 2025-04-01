@@ -17,7 +17,6 @@
  */
 package io.aiven.inkless.control_plane;
 
-import io.aiven.inkless.common.ObjectFormat;
 import org.apache.kafka.common.Configurable;
 import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.utils.Time;
@@ -28,6 +27,7 @@ import java.lang.reflect.InvocationTargetException;
 import java.util.List;
 import java.util.Set;
 
+import io.aiven.inkless.common.ObjectFormat;
 import io.aiven.inkless.config.InklessConfig;
 
 public interface ControlPlane extends Closeable, Configurable {

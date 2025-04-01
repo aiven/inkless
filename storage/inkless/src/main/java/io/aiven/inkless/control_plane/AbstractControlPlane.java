@@ -17,13 +17,14 @@
  */
 package io.aiven.inkless.control_plane;
 
-import io.aiven.inkless.common.ObjectFormat;
 import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.utils.Time;
 
 import java.util.Iterator;
 import java.util.List;
 import java.util.stream.Stream;
+
+import io.aiven.inkless.common.ObjectFormat;
 
 public abstract class AbstractControlPlane implements ControlPlane {
     protected final Time time;

@@ -17,7 +17,6 @@
  */
 package io.aiven.inkless.control_plane;
 
-import io.aiven.inkless.common.ObjectFormat;
 import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.protocol.Errors;
@@ -44,6 +43,7 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import io.aiven.inkless.TimeUtils;
+import io.aiven.inkless.common.ObjectFormat;
 
 // TODO: in-memory control plane is using synchronous operations. It could be improved by using finer-grained locks if needed later.
 public class InMemoryControlPlane extends AbstractControlPlane {
