@@ -2927,6 +2927,7 @@ kafka.server.ShareFetchAcknowledgeRequestTest:
 - testShareFetchRequestForgetTopicPartitions
 - testShareFetchRequestInvalidShareSessionEpoch
 - testShareFetchRequestIsInAccessibleWhenConfigsDisabled
+- testShareFetchRequestMultipleBatchesWithMaxRecordsAndBatchSize
 - testShareFetchRequestNoSharingBetweenMultipleConsumersFromDifferentGroups
 - testShareFetchRequestPiggybackedAccept
 - testShareFetchRequestPiggybackedReject
@@ -2937,6 +2938,7 @@ kafka.server.ShareFetchAcknowledgeRequestTest:
 - testShareFetchRequestSuccessMultiplePartitionsMultipleBrokers
 - testShareFetchRequestSuccessfulSharingBetweenMultipleConsumers
 - testShareFetchRequestToNonLeaderReplica
+- testShareFetchRequestWithMaxRecordsAndBatchSize
 - testShareSessionCloseWithShareAcknowledge
 - testShareSessionCloseWithShareFetch
 kafka.server.ShareGroupDescribeRequestTest:
