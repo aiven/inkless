@@ -2348,9 +2348,7 @@ class KafkaApisTest extends Logging {
     when(metadataView.isInklessTopic(ArgumentMatchers.eq(topic))).thenReturn(true)
     val sharedState: SharedState = mock(classOf[SharedState])
     when(sharedState.metadata()).thenReturn(metadataView)
-    val kafkaApis = createKafkaApis(
-      inklessSharedState = Some(sharedState)
-    )
+    val kafkaApis = createKafkaApis(inklessSharedState = Some(sharedState))
     try {
       kafkaApis.handleAddPartitionsToTxnRequest(request, RequestLocal.withThreadConfinedCaching)
 
@@ -2865,6 +2863,30 @@ class KafkaApisTest extends Logging {
       }
     }
     copy
+  }
+
+  @Test
+  def testHandleWriteTxnMarkersRequestWithInklessTopic(): Unit = {
+    val topic = "topic"
+    val topicPartition = new TopicPartition(topic, 0)
+    val (_, request) = createWriteTxnMarkersRequest(asList(topicPartition))
+    val expectedErrors = Map(topicPartition -> Errors.INVALID_TOPIC_EXCEPTION).asJava
+    val capturedResponse: ArgumentCaptor[WriteTxnMarkersResponse] = ArgumentCaptor.forClass(classOf[WriteTxnMarkersResponse])
+
+    val metadataView: MetadataView = mock(classOf[MetadataView])
+    when(metadataView.isInklessTopic(ArgumentMatchers.eq(topic))).thenReturn(true)
+    val sharedState: SharedState = mock(classOf[SharedState])
+    when(sharedState.metadata()).thenReturn(metadataView)
+    val kafkaApis = createKafkaApis(inklessSharedState = Some(sharedState))
+    kafkaApis.handleWriteTxnMarkersRequest(request, RequestLocal.withThreadConfinedCaching)
+
+    verify(requestChannel).sendResponse(
+      ArgumentMatchers.eq(request),
+      capturedResponse.capture(),
+      ArgumentMatchers.eq(None)
+    )
+    val markersResponse = capturedResponse.getValue
+    assertEquals(expectedErrors, markersResponse.errorsByProducerId.get(1L))
   }
 
   @Test
