@@ -17,6 +17,8 @@
 
 package kafka.server
 
+import io.aiven.inkless.common.SharedState
+import io.aiven.inkless.control_plane.MetadataView
 import kafka.cluster.Partition
 import kafka.coordinator.transaction.{InitProducerIdResult, TransactionCoordinator}
 import kafka.network.RequestChannel
@@ -162,7 +164,8 @@ class KafkaApisTest extends Logging {
     authorizer: Option[Authorizer] = None,
     configRepository: ConfigRepository = new MockConfigRepository(),
     overrideProperties: Map[String, String] = Map.empty,
-    featureVersions: Seq[FeatureVersion] = Seq.empty
+    featureVersions: Seq[FeatureVersion] = Seq.empty,
+    inklessSharedState: Option[SharedState] = None
   ): KafkaApis = {
 
     val properties = TestUtils.createBrokerConfig(brokerId)
@@ -209,7 +212,8 @@ class KafkaApisTest extends Logging {
       time = time,
       tokenManager = null,
       apiVersionManager = apiVersionManager,
-      clientMetricsManager = clientMetricsManager)
+      clientMetricsManager = clientMetricsManager,
+      inklessSharedState = inklessSharedState)
   }
 
   private def setupFeatures(featureVersions: Seq[FeatureVersion]): Unit = {
@@ -2324,6 +2328,38 @@ class KafkaApisTest extends Logging {
 
     checkInvalidPartition(-1)
     checkInvalidPartition(1) // topic has only one partition
+  }
+
+  @Test
+  def testAddPartitionsToTxnWithInklessTopic(): Unit = {
+    val topic = "topic"
+    val topicPartition = new TopicPartition(topic, 0)
+    addTopicToMetadataCache(topic, numPartitions = 1)
+
+    val addPartitionsToTxnRequest = AddPartitionsToTxnRequest.Builder.forClient(
+      "txnlId", 15L, 0.toShort, List(topicPartition).asJava
+    ).build()
+    val request = buildRequest(addPartitionsToTxnRequest)
+
+    when(clientRequestQuotaManager.maybeRecordAndGetThrottleTimeMs(any[RequestChannel.Request](),
+      any[Long])).thenReturn(0)
+
+    val metadataView: MetadataView = mock(classOf[MetadataView])
+    when(metadataView.isInklessTopic(ArgumentMatchers.eq(topic))).thenReturn(true)
+    val sharedState: SharedState = mock(classOf[SharedState])
+    when(sharedState.metadata()).thenReturn(metadataView)
+    val kafkaApis = createKafkaApis(
+      inklessSharedState = Some(sharedState)
+    )
+    try {
+      kafkaApis.handleAddPartitionsToTxnRequest(request, RequestLocal.withThreadConfinedCaching)
+
+      val response = verifyNoThrottling[AddPartitionsToTxnResponse](request)
+      println(response)
+      assertEquals(Errors.INVALID_TOPIC_EXCEPTION, response.errors().get(AddPartitionsToTxnResponse.V3_AND_BELOW_TXN_ID).get(topicPartition))
+    } finally {
+      kafkaApis.close()
+    }
   }
 
   @Test
