@@ -49,7 +49,8 @@ public class InfinispanCache implements ObjectCache {
         this.time = time;
         GlobalConfigurationBuilder globalConfig = GlobalConfigurationBuilder.defaultClusteredBuilder();
         globalConfig.transport()
-                .clusterName(clusterName(clusterId, rack));
+            .clusterName(clusterName(clusterId, rack))
+            .addProperty("configurationFile", "jgroups-udp.xml"); // Set bind port to 0
         globalConfig.serialization()
                 .addContextInitializers()
                 .marshaller(new KafkaMarshaller())
