@@ -574,7 +574,7 @@ org.apache.kafka.raft.RequestManagerTest:
 - testAnyInflightRequestWithAnyRequest
 - testBackoffAfterFailure
 - testFindReadyWithInflightRequest
-- testFindReadyWithRequestTimedout
+- testFindReadyWithRequestTimedOut
 - testIgnoreUnexpectedResponse
 - testRequestTimeout
 - testRequestToBootstrapList
@@ -605,7 +605,7 @@ org.apache.kafka.raft.VoterSetTest:
 - testIsOnlyVoterInStandalone
 - testIsVoterWithDirectoryId
 - testIsVoterWithoutDirectoryId
-- testNonoverlappingMajority
+- testNonOverlappingMajority
 - testOverlappingMajority
 - testRecordRoundTrip
 - testRemoveVoter
