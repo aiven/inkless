@@ -148,6 +148,7 @@ org.apache.kafka.streams.integration.KafkaStreamsTelemetryIntegrationTest:
 - passedMetricsShouldNotLeakIntoClientMetrics
 - shouldPassCorrectMetricsDynamicInstances
 - shouldPassMetrics
+- shouldPushGlobalThreadMetricsToBroker
 - shouldPushMetricsToBroker
 org.apache.kafka.streams.integration.LagFetchIntegrationTest:
 - shouldFetchLagsDuringRebalancingWithNoOptimization
