@@ -531,13 +531,17 @@ public class LogConfig extends AbstractConfig {
             if (existingConfigs.containsKey(TopicConfig.INKLESS_ENABLE_CONFIG)) {
                 boolean wasInklessEnabled = Boolean.parseBoolean(existingConfigs.get(TopicConfig.INKLESS_ENABLE_CONFIG));
                 if (!wasInklessEnabled) {
-                    throw new InvalidConfigurationException("It is invalid to enable inkless");
+                    throw new InvalidConfigurationException("It is invalid to enable Inkless");
                 }
+            }
+
+            if (isRemoteLogStorageEnabled) {
+                throw new InvalidConfigurationException("Inkless and remote storage cannot be enabled simultaneously");
             }
         } else {
             boolean wasInklessEnabled = Boolean.parseBoolean(existingConfigs.getOrDefault(TopicConfig.INKLESS_ENABLE_CONFIG, "false"));
             if (wasInklessEnabled) {
-                throw new InvalidConfigurationException("It is invalid to disable inkless");
+                throw new InvalidConfigurationException("It is invalid to disable Inkless");
             }
         }
     }
