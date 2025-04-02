@@ -467,32 +467,34 @@ class ControllerApis(
   }
 
   private def createTopicsInkless(response: CreateTopicsResponseData): Unit = {
-    val successfullyCreatedTopics = response.topics.asScala
-      // It's OK if we retry creating for already existing topics,
-      // this may save some trouble when Inkless creation failed for some reason and the user retries.
-      .filter(t => t.errorCode() == Errors.NONE.code() || t.errorCode() == Errors.TOPIC_ALREADY_EXISTS.code())
+    inklessControlPlane.foreach { cp =>
+      val successfullyCreatedTopics = response.topics.asScala
+        // It's OK if we retry creating for already existing topics,
+        // this may save some trouble when Inkless creation failed for some reason and the user retries.
+        .filter(t => t.errorCode() == Errors.NONE.code() || t.errorCode() == Errors.TOPIC_ALREADY_EXISTS.code())
 
-    // We need to be sure the newly created topic exist in the metadata.
-    // As this is the same process, this should happen very quickly.
-    // We could have probably bound to the context deadline,
-    // but since Inkless operations themselves aren't time-bound now, this doesn't make much sense.
-    val timer = time.timer(Duration.ofSeconds(10))
-    while (timer.notExpired()
-      // `getTopicId` returns `ZERO_UUID` when not found
-      && successfullyCreatedTopics.exists {t => inklessMetadataView.getTopicId(t.name()) != t.topicId()}) {
-      timer.sleep(10)
-    }
-    if (timer.isExpired) {
-      // If after all this happens, we can not bother ourselves with proper fine-grained error responses
-      // and let the user retry.
-      throw new UnknownServerException("Could not find newly created topic metadata")
-    }
+      // We need to be sure the newly created topic exist in the metadata.
+      // As this is the same process, this should happen very quickly.
+      // We could have probably bound to the context deadline,
+      // but since Inkless operations themselves aren't time-bound now, this doesn't make much sense.
+      val timer = time.timer(Duration.ofSeconds(10))
+      while (timer.notExpired()
+        // `getTopicId` returns `ZERO_UUID` when not found
+        && successfullyCreatedTopics.exists {t => inklessMetadataView.getTopicId(t.name()) != t.topicId()}) {
+        timer.sleep(10)
+      }
+      if (timer.isExpired) {
+        // If after all this happens, we can not bother ourselves with proper fine-grained error responses
+        // and let the user retry.
+        throw new UnknownServerException("Could not find newly created topic metadata")
+      }
 
-    val createTopicRequests = successfullyCreatedTopics
-      .filter(t => inklessMetadataView.isInklessTopic(t.name()))
-      .map(t => new CreateTopicAndPartitionsRequest(t.topicId(), t.name(), t.numPartitions()))
-      .toSet.asJava
-    inklessControlPlane.foreach{ cp => cp.createTopicAndPartitions(createTopicRequests) }
+      val createTopicRequests = successfullyCreatedTopics
+        .filter(t => inklessMetadataView.isInklessTopic(t.name()))
+        .map(t => new CreateTopicAndPartitionsRequest(t.topicId(), t.name(), t.numPartitions()))
+        .toSet.asJava
+      cp.createTopicAndPartitions(createTopicRequests)
+    }
   }
 
   def handleApiVersionsRequest(request: RequestChannel.Request): CompletableFuture[Unit] = {
@@ -916,34 +918,38 @@ class ControllerApis(
                                       context: ControllerRequestContext,
                                       topics: java.util.List[CreatePartitionsTopic],
                                       results: java.util.List[CreatePartitionsTopicResult]): CompletableFuture[Unit] = {
-    if (validateOnly) {
-      return CompletableFuture.completedFuture(())
-    }
+    inklessControlPlane match {
+      case _ if validateOnly =>
+        CompletableFuture.completedFuture(())
+      case None =>
+        CompletableFuture.completedFuture(())
 
-    val successfulCreations = (topics.asScala zip results.asScala)
-      // It's OK if we retry creating for already existing topics,
-      // this may save some trouble when Inkless creation failed for some reason and the user retries.
-      .filter { case (_, res) => res.errorCode() == Errors.NONE.code() || res.errorCode() == Errors.TOPIC_ALREADY_EXISTS.code() }
-      // In contrast to the topic creation, we only create new partitions to existing topics.
-      // Hence, the topics themselves must be in the metadata already, no need to wait.
-      .filter { case (req, _) => inklessMetadataView.isInklessTopic(req.name()) }
-      .map { case (req, _) => req }
-      .toSet
-    val topicNames = successfulCreations.map(_.name()).toList.asJava
-    controller.findTopicIds(context, topicNames).thenApply { topicIds =>
-      val createPartitionRequests = successfulCreations.flatMap { req =>
-        val topicName = req.name()
-        val topicIdOrError = topicIds.get(topicName)
-        if (topicIdOrError.isError) {
-          // The chances for this are slim: only when someone concurrently deleted the topic
-          // right after the partitions were created in the quorum metadata.
-          logger.error("Error finding topic ID for topic {}: partitions will not be created", topicName)
-          None
-        } else {
-          Some(new CreateTopicAndPartitionsRequest(topicIdOrError.result(), req.name(), req.count()))
+      case Some(cp) =>
+        val successfulCreations = (topics.asScala zip results.asScala)
+          // It's OK if we retry creating for already existing topics,
+          // this may save some trouble when Inkless creation failed for some reason and the user retries.
+          .filter { case (_, res) => res.errorCode() == Errors.NONE.code() || res.errorCode() == Errors.TOPIC_ALREADY_EXISTS.code() }
+          // In contrast to the topic creation, we only create new partitions to existing topics.
+          // Hence, the topics themselves must be in the metadata already, no need to wait.
+          .filter { case (req, _) => inklessMetadataView.isInklessTopic(req.name()) }
+          .map { case (req, _) => req }
+          .toSet
+        val topicNames = successfulCreations.map(_.name()).toList.asJava
+        controller.findTopicIds(context, topicNames).thenApply { topicIds =>
+          val createPartitionRequests = successfulCreations.flatMap { req =>
+            val topicName = req.name()
+            val topicIdOrError = topicIds.get(topicName)
+            if (topicIdOrError.isError) {
+              // The chances for this are slim: only when someone concurrently deleted the topic
+              // right after the partitions were created in the quorum metadata.
+              logger.error("Error finding topic ID for topic {}: partitions will not be created", topicName)
+              None
+            } else {
+              Some(new CreateTopicAndPartitionsRequest(topicIdOrError.result(), req.name(), req.count()))
+            }
+          }
+          cp.createTopicAndPartitions(createPartitionRequests.asJava)
         }
-      }
-      inklessControlPlane.foreach{ cp => cp.createTopicAndPartitions(createPartitionRequests.asJava) }
     }
   }
 
