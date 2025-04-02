@@ -1252,6 +1252,38 @@ class KafkaApisTest extends Logging {
   }
 
   @Test
+  def testTxnOffsetCommitWithInklessTopic(): Unit = {
+    val topic = "topic"
+    addTopicToMetadataCache(topic, numPartitions = 1)
+
+    reset(replicaManager, clientRequestQuotaManager, requestChannel)
+
+    val topicPartition = new TopicPartition(topic, 0)
+    val partitionOffsetCommitData = new TxnOffsetCommitRequest.CommittedOffset(15L, "", Optional.empty())
+    val offsetCommitRequest = new TxnOffsetCommitRequest.Builder(
+      "txnId",
+      "groupId",
+      15L,
+      0.toShort,
+      Map(topicPartition -> partitionOffsetCommitData).asJava,
+      true
+    ).build()
+    val request = buildRequest(offsetCommitRequest)
+    when(clientRequestQuotaManager.maybeRecordAndGetThrottleTimeMs(any[RequestChannel.Request](),
+      any[Long])).thenReturn(0)
+
+    val kafkaApis = createKafkaApis(inklessSharedState = Some(createInklessSharedStateWithTopic(topic)))
+    try {
+      kafkaApis.handleTxnOffsetCommitRequest(request, RequestLocal.withThreadConfinedCaching)
+
+      val response = verifyNoThrottling[TxnOffsetCommitResponse](request)
+      assertEquals(Errors.INVALID_TOPIC_EXCEPTION, response.errors().get(topicPartition))
+    } finally {
+      kafkaApis.close()
+    }
+  }
+
+  @Test
   def testHandleTxnOffsetCommitRequest(): Unit = {
     addTopicToMetadataCache("foo", numPartitions = 1)
 
@@ -2344,11 +2376,7 @@ class KafkaApisTest extends Logging {
     when(clientRequestQuotaManager.maybeRecordAndGetThrottleTimeMs(any[RequestChannel.Request](),
       any[Long])).thenReturn(0)
 
-    val metadataView: MetadataView = mock(classOf[MetadataView])
-    when(metadataView.isInklessTopic(ArgumentMatchers.eq(topic))).thenReturn(true)
-    val sharedState: SharedState = mock(classOf[SharedState])
-    when(sharedState.metadata()).thenReturn(metadataView)
-    val kafkaApis = createKafkaApis(inklessSharedState = Some(sharedState))
+    val kafkaApis = createKafkaApis(inklessSharedState = Some(createInklessSharedStateWithTopic(topic)))
     try {
       kafkaApis.handleAddPartitionsToTxnRequest(request, RequestLocal.withThreadConfinedCaching)
 
@@ -2873,11 +2901,7 @@ class KafkaApisTest extends Logging {
     val expectedErrors = Map(topicPartition -> Errors.INVALID_TOPIC_EXCEPTION).asJava
     val capturedResponse: ArgumentCaptor[WriteTxnMarkersResponse] = ArgumentCaptor.forClass(classOf[WriteTxnMarkersResponse])
 
-    val metadataView: MetadataView = mock(classOf[MetadataView])
-    when(metadataView.isInklessTopic(ArgumentMatchers.eq(topic))).thenReturn(true)
-    val sharedState: SharedState = mock(classOf[SharedState])
-    when(sharedState.metadata()).thenReturn(metadataView)
-    val kafkaApis = createKafkaApis(inklessSharedState = Some(sharedState))
+    val kafkaApis = createKafkaApis(inklessSharedState = Some(createInklessSharedStateWithTopic(topic)))
     kafkaApis.handleWriteTxnMarkersRequest(request, RequestLocal.withThreadConfinedCaching)
 
     verify(requestChannel).sendResponse(
@@ -2887,6 +2911,14 @@ class KafkaApisTest extends Logging {
     )
     val markersResponse = capturedResponse.getValue
     assertEquals(expectedErrors, markersResponse.errorsByProducerId.get(1L))
+  }
+
+  private def createInklessSharedStateWithTopic(inklessTopic: String): SharedState = {
+    val metadataView = mock(classOf[MetadataView])
+    when(metadataView.isInklessTopic(ArgumentMatchers.eq(inklessTopic))).thenReturn(true)
+    val sharedState = mock(classOf[SharedState])
+    when(sharedState.metadata()).thenReturn(metadataView)
+    sharedState
   }
 
   @Test

@@ -2010,6 +2010,10 @@ class KafkaApis(val requestChannel: RequestChannel,
           // to the response with UNKNOWN_TOPIC_OR_PARTITION.
           responseBuilder.addPartitions[TxnOffsetCommitRequestData.TxnOffsetCommitRequestPartition](
             topic.name, topic.partitions, _.partitionIndex, Errors.UNKNOWN_TOPIC_OR_PARTITION)
+        } else if (inklessSharedState.exists(s => s.metadata().isInklessTopic(topic.name()))) {
+          warn("Attempt to call TxnOffsetCommitRequest with Inkless topic")
+          responseBuilder.addPartitions[TxnOffsetCommitRequestData.TxnOffsetCommitRequestPartition](
+            topic.name, topic.partitions, _.partitionIndex, Errors.INVALID_TOPIC_EXCEPTION)
         } else {
           // Otherwise, we check all partitions to ensure that they all exist.
           val topicWithValidPartitions = new TxnOffsetCommitRequestData.TxnOffsetCommitRequestTopic().setName(topic.name)
