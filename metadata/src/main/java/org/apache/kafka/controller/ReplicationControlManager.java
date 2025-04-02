@@ -2076,12 +2076,14 @@ public class ReplicationControlManager {
                         .setAllowReplicationFactorChange(allowRFChange);
         int successfulAlterations = 0, totalAlterations = 0;
         for (ReassignableTopic topic : request.topics()) {
+            boolean effectiveRFChange = allowRFChange
+                && !Boolean.parseBoolean(configurationControl.currentTopicConfig(topic.name()).getOrDefault(INKLESS_ENABLE_CONFIG, "false"));
             ReassignableTopicResponse topicResponse = new ReassignableTopicResponse().
                 setName(topic.name());
             for (ReassignablePartition partition : topic.partitions()) {
                 ApiError error = ApiError.NONE;
                 try {
-                    alterPartitionReassignment(topic.name(), partition, records, allowRFChange);
+                    alterPartitionReassignment(topic.name(), partition, records, effectiveRFChange);
                     successfulAlterations++;
                 } catch (Throwable e) {
                     log.info("Unable to alter partition reassignment for " +
