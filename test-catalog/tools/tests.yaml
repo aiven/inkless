@@ -531,6 +531,8 @@ org.apache.kafka.tools.TransactionsCommandTest:
 - testFindHangingRequiresTopicIfPartitionIsSpecified
 - testFindHangingSpecifiedTopicPartition
 - testFindHangingWithNoTransactionDescription
+- testForceTerminateTransaction
+- testForceTerminateTransactionTransactionalIdRequired
 - testListTransactions
 - testNewBrokerAbortTransaction
 - testOldBrokerAbortTransactionWithUnknownCoordinatorEpoch

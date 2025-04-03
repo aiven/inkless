@@ -334,6 +334,9 @@ org.apache.kafka.clients.admin.KafkaAdminClientTest:
 - testExplicitlyEnableJmxReporter
 - testExplicitlyEnableTelemetryReporter
 - testFenceProducers
+- testForceTerminateTransaction
+- testForceTerminateTransactionWithCustomTimeout
+- testForceTerminateTransactionWithError
 - testGenerateClientId
 - testGetOrCreateListValue
 - testGetSubLevelError
