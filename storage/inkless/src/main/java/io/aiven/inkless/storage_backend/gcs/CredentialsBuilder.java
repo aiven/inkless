@@ -36,9 +36,9 @@ final class CredentialsBuilder {
         // hide constructor
     }
 
-    public static void validate(final Boolean defaultCredentials,
-                                final String credentialsJson,
-                                final String credentialsPath) {
+    public static void validate(final Object defaultCredentials,
+                                final Object credentialsJson,
+                                final Object credentialsPath) {
         final long nonNulls = Stream.of(defaultCredentials, credentialsJson, credentialsPath)
             .filter(Objects::nonNull).count();
         if (nonNulls == 0) {

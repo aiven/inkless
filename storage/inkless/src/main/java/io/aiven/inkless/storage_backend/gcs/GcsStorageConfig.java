@@ -93,19 +93,15 @@ public class GcsStorageConfig extends AbstractConfig {
 
     public GcsStorageConfig(final Map<String, ?> props) {
         super(configDef(), props);
-        validate();
+        validate(props);
     }
 
-    private void validate() {
-        final String credentialsJson = getPassword(GCP_CREDENTIALS_JSON_CONFIG) == null
-            ? null
-            : getPassword(GCP_CREDENTIALS_JSON_CONFIG).value();
-
+    private void validate(final Map<String, ?> props) {
         try {
             CredentialsBuilder.validate(
-                getBoolean(GCP_CREDENTIALS_DEFAULT_CONFIG),
-                credentialsJson,
-                getString(GCP_CREDENTIALS_PATH_CONFIG)
+                props.get(GCP_CREDENTIALS_DEFAULT_CONFIG),
+                props.get(GCP_CREDENTIALS_JSON_CONFIG),
+                props.get(GCP_CREDENTIALS_PATH_CONFIG)
             );
         } catch (final IllegalArgumentException e) {
             final String message = e.getMessage()
