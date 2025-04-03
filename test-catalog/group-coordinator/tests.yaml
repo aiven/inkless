@@ -123,6 +123,8 @@ org.apache.kafka.coordinator.group.GroupCoordinatorServiceTest:
 - testPersisterInitializeGroupInitializeFailure
 - testPersisterInitializePartialFailure
 - testPersisterInitializeSuccess
+- testReconcileShareGroupInitializingState
+- testReconcileShareGroupInitializingStateNoRequests
 - testShareGroupDescribe
 - testShareGroupDescribeCoordinatorLoadInProgress
 - testShareGroupDescribeCoordinatorNotActive
@@ -344,6 +346,7 @@ org.apache.kafka.coordinator.group.GroupMetadataManagerTest:
 - testMemberIdGeneration
 - testMemberJoinsEmptyConsumerGroup
 - testMemberJoinsEmptyStreamsGroup
+- testMergeShareGroupInitMaps
 - testNewJoiningMemberTriggersNewTargetAssignment
 - testNewMemberFailureAfterJoinGroupCompletion
 - testNewMemberIsRejectedWithMaximumMembersIsReached
@@ -429,6 +432,7 @@ org.apache.kafka.coordinator.group.GroupMetadataManagerTest:
 - testShareGroupDescribeRequest
 - testShareGroupDynamicConfigs
 - testShareGroupHeartbeatInitializeOnPartitionUpdate
+- testShareGroupHeartbeatNoPersisterRequestWithInitializing
 - testShareGroupHeartbeatOnConsumerGroup
 - testShareGroupHeartbeatOnStreamsGroup
 - testShareGroupHeartbeatRequestValidation
@@ -522,6 +526,7 @@ org.apache.kafka.coordinator.group.GroupMetadataManagerTest:
 - testSyncGroupReturnsAnErrorWhenProtocolTypeIsInconsistent
 - testSyncGroupSucceedWhenProtocolTypeAndNameAreConsistent
 - testSyncGroupSucceedWhenProtocolTypeAndNameAreNotProvided
+- testUninitializeTopics
 - testUnknownGroupId
 - testUnknownMemberIdJoinsConsumerGroup
 - testUnknownMemberIdJoinsStreamsGroup
