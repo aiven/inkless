@@ -45,6 +45,12 @@ import java.util.stream.Collectors;
 
 import io.aiven.inkless.TimeUtils;
 
+import static org.apache.kafka.common.record.RecordBatch.NO_TIMESTAMP;
+import static org.apache.kafka.common.requests.ListOffsetsRequest.EARLIEST_LOCAL_TIMESTAMP;
+import static org.apache.kafka.common.requests.ListOffsetsRequest.EARLIEST_TIMESTAMP;
+import static org.apache.kafka.common.requests.ListOffsetsRequest.LATEST_TIERED_TIMESTAMP;
+import static org.apache.kafka.common.requests.ListOffsetsRequest.LATEST_TIMESTAMP;
+import static org.apache.kafka.common.requests.ListOffsetsRequest.MAX_TIMESTAMP;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -601,6 +607,227 @@ public abstract class AbstractControlPlaneTest {
                 CommitBatchRequest.of(0, new TopicIdPartition(EXISTING_TOPIC_1_ID, 0, EXISTING_TOPIC_1), 1, (int) FILE_SIZE, 0, 0, 1000, TimestampType.CREATE_TIME)
             ));
         assertThat(controlPlane.isSafeToDeleteFile(objectKey)).isFalse();
+    }
+
+    /**
+     * Cases are validated against classic topics.
+     */
+    @Nested
+    class ListOffsets {
+        private static final String newTopic1Name = "newTopic1";
+        private static final Uuid newTopic1Id = new Uuid(12345, 67890);
+        private static final String newTopic2Name = "newTopic2";
+        private static final Uuid newTopic2Id = new Uuid(88888, 99999);
+        private static final TopicIdPartition tidp1 = new TopicIdPartition(newTopic1Id, 0, newTopic1Name);
+        private static final TopicIdPartition tidp2 = new TopicIdPartition(newTopic2Id, 0, newTopic2Name);
+
+        private static final long TP1_BATCH1_RECORDS = 10;
+        private static final long TP1_BATCH1_BASE_OFFSET = 0;
+        private static final long TP1_BATCH2_RECORDS = 100;
+        private static final long TP1_BATCH2_BASE_OFFSET = TP1_BATCH1_RECORDS;
+
+        private static final long TP2_BATCH1_RECORDS = 20;
+        private static final long TP2_BATCH1_BASE_OFFSET = 0;
+        private static final long TP2_BATCH2_RECORDS = 200;
+        private static final long TP2_BATCH2_BASE_OFFSET = TP2_BATCH1_RECORDS;
+
+        private static final long TP1_BATCH1_TIMESTAMP = 1000;
+        private static final long TP1_BATCH2_TIMESTAMP = 2000;
+        private static final long TP2_BATCH1_TIMESTAMP = 1001;
+        private static final long TP2_BATCH2_TIMESTAMP = 2001;
+
+        @Nested
+        class Empty {
+            @BeforeEach
+            void prepare() {
+                controlPlane.createTopicAndPartitions(Set.of(
+                    new CreateTopicAndPartitionsRequest(newTopic1Id, newTopic1Name, 1)
+                ));
+            }
+
+            @Test
+            void latestTimestamp() {
+                final List<ListOffsetsResponse> result = controlPlane.listOffsets(List.of(
+                    new ListOffsetsRequest(tidp1, LATEST_TIMESTAMP)
+                ));
+                assertThat(result).containsExactly(
+                    ListOffsetsResponse.success(tidp1, NO_TIMESTAMP, 0)
+                );
+            }
+
+            @ParameterizedTest
+            @ValueSource(longs = {EARLIEST_TIMESTAMP, EARLIEST_LOCAL_TIMESTAMP})
+            void earliestTimestamp(final long timestamp) {
+                final List<ListOffsetsResponse> result = controlPlane.listOffsets(List.of(
+                    new ListOffsetsRequest(tidp1, timestamp)
+                ));
+
+                assertThat(result).containsExactly(
+                    ListOffsetsResponse.success(tidp1, NO_TIMESTAMP, 0)
+                );
+            }
+
+            @Test
+            void maxTimestamp() {
+                final List<ListOffsetsResponse> result = controlPlane.listOffsets(List.of(
+                    new ListOffsetsRequest(tidp1, MAX_TIMESTAMP)
+                ));
+                assertThat(result).containsExactly(
+                    ListOffsetsResponse.success(tidp1, NO_TIMESTAMP, -1)
+                );
+            }
+
+            @Test
+            void latestTieredTimestamp() {
+                final List<ListOffsetsResponse> result = controlPlane.listOffsets(List.of(
+                    new ListOffsetsRequest(tidp1, LATEST_TIERED_TIMESTAMP)
+                ));
+                assertThat(result).containsExactly(
+                    ListOffsetsResponse.success(tidp1, NO_TIMESTAMP, -1)
+                );
+            }
+
+            @Test
+            void realTimestamp() {
+                final List<ListOffsetsResponse> result = controlPlane.listOffsets(List.of(
+                    new ListOffsetsRequest(tidp1, 0),
+                    new ListOffsetsRequest(tidp1, 111),
+                    new ListOffsetsRequest(tidp1, Long.MAX_VALUE)
+                ));
+                assertThat(result).containsExactly(
+                    ListOffsetsResponse.success(tidp1, NO_TIMESTAMP, -1),
+                    ListOffsetsResponse.success(tidp1, NO_TIMESTAMP, -1),
+                    ListOffsetsResponse.success(tidp1, NO_TIMESTAMP, -1)
+                );
+            }
+        }
+
+        @Nested
+        class NonEmpty {
+            private long batch1CommitTimestamp;
+            private long batch2CommitTimestamp;
+
+            @BeforeEach
+            void prepare() {
+                batch1CommitTimestamp = time.milliseconds();
+                controlPlane.createTopicAndPartitions(Set.of(
+                    new CreateTopicAndPartitionsRequest(newTopic1Id, newTopic1Name, 1),
+                    new CreateTopicAndPartitionsRequest(newTopic2Id, newTopic2Name, 1)
+                ));
+
+                controlPlane.commitFile("a1", BROKER_ID, FILE_SIZE,
+                    List.of(
+                        CommitBatchRequest.of(0, tidp1, 0, 1, TP1_BATCH1_BASE_OFFSET, TP1_BATCH1_BASE_OFFSET + TP1_BATCH1_RECORDS - 1, TP1_BATCH1_TIMESTAMP, TimestampType.CREATE_TIME),
+                        CommitBatchRequest.of(0, tidp2, 0, 1, TP2_BATCH1_BASE_OFFSET, TP2_BATCH1_BASE_OFFSET + TP2_BATCH1_RECORDS - 1, TP2_BATCH1_TIMESTAMP, TimestampType.LOG_APPEND_TIME)
+                    ));
+
+                time.sleep(10);
+                batch2CommitTimestamp = time.milliseconds();
+                controlPlane.commitFile("a2", BROKER_ID, FILE_SIZE,
+                    List.of(
+                        CommitBatchRequest.of(0, tidp1, 0, 1, TP1_BATCH2_BASE_OFFSET, TP1_BATCH2_BASE_OFFSET + TP1_BATCH2_RECORDS - 1, TP1_BATCH2_TIMESTAMP, TimestampType.CREATE_TIME),
+                        CommitBatchRequest.of(0, tidp2, 0, 1, TP2_BATCH2_BASE_OFFSET, TP2_BATCH2_BASE_OFFSET + TP2_BATCH2_RECORDS - 1, TP2_BATCH2_TIMESTAMP, TimestampType.LOG_APPEND_TIME)
+                    ));
+            }
+
+            @Test
+            void latestTimestamp() {
+                final List<ListOffsetsResponse> result = controlPlane.listOffsets(List.of(
+                    new ListOffsetsRequest(tidp1, LATEST_TIMESTAMP),
+                    new ListOffsetsRequest(tidp2, LATEST_TIMESTAMP)
+                ));
+                assertThat(result).containsExactly(
+                    ListOffsetsResponse.success(tidp1, NO_TIMESTAMP, TP1_BATCH1_RECORDS + TP1_BATCH2_RECORDS),  // high watermark
+                    ListOffsetsResponse.success(tidp2, NO_TIMESTAMP, TP2_BATCH1_RECORDS + TP2_BATCH2_RECORDS)  // high watermark
+                );
+            }
+
+            @ParameterizedTest
+            @ValueSource(longs = {EARLIEST_TIMESTAMP, EARLIEST_LOCAL_TIMESTAMP})
+            void earliestTimestamp(final long timestamp) {
+                controlPlane.deleteRecords(List.of(new DeleteRecordsRequest(tidp1, 1)));
+
+                final List<ListOffsetsResponse> result = controlPlane.listOffsets(List.of(
+                    new ListOffsetsRequest(tidp1, timestamp),
+                    new ListOffsetsRequest(tidp2, timestamp)
+                ));
+                assertThat(result).containsExactly(
+                    ListOffsetsResponse.success(tidp1, NO_TIMESTAMP, 1),
+                    ListOffsetsResponse.success(tidp2, NO_TIMESTAMP, 0)
+                );
+            }
+
+            @Test
+            void maxTimestamp() {
+                final List<ListOffsetsResponse> result = controlPlane.listOffsets(List.of(
+                    new ListOffsetsRequest(tidp1, MAX_TIMESTAMP),
+                    new ListOffsetsRequest(tidp2, MAX_TIMESTAMP)
+                ));
+                // We expect the offsets of the records with the max timestamps.
+                assertThat(result).containsExactly(
+                    ListOffsetsResponse.success(tidp1, TP1_BATCH2_TIMESTAMP, TP1_BATCH1_RECORDS + TP1_BATCH2_RECORDS - 1),
+                    ListOffsetsResponse.success(tidp2, batch2CommitTimestamp, TP2_BATCH1_RECORDS + TP2_BATCH2_RECORDS - 1)
+                );
+            }
+
+            @Test
+            void latestTieredTimestamp() {
+                final List<ListOffsetsResponse> result = controlPlane.listOffsets(List.of(
+                    new ListOffsetsRequest(tidp1, LATEST_TIERED_TIMESTAMP),
+                    new ListOffsetsRequest(tidp2, LATEST_TIERED_TIMESTAMP)
+                ));
+                assertThat(result).containsExactly(
+                    ListOffsetsResponse.success(tidp1, NO_TIMESTAMP, -1),
+                    ListOffsetsResponse.success(tidp2, NO_TIMESTAMP, -1)
+                );
+            }
+
+            @Test
+            void realTimestamp() {
+                controlPlane.deleteRecords(List.of(new DeleteRecordsRequest(tidp1, 1)));
+
+                final List<ListOffsetsResponse> result = controlPlane.listOffsets(List.of(
+                    // Earliest possible offset.
+                    new ListOffsetsRequest(tidp1, 0),
+                    new ListOffsetsRequest(tidp2, 0),
+                    // Before the first batch.
+                    new ListOffsetsRequest(tidp1, 111),
+                    new ListOffsetsRequest(tidp2, 111),
+                    // Equal to the first batch.
+                    new ListOffsetsRequest(tidp1, TP1_BATCH1_TIMESTAMP),
+                    new ListOffsetsRequest(tidp2, batch1CommitTimestamp),
+                    // After the first batch.
+                    new ListOffsetsRequest(tidp1, TP1_BATCH1_TIMESTAMP + 1),
+                    new ListOffsetsRequest(tidp2, batch1CommitTimestamp + 1),
+                    // Equals to the last batch.
+                    new ListOffsetsRequest(tidp1, TP1_BATCH2_TIMESTAMP),
+                    new ListOffsetsRequest(tidp2, batch2CommitTimestamp),
+                    // After the last batch.
+                    new ListOffsetsRequest(tidp1, Long.MAX_VALUE),
+                    new ListOffsetsRequest(tidp2, Long.MAX_VALUE)
+                ));
+                assertThat(result).containsExactly(
+                    // Earliest possible offset.
+                    ListOffsetsResponse.success(tidp1, TP1_BATCH1_TIMESTAMP, 1),
+                    ListOffsetsResponse.success(tidp2, batch1CommitTimestamp, 0),
+                    // Before the first batch.
+                    ListOffsetsResponse.success(tidp1, TP1_BATCH1_TIMESTAMP, 1),
+                    ListOffsetsResponse.success(tidp2, batch1CommitTimestamp, 0),
+                    // Equal to the first batch.
+                    ListOffsetsResponse.success(tidp1, TP1_BATCH1_TIMESTAMP, 1),
+                    ListOffsetsResponse.success(tidp2, batch1CommitTimestamp, 0),
+                    // After the first batch.
+                    ListOffsetsResponse.success(tidp1, TP1_BATCH2_TIMESTAMP, TP1_BATCH2_BASE_OFFSET),
+                    ListOffsetsResponse.success(tidp2, batch2CommitTimestamp, TP2_BATCH2_BASE_OFFSET),
+                    // Equals to the last batch.
+                    ListOffsetsResponse.success(tidp1, TP1_BATCH2_TIMESTAMP, TP1_BATCH2_BASE_OFFSET),
+                    ListOffsetsResponse.success(tidp2, batch2CommitTimestamp, TP2_BATCH2_BASE_OFFSET),
+                    // After the last batch.
+                    ListOffsetsResponse.success(tidp1, NO_TIMESTAMP, -1),
+                    ListOffsetsResponse.success(tidp2, NO_TIMESTAMP, -1)
+                );
+            }
+        }
     }
 
     @Nested

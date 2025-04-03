@@ -12,6 +12,8 @@ CREATE DOMAIN offset_nullable_t BIGINT
 CHECK (VALUE IS NULL OR VALUE >= 0);
 CREATE DOMAIN offset_t AS offset_nullable_t
 CHECK (VALUE IS NOT NULL);
+CREATE DOMAIN offset_with_minus_one_t BIGINT
+CHECK (VALUE IS NOT NULL AND VALUE >= -1);
 
 CREATE DOMAIN byte_offset_t BIGINT NOT NULL
 CHECK (VALUE >= 0);
@@ -25,7 +27,7 @@ CREATE DOMAIN timestamp_type_t AS SMALLINT NOT NULL
 CHECK (VALUE >= -1 AND VALUE <= 1);
 
 CREATE DOMAIN timestamp_t AS BIGINT NOT NULL
-CHECK (VALUE >= -1);
+CHECK (VALUE >= -5);
 
 CREATE DOMAIN producer_id_t AS BIGINT NOT NULL
 CHECK (VALUE >= -1);
@@ -460,6 +462,135 @@ END;
 $$
 ;
 
+CREATE TYPE list_offsets_request_v1 AS (
+    topic_id topic_id_t,
+    partition partition_t,
+    timestamp timestamp_t
+);
+
+CREATE TYPE list_offsets_response_error_v1 AS ENUM (
+    'none',
+    -- errors
+    'unknown_topic_or_partition',
+    'unsupported_special_timestamp'
+);
+
+CREATE TYPE list_offsets_response_v1 AS (
+    topic_id topic_id_t,
+    partition partition_t,
+    timestamp timestamp_t,
+    "offset" offset_with_minus_one_t,
+    error list_offsets_response_error_v1
+);
+
+CREATE FUNCTION list_offsets_v1(
+    requests list_offsets_request_v1[]
+)
+RETURNS SETOF list_offsets_response_v1 LANGUAGE plpgsql STABLE AS $$
+DECLARE
+    request RECORD;
+    log RECORD;
+    max_timestamp BIGINT = NULL;
+    found_timestamp BIGINT = NULL;
+    found_timestamp_offset BIGINT = NULL;
+BEGIN
+    FOR request IN
+        SELECT *
+        FROM unnest(requests)
+    LOOP
+        -- Note that we're not doing locking ("FOR UPDATE") here, as it's not really needed for this read-only function.
+        SELECT *
+        FROM logs
+        WHERE topic_id = request.topic_id
+            AND partition = request.partition
+        INTO log;
+
+        IF NOT FOUND THEN
+            -- -1 = org.apache.kafka.common.record.RecordBatch.NO_TIMESTAMP
+            RETURN NEXT (request.topic_id, request.partition, -1, -1, 'unknown_topic_or_partition')::list_offsets_response_v1;
+            CONTINUE;
+        END IF;
+
+        -- -2 = org.apache.kafka.common.requests.ListOffsetsRequest.EARLIEST_TIMESTAMP
+        -- -4 = org.apache.kafka.common.requests.ListOffsetsRequest.EARLIEST_LOCAL_TIMESTAMP
+        IF request.timestamp = -2 OR request.timestamp = -4 THEN
+            -- -1 = org.apache.kafka.common.record.RecordBatch.NO_TIMESTAMP
+            RETURN NEXT (request.topic_id, request.partition, -1, log.log_start_offset, 'none')::list_offsets_response_v1;
+            CONTINUE;
+        END IF;
+
+        -- -1 = org.apache.kafka.common.requests.ListOffsetsRequest.LATEST_TIMESTAMP
+        IF request.timestamp = -1 THEN
+            -- -1 = org.apache.kafka.common.record.RecordBatch.NO_TIMESTAMP
+            RETURN NEXT (request.topic_id, request.partition, -1, log.high_watermark, 'none')::list_offsets_response_v1;
+            CONTINUE;
+        END IF;
+
+        -- -3 = org.apache.kafka.common.requests.ListOffsetsRequest.MAX_TIMESTAMP
+        IF request.timestamp = -3 THEN
+            SELECT MAX(batch_timestamp(timestamp_type, batch_max_timestamp, log_append_timestamp))
+            INTO max_timestamp
+            FROM batches
+            WHERE topic_id = request.topic_id
+                AND partition = request.partition;
+
+            SELECT last_offset
+            INTO found_timestamp_offset
+            FROM batches
+            WHERE topic_id = request.topic_id
+                AND partition = request.partition
+                AND batch_timestamp(timestamp_type, batch_max_timestamp, log_append_timestamp) = max_timestamp
+            ORDER BY batch_id
+            LIMIT 1;
+
+            IF found_timestamp_offset IS NULL THEN
+                -- -1 = org.apache.kafka.common.record.RecordBatch.NO_TIMESTAMP
+                RETURN NEXT (request.topic_id, request.partition, -1, -1, 'none')::list_offsets_response_v1;
+            ELSE
+                RETURN NEXT (request.topic_id, request.partition, max_timestamp, found_timestamp_offset, 'none')::list_offsets_response_v1;
+            END IF;
+            CONTINUE;
+        END IF;
+
+        -- -5 = org.apache.kafka.common.requests.ListOffsetsRequest.LATEST_TIERED_TIMESTAMP
+        IF request.timestamp = -5 THEN
+            -- -1 = org.apache.kafka.common.record.RecordBatch.NO_TIMESTAMP
+            RETURN NEXT (request.topic_id, request.partition, -1, -1, 'none')::list_offsets_response_v1;
+            CONTINUE;
+        END IF;
+
+        IF request.timestamp < 0 THEN
+            -- Unsupported special timestamp.
+            -- -1 = org.apache.kafka.common.record.RecordBatch.NO_TIMESTAMP
+            RETURN NEXT (request.topic_id, request.partition, -1, -1, 'unsupported_special_timestamp')::list_offsets_response_v1;
+            CONTINUE;
+        END IF;
+
+        SELECT batch_timestamp(timestamp_type, batch_max_timestamp, log_append_timestamp), base_offset
+        INTO found_timestamp, found_timestamp_offset
+        FROM batches
+        WHERE topic_id = request.topic_id
+            AND partition = request.partition
+            AND batch_timestamp(timestamp_type, batch_max_timestamp, log_append_timestamp) >= request.timestamp
+        ORDER BY batch_id
+        LIMIT 1;
+
+        IF found_timestamp_offset IS NULL THEN
+            -- -1 = org.apache.kafka.common.record.RecordBatch.NO_TIMESTAMP
+            RETURN NEXT (request.topic_id, request.partition, -1, -1, 'none')::list_offsets_response_v1;
+        ELSE
+            RETURN NEXT (
+                request.topic_id, request.partition, found_timestamp,
+                GREATEST(found_timestamp_offset, log.log_start_offset),
+                'none'
+            )::list_offsets_response_v1;
+        END IF;
+        CONTINUE;
+    END LOOP;
+END;
+$$
+;
+
 CREATE TABLE file_merge_work_items (
     work_item_id BIGSERIAL PRIMARY KEY,
     created_at TIMESTAMP WITH TIME ZONE
@@ -860,5 +991,21 @@ BEGIN
 
     RETURN ROW('none'::release_file_merge_work_item_v1_error)::release_file_merge_work_item_v1_response;
 END;
+$$
+;
+
+CREATE FUNCTION batch_timestamp(
+    timestamp_type timestamp_type_t,
+    batch_max_timestamp timestamp_t,
+    log_append_timestamp timestamp_t
+)
+RETURNS timestamp_t LANGUAGE plpgsql IMMUTABLE AS $$
+BEGIN
+    RETURN CASE timestamp_type
+       WHEN 0 THEN batch_max_timestamp  -- org.apache.kafka.common.record.TimestampType.CREATE_TIME
+       WHEN 1 THEN log_append_timestamp  -- org.apache.kafka.common.record.TimestampType.LOG_APPEND_TIME
+       ELSE -1  -- org.apache.kafka.common.record.RecordBatch.NO_TIMESTAMP
+   END;
+END
 $$
 ;

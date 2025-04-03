@@ -74,4 +74,14 @@ public record BatchMetadata (
     public ByteRange range() {
         return new ByteRange(byteOffset, byteSize);
     }
+
+    public long timestamp() {
+        if (timestampType == TimestampType.CREATE_TIME) {
+            return batchMaxTimestamp;
+        } else if (timestampType == TimestampType.LOG_APPEND_TIME) {
+            return logAppendTimestamp;
+        } else {
+            return -1;
+        }
+    }
 }
