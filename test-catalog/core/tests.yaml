@@ -1037,8 +1037,6 @@ kafka.integration.UncleanLeaderElectionTest:
 - testUncleanLeaderElectionEnabled
 - testUncleanLeaderElectionEnabledByTopicOverride
 - testUncleanLeaderElectionInvalidTopicOverride
-kafka.log.BrokerCompressionTest:
-- testBrokerSideCompression
 kafka.log.LogCleanerIntegrationTest:
 - testIsThreadFailed
 - testMarksPartitionsAsOfflineAndPopulatesUncleanableMetrics
