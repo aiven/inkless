@@ -34,7 +34,7 @@ import kafka.utils.Logging
 import org.apache.kafka.clients.admin.{AlterConfigOp, EndpointType}
 import org.apache.kafka.common.Uuid.ZERO_UUID
 import org.apache.kafka.common.acl.AclOperation.{ALTER, ALTER_CONFIGS, CLUSTER_ACTION, CREATE, CREATE_TOKENS, DELETE, DESCRIBE, DESCRIBE_CONFIGS}
-import org.apache.kafka.common.config.ConfigResource
+import org.apache.kafka.common.config.{ConfigResource, TopicConfig}
 import org.apache.kafka.common.errors.{ApiException, ClusterAuthorizationException, InvalidRequestException, TopicDeletionDisabledException, UnknownServerException, UnsupportedVersionException}
 import org.apache.kafka.common.internals.FatalExitError
 import org.apache.kafka.common.internals.Topic
@@ -469,6 +469,14 @@ class ControllerApis(
   private def createTopicsInkless(response: CreateTopicsResponseData): Unit = {
     inklessControlPlane.foreach { cp =>
       val successfullyCreatedTopics = response.topics.asScala
+        // Include only inkless topics
+        .filter(t =>
+          t.configs().stream()
+            .filter(c => c.name() == TopicConfig.INKLESS_ENABLE_CONFIG)
+            .filter(c => c.value() == "true")
+            .findAny()
+            .isPresent
+        )
         // It's OK if we retry creating for already existing topics,
         // this may save some trouble when Inkless creation failed for some reason and the user retries.
         .filter(t => t.errorCode() == Errors.NONE.code() || t.errorCode() == Errors.TOPIC_ALREADY_EXISTS.code())
