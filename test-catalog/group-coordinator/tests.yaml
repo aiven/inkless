@@ -84,6 +84,11 @@ org.apache.kafka.coordinator.group.GroupCoordinatorServiceTest:
 - testDescribeGroups
 - testDescribeGroupsInvalidGroupId
 - testDescribeGroupsWhenNotStarted
+- testDescribeShareGroupAllOffsets
+- testDescribeShareGroupAllOffsetsCoordinatorNotActive
+- testDescribeShareGroupAllOffsetsMetadataImageNull
+- testDescribeShareGroupAllOffsetsNullResult
+- testDescribeShareGroupAllOffsetsThrowsError
 - testDescribeShareGroupOffsetsCoordinatorNotActive
 - testDescribeShareGroupOffsetsMetadataImageNull
 - testDescribeShareGroupOffsetsNonexistentTopicWithDefaultPersister

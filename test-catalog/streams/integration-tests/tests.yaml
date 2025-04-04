@@ -128,6 +128,7 @@ org.apache.kafka.streams.integration.KTableKTableForeignKeyJoinDistributedTest:
 - shouldBeInitializedWithDefaultSerde
 org.apache.kafka.streams.integration.KTableKTableForeignKeyJoinIntegrationTest:
 - doJoinFromLeftThenDeleteLeftEntity
+- doJoinFromLeftThenUpdateFkThenRevertBack
 - doJoinFromRightThenDeleteRightEntity
 - joinShouldProduceNullsWhenValueHasNonMatchingForeignKey
 - shouldEmitRecordOnNullForeignKeyForLeftJoins
