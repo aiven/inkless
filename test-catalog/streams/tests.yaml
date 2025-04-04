@@ -1670,6 +1670,7 @@ org.apache.kafka.streams.processor.internals.ActiveTaskCreatorTest:
 - shouldConstructClientIdWithEosV2Enabled
 - shouldConstructProducerMetricsWithEosDisabled
 - shouldConstructProducerMetricsWithEosV2Enabled
+- shouldNotResetProducerAfterDisableRest
 - shouldReturnBlockedTimeWhenStreamsProducer
 - shouldReturnStreamsProducerIfAtLeastOnceIsEnabled
 - shouldReturnStreamsProducerIfEosV2Enabled
