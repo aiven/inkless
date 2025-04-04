@@ -1117,9 +1117,11 @@ org.apache.kafka.coordinator.group.streams.assignor.StickyTaskAssignorTest:
 org.apache.kafka.coordinator.group.streams.topics.ChangelogTopicsTest:
 - shouldContainBothTypesOfPreExistingChangelogs
 - shouldContainNonSourceBasedChangelogs
-- shouldFailIfNoSourceTopics
+- shouldFailIfNoSourceTopicsAndNoRepartitionSourceTopics
 - shouldNotContainChangelogsForStatelessTasks
 - shouldNotContainSourceBasedChangelogs
+- shouldNotFailIfOnlyRepartitionSourceTopicsEmpty
+- shouldNotFailIfOnlySourceTopicsEmpty
 org.apache.kafka.coordinator.group.streams.topics.ConfiguredInternalTopicTest:
 - testAsStreamsGroupDescribeTopicInfo
 - testConstructorWithInvalidName
