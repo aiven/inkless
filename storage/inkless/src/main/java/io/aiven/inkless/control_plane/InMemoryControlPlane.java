@@ -19,7 +19,6 @@ package io.aiven.inkless.control_plane;
 
 import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.Uuid;
-import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.utils.Time;
 
 import org.slf4j.Logger;
