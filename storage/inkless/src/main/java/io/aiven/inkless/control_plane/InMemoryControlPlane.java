@@ -366,7 +366,7 @@ public class InMemoryControlPlane extends AbstractControlPlane {
             return ListOffsetsResponse.success(request.topicIdPartition(), NO_TIMESTAMP, -1);
         } else {
             LOGGER.error("listOffset request for timestamp {} in {} unsupported", timestamp, request.topicIdPartition());
-            return new ListOffsetsResponse(Errors.UNKNOWN_SERVER_ERROR, request.topicIdPartition(), NO_TIMESTAMP, -1);
+            return ListOffsetsResponse.unknownServerError(request.topicIdPartition());
         }
     }
 
