@@ -76,12 +76,12 @@ public record BatchMetadata (
     }
 
     public long timestamp() {
-        if (timestampType == TimestampType.CREATE_TIME) {
-            return batchMaxTimestamp;
-        } else if (timestampType == TimestampType.LOG_APPEND_TIME) {
+        // See how timestamps are assigned in
+        // https://github.com/aiven/inkless/blob/e124d3975bdb3a9ec85eee2fba7a1b0a6967d3a6/storage/src/main/java/org/apache/kafka/storage/internals/log/LogValidator.java#L271-L276
+        if (timestampType == TimestampType.LOG_APPEND_TIME) {
             return logAppendTimestamp;
         } else {
-            return -1;
+            return batchMaxTimestamp;
         }
     }
 }

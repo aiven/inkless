@@ -1001,10 +1001,11 @@ CREATE FUNCTION batch_timestamp(
 )
 RETURNS timestamp_t LANGUAGE plpgsql IMMUTABLE AS $$
 BEGIN
+    -- See how timestamps are assigned in
+    -- https://github.com/aiven/inkless/blob/e124d3975bdb3a9ec85eee2fba7a1b0a6967d3a6/storage/src/main/java/org/apache/kafka/storage/internals/log/LogValidator.java#L271-L276
     RETURN CASE timestamp_type
-       WHEN 0 THEN batch_max_timestamp  -- org.apache.kafka.common.record.TimestampType.CREATE_TIME
        WHEN 1 THEN log_append_timestamp  -- org.apache.kafka.common.record.TimestampType.LOG_APPEND_TIME
-       ELSE -1  -- org.apache.kafka.common.record.RecordBatch.NO_TIMESTAMP
+       ELSE batch_max_timestamp
    END;
 END
 $$
