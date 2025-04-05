@@ -108,6 +108,11 @@ org.apache.kafka.server.log.remote.storage.RemoteLogMetadataManagerTest:
 - testRemotePartitionDeletion
 org.apache.kafka.server.log.remote.storage.RemoteTopicPartitionDirectoryTest:
 - testSubStr
+org.apache.kafka.server.purgatory.DelayedRemoteListOffsetsTest:
+- testPartialResponseWhenNotLeaderOrFollowerExceptionOnOnePartition
+- testResponseOnPartialError
+- testResponseOnRequestExpiration
+- testResponseOnSuccess
 org.apache.kafka.storage.internals.checkpoint.CleanShutdownFileHandlerTest:
 - testCleanShutdownFileBasic
 - testCleanShutdownFileCanParseWithUnknownFields

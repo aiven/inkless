@@ -2024,11 +2024,6 @@ kafka.server.DelayedRemoteFetchTest:
 - testFollowerFetch
 - testNotLeaderOrFollower
 - testRequestExpiry
-kafka.server.DelayedRemoteListOffsetsTest:
-- testPartialResponseWhenNotLeaderOrFollowerExceptionOnOnePartition
-- testResponseOnPartialError
-- testResponseOnRequestExpiration
-- testResponseOnSuccess
 kafka.server.DelegationTokenRequestsOnPlainTextTest:
 - testDelegationTokenRequests
 kafka.server.DelegationTokenRequestsTest:
