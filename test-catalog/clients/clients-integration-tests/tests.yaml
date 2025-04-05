@@ -7,6 +7,11 @@ org.apache.kafka.clients.ClientRebootstrapTest:
 - testConsumerRebootstrapDisabled
 - testProducerRebootstrap
 - testProducerRebootstrapDisabled
+org.apache.kafka.clients.TransactionsExpirationTest:
+- testFatalErrorAfterInvalidProducerIdMappingWithTV1
+- testFatalErrorAfterInvalidProducerIdMappingWithTV2
+- testTransactionAfterProducerIdExpiresWithTV1
+- testTransactionAfterProducerIdExpiresWithTV2
 org.apache.kafka.clients.admin.AdminFenceProducersTest:
 - testFenceAfterProducerCommit
 - testFenceBeforeProducerCommit

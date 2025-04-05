@@ -646,9 +646,6 @@ kafka.api.SslProducerSendTest:
 - testSendToPartitionWithFollowerShutdownShouldNotTimeout
 kafka.api.TransactionsBounceTest:
 - testWithGroupMetadata
-kafka.api.TransactionsExpirationTest:
-- testFatalErrorAfterInvalidProducerIdMapping
-- testTransactionAfterProducerIdExpires
 kafka.api.TransactionsTest:
 - testAbortTransactionTimeout
 - testBasicTransactions
