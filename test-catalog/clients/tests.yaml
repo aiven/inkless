@@ -1011,6 +1011,7 @@ org.apache.kafka.clients.consumer.internals.AbstractCoordinatorTest:
 - testJoinGroupRequestWithRebalanceInProgress
 - testJoinGroupUnknownMemberResponseWithOldGeneration
 - testLeaveGroupSentWithGroupInstanceIdUnSet
+- testLeaveGroupSentWithGroupInstanceIdUnSetAndDifferentGroupMembershipOperation
 - testLookupCoordinator
 - testMetrics
 - testNoGenerationWillNotTriggerProtocolNameCheck
@@ -1239,6 +1240,7 @@ org.apache.kafka.clients.consumer.internals.ConsumerHeartbeatRequestManagerTest:
 - testNetworkTimeout
 - testNoCoordinator
 - testPollOnCloseGeneratesRequestIfNeeded
+- testPollOnLeaving
 - testPollTimerExpiration
 - testPollTimerExpirationShouldNotMarkMemberStaleIfMemberAlreadyLeaving
 - testRegexInHeartbeatLifecycle
@@ -1280,6 +1282,7 @@ org.apache.kafka.clients.consumer.internals.ConsumerMembershipManagerTest:
 - testHeartbeatSuccessfulResponseWhenLeavingGroupCompletesLeave
 - testIgnoreHeartbeatResponseWhenNotInGroup
 - testLeaveGroupEpoch
+- testLeaveGroupEpochOnClose
 - testLeaveGroupWhenMemberAlreadyLeaving
 - testLeaveGroupWhenMemberAlreadyLeft
 - testLeaveGroupWhenMemberFenced
