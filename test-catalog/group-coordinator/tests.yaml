@@ -504,6 +504,7 @@ org.apache.kafka.coordinator.group.GroupMetadataManagerTest:
 - testStreamsGroupMemberJoiningWithMissingInternalTopic
 - testStreamsGroupMemberJoiningWithMissingSourceTopic
 - testStreamsGroupMemberJoiningWithStaleTopology
+- testStreamsGroupMemberRequestingShutdownApplication
 - testStreamsHeartbeatRequestValidation
 - testStreamsLeavingMemberRemovesMemberAndBumpsGroupEpoch
 - testStreamsNewJoiningMemberTriggersNewTargetAssignment
@@ -1013,6 +1014,7 @@ org.apache.kafka.coordinator.group.streams.StreamsGroupTest:
 - testSetPartitionMetadataUpdatesStateAndConfiguredTopology
 - testSetTopologyUpdatesStateAndConfiguredTopology
 - testSetTopologyUpdatesStateAndConfiguredTopologyWithPreviousCallToSetMetadata
+- testShutdownRequestedMethods
 - testUpdateMember
 - testUpdatingMemberUpdatesProcessId
 - testUpdatingMemberUpdatesTaskProcessIdWhenPartitionIsNotReleased
