@@ -2094,6 +2094,7 @@ org.apache.kafka.clients.consumer.internals.ShareConsumeRequestManagerTest:
 - testCommitSync
 - testCommitSyncWithSubscriptionChange
 - testCorruptMessageError
+- testFatalErrorsAcknowledgementResponse
 - testFetchDisconnected
 - testFetchError
 - testFetchNormal
@@ -2137,6 +2138,7 @@ org.apache.kafka.clients.consumer.internals.ShareConsumerImplTest:
 - testAcknowledgementCommitCallbackRegistrationEvent
 - testAcknowledgementCommitCallbackRegistrationEvent_Null
 - testBackgroundError
+- testCloseWithInvalidTopicException
 - testCloseWithTopicAuthorizationException
 - testCompleteQuietly
 - testControlRecordsOnEmptyFetch
