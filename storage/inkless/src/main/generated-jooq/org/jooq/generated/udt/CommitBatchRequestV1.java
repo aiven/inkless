@@ -52,6 +52,11 @@ public class CommitBatchRequestV1 extends UDTImpl<CommitBatchRequestV1Record> {
     }
 
     /**
+     * The attribute <code>commit_batch_request_v1.magic</code>.
+     */
+    public static final UDTField<CommitBatchRequestV1Record, Short> MAGIC = createField(DSL.name("magic"), Domains.MAGIC_T.getDataType().nullable(false), COMMIT_BATCH_REQUEST_V1, "");
+
+    /**
      * The attribute <code>commit_batch_request_v1.topic_id</code>.
      */
     public static final UDTField<CommitBatchRequestV1Record, Uuid> TOPIC_ID = createField(DSL.name("topic_id"), SQLDataType.UUID.nullable(false), COMMIT_BATCH_REQUEST_V1, "", new UUIDtoUuidConverter());

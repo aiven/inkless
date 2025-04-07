@@ -61,87 +61,101 @@ public class FilesRecord extends UpdatableRecordImpl<FilesRecord> {
     }
 
     /**
+     * Setter for <code>files.format</code>.
+     */
+    public void setFormat(Short value) {
+        set(2, value);
+    }
+
+    /**
+     * Getter for <code>files.format</code>.
+     */
+    public Short getFormat() {
+        return (Short) get(2);
+    }
+
+    /**
      * Setter for <code>files.reason</code>.
      */
     public void setReason(FileReason value) {
-        set(2, value);
+        set(3, value);
     }
 
     /**
      * Getter for <code>files.reason</code>.
      */
     public FileReason getReason() {
-        return (FileReason) get(2);
+        return (FileReason) get(3);
     }
 
     /**
      * Setter for <code>files.state</code>.
      */
     public void setState(FileStateT value) {
-        set(3, value);
+        set(4, value);
     }
 
     /**
      * Getter for <code>files.state</code>.
      */
     public FileStateT getState() {
-        return (FileStateT) get(3);
+        return (FileStateT) get(4);
     }
 
     /**
      * Setter for <code>files.uploader_broker_id</code>.
      */
     public void setUploaderBrokerId(Integer value) {
-        set(4, value);
+        set(5, value);
     }
 
     /**
      * Getter for <code>files.uploader_broker_id</code>.
      */
     public Integer getUploaderBrokerId() {
-        return (Integer) get(4);
+        return (Integer) get(5);
     }
 
     /**
      * Setter for <code>files.committed_at</code>.
      */
     public void setCommittedAt(Instant value) {
-        set(5, value);
+        set(6, value);
     }
 
     /**
      * Getter for <code>files.committed_at</code>.
      */
     public Instant getCommittedAt() {
-        return (Instant) get(5);
+        return (Instant) get(6);
+    }
+
+    /**
+     * Setter for <code>files.marked_for_deletion_at</code>.
+     */
+    public void setMarkedForDeletionAt(Instant value) {
+        set(7, value);
+    }
+
+    /**
+     * Getter for <code>files.marked_for_deletion_at</code>.
+     */
+    public Instant getMarkedForDeletionAt() {
+        return (Instant) get(7);
     }
 
     /**
      * Setter for <code>files.size</code>.
      */
     public void setSize(Long value) {
-        set(6, value);
+        set(8, value);
     }
 
     /**
      * Getter for <code>files.size</code>.
      */
     public Long getSize() {
-        return (Long) get(6);
-    }
-
-    /**
-     * Setter for <code>files.used_size</code>.
-     */
-    public void setUsedSize(Long value) {
-        set(7, value);
-    }
-
-    /**
-     * Getter for <code>files.used_size</code>.
-     */
-    public Long getUsedSize() {
-        return (Long) get(7);
+        return (Long) get(8);
     }
 
     // -------------------------------------------------------------------------
@@ -167,17 +181,18 @@ public class FilesRecord extends UpdatableRecordImpl<FilesRecord> {
     /**
      * Create a detached, initialised FilesRecord
      */
-    public FilesRecord(Long fileId, String objectKey, FileReason reason, FileStateT state, Integer uploaderBrokerId, Instant committedAt, Long size, Long usedSize) {
+    public FilesRecord(Long fileId, String objectKey, Short format, FileReason reason, FileStateT state, Integer uploaderBrokerId, Instant committedAt, Instant markedForDeletionAt, Long size) {
         super(Files.FILES);
 
         setFileId(fileId);
         setObjectKey(objectKey);
+        setFormat(format);
         setReason(reason);
         setState(state);
         setUploaderBrokerId(uploaderBrokerId);
         setCommittedAt(committedAt);
+        setMarkedForDeletionAt(markedForDeletionAt);
         setSize(size);
-        setUsedSize(usedSize);
         resetChangedOnNotNull();
     }
 }

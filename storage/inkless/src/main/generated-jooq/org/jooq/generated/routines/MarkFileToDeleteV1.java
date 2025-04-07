@@ -34,9 +34,9 @@ public class MarkFileToDeleteV1 extends AbstractRoutine<java.lang.Void> {
     private static final long serialVersionUID = 1L;
 
     /**
-     * The parameter <code>mark_file_to_delete_v1.now</code>.
+     * The parameter <code>mark_file_to_delete_v1.arg_now</code>.
      */
-    public static final Parameter<Instant> NOW = Internal.createParameter("now", SQLDataType.TIMESTAMPWITHTIMEZONE, false, false, new OffsetDateTimeToInstantConverter());
+    public static final Parameter<Instant> ARG_NOW = Internal.createParameter("arg_now", SQLDataType.TIMESTAMPWITHTIMEZONE, false, false, new OffsetDateTimeToInstantConverter());
 
     /**
      * The parameter <code>mark_file_to_delete_v1.arg_file_id</code>.
@@ -49,15 +49,15 @@ public class MarkFileToDeleteV1 extends AbstractRoutine<java.lang.Void> {
     public MarkFileToDeleteV1() {
         super("mark_file_to_delete_v1", DefaultSchema.DEFAULT_SCHEMA);
 
-        addInParameter(NOW);
+        addInParameter(ARG_NOW);
         addInParameter(ARG_FILE_ID);
     }
 
     /**
-     * Set the <code>now</code> parameter IN value to the routine
+     * Set the <code>arg_now</code> parameter IN value to the routine
      */
-    public void setNow(Instant value) {
-        setValue(NOW, value);
+    public void setArgNow(Instant value) {
+        setValue(ARG_NOW, value);
     }
 
     /**

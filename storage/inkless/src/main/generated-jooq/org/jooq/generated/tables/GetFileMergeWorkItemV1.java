@@ -154,14 +154,14 @@ public class GetFileMergeWorkItemV1 extends TableImpl<GetFileMergeWorkItemV1Reco
      * Call this table-valued function
      */
     public GetFileMergeWorkItemV1 call(
-          Instant now
-        , YearToSecond expirationInterval
-        , Long mergeFileSizeThreshold
+          Instant argNow
+        , YearToSecond argExpirationInterval
+        , Long argMergeFileSizeThreshold
     ) {
         GetFileMergeWorkItemV1 result = new GetFileMergeWorkItemV1(DSL.name("get_file_merge_work_item_v1"), null, new Field[] {
-            DSL.val(now, SQLDataType.TIMESTAMPWITHTIMEZONE.asConvertedDataType(new OffsetDateTimeToInstantConverter())),
-            DSL.val(expirationInterval, SQLDataType.INTERVAL),
-            DSL.val(mergeFileSizeThreshold, Domains.BYTE_SIZE_T.getDataType())
+            DSL.val(argNow, SQLDataType.TIMESTAMPWITHTIMEZONE.asConvertedDataType(new OffsetDateTimeToInstantConverter())),
+            DSL.val(argExpirationInterval, SQLDataType.INTERVAL),
+            DSL.val(argMergeFileSizeThreshold, Domains.BYTE_SIZE_T.getDataType())
         });
 
         return aliased() ? result.as(getUnqualifiedName()) : result;
@@ -171,14 +171,14 @@ public class GetFileMergeWorkItemV1 extends TableImpl<GetFileMergeWorkItemV1Reco
      * Call this table-valued function
      */
     public GetFileMergeWorkItemV1 call(
-          Field<Instant> now
-        , Field<YearToSecond> expirationInterval
-        , Field<Long> mergeFileSizeThreshold
+          Field<Instant> argNow
+        , Field<YearToSecond> argExpirationInterval
+        , Field<Long> argMergeFileSizeThreshold
     ) {
         GetFileMergeWorkItemV1 result = new GetFileMergeWorkItemV1(DSL.name("get_file_merge_work_item_v1"), null, new Field[] {
-            now,
-            expirationInterval,
-            mergeFileSizeThreshold
+            argNow,
+            argExpirationInterval,
+            argMergeFileSizeThreshold
         });
 
         return aliased() ? result.as(getUnqualifiedName()) : result;

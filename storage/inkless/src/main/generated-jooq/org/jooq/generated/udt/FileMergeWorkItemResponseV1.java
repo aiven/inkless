@@ -13,7 +13,7 @@ import javax.annotation.processing.Generated;
 import org.jooq.Schema;
 import org.jooq.UDTField;
 import org.jooq.generated.DefaultSchema;
-import org.jooq.generated.udt.records.FileMergeWorkItemResponseV1FileRecord;
+import org.jooq.generated.udt.records.FileMergeWorkItemResponseFileV1Record;
 import org.jooq.generated.udt.records.FileMergeWorkItemResponseV1Record;
 import org.jooq.impl.DSL;
 import org.jooq.impl.SQLDataType;
@@ -63,7 +63,7 @@ public class FileMergeWorkItemResponseV1 extends UDTImpl<FileMergeWorkItemRespon
     /**
      * The attribute <code>file_merge_work_item_response_v1.file_ids</code>.
      */
-    public static final UDTField<FileMergeWorkItemResponseV1Record, FileMergeWorkItemResponseV1FileRecord[]> FILE_IDS = createField(DSL.name("file_ids"), FileMergeWorkItemResponseV1File.FILE_MERGE_WORK_ITEM_RESPONSE_V1_FILE.getDataType().array(), FILE_MERGE_WORK_ITEM_RESPONSE_V1, "");
+    public static final UDTField<FileMergeWorkItemResponseV1Record, FileMergeWorkItemResponseFileV1Record[]> FILE_IDS = createField(DSL.name("file_ids"), FileMergeWorkItemResponseFileV1.FILE_MERGE_WORK_ITEM_RESPONSE_FILE_V1.getDataType().array(), FILE_MERGE_WORK_ITEM_RESPONSE_V1, "");
 
     /**
      * No further instances allowed

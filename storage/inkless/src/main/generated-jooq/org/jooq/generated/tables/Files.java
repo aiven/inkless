@@ -19,6 +19,7 @@ import org.jooq.Condition;
 import org.jooq.Field;
 import org.jooq.ForeignKey;
 import org.jooq.Identity;
+import org.jooq.Index;
 import org.jooq.InverseForeignKey;
 import org.jooq.Name;
 import org.jooq.Path;
@@ -35,13 +36,13 @@ import org.jooq.TableOptions;
 import org.jooq.UniqueKey;
 import org.jooq.generated.DefaultSchema;
 import org.jooq.generated.Domains;
+import org.jooq.generated.Indexes;
 import org.jooq.generated.Keys;
 import org.jooq.generated.enums.FileReasonT;
 import org.jooq.generated.enums.FileStateT;
 import org.jooq.generated.tables.Batches.BatchesPath;
 import org.jooq.generated.tables.FileMergeWorkItemFiles.FileMergeWorkItemFilesPath;
 import org.jooq.generated.tables.FileMergeWorkItems.FileMergeWorkItemsPath;
-import org.jooq.generated.tables.FilesToDelete.FilesToDeletePath;
 import org.jooq.generated.tables.records.FilesRecord;
 import org.jooq.impl.DSL;
 import org.jooq.impl.SQLDataType;
@@ -88,6 +89,11 @@ public class Files extends TableImpl<FilesRecord> {
     public final TableField<FilesRecord, String> OBJECT_KEY = createField(DSL.name("object_key"), Domains.OBJECT_KEY_T.getDataType().nullable(false), this, "");
 
     /**
+     * The column <code>files.format</code>.
+     */
+    public final TableField<FilesRecord, Short> FORMAT = createField(DSL.name("format"), Domains.FORMAT_T.getDataType().nullable(false), this, "");
+
+    /**
      * The column <code>files.reason</code>.
      */
     public final TableField<FilesRecord, FileReason> REASON = createField(DSL.name("reason"), SQLDataType.VARCHAR.nullable(false).asEnumDataType(FileReasonT.class), this, "", new FileReasonTToFileReasonConverter());
@@ -108,14 +114,14 @@ public class Files extends TableImpl<FilesRecord> {
     public final TableField<FilesRecord, Instant> COMMITTED_AT = createField(DSL.name("committed_at"), SQLDataType.TIMESTAMPWITHTIMEZONE, this, "", new OffsetDateTimeToInstantConverter());
 
     /**
+     * The column <code>files.marked_for_deletion_at</code>.
+     */
+    public final TableField<FilesRecord, Instant> MARKED_FOR_DELETION_AT = createField(DSL.name("marked_for_deletion_at"), SQLDataType.TIMESTAMPWITHTIMEZONE, this, "", new OffsetDateTimeToInstantConverter());
+
+    /**
      * The column <code>files.size</code>.
      */
     public final TableField<FilesRecord, Long> SIZE = createField(DSL.name("size"), Domains.BYTE_SIZE_T.getDataType().nullable(false), this, "");
-
-    /**
-     * The column <code>files.used_size</code>.
-     */
-    public final TableField<FilesRecord, Long> USED_SIZE = createField(DSL.name("used_size"), Domains.BYTE_SIZE_T.getDataType().nullable(false), this, "");
 
     private Files(Name alias, Table<FilesRecord> aliased) {
         this(alias, aliased, (Field<?>[]) null, null);
@@ -193,6 +199,11 @@ public class Files extends TableImpl<FilesRecord> {
     }
 
     @Override
+    public List<Index> getIndexes() {
+        return Arrays.asList(Indexes.FILES_BY_STATE_ONLY_DELETING_IDX);
+    }
+
+    @Override
     public Identity<FilesRecord, Long> getIdentity() {
         return (Identity<FilesRecord, Long>) super.getIdentity();
     }
@@ -231,19 +242,6 @@ public class Files extends TableImpl<FilesRecord> {
             _batches = new BatchesPath(this, null, Keys.BATCHES__FK_BATCHES_FILES.getInverseKey());
 
         return _batches;
-    }
-
-    private transient FilesToDeletePath _filesToDelete;
-
-    /**
-     * Get the implicit to-many join path to the
-     * <code>public.files_to_delete</code> table
-     */
-    public FilesToDeletePath filesToDelete() {
-        if (_filesToDelete == null)
-            _filesToDelete = new FilesToDeletePath(this, null, Keys.FILES_TO_DELETE__FK_FILES_TO_DELETE_FILES.getInverseKey());
-
-        return _filesToDelete;
     }
 
     /**

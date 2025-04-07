@@ -71,6 +71,7 @@ public class CommitFileV1 extends TableImpl<CommitFileV1Record> {
     private CommitFileV1(Name alias, Table<CommitFileV1Record> aliased) {
         this(alias, aliased, new Field[] {
             DSL.val(null, Domains.OBJECT_KEY_T.getDataType()),
+            DSL.val(null, Domains.FORMAT_T.getDataType()),
             DSL.val(null, Domains.BROKER_ID_T.getDataType()),
             DSL.val(null, Domains.BYTE_SIZE_T.getDataType()),
             DSL.val(null, SQLDataType.TIMESTAMPWITHTIMEZONE.asConvertedDataType(new OffsetDateTimeToInstantConverter())),
@@ -155,18 +156,20 @@ public class CommitFileV1 extends TableImpl<CommitFileV1Record> {
      * Call this table-valued function
      */
     public CommitFileV1 call(
-          String objectKey
-        , Integer uploaderBrokerId
-        , Long fileSize
-        , Instant now
-        , CommitBatchRequestV1Record[] requests
+          String argObjectKey
+        , Short argFormat
+        , Integer argUploaderBrokerId
+        , Long argFileSize
+        , Instant argNow
+        , CommitBatchRequestV1Record[] argRequests
     ) {
         CommitFileV1 result = new CommitFileV1(DSL.name("commit_file_v1"), null, new Field[] {
-            DSL.val(objectKey, Domains.OBJECT_KEY_T.getDataType()),
-            DSL.val(uploaderBrokerId, Domains.BROKER_ID_T.getDataType()),
-            DSL.val(fileSize, Domains.BYTE_SIZE_T.getDataType()),
-            DSL.val(now, SQLDataType.TIMESTAMPWITHTIMEZONE.asConvertedDataType(new OffsetDateTimeToInstantConverter())),
-            DSL.val(requests, CommitBatchRequestV1.COMMIT_BATCH_REQUEST_V1.getDataType().array())
+            DSL.val(argObjectKey, Domains.OBJECT_KEY_T.getDataType()),
+            DSL.val(argFormat, Domains.FORMAT_T.getDataType()),
+            DSL.val(argUploaderBrokerId, Domains.BROKER_ID_T.getDataType()),
+            DSL.val(argFileSize, Domains.BYTE_SIZE_T.getDataType()),
+            DSL.val(argNow, SQLDataType.TIMESTAMPWITHTIMEZONE.asConvertedDataType(new OffsetDateTimeToInstantConverter())),
+            DSL.val(argRequests, CommitBatchRequestV1.COMMIT_BATCH_REQUEST_V1.getDataType().array())
         });
 
         return aliased() ? result.as(getUnqualifiedName()) : result;
@@ -176,18 +179,20 @@ public class CommitFileV1 extends TableImpl<CommitFileV1Record> {
      * Call this table-valued function
      */
     public CommitFileV1 call(
-          Field<String> objectKey
-        , Field<Integer> uploaderBrokerId
-        , Field<Long> fileSize
-        , Field<Instant> now
-        , Field<CommitBatchRequestV1Record[]> requests
+          Field<String> argObjectKey
+        , Field<Short> argFormat
+        , Field<Integer> argUploaderBrokerId
+        , Field<Long> argFileSize
+        , Field<Instant> argNow
+        , Field<CommitBatchRequestV1Record[]> argRequests
     ) {
         CommitFileV1 result = new CommitFileV1(DSL.name("commit_file_v1"), null, new Field[] {
-            objectKey,
-            uploaderBrokerId,
-            fileSize,
-            now,
-            requests
+            argObjectKey,
+            argFormat,
+            argUploaderBrokerId,
+            argFileSize,
+            argNow,
+            argRequests
         });
 
         return aliased() ? result.as(getUnqualifiedName()) : result;

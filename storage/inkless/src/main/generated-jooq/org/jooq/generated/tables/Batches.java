@@ -81,6 +81,11 @@ public class Batches extends TableImpl<BatchesRecord> {
     public final TableField<BatchesRecord, Long> BATCH_ID = createField(DSL.name("batch_id"), SQLDataType.BIGINT.nullable(false).identity(true), this, "");
 
     /**
+     * The column <code>batches.magic</code>.
+     */
+    public final TableField<BatchesRecord, Short> MAGIC = createField(DSL.name("magic"), Domains.MAGIC_T.getDataType().nullable(false), this, "");
+
+    /**
      * The column <code>batches.topic_id</code>.
      */
     public final TableField<BatchesRecord, Uuid> TOPIC_ID = createField(DSL.name("topic_id"), SQLDataType.UUID.nullable(false), this, "", new UUIDtoUuidConverter());
@@ -129,26 +134,6 @@ public class Batches extends TableImpl<BatchesRecord> {
      * The column <code>batches.batch_max_timestamp</code>.
      */
     public final TableField<BatchesRecord, Long> BATCH_MAX_TIMESTAMP = createField(DSL.name("batch_max_timestamp"), Domains.TIMESTAMP_T.getDataType().nullable(false), this, "");
-
-    /**
-     * The column <code>batches.producer_id</code>.
-     */
-    public final TableField<BatchesRecord, Long> PRODUCER_ID = createField(DSL.name("producer_id"), Domains.PRODUCER_ID_T.getDataType().nullable(false), this, "");
-
-    /**
-     * The column <code>batches.producer_epoch</code>.
-     */
-    public final TableField<BatchesRecord, Short> PRODUCER_EPOCH = createField(DSL.name("producer_epoch"), Domains.PRODUCER_EPOCH_T.getDataType().nullable(false), this, "");
-
-    /**
-     * The column <code>batches.base_sequence</code>.
-     */
-    public final TableField<BatchesRecord, Integer> BASE_SEQUENCE = createField(DSL.name("base_sequence"), Domains.SEQUENCE_T.getDataType().nullable(false), this, "");
-
-    /**
-     * The column <code>batches.last_sequence</code>.
-     */
-    public final TableField<BatchesRecord, Integer> LAST_SEQUENCE = createField(DSL.name("last_sequence"), Domains.SEQUENCE_T.getDataType().nullable(false), this, "");
 
     private Batches(Name alias, Table<BatchesRecord> aliased) {
         this(alias, aliased, (Field<?>[]) null, null);
@@ -227,7 +212,7 @@ public class Batches extends TableImpl<BatchesRecord> {
 
     @Override
     public List<Index> getIndexes() {
-        return Arrays.asList(Indexes.BATCHES_BY_LAST_OFFSET_IDX, Indexes.BATCHES_BY_PRODUCER_IDX);
+        return Arrays.asList(Indexes.BATCHES_BY_FILE, Indexes.BATCHES_BY_LAST_OFFSET_IDX);
     }
 
     @Override

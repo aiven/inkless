@@ -13,7 +13,7 @@ import org.jooq.Schema;
 import org.jooq.UDTField;
 import org.jooq.generated.DefaultSchema;
 import org.jooq.generated.Domains;
-import org.jooq.generated.enums.CommitBatchResponseV1Error;
+import org.jooq.generated.enums.CommitBatchResponseErrorV1;
 import org.jooq.generated.udt.records.CommitBatchResponseV1Record;
 import org.jooq.impl.DSL;
 import org.jooq.impl.SQLDataType;
@@ -78,7 +78,7 @@ public class CommitBatchResponseV1 extends UDTImpl<CommitBatchResponseV1Record> 
     /**
      * The attribute <code>commit_batch_response_v1.error</code>.
      */
-    public static final UDTField<CommitBatchResponseV1Record, CommitBatchResponseV1Error> ERROR = createField(DSL.name("error"), SQLDataType.VARCHAR.asEnumDataType(CommitBatchResponseV1Error.class), COMMIT_BATCH_RESPONSE_V1, "");
+    public static final UDTField<CommitBatchResponseV1Record, CommitBatchResponseErrorV1> ERROR = createField(DSL.name("error"), SQLDataType.VARCHAR.asEnumDataType(CommitBatchResponseErrorV1.class), COMMIT_BATCH_RESPONSE_V1, "");
 
     /**
      * No further instances allowed

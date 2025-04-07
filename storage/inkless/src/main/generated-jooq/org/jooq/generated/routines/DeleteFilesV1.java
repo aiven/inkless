@@ -30,9 +30,9 @@ public class DeleteFilesV1 extends AbstractRoutine<java.lang.Void> {
     private static final long serialVersionUID = 1L;
 
     /**
-     * The parameter <code>delete_files_v1.paths</code>.
+     * The parameter <code>delete_files_v1.arg_paths</code>.
      */
-    public static final Parameter<String[]> PATHS = Internal.createParameter("paths", Domains.OBJECT_KEY_T.getDataType().array(), false, false);
+    public static final Parameter<String[]> ARG_PATHS = Internal.createParameter("arg_paths", Domains.OBJECT_KEY_T.getDataType().array(), false, false);
 
     /**
      * Create a new routine call instance
@@ -40,13 +40,13 @@ public class DeleteFilesV1 extends AbstractRoutine<java.lang.Void> {
     public DeleteFilesV1() {
         super("delete_files_v1", DefaultSchema.DEFAULT_SCHEMA);
 
-        addInParameter(PATHS);
+        addInParameter(ARG_PATHS);
     }
 
     /**
-     * Set the <code>paths</code> parameter IN value to the routine
+     * Set the <code>arg_paths</code> parameter IN value to the routine
      */
-    public void setPaths(String[] value) {
-        setValue(PATHS, value);
+    public void setArgPaths(String[] value) {
+        setValue(ARG_PATHS, value);
     }
 }

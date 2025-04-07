@@ -44,6 +44,11 @@ public class CommitBatchRequestV1Path<R extends Record, T> extends UDTPathTableF
     private static final long serialVersionUID = 1L;
 
     /**
+     * The attribute <code>commit_batch_request_v1.magic</code>.
+     */
+    public final UDTField<CommitBatchRequestV1Record, Short> MAGIC = Internal.createUDTPathField(DSL.name("magic"), Domains.MAGIC_T.getDataType().nullable(false), this, "", UDTField.class);
+
+    /**
      * The attribute <code>commit_batch_request_v1.topic_id</code>.
      */
     public final UDTField<CommitBatchRequestV1Record, Uuid> TOPIC_ID = Internal.createUDTPathField(DSL.name("topic_id"), SQLDataType.UUID.nullable(false), this, "", UDTField.class, new UUIDtoUuidConverter());

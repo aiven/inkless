@@ -44,199 +44,157 @@ public class BatchesRecord extends UpdatableRecordImpl<BatchesRecord> {
     }
 
     /**
+     * Setter for <code>batches.magic</code>.
+     */
+    public void setMagic(Short value) {
+        set(1, value);
+    }
+
+    /**
+     * Getter for <code>batches.magic</code>.
+     */
+    public Short getMagic() {
+        return (Short) get(1);
+    }
+
+    /**
      * Setter for <code>batches.topic_id</code>.
      */
     public void setTopicId(Uuid value) {
-        set(1, value);
+        set(2, value);
     }
 
     /**
      * Getter for <code>batches.topic_id</code>.
      */
     public Uuid getTopicId() {
-        return (Uuid) get(1);
+        return (Uuid) get(2);
     }
 
     /**
      * Setter for <code>batches.partition</code>.
      */
     public void setPartition(Integer value) {
-        set(2, value);
+        set(3, value);
     }
 
     /**
      * Getter for <code>batches.partition</code>.
      */
     public Integer getPartition() {
-        return (Integer) get(2);
+        return (Integer) get(3);
     }
 
     /**
      * Setter for <code>batches.base_offset</code>.
      */
     public void setBaseOffset(Long value) {
-        set(3, value);
+        set(4, value);
     }
 
     /**
      * Getter for <code>batches.base_offset</code>.
      */
     public Long getBaseOffset() {
-        return (Long) get(3);
+        return (Long) get(4);
     }
 
     /**
      * Setter for <code>batches.last_offset</code>.
      */
     public void setLastOffset(Long value) {
-        set(4, value);
+        set(5, value);
     }
 
     /**
      * Getter for <code>batches.last_offset</code>.
      */
     public Long getLastOffset() {
-        return (Long) get(4);
+        return (Long) get(5);
     }
 
     /**
      * Setter for <code>batches.file_id</code>.
      */
     public void setFileId(Long value) {
-        set(5, value);
+        set(6, value);
     }
 
     /**
      * Getter for <code>batches.file_id</code>.
      */
     public Long getFileId() {
-        return (Long) get(5);
+        return (Long) get(6);
     }
 
     /**
      * Setter for <code>batches.byte_offset</code>.
      */
     public void setByteOffset(Long value) {
-        set(6, value);
+        set(7, value);
     }
 
     /**
      * Getter for <code>batches.byte_offset</code>.
      */
     public Long getByteOffset() {
-        return (Long) get(6);
+        return (Long) get(7);
     }
 
     /**
      * Setter for <code>batches.byte_size</code>.
      */
     public void setByteSize(Long value) {
-        set(7, value);
+        set(8, value);
     }
 
     /**
      * Getter for <code>batches.byte_size</code>.
      */
     public Long getByteSize() {
-        return (Long) get(7);
+        return (Long) get(8);
     }
 
     /**
      * Setter for <code>batches.timestamp_type</code>.
      */
     public void setTimestampType(TimestampType value) {
-        set(8, value);
+        set(9, value);
     }
 
     /**
      * Getter for <code>batches.timestamp_type</code>.
      */
     public TimestampType getTimestampType() {
-        return (TimestampType) get(8);
+        return (TimestampType) get(9);
     }
 
     /**
      * Setter for <code>batches.log_append_timestamp</code>.
      */
     public void setLogAppendTimestamp(Long value) {
-        set(9, value);
+        set(10, value);
     }
 
     /**
      * Getter for <code>batches.log_append_timestamp</code>.
      */
     public Long getLogAppendTimestamp() {
-        return (Long) get(9);
+        return (Long) get(10);
     }
 
     /**
      * Setter for <code>batches.batch_max_timestamp</code>.
      */
     public void setBatchMaxTimestamp(Long value) {
-        set(10, value);
+        set(11, value);
     }
 
     /**
      * Getter for <code>batches.batch_max_timestamp</code>.
      */
     public Long getBatchMaxTimestamp() {
-        return (Long) get(10);
-    }
-
-    /**
-     * Setter for <code>batches.producer_id</code>.
-     */
-    public void setProducerId(Long value) {
-        set(11, value);
-    }
-
-    /**
-     * Getter for <code>batches.producer_id</code>.
-     */
-    public Long getProducerId() {
         return (Long) get(11);
-    }
-
-    /**
-     * Setter for <code>batches.producer_epoch</code>.
-     */
-    public void setProducerEpoch(Short value) {
-        set(12, value);
-    }
-
-    /**
-     * Getter for <code>batches.producer_epoch</code>.
-     */
-    public Short getProducerEpoch() {
-        return (Short) get(12);
-    }
-
-    /**
-     * Setter for <code>batches.base_sequence</code>.
-     */
-    public void setBaseSequence(Integer value) {
-        set(13, value);
-    }
-
-    /**
-     * Getter for <code>batches.base_sequence</code>.
-     */
-    public Integer getBaseSequence() {
-        return (Integer) get(13);
-    }
-
-    /**
-     * Setter for <code>batches.last_sequence</code>.
-     */
-    public void setLastSequence(Integer value) {
-        set(14, value);
-    }
-
-    /**
-     * Getter for <code>batches.last_sequence</code>.
-     */
-    public Integer getLastSequence() {
-        return (Integer) get(14);
     }
 
     // -------------------------------------------------------------------------
@@ -262,10 +220,11 @@ public class BatchesRecord extends UpdatableRecordImpl<BatchesRecord> {
     /**
      * Create a detached, initialised BatchesRecord
      */
-    public BatchesRecord(Long batchId, Uuid topicId, Integer partition, Long baseOffset, Long lastOffset, Long fileId, Long byteOffset, Long byteSize, TimestampType timestampType, Long logAppendTimestamp, Long batchMaxTimestamp, Long producerId, Short producerEpoch, Integer baseSequence, Integer lastSequence) {
+    public BatchesRecord(Long batchId, Short magic, Uuid topicId, Integer partition, Long baseOffset, Long lastOffset, Long fileId, Long byteOffset, Long byteSize, TimestampType timestampType, Long logAppendTimestamp, Long batchMaxTimestamp) {
         super(Batches.BATCHES);
 
         setBatchId(batchId);
+        setMagic(magic);
         setTopicId(topicId);
         setPartition(partition);
         setBaseOffset(baseOffset);
@@ -276,10 +235,6 @@ public class BatchesRecord extends UpdatableRecordImpl<BatchesRecord> {
         setTimestampType(timestampType);
         setLogAppendTimestamp(logAppendTimestamp);
         setBatchMaxTimestamp(batchMaxTimestamp);
-        setProducerId(producerId);
-        setProducerEpoch(producerEpoch);
-        setBaseSequence(baseSequence);
-        setLastSequence(lastSequence);
         resetChangedOnNotNull();
     }
 }

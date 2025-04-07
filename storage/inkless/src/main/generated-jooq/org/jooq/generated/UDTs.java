@@ -9,14 +9,16 @@ import javax.annotation.processing.Generated;
 import org.jooq.generated.udt.BatchMetadataV1;
 import org.jooq.generated.udt.CommitBatchRequestV1;
 import org.jooq.generated.udt.CommitBatchResponseV1;
-import org.jooq.generated.udt.CommitFileMergeWorkItemV1Batch;
-import org.jooq.generated.udt.CommitFileMergeWorkItemV1Response;
+import org.jooq.generated.udt.CommitFileMergeWorkItemBatchV1;
+import org.jooq.generated.udt.CommitFileMergeWorkItemResponseV1;
 import org.jooq.generated.udt.DeleteRecordsRequestV1;
 import org.jooq.generated.udt.DeleteRecordsResponseV1;
+import org.jooq.generated.udt.FileMergeWorkItemResponseBatchV1;
+import org.jooq.generated.udt.FileMergeWorkItemResponseFileV1;
 import org.jooq.generated.udt.FileMergeWorkItemResponseV1;
-import org.jooq.generated.udt.FileMergeWorkItemResponseV1Batch;
-import org.jooq.generated.udt.FileMergeWorkItemResponseV1File;
-import org.jooq.generated.udt.ReleaseFileMergeWorkItemV1Response;
+import org.jooq.generated.udt.ListOffsetsRequestV1;
+import org.jooq.generated.udt.ListOffsetsResponseV1;
+import org.jooq.generated.udt.ReleaseFileMergeWorkItemResponseV1;
 
 
 /**
@@ -49,14 +51,14 @@ public class UDTs {
     public static final CommitBatchResponseV1 COMMIT_BATCH_RESPONSE_V1 = org.jooq.generated.udt.CommitBatchResponseV1.COMMIT_BATCH_RESPONSE_V1;
 
     /**
-     * The type <code>commit_file_merge_work_item_v1_batch</code>
+     * The type <code>commit_file_merge_work_item_batch_v1</code>
      */
-    public static final CommitFileMergeWorkItemV1Batch COMMIT_FILE_MERGE_WORK_ITEM_V1_BATCH = org.jooq.generated.udt.CommitFileMergeWorkItemV1Batch.COMMIT_FILE_MERGE_WORK_ITEM_V1_BATCH;
+    public static final CommitFileMergeWorkItemBatchV1 COMMIT_FILE_MERGE_WORK_ITEM_BATCH_V1 = org.jooq.generated.udt.CommitFileMergeWorkItemBatchV1.COMMIT_FILE_MERGE_WORK_ITEM_BATCH_V1;
 
     /**
-     * The type <code>commit_file_merge_work_item_v1_response</code>
+     * The type <code>commit_file_merge_work_item_response_v1</code>
      */
-    public static final CommitFileMergeWorkItemV1Response COMMIT_FILE_MERGE_WORK_ITEM_V1_RESPONSE = org.jooq.generated.udt.CommitFileMergeWorkItemV1Response.COMMIT_FILE_MERGE_WORK_ITEM_V1_RESPONSE;
+    public static final CommitFileMergeWorkItemResponseV1 COMMIT_FILE_MERGE_WORK_ITEM_RESPONSE_V1 = org.jooq.generated.udt.CommitFileMergeWorkItemResponseV1.COMMIT_FILE_MERGE_WORK_ITEM_RESPONSE_V1;
 
     /**
      * The type <code>delete_records_request_v1</code>
@@ -69,22 +71,32 @@ public class UDTs {
     public static final DeleteRecordsResponseV1 DELETE_RECORDS_RESPONSE_V1 = org.jooq.generated.udt.DeleteRecordsResponseV1.DELETE_RECORDS_RESPONSE_V1;
 
     /**
+     * The type <code>file_merge_work_item_response_batch_v1</code>
+     */
+    public static final FileMergeWorkItemResponseBatchV1 FILE_MERGE_WORK_ITEM_RESPONSE_BATCH_V1 = org.jooq.generated.udt.FileMergeWorkItemResponseBatchV1.FILE_MERGE_WORK_ITEM_RESPONSE_BATCH_V1;
+
+    /**
+     * The type <code>file_merge_work_item_response_file_v1</code>
+     */
+    public static final FileMergeWorkItemResponseFileV1 FILE_MERGE_WORK_ITEM_RESPONSE_FILE_V1 = org.jooq.generated.udt.FileMergeWorkItemResponseFileV1.FILE_MERGE_WORK_ITEM_RESPONSE_FILE_V1;
+
+    /**
      * The type <code>file_merge_work_item_response_v1</code>
      */
     public static final FileMergeWorkItemResponseV1 FILE_MERGE_WORK_ITEM_RESPONSE_V1 = org.jooq.generated.udt.FileMergeWorkItemResponseV1.FILE_MERGE_WORK_ITEM_RESPONSE_V1;
 
     /**
-     * The type <code>file_merge_work_item_response_v1_batch</code>
+     * The type <code>list_offsets_request_v1</code>
      */
-    public static final FileMergeWorkItemResponseV1Batch FILE_MERGE_WORK_ITEM_RESPONSE_V1_BATCH = org.jooq.generated.udt.FileMergeWorkItemResponseV1Batch.FILE_MERGE_WORK_ITEM_RESPONSE_V1_BATCH;
+    public static final ListOffsetsRequestV1 LIST_OFFSETS_REQUEST_V1 = org.jooq.generated.udt.ListOffsetsRequestV1.LIST_OFFSETS_REQUEST_V1;
 
     /**
-     * The type <code>file_merge_work_item_response_v1_file</code>
+     * The type <code>list_offsets_response_v1</code>
      */
-    public static final FileMergeWorkItemResponseV1File FILE_MERGE_WORK_ITEM_RESPONSE_V1_FILE = org.jooq.generated.udt.FileMergeWorkItemResponseV1File.FILE_MERGE_WORK_ITEM_RESPONSE_V1_FILE;
+    public static final ListOffsetsResponseV1 LIST_OFFSETS_RESPONSE_V1 = org.jooq.generated.udt.ListOffsetsResponseV1.LIST_OFFSETS_RESPONSE_V1;
 
     /**
-     * The type <code>release_file_merge_work_item_v1_response</code>
+     * The type <code>release_file_merge_work_item_response_v1</code>
      */
-    public static final ReleaseFileMergeWorkItemV1Response RELEASE_FILE_MERGE_WORK_ITEM_V1_RESPONSE = org.jooq.generated.udt.ReleaseFileMergeWorkItemV1Response.RELEASE_FILE_MERGE_WORK_ITEM_V1_RESPONSE;
+    public static final ReleaseFileMergeWorkItemResponseV1 RELEASE_FILE_MERGE_WORK_ITEM_RESPONSE_V1 = org.jooq.generated.udt.ReleaseFileMergeWorkItemResponseV1.RELEASE_FILE_MERGE_WORK_ITEM_RESPONSE_V1;
 }

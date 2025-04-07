@@ -151,12 +151,12 @@ public class DeleteRecordsV1 extends TableImpl<DeleteRecordsV1Record> {
      * Call this table-valued function
      */
     public DeleteRecordsV1 call(
-          Instant now
-        , DeleteRecordsRequestV1Record[] requests
+          Instant argNow
+        , DeleteRecordsRequestV1Record[] argRequests
     ) {
         DeleteRecordsV1 result = new DeleteRecordsV1(DSL.name("delete_records_v1"), null, new Field[] {
-            DSL.val(now, SQLDataType.TIMESTAMPWITHTIMEZONE.asConvertedDataType(new OffsetDateTimeToInstantConverter())),
-            DSL.val(requests, DeleteRecordsRequestV1.DELETE_RECORDS_REQUEST_V1.getDataType().array())
+            DSL.val(argNow, SQLDataType.TIMESTAMPWITHTIMEZONE.asConvertedDataType(new OffsetDateTimeToInstantConverter())),
+            DSL.val(argRequests, DeleteRecordsRequestV1.DELETE_RECORDS_REQUEST_V1.getDataType().array())
         });
 
         return aliased() ? result.as(getUnqualifiedName()) : result;
@@ -166,12 +166,12 @@ public class DeleteRecordsV1 extends TableImpl<DeleteRecordsV1Record> {
      * Call this table-valued function
      */
     public DeleteRecordsV1 call(
-          Field<Instant> now
-        , Field<DeleteRecordsRequestV1Record[]> requests
+          Field<Instant> argNow
+        , Field<DeleteRecordsRequestV1Record[]> argRequests
     ) {
         DeleteRecordsV1 result = new DeleteRecordsV1(DSL.name("delete_records_v1"), null, new Field[] {
-            now,
-            requests
+            argNow,
+            argRequests
         });
 
         return aliased() ? result.as(getUnqualifiedName()) : result;

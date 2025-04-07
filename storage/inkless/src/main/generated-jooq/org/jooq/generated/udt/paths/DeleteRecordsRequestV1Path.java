@@ -54,7 +54,7 @@ public class DeleteRecordsRequestV1Path<R extends Record, T> extends UDTPathTabl
     /**
      * The attribute <code>delete_records_request_v1.offset</code>.
      */
-    public final UDTField<DeleteRecordsRequestV1Record, Long> OFFSET = Internal.createUDTPathField(DSL.name("offset"), SQLDataType.BIGINT, this, "", UDTField.class);
+    public final UDTField<DeleteRecordsRequestV1Record, Long> OFFSET = Internal.createUDTPathField(DSL.name("offset"), Domains.BIGINT_NOT_NULLABLE_T.getDataType(), this, "", UDTField.class);
 
     public DeleteRecordsRequestV1Path(Name name, DataType<T> type, RecordQualifier<R> qualifier, Comment comment, Binding<?, T> binding) {
         super(name, type, qualifier, DeleteRecordsRequestV1.DELETE_RECORDS_REQUEST_V1, comment, binding);

@@ -17,9 +17,9 @@ import org.jooq.Name;
 import org.jooq.Record;
 import org.jooq.RecordQualifier;
 import org.jooq.UDTField;
+import org.jooq.generated.udt.FileMergeWorkItemResponseFileV1;
 import org.jooq.generated.udt.FileMergeWorkItemResponseV1;
-import org.jooq.generated.udt.FileMergeWorkItemResponseV1File;
-import org.jooq.generated.udt.records.FileMergeWorkItemResponseV1FileRecord;
+import org.jooq.generated.udt.records.FileMergeWorkItemResponseFileV1Record;
 import org.jooq.generated.udt.records.FileMergeWorkItemResponseV1Record;
 import org.jooq.impl.DSL;
 import org.jooq.impl.Internal;
@@ -56,7 +56,7 @@ public class FileMergeWorkItemResponseV1Path<R extends Record, T> extends UDTPat
     /**
      * The attribute <code>file_merge_work_item_response_v1.file_ids</code>.
      */
-    public final UDTField<FileMergeWorkItemResponseV1Record, FileMergeWorkItemResponseV1FileRecord[]> FILE_IDS = Internal.createUDTPathField(DSL.name("file_ids"), FileMergeWorkItemResponseV1File.FILE_MERGE_WORK_ITEM_RESPONSE_V1_FILE.getDataType().array(), this, "", UDTField.class);
+    public final UDTField<FileMergeWorkItemResponseV1Record, FileMergeWorkItemResponseFileV1Record[]> FILE_IDS = Internal.createUDTPathField(DSL.name("file_ids"), FileMergeWorkItemResponseFileV1.FILE_MERGE_WORK_ITEM_RESPONSE_FILE_V1.getDataType().array(), this, "", UDTField.class);
 
     public FileMergeWorkItemResponseV1Path(Name name, DataType<T> type, RecordQualifier<R> qualifier, Comment comment, Binding<?, T> binding) {
         super(name, type, qualifier, FileMergeWorkItemResponseV1.FILE_MERGE_WORK_ITEM_RESPONSE_V1, comment, binding);
