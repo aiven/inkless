@@ -6,6 +6,7 @@ on:
   push:
     branches:
       - 'main'
+      - 'releases/**'
   pull_request:
     types: [ opened, synchronize, ready_for_review, reopened ]
     branches:
