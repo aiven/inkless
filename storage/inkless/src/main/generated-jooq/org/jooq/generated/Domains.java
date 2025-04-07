@@ -89,6 +89,16 @@ public class Domains {
     );
 
     /**
+     * The domain <code>offset_with_minus_one_t</code>.
+     */
+    public static final Domain<Long> OFFSET_WITH_MINUS_ONE_T = Internal.createDomain(
+          schema()
+        , DSL.name("offset_with_minus_one_t")
+        , SQLDataType.BIGINT
+        , Internal.createCheck(null, null, "CHECK (((VALUE IS NOT NULL) AND (VALUE >= '-1'::integer)))")
+    );
+
+    /**
      * The domain <code>partition_t</code>.
      */
     public static final Domain<Integer> PARTITION_T = Internal.createDomain(
@@ -135,7 +145,7 @@ public class Domains {
           schema()
         , DSL.name("timestamp_t")
         , SQLDataType.BIGINT.nullable(false)
-        , Internal.createCheck(null, null, "CHECK ((VALUE >= '-1'::integer))")
+        , Internal.createCheck(null, null, "CHECK ((VALUE >= '-5'::integer))")
     );
 
     /**

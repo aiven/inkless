@@ -25,10 +25,12 @@ import org.jooq.generated.tables.FileMergeWorkItems;
 import org.jooq.generated.tables.Files;
 import org.jooq.generated.tables.FilesToDelete;
 import org.jooq.generated.tables.GetFileMergeWorkItemV1;
+import org.jooq.generated.tables.ListOffsetsV1;
 import org.jooq.generated.tables.Logs;
 import org.jooq.generated.tables.records.CommitFileV1Record;
 import org.jooq.generated.tables.records.DeleteRecordsV1Record;
 import org.jooq.generated.tables.records.GetFileMergeWorkItemV1Record;
+import org.jooq.generated.tables.records.ListOffsetsV1Record;
 import org.jooq.generated.udt.BatchMetadataV1;
 import org.jooq.generated.udt.CommitBatchRequestV1;
 import org.jooq.generated.udt.CommitBatchResponseV1;
@@ -39,9 +41,12 @@ import org.jooq.generated.udt.DeleteRecordsResponseV1;
 import org.jooq.generated.udt.FileMergeWorkItemResponseV1;
 import org.jooq.generated.udt.FileMergeWorkItemResponseV1Batch;
 import org.jooq.generated.udt.FileMergeWorkItemResponseV1File;
+import org.jooq.generated.udt.ListOffsetsRequestV1;
+import org.jooq.generated.udt.ListOffsetsResponseV1;
 import org.jooq.generated.udt.ReleaseFileMergeWorkItemV1Response;
 import org.jooq.generated.udt.records.CommitBatchRequestV1Record;
 import org.jooq.generated.udt.records.DeleteRecordsRequestV1Record;
+import org.jooq.generated.udt.records.ListOffsetsRequestV1Record;
 import org.jooq.impl.SchemaImpl;
 import org.jooq.types.YearToSecond;
 
@@ -252,6 +257,45 @@ public class DefaultSchema extends SchemaImpl {
     }
 
     /**
+     * The table <code>list_offsets_v1</code>.
+     */
+    public final ListOffsetsV1 LIST_OFFSETS_V1 = ListOffsetsV1.LIST_OFFSETS_V1;
+
+    /**
+     * Call <code>list_offsets_v1</code>.
+     */
+    public static Result<ListOffsetsV1Record> LIST_OFFSETS_V1(
+          Configuration configuration
+        , ListOffsetsRequestV1Record[] requests
+    ) {
+        return configuration.dsl().selectFrom(org.jooq.generated.tables.ListOffsetsV1.LIST_OFFSETS_V1.call(
+              requests
+        )).fetch();
+    }
+
+    /**
+     * Get <code>list_offsets_v1</code> as a table.
+     */
+    public static ListOffsetsV1 LIST_OFFSETS_V1(
+          ListOffsetsRequestV1Record[] requests
+    ) {
+        return org.jooq.generated.tables.ListOffsetsV1.LIST_OFFSETS_V1.call(
+            requests
+        );
+    }
+
+    /**
+     * Get <code>list_offsets_v1</code> as a table.
+     */
+    public static ListOffsetsV1 LIST_OFFSETS_V1(
+          Field<ListOffsetsRequestV1Record[]> requests
+    ) {
+        return org.jooq.generated.tables.ListOffsetsV1.LIST_OFFSETS_V1.call(
+            requests
+        );
+    }
+
+    /**
      * The table <code>logs</code>.
      */
     public final Logs LOGS = Logs.LOGS;
@@ -278,6 +322,7 @@ public class DefaultSchema extends SchemaImpl {
             Domains.OBJECT_KEY_T,
             Domains.OFFSET_NULLABLE_T,
             Domains.OFFSET_T,
+            Domains.OFFSET_WITH_MINUS_ONE_T,
             Domains.PARTITION_T,
             Domains.PRODUCER_EPOCH_T,
             Domains.PRODUCER_ID_T,
@@ -300,6 +345,7 @@ public class DefaultSchema extends SchemaImpl {
             Files.FILES,
             FilesToDelete.FILES_TO_DELETE,
             GetFileMergeWorkItemV1.GET_FILE_MERGE_WORK_ITEM_V1,
+            ListOffsetsV1.LIST_OFFSETS_V1,
             Logs.LOGS
         );
     }
@@ -317,6 +363,8 @@ public class DefaultSchema extends SchemaImpl {
             FileMergeWorkItemResponseV1.FILE_MERGE_WORK_ITEM_RESPONSE_V1,
             FileMergeWorkItemResponseV1Batch.FILE_MERGE_WORK_ITEM_RESPONSE_V1_BATCH,
             FileMergeWorkItemResponseV1File.FILE_MERGE_WORK_ITEM_RESPONSE_V1_FILE,
+            ListOffsetsRequestV1.LIST_OFFSETS_REQUEST_V1,
+            ListOffsetsResponseV1.LIST_OFFSETS_RESPONSE_V1,
             ReleaseFileMergeWorkItemV1Response.RELEASE_FILE_MERGE_WORK_ITEM_V1_RESPONSE
         );
     }

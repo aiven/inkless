@@ -9,9 +9,11 @@ import java.util.UUID;
 
 import javax.annotation.processing.Generated;
 
+import org.apache.kafka.common.record.TimestampType;
 import org.jooq.Configuration;
 import org.jooq.Field;
 import org.jooq.Result;
+import org.jooq.generated.routines.BatchTimestamp;
 import org.jooq.generated.routines.CommitFileMergeWorkItemV1;
 import org.jooq.generated.routines.DeleteBatchV1;
 import org.jooq.generated.routines.DeleteFilesV1;
@@ -21,13 +23,16 @@ import org.jooq.generated.routines.ReleaseFileMergeWorkItemV1;
 import org.jooq.generated.tables.CommitFileV1;
 import org.jooq.generated.tables.DeleteRecordsV1;
 import org.jooq.generated.tables.GetFileMergeWorkItemV1;
+import org.jooq.generated.tables.ListOffsetsV1;
 import org.jooq.generated.tables.records.CommitFileV1Record;
 import org.jooq.generated.tables.records.DeleteRecordsV1Record;
 import org.jooq.generated.tables.records.GetFileMergeWorkItemV1Record;
+import org.jooq.generated.tables.records.ListOffsetsV1Record;
 import org.jooq.generated.udt.records.CommitBatchRequestV1Record;
 import org.jooq.generated.udt.records.CommitFileMergeWorkItemV1BatchRecord;
 import org.jooq.generated.udt.records.CommitFileMergeWorkItemV1ResponseRecord;
 import org.jooq.generated.udt.records.DeleteRecordsRequestV1Record;
+import org.jooq.generated.udt.records.ListOffsetsRequestV1Record;
 import org.jooq.generated.udt.records.ReleaseFileMergeWorkItemV1ResponseRecord;
 import org.jooq.types.YearToSecond;
 
@@ -46,6 +51,56 @@ import org.jooq.types.YearToSecond;
 )
 @SuppressWarnings({ "all", "unchecked", "rawtypes" })
 public class Routines {
+
+    /**
+     * Call <code>batch_timestamp</code>
+     */
+    public static Long batchTimestamp(
+          Configuration configuration
+        , TimestampType timestampType
+        , Long batchMaxTimestamp
+        , Long logAppendTimestamp
+    ) {
+        BatchTimestamp f = new BatchTimestamp();
+        f.setTimestampType(timestampType);
+        f.setBatchMaxTimestamp(batchMaxTimestamp);
+        f.setLogAppendTimestamp(logAppendTimestamp);
+
+        f.execute(configuration);
+        return f.getReturnValue();
+    }
+
+    /**
+     * Get <code>batch_timestamp</code> as a field.
+     */
+    public static Field<Long> batchTimestamp(
+          TimestampType timestampType
+        , Long batchMaxTimestamp
+        , Long logAppendTimestamp
+    ) {
+        BatchTimestamp f = new BatchTimestamp();
+        f.setTimestampType(timestampType);
+        f.setBatchMaxTimestamp(batchMaxTimestamp);
+        f.setLogAppendTimestamp(logAppendTimestamp);
+
+        return f.asField();
+    }
+
+    /**
+     * Get <code>batch_timestamp</code> as a field.
+     */
+    public static Field<Long> batchTimestamp(
+          Field<TimestampType> timestampType
+        , Field<Long> batchMaxTimestamp
+        , Field<Long> logAppendTimestamp
+    ) {
+        BatchTimestamp f = new BatchTimestamp();
+        f.setTimestampType(timestampType);
+        f.setBatchMaxTimestamp(batchMaxTimestamp);
+        f.setLogAppendTimestamp(logAppendTimestamp);
+
+        return f.asField();
+    }
 
     /**
      * Call <code>commit_file_merge_work_item_v1</code>
@@ -356,6 +411,40 @@ public class Routines {
             now,
             expirationInterval,
             mergeFileSizeThreshold
+        );
+    }
+
+    /**
+     * Call <code>list_offsets_v1</code>.
+     */
+    public static Result<ListOffsetsV1Record> listOffsetsV1(
+          Configuration configuration
+        , ListOffsetsRequestV1Record[] requests
+    ) {
+        return configuration.dsl().selectFrom(org.jooq.generated.tables.ListOffsetsV1.LIST_OFFSETS_V1.call(
+              requests
+        )).fetch();
+    }
+
+    /**
+     * Get <code>list_offsets_v1</code> as a table.
+     */
+    public static ListOffsetsV1 listOffsetsV1(
+          ListOffsetsRequestV1Record[] requests
+    ) {
+        return org.jooq.generated.tables.ListOffsetsV1.LIST_OFFSETS_V1.call(
+            requests
+        );
+    }
+
+    /**
+     * Get <code>list_offsets_v1</code> as a table.
+     */
+    public static ListOffsetsV1 listOffsetsV1(
+          Field<ListOffsetsRequestV1Record[]> requests
+    ) {
+        return org.jooq.generated.tables.ListOffsetsV1.LIST_OFFSETS_V1.call(
+            requests
         );
     }
 }

@@ -19,12 +19,15 @@ import org.jooq.generated.tables.FileMergeWorkItems;
 import org.jooq.generated.tables.Files;
 import org.jooq.generated.tables.FilesToDelete;
 import org.jooq.generated.tables.GetFileMergeWorkItemV1;
+import org.jooq.generated.tables.ListOffsetsV1;
 import org.jooq.generated.tables.Logs;
 import org.jooq.generated.tables.records.CommitFileV1Record;
 import org.jooq.generated.tables.records.DeleteRecordsV1Record;
 import org.jooq.generated.tables.records.GetFileMergeWorkItemV1Record;
+import org.jooq.generated.tables.records.ListOffsetsV1Record;
 import org.jooq.generated.udt.records.CommitBatchRequestV1Record;
 import org.jooq.generated.udt.records.DeleteRecordsRequestV1Record;
+import org.jooq.generated.udt.records.ListOffsetsRequestV1Record;
 import org.jooq.types.YearToSecond;
 
 
@@ -223,6 +226,45 @@ public class Tables {
             now,
             expirationInterval,
             mergeFileSizeThreshold
+        );
+    }
+
+    /**
+     * The table <code>list_offsets_v1</code>.
+     */
+    public static final ListOffsetsV1 LIST_OFFSETS_V1 = ListOffsetsV1.LIST_OFFSETS_V1;
+
+    /**
+     * Call <code>list_offsets_v1</code>.
+     */
+    public static Result<ListOffsetsV1Record> LIST_OFFSETS_V1(
+          Configuration configuration
+        , ListOffsetsRequestV1Record[] requests
+    ) {
+        return configuration.dsl().selectFrom(org.jooq.generated.tables.ListOffsetsV1.LIST_OFFSETS_V1.call(
+              requests
+        )).fetch();
+    }
+
+    /**
+     * Get <code>list_offsets_v1</code> as a table.
+     */
+    public static ListOffsetsV1 LIST_OFFSETS_V1(
+          ListOffsetsRequestV1Record[] requests
+    ) {
+        return org.jooq.generated.tables.ListOffsetsV1.LIST_OFFSETS_V1.call(
+            requests
+        );
+    }
+
+    /**
+     * Get <code>list_offsets_v1</code> as a table.
+     */
+    public static ListOffsetsV1 LIST_OFFSETS_V1(
+          Field<ListOffsetsRequestV1Record[]> requests
+    ) {
+        return org.jooq.generated.tables.ListOffsetsV1.LIST_OFFSETS_V1.call(
+            requests
         );
     }
 
