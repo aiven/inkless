@@ -59,15 +59,15 @@ public class FileMergeWorkItemResponseV1Record extends UDTRecordImpl<FileMergeWo
     /**
      * Setter for <code>file_merge_work_item_response_v1.file_ids</code>.
      */
-    public void setFileIds(FileMergeWorkItemResponseV1FileRecord[] value) {
+    public void setFileIds(FileMergeWorkItemResponseFileV1Record[] value) {
         set(2, value);
     }
 
     /**
      * Getter for <code>file_merge_work_item_response_v1.file_ids</code>.
      */
-    public FileMergeWorkItemResponseV1FileRecord[] getFileIds() {
-        return (FileMergeWorkItemResponseV1FileRecord[]) get(2);
+    public FileMergeWorkItemResponseFileV1Record[] getFileIds() {
+        return (FileMergeWorkItemResponseFileV1Record[]) get(2);
     }
 
     // -------------------------------------------------------------------------
@@ -84,7 +84,7 @@ public class FileMergeWorkItemResponseV1Record extends UDTRecordImpl<FileMergeWo
     /**
      * Create a detached, initialised FileMergeWorkItemResponseV1Record
      */
-    public FileMergeWorkItemResponseV1Record(Long workItemId, Instant createdAt, FileMergeWorkItemResponseV1FileRecord[] fileIds) {
+    public FileMergeWorkItemResponseV1Record(Long workItemId, Instant createdAt, FileMergeWorkItemResponseFileV1Record[] fileIds) {
         super(FileMergeWorkItemResponseV1.FILE_MERGE_WORK_ITEM_RESPONSE_V1);
 
         setWorkItemId(workItemId);

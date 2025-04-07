@@ -7,7 +7,7 @@ package org.jooq.generated.udt.records;
 import javax.annotation.processing.Generated;
 
 import org.apache.kafka.common.Uuid;
-import org.jooq.generated.enums.CommitBatchResponseV1Error;
+import org.jooq.generated.enums.CommitBatchResponseErrorV1;
 import org.jooq.generated.udt.CommitBatchResponseV1;
 import org.jooq.impl.UDTRecordImpl;
 
@@ -101,15 +101,15 @@ public class CommitBatchResponseV1Record extends UDTRecordImpl<CommitBatchRespon
     /**
      * Setter for <code>commit_batch_response_v1.error</code>.
      */
-    public void setError(CommitBatchResponseV1Error value) {
+    public void setError(CommitBatchResponseErrorV1 value) {
         set(5, value);
     }
 
     /**
      * Getter for <code>commit_batch_response_v1.error</code>.
      */
-    public CommitBatchResponseV1Error getError() {
-        return (CommitBatchResponseV1Error) get(5);
+    public CommitBatchResponseErrorV1 getError() {
+        return (CommitBatchResponseErrorV1) get(5);
     }
 
     // -------------------------------------------------------------------------
@@ -126,7 +126,7 @@ public class CommitBatchResponseV1Record extends UDTRecordImpl<CommitBatchRespon
     /**
      * Create a detached, initialised CommitBatchResponseV1Record
      */
-    public CommitBatchResponseV1Record(Uuid topicId, Integer partition, Long logStartOffset, Long assignedBaseOffset, Long batchTimestamp, CommitBatchResponseV1Error error) {
+    public CommitBatchResponseV1Record(Uuid topicId, Integer partition, Long logStartOffset, Long assignedBaseOffset, Long batchTimestamp, CommitBatchResponseErrorV1 error) {
         super(CommitBatchResponseV1.COMMIT_BATCH_RESPONSE_V1);
 
         setTopicId(topicId);

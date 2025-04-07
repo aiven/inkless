@@ -12,6 +12,7 @@ import javax.annotation.processing.Generated;
 import org.jooq.Configuration;
 import org.jooq.Field;
 import org.jooq.Result;
+import org.jooq.generated.routines.BatchTimestamp;
 import org.jooq.generated.routines.CommitFileMergeWorkItemV1;
 import org.jooq.generated.routines.DeleteBatchV1;
 import org.jooq.generated.routines.DeleteFilesV1;
@@ -21,14 +22,17 @@ import org.jooq.generated.routines.ReleaseFileMergeWorkItemV1;
 import org.jooq.generated.tables.CommitFileV1;
 import org.jooq.generated.tables.DeleteRecordsV1;
 import org.jooq.generated.tables.GetFileMergeWorkItemV1;
+import org.jooq.generated.tables.ListOffsetsV1;
 import org.jooq.generated.tables.records.CommitFileV1Record;
 import org.jooq.generated.tables.records.DeleteRecordsV1Record;
 import org.jooq.generated.tables.records.GetFileMergeWorkItemV1Record;
+import org.jooq.generated.tables.records.ListOffsetsV1Record;
 import org.jooq.generated.udt.records.CommitBatchRequestV1Record;
-import org.jooq.generated.udt.records.CommitFileMergeWorkItemV1BatchRecord;
-import org.jooq.generated.udt.records.CommitFileMergeWorkItemV1ResponseRecord;
+import org.jooq.generated.udt.records.CommitFileMergeWorkItemBatchV1Record;
+import org.jooq.generated.udt.records.CommitFileMergeWorkItemResponseV1Record;
 import org.jooq.generated.udt.records.DeleteRecordsRequestV1Record;
-import org.jooq.generated.udt.records.ReleaseFileMergeWorkItemV1ResponseRecord;
+import org.jooq.generated.udt.records.ListOffsetsRequestV1Record;
+import org.jooq.generated.udt.records.ReleaseFileMergeWorkItemResponseV1Record;
 import org.jooq.types.YearToSecond;
 
 
@@ -48,24 +52,76 @@ import org.jooq.types.YearToSecond;
 public class Routines {
 
     /**
+     * Call <code>batch_timestamp</code>
+     */
+    public static Long batchTimestamp(
+          Configuration configuration
+        , Short argTimestampType
+        , Long argBatchMaxTimestamp
+        , Long argLogAppendTimestamp
+    ) {
+        BatchTimestamp f = new BatchTimestamp();
+        f.setArgTimestampType(argTimestampType);
+        f.setArgBatchMaxTimestamp(argBatchMaxTimestamp);
+        f.setArgLogAppendTimestamp(argLogAppendTimestamp);
+
+        f.execute(configuration);
+        return f.getReturnValue();
+    }
+
+    /**
+     * Get <code>batch_timestamp</code> as a field.
+     */
+    public static Field<Long> batchTimestamp(
+          Short argTimestampType
+        , Long argBatchMaxTimestamp
+        , Long argLogAppendTimestamp
+    ) {
+        BatchTimestamp f = new BatchTimestamp();
+        f.setArgTimestampType(argTimestampType);
+        f.setArgBatchMaxTimestamp(argBatchMaxTimestamp);
+        f.setArgLogAppendTimestamp(argLogAppendTimestamp);
+
+        return f.asField();
+    }
+
+    /**
+     * Get <code>batch_timestamp</code> as a field.
+     */
+    public static Field<Long> batchTimestamp(
+          Field<Short> argTimestampType
+        , Field<Long> argBatchMaxTimestamp
+        , Field<Long> argLogAppendTimestamp
+    ) {
+        BatchTimestamp f = new BatchTimestamp();
+        f.setArgTimestampType(argTimestampType);
+        f.setArgBatchMaxTimestamp(argBatchMaxTimestamp);
+        f.setArgLogAppendTimestamp(argLogAppendTimestamp);
+
+        return f.asField();
+    }
+
+    /**
      * Call <code>commit_file_merge_work_item_v1</code>
      */
-    public static CommitFileMergeWorkItemV1ResponseRecord commitFileMergeWorkItemV1(
+    public static CommitFileMergeWorkItemResponseV1Record commitFileMergeWorkItemV1(
           Configuration configuration
-        , Instant now
-        , Long existingWorkItemId
-        , String objectKey
-        , Integer uploaderBrokerId
-        , Long fileSize
-        , CommitFileMergeWorkItemV1BatchRecord[] mergeFileBatches
+        , Instant argNow
+        , Long argExistingWorkItemId
+        , String argObjectKey
+        , Short argFormat
+        , Integer argUploaderBrokerId
+        , Long argFileSize
+        , CommitFileMergeWorkItemBatchV1Record[] argMergeFileBatches
     ) {
         CommitFileMergeWorkItemV1 f = new CommitFileMergeWorkItemV1();
-        f.setNow(now);
-        f.setExistingWorkItemId(existingWorkItemId);
-        f.setObjectKey(objectKey);
-        f.setUploaderBrokerId(uploaderBrokerId);
-        f.setFileSize(fileSize);
-        f.setMergeFileBatches(mergeFileBatches);
+        f.setArgNow(argNow);
+        f.setArgExistingWorkItemId(argExistingWorkItemId);
+        f.setArgObjectKey(argObjectKey);
+        f.setArgFormat(argFormat);
+        f.setArgUploaderBrokerId(argUploaderBrokerId);
+        f.setArgFileSize(argFileSize);
+        f.setArgMergeFileBatches(argMergeFileBatches);
 
         f.execute(configuration);
         return f.getReturnValue();
@@ -74,21 +130,23 @@ public class Routines {
     /**
      * Get <code>commit_file_merge_work_item_v1</code> as a field.
      */
-    public static Field<CommitFileMergeWorkItemV1ResponseRecord> commitFileMergeWorkItemV1(
-          Instant now
-        , Long existingWorkItemId
-        , String objectKey
-        , Integer uploaderBrokerId
-        , Long fileSize
-        , CommitFileMergeWorkItemV1BatchRecord[] mergeFileBatches
+    public static Field<CommitFileMergeWorkItemResponseV1Record> commitFileMergeWorkItemV1(
+          Instant argNow
+        , Long argExistingWorkItemId
+        , String argObjectKey
+        , Short argFormat
+        , Integer argUploaderBrokerId
+        , Long argFileSize
+        , CommitFileMergeWorkItemBatchV1Record[] argMergeFileBatches
     ) {
         CommitFileMergeWorkItemV1 f = new CommitFileMergeWorkItemV1();
-        f.setNow(now);
-        f.setExistingWorkItemId(existingWorkItemId);
-        f.setObjectKey(objectKey);
-        f.setUploaderBrokerId(uploaderBrokerId);
-        f.setFileSize(fileSize);
-        f.setMergeFileBatches(mergeFileBatches);
+        f.setArgNow(argNow);
+        f.setArgExistingWorkItemId(argExistingWorkItemId);
+        f.setArgObjectKey(argObjectKey);
+        f.setArgFormat(argFormat);
+        f.setArgUploaderBrokerId(argUploaderBrokerId);
+        f.setArgFileSize(argFileSize);
+        f.setArgMergeFileBatches(argMergeFileBatches);
 
         return f.asField();
     }
@@ -96,21 +154,23 @@ public class Routines {
     /**
      * Get <code>commit_file_merge_work_item_v1</code> as a field.
      */
-    public static Field<CommitFileMergeWorkItemV1ResponseRecord> commitFileMergeWorkItemV1(
-          Field<Instant> now
-        , Field<Long> existingWorkItemId
-        , Field<String> objectKey
-        , Field<Integer> uploaderBrokerId
-        , Field<Long> fileSize
-        , Field<CommitFileMergeWorkItemV1BatchRecord[]> mergeFileBatches
+    public static Field<CommitFileMergeWorkItemResponseV1Record> commitFileMergeWorkItemV1(
+          Field<Instant> argNow
+        , Field<Long> argExistingWorkItemId
+        , Field<String> argObjectKey
+        , Field<Short> argFormat
+        , Field<Integer> argUploaderBrokerId
+        , Field<Long> argFileSize
+        , Field<CommitFileMergeWorkItemBatchV1Record[]> argMergeFileBatches
     ) {
         CommitFileMergeWorkItemV1 f = new CommitFileMergeWorkItemV1();
-        f.setNow(now);
-        f.setExistingWorkItemId(existingWorkItemId);
-        f.setObjectKey(objectKey);
-        f.setUploaderBrokerId(uploaderBrokerId);
-        f.setFileSize(fileSize);
-        f.setMergeFileBatches(mergeFileBatches);
+        f.setArgNow(argNow);
+        f.setArgExistingWorkItemId(argExistingWorkItemId);
+        f.setArgObjectKey(argObjectKey);
+        f.setArgFormat(argFormat);
+        f.setArgUploaderBrokerId(argUploaderBrokerId);
+        f.setArgFileSize(argFileSize);
+        f.setArgMergeFileBatches(argMergeFileBatches);
 
         return f.asField();
     }
@@ -120,16 +180,12 @@ public class Routines {
      */
     public static void deleteBatchV1(
           Configuration configuration
-        , Instant now
-        , UUID argTopicId
-        , Integer argPartition
-        , Long argBaseOffset
+        , Instant argNow
+        , Long argBatchId
     ) {
         DeleteBatchV1 p = new DeleteBatchV1();
-        p.setNow(now);
-        p.setArgTopicId(argTopicId);
-        p.setArgPartition(argPartition);
-        p.setArgBaseOffset(argBaseOffset);
+        p.setArgNow(argNow);
+        p.setArgBatchId(argBatchId);
 
         p.execute(configuration);
     }
@@ -139,10 +195,10 @@ public class Routines {
      */
     public static void deleteFilesV1(
           Configuration configuration
-        , String[] paths
+        , String[] argPaths
     ) {
         DeleteFilesV1 p = new DeleteFilesV1();
-        p.setPaths(paths);
+        p.setArgPaths(argPaths);
 
         p.execute(configuration);
     }
@@ -152,11 +208,11 @@ public class Routines {
      */
     public static void deleteTopicV1(
           Configuration configuration
-        , Instant now
+        , Instant argNow
         , UUID[] argTopicIds
     ) {
         DeleteTopicV1 p = new DeleteTopicV1();
-        p.setNow(now);
+        p.setArgNow(argNow);
         p.setArgTopicIds(argTopicIds);
 
         p.execute(configuration);
@@ -167,11 +223,11 @@ public class Routines {
      */
     public static void markFileToDeleteV1(
           Configuration configuration
-        , Instant now
+        , Instant argNow
         , Long argFileId
     ) {
         MarkFileToDeleteV1 p = new MarkFileToDeleteV1();
-        p.setNow(now);
+        p.setArgNow(argNow);
         p.setArgFileId(argFileId);
 
         p.execute(configuration);
@@ -180,12 +236,12 @@ public class Routines {
     /**
      * Call <code>release_file_merge_work_item_v1</code>
      */
-    public static ReleaseFileMergeWorkItemV1ResponseRecord releaseFileMergeWorkItemV1(
+    public static ReleaseFileMergeWorkItemResponseV1Record releaseFileMergeWorkItemV1(
           Configuration configuration
-        , Long existingWorkItemId
+        , Long argExistingWorkItemId
     ) {
         ReleaseFileMergeWorkItemV1 f = new ReleaseFileMergeWorkItemV1();
-        f.setExistingWorkItemId(existingWorkItemId);
+        f.setArgExistingWorkItemId(argExistingWorkItemId);
 
         f.execute(configuration);
         return f.getReturnValue();
@@ -194,11 +250,11 @@ public class Routines {
     /**
      * Get <code>release_file_merge_work_item_v1</code> as a field.
      */
-    public static Field<ReleaseFileMergeWorkItemV1ResponseRecord> releaseFileMergeWorkItemV1(
-          Long existingWorkItemId
+    public static Field<ReleaseFileMergeWorkItemResponseV1Record> releaseFileMergeWorkItemV1(
+          Long argExistingWorkItemId
     ) {
         ReleaseFileMergeWorkItemV1 f = new ReleaseFileMergeWorkItemV1();
-        f.setExistingWorkItemId(existingWorkItemId);
+        f.setArgExistingWorkItemId(argExistingWorkItemId);
 
         return f.asField();
     }
@@ -206,11 +262,11 @@ public class Routines {
     /**
      * Get <code>release_file_merge_work_item_v1</code> as a field.
      */
-    public static Field<ReleaseFileMergeWorkItemV1ResponseRecord> releaseFileMergeWorkItemV1(
-          Field<Long> existingWorkItemId
+    public static Field<ReleaseFileMergeWorkItemResponseV1Record> releaseFileMergeWorkItemV1(
+          Field<Long> argExistingWorkItemId
     ) {
         ReleaseFileMergeWorkItemV1 f = new ReleaseFileMergeWorkItemV1();
-        f.setExistingWorkItemId(existingWorkItemId);
+        f.setArgExistingWorkItemId(argExistingWorkItemId);
 
         return f.asField();
     }
@@ -220,18 +276,20 @@ public class Routines {
      */
     public static Result<CommitFileV1Record> commitFileV1(
           Configuration configuration
-        , String objectKey
-        , Integer uploaderBrokerId
-        , Long fileSize
-        , Instant now
-        , CommitBatchRequestV1Record[] requests
+        , String argObjectKey
+        , Short argFormat
+        , Integer argUploaderBrokerId
+        , Long argFileSize
+        , Instant argNow
+        , CommitBatchRequestV1Record[] argRequests
     ) {
         return configuration.dsl().selectFrom(org.jooq.generated.tables.CommitFileV1.COMMIT_FILE_V1.call(
-              objectKey
-            , uploaderBrokerId
-            , fileSize
-            , now
-            , requests
+              argObjectKey
+            , argFormat
+            , argUploaderBrokerId
+            , argFileSize
+            , argNow
+            , argRequests
         )).fetch();
     }
 
@@ -239,18 +297,20 @@ public class Routines {
      * Get <code>commit_file_v1</code> as a table.
      */
     public static CommitFileV1 commitFileV1(
-          String objectKey
-        , Integer uploaderBrokerId
-        , Long fileSize
-        , Instant now
-        , CommitBatchRequestV1Record[] requests
+          String argObjectKey
+        , Short argFormat
+        , Integer argUploaderBrokerId
+        , Long argFileSize
+        , Instant argNow
+        , CommitBatchRequestV1Record[] argRequests
     ) {
         return org.jooq.generated.tables.CommitFileV1.COMMIT_FILE_V1.call(
-            objectKey,
-            uploaderBrokerId,
-            fileSize,
-            now,
-            requests
+            argObjectKey,
+            argFormat,
+            argUploaderBrokerId,
+            argFileSize,
+            argNow,
+            argRequests
         );
     }
 
@@ -258,18 +318,20 @@ public class Routines {
      * Get <code>commit_file_v1</code> as a table.
      */
     public static CommitFileV1 commitFileV1(
-          Field<String> objectKey
-        , Field<Integer> uploaderBrokerId
-        , Field<Long> fileSize
-        , Field<Instant> now
-        , Field<CommitBatchRequestV1Record[]> requests
+          Field<String> argObjectKey
+        , Field<Short> argFormat
+        , Field<Integer> argUploaderBrokerId
+        , Field<Long> argFileSize
+        , Field<Instant> argNow
+        , Field<CommitBatchRequestV1Record[]> argRequests
     ) {
         return org.jooq.generated.tables.CommitFileV1.COMMIT_FILE_V1.call(
-            objectKey,
-            uploaderBrokerId,
-            fileSize,
-            now,
-            requests
+            argObjectKey,
+            argFormat,
+            argUploaderBrokerId,
+            argFileSize,
+            argNow,
+            argRequests
         );
     }
 
@@ -278,12 +340,12 @@ public class Routines {
      */
     public static Result<DeleteRecordsV1Record> deleteRecordsV1(
           Configuration configuration
-        , Instant now
-        , DeleteRecordsRequestV1Record[] requests
+        , Instant argNow
+        , DeleteRecordsRequestV1Record[] argRequests
     ) {
         return configuration.dsl().selectFrom(org.jooq.generated.tables.DeleteRecordsV1.DELETE_RECORDS_V1.call(
-              now
-            , requests
+              argNow
+            , argRequests
         )).fetch();
     }
 
@@ -291,12 +353,12 @@ public class Routines {
      * Get <code>delete_records_v1</code> as a table.
      */
     public static DeleteRecordsV1 deleteRecordsV1(
-          Instant now
-        , DeleteRecordsRequestV1Record[] requests
+          Instant argNow
+        , DeleteRecordsRequestV1Record[] argRequests
     ) {
         return org.jooq.generated.tables.DeleteRecordsV1.DELETE_RECORDS_V1.call(
-            now,
-            requests
+            argNow,
+            argRequests
         );
     }
 
@@ -304,12 +366,12 @@ public class Routines {
      * Get <code>delete_records_v1</code> as a table.
      */
     public static DeleteRecordsV1 deleteRecordsV1(
-          Field<Instant> now
-        , Field<DeleteRecordsRequestV1Record[]> requests
+          Field<Instant> argNow
+        , Field<DeleteRecordsRequestV1Record[]> argRequests
     ) {
         return org.jooq.generated.tables.DeleteRecordsV1.DELETE_RECORDS_V1.call(
-            now,
-            requests
+            argNow,
+            argRequests
         );
     }
 
@@ -318,14 +380,14 @@ public class Routines {
      */
     public static Result<GetFileMergeWorkItemV1Record> getFileMergeWorkItemV1(
           Configuration configuration
-        , Instant now
-        , YearToSecond expirationInterval
-        , Long mergeFileSizeThreshold
+        , Instant argNow
+        , YearToSecond argExpirationInterval
+        , Long argMergeFileSizeThreshold
     ) {
         return configuration.dsl().selectFrom(org.jooq.generated.tables.GetFileMergeWorkItemV1.GET_FILE_MERGE_WORK_ITEM_V1.call(
-              now
-            , expirationInterval
-            , mergeFileSizeThreshold
+              argNow
+            , argExpirationInterval
+            , argMergeFileSizeThreshold
         )).fetch();
     }
 
@@ -333,14 +395,14 @@ public class Routines {
      * Get <code>get_file_merge_work_item_v1</code> as a table.
      */
     public static GetFileMergeWorkItemV1 getFileMergeWorkItemV1(
-          Instant now
-        , YearToSecond expirationInterval
-        , Long mergeFileSizeThreshold
+          Instant argNow
+        , YearToSecond argExpirationInterval
+        , Long argMergeFileSizeThreshold
     ) {
         return org.jooq.generated.tables.GetFileMergeWorkItemV1.GET_FILE_MERGE_WORK_ITEM_V1.call(
-            now,
-            expirationInterval,
-            mergeFileSizeThreshold
+            argNow,
+            argExpirationInterval,
+            argMergeFileSizeThreshold
         );
     }
 
@@ -348,14 +410,48 @@ public class Routines {
      * Get <code>get_file_merge_work_item_v1</code> as a table.
      */
     public static GetFileMergeWorkItemV1 getFileMergeWorkItemV1(
-          Field<Instant> now
-        , Field<YearToSecond> expirationInterval
-        , Field<Long> mergeFileSizeThreshold
+          Field<Instant> argNow
+        , Field<YearToSecond> argExpirationInterval
+        , Field<Long> argMergeFileSizeThreshold
     ) {
         return org.jooq.generated.tables.GetFileMergeWorkItemV1.GET_FILE_MERGE_WORK_ITEM_V1.call(
-            now,
-            expirationInterval,
-            mergeFileSizeThreshold
+            argNow,
+            argExpirationInterval,
+            argMergeFileSizeThreshold
+        );
+    }
+
+    /**
+     * Call <code>list_offsets_v1</code>.
+     */
+    public static Result<ListOffsetsV1Record> listOffsetsV1(
+          Configuration configuration
+        , ListOffsetsRequestV1Record[] argRequests
+    ) {
+        return configuration.dsl().selectFrom(org.jooq.generated.tables.ListOffsetsV1.LIST_OFFSETS_V1.call(
+              argRequests
+        )).fetch();
+    }
+
+    /**
+     * Get <code>list_offsets_v1</code> as a table.
+     */
+    public static ListOffsetsV1 listOffsetsV1(
+          ListOffsetsRequestV1Record[] argRequests
+    ) {
+        return org.jooq.generated.tables.ListOffsetsV1.LIST_OFFSETS_V1.call(
+            argRequests
+        );
+    }
+
+    /**
+     * Get <code>list_offsets_v1</code> as a table.
+     */
+    public static ListOffsetsV1 listOffsetsV1(
+          Field<ListOffsetsRequestV1Record[]> argRequests
+    ) {
+        return org.jooq.generated.tables.ListOffsetsV1.LIST_OFFSETS_V1.call(
+            argRequests
         );
     }
 }

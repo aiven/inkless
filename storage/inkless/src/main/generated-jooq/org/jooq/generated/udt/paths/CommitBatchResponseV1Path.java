@@ -17,7 +17,7 @@ import org.jooq.Record;
 import org.jooq.RecordQualifier;
 import org.jooq.UDTField;
 import org.jooq.generated.Domains;
-import org.jooq.generated.enums.CommitBatchResponseV1Error;
+import org.jooq.generated.enums.CommitBatchResponseErrorV1;
 import org.jooq.generated.udt.CommitBatchResponseV1;
 import org.jooq.generated.udt.records.CommitBatchResponseV1Record;
 import org.jooq.impl.DSL;
@@ -70,7 +70,7 @@ public class CommitBatchResponseV1Path<R extends Record, T> extends UDTPathTable
     /**
      * The attribute <code>commit_batch_response_v1.error</code>.
      */
-    public final UDTField<CommitBatchResponseV1Record, CommitBatchResponseV1Error> ERROR = Internal.createUDTPathField(DSL.name("error"), SQLDataType.VARCHAR.asEnumDataType(CommitBatchResponseV1Error.class), this, "", UDTField.class);
+    public final UDTField<CommitBatchResponseV1Record, CommitBatchResponseErrorV1> ERROR = Internal.createUDTPathField(DSL.name("error"), SQLDataType.VARCHAR.asEnumDataType(CommitBatchResponseErrorV1.class), this, "", UDTField.class);
 
     public CommitBatchResponseV1Path(Name name, DataType<T> type, RecordQualifier<R> qualifier, Comment comment, Binding<?, T> binding) {
         super(name, type, qualifier, CommitBatchResponseV1.COMMIT_BATCH_RESPONSE_V1, comment, binding);

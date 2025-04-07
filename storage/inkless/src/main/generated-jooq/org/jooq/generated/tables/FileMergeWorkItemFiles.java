@@ -13,6 +13,7 @@ import javax.annotation.processing.Generated;
 import org.jooq.Condition;
 import org.jooq.Field;
 import org.jooq.ForeignKey;
+import org.jooq.Index;
 import org.jooq.InverseForeignKey;
 import org.jooq.Name;
 import org.jooq.Path;
@@ -28,6 +29,7 @@ import org.jooq.TableField;
 import org.jooq.TableOptions;
 import org.jooq.UniqueKey;
 import org.jooq.generated.DefaultSchema;
+import org.jooq.generated.Indexes;
 import org.jooq.generated.Keys;
 import org.jooq.generated.tables.FileMergeWorkItems.FileMergeWorkItemsPath;
 import org.jooq.generated.tables.Files.FilesPath;
@@ -149,6 +151,11 @@ public class FileMergeWorkItemFiles extends TableImpl<FileMergeWorkItemFilesReco
     @Override
     public Schema getSchema() {
         return aliased() ? null : DefaultSchema.DEFAULT_SCHEMA;
+    }
+
+    @Override
+    public List<Index> getIndexes() {
+        return Arrays.asList(Indexes.FILE_MERGE_WORK_ITEM_FILES_BY_FILE);
     }
 
     @Override

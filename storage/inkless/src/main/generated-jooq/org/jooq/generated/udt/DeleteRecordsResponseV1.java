@@ -13,7 +13,7 @@ import org.jooq.Schema;
 import org.jooq.UDTField;
 import org.jooq.generated.DefaultSchema;
 import org.jooq.generated.Domains;
-import org.jooq.generated.enums.DeleteRecordsResponseV1ErrorT;
+import org.jooq.generated.enums.DeleteRecordsResponseErrorV1;
 import org.jooq.generated.udt.records.DeleteRecordsResponseV1Record;
 import org.jooq.impl.DSL;
 import org.jooq.impl.SQLDataType;
@@ -63,7 +63,7 @@ public class DeleteRecordsResponseV1 extends UDTImpl<DeleteRecordsResponseV1Reco
     /**
      * The attribute <code>delete_records_response_v1.error</code>.
      */
-    public static final UDTField<DeleteRecordsResponseV1Record, DeleteRecordsResponseV1ErrorT> ERROR = createField(DSL.name("error"), SQLDataType.VARCHAR.asEnumDataType(DeleteRecordsResponseV1ErrorT.class), DELETE_RECORDS_RESPONSE_V1, "");
+    public static final UDTField<DeleteRecordsResponseV1Record, DeleteRecordsResponseErrorV1> ERROR = createField(DSL.name("error"), SQLDataType.VARCHAR.asEnumDataType(DeleteRecordsResponseErrorV1.class), DELETE_RECORDS_RESPONSE_V1, "");
 
     /**
      * The attribute <code>delete_records_response_v1.log_start_offset</code>.

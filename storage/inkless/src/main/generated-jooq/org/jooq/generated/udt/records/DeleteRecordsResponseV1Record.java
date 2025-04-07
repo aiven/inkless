@@ -7,7 +7,7 @@ package org.jooq.generated.udt.records;
 import javax.annotation.processing.Generated;
 
 import org.apache.kafka.common.Uuid;
-import org.jooq.generated.enums.DeleteRecordsResponseV1ErrorT;
+import org.jooq.generated.enums.DeleteRecordsResponseErrorV1;
 import org.jooq.generated.udt.DeleteRecordsResponseV1;
 import org.jooq.impl.UDTRecordImpl;
 
@@ -59,15 +59,15 @@ public class DeleteRecordsResponseV1Record extends UDTRecordImpl<DeleteRecordsRe
     /**
      * Setter for <code>delete_records_response_v1.error</code>.
      */
-    public void setError(DeleteRecordsResponseV1ErrorT value) {
+    public void setError(DeleteRecordsResponseErrorV1 value) {
         set(2, value);
     }
 
     /**
      * Getter for <code>delete_records_response_v1.error</code>.
      */
-    public DeleteRecordsResponseV1ErrorT getError() {
-        return (DeleteRecordsResponseV1ErrorT) get(2);
+    public DeleteRecordsResponseErrorV1 getError() {
+        return (DeleteRecordsResponseErrorV1) get(2);
     }
 
     /**
@@ -98,7 +98,7 @@ public class DeleteRecordsResponseV1Record extends UDTRecordImpl<DeleteRecordsRe
     /**
      * Create a detached, initialised DeleteRecordsResponseV1Record
      */
-    public DeleteRecordsResponseV1Record(Uuid topicId, Integer partition, DeleteRecordsResponseV1ErrorT error, Long logStartOffset) {
+    public DeleteRecordsResponseV1Record(Uuid topicId, Integer partition, DeleteRecordsResponseErrorV1 error, Long logStartOffset) {
         super(DeleteRecordsResponseV1.DELETE_RECORDS_RESPONSE_V1);
 
         setTopicId(topicId);

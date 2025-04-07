@@ -17,7 +17,7 @@ import org.jooq.Record;
 import org.jooq.RecordQualifier;
 import org.jooq.UDTField;
 import org.jooq.generated.Domains;
-import org.jooq.generated.enums.DeleteRecordsResponseV1ErrorT;
+import org.jooq.generated.enums.DeleteRecordsResponseErrorV1;
 import org.jooq.generated.udt.DeleteRecordsResponseV1;
 import org.jooq.generated.udt.records.DeleteRecordsResponseV1Record;
 import org.jooq.impl.DSL;
@@ -55,7 +55,7 @@ public class DeleteRecordsResponseV1Path<R extends Record, T> extends UDTPathTab
     /**
      * The attribute <code>delete_records_response_v1.error</code>.
      */
-    public final UDTField<DeleteRecordsResponseV1Record, DeleteRecordsResponseV1ErrorT> ERROR = Internal.createUDTPathField(DSL.name("error"), SQLDataType.VARCHAR.asEnumDataType(DeleteRecordsResponseV1ErrorT.class), this, "", UDTField.class);
+    public final UDTField<DeleteRecordsResponseV1Record, DeleteRecordsResponseErrorV1> ERROR = Internal.createUDTPathField(DSL.name("error"), SQLDataType.VARCHAR.asEnumDataType(DeleteRecordsResponseErrorV1.class), this, "", UDTField.class);
 
     /**
      * The attribute <code>delete_records_response_v1.log_start_offset</code>.

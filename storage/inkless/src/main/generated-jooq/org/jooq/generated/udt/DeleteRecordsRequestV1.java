@@ -62,7 +62,7 @@ public class DeleteRecordsRequestV1 extends UDTImpl<DeleteRecordsRequestV1Record
     /**
      * The attribute <code>delete_records_request_v1.offset</code>.
      */
-    public static final UDTField<DeleteRecordsRequestV1Record, Long> OFFSET = createField(DSL.name("offset"), SQLDataType.BIGINT, DELETE_RECORDS_REQUEST_V1, "");
+    public static final UDTField<DeleteRecordsRequestV1Record, Long> OFFSET = createField(DSL.name("offset"), Domains.BIGINT_NOT_NULLABLE_T.getDataType(), DELETE_RECORDS_REQUEST_V1, "");
 
     /**
      * No further instances allowed
