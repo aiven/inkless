@@ -7,13 +7,11 @@ package org.jooq.generated.routines;
 import io.aiven.inkless.control_plane.postgres.converters.OffsetDateTimeToInstantConverter;
 
 import java.time.Instant;
-import java.util.UUID;
 
 import javax.annotation.processing.Generated;
 
 import org.jooq.Parameter;
 import org.jooq.generated.DefaultSchema;
-import org.jooq.generated.Domains;
 import org.jooq.impl.AbstractRoutine;
 import org.jooq.impl.Internal;
 import org.jooq.impl.SQLDataType;
@@ -41,19 +39,9 @@ public class DeleteBatchV1 extends AbstractRoutine<java.lang.Void> {
     public static final Parameter<Instant> NOW = Internal.createParameter("now", SQLDataType.TIMESTAMPWITHTIMEZONE, false, false, new OffsetDateTimeToInstantConverter());
 
     /**
-     * The parameter <code>delete_batch_v1.arg_topic_id</code>.
+     * The parameter <code>delete_batch_v1.arg_batch_id</code>.
      */
-    public static final Parameter<UUID> ARG_TOPIC_ID = Internal.createParameter("arg_topic_id", Domains.TOPIC_ID_T.getDataType(), false, false);
-
-    /**
-     * The parameter <code>delete_batch_v1.arg_partition</code>.
-     */
-    public static final Parameter<Integer> ARG_PARTITION = Internal.createParameter("arg_partition", Domains.PARTITION_T.getDataType(), false, false);
-
-    /**
-     * The parameter <code>delete_batch_v1.arg_base_offset</code>.
-     */
-    public static final Parameter<Long> ARG_BASE_OFFSET = Internal.createParameter("arg_base_offset", Domains.OFFSET_T.getDataType(), false, false);
+    public static final Parameter<Long> ARG_BATCH_ID = Internal.createParameter("arg_batch_id", SQLDataType.BIGINT, false, false);
 
     /**
      * Create a new routine call instance
@@ -62,9 +50,7 @@ public class DeleteBatchV1 extends AbstractRoutine<java.lang.Void> {
         super("delete_batch_v1", DefaultSchema.DEFAULT_SCHEMA);
 
         addInParameter(NOW);
-        addInParameter(ARG_TOPIC_ID);
-        addInParameter(ARG_PARTITION);
-        addInParameter(ARG_BASE_OFFSET);
+        addInParameter(ARG_BATCH_ID);
     }
 
     /**
@@ -75,23 +61,9 @@ public class DeleteBatchV1 extends AbstractRoutine<java.lang.Void> {
     }
 
     /**
-     * Set the <code>arg_topic_id</code> parameter IN value to the routine
+     * Set the <code>arg_batch_id</code> parameter IN value to the routine
      */
-    public void setArgTopicId(UUID value) {
-        setValue(ARG_TOPIC_ID, value);
-    }
-
-    /**
-     * Set the <code>arg_partition</code> parameter IN value to the routine
-     */
-    public void setArgPartition(Integer value) {
-        setValue(ARG_PARTITION, value);
-    }
-
-    /**
-     * Set the <code>arg_base_offset</code> parameter IN value to the routine
-     */
-    public void setArgBaseOffset(Long value) {
-        setValue(ARG_BASE_OFFSET, value);
+    public void setArgBatchId(Long value) {
+        setValue(ARG_BATCH_ID, value);
     }
 }

@@ -61,6 +61,11 @@ public class CommitFileMergeWorkItemV1 extends AbstractRoutine<CommitFileMergeWo
     public static final Parameter<String> OBJECT_KEY = Internal.createParameter("object_key", Domains.OBJECT_KEY_T.getDataType(), false, false);
 
     /**
+     * The parameter <code>commit_file_merge_work_item_v1.format</code>.
+     */
+    public static final Parameter<Short> FORMAT = Internal.createParameter("format", Domains.FORMAT_T.getDataType(), false, false);
+
+    /**
      * The parameter
      * <code>commit_file_merge_work_item_v1.uploader_broker_id</code>.
      */
@@ -87,6 +92,7 @@ public class CommitFileMergeWorkItemV1 extends AbstractRoutine<CommitFileMergeWo
         addInParameter(NOW);
         addInParameter(EXISTING_WORK_ITEM_ID);
         addInParameter(OBJECT_KEY);
+        addInParameter(FORMAT);
         addInParameter(UPLOADER_BROKER_ID);
         addInParameter(FILE_SIZE);
         addInParameter(MERGE_FILE_BATCHES);
@@ -136,6 +142,21 @@ public class CommitFileMergeWorkItemV1 extends AbstractRoutine<CommitFileMergeWo
      */
     public void setObjectKey(Field<String> field) {
         setField(OBJECT_KEY, field);
+    }
+
+    /**
+     * Set the <code>format</code> parameter IN value to the routine
+     */
+    public void setFormat(Short value) {
+        setValue(FORMAT, value);
+    }
+
+    /**
+     * Set the <code>format</code> parameter to the function to be used with a
+     * {@link org.jooq.Select} statement
+     */
+    public void setFormat(Field<Short> field) {
+        setField(FORMAT, field);
     }
 
     /**

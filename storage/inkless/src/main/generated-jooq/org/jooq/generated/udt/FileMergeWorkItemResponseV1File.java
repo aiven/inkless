@@ -60,15 +60,14 @@ public class FileMergeWorkItemResponseV1File extends UDTImpl<FileMergeWorkItemRe
     public static final UDTField<FileMergeWorkItemResponseV1FileRecord, String> OBJECT_KEY = createField(DSL.name("object_key"), Domains.OBJECT_KEY_T.getDataType().nullable(false), FILE_MERGE_WORK_ITEM_RESPONSE_V1_FILE, "");
 
     /**
+     * The attribute <code>file_merge_work_item_response_v1_file.format</code>.
+     */
+    public static final UDTField<FileMergeWorkItemResponseV1FileRecord, Short> FORMAT = createField(DSL.name("format"), Domains.FORMAT_T.getDataType().nullable(false), FILE_MERGE_WORK_ITEM_RESPONSE_V1_FILE, "");
+
+    /**
      * The attribute <code>file_merge_work_item_response_v1_file.size</code>.
      */
     public static final UDTField<FileMergeWorkItemResponseV1FileRecord, Long> SIZE = createField(DSL.name("size"), Domains.BYTE_SIZE_T.getDataType().nullable(false), FILE_MERGE_WORK_ITEM_RESPONSE_V1_FILE, "");
-
-    /**
-     * The attribute
-     * <code>file_merge_work_item_response_v1_file.used_size</code>.
-     */
-    public static final UDTField<FileMergeWorkItemResponseV1FileRecord, Long> USED_SIZE = createField(DSL.name("used_size"), Domains.BYTE_SIZE_T.getDataType().nullable(false), FILE_MERGE_WORK_ITEM_RESPONSE_V1_FILE, "");
 
     /**
      * The attribute <code>file_merge_work_item_response_v1_file.batches</code>.

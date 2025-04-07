@@ -13,14 +13,14 @@ import org.jooq.generated.tables.Batches;
 import org.jooq.generated.tables.FileMergeWorkItemFiles;
 import org.jooq.generated.tables.FileMergeWorkItems;
 import org.jooq.generated.tables.Files;
-import org.jooq.generated.tables.FilesToDelete;
 import org.jooq.generated.tables.Logs;
+import org.jooq.generated.tables.ProducerState;
 import org.jooq.generated.tables.records.BatchesRecord;
 import org.jooq.generated.tables.records.FileMergeWorkItemFilesRecord;
 import org.jooq.generated.tables.records.FileMergeWorkItemsRecord;
 import org.jooq.generated.tables.records.FilesRecord;
-import org.jooq.generated.tables.records.FilesToDeleteRecord;
 import org.jooq.generated.tables.records.LogsRecord;
+import org.jooq.generated.tables.records.ProducerStateRecord;
 import org.jooq.impl.DSL;
 import org.jooq.impl.Internal;
 
@@ -49,8 +49,8 @@ public class Keys {
     public static final UniqueKey<FileMergeWorkItemsRecord> FILE_MERGE_WORK_ITEMS_PKEY = Internal.createUniqueKey(FileMergeWorkItems.FILE_MERGE_WORK_ITEMS, DSL.name("file_merge_work_items_pkey"), new TableField[] { FileMergeWorkItems.FILE_MERGE_WORK_ITEMS.WORK_ITEM_ID }, true);
     public static final UniqueKey<FilesRecord> FILES_OBJECT_KEY_KEY = Internal.createUniqueKey(Files.FILES, DSL.name("files_object_key_key"), new TableField[] { Files.FILES.OBJECT_KEY }, true);
     public static final UniqueKey<FilesRecord> FILES_PKEY = Internal.createUniqueKey(Files.FILES, DSL.name("files_pkey"), new TableField[] { Files.FILES.FILE_ID }, true);
-    public static final UniqueKey<FilesToDeleteRecord> FILES_TO_DELETE_PKEY = Internal.createUniqueKey(FilesToDelete.FILES_TO_DELETE, DSL.name("files_to_delete_pkey"), new TableField[] { FilesToDelete.FILES_TO_DELETE.FILE_ID }, true);
     public static final UniqueKey<LogsRecord> LOGS_PKEY = Internal.createUniqueKey(Logs.LOGS, DSL.name("logs_pkey"), new TableField[] { Logs.LOGS.TOPIC_ID, Logs.LOGS.PARTITION }, true);
+    public static final UniqueKey<ProducerStateRecord> PRODUCER_STATE_PKEY = Internal.createUniqueKey(ProducerState.PRODUCER_STATE, DSL.name("producer_state_pkey"), new TableField[] { ProducerState.PRODUCER_STATE.TOPIC_ID, ProducerState.PRODUCER_STATE.PARTITION, ProducerState.PRODUCER_STATE.PRODUCER_ID, ProducerState.PRODUCER_STATE.ROW_ID }, true);
 
     // -------------------------------------------------------------------------
     // FOREIGN KEY definitions
@@ -60,5 +60,4 @@ public class Keys {
     public static final ForeignKey<BatchesRecord, LogsRecord> BATCHES__FK_BATCHES_LOGS = Internal.createForeignKey(Batches.BATCHES, DSL.name("fk_batches_logs"), new TableField[] { Batches.BATCHES.TOPIC_ID, Batches.BATCHES.PARTITION }, Keys.LOGS_PKEY, new TableField[] { Logs.LOGS.TOPIC_ID, Logs.LOGS.PARTITION }, true);
     public static final ForeignKey<FileMergeWorkItemFilesRecord, FilesRecord> FILE_MERGE_WORK_ITEM_FILES__FILE_MERGE_WORK_ITEM_FILES_FILE_ID_FKEY = Internal.createForeignKey(FileMergeWorkItemFiles.FILE_MERGE_WORK_ITEM_FILES, DSL.name("file_merge_work_item_files_file_id_fkey"), new TableField[] { FileMergeWorkItemFiles.FILE_MERGE_WORK_ITEM_FILES.FILE_ID }, Keys.FILES_PKEY, new TableField[] { Files.FILES.FILE_ID }, true);
     public static final ForeignKey<FileMergeWorkItemFilesRecord, FileMergeWorkItemsRecord> FILE_MERGE_WORK_ITEM_FILES__FILE_MERGE_WORK_ITEM_FILES_WORK_ITEM_ID_FKEY = Internal.createForeignKey(FileMergeWorkItemFiles.FILE_MERGE_WORK_ITEM_FILES, DSL.name("file_merge_work_item_files_work_item_id_fkey"), new TableField[] { FileMergeWorkItemFiles.FILE_MERGE_WORK_ITEM_FILES.WORK_ITEM_ID }, Keys.FILE_MERGE_WORK_ITEMS_PKEY, new TableField[] { FileMergeWorkItems.FILE_MERGE_WORK_ITEMS.WORK_ITEM_ID }, true);
-    public static final ForeignKey<FilesToDeleteRecord, FilesRecord> FILES_TO_DELETE__FK_FILES_TO_DELETE_FILES = Internal.createForeignKey(FilesToDelete.FILES_TO_DELETE, DSL.name("fk_files_to_delete_files"), new TableField[] { FilesToDelete.FILES_TO_DELETE.FILE_ID }, Keys.FILES_PKEY, new TableField[] { Files.FILES.FILE_ID }, true);
 }

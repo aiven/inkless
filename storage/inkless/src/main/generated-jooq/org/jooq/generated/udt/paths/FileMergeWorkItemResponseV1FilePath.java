@@ -52,15 +52,14 @@ public class FileMergeWorkItemResponseV1FilePath<R extends Record, T> extends UD
     public final UDTField<FileMergeWorkItemResponseV1FileRecord, String> OBJECT_KEY = Internal.createUDTPathField(DSL.name("object_key"), Domains.OBJECT_KEY_T.getDataType().nullable(false), this, "", UDTField.class);
 
     /**
+     * The attribute <code>file_merge_work_item_response_v1_file.format</code>.
+     */
+    public final UDTField<FileMergeWorkItemResponseV1FileRecord, Short> FORMAT = Internal.createUDTPathField(DSL.name("format"), Domains.FORMAT_T.getDataType().nullable(false), this, "", UDTField.class);
+
+    /**
      * The attribute <code>file_merge_work_item_response_v1_file.size</code>.
      */
     public final UDTField<FileMergeWorkItemResponseV1FileRecord, Long> SIZE = Internal.createUDTPathField(DSL.name("size"), Domains.BYTE_SIZE_T.getDataType().nullable(false), this, "", UDTField.class);
-
-    /**
-     * The attribute
-     * <code>file_merge_work_item_response_v1_file.used_size</code>.
-     */
-    public final UDTField<FileMergeWorkItemResponseV1FileRecord, Long> USED_SIZE = Internal.createUDTPathField(DSL.name("used_size"), Domains.BYTE_SIZE_T.getDataType().nullable(false), this, "", UDTField.class);
 
     /**
      * The attribute <code>file_merge_work_item_response_v1_file.batches</code>.

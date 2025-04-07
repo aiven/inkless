@@ -52,6 +52,11 @@ public class BatchMetadataV1 extends UDTImpl<BatchMetadataV1Record> {
     }
 
     /**
+     * The attribute <code>batch_metadata_v1.magic</code>.
+     */
+    public static final UDTField<BatchMetadataV1Record, Short> MAGIC = createField(DSL.name("magic"), Domains.MAGIC_T.getDataType().nullable(false), BATCH_METADATA_V1, "");
+
+    /**
      * The attribute <code>batch_metadata_v1.topic_id</code>.
      */
     public static final UDTField<BatchMetadataV1Record, Uuid> TOPIC_ID = createField(DSL.name("topic_id"), SQLDataType.UUID.nullable(false), BATCH_METADATA_V1, "", new UUIDtoUuidConverter());
@@ -100,26 +105,6 @@ public class BatchMetadataV1 extends UDTImpl<BatchMetadataV1Record> {
      * The attribute <code>batch_metadata_v1.timestamp_type</code>.
      */
     public static final UDTField<BatchMetadataV1Record, TimestampType> TIMESTAMP_TYPE = createField(DSL.name("timestamp_type"), Domains.TIMESTAMP_TYPE_T.getDataType().nullable(false), BATCH_METADATA_V1, "", new ShortToTimestampTypeConverter());
-
-    /**
-     * The attribute <code>batch_metadata_v1.producer_id</code>.
-     */
-    public static final UDTField<BatchMetadataV1Record, Long> PRODUCER_ID = createField(DSL.name("producer_id"), Domains.PRODUCER_ID_T.getDataType().nullable(false), BATCH_METADATA_V1, "");
-
-    /**
-     * The attribute <code>batch_metadata_v1.producer_epoch</code>.
-     */
-    public static final UDTField<BatchMetadataV1Record, Short> PRODUCER_EPOCH = createField(DSL.name("producer_epoch"), Domains.PRODUCER_EPOCH_T.getDataType().nullable(false), BATCH_METADATA_V1, "");
-
-    /**
-     * The attribute <code>batch_metadata_v1.base_sequence</code>.
-     */
-    public static final UDTField<BatchMetadataV1Record, Integer> BASE_SEQUENCE = createField(DSL.name("base_sequence"), Domains.SEQUENCE_T.getDataType().nullable(false), BATCH_METADATA_V1, "");
-
-    /**
-     * The attribute <code>batch_metadata_v1.last_sequence</code>.
-     */
-    public static final UDTField<BatchMetadataV1Record, Integer> LAST_SEQUENCE = createField(DSL.name("last_sequence"), Domains.SEQUENCE_T.getDataType().nullable(false), BATCH_METADATA_V1, "");
 
     /**
      * No further instances allowed
