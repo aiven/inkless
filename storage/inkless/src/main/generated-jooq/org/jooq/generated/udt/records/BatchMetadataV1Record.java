@@ -29,199 +29,157 @@ public class BatchMetadataV1Record extends UDTRecordImpl<BatchMetadataV1Record> 
     private static final long serialVersionUID = 1L;
 
     /**
+     * Setter for <code>batch_metadata_v1.magic</code>.
+     */
+    public void setMagic(Short value) {
+        set(0, value);
+    }
+
+    /**
+     * Getter for <code>batch_metadata_v1.magic</code>.
+     */
+    public Short getMagic() {
+        return (Short) get(0);
+    }
+
+    /**
      * Setter for <code>batch_metadata_v1.topic_id</code>.
      */
     public void setTopicId(Uuid value) {
-        set(0, value);
+        set(1, value);
     }
 
     /**
      * Getter for <code>batch_metadata_v1.topic_id</code>.
      */
     public Uuid getTopicId() {
-        return (Uuid) get(0);
+        return (Uuid) get(1);
     }
 
     /**
      * Setter for <code>batch_metadata_v1.topic_name</code>.
      */
     public void setTopicName(String value) {
-        set(1, value);
+        set(2, value);
     }
 
     /**
      * Getter for <code>batch_metadata_v1.topic_name</code>.
      */
     public String getTopicName() {
-        return (String) get(1);
+        return (String) get(2);
     }
 
     /**
      * Setter for <code>batch_metadata_v1.partition</code>.
      */
     public void setPartition(Integer value) {
-        set(2, value);
+        set(3, value);
     }
 
     /**
      * Getter for <code>batch_metadata_v1.partition</code>.
      */
     public Integer getPartition() {
-        return (Integer) get(2);
+        return (Integer) get(3);
     }
 
     /**
      * Setter for <code>batch_metadata_v1.byte_offset</code>.
      */
     public void setByteOffset(Long value) {
-        set(3, value);
+        set(4, value);
     }
 
     /**
      * Getter for <code>batch_metadata_v1.byte_offset</code>.
      */
     public Long getByteOffset() {
-        return (Long) get(3);
+        return (Long) get(4);
     }
 
     /**
      * Setter for <code>batch_metadata_v1.byte_size</code>.
      */
     public void setByteSize(Long value) {
-        set(4, value);
+        set(5, value);
     }
 
     /**
      * Getter for <code>batch_metadata_v1.byte_size</code>.
      */
     public Long getByteSize() {
-        return (Long) get(4);
+        return (Long) get(5);
     }
 
     /**
      * Setter for <code>batch_metadata_v1.base_offset</code>.
      */
     public void setBaseOffset(Long value) {
-        set(5, value);
+        set(6, value);
     }
 
     /**
      * Getter for <code>batch_metadata_v1.base_offset</code>.
      */
     public Long getBaseOffset() {
-        return (Long) get(5);
+        return (Long) get(6);
     }
 
     /**
      * Setter for <code>batch_metadata_v1.last_offset</code>.
      */
     public void setLastOffset(Long value) {
-        set(6, value);
+        set(7, value);
     }
 
     /**
      * Getter for <code>batch_metadata_v1.last_offset</code>.
      */
     public Long getLastOffset() {
-        return (Long) get(6);
+        return (Long) get(7);
     }
 
     /**
      * Setter for <code>batch_metadata_v1.log_append_timestamp</code>.
      */
     public void setLogAppendTimestamp(Long value) {
-        set(7, value);
+        set(8, value);
     }
 
     /**
      * Getter for <code>batch_metadata_v1.log_append_timestamp</code>.
      */
     public Long getLogAppendTimestamp() {
-        return (Long) get(7);
+        return (Long) get(8);
     }
 
     /**
      * Setter for <code>batch_metadata_v1.batch_max_timestamp</code>.
      */
     public void setBatchMaxTimestamp(Long value) {
-        set(8, value);
+        set(9, value);
     }
 
     /**
      * Getter for <code>batch_metadata_v1.batch_max_timestamp</code>.
      */
     public Long getBatchMaxTimestamp() {
-        return (Long) get(8);
+        return (Long) get(9);
     }
 
     /**
      * Setter for <code>batch_metadata_v1.timestamp_type</code>.
      */
     public void setTimestampType(TimestampType value) {
-        set(9, value);
+        set(10, value);
     }
 
     /**
      * Getter for <code>batch_metadata_v1.timestamp_type</code>.
      */
     public TimestampType getTimestampType() {
-        return (TimestampType) get(9);
-    }
-
-    /**
-     * Setter for <code>batch_metadata_v1.producer_id</code>.
-     */
-    public void setProducerId(Long value) {
-        set(10, value);
-    }
-
-    /**
-     * Getter for <code>batch_metadata_v1.producer_id</code>.
-     */
-    public Long getProducerId() {
-        return (Long) get(10);
-    }
-
-    /**
-     * Setter for <code>batch_metadata_v1.producer_epoch</code>.
-     */
-    public void setProducerEpoch(Short value) {
-        set(11, value);
-    }
-
-    /**
-     * Getter for <code>batch_metadata_v1.producer_epoch</code>.
-     */
-    public Short getProducerEpoch() {
-        return (Short) get(11);
-    }
-
-    /**
-     * Setter for <code>batch_metadata_v1.base_sequence</code>.
-     */
-    public void setBaseSequence(Integer value) {
-        set(12, value);
-    }
-
-    /**
-     * Getter for <code>batch_metadata_v1.base_sequence</code>.
-     */
-    public Integer getBaseSequence() {
-        return (Integer) get(12);
-    }
-
-    /**
-     * Setter for <code>batch_metadata_v1.last_sequence</code>.
-     */
-    public void setLastSequence(Integer value) {
-        set(13, value);
-    }
-
-    /**
-     * Getter for <code>batch_metadata_v1.last_sequence</code>.
-     */
-    public Integer getLastSequence() {
-        return (Integer) get(13);
+        return (TimestampType) get(10);
     }
 
     // -------------------------------------------------------------------------
@@ -238,9 +196,10 @@ public class BatchMetadataV1Record extends UDTRecordImpl<BatchMetadataV1Record> 
     /**
      * Create a detached, initialised BatchMetadataV1Record
      */
-    public BatchMetadataV1Record(Uuid topicId, String topicName, Integer partition, Long byteOffset, Long byteSize, Long baseOffset, Long lastOffset, Long logAppendTimestamp, Long batchMaxTimestamp, TimestampType timestampType, Long producerId, Short producerEpoch, Integer baseSequence, Integer lastSequence) {
+    public BatchMetadataV1Record(Short magic, Uuid topicId, String topicName, Integer partition, Long byteOffset, Long byteSize, Long baseOffset, Long lastOffset, Long logAppendTimestamp, Long batchMaxTimestamp, TimestampType timestampType) {
         super(BatchMetadataV1.BATCH_METADATA_V1);
 
+        setMagic(magic);
         setTopicId(topicId);
         setTopicName(topicName);
         setPartition(partition);
@@ -251,10 +210,6 @@ public class BatchMetadataV1Record extends UDTRecordImpl<BatchMetadataV1Record> 
         setLogAppendTimestamp(logAppendTimestamp);
         setBatchMaxTimestamp(batchMaxTimestamp);
         setTimestampType(timestampType);
-        setProducerId(producerId);
-        setProducerEpoch(producerEpoch);
-        setBaseSequence(baseSequence);
-        setLastSequence(lastSequence);
         resetChangedOnNotNull();
     }
 }

@@ -44,6 +44,11 @@ public class BatchMetadataV1Path<R extends Record, T> extends UDTPathTableFieldI
     private static final long serialVersionUID = 1L;
 
     /**
+     * The attribute <code>batch_metadata_v1.magic</code>.
+     */
+    public final UDTField<BatchMetadataV1Record, Short> MAGIC = Internal.createUDTPathField(DSL.name("magic"), Domains.MAGIC_T.getDataType().nullable(false), this, "", UDTField.class);
+
+    /**
      * The attribute <code>batch_metadata_v1.topic_id</code>.
      */
     public final UDTField<BatchMetadataV1Record, Uuid> TOPIC_ID = Internal.createUDTPathField(DSL.name("topic_id"), SQLDataType.UUID.nullable(false), this, "", UDTField.class, new UUIDtoUuidConverter());
@@ -92,26 +97,6 @@ public class BatchMetadataV1Path<R extends Record, T> extends UDTPathTableFieldI
      * The attribute <code>batch_metadata_v1.timestamp_type</code>.
      */
     public final UDTField<BatchMetadataV1Record, TimestampType> TIMESTAMP_TYPE = Internal.createUDTPathField(DSL.name("timestamp_type"), Domains.TIMESTAMP_TYPE_T.getDataType().nullable(false), this, "", UDTField.class, new ShortToTimestampTypeConverter());
-
-    /**
-     * The attribute <code>batch_metadata_v1.producer_id</code>.
-     */
-    public final UDTField<BatchMetadataV1Record, Long> PRODUCER_ID = Internal.createUDTPathField(DSL.name("producer_id"), Domains.PRODUCER_ID_T.getDataType().nullable(false), this, "", UDTField.class);
-
-    /**
-     * The attribute <code>batch_metadata_v1.producer_epoch</code>.
-     */
-    public final UDTField<BatchMetadataV1Record, Short> PRODUCER_EPOCH = Internal.createUDTPathField(DSL.name("producer_epoch"), Domains.PRODUCER_EPOCH_T.getDataType().nullable(false), this, "", UDTField.class);
-
-    /**
-     * The attribute <code>batch_metadata_v1.base_sequence</code>.
-     */
-    public final UDTField<BatchMetadataV1Record, Integer> BASE_SEQUENCE = Internal.createUDTPathField(DSL.name("base_sequence"), Domains.SEQUENCE_T.getDataType().nullable(false), this, "", UDTField.class);
-
-    /**
-     * The attribute <code>batch_metadata_v1.last_sequence</code>.
-     */
-    public final UDTField<BatchMetadataV1Record, Integer> LAST_SEQUENCE = Internal.createUDTPathField(DSL.name("last_sequence"), Domains.SEQUENCE_T.getDataType().nullable(false), this, "", UDTField.class);
 
     public BatchMetadataV1Path(Name name, DataType<T> type, RecordQualifier<R> qualifier, Comment comment, Binding<?, T> binding) {
         super(name, type, qualifier, BatchMetadataV1.BATCH_METADATA_V1, comment, binding);

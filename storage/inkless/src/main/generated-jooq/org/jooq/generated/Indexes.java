@@ -9,6 +9,7 @@ import javax.annotation.processing.Generated;
 import org.jooq.Index;
 import org.jooq.OrderField;
 import org.jooq.generated.tables.Batches;
+import org.jooq.generated.tables.Files;
 import org.jooq.impl.DSL;
 import org.jooq.impl.Internal;
 
@@ -32,5 +33,5 @@ public class Indexes {
     // -------------------------------------------------------------------------
 
     public static final Index BATCHES_BY_LAST_OFFSET_IDX = Internal.createIndex(DSL.name("batches_by_last_offset_idx"), Batches.BATCHES, new OrderField[] { Batches.BATCHES.TOPIC_ID, Batches.BATCHES.PARTITION, Batches.BATCHES.LAST_OFFSET }, false);
-    public static final Index BATCHES_BY_PRODUCER_IDX = Internal.createIndex(DSL.name("batches_by_producer_idx"), Batches.BATCHES, new OrderField[] { Batches.BATCHES.PRODUCER_ID, Batches.BATCHES.PRODUCER_EPOCH }, false);
+    public static final Index FILES_BY_STATE_ONLY_DELETING_IDX = Internal.createIndex(DSL.name("files_by_state_only_deleting_idx"), Files.FILES, new OrderField[] { Files.FILES.STATE }, false);
 }

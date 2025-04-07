@@ -16,6 +16,8 @@ import org.jooq.generated.udt.DeleteRecordsResponseV1;
 import org.jooq.generated.udt.FileMergeWorkItemResponseV1;
 import org.jooq.generated.udt.FileMergeWorkItemResponseV1Batch;
 import org.jooq.generated.udt.FileMergeWorkItemResponseV1File;
+import org.jooq.generated.udt.ListOffsetsRequestV1;
+import org.jooq.generated.udt.ListOffsetsResponseV1;
 import org.jooq.generated.udt.ReleaseFileMergeWorkItemV1Response;
 
 
@@ -82,6 +84,16 @@ public class UDTs {
      * The type <code>file_merge_work_item_response_v1_file</code>
      */
     public static final FileMergeWorkItemResponseV1File FILE_MERGE_WORK_ITEM_RESPONSE_V1_FILE = org.jooq.generated.udt.FileMergeWorkItemResponseV1File.FILE_MERGE_WORK_ITEM_RESPONSE_V1_FILE;
+
+    /**
+     * The type <code>list_offsets_request_v1</code>
+     */
+    public static final ListOffsetsRequestV1 LIST_OFFSETS_REQUEST_V1 = org.jooq.generated.udt.ListOffsetsRequestV1.LIST_OFFSETS_REQUEST_V1;
+
+    /**
+     * The type <code>list_offsets_response_v1</code>
+     */
+    public static final ListOffsetsResponseV1 LIST_OFFSETS_RESPONSE_V1 = org.jooq.generated.udt.ListOffsetsResponseV1.LIST_OFFSETS_RESPONSE_V1;
 
     /**
      * The type <code>release_file_merge_work_item_v1_response</code>

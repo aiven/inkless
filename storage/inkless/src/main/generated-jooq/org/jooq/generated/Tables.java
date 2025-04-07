@@ -17,14 +17,17 @@ import org.jooq.generated.tables.DeleteRecordsV1;
 import org.jooq.generated.tables.FileMergeWorkItemFiles;
 import org.jooq.generated.tables.FileMergeWorkItems;
 import org.jooq.generated.tables.Files;
-import org.jooq.generated.tables.FilesToDelete;
 import org.jooq.generated.tables.GetFileMergeWorkItemV1;
+import org.jooq.generated.tables.ListOffsetsV1;
 import org.jooq.generated.tables.Logs;
+import org.jooq.generated.tables.ProducerState;
 import org.jooq.generated.tables.records.CommitFileV1Record;
 import org.jooq.generated.tables.records.DeleteRecordsV1Record;
 import org.jooq.generated.tables.records.GetFileMergeWorkItemV1Record;
+import org.jooq.generated.tables.records.ListOffsetsV1Record;
 import org.jooq.generated.udt.records.CommitBatchRequestV1Record;
 import org.jooq.generated.udt.records.DeleteRecordsRequestV1Record;
+import org.jooq.generated.udt.records.ListOffsetsRequestV1Record;
 import org.jooq.types.YearToSecond;
 
 
@@ -58,6 +61,7 @@ public class Tables {
     public static Result<CommitFileV1Record> COMMIT_FILE_V1(
           Configuration configuration
         , String objectKey
+        , Short format
         , Integer uploaderBrokerId
         , Long fileSize
         , Instant now
@@ -65,6 +69,7 @@ public class Tables {
     ) {
         return configuration.dsl().selectFrom(org.jooq.generated.tables.CommitFileV1.COMMIT_FILE_V1.call(
               objectKey
+            , format
             , uploaderBrokerId
             , fileSize
             , now
@@ -77,6 +82,7 @@ public class Tables {
      */
     public static CommitFileV1 COMMIT_FILE_V1(
           String objectKey
+        , Short format
         , Integer uploaderBrokerId
         , Long fileSize
         , Instant now
@@ -84,6 +90,7 @@ public class Tables {
     ) {
         return org.jooq.generated.tables.CommitFileV1.COMMIT_FILE_V1.call(
             objectKey,
+            format,
             uploaderBrokerId,
             fileSize,
             now,
@@ -96,6 +103,7 @@ public class Tables {
      */
     public static CommitFileV1 COMMIT_FILE_V1(
           Field<String> objectKey
+        , Field<Short> format
         , Field<Integer> uploaderBrokerId
         , Field<Long> fileSize
         , Field<Instant> now
@@ -103,6 +111,7 @@ public class Tables {
     ) {
         return org.jooq.generated.tables.CommitFileV1.COMMIT_FILE_V1.call(
             objectKey,
+            format,
             uploaderBrokerId,
             fileSize,
             now,
@@ -171,11 +180,6 @@ public class Tables {
     public static final Files FILES = Files.FILES;
 
     /**
-     * The table <code>files_to_delete</code>.
-     */
-    public static final FilesToDelete FILES_TO_DELETE = FilesToDelete.FILES_TO_DELETE;
-
-    /**
      * The table <code>get_file_merge_work_item_v1</code>.
      */
     public static final GetFileMergeWorkItemV1 GET_FILE_MERGE_WORK_ITEM_V1 = GetFileMergeWorkItemV1.GET_FILE_MERGE_WORK_ITEM_V1;
@@ -227,7 +231,51 @@ public class Tables {
     }
 
     /**
+     * The table <code>list_offsets_v1</code>.
+     */
+    public static final ListOffsetsV1 LIST_OFFSETS_V1 = ListOffsetsV1.LIST_OFFSETS_V1;
+
+    /**
+     * Call <code>list_offsets_v1</code>.
+     */
+    public static Result<ListOffsetsV1Record> LIST_OFFSETS_V1(
+          Configuration configuration
+        , ListOffsetsRequestV1Record[] requests
+    ) {
+        return configuration.dsl().selectFrom(org.jooq.generated.tables.ListOffsetsV1.LIST_OFFSETS_V1.call(
+              requests
+        )).fetch();
+    }
+
+    /**
+     * Get <code>list_offsets_v1</code> as a table.
+     */
+    public static ListOffsetsV1 LIST_OFFSETS_V1(
+          ListOffsetsRequestV1Record[] requests
+    ) {
+        return org.jooq.generated.tables.ListOffsetsV1.LIST_OFFSETS_V1.call(
+            requests
+        );
+    }
+
+    /**
+     * Get <code>list_offsets_v1</code> as a table.
+     */
+    public static ListOffsetsV1 LIST_OFFSETS_V1(
+          Field<ListOffsetsRequestV1Record[]> requests
+    ) {
+        return org.jooq.generated.tables.ListOffsetsV1.LIST_OFFSETS_V1.call(
+            requests
+        );
+    }
+
+    /**
      * The table <code>logs</code>.
      */
     public static final Logs LOGS = Logs.LOGS;
+
+    /**
+     * The table <code>producer_state</code>.
+     */
+    public static final ProducerState PRODUCER_STATE = ProducerState.PRODUCER_STATE;
 }

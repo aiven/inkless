@@ -55,45 +55,59 @@ public class FileMergeWorkItemResponseV1FileRecord extends UDTRecordImpl<FileMer
     }
 
     /**
+     * Setter for <code>file_merge_work_item_response_v1_file.format</code>.
+     */
+    public void setFormat(Short value) {
+        set(2, value);
+    }
+
+    /**
+     * Getter for <code>file_merge_work_item_response_v1_file.format</code>.
+     */
+    public Short getFormat() {
+        return (Short) get(2);
+    }
+
+    /**
      * Setter for <code>file_merge_work_item_response_v1_file.size</code>.
      */
     public void setSize(Long value) {
-        set(2, value);
+        set(3, value);
     }
 
     /**
      * Getter for <code>file_merge_work_item_response_v1_file.size</code>.
      */
     public Long getSize() {
-        return (Long) get(2);
+        return (Long) get(3);
     }
 
     /**
      * Setter for <code>file_merge_work_item_response_v1_file.used_size</code>.
      */
     public void setUsedSize(Long value) {
-        set(3, value);
+        set(4, value);
     }
 
     /**
      * Getter for <code>file_merge_work_item_response_v1_file.used_size</code>.
      */
     public Long getUsedSize() {
-        return (Long) get(3);
+        return (Long) get(4);
     }
 
     /**
      * Setter for <code>file_merge_work_item_response_v1_file.batches</code>.
      */
     public void setBatches(FileMergeWorkItemResponseV1BatchRecord[] value) {
-        set(4, value);
+        set(5, value);
     }
 
     /**
      * Getter for <code>file_merge_work_item_response_v1_file.batches</code>.
      */
     public FileMergeWorkItemResponseV1BatchRecord[] getBatches() {
-        return (FileMergeWorkItemResponseV1BatchRecord[]) get(4);
+        return (FileMergeWorkItemResponseV1BatchRecord[]) get(5);
     }
 
     // -------------------------------------------------------------------------
@@ -110,11 +124,12 @@ public class FileMergeWorkItemResponseV1FileRecord extends UDTRecordImpl<FileMer
     /**
      * Create a detached, initialised FileMergeWorkItemResponseV1FileRecord
      */
-    public FileMergeWorkItemResponseV1FileRecord(Long fileId, String objectKey, Long size, Long usedSize, FileMergeWorkItemResponseV1BatchRecord[] batches) {
+    public FileMergeWorkItemResponseV1FileRecord(Long fileId, String objectKey, Short format, Long size, Long usedSize, FileMergeWorkItemResponseV1BatchRecord[] batches) {
         super(FileMergeWorkItemResponseV1File.FILE_MERGE_WORK_ITEM_RESPONSE_V1_FILE);
 
         setFileId(fileId);
         setObjectKey(objectKey);
+        setFormat(format);
         setSize(size);
         setUsedSize(usedSize);
         setBatches(batches);

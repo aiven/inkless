@@ -71,6 +71,7 @@ public class CommitFileV1 extends TableImpl<CommitFileV1Record> {
     private CommitFileV1(Name alias, Table<CommitFileV1Record> aliased) {
         this(alias, aliased, new Field[] {
             DSL.val(null, Domains.OBJECT_KEY_T.getDataType()),
+            DSL.val(null, Domains.FORMAT_T.getDataType()),
             DSL.val(null, Domains.BROKER_ID_T.getDataType()),
             DSL.val(null, Domains.BYTE_SIZE_T.getDataType()),
             DSL.val(null, SQLDataType.TIMESTAMPWITHTIMEZONE.asConvertedDataType(new OffsetDateTimeToInstantConverter())),
@@ -156,6 +157,7 @@ public class CommitFileV1 extends TableImpl<CommitFileV1Record> {
      */
     public CommitFileV1 call(
           String objectKey
+        , Short format
         , Integer uploaderBrokerId
         , Long fileSize
         , Instant now
@@ -163,6 +165,7 @@ public class CommitFileV1 extends TableImpl<CommitFileV1Record> {
     ) {
         CommitFileV1 result = new CommitFileV1(DSL.name("commit_file_v1"), null, new Field[] {
             DSL.val(objectKey, Domains.OBJECT_KEY_T.getDataType()),
+            DSL.val(format, Domains.FORMAT_T.getDataType()),
             DSL.val(uploaderBrokerId, Domains.BROKER_ID_T.getDataType()),
             DSL.val(fileSize, Domains.BYTE_SIZE_T.getDataType()),
             DSL.val(now, SQLDataType.TIMESTAMPWITHTIMEZONE.asConvertedDataType(new OffsetDateTimeToInstantConverter())),
@@ -177,6 +180,7 @@ public class CommitFileV1 extends TableImpl<CommitFileV1Record> {
      */
     public CommitFileV1 call(
           Field<String> objectKey
+        , Field<Short> format
         , Field<Integer> uploaderBrokerId
         , Field<Long> fileSize
         , Field<Instant> now
@@ -184,6 +188,7 @@ public class CommitFileV1 extends TableImpl<CommitFileV1Record> {
     ) {
         CommitFileV1 result = new CommitFileV1(DSL.name("commit_file_v1"), null, new Field[] {
             objectKey,
+            format,
             uploaderBrokerId,
             fileSize,
             now,
