@@ -112,3 +112,4 @@ org.apache.kafka.clients.consumer.ShareConsumerTest:
 - testWakeupWithFetchedRecordsAvailable
 org.apache.kafka.server.quota.CustomQuotaCallbackTest:
 - testCustomQuotaCallbackWithControllerServer
+- testMonitorableCustomQuotaCallbackWithCombinedMode
