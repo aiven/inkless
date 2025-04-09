@@ -7,8 +7,6 @@ integration.kafka.api.PlaintextConsumerCallbackTest:
 - testConsumerRebalanceListenerBeginningOffsetsOnPartitionsRevoked
 - testGetPositionOfNewlyAssignedPartitionOnPartitionsAssignedCallback
 - testSeekPositionAndPauseNewlyAssignedPartitionOnPartitionsAssignedCallback
-integration.kafka.server.DelayedFutureTest:
-- testDelayedFuture
 kafka.KafkaConfigTest:
 - testBrokerRequiredProperties
 - testBrokerRoleNodeIdValidation

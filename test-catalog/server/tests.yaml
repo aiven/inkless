@@ -129,6 +129,8 @@ org.apache.kafka.server.metrics.ClientMetricsReceiverPluginTest:
 org.apache.kafka.server.metrics.LinuxIoMetricsCollectorTest:
 - testReadProcFile
 - testUnableToReadNonexistentProcFile
+org.apache.kafka.server.purgatory.DelayedFutureTest:
+- testDelayedFuture
 org.apache.kafka.server.quota.ThrottledChannelTest:
 - testThrottledChannelDelay
 org.apache.kafka.server.share.CachedSharePartitionTest:
