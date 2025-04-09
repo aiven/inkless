@@ -1820,6 +1820,7 @@ org.apache.kafka.streams.processor.internals.GlobalStateManagerImplTest:
 - shouldFlushStateStores
 - shouldInitializeStateStores
 - shouldListenForRestoreEvents
+- shouldListenForRestoreEventsWhenReprocessing
 - shouldLogWarningMessageWhenIOExceptionInCheckPoint
 - shouldNotCloseStoresIfCloseAlreadyCalled
 - shouldNotConvertValuesIfInnerStoreDoesNotImplementTimestampedBytesStore

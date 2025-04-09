@@ -891,6 +891,7 @@ org.apache.kafka.clients.consumer.KafkaShareConsumerTest:
 org.apache.kafka.clients.consumer.MockConsumerTest:
 - endOffsetsShouldBeIdempotent
 - shouldNotClearRecordsForPausedPartitions
+- shouldReturnMaxPollRecords
 - testConsumerRecordsIsEmptyWhenReturningNoRecords
 - testDurationBasedOffsetReset
 - testRe2JPatternSubscription
