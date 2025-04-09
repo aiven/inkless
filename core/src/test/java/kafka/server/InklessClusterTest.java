@@ -182,6 +182,7 @@ public class InklessClusterTest {
     private static void consume(TimestampType timestampType, Map<String, Object> clientConfigs, String topicName, long now, int numRecords) {
         final Map<String, Object> consumerConfigs = new HashMap<>(clientConfigs);
         // by default is latest and nothing would get consumed.
+        consumerConfigs.put(ConsumerConfig.GROUP_ID_CONFIG, "test-group");
         consumerConfigs.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, AutoOffsetResetStrategy.EARLIEST.name());
         int recordsConsumed = 0;
         try (Consumer<byte[], byte[]> consumer = new KafkaConsumer<>(consumerConfigs)) {
