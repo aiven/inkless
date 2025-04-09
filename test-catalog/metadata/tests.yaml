@@ -65,6 +65,8 @@ org.apache.kafka.controller.ClientQuotaControlManagerTest:
 org.apache.kafka.controller.ClusterControlManagerTest:
 - testBrokerContactTimesAreUpdatedOnClusterControlActivation
 - testDefaultDir
+- testDuplicateBrokerRegistrationWithActiveOldBroker
+- testDuplicateBrokerRegistrationWithInactiveBroker
 - testHasOnlineDir
 - testPlaceReplicas
 - testReRegistrationAndBrokerEpoch
