@@ -805,3 +805,8 @@ org.apache.kafka.tools.reassign.ReassignPartitionsUnitTest:
 - testPartitionReassignStatesToString
 - testPropagateInvalidJsonError
 - testReplicaMoveStatesToString
+org.apache.kafka.tools.streams.StreamsGroupCommandTest:
+- testGroupStatesFromString
+- testListStreamsGroups
+- testListStreamsGroupsWithStates
+- testListWithUnrecognizedOption
