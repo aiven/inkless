@@ -259,6 +259,12 @@ org.apache.kafka.clients.admin.KafkaAdminClientTest:
 - testDeleteRecords
 - testDeleteRecordsMultipleSends
 - testDeleteRecordsTopicAuthorizationError
+- testDeleteShareGroupOffsets
+- testDeleteShareGroupOffsetsEmpty
+- testDeleteShareGroupOffsetsOptionsWithBatchedApi
+- testDeleteShareGroupOffsetsWithErrorInGroup
+- testDeleteShareGroupOffsetsWithErrorInOnePartition
+- testDeleteShareGroupOffsetsWithPartitionNotPresentInResult
 - testDeleteStreamsGroupOffsets
 - testDeleteStreamsGroupOffsetsFindCoordinatorNonRetriableErrors
 - testDeleteStreamsGroupOffsetsFindCoordinatorRetriableErrors
