@@ -8,6 +8,7 @@ org.apache.kafka.coordinator.group.GroupConfigTest:
 - testInvalidConfigName
 - testInvalidProps
 - testValidShareAutoOffsetResetValues
+- testValidShareIsolationLevelValues
 org.apache.kafka.coordinator.group.GroupCoordinatorConfigTest:
 - testConfigs
 - testConsumerGroupAssignorFullClassNames

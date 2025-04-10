@@ -3185,6 +3185,7 @@ kafka.server.share.SharePartitionTest:
 - testAcquireWithEmptyFetchRecords
 - testAcquireWithMaxFetchRecords
 - testAcquireWithMultipleBatchesAndMaxFetchRecords
+- testAcquireWithReadCommittedIsolationLevel
 - testAcquireWithWriteShareGroupStateDelay
 - testAcquisitionLockAfterDifferentAcknowledges
 - testAcquisitionLockForAcquiringMultipleRecords
@@ -3214,6 +3215,10 @@ kafka.server.share.SharePartitionTest:
 - testCanAcquireRecordsWithCachedDataAndLimitNotReached
 - testCanAcquireRecordsWithCachedDataAndLimitReached
 - testCanAcquireRecordsWithEmptyCache
+- testContainsAbortMarker
+- testFetchAbortedTransactionRecordBatchesForAbortedAndCommittedTransactions
+- testFetchAbortedTransactionRecordBatchesForOnlyAbortedTransactions
+- testFilterRecordBatchesFromAcquiredRecords
 - testFindLastOffsetAcknowledgedWhenGapAtBeginning
 - testLsoMovementAheadOfEndOffset
 - testLsoMovementAheadOfEndOffsetPostAcknowledgment
