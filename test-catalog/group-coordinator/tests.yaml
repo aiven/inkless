@@ -445,7 +445,8 @@ org.apache.kafka.coordinator.group.GroupMetadataManagerTest:
 - testSessionTimeoutExpirationForShareMember
 - testSessionTimeoutExpirationStaticMember
 - testSessionTimeoutLifecycle
-- testShareGroupDelete
+- testShareGroupDeleteRequest
+- testShareGroupDeleteTombstones
 - testShareGroupDescribeNoErrors
 - testShareGroupDescribeOnConsumerGroup
 - testShareGroupDescribeOnStreamsGroup
@@ -465,7 +466,6 @@ org.apache.kafka.coordinator.group.GroupMetadataManagerTest:
 - testShareGroupStates
 - testShareGroupUnknownGroupId
 - testShareGroupUnknownMemberIdJoins
-- testSharePartitionDeleteRequest
 - testShouldThrowFencedInstanceIdExceptionWhenStaticMemberWithDifferentMemberIdJoins
 - testShouldThrowFencedInstanceIdExceptionWhenStaticMemberWithDifferentMemberIdLeaves
 - testShouldThrowUnknownMemberIdExceptionWhenUnknownStaticMemberLeaves
