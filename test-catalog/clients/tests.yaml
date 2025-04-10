@@ -2413,13 +2413,6 @@ org.apache.kafka.clients.consumer.internals.StreamsRebalanceDataTest:
 - testTaskIdCompareTo
 - testTaskIdEqualsAndHashCode
 - topicInfoShouldNotAcceptNulls
-org.apache.kafka.clients.consumer.internals.StreamsRebalanceEventsProcessorTest:
-- shouldInvokeOnAllTasksLostCallback
-- shouldInvokeOnTasksAssignedCallback
-- shouldInvokeOnTasksRevokedCallback
-- shouldReThrowErrorFromOnAllTasksLostCallbackAndPassErrorToBackground
-- shouldReThrowErrorFromOnTasksAssignedCallbackAndPassErrorToBackground
-- shouldReThrowErrorFromOnTasksRevokedCallbackAndPassErrorToBackground
 org.apache.kafka.clients.consumer.internals.SubscriptionStateTest:
 - cantAssignPartitionForUnmatchedPattern
 - cantAssignPartitionForUnsubscribedTopics
