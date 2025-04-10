@@ -4252,6 +4252,7 @@ org.apache.kafka.common.requests.RequestResponseTest:
 - testErrorCountsIncludesNone
 - testFetchRequestIsolationLevel
 - testFetchRequestWithMetadata
+- testFetchResponseShouldNotHaveNullRecords
 - testFetchResponseV4
 - testInitProducerIdRequestVersions
 - testInvalidApiVersionsRequest
@@ -4268,6 +4269,7 @@ org.apache.kafka.common.requests.RequestResponseTest:
 - testSerializeWithHeader
 - testSerializeWithInconsistentHeaderApiKey
 - testSerializeWithInconsistentHeaderVersion
+- testShareFetchResponseShouldNotHaveNullRecords
 - testUnregisterBrokerResponseWithUnknownServerError
 - testValidApiVersionsRequest
 - testValidTaggedFieldsWithSaslAuthenticateRequest
