@@ -665,8 +665,6 @@ kafka.api.TransactionsTest:
 - testReadCommittedConsumerShouldNotSeeUndecidedData
 - testSendOffsetsToTransactionTimeout
 - testSendOffsetsWithGroupMetadata
-kafka.api.TransactionsWithMaxInFlightOneTest:
-- testTransactionalProducerSingleBrokerMaxInFlightOne
 kafka.api.UserClientIdQuotaTest:
 - testProducerConsumerOverrideLowerQuota
 - testProducerConsumerOverrideUnthrottled

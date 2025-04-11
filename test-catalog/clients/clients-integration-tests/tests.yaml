@@ -12,6 +12,8 @@ org.apache.kafka.clients.TransactionsExpirationTest:
 - testFatalErrorAfterInvalidProducerIdMappingWithTV2
 - testTransactionAfterProducerIdExpiresWithTV1
 - testTransactionAfterProducerIdExpiresWithTV2
+org.apache.kafka.clients.TransactionsWithMaxInFlightOneTest:
+- testTransactionalProducerSingleBrokerMaxInFlightOne
 org.apache.kafka.clients.admin.AdminFenceProducersTest:
 - testFenceAfterProducerCommit
 - testFenceBeforeProducerCommit
