@@ -602,6 +602,7 @@ org.apache.kafka.tools.consumer.ConsoleShareConsumerTest:
 - shouldLimitReadsToMaxMessageLimit
 - shouldStopWhenOutputCheckErrorFails
 - shouldThrowTimeoutExceptionWhenTimeoutIsReached
+- shouldUpgradeDeliveryCount
 - testRejectMessageOnError
 org.apache.kafka.tools.consumer.DefaultMessageFormatterTest:
 - testDefaultMessageFormatter
