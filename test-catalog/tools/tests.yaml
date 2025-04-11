@@ -602,6 +602,8 @@ org.apache.kafka.tools.consumer.NoOpMessageFormatterTest:
 - testNoOpMessageFormatter
 org.apache.kafka.tools.consumer.OffsetMessageFormatterTest:
 - testMessageFormatter
+org.apache.kafka.tools.consumer.ShareGroupMessageFormatterTest:
+- testMessageFormatter
 org.apache.kafka.tools.consumer.TransactionLogMessageFormatterTest:
 - testMessageFormatter
 org.apache.kafka.tools.consumer.group.AuthorizerIntegrationTest:
