@@ -58,7 +58,9 @@ org.apache.kafka.tools.ClusterToolTest:
 org.apache.kafka.tools.ConfigCommandIntegrationTest:
 - testAddConfigKeyValuesUsingCommand
 - testAlterReadOnlyConfigInKRaftThenShouldFail
+- testAlterStreamsGroupNumOfStandbyReplicas
 - testClientMetricsConfigUpdate
+- testDescribeStreamsGroupConfigs
 - testDynamicBrokerConfigUpdateUsingKraft
 - testExitWithNonZeroStatusOnUpdatingUnallowedConfig
 - testGroupConfigUpdateUsingKraft
@@ -266,19 +268,26 @@ org.apache.kafka.tools.GroupsCommandTest:
 - testListGroupsProtocolAndTypeFilterNoMatch
 - testListGroupsProtocolFilter
 - testListGroupsShareFilter
+- testListGroupsStreamsFilter
 - testListGroupsTypeFilter
 - testOptionsListConsumerAndProtocolFilterFails
 - testOptionsListConsumerAndShareFilterFails
+- testOptionsListConsumerAndStreamsFilterFails
 - testOptionsListConsumerAndTypeFilterFails
 - testOptionsListConsumerFilterSucceeds
 - testOptionsListInvalidTypeFilterFails
 - testOptionsListProtocolAndTypeFiltersSucceeds
 - testOptionsListProtocolFilterSucceeds
 - testOptionsListShareAndProtocolFilterFails
+- testOptionsListShareAndStreamsFilterFails
 - testOptionsListShareAndTypeFilterFails
 - testOptionsListShareFilterSucceeds
+- testOptionsListStreamsAndProtocolFilterFails
+- testOptionsListStreamsAndTypeFilterFails
+- testOptionsListStreamsFilterSucceeds
 - testOptionsListSucceeds
 - testOptionsListTypeFilterSucceeds
+- testOptionsListTypeStreamsFilterSucceeds
 - testOptionsNoActionFails
 org.apache.kafka.tools.JmxToolTest:
 - allMetrics
