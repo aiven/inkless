@@ -103,6 +103,10 @@ org.apache.kafka.server.ClientMetricsManagerTest:
 - testUpdateSubscriptionWithPropertiesDeletion
 org.apache.kafka.server.LogManagerIntegrationTest:
 - testRestartBrokerNoErrorIfMissingPartitionMetadata
+org.apache.kafka.server.config.DelegationTokenManagerConfigsTest:
+- testDefaults
+- testInvalidProperty
+- testOverride
 org.apache.kafka.server.metrics.BrokerServerMetricsTest:
 - testIgnoredStaticVoters
 - testLastAppliedRecordOffset
