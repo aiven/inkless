@@ -56,6 +56,7 @@ kafka.admin.RemoteTopicCrudTest:
 - testEnableRemoteLogWhenSystemRemoteStorageIsDisabled
 - testTopicDeletion
 - testUpdateTopicConfigWithDisablingRemoteStorage
+- testUpdateTopicConfigWithDisablingRemoteStorageWithDeleteOnDisable
 - testUpdateTopicConfigWithInheritedLocalRetentionSize
 - testUpdateTopicConfigWithInheritedLocalRetentionTime
 - testUpdateTopicConfigWithValidRetentionSizeTest
