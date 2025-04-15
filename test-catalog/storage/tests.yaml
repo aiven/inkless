@@ -342,6 +342,30 @@ org.apache.kafka.storage.internals.log.ProducerStateManagerTest:
 - testTxnFirstOffsetMetadataCached
 - testVerificationStateEntryExpiration
 - updateProducerTransactionState
+org.apache.kafka.storage.internals.log.RemoteIndexCacheTest:
+- testCacheEntryExpiry
+- testCacheEntryIsDeletedOnRemoval
+- testCleanerThreadShutdown
+- testClearCacheAndIndexFilesWhenResizeCache
+- testClose
+- testCloseIsIdempotent
+- testConcurrentCacheDeletedFileExists
+- testConcurrentReadWriteAccessForCache
+- testConcurrentRemoveReadForCache
+- testCorrectnessForCacheAndIndexFilesWhenResizeCache
+- testCorruptCacheIndexFileExistsButNotInCache
+- testFetchIndexForMissingTransactionIndex
+- testFetchIndexFromRemoteStorage
+- testGetIndexAfterCacheClose
+- testIndexFileAlreadyExistOnDiskButNotInCache
+- testIndexFileNameAndLocationOnDisk
+- testMultipleIndexEntriesExecutionInCorruptException
+- testPositionForNonExistingIndexFromRemoteStorage
+- testRSMReturnCorruptedIndexFile
+- testReloadCacheAfterClose
+- testRemoveItem
+- testRemoveMultipleItems
+- testRemoveNonExistentItem
 org.apache.kafka.storage.internals.log.TimeIndexTest:
 - testAppend
 - testEntry

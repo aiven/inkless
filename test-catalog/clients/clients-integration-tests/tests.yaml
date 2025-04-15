@@ -117,6 +117,23 @@ org.apache.kafka.clients.consumer.ShareConsumerTest:
 - testSubscriptionAndPollMultiple
 - testSubscriptionFollowedByTopicCreation
 - testWakeupWithFetchedRecordsAvailable
+org.apache.kafka.clients.producer.ProducerCompressionTest:
+- testCompression
+org.apache.kafka.clients.producer.ProducerFailureHandlingTest:
+- testCannotSendToInternalTopic
+- testInvalidPartition
+- testNonExistentTopic
+- testNotEnoughReplicasAfterBrokerShutdown
+- testPartitionTooLargeForReplicationWithAckAll
+- testResponseTooLargeForReplicationWithAckAll
+- testSendAfterClosed
+- testTooLargeRecordWithAckOne
+- testTooLargeRecordWithAckZero
+- testWrongBrokerList
+org.apache.kafka.clients.producer.ProducerIdExpirationTest:
+- testDynamicProducerIdExpirationMs
+- testProducerIdExpirationWithNoTransactions
+- testTransactionAfterTransactionIdExpiresButProducerIdRemains
 org.apache.kafka.server.quota.CustomQuotaCallbackTest:
 - testCustomQuotaCallbackWithControllerServer
 - testMonitorableCustomQuotaCallbackWithCombinedMode

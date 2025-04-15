@@ -487,21 +487,6 @@ kafka.api.PlaintextProducerSendTest:
 - testValidBeforeAndAfterTimestampsAtThreshold
 - testValidBeforeAndAfterTimestampsWithinThreshold
 - testWrongSerializer
-kafka.api.ProducerFailureHandlingTest:
-- testCannotSendToInternalTopic
-- testInvalidPartition
-- testNonExistentTopic
-- testNotEnoughReplicasAfterBrokerShutdown
-- testPartitionTooLargeForReplicationWithAckAll
-- testResponseTooLargeForReplicationWithAckAll
-- testSendAfterClosed
-- testTooLargeRecordWithAckOne
-- testTooLargeRecordWithAckZero
-- testWrongBrokerList
-kafka.api.ProducerIdExpirationTest:
-- testDynamicProducerIdExpirationMs
-- testProducerIdExpirationWithNoTransactions
-- testTransactionAfterTransactionIdExpiresButProducerIdRemains
 kafka.api.ProducerSendWhileDeletionTest:
 - testSendWithTopicDeletionMidWay
 kafka.api.SaslClientsWithInvalidCredentialsTest:
@@ -678,8 +663,6 @@ kafka.api.UserQuotaTest:
 - testQuotaOverrideDelete
 - testThrottledProducerConsumer
 - testThrottledRequest
-kafka.api.test.ProducerCompressionTest:
-- testCompression
 kafka.cluster.AssignmentStateTest:
 - testPartitionAssignmentStatus
 kafka.cluster.PartitionLockTest:
@@ -1387,31 +1370,6 @@ kafka.log.UnifiedLogTest:
 - testWriteLeaderEpochCheckpointAfterDirectoryRename
 - testZombieCoordinatorFenced
 - testZombieCoordinatorFencedEmptyTransaction
-kafka.log.remote.RemoteIndexCacheTest:
-- testCacheEntryExpiry
-- testCacheEntryIsDeletedOnRemoval
-- testCleanerThreadShutdown
-- testClearCacheAndIndexFilesWhenResizeCache
-- testClose
-- testCloseIsIdempotent
-- testConcurrentCacheDeletedFileExists
-- testConcurrentReadWriteAccessForCache
-- testConcurrentRemoveReadForCache
-- testCorrectnessForCacheAndIndexFilesWhenResizeCache
-- testCorruptCacheIndexFileExistsButNotInCache
-- testDeleteInvalidIndexFilesOnInit
-- testFetchIndexForMissingTransactionIndex
-- testFetchIndexFromRemoteStorage
-- testGetIndexAfterCacheClose
-- testIndexFileAlreadyExistOnDiskButNotInCache
-- testIndexFileNameAndLocationOnDisk
-- testMultipleIndexEntriesExecutionInCorruptException
-- testPositionForNonExistingIndexFromRemoteStorage
-- testRSMReturnCorruptedIndexFile
-- testReloadCacheAfterClose
-- testRemoveItem
-- testRemoveMultipleItems
-- testRemoveNonExistentItem
 kafka.log.remote.RemoteLogManagerTest:
 - testBuildFilteredLeaderEpochMap
 - testCandidateLogSegmentsSkipsActiveSegment
