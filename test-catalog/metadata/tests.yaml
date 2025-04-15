@@ -753,6 +753,7 @@ org.apache.kafka.metadata.authorizer.StandardAuthorizerTest:
 - testAllowEveryoneIfNoAclFoundConfigEnabled
 - testAuthorizationPriorToCompleteInitialLoad
 - testAuthorizationWithManyAcls
+- testAuthorizerMetrics
 - testCompleteInitialLoad
 - testCompleteInitialLoadWithException
 - testConfigure

@@ -13,6 +13,8 @@ org.apache.kafka.network.SocketServerConfigsTest:
 - testListenerListToEndPointsWithOneEndpoint
 - testListenerListToEndPointsWithUnderscores
 - testListenerListToEndPointsWithWildcard
+org.apache.kafka.security.authorizer.AuthorizerUtilsTest:
+- testCreateAuthorizer
 org.apache.kafka.server.AssignmentTest:
 - testAssignmentForNonExistentPartitionIsNotValid
 - testAssignmentForNonExistentTopicIsNotValid
@@ -103,6 +105,8 @@ org.apache.kafka.server.ClientMetricsManagerTest:
 - testUpdateSubscriptionWithPropertiesDeletion
 org.apache.kafka.server.LogManagerIntegrationTest:
 - testRestartBrokerNoErrorIfMissingPartitionMetadata
+org.apache.kafka.server.MonitorablePluginsIntegrationTest:
+- testMonitorableServerPlugins
 org.apache.kafka.server.config.DelegationTokenManagerConfigsTest:
 - testDefaults
 - testInvalidProperty
