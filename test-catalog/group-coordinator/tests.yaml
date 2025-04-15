@@ -452,7 +452,8 @@ org.apache.kafka.coordinator.group.GroupMetadataManagerTest:
 - testSessionTimeoutExpirationForShareMember
 - testSessionTimeoutExpirationStaticMember
 - testSessionTimeoutLifecycle
-- testShareGroupDeleteRequest
+- testShareGroupDeleteRequestNoDeletingTopics
+- testShareGroupDeleteRequestWithAlreadyDeletingTopics
 - testShareGroupDeleteTombstones
 - testShareGroupDescribeNoErrors
 - testShareGroupDescribeOnConsumerGroup
@@ -466,6 +467,7 @@ org.apache.kafka.coordinator.group.GroupMetadataManagerTest:
 - testShareGroupHeartbeatRequestValidation
 - testShareGroupInitializeEmptyMap
 - testShareGroupInitializeSuccess
+- testShareGroupInitializingClearsCommonDeleting
 - testShareGroupLeavingMemberBumpsGroupEpoch
 - testShareGroupMemberIdGeneration
 - testShareGroupMemberJoinsEmptyGroupWithAssignments
