@@ -1782,11 +1782,6 @@ kafka.server.AlterUserScramCredentialsRequestTest:
 - testAlterUnknownMechanism
 - testDeleteSomethingThatDoesNotExist
 - testMetadataVersionTooLow
-kafka.server.ApiVersionManagerTest:
-- testApiScope
-- testControllerApiIntersection
-- testDisabledApis
-- testEnvelopeDisabledForKRaftBroker
 kafka.server.ApiVersionsRequestTest:
 - testApiVersionsRequest
 - testApiVersionsRequestIncludesUnreleasedApis
@@ -2007,6 +2002,11 @@ kafka.server.CreateTopicsRequestTest:
 kafka.server.CreateTopicsRequestWithPolicyTest:
 - testErrorCreateTopicsRequests
 - testValidCreateTopicsRequests
+kafka.server.DefaultApiVersionManagerTest:
+- testApiScope
+- testControllerApiIntersection
+- testDisabledApis
+- testEnvelopeDisabledForKRaftBroker
 kafka.server.DelayedFetchTest:
 - testDelayedFetchWithMessageOnlyHighWatermark
 - testDivergingEpoch
