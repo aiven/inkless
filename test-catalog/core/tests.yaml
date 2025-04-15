@@ -2345,6 +2345,8 @@ kafka.server.KafkaApisTest:
 - testIncrementalAlterConfigsWithAuthorizer
 - testIncrementalClientMetricAlterConfigs
 - testIncrementalConsumerGroupAlterConfigs
+- testInitProducerIdWithEnable2PcFailsWithoutTwoPhaseCommitAcl
+- testInitProducerIdWithEnable2PcSucceedsWithTwoPhaseCommitAcl
 - testInitializeShareGroupStateAuthorizationFailed
 - testInitializeShareGroupStateSuccess
 - testInvalidLegacyAlterConfigsRequestWithKRaft

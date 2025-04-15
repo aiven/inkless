@@ -86,7 +86,6 @@ org.apache.kafka.clients.consumer.ShareConsumerTest:
 - testImplicitAcknowledgeCommitSync
 - testImplicitAcknowledgeFailsExplicit
 - testImplicitAcknowledgementCommitAsync
-- testImplicitModeNotTriggeredByPollWhenNoAcksToSend
 - testLsoMovementByRecordsDeletion
 - testMaxPollRecords
 - testMultipleConsumersInGroupConcurrentConsumption

@@ -2077,6 +2077,10 @@ org.apache.kafka.clients.consumer.internals.RequestStateTest:
 - testRequestStateSimple
 - testTrackInflightOnFailedAttempt
 - testTrackInflightOnSuccessfulAttempt
+org.apache.kafka.clients.consumer.internals.ShareAcknowledgementModeTest:
+- testEqualsAndHashCode
+- testFromString
+- testValidator
 org.apache.kafka.clients.consumer.internals.ShareCompletedFetchTest:
 - testAcquireOddRecords
 - testAcquiredRecords
@@ -2150,6 +2154,7 @@ org.apache.kafka.clients.consumer.internals.ShareConsumerImplTest:
 - testCompleteQuietly
 - testControlRecordsOnEmptyFetch
 - testEnsurePollEventSentOnConsumerPoll
+- testExplicitModeUnacknowledgedRecords
 - testFailConstructor
 - testFailOnClosedConsumer
 - testGroupIdEmpty
@@ -2160,6 +2165,7 @@ org.apache.kafka.clients.consumer.internals.ShareConsumerImplTest:
 - testProcessBackgroundEventsTimesOut
 - testProcessBackgroundEventsWithInitialDelay
 - testProcessBackgroundEventsWithoutDelay
+- testStopFindCoordinatorOnClose
 - testSubscribeGeneratesEvent
 - testSubscribeToEmptyListActsAsUnsubscribe
 - testSubscribeToNullTopicCollection
