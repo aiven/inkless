@@ -3612,6 +3612,7 @@ org.apache.kafka.streams.query.PositionTest:
 - shouldMatchSelf
 - shouldMerge
 - shouldMergeNull
+- shouldMonotonicallyIncreasePartitionPosition
 - shouldNotHash
 - shouldNotMatchNull
 - shouldNotMatchOnUnEqual

@@ -22,14 +22,6 @@ kafka.admin.AddPartitionsTest:
 - testReplicaPlacementAllServers
 - testReplicaPlacementPartialServers
 - testWrongReplicaCount
-kafka.admin.ListOffsetsIntegrationTest:
-- testListMaxTimestampWithEmptyLog
-- testThreeCompressedRecordsInOneBatch
-- testThreeCompressedRecordsInSeparateBatch
-- testThreeNonCompressedRecordsInOneBatch
-- testThreeNonCompressedRecordsInSeparateBatch
-- testThreeRecordsInOneBatchHavingDifferentCompressionTypeWithServer
-- testThreeRecordsInSeparateBatchHavingDifferentCompressionTypeWithServer
 kafka.admin.RemoteTopicCrudTest:
 - testClusterWideDisablementOfTieredStorageWithEnabledTieredTopic
 - testClusterWithoutTieredStorageStartsSuccessfullyIfTopicWithTieringDisabled
