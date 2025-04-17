@@ -72,7 +72,7 @@ public class MetricCollector {
         policy = new MetricsPolicy(metrics, pathPattern());
     }
 
-    Pattern pathPattern() {
+    final Pattern pathPattern() {
         // account is in the hostname when on azure, but included on the path when testing on Azurite
         final var maybeAccountName = "(/" + config.accountName() + ")?";
         final var exp = "^" + maybeAccountName + "/" + config.containerName() + "/" + "([^/]+)";
