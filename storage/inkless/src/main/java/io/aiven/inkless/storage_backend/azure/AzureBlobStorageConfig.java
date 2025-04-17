@@ -110,29 +110,29 @@ public class AzureBlobStorageConfig extends AbstractConfig {
 
     public AzureBlobStorageConfig(final Map<String, ?> props) {
         super(configDef(), props);
-        validate();
+        validate(props);
     }
 
-    private void validate() {
-        if (connectionString() != null) {
-            if (accountName() != null) {
+    private void validate(final Map<String, ?> props) {
+        if (props.get(AZURE_CONNECTION_STRING_CONFIG) != null) {
+            if (props.get(AZURE_ACCOUNT_NAME_CONFIG) != null) {
                 throw new ConfigException(
                     "\"azure.connection.string\" cannot be set together with \"azure.account.name\".");
             }
-            if (accountKey() != null) {
+            if (props.get(AZURE_ACCOUNT_KEY_CONFIG) != null) {
                 throw new ConfigException(
                     "\"azure.connection.string\" cannot be set together with \"azure.account.key\".");
             }
-            if (sasToken() != null) {
+            if (props.get(AZURE_SAS_TOKEN_CONFIG) != null) {
                 throw new ConfigException(
                     "\"azure.connection.string\" cannot be set together with \"azure.sas.token\".");
             }
-            if (endpointUrl() != null) {
+            if (props.get(AZURE_ENDPOINT_URL_CONFIG) != null) {
                 throw new ConfigException(
                     "\"azure.connection.string\" cannot be set together with \"azure.endpoint.url\".");
             }
         } else {
-            if (accountName() == null && sasToken() == null) {
+            if (props.get(AZURE_ACCOUNT_NAME_CONFIG) == null && props.get(AZURE_SAS_TOKEN_CONFIG) == null) {
                 throw new ConfigException(
                     "\"azure.account.name\" and/or \"azure.sas.token\" "
                         + "must be set if \"azure.connection.string\" is not set.");
