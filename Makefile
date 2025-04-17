@@ -9,6 +9,10 @@ local_minio:
 local_gcs:
 	docker compose -f docker-compose.yml -f docker-compose.gcs.yml up -d create_bucket
 
+.PHONY: local_azure
+local_azure:
+	docker compose -f docker-compose.yml -f docker-compose.azure.yml up -d create_bucket
+
 .PHONY: bucket
 bucket:
 	AWS_ACCESS_KEY_ID='minioadmin' AWS_SECRET_KEY='minioadmin' AWS_SECRET_ACCESS_KEY='minioadmin' aws --endpoint-url http://127.0.0.1:9000 s3api create-bucket --bucket inkless1 --region us-east-1
