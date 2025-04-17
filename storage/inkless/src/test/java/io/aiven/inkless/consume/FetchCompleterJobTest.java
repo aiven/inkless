@@ -332,4 +332,66 @@ public class FetchCompleterJobTest {
         assertTrue(iterator.hasNext());
         assertEquals(ByteBuffer.wrap(secondValue), iterator.next().value());
     }
+
+    @Test
+    public void testFetchMultipleFilesForMultipleBatches() {
+        var blockSize = 16;
+        byte[] firstValue = {1};
+        byte[] secondValue = {2};
+        MemoryRecords recordsBatch1 = MemoryRecords.withRecords(0L, Compression.NONE, new SimpleRecord(firstValue));
+        MemoryRecords recordsBatch2 = MemoryRecords.withRecords(0L, Compression.NONE, new SimpleRecord(secondValue));
+
+        Map<TopicIdPartition, FetchRequest.PartitionData> fetchInfos = Map.of(
+            partition0, new FetchRequest.PartitionData(topicId, 0, 0, 10000, Optional.empty())
+        );
+        int logStartOffset = 0;
+        long logAppendTimestamp = 10L;
+        long maxBatchTimestamp = 20L;
+        int highWatermark = 2;
+        Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of(
+            partition0, FindBatchResponse.success(List.of(
+                new BatchInfo(1L, OBJECT_KEY_A.value(), BatchMetadata.of(partition0, 0, recordsBatch1.sizeInBytes(),
+                        0, 0, logAppendTimestamp, maxBatchTimestamp, TimestampType.CREATE_TIME)),
+                new BatchInfo(2L, OBJECT_KEY_A.value(), BatchMetadata.of(partition0, recordsBatch1.sizeInBytes(),
+                        recordsBatch2.sizeInBytes(), 1, 1, logAppendTimestamp, maxBatchTimestamp,
+                        TimestampType.CREATE_TIME))
+            ), logStartOffset, highWatermark)
+        );
+        int totalSize = recordsBatch1.sizeInBytes() + recordsBatch2.sizeInBytes();
+        ByteBuffer concatenatedBuffer = ByteBuffer.allocate(totalSize);
+        concatenatedBuffer.put(recordsBatch1.buffer());
+        concatenatedBuffer.put(recordsBatch2.buffer());
+        var fixedAlignment = new FixedBlockAlignment(blockSize);
+        var ranges = fixedAlignment.align(List.of(new ByteRange(0, totalSize)));
+
+        var fileExtents = new ArrayList<FileExtent>();
+        for (ByteRange range : ranges) {
+            var startOffset = Math.toIntExact(range.offset());
+            var length = Math.min(blockSize, totalSize - startOffset);
+            var endOffset = startOffset + length;
+            ByteBuffer copy = ByteBuffer.allocate(blockSize);
+            copy.put(concatenatedBuffer.duplicate().position(startOffset).limit(endOffset).slice());
+            fileExtents.add(FileFetchJob.createFileExtent(OBJECT_KEY_A, range, copy));
+        }
+        List<Future<FileExtent>> files = fileExtents.stream().map(CompletableFuture::completedFuture).collect(Collectors.toList());
+
+        FetchCompleterJob job = new FetchCompleterJob(
+            new MockTime(),
+            OBJECT_KEY_CREATOR,
+            fetchInfos,
+            CompletableFuture.completedFuture(coordinates),
+            CompletableFuture.completedFuture(files),
+            durationMs -> {}
+        );
+        Map<TopicIdPartition, FetchPartitionData> result = job.get();
+        FetchPartitionData data = result.get(partition0);
+        assertEquals(totalSize, data.records.sizeInBytes());
+        assertEquals(logStartOffset, data.logStartOffset);
+        assertEquals(highWatermark, data.highWatermark);
+        Iterator<Record> iterator = data.records.records().iterator();
+        assertTrue(iterator.hasNext());
+        assertEquals(ByteBuffer.wrap(firstValue), iterator.next().value());
+        assertTrue(iterator.hasNext());
+        assertEquals(ByteBuffer.wrap(secondValue), iterator.next().value());
+    }
 }

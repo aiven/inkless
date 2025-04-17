@@ -28,6 +28,7 @@ import org.apache.kafka.server.storage.log.FetchPartitionData;
 
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
@@ -209,30 +210,25 @@ public class FetchCompleterJob implements Supplier<Map<TopicIdPartition, FetchPa
     }
 
     private static MemoryRecords constructRecordsFromFile(BatchInfo batch, List<FileExtent> files) {
-        final long batchSize = batch.metadata().byteSize();
-        final long batchOffset = batch.metadata().byteOffset();
         ByteBuffer buffer = null;
         for (FileExtent file : files) {
-            final long fileOffset = file.range().offset();
-            if (new ByteRange(file.range().offset(), file.range().length()).contains(batch.metadata().range())) {
-                // Batch is fully contained by the file
-                final int index = Math.toIntExact(batchOffset - fileOffset);
-                final int length = Math.toIntExact(batchSize);
-                return createMemoryRecords(ByteBuffer.wrap(file.data()).slice(index, length), batch);
-            } else {
-                // Batch is split into multiple files
+            final ByteRange batchRange = batch.metadata().range();
+            final ByteRange fileRange = new ByteRange(file.range().offset(), file.range().length());
+            ByteRange intersection = ByteRange.intersect(batchRange, fileRange);
+            if (intersection.size() > 0) {
                 if (buffer == null) {
-                    buffer = ByteBuffer.allocate(Math.toIntExact(batchSize));
+                    buffer = ByteBuffer.allocate(Math.toIntExact(batchRange.bufferSize()));
                 }
-                buffer.position(Math.toIntExact(fileOffset));
-                buffer.put(file.data());
+                buffer.position(intersection.bufferOffset() - batchRange.bufferOffset());
+                buffer.put(Arrays.copyOfRange(file.data(),
+                        intersection.bufferOffset() - fileRange.bufferOffset(),
+                        intersection.bufferOffset() - fileRange.bufferOffset() + intersection.bufferSize()));
             }
         }
         if (buffer == null) {
             return null;
         }
-        buffer.position(0);
+        buffer.rewind();
         return createMemoryRecords(buffer, batch);
     }
-
 }
