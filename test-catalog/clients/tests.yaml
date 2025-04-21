@@ -2604,7 +2604,8 @@ org.apache.kafka.clients.producer.KafkaProducerTest:
 - testExplicitlyOnlyEnableJmxReporter
 - testFlushCompleteSendOfInflightBatches
 - testFlushMeasureLatency
-- testHeaders
+- testHeadersFailure
+- testHeadersSuccess
 - testInflightRequestsAndIdempotenceForIdempotentProducers
 - testInitTransactionTimeout
 - testInitTransactionWhileThrottled
