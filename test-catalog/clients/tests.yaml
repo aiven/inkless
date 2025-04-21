@@ -5161,5 +5161,11 @@ org.apache.kafka.common.utils.UtilsTest:
 - utf8ByteArraySerde
 - utf8ByteBufferSerde
 - writeToBuffer
+org.apache.kafka.common.utils.annotation.ApiKeyVersionsProviderTest:
+- testFromVersionTooOldThrowsException
+- testInvalidRangeThrowsExceptionFromGreaterThanTo
+- testProvideArgumentsWithDefaultRange
+- testProvideArgumentsWithExplicitRange
+- testToVersionTooNewThrowsException
 org.apache.kafka.server.policy.AlterConfigPolicyTest:
 - testRequestMetadataEquals

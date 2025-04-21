@@ -107,6 +107,7 @@ org.apache.kafka.server.log.remote.storage.RemoteLogManagerTest:
 - testBuildFilteredLeaderEpochMap
 - testCandidateLogSegmentsSkipsActiveSegment
 - testCandidateLogSegmentsSkipsSegmentsAfterLastStableOffset
+- testConfigure
 - testCopyLogSegmentToRemoteForStaleTopic
 - testCopyLogSegmentsToRemoteShouldCopyExpectedLogSegment
 - testCopyQuota
@@ -141,9 +142,9 @@ org.apache.kafka.server.log.remote.storage.RemoteLogManagerTest:
 - testGetClassLoaderAwareRemoteStorageManager
 - testGetLeaderEpochCheckpoint
 - testIdempotentClose
-- testLeadershipChangesWithoutRemoteLogManagerConfiguring
 - testLogStartOffsetUpdatedOnStartup
 - testMetricsUpdateOnCopyLogSegmentsFailure
+- testMonitorableRemoteLogStorageManager
 - testOnLeadershipChangeWillInvokeHandleLeaderOrFollowerPartitions
 - testRLMOpsWhenMetadataIsNotReady
 - testRLMShutdownDuringQuotaExceededScenario
@@ -166,7 +167,6 @@ org.apache.kafka.server.log.remote.storage.RemoteLogManagerTest:
 - testRemoteSizeTime
 - testRemoteStorageManagerWithUserDefinedConfigs
 - testRemoveMetricsOnClose
-- testStartup
 - testStopPartitionsWithDeletion
 - testStopPartitionsWithoutDeletion
 - testTierLagResetsToZeroOnBecomingFollower
@@ -249,6 +249,12 @@ org.apache.kafka.storage.internals.log.LocalLogTest:
 - testTruncateTo
 - testUpdateConfig
 - testWhenFetchOffsetHigherThanMaxOffset
+org.apache.kafka.storage.internals.log.LogManagerTest:
+- testIsStrayKraftMissingTopicId
+- testIsStrayKraftReplicaInImage
+- testIsStrayKraftReplicaInImageWithRemoteReplicas
+- testIsStrayKraftReplicaWithEmptyImage
+- testWaitForAllToComplete
 org.apache.kafka.storage.internals.log.LogOffsetMetadataTest:
 - testMessageOffsetOnly
 - testOnOlderSegment
@@ -418,6 +424,7 @@ org.apache.kafka.storage.internals.log.ProducerStateManagerTest:
 - testVerificationStateEntryExpiration
 - updateProducerTransactionState
 org.apache.kafka.storage.internals.log.RemoteIndexCacheTest:
+- shouldThrowErrorWhenAccessedAfterCacheClose
 - testCacheEntryExpiry
 - testCacheEntryIsDeletedOnRemoval
 - testCleanerThreadShutdown
@@ -426,16 +433,18 @@ org.apache.kafka.storage.internals.log.RemoteIndexCacheTest:
 - testCloseIsIdempotent
 - testConcurrentCacheDeletedFileExists
 - testConcurrentReadWriteAccessForCache
-- testConcurrentRemoveReadForCache
+- testConcurrentRemoveReadForCache1
+- testConcurrentRemoveReadForCache2
 - testCorrectnessForCacheAndIndexFilesWhenResizeCache
 - testCorruptCacheIndexFileExistsButNotInCache
+- testDeleteInvalidIndexFilesOnInit
+- testFetchIndexAccessibleWhenMarkedForCleanup
 - testFetchIndexForMissingTransactionIndex
 - testFetchIndexFromRemoteStorage
-- testGetIndexAfterCacheClose
 - testIndexFileAlreadyExistOnDiskButNotInCache
 - testIndexFileNameAndLocationOnDisk
 - testMultipleIndexEntriesExecutionInCorruptException
-- testPositionForNonExistingIndexFromRemoteStorage
+- testPositionForNonExistentEntry
 - testRSMReturnCorruptedIndexFile
 - testReloadCacheAfterClose
 - testRemoveItem

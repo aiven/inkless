@@ -1184,10 +1184,6 @@ kafka.log.LogManagerTest:
 - testGetNonExistentLog
 - testHandlingExceptionsDuringShutdown
 - testInvalidLogDirNotFailLogManager
-- testIsStrayKraftMissingTopicId
-- testIsStrayKraftReplicaInImage
-- testIsStrayKraftReplicaInImageWithRemoteReplicas
-- testIsStrayKraftReplicaWithEmptyImage
 - testLeastLoadedAssignment
 - testLoadDirectoryIds
 - testLoadLogRenameLogThatShouldBeStray
@@ -1204,7 +1200,6 @@ kafka.log.LogManagerTest:
 - testTopicConfigChangeStopCleaningIfCompactIsRemoved
 - testTopicConfigChangeUpdatesLogConfig
 - testTwoLogManagersUsingSameDirFails
-- testWaitForAllToComplete
 kafka.log.UnifiedLogTest:
 - followerShouldSaveEpochInformationFromReplicatedMessagesToTheEpochCache
 - shouldApplyEpochToMessageOnAppendIfLeader
@@ -3261,6 +3256,7 @@ kafka.utils.SchedulerTest:
 - testMockSchedulerPeriodicTask
 - testNonPeriodicTask
 - testNonPeriodicTaskWhenPeriodIsZero
+- testPendingTaskSize
 - testPeriodicTask
 - testReentrantTaskInMockScheduler
 - testRestart
