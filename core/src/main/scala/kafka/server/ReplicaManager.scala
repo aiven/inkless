@@ -18,7 +18,7 @@ package kafka.server
 
 import com.yammer.metrics.core.Meter
 import io.aiven.inkless.common.SharedState
-import io.aiven.inkless.consume.{FetchInterceptor, FetchOffsetInterceptor}
+import io.aiven.inkless.consume.{FetchInterceptor, FetchOffsetHandler}
 import io.aiven.inkless.delete.{DeleteRecordsInterceptor, FileCleaner}
 import io.aiven.inkless.merge.FileMerger
 import io.aiven.inkless.produce.AppendInterceptor
@@ -63,8 +63,7 @@ import org.apache.kafka.server.share.fetch.{DelayedShareFetchKey, DelayedShareFe
 import org.apache.kafka.server.storage.log.{FetchParams, FetchPartitionData}
 import org.apache.kafka.server.util.{Scheduler, ShutdownableThread}
 import org.apache.kafka.storage.internals.checkpoint.{LazyOffsetCheckpoints, OffsetCheckpointFile, OffsetCheckpoints}
-import org.apache.kafka.storage.internals.log.{AppendOrigin, FetchDataInfo, LeaderHwChange, LogAppendInfo, LogConfig, LogDirFailureChannel, LogOffsetMetadata, LogReadInfo, OffsetResultHolder, RecordValidationException, RemoteLogReadResult, RemoteStorageFetchInfo, UnifiedLog => UnifiedLog, VerificationGuard}
-
+import org.apache.kafka.storage.internals.log.{AppendOrigin, AsyncOffsetReadFutureHolder, FetchDataInfo, LeaderHwChange, LogAppendInfo, LogConfig, LogDirFailureChannel, LogOffsetMetadata, LogReadInfo, OffsetResultHolder, RecordValidationException, RemoteLogReadResult, RemoteStorageFetchInfo, UnifiedLog, VerificationGuard}
 import org.apache.kafka.storage.log.metrics.BrokerTopicStats
 
 import java.io.File
@@ -317,7 +316,7 @@ class ReplicaManager(val config: KafkaConfig,
 
   private val inklessAppendInterceptor: Option[AppendInterceptor] = inklessSharedState.map(new AppendInterceptor(_))
   private val inklessFetchInterceptor: Option[FetchInterceptor] = inklessSharedState.map(new FetchInterceptor(_))
-  private val inklessFetchOffsetInterceptor: Option[FetchOffsetInterceptor] = inklessSharedState.map(new FetchOffsetInterceptor(_))
+  private val inklessFetchOffsetHandler: Option[FetchOffsetHandler] = inklessSharedState.map(new FetchOffsetHandler(_))
   private val inklessDeleteRecordsInterceptor: Option[DeleteRecordsInterceptor] = inklessSharedState.map(new DeleteRecordsInterceptor(_))
   private val inklessFileCleaner: Option[FileCleaner] = inklessSharedState.map(new FileCleaner(_))
   private val inklessFileMerger: Option[FileMerger] = inklessSharedState.map(new FileMerger(_))
@@ -1458,10 +1457,7 @@ class ReplicaManager(val config: KafkaConfig,
                   buildErrorResponse: (Errors, ListOffsetsPartition) => ListOffsetsPartitionResponse,
                   responseCallback: List[ListOffsetsTopicResponse] => Unit,
                   timeoutMs: Int = 0): Unit = {
-    if (inklessFetchOffsetInterceptor.exists(_.intercept(topics.asJava, duplicatePartitions.asJava, isolationLevel, (e, v) => buildErrorResponse(e, v), r => responseCallback(r.asScala.toList)))) {
-      return
-    }
-
+    val maybeFetchOffsetJob: Option[FetchOffsetHandler.Job] = inklessFetchOffsetHandler.map(_.createJob())
     val statusByPartition = mutable.Map[TopicPartition, ListOffsetsPartitionStatus]()
     topics.foreach { topic =>
       topic.partitions.asScala.foreach { partition =>
@@ -1474,6 +1470,9 @@ class ReplicaManager(val config: KafkaConfig,
         } else if (isListOffsetsTimestampUnsupported(partition.timestamp(), version)) {
           statusByPartition += topicPartition ->
             ListOffsetsPartitionStatus.builder().responseOpt(Optional.of(buildErrorResponse(Errors.UNSUPPORTED_VERSION, partition))).build()
+        } else if (maybeFetchOffsetJob.exists(_.mustHandle(topic.name()))) {
+          statusByPartition += topicPartition ->
+            inklessFetchOffset(maybeFetchOffsetJob.get, topicPartition, partition)
         } else {
           try {
             val fetchOnlyFromLeader = replicaId != ListOffsetsRequest.DEBUGGING_REPLICA_ID
@@ -1556,6 +1555,8 @@ class ReplicaManager(val config: KafkaConfig,
       }
     }
 
+    maybeFetchOffsetJob.foreach(_.start())
+
     if (delayedRemoteListOffsetsRequired(statusByPartition)) {
       val delayMs: Long = if (timeoutMs > 0) timeoutMs else config.remoteLogManagerConfig.remoteListOffsetsRequestTimeoutMs()
       // create delayed remote list offsets operation
@@ -1572,6 +1573,23 @@ class ReplicaManager(val config: KafkaConfig,
       }.toList
       responseCallback(responseTopics)
     }
+  }
+
+  private def inklessFetchOffset(fetchOffsetJob: FetchOffsetHandler.Job,
+                                 topicPartition: TopicPartition,
+                                 partition: ListOffsetsPartition): ListOffsetsPartitionStatus = {
+    val taskFuture = fetchOffsetJob.add(topicPartition, partition)
+    taskFuture.handle((_ignoredValue, _ignoredError) => {
+      val key = new TopicPartitionOperationKey(topicPartition.topic, topicPartition.partition)
+      delayedRemoteListOffsetsPurgatory.checkAndComplete(key)
+    })
+    val futureHolder = new AsyncOffsetReadFutureHolder[OffsetResultHolder.FileRecordsOrError](
+      fetchOffsetJob.cancelHandler(),
+      taskFuture
+    )
+    ListOffsetsPartitionStatus.builder()
+      .futureHolderOpt(Optional.of(futureHolder))
+      .build()
   }
 
   private def delayedRemoteListOffsetsRequired(responseByPartition: Map[TopicPartition, ListOffsetsPartitionStatus]): Boolean = {
