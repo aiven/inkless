@@ -2998,7 +2998,6 @@ kafka.server.share.SharePartitionManagerTest:
 - testSharePartitionListenerOnDeleted
 - testSharePartitionListenerOnFailed
 - testSharePartitionPartialInitializationFailure
-- testShareSessionExpiration
 - testShareSessionUpdateTopicIdsBrokerSide
 - testSubsequentShareSession
 - testToForgetPartitions
