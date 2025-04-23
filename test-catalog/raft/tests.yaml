@@ -93,6 +93,7 @@ org.apache.kafka.raft.FileQuorumStateStoreTest:
 org.apache.kafka.raft.FollowerStateTest:
 - testFetchTimeoutExpiration
 - testGrantStandardVote
+- testHasUpdatedLeader
 - testLeaderIdAndEndpoint
 - testMonotonicHighWatermark
 - testPreVoteAfterSuccessfulFetchFromLeader
@@ -162,8 +163,14 @@ org.apache.kafka.raft.KafkaRaftClientReconfigTest:
 - testFollowerDoesNotRequestLeaderBootstrapSnapshot
 - testFollowerReadsKRaftBootstrapRecords
 - testFollowerSendsUpdateVoter
+- testFollowerSendsUpdateVoterAfterElectionWithKraftVersion0
+- testFollowerSendsUpdateVoterIfPendingFetchDuringTimeout
 - testFollowerSendsUpdateVoterWhenDifferent
+- testFollowerSendsUpdateVoterWithKraftVersion0
 - testHandleBeginQuorumRequestMoreEndpoints
+- testInvalidKRaftUpgradeVersion
+- testInvalidUpdateVoter
+- testKRaftUpgradeVersion
 - testLeaderDoesNotBootstrapRecordsWithKraftVersion0
 - testLeaderMetricsAreReset
 - testLeaderUpdatesVoter
@@ -183,6 +190,7 @@ org.apache.kafka.raft.KafkaRaftClientReconfigTest:
 - testRemoveVoterWithPendingRemoveVoter
 - testRemoveVoterWithoutFencedPreviousLeaders
 - testUpdateVoter
+- testUpdateVoterAfterKRaftVersionUpgrade
 - testUpdateVoterInvalidClusterId
 - testUpdateVoterNewEpoch
 - testUpdateVoterOldEpoch
@@ -362,7 +370,9 @@ org.apache.kafka.raft.LeaderStateTest:
 - testHighWatermarkDoesIncreaseFromNewVoter
 - testHighWatermarkDoesNotDecreaseFromNewVoter
 - testIdempotentEndOffsetUpdate
+- testInvalidMaybeAppendUpgradedKRaftVersion
 - testLeaderEndpoints
+- testMaybeAppendUpgradedKRaftVersion
 - testNonFollowerAcknowledgement
 - testNonMonotonicHighWatermarkUpdate
 - testNonMonotonicLocalEndOffsetUpdate
@@ -374,6 +384,7 @@ org.apache.kafka.raft.LeaderStateTest:
 - testUpdateHighWatermarkQuorumSizeTwo
 - testUpdateHighWatermarkRemovingFollowerFromVoterStates
 - testUpdateVotersFromNoDirectoryIdToDirectoryId
+- testVolatileVoters
 org.apache.kafka.raft.MockExpirationServiceTest:
 - testFailAfter
 org.apache.kafka.raft.MockLogTest:
@@ -610,7 +621,9 @@ org.apache.kafka.raft.VoterSetTest:
 - testOverlappingMajority
 - testRecordRoundTrip
 - testRemoveVoter
+- testSupportsVersion
 - testUpdateVoter
+- testUpdateVoterIgnoringDirectoryId
 - testVoterIds
 - testVoterNode
 - testVoterNodeIsVoterWithDirectoryId

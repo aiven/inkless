@@ -51,6 +51,8 @@ org.apache.kafka.server.common.KRaftVersionTest:
 - testBootstrapMetadataVersion
 - testFeatureLevel
 - testFromFeatureLevel
+- testIsAtLeast
+- testIsMoreThan
 - testKraftVersionRecordVersion
 - testQuorumStateVersion
 org.apache.kafka.server.common.MetadataVersionTest:
