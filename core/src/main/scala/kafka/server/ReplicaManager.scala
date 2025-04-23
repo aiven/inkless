@@ -2698,9 +2698,13 @@ class ReplicaManager(val config: KafkaConfig,
   def lastOffsetForLeaderEpoch(
     requestedEpochInfo: Seq[OffsetForLeaderTopic]
   ): Seq[OffsetForLeaderTopicResult] = {
+    val maybeFetchOffsetJob: Option[FetchOffsetHandler.Job] = inklessFetchOffsetHandler.map(_.createJob())
     requestedEpochInfo.map { offsetForLeaderTopic =>
       val partitions = offsetForLeaderTopic.partitions.asScala.map { offsetForLeaderPartition =>
         val tp = new TopicPartition(offsetForLeaderTopic.topic, offsetForLeaderPartition.partition)
+        if (maybeFetchOffsetJob.exists(_.mustHandle(tp.topic()))) {
+          throw new RuntimeException("Support for inkless topics missing, topic: " + tp.topic())
+        }
         getPartition(tp) match {
           case HostedPartition.Online(partition) =>
             val currentLeaderEpochOpt =
