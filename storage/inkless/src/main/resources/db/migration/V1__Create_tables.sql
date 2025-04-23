@@ -162,7 +162,7 @@ RETURNS SETOF commit_batch_response_v1 LANGUAGE plpgsql VOLATILE AS $$
 DECLARE
     new_file_id BIGINT;
     request RECORD;
-    log RECORD;
+    log logs%ROWTYPE;
     duplicate RECORD;
     assigned_offset offset_nullable_t;
     new_high_watermark offset_nullable_t;
@@ -173,23 +173,41 @@ BEGIN
     RETURNING file_id
     INTO new_file_id;
 
+    -- We use this temporary table to perform the write operations in loop on it first
+    -- and only then dump the result on the real table. This reduces the WAL pressure and latency of the function.
+    CREATE TEMPORARY TABLE logs_tmp
+    ON COMMIT DROP
+    AS
+        -- Extract the relevant logs into the temporary table and simultaneously lock them.
+        -- topic_name and log_start_offset aren't technically needed, but having them allows declaring `log logs%ROWTYPE`.
+        SELECT *
+        FROM logs
+        WHERE (topic_id, partition) IN (SELECT DISTINCT topic_id, partition FROM unnest(requests))
+        ORDER BY topic_id, partition  -- ordering is important to prevent deadlocks
+        FOR UPDATE;
+
     FOR request IN
         SELECT *
         FROM unnest(requests)
     LOOP
-        SELECT *
-        FROM logs
-        WHERE topic_id = request.topic_id
-            AND partition = request.partition
-        FOR UPDATE
-        INTO log;
+        -- A small optimization: select the log into a variable only if it's a different topic-partition.
+        -- Batches are sorted by topic-partitions, so this makes sense.
+        IF log.topic_id IS DISTINCT FROM request.topic_id
+            OR log.partition IS DISTINCT FROM request.partition THEN
 
-        IF NOT FOUND THEN
-            UPDATE files
-            SET used_size = used_size - request.byte_size
-            WHERE file_id = new_file_id;
-            RETURN NEXT (request.topic_id, request.partition, NULL, NULL, -1, 'nonexistent_log')::commit_batch_response_v1;
-            CONTINUE;
+            SELECT *
+            FROM logs_tmp
+            WHERE topic_id = request.topic_id
+                AND partition = request.partition
+            INTO log;
+
+            IF NOT FOUND THEN
+                UPDATE files
+                SET used_size = used_size - request.byte_size
+                WHERE file_id = new_file_id;RETURN NEXT (request.topic_id, request.partition, NULL, NULL, -1, 'nonexistent_log')::commit_batch_response_v1;
+                CONTINUE;
+            END IF;
+
         END IF;
 
         assigned_offset = log.high_watermark;
@@ -289,12 +307,14 @@ BEGIN
                 );
         END IF;
 
-        UPDATE logs
+        UPDATE logs_tmp
         SET high_watermark = high_watermark + (request.last_offset - request.base_offset + 1)
         WHERE topic_id = request.topic_id
             AND partition = request.partition
         RETURNING high_watermark
         INTO new_high_watermark;
+
+        log.high_watermark = new_high_watermark;
 
         INSERT INTO batches (
             magic,
@@ -319,6 +339,13 @@ BEGIN
 
         RETURN NEXT (request.topic_id, request.partition, log.log_start_offset, assigned_offset, request.batch_max_timestamp, 'none')::commit_batch_response_v1;
     END LOOP;
+
+    -- Transfer from the temporary to real table.
+    UPDATE logs
+    SET high_watermark = logs_tmp.high_watermark
+    FROM logs_tmp
+    WHERE logs.topic_id = logs_tmp.topic_id
+        AND logs.partition = logs_tmp.partition;
 
     IF (SELECT used_size FROM files WHERE file_id = new_file_id) = 0 THEN
         PERFORM mark_file_to_delete_v1(now, new_file_id);
