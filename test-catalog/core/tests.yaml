@@ -2207,6 +2207,7 @@ kafka.server.KafkaApisTest:
 - testHandleOffsetCommitRequest
 - testHandleOffsetCommitRequestFutureFailed
 - testHandleOffsetCommitRequestTopicsAndPartitionsValidation
+- testHandleOffsetCommitRequestTopicsAndPartitionsValidationWithTopicIds
 - testHandleOffsetFetchAllOffsetsWithSingleGroup
 - testHandleOffsetFetchAuthorization
 - testHandleOffsetFetchWithMultipleGroups
@@ -2286,7 +2287,6 @@ kafka.server.KafkaApisTest:
 - testMetadataAutoTopicCreationForTxnTopic
 - testMetadataRequestOnDistinctListenerWithInconsistentListenersAcrossBrokers
 - testMetadataRequestOnSharedListenerWithInconsistentListenersAcrossBrokers
-- testOffsetCommitWithInvalidPartition
 - testOffsetDelete
 - testOffsetDeleteTopicsAndPartitionsValidation
 - testOffsetDeleteWithInvalidGroup

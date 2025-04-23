@@ -591,6 +591,7 @@ org.apache.kafka.coordinator.group.OffsetMetadataManagerTest:
 - testConsumerGroupOffsetCommitWithIllegalGenerationId
 - testConsumerGroupOffsetCommitWithOffsetMetadataTooLarge
 - testConsumerGroupOffsetCommitWithStaleMemberEpoch
+- testConsumerGroupOffsetCommitWithTopicIds
 - testConsumerGroupOffsetCommitWithUnknownMemberId
 - testConsumerGroupOffsetDelete
 - testConsumerGroupOffsetDeleteWithErrors
