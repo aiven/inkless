@@ -25,6 +25,8 @@ org.apache.kafka.coordinator.share.ShareCoordinatorRecordSerdeTest:
 - testSerializeNullValue
 - testSerializeValue
 org.apache.kafka.coordinator.share.ShareCoordinatorServiceTest:
+- testColdPartitionSnapshotTaskPeriodicityWithAllSuccess
+- testColdPartitionSnapshotTaskPeriodicityWithSomeFailures
 - testDeleteFutureReturnsError
 - testDeleteStateSuccess
 - testDeleteStateValidationsError
@@ -79,6 +81,10 @@ org.apache.kafka.coordinator.share.ShareCoordinatorShardTest:
 - testReadStateSummaryInvalidRequestData
 - testReadStateSummarySuccess
 - testReplayWithShareSnapshot
+- testSnapshotColdPartitionsDoesNotPerpetuallySnapshot
+- testSnapshotColdPartitionsNoEligiblePartitions
+- testSnapshotColdPartitionsPartialEligiblePartitions
+- testSnapshotColdPartitionsSnapshotUpdateNotConsidered
 - testSubsequentWriteStateSnapshotEpochUpdatesSuccessfully
 - testWriteNullMetadataImage
 - testWriteStateFencedLeaderEpochError
