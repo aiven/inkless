@@ -18,7 +18,7 @@ package kafka.server
 
 import com.yammer.metrics.core.Meter
 import io.aiven.inkless.common.SharedState
-import io.aiven.inkless.consume.{FetchInterceptor, FetchOffsetInterceptor}
+import io.aiven.inkless.consume.{FetchInterceptor, FetchOffsetInterceptor, OffsetForLeaderEpochHandler}
 import io.aiven.inkless.delete.{DeleteRecordsInterceptor, FileCleaner}
 import io.aiven.inkless.merge.FileMerger
 import io.aiven.inkless.produce.AppendInterceptor
@@ -37,7 +37,7 @@ import org.apache.kafka.common.message.DeleteRecordsResponseData.DeleteRecordsPa
 import org.apache.kafka.common.message.DescribeLogDirsResponseData.DescribeLogDirsTopic
 import org.apache.kafka.common.message.ListOffsetsRequestData.{ListOffsetsPartition, ListOffsetsTopic}
 import org.apache.kafka.common.message.ListOffsetsResponseData.{ListOffsetsPartitionResponse, ListOffsetsTopicResponse}
-import org.apache.kafka.common.message.OffsetForLeaderEpochRequestData.OffsetForLeaderTopic
+import org.apache.kafka.common.message.OffsetForLeaderEpochRequestData.{OffsetForLeaderTopic}
 import org.apache.kafka.common.message.OffsetForLeaderEpochResponseData.{EpochEndOffset, OffsetForLeaderTopicResult}
 import org.apache.kafka.common.message.{DescribeLogDirsResponseData, DescribeProducersResponseData, FetchResponseData}
 import org.apache.kafka.common.metrics.Metrics
@@ -321,6 +321,7 @@ class ReplicaManager(val config: KafkaConfig,
   private val inklessDeleteRecordsInterceptor: Option[DeleteRecordsInterceptor] = inklessSharedState.map(new DeleteRecordsInterceptor(_))
   private val inklessFileCleaner: Option[FileCleaner] = inklessSharedState.map(new FileCleaner(_))
   private val inklessFileMerger: Option[FileMerger] = inklessSharedState.map(new FileMerger(_))
+  private val inklessOffsetForLeaderEpochHandler: Option[OffsetForLeaderEpochHandler] = inklessSharedState.map(new OffsetForLeaderEpochHandler(_))
 
   /* epoch of the controller that last changed the leader */
   @volatile private[server] var controllerEpoch: Int = 0
@@ -2680,7 +2681,11 @@ class ReplicaManager(val config: KafkaConfig,
   def lastOffsetForLeaderEpoch(
     requestedEpochInfo: Seq[OffsetForLeaderTopic]
   ): Seq[OffsetForLeaderTopicResult] = {
-    requestedEpochInfo.map { offsetForLeaderTopic =>
+    val maybeOffsetForLeaderEpochJob: Option[OffsetForLeaderEpochHandler.Job] = inklessOffsetForLeaderEpochHandler.map(_.createJob())
+
+    val classicTopicResult = requestedEpochInfo.filter { offsetForLeaderTopic =>
+      !maybeOffsetForLeaderEpochJob.exists(_.mustHandle(offsetForLeaderTopic.topic))
+    }.map { offsetForLeaderTopic =>
       val partitions = offsetForLeaderTopic.partitions.asScala.map { offsetForLeaderPartition =>
         val tp = new TopicPartition(offsetForLeaderTopic.topic, offsetForLeaderPartition.partition)
         getPartition(tp) match {
@@ -2717,6 +2722,50 @@ class ReplicaManager(val config: KafkaConfig,
         .setTopic(offsetForLeaderTopic.topic)
         .setPartitions(partitions.toList.asJava)
     }
+
+    val inklessFuturesByTopic = requestedEpochInfo.filter { offsetForLeaderTopic =>
+      maybeOffsetForLeaderEpochJob.exists(_.mustHandle(offsetForLeaderTopic.topic))
+    }.map { offsetForLeaderTopic =>
+      val topic = offsetForLeaderTopic.topic()
+      val partitions = offsetForLeaderTopic.partitions.asScala.map { offsetForLeaderPartition =>
+        val partition = offsetForLeaderPartition.partition
+        val leaderEpoch = offsetForLeaderPartition.leaderEpoch()
+        val tp = new TopicPartition(topic, partition)
+
+        val future = maybeOffsetForLeaderEpochJob.get.add(tp, offsetForLeaderPartition)
+        (tp, leaderEpoch, future)
+      }
+      (topic, partitions)
+    }
+
+    maybeOffsetForLeaderEpochJob.foreach(_.start())
+
+    val inklessTopicResult = inklessFuturesByTopic.map { value =>
+      val topic = value._1
+      val partitionFutures = value._2
+      val partitionEndOffsets = partitionFutures.map { partitionFuture =>
+        val tp = partitionFuture._1
+        val leaderEpoch = partitionFuture._2
+        val future = partitionFuture._3
+
+        val epochEndOffset = future.get()
+        // TODO: this is likely wrong.
+        // It's off by one. But adding one makes the consumer break differently.
+        val endOffset = epochEndOffset.endOffset()
+        new EpochEndOffset()
+          .setPartition(tp.partition())
+          .setErrorCode(epochEndOffset.errorCode())
+          .setLeaderEpoch(leaderEpoch)
+          .setEndOffset(endOffset)
+      }
+
+      new OffsetForLeaderTopicResult()
+        .setTopic(topic)
+        .setPartitions(partitionEndOffsets.toList.asJava)
+    }
+
+    val allTopicResult = classicTopicResult ++ inklessTopicResult
+    allTopicResult
   }
 
   def activeProducerState(requestPartition: TopicPartition): DescribeProducersResponseData.PartitionResponse = {
