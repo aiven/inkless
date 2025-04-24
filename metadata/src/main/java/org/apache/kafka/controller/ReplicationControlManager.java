@@ -120,6 +120,7 @@ import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.Set;
 import java.util.function.IntPredicate;
+import java.util.function.Predicate;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
@@ -380,8 +381,6 @@ public class ReplicationControlManager {
      */
     final KRaftClusterDescriber clusterDescriber = new KRaftClusterDescriber();
 
-    final InklessTopicCreator inklessTopicCreator;
-
     private ReplicationControlManager(
         SnapshotRegistry snapshotRegistry,
         LogContext logContext,
@@ -410,9 +409,6 @@ public class ReplicationControlManager {
         this.reassigningTopics = new TimelineHashMap<>(snapshotRegistry, 0);
         this.imbalancedPartitions = new TimelineHashSet<>(snapshotRegistry, 0);
         this.directoriesToPartitions = new TimelineHashMap<>(snapshotRegistry, 0);
-
-        // inkless support
-        this.inklessTopicCreator = new InklessTopicCreator(configurationControl, clusterControl, featureControl, defaultNumPartitions, log);
     }
 
     public void replay(TopicRecord record) {
@@ -719,10 +715,15 @@ public class ReplicationControlManager {
         Map<String, String> creationConfigs = translateCreationConfigs(topic.configs());
         Map<Integer, PartitionRegistration> newParts = new HashMap<>();
 
-        // inkless handler
         boolean inklessEnabled = Boolean.parseBoolean(creationConfigs.getOrDefault(INKLESS_ENABLE_CONFIG, "false"));
-        if (inklessEnabled)
-            return inklessTopicCreator.createTopic(context, topic, records, successes, configRecords, authorizedToReturnConfigs, this::maybeCheckCreateTopicPolicy);
+        if (inklessEnabled) {
+            if (Math.abs(topic.replicationFactor()) != 1) {
+                return new ApiError(Errors.INVALID_REPLICATION_FACTOR,
+                    "Replication factor for Inkless topics must be 1 or -1 to use the default value (1).");
+            }
+
+            topic.assignments().clear();
+        }
 
         if (!topic.assignments().isEmpty()) {
             if (topic.replicationFactor() != -1) {
@@ -782,15 +783,28 @@ public class ReplicationControlManager {
             short replicationFactor = topic.replicationFactor() == -1 ?
                 defaultReplicationFactor : topic.replicationFactor();
             try {
-                TopicAssignment topicAssignment = clusterControl.replicaPlacer().place(new PlacementSpec(
-                    0,
-                    numPartitions,
-                    replicationFactor
-                ), clusterDescriber);
+                TopicAssignment topicAssignment;
+                Predicate<Integer> brokerFilter;
+                if (!inklessEnabled) {
+                    topicAssignment = clusterControl.replicaPlacer().place(new PlacementSpec(
+                        0,
+                        numPartitions,
+                        replicationFactor
+                    ), clusterDescriber);
+                    brokerFilter = clusterControl::isActive;
+                } else {
+                    topicAssignment = createInklessAssignment(numPartitions);
+                    if (topicAssignment == null) {
+                        return new ApiError(Errors.BROKER_NOT_AVAILABLE, "No brokers available to create inkless topic.");
+                    }
+                    // For Inkless, it doesn't matter if a broker is fenced of not.
+                    brokerFilter = x -> true;
+                }
+
                 for (int partitionId = 0; partitionId < topicAssignment.assignments().size(); partitionId++) {
                     PartitionAssignment partitionAssignment = topicAssignment.assignments().get(partitionId);
                     List<Integer> isr = partitionAssignment.replicas().stream().
-                        filter(clusterControl::isActive).collect(Collectors.toList());
+                        filter(brokerFilter).collect(Collectors.toList());
                     // If the ISR is empty, it means that all brokers are fenced or
                     // in controlled shutdown. To be consistent with the replica placer,
                     // we reject the create topic request with INVALID_REPLICATION_FACTOR.
@@ -861,6 +875,24 @@ public class ReplicationControlManager {
                 build()));
         }
         return ApiError.NONE;
+    }
+
+    /**
+     * Create a topic assignment for an Inkless topic.
+     * @return the assignment or {@code null} if there are no brokers avaiable.
+     */
+    private TopicAssignment createInklessAssignment(int numPartitions) {
+        final Iterator<UsableBroker> usableBrokers = clusterControl.usableBrokers();
+        if (!usableBrokers.hasNext()) {
+            return null;
+        }
+        final int brokerId = usableBrokers.next().id();
+
+        List<PartitionAssignment> assignments = new ArrayList<>();
+        for (int partition = 0; partition < numPartitions; partition++) {
+            assignments.add(new PartitionAssignment(List.of(brokerId), clusterDescriber));
+        }
+        return new TopicAssignment(assignments);
     }
 
     private static PartitionRegistration buildPartitionRegistration(
@@ -2076,12 +2108,14 @@ public class ReplicationControlManager {
                         .setAllowReplicationFactorChange(allowRFChange);
         int successfulAlterations = 0, totalAlterations = 0;
         for (ReassignableTopic topic : request.topics()) {
+            boolean effectiveRFChange = allowRFChange
+                && !Boolean.parseBoolean(configurationControl.currentTopicConfig(topic.name()).getOrDefault(INKLESS_ENABLE_CONFIG, "false"));
             ReassignableTopicResponse topicResponse = new ReassignableTopicResponse().
                 setName(topic.name());
             for (ReassignablePartition partition : topic.partitions()) {
                 ApiError error = ApiError.NONE;
                 try {
-                    alterPartitionReassignment(topic.name(), partition, records, allowRFChange);
+                    alterPartitionReassignment(topic.name(), partition, records, effectiveRFChange);
                     successfulAlterations++;
                 } catch (Throwable e) {
                     log.info("Unable to alter partition reassignment for " +

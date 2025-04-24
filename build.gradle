@@ -2376,6 +2376,23 @@ project(':storage:inkless') {
     implementation libs.jooq
     compileOnly libs.jooqMeta  // mostly to suppress compiler warnings, we don't use this at run time
     implementation libs.awsskdS3
+    implementation platform(libs.azurebom)
+    implementation("com.azure:azure-identity") {
+      exclude group: "com.fasterxml.jackson.core"
+      exclude group: "org.slf4j"
+    }
+    implementation("com.azure:azure-storage-blob") {
+      exclude group: "com.fasterxml.jackson.core"
+      exclude group: "org.slf4j"
+    }
+    implementation(libs.gcssdk) {
+      exclude group: 'com.google.errorprone', module: 'error_prone_annotations'
+      exclude group: 'org.checkerframework', module: 'checker-qual'
+      exclude group: 'com.google.code.findbugs', module: 'jsr305'
+      exclude group: 'com.google.j2objc', module: 'j2objc-annotations'
+      exclude group: 'org.codehaus.mojo', module: 'animal-sniffer-annotations'
+      exclude group: 'com.google.guava', module: 'listenablefuture'
+    }
     implementation libs.metrics
     implementation libs.commonsIo
     implementation libs.infinispan
@@ -2389,6 +2406,7 @@ project(':storage:inkless') {
     testImplementation libs.mockitoJunitJupiter // supports MockitoExtension
     testImplementation libs.testcontainers
     testImplementation libs.testcontainersJunitJupiter
+    testImplementation libs.testcontainersFakegcs
     testImplementation libs.testcontainersPostgresql
     testImplementation libs.testcontainersLocalstack
     testImplementation libs.wiremock
@@ -2511,6 +2529,8 @@ project(':storage:inkless') {
     addJUnitPlatformLauncher = false
     targetClasses.add("io.aiven.inkless.*")
     excludedTestClasses.add("*io.aiven.inkless.storage_backend.s3.integration.*")
+    excludedTestClasses.add("*io.aiven.inkless.storage_backend.azure.integration.*")
+    excludedTestClasses.add("*io.aiven.inkless.storage_backend.gcs.integration.*")
     excludedTestClasses.add("*io.aiven.inkless.produce.WriterIntegrationTest")
     excludedTestClasses.add("*io.aiven.inkless.produce.WriterPropertyTest")
     excludedTestClasses.add("*io.aiven.inkless.control_plane.postgres.*")

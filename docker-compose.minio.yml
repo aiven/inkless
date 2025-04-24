@@ -1,0 +1,37 @@
+services:
+  broker:
+    environment:
+      KAFKA_INKLESS_STORAGE_BACKEND_CLASS: "io.aiven.inkless.storage_backend.s3.S3Storage"
+      KAFKA_INKLESS_STORAGE_S3_PATH_STYLE_ACCESS_ENABLED: "true"
+      KAFKA_INKLESS_STORAGE_S3_BUCKET_NAME: "inkless"
+      KAFKA_INKLESS_STORAGE_S3_REGION: "us-east-1"
+      KAFKA_INKLESS_STORAGE_S3_ENDPOINT_URL: "http://storage:9000"
+      KAFKA_INKLESS_STORAGE_AWS_ACCESS_KEY_ID: "minioadmin"
+      KAFKA_INKLESS_STORAGE_AWS_SECRET_ACCESS_KEY: "minioadmin"
+
+    depends_on:
+      - postgres
+      - storage
+
+  # Object storage
+  storage:
+    image: quay.io/minio/minio
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    command: server /data --console-address ":9001"
+
+  create_bucket:
+    image: quay.io/minio/mc
+    restart: "no"
+    depends_on:
+      - storage
+    entrypoint: >
+      /bin/sh -c "
+      until /usr/bin/mc config host add local http://storage:9000 minioadmin minioadmin; do
+        echo 'Waiting for Minio...';
+        sleep 5;
+      done;
+      /usr/bin/mc mb local/inkless;
+      exit 0;
+      "

@@ -2170,6 +2170,64 @@ public class ReplicationControlManagerTest {
 
     @ParameterizedTest
     @ApiKeyVersionsSource(apiKey = ApiKeys.ALTER_PARTITION)
+    public void testReassignPartitionsInkless(short version) {
+        MetadataVersion metadataVersion = MetadataVersion.latestTesting();
+        ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+            .setMetadataVersion(metadataVersion)
+            .build();
+        ReplicationControlManager replication = ctx.replicationControl;
+        ctx.registerBrokers(0, 1);
+        ctx.unfenceBrokers(0, 1);
+        String topic = "foo";
+        ctx.createTestTopic(topic, new int[][] {new int[] {0}}, Map.of(INKLESS_ENABLE_CONFIG, "true"), (short) 0).topicId();
+
+        // No change in the replication factor.
+        ControllerResult<AlterPartitionReassignmentsResponseData> alterResult1 =
+            replication.alterPartitionReassignments(
+                new AlterPartitionReassignmentsRequestData().setTopics(singletonList(
+                    new ReassignableTopic().setName(topic).setPartitions(singletonList(
+                        new ReassignablePartition().setPartitionIndex(0).
+                            setReplicas(singletonList(1)))))));
+        assertEquals(new AlterPartitionReassignmentsResponseData().
+                setErrorMessage(null).setResponses(singletonList(
+                    new ReassignableTopicResponse().setName(topic).setPartitions(singletonList(
+                        new ReassignablePartitionResponse().setPartitionIndex(0).setErrorMessage(null))))),
+            alterResult1.response());
+        ctx.replay(alterResult1.records());
+        ListPartitionReassignmentsResponseData currentReassigning =
+            new ListPartitionReassignmentsResponseData().setErrorMessage(null).
+                setTopics(singletonList(new OngoingTopicReassignment().
+                    setName(topic).setPartitions(singletonList(
+                        new OngoingPartitionReassignment().setPartitionIndex(0).
+                            setRemovingReplicas(singletonList(0)).
+                            setAddingReplicas(singletonList(1)).
+                            setReplicas(asList(1, 0))))));
+        assertEquals(currentReassigning, replication.listPartitionReassignments(singletonList(
+            new ListPartitionReassignmentsTopics().setName(topic).
+                setPartitionIndexes(singletonList(0))), Long.MAX_VALUE));
+
+        // Try to increase the replication factor.
+        ControllerResult<AlterPartitionReassignmentsResponseData> alterResult2 =
+            replication.alterPartitionReassignments(
+                new AlterPartitionReassignmentsRequestData().setTopics(singletonList(
+                    new ReassignableTopic().setName(topic).setPartitions(singletonList(
+                        new ReassignablePartition().setPartitionIndex(0).
+                            setReplicas(asList(0, 1)))))));
+        assertEquals(new AlterPartitionReassignmentsResponseData().
+                setErrorMessage(null).setResponses(singletonList(
+                    new ReassignableTopicResponse().setName(topic).setPartitions(singletonList(
+                        new ReassignablePartitionResponse().setPartitionIndex(0)
+                            .setErrorCode(INVALID_REPLICATION_FACTOR.code())
+                            .setErrorMessage("The replication factor is changed from 1 to 2"))))),
+            alterResult2.response());
+        ctx.replay(alterResult2.records());
+        assertEquals(currentReassigning, replication.listPartitionReassignments(singletonList(
+            new ListPartitionReassignmentsTopics().setName(topic).
+                setPartitionIndexes(singletonList(0))), Long.MAX_VALUE));
+    }
+
+    @ParameterizedTest
+    @ApiKeyVersionsSource(apiKey = ApiKeys.ALTER_PARTITION)
     public void testAlterPartitionShouldRejectFencedBrokers(short version) {
         ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder().build();
         ReplicationControlManager replication = ctx.replicationControl;

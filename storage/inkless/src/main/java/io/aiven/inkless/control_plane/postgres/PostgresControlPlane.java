@@ -134,8 +134,7 @@ public class PostgresControlPlane extends AbstractControlPlane {
     protected Iterator<ListOffsetsResponse> listOffsetsForExistingPartitions(Stream<ListOffsetsRequest> requests) {
             final ListOffsetsJob job = new ListOffsetsJob(
                     time, jooqCtx,
-                    requests.toList(),
-                    metrics::onGetLogsCompleted);
+                    requests.toList());
             return job.call().iterator();
     }
 

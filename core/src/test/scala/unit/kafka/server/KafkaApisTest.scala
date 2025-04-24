@@ -17,6 +17,8 @@
 
 package kafka.server
 
+import io.aiven.inkless.common.SharedState
+import io.aiven.inkless.control_plane.MetadataView
 import kafka.cluster.Partition
 import kafka.coordinator.transaction.{InitProducerIdResult, TransactionCoordinator}
 import kafka.network.RequestChannel
@@ -162,7 +164,8 @@ class KafkaApisTest extends Logging {
     authorizer: Option[Authorizer] = None,
     configRepository: ConfigRepository = new MockConfigRepository(),
     overrideProperties: Map[String, String] = Map.empty,
-    featureVersions: Seq[FeatureVersion] = Seq.empty
+    featureVersions: Seq[FeatureVersion] = Seq.empty,
+    inklessSharedState: Option[SharedState] = None
   ): KafkaApis = {
 
     val properties = TestUtils.createBrokerConfig(brokerId)
@@ -209,7 +212,8 @@ class KafkaApisTest extends Logging {
       time = time,
       tokenManager = null,
       apiVersionManager = apiVersionManager,
-      clientMetricsManager = clientMetricsManager)
+      clientMetricsManager = clientMetricsManager,
+      inklessSharedState = inklessSharedState)
   }
 
   private def setupFeatures(featureVersions: Seq[FeatureVersion]): Unit = {
@@ -1245,6 +1249,38 @@ class KafkaApisTest extends Logging {
 
     checkInvalidPartition(-1)
     checkInvalidPartition(1) // topic has only one partition
+  }
+
+  @Test
+  def testTxnOffsetCommitWithInklessTopic(): Unit = {
+    val topic = "topic"
+    addTopicToMetadataCache(topic, numPartitions = 1)
+
+    reset(replicaManager, clientRequestQuotaManager, requestChannel)
+
+    val topicPartition = new TopicPartition(topic, 0)
+    val partitionOffsetCommitData = new TxnOffsetCommitRequest.CommittedOffset(15L, "", Optional.empty())
+    val offsetCommitRequest = new TxnOffsetCommitRequest.Builder(
+      "txnId",
+      "groupId",
+      15L,
+      0.toShort,
+      Map(topicPartition -> partitionOffsetCommitData).asJava,
+      true
+    ).build()
+    val request = buildRequest(offsetCommitRequest)
+    when(clientRequestQuotaManager.maybeRecordAndGetThrottleTimeMs(any[RequestChannel.Request](),
+      any[Long])).thenReturn(0)
+
+    val kafkaApis = createKafkaApis(inklessSharedState = Some(createInklessSharedStateWithTopic(topic)))
+    try {
+      kafkaApis.handleTxnOffsetCommitRequest(request, RequestLocal.withThreadConfinedCaching)
+
+      val response = verifyNoThrottling[TxnOffsetCommitResponse](request)
+      assertEquals(Errors.INVALID_TOPIC_EXCEPTION, response.errors().get(topicPartition))
+    } finally {
+      kafkaApis.close()
+    }
   }
 
   @Test
@@ -2327,6 +2363,32 @@ class KafkaApisTest extends Logging {
   }
 
   @Test
+  def testAddPartitionsToTxnWithInklessTopic(): Unit = {
+    val topic = "topic"
+    val topicPartition = new TopicPartition(topic, 0)
+    addTopicToMetadataCache(topic, numPartitions = 1)
+
+    val addPartitionsToTxnRequest = AddPartitionsToTxnRequest.Builder.forClient(
+      "txnlId", 15L, 0.toShort, List(topicPartition).asJava
+    ).build()
+    val request = buildRequest(addPartitionsToTxnRequest)
+
+    when(clientRequestQuotaManager.maybeRecordAndGetThrottleTimeMs(any[RequestChannel.Request](),
+      any[Long])).thenReturn(0)
+
+    val kafkaApis = createKafkaApis(inklessSharedState = Some(createInklessSharedStateWithTopic(topic)))
+    try {
+      kafkaApis.handleAddPartitionsToTxnRequest(request, RequestLocal.withThreadConfinedCaching)
+
+      val response = verifyNoThrottling[AddPartitionsToTxnResponse](request)
+      println(response)
+      assertEquals(Errors.INVALID_TOPIC_EXCEPTION, response.errors().get(AddPartitionsToTxnResponse.V3_AND_BELOW_TXN_ID).get(topicPartition))
+    } finally {
+      kafkaApis.close()
+    }
+  }
+
+  @Test
   def requiredAclsNotPresentWriteTxnMarkersThrowsAuthorizationException(): Unit = {
     val topicPartition = new TopicPartition("t", 0)
     val (_, request) = createWriteTxnMarkersRequest(asList(topicPartition))
@@ -2829,6 +2891,34 @@ class KafkaApisTest extends Logging {
       }
     }
     copy
+  }
+
+  @Test
+  def testHandleWriteTxnMarkersRequestWithInklessTopic(): Unit = {
+    val topic = "topic"
+    val topicPartition = new TopicPartition(topic, 0)
+    val (_, request) = createWriteTxnMarkersRequest(asList(topicPartition))
+    val expectedErrors = Map(topicPartition -> Errors.INVALID_TOPIC_EXCEPTION).asJava
+    val capturedResponse: ArgumentCaptor[WriteTxnMarkersResponse] = ArgumentCaptor.forClass(classOf[WriteTxnMarkersResponse])
+
+    val kafkaApis = createKafkaApis(inklessSharedState = Some(createInklessSharedStateWithTopic(topic)))
+    kafkaApis.handleWriteTxnMarkersRequest(request, RequestLocal.withThreadConfinedCaching)
+
+    verify(requestChannel).sendResponse(
+      ArgumentMatchers.eq(request),
+      capturedResponse.capture(),
+      ArgumentMatchers.eq(None)
+    )
+    val markersResponse = capturedResponse.getValue
+    assertEquals(expectedErrors, markersResponse.errorsByProducerId.get(1L))
+  }
+
+  private def createInklessSharedStateWithTopic(inklessTopic: String): SharedState = {
+    val metadataView = mock(classOf[MetadataView])
+    when(metadataView.isInklessTopic(ArgumentMatchers.eq(inklessTopic))).thenReturn(true)
+    val sharedState = mock(classOf[SharedState])
+    when(sharedState.metadata()).thenReturn(metadataView)
+    sharedState
   }
 
   @Test

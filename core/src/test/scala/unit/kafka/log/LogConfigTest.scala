@@ -463,6 +463,34 @@ class LogConfigTest {
   }
 
   @Test
+  def testValidInklessAndRemoteStorageEnable(): Unit = {
+    val kafkaProps = TestUtils.createDummyBrokerConfig()
+    val kafkaConfig = KafkaConfig.fromProps(kafkaProps)
+
+    val logProps = new Properties
+    logProps.put(TopicConfig.INKLESS_ENABLE_CONFIG, "true")
+    logProps.put(TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG, "true")
+
+    // Add Inkless
+    val t1 = assertThrows(
+      classOf[InvalidConfigurationException],
+      () => LogConfig.validate(Map(TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG -> "true").asJava, logProps, kafkaConfig.extractLogConfigMap, true))
+    assertEquals("Inkless and remote storage cannot be enabled simultaneously", t1.getMessage)
+
+    // Add remote storage
+    val t2 = assertThrows(
+      classOf[InvalidConfigurationException],
+      () => LogConfig.validate(Map(TopicConfig.INKLESS_ENABLE_CONFIG -> "true").asJava, logProps, kafkaConfig.extractLogConfigMap, true))
+    assertEquals("Inkless and remote storage cannot be enabled simultaneously", t2.getMessage)
+
+    // Add both
+    val t3 = assertThrows(
+      classOf[InvalidConfigurationException],
+      () => LogConfig.validate(Collections.emptyMap(), logProps, kafkaConfig.extractLogConfigMap, true))
+    assertEquals("Inkless and remote storage cannot be enabled simultaneously", t3.getMessage)
+  }
+
+  @Test
   def testValidateWithMetadataVersionJbodSupport(): Unit = {
     def validate(metadataVersion: MetadataVersion, jbodConfig: Boolean): Unit =
       KafkaConfig.fromProps(

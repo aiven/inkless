@@ -119,7 +119,7 @@ class KafkaApis(val requestChannel: RequestChannel,
   val describeTopicPartitionsRequestHandler = new DescribeTopicPartitionsRequestHandler(
     metadataCache, authHelper, config)
 
-  val inklessTopicMetadataTransformer = new InklessTopicMetadataTransformer(inklessSharedState.get.metadata())
+  val inklessTopicMetadataTransformer = inklessSharedState.map(s => new InklessTopicMetadataTransformer(s.metadata()))
 
   def close(): Unit = {
     aclApis.close()
@@ -950,7 +950,7 @@ class KafkaApis(val requestChannel: RequestChannel,
       }
     }
 
-    inklessTopicMetadataTransformer.transformClusterMetadata(request.context.clientId(), topicMetadata.asJava)
+    inklessTopicMetadataTransformer.foreach(t => t.transformClusterMetadata(request.context.clientId(), topicMetadata.asJava))
 
     val completeTopicMetadata =  unknownTopicIdsTopicMetadata ++
       topicMetadata ++ unauthorizedForCreateTopicMetadata ++ unauthorizedForDescribeTopicMetadata
@@ -978,7 +978,7 @@ class KafkaApis(val requestChannel: RequestChannel,
     trace("Sending topic partitions metadata %s for correlation id %d to client %s".format(response.topics().asScala.mkString(","),
       request.header.correlationId, request.header.clientId))
 
-    inklessTopicMetadataTransformer.transformDescribeTopicResponse(request.header.clientId, response)
+    inklessTopicMetadataTransformer.foreach(t => t.transformDescribeTopicResponse(request.header.clientId, response))
 
     requestHelper.sendResponseMaybeThrottle(request, requestThrottleMs => {
       response.setThrottleTimeMs(requestThrottleMs)
@@ -1692,11 +1692,16 @@ class KafkaApis(val requestChannel: RequestChannel,
 
       val currentErrors = new ConcurrentHashMap[TopicPartition, Errors]()
       marker.partitions.forEach { partition =>
-        replicaManager.onlinePartition(partition) match {
-          case Some(_)  =>
-            partitionsWithCompatibleMessageFormat += partition
-          case None =>
-            currentErrors.put(partition, Errors.UNKNOWN_TOPIC_OR_PARTITION)
+        if (inklessSharedState.exists(s => s.metadata().isInklessTopic(partition.topic()))) {
+          warn("Attempt to call WriteTxnMarkersRequest with Inkless topic")
+          currentErrors.put(partition, Errors.INVALID_TOPIC_EXCEPTION)
+        } else {
+          replicaManager.onlinePartition(partition) match {
+            case Some(_) =>
+              partitionsWithCompatibleMessageFormat += partition
+            case None =>
+              currentErrors.put(partition, Errors.UNKNOWN_TOPIC_OR_PARTITION)
+          }
         }
       }
 
@@ -1839,6 +1844,7 @@ class KafkaApis(val requestChannel: RequestChannel,
       } else {
         val unauthorizedTopicErrors = mutable.Map[TopicPartition, Errors]()
         val nonExistingTopicErrors = mutable.Map[TopicPartition, Errors]()
+        val prohibitedInklessTopicErrors = mutable.Map[TopicPartition, Errors]()
         val authorizedPartitions = mutable.Set[TopicPartition]()
 
         // Only request versions less than 4 need write authorization since they come from clients.
@@ -1852,15 +1858,18 @@ class KafkaApis(val requestChannel: RequestChannel,
             unauthorizedTopicErrors += topicPartition -> Errors.TOPIC_AUTHORIZATION_FAILED
           else if (!metadataCache.contains(topicPartition))
             nonExistingTopicErrors += topicPartition -> Errors.UNKNOWN_TOPIC_OR_PARTITION
-          else
+          else if (inklessSharedState.exists(s => s.metadata().isInklessTopic(topicPartition.topic))) {
+            warn("Attempt to call AddPartitionsToTxnRequest with Inkless topic")
+            prohibitedInklessTopicErrors += topicPartition -> Errors.INVALID_TOPIC_EXCEPTION
+          } else
             authorizedPartitions.add(topicPartition)
         }
 
-        if (unauthorizedTopicErrors.nonEmpty || nonExistingTopicErrors.nonEmpty) {
+        if (unauthorizedTopicErrors.nonEmpty || nonExistingTopicErrors.nonEmpty || prohibitedInklessTopicErrors.nonEmpty) {
           // Any failed partition check causes the entire transaction to fail. We send the appropriate error codes for the
           // partitions which failed, and an 'OPERATION_NOT_ATTEMPTED' error code for the partitions which succeeded
           // the authorization check to indicate that they were not added to the transaction.
-          val partitionErrors = unauthorizedTopicErrors ++ nonExistingTopicErrors ++
+          val partitionErrors = unauthorizedTopicErrors ++ nonExistingTopicErrors ++ prohibitedInklessTopicErrors ++
             authorizedPartitions.map(_ -> Errors.OPERATION_NOT_ATTEMPTED)
           addResultAndMaybeSendResponse(AddPartitionsToTxnResponse.resultForTransaction(transactionalId, partitionErrors.asJava))
         } else {
@@ -2001,6 +2010,10 @@ class KafkaApis(val requestChannel: RequestChannel,
           // to the response with UNKNOWN_TOPIC_OR_PARTITION.
           responseBuilder.addPartitions[TxnOffsetCommitRequestData.TxnOffsetCommitRequestPartition](
             topic.name, topic.partitions, _.partitionIndex, Errors.UNKNOWN_TOPIC_OR_PARTITION)
+        } else if (inklessSharedState.exists(s => s.metadata().isInklessTopic(topic.name()))) {
+          warn("Attempt to call TxnOffsetCommitRequest with Inkless topic")
+          responseBuilder.addPartitions[TxnOffsetCommitRequestData.TxnOffsetCommitRequestPartition](
+            topic.name, topic.partitions, _.partitionIndex, Errors.INVALID_TOPIC_EXCEPTION)
         } else {
           // Otherwise, we check all partitions to ensure that they all exist.
           val topicWithValidPartitions = new TxnOffsetCommitRequestData.TxnOffsetCommitRequestTopic().setName(topic.name)

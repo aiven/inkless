@@ -20,6 +20,8 @@ package io.aiven.inkless.control_plane;
 import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.protocol.Errors;
 
+import static org.apache.kafka.common.record.RecordBatch.NO_TIMESTAMP;
+
 public record ListOffsetsResponse(
         Errors errors,
         TopicIdPartition topicIdPartition,
@@ -30,7 +32,12 @@ public record ListOffsetsResponse(
     public static ListOffsetsResponse success(TopicIdPartition topicIdPartition, final long timestamp, final long offset) {
         return new ListOffsetsResponse(Errors.NONE, topicIdPartition, timestamp, offset);
     }
+
     public static ListOffsetsResponse unknownTopicOrPartition(TopicIdPartition topicIdPartition) {
-        return new ListOffsetsResponse(Errors.UNKNOWN_TOPIC_OR_PARTITION, topicIdPartition, -1, -1);
+        return new ListOffsetsResponse(Errors.UNKNOWN_TOPIC_OR_PARTITION, topicIdPartition, NO_TIMESTAMP, -1);
+    }
+
+    public static ListOffsetsResponse unknownServerError(TopicIdPartition topicIdPartition) {
+        return new ListOffsetsResponse(Errors.UNKNOWN_SERVER_ERROR, topicIdPartition, NO_TIMESTAMP, -1);
     }
 }

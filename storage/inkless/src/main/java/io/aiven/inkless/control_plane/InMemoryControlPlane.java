@@ -19,7 +19,6 @@ package io.aiven.inkless.control_plane;
 
 import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.Uuid;
-import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.utils.Time;
 
 import org.slf4j.Logger;
@@ -44,6 +43,8 @@ import java.util.stream.Stream;
 
 import io.aiven.inkless.TimeUtils;
 import io.aiven.inkless.common.ObjectFormat;
+
+import static org.apache.kafka.common.record.RecordBatch.NO_TIMESTAMP;
 
 // TODO: in-memory control plane is using synchronous operations. It could be improved by using finer-grained locks if needed later.
 public class InMemoryControlPlane extends AbstractControlPlane {
@@ -324,26 +325,51 @@ public class InMemoryControlPlane extends AbstractControlPlane {
     @Override
     protected Iterator<ListOffsetsResponse> listOffsetsForExistingPartitions(Stream<ListOffsetsRequest> requests) {
         return requests
-                .map(request -> listOffset(request, logs))
+                .map(request -> listOffset(request))
                 .iterator();
     }
 
-    private ListOffsetsResponse listOffset(ListOffsetsRequest request, Map<TopicIdPartition, LogInfo> data) {
-        LogInfo logInfo = data.get(request.topicIdPartition());
+    private ListOffsetsResponse listOffset(ListOffsetsRequest request) {
+        final LogInfo logInfo = logs.get(request.topicIdPartition());
 
         if (logInfo == null) {
             LOGGER.warn("Unexpected non-existing partition {}", request.topicIdPartition());
             return ListOffsetsResponse.unknownTopicOrPartition(request.topicIdPartition());
         }
 
-        long timestamp = request.timestamp();
-        if (timestamp == ListOffsetsRequest.EARLIEST_TIMESTAMP) {
-            return ListOffsetsResponse.success(request.topicIdPartition(), timestamp, logInfo.logStartOffset);
+        final long timestamp = request.timestamp();
+        if (timestamp == ListOffsetsRequest.EARLIEST_TIMESTAMP || timestamp == ListOffsetsRequest.EARLIEST_LOCAL_TIMESTAMP) {
+            return ListOffsetsResponse.success(request.topicIdPartition(), NO_TIMESTAMP, logInfo.logStartOffset);
         } else if (timestamp == ListOffsetsRequest.LATEST_TIMESTAMP) {
-            return ListOffsetsResponse.success(request.topicIdPartition(), timestamp, logInfo.logStartOffset);
+            return ListOffsetsResponse.success(request.topicIdPartition(), NO_TIMESTAMP, logInfo.highWatermark);
+        } else if (timestamp == ListOffsetsRequest.MAX_TIMESTAMP) {
+            long maxTimestamp = NO_TIMESTAMP;
+            long maxTimestampOffset = -1;
+            for (final var entry : batches.get(request.topicIdPartition()).entrySet()) {
+                final BatchInfo batchInfo = entry.getValue().batchInfo();
+                final long batchTimestamp = batchInfo.metadata().timestamp();
+                if (batchTimestamp > maxTimestamp) {
+                    maxTimestamp = batchTimestamp;
+                    maxTimestampOffset = entry.getKey();
+                }
+            }
+            return ListOffsetsResponse.success(request.topicIdPartition(), maxTimestamp, maxTimestampOffset);
+        } else if (timestamp == ListOffsetsRequest.LATEST_TIERED_TIMESTAMP) {
+            return ListOffsetsResponse.success(request.topicIdPartition(), NO_TIMESTAMP, -1);
+        } else if (timestamp >= 0) {
+            for (final var entry : batches.get(request.topicIdPartition()).entrySet()) {
+                final BatchMetadata batchMetadata = entry.getValue().batchInfo().metadata();
+                final long batchTimestamp = batchMetadata.timestamp();
+                if (batchTimestamp >= timestamp) {
+                    return ListOffsetsResponse.success(request.topicIdPartition(), batchTimestamp,
+                        Math.max(logInfo.logStartOffset, batchMetadata.baseOffset()));
+                }
+            }
+            return ListOffsetsResponse.success(request.topicIdPartition(), NO_TIMESTAMP, -1);
+        } else {
+            LOGGER.error("listOffset request for timestamp {} in {} unsupported", timestamp, request.topicIdPartition());
+            return ListOffsetsResponse.unknownServerError(request.topicIdPartition());
         }
-        LOGGER.error("listOffset request for timestamp {} in {} unsupported", timestamp, request.topicIdPartition());
-        return new ListOffsetsResponse(Errors.UNKNOWN_SERVER_ERROR, request.topicIdPartition(), -1, -1);
     }
 
     @Override

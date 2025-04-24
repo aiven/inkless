@@ -24,7 +24,7 @@ import org.apache.kafka.server.config.{ReplicationConfigs, ServerLogConfigs}
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Tag
 import org.junit.jupiter.params.ParameterizedTest
-import org.junit.jupiter.params.provider.ValueSource
+import org.junit.jupiter.params.provider.CsvSource
 
 import java.nio.charset.StandardCharsets
 import java.util
@@ -52,9 +52,9 @@ class ProducerSendWhileDeletionTest extends IntegrationTestHarness {
    * Producer will attempt to send messages to the partition specified in each record, and should
    * succeed as long as the partition is included in the metadata.
    */
-  @ParameterizedTest
-  @ValueSource(strings = Array("kraft"))
-  def testSendWithTopicDeletionMidWay(quorum: String): Unit = {
+  @ParameterizedTest(name = "{displayName}.quorum={0}.topicType={1}")
+  @CsvSource(Array("kraft,classic", "kraft,inkless"))
+  def testSendWithTopicDeletionMidWay(quorum: String, topicType: String): Unit = {
     val numRecords = 10
     val topic = "topic"
 

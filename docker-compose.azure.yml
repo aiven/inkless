@@ -1,0 +1,28 @@
+services:
+  broker:
+    environment:
+      KAFKA_INKLESS_STORAGE_BACKEND_CLASS: "io.aiven.inkless.storage_backend.azure.AzureBlobStorage"
+      KAFKA_INKLESS_STORAGE_AZURE_CONTAINER_NAME: "inkless"
+      KAFKA_INKLESS_STORAGE_AZURE_ACCOUNT_NAME: "devstoreaccount1"
+      KAFKA_INKLESS_STORAGE_AZURE_ACCOUNT_KEY: "Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw=="
+      KAFKA_INKLESS_STORAGE_AZURE_ENDPOINT_URL: "http://storage:10000/devstoreaccount1"
+    depends_on:
+     - postgres
+     - storage
+
+  storage:
+    image: mcr.microsoft.com/azure-storage/azurite
+    ports:
+      - "10000:10000"
+    command: azurite-blob --blobHost 0.0.0.0
+
+  create_bucket:
+    image: mcr.microsoft.com/azure-cli
+    restart: "no"
+    depends_on:
+      - storage
+    command: >
+      az storage container create --name inkless 
+        --account-name devstoreaccount1 
+        --account-key Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw== 
+        --blob-endpoint http://storage:10000/devstoreaccount1
