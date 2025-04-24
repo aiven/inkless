@@ -985,15 +985,29 @@ public abstract class AbstractControlPlaneTest {
 
     @Test
     void testCommitDuplicates() {
-        final CommitBatchRequest request = CommitBatchRequest.idempotent(0, EXISTING_TOPIC_1_ID_PARTITION_0, 1, 10, 10, 19, time.milliseconds(), TimestampType.CREATE_TIME, 1L, (short) 3, 0, 9);
-        final CommitBatchResponse response = controlPlane.commitFile("a", BROKER_ID, FILE_SIZE, List.of(request)).get(0);
+        final CommitBatchRequest request1 = CommitBatchRequest.idempotent(1, EXISTING_TOPIC_1_ID_PARTITION_0, 1, 10, 10, 19, time.milliseconds(), TimestampType.CREATE_TIME, 1L, (short) 3, 0, 9);
 
-        assertThat(response)
-            .extracting(CommitBatchResponse::errors, CommitBatchResponse::isDuplicate)
-            .containsExactly(Errors.NONE, false);
+        final List<CommitBatchRequest> requests = List.of(
+            request1,
+            CommitBatchRequest.idempotent(2, EXISTING_TOPIC_1_ID_PARTITION_0, 2, 10, 20, 29, time.milliseconds(), TimestampType.CREATE_TIME, 1L, (short) 3, 10, 19),
+            CommitBatchRequest.idempotent(3, EXISTING_TOPIC_1_ID_PARTITION_0, 3, 10, 30, 39, time.milliseconds(), TimestampType.CREATE_TIME, 1L, (short) 3, 20, 29),
+            CommitBatchRequest.idempotent(4, EXISTING_TOPIC_1_ID_PARTITION_0, 4, 10, 40, 49, time.milliseconds(), TimestampType.CREATE_TIME, 1L, (short) 3, 30, 39),
+            CommitBatchRequest.idempotent(5, EXISTING_TOPIC_1_ID_PARTITION_0, 5, 10, 50, 59, time.milliseconds(), TimestampType.CREATE_TIME, 1L, (short) 3, 40, 49)
+        );
+        final List<CommitBatchResponse> responses = controlPlane.commitFile("a", BROKER_ID, FILE_SIZE, requests);
+        assertThat(responses).containsExactly(
+            CommitBatchResponse.success(0, time.milliseconds(), 0, requests.get(0)),
+            CommitBatchResponse.success(10, time.milliseconds(), 0, requests.get(1)),
+            CommitBatchResponse.success(20, time.milliseconds(), 0, requests.get(2)),
+            CommitBatchResponse.success(30, time.milliseconds(), 0, requests.get(3)),
+            CommitBatchResponse.success(40, time.milliseconds(), 0, requests.get(4))
+        );
 
-        final CommitBatchResponse dupResponse = controlPlane.commitFile("b", BROKER_ID, FILE_SIZE, List.of(request)).get(0);
-        assertThat(dupResponse.isDuplicate()).isTrue();
+        // Try to produce a duplicate.
+        final List<CommitBatchResponse> dupResponses = controlPlane.commitFile("b", BROKER_ID, FILE_SIZE, List.of(request1));
+        assertThat(dupResponses).containsExactly(
+            CommitBatchResponse.ofDuplicate(0, time.milliseconds(), 0)
+        );
 
         final List<FindBatchResponse> findResponse = controlPlane.findBatches(
             List.of(new FindBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 0, Integer.MAX_VALUE)),
@@ -1002,11 +1016,30 @@ public abstract class AbstractControlPlaneTest {
             new FindBatchResponse(
                 Errors.NONE,
                 List.of(
-                    new BatchInfo(1L, "a", new BatchMetadata(EXISTING_TOPIC_1_ID_PARTITION_0, 1, 10, 0, 9, time.milliseconds(), time.milliseconds(), TimestampType.CREATE_TIME, 1L, (short) 3, 0, 9))
+                    new BatchInfo(1L, "a", new BatchMetadata(EXISTING_TOPIC_1_ID_PARTITION_0, 1, 10, 0, 9, time.milliseconds(), time.milliseconds(), TimestampType.CREATE_TIME)),
+                    new BatchInfo(2L, "a", new BatchMetadata(EXISTING_TOPIC_1_ID_PARTITION_0, 2, 10, 10, 19, time.milliseconds(), time.milliseconds(), TimestampType.CREATE_TIME)),
+                    new BatchInfo(3L, "a", new BatchMetadata(EXISTING_TOPIC_1_ID_PARTITION_0, 3, 10, 20, 29, time.milliseconds(), time.milliseconds(), TimestampType.CREATE_TIME)),
+                    new BatchInfo(4L, "a", new BatchMetadata(EXISTING_TOPIC_1_ID_PARTITION_0, 4, 10, 30, 39, time.milliseconds(), time.milliseconds(), TimestampType.CREATE_TIME)),
+                    new BatchInfo(5L, "a", new BatchMetadata(EXISTING_TOPIC_1_ID_PARTITION_0, 5, 10, 40, 49, time.milliseconds(), time.milliseconds(), TimestampType.CREATE_TIME))
                 ),
                 0,
-                10
+                50
             )
+        );
+
+        // Make the control plane to forget the original.
+        final List<CommitBatchRequest> requests2 = List.of(
+            CommitBatchRequest.idempotent(1, EXISTING_TOPIC_1_ID_PARTITION_0, 1, 10, 10, 19, time.milliseconds(), TimestampType.CREATE_TIME, 1L, (short) 3, 50, 59)
+        );
+        final List<CommitBatchResponse> responses2 = controlPlane.commitFile("c", BROKER_ID, FILE_SIZE, requests2);
+        assertThat(responses2).containsExactly(
+            CommitBatchResponse.success(50, time.milliseconds(), 0, requests2.get(0))
+        );
+
+        // Try to produce a duplicate again.
+        final List<CommitBatchResponse> dupResponses2 = controlPlane.commitFile("d", BROKER_ID, FILE_SIZE, List.of(request1));
+        assertThat(dupResponses2).containsExactly(
+            CommitBatchResponse.sequenceOutOfOrder(request1)
         );
     }
 

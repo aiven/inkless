@@ -86,11 +86,7 @@ public class CommitFileMergeWorkItemJob implements Callable<CommitFileMergeWorkI
                             b.metadata().lastOffset(),
                             b.metadata().logAppendTimestamp(),
                             b.metadata().batchMaxTimestamp(),
-                            b.metadata().timestampType(),
-                            b.metadata().producerId(),
-                            b.metadata().producerEpoch(),
-                            b.metadata().baseSequence(),
-                            b.metadata().lastSequence()
+                            b.metadata().timestampType()
                         ),
                         b.parentBatches().toArray(new Long[0])
                     )

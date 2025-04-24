@@ -121,11 +121,7 @@ class FindBatchesJob implements Callable<List<FindBatchResponse>> {
                 BATCHES.LAST_OFFSET,
                 BATCHES.TIMESTAMP_TYPE,
                 BATCHES.LOG_APPEND_TIMESTAMP,
-                BATCHES.BATCH_MAX_TIMESTAMP,
-                BATCHES.PRODUCER_ID,
-                BATCHES.PRODUCER_EPOCH,
-                BATCHES.BASE_SEQUENCE,
-                BATCHES.LAST_SEQUENCE
+                BATCHES.BATCH_MAX_TIMESTAMP
             ).from(BATCHES)
             .innerJoin(FILES).on(BATCHES.FILE_ID.eq(FILES.FILE_ID))
             .where(BATCHES.TOPIC_ID.eq(request.topicIdPartition().topicId()))
@@ -149,11 +145,7 @@ class FindBatchesJob implements Callable<List<FindBatchResponse>> {
                         record.get(BATCHES.LAST_OFFSET),
                         record.get(BATCHES.LOG_APPEND_TIMESTAMP),
                         record.get(BATCHES.BATCH_MAX_TIMESTAMP),
-                        record.get(BATCHES.TIMESTAMP_TYPE),
-                        record.get(BATCHES.PRODUCER_ID),
-                        record.get(BATCHES.PRODUCER_EPOCH),
-                        record.get(BATCHES.BASE_SEQUENCE),
-                        record.get(BATCHES.LAST_SEQUENCE)
+                        record.get(BATCHES.TIMESTAMP_TYPE)
                     )
                 );
                 batches.add(batch);

@@ -44,6 +44,7 @@ import java.util.stream.Stream;
 import io.aiven.inkless.TimeUtils;
 
 import static org.apache.kafka.common.record.RecordBatch.NO_TIMESTAMP;
+import static org.apache.kafka.storage.internals.log.ProducerStateEntry.NUM_BATCHES_TO_RETAIN;
 
 // TODO: in-memory control plane is using synchronous operations. It could be improved by using finer-grained locks if needed later.
 public class InMemoryControlPlane extends AbstractControlPlane {
@@ -119,11 +120,13 @@ public class InMemoryControlPlane extends AbstractControlPlane {
             return CommitBatchResponse.unknownTopicOrPartition();
         }
 
+        final long firstOffset = logInfo.highWatermark;
+
         // Update the producer state
         if (request.hasProducerId()) {
             final LatestProducerState latestProducerState = producers
                 .computeIfAbsent(topicIdPartition, k -> new TreeMap<>())
-                .computeIfAbsent(request.producerId(), k -> LatestProducerState.empty(request));
+                .computeIfAbsent(request.producerId(), k -> LatestProducerState.empty(request.producerEpoch()));
 
             if (latestProducerState.epoch > request.producerEpoch()) {
                 LOGGER.warn("Producer request with epoch {} is less than the latest epoch {}. Rejecting request",
@@ -137,14 +140,14 @@ public class InMemoryControlPlane extends AbstractControlPlane {
                     return CommitBatchResponse.sequenceOutOfOrder(request);
                 }
             } else {
-                final Optional<CommitBatchRequest> first = latestProducerState.lastEntries.stream()
-                    .filter(e -> e.lastSequence() - e.offsetDelta() == request.baseSequence() && e.lastSequence() == request.lastSequence())
+                final Optional<ProducerStateItem> first = latestProducerState.lastEntries.stream()
+                    .filter(e -> e.baseSequence() == request.baseSequence() && e.lastSequence() == request.lastSequence())
                     .findFirst();
                 if (first.isPresent()) {
                     LOGGER.warn("Producer request with base sequence {} and last sequence {} is a duplicate. Rejecting request",
                         request.baseSequence(), request.lastSequence());
-                    final CommitBatchRequest batchMetadata = first.get();
-                    return CommitBatchResponse.ofDuplicate(batchMetadata.lastOffset(), batchMetadata.batchMaxTimestamp(), logInfo.logStartOffset);
+                    final ProducerStateItem batchMetadata = first.get();
+                    return CommitBatchResponse.ofDuplicate(batchMetadata.assignedOffset(), batchMetadata.batchMaxTimestamp(), logInfo.logStartOffset);
                 }
 
                 final int lastSeq = latestProducerState.lastEntries.getLast().lastSequence();
@@ -157,16 +160,15 @@ public class InMemoryControlPlane extends AbstractControlPlane {
 
             final LatestProducerState current;
             if (latestProducerState.epoch < request.producerEpoch()) {
-                current = LatestProducerState.empty(request);
+                current = LatestProducerState.empty(request.producerEpoch());
             } else {
                 current = latestProducerState;
             }
-            current.addElement(request);
+            current.addElement(request.baseSequence(), request.lastSequence(), firstOffset, request.batchMaxTimestamp());
 
             producers.get(topicIdPartition).put(request.producerId(), current);
         }
 
-        final long firstOffset = logInfo.highWatermark;
         final long lastOffset = firstOffset + request.offsetDelta();
         logInfo.highWatermark = lastOffset + 1;
         final BatchInfo batchInfo = new BatchInfo(
@@ -180,11 +182,7 @@ public class InMemoryControlPlane extends AbstractControlPlane {
                 lastOffset,
                 now,
                 request.batchMaxTimestamp(),
-                request.messageTimestampType(),
-                request.producerId(),
-                request.producerEpoch(),
-                request.baseSequence(),
-                request.lastSequence()
+                request.messageTimestampType()
             )
         );
         coordinates.put(lastOffset, new BatchInfoInternal(batchInfo, fileInfo));
@@ -623,18 +621,27 @@ public class InMemoryControlPlane extends AbstractControlPlane {
     private record BatchInfoInternal(BatchInfo batchInfo,
                                      FileInfo fileInfo) {
     }
-    
-    private record LatestProducerState(short epoch, long timestamp, LinkedList<CommitBatchRequest> lastEntries) {
-        static LatestProducerState empty(CommitBatchRequest request) {
-            return new LatestProducerState(request.producerEpoch(), request.batchMaxTimestamp(), new LinkedList<>());
+
+    private record ProducerStateItem(int baseSequence,
+                                     int lastSequence,
+                                     long assignedOffset,
+                                     long batchMaxTimestamp) {
+    }
+
+    private record LatestProducerState(short epoch, LinkedList<ProducerStateItem> lastEntries) {
+        static LatestProducerState empty(final short epoch) {
+            return new LatestProducerState(epoch, new LinkedList<>());
         }
 
-        public void addElement(CommitBatchRequest element) {
+        public void addElement(final int baseSequence,
+                               final int lastSequence,
+                               final long assignedOffset,
+                               final long batchMaxTimestamp) {
             // Keep the last 5 entries
-            while (lastEntries.size() >= 5) {
+            while (lastEntries.size() >= NUM_BATCHES_TO_RETAIN) {
                 lastEntries.removeFirst();
             }
-            lastEntries.addLast(element);
+            lastEntries.addLast(new ProducerStateItem(baseSequence, lastSequence, assignedOffset, batchMaxTimestamp));
         }
     }
 }

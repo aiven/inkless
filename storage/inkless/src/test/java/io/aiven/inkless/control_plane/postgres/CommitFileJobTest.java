@@ -19,7 +19,6 @@ package io.aiven.inkless.control_plane.postgres;
 
 import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.Uuid;
-import org.apache.kafka.common.record.RecordBatch;
 import org.apache.kafka.common.record.TimestampType;
 import org.apache.kafka.common.utils.MockTime;
 import org.apache.kafka.common.utils.Time;
@@ -121,10 +120,8 @@ class CommitFileJobTest {
 
         assertThat(DBUtils.getAllBatches(pgContainer.getDataSource()))
             .containsExactlyInAnyOrder(
-                new BatchesRecord(1L, TOPIC_ID_0, 1, 0L, 14L, EXPECTED_FILE_ID_1, 0L, 100L, TimestampType.CREATE_TIME, time.milliseconds(), 1000L,
-                    RecordBatch.NO_PRODUCER_ID, RecordBatch.NO_PRODUCER_EPOCH, RecordBatch.NO_SEQUENCE, RecordBatch.NO_SEQUENCE),
-                new BatchesRecord(2L, TOPIC_ID_1, 0, 0L, 26L, EXPECTED_FILE_ID_1, 100L, 50L, TimestampType.LOG_APPEND_TIME, time.milliseconds(), 2000L,
-                    RecordBatch.NO_PRODUCER_ID, RecordBatch.NO_PRODUCER_EPOCH, RecordBatch.NO_SEQUENCE, RecordBatch.NO_SEQUENCE)
+                new BatchesRecord(1L, TOPIC_ID_0, 1, 0L, 14L, EXPECTED_FILE_ID_1, 0L, 100L, TimestampType.CREATE_TIME, time.milliseconds(), 1000L),
+                new BatchesRecord(2L, TOPIC_ID_1, 0, 0L, 26L, EXPECTED_FILE_ID_1, 100L, 50L, TimestampType.LOG_APPEND_TIME, time.milliseconds(), 2000L)
             );
     }
 
@@ -181,15 +178,11 @@ class CommitFileJobTest {
         assertThat(DBUtils.getAllBatches(pgContainer.getDataSource()))
             .containsExactlyInAnyOrder(
                 // first pair
-                new BatchesRecord(1L, TOPIC_ID_0, 1, 0L, 14L, EXPECTED_FILE_ID_1, 0L, 100L, TimestampType.CREATE_TIME, firstFileCommittedAt, 1000L,
-                    RecordBatch.NO_PRODUCER_ID, RecordBatch.NO_PRODUCER_EPOCH, RecordBatch.NO_SEQUENCE, RecordBatch.NO_SEQUENCE),
-                new BatchesRecord(2L, TOPIC_ID_1, 0, 0L, 26L, EXPECTED_FILE_ID_1, 100L, 50L, TimestampType.LOG_APPEND_TIME, firstFileCommittedAt, 2000L,
-                    RecordBatch.NO_PRODUCER_ID, RecordBatch.NO_PRODUCER_EPOCH, RecordBatch.NO_SEQUENCE, RecordBatch.NO_SEQUENCE),
+                new BatchesRecord(1L, TOPIC_ID_0, 1, 0L, 14L, EXPECTED_FILE_ID_1, 0L, 100L, TimestampType.CREATE_TIME, firstFileCommittedAt, 1000L),
+                new BatchesRecord(2L, TOPIC_ID_1, 0, 0L, 26L, EXPECTED_FILE_ID_1, 100L, 50L, TimestampType.LOG_APPEND_TIME, firstFileCommittedAt, 2000L),
                 // second pair
-                new BatchesRecord(3L, TOPIC_ID_0, 0, 0L, 158L, EXPECTED_FILE_ID_2, 0L, 111L, TimestampType.CREATE_TIME, secondFileCommittedAt, 3000L,
-                    RecordBatch.NO_PRODUCER_ID, RecordBatch.NO_PRODUCER_EPOCH, RecordBatch.NO_SEQUENCE, RecordBatch.NO_SEQUENCE),
-                new BatchesRecord(4L, TOPIC_ID_0, 1, 15L, 15L + 245 - 1, EXPECTED_FILE_ID_2, 111L, 222L, TimestampType.CREATE_TIME, secondFileCommittedAt, 4000L,
-                    RecordBatch.NO_PRODUCER_ID, RecordBatch.NO_PRODUCER_EPOCH, RecordBatch.NO_SEQUENCE, RecordBatch.NO_SEQUENCE)
+                new BatchesRecord(3L, TOPIC_ID_0, 0, 0L, 158L, EXPECTED_FILE_ID_2, 0L, 111L, TimestampType.CREATE_TIME, secondFileCommittedAt, 3000L),
+                new BatchesRecord(4L, TOPIC_ID_0, 1, 15L, 15L + 245 - 1, EXPECTED_FILE_ID_2, 111L, 222L, TimestampType.CREATE_TIME, secondFileCommittedAt, 4000L)
             );
     }
 
@@ -229,10 +222,8 @@ class CommitFileJobTest {
 
         assertThat(DBUtils.getAllBatches(pgContainer.getDataSource()))
             .containsExactlyInAnyOrder(
-                new BatchesRecord(1L, TOPIC_ID_0, 1, 0L, 14L, EXPECTED_FILE_ID_1, 0L, 100L, TimestampType.CREATE_TIME, time.milliseconds(), 1000L,
-                    RecordBatch.NO_PRODUCER_ID, RecordBatch.NO_PRODUCER_EPOCH, RecordBatch.NO_SEQUENCE, RecordBatch.NO_SEQUENCE),
-                new BatchesRecord(2L, TOPIC_ID_1, 0, 0L, 26L, EXPECTED_FILE_ID_1, 100L, 50L, TimestampType.LOG_APPEND_TIME, time.milliseconds(), 2000L,
-                    RecordBatch.NO_PRODUCER_ID, RecordBatch.NO_PRODUCER_EPOCH, RecordBatch.NO_SEQUENCE, RecordBatch.NO_SEQUENCE)
+                new BatchesRecord(1L, TOPIC_ID_0, 1, 0L, 14L, EXPECTED_FILE_ID_1, 0L, 100L, TimestampType.CREATE_TIME, time.milliseconds(), 1000L),
+                new BatchesRecord(2L, TOPIC_ID_1, 0, 0L, 26L, EXPECTED_FILE_ID_1, 100L, 50L, TimestampType.LOG_APPEND_TIME, time.milliseconds(), 2000L)
             );
     }
 
@@ -265,10 +256,8 @@ class CommitFileJobTest {
 
         assertThat(DBUtils.getAllBatches(pgContainer.getDataSource()))
             .containsExactlyInAnyOrder(
-                new BatchesRecord(1L, TOPIC_ID_0, 1, 0L, 14L, EXPECTED_FILE_ID_1, 0L, 100L, TimestampType.CREATE_TIME, time.milliseconds(), 1000L,
-                    1L, (short) 3, 0, 14),
-                new BatchesRecord(2L, TOPIC_ID_1, 0, 0L, 26L, EXPECTED_FILE_ID_1, 100L, 50L, TimestampType.LOG_APPEND_TIME, time.milliseconds(), 2000L,
-                    1L, (short) 3, 0, 26)
+                new BatchesRecord(1L, TOPIC_ID_0, 1, 0L, 14L, EXPECTED_FILE_ID_1, 0L, 100L, TimestampType.CREATE_TIME, time.milliseconds(), 1000L),
+                new BatchesRecord(2L, TOPIC_ID_1, 0, 0L, 26L, EXPECTED_FILE_ID_1, 100L, 50L, TimestampType.LOG_APPEND_TIME, time.milliseconds(), 2000L)
             );
     }
 
@@ -301,10 +290,8 @@ class CommitFileJobTest {
 
         assertThat(DBUtils.getAllBatches(pgContainer.getDataSource()))
             .containsExactlyInAnyOrder(
-                new BatchesRecord(1L, TOPIC_ID_0, 1, 0L, 14L, EXPECTED_FILE_ID_1, 0L, 100L, TimestampType.CREATE_TIME, time.milliseconds(), 1000L,
-                    1L, (short) 3, 0, 14),
-                new BatchesRecord(2L, TOPIC_ID_0, 1, 15L, 26L, EXPECTED_FILE_ID_1, 100L, 50L, TimestampType.LOG_APPEND_TIME, time.milliseconds(), 2000L,
-                    1L, (short) 3, 15, 26)
+                new BatchesRecord(1L, TOPIC_ID_0, 1, 0L, 14L, EXPECTED_FILE_ID_1, 0L, 100L, TimestampType.CREATE_TIME, time.milliseconds(), 1000L),
+                new BatchesRecord(2L, TOPIC_ID_0, 1, 15L, 26L, EXPECTED_FILE_ID_1, 100L, 50L, TimestampType.LOG_APPEND_TIME, time.milliseconds(), 2000L)
             );
     }
 
@@ -344,8 +331,7 @@ class CommitFileJobTest {
 
         assertThat(DBUtils.getAllBatches(pgContainer.getDataSource()))
             .containsExactlyInAnyOrder(
-                new BatchesRecord(1L, TOPIC_ID_0, 1, 0L, 14L, EXPECTED_FILE_ID_1, 0L, 100L, TimestampType.CREATE_TIME, time.milliseconds(), 1000L,
-                    1L, (short) 3, 0, lastBatchSequence)
+                new BatchesRecord(1L, TOPIC_ID_0, 1, 0L, 14L, EXPECTED_FILE_ID_1, 0L, 100L, TimestampType.CREATE_TIME, time.milliseconds(), 1000L)
             );
     }
 
@@ -405,8 +391,7 @@ class CommitFileJobTest {
 
         assertThat(DBUtils.getAllBatches(pgContainer.getDataSource()))
             .containsExactlyInAnyOrder(
-                new BatchesRecord(1L, TOPIC_ID_0, 1, 0L, 14L, EXPECTED_FILE_ID_1, 0L, 100L, TimestampType.CREATE_TIME, time.milliseconds(), 1000L,
-                    1L, (short) 3, 0, 14)
+                new BatchesRecord(1L, TOPIC_ID_0, 1, 0L, 14L, EXPECTED_FILE_ID_1, 0L, 100L, TimestampType.CREATE_TIME, time.milliseconds(), 1000L)
             );
     }
 }

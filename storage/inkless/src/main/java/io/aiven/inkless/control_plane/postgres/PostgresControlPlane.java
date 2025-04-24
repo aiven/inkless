@@ -237,11 +237,7 @@ public class PostgresControlPlane extends AbstractControlPlane {
                 errorBatch.getMetadata().getLastOffset(),
                 errorBatch.getMetadata().getLogAppendTimestamp(),
                 errorBatch.getMetadata().getBatchMaxTimestamp(),
-                errorBatch.getMetadata().getTimestampType(),
-                errorBatch.getMetadata().getProducerId(),
-                errorBatch.getMetadata().getProducerEpoch(),
-                errorBatch.getMetadata().getBaseSequence(),
-                errorBatch.getMetadata().getLastSequence()
+                errorBatch.getMetadata().getTimestampType()
             ),
             Arrays.asList(errorBatch.getParentBatchIds())
         );

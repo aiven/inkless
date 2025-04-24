@@ -61,11 +61,7 @@ public class MergeBatchesInputStream extends InputStream {
                         bf.parentBatch().metadata().lastOffset(),
                         bf.parentBatch().metadata().logAppendTimestamp(),
                         bf.parentBatch().metadata().batchMaxTimestamp(),
-                        bf.parentBatch().metadata().timestampType(),
-                        bf.parentBatch().metadata().producerId(),
-                        bf.parentBatch().metadata().producerEpoch(),
-                        bf.parentBatch().metadata().baseSequence(),
-                        bf.parentBatch().metadata().lastSequence()
+                        bf.parentBatch().metadata().timestampType()
                     ),
                     List.of(bf.parentBatch().batchId())
                 ));
