@@ -1789,6 +1789,13 @@ org.apache.kafka.streams.processor.internals.DefaultStateUpdaterTest:
 - shouldUpdateSingleStandbyTask
 - shouldUpdateStandbyTaskAfterAllActiveStatefulTasksFailed
 - shouldUpdateStandbyTaskAfterAllActiveStatefulTasksRemoved
+org.apache.kafka.streams.processor.internals.DefaultStreamsRebalanceListenerTest:
+- testOnAllTasksLost
+- testOnAllTasksLostWithException
+- testOnTasksAssigned
+- testOnTasksAssignedWithException
+- testOnTasksRevoked
+- testOnTasksRevokedWithException
 org.apache.kafka.streams.processor.internals.ForwardingDisabledProcessorContextTest:
 - shouldThrowOnForward
 - shouldThrowOnForwardWithTo
@@ -2722,6 +2729,13 @@ org.apache.kafka.streams.processor.internals.StreamThreadTest:
 - shouldTransmitTaskManagerMetrics
 - shouldUpdateLagsAfterPolling
 - shouldUpdateStandbyTask
+- testGetTopicPartitionInfo
+- testNamedTopologyWithStreamsProtocol
+- testStreamsProtocolRunOnceWithProcessingThreads
+- testStreamsProtocolRunOnceWithoutProcessingThreads
+- testStreamsRebalanceDataWithClassicProtocol
+- testStreamsRebalanceDataWithExtraCopartition
+- testStreamsRebalanceDataWithStreamsProtocol
 org.apache.kafka.streams.processor.internals.StreamThreadTotalBlockedTimeTest:
 - shouldComputeTotalBlockedTime
 org.apache.kafka.streams.processor.internals.StreamsAssignmentScaleTest:

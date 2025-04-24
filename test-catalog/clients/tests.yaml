@@ -1103,6 +1103,7 @@ org.apache.kafka.clients.consumer.internals.AsyncKafkaConsumerTest:
 - testCommitSyncAwaitsCommitAsyncCompletionWithNonEmptyOffsets
 - testCommitted
 - testCommittedExceptionThrown
+- testEmptyStreamRebalanceData
 - testEndOffsetsTimeoutException
 - testEnsureCallbackExecutedByApplicationThread
 - testEnsureCommitSyncExecutedCommitAsyncCallbacks
@@ -1148,6 +1149,7 @@ org.apache.kafka.clients.consumer.internals.AsyncKafkaConsumerTest:
 - testSeekToBeginningWithException
 - testSeekToEnd
 - testSeekToEndWithException
+- testStreamRebalanceData
 - testSubscribeGeneratesEvent
 - testSubscribePatternAgainstBrokerNotSupportingRegex
 - testSubscribePatternGeneratesEvent
@@ -2073,6 +2075,7 @@ org.apache.kafka.clients.consumer.internals.RequestFutureTest:
 - testVoidFuture
 org.apache.kafka.clients.consumer.internals.RequestManagersTest:
 - testMemberStateListenerRegistered
+- testStreamMemberStateListenerRegistered
 org.apache.kafka.clients.consumer.internals.RequestStateTest:
 - testRequestStateSimple
 - testTrackInflightOnFailedAttempt
@@ -2313,6 +2316,8 @@ org.apache.kafka.clients.consumer.internals.StreamsGroupHeartbeatRequestManagerT
 - testPollOnCloseWhenIsLeaving
 - testPollOnCloseWhenIsNotLeaving
 - testPropagateCoordinatorFatalErrorToApplicationThread
+- testResetPollTimer
+- testResetPollTimerWhenExpired
 - testResettingHeartbeatState
 - testSendingHeartbeatIfHeartbeatCanBeSent
 - testSendingHeartbeatIfMemberIsJoiningOrAcknowledging
@@ -2537,6 +2542,12 @@ org.apache.kafka.clients.consumer.internals.events.ApplicationEventProcessorTest
 - testResetOffsetEvent
 - testSeekUnvalidatedEvent
 - testSeekUnvalidatedEventWithException
+- testStreamsOnAllTasksLostCallbackCompletedEvent
+- testStreamsOnAllTasksLostCallbackCompletedEventWithoutStreamsMembershipManager
+- testStreamsOnTasksAssignedCallbackCompletedEvent
+- testStreamsOnTasksAssignedCallbackCompletedEventWithoutStreamsMembershipManager
+- testStreamsOnTasksRevokedCallbackCompletedEvent
+- testStreamsOnTasksRevokedCallbackCompletedEventWithoutStreamsMembershipManager
 - testSyncCommitEvent
 - testSyncCommitEventWithEmptyOffsets
 - testSyncCommitEventWithException
