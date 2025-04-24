@@ -2621,6 +2621,7 @@ org.apache.kafka.clients.producer.KafkaProducerTest:
 - testInitTransactionTimeout
 - testInitTransactionWhileThrottled
 - testInitTransactionsResponseAfterTimeout
+- testInitTransactionsWithKeepPreparedTxnAndTwoPhaseCommit
 - testInterceptorConstructClose
 - testInterceptorConstructorConfigurationWithExceptionShouldCloseRemainingInstances
 - testInterceptorPartitionSetOnTooLargeRecord
@@ -2730,6 +2731,7 @@ org.apache.kafka.clients.producer.ProducerConfigTest:
 - testInvalidCompressionType
 - testInvalidMetadataRecoveryStrategy
 - testInvalidSecurityProtocol
+- testTwoPhaseCommitIncompatibleWithTransactionTimeout
 - testUpperboundCheckOfEnableIdempotence
 org.apache.kafka.clients.producer.ProducerRecordTest:
 - testEqualsAndHashCode
@@ -2977,6 +2979,7 @@ org.apache.kafka.clients.producer.internals.TransactionManagerTest:
 - testHealthyPartitionRetriesDuringEpochBump
 - testIllegalGenerationInTxnOffsetCommitByGroupMetadata
 - testInitializeTransactionsTwiceRaisesError
+- testInitializeTransactionsWithKeepPreparedTxn
 - testInvalidProducerEpochConvertToProducerFencedInAddOffSetsToTxn
 - testInvalidProducerEpochConvertToProducerFencedInAddPartitionToTxn
 - testInvalidProducerEpochConvertToProducerFencedInEndTxn
