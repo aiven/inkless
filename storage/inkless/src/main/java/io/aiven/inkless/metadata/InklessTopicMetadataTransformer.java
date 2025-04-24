@@ -20,6 +20,7 @@ package io.aiven.inkless.metadata;
 import org.apache.kafka.admin.BrokerMetadata;
 import org.apache.kafka.common.message.DescribeTopicPartitionsResponseData;
 import org.apache.kafka.common.message.MetadataResponseData;
+import org.apache.kafka.metadata.LeaderAndIsr;
 
 import java.util.Collections;
 import java.util.Comparator;
@@ -59,6 +60,7 @@ public class InklessTopicMetadataTransformer {
                 partition.setReplicaNodes(list);
                 partition.setIsrNodes(list);
                 partition.setOfflineReplicas(Collections.emptyList());
+                partition.setLeaderEpoch(LeaderAndIsr.INITIAL_LEADER_EPOCH);
             }
         }
     }
@@ -86,6 +88,7 @@ public class InklessTopicMetadataTransformer {
                 partition.setEligibleLeaderReplicas(Collections.emptyList());
                 partition.setLastKnownElr(Collections.emptyList());
                 partition.setOfflineReplicas(Collections.emptyList());
+                partition.setLeaderEpoch(LeaderAndIsr.INITIAL_LEADER_EPOCH);
             }
         }
     }
