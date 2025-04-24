@@ -2095,6 +2095,7 @@ kafka.server.KRaftClusterTest:
 - testDirectToControllerCommunicationFailsOnOlderMetadataVersion
 - testIncreaseNumIoThreads
 - testIncrementalAlterConfigs
+- testOldBootstrapMetadataFile
 - testOverlyLargeCreateTopics
 - testReconfigureControllerAuthorizer
 - testReconfigureControllerClientQuotas
