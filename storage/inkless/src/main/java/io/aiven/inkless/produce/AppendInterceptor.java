@@ -93,7 +93,7 @@ public class AppendInterceptor implements Closeable {
                              final RequestLocal requestLocal) {
         final TopicTypeCounter.Result countResult = topicTypeCounter.count(entriesPerPartition.keySet());
         if (countResult.bothTypesPresent()) {
-            LOGGER.warn("Producing to Inkless and class topic in same request isn't supported");
+            LOGGER.warn("Producing to Inkless and classic topic in same request isn't supported");
             respondAllWithError(entriesPerPartition, responseCallback, Errors.INVALID_REQUEST);
             return true;
         }

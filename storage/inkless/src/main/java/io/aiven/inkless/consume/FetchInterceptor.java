@@ -65,7 +65,7 @@ public class FetchInterceptor implements Closeable {
             fetchInfos.keySet().stream().map(TopicIdPartition::topicPartition).collect(Collectors.toSet())
         );
         if (countResult.bothTypesPresent()) {
-            LOGGER.warn("Consuming from Inkless and class topic in same request isn't supported");
+            LOGGER.warn("Consuming from Inkless and classic topic in same request isn't supported");
             final var response = fetchInfos.entrySet().stream()
                     .collect(Collectors.toMap(
                             Map.Entry::getKey,
