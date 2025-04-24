@@ -82,7 +82,7 @@ class DelayedRemoteListOffsetsTest {
       new TopicPartition("test1", 0) -> ListOffsetsPartitionStatus.builder().futureHolderOpt(Optional.of(holder)).build(),
     )
 
-    val delayedRemoteListOffsets = new DelayedRemoteListOffsets(delayMs, version = 5, statusByPartition, replicaManager, responseCallback)
+    val delayedRemoteListOffsets = new DelayedRemoteListOffsets(delayMs, version = 5, statusByPartition, replicaManager, _ => false, responseCallback)
     val listOffsetsRequestKeys = statusByPartition.keys.map(new TopicPartitionOperationKey(_)).toList.asJava
     assertEquals(0, DelayedRemoteListOffsetsMetrics.aggregateExpirationMeter.count())
     assertEquals(0, DelayedRemoteListOffsetsMetrics.partitionExpirationMeters.size)
@@ -134,7 +134,7 @@ class DelayedRemoteListOffsetsTest {
       new TopicPartition("test1", 0) -> ListOffsetsPartitionStatus.builder().futureHolderOpt(Optional.of(holder)).build()
     )
 
-    val delayedRemoteListOffsets = new DelayedRemoteListOffsets(delayMs, version = 5, statusByPartition, replicaManager, responseCallback)
+    val delayedRemoteListOffsets = new DelayedRemoteListOffsets(delayMs, version = 5, statusByPartition, replicaManager, _ => false, responseCallback)
     val listOffsetsRequestKeys = statusByPartition.keys.map(new TopicPartitionOperationKey(_)).toList.asJava
     purgatory.tryCompleteElseWatch(delayedRemoteListOffsets, listOffsetsRequestKeys)
 
@@ -190,7 +190,7 @@ class DelayedRemoteListOffsetsTest {
       new TopicPartition("test1", 0) -> ListOffsetsPartitionStatus.builder().futureHolderOpt(Optional.of(errorFutureHolder)).build() 
     )
 
-    val delayedRemoteListOffsets = new DelayedRemoteListOffsets(delayMs, version = 5, statusByPartition, replicaManager, responseCallback)
+    val delayedRemoteListOffsets = new DelayedRemoteListOffsets(delayMs, version = 5, statusByPartition, replicaManager, _ => false, responseCallback)
     val listOffsetsRequestKeys = statusByPartition.keys.map(new TopicPartitionOperationKey(_)).toList.asJava
     purgatory.tryCompleteElseWatch(delayedRemoteListOffsets, listOffsetsRequestKeys)
 
@@ -248,7 +248,7 @@ class DelayedRemoteListOffsetsTest {
       new TopicPartition("test1", 1) -> ListOffsetsPartitionStatus.builder().futureHolderOpt(Optional.of(holder)).build()
     )
 
-    val delayedRemoteListOffsets = new DelayedRemoteListOffsets(delayMs, version = 5, statusByPartition, replicaManager, responseCallback)
+    val delayedRemoteListOffsets = new DelayedRemoteListOffsets(delayMs, version = 5, statusByPartition, replicaManager, _ => false, responseCallback)
     val listOffsetsRequestKeys = statusByPartition.keys.map(new TopicPartitionOperationKey(_)).toList.asJava
     purgatory.tryCompleteElseWatch(delayedRemoteListOffsets, listOffsetsRequestKeys)
 
