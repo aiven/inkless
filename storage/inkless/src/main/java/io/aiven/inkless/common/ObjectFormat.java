@@ -23,7 +23,8 @@ public enum ObjectFormat {
      * An object consisting of batches which:
      * <ul>
      *     <li>are locally ordered by byte position
-     *     <li>do not include a valid timestamp
+     *     <li>include a valid timestamp iff {@link org.apache.kafka.common.record.TimestampType#CREATE_TIME} is used
+     *     <li>do not include a valid start/end log offset
      *     <li>are members of multiple partitions
      * </ul>
      * <p>This object may contain invalid data between batches.

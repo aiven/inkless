@@ -120,7 +120,7 @@ public abstract class AbstractControlPlaneTest {
         final List<CommitBatchResponse> commitResponse1 = controlPlane.commitFile(
             objectKey1, ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, BROKER_ID,
             FILE_SIZE,
-                List.of(
+            List.of(
                 successfulRequest1,
                 // non-existing partition
                 CommitBatchRequest.of(0, new TopicIdPartition(EXISTING_TOPIC_1_ID, EXISTING_TOPIC_1_PARTITIONS + 1, EXISTING_TOPIC_1), 2, 10, 1, 10, 1000, TimestampType.CREATE_TIME),
@@ -138,7 +138,7 @@ public abstract class AbstractControlPlaneTest {
         final List<CommitBatchResponse> commitResponse2 = controlPlane.commitFile(
             objectKey2, ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, BROKER_ID,
             FILE_SIZE,
-                List.of(
+            List.of(
                 successfulRequest2,
                 CommitBatchRequest.of(0, new TopicIdPartition(EXISTING_TOPIC_1_ID, EXISTING_TOPIC_1_PARTITIONS + 1, EXISTING_TOPIC_1), 200, 10, 1, 10, 2000, TimestampType.CREATE_TIME),
                 CommitBatchRequest.of(0, new TopicIdPartition(NONEXISTENT_TOPIC_ID, 0, NONEXISTENT_TOPIC), 300, 10, 1, 10, 3000, TimestampType.CREATE_TIME)

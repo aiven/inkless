@@ -90,7 +90,8 @@ public class InMemoryControlPlane extends AbstractControlPlane {
     @Override
     protected synchronized Iterator<CommitBatchResponse> commitFileForValidRequests(
             final String objectKey,
-            final ObjectFormat format, final int uploaderBrokerId,
+            final ObjectFormat format,
+            final int uploaderBrokerId,
             final long fileSize,
             final Stream<CommitBatchRequest> requests
     ) {
