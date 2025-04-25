@@ -717,7 +717,7 @@ public abstract class AbstractControlPlaneTest {
                     new CreateTopicAndPartitionsRequest(newTopic2Id, newTopic2Name, 1)
                 ));
 
-                controlPlane.commitFile("a1", BROKER_ID, FILE_SIZE,
+                controlPlane.commitFile("a1", ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, BROKER_ID, FILE_SIZE,
                     List.of(
                         CommitBatchRequest.of(0, tidp1, 0, 1, TP1_BATCH1_BASE_OFFSET, TP1_BATCH1_BASE_OFFSET + TP1_BATCH1_RECORDS - 1, TP1_BATCH1_TIMESTAMP, TimestampType.CREATE_TIME),
                         CommitBatchRequest.of(0, tidp2, 0, 1, TP2_BATCH1_BASE_OFFSET, TP2_BATCH1_BASE_OFFSET + TP2_BATCH1_RECORDS - 1, TP2_BATCH1_TIMESTAMP, TimestampType.LOG_APPEND_TIME)
@@ -725,7 +725,7 @@ public abstract class AbstractControlPlaneTest {
 
                 time.sleep(10);
                 batch2CommitTimestamp = time.milliseconds();
-                controlPlane.commitFile("a2", BROKER_ID, FILE_SIZE,
+                controlPlane.commitFile("a2", ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, BROKER_ID, FILE_SIZE,
                     List.of(
                         CommitBatchRequest.of(0, tidp1, 0, 1, TP1_BATCH2_BASE_OFFSET, TP1_BATCH2_BASE_OFFSET + TP1_BATCH2_RECORDS - 1, TP1_BATCH2_TIMESTAMP, TimestampType.CREATE_TIME),
                         CommitBatchRequest.of(0, tidp2, 0, 1, TP2_BATCH2_BASE_OFFSET, TP2_BATCH2_BASE_OFFSET + TP2_BATCH2_RECORDS - 1, TP2_BATCH2_TIMESTAMP, TimestampType.LOG_APPEND_TIME)

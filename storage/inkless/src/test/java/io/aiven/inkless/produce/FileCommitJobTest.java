@@ -120,11 +120,7 @@ class FileCommitJobTest {
             CommitBatchResponse.success(30, 10, 0, COMMIT_BATCH_REQUESTS.get(3))
         );
 
-        String objectKey = eq(OBJECT_KEY_MAIN_PART);
-        int uploaderBrokerId = eq(BROKER_ID);
-        long fileSize = eq(FILE_SIZE);
-        List<CommitBatchRequest> batches = eq(COMMIT_BATCH_REQUESTS);
-        when(controlPlane.commitFile(objectKey, ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, uploaderBrokerId, fileSize, batches))
+        when(controlPlane.commitFile(eq(OBJECT_KEY_MAIN_PART), eq(ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT), eq(BROKER_ID), eq(FILE_SIZE), eq(COMMIT_BATCH_REQUESTS)))
             .thenReturn(commitBatchResponses);
         when(time.nanoseconds()).thenReturn(10_000_000L, 20_000_000L);
 
@@ -156,11 +152,7 @@ class FileCommitJobTest {
 
         final List<CommitBatchResponse> commitBatchResponses = List.of();
 
-        String objectKey = eq(OBJECT_KEY_MAIN_PART);
-        int uploaderBrokerId = eq(BROKER_ID);
-        long fileSize = eq(FILE_SIZE);
-        List<CommitBatchRequest> batches = eq(COMMIT_BATCH_REQUESTS);
-        when(controlPlane.commitFile(objectKey, ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, uploaderBrokerId, fileSize, batches))
+        when(controlPlane.commitFile(eq(OBJECT_KEY_MAIN_PART), eq(ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT), eq(BROKER_ID), eq(FILE_SIZE), eq(COMMIT_BATCH_REQUESTS)))
             .thenReturn(commitBatchResponses);
         when(time.nanoseconds()).thenReturn(10_000_000L, 20_000_000L);
 
@@ -209,11 +201,7 @@ class FileCommitJobTest {
             1, new CompletableFuture<>()
         );
 
-        String objectKey = eq(OBJECT_KEY_MAIN_PART);
-        int uploaderBrokerId = eq(BROKER_ID);
-        long fileSize = eq(FILE_SIZE);
-        List<CommitBatchRequest> batches = eq(COMMIT_BATCH_REQUESTS);
-        when(controlPlane.commitFile(objectKey, ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, uploaderBrokerId, fileSize, batches))
+        when(controlPlane.commitFile(eq(OBJECT_KEY_MAIN_PART), eq(ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT), eq(BROKER_ID), eq(FILE_SIZE), eq(COMMIT_BATCH_REQUESTS)))
             .thenThrow(new ControlPlaneException("test"));
         when(controlPlane.isSafeToDeleteFile(eq(OBJECT_KEY_MAIN_PART))).thenReturn(isSafeToDelete);
 
@@ -241,11 +229,7 @@ class FileCommitJobTest {
             1, new CompletableFuture<>()
         );
 
-        String objectKey = eq(OBJECT_KEY_MAIN_PART);
-        int uploaderBrokerId = eq(BROKER_ID);
-        long fileSize = eq(FILE_SIZE);
-        List<CommitBatchRequest> batches = eq(COMMIT_BATCH_REQUESTS);
-        when(controlPlane.commitFile(objectKey, ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, uploaderBrokerId, fileSize, batches))
+        when(controlPlane.commitFile(eq(OBJECT_KEY_MAIN_PART), eq(ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT), eq(BROKER_ID), eq(FILE_SIZE), eq(COMMIT_BATCH_REQUESTS)))
             .thenThrow(new RuntimeException("test"));
 
         final ClosedFile file = new ClosedFile(Instant.EPOCH, REQUESTS, awaitingFuturesByRequest, COMMIT_BATCH_REQUESTS, Map.of(), DATA);

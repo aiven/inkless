@@ -155,9 +155,9 @@ class DeleteTopicJobTest {
 
         // The batches of the deleted topics must be gone, i.e. only TOPIC_2 remains.
         assertThat(DBUtils.getAllBatches(pgContainer.getDataSource())).containsExactlyInAnyOrder(
-            new BatchesRecord(4L, FORMAT, TOPIC_ID_2, 0, 0L, 11L, 2L, 0L, 2000L, TimestampType.CREATE_TIME, filesCommittedAt.toEpochMilli(), 1000L,
+            new BatchesRecord(4L, (short) RecordBatch.CURRENT_MAGIC_VALUE, TOPIC_ID_2, 0, 0L, 11L, 2L, 0L, 2000L, TimestampType.CREATE_TIME, filesCommittedAt.toEpochMilli(), 1000L,
                 RecordBatch.NO_PRODUCER_ID, RecordBatch.NO_PRODUCER_EPOCH, RecordBatch.NO_SEQUENCE, RecordBatch.NO_SEQUENCE),
-            new BatchesRecord(7L, FORMAT, TOPIC_ID_2, 0, 12L, 23L, 3L, 0L, 2000L, TimestampType.CREATE_TIME, filesCommittedAt.toEpochMilli(), 1000L,
+            new BatchesRecord(7L, (short) RecordBatch.CURRENT_MAGIC_VALUE, TOPIC_ID_2, 0, 12L, 23L, 3L, 0L, 2000L, TimestampType.CREATE_TIME, filesCommittedAt.toEpochMilli(), 1000L,
                 RecordBatch.NO_PRODUCER_ID, RecordBatch.NO_PRODUCER_EPOCH, RecordBatch.NO_SEQUENCE, RecordBatch.NO_SEQUENCE)
         );
 

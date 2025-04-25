@@ -745,6 +745,7 @@ BEGIN
             SELECT (
                 f.file_id,
                 files.object_key,
+                files.format,
                 files.size,
                 files.used_size,
                 ARRAY(
@@ -752,10 +753,10 @@ BEGIN
                         batches.batch_id,
                         files.object_key,
                         (
+                            batches.magic,
                             logs.topic_id,
                             logs.topic_name,
                             batches.partition,
-
                             batches.byte_offset,
                             batches.byte_size,
                             batches.base_offset,

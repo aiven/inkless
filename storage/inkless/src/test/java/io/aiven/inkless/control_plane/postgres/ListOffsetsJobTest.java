@@ -17,6 +17,7 @@
  */
 package io.aiven.inkless.control_plane.postgres;
 
+import io.aiven.inkless.common.ObjectFormat;
 import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.protocol.Errors;
@@ -78,7 +79,7 @@ class ListOffsetsJobTest {
         final String objectKey1 = "obj1";
 
         final CommitFileJob commitJob = new CommitFileJob(
-            time, pgContainer.getJooqCtx(), objectKey1, BROKER_ID, FILE_SIZE,
+            time, pgContainer.getJooqCtx(), objectKey1, ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, BROKER_ID, FILE_SIZE,
             List.of(
                 CommitBatchRequest.of(0, T0P0, 0, 1234, 0, 11, 1000, TimestampType.CREATE_TIME)
             ),
