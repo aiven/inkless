@@ -70,6 +70,7 @@ org.apache.kafka.coordinator.group.GroupCoordinatorServiceTest:
 - testConsumerGroupHeartbeat
 - testConsumerGroupHeartbeatWhenNotStarted
 - testConsumerGroupHeartbeatWithException
+- testConsumerHeartbeatRequestValidation
 - testDeleteGroups
 - testDeleteGroupsWhenNotStarted
 - testDeleteGroupsWithException
@@ -153,6 +154,7 @@ org.apache.kafka.coordinator.group.GroupCoordinatorServiceTest:
 - testShareGroupDescribeCoordinatorNotActive
 - testShareGroupDescribeInvalidGroupId
 - testShareGroupHeartbeat
+- testShareGroupHeartbeatRequestValidation
 - testShareGroupHeartbeatWhenNotStarted
 - testShareGroupHeartbeatWithException
 - testStartupShutdown
@@ -163,6 +165,7 @@ org.apache.kafka.coordinator.group.GroupCoordinatorServiceTest:
 - testStreamsGroupHeartbeat
 - testStreamsGroupHeartbeatWhenNotStarted
 - testStreamsGroupHeartbeatWithException
+- testStreamsHeartbeatRequestValidation
 - testSyncGroup
 - testSyncGroupInvalidGroupId
 - testSyncGroupWhenNotStarted
@@ -296,7 +299,6 @@ org.apache.kafka.coordinator.group.GroupMetadataManagerTest:
 - testConsumerGroupRebalanceSensor
 - testConsumerGroupStates
 - testConsumerHeartbeatRegexValidation
-- testConsumerHeartbeatRequestValidation
 - testDelayInitialRebalanceByGroupInitialRebalanceDelayOnEmptyGroup
 - testDelayRebalanceUptoRebalanceTimeout
 - testDescribeGroupRebalancing
@@ -465,7 +467,6 @@ org.apache.kafka.coordinator.group.GroupMetadataManagerTest:
 - testShareGroupHeartbeatNoPersisterRequestWithInitializing
 - testShareGroupHeartbeatOnConsumerGroup
 - testShareGroupHeartbeatOnStreamsGroup
-- testShareGroupHeartbeatRequestValidation
 - testShareGroupInitializeEmptyMap
 - testShareGroupInitializeSuccess
 - testShareGroupInitializingClearsCommonDeleting
@@ -535,7 +536,6 @@ org.apache.kafka.coordinator.group.GroupMetadataManagerTest:
 - testStreamsGroupMemberJoiningWithStaleTopology
 - testStreamsGroupMemberRequestingShutdownApplication
 - testStreamsGroupMemberRequestingShutdownApplicationUponLeaving
-- testStreamsHeartbeatRequestValidation
 - testStreamsLeavingMemberRemovesMemberAndBumpsGroupEpoch
 - testStreamsNewJoiningMemberTriggersNewTargetAssignment
 - testStreamsNewMemberIsRejectedWithMaximumMembersIsReached

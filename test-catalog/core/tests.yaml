@@ -366,16 +366,6 @@ kafka.api.PlaintextConsumerCommitTest:
 - testCommitSpecifiedOffsets
 - testPositionAndCommit
 - testSubscribeAndCommitSync
-kafka.api.PlaintextConsumerFetchTest:
-- testFetchHonoursFetchSizeIfLargeRecordNotFirst
-- testFetchHonoursMaxPartitionFetchBytesIfLargeRecordNotFirst
-- testFetchInvalidOffset
-- testFetchOutOfRangeOffsetResetConfigByDuration
-- testFetchOutOfRangeOffsetResetConfigEarliest
-- testFetchOutOfRangeOffsetResetConfigLatest
-- testFetchRecordLargerThanFetchMaxBytes
-- testFetchRecordLargerThanMaxPartitionFetchBytes
-- testLowMaxFetchSizeForRequestAndPartition
 kafka.api.PlaintextConsumerPollTest:
 - testMaxPollIntervalMs
 - testMaxPollIntervalMsDelayInAssignment
