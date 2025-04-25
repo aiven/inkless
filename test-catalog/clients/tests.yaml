@@ -263,7 +263,7 @@ org.apache.kafka.clients.admin.KafkaAdminClientTest:
 - testDeleteShareGroupOffsetsEmpty
 - testDeleteShareGroupOffsetsOptionsWithBatchedApi
 - testDeleteShareGroupOffsetsWithErrorInGroup
-- testDeleteShareGroupOffsetsWithErrorInOnePartition
+- testDeleteShareGroupOffsetsWithErrorInOneTopic
 - testDeleteShareGroupOffsetsWithPartitionNotPresentInResult
 - testDeleteStreamsGroupOffsets
 - testDeleteStreamsGroupOffsetsFindCoordinatorNonRetriableErrors
