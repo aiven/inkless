@@ -2595,6 +2595,7 @@ org.apache.kafka.streams.processor.internals.StreamTaskTest:
 - shouldNotCheckpointOffsetsAgainOnCommitIfSnapshotNotChangedMuch
 - shouldNotCheckpointOffsetsOnCommitIfEosIsEnabled
 - shouldNotCheckpointOnCloseCreated
+- shouldNotGetOffsetsIfPrepareCommitDirty
 - shouldNotProcessRecordsAfterPrepareCommitWhenEosV2Enabled
 - shouldNotPunctuateSystemTimeWhenIntervalNotElapsed
 - shouldNotShareHeadersBetweenPunctuateIterations
