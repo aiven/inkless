@@ -17,7 +17,6 @@
  */
 package io.aiven.inkless.control_plane.postgres;
 
-import io.aiven.inkless.common.ObjectFormat;
 import org.apache.kafka.common.utils.Time;
 
 import org.jooq.DSLContext;
@@ -40,6 +39,7 @@ import java.sql.Connection;
 import java.sql.SQLException;
 import java.time.Instant;
 
+import io.aiven.inkless.common.ObjectFormat;
 import io.aiven.inkless.control_plane.FileReason;
 import io.aiven.inkless.control_plane.FileToDelete;
 import io.aiven.inkless.test_utils.InklessPostgreSQLContainer;
