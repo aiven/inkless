@@ -171,6 +171,7 @@ org.apache.kafka.server.log.remote.storage.RemoteLogManagerTest:
 - testStopPartitionsWithoutDeletion
 - testTierLagResetsToZeroOnBecomingFollower
 - testTopicIdCacheUpdates
+- testUpdateRemoteStorageReaderThreads
 org.apache.kafka.server.log.remote.storage.RemoteLogMetadataManagerTest:
 - testFetchSegments
 - testRemotePartitionDeletion

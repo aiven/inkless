@@ -38,6 +38,7 @@ org.apache.kafka.coordinator.group.GroupCoordinatorRecordHelpersTest:
 - testNewOffsetCommitRecord
 - testNewOffsetCommitRecordWithExpireTimestamp
 - testNewOffsetCommitTombstoneRecord
+- testNewShareGroupEpochRecord
 - testNewShareGroupEpochTombstoneRecord
 - testNewShareGroupPartitionMetadataRecord
 - testOffsetCommitValueVersion
@@ -533,6 +534,7 @@ org.apache.kafka.coordinator.group.GroupMetadataManagerTest:
 - testStreamsGroupMemberJoiningWithMissingSourceTopic
 - testStreamsGroupMemberJoiningWithStaleTopology
 - testStreamsGroupMemberRequestingShutdownApplication
+- testStreamsGroupMemberRequestingShutdownApplicationUponLeaving
 - testStreamsHeartbeatRequestValidation
 - testStreamsLeavingMemberRemovesMemberAndBumpsGroupEpoch
 - testStreamsNewJoiningMemberTriggersNewTargetAssignment
