@@ -36,6 +36,7 @@ class DelayedRemoteListOffsets(delayMs: Long,
                                version: Int,
                                statusByPartition: mutable.Map[TopicPartition, ListOffsetsPartitionStatus],
                                replicaManager: ReplicaManager,
+                               isInklessTopic: String => Boolean = _ => false,
                                responseCallback: List[ListOffsetsTopicResponse] => Unit)
   extends DelayedOperation(delayMs) with Logging {
   // Mark the status as completed, if there is no async task to track.
@@ -85,7 +86,8 @@ class DelayedRemoteListOffsets(delayMs: Long,
     statusByPartition.foreachEntry { (partition, status) =>
       if (!status.completed) {
         try {
-          replicaManager.getPartitionOrException(partition)
+          if (!isInklessTopic(partition.topic()))
+            replicaManager.getPartitionOrException(partition)
         } catch {
           case e: ApiException =>
             status.futureHolderOpt.ifPresent { futureHolder =>

@@ -161,7 +161,7 @@ public class FetchCompleterJob implements Supplier<Map<TopicIdPartition, FetchPa
                 metadata.logStartOffset(),
                 new ConcatenatedRecords(foundRecords),
                 Optional.empty(),
-                OptionalLong.empty(),
+                OptionalLong.of(metadata.highWatermark()),
                 Optional.empty(),
                 OptionalInt.empty(),
                 false

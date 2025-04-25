@@ -135,7 +135,7 @@ class FetchOffsetHandlerTest {
 
         assertThat(future1.isDone()).isTrue();
         assertThat(future1.get().exception()).isEmpty();
-        assertThat(future1.get().timestampAndOffset()).contains(new FileRecords.TimestampAndOffset(-1, 100, Optional.empty()));
+        assertThat(future1.get().timestampAndOffset()).contains(new FileRecords.TimestampAndOffset(-1, 100, Optional.of(0)));
 
         assertThat(future2.isDone()).isTrue();
         assertThat(future2.get().exception()).isNotEmpty();
@@ -145,7 +145,7 @@ class FetchOffsetHandlerTest {
 
         assertThat(future3.isDone()).isTrue();
         assertThat(future3.get().exception()).isEmpty();
-        assertThat(future3.get().timestampAndOffset()).contains(new FileRecords.TimestampAndOffset(-3, 200, Optional.empty()));
+        assertThat(future3.get().timestampAndOffset()).contains(new FileRecords.TimestampAndOffset(-3, 200, Optional.of(0)));
     }
 
     @Test

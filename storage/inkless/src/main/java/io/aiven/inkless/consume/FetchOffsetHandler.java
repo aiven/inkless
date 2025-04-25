@@ -22,6 +22,7 @@ import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.errors.ApiException;
 import org.apache.kafka.common.message.ListOffsetsRequestData;
 import org.apache.kafka.common.record.FileRecords;
+import org.apache.kafka.metadata.LeaderAndIsr;
 import org.apache.kafka.storage.internals.log.OffsetResultHolder;
 
 import org.slf4j.Logger;
@@ -148,7 +149,7 @@ public class FetchOffsetHandler implements Closeable {
                 if (exception == null) {
                     future.complete(new OffsetResultHolder.FileRecordsOrError(
                         Optional.empty(),
-                        Optional.of(new FileRecords.TimestampAndOffset(response.timestamp(), response.offset(), Optional.empty()))
+                        Optional.of(new FileRecords.TimestampAndOffset(response.timestamp(), response.offset(), Optional.of(LeaderAndIsr.INITIAL_LEADER_EPOCH)))
                     ));
                 } else {
                     future.complete(new OffsetResultHolder.FileRecordsOrError(

@@ -363,6 +363,11 @@ class KafkaApis(val requestChannel: RequestChannel,
   case class LeaderNode(leaderId: Int, leaderEpoch: Int, node: Option[Node])
 
   private def getCurrentLeader(tp: TopicPartition, ln: ListenerName): LeaderNode = {
+    // Return unknown leader if the topic is inkless, as these topics do not have leaders
+    if (inklessSharedState.exists(_.metadata().isInklessTopic(tp.topic()))) {
+      return LeaderNode(-1, -1, metadataCache.getAliveBrokerNode(-1, ln))
+    }
+
     val partitionInfoOrError = replicaManager.getPartitionOrError(tp)
     val (leaderId, leaderEpoch) = partitionInfoOrError match {
       case Right(x) =>
