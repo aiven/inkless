@@ -155,4 +155,8 @@ public class ServerLogConfigs {
     public static final Long LOG_DIR_FAILURE_TIMEOUT_MS_DEFAULT = 30000L;
     public static final String LOG_DIR_FAILURE_TIMEOUT_MS_DOC = "If the broker is unable to successfully communicate to the controller that some log " +
         "directory has failed for longer than this time, the broker will fail and shut down.";
+
+    public static final String INKLESS_ENABLE_CONFIG = ServerTopicConfigSynonyms.serverSynonym(TopicConfig.INKLESS_ENABLE_CONFIG);
+    public static final boolean INKLESS_ENABLE_DEFAULT = false;
+    public static final String INKLESS_ENABLE_DOC = TopicConfig.INKLESS_ENABLE_DOC;
 }

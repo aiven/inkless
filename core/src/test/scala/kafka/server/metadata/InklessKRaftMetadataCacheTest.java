@@ -31,8 +31,12 @@ import org.apache.kafka.server.common.KRaftVersion;
 
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
+import scala.collection.Map;
+import scala.jdk.javaapi.CollectionConverters;
 
+import java.util.Collections;
 import java.util.List;
+import java.util.function.Supplier;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
@@ -43,6 +47,7 @@ class InklessKRaftMetadataCacheTest {
         "__consumer_offsets,false", "__transaction_state,false", "__share_group_state,false", "__cluster_metadata,false",
         "__other_topic1,false", "__other_topic2__,true", "_other_topic3,false", "other_topic4,true"})
     void isInklessTopic(final String topicName, final boolean expectedIsInkless) {
+        Supplier<Map<?, ?>> defaultConfig = () -> CollectionConverters.asScala(Collections.emptyMap());
         // Given a cache with a couple of inkless topics
         final KRaftMetadataCache cache = MetadataCache.kRaftMetadataCache(1, () -> KRaftVersion.KRAFT_VERSION_0);
         final List<ApiMessage> configRecords = List.of(new ConfigRecord()
@@ -57,7 +62,7 @@ class InklessKRaftMetadataCacheTest {
                 .setValue("true"));
         updateCache(cache, configRecords);
         // When checking if a topic is inkless, then the expected result is returned
-        assertEquals(expectedIsInkless, cache.isInklessTopic(topicName));
+        assertEquals(expectedIsInkless, cache.isInklessTopic(topicName, defaultConfig));
     }
 
     // Similar to {@link kafka.server.MetadataCacheTest#updateCache}

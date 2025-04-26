@@ -21,13 +21,15 @@ package kafka.server.metadata
 import io.aiven.inkless.control_plane.MetadataView
 import org.apache.kafka.admin.BrokerMetadata
 import org.apache.kafka.common.config.ConfigResource
-import org.apache.kafka.common.{TopicPartition, Uuid}
+import org.apache.kafka.common.{Uuid, TopicPartition}
 
 import java.util.Properties
-import java.{lang, util}
+import java.util.function.Supplier
+import java.{util, lang}
+import scala.collection.Map
 import scala.jdk.CollectionConverters.{IterableHasAsJava, SetHasAsJava}
 
-class InklessMetadataView(val metadataCache: KRaftMetadataCache) extends MetadataView {
+class InklessMetadataView(val metadataCache: KRaftMetadataCache, val defaultConfig: Supplier[Map[_, _]]) extends MetadataView {
   override def getAliveBrokers: lang.Iterable[BrokerMetadata] = {
     metadataCache.getAliveBrokers().asJava
   }
@@ -41,7 +43,7 @@ class InklessMetadataView(val metadataCache: KRaftMetadataCache) extends Metadat
   }
 
   override def isInklessTopic(topicName: String): Boolean = {
-    metadataCache.isInklessTopic(topicName)
+    metadataCache.isInklessTopic(topicName, defaultConfig)
   }
 
   override def getTopicConfig(topicName: String): Properties = {

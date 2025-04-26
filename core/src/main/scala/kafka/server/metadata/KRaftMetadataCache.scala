@@ -21,18 +21,18 @@ import kafka.server.MetadataCache
 import kafka.utils.Logging
 import org.apache.kafka.admin.BrokerMetadata
 import org.apache.kafka.common._
-import org.apache.kafka.common.config.{ConfigResource, TopicConfig}
+import org.apache.kafka.common.config.{TopicConfig, ConfigResource}
 import org.apache.kafka.common.errors.InvalidTopicException
 import org.apache.kafka.common.internals.Topic
-import org.apache.kafka.common.message.DescribeTopicPartitionsResponseData.{Cursor, DescribeTopicPartitionsResponsePartition, DescribeTopicPartitionsResponseTopic}
-import org.apache.kafka.common.message.MetadataResponseData.{MetadataResponsePartition, MetadataResponseTopic}
+import org.apache.kafka.common.message.DescribeTopicPartitionsResponseData.{DescribeTopicPartitionsResponseTopic, DescribeTopicPartitionsResponsePartition, Cursor}
+import org.apache.kafka.common.message.MetadataResponseData.{MetadataResponseTopic, MetadataResponsePartition}
 import org.apache.kafka.common.message._
 import org.apache.kafka.common.network.ListenerName
 import org.apache.kafka.common.protocol.Errors
 import org.apache.kafka.common.requests.MetadataResponse
 import org.apache.kafka.image.MetadataImage
-import org.apache.kafka.metadata.{BrokerRegistration, LeaderAndIsr, PartitionRegistration, Replicas}
-import org.apache.kafka.server.common.{FinalizedFeatures, KRaftVersion, MetadataVersion}
+import org.apache.kafka.metadata.{LeaderAndIsr, PartitionRegistration, Replicas, BrokerRegistration}
+import org.apache.kafka.server.common.{MetadataVersion, FinalizedFeatures, KRaftVersion}
 import org.apache.kafka.storage.internals.log.LogConfig
 
 import java.util
@@ -529,8 +529,8 @@ class KRaftMetadataCache(
       image.highestOffsetAndEpoch().offset)
   }
 
-  override def isInklessTopic(topic: String): Boolean = {
-    val logConfig = new LogConfig(config(new ConfigResource(ConfigResource.Type.TOPIC, topic)))
+  override def isInklessTopic(topic: String, defaultConfig: Supplier[Map[_, _]]): Boolean = {
+    val logConfig = LogConfig.fromProps(defaultConfig.get().asJava, topicConfig(topic))
     val inklessEnabled = logConfig.getBoolean(TopicConfig.INKLESS_ENABLE_CONFIG)
     !Topic.isInternal(topic) && topic != Topic.CLUSTER_METADATA_TOPIC_NAME && inklessEnabled
   }
