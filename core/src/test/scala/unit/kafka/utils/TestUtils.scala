@@ -17,7 +17,7 @@
 package kafka.utils
 
 import com.yammer.metrics.core.{Histogram, Meter}
-import io.aiven.inkless.test_utils.{MinioContainer, InklessPostgreSQLContainer}
+import io.aiven.inkless.test_utils.{InklessPostgreSQLContainer, MinioContainer}
 import kafka.log.LogManager
 import kafka.network.RequestChannel
 import kafka.security.JaasTestUtils
@@ -26,13 +26,13 @@ import kafka.utils.Implicits._
 import org.apache.kafka.clients.admin.AlterConfigOp.OpType
 import org.apache.kafka.clients.admin._
 import org.apache.kafka.clients.consumer._
-import org.apache.kafka.clients.producer.{KafkaProducer, ProducerRecord, ProducerConfig}
+import org.apache.kafka.clients.producer.{KafkaProducer, ProducerConfig, ProducerRecord}
 import org.apache.kafka.clients.ClientResponse
 import org.apache.kafka.common._
-import org.apache.kafka.common.acl.{AclBindingFilter, AccessControlEntry, AccessControlEntryFilter}
+import org.apache.kafka.common.acl.{AccessControlEntry, AccessControlEntryFilter, AclBindingFilter}
 import org.apache.kafka.common.compress.Compression
 import org.apache.kafka.common.config.{ConfigException, ConfigResource}
-import org.apache.kafka.common.errors.{OperationNotAttemptedException, UnknownTopicOrPartitionException, TopicExistsException}
+import org.apache.kafka.common.errors.{OperationNotAttemptedException, TopicExistsException, UnknownTopicOrPartitionException}
 import org.apache.kafka.common.header.Header
 import org.apache.kafka.common.internals.Topic
 import org.apache.kafka.common.memory.MemoryPool
@@ -42,46 +42,46 @@ import org.apache.kafka.common.protocol.{ApiKeys, Errors}
 import org.apache.kafka.common.record._
 import org.apache.kafka.common.requests._
 import org.apache.kafka.common.resource.ResourcePattern
-import org.apache.kafka.common.security.auth.{KafkaPrincipalSerde, SecurityProtocol, KafkaPrincipal}
+import org.apache.kafka.common.security.auth.{KafkaPrincipal, KafkaPrincipalSerde, SecurityProtocol}
 import org.apache.kafka.common.serialization._
 import org.apache.kafka.common.utils.Utils.formatAddress
 import org.apache.kafka.coordinator.group.GroupCoordinatorConfig
 import org.apache.kafka.coordinator.transaction.TransactionLogConfig
-import org.apache.kafka.metadata.{LeaderAndIsr, MockConfigRepository, ConfigRepository}
+import org.apache.kafka.metadata.{ConfigRepository, LeaderAndIsr, MockConfigRepository}
 import org.apache.kafka.network.SocketServerConfigs
 import org.apache.kafka.network.metrics.RequestChannelMetrics
 import org.apache.kafka.raft.QuorumConfig
 import org.apache.kafka.server.authorizer.{AuthorizableRequestContext, Authorizer => JAuthorizer}
 import org.apache.kafka.server.common.{ControllerRequestCompletionHandler, TopicIdPartition}
-import org.apache.kafka.server.config.{ServerLogConfigs, KRaftConfigs, ServerConfigs, ReplicationConfigs, DelegationTokenManagerConfigs}
+import org.apache.kafka.server.config.{DelegationTokenManagerConfigs, KRaftConfigs, ReplicationConfigs, ServerConfigs, ServerLogConfigs}
 import org.apache.kafka.server.metrics.KafkaYammerMetrics
 import org.apache.kafka.server.util.MockTime
 import org.apache.kafka.storage.internals.checkpoint.OffsetCheckpointFile
-import org.apache.kafka.storage.internals.log.{CleanerConfig, LogConfig, ProducerStateManagerConfig, UnifiedLog, LogDirFailureChannel}
+import org.apache.kafka.storage.internals.log.{CleanerConfig, LogConfig, LogDirFailureChannel, ProducerStateManagerConfig, UnifiedLog}
 import org.apache.kafka.storage.log.metrics.BrokerTopicStats
 import org.apache.kafka.test.{TestUtils => JTestUtils}
 import org.junit.jupiter.api.Assertions._
-import org.mockito.ArgumentMatchers.{anyBoolean, any}
+import org.mockito.ArgumentMatchers.{any, anyBoolean}
 import org.mockito.Mockito
 
 import java.io._
 import java.net.InetAddress
 import java.nio._
-import java.nio.charset.{StandardCharsets, Charset}
-import java.nio.file.{StandardOpenOption, Files}
+import java.nio.charset.{Charset, StandardCharsets}
+import java.nio.file.{Files, StandardOpenOption}
 import java.time.Duration
 import java.util
 import java.util.concurrent._
 import java.util.concurrent.atomic.AtomicBoolean
-import java.util.{Optional, Collections, Properties}
+import java.util.{Collections, Optional, Properties}
 import scala.collection.mutable.ArrayBuffer
-import scala.collection.{mutable, Map, Seq}
+import scala.collection.{Map, Seq, mutable}
 import scala.concurrent.duration.FiniteDuration
-import scala.concurrent.{ExecutionContext, Future, Await}
+import scala.concurrent.{Await, ExecutionContext, Future}
 import scala.jdk.CollectionConverters._
 import scala.jdk.OptionConverters.RichOption
 import scala.jdk.javaapi.OptionConverters
-import scala.util.{Try, Success, Failure}
+import scala.util.{Failure, Success, Try}
 
 /**
  * Utility functions to help with testing
@@ -1554,7 +1554,6 @@ object TestUtils extends Logging {
       props.put("inkless.control.plane.connection.string", pgContainer.getUserJdbcUrl)
       props.put("inkless.control.plane.username", pgContainer.getUsername)
       props.put("inkless.control.plane.password", pgContainer.getPassword)
-      props.put(ServerLogConfigs.INKLESS_ENABLE_CONFIG, "true") // By default, create topics as inkless topics.
     }
   }
 }
