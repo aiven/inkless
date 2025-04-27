@@ -3245,8 +3245,6 @@ kafka.utils.LoggingTest:
 - testLogNameOverride
 - testLoggerLevelIsResolved
 - testTypeOfGetLoggers
-kafka.utils.PoolTest:
-- testRemoveAll
 kafka.utils.SchedulerTest:
 - testMockSchedulerLocking
 - testMockSchedulerNonPeriodicTask
