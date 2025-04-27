@@ -4197,11 +4197,13 @@ org.apache.kafka.common.requests.OffsetCommitResponseTest:
 - testConstructorWithErrorResponse
 - testParse
 org.apache.kafka.common.requests.OffsetFetchRequestTest:
-- testBuildThrowForUnsupportedBatchRequest
-- testBuildThrowForUnsupportedRequireStable
-- testConstructor
-- testConstructorFailForUnsupportedRequireStable
-- testConstructorWithMultipleGroups
+- testGetErrorResponse
+- testGroups
+- testGroupsWithAllTopics
+- testSingleGroup
+- testSingleGroupWithAllTopics
+- testThrowOnFetchStableOffsetsUnsupported
+- testWithMultipleGroups
 org.apache.kafka.common.requests.OffsetFetchResponseTest:
 - testConstructor
 - testConstructorWithMultipleGroups
@@ -4276,8 +4278,6 @@ org.apache.kafka.common.requests.RequestResponseTest:
 - testInvalidSaslHandShakeRequest
 - testInvalidTaggedFieldsWithSaslAuthenticateRequest
 - testListGroupRequestV3FailsWithStates
-- testOffsetFetchRequestBuilderToStringV0ToV7
-- testOffsetFetchRequestBuilderToStringV8AndAbove
 - testProduceRequestPartitionSize
 - testResponseHeader
 - testSerialization
