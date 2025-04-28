@@ -32,14 +32,13 @@ import org.apache.kafka.common.{MetricName, TopicPartition}
 import org.apache.kafka.server.quota.QuotaType
 import org.apache.kafka.test.{MockConsumerInterceptor, MockProducerInterceptor}
 import org.junit.jupiter.api.Assertions._
-import org.junit.jupiter.api.{Disabled, Tag, Timeout}
+import org.junit.jupiter.api.Timeout
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.MethodSource
 
 import java.util.concurrent.{CompletableFuture, ExecutionException, TimeUnit}
 import scala.jdk.CollectionConverters._
 
-@Tag("inkless")
 @Timeout(600)
 class PlaintextConsumerTest extends BaseConsumerTest {
 
@@ -131,7 +130,7 @@ class PlaintextConsumerTest extends BaseConsumerTest {
   @MethodSource(Array("getTestQuorumAndGroupProtocolParametersAll"))
   def testPartitionsFor(quorum: String, groupProtocol: String): Unit = {
     val numParts = 2
-    createInklessTopic("part-test", numParts)
+    createTopic("part-test", numParts)
     val consumer = createConsumer()
     val parts = consumer.partitionsFor("part-test")
     assertNotNull(parts)
@@ -156,7 +155,6 @@ class PlaintextConsumerTest extends BaseConsumerTest {
     assertThrows(classOf[InvalidTopicException], () => consumer.partitionsFor(";3# ads,{234"))
   }
 
-  @Disabled("INKLESS: Broken on Inkless: may be related to the pauseAndResume test broken. When seeking to end on tp2 and then polling, it still get messages. TODO investigate")
   @ParameterizedTest(name = TestInfoUtils.TestWithParameterizedQuorumAndGroupProtocolNames)
   @MethodSource(Array("getTestQuorumAndGroupProtocolParametersAll"))
   def testSeek(quorum: String, groupProtocol: String): Unit = {
@@ -213,7 +211,6 @@ class PlaintextConsumerTest extends BaseConsumerTest {
     producer.close()
   }
 
-  @Disabled("INKLESS: Broken on Inkless: after pause, it fetches the initial records again, like pause is not holding the records consumed, TODO investigate")
   @ParameterizedTest(name = TestInfoUtils.TestWithParameterizedQuorumAndGroupProtocolNames)
   @MethodSource(Array("getTestQuorumAndGroupProtocolParametersAll"))
   def testPartitionPauseAndResume(quorum: String, groupProtocol: String): Unit = {
@@ -344,7 +341,7 @@ class PlaintextConsumerTest extends BaseConsumerTest {
     val topicName = "testConsumeMessagesWithLogAppendTime"
     val topicProps = new Properties()
     topicProps.setProperty(TopicConfig.MESSAGE_TIMESTAMP_TYPE_CONFIG, "LogAppendTime")
-    createInklessTopic(topicName, 2, topicProps)
+    createTopic(topicName, 2, 2, topicProps)
 
     val startTime = System.currentTimeMillis()
     val numRecords = 50
@@ -374,9 +371,9 @@ class PlaintextConsumerTest extends BaseConsumerTest {
     val topic1 = "part-test-topic-1"
     val topic2 = "part-test-topic-2"
     val topic3 = "part-test-topic-3"
-    createInklessTopic(topic1, numParts)
-    createInklessTopic(topic2, numParts)
-    createInklessTopic(topic3, numParts)
+    createTopic(topic1, numParts)
+    createTopic(topic2, numParts)
+    createTopic(topic3, numParts)
 
     val consumer = createConsumer()
     val topics = consumer.listTopics()
@@ -417,7 +414,7 @@ class PlaintextConsumerTest extends BaseConsumerTest {
   def testPerPartitionLeadMetricsCleanUpWithSubscribe(quorum: String, groupProtocol: String): Unit = {
     val numMessages = 1000
     val topic2 = "topic2"
-    createInklessTopic(topic2, 2)
+    createTopic(topic2, 2, brokerCount)
     // send some messages.
     val producer = createProducer()
     sendRecords(producer, numMessages, tp)
@@ -457,7 +454,7 @@ class PlaintextConsumerTest extends BaseConsumerTest {
   def testPerPartitionLagMetricsCleanUpWithSubscribe(quorum: String, groupProtocol: String): Unit = {
     val numMessages = 1000
     val topic2 = "topic2"
-    createInklessTopic(topic2, 2)
+    createTopic(topic2, 2, brokerCount)
     // send some messages.
     val producer = createProducer()
     sendRecords(producer, numMessages, tp)
@@ -555,7 +552,6 @@ class PlaintextConsumerTest extends BaseConsumerTest {
     assertNull(consumer.metrics.get(new MetricName("records-lag", "consumer-fetch-manager-metrics", "", tags)))
   }
 
-  @Disabled("INKLESS: Transactions is an unsupported feature atm")
   @ParameterizedTest(name = TestInfoUtils.TestWithParameterizedQuorumAndGroupProtocolNames)
   @MethodSource(Array("getTestQuorumAndGroupProtocolParametersAll"))
   def testPerPartitionLagMetricsWhenReadCommitted(quorum: String, groupProtocol: String): Unit = {
@@ -618,7 +614,7 @@ class PlaintextConsumerTest extends BaseConsumerTest {
     val topic = "test_topic"
     val partition = 0
     val tp = new TopicPartition(topic, partition)
-    createInklessTopic(topic)
+    createTopic(topic)
 
     val producer = createProducer()
     producer.send(new ProducerRecord(topic, partition, "k1".getBytes, "v1".getBytes)).get()
@@ -700,9 +696,7 @@ class PlaintextConsumerTest extends BaseConsumerTest {
     val foo1 = new TopicPartition(foo, 1)
 
     val admin = createAdminClient()
-    val props = new util.HashMap[String, String]
-    props.put("inkless.enable", "true")
-    admin.createTopics(Seq(new NewTopic(foo, 1, 1.toShort).configs(props)).asJava).all.get
+    admin.createTopics(Seq(new NewTopic(foo, 1, 1.toShort)).asJava).all.get
 
     val consumerConfig = new Properties
     consumerConfig.put(ConsumerConfig.GROUP_ID_CONFIG, "my-group-id")
@@ -755,7 +749,6 @@ class PlaintextConsumerTest extends BaseConsumerTest {
     assertEquals("No current assignment for partition " + tp, e.getMessage)
   }
 
-  @Disabled("INKLESS: Fetch by time is an unsupported feature atm")
   @ParameterizedTest(name = TestInfoUtils.TestWithParameterizedQuorumAndGroupProtocolNames)
   @MethodSource(Array("getTestQuorumAndGroupProtocolParametersAll"))
   def testFetchOffsetsForTime(quorum: String, groupProtocol: String): Unit = {
