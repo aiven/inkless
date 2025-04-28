@@ -180,16 +180,6 @@ abstract class KafkaServerTestHarness extends QuorumTestHarness {
     }
   }
 
-  def createInklessTopic(topic: String,
-                         numPartitions: Int = 1,
-                         topicConfig: Properties = new Properties,
-                         listenerName: ListenerName = listenerName,
-                         adminClientConfig: Properties = new Properties): Map[Int, Int] = {
-    topicConfig.put("inkless.enable", "true")
-
-    createTopic(topic, numPartitions, 1, topicConfig, listenerName, adminClientConfig)
-  }
-
   /**
    * Create a topic in ZooKeeper using a customized replica assignment.
    * Wait until the leader is elected and the metadata is propagated to all brokers.
