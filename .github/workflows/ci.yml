@@ -18,7 +18,7 @@ name: CI
 on:
   push:
     branches:
-      - 'trunk'
+      - 'main'
       - '4.0'
 
   schedule:
@@ -27,7 +27,7 @@ on:
   pull_request:
     types: [ opened, synchronize, ready_for_review, reopened ]
     branches:
-      - 'trunk'
+      - 'main'
       - '4.0'
 
 concurrency:

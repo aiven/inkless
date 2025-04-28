@@ -535,6 +535,8 @@ subprojects {
     systemProperty("kafka.test.run.flaky", project.findProperty("kafka.test.run.flaky"))
     systemProperty("kafka.test.verbose", project.findProperty("kafka.test.verbose"))
 
+    systemProperty("kafka.log.inkless.enable", project.findProperty("kafka.log.inkless.enable"))
+
     testLogging {
       events = userTestLoggingEvents ?: testLoggingEvents
       showStandardStreams = userShowStandardStreams ?: testShowStandardStreams
@@ -567,6 +569,7 @@ subprojects {
     maxHeapSize = "2560m"
     jvmArgs = defaultJvmArgs
 
+    systemProperty("kafka.log.inkless.enable", project.findProperty("kafka.log.inkless.enable"))
 
     testLogging {
       events = userTestLoggingEvents ?: testLoggingEvents
