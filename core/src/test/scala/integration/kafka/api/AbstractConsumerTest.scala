@@ -80,8 +80,12 @@ abstract class AbstractConsumerTest extends BaseRequestTest {
   override def setUp(testInfo: TestInfo): Unit = {
     super.setUp(testInfo)
 
-    // create the test topic with all the brokers as replicas
-    createTopic(topic, 2, brokerCount, adminClientConfig = this.adminClientConfig)
+    if (testInfo.getTags.contains("inkless")) {
+      createInklessTopic(topic, 2, adminClientConfig = this.adminClientConfig)
+    } else {
+      // create the test topic with all the brokers as replicas
+      createTopic(topic, 2, brokerCount, adminClientConfig = this.adminClientConfig)
+    }
   }
 
   def awaitAssignment(consumer: Consumer[_, _], expectedAssignment: Set[TopicPartition])

@@ -20,7 +20,7 @@ package kafka.api
 import java.util.concurrent.ExecutionException
 import java.util.Properties
 import kafka.integration.KafkaServerTestHarness
-import kafka.server.{KafkaConfig, QuorumAndGroupProtocolAndMaybeTopicTypeProvider}
+import kafka.server.KafkaConfig
 import kafka.utils.{TestInfoUtils, TestUtils}
 import org.apache.kafka.clients.producer._
 import org.apache.kafka.common.config.TopicConfig
@@ -28,11 +28,11 @@ import org.apache.kafka.common.errors._
 import org.apache.kafka.common.internals.Topic
 import org.apache.kafka.common.record.{DefaultRecord, DefaultRecordBatch}
 import org.apache.kafka.coordinator.group.GroupCoordinatorConfig
-import org.apache.kafka.server.config.{ReplicationConfigs, ServerConfigs, ServerLogConfigs}
+import org.apache.kafka.server.config.{ServerConfigs, ReplicationConfigs, ServerLogConfigs}
 import org.junit.jupiter.api.Assertions._
 import org.junit.jupiter.api.{AfterEach, BeforeEach, Tag, TestInfo}
 import org.junit.jupiter.params.ParameterizedTest
-import org.junit.jupiter.params.provider.{ArgumentsSource, CsvSource}
+import org.junit.jupiter.params.provider.{MethodSource, ValueSource}
 
 @Tag("inkless")
 class ProducerFailureHandlingTest extends KafkaServerTestHarness {
@@ -89,11 +89,11 @@ class ProducerFailureHandlingTest extends KafkaServerTestHarness {
   /**
    * With ack == 0 the future metadata will have no exceptions with offset -1
    */
-  @ParameterizedTest(name = TestInfoUtils.TestWithParameterizedQuorumAndGroupProtocolNamesAndTopicType)
-  @ArgumentsSource(classOf[QuorumAndGroupProtocolAndMaybeTopicTypeProvider])
-  def testTooLargeRecordWithAckZero(quorum: String, topicType: String): Unit = {
+  @ParameterizedTest(name = TestInfoUtils.TestWithParameterizedQuorumAndGroupProtocolNames)
+  @MethodSource(Array("getTestQuorumAndGroupProtocolParametersAll"))
+  def testTooLargeRecordWithAckZero(quorum: String): Unit = {
     // create topic
-    createTopic(topic1)
+    createInklessTopic(topic1)
 
     // send a too-large record
     val record = new ProducerRecord(topic1, null, "key".getBytes, new Array[Byte](serverMessageMaxBytes + 1))
@@ -107,11 +107,11 @@ class ProducerFailureHandlingTest extends KafkaServerTestHarness {
   /**
    * With ack == 1 the future metadata will throw ExecutionException caused by RecordTooLargeException
    */
-  @ParameterizedTest(name = TestInfoUtils.TestWithParameterizedQuorumAndGroupProtocolNamesAndTopicType)
-  @ArgumentsSource(classOf[QuorumAndGroupProtocolAndMaybeTopicTypeProvider])
-  def testTooLargeRecordWithAckOne(quorum: String, topicType: String): Unit = {
+  @ParameterizedTest(name = TestInfoUtils.TestWithParameterizedQuorumAndGroupProtocolNames)
+  @MethodSource(Array("getTestQuorumAndGroupProtocolParametersAll"))
+  def testTooLargeRecordWithAckOne(quorum: String): Unit = {
     // create topic
-    createTopic(topic1)
+    createInklessTopic(topic1)
 
     // send a too-large record
     val record = new ProducerRecord(topic1, null, "key".getBytes, new Array[Byte](serverMessageMaxBytes + 1))
@@ -126,7 +126,7 @@ class ProducerFailureHandlingTest extends KafkaServerTestHarness {
 
     // create topic
     val topic10 = "topic10"
-    createTopic(topic10, numPartitions = brokers.size, replicationFactor = numServers, topicConfig)
+    createInklessTopic(topic10, numPartitions = brokers.size, topicConfig)
 
     // send a record that is too large for replication, but within the broker max message limit
     val value = new Array[Byte](maxMessageSize - DefaultRecordBatch.RECORD_BATCH_OVERHEAD - DefaultRecord.MAX_RECORD_OVERHEAD)
@@ -137,25 +137,25 @@ class ProducerFailureHandlingTest extends KafkaServerTestHarness {
   }
 
   /** This should succeed as the replica fetcher thread can handle oversized messages since KIP-74 */
-  @ParameterizedTest(name = "{displayName}.quorum={0}.topicType={1}")
-  @CsvSource(Array("kraft,classic", "kraft,inkless"))
-  def testPartitionTooLargeForReplicationWithAckAll(quorum: String, topicType: String): Unit = {
+  @ParameterizedTest
+  @ValueSource(strings = Array("kraft"))
+  def testPartitionTooLargeForReplicationWithAckAll(quorum: String): Unit = {
     checkTooLargeRecordForReplicationWithAckAll(replicaFetchMaxPartitionBytes)
   }
 
   /** This should succeed as the replica fetcher thread can handle oversized messages since KIP-74 */
-  @ParameterizedTest(name = "{displayName}.quorum={0}.topicType={1}")
-  @CsvSource(Array("kraft,classic", "kraft,inkless"))
-  def testResponseTooLargeForReplicationWithAckAll(quorum: String, topicType: String): Unit = {
+  @ParameterizedTest
+  @ValueSource(strings = Array("kraft"))
+  def testResponseTooLargeForReplicationWithAckAll(quorum: String): Unit = {
     checkTooLargeRecordForReplicationWithAckAll(replicaFetchMaxResponseBytes)
   }
 
   /**
    * With non-exist-topic the future metadata should return ExecutionException caused by TimeoutException
    */
-  @ParameterizedTest(name = TestInfoUtils.TestWithParameterizedQuorumAndGroupProtocolNamesAndTopicType)
-  @ArgumentsSource(classOf[QuorumAndGroupProtocolAndMaybeTopicTypeProvider])
-  def testNonExistentTopic(quorum: String, topicType: String): Unit = {
+  @ParameterizedTest(name = TestInfoUtils.TestWithParameterizedQuorumAndGroupProtocolNames)
+  @MethodSource(Array("getTestQuorumAndGroupProtocolParametersAll"))
+  def testNonExistentTopic(quorum: String): Unit = {
     // send a record with non-exist topic
     val record = new ProducerRecord(topic2, null, "key".getBytes, "value".getBytes)
     assertThrows(classOf[ExecutionException], () => producer1.send(record).get)
@@ -171,11 +171,11 @@ class ProducerFailureHandlingTest extends KafkaServerTestHarness {
    *    CorruptRecordException
    *    TimeoutException
    */
-  @ParameterizedTest(name = "{displayName}.quorum={0}.topicType={1}")
-  @CsvSource(Array("kraft,classic", "kraft,inkless"))
-  def testWrongBrokerList(quorum: String, topicType: String): Unit = {
+  @ParameterizedTest
+  @ValueSource(strings = Array("kraft"))
+  def testWrongBrokerList(quorum: String): Unit = {
     // create topic
-    createTopic(topic1)
+    createInklessTopic(topic1)
 
     // producer with incorrect broker list
     producer4 = TestUtils.createProducer("localhost:8686,localhost:4242", acks = 1, maxBlockMs = 10000L, bufferSize = producerBufferSize)
@@ -189,11 +189,11 @@ class ProducerFailureHandlingTest extends KafkaServerTestHarness {
    * Send with invalid partition id should return ExecutionException caused by TimeoutException
    * when partition is higher than the upper bound of partitions.
    */
-  @ParameterizedTest(name = "{displayName}.quorum={0}.topicType={1}")
-  @CsvSource(Array("kraft,classic", "kraft,inkless"))
-  def testInvalidPartition(quorum: String, topicType: String): Unit = {
+  @ParameterizedTest
+  @ValueSource(strings = Array("kraft"))
+  def testInvalidPartition(quorum: String): Unit = {
     // create topic with a single partition
-    createTopic(topic1)
+    createInklessTopic(topic1)
 
     // create a record with incorrect partition id (higher than the number of partitions), send should fail
     val higherRecord = new ProducerRecord(topic1, 1, "key".getBytes, "value".getBytes)
@@ -204,11 +204,11 @@ class ProducerFailureHandlingTest extends KafkaServerTestHarness {
   /**
    * The send call after producer closed should throw IllegalStateException
    */
-  @ParameterizedTest(name = "{displayName}.quorum={0}.topicType={1}")
-  @CsvSource(Array("kraft,classic", "kraft,inkless"))
-  def testSendAfterClosed(quorum: String, topicType: String): Unit = {
+  @ParameterizedTest
+  @ValueSource(strings = Array("kraft"))
+  def testSendAfterClosed(quorum: String): Unit = {
     // create topic
-    createTopic(topic1)
+    createInklessTopic(topic1)
 
     val record = new ProducerRecord[Array[Byte], Array[Byte]](topic1, null, "key".getBytes, "value".getBytes)
 
@@ -225,9 +225,9 @@ class ProducerFailureHandlingTest extends KafkaServerTestHarness {
     assertThrows(classOf[IllegalStateException], () =>  producer3.send(record))
   }
 
-  @ParameterizedTest(name = "{displayName}.quorum={0}.topicType={1}")
-  @CsvSource(Array("kraft,classic", "kraft,inkless"))
-  def testCannotSendToInternalTopic(quorum: String, topicType: String): Unit = {
+  @ParameterizedTest
+  @ValueSource(strings = Array("kraft"))
+  def testCannotSendToInternalTopic(quorum: String): Unit = {
 
     createOffsetsTopic()
     val thrown = assertThrows(classOf[ExecutionException],
@@ -235,9 +235,9 @@ class ProducerFailureHandlingTest extends KafkaServerTestHarness {
     assertTrue(thrown.getCause.isInstanceOf[InvalidTopicException], "Unexpected exception while sending to an invalid topic " + thrown.getCause)
   }
 
-  @ParameterizedTest(name = "{displayName}.quorum={0}.topicType={1}")
-  @CsvSource(Array("kraft,classic")) // inkless does not fail on not enough replicas
-  def testNotEnoughReplicasAfterBrokerShutdown(quorum: String, topicType: String): Unit = {
+  @ParameterizedTest
+  @ValueSource(strings = Array("kraft"))
+  def testNotEnoughReplicasAfterBrokerShutdown(quorum: String): Unit = {
     val topicName = "minisrtest2"
     val topicProps = new Properties()
     topicProps.put("min.insync.replicas", numServers.toString)

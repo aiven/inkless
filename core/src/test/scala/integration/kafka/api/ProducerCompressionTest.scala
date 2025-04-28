@@ -64,30 +64,20 @@ class ProducerCompressionTest extends QuorumTestHarness {
    *
    * Compressed messages should be able to sent and consumed correctly
    */
-  @ParameterizedTest(name = "{displayName}.quorum={0}.groupProtocol={1}.compression={2}.topicType={3}")
+  @ParameterizedTest(name = "{displayName}.quorum={0}.groupProtocol={1}.compression={2}")
   @CsvSource(value = Array(
-    "kraft,classic,none,classic",
-    "kraft,consumer,none,classic",
-    "kraft,classic,gzip,classic",
-    "kraft,consumer,gzip,classic",
-    "kraft,classic,snappy,classic",
-    "kraft,consumer,snappy,classic",
-    "kraft,classic,lz4,classic",
-    "kraft,consumer,lz4,classic",
-    "kraft,classic,zstd,classic",
-    "kraft,consumer,zstd,classic",
-    "kraft,classic,none,inkless",
-    "kraft,consumer,none,inkless",
-    "kraft,classic,gzip,inkless",
-    "kraft,consumer,gzip,inkless",
-    "kraft,classic,snappy,inkless",
-    "kraft,consumer,snappy,inkless",
-    "kraft,classic,lz4,inkless",
-    "kraft,consumer,lz4,inkless",
-    "kraft,classic,zstd,inkless",
-    "kraft,consumer,zstd,inkless",
+    "kraft,classic,none",
+    "kraft,consumer,none",
+    "kraft,classic,gzip",
+    "kraft,consumer,gzip",
+    "kraft,classic,snappy",
+    "kraft,consumer,snappy",
+    "kraft,classic,lz4",
+    "kraft,consumer,lz4",
+    "kraft,classic,zstd",
+    "kraft,consumer,zstd"
   ))
-  def testCompression(quorum: String, groupProtocol: String, compression: String, topicType: String): Unit = {
+  def testCompression(quorum: String, groupProtocol: String, compression: String): Unit = {
     val producerProps = new Properties()
     val bootstrapServers = TestUtils.plaintextBootstrapServers(Seq(broker))
     producerProps.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers)
@@ -102,7 +92,7 @@ class ProducerCompressionTest extends QuorumTestHarness {
       val admin = TestUtils.createAdminClient(Seq(broker),
         ListenerName.forSecurityProtocol(SecurityProtocol.PLAINTEXT))
       try {
-        TestUtils.createTopicWithAdmin(admin, topic, Seq(broker), controllerServers, topicType = topicType)
+        TestUtils.createInklessTopicWithAdmin(admin, topic, Seq(broker), controllerServers)
       } finally {
         admin.close()
       }

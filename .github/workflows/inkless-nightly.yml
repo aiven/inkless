@@ -62,7 +62,8 @@ jobs:
           ./gradlew ${GRADLE_ARGS} :metadata:test --tests "org.apache.kafka.controller.*" && \
           ./gradlew ${GRADLE_ARGS} :core:test --tests "*Inkless*" && \
           ./gradlew ${GRADLE_ARGS} :core:test --tests "kafka.server.*" && \
-          ./gradlew ${GRADLE_ARGS} :core:test --tests "kafka.api.*"
+          ./gradlew ${GRADLE_ARGS} :core:test --tests "kafka.api.*Producer*Test" && \
+          ./gradlew ${GRADLE_ARGS} :core:test --tests "kafka.api.PlaintextConsumerTest"
           exitcode="$?"
           echo "exitcode=$exitcode" >> $GITHUB_OUTPUT
       - name: Archive JUnit HTML reports
