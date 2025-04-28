@@ -20,12 +20,12 @@ package kafka.server
 import kafka.server.metadata.KRaftMetadataCache
 import org.apache.kafka.admin.BrokerMetadata
 import org.apache.kafka.common.internals.Topic
-import org.apache.kafka.common.message.{DescribeClientQuotasRequestData, DescribeTopicPartitionsResponseData, DescribeUserScramCredentialsResponseData, DescribeClientQuotasResponseData, DescribeUserScramCredentialsRequestData, MetadataResponseData}
+import org.apache.kafka.common.message.{DescribeClientQuotasRequestData, DescribeClientQuotasResponseData, DescribeTopicPartitionsResponseData, DescribeUserScramCredentialsRequestData, DescribeUserScramCredentialsResponseData, MetadataResponseData}
 import org.apache.kafka.common.network.ListenerName
-import org.apache.kafka.common.{PartitionInfo, TopicPartition, Node, Uuid, Cluster}
+import org.apache.kafka.common.{Cluster, Node, PartitionInfo, TopicPartition, Uuid}
 import org.apache.kafka.image.MetadataImage
-import org.apache.kafka.metadata.{LeaderAndIsr, PartitionRegistration, ConfigRepository, BrokerRegistration}
-import org.apache.kafka.server.common.{MetadataVersion, FinalizedFeatures, KRaftVersion}
+import org.apache.kafka.metadata.{BrokerRegistration, ConfigRepository, LeaderAndIsr, PartitionRegistration}
+import org.apache.kafka.server.common.{FinalizedFeatures, KRaftVersion, MetadataVersion}
 
 import java.util
 import java.util.Collections

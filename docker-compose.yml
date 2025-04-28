@@ -23,6 +23,7 @@ services:
       KAFKA_LOG_DIRS: "/tmp/kraft-combined-logs"
 
       # Inkless
+      KAFKA_LOG_INKLESS_ENABLE: "true"
 
       ## Control Plane
       ### Postgresql

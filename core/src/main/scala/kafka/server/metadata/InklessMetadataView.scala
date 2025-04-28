@@ -21,11 +21,11 @@ package kafka.server.metadata
 import io.aiven.inkless.control_plane.MetadataView
 import org.apache.kafka.admin.BrokerMetadata
 import org.apache.kafka.common.config.ConfigResource
-import org.apache.kafka.common.{Uuid, TopicPartition}
+import org.apache.kafka.common.{TopicPartition, Uuid}
 
 import java.util.Properties
 import java.util.function.Supplier
-import java.{util, lang}
+import java.{lang, util}
 import scala.collection.Map
 import scala.jdk.CollectionConverters.{IterableHasAsJava, SetHasAsJava}
 
