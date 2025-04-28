@@ -3450,9 +3450,8 @@ org.apache.kafka.common.message.MessageTest:
 - testOffsetCommitDefaultGroupInstanceId
 - testOffsetCommitRequestVersions
 - testOffsetCommitResponseVersions
-- testOffsetFetchV1ToV7
-- testOffsetFetchV8AndAbove
-- testOffsetFetchV8AndAboveSingleGroup
+- testOffsetFetchRequestVersions
+- testOffsetFetchResponseVersions
 - testOffsetForLeaderEpochVersions
 - testProduceResponseVersions
 - testSimpleMessage
