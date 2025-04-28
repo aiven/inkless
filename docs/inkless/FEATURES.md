@@ -36,7 +36,7 @@ If not specified above, features are untested and assumed to be inoperable.
 - `FETCH`
     - can't fetch from Inkless and classic topics in the same request.
 - `LIST_OFFSETS`
-    - can't list offsets of Inkless and classic topics in the same request.
+- `OFFSET_FOR_LEADER_EPOCH`
 - `METADATA`
     - the output is modified according to client and broker racks.
 - `DESCRIBE_TOPIC_PARTITIONS`
