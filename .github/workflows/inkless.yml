@@ -107,9 +107,9 @@ jobs:
         env:
           TIMEOUT_MINUTES: 30
           GRADLE_ARGS: >-
-            --build-cache --no-scan 
+            --build-cache --no-scan --continue
             -PtestLoggingEvents=started,passed,skipped,failed 
-            -PmaxParallelForks=2 
+            -PmaxParallelForks=4 
             -PmaxTestRetries=1 -PmaxTestRetryFailures=3 
             -PmaxQuarantineTestRetries=3 -PmaxQuarantineTestRetryFailures=0 
             -PcommitId=xxxxxxxxxxxxxxxx
@@ -119,9 +119,7 @@ jobs:
           ./.github/scripts/thread-dump.sh &
           # inkless tests
           timeout ${TIMEOUT_MINUTES}m \
-          ./gradlew ${GRADLE_ARGS} :storage:inkless:test :storage:inkless:integrationTest && \
-          ./gradlew ${GRADLE_ARGS} :metadata:test --tests "org.apache.kafka.controller.*" && \
-          ./gradlew ${GRADLE_ARGS} :core:test --tests "*Inkless*"
+          ./gradlew ${GRADLE_ARGS} test
           exitcode="$?"
           echo "exitcode=$exitcode" >> $GITHUB_OUTPUT
       - name: Archive JUnit HTML reports
