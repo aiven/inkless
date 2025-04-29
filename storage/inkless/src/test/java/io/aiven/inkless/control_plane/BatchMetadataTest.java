@@ -20,6 +20,7 @@ package io.aiven.inkless.control_plane;
 import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.Uuid;
+import org.apache.kafka.common.record.RecordBatch;
 import org.apache.kafka.common.record.TimestampType;
 
 import org.junit.jupiter.api.Test;
@@ -34,6 +35,7 @@ class BatchMetadataTest {
     @Test
     void testOffsets() {
         final var batchMetadata = new BatchMetadata(
+            RecordBatch.CURRENT_MAGIC_VALUE,
             TOPIC_ID_PARTITION,
             0,
             10,
@@ -49,6 +51,7 @@ class BatchMetadataTest {
     @Test
     void invalidRequestOffsets() {
         assertThatThrownBy(() -> new BatchMetadata(
+            RecordBatch.CURRENT_MAGIC_VALUE,
             TOPIC_ID_PARTITION,
             0,
             10,

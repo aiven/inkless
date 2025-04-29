@@ -54,6 +54,7 @@ public class MergeBatchesInputStream extends InputStream {
                 var batchSize = bf.batchLength();
                 mergedFileBatches.add(new MergedFileBatch(
                     new BatchMetadata(
+                        bf.parentBatch().metadata().magic(),
                         bf.parentBatch().metadata().topicIdPartition(),
                         fileSize,
                         batchSize,

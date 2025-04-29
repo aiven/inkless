@@ -42,6 +42,7 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import io.aiven.inkless.TimeUtils;
+import io.aiven.inkless.common.ObjectFormat;
 
 import static org.apache.kafka.common.record.RecordBatch.NO_TIMESTAMP;
 import static org.apache.kafka.storage.internals.log.ProducerStateEntry.NUM_BATCHES_TO_RETAIN;
@@ -90,14 +91,15 @@ public class InMemoryControlPlane extends AbstractControlPlane {
 
     @Override
     protected synchronized Iterator<CommitBatchResponse> commitFileForValidRequests(
-        final String objectKey,
-        final int uploaderBrokerId,
-        final long fileSize,
-        final Stream<CommitBatchRequest> requests
+            final String objectKey,
+            final ObjectFormat format,
+            final int uploaderBrokerId,
+            final long fileSize,
+            final Stream<CommitBatchRequest> requests
     ) {
         try {
             final long now = time.milliseconds();
-            final FileInfo fileInfo = new FileInfo(fileIdCounter.incrementAndGet(), objectKey, FileReason.PRODUCE, uploaderBrokerId, fileSize);
+            final FileInfo fileInfo = new FileInfo(fileIdCounter.incrementAndGet(), objectKey, ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, FileReason.PRODUCE, uploaderBrokerId, fileSize);
             final List<CommitBatchResponse> responses = requests.map(request -> commitFileForValidRequest(now, fileInfo, request)).toList();
             files.put(objectKey, fileInfo);
             return responses.iterator();
@@ -174,7 +176,8 @@ public class InMemoryControlPlane extends AbstractControlPlane {
         final BatchInfo batchInfo = new BatchInfo(
             batchIdCounter.incrementAndGet(),
             fileInfo.objectKey,
-            new BatchMetadata(
+                new BatchMetadata(
+                request.magic(),
                 topicIdPartition,
                 request.byteOffset(),
                 request.size(),
@@ -409,6 +412,7 @@ public class InMemoryControlPlane extends AbstractControlPlane {
             mergeableFiles.add(new FileMergeWorkItem.File(
                 fileInfo.fileId,
                 fileInfo.objectKey,
+                fileInfo.format,
                 fileInfo.fileSize,
                 fileInfo.usedSize,
                 batchesFromFileToMerge(fileInfo)
@@ -445,6 +449,7 @@ public class InMemoryControlPlane extends AbstractControlPlane {
     @Override
     public synchronized void commitFileMergeWorkItem(final long workItemId,
                                                      final String objectKey,
+                                                     final ObjectFormat format,
                                                      final int uploaderBrokerId,
                                                      final long fileSize,
                                                      final List<MergedFileBatch> batches) {
@@ -510,7 +515,7 @@ public class InMemoryControlPlane extends AbstractControlPlane {
                 }
             }
         }
-        final FileInfo mergedFile = new FileInfo(fileIdCounter.incrementAndGet(), objectKey, FileReason.MERGE, uploaderBrokerId, fileSize);
+        final FileInfo mergedFile = new FileInfo(fileIdCounter.incrementAndGet(), objectKey, format, FileReason.MERGE, uploaderBrokerId, fileSize);
         this.files.put(objectKey, mergedFile);
 
         // Delete the old batches and insert the new one.
@@ -535,11 +540,7 @@ public class InMemoryControlPlane extends AbstractControlPlane {
             coordinates.remove(parentBatchFound.get().getKey());
 
             coordinates.put(batch.metadata().lastOffset(), new BatchInfoInternal(
-                new BatchInfo(
-                    batchIdCounter.incrementAndGet(),
-                    objectKey,
-                    batch.metadata()
-                ),
+                new BatchInfo(batchIdCounter.incrementAndGet(), objectKey, batch.metadata()),
                 mergedFile
             ));
         }
@@ -553,7 +554,7 @@ public class InMemoryControlPlane extends AbstractControlPlane {
     }
 
     private void markFileToDelete(final String objectKey, final int uploaderBrokerId, final Instant now) {
-        final FileInfo fileInfo = new FileInfo(fileIdCounter.incrementAndGet(), objectKey, FileReason.MERGE, uploaderBrokerId, 0);
+        final FileInfo fileInfo = new FileInfo(fileIdCounter.incrementAndGet(), objectKey, ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, FileReason.MERGE, uploaderBrokerId, 0);
         filesToDelete.put(fileInfo.objectKey, new FileToDeleteInternal(fileInfo, now));
     }
 
@@ -583,6 +584,7 @@ public class InMemoryControlPlane extends AbstractControlPlane {
     private static class FileInfo {
         final long fileId;
         final String objectKey;
+        final ObjectFormat format;
         final FileReason fileReason;
         final int uploaderBrokerId;
         final long fileSize;
@@ -590,11 +592,13 @@ public class InMemoryControlPlane extends AbstractControlPlane {
 
         private FileInfo(final long fileId,
                          final String objectKey,
+                         final ObjectFormat format,
                          final FileReason fileReason,
                          final int uploaderBrokerId,
                          final long fileSize) {
             this.fileId = fileId;
             this.objectKey = objectKey;
+            this.format = format;
             this.fileReason = fileReason;
             this.uploaderBrokerId = uploaderBrokerId;
             this.fileSize = fileSize;

@@ -31,12 +31,14 @@ import java.util.List;
 import java.util.concurrent.Callable;
 
 import io.aiven.inkless.TimeUtils;
+import io.aiven.inkless.common.ObjectFormat;
 import io.aiven.inkless.control_plane.MergedFileBatch;
 
 public class CommitFileMergeWorkItemJob implements Callable<CommitFileMergeWorkItemV1ResponseRecord> {
     private final Time time;
     private final Long workItemId;
     private final String objectKey;
+    private final ObjectFormat format;
     private final int uploaderBrokerId;
     private final long fileSize;
     private final List<MergedFileBatch> mergedFileBatches;
@@ -46,6 +48,7 @@ public class CommitFileMergeWorkItemJob implements Callable<CommitFileMergeWorkI
         final Time time,
         final Long workItemId,
         final String objectKey,
+        final ObjectFormat format,
         final int uploaderBrokerId,
         final long fileSize,
         final List<MergedFileBatch> mergedFileBatches,
@@ -54,6 +57,7 @@ public class CommitFileMergeWorkItemJob implements Callable<CommitFileMergeWorkI
         this.time = time;
         this.workItemId = workItemId;
         this.objectKey = objectKey;
+        this.format = format;
         this.uploaderBrokerId = uploaderBrokerId;
         this.fileSize = fileSize;
         this.mergedFileBatches = mergedFileBatches;
@@ -77,6 +81,7 @@ public class CommitFileMergeWorkItemJob implements Callable<CommitFileMergeWorkI
                 .map(b ->
                     new CommitFileMergeWorkItemV1BatchRecord(
                         new BatchMetadataV1Record(
+                            (short) b.metadata().magic(),
                             b.metadata().topicIdPartition().topicId(),
                             b.metadata().topicIdPartition().topic(),
                             b.metadata().topicIdPartition().partition(),
@@ -92,7 +97,7 @@ public class CommitFileMergeWorkItemJob implements Callable<CommitFileMergeWorkI
                     )
                 )
                 .toArray(CommitFileMergeWorkItemV1BatchRecord[]::new);
-            return Routines.commitFileMergeWorkItemV1(conf, now, workItemId, objectKey, uploaderBrokerId, fileSize, batches);
+            return Routines.commitFileMergeWorkItemV1(conf, now, workItemId, objectKey, (short) format.id, uploaderBrokerId, fileSize, batches);
         });
     }
 }

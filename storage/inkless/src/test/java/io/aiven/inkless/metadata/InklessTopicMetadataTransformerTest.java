@@ -145,14 +145,16 @@ class InklessTopicMetadataTransformerTest {
                             .setLeaderId(-1)
                             .setReplicaNodes(List.of(1, 2, 3, 4))
                             .setIsrNodes(List.of(1, 2))
-                            .setOfflineReplicas(List.of(3, 4)),
+                            .setOfflineReplicas(List.of(3, 4))
+                            .setLeaderEpoch(0),
                         new MetadataResponsePartition()
                             .setPartitionIndex(1)
                             .setErrorCode((short) 1)
                             .setLeaderId(-1)
                             .setReplicaNodes(List.of(1, 2, 3, 4))
                             .setIsrNodes(List.of(1, 2))
-                            .setOfflineReplicas(List.of(3, 4)),
+                            .setOfflineReplicas(List.of(3, 4))
+                            .setLeaderEpoch(0),
                         new MetadataResponsePartition()
                             .setPartitionIndex(2)
                             .setErrorCode((short) 2)
@@ -160,6 +162,7 @@ class InklessTopicMetadataTransformerTest {
                             .setReplicaNodes(List.of(1, 2, 3, 4))
                             .setIsrNodes(List.of(1, 2))
                             .setOfflineReplicas(List.of(3, 4))
+                            .setLeaderEpoch(0)
                     ));
 
             final Supplier<MetadataResponseTopic> classicTopicMetadata =
@@ -226,7 +229,8 @@ class InklessTopicMetadataTransformerTest {
                             .setIsrNodes(List.of(1, 2))
                             .setOfflineReplicas(List.of(3, 4))
                             .setEligibleLeaderReplicas(List.of(10, 11))
-                            .setLastKnownElr(List.of(10, 11)),
+                            .setLastKnownElr(List.of(10, 11))
+                            .setLeaderEpoch(0),
                         new DescribeTopicPartitionsResponsePartition()
                             .setPartitionIndex(1)
                             .setErrorCode((short) 1)
@@ -235,7 +239,8 @@ class InklessTopicMetadataTransformerTest {
                             .setIsrNodes(List.of(1, 2))
                             .setOfflineReplicas(List.of(3, 4))
                             .setEligibleLeaderReplicas(List.of(10, 11))
-                            .setLastKnownElr(List.of(10, 11)),
+                            .setLastKnownElr(List.of(10, 11))
+                            .setLeaderEpoch(0),
                         new DescribeTopicPartitionsResponsePartition()
                             .setPartitionIndex(2)
                             .setErrorCode((short) 2)
@@ -245,6 +250,7 @@ class InklessTopicMetadataTransformerTest {
                             .setOfflineReplicas(List.of(3, 4))
                             .setEligibleLeaderReplicas(List.of(10, 11))
                             .setLastKnownElr(List.of(10, 11))
+                            .setLeaderEpoch(0)
                     ));
 
             final Supplier<DescribeTopicPartitionsResponseTopic> classicTopicMetadata =
@@ -262,6 +268,7 @@ class InklessTopicMetadataTransformerTest {
                             .setOfflineReplicas(List.of(3, 4))
                             .setEligibleLeaderReplicas(List.of(10, 11))
                             .setLastKnownElr(List.of(10, 11))
+                            .setLeaderEpoch(0)
                     ));
 
             final DescribeTopicPartitionsResponseData describeResponse =
@@ -320,6 +327,7 @@ class InklessTopicMetadataTransformerTest {
                             .setReplicaNodes(List.of(1, 2, 3, 4))
                             .setIsrNodes(List.of(1, 2))
                             .setOfflineReplicas(List.of(3, 4))
+                            .setLeaderEpoch(0)
                     ));
 
             final List<MetadataResponseTopic> topicMetadata = List.of(inklessTopicMetadata.get());
@@ -354,6 +362,7 @@ class InklessTopicMetadataTransformerTest {
                                     .setOfflineReplicas(List.of(3, 4))
                                     .setEligibleLeaderReplicas(List.of(10, 11))
                                     .setLastKnownElr(List.of(10, 11))
+                                    .setLeaderEpoch(0)
                             ))
                     ).iterator()));
 
@@ -398,6 +407,7 @@ class InklessTopicMetadataTransformerTest {
                             .setReplicaNodes(List.of(1, 2, 3, 4))
                             .setIsrNodes(List.of(1, 2))
                             .setOfflineReplicas(List.of(3, 4))
+                            .setLeaderEpoch(0)
                     ));
 
             final List<MetadataResponseTopic> topicMetadata = List.of(inklessTopicMetadata.get());
@@ -432,6 +442,7 @@ class InklessTopicMetadataTransformerTest {
                                     .setOfflineReplicas(List.of(3, 4))
                                     .setEligibleLeaderReplicas(List.of(10, 11))
                                     .setLastKnownElr(List.of(10, 11))
+                                    .setLeaderEpoch(0)
                             ))
                     ).iterator()));
 

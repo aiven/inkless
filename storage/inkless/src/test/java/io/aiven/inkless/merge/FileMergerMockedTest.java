@@ -45,6 +45,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 
+import io.aiven.inkless.common.ObjectFormat;
 import io.aiven.inkless.common.ObjectKey;
 import io.aiven.inkless.common.PlainObjectKey;
 import io.aiven.inkless.common.SharedState;
@@ -130,7 +131,7 @@ class FileMergerMockedTest {
         final int file1UsedSize = file1Size;
         final byte[] file1Batch1 = MockInputStream.generateData(file1Batch1Size, "file1Batch1");
 
-        final FileMergeWorkItem.File file1InWorkItem = new FileMergeWorkItem.File(file1Id, obj1, file1Size, file1UsedSize, List.of(
+        final FileMergeWorkItem.File file1InWorkItem = new FileMergeWorkItem.File(file1Id, obj1, ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, file1Size, file1UsedSize, List.of(
             new BatchInfo(batch1Id, obj1, BatchMetadata.of(T1P0, 0, file1Batch1Size, 1L, 11L, 1L, 2L, TimestampType.CREATE_TIME))
         ));
 
@@ -162,9 +163,7 @@ class FileMergerMockedTest {
         verify(storage).upload(objectKeyCaptor.capture(), any(InputStream.class), anyLong());
         assertThat(out.toByteArray()).isEqualTo(expectedUploadBuffer);
 
-        verify(controlPlane).commitFileMergeWorkItem(eq(WORK_ITEM_ID), eq(objectKeyCaptor.getValue().value()), eq(BROKER_ID), eq(expectedMergedFileSize),
-            eq(expectedMergedFileBatches)
-        );
+        verify(controlPlane).commitFileMergeWorkItem(eq(WORK_ITEM_ID), eq(objectKeyCaptor.getValue().value()), eq(ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT), eq(BROKER_ID), eq(expectedMergedFileSize), eq(expectedMergedFileBatches));
 
         file1.assertClosedAndDataFullyConsumed();
     }
@@ -212,7 +211,7 @@ class FileMergerMockedTest {
         final List<BatchInfo> file1Batches = directBatchOrder
             ? List.of(file1Batch1InWorkItem, file1Batch2InWorkItem)
             : List.of(file1Batch2InWorkItem, file1Batch1InWorkItem);
-        final FileMergeWorkItem.File file1InWorkItem = new FileMergeWorkItem.File(file1Id, obj1, file1Size, file1UsedSize, file1Batches);
+        final FileMergeWorkItem.File file1InWorkItem = new FileMergeWorkItem.File(file1Id, obj1, ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, file1Size, file1UsedSize, file1Batches);
 
         final MockInputStream file1 = new MockInputStream(file1Size);
         file1.addGap(file1Gap1Size);
@@ -239,7 +238,7 @@ class FileMergerMockedTest {
         final List<BatchInfo> file2Batches = directBatchOrder
             ? List.of(file2Batch1InWorkItem, file2Batch2InWorkItem)
             : List.of(file2Batch2InWorkItem, file2Batch1InWorkItem);
-        final FileMergeWorkItem.File file2InWorkItem = new FileMergeWorkItem.File(file2Id, obj2, file2Size, file2UsedSize, file2Batches);
+        final FileMergeWorkItem.File file2InWorkItem = new FileMergeWorkItem.File(file2Id, obj2, ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, file2Size, file2UsedSize, file2Batches);
 
         final MockInputStream file2 = new MockInputStream(file2Size);
         file2.addBatch(file2Batch1);
@@ -282,10 +281,7 @@ class FileMergerMockedTest {
         assertThat(out.toByteArray()).isEqualTo(expectedUploadBuffer);
         verify(storage).upload(objectKeyCaptor.capture(), any(InputStream.class), anyLong());
 
-        verify(controlPlane).commitFileMergeWorkItem(eq(WORK_ITEM_ID), eq(objectKeyCaptor.getValue().value()), eq(BROKER_ID), eq(expectedMergedFileSize),
-            eq(expectedMergedFileBatches)
-        );
-
+        verify(controlPlane).commitFileMergeWorkItem(eq(WORK_ITEM_ID), eq(objectKeyCaptor.getValue().value()), eq(ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT), eq(BROKER_ID), eq(expectedMergedFileSize), eq(expectedMergedFileBatches));
         file1.assertClosedAndDataFullyConsumed();
         file2.assertClosedAndDataFullyConsumed();
     }
@@ -321,7 +317,7 @@ class FileMergerMockedTest {
         }).when(storage).upload(any(ObjectKey.class), any(InputStream.class), anyLong());
         bindFilesToObjectNames(Map.of(obj1, file1));
 
-        final FileMergeWorkItem.File file1InWorkItem = new FileMergeWorkItem.File(1, obj1, 10, 10, List.of(
+        final FileMergeWorkItem.File file1InWorkItem = new FileMergeWorkItem.File(1, obj1, ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, 10, 10, List.of(
             new BatchInfo(batch1Id, obj1, BatchMetadata.of(T1P0, 0, 10, 1L, 11L, 1L, 2L, TimestampType.CREATE_TIME))
         ));
         when(controlPlane.getFileMergeWorkItem()).thenReturn(
@@ -332,7 +328,7 @@ class FileMergerMockedTest {
         fileMerger.run();
 
         verify(controlPlane).releaseFileMergeWorkItem(eq(WORK_ITEM_ID));
-        verify(controlPlane, never()).commitFileMergeWorkItem(anyLong(), anyString(), anyInt(), anyLong(), any());
+        verify(controlPlane, never()).commitFileMergeWorkItem(anyLong(), anyString(), any(), anyInt(), anyLong(), any());
         verify(time).sleep(longThat(l -> l >= 50));
         verify(file1).close();
 
@@ -367,7 +363,7 @@ class FileMergerMockedTest {
         }).when(storage).upload(any(ObjectKey.class), any(InputStream.class), anyLong());
         bindFilesToObjectNames(Map.of(obj1, file1));
 
-        final FileMergeWorkItem.File file1InWorkItem = new FileMergeWorkItem.File(file1Id, obj1, file1Size, file1UsedSize, List.of(
+        final FileMergeWorkItem.File file1InWorkItem = new FileMergeWorkItem.File(file1Id, obj1, ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, file1Size, file1UsedSize, List.of(
             new BatchInfo(batch1Id, obj1, BatchMetadata.of(T1P0, 0, file1Batch1Size, 1L, 11L, 1L, 2L, TimestampType.CREATE_TIME))
         ));
         when(controlPlane.getFileMergeWorkItem()).thenReturn(
@@ -378,7 +374,7 @@ class FileMergerMockedTest {
         fileMerger.run();
 
         verify(controlPlane).releaseFileMergeWorkItem(eq(WORK_ITEM_ID));
-        verify(controlPlane, never()).commitFileMergeWorkItem(anyLong(), anyString(), anyInt(), anyLong(), any());
+        verify(controlPlane, never()).commitFileMergeWorkItem(anyLong(), anyString(), any(), anyInt(), anyLong(), any());
         verify(time).sleep(longThat(l -> l >= 50));
         file1.assertClosedAndDataFullyConsumed();
 
@@ -413,13 +409,13 @@ class FileMergerMockedTest {
         }).when(storage).upload(any(ObjectKey.class), any(InputStream.class), anyLong());
         bindFilesToObjectNames(Map.of(obj1, file1));
 
-        final FileMergeWorkItem.File file1InWorkItem = new FileMergeWorkItem.File(file1Id, obj1, file1Size, file1UsedSize, List.of(
+        final FileMergeWorkItem.File file1InWorkItem = new FileMergeWorkItem.File(file1Id, obj1, ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, file1Size, file1UsedSize, List.of(
             new BatchInfo(batch1Id, obj1, BatchMetadata.of(T1P0, 0, file1Batch1Size, 1L, 11L, 1L, 2L, TimestampType.CREATE_TIME))
         ));
         when(controlPlane.getFileMergeWorkItem())
             .thenReturn(new FileMergeWorkItem(WORK_ITEM_ID, Instant.ofEpochMilli(1234), List.of(file1InWorkItem)));
         doThrow(new ControlPlaneException("test"))
-            .when(controlPlane).commitFileMergeWorkItem(anyLong(), anyString(), anyInt(), anyLong(), any());
+            .when(controlPlane).commitFileMergeWorkItem(anyLong(), anyString(), any(), anyInt(), anyLong(), any());
         when(controlPlane.isSafeToDeleteFile(anyString())).thenReturn(isSafeToDelete);
 
         final FileMerger fileMerger = new FileMerger(sharedState);
@@ -459,13 +455,13 @@ class FileMergerMockedTest {
         }).when(storage).upload(any(ObjectKey.class), any(InputStream.class), anyLong());
         bindFilesToObjectNames(Map.of(obj1, file1));
 
-        final FileMergeWorkItem.File file1InWorkItem = new FileMergeWorkItem.File(file1Id, obj1, file1Size, file1UsedSize, List.of(
+        final FileMergeWorkItem.File file1InWorkItem = new FileMergeWorkItem.File(file1Id, obj1, ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, file1Size, file1UsedSize, List.of(
             new BatchInfo(batch1Id, obj1, BatchMetadata.of(T1P0, 0, file1Batch1Size, 1L, 11L, 1L, 2L, TimestampType.CREATE_TIME))
         ));
         when(controlPlane.getFileMergeWorkItem())
             .thenReturn(new FileMergeWorkItem(WORK_ITEM_ID, Instant.ofEpochMilli(1234), List.of(file1InWorkItem)));
         doThrow(new RuntimeException("test"))
-            .when(controlPlane).commitFileMergeWorkItem(anyLong(), anyString(), anyInt(), anyLong(), any());
+            .when(controlPlane).commitFileMergeWorkItem(anyLong(), anyString(), any(), anyInt(), anyLong(), any());
 
         final FileMerger fileMerger = new FileMerger(sharedState);
         fileMerger.run();

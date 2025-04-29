@@ -29,6 +29,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
 
 import io.aiven.inkless.TimeUtils;
+import io.aiven.inkless.common.ObjectFormat;
 import io.aiven.inkless.common.ObjectKey;
 import io.aiven.inkless.common.ObjectKeyCreator;
 import io.aiven.inkless.common.SharedState;
@@ -155,6 +156,7 @@ public class FileMerger implements Runnable {
                 controlPlane.commitFileMergeWorkItem(
                     workItem.workItemId(),
                     objectKey.value(),
+                    ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT,
                     brokerId,
                     mergeMetadata.mergedFileSize(),
                     mergeMetadata.mergedFileBatch()

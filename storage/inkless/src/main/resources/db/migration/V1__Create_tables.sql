@@ -8,6 +8,12 @@ CHECK (VALUE >= 0);
 
 CREATE DOMAIN topic_name_t VARCHAR(255) NOT NULL;
 
+CREATE DOMAIN magic_t AS SMALLINT NOT NULL
+CHECK (VALUE >= 0 AND VALUE <= 2);
+
+CREATE DOMAIN format_t AS SMALLINT NOT NULL
+CHECK (value >= 1 AND VALUE <= 3);
+
 CREATE DOMAIN offset_nullable_t BIGINT
 CHECK (VALUE IS NULL OR VALUE >= 0);
 CREATE DOMAIN offset_t AS offset_nullable_t
@@ -65,6 +71,7 @@ CREATE TYPE file_state_t AS ENUM (
 CREATE TABLE files (
     file_id BIGSERIAL PRIMARY KEY,
     object_key object_key_t UNIQUE NOT NULL,
+    format format_t,
     reason file_reason_t NOT NULL,
     state file_state_t NOT NULL,
     uploader_broker_id broker_id_t,
@@ -81,6 +88,7 @@ CREATE TABLE files_to_delete (
 
 CREATE TABLE batches (
     batch_id BIGSERIAL PRIMARY KEY,
+    magic magic_t,
     topic_id topic_id_t,
     partition partition_t,
     base_offset offset_t,
@@ -112,6 +120,7 @@ CREATE TABLE producer_state (
 );
 
 CREATE TYPE commit_batch_request_v1 AS (
+    magic magic_t,
     topic_id topic_id_t,
     partition partition_t,
     byte_offset byte_offset_t,
@@ -146,6 +155,7 @@ CREATE TYPE commit_batch_response_v1 AS (
 
 CREATE FUNCTION commit_file_v1(
     object_key object_key_t,
+    format format_t,
     uploader_broker_id broker_id_t,
     file_size byte_size_t,
     now TIMESTAMP WITH TIME ZONE,
@@ -161,8 +171,8 @@ DECLARE
     new_high_watermark offset_nullable_t;
     last_sequence_in_producer_epoch BIGINT;
 BEGIN
-    INSERT INTO files (object_key, reason, state, uploader_broker_id, committed_at, size, used_size)
-    VALUES (object_key, 'produce', 'uploaded', uploader_broker_id, now, file_size, file_size)
+    INSERT INTO files (object_key, format, reason, state, uploader_broker_id, committed_at, size, used_size)
+    VALUES (object_key, format, 'produce', 'uploaded', uploader_broker_id, now, file_size, file_size)
     RETURNING file_id
     INTO new_file_id;
 
@@ -275,6 +285,7 @@ BEGIN
         INTO new_high_watermark;
 
         INSERT INTO batches (
+            magic,
             topic_id, partition,
             base_offset,
             last_offset,
@@ -283,6 +294,7 @@ BEGIN
             timestamp_type, log_append_timestamp, batch_max_timestamp
         )
         VALUES (
+            request.magic,
             request.topic_id, request.partition,
             assigned_offset,
             new_high_watermark - 1,
@@ -620,6 +632,7 @@ CREATE TABLE file_merge_work_item_files (
 );
 
 CREATE TYPE batch_metadata_v1 AS (
+    magic magic_t,
     topic_id topic_id_t,
     topic_name topic_name_t,
     partition partition_t,
@@ -642,6 +655,7 @@ CREATE TYPE file_merge_work_item_response_v1_batch AS (
 CREATE TYPE file_merge_work_item_response_v1_file AS (
     file_id BIGINT,
     object_key object_key_t,
+    format format_t,
     size byte_size_t,
     used_size byte_size_t,
     batches file_merge_work_item_response_v1_batch[]
@@ -743,6 +757,7 @@ BEGIN
             SELECT (
                 f.file_id,
                 files.object_key,
+                files.format,
                 files.size,
                 files.used_size,
                 ARRAY(
@@ -750,10 +765,10 @@ BEGIN
                         batches.batch_id,
                         files.object_key,
                         (
+                            batches.magic,
                             logs.topic_id,
                             logs.topic_name,
                             batches.partition,
-
                             batches.byte_offset,
                             batches.byte_size,
                             batches.base_offset,
@@ -799,6 +814,7 @@ CREATE FUNCTION commit_file_merge_work_item_v1(
     now TIMESTAMP WITH TIME ZONE,
     existing_work_item_id BIGINT,
     object_key object_key_t,
+    format format_t,
     uploader_broker_id broker_id_t,
     file_size byte_size_t,
     merge_file_batches commit_file_merge_work_item_v1_batch[]
@@ -831,8 +847,8 @@ BEGIN
     LOOP
         IF array_length(merge_file_batch.parent_batch_ids, 1) IS NULL OR array_length(merge_file_batch.parent_batch_ids, 1) != 1 THEN
             -- insert new empty file to be deleted
-            INSERT INTO files (object_key, reason, state, uploader_broker_id, committed_at, size, used_size)
-            VALUES (object_key, 'merge', 'uploaded', uploader_broker_id, now, 0, 0)
+            INSERT INTO files (object_key, format, reason, state, uploader_broker_id, committed_at, size, used_size)
+            VALUES (object_key, format, 'merge', 'uploaded', uploader_broker_id, now, 0, 0)
             RETURNING file_id
             INTO new_file_id;
             PERFORM mark_file_to_delete_v1(now, new_file_id);
@@ -861,8 +877,8 @@ BEGIN
 
     IF found_batches_size IS NULL THEN
         -- insert new empty file
-        INSERT INTO files (object_key, reason, state, uploader_broker_id, committed_at, size, used_size)
-        VALUES (object_key, 'merge', 'uploaded', uploader_broker_id, now, 0, 0)
+        INSERT INTO files (object_key, format, reason, state, uploader_broker_id, committed_at, size, used_size)
+        VALUES (object_key, format, 'merge', 'uploaded', uploader_broker_id, now, 0, 0)
         RETURNING file_id
         INTO new_file_id;
         PERFORM mark_file_to_delete_v1(now, new_file_id);
@@ -886,8 +902,8 @@ BEGIN
         )
     LOOP
         -- insert new empty file to be deleted
-        INSERT INTO files (object_key, reason, state, uploader_broker_id, committed_at, size, used_size)
-        VALUES (object_key, 'merge', 'uploaded', uploader_broker_id, now, 0, 0)
+        INSERT INTO files (object_key, format, reason, state, uploader_broker_id, committed_at, size, used_size)
+        VALUES (object_key, format, 'merge', 'uploaded', uploader_broker_id, now, 0, 0)
         RETURNING file_id
         INTO new_file_id;
         PERFORM mark_file_to_delete_v1(now, new_file_id);
@@ -910,8 +926,8 @@ BEGIN
     END LOOP;
 
     -- insert new file
-    INSERT INTO files (object_key, reason, state, uploader_broker_id, committed_at, size, used_size)
-    VALUES (object_key, 'merge', 'uploaded', uploader_broker_id, now, file_size, found_batches_size)
+    INSERT INTO files (object_key, format, reason, state, uploader_broker_id, committed_at, size, used_size)
+    VALUES (object_key, format, 'merge', 'uploaded', uploader_broker_id, now, file_size, found_batches_size)
     RETURNING file_id
     INTO new_file_id;
 
@@ -925,6 +941,7 @@ BEGIN
 
     -- insert new batches
     INSERT INTO batches (
+        magic,
         topic_id, partition,
         base_offset,
         last_offset,
@@ -935,6 +952,7 @@ BEGIN
         timestamp_type
     )
     SELECT DISTINCT
+        (unnest(merge_file_batches)).metadata.magic,
         (unnest(merge_file_batches)).metadata.topic_id,
         (unnest(merge_file_batches)).metadata.partition,
         (unnest(merge_file_batches)).metadata.base_offset,
