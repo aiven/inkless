@@ -160,7 +160,7 @@ abstract class BaseProducerSendTest extends KafkaServerTestHarness {
 
     try {
       // create topic
-      TestUtils.createInklessTopicWithAdmin(admin, topic, brokers, controllerServers, 1)
+      TestUtils.createTopicWithAdmin(admin, topic, brokers, controllerServers, 1, 2)
 
       // send a normal record
       val record0 = new ProducerRecord[Array[Byte], Array[Byte]](topic, partition, "key".getBytes(StandardCharsets.UTF_8),
@@ -214,7 +214,7 @@ abstract class BaseProducerSendTest extends KafkaServerTestHarness {
                               timeoutMs: Long = 20000L): Unit = {
     val partition = 0
     try {
-      TestUtils.createInklessTopicWithAdmin(admin, topic, brokers, controllerServers, 1)
+      TestUtils.createTopicWithAdmin(admin, topic, brokers, controllerServers, 1, 2)
 
       val futures = for (i <- 1 to numRecords) yield {
         val record = new ProducerRecord(topic, partition, s"key$i".getBytes(StandardCharsets.UTF_8),
@@ -269,7 +269,7 @@ abstract class BaseProducerSendTest extends KafkaServerTestHarness {
         topicProps.setProperty(TopicConfig.MESSAGE_TIMESTAMP_TYPE_CONFIG, "LogAppendTime")
       else
         topicProps.setProperty(TopicConfig.MESSAGE_TIMESTAMP_TYPE_CONFIG, "CreateTime")
-      TestUtils.createInklessTopicWithAdmin(admin, topic, brokers, controllerServers, 1, topicConfig = topicProps)
+      TestUtils.createTopicWithAdmin(admin, topic, brokers, controllerServers, 1, 2, topicConfig = topicProps)
 
       val recordAndFutures = for (i <- 1 to numRecords) yield {
         val record = new ProducerRecord(topic, partition, baseTimestamp + i, s"key$i".getBytes(StandardCharsets.UTF_8),
@@ -302,7 +302,7 @@ abstract class BaseProducerSendTest extends KafkaServerTestHarness {
 
     try {
       // create topic
-      TestUtils.createInklessTopicWithAdmin(admin, topic, brokers, controllerServers, 1)
+      TestUtils.createTopicWithAdmin(admin, topic, brokers, controllerServers, 1, 2)
 
       // non-blocking send a list of records
       val record0 = new ProducerRecord[Array[Byte], Array[Byte]](topic, null, "key".getBytes(StandardCharsets.UTF_8),
@@ -335,7 +335,7 @@ abstract class BaseProducerSendTest extends KafkaServerTestHarness {
     val producer = createProducer()
 
     try {
-      TestUtils.createInklessTopicWithAdmin(admin, topic, brokers, controllerServers, 2)
+      TestUtils.createTopicWithAdmin(admin, topic, brokers, controllerServers, 2, 2)
       val partition = 1
 
       val now = System.currentTimeMillis()
@@ -379,7 +379,6 @@ abstract class BaseProducerSendTest extends KafkaServerTestHarness {
     val replicas = List(0, follower)
 
     try {
-      // Not-applicable for Inkless since it does not have followers
       TestUtils.createTopicWithAdmin(admin, topic, brokers, controllerServers, 1, 3, Map(0 -> replicas))
       val partition = 0
 
@@ -429,7 +428,7 @@ abstract class BaseProducerSendTest extends KafkaServerTestHarness {
     val producer = createProducer(maxBlockMs = 5 * 1000L)
 
     // create topic
-    TestUtils.createInklessTopicWithAdmin(admin, topic, brokers, controllerServers, 1)
+    TestUtils.createTopicWithAdmin(admin, topic, brokers, controllerServers, 1, 2)
 
     val partition0 = 0
     var futures0 = (1 to numRecords).map { i =>
@@ -486,7 +485,7 @@ abstract class BaseProducerSendTest extends KafkaServerTestHarness {
   def testFlush(quorum: String, groupProtocol: String): Unit = {
     val producer = createProducer(lingerMs = Int.MaxValue, deliveryTimeoutMs = Int.MaxValue)
     try {
-      TestUtils.createInklessTopicWithAdmin(admin, topic, brokers, controllerServers, 2)
+      TestUtils.createTopicWithAdmin(admin, topic, brokers, controllerServers, 2, 2)
       val record = new ProducerRecord[Array[Byte], Array[Byte]](topic,
         "value".getBytes(StandardCharsets.UTF_8))
       for (_ <- 0 until 50) {
@@ -506,7 +505,7 @@ abstract class BaseProducerSendTest extends KafkaServerTestHarness {
   @ParameterizedTest(name = TestInfoUtils.TestWithParameterizedQuorumAndGroupProtocolNames)
   @MethodSource(Array("getTestQuorumAndGroupProtocolParametersAll"))
   def testCloseWithZeroTimeoutFromCallerThread(quorum: String, groupProtocol: String): Unit = {
-    TestUtils.createInklessTopicWithAdmin(admin, topic, brokers, controllerServers, 2)
+    TestUtils.createTopicWithAdmin(admin, topic, brokers, controllerServers, 2, 2)
     val partition = 0
     consumer.assign(List(new TopicPartition(topic, partition)).asJava)
     val record0 = new ProducerRecord[Array[Byte], Array[Byte]](topic, partition, null,
@@ -532,7 +531,7 @@ abstract class BaseProducerSendTest extends KafkaServerTestHarness {
   @ParameterizedTest(name = TestInfoUtils.TestWithParameterizedQuorumAndGroupProtocolNames)
   @MethodSource(Array("getTestQuorumAndGroupProtocolParametersAll"))
   def testCloseWithZeroTimeoutFromSenderThread(quorum: String, groupProtocol: String): Unit = {
-    TestUtils.createInklessTopicWithAdmin(admin, topic, brokers, controllerServers, 1)
+    TestUtils.createTopicWithAdmin(admin, topic, brokers, controllerServers, 1, 2)
     val partition = 0
     consumer.assign(List(new TopicPartition(topic, partition)).asJava)
     val record = new ProducerRecord[Array[Byte], Array[Byte]](topic, partition, null, "value".getBytes(StandardCharsets.UTF_8))

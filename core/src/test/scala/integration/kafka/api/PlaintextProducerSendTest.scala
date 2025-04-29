@@ -28,13 +28,14 @@ import org.apache.kafka.common.record.{DefaultRecord, DefaultRecordBatch, Record
 import org.apache.kafka.common.serialization.ByteArraySerializer
 import org.apache.kafka.storage.internals.log.LogConfig
 import org.junit.jupiter.api.Assertions._
-import org.junit.jupiter.api.Timeout
+import org.junit.jupiter.api.{Tag, Timeout}
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.{Arguments, MethodSource}
 
 import java.nio.charset.StandardCharsets
 
 
+@Tag("inkless")
 class PlaintextProducerSendTest extends BaseProducerSendTest {
 
   @ParameterizedTest(name = TestInfoUtils.TestWithParameterizedQuorumAndGroupProtocolNames)
@@ -56,7 +57,7 @@ class PlaintextProducerSendTest extends BaseProducerSendTest {
       lingerMs = Int.MaxValue,
       deliveryTimeoutMs = Int.MaxValue,
       batchSize = 0)
-    // default timeout is not enough for the 100 requests
+    // inkless: default timeout is not enough for the 100 requests
     sendAndVerify(producer, timeoutMs = 60_000)
   }
 

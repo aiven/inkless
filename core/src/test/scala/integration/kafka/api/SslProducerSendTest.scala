@@ -18,9 +18,10 @@
 package kafka.api
 
 import kafka.utils.TestUtils
-
 import org.apache.kafka.common.security.auth.SecurityProtocol
+import org.junit.jupiter.api.Tag
 
+@Tag("inkless")
 class SslProducerSendTest extends BaseProducerSendTest {
   override protected def securityProtocol = SecurityProtocol.SSL
   override protected lazy val trustStoreFile = Some(TestUtils.tempFile("truststore", ".jks"))

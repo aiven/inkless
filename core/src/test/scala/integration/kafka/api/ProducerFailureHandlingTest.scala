@@ -235,6 +235,8 @@ class ProducerFailureHandlingTest extends KafkaServerTestHarness {
 
   @ParameterizedTest
   @ValueSource(strings = Array("kraft"))
+  // Keeping as standard topic as inkless does not fail on not enough replicas
+  @Tag("noinkless")
   def testNotEnoughReplicasAfterBrokerShutdown(quorum: String): Unit = {
     val topicName = "minisrtest2"
     val topicProps = new Properties()
