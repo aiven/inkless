@@ -557,8 +557,8 @@ class KRaftMetadataCache(
       true)
   }
 
-  override def isInklessTopic(topic: String): Boolean = {
-    val logConfig = new LogConfig(config(new ConfigResource(ConfigResource.Type.TOPIC, topic)))
+  override def isInklessTopic(topic: String, defaultConfig: Supplier[Map[_, _]]): Boolean = {
+    val logConfig = LogConfig.fromProps(defaultConfig.get().asJava, topicConfig(topic))
     val inklessEnabled = logConfig.getBoolean(TopicConfig.INKLESS_ENABLE_CONFIG)
     !Topic.isInternal(topic) && topic != Topic.CLUSTER_METADATA_TOPIC_NAME && inklessEnabled
   }

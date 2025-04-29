@@ -616,8 +616,10 @@ object DynamicLogConfig {
    * the names you would use when setting a static or dynamic broker configuration (not topic
    * configuration).
    */
-  val ReconfigurableConfigs: Set[String] =
-    ServerTopicConfigSynonyms.TOPIC_CONFIG_SYNONYMS.asScala.values.toSet
+  val ReconfigurableConfigs: Set[String] = {
+    // LOG_INKLESS_ENABLE is not reconfigurable, as changing the storage type of an existing topic is unsupported
+    ServerTopicConfigSynonyms.TOPIC_CONFIG_SYNONYMS.asScala.values.toSet -- Set(ServerLogConfigs.INKLESS_ENABLE_CONFIG)
+  }
 }
 
 class DynamicLogConfig(logManager: LogManager) extends BrokerReconfigurable with Logging {

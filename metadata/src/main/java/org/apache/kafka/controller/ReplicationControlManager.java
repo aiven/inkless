@@ -159,6 +159,7 @@ public class ReplicationControlManager {
         private LogContext logContext = null;
         private short defaultReplicationFactor = (short) 3;
         private int defaultNumPartitions = 1;
+        private boolean defaultInklessEnable = false;
 
         private int maxElectionsPerImbalance = MAX_ELECTIONS_PER_IMBALANCE;
         private ConfigurationControlManager configurationControl = null;
@@ -183,6 +184,11 @@ public class ReplicationControlManager {
 
         Builder setDefaultNumPartitions(int defaultNumPartitions) {
             this.defaultNumPartitions = defaultNumPartitions;
+            return this;
+        }
+
+        public Builder setDefaultInklessEnable(boolean defaultInklessEnable) {
+            this.defaultInklessEnable = defaultInklessEnable;
             return this;
         }
 
@@ -226,6 +232,7 @@ public class ReplicationControlManager {
                 logContext,
                 defaultReplicationFactor,
                 defaultNumPartitions,
+                defaultInklessEnable,
                 maxElectionsPerImbalance,
                 configurationControl,
                 clusterControl,
@@ -297,6 +304,11 @@ public class ReplicationControlManager {
      * not specify a number of partitions.
      */
     private final int defaultNumPartitions;
+
+    /**
+     * When true, enable Inkless topics if a CreateTopics request does not specify a topic type.
+     */
+    private final boolean defaultInklessEnable;
 
     /**
      * Maximum number of leader elections to perform during one partition leader balancing operation.
@@ -386,6 +398,7 @@ public class ReplicationControlManager {
         LogContext logContext,
         short defaultReplicationFactor,
         int defaultNumPartitions,
+        boolean defaultInklessEnable,
         int maxElectionsPerImbalance,
         ConfigurationControlManager configurationControl,
         ClusterControlManager clusterControl,
@@ -396,6 +409,7 @@ public class ReplicationControlManager {
         this.log = logContext.logger(ReplicationControlManager.class);
         this.defaultReplicationFactor = defaultReplicationFactor;
         this.defaultNumPartitions = defaultNumPartitions;
+        this.defaultInklessEnable = defaultInklessEnable;
         this.maxElectionsPerImbalance = maxElectionsPerImbalance;
         this.configurationControl = configurationControl;
         this.createTopicPolicy = createTopicPolicy;
@@ -715,7 +729,7 @@ public class ReplicationControlManager {
         Map<String, String> creationConfigs = translateCreationConfigs(topic.configs());
         Map<Integer, PartitionRegistration> newParts = new HashMap<>();
 
-        boolean inklessEnabled = Boolean.parseBoolean(creationConfigs.getOrDefault(INKLESS_ENABLE_CONFIG, "false"));
+        boolean inklessEnabled = Boolean.parseBoolean(creationConfigs.getOrDefault(INKLESS_ENABLE_CONFIG, "" + defaultInklessEnable));
         if (inklessEnabled) {
             if (Math.abs(topic.replicationFactor()) != 1) {
                 return new ApiError(Errors.INVALID_REPLICATION_FACTOR,

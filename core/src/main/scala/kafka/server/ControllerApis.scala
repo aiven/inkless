@@ -90,7 +90,7 @@ class ControllerApis(
   val runtimeLoggerManager = new RuntimeLoggerManager(config.nodeId, logger.underlying)
   private val aclApis = new AclApis(authHelper, authorizer, requestHelper, "controller", config)
 
-  private val inklessMetadataView = new InklessMetadataView(metadataCache)
+  private val inklessMetadataView = new InklessMetadataView(metadataCache, () => config.extractLogConfigMap.asScala)
 
   def isClosed: Boolean = aclApis.isClosed
 
