@@ -80,7 +80,10 @@ public class MockInputStream extends InputStream {
             throw new IllegalStateException();
         }
         if (endGap != null) {
-            buffer.position(buffer.position() + endGap);
+            final int remaining = buffer.remaining();
+            if (remaining >= endGap) {
+                buffer.position(buffer.position() + endGap);
+            }
         }
         stream.close();
         wasClosed = true;
