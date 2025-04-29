@@ -18,10 +18,10 @@ package kafka.utils
 
 import java.lang.reflect.Method
 import java.util
-import java.util.{Collections, Optional}
-
+import java.util.{Optional, Collections}
 import org.junit.jupiter.api.TestInfo
 import org.apache.kafka.clients.consumer.GroupProtocol
+import org.junit.jupiter.api.Tag
 
 class EmptyTestInfo extends TestInfo {
   override def getDisplayName: String = ""
@@ -63,5 +63,30 @@ object TestInfoUtils {
    */
   def isEligibleLeaderReplicasV1Enabled(testInfo: TestInfo): Boolean = {
     testInfo.getDisplayName.contains("isELRV1Enabled=true")
+  }
+
+  /**
+   * Returns whether the test should use Inkless topics, which is true when all of the following are true:
+   * <ul>
+   *   <li>-Dkafka.log.inkless.enable is unspecified or =true
+   *   <li>The test or class has the "inkless" tag
+   *   <li>the test or class does not have has the "noinkless" tag
+   * </ul>
+   * This does not use the typical test harness parameterization to avoid regular merge conflicts.
+   */
+  def isInklessEnabled(testInfo: TestInfo): Boolean = {
+    val propertyEnabled = System.getProperty("kafka.log.inkless.enable", "").toBooleanOption.getOrElse(true)
+
+    val hasInklessTag = testInfo.getTestMethod
+      .filter(method => method.isAnnotationPresent(classOf[Tag]) &&
+        method.getAnnotation(classOf[Tag]).value().contains("inkless"))
+      .isPresent || testInfo.getTags.contains("inkless")
+
+    val hasNoInklessTag = testInfo.getTestMethod
+      .filter(method => method.isAnnotationPresent(classOf[Tag]) &&
+        method.getAnnotation(classOf[Tag]).value().contains("noinkless"))
+      .isPresent || testInfo.getTags.contains("noinkless")
+
+    propertyEnabled && hasInklessTag && !hasNoInklessTag
   }
 }

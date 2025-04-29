@@ -200,7 +200,7 @@ abstract class QuorumTestHarness extends Logging {
   @BeforeEach
   def setUp(testInfo: TestInfo): Unit = {
     this.testInfo = testInfo
-    val inklessEnabled = testInfo.getTags.contains("inkless") && System.getProperty("kafka.log.inkless.enable", "true").toBoolean
+    val inklessEnabled = TestInfoUtils.isInklessEnabled(testInfo)
     if (inklessEnabled) this.inklessMode = Some(new InklessMode(pgContainer, minioContainer))
     Exit.setExitProcedure((code, message) => {
       try {
