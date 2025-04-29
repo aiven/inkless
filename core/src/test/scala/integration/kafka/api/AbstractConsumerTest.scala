@@ -80,8 +80,9 @@ abstract class AbstractConsumerTest extends BaseRequestTest {
   override def setUp(testInfo: TestInfo): Unit = {
     super.setUp(testInfo)
 
-    // create the test topic with all the brokers as replicas
-    createTopic(topic, 2, brokerCount, adminClientConfig = this.adminClientConfig)
+    // create the test topic with all the brokers as replicas, or just 1 if in inkless mode
+    val replicaCount = inklessMode.map(m => 1).getOrElse(brokerCount)
+    createTopic(topic, 2, replicaCount, adminClientConfig = this.adminClientConfig)
   }
 
   def awaitAssignment(consumer: Consumer[_, _], expectedAssignment: Set[TopicPartition])

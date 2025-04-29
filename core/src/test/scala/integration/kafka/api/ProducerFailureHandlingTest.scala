@@ -139,6 +139,7 @@ class ProducerFailureHandlingTest extends KafkaServerTestHarness {
   /** This should succeed as the replica fetcher thread can handle oversized messages since KIP-74 */
   @ParameterizedTest
   @ValueSource(strings = Array("kraft"))
+  @Tag("noinkless")
   def testPartitionTooLargeForReplicationWithAckAll(quorum: String): Unit = {
     checkTooLargeRecordForReplicationWithAckAll(replicaFetchMaxPartitionBytes)
   }
@@ -146,6 +147,7 @@ class ProducerFailureHandlingTest extends KafkaServerTestHarness {
   /** This should succeed as the replica fetcher thread can handle oversized messages since KIP-74 */
   @ParameterizedTest
   @ValueSource(strings = Array("kraft"))
+  @Tag("noinkless")
   def testResponseTooLargeForReplicationWithAckAll(quorum: String): Unit = {
     checkTooLargeRecordForReplicationWithAckAll(replicaFetchMaxResponseBytes)
   }

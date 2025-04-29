@@ -130,7 +130,7 @@ class PlaintextProducerSendTest extends BaseProducerSendTest {
     // set the TopicConfig for timestamp validation to have 1 minute threshold. Note that recordTimestamp has 5 minutes diff
     val oneMinuteInMs: Long = 1 * 60 * 60 * 1000L
     topicProps.setProperty(messageTimeStampConfig, oneMinuteInMs.toString)
-    TestUtils.createTopicWithAdmin(admin, topic, brokers, controllerServers, 1, 2, topicConfig = topicProps)
+    TestUtils.createTopicWithAdmin(admin, topic, brokers, controllerServers, topicConfig = topicProps)
 
     val producer = createProducer()
     try {
@@ -159,7 +159,7 @@ class PlaintextProducerSendTest extends BaseProducerSendTest {
 
     // set the TopicConfig for timestamp validation to be the same as the record timestamp
     topicProps.setProperty(messageTimeStampConfig, recordTimestamp.toString)
-    TestUtils.createTopicWithAdmin(admin, topic, brokers, controllerServers, 1, 2, topicConfig = topicProps)
+    TestUtils.createTopicWithAdmin(admin, topic, brokers, controllerServers, topicConfig = topicProps)
 
     val producer = createProducer()
 
@@ -180,7 +180,7 @@ class PlaintextProducerSendTest extends BaseProducerSendTest {
     // set the TopicConfig for timestamp validation to have 10 minute threshold. Note that recordTimestamp has 5 minutes diff
     val tenMinutesInMs: Long = 10 * 60 * 60 * 1000L
     topicProps.setProperty(messageTimeStampConfig, tenMinutesInMs.toString)
-    TestUtils.createTopicWithAdmin(admin, topic, brokers, controllerServers, 1, 2, topicConfig = topicProps)
+    TestUtils.createTopicWithAdmin(admin, topic, brokers, controllerServers, topicConfig = topicProps)
 
     val producer = createProducer()
 
