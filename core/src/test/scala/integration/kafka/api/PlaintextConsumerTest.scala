@@ -32,13 +32,14 @@ import org.apache.kafka.common.{MetricName, TopicPartition}
 import org.apache.kafka.server.quota.QuotaType
 import org.apache.kafka.test.{MockConsumerInterceptor, MockProducerInterceptor}
 import org.junit.jupiter.api.Assertions._
-import org.junit.jupiter.api.Timeout
+import org.junit.jupiter.api.{Tag, Timeout}
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.MethodSource
 
 import java.util.concurrent.{CompletableFuture, ExecutionException, TimeUnit}
 import scala.jdk.CollectionConverters._
 
+@Tag("inkless")
 @Timeout(600)
 class PlaintextConsumerTest extends BaseConsumerTest {
 
@@ -416,7 +417,7 @@ class PlaintextConsumerTest extends BaseConsumerTest {
   def testPerPartitionLeadMetricsCleanUpWithSubscribe(quorum: String, groupProtocol: String): Unit = {
     val numMessages = 1000
     val topic2 = "topic2"
-    createTopic(topic2, 2, brokerCount)
+    createTopic(topic2, 2)
     // send some messages.
     val producer = createProducer()
     sendRecords(producer, numMessages, tp)
@@ -456,7 +457,7 @@ class PlaintextConsumerTest extends BaseConsumerTest {
   def testPerPartitionLagMetricsCleanUpWithSubscribe(quorum: String, groupProtocol: String): Unit = {
     val numMessages = 1000
     val topic2 = "topic2"
-    createTopic(topic2, 2, brokerCount)
+    createTopic(topic2, 2)
     // send some messages.
     val producer = createProducer()
     sendRecords(producer, numMessages, tp)
