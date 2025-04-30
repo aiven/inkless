@@ -464,7 +464,9 @@ kafka.api.PlaintextProducerSendTest:
 - testValidBeforeAndAfterTimestampsWithinThreshold
 - testWrongSerializer
 kafka.api.ProducerSendWhileDeletionTest:
+- testSendWithRecreatedTopic
 - testSendWithTopicDeletionMidWay
+- testSendWithTopicReassignmentIsMidWay
 kafka.api.SaslClientsWithInvalidCredentialsTest:
 - testConsumerWithAuthenticationFailure
 - testKafkaAdminClientWithAuthenticationFailure

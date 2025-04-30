@@ -2,7 +2,7 @@ org.apache.kafka.streams.AutoOffsetResetTest:
 - customDurationShouldMatchExpectedValue
 - shouldThrowExceptionIfDurationIsNegative
 - shouldThrowExceptionOnDurationForEarliestReset
-- shouldThrowExceptionOnDurationForLastetReset
+- shouldThrowExceptionOnDurationForLatestReset
 - shouldThrowExceptionOnDurationForNoneReset
 - twoInstancesCreatedAtTheSameTimeWithSameOptionsShouldBeEqual
 org.apache.kafka.streams.KafkaStreamsTest:
@@ -282,6 +282,7 @@ org.apache.kafka.streams.StreamsConfigTest:
 - shouldReturnTaskAssignorClass
 - shouldSetAndGetDeserializationExceptionHandlerWhenOnlyNewConfigIsSet
 - shouldSetAndGetProductionExceptionHandlerWhenOnlyNewConfigIsSet
+- shouldSetBalanceSubtopologyRackAwareAssignmentConfig
 - shouldSetDefaultAcceptableRecoveryLag
 - shouldSetDefaultBuiltInMetricsVersionIfNoneIsSpecified
 - shouldSetDefaultMaxWarmupReplicas
@@ -292,6 +293,7 @@ org.apache.kafka.streams.StreamsConfigTest:
 - shouldSetGroupProtocolToClassicByDefault
 - shouldSetGroupProtocolToStreams
 - shouldSetInternalLeaveGroupOnCloseConfigToFalseInConsumer
+- shouldSetMinTrafficRackAwareAssignmentConfig
 - shouldSetRackAwareAssignmentTags
 - shouldSpecifyCorrectKeySerdeClassOnError
 - shouldSpecifyCorrectValueSerdeClassOnError
@@ -357,8 +359,6 @@ org.apache.kafka.streams.StreamsConfigTest:
 - shouldUseOldProductionExceptionHandlerWhenOnlyOldConfigIsSet
 - shouldUseStateStoreCacheMaxBytesWhenBothOldAndNewConfigsAreSet
 - shouldUseStateStoreCacheMaxBytesWhenNewConfigIsSet
-- shouldtSetBalanceSubtopologyRackAwareAssignmentConfig
-- shouldtSetMinTrafficRackAwareAssignmentConfig
 - testCaseInsensitiveSecurityProtocol
 - testGetConsumerConfigs
 - testGetGlobalConsumerConfigs
@@ -2165,8 +2165,8 @@ org.apache.kafka.streams.processor.internals.ProcessorContextTest:
 - shouldNotAllowToScheduleSubMillisecondPunctuation
 - shouldNotAllowToScheduleZeroMillisecondPunctuation
 org.apache.kafka.streams.processor.internals.ProcessorMetadataTest:
-- shouldAddandGetKeyValueWithEmptyConstructor
-- shouldAddandGetKeyValueWithExistingMeta
+- shouldAddAndGetKeyValueWithEmptyConstructor
+- shouldAddAndGetKeyValueWithExistingMeta
 - shouldDeserializeNull
 - shouldNotUseCommitFlagForHashcodeAndEquals
 - shouldSerializeAndDeserialize
@@ -3404,7 +3404,7 @@ org.apache.kafka.streams.processor.internals.assignment.RackAwareTaskAssignorTes
 - shouldReturnFalseWhenRackMissingInProcess
 - shouldReturnInvalidClientRackWhenRackDiffersInSameProcess
 - shouldReturnInvalidClientRackWhenRackMissingInClientConsumer
-- shouldThrowIfMissingCallcanEnableRackAwareAssignor
+- shouldThrowIfMissingCallCanEnableRackAwareAssignor
 - shouldThrowIfTaskInMultipleClients
 - shouldThrowIfTaskMissingInClients
 org.apache.kafka.streams.processor.internals.assignment.StandbyTaskAssignmentUtilsTest:

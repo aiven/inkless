@@ -61,6 +61,9 @@ org.apache.kafka.streams.integration.HandlingSourceTopicDeletionIntegrationTest:
 org.apache.kafka.streams.integration.HighAvailabilityTaskAssignorIntegrationTest:
 - shouldScaleOutWithWarmupTasksAndInMemoryStores
 - shouldScaleOutWithWarmupTasksAndPersistentStores
+org.apache.kafka.streams.integration.IQv2EndpointToPartitionsIntegrationTest:
+- CLASSIC
+- STREAMS
 org.apache.kafka.streams.integration.IQv2IntegrationTest:
 - shouldFailNotStarted
 - shouldFailStopped
