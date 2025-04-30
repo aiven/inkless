@@ -16,14 +16,13 @@
  */
 package io.aiven.inkless.produce;
 
-import io.aiven.inkless.TimeUtils;
-import io.aiven.inkless.control_plane.CommitBatchResponse;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.record.RecordBatch;
 import org.apache.kafka.common.record.TimestampType;
 import org.apache.kafka.common.requests.ProduceResponse;
 import org.apache.kafka.common.utils.Time;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -34,6 +33,9 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
+
+import io.aiven.inkless.TimeUtils;
+import io.aiven.inkless.control_plane.CommitBatchResponse;
 
 /**
  * This job is responsible for completing the Append requests generating client responses.
