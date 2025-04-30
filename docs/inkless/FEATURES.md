@@ -30,7 +30,6 @@ If not specified above, features are untested and assumed to be inoperable.
 
 ### Inkless topics supported (possibly with limitations)
 - `PRODUCE`
-    - can't produce to Inkless and classic topics in the same request;
     - upload parallelism is underutilized;
     - Inkless topics can’t participate in transactions.
 - `FETCH`

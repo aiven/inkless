@@ -33,26 +33,24 @@ import org.slf4j.LoggerFactory;
 
 import java.io.Closeable;
 import java.io.IOException;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.function.Consumer;
+import java.util.concurrent.CompletableFuture;
 import java.util.stream.Collectors;
 
 import io.aiven.inkless.common.SharedState;
 import io.aiven.inkless.common.TopicIdEnricher;
-import io.aiven.inkless.common.TopicTypeCounter;
 
-public class AppendInterceptor implements Closeable {
-    private static final Logger LOGGER = LoggerFactory.getLogger(AppendInterceptor.class);
+public class AppendHandler implements Closeable {
+    private static final Logger LOGGER = LoggerFactory.getLogger(AppendHandler.class);
 
     private final SharedState state;
     private final Writer writer;
 
-    private final TopicTypeCounter topicTypeCounter;
-
     @DoNotMutate
     @CoverageIgnore
-    public AppendInterceptor(final SharedState state) {
+    public AppendHandler(final SharedState state) {
         this(
             state,
             new Writer(
@@ -73,12 +71,14 @@ public class AppendInterceptor implements Closeable {
     }
 
     // Visible for tests
-    AppendInterceptor(final SharedState state,
-                      final Writer writer) {
+    AppendHandler(final SharedState state,
+                  final Writer writer) {
         this.state = state;
         this.writer = writer;
+    }
 
-        this.topicTypeCounter = new TopicTypeCounter(this.state.metadata());
+    public boolean isInkless(String topicName) {
+        return this.state.metadata().isInklessTopic(topicName);
     }
 
     /**
@@ -88,32 +88,17 @@ public class AppendInterceptor implements Closeable {
      *
      * @return {@code true} if interception happened
      */
-    public boolean intercept(final Map<TopicPartition, MemoryRecords> entriesPerPartition,
-                             final Consumer<Map<TopicPartition, PartitionResponse>> responseCallback,
-                             final RequestLocal requestLocal) {
-        final TopicTypeCounter.Result countResult = topicTypeCounter.count(entriesPerPartition.keySet());
-        if (countResult.bothTypesPresent()) {
-            LOGGER.warn("Producing to Inkless and classic topic in same request isn't supported");
-            respondAllWithError(entriesPerPartition, responseCallback, Errors.INVALID_REQUEST);
-            return true;
-        }
-
-        // This request produces only to classic topics, don't intercept.
-        if (countResult.noInkless()) {
-            return false;
-        }
-
-        // This automatically reject transactional produce with this check.
-        if (rejectTransactionalProduce(entriesPerPartition, responseCallback)) {
-            return true;
-        }
-
+    public CompletableFuture<Map<TopicPartition, PartitionResponse>> handle(final Map<TopicPartition, MemoryRecords> entriesPerPartition,
+                                                                            final RequestLocal requestLocal) {
         if (entriesPerPartition.isEmpty()) {
-            // Empty produce request are expected to be filtered out at the KafkaApis level.
-            // adding for safety.
-            LOGGER.warn("Empty produce request");
-            responseCallback.accept(Map.of());
-            return true;
+            return CompletableFuture.completedFuture(Collections.emptyMap());
+        }
+        // This automatically reject transactional produce with this check.
+        if (requestContainsTransactionalProduce(entriesPerPartition)) {
+            LOGGER.warn("Transactional produce found, rejecting request");
+            return CompletableFuture.completedFuture(entriesPerPartition.entrySet().stream().collect(
+                Collectors.toMap(Map.Entry::getKey, ignore -> new PartitionResponse(Errors.INVALID_REQUEST)))
+            );
         }
 
         final Map<TopicIdPartition, MemoryRecords> entriesPerPartitionEnriched;
@@ -121,26 +106,15 @@ public class AppendInterceptor implements Closeable {
             entriesPerPartitionEnriched = TopicIdEnricher.enrich(state.metadata(), entriesPerPartition);
         } catch (final TopicIdEnricher.TopicIdNotFoundException e) {
             LOGGER.error("Cannot find UUID for topic {}", e.topicName);
-            respondAllWithError(entriesPerPartition, responseCallback, Errors.UNKNOWN_SERVER_ERROR);
-            return true;
+            return CompletableFuture.completedFuture(entriesPerPartition.entrySet().stream().collect(
+                Collectors.toMap(Map.Entry::getKey, ignore -> new PartitionResponse(Errors.UNKNOWN_SERVER_ERROR)))
+            );
         }
-        final var resultFuture = writer.write(entriesPerPartitionEnriched, getLogConfigs(entriesPerPartition), requestLocal);
-        resultFuture.whenComplete((result, e) -> {
-            if (result == null) {
-                // We don't really expect this future to fail, but in case it does...
-                LOGGER.error("Write future failed", e);
-                result = entriesPerPartition.entrySet().stream()
-                    .collect(Collectors.toMap(Map.Entry::getKey, ignore -> new PartitionResponse(Errors.UNKNOWN_SERVER_ERROR)));
-            }
-            responseCallback.accept(result);
-        });
-
-        return true;
+        return writer.write(entriesPerPartitionEnriched, getLogConfigs(entriesPerPartition), requestLocal);
     }
 
-    private boolean rejectTransactionalProduce(final Map<TopicPartition, MemoryRecords> entriesPerPartition,
-                                               final Consumer<Map<TopicPartition, PartitionResponse>> responseCallback) {
-        boolean atLeastBatchHasProducerId = entriesPerPartition.values().stream().anyMatch(records -> {
+    private boolean requestContainsTransactionalProduce(final Map<TopicPartition, MemoryRecords> entriesPerPartition) {
+        return entriesPerPartition.values().stream().anyMatch(records -> {
             for (final var batch : records.batches()) {
                 if (batch.hasProducerId() && batch.isTransactional()) {
                     return true;
@@ -148,28 +122,6 @@ public class AppendInterceptor implements Closeable {
             }
             return false;
         });
-
-        if (atLeastBatchHasProducerId) {
-            LOGGER.warn("Transactional produce found, rejecting request");
-            final var result = entriesPerPartition.entrySet().stream()
-                .collect(Collectors.toMap(
-                    Map.Entry::getKey,
-                    ignore -> new PartitionResponse(Errors.INVALID_REQUEST)));
-            responseCallback.accept(result);
-            return true;
-        } else {
-            return false;
-        }
-    }
-
-    private void respondAllWithError(final Map<TopicPartition, MemoryRecords> entriesPerPartition,
-                                     final Consumer<Map<TopicPartition, PartitionResponse>> responseCallback,
-                                     final Errors error) {
-        final var response = entriesPerPartition.entrySet().stream()
-            .collect(Collectors.toMap(
-                Map.Entry::getKey,
-                ignored -> new PartitionResponse(error)));
-        responseCallback.accept(response);
     }
 
     private Map<String, LogConfig> getLogConfigs(final Map<TopicPartition, MemoryRecords> entriesPerPartition) {

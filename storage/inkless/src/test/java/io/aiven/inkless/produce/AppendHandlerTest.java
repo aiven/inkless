@@ -44,7 +44,6 @@ import java.io.IOException;
 import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.CompletableFuture;
-import java.util.function.Consumer;
 import java.util.function.Supplier;
 
 import io.aiven.inkless.cache.FixedBlockAlignment;
@@ -54,6 +53,7 @@ import io.aiven.inkless.cache.ObjectCache;
 import io.aiven.inkless.common.ObjectKey;
 import io.aiven.inkless.common.ObjectKeyCreator;
 import io.aiven.inkless.common.SharedState;
+import io.aiven.inkless.common.TopicIdEnricher;
 import io.aiven.inkless.config.InklessConfig;
 import io.aiven.inkless.control_plane.ControlPlane;
 import io.aiven.inkless.control_plane.MetadataView;
@@ -69,7 +69,7 @@ import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.STRICT_STUBS)
-public class AppendInterceptorTest {
+public class AppendHandlerTest {
     static final int BROKER_ID = 11;
     static final ObjectKeyCreator OBJECT_KEY_CREATOR = ObjectKey.creator("", false);
     private static final KeyAlignmentStrategy KEY_ALIGNMENT_STRATEGY = new FixedBlockAlignment(Integer.MAX_VALUE);
@@ -87,8 +87,6 @@ public class AppendInterceptorTest {
     ControlPlane controlPlane;
     @Mock
     StorageBackend storageBackend;
-    @Mock
-    Consumer<Map<TopicPartition, PartitionResponse>> responseCallback;
     @Mock
     Writer writer;
     @Mock
@@ -130,137 +128,44 @@ public class AppendInterceptorTest {
     );
 
     @Test
-    public void mixingInklessAndClassicTopicsIsNotAllowed() {
-        when(metadataView.isInklessTopic(eq("inkless"))).thenReturn(true);
-        when(metadataView.isInklessTopic(eq("non_inkless"))).thenReturn(false);
-        final AppendInterceptor interceptor = new AppendInterceptor(
+    public void rejectTransactionalProduce() {
+        final AppendHandler interceptor = new AppendHandler(
             new SharedState(time, BROKER_ID, inklessConfig, metadataView, controlPlane, storageBackend,
                 OBJECT_KEY_CREATOR, KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, brokerTopicStats, DEFAULT_TOPIC_CONFIGS), writer);
 
         final Map<TopicPartition, MemoryRecords> entriesPerPartition = Map.of(
-            new TopicPartition("inkless", 0),
-            MemoryRecords.withRecords(Compression.NONE, new SimpleRecord("first message".getBytes())),
-            new TopicPartition("non_inkless", 0),
-            MemoryRecords.withRecords(Compression.NONE, new SimpleRecord("first message".getBytes()))
+            new TopicPartition("inkless1", 0), RECORDS_WITHOUT_PRODUCER_ID,
+            new TopicPartition("inkless2", 0), TRANSACTIONAL_RECORDS
         );
 
-        final boolean result = interceptor.intercept(entriesPerPartition, responseCallback, requestLocal);
-        assertThat(result).isTrue();
-
-        verify(responseCallback).accept(resultCaptor.capture());
-        assertThat(resultCaptor.getValue()).isEqualTo(Map.of(
-            new TopicPartition("inkless", 0),
-            new PartitionResponse(Errors.INVALID_REQUEST),
-            new TopicPartition("non_inkless", 0),
-            new PartitionResponse(Errors.INVALID_REQUEST)
-        ));
+        interceptor.handle(entriesPerPartition, requestLocal)
+            .whenComplete((r, ex) -> assertThat(r).isEqualTo(
+                Map.of(
+                    new TopicPartition("inkless1", 0), new PartitionResponse(Errors.INVALID_REQUEST),
+                    new TopicPartition("inkless2", 0), new PartitionResponse(Errors.INVALID_REQUEST)
+                )
+            ));
         verify(writer, never()).write(any(), anyMap(), any());
     }
 
     @Test
-    public void notInterceptProducingToClassicTopics() {
-        when(metadataView.isInklessTopic(eq("non_inkless"))).thenReturn(false);
-        final AppendInterceptor interceptor = new AppendInterceptor(
-            new SharedState(time, BROKER_ID, inklessConfig, metadataView, controlPlane, storageBackend,
-                OBJECT_KEY_CREATOR, KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, brokerTopicStats, DEFAULT_TOPIC_CONFIGS), writer);
-
-        final Map<TopicPartition, MemoryRecords> entriesPerPartition = Map.of(
-            new TopicPartition("non_inkless", 0),
-            MemoryRecords.withRecords(Compression.NONE, new SimpleRecord("first message".getBytes()))
-        );
-
-        final boolean result = interceptor.intercept(entriesPerPartition, responseCallback, requestLocal);
-        assertThat(result).isFalse();
-        verify(responseCallback, never()).accept(any());
-        verify(writer, never()).write(any(), anyMap(), any());
-    }
-
-    @Test
-    public void acceptIdempotentProduceForNonInklessTopics() {
-        when(metadataView.isInklessTopic(eq("non_inkless"))).thenReturn(false);
-        final AppendInterceptor interceptor = new AppendInterceptor(
-            new SharedState(time, BROKER_ID, inklessConfig, metadataView, controlPlane, storageBackend,
-                OBJECT_KEY_CREATOR, KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, brokerTopicStats, DEFAULT_TOPIC_CONFIGS), writer);
-
-        final Map<TopicPartition, MemoryRecords> entriesPerPartition = Map.of(
-            new TopicPartition("non_inkless", 0),
-            RECORDS_WITH_PRODUCER_ID
-        );
-
-        final boolean result = interceptor.intercept(entriesPerPartition, responseCallback, requestLocal);
-        assertThat(result).isFalse();
-
-        verify(responseCallback, never()).accept(any());
-        verify(writer, never()).write(any(), anyMap(), any());
-    }
-
-    @Test
-    public void rejectTransactionalProduceForInklessTopics() {
-        when(metadataView.isInklessTopic(eq("inkless1"))).thenReturn(true);
-        when(metadataView.isInklessTopic(eq("inkless2"))).thenReturn(true);
-        final AppendInterceptor interceptor = new AppendInterceptor(
-            new SharedState(time, BROKER_ID, inklessConfig, metadataView, controlPlane, storageBackend,
-                OBJECT_KEY_CREATOR, KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, brokerTopicStats, DEFAULT_TOPIC_CONFIGS), writer);
-
-        final Map<TopicPartition, MemoryRecords> entriesPerPartition = Map.of(
-            new TopicPartition("inkless1", 0),
-            RECORDS_WITHOUT_PRODUCER_ID,
-            new TopicPartition("inkless2", 0),
-            TRANSACTIONAL_RECORDS
-        );
-
-        final boolean result = interceptor.intercept(entriesPerPartition, responseCallback, requestLocal);
-        assertThat(result).isTrue();
-
-        verify(responseCallback).accept(resultCaptor.capture());
-        assertThat(resultCaptor.getValue()).isEqualTo(Map.of(
-            new TopicPartition("inkless1", 0),
-            new PartitionResponse(Errors.INVALID_REQUEST),
-            new TopicPartition("inkless2", 0),
-            new PartitionResponse(Errors.INVALID_REQUEST)
-        ));
-        verify(writer, never()).write(any(), anyMap(), any());
-    }
-
-    @Test
-    public void acceptTransactionalProduceForNonInklessTopics() {
-        when(metadataView.isInklessTopic(eq("non_inkless"))).thenReturn(false);
-        final AppendInterceptor interceptor = new AppendInterceptor(
-            new SharedState(time, BROKER_ID, inklessConfig, metadataView, controlPlane, storageBackend,
-                OBJECT_KEY_CREATOR, KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, brokerTopicStats, DEFAULT_TOPIC_CONFIGS), writer);
-
-        final Map<TopicPartition, MemoryRecords> entriesPerPartition = Map.of(
-            new TopicPartition("non_inkless", 0),
-            RECORDS_WITH_PRODUCER_ID
-        );
-
-        final boolean result = interceptor.intercept(entriesPerPartition, responseCallback, requestLocal);
-        assertThat(result).isFalse();
-
-        verify(responseCallback, never()).accept(any());
-        verify(writer, never()).write(any(), anyMap(), any());
-    }
-
-    @Test
-    public void emptyRequests() {
-        final AppendInterceptor interceptor = new AppendInterceptor(
+    public void emptyRequests() throws Exception {
+        final AppendHandler interceptor = new AppendHandler(
             new SharedState(time, BROKER_ID, inklessConfig, metadataView, controlPlane, storageBackend,
                 OBJECT_KEY_CREATOR, KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, brokerTopicStats, DEFAULT_TOPIC_CONFIGS), writer);
 
         final Map<TopicPartition, MemoryRecords> entriesPerPartition = Map.of();
 
-        final boolean result = interceptor.intercept(entriesPerPartition, responseCallback, requestLocal);
-        assertThat(result).isFalse();
+        final var result = interceptor.handle(entriesPerPartition, requestLocal);
+        assert(result.get().isEmpty());
 
-        verify(responseCallback, never()).accept(any());
         verify(writer, never()).write(any(), anyMap(), any());
     }
 
     @Test
-    public void acceptNonIdempotentNotTransactionalProduceForInklessTopics() {
+    public void acceptNotTransactionalProduceForInklessTopics() {
         final Map<TopicPartition, MemoryRecords> entriesPerPartition = Map.of(
-            new TopicPartition("inkless", 0),
-            RECORDS_WITHOUT_PRODUCER_ID
+            new TopicPartition("inkless", 0), RECORDS_WITHOUT_PRODUCER_ID
         );
 
         final var writeResult = Map.of(
@@ -271,16 +176,36 @@ public class AppendInterceptorTest {
         );
 
         when(metadataView.getTopicId(eq("inkless"))).thenReturn(new Uuid(123, 456));
-        when(metadataView.isInklessTopic(eq("inkless"))).thenReturn(true);
         when(metadataView.getTopicConfig(any())).thenReturn(new Properties());
-        final AppendInterceptor interceptor = new AppendInterceptor(
+        final AppendHandler interceptor = new AppendHandler(
             new SharedState(time, BROKER_ID, inklessConfig, metadataView, controlPlane, storageBackend,
                 OBJECT_KEY_CREATOR, KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, brokerTopicStats, DEFAULT_TOPIC_CONFIGS), writer);
 
-        final boolean result = interceptor.intercept(entriesPerPartition, responseCallback, requestLocal);
-        assertThat(result).isTrue();
+        final var futureResult = interceptor.handle(entriesPerPartition, requestLocal);
+        futureResult.whenComplete((r, ex) -> assertThat(r).isEqualTo(writeResult));
+    }
 
-        verify(responseCallback).accept(eq(writeResult));
+    @Test
+    public void topicIdNotFound() {
+        final Map<TopicPartition, MemoryRecords> entriesPerPartition = Map.of(
+            new TopicPartition("inkless", 0),
+            RECORDS_WITHOUT_PRODUCER_ID
+        );
+
+        when(metadataView.getTopicId(eq("inkless"))).thenAnswer(invocation -> {
+            throw new TopicIdEnricher.TopicIdNotFoundException("inkless");
+        });
+        final AppendHandler interceptor = new AppendHandler(
+            new SharedState(time, BROKER_ID, inklessConfig, metadataView, controlPlane, storageBackend,
+                OBJECT_KEY_CREATOR, KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, brokerTopicStats, DEFAULT_TOPIC_CONFIGS), writer);
+
+        interceptor.handle(entriesPerPartition, requestLocal)
+            .whenComplete((r, ex) -> assertThat(r).isEqualTo(
+                Map.of(
+                    new TopicPartition("inkless", 0), new PartitionResponse(Errors.UNKNOWN_SERVER_ERROR)
+                )
+            ));
+        verify(writer, never()).write(any(), anyMap(), any());
     }
 
     @Test
@@ -296,24 +221,21 @@ public class AppendInterceptorTest {
         );
 
         when(metadataView.getTopicId(eq("inkless"))).thenReturn(new Uuid(123, 456));
-        when(metadataView.isInklessTopic(eq("inkless"))).thenReturn(true);
         when(metadataView.getTopicConfig(any())).thenReturn(new Properties());
-        final AppendInterceptor interceptor = new AppendInterceptor(
+        final AppendHandler interceptor = new AppendHandler(
             new SharedState(time, BROKER_ID, inklessConfig, metadataView, controlPlane, storageBackend,
                 OBJECT_KEY_CREATOR, KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, brokerTopicStats, DEFAULT_TOPIC_CONFIGS), writer);
 
-        final boolean result = interceptor.intercept(entriesPerPartition, responseCallback, requestLocal);
-        assertThat(result).isTrue();
-
-        final var expectedResult = Map.of(
-            new TopicPartition("inkless", 0), new PartitionResponse(Errors.UNKNOWN_SERVER_ERROR)
-        );
-        verify(responseCallback).accept(eq(expectedResult));
+        final var futureResult = interceptor.handle(entriesPerPartition, requestLocal);
+        futureResult.whenComplete((r, ex) -> {
+            assertThat(r).isEqualTo(null);
+            assertThat(ex).isEqualTo(exception);
+        });
     }
 
     @Test
     public void close() throws IOException {
-        final AppendInterceptor interceptor = new AppendInterceptor(
+        final AppendHandler interceptor = new AppendHandler(
             new SharedState(time, BROKER_ID, inklessConfig, metadataView, controlPlane, storageBackend,
                 OBJECT_KEY_CREATOR, KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, brokerTopicStats, DEFAULT_TOPIC_CONFIGS), writer);
 

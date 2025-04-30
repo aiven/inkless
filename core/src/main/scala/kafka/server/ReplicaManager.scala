@@ -21,7 +21,7 @@ import io.aiven.inkless.common.SharedState
 import io.aiven.inkless.consume.{FetchInterceptor, FetchOffsetHandler}
 import io.aiven.inkless.delete.{DeleteRecordsInterceptor, FileCleaner}
 import io.aiven.inkless.merge.FileMerger
-import io.aiven.inkless.produce.AppendInterceptor
+import io.aiven.inkless.produce.AppendHandler
 import kafka.cluster.{Partition, PartitionListener}
 import kafka.controller.StateChangeLogger
 import kafka.log.remote.RemoteLogManager
@@ -315,7 +315,7 @@ class ReplicaManager(val config: KafkaConfig,
       "ShareFetch", config.brokerId,
       config.shareGroupConfig.shareFetchPurgatoryPurgeIntervalRequests))
 
-  private val inklessAppendInterceptor: Option[AppendInterceptor] = inklessSharedState.map(new AppendInterceptor(_))
+  private val inklessAppendHandler: Option[AppendHandler] = inklessSharedState.map(new AppendHandler(_))
   private val inklessFetchInterceptor: Option[FetchInterceptor] = inklessSharedState.map(new FetchInterceptor(_))
   private val inklessFetchOffsetHandler: Option[FetchOffsetHandler] = inklessSharedState.map(new FetchOffsetHandler(_))
   private val inklessDeleteRecordsInterceptor: Option[DeleteRecordsInterceptor] = inklessSharedState.map(new DeleteRecordsInterceptor(_))
@@ -681,30 +681,46 @@ class ReplicaManager(val config: KafkaConfig,
       return
     }
 
-    def respCallback(result: Map[TopicPartition, PartitionResponse]): Unit = {
-      val appendResults = new mutable.HashMap[TopicOptionalIdPartition, LogAppendResult]
-      result.foreach {
-        case (tp, _) => {
-          // Consider every successful produce request as if it increased the high watermark. This is a simplification
-          // that will always result in the attempt to complete the delayed operations.
-          // The current implementation does not take into account that other brokers might have performed appends
-          // that would unblock delayed operations in the purgatories of this broker.
-          val logAppendInfo = LogAppendInfo.UNKNOWN_LOG_APPEND_INFO.copy(LeaderHwChange.INCREASED)
-          val logAppendResult =  LogAppendResult(logAppendInfo, None, hasCustomErrorMessage = false)
-          appendResults += (new TopicOptionalIdPartition(Optional.empty(), tp) -> logAppendResult)
-        }
-      }
-      addCompletePurgatoryAction(actionQueue, appendResults)
-      responseCallback(result)
+    val (inklessEntries, classicEntries) = entriesPerPartition.partition { case (k, v) =>
+      inklessAppendHandler.exists(_.isInkless(k.topic()))
     }
 
-    if (inklessAppendInterceptor.exists(_.intercept(entriesPerPartition.asJava, r => respCallback(r.asScala), requestLocal))) {
+    val inklessResponsesFuture = inklessAppendHandler match {
+      case Some(interceptor) => interceptor.handle(inklessEntries.asJava, requestLocal)
+      case _ => CompletableFuture.completedFuture(util.Map.of[TopicPartition, PartitionResponse]())
+    }
+
+    def classicResponseCallback(classicResult: Map[TopicPartition, PartitionResponse]): Unit = {
+      inklessResponsesFuture.whenComplete { case (result, e) =>
+        val inklessResult = if (result != null) result.asScala else {
+          error("Inkless append future failed", e)
+          inklessEntries.map{ case (tp, _) => tp -> new PartitionResponse(Errors.UNKNOWN_SERVER_ERROR)}
+        }
+        val inklessAppendResults = new mutable.HashMap[TopicOptionalIdPartition, LogAppendResult]
+        inklessResult.foreach {
+          case (tp, _) => {
+            // Consider every successful produce request as if it increased the high watermark. This is a simplification
+            // that will always result in the attempt to complete the delayed operations.
+            // The current implementation does not take into account that other brokers might have performed appends
+            // that would unblock delayed operations in the purgatories of this broker.
+            val logAppendInfo = LogAppendInfo.UNKNOWN_LOG_APPEND_INFO.copy(LeaderHwChange.INCREASED)
+            val logAppendResult =  LogAppendResult(logAppendInfo, None, hasCustomErrorMessage = false)
+            inklessAppendResults += (new TopicOptionalIdPartition(Optional.empty(), tp) -> logAppendResult)
+          }
+        }
+        addCompletePurgatoryAction(actionQueue, inklessAppendResults)
+        responseCallback(inklessResult ++ classicResult)
+      }
+    }
+
+    if (classicEntries.isEmpty) {
+      classicResponseCallback(Map.empty)
       return
     }
 
     val sTime = time.milliseconds
     val localProduceResultsWithTopicId = appendToLocalLog(internalTopicsAllowed = internalTopicsAllowed,
-      origin, entriesPerPartition, requiredAcks, requestLocal, verificationGuards.toMap)
+      origin, classicEntries, requiredAcks, requestLocal, verificationGuards.toMap)
     debug("Produce to local log in %d ms".format(time.milliseconds - sTime))
     val localProduceResults : Map[TopicPartition, LogAppendResult] = localProduceResultsWithTopicId.map {
       case(k, v) => (k.topicPartition, v)}
@@ -720,10 +736,10 @@ class ReplicaManager(val config: KafkaConfig,
       requiredAcks,
       delayedProduceLock,
       timeout,
-      entriesPerPartition,
+      classicEntries,
       localProduceResults,
       produceStatus,
-      responseCallback
+      classicResponseCallback,
     )
   }
 
@@ -2669,7 +2685,7 @@ class ReplicaManager(val config: KafkaConfig,
     replicaSelectorOpt.foreach(_.close)
     removeAllTopicMetrics()
     addPartitionsToTxnManager.foreach(_.shutdown())
-    inklessAppendInterceptor.foreach(_.close())
+    inklessAppendHandler.foreach(_.close())
     inklessFetchInterceptor.foreach(_.close())
     inklessSharedState.foreach(_.close())
     info("Shut down completely")

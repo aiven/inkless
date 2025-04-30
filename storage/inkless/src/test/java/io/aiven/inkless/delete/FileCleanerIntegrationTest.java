@@ -60,11 +60,12 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Properties;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
@@ -79,7 +80,7 @@ import io.aiven.inkless.control_plane.FindBatchRequest;
 import io.aiven.inkless.control_plane.FindBatchResponse;
 import io.aiven.inkless.control_plane.InMemoryControlPlane;
 import io.aiven.inkless.control_plane.MetadataView;
-import io.aiven.inkless.produce.AppendInterceptor;
+import io.aiven.inkless.produce.AppendHandler;
 import io.aiven.inkless.produce.WriterTestUtils;
 import io.aiven.inkless.storage_backend.s3.S3Storage;
 import io.aiven.inkless.test_utils.MinioContainer;
@@ -93,7 +94,6 @@ import software.amazon.awssdk.services.s3.model.S3Object;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.when;
-import static org.testcontainers.shaded.org.awaitility.Awaitility.await;
 
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.STRICT_STUBS)
@@ -194,12 +194,12 @@ class FileCleanerIntegrationTest {
 
         createTopics(controlPlane);
 
-        final AppendInterceptor appendInterceptor = new AppendInterceptor(sharedState);
+        final AppendHandler appendHandler = new AppendHandler(sharedState);
         final FetchInterceptor fetchInterceptor = new FetchInterceptor(sharedState);
         final FileCleaner fileCleaner = new FileCleaner(sharedState);
 
         // Write a bunch of records.
-        writeRecords(appendInterceptor);
+        writeRecords(appendHandler);
 
         // Consume the high watermarks and the records themselves for future comparison.
         final Map<TopicIdPartition, Long> highWatermarks1 = getHighWatermarks(controlPlane);
@@ -235,11 +235,9 @@ class FileCleanerIntegrationTest {
         controlPlane.createTopicAndPartitions(createTopicsRequests);
     }
 
-    private void writeRecords(final AppendInterceptor appendInterceptor) {
+    private void writeRecords(final AppendHandler appendHandler) {
         final WriterTestUtils.RecordCreator recordCreator = new WriterTestUtils.RecordCreator();
-        final AtomicInteger produceResponseCallbackCalls = new AtomicInteger(WRITE_ITERATIONS);
-        final Consumer<Map<TopicPartition, ProduceResponse.PartitionResponse>> responseCallback =
-            (r) -> produceResponseCallbackCalls.decrementAndGet();
+        var futures = new ArrayList<CompletableFuture<Map<TopicPartition, ProduceResponse.PartitionResponse>>>();
 
         for (int i = 0; i < WRITE_ITERATIONS; i++) {
             final HashMap<TopicPartition, MemoryRecords> records = new HashMap<>();
@@ -249,12 +247,14 @@ class FileCleanerIntegrationTest {
                     records.put(tidp.topicPartition(), recordCreator.create(tidp.topicPartition(), i));
                 }
             }
-            assertThat(appendInterceptor.intercept(records, responseCallback, RequestLocal.noCaching())).isTrue();
+            futures.add(appendHandler.handle(records, RequestLocal.noCaching()));
         }
 
-        await().atMost(Duration.ofSeconds(60))
-            .pollDelay(Duration.ofMillis(100))
-            .until(() -> produceResponseCallbackCalls.get() == 0);
+        CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).orTimeout(60, TimeUnit.SECONDS);
+        futures.forEach(response -> {
+            response.join()
+                .forEach((tp, partitionResponse) -> assertThat(partitionResponse.error).isEqualTo(Errors.NONE));
+        });
     }
 
     private Map<TopicIdPartition, Long> getHighWatermarks(final ControlPlane controlPlane) {

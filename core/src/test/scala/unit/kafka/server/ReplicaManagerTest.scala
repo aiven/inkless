@@ -20,7 +20,7 @@ package kafka.server
 import com.yammer.metrics.core.{Gauge, Meter, Timer}
 import io.aiven.inkless.common.SharedState
 import io.aiven.inkless.config.InklessConfig
-import io.aiven.inkless.produce.AppendInterceptor
+import io.aiven.inkless.produce.AppendHandler
 import kafka.cluster.PartitionTest.MockPartitionListener
 import kafka.cluster.Partition
 import kafka.log.LogManager
@@ -77,7 +77,7 @@ import org.apache.kafka.storage.log.metrics.BrokerTopicStats
 import org.junit.jupiter.api.Assertions._
 import org.junit.jupiter.api.{AfterAll, AfterEach, BeforeEach, Nested, Test}
 import org.junit.jupiter.params.ParameterizedTest
-import org.junit.jupiter.params.provider.{CsvSource, EnumSource, ValueSource}
+import org.junit.jupiter.params.provider.{EnumSource, ValueSource}
 import org.mockito.ArgumentMatchers._
 import org.mockito.Mockito._
 import org.mockito.invocation.InvocationOnMock
@@ -6202,18 +6202,30 @@ class ReplicaManagerTest {
 
   @Nested
   class Inkless {
-    @ParameterizedTest
-    @CsvSource(Array("true,0", "false,1"))
-    def testAppendInterceptorIsHonored(interceptorResult: Boolean, expectedCallbackTimes: Int): Unit = {
-      val appendInterceptorCtorMockInitializer: MockedConstruction.MockInitializer[AppendInterceptor] = {
+    val RECORDS: MemoryRecords = MemoryRecords.withRecords(
+      2.toByte, 0L, Compression.NONE, TimestampType.CREATE_TIME, 123L, 0.toShort, 0, 0, false, new SimpleRecord(0, "hello".getBytes())
+    )
+    val inklessTopicPartition = new TopicPartition("inkless", 0)
+    val classicTopicPartition = new TopicPartition("classic", 0)
+
+    @Test
+    def testAppendInklessEntries(): Unit = {
+      val entriesPerPartition = Map(inklessTopicPartition -> RECORDS)
+      val inklessResponse = Map(inklessTopicPartition -> new PartitionResponse(Errors.NONE))
+      val inklessFutureResult = CompletableFuture.completedFuture[util.Map[TopicPartition, PartitionResponse]](
+        inklessResponse.asJava
+      )
+      val appendHandlerCtorMockInitializer: MockedConstruction.MockInitializer[AppendHandler] = {
         case (mock, _) =>
-          when(mock.intercept(any(), any(), any())).thenReturn(interceptorResult)
+          when(mock.handle(any(), any())).thenReturn(inklessFutureResult)
+          when(mock.isInkless(any())).thenReturn(false)
+          when(mock.isInkless(inklessTopicPartition.topic())).thenReturn(true)
       }
-      val appendInterceptorCtor = mockConstruction(classOf[AppendInterceptor], appendInterceptorCtorMockInitializer)
+      val appendHandlerCtor = mockConstruction(classOf[AppendHandler], appendHandlerCtorMockInitializer)
       val replicaManager = try {
         createReplicaManager()
       } finally {
-        appendInterceptorCtor.close()
+        appendHandlerCtor.close()
       }
 
       val responseCallback = mock(classOf[Function[Map[TopicPartition, PartitionResponse], Unit]])
@@ -6222,11 +6234,132 @@ class ReplicaManagerTest {
         requiredAcks = -1,
         internalTopicsAllowed = true,
         origin = AppendOrigin.CLIENT,
-        entriesPerPartition = Map.empty,
-        responseCallback = responseCallback
+        entriesPerPartition = entriesPerPartition,
+        responseCallback = responseCallback,
       )
 
-      verify(responseCallback, times(expectedCallbackTimes)).apply(any())
+      verify(responseCallback, times(1)).apply(inklessResponse)
+    }
+
+    @Test
+    def testAppendInklessAndClassicEntries(): Unit = {
+      val entriesPerPartition = Map(
+        inklessTopicPartition -> RECORDS,
+        classicTopicPartition -> RECORDS,
+      )
+      val inklessResponse = Map(inklessTopicPartition -> new PartitionResponse(Errors.NONE))
+      val inklessFutureResult = CompletableFuture.completedFuture[util.Map[TopicPartition, PartitionResponse]](
+        inklessResponse.asJava
+      )
+      val appendHandlerCtorMockInitializer: MockedConstruction.MockInitializer[AppendHandler] = {
+        case (mock, _) =>
+          when(mock.handle(any(), any())).thenReturn(inklessFutureResult)
+          when(mock.isInkless(any())).thenReturn(false)
+          when(mock.isInkless(inklessTopicPartition.topic())).thenReturn(true)
+      }
+      val appendHandlerCtor = mockConstruction(classOf[AppendHandler], appendHandlerCtorMockInitializer)
+      val replicaManager = try {
+        createReplicaManager()
+      } finally {
+        appendHandlerCtor.close()
+      }
+
+      val responseCallback = mock(classOf[Function[Map[TopicPartition, PartitionResponse], Unit]])
+      replicaManager.appendRecords(
+        timeout = 0,
+        requiredAcks = -1,
+        internalTopicsAllowed = true,
+        origin = AppendOrigin.CLIENT,
+        entriesPerPartition = entriesPerPartition,
+        responseCallback = responseCallback,
+      )
+
+      verify(responseCallback, times(1))
+        .apply(
+          inklessResponse ++
+            // ReplicaManager will always reply with UNKNOWN_TOPIC_OR_PARTITION because topic does not exist.
+            Map(classicTopicPartition -> new PartitionResponse(Errors.UNKNOWN_TOPIC_OR_PARTITION))
+        )
+    }
+
+    @Test
+    def testInvalidRequest(): Unit = {
+      val entriesPerPartition = Map(
+        inklessTopicPartition -> RECORDS,
+        classicTopicPartition -> RECORDS,
+      )
+      val appendHandlerCtorMockInitializer: MockedConstruction.MockInitializer[AppendHandler] = {
+        case (mock, _) =>
+          when(mock.handle(any(), any())).thenReturn(CompletableFuture.completedFuture[util.Map[TopicPartition, PartitionResponse]](
+            util.Map.of(inklessTopicPartition, new PartitionResponse(Errors.INVALID_REQUEST))
+        ))
+          when(mock.isInkless(any())).thenReturn(false)
+          when(mock.isInkless(inklessTopicPartition.topic())).thenReturn(true)
+      }
+      val appendHandlerCtor = mockConstruction(classOf[AppendHandler], appendHandlerCtorMockInitializer)
+      val replicaManager = try {
+        createReplicaManager()
+      } finally {
+        appendHandlerCtor.close()
+      }
+
+      val responseCallback = mock(classOf[Function[Map[TopicPartition, PartitionResponse], Unit]])
+      replicaManager.appendRecords(
+        timeout = 0,
+        requiredAcks = -1,
+        internalTopicsAllowed = true,
+        origin = AppendOrigin.CLIENT,
+        entriesPerPartition = entriesPerPartition,
+        responseCallback = responseCallback,
+      )
+
+      verify(responseCallback, times(1))
+        .apply(Map(
+          // inkless entries get an INVALID_REQUEST
+          inklessTopicPartition -> new PartitionResponse(Errors.INVALID_REQUEST),
+          // classic entries get a regular response, in this case the topic does not exist
+          classicTopicPartition -> new PartitionResponse(Errors.UNKNOWN_TOPIC_OR_PARTITION),
+        ))
+    }
+
+    @Test
+    def testInklessWriteFailure(): Unit = {
+      val entriesPerPartition = Map(
+        inklessTopicPartition -> RECORDS,
+        classicTopicPartition -> RECORDS,
+      )
+      val appendHandlerCtorMockInitializer: MockedConstruction.MockInitializer[AppendHandler] = {
+        case (mock, _) =>
+          when(mock.handle(any(), any())).thenReturn(CompletableFuture.failedFuture[util.Map[TopicPartition, PartitionResponse]](
+             new Exception()
+          ))
+          when(mock.isInkless(any())).thenReturn(false)
+          when(mock.isInkless(inklessTopicPartition.topic())).thenReturn(true)
+      }
+      val appendHandlerCtor = mockConstruction(classOf[AppendHandler], appendHandlerCtorMockInitializer)
+      val replicaManager = try {
+        createReplicaManager()
+      } finally {
+        appendHandlerCtor.close()
+      }
+
+      val responseCallback = mock(classOf[Function[Map[TopicPartition, PartitionResponse], Unit]])
+      replicaManager.appendRecords(
+        timeout = 0,
+        requiredAcks = -1,
+        internalTopicsAllowed = true,
+        origin = AppendOrigin.CLIENT,
+        entriesPerPartition = entriesPerPartition,
+        responseCallback = responseCallback,
+      )
+
+      verify(responseCallback, times(1))
+        .apply(Map(
+          // inkless entries get an UNKNOWN_SERVER_ERROR for the write failure
+          inklessTopicPartition -> new PartitionResponse(Errors.UNKNOWN_SERVER_ERROR),
+          // classic entries get a regular response, in this case the topic does not exist
+          classicTopicPartition -> new PartitionResponse(Errors.UNKNOWN_TOPIC_OR_PARTITION),
+        ))
     }
 
     private def createReplicaManager(): ReplicaManager = {
