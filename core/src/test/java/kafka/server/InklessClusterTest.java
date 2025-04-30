@@ -38,6 +38,7 @@ import org.apache.kafka.common.serialization.ByteArrayDeserializer;
 import org.apache.kafka.common.serialization.ByteArraySerializer;
 import org.apache.kafka.common.test.KafkaClusterTestKit;
 import org.apache.kafka.common.test.TestKitNodes;
+import org.apache.kafka.coordinator.group.GroupCoordinatorConfig;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -93,6 +94,7 @@ public class InklessClusterTest {
             .setNumControllerNodes(1)
             .build();
         cluster = new KafkaClusterTestKit.Builder(nodes)
+            .setConfigProp(GroupCoordinatorConfig.OFFSETS_TOPIC_REPLICATION_FACTOR_CONFIG, "1")
             // PG control plane config
             .setConfigProp(InklessConfig.PREFIX + InklessConfig.CONTROL_PLANE_CLASS_CONFIG, PostgresControlPlane.class.getName())
             .setConfigProp(InklessConfig.PREFIX + InklessConfig.CONTROL_PLANE_PREFIX + PostgresControlPlaneConfig.CONNECTION_STRING_CONFIG, pgContainer.getJdbcUrl())
@@ -143,6 +145,8 @@ public class InklessClusterTest {
         clientConfigs.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, ByteArraySerializer.class.getName());
         clientConfigs.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, ByteArrayDeserializer.class.getName());
         clientConfigs.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, ByteArrayDeserializer.class.getName());
+        // by default is latest and nothing would get consumed.
+        clientConfigs.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, AutoOffsetResetStrategy.EARLIEST.name());
         String topicName = "inkless-topic";
         int numRecords = 500;
 
@@ -175,27 +179,41 @@ public class InklessClusterTest {
         }
 
         assertEquals(numRecords, recordsProduced.get());
-        consume(timestampType, clientConfigs, topicName, now, numRecords);
-        consume(timestampType, clientConfigs, topicName, now, numRecords);
+        consumeWithManualAssignment(timestampType, clientConfigs, topicName, now, numRecords);
+        consumeWithSubscription(timestampType, clientConfigs, topicName, now, numRecords);
     }
 
-    private static void consume(TimestampType timestampType, Map<String, Object> clientConfigs, String topicName, long now, int numRecords) {
-        final Map<String, Object> consumerConfigs = new HashMap<>(clientConfigs);
-        // by default is latest and nothing would get consumed.
-        consumerConfigs.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, AutoOffsetResetStrategy.EARLIEST.name());
-        int recordsConsumed = 0;
-        try (Consumer<byte[], byte[]> consumer = new KafkaConsumer<>(consumerConfigs)) {
+    private static void consumeWithManualAssignment(TimestampType timestampType, Map<String, Object> clientConfigs, String topicName, long now, int numRecords) {
+        int recordsConsumed;
+        try (Consumer<byte[], byte[]> consumer = new KafkaConsumer<>(clientConfigs)) {
             consumer.assign(Collections.singletonList(new TopicPartition(topicName, 0)));
-            ConsumerRecords<byte[], byte[]> poll = consumer.poll(Duration.ofSeconds(30));
-            for (ConsumerRecord<byte[], byte[]> record : poll) {
-                log.info("Received record {}  at {}", recordsConsumed, record.timestamp());
-                switch (timestampType) {
-                    case CREATE_TIME -> assertEquals(now, record.timestamp());
-                    case LOG_APPEND_TIME -> assertTrue(record.timestamp() > now);
-                }
-                recordsConsumed++;
-            }
+            recordsConsumed = poll(consumer, timestampType, now);
         }
         assertEquals(numRecords, recordsConsumed);
+    }
+
+    private static void consumeWithSubscription(TimestampType timestampType, Map<String, Object> clientConfigs, String topicName, long now, int numRecords) {
+        final Map<String, Object> consumerConfigs = new HashMap<>(clientConfigs);
+        consumerConfigs.put(ConsumerConfig.GROUP_ID_CONFIG, java.util.UUID.randomUUID().toString());
+        int recordsConsumed;
+        try (Consumer<byte[], byte[]> consumer = new KafkaConsumer<>(consumerConfigs)) {
+            consumer.subscribe(Collections.singletonList(topicName));
+            recordsConsumed = poll(consumer, timestampType, now);
+        }
+        assertEquals(numRecords, recordsConsumed);
+    }
+
+    private static int poll(Consumer<byte[], byte[]> consumer, TimestampType timestampType, long now) {
+        int recordsConsumed = 0;
+        ConsumerRecords<byte[], byte[]> poll = consumer.poll(Duration.ofSeconds(30));
+        for (ConsumerRecord<byte[], byte[]> record : poll) {
+            log.info("Received record {} at {}", recordsConsumed, record.timestamp());
+            switch (timestampType) {
+                case CREATE_TIME -> assertEquals(now, record.timestamp());
+                case LOG_APPEND_TIME -> assertTrue(record.timestamp() > now);
+            }
+            recordsConsumed++;
+        }
+        return recordsConsumed;
     }
 }
