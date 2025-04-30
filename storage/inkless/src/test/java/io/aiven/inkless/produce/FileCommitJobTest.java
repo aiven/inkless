@@ -17,6 +17,15 @@
  */
 package io.aiven.inkless.produce;
 
+import io.aiven.inkless.common.ObjectFormat;
+import io.aiven.inkless.common.ObjectKey;
+import io.aiven.inkless.common.PlainObjectKey;
+import io.aiven.inkless.control_plane.CommitBatchRequest;
+import io.aiven.inkless.control_plane.CommitBatchResponse;
+import io.aiven.inkless.control_plane.ControlPlaneException;
+import io.aiven.inkless.control_plane.InMemoryControlPlane;
+import io.aiven.inkless.storage_backend.common.ObjectDeleter;
+import io.aiven.inkless.storage_backend.common.StorageBackendException;
 import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.Uuid;
@@ -27,7 +36,6 @@ import org.apache.kafka.common.record.SimpleRecord;
 import org.apache.kafka.common.record.TimestampType;
 import org.apache.kafka.common.requests.ProduceResponse.PartitionResponse;
 import org.apache.kafka.common.utils.Time;
-
 import org.junit.Assert;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -43,16 +51,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.Consumer;
-
-import io.aiven.inkless.common.ObjectFormat;
-import io.aiven.inkless.common.ObjectKey;
-import io.aiven.inkless.common.PlainObjectKey;
-import io.aiven.inkless.control_plane.CommitBatchRequest;
-import io.aiven.inkless.control_plane.CommitBatchResponse;
-import io.aiven.inkless.control_plane.ControlPlaneException;
-import io.aiven.inkless.control_plane.InMemoryControlPlane;
-import io.aiven.inkless.storage_backend.common.ObjectDeleter;
-import io.aiven.inkless.storage_backend.common.StorageBackendException;
 
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;

@@ -17,6 +17,7 @@
  */
 package io.aiven.inkless.produce;
 
+import io.aiven.inkless.control_plane.CommitBatchResponse;
 import org.apache.kafka.common.utils.Time;
 
 import com.groupcdg.pitest.annotations.DoNotMutate;
@@ -42,7 +43,6 @@ import io.aiven.inkless.cache.ObjectCache;
 import io.aiven.inkless.common.InklessThreadFactory;
 import io.aiven.inkless.common.ObjectKey;
 import io.aiven.inkless.common.ObjectKeyCreator;
-import io.aiven.inkless.control_plane.CommitBatchResponse;
 import io.aiven.inkless.control_plane.ControlPlane;
 import io.aiven.inkless.storage_backend.common.StorageBackend;
 
