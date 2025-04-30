@@ -32,7 +32,6 @@ import java.util.Optional
 import scala.jdk.CollectionConverters._
 
 
-@Tag("inkless")
 class ProducerSendWhileDeletionTest extends IntegrationTestHarness {
   val producerCount: Int = 1
   val brokerCount: Int = 2
