@@ -198,10 +198,11 @@ class CommitFileJobTest {
         final var t1p1 = new TopicIdPartition(TOPIC_ID_1, 10, TOPIC_1);
         final CommitBatchRequest request1 = CommitBatchRequest.of(0, T0P1, 0, 100, 0, 14, 1000, TimestampType.CREATE_TIME);
         final CommitBatchRequest request2 = CommitBatchRequest.of(0, T1P0, 100, 50, 0, 26, 2000, TimestampType.LOG_APPEND_TIME);
+        final int request3BatchSize = 1243;
         final CommitFileJob job = new CommitFileJob(time, pgContainer.getJooqCtx(), objectKey, ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, BROKER_ID, FILE_SIZE, List.of(
             request1,
             request2,
-            CommitBatchRequest.of(0, t1p1, 150, 1243, 82, 100, 3000, TimestampType.LOG_APPEND_TIME)
+            CommitBatchRequest.of(0, t1p1, 150, request3BatchSize, 82, 100, 3000, TimestampType.LOG_APPEND_TIME)
         ), duration -> {});
 
         final List<CommitBatchResponse> result = job.call();
@@ -221,7 +222,7 @@ class CommitFileJobTest {
 
         assertThat(DBUtils.getAllFiles(pgContainer.getDataSource()))
             .containsExactlyInAnyOrder(
-                new FilesRecord(EXPECTED_FILE_ID_1, "obj1", FORMAT, FileReason.PRODUCE, FileStateT.uploaded, BROKER_ID, TimeUtils.now(time), null, FILE_SIZE, FILE_SIZE)
+                new FilesRecord(EXPECTED_FILE_ID_1, "obj1", FORMAT, FileReason.PRODUCE, FileStateT.uploaded, BROKER_ID, TimeUtils.now(time), null, FILE_SIZE, FILE_SIZE - request3BatchSize)
             );
 
         assertThat(DBUtils.getAllBatches(pgContainer.getDataSource()))
@@ -310,8 +311,9 @@ class CommitFileJobTest {
     void outOfOrderCommit(int lastBatchSequence, int firstBatchSequence) {
         final String objectKey = "obj1";
 
+        final int request2BatchSize = 50;
         final CommitBatchRequest request1 = CommitBatchRequest.idempotent(0, T0P1, 0, 100, 0, 14, 1000, TimestampType.CREATE_TIME, 1L, (short) 3, 0, lastBatchSequence);
-        final CommitBatchRequest request2 = CommitBatchRequest.idempotent(0, T0P1, 100, 50, 0, 26, 2000, TimestampType.LOG_APPEND_TIME, 1L, (short) 3, firstBatchSequence, 26);
+        final CommitBatchRequest request2 = CommitBatchRequest.idempotent(0, T0P1, 100, request2BatchSize, 0, 26, 2000, TimestampType.LOG_APPEND_TIME, 1L, (short) 3, firstBatchSequence, 26);
         final CommitFileJob job = new CommitFileJob(time, pgContainer.getJooqCtx(), objectKey, ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, BROKER_ID, FILE_SIZE, List.of(request1, request2), duration -> {
         });
         final List<CommitBatchResponse> result = job.call();
@@ -330,7 +332,7 @@ class CommitFileJobTest {
 
         assertThat(DBUtils.getAllFiles(pgContainer.getDataSource()))
             .containsExactlyInAnyOrder(
-                new FilesRecord(EXPECTED_FILE_ID_1, "obj1", FORMAT, FileReason.PRODUCE, FileStateT.uploaded, BROKER_ID, TimeUtils.now(time), null, FILE_SIZE, FILE_SIZE)
+                new FilesRecord(EXPECTED_FILE_ID_1, "obj1", FORMAT, FileReason.PRODUCE, FileStateT.uploaded, BROKER_ID, TimeUtils.now(time), null, FILE_SIZE, FILE_SIZE - request2BatchSize)
             );
 
         assertThat(DBUtils.getAllBatches(pgContainer.getDataSource()))
@@ -343,7 +345,8 @@ class CommitFileJobTest {
     void outOfOrderCommitNewEpoch() {
         final String objectKey = "obj1";
 
-        final CommitBatchRequest request1 = CommitBatchRequest.idempotent(0, T0P1, 0, 100, 0, 14, 1000, TimestampType.CREATE_TIME, 1L, (short) 2, 1, 15);
+        final int request1BatchSize = 100;
+        final CommitBatchRequest request1 = CommitBatchRequest.idempotent(0, T0P1, 0, request1BatchSize, 0, 14, 1000, TimestampType.CREATE_TIME, 1L, (short) 2, 1, 15);
         final CommitFileJob job = new CommitFileJob(time, pgContainer.getJooqCtx(), objectKey, ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, BROKER_ID, FILE_SIZE, List.of(request1), duration -> {
         });
         final List<CommitBatchResponse> result = job.call();
@@ -361,7 +364,7 @@ class CommitFileJobTest {
 
         assertThat(DBUtils.getAllFiles(pgContainer.getDataSource()))
             .containsExactlyInAnyOrder(
-                new FilesRecord(EXPECTED_FILE_ID_1, "obj1", FORMAT, FileReason.PRODUCE, FileStateT.uploaded, BROKER_ID, TimeUtils.now(time), null, FILE_SIZE, FILE_SIZE)
+                new FilesRecord(EXPECTED_FILE_ID_1, "obj1", FORMAT, FileReason.PRODUCE, FileStateT.uploaded, BROKER_ID, TimeUtils.now(time), null, FILE_SIZE, FILE_SIZE - request1BatchSize)
             );
         assertThat(DBUtils.getAllBatches(pgContainer.getDataSource())).isEmpty();
     }
@@ -371,7 +374,8 @@ class CommitFileJobTest {
         final String objectKey = "obj1";
 
         final CommitBatchRequest request1 = CommitBatchRequest.idempotent(0, T0P1, 0, 100, 0, 14, 1000, TimestampType.CREATE_TIME, 1L, (short) 3, 0, 14);
-        final CommitBatchRequest request2 = CommitBatchRequest.idempotent(0, T0P1, 100, 50, 0, 26, 2000, TimestampType.LOG_APPEND_TIME, 1L, (short) 2, 15, 26);
+        final int request2BatchSize = 50;
+        final CommitBatchRequest request2 = CommitBatchRequest.idempotent(0, T0P1, 100, request2BatchSize, 0, 26, 2000, TimestampType.LOG_APPEND_TIME, 1L, (short) 2, 15, 26);
         final CommitFileJob job = new CommitFileJob(time, pgContainer.getJooqCtx(), objectKey, ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, BROKER_ID, FILE_SIZE, List.of(request1, request2), duration -> {
         });
         final List<CommitBatchResponse> result = job.call();
@@ -390,7 +394,7 @@ class CommitFileJobTest {
 
         assertThat(DBUtils.getAllFiles(pgContainer.getDataSource()))
             .containsExactlyInAnyOrder(
-                new FilesRecord(EXPECTED_FILE_ID_1, "obj1", FORMAT, FileReason.PRODUCE, FileStateT.uploaded, BROKER_ID, TimeUtils.now(time), null, FILE_SIZE, FILE_SIZE)
+                new FilesRecord(EXPECTED_FILE_ID_1, "obj1", FORMAT, FileReason.PRODUCE, FileStateT.uploaded, BROKER_ID, TimeUtils.now(time), null, FILE_SIZE, FILE_SIZE - request2BatchSize)
             );
 
         assertThat(DBUtils.getAllBatches(pgContainer.getDataSource()))

@@ -185,6 +185,9 @@ BEGIN
         INTO log;
 
         IF NOT FOUND THEN
+            UPDATE files
+            SET used_size = used_size - request.byte_size
+            WHERE file_id = new_file_id;
             RETURN NEXT (request.topic_id, request.partition, NULL, NULL, -1, 'nonexistent_log')::commit_batch_response_v1;
             CONTINUE;
         END IF;
@@ -203,6 +206,9 @@ BEGIN
                     AND producer_id = request.producer_id
                     AND producer_epoch > request.producer_epoch
              ) THEN
+                UPDATE files
+                SET used_size = used_size - request.byte_size
+                WHERE file_id = new_file_id;
                 RETURN NEXT (request.topic_id, request.partition, NULL, NULL, -1, 'invalid_producer_epoch')::commit_batch_response_v1;
                 CONTINUE;
              END IF;
@@ -220,6 +226,9 @@ BEGIN
                 -- If there are no previous batches for the producer, the base sequence must be 0
                 IF request.base_sequence <> 0
                 THEN
+                    UPDATE files
+                    SET used_size = used_size - request.byte_size
+                    WHERE file_id = new_file_id;
                     RETURN NEXT (request.topic_id, request.partition, NULL, NULL, -1, 'sequence_out_of_order')::commit_batch_response_v1;
                     CONTINUE;
                 END IF;
@@ -235,6 +244,9 @@ BEGIN
                     AND last_sequence = request.last_sequence
                 INTO duplicate;
                 IF FOUND THEN
+                    UPDATE files
+                    SET used_size = used_size - request.byte_size
+                    WHERE file_id = new_file_id;
                     RETURN NEXT (request.topic_id, request.partition, log.log_start_offset, duplicate.assigned_offset, duplicate.batch_max_timestamp, 'duplicate_batch')::commit_batch_response_v1;
                     CONTINUE;
                 END IF;
@@ -243,6 +255,9 @@ BEGIN
                 -- A sequence is out of order if the base sequence is not a continuation of the last sequence
                 -- or, in case of wraparound, the base sequence must be 0 and the last sequence must be 2147483647 (Integer.MAX_VALUE).
                 IF (request.base_sequence - 1) <> last_sequence_in_producer_epoch OR (last_sequence_in_producer_epoch = 2147483647 AND request.base_sequence <> 0) THEN
+                    UPDATE files
+                    SET used_size = used_size - request.byte_size
+                    WHERE file_id = new_file_id;
                     RETURN NEXT (request.topic_id, request.partition, NULL, NULL, -1, 'sequence_out_of_order')::commit_batch_response_v1;
                     CONTINUE;
                 END IF;
@@ -304,6 +319,10 @@ BEGIN
 
         RETURN NEXT (request.topic_id, request.partition, log.log_start_offset, assigned_offset, request.batch_max_timestamp, 'none')::commit_batch_response_v1;
     END LOOP;
+
+    IF (SELECT used_size FROM files WHERE file_id = new_file_id) = 0 THEN
+        PERFORM mark_file_to_delete_v1(now, new_file_id);
+    END IF;
 END;
 $$
 ;
