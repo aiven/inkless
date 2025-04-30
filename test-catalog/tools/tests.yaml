@@ -723,6 +723,12 @@ org.apache.kafka.tools.consumer.group.SaslClientsWithInvalidCredentialsTest:
 - testConsumerGroupServiceWithAuthenticationFailure
 - testConsumerGroupServiceWithAuthenticationSuccess
 org.apache.kafka.tools.consumer.group.ShareGroupCommandTest:
+- testDeleteShareGroupOffsets
+- testDeleteShareGroupOffsetsArgsWithoutGroup
+- testDeleteShareGroupOffsetsArgsWithoutTopic
+- testDeleteShareGroupOffsetsMultipleGroups
+- testDeleteShareGroupOffsetsTopLevelError
+- testDeleteShareGroupOffsetsTopicLevelError
 - testDeleteShareGroupsAllGroupsPartialFail
 - testDeleteShareGroupsAllGroupsSuccess
 - testDeleteShareGroupsArgs
