@@ -54,6 +54,7 @@ public class MergeBatchesInputStream extends InputStream {
                 var batchSize = bf.batchLength();
                 mergedFileBatches.add(new MergedFileBatch(
                     new BatchMetadata(
+                        bf.parentBatch().metadata().magic(),
                         bf.parentBatch().metadata().topicIdPartition(),
                         fileSize,
                         batchSize,
@@ -61,11 +62,7 @@ public class MergeBatchesInputStream extends InputStream {
                         bf.parentBatch().metadata().lastOffset(),
                         bf.parentBatch().metadata().logAppendTimestamp(),
                         bf.parentBatch().metadata().batchMaxTimestamp(),
-                        bf.parentBatch().metadata().timestampType(),
-                        bf.parentBatch().metadata().producerId(),
-                        bf.parentBatch().metadata().producerEpoch(),
-                        bf.parentBatch().metadata().baseSequence(),
-                        bf.parentBatch().metadata().lastSequence()
+                        bf.parentBatch().metadata().timestampType()
                     ),
                     List.of(bf.parentBatch().batchId())
                 ));

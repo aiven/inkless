@@ -24,6 +24,8 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.stream.Stream;
 
+import io.aiven.inkless.common.ObjectFormat;
+
 public abstract class AbstractControlPlane implements ControlPlane {
     protected final Time time;
 
@@ -34,6 +36,7 @@ public abstract class AbstractControlPlane implements ControlPlane {
     @Override
     public List<CommitBatchResponse> commitFile(
         final String objectKey,
+        final ObjectFormat format,
         final int uploaderBrokerId,
         final long fileSize,
         final List<CommitBatchRequest> batches
@@ -56,7 +59,7 @@ public abstract class AbstractControlPlane implements ControlPlane {
         );
 
         // Process those valid ones
-        splitMapper.setTrueOut(commitFileForValidRequests(objectKey, uploaderBrokerId, fileSize, splitMapper.getTrueIn()));
+        splitMapper.setTrueOut(commitFileForValidRequests(objectKey, format, uploaderBrokerId, fileSize, splitMapper.getTrueIn()));
 
         return splitMapper.getOut();
     }
@@ -72,6 +75,7 @@ public abstract class AbstractControlPlane implements ControlPlane {
 
     protected abstract Iterator<CommitBatchResponse> commitFileForValidRequests(
         final String objectKey,
+        final ObjectFormat format,
         final int uploaderBrokerId,
         final long fileSize,
         final Stream<CommitBatchRequest> requests

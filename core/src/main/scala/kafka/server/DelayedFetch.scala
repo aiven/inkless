@@ -51,6 +51,7 @@ class DelayedFetch(
   params: FetchParams,
   fetchPartitionStatus: Seq[(TopicIdPartition, FetchPartitionStatus)],
   replicaManager: ReplicaManager,
+  isInklessTopic: String => Boolean = _ => false,
   quota: ReplicaQuota,
   responseCallback: Seq[(TopicIdPartition, FetchPartitionData)] => Unit
 ) extends DelayedOperation(params.maxWaitMs) with Logging {
@@ -81,7 +82,7 @@ class DelayedFetch(
         val fetchOffset = fetchStatus.startOffsetMetadata
         val fetchLeaderEpoch = fetchStatus.fetchInfo.currentLeaderEpoch
         try {
-          if (fetchOffset != LogOffsetMetadata.UNKNOWN_OFFSET_METADATA) {
+          if (fetchOffset != LogOffsetMetadata.UNKNOWN_OFFSET_METADATA && !isInklessTopic(topicIdPartition.topic())) {
             val partition = replicaManager.getPartitionOrException(topicIdPartition.topicPartition)
             val offsetSnapshot = partition.fetchOffsetSnapshot(fetchLeaderEpoch, params.fetchOnlyLeader)
 

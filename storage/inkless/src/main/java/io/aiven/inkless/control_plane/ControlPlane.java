@@ -27,16 +27,20 @@ import java.lang.reflect.InvocationTargetException;
 import java.util.List;
 import java.util.Set;
 
+import io.aiven.inkless.common.ObjectFormat;
 import io.aiven.inkless.config.InklessConfig;
 
 public interface ControlPlane extends Closeable, Configurable {
-    List<CommitBatchResponse> commitFile(String objectKey,
-                                         int uploaderBrokerId,
-                                         long fileSize,
-                                         List<CommitBatchRequest> batches);
+    List<CommitBatchResponse> commitFile(
+            String objectKey,
+            ObjectFormat format,
+            int uploaderBrokerId,
+            long fileSize,
+            List<CommitBatchRequest> batches);
 
-    List<FindBatchResponse> findBatches(List<FindBatchRequest> findBatchRequests,
-                                        int fetchMaxBytes);
+    List<FindBatchResponse> findBatches(
+            List<FindBatchRequest> findBatchRequests,
+            int fetchMaxBytes);
 
     void createTopicAndPartitions(Set<CreateTopicAndPartitionsRequest> requests);
 
@@ -52,11 +56,13 @@ public interface ControlPlane extends Closeable, Configurable {
 
     FileMergeWorkItem getFileMergeWorkItem();
 
-    void commitFileMergeWorkItem(long workItemId,
-                                 String objectKey,
-                                 int uploaderBrokerId,
-                                 long fileSize,
-                                 List<MergedFileBatch> batches);
+    void commitFileMergeWorkItem(
+            long workItemId,
+            String objectKey,
+            ObjectFormat format,
+            int uploaderBrokerId,
+            long fileSize,
+            List<MergedFileBatch> batches);
 
     void releaseFileMergeWorkItem(long workItemId);
 

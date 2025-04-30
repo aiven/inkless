@@ -41,7 +41,7 @@ public record CommitBatchResponse(Errors errors, long assignedBaseOffset, long l
         return new CommitBatchResponse(Errors.OUT_OF_ORDER_SEQUENCE_NUMBER, -1, RecordBatch.NO_TIMESTAMP, -1, false, request);
     }
 
-    public static CommitBatchResponse ofDuplicate(long lastOffset, long batchTimestamp, long logStartOffset) {
-        return new CommitBatchResponse(Errors.NONE, lastOffset, batchTimestamp, logStartOffset, true, null);
+    public static CommitBatchResponse ofDuplicate(long assignedBaseOffset, long batchTimestamp, long logStartOffset) {
+        return new CommitBatchResponse(Errors.NONE, assignedBaseOffset, batchTimestamp, logStartOffset, true, null);
     }
 }

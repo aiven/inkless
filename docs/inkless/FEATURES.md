@@ -36,7 +36,6 @@ If not specified above, features are untested and assumed to be inoperable.
 - `FETCH`
     - can't fetch from Inkless and classic topics in the same request.
 - `LIST_OFFSETS`
-    - can't list offsets of Inkless and classic topics in the same request.
 - `METADATA`
     - the output is modified according to client and broker racks.
 - `DESCRIBE_TOPIC_PARTITIONS`
@@ -44,9 +43,10 @@ If not specified above, features are untested and assumed to be inoperable.
 - `CREATE_TOPICS`
     - Inkless topics cannot be created with the remote storage enabled;
     - the replication factor must be `1` or `-1`;
-    - the initial partition assignment provived by the user is ignored.
+    - the initial partition assignment provided by the user is ignored.
 - `DELETE_TOPICS`
 - `DELETE_RECORDS`
+- `OFFSET_FOR_LEADER_EPOCH`
 - `DESCRIBE_CONFIGS`
 - `ALTER_CONFIGS`
     - the remote storage cannot be enabled for Inkless topics.
@@ -62,7 +62,6 @@ If not specified above, features are untested and assumed to be inoperable.
 - `TXN_OFFSET_COMMIT`
 
 ### Not supported for Inkless topics (WIP)
-- `OFFSET_FOR_LEADER_EPOCH`
 - `DESCRIBE_PRODUCERS`
 - `ASSIGN_REPLICAS_TO_DIRS`
 

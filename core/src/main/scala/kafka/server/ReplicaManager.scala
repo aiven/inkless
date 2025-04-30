@@ -53,6 +53,7 @@ import org.apache.kafka.common.requests._
 import org.apache.kafka.common.utils.{Exit, Time, Utils}
 import org.apache.kafka.common.{IsolationLevel, Node, TopicIdPartition, TopicPartition, Uuid}
 import org.apache.kafka.image.{LocalReplicaChanges, MetadataImage, TopicsDelta}
+import org.apache.kafka.metadata.LeaderAndIsr
 import org.apache.kafka.metadata.LeaderConstants.NO_LEADER
 import org.apache.kafka.server.{ActionQueue, DelayedActionQueue, ListOffsetsPartitionStatus, common}
 import org.apache.kafka.server.common.{DirectoryEventHandler, RequestLocal, StopPartition, TopicOptionalIdPartition}
@@ -1560,7 +1561,7 @@ class ReplicaManager(val config: KafkaConfig,
     if (delayedRemoteListOffsetsRequired(statusByPartition)) {
       val delayMs: Long = if (timeoutMs > 0) timeoutMs else config.remoteLogManagerConfig.remoteListOffsetsRequestTimeoutMs()
       // create delayed remote list offsets operation
-      val delayedRemoteListOffsets = new DelayedRemoteListOffsets(delayMs, version, statusByPartition, this, responseCallback)
+      val delayedRemoteListOffsets = new DelayedRemoteListOffsets(delayMs, version, statusByPartition, this, isInklessTopic, responseCallback)
       // create a list of (topic, partition) pairs to use as keys for this delayed remote list offsets operation
       val listOffsetsRequestKeys = statusByPartition.keys.map(new TopicPartitionOperationKey(_)).toList
       // try to complete the request immediately, otherwise put it into the purgatory
@@ -1670,6 +1671,7 @@ class ReplicaManager(val config: KafkaConfig,
         params = params,
         fetchPartitionStatus = fetchPartitionStatus,
         replicaManager = this,
+        isInklessTopic = isInklessTopic,
         quota = quota,
         responseCallback = responseCallback
       )
@@ -1757,6 +1759,7 @@ class ReplicaManager(val config: KafkaConfig,
           params = params,
           fetchPartitionStatus = fetchPartitionStatus,
           replicaManager = this,
+          isInklessTopic = isInklessTopic,
           quota = quota,
           responseCallback = responseCallback
         )
@@ -2540,7 +2543,8 @@ class ReplicaManager(val config: KafkaConfig,
 
     // Shrink ISRs for non offline partitions
     allPartitions.keys.foreach { topicPartition =>
-      onlinePartition(topicPartition).foreach(_.maybeShrinkIsr())
+      if (!isInklessTopic(topicPartition.topic()))
+        onlinePartition(topicPartition).foreach(_.maybeShrinkIsr())
     }
   }
 
@@ -2698,43 +2702,102 @@ class ReplicaManager(val config: KafkaConfig,
   def lastOffsetForLeaderEpoch(
     requestedEpochInfo: Seq[OffsetForLeaderTopic]
   ): Seq[OffsetForLeaderTopicResult] = {
-    requestedEpochInfo.map { offsetForLeaderTopic =>
-      val partitions = offsetForLeaderTopic.partitions.asScala.map { offsetForLeaderPartition =>
-        val tp = new TopicPartition(offsetForLeaderTopic.topic, offsetForLeaderPartition.partition)
-        getPartition(tp) match {
-          case HostedPartition.Online(partition) =>
-            val currentLeaderEpochOpt =
-              if (offsetForLeaderPartition.currentLeaderEpoch == RecordBatch.NO_PARTITION_LEADER_EPOCH)
-                Optional.empty[Integer]
-              else
-                Optional.of[Integer](offsetForLeaderPartition.currentLeaderEpoch)
+    // First start job to collect inkless offsets
+    val inklessFetchOffsetHandlerJob: Option[FetchOffsetHandler.Job] = inklessFetchOffsetHandler.map(_.createJob())
 
-            partition.lastOffsetForLeaderEpoch(
-              currentLeaderEpochOpt,
-              offsetForLeaderPartition.leaderEpoch,
-              fetchOnlyFromLeader = true)
+    val inklessOffsetFuturesByTopic: Map[String, Seq[CompletableFuture[EpochEndOffset]]] = requestedEpochInfo
+      .filter { offsetForLeaderTopic =>
+        inklessFetchOffsetHandlerJob.exists(_.mustHandle(offsetForLeaderTopic.topic))
+      }
+      .map { offsetForLeaderTopic =>
+        val topic = offsetForLeaderTopic.topic()
+        val partitions = offsetForLeaderTopic.partitions.asScala.map { offsetForLeaderPartition =>
+          val partition = offsetForLeaderPartition.partition
+          val leaderEpoch = offsetForLeaderPartition.leaderEpoch()
+          val tp = new TopicPartition(topic, partition)
 
-          case HostedPartition.Offline(_) =>
-            new EpochEndOffset()
-              .setPartition(offsetForLeaderPartition.partition)
-              .setErrorCode(Errors.KAFKA_STORAGE_ERROR.code)
+          val partitionRequest = new ListOffsetsPartition()
+            .setPartitionIndex(partition)
+            .setCurrentLeaderEpoch(LeaderAndIsr.INITIAL_LEADER_EPOCH)
+            .setTimestamp(ListOffsetsRequest.LATEST_TIMESTAMP)
 
-          case HostedPartition.None if metadataCache.contains(tp) =>
-            new EpochEndOffset()
-              .setPartition(offsetForLeaderPartition.partition)
-              .setErrorCode(Errors.NOT_LEADER_OR_FOLLOWER.code)
+          inklessFetchOffsetHandlerJob.get
+            .add(tp, partitionRequest)
+            .thenApply[EpochEndOffset](epochEndOffset => {
+              val endOffset = epochEndOffset.timestampAndOffset().get().offset
+              val errorCode = epochEndOffset.exception()
+                .map[Errors](e => Errors.forException(e))
+                .orElse(Errors.NONE)
+                .code
+              new EpochEndOffset()
+                .setPartition(tp.partition())
+                .setErrorCode(errorCode)
+                .setLeaderEpoch(leaderEpoch)
+                .setEndOffset(endOffset)
+            })
+        }.toSeq
+        topic -> partitions
+      }.toMap
 
-          case HostedPartition.None =>
-            new EpochEndOffset()
-              .setPartition(offsetForLeaderPartition.partition)
-              .setErrorCode(Errors.UNKNOWN_TOPIC_OR_PARTITION.code)
+    inklessFetchOffsetHandlerJob.foreach(_.start())
+
+    // Then build response
+    requestedEpochInfo
+      .map { offsetForLeaderTopic =>
+        if (isInklessTopic(offsetForLeaderTopic.topic())) {
+          inklessOffsetFuturesByTopic.get(offsetForLeaderTopic.topic())
+            .map { futures =>
+              // Wait until offsetForLeaderTopic is completed
+              // TODO check if this can be bound -- currently as last offset is available locally on classic topics
+              //   it is not needed to have a purgatory; but it may be needed.
+              val offsets = futures.map(_.get())
+              new OffsetForLeaderTopicResult()
+                .setTopic(offsetForLeaderTopic.topic())
+                .setPartitions(offsets.toList.asJava)
+            }
+            .get
+        } else {
+          val partitions = offsetForLeaderTopic.partitions.asScala.map { offsetForLeaderPartition =>
+            val tp = new TopicPartition(offsetForLeaderTopic.topic, offsetForLeaderPartition.partition)
+            getPartition(tp) match {
+              case HostedPartition.Online(partition) =>
+                val currentLeaderEpochOpt =
+                  if (offsetForLeaderPartition.currentLeaderEpoch == RecordBatch.NO_PARTITION_LEADER_EPOCH)
+                    Optional.empty[Integer]
+                  else
+                    Optional.of[Integer](offsetForLeaderPartition.currentLeaderEpoch)
+
+                partition.lastOffsetForLeaderEpoch(
+                  currentLeaderEpochOpt,
+                  offsetForLeaderPartition.leaderEpoch,
+                  fetchOnlyFromLeader = true)
+
+              case HostedPartition.Offline(_) =>
+                new EpochEndOffset()
+                  .setPartition(offsetForLeaderPartition.partition)
+                  .setErrorCode(Errors.KAFKA_STORAGE_ERROR.code)
+
+              case HostedPartition.None if metadataCache.contains(tp) =>
+                new EpochEndOffset()
+                  .setPartition(offsetForLeaderPartition.partition)
+                  .setErrorCode(Errors.NOT_LEADER_OR_FOLLOWER.code)
+
+              case HostedPartition.None =>
+                new EpochEndOffset()
+                  .setPartition(offsetForLeaderPartition.partition)
+                  .setErrorCode(Errors.UNKNOWN_TOPIC_OR_PARTITION.code)
+            }
+          }
+
+          new OffsetForLeaderTopicResult()
+            .setTopic(offsetForLeaderTopic.topic)
+            .setPartitions(partitions.toList.asJava)
         }
       }
+  }
 
-      new OffsetForLeaderTopicResult()
-        .setTopic(offsetForLeaderTopic.topic)
-        .setPartitions(partitions.toList.asJava)
-    }
+  private def isInklessTopic(topic: String): Boolean = {
+    inklessSharedState.exists(_.metadata().isInklessTopic(topic))
   }
 
   def activeProducerState(requestPartition: TopicPartition): DescribeProducersResponseData.PartitionResponse = {
@@ -2864,24 +2927,25 @@ class ReplicaManager(val config: KafkaConfig,
       "local leaders.")
     replicaFetcherManager.removeFetcherForPartitions(localLeaders.keySet)
     localLeaders.foreachEntry { (tp, info) =>
-      getOrCreatePartition(tp, delta, info.topicId).foreach { case (partition, isNew) =>
-        try {
-          val state = info.partition.toLeaderAndIsrPartitionState(tp, isNew)
-          val partitionAssignedDirectoryId = directoryIds.find(_._1.topicPartition() == tp).map(_._2)
-          partition.makeLeader(state, offsetCheckpoints, Some(info.topicId), partitionAssignedDirectoryId)
+      if (!isInklessTopic(tp.topic()))
+        getOrCreatePartition(tp, delta, info.topicId).foreach { case (partition, isNew) =>
+          try {
+            val state = info.partition.toLeaderAndIsrPartitionState(tp, isNew)
+            val partitionAssignedDirectoryId = directoryIds.find(_._1.topicPartition() == tp).map(_._2)
+            partition.makeLeader(state, offsetCheckpoints, Some(info.topicId), partitionAssignedDirectoryId)
 
-          changedPartitions.add(partition)
-        } catch {
-          case e: KafkaStorageException =>
-            stateChangeLogger.info(s"Skipped the become-leader state change for $tp " +
-              s"with topic id ${info.topicId} due to a storage error ${e.getMessage}")
-            // If there is an offline log directory, a Partition object may have been created by
-            // `getOrCreatePartition()` before `createLogIfNotExists()` failed to create local replica due
-            // to KafkaStorageException. In this case `ReplicaManager.allPartitions` will map this topic-partition
-            // to an empty Partition object. We need to map this topic-partition to OfflinePartition instead.
-            markPartitionOffline(tp)
+            changedPartitions.add(partition)
+          } catch {
+            case e: KafkaStorageException =>
+              stateChangeLogger.info(s"Skipped the become-leader state change for $tp " +
+                s"with topic id ${info.topicId} due to a storage error ${e.getMessage}")
+              // If there is an offline log directory, a Partition object may have been created by
+              // `getOrCreatePartition()` before `createLogIfNotExists()` failed to create local replica due
+              // to KafkaStorageException. In this case `ReplicaManager.allPartitions` will map this topic-partition
+              // to an empty Partition object. We need to map this topic-partition to OfflinePartition instead.
+              markPartitionOffline(tp)
+          }
         }
-      }
     }
   }
 
@@ -2899,49 +2963,50 @@ class ReplicaManager(val config: KafkaConfig,
     val partitionsToStopFetching = new mutable.HashMap[TopicPartition, Boolean]
     val followerTopicSet = new mutable.HashSet[String]
     localFollowers.foreachEntry { (tp, info) =>
-      getOrCreatePartition(tp, delta, info.topicId).foreach { case (partition, isNew) =>
-        try {
-          followerTopicSet.add(tp.topic)
+      if (!isInklessTopic(tp.topic()))
+        getOrCreatePartition(tp, delta, info.topicId).foreach { case (partition, isNew) =>
+          try {
+            followerTopicSet.add(tp.topic)
 
-          // We always update the follower state.
-          // - This ensure that a replica with no leader can step down;
-          // - This also ensures that the local replica is created even if the leader
-          //   is unavailable. This is required to ensure that we include the partition's
-          //   high watermark in the checkpoint file (see KAFKA-1647).
-          val state = info.partition.toLeaderAndIsrPartitionState(tp, isNew)
-          val partitionAssignedDirectoryId = directoryIds.find(_._1.topicPartition() == tp).map(_._2)
-          val isNewLeaderEpoch = partition.makeFollower(state, offsetCheckpoints, Some(info.topicId), partitionAssignedDirectoryId)
+            // We always update the follower state.
+            // - This ensure that a replica with no leader can step down;
+            // - This also ensures that the local replica is created even if the leader
+            //   is unavailable. This is required to ensure that we include the partition's
+            //   high watermark in the checkpoint file (see KAFKA-1647).
+            val state = info.partition.toLeaderAndIsrPartitionState(tp, isNew)
+            val partitionAssignedDirectoryId = directoryIds.find(_._1.topicPartition() == tp).map(_._2)
+            val isNewLeaderEpoch = partition.makeFollower(state, offsetCheckpoints, Some(info.topicId), partitionAssignedDirectoryId)
 
-          if (isInControlledShutdown && (info.partition.leader == NO_LEADER ||
+            if (isInControlledShutdown && (info.partition.leader == NO_LEADER ||
               !info.partition.isr.contains(config.brokerId))) {
-            // During controlled shutdown, replica with no leaders and replica
-            // where this broker is not in the ISR are stopped.
-            partitionsToStopFetching.put(tp, false)
-          } else if (isNewLeaderEpoch) {
-            // Invoke the follower transition listeners for the partition.
-            partition.invokeOnBecomingFollowerListeners()
-            // Otherwise, fetcher is restarted if the leader epoch has changed.
-            partitionsToStartFetching.put(tp, partition)
+              // During controlled shutdown, replica with no leaders and replica
+              // where this broker is not in the ISR are stopped.
+              partitionsToStopFetching.put(tp, false)
+            } else if (isNewLeaderEpoch) {
+              // Invoke the follower transition listeners for the partition.
+              partition.invokeOnBecomingFollowerListeners()
+              // Otherwise, fetcher is restarted if the leader epoch has changed.
+              partitionsToStartFetching.put(tp, partition)
+            }
+
+            changedPartitions.add(partition)
+          } catch {
+            case e: KafkaStorageException =>
+              stateChangeLogger.error(s"Unable to start fetching $tp " +
+                s"with topic ID ${info.topicId} due to a storage error ${e.getMessage}", e)
+              replicaFetcherManager.addFailedPartition(tp)
+              // If there is an offline log directory, a Partition object may have been created by
+              // `getOrCreatePartition()` before `createLogIfNotExists()` failed to create local replica due
+              // to KafkaStorageException. In this case `ReplicaManager.allPartitions` will map this topic-partition
+              // to an empty Partition object. We need to map this topic-partition to OfflinePartition instead.
+              markPartitionOffline(tp)
+
+            case e: Throwable =>
+              stateChangeLogger.error(s"Unable to start fetching $tp " +
+                s"with topic ID ${info.topicId} due to ${e.getClass.getSimpleName}", e)
+              replicaFetcherManager.addFailedPartition(tp)
           }
-
-          changedPartitions.add(partition)
-        } catch {
-          case e: KafkaStorageException =>
-            stateChangeLogger.error(s"Unable to start fetching $tp " +
-              s"with topic ID ${info.topicId} due to a storage error ${e.getMessage}", e)
-            replicaFetcherManager.addFailedPartition(tp)
-            // If there is an offline log directory, a Partition object may have been created by
-            // `getOrCreatePartition()` before `createLogIfNotExists()` failed to create local replica due
-            // to KafkaStorageException. In this case `ReplicaManager.allPartitions` will map this topic-partition
-            // to an empty Partition object. We need to map this topic-partition to OfflinePartition instead.
-            markPartitionOffline(tp)
-
-          case e: Throwable =>
-            stateChangeLogger.error(s"Unable to start fetching $tp " +
-              s"with topic ID ${info.topicId} due to ${e.getClass.getSimpleName}", e)
-            replicaFetcherManager.addFailedPartition(tp)
         }
-      }
     }
 
     if (partitionsToStartFetching.nonEmpty) {

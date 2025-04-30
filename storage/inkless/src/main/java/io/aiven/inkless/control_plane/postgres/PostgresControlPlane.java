@@ -39,6 +39,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.stream.Stream;
 
+import io.aiven.inkless.common.ObjectFormat;
 import io.aiven.inkless.control_plane.AbstractControlPlane;
 import io.aiven.inkless.control_plane.BatchMetadata;
 import io.aiven.inkless.control_plane.CommitBatchRequest;
@@ -106,12 +107,13 @@ public class PostgresControlPlane extends AbstractControlPlane {
     @Override
     protected Iterator<CommitBatchResponse> commitFileForValidRequests(
         final String objectKey,
+        final ObjectFormat format,
         final int uploaderBrokerId,
         final long fileSize,
         final Stream<CommitBatchRequest> requests) {
         final CommitFileJob job = new CommitFileJob(
             time, jooqCtx,
-            objectKey, uploaderBrokerId, fileSize, requests.toList(),
+            objectKey, format, uploaderBrokerId, fileSize, requests.toList(),
             metrics::onCommitFileCompleted);
         return job.call().iterator();
     }
@@ -180,15 +182,18 @@ public class PostgresControlPlane extends AbstractControlPlane {
     }
 
     @Override
-    public void commitFileMergeWorkItem(final long workItemId,
-                                        final String objectKey,
-                                        final int uploaderBrokerId,
-                                        final long fileSize,
-                                        final List<MergedFileBatch> batches) {
+    public void commitFileMergeWorkItem(
+            final long workItemId,
+            final String objectKey,
+            final ObjectFormat format,
+            final int uploaderBrokerId,
+            final long fileSize,
+            final List<MergedFileBatch> batches) {
         final CommitFileMergeWorkItemJob job = new CommitFileMergeWorkItemJob(
             time,
             workItemId,
             objectKey,
+            format,
             uploaderBrokerId,
             fileSize,
             batches,
@@ -226,6 +231,7 @@ public class PostgresControlPlane extends AbstractControlPlane {
         final CommitFileMergeWorkItemV1BatchRecord errorBatch = result.getErrorBatch();
         return new MergedFileBatch(
             new BatchMetadata(
+                errorBatch.getMetadata().getMagic().byteValue(),
                 new TopicIdPartition(
                     errorBatch.getMetadata().getTopicId(),
                     errorBatch.getMetadata().getPartition(),
@@ -237,11 +243,7 @@ public class PostgresControlPlane extends AbstractControlPlane {
                 errorBatch.getMetadata().getLastOffset(),
                 errorBatch.getMetadata().getLogAppendTimestamp(),
                 errorBatch.getMetadata().getBatchMaxTimestamp(),
-                errorBatch.getMetadata().getTimestampType(),
-                errorBatch.getMetadata().getProducerId(),
-                errorBatch.getMetadata().getProducerEpoch(),
-                errorBatch.getMetadata().getBaseSequence(),
-                errorBatch.getMetadata().getLastSequence()
+                errorBatch.getMetadata().getTimestampType()
             ),
             Arrays.asList(errorBatch.getParentBatchIds())
         );

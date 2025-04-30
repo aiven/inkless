@@ -34,6 +34,7 @@ import java.util.List;
 import java.util.concurrent.Callable;
 
 import io.aiven.inkless.TimeUtils;
+import io.aiven.inkless.common.ObjectFormat;
 import io.aiven.inkless.control_plane.BatchInfo;
 import io.aiven.inkless.control_plane.BatchMetadata;
 import io.aiven.inkless.control_plane.FileMergeWorkItem;
@@ -99,6 +100,7 @@ public class GetFileMergeWorkItemJob implements Callable<FileMergeWorkItem> {
                         new FileMergeWorkItem.File(
                             r.getFileId(),
                             r.getObjectKey(),
+                            ObjectFormat.forId(r.getFormat().byteValue()),
                             r.getSize(),
                             r.getUsedSize(),
                             Arrays.stream(r.getBatches())
@@ -107,6 +109,7 @@ public class GetFileMergeWorkItemJob implements Callable<FileMergeWorkItem> {
                                         return new BatchInfo(
                                             b.getBatchId(), b.getObjectKey(),
                                             new BatchMetadata(
+                                                m.getMagic().byteValue(),
                                                 new TopicIdPartition(m.getTopicId(), new TopicPartition(m.getTopicName(), m.getPartition())),
                                                 m.getByteOffset(),
                                                 m.getByteSize(),
@@ -114,11 +117,7 @@ public class GetFileMergeWorkItemJob implements Callable<FileMergeWorkItem> {
                                                 m.getLastOffset(),
                                                 m.getLogAppendTimestamp(),
                                                 m.getBatchMaxTimestamp(),
-                                                m.getTimestampType(),
-                                                m.getProducerId(),
-                                                m.getProducerEpoch(),
-                                                m.getBaseSequence(),
-                                                m.getLastSequence()
+                                                m.getTimestampType()
                                             )
                                         );
                                     }

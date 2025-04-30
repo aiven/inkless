@@ -39,6 +39,7 @@ import java.sql.Connection;
 import java.sql.SQLException;
 import java.time.Instant;
 
+import io.aiven.inkless.common.ObjectFormat;
 import io.aiven.inkless.control_plane.FileReason;
 import io.aiven.inkless.control_plane.FileToDelete;
 import io.aiven.inkless.test_utils.InklessPostgreSQLContainer;
@@ -74,9 +75,9 @@ class FindFilesToDeleteJobTest {
             final DSLContext ctx = DSL.using(connection, SQLDialect.POSTGRES);
 
             fileId = ctx.insertInto(FILES,
-                FILES.OBJECT_KEY, FILES.REASON, FILES.STATE, FILES.UPLOADER_BROKER_ID, FILES.COMMITTED_AT, FILES.SIZE, FILES.USED_SIZE
+                FILES.OBJECT_KEY, FILES.FORMAT, FILES.REASON, FILES.STATE, FILES.UPLOADER_BROKER_ID, FILES.COMMITTED_AT, FILES.SIZE, FILES.USED_SIZE
             ).values(
-                OBJECT_KEY, FileReason.PRODUCE, FileStateT.uploaded, BROKER_ID, COMMITTED_AT, 1000L, 900L
+                OBJECT_KEY, (short) ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT.id, FileReason.PRODUCE, FileStateT.uploaded, BROKER_ID, COMMITTED_AT, 1000L, 900L
             ).returning(FILES.FILE_ID).fetchOne(FILES.FILE_ID);
 
             ctx.insertInto(FILES_TO_DELETE,

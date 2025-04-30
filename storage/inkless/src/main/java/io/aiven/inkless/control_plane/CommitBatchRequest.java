@@ -21,18 +21,20 @@ import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.record.RecordBatch;
 import org.apache.kafka.common.record.TimestampType;
 
-public record CommitBatchRequest(int requestId,
-                                 TopicIdPartition topicIdPartition,
-                                 int byteOffset,
-                                 int size,
-                                 long baseOffset,
-                                 long lastOffset,
-                                 long batchMaxTimestamp,
-                                 TimestampType messageTimestampType,
-                                 long producerId,
-                                 short producerEpoch,
-                                 int baseSequence,
-                                 int lastSequence) {
+public record CommitBatchRequest(
+        byte magic,
+        int requestId,
+        TopicIdPartition topicIdPartition,
+        int byteOffset,
+        int size,
+        long baseOffset,
+        long lastOffset,
+        long batchMaxTimestamp,
+        TimestampType messageTimestampType,
+        long producerId,
+        short producerEpoch,
+        int baseSequence,
+        int lastSequence) {
 
     public static CommitBatchRequest of(
         int requestId,
@@ -41,6 +43,7 @@ public record CommitBatchRequest(int requestId,
         RecordBatch batch
     ) {
         return new CommitBatchRequest(
+            batch.magic(),
             requestId,
             topicIdPartition,
             byteOffset,
@@ -64,7 +67,8 @@ public record CommitBatchRequest(int requestId,
         TimestampType messageTimestampType
     ) {
         return new CommitBatchRequest(
-            requestId, topicIdPartition, byteOffset, size, baseOffset, lastOffset, batchMaxTimestamp, messageTimestampType,
+            RecordBatch.CURRENT_MAGIC_VALUE, requestId, topicIdPartition,
+            byteOffset, size, baseOffset, lastOffset, batchMaxTimestamp, messageTimestampType,
             RecordBatch.NO_PRODUCER_ID, RecordBatch.NO_PRODUCER_EPOCH, RecordBatch.NO_SEQUENCE, RecordBatch.NO_SEQUENCE);
     }
 
@@ -83,7 +87,9 @@ public record CommitBatchRequest(int requestId,
         int baseSequence,
         int lastSequence
     ) {
-        return new CommitBatchRequest(requestId, topicIdPartition, byteOffset, size, baseOffset, lastOffset, batchMaxTimestamp, messageTimestampType,
+        return new CommitBatchRequest(
+            RecordBatch.CURRENT_MAGIC_VALUE, requestId, topicIdPartition,
+            byteOffset, size, baseOffset, lastOffset, batchMaxTimestamp, messageTimestampType,
             producerId, producerEpoch, baseSequence, lastSequence);
     }
 

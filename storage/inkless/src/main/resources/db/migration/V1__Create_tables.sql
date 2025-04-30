@@ -8,6 +8,12 @@ CHECK (VALUE >= 0);
 
 CREATE DOMAIN topic_name_t VARCHAR(255) NOT NULL;
 
+CREATE DOMAIN magic_t AS SMALLINT NOT NULL
+CHECK (VALUE >= 0 AND VALUE <= 2);
+
+CREATE DOMAIN format_t AS SMALLINT NOT NULL
+CHECK (value >= 1 AND VALUE <= 3);
+
 CREATE DOMAIN offset_nullable_t BIGINT
 CHECK (VALUE IS NULL OR VALUE >= 0);
 CREATE DOMAIN offset_t AS offset_nullable_t
@@ -65,6 +71,7 @@ CREATE TYPE file_state_t AS ENUM (
 CREATE TABLE files (
     file_id BIGSERIAL PRIMARY KEY,
     object_key object_key_t UNIQUE NOT NULL,
+    format format_t,
     reason file_reason_t NOT NULL,
     state file_state_t NOT NULL,
     uploader_broker_id broker_id_t,
@@ -81,6 +88,7 @@ CREATE TABLE files_to_delete (
 
 CREATE TABLE batches (
     batch_id BIGSERIAL PRIMARY KEY,
+    magic magic_t,
     topic_id topic_id_t,
     partition partition_t,
     base_offset offset_t,
@@ -91,10 +99,6 @@ CREATE TABLE batches (
     timestamp_type timestamp_type_t,
     log_append_timestamp timestamp_t,
     batch_max_timestamp timestamp_t,
-    producer_id producer_id_t,
-    producer_epoch producer_epoch_t,
-    base_sequence sequence_t,
-    last_sequence sequence_t,
     CONSTRAINT fk_batches_logs FOREIGN KEY (topic_id, partition) REFERENCES logs(topic_id, partition)
         ON DELETE NO ACTION ON UPDATE CASCADE DEFERRABLE INITIALLY DEFERRED,  -- allow deleting logs before batches
     CONSTRAINT fk_batches_files FOREIGN KEY (file_id) REFERENCES files(file_id) ON DELETE RESTRICT ON UPDATE CASCADE
@@ -102,7 +106,21 @@ CREATE TABLE batches (
 
 CREATE INDEX batches_by_last_offset_idx ON batches (topic_id, partition, last_offset);
 
+CREATE TABLE producer_state (
+    topic_id topic_id_t,
+    partition partition_t,
+    producer_id producer_id_t,
+    row_id BIGSERIAL,
+    producer_epoch producer_epoch_t,
+    base_sequence sequence_t,
+    last_sequence sequence_t,
+    assigned_offset offset_t,
+    batch_max_timestamp timestamp_t,
+    PRIMARY KEY (topic_id, partition, producer_id, row_id)
+);
+
 CREATE TYPE commit_batch_request_v1 AS (
+    magic magic_t,
     topic_id topic_id_t,
     partition partition_t,
     byte_offset byte_offset_t,
@@ -116,8 +134,6 @@ CREATE TYPE commit_batch_request_v1 AS (
     base_sequence sequence_t,
     last_sequence sequence_t
 );
-
-CREATE INDEX batches_by_producer_idx ON batches (producer_id, producer_epoch);
 
 CREATE TYPE commit_batch_response_v1_error AS ENUM (
     'none',
@@ -139,6 +155,7 @@ CREATE TYPE commit_batch_response_v1 AS (
 
 CREATE FUNCTION commit_file_v1(
     object_key object_key_t,
+    format format_t,
     uploader_broker_id broker_id_t,
     file_size byte_size_t,
     now TIMESTAMP WITH TIME ZONE,
@@ -152,9 +169,10 @@ DECLARE
     duplicate RECORD;
     assigned_offset offset_nullable_t;
     new_high_watermark offset_nullable_t;
+    last_sequence_in_producer_epoch BIGINT;
 BEGIN
-    INSERT INTO files (object_key, reason, state, uploader_broker_id, committed_at, size, used_size)
-    VALUES (object_key, 'produce', 'uploaded', uploader_broker_id, now, file_size, file_size)
+    INSERT INTO files (object_key, format, reason, state, uploader_broker_id, committed_at, size, used_size)
+    VALUES (object_key, format, 'produce', 'uploaded', uploader_broker_id, now, file_size, file_size)
     RETURNING file_id
     INTO new_file_id;
 
@@ -174,13 +192,15 @@ BEGIN
             CONTINUE;
         END IF;
 
+        assigned_offset = log.high_watermark;
+
         -- Validate that the new request base sequence is not larger than the previous batch last sequence
         IF request.producer_id > -1 AND request.producer_epoch > -1
         THEN
             -- If there are previous batches for the producer, check that the producer epoch is not smaller than the last batch
              IF EXISTS (
                 SELECT 1
-                FROM batches
+                FROM producer_state
                 WHERE topic_id = request.topic_id
                     AND partition = request.partition
                     AND producer_id = request.producer_id
@@ -189,18 +209,27 @@ BEGIN
                 RETURN NEXT (request.topic_id, request.partition, NULL, NULL, -1, 'invalid_producer_epoch')::commit_batch_response_v1;
                 CONTINUE;
              END IF;
+
+             SELECT MAX(last_sequence)
+             INTO last_sequence_in_producer_epoch
+             FROM producer_state
+             WHERE topic_id = request.topic_id
+                 AND partition = request.partition
+                 AND producer_id = request.producer_id
+                 AND producer_epoch = request.producer_epoch;
+
             -- If there are previous batches for the producer
-            IF EXISTS (
-                SELECT 1
-                FROM batches
-                WHERE topic_id = request.topic_id
-                    AND partition = request.partition
-                    AND producer_id = request.producer_id
-                    AND producer_epoch = request.producer_epoch
-            ) THEN
+            IF last_sequence_in_producer_epoch IS NULL THEN
+                -- If there are no previous batches for the producer, the base sequence must be 0
+                IF request.base_sequence <> 0
+                THEN
+                    RETURN NEXT (request.topic_id, request.partition, NULL, NULL, -1, 'sequence_out_of_order')::commit_batch_response_v1;
+                    CONTINUE;
+                END IF;
+            ELSE
                 -- Check for duplicates
                 SELECT *
-                FROM batches
+                FROM producer_state
                 WHERE topic_id = request.topic_id
                     AND partition = request.partition
                     AND producer_id = request.producer_id
@@ -209,44 +238,44 @@ BEGIN
                     AND last_sequence = request.last_sequence
                 INTO duplicate;
                 IF FOUND THEN
-                    RETURN NEXT (request.topic_id, request.partition, log.log_start_offset, duplicate.base_offset, duplicate.batch_max_timestamp, 'duplicate_batch')::commit_batch_response_v1;
+                    RETURN NEXT (request.topic_id, request.partition, log.log_start_offset, duplicate.assigned_offset, duplicate.batch_max_timestamp, 'duplicate_batch')::commit_batch_response_v1;
                     CONTINUE;
                 END IF;
-                -- Check that the sequence is not out of order
-                IF EXISTS (
-                    SELECT 1
-                    FROM batches
-                    WHERE topic_id = request.topic_id
-                        AND partition = request.partition
-                        AND producer_id = request.producer_id
-                        AND producer_epoch = request.producer_epoch
-                        AND last_sequence = (
-                            SELECT MAX(last_sequence)
-                            FROM batches
-                            WHERE topic_id = request.topic_id
-                                AND partition = request.partition
-                                AND producer_id = request.producer_id
-                                AND producer_epoch = request.producer_epoch
-                        )
-                        -- sequence is out of order if the base sequence is not a continuation of the last sequence
-                        AND request.base_sequence - 1 != last_sequence
-                        -- if end of int32 range, the base sequence must be 0 and the last sequence must be 2147483647
-                        AND NOT (request.base_sequence = 0 AND last_sequence = 2147483647)
-                ) THEN
-                    RETURN NEXT (request.topic_id, request.partition, NULL, NULL, -1, 'sequence_out_of_order')::commit_batch_response_v1;
-                    CONTINUE;
-                END IF;
-            ELSE
-                -- If there are no previous batches for the producer, the base sequence must be 0
-                IF request.base_sequence != 0
-                THEN
+
+                -- Check that the sequence is not out of order.
+                -- A sequence is out of order if the base sequence is not a continuation of the last sequence
+                -- or, in case of wraparound, the base sequence must be 0 and the last sequence must be 2147483647 (Integer.MAX_VALUE).
+                IF (request.base_sequence - 1) <> last_sequence_in_producer_epoch OR (last_sequence_in_producer_epoch = 2147483647 AND request.base_sequence <> 0) THEN
                     RETURN NEXT (request.topic_id, request.partition, NULL, NULL, -1, 'sequence_out_of_order')::commit_batch_response_v1;
                     CONTINUE;
                 END IF;
             END IF;
-        END IF;
 
-        assigned_offset = log.high_watermark;
+            INSERT INTO producer_state (
+                topic_id, partition, producer_id,
+                producer_epoch, base_sequence, last_sequence, assigned_offset, batch_max_timestamp
+            )
+            VALUES (
+                request.topic_id, request.partition, request.producer_id,
+                request.producer_epoch, request.base_sequence, request.last_sequence, assigned_offset, request.batch_max_timestamp
+            );
+            -- Keep only the last 5 records.
+            -- 5 == org.apache.kafka.storage.internals.log.ProducerStateEntry.NUM_BATCHES_TO_RETAIN
+            DELETE FROM producer_state
+            WHERE topic_id = request.topic_id
+                AND partition = request.partition
+                AND producer_id = request.producer_id
+                AND row_id <= (
+                    SELECT row_id
+                    FROM producer_state
+                    WHERE topic_id = request.topic_id
+                        AND partition = request.partition
+                        AND producer_id = request.producer_id
+                    ORDER BY row_id DESC
+                    LIMIT 1
+                    OFFSET 5
+                );
+        END IF;
 
         UPDATE logs
         SET high_watermark = high_watermark + (request.last_offset - request.base_offset + 1)
@@ -256,15 +285,16 @@ BEGIN
         INTO new_high_watermark;
 
         INSERT INTO batches (
+            magic,
             topic_id, partition,
             base_offset,
             last_offset,
             file_id,
             byte_offset, byte_size,
-            timestamp_type, log_append_timestamp, batch_max_timestamp,
-            producer_id, producer_epoch, base_sequence, last_sequence
+            timestamp_type, log_append_timestamp, batch_max_timestamp
         )
         VALUES (
+            request.magic,
             request.topic_id, request.partition,
             assigned_offset,
             new_high_watermark - 1,
@@ -272,8 +302,7 @@ BEGIN
             request.byte_offset, request.byte_size,
             request.timestamp_type,
             (EXTRACT(EPOCH FROM now AT TIME ZONE 'UTC') * 1000)::BIGINT,
-            request.batch_max_timestamp,
-            request.producer_id, request.producer_epoch, request.base_sequence, request.last_sequence
+            request.batch_max_timestamp
         );
 
         RETURN NEXT (request.topic_id, request.partition, log.log_start_offset, assigned_offset, request.batch_max_timestamp, 'none')::commit_batch_response_v1;
@@ -603,6 +632,7 @@ CREATE TABLE file_merge_work_item_files (
 );
 
 CREATE TYPE batch_metadata_v1 AS (
+    magic magic_t,
     topic_id topic_id_t,
     topic_name topic_name_t,
     partition partition_t,
@@ -613,12 +643,7 @@ CREATE TYPE batch_metadata_v1 AS (
     last_offset offset_t,
     log_append_timestamp timestamp_t,
     batch_max_timestamp timestamp_t,
-    timestamp_type timestamp_type_t,
-
-    producer_id producer_id_t,
-    producer_epoch producer_epoch_t,
-    base_sequence sequence_t,
-    last_sequence sequence_t
+    timestamp_type timestamp_type_t
 );
 
 CREATE TYPE file_merge_work_item_response_v1_batch AS (
@@ -630,6 +655,7 @@ CREATE TYPE file_merge_work_item_response_v1_batch AS (
 CREATE TYPE file_merge_work_item_response_v1_file AS (
     file_id BIGINT,
     object_key object_key_t,
+    format format_t,
     size byte_size_t,
     used_size byte_size_t,
     batches file_merge_work_item_response_v1_batch[]
@@ -731,6 +757,7 @@ BEGIN
             SELECT (
                 f.file_id,
                 files.object_key,
+                files.format,
                 files.size,
                 files.used_size,
                 ARRAY(
@@ -738,21 +765,17 @@ BEGIN
                         batches.batch_id,
                         files.object_key,
                         (
+                            batches.magic,
                             logs.topic_id,
                             logs.topic_name,
                             batches.partition,
-
                             batches.byte_offset,
                             batches.byte_size,
                             batches.base_offset,
                             batches.last_offset,
                             batches.log_append_timestamp,
                             batches.batch_max_timestamp,
-                            batches.timestamp_type,
-                            batches.producer_id,
-                            batches.producer_epoch,
-                            batches.base_sequence,
-                            batches.last_sequence
+                            batches.timestamp_type
                         )::batch_metadata_v1
                     )::file_merge_work_item_response_v1_batch
                     FROM batches
@@ -791,6 +814,7 @@ CREATE FUNCTION commit_file_merge_work_item_v1(
     now TIMESTAMP WITH TIME ZONE,
     existing_work_item_id BIGINT,
     object_key object_key_t,
+    format format_t,
     uploader_broker_id broker_id_t,
     file_size byte_size_t,
     merge_file_batches commit_file_merge_work_item_v1_batch[]
@@ -823,8 +847,8 @@ BEGIN
     LOOP
         IF array_length(merge_file_batch.parent_batch_ids, 1) IS NULL OR array_length(merge_file_batch.parent_batch_ids, 1) != 1 THEN
             -- insert new empty file to be deleted
-            INSERT INTO files (object_key, reason, state, uploader_broker_id, committed_at, size, used_size)
-            VALUES (object_key, 'merge', 'uploaded', uploader_broker_id, now, 0, 0)
+            INSERT INTO files (object_key, format, reason, state, uploader_broker_id, committed_at, size, used_size)
+            VALUES (object_key, format, 'merge', 'uploaded', uploader_broker_id, now, 0, 0)
             RETURNING file_id
             INTO new_file_id;
             PERFORM mark_file_to_delete_v1(now, new_file_id);
@@ -853,8 +877,8 @@ BEGIN
 
     IF found_batches_size IS NULL THEN
         -- insert new empty file
-        INSERT INTO files (object_key, reason, state, uploader_broker_id, committed_at, size, used_size)
-        VALUES (object_key, 'merge', 'uploaded', uploader_broker_id, now, 0, 0)
+        INSERT INTO files (object_key, format, reason, state, uploader_broker_id, committed_at, size, used_size)
+        VALUES (object_key, format, 'merge', 'uploaded', uploader_broker_id, now, 0, 0)
         RETURNING file_id
         INTO new_file_id;
         PERFORM mark_file_to_delete_v1(now, new_file_id);
@@ -878,8 +902,8 @@ BEGIN
         )
     LOOP
         -- insert new empty file to be deleted
-        INSERT INTO files (object_key, reason, state, uploader_broker_id, committed_at, size, used_size)
-        VALUES (object_key, 'merge', 'uploaded', uploader_broker_id, now, 0, 0)
+        INSERT INTO files (object_key, format, reason, state, uploader_broker_id, committed_at, size, used_size)
+        VALUES (object_key, format, 'merge', 'uploaded', uploader_broker_id, now, 0, 0)
         RETURNING file_id
         INTO new_file_id;
         PERFORM mark_file_to_delete_v1(now, new_file_id);
@@ -902,8 +926,8 @@ BEGIN
     END LOOP;
 
     -- insert new file
-    INSERT INTO files (object_key, reason, state, uploader_broker_id, committed_at, size, used_size)
-    VALUES (object_key, 'merge', 'uploaded', uploader_broker_id, now, file_size, found_batches_size)
+    INSERT INTO files (object_key, format, reason, state, uploader_broker_id, committed_at, size, used_size)
+    VALUES (object_key, format, 'merge', 'uploaded', uploader_broker_id, now, file_size, found_batches_size)
     RETURNING file_id
     INTO new_file_id;
 
@@ -917,6 +941,7 @@ BEGIN
 
     -- insert new batches
     INSERT INTO batches (
+        magic,
         topic_id, partition,
         base_offset,
         last_offset,
@@ -924,13 +949,10 @@ BEGIN
         byte_offset, byte_size,
         log_append_timestamp,
         batch_max_timestamp,
-        timestamp_type,
-        producer_id,
-        producer_epoch,
-        base_sequence,
-        last_sequence
+        timestamp_type
     )
     SELECT DISTINCT
+        (unnest(merge_file_batches)).metadata.magic,
         (unnest(merge_file_batches)).metadata.topic_id,
         (unnest(merge_file_batches)).metadata.partition,
         (unnest(merge_file_batches)).metadata.base_offset,
@@ -940,11 +962,7 @@ BEGIN
         (unnest(merge_file_batches)).metadata.byte_size,
         (unnest(merge_file_batches)).metadata.log_append_timestamp,
         (unnest(merge_file_batches)).metadata.batch_max_timestamp,
-        (unnest(merge_file_batches)).metadata.timestamp_type,
-        (unnest(merge_file_batches)).metadata.producer_id,
-        (unnest(merge_file_batches)).metadata.producer_epoch,
-        (unnest(merge_file_batches)).metadata.base_sequence,
-        (unnest(merge_file_batches)).metadata.last_sequence
+        (unnest(merge_file_batches)).metadata.timestamp_type
     FROM unnest(merge_file_batches)
     ORDER BY (unnest(merge_file_batches)).metadata.topic_id,
         (unnest(merge_file_batches)).metadata.partition,

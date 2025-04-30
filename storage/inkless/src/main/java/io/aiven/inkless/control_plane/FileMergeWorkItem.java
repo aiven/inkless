@@ -20,12 +20,15 @@ package io.aiven.inkless.control_plane;
 import java.time.Instant;
 import java.util.List;
 
+import io.aiven.inkless.common.ObjectFormat;
+
 public record FileMergeWorkItem(long workItemId,
                                 Instant createdAt,
                                 List<File> files) {
 
     public record File(long fileId,
                        String objectKey,
+                       ObjectFormat format,
                        long size,
                        long usedSize,
                        List<BatchInfo> batches) {

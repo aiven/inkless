@@ -112,20 +112,18 @@ class FindBatchesJob implements Callable<List<FindBatchResponse>> {
     private FindBatchResponse getBatchResponse(final DSLContext ctx, final FindBatchRequest request, final LogEntity logEntity) {
         final var select = ctx.select(
                 BATCHES.BATCH_ID,
+                BATCHES.MAGIC,
                 BATCHES.BASE_OFFSET,
                 BATCHES.LAST_OFFSET,
                 FILES.OBJECT_KEY,
+                FILES.FORMAT,
                 BATCHES.BYTE_OFFSET,
                 BATCHES.BYTE_SIZE,
                 BATCHES.BASE_OFFSET,
                 BATCHES.LAST_OFFSET,
                 BATCHES.TIMESTAMP_TYPE,
                 BATCHES.LOG_APPEND_TIMESTAMP,
-                BATCHES.BATCH_MAX_TIMESTAMP,
-                BATCHES.PRODUCER_ID,
-                BATCHES.PRODUCER_EPOCH,
-                BATCHES.BASE_SEQUENCE,
-                BATCHES.LAST_SEQUENCE
+                BATCHES.BATCH_MAX_TIMESTAMP
             ).from(BATCHES)
             .innerJoin(FILES).on(BATCHES.FILE_ID.eq(FILES.FILE_ID))
             .where(BATCHES.TOPIC_ID.eq(request.topicIdPartition().topicId()))
@@ -141,7 +139,8 @@ class FindBatchesJob implements Callable<List<FindBatchResponse>> {
                 final BatchInfo batch = new BatchInfo(
                     record.get(BATCHES.BATCH_ID),
                     record.get(FILES.OBJECT_KEY),
-                    new BatchMetadata(
+                        new BatchMetadata(
+                        record.get(BATCHES.MAGIC).byteValue(),
                         request.topicIdPartition(),
                         record.get(BATCHES.BYTE_OFFSET),
                         record.get(BATCHES.BYTE_SIZE),
@@ -149,11 +148,7 @@ class FindBatchesJob implements Callable<List<FindBatchResponse>> {
                         record.get(BATCHES.LAST_OFFSET),
                         record.get(BATCHES.LOG_APPEND_TIMESTAMP),
                         record.get(BATCHES.BATCH_MAX_TIMESTAMP),
-                        record.get(BATCHES.TIMESTAMP_TYPE),
-                        record.get(BATCHES.PRODUCER_ID),
-                        record.get(BATCHES.PRODUCER_EPOCH),
-                        record.get(BATCHES.BASE_SEQUENCE),
-                        record.get(BATCHES.LAST_SEQUENCE)
+                        record.get(BATCHES.TIMESTAMP_TYPE)
                     )
                 );
                 batches.add(batch);
