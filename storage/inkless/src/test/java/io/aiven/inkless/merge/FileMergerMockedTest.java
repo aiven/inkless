@@ -23,6 +23,7 @@ import org.apache.kafka.common.record.TimestampType;
 import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.storage.log.metrics.BrokerTopicStats;
 
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -40,6 +41,8 @@ import org.testcontainers.shaded.com.google.common.base.Supplier;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
@@ -91,6 +94,7 @@ class FileMergerMockedTest {
     static final TopicIdPartition T0P0 = new TopicIdPartition(TOPIC_ID_0, 0, TOPIC_0);
     static final TopicIdPartition T1P0 = new TopicIdPartition(TOPIC_ID_1, 0, TOPIC_1);
     static final TopicIdPartition T1P1 = new TopicIdPartition(TOPIC_ID_1, 1, TOPIC_1);
+    public static final Path WORK_DIR = Path.of("/tmp/inkless/file-merge");
 
     @Mock
     Time time;
@@ -110,9 +114,15 @@ class FileMergerMockedTest {
     @BeforeEach
     void setup() {
         when(inklessConfig.objectKeyPrefix()).thenReturn("prefix");
+        when(inklessConfig.fileMergeWorkDir()).thenReturn(WORK_DIR);
 
         sharedState = SharedState.initialize(time, "cluster-id", "rack", BROKER_ID, inklessConfig, mock(MetadataView.class), controlPlane,
             mock(BrokerTopicStats.class), mock(Supplier.class));
+    }
+
+    @AfterEach
+    void tearDown() {
+        assertThat(WORK_DIR).isEmptyDirectory();
     }
 
     @Test
@@ -301,20 +311,14 @@ class FileMergerMockedTest {
     @Test
     void errorInReading() throws Exception {
         when(inklessConfig.storage()).thenReturn(storage);
-        when(inklessConfig.produceMaxUploadAttempts()).thenReturn(1);
 
         final String obj1 = "obj1";
         final long batch1Id = 1;
 
         final InputStream file1 = mock(InputStream.class);
-        when(file1.read(any(byte[].class), anyInt(), anyInt()))
+        when(file1.transferTo(any(OutputStream.class)))
             .thenThrow(new IOException("test"));
 
-        doAnswer(i -> {
-            final MergeBatchesInputStream data = i.getArgument(1, MergeBatchesInputStream.class);
-            data.transferTo(new ByteArrayOutputStream());
-            return null;
-        }).when(storage).upload(any(ObjectKey.class), any(InputStream.class), anyLong());
         bindFilesToObjectNames(Map.of(obj1, file1));
 
         final FileMergeWorkItem.File file1InWorkItem = new FileMergeWorkItem.File(1, obj1, ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, 10, 10, List.of(
@@ -332,7 +336,7 @@ class FileMergerMockedTest {
         verify(time).sleep(longThat(l -> l >= 50));
         verify(file1).close();
 
-        verify(storage).upload(any(ObjectKey.class), any(InputStream.class), anyLong());
+        verify(storage, never()).upload(any(ObjectKey.class), any(InputStream.class), anyLong());
         verify(storage, never()).delete(any(ObjectKey.class));
     }
 

@@ -39,8 +39,9 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
-import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
@@ -51,6 +52,7 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.io.IOException;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -168,7 +170,20 @@ class FileMergerIntegrationTest {
         controlPlane.configure(Map.of(
             "file.merge.size.threshold.bytes", Long.toString(FILE_MERGE_THRESHOLD)
         ));
+    }
 
+    @AfterEach
+    void tearDown() {
+        try {
+            sharedState.close();
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    void test(final boolean masked) throws Exception {
         final Map<String, String> config = new HashMap<>();
         config.put("control.plane.class", InMemoryControlPlane.class.getCanonicalName());
         config.put("object.key.prefix", "my-prefix");
@@ -181,23 +196,11 @@ class FileMergerIntegrationTest {
         config.put("storage.aws.access.key.id", S3_CONTAINER.getAccessKey());
         config.put("storage.aws.secret.access.key", S3_CONTAINER.getSecretKey());
         config.put("storage.s3.path.style.access.enabled", "true");
+        config.put("object.key.log.prefix.masked", Boolean.toString(masked));
         final InklessConfig inklessConfig = new InklessConfig(config);
 
         sharedState = SharedState.initialize(time, "cluster-id", "az1", BROKER_ID, inklessConfig,
             metadataView, controlPlane, new BrokerTopicStats(), defaultTopicConfigs);
-    }
-
-    @AfterEach
-    void tearDown() {
-        try {
-            sharedState.close();
-        } catch (IOException e) {
-            throw new RuntimeException(e);
-        }
-    }
-
-    @Test
-    void test() throws Exception {
 
         createTopics(controlPlane);
 
@@ -240,6 +243,10 @@ class FileMergerIntegrationTest {
         assertThat(highWatermarks2).isEqualTo(highWatermarks1);
         final Map<TopicIdPartition, List<RecordBatch>> batches2 = read(fetchInterceptor, highWatermarks2);
         assertThat(batches2).isEqualTo(batches1);
+
+        // Ensure work dir is empty.
+        Path workDir = inklessConfig.fileMergeWorkDir();
+        assertThat(workDir).isEmptyDirectory();
     }
 
     private void createTopics(final ControlPlane controlPlane) {

@@ -134,11 +134,12 @@ class WriterPropertyTest {
                                   @ForAll @IntRange(min = 1, max = 100) int commitIntervalMsAvg,
                                   @ForAll @IntRange(min = 10, max = 30) int uploadDurationAvg,
                                   @ForAll @IntRange(min = 5, max = 10) int commitDurationAvg,
+                                  @ForAll @IntRange(min = 5, max = 10) int completeDurationAvg,
                                   @ForAll @IntRange(min = 5, max = 10) int cacheStoreAvg,
                                   @ForAll @IntRange(min = 1, max = 1 * 1024) int maxBufferSize) throws Exception {
         try (final ControlPlane controlPlane = new InMemoryControlPlane(new MockTime(0, 0, 0))) {
             controlPlane.configure(Map.of());
-            test(requestCount, requestIntervalMsAvg, commitIntervalMsAvg, uploadDurationAvg, commitDurationAvg, cacheStoreAvg, maxBufferSize, controlPlane);
+            test(requestCount, requestIntervalMsAvg, commitIntervalMsAvg, uploadDurationAvg, commitDurationAvg, completeDurationAvg, cacheStoreAvg, maxBufferSize, controlPlane);
         }
     }
 
@@ -149,6 +150,7 @@ class WriterPropertyTest {
                                   @ForAll @IntRange(min = 1, max = 100) int commitIntervalMsAvg,
                                   @ForAll @IntRange(min = 10, max = 30) int uploadDurationAvg,
                                   @ForAll @IntRange(min = 5, max = 10) int commitDurationAvg,
+                                  @ForAll @IntRange(min = 5, max = 10) int completeDurationAvg,
                                   @ForAll @IntRange(min = 5, max = 10) int cacheStoreAvg,
                                   @ForAll @IntRange(min = 1, max = 1 * 1024) int maxBufferSize) throws Exception {
         String dbName = "test-" + requestCount
@@ -169,7 +171,7 @@ class WriterPropertyTest {
                 "password", pgContainer.getPassword()
             ));
 
-            test(requestCount, requestIntervalMsAvg, commitIntervalMsAvg, uploadDurationAvg, commitDurationAvg, cacheStoreAvg, maxBufferSize, controlPlane);
+            test(requestCount, requestIntervalMsAvg, commitIntervalMsAvg, uploadDurationAvg, commitDurationAvg, completeDurationAvg, cacheStoreAvg, maxBufferSize, controlPlane);
         }
     }
 
@@ -178,6 +180,7 @@ class WriterPropertyTest {
               final int commitIntervalMsAvg,
               final int uploadDurationAvg,
               final int commitDurationAvg,
+              final int completeDurationAvg,
               final int cacheStoreDurationAvg,
               final int maxBufferSize,
               final ControlPlane controlPlane) throws InterruptedException, ExecutionException, StorageBackendException {
@@ -200,11 +203,19 @@ class WriterPropertyTest {
         );
         final CommitterHandler committerHandler = new CommitterHandler(
             uploaderHandler,
-            new MockExecutorService(),
+            new MockExecutorServiceWithFutureSupport(),
             new Timer("commit",
                 time,
                 Instant.ofEpochMilli(time.milliseconds()),
                 Arbitraries.longs().between(commitDurationAvg - 2, commitDurationAvg + 2))
+        );
+        final CompleterHandler completerHandler = new CompleterHandler(
+                committerHandler,
+                new MockExecutorServiceWithFutureSupport(),
+                new Timer("complete",
+                        time,
+                        Instant.ofEpochMilli(time.milliseconds()),
+                        Arbitraries.longs().between(completeDurationAvg - 2, completeDurationAvg + 2))
         );
         final CacheStoreHandler cacheStoreHandler = new CacheStoreHandler(
                 uploaderHandler,
@@ -226,6 +237,7 @@ class WriterPropertyTest {
             Duration.ZERO,
             uploaderHandler.executorService,
             committerHandler.executorService,
+            completerHandler.executorService,
             cacheStoreHandler.executorService,
             mock(FileCommitterMetrics.class)
         );
@@ -268,6 +280,8 @@ class WriterPropertyTest {
             commitTicker.maybeTick();
             uploaderHandler.maybeRunNext();
             committerHandler.maybeRunNext();
+            completerHandler.maybeRunNext();
+            cacheStoreHandler.maybeRunNext();
             time.sleep(1);
         }
         assertThat(finished).withFailMessage(String.format("Not finished in %d virtual ms", maxTime)).isTrue();
@@ -529,6 +543,11 @@ class WriterPropertyTest {
         private final LinkedBlockingQueue<Future<?>> returnedFutures = new LinkedBlockingQueue<>();
 
         @Override
+        public void execute(final Runnable command) {
+            this.submit(command);
+        }
+
+        @Override
         public Future<?> submit(final Runnable task) {
             return this.submit(() -> {
                 task.run();
@@ -586,11 +605,11 @@ class WriterPropertyTest {
 
     private static class CommitterHandler {
         private final UploaderHandler uploaderHandler;
-        private final MockExecutorService executorService;
+        private final MockExecutorServiceWithFutureSupport executorService;
         private final Timer timer;
 
         private CommitterHandler(final UploaderHandler uploaderHandler,
-                                 final MockExecutorService executorService,
+                                 final MockExecutorServiceWithFutureSupport executorService,
                                  final Timer timer) {
             this.uploaderHandler = uploaderHandler;
             this.executorService = executorService;
@@ -602,6 +621,38 @@ class WriterPropertyTest {
                 return;
             }
             if (!uploaderHandler.oldestFutureIsDone()) {
+                // Otherwise it'd block indefinitely.
+                return;
+            }
+            executorService.runNextIfExists();
+        }
+
+        boolean oldestFutureIsDone() {
+            return uploaderHandler.oldestFutureIsDone()
+                    && Optional.ofNullable(executorService.returnedFutures.peek())
+                    .map(Future::isDone)
+                    .orElse(true);
+        }
+    }
+
+    private static class CompleterHandler {
+        private final CommitterHandler committerHandler;
+        private final MockExecutorService executorService;
+        private final Timer timer;
+
+        private CompleterHandler(final CommitterHandler committerHandler,
+                                 final MockExecutorService executorService,
+                                 final Timer timer) {
+            this.committerHandler = committerHandler;
+            this.executorService = executorService;
+            this.timer = timer;
+        }
+
+        void maybeRunNext() throws InterruptedException {
+            if (!timer.happensNow()) {
+                return;
+            }
+            if (!committerHandler.oldestFutureIsDone()) {
                 // Otherwise it'd block indefinitely.
                 return;
             }
