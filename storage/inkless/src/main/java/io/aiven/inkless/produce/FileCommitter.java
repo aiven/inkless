@@ -174,7 +174,12 @@ class FileCommitter implements Closeable {
                         storage,
                         metrics::fileCommitFinished
                 );
-                commitFuture = executorServiceCommit.submit(commitJob);
+                commitFuture = CompletableFuture.supplyAsync(commitJob, executorServiceCommit)
+                        .whenComplete((result, error) -> {
+                            totalFilesInProgress.addAndGet(-1);
+                            totalBytesInProgress.addAndGet(-file.size());
+                            metrics.fileFinished(file.start(), uploadAndCommitStart);
+                        });
 
 
                 final CacheStoreJob cacheStoreJob = new CacheStoreJob(
@@ -185,12 +190,7 @@ class FileCommitter implements Closeable {
                         uploadFuture,
                         metrics::cacheStoreFinished
                 );
-                CompletableFuture.runAsync(cacheStoreJob, executorServiceCacheStore)
-                    .whenComplete((result, error) -> {
-                        totalFilesInProgress.addAndGet(-1);
-                        totalBytesInProgress.addAndGet(-file.size());
-                        metrics.fileFinished(file.start(), uploadAndCommitStart);
-                    });
+                executorServiceCacheStore.submit(cacheStoreJob);
             }
             final AppendCompleterJob completerJob = new AppendCompleterJob(file, commitFuture, time, metrics::appendCompletionFinished);
             executorServiceComplete.submit(completerJob);

@@ -128,7 +128,7 @@ class FileCommitJobTest {
         final CompletableFuture<ObjectKey> uploadFuture = CompletableFuture.completedFuture(OBJECT_KEY);
         final FileCommitJob job = new FileCommitJob(BROKER_ID, file, uploadFuture, time, controlPlane, objectDeleter, commitTimeDurationCallback);
 
-        job.call();
+        job.get();
 
         verify(commitTimeDurationCallback).accept(eq(10L));
     }
@@ -152,7 +152,7 @@ class FileCommitJobTest {
         final CompletableFuture<ObjectKey> uploadFuture = CompletableFuture.completedFuture(OBJECT_KEY);
         final FileCommitJob job = new FileCommitJob(BROKER_ID, file, uploadFuture, time, controlPlane, objectDeleter, commitTimeDurationCallback);
 
-        job.call();
+        job.get();
 
         verify(commitTimeDurationCallback).accept(eq(10L));
     }
@@ -170,7 +170,7 @@ class FileCommitJobTest {
         final CompletableFuture<ObjectKey> uploadFuture = CompletableFuture.failedFuture(new StorageBackendException("test"));
         final FileCommitJob job = new FileCommitJob(BROKER_ID, file, uploadFuture, time, controlPlane, objectDeleter, commitTimeDurationCallback);
 
-        Assert.assertThrows(RuntimeException.class, job::call);
+        Assert.assertThrows(RuntimeException.class, job::get);
 
         verify(commitTimeDurationCallback).accept(eq(10L));
     }
@@ -191,7 +191,7 @@ class FileCommitJobTest {
         final CompletableFuture<ObjectKey> uploadFuture = CompletableFuture.completedFuture(OBJECT_KEY);
         final FileCommitJob job = new FileCommitJob(BROKER_ID, file, uploadFuture, time, controlPlane, objectDeleter, commitTimeDurationCallback);
 
-        Assert.assertThrows(RuntimeException.class, job::call);
+        Assert.assertThrows(RuntimeException.class, job::get);
 
         verify(objectDeleter, times(isSafeToDelete ? 1 : 0)).delete(eq(OBJECT_KEY));
     }
@@ -210,7 +210,7 @@ class FileCommitJobTest {
         final CompletableFuture<ObjectKey> uploadFuture = CompletableFuture.completedFuture(OBJECT_KEY);
         final FileCommitJob job = new FileCommitJob(BROKER_ID, file, uploadFuture, time, controlPlane, objectDeleter, commitTimeDurationCallback);
 
-        Assert.assertThrows(RuntimeException.class, job::call);
+        Assert.assertThrows(RuntimeException.class, job::get);
 
         verify(objectDeleter, never()).delete(eq(OBJECT_KEY));
     }

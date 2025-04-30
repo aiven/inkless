@@ -27,6 +27,7 @@ import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
 import java.util.function.Consumer;
+import java.util.function.Supplier;
 
 import io.aiven.inkless.TimeUtils;
 import io.aiven.inkless.common.ObjectFormat;
@@ -42,7 +43,7 @@ import io.aiven.inkless.storage_backend.common.StorageBackendException;
  *
  * <p>If the file was uploaded successfully, commit to the control plane happens. Otherwise, it doesn't.
  */
-class FileCommitJob implements Callable<List<CommitBatchResponse>> {
+class FileCommitJob implements Supplier<List<CommitBatchResponse>> {
     private static final Logger LOGGER = LoggerFactory.getLogger(FileCommitJob.class);
 
     private final int brokerId;
@@ -70,9 +71,9 @@ class FileCommitJob implements Callable<List<CommitBatchResponse>> {
     }
 
     @Override
-    public List<CommitBatchResponse> call() throws Exception {
+    public List<CommitBatchResponse> get() {
         final UploadResult uploadResult = waitForUpload();
-        return TimeUtils.measureDurationMs(time, () -> doCommit(uploadResult), durationCallback);
+        return TimeUtils.measureDurationMsSupplier(time, () -> doCommit(uploadResult), durationCallback);
     }
 
     private UploadResult waitForUpload() {

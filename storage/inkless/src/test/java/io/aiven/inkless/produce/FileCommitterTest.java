@@ -17,6 +17,7 @@
  */
 package io.aiven.inkless.produce;
 
+import io.aiven.inkless.control_plane.CommitBatchResponse;
 import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.record.MemoryRecords;
@@ -36,6 +37,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Callable;
@@ -111,6 +113,8 @@ class FileCommitterTest {
     ArgumentCaptor<Callable<ObjectKey>> uploadCallableCaptor;
     @Captor
     ArgumentCaptor<Runnable> commitRunnableCaptor;
+    @Captor
+    ArgumentCaptor<Runnable> completeRunnableCaptor;
 
     @Test
     @SuppressWarnings("unchecked")
@@ -151,6 +155,11 @@ class FileCommitterTest {
         final Runnable commitRunnable = commitRunnableCaptor.getValue();
 
         commitRunnable.run();
+
+        verify(executorServiceComplete).submit(completeRunnableCaptor.capture());
+        final Runnable completeRunnable = completeRunnableCaptor.getValue();
+
+        completeRunnable.run();
 
         assertThat(committer.totalFilesInProgress()).isZero();
         assertThat(committer.totalBytesInProgress()).isZero();
@@ -197,6 +206,11 @@ class FileCommitterTest {
         final Runnable commitRunnable = commitRunnableCaptor.getValue();
 
         commitRunnable.run();
+
+        verify(executorServiceComplete).submit(completeRunnableCaptor.capture());
+        final Runnable completeRunnable = completeRunnableCaptor.getValue();
+
+        completeRunnable.run();
 
         assertThat(committer.totalFilesInProgress()).isZero();
         assertThat(committer.totalBytesInProgress()).isZero();

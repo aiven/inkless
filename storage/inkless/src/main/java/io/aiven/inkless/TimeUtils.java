@@ -23,6 +23,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.concurrent.Callable;
 import java.util.function.Consumer;
+import java.util.function.Supplier;
 
 public class TimeUtils {
     private static final long NANOS_PER_SECOND = 1_000_000_000L;
@@ -39,6 +40,19 @@ public class TimeUtils {
     public static Instant durationMeasurementNow(final Time time) {
         final long nowNano = time.nanoseconds();
         return Instant.ofEpochSecond(nowNano / NANOS_PER_SECOND, nowNano % NANOS_PER_SECOND);
+    }
+
+    /**
+     * Measure the duration of a {@link Callable}.
+     */
+    public static <V> V measureDurationMsSupplier(final Time time, final Supplier<V> f, final Consumer<Long> callback) {
+        final Instant start = TimeUtils.durationMeasurementNow(time);
+        try {
+            return f.get();
+        } finally {
+            final Instant now = TimeUtils.durationMeasurementNow(time);
+            callback.accept(Duration.between(start, now).toMillis());
+        }
     }
 
     /**
