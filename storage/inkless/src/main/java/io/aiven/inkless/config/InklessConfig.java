@@ -21,6 +21,7 @@ import org.apache.kafka.common.config.AbstractConfig;
 import org.apache.kafka.common.config.ConfigDef;
 import org.apache.kafka.common.utils.Utils;
 
+import java.nio.file.Path;
 import java.time.Duration;
 import java.util.Map;
 
@@ -87,6 +88,10 @@ public class InklessConfig extends AbstractConfig {
     public static final String FILE_MERGER_INTERVAL_MS_CONFIG = "file.merger.interval.ms";
     private static final String FILE_MERGER_INTERVAL_MS_DOC = "The interval with which to merge files.";
     private static final int FILE_MERGER_INTERVAL_MS_DEFAULT = 60 * 1000;  // 1 minute
+
+    public static final String FILE_MERGER_TEMP_DIR_CONFIG = "file.merger.temp.dir";
+    private static final String FILE_MERGER_TEMP_DIR_DOC = "The temporary directory for file merging.";
+    private static final String FILE_MERGER_TEMP_DIR_DEFAULT = "/tmp/inkless/merger";
 
     public static ConfigDef configDef() {
         final ConfigDef configDef = new ConfigDef();
@@ -194,6 +199,14 @@ public class InklessConfig extends AbstractConfig {
             ConfigDef.Importance.LOW,
             FILE_MERGER_INTERVAL_MS_DOC
         );
+        configDef.define(
+            FILE_MERGER_TEMP_DIR_CONFIG,
+            ConfigDef.Type.STRING,
+            FILE_MERGER_TEMP_DIR_DEFAULT,
+            new ConfigDef.NonNullValidator(),
+            ConfigDef.Importance.LOW,
+            FILE_MERGER_TEMP_DIR_DOC
+        );
 
         return configDef;
     }
@@ -259,5 +272,10 @@ public class InklessConfig extends AbstractConfig {
 
     public Duration fileMergerInterval() {
         return Duration.ofMillis(getInt(FILE_MERGER_INTERVAL_MS_CONFIG));
+    }
+
+    public Path fileMergeWorkDir() {
+        final String path = getString(FILE_MERGER_TEMP_DIR_CONFIG);
+        return Path.of(path);
     }
 }
