@@ -17,22 +17,17 @@
  */
 package io.aiven.inkless.produce;
 
-import org.apache.kafka.common.TopicPartition;
-import org.apache.kafka.common.protocol.Errors;
-import org.apache.kafka.common.record.RecordBatch;
-import org.apache.kafka.common.record.TimestampType;
-import org.apache.kafka.common.requests.ProduceResponse;
 import org.apache.kafka.common.utils.Time;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.util.HashMap;
-import java.util.Map;
+import java.util.List;
+import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
 import java.util.function.Consumer;
-import java.util.stream.Collectors;
+import java.util.function.Supplier;
 
 import io.aiven.inkless.TimeUtils;
 import io.aiven.inkless.common.ObjectFormat;
@@ -48,7 +43,7 @@ import io.aiven.inkless.storage_backend.common.StorageBackendException;
  *
  * <p>If the file was uploaded successfully, commit to the control plane happens. Otherwise, it doesn't.
  */
-class FileCommitJob implements Runnable {
+class FileCommitJob implements Callable<List<CommitBatchResponse>> {
     private static final Logger LOGGER = LoggerFactory.getLogger(FileCommitJob.class);
 
     private final int brokerId;
@@ -76,9 +71,9 @@ class FileCommitJob implements Runnable {
     }
 
     @Override
-    public void run() {
+    public List<CommitBatchResponse> call() throws Exception {
         final UploadResult uploadResult = waitForUpload();
-        TimeUtils.measureDurationMs(time, () -> doCommit(uploadResult), durationCallback);
+        return TimeUtils.measureDurationMs(time, () -> doCommit(uploadResult), durationCallback);
     }
 
     private UploadResult waitForUpload() {
@@ -95,22 +90,24 @@ class FileCommitJob implements Runnable {
         }
     }
 
-    private void doCommit(final UploadResult result) {
+    private List<CommitBatchResponse> doCommit(final UploadResult result) {
         if (result.objectKey != null) {
             LOGGER.debug("Uploaded {} successfully, committing", result.objectKey);
             try {
-                finishCommitSuccessfully(result.objectKey);
+                final var commitBatchResponses = controlPlane.commitFile(result.objectKey.value(), ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, brokerId, file.size(), file.commitBatchRequests());
+                LOGGER.debug("Committed successfully");
+                return commitBatchResponses;
             } catch (final Exception e) {
                 LOGGER.error("Commit failed", e);
                 if (e instanceof ControlPlaneException) {
                     // only attempt to remove the uploaded file if it is a control plane error
                     tryDeleteFile(result.objectKey(), e);
                 }
-                finishCommitWithError();
+                throw e;
             }
         } else {
             LOGGER.error("Upload failed: {}", result.uploadError.getMessage());
-            finishCommitWithError();
+            throw new RuntimeException("File not uploaded", result.uploadError);
         }
     }
 
@@ -132,63 +129,6 @@ class FileCommitJob implements Runnable {
             }
         } else {
             LOGGER.error("Error commiting data, but not removing the uploaded file {} as it is not safe", objectKey, e);
-        }
-    }
-
-    private void finishCommitSuccessfully(final ObjectKey objectKey) {
-        final var commitBatchResponses = controlPlane.commitFile(objectKey.value(), ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, brokerId, file.size(), file.commitBatchRequests());
-        LOGGER.debug("Committed successfully");
-
-        // Each request must have a response.
-        final Map<Integer, Map<TopicPartition, ProduceResponse.PartitionResponse>> resultsPerRequest = file
-            .awaitingFuturesByRequest()
-            .entrySet().stream()
-            .collect(Collectors.toMap(Map.Entry::getKey, ignore -> new HashMap<>()));
-
-        for (int i = 0; i < commitBatchResponses.size(); i++) {
-            final var commitBatchRequest = file.commitBatchRequests().get(i);
-            final var result = resultsPerRequest.computeIfAbsent(commitBatchRequest.requestId(), ignore -> new HashMap<>());
-            final var commitBatchResponse = commitBatchResponses.get(i);
-
-            result.put(
-                commitBatchRequest.topicIdPartition().topicPartition(),
-                partitionResponse(commitBatchResponse)
-            );
-            result.putAll(file.invalidResponseByRequest().getOrDefault(commitBatchRequest.requestId(), Map.of()));
-        }
-
-        for (final var entry : file.awaitingFuturesByRequest().entrySet()) {
-            final var result = resultsPerRequest.get(entry.getKey());
-            entry.getValue().complete(result);
-        }
-    }
-
-    private static ProduceResponse.PartitionResponse partitionResponse(CommitBatchResponse response) {
-        // Producer expects logAppendTime to be NO_TIMESTAMP if the message timestamp type is CREATE_TIME.
-        final long logAppendTime;
-        if (response.request() != null) {
-            logAppendTime = response.request().messageTimestampType() == TimestampType.LOG_APPEND_TIME
-                ? response.logAppendTime()
-                : RecordBatch.NO_TIMESTAMP;
-        } else {
-            logAppendTime = RecordBatch.NO_TIMESTAMP;
-        }
-        return new ProduceResponse.PartitionResponse(
-            response.errors(),
-            response.assignedBaseOffset(),
-            logAppendTime,
-            response.logStartOffset()
-        );
-    }
-
-    private void finishCommitWithError() {
-        for (final var entry : file.awaitingFuturesByRequest().entrySet()) {
-            final var originalRequest = file.originalRequests().get(entry.getKey());
-            final var result = originalRequest.entrySet().stream()
-                .collect(Collectors.toMap(
-                    kv -> kv.getKey().topicPartition(),
-                    ignore -> new ProduceResponse.PartitionResponse(Errors.KAFKA_STORAGE_ERROR, "Error commiting data")));
-            entry.getValue().complete(result);
         }
     }
 
