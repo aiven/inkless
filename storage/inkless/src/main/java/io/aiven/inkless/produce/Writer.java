@@ -218,7 +218,13 @@ class Writer implements Closeable {
         this.activeFile = new ActiveFile(time, brokerTopicStats);
 
         try {
-            this.fileCommitter.commit(prevActiveFile.close());
+            final ClosedFile closedFile = prevActiveFile.close();
+            if (closedFile.isEmpty()) {
+                LOGGER.debug("Active file is empty, skipping rotation");
+                return;
+            }
+
+            this.fileCommitter.commit(closedFile);
             // mark metrics that the file is committed
             if (openedAt != null) {
                 writerMetrics.fileRotated(openedAt);

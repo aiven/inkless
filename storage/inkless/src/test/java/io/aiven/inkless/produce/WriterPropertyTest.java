@@ -200,19 +200,11 @@ class WriterPropertyTest {
         );
         final CommitterHandler committerHandler = new CommitterHandler(
             uploaderHandler,
-            new MockExecutorServiceWithFutureSupport(),
+            new MockExecutorService(),
             new Timer("commit",
                 time,
                 Instant.ofEpochMilli(time.milliseconds()),
                 Arbitraries.longs().between(commitDurationAvg - 2, commitDurationAvg + 2))
-        );
-        final CompleterHandler completerHandler = new CompleterHandler(
-                committerHandler,
-                new MockExecutorServiceWithFutureSupport(),
-                new Timer("complete",
-                        time,
-                        Instant.ofEpochMilli(time.milliseconds()),
-                        Arbitraries.longs().between(commitDurationAvg - 2, commitDurationAvg + 2))
         );
         final CacheStoreHandler cacheStoreHandler = new CacheStoreHandler(
                 uploaderHandler,
@@ -234,7 +226,6 @@ class WriterPropertyTest {
             Duration.ZERO,
             uploaderHandler.executorService,
             committerHandler.executorService,
-            completerHandler.executorService,
             cacheStoreHandler.executorService,
             mock(FileCommitterMetrics.class)
         );
@@ -595,11 +586,11 @@ class WriterPropertyTest {
 
     private static class CommitterHandler {
         private final UploaderHandler uploaderHandler;
-        private final MockExecutorServiceWithFutureSupport executorService;
+        private final MockExecutorService executorService;
         private final Timer timer;
 
         private CommitterHandler(final UploaderHandler uploaderHandler,
-                                 final MockExecutorServiceWithFutureSupport executorService,
+                                 final MockExecutorService executorService,
                                  final Timer timer) {
             this.uploaderHandler = uploaderHandler;
             this.executorService = executorService;
@@ -611,37 +602,6 @@ class WriterPropertyTest {
                 return;
             }
             if (!uploaderHandler.oldestFutureIsDone()) {
-                // Otherwise it'd block indefinitely.
-                return;
-            }
-            executorService.runNextIfExists();
-        }
-
-        boolean oldestFutureIsDone() {
-            return Optional.ofNullable(executorService.returnedFutures.peek())
-                    .map(Future::isDone)
-                    .orElse(true);
-        }
-    }
-
-    private static class CompleterHandler {
-        private final CommitterHandler committerHandler;
-        private final MockExecutorService executorService;
-        private final Timer timer;
-
-        private CompleterHandler(final CommitterHandler committerHandler,
-                                 final MockExecutorService executorService,
-                                 final Timer timer) {
-            this.committerHandler = committerHandler;
-            this.executorService = executorService;
-            this.timer = timer;
-        }
-
-        void maybeRunNext() throws InterruptedException {
-            if (!timer.happensNow()) {
-                return;
-            }
-            if (!committerHandler.oldestFutureIsDone()) {
                 // Otherwise it'd block indefinitely.
                 return;
             }
