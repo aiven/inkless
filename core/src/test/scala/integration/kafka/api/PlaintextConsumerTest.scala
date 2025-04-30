@@ -344,7 +344,7 @@ class PlaintextConsumerTest extends BaseConsumerTest {
     val topicName = "testConsumeMessagesWithLogAppendTime"
     val topicProps = new Properties()
     topicProps.setProperty(TopicConfig.MESSAGE_TIMESTAMP_TYPE_CONFIG, "LogAppendTime")
-    createTopic(topicName, 2, topicConfig = topicProps)
+    createTopic(topicName, 2, 2, topicProps)
 
     val startTime = System.currentTimeMillis()
     val numRecords = 50
