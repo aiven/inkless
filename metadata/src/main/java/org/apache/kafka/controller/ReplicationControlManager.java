@@ -70,6 +70,7 @@ import org.apache.kafka.common.message.ListPartitionReassignmentsResponseData.On
 import org.apache.kafka.common.message.ListPartitionReassignmentsResponseData.OngoingTopicReassignment;
 import org.apache.kafka.common.metadata.BrokerRegistrationChangeRecord;
 import org.apache.kafka.common.metadata.ClearElrRecord;
+import org.apache.kafka.common.metadata.ConfigRecord;
 import org.apache.kafka.common.metadata.PartitionChangeRecord;
 import org.apache.kafka.common.metadata.PartitionRecord;
 import org.apache.kafka.common.metadata.RemoveTopicRecord;
@@ -78,6 +79,7 @@ import org.apache.kafka.common.metadata.UnregisterBrokerRecord;
 import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.requests.AlterPartitionRequest;
 import org.apache.kafka.common.requests.ApiError;
+import org.apache.kafka.common.resource.ResourceType;
 import org.apache.kafka.common.utils.LogContext;
 import org.apache.kafka.image.writer.ImageWriterOptions;
 import org.apache.kafka.metadata.BrokerHeartbeatReply;
@@ -729,7 +731,8 @@ public class ReplicationControlManager {
         Map<String, String> creationConfigs = translateCreationConfigs(topic.configs());
         Map<Integer, PartitionRegistration> newParts = new HashMap<>();
 
-        boolean inklessEnabled = Boolean.parseBoolean(creationConfigs.getOrDefault(INKLESS_ENABLE_CONFIG, "" + defaultInklessEnable));
+        boolean inklessEnabled = Boolean.parseBoolean(creationConfigs.getOrDefault(INKLESS_ENABLE_CONFIG, "" + defaultInklessEnable))
+            && !Topic.isInternal(topic.name());
         if (inklessEnabled) {
             if (Math.abs(topic.replicationFactor()) != 1) {
                 return new ApiError(Errors.INVALID_REPLICATION_FACTOR,
@@ -862,9 +865,13 @@ public class ReplicationControlManager {
             configNames.sort(String::compareTo);
             for (String configName : configNames) {
                 ConfigEntry entry = effectiveConfig.get(configName);
+                String value = entry.isSensitive() ? null : entry.value();
+                if (Topic.isInternal(topic.name()) && configName.equals(INKLESS_ENABLE_CONFIG)) {
+                    value = String.valueOf(false);
+                }
                 result.configs().add(new CreateTopicsResponseData.CreatableTopicConfigs().
                     setName(entry.name()).
-                    setValue(entry.isSensitive() ? null : entry.value()).
+                    setValue(value).
                     setReadOnly(entry.isReadOnly()).
                     setConfigSource(KafkaConfigSchema.translateConfigSource(entry.source()).id()).
                     setIsSensitive(entry.isSensitive()));
@@ -880,6 +887,13 @@ public class ReplicationControlManager {
             setName(topic.name()).
             setTopicId(topicId), (short) 0));
         // ConfigRecords go after TopicRecord but before PartitionRecord(s).
+        if (Topic.isInternal(topic.name())) {
+            configRecords.add(new ApiMessageAndVersion(new ConfigRecord()
+                .setName(INKLESS_ENABLE_CONFIG)
+                .setValue("false")
+                .setResourceName(topic.name())
+                .setResourceType(ResourceType.TOPIC.code()), (short) 0));
+        }
         records.addAll(configRecords);
         for (Entry<Integer, PartitionRegistration> partEntry : newParts.entrySet()) {
             int partitionIndex = partEntry.getKey();

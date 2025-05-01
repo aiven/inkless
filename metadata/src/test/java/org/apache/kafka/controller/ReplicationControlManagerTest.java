@@ -28,6 +28,7 @@ import org.apache.kafka.common.errors.InvalidReplicaAssignmentException;
 import org.apache.kafka.common.errors.PolicyViolationException;
 import org.apache.kafka.common.errors.StaleBrokerEpochException;
 import org.apache.kafka.common.errors.UnsupportedVersionException;
+import org.apache.kafka.common.internals.Topic;
 import org.apache.kafka.common.message.AlterPartitionReassignmentsRequestData;
 import org.apache.kafka.common.message.AlterPartitionReassignmentsRequestData.ReassignablePartition;
 import org.apache.kafka.common.message.AlterPartitionReassignmentsRequestData.ReassignableTopic;
@@ -798,6 +799,43 @@ public class ReplicationControlManagerTest {
             replicationControl.createTopics(requestContext, request1, Collections.singleton("baz"));
         assertEquals(Errors.valueOf(expectedError).code(), result1.response().topics().find("baz").errorCode());
         assertEquals(Collections.emptyList(), result1.records());
+    }
+
+    @Test
+    public void testCreateInternalTopicWithInklessEnabled() {
+        ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder().build();
+        ReplicationControlManager replicationControl = ctx.replicationControl;
+        // Given an internal kafka topic with inkless enabled
+        CreateTopicsRequestData request = new CreateTopicsRequestData();
+        CreateTopicsRequestData.CreatableTopicConfigCollection creatableTopicConfigs = new CreateTopicsRequestData.CreatableTopicConfigCollection();
+        creatableTopicConfigs.add(new CreateTopicsRequestData.CreatableTopicConfig()
+            .setName(INKLESS_ENABLE_CONFIG)
+            .setValue("true"));
+        final String internalTopic = Topic.GROUP_METADATA_TOPIC_NAME;
+        request.topics().add(new CreatableTopic().setName(internalTopic).
+            setNumPartitions(-1).setReplicationFactor((short) -1)
+            .setConfigs(creatableTopicConfigs));
+        // Given all brokers unfenced
+        ctx.registerBrokers(0, 1, 2);
+        ctx.unfenceBrokers(0, 1, 2);
+        // When creating an internal topic with inkless enabled, disable it
+        ControllerRequestContext requestContext = anonymousContextFor(ApiKeys.CREATE_TOPICS);
+        ControllerResult<CreateTopicsResponseData> result =
+            replicationControl.createTopics(requestContext, request, Collections.singleton(internalTopic));
+        CreateTopicsResponseData expectedResponse = new CreateTopicsResponseData();
+        // Then the topic creation should fail with TOPIC_ALREADY_EXISTS error
+        expectedResponse.topics().add(
+            new CreatableTopicResult()
+                .setName(internalTopic)
+                .setNumPartitions(1)
+                .setReplicationFactor((short) 3)
+                .setErrorMessage(null).setErrorCode((short) 0)
+                .setTopicId(result.response().topics().find(internalTopic).topicId()));
+        assertEquals(expectedResponse, withoutConfigs(result.response()));
+        assertTrue(result.response().topics().find(internalTopic)
+            .configs()
+            .stream()
+            .noneMatch(c -> c.name().equals(INKLESS_ENABLE_CONFIG)));
     }
 
     @Test
