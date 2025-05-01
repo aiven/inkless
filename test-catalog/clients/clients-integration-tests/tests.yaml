@@ -116,6 +116,8 @@ org.apache.kafka.clients.consumer.ShareConsumerTest:
 - testConfiguredImplicitAcknowledgeExplicitAcknowledgeFails
 - testConsumerCloseInGroupSequential
 - testControlRecordsSkipped
+- testDeliveryCountDifferentBehaviorWhenClosingSessionWithExplicitAcknowledgement
+- testDeliveryCountNotIncreaseAfterSessionClose
 - testExplicitAcknowledgeCommitSuccess
 - testExplicitAcknowledgeReleaseAccept
 - testExplicitAcknowledgeReleaseClose
@@ -149,6 +151,7 @@ org.apache.kafka.clients.consumer.ShareConsumerTest:
 - testShareAutoOffsetResetEarliestAfterLsoMovement
 - testShareAutoOffsetResetMultipleGroupsWithDifferentValue
 - testShareConsumerAfterCoordinatorMovement
+- testShareGroupMaxSizeConfigExceeded
 - testSubscribeAndPollNoRecords
 - testSubscribeOnInvalidTopicThrowsInvalidTopicException
 - testSubscribePollSubscribe
