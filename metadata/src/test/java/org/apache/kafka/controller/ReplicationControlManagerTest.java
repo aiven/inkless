@@ -28,6 +28,7 @@ import org.apache.kafka.common.errors.InvalidReplicaAssignmentException;
 import org.apache.kafka.common.errors.PolicyViolationException;
 import org.apache.kafka.common.errors.StaleBrokerEpochException;
 import org.apache.kafka.common.errors.UnsupportedVersionException;
+import org.apache.kafka.common.internals.Topic;
 import org.apache.kafka.common.message.AlterPartitionReassignmentsRequestData;
 import org.apache.kafka.common.message.AlterPartitionReassignmentsRequestData.ReassignablePartition;
 import org.apache.kafka.common.message.AlterPartitionReassignmentsRequestData.ReassignableTopic;
@@ -178,6 +179,7 @@ public class ReplicationControlManagerTest {
             private MockTime mockTime = new MockTime();
             private boolean isElrEnabled = false;
             private final Map<String, Object> staticConfig = new HashMap<>();
+            private boolean defaultInklessEnable = false;
 
             Builder setCreateTopicPolicy(CreateTopicPolicy createTopicPolicy) {
                 this.createTopicPolicy = Optional.of(createTopicPolicy);
@@ -204,12 +206,18 @@ public class ReplicationControlManagerTest {
                 return this;
             }
 
+            Builder setDefaultInklessEnable(boolean inklessEnable) {
+                this.defaultInklessEnable = inklessEnable;
+                return this;
+            }
+
             ReplicationControlTestContext build() {
                 return new ReplicationControlTestContext(metadataVersion,
                     createTopicPolicy,
                     mockTime,
                     isElrEnabled,
-                    staticConfig);
+                    staticConfig,
+                    defaultInklessEnable);
             }
         }
 
@@ -234,7 +242,8 @@ public class ReplicationControlManagerTest {
             Optional<CreateTopicPolicy> createTopicPolicy,
             MockTime time,
             boolean isElrEnabled,
-            Map<String, Object> staticConfig
+            Map<String, Object> staticConfig,
+            boolean defaultInklessEnable
         ) {
             this.time = time;
             this.featureControl = new FeatureControlManager.Builder().
@@ -276,6 +285,7 @@ public class ReplicationControlManagerTest {
                 setClusterControl(clusterControl).
                 setCreateTopicPolicy(createTopicPolicy).
                 setFeatureControl(featureControl).
+                setDefaultInklessEnable(defaultInklessEnable).
                 build();
             clusterControl.activate();
         }
@@ -798,6 +808,59 @@ public class ReplicationControlManagerTest {
             replicationControl.createTopics(requestContext, request1, Collections.singleton("baz"));
         assertEquals(Errors.valueOf(expectedError).code(), result1.response().topics().find("baz").errorCode());
         assertEquals(Collections.emptyList(), result1.records());
+    }
+
+    @ParameterizedTest
+    @CsvSource({
+        "true,true",
+        "true,false",
+        "false,true"
+    })
+    public void testCreateInternalTopicWithInklessEnabled(boolean logInklessEnableServerConfig, boolean inklessEnableTopicConfig) {
+        // Given a setup with inkless defined at the server level
+        ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+            .setDefaultInklessEnable(logInklessEnableServerConfig)
+            .build();
+        ReplicationControlManager replicationControl = ctx.replicationControl;
+        // Given an internal kafka topic with inkless enabled
+        CreateTopicsRequestData request = new CreateTopicsRequestData();
+        CreateTopicsRequestData.CreatableTopicConfigCollection creatableTopicConfigs = new CreateTopicsRequestData.CreatableTopicConfigCollection();
+        creatableTopicConfigs.add(new CreateTopicsRequestData.CreatableTopicConfig()
+            .setName(INKLESS_ENABLE_CONFIG)
+            .setValue(String.valueOf(inklessEnableTopicConfig)));
+        final String internalTopic = Topic.GROUP_METADATA_TOPIC_NAME;
+        request.topics().add(new CreatableTopic().setName(internalTopic).
+            setNumPartitions(-1).setReplicationFactor((short) -1)
+            .setConfigs(creatableTopicConfigs));
+        // Given all brokers unfenced
+        ctx.registerBrokers(0, 1, 2);
+        ctx.unfenceBrokers(0, 1, 2);
+        // When creating an internal topic with inkless enabled, disable it
+        ControllerRequestContext requestContext = anonymousContextFor(ApiKeys.CREATE_TOPICS);
+        ControllerResult<CreateTopicsResponseData> result =
+            replicationControl.createTopics(requestContext, request, Collections.singleton(internalTopic));
+        CreateTopicsResponseData expectedResponse = new CreateTopicsResponseData();
+        // Then the topic creation should fail with TOPIC_ALREADY_EXISTS error
+        expectedResponse.topics().add(
+            new CreatableTopicResult()
+                .setName(internalTopic)
+                .setNumPartitions(1)
+                .setReplicationFactor((short) 3)
+                .setErrorMessage(null).setErrorCode((short) 0)
+                .setTopicId(result.response().topics().find(internalTopic).topicId()));
+        assertEquals(expectedResponse, withoutConfigs(result.response()));
+        assertTrue(result.response().topics().find(internalTopic)
+            .configs()
+            .stream()
+            .noneMatch(c -> c.name().equals(INKLESS_ENABLE_CONFIG)));
+        final List<ConfigRecord> inklessConfigRecords = result.records().stream()
+            .filter(m -> m.message() instanceof ConfigRecord)
+            .map(m -> (ConfigRecord) m.message())
+            .filter(c -> c.name().equals(INKLESS_ENABLE_CONFIG))
+            .toList();
+        assertTrue(inklessConfigRecords.size() == 1);
+        // Then always inkless is disabled
+        assertTrue(inklessConfigRecords.stream().allMatch(c -> c.value().equals("false")));
     }
 
     @Test

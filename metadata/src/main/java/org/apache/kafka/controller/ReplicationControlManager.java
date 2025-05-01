@@ -70,6 +70,7 @@ import org.apache.kafka.common.message.ListPartitionReassignmentsResponseData.On
 import org.apache.kafka.common.message.ListPartitionReassignmentsResponseData.OngoingTopicReassignment;
 import org.apache.kafka.common.metadata.BrokerRegistrationChangeRecord;
 import org.apache.kafka.common.metadata.ClearElrRecord;
+import org.apache.kafka.common.metadata.ConfigRecord;
 import org.apache.kafka.common.metadata.PartitionChangeRecord;
 import org.apache.kafka.common.metadata.PartitionRecord;
 import org.apache.kafka.common.metadata.RemoveTopicRecord;
@@ -78,6 +79,7 @@ import org.apache.kafka.common.metadata.UnregisterBrokerRecord;
 import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.requests.AlterPartitionRequest;
 import org.apache.kafka.common.requests.ApiError;
+import org.apache.kafka.common.resource.ResourceType;
 import org.apache.kafka.common.utils.LogContext;
 import org.apache.kafka.image.writer.ImageWriterOptions;
 import org.apache.kafka.metadata.BrokerHeartbeatReply;
@@ -729,7 +731,8 @@ public class ReplicationControlManager {
         Map<String, String> creationConfigs = translateCreationConfigs(topic.configs());
         Map<Integer, PartitionRegistration> newParts = new HashMap<>();
 
-        boolean inklessEnabled = Boolean.parseBoolean(creationConfigs.getOrDefault(INKLESS_ENABLE_CONFIG, "" + defaultInklessEnable));
+        boolean inklessEnabled = Boolean.parseBoolean(creationConfigs.getOrDefault(INKLESS_ENABLE_CONFIG, "" + defaultInklessEnable))
+            && !Topic.isInternal(topic.name());
         if (inklessEnabled) {
             if (Math.abs(topic.replicationFactor()) != 1) {
                 return new ApiError(Errors.INVALID_REPLICATION_FACTOR,
@@ -850,6 +853,60 @@ public class ReplicationControlManager {
             return ApiError.fromThrowable(e);
         }
         Uuid topicId = Uuid.randomUuid();
+        final CreatableTopicResult result = buildCreatableTopicResult(topic, authorizedToReturnConfigs, topicId, creationConfigs, numPartitions, newParts);
+        successes.put(topic.name(), result);
+        records.add(new ApiMessageAndVersion(new TopicRecord().
+            setName(topic.name()).
+            setTopicId(topicId), (short) 0));
+        List<ApiMessageAndVersion> validConfigRecords = validConfigRecords(topic, configRecords);
+        // ConfigRecords go after TopicRecord but before PartitionRecord(s).
+        records.addAll(validConfigRecords);
+        for (Entry<Integer, PartitionRegistration> partEntry : newParts.entrySet()) {
+            int partitionIndex = partEntry.getKey();
+            PartitionRegistration info = partEntry.getValue();
+            records.add(info.toRecord(topicId, partitionIndex, new ImageWriterOptions.Builder(featureControl.metadataVersion()).
+                setEligibleLeaderReplicasEnabled(featureControl.isElrFeatureEnabled()).
+                build()));
+        }
+        return ApiError.NONE;
+    }
+
+    private static List<ApiMessageAndVersion> validConfigRecords(CreatableTopic topic, List<ApiMessageAndVersion> configRecords) {
+        final List<ApiMessageAndVersion> validConfigRecord = new ArrayList<>();
+        boolean inklessSet = false;
+        for (ApiMessageAndVersion configRecord: configRecords) {
+            ConfigRecord record = (ConfigRecord) configRecord.message();
+            if (record.name().equals(INKLESS_ENABLE_CONFIG) && Topic.isInternal(topic.name())) {
+                ApiMessageAndVersion message = new ApiMessageAndVersion(new ConfigRecord()
+                    .setName(INKLESS_ENABLE_CONFIG)
+                    .setValue("false")
+                    .setResourceName(topic.name())
+                    .setResourceType(ResourceType.TOPIC.code()), (short) 0);
+                validConfigRecord.add(message);
+
+                inklessSet = true;
+            } else {
+                validConfigRecord.add(configRecord);
+            }
+        }
+        if (Topic.isInternal(topic.name()) && !inklessSet) {
+            configRecords.add(new ApiMessageAndVersion(new ConfigRecord()
+                .setName(INKLESS_ENABLE_CONFIG)
+                .setValue("false")
+                .setResourceName(topic.name())
+                .setResourceType(ResourceType.TOPIC.code()), (short) 0));
+        }
+        return validConfigRecord;
+    }
+
+    private CreatableTopicResult buildCreatableTopicResult(
+        CreatableTopic topic,
+        boolean authorizedToReturnConfigs,
+        Uuid topicId,
+        Map<String, String> creationConfigs,
+        int numPartitions,
+        Map<Integer, PartitionRegistration> newParts
+    ) {
         CreatableTopicResult result = new CreatableTopicResult().
             setName(topic.name()).
             setTopicId(topicId).
@@ -862,9 +919,14 @@ public class ReplicationControlManager {
             configNames.sort(String::compareTo);
             for (String configName : configNames) {
                 ConfigEntry entry = effectiveConfig.get(configName);
+                String value = entry.isSensitive() ? null : entry.value();
+                // If topic is internal, inkless must be disabled
+                if (Topic.isInternal(topic.name()) && configName.equals(INKLESS_ENABLE_CONFIG)) {
+                    value = String.valueOf(false);
+                }
                 result.configs().add(new CreateTopicsResponseData.CreatableTopicConfigs().
                     setName(entry.name()).
-                    setValue(entry.isSensitive() ? null : entry.value()).
+                    setValue(value).
                     setReadOnly(entry.isReadOnly()).
                     setConfigSource(KafkaConfigSchema.translateConfigSource(entry.source()).id()).
                     setIsSensitive(entry.isSensitive()));
@@ -875,20 +937,7 @@ public class ReplicationControlManager {
         } else {
             result.setTopicConfigErrorCode(TOPIC_AUTHORIZATION_FAILED.code());
         }
-        successes.put(topic.name(), result);
-        records.add(new ApiMessageAndVersion(new TopicRecord().
-            setName(topic.name()).
-            setTopicId(topicId), (short) 0));
-        // ConfigRecords go after TopicRecord but before PartitionRecord(s).
-        records.addAll(configRecords);
-        for (Entry<Integer, PartitionRegistration> partEntry : newParts.entrySet()) {
-            int partitionIndex = partEntry.getKey();
-            PartitionRegistration info = partEntry.getValue();
-            records.add(info.toRecord(topicId, partitionIndex, new ImageWriterOptions.Builder(featureControl.metadataVersion()).
-                setEligibleLeaderReplicasEnabled(featureControl.isElrFeatureEnabled()).
-                build()));
-        }
-        return ApiError.NONE;
+        return result;
     }
 
     /**
