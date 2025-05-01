@@ -543,6 +543,7 @@ org.apache.kafka.tools.TransactionsCommandTest:
 - testForceTerminateTransaction
 - testForceTerminateTransactionTransactionalIdRequired
 - testListTransactions
+- testListTransactionsWithTransactionalIdPattern
 - testNewBrokerAbortTransaction
 - testOldBrokerAbortTransactionWithUnknownCoordinatorEpoch
 org.apache.kafka.tools.UserScramCredentialsCommandTest:

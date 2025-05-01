@@ -634,8 +634,11 @@ org.apache.kafka.clients.admin.internals.ListOffsetsHandlerTest:
 - testHandleUnexpectedPartitionErrorResponse
 org.apache.kafka.clients.admin.internals.ListTransactionsHandlerTest:
 - testBuildRequestWithDurationFilter
+- testBuildRequestWithEmptyFilteredTransactionalIdPattern
 - testBuildRequestWithFilteredProducerId
 - testBuildRequestWithFilteredState
+- testBuildRequestWithFilteredTransactionalIdPattern
+- testBuildRequestWithNullFilteredTransactionalIdPattern
 - testBuildRequestWithoutFilters
 - testCoordinatorLoadingErrorIsRetriable
 - testHandleResponseWithFatalErrors

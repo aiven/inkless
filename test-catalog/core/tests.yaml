@@ -990,6 +990,7 @@ kafka.coordinator.transaction.TransactionStateManagerTest:
 - testDeletePartition
 - testIgnoreUnknownRecordType
 - testListTransactionsFiltering
+- testListTransactionsFilteringWithInvalidPattern
 - testListTransactionsWithCoordinatorLoadingInProgress
 - testLoadAndRemoveTransactionsForPartition
 - testLoadTransactionMetadataContainingSegmentEndingWithEmptyBatch
