@@ -1,5 +1,9 @@
 .PHONY: all
-all: clean fmt test pitest
+all: clean fmt test pitest build_release
+
+.PHONY: local_pg
+local_pg:
+	docker compose up -d postgres
 
 .PHONY: local_minio
 local_minio:
