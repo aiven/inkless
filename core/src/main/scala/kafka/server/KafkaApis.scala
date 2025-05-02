@@ -591,8 +591,26 @@ class KafkaApis(val requestChannel: RequestChannel,
           erroneous += topicIdPartition -> FetchResponse.partitionResponse(topicIdPartition, Errors.TOPIC_AUTHORIZATION_FAILED)
         else if (!metadataCache.contains(topicIdPartition.topicPartition))
           erroneous += topicIdPartition -> FetchResponse.partitionResponse(topicIdPartition, Errors.UNKNOWN_TOPIC_OR_PARTITION)
-        else
-          interesting += topicIdPartition -> data
+        else {
+          // Rebuild topicIdPartition based on the actual topic id if zero is found
+          // This is needed for Inkless topic as topic id is required
+          val validTopicIdPartition = if (topicIdPartition.topicId == Uuid.ZERO_UUID && topicIdPartition.topic != null) {
+            if (inklessSharedState.exists(_.metadata().isInklessTopic(topicIdPartition.topic))) {
+              val topicId = metadataCache.getTopicId(topicIdPartition.topic)
+              if (topicId != Uuid.ZERO_UUID) {
+                new TopicIdPartition(topicId, topicIdPartition.topicPartition)
+              } else {
+                topicIdPartition
+              }
+            } else {
+              topicIdPartition
+            }
+          } else {
+            topicIdPartition
+          }
+
+          interesting += validTopicIdPartition -> data
+        }
       }
     }
 
