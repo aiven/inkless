@@ -20,6 +20,7 @@ package io.aiven.inkless.control_plane.postgres;
 import org.apache.kafka.common.utils.Time;
 
 import org.jooq.DSLContext;
+import org.jooq.generated.enums.FileStateT;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -29,7 +30,6 @@ import java.util.concurrent.Callable;
 import io.aiven.inkless.control_plane.FileToDelete;
 
 import static org.jooq.generated.Tables.FILES;
-import static org.jooq.generated.Tables.FILES_TO_DELETE;
 
 public class FindFilesToDeleteJob implements Callable<List<FileToDelete>> {
     private static final Logger LOGGER = LoggerFactory.getLogger(FindFilesToDeleteJob.class);
@@ -56,14 +56,13 @@ public class FindFilesToDeleteJob implements Callable<List<FileToDelete>> {
         final var fetchResult = jooqCtx.select(
                 FILES.FILE_ID,
                 FILES.OBJECT_KEY,
-                FILES_TO_DELETE.MARKED_FOR_DELETION_AT
-            ).from(FILES_TO_DELETE)
-            .innerJoin(FILES)
-            .using(FILES.FILE_ID)
+                FILES.MARKED_FOR_DELETION_AT
+            ).from(FILES)
+            .where(FILES.STATE.eq(FileStateT.deleting))
             .fetchStream();
         return fetchResult.map(r -> new FileToDelete(
                 r.get(FILES.OBJECT_KEY),
-                r.get(FILES_TO_DELETE.MARKED_FOR_DELETION_AT)
+                r.get(FILES.MARKED_FOR_DELETION_AT)
             ))
             .toList();
     }

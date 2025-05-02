@@ -25,7 +25,6 @@ import org.jooq.Record;
 import org.jooq.SQLDialect;
 import org.jooq.generated.tables.records.BatchesRecord;
 import org.jooq.generated.tables.records.FilesRecord;
-import org.jooq.generated.tables.records.FilesToDeleteRecord;
 import org.jooq.generated.tables.records.LogsRecord;
 import org.jooq.impl.DSL;
 import org.jooq.impl.TableImpl;
@@ -37,7 +36,6 @@ import java.util.stream.Collectors;
 
 import static org.jooq.generated.Tables.BATCHES;
 import static org.jooq.generated.Tables.FILES;
-import static org.jooq.generated.Tables.FILES_TO_DELETE;
 import static org.jooq.generated.Tables.LOGS;
 import static org.jooq.impl.DSL.asterisk;
 
@@ -48,10 +46,6 @@ public class DBUtils {
 
     static Set<FilesRecord> getAllFiles(final HikariDataSource hikariDataSource) {
         return getAll(hikariDataSource, FILES, FilesRecord.class);
-    }
-
-    static Set<FilesToDeleteRecord> getAllFilesToDelete(final HikariDataSource hikariDataSource) {
-        return getAll(hikariDataSource, FILES_TO_DELETE, FilesToDeleteRecord.class);
     }
 
     static Set<BatchesRecord> getAllBatches(final HikariDataSource hikariDataSource) {

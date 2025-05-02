@@ -76,15 +76,12 @@ CREATE TABLE files (
     state file_state_t NOT NULL,
     uploader_broker_id broker_id_t,
     committed_at TIMESTAMP WITH TIME ZONE,
+    marked_for_deletion_at TIMESTAMP WITH TIME ZONE,
     size byte_size_t,
     used_size byte_size_t
 );
 
-CREATE TABLE files_to_delete (
-    file_id BIGINT PRIMARY KEY,
-    marked_for_deletion_at TIMESTAMP WITH TIME ZONE,
-    CONSTRAINT fk_files_to_delete_files FOREIGN KEY (file_id) REFERENCES files(file_id) ON DELETE RESTRICT ON UPDATE CASCADE
-);
+CREATE INDEX files_by_state_only_deleting_idx ON files (state) WHERE state = 'deleting';
 
 CREATE TABLE batches (
     batch_id BIGSERIAL PRIMARY KEY,
@@ -447,19 +444,10 @@ RETURNS VOID LANGUAGE plpgsql VOLATILE AS $$
 DECLARE
     file RECORD;
 BEGIN
-    -- Lock the files row first
-    SELECT * FROM files
-    WHERE file_id = arg_file_id
-    FOR UPDATE
-    INTO file;
-
     UPDATE files
-    SET state = 'deleting'
+    SET state = 'deleting',
+        marked_for_deletion_at = now
     WHERE file_id = arg_file_id;
-
-    INSERT INTO files_to_delete(file_id, marked_for_deletion_at)
-    VALUES (arg_file_id, now)
-    ON CONFLICT (file_id) DO NOTHING;
 END;
 $$
 ;
@@ -479,9 +467,6 @@ BEGIN
         FOR UPDATE
     LOOP
         DELETE FROM file_merge_work_item_files
-        WHERE file_id = file.file_id;
-
-        DELETE FROM files_to_delete
         WHERE file_id = file.file_id;
 
         DELETE FROM files
@@ -916,11 +901,6 @@ BEGIN
         SELECT file_id
         FROM file_merge_work_item_files AS f
         WHERE work_item_id = existing_work_item_id
-            AND NOT EXISTS (
-                SELECT 1
-                FROM files_to_delete
-                WHERE file_id = f.file_id
-            )
     LOOP
         PERFORM mark_file_to_delete_v1(now, work_item_file.file_id);
     END LOOP;
