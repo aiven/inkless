@@ -71,13 +71,13 @@ class LogSelectQuery {
 
         SelectConditionStep<Record5<Uuid, Integer, String, Long, Long>> selectConditional = null;
         for (final TopicIdPartition topicIdPartition : topicIdAndPartitions) {
-            final Condition topicIdCondition = LOGS.TOPIC_ID.eq(topicIdPartition.topicId());
+            final Condition topicCondition = LOGS.TOPIC_NAME.eq(topicIdPartition.topic());
             final Condition partitionCondition = LOGS.PARTITION.eq(topicIdPartition.partition());
 
             if (selectConditional == null) {
-                selectConditional = select.where(topicIdCondition.and(partitionCondition));
+                selectConditional = select.where(topicCondition.and(partitionCondition));
             } else {
-                selectConditional = selectConditional.or(topicIdCondition.and(partitionCondition));
+                selectConditional = selectConditional.or(topicCondition.and(partitionCondition));
             }
         }
 
