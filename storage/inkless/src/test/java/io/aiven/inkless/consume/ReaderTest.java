@@ -40,6 +40,7 @@ import io.aiven.inkless.cache.ObjectCache;
 import io.aiven.inkless.common.ObjectKey;
 import io.aiven.inkless.common.ObjectKeyCreator;
 import io.aiven.inkless.control_plane.ControlPlane;
+import io.aiven.inkless.control_plane.MetadataView;
 import io.aiven.inkless.storage_backend.common.ObjectFetcher;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -58,6 +59,8 @@ public class ReaderTest {
     @Mock
     private ControlPlane controlPlane;
     @Mock
+    private MetadataView metadataView;
+    @Mock
     private ObjectFetcher objectFetcher;
     @Mock
     private ExecutorService metadataExecutor;
@@ -75,7 +78,7 @@ public class ReaderTest {
 
     @BeforeEach
     public void setup() {
-        reader = new Reader(time, OBJECT_KEY_CREATOR, KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, controlPlane, objectFetcher, metadataExecutor, fetchPlannerExecutor, dataExecutor, fetchCompleterExecutor);
+        reader = new Reader(time, OBJECT_KEY_CREATOR, KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, controlPlane, metadataView, objectFetcher, metadataExecutor, fetchPlannerExecutor, dataExecutor, fetchCompleterExecutor);
     }
 
     @Test
