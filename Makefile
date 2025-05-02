@@ -1,5 +1,5 @@
 .PHONY: all
-all: clean fmt test pitest
+all: clean fmt test pitest build_release
 
 .PHONY: local_pg
 local_pg:
