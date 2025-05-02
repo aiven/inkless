@@ -1,6 +1,10 @@
 .PHONY: all
 all: clean fmt test pitest
 
+.PHONY: local_pg
+local_pg:
+	docker compose up -d postgres
+
 .PHONY: local_minio
 local_minio:
 	docker compose -f docker-compose.yml -f docker-compose.minio.yml up -d create_bucket
