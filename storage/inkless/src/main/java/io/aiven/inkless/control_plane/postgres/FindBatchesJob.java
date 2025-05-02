@@ -18,6 +18,7 @@
 package io.aiven.inkless.control_plane.postgres;
 
 import org.apache.kafka.common.TopicIdPartition;
+import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.utils.Time;
 
 import org.jooq.Configuration;
@@ -28,6 +29,7 @@ import org.slf4j.LoggerFactory;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.Callable;
 import java.util.function.Consumer;
 import java.util.function.Function;
@@ -82,9 +84,26 @@ class FindBatchesJob implements Callable<List<FindBatchResponse>> {
             final Map<TopicIdPartition, LogEntity> logInfos = getLogInfos(context);
             final List<FindBatchResponse> result = new ArrayList<>();
             for (final FindBatchRequest request : requests) {
-                result.add(
-                    findBatchPerPartition(context, request, logInfos.get(request.topicIdPartition()))
-                );
+                TopicPartition requestTopicPartition = request.topicIdPartition().topicPartition();
+
+                List<TopicIdPartition> topicIdPartitions = logInfos.keySet()
+                        .stream()
+                        .filter(topicIdPartition -> topicIdPartition.topicPartition().equals(requestTopicPartition))
+                        .toList();
+
+                if (topicIdPartitions.isEmpty()) {
+                    result.add(FindBatchResponse.unknownTopicOrPartition());
+                } else {
+                    if (topicIdPartitions.size() > 1) {
+                        LOGGER.warn("Multiple topicIdPartitions found for {}: {}", requestTopicPartition, topicIdPartitions);
+                        result.add(FindBatchResponse.unknownServerError());
+                    }
+                    TopicIdPartition realKey = topicIdPartitions.get(0);
+                    FindBatchRequest patchedRequest = new FindBatchRequest(realKey, request.offset(), request.maxPartitionFetchBytes());
+                    result.add(
+                            findBatchPerPartition(context, patchedRequest, logInfos.get(realKey))
+                    );
+                }
             }
             return result;
         });
