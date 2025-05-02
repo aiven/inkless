@@ -44,6 +44,7 @@ import io.aiven.inkless.control_plane.BatchMetadata;
 import io.aiven.inkless.control_plane.ControlPlane;
 import io.aiven.inkless.control_plane.FindBatchRequest;
 import io.aiven.inkless.control_plane.FindBatchResponse;
+import io.aiven.inkless.control_plane.MetadataView;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.anyInt;
@@ -59,6 +60,8 @@ public class FindBatchesJobTest {
     private ControlPlane controlPlane;
     @Mock
     private FetchParams params;
+    @Mock
+    private MetadataView metadataView;
 
     @Captor
     ArgumentCaptor<List<FindBatchRequest>> requestCaptor;
@@ -81,7 +84,7 @@ public class FindBatchesJobTest {
                 new BatchInfo(1L, OBJECT_KEY_MAIN_PART, BatchMetadata.of(partition0, 0, 10, 0, 0, logAppendTimestamp, maxBatchTimestamp, TimestampType.CREATE_TIME))
             ), logStartOffset, highWatermark)
         );
-        FindBatchesJob job = new FindBatchesJob(time, controlPlane, params, fetchInfos, durationMs -> {});
+        FindBatchesJob job = new FindBatchesJob(time, controlPlane, metadataView, params, fetchInfos, durationMs -> {});
         when(controlPlane.findBatches(requestCaptor.capture(), anyInt())).thenReturn(new ArrayList<>(coordinates.values()));
         Map<TopicIdPartition, FindBatchResponse> result = job.call();
 

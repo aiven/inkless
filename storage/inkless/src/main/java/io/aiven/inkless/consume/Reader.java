@@ -37,6 +37,7 @@ import io.aiven.inkless.cache.ObjectCache;
 import io.aiven.inkless.common.InklessThreadFactory;
 import io.aiven.inkless.common.ObjectKeyCreator;
 import io.aiven.inkless.control_plane.ControlPlane;
+import io.aiven.inkless.control_plane.MetadataView;
 import io.aiven.inkless.storage_backend.common.ObjectFetcher;
 
 public class Reader implements AutoCloseable {
@@ -47,6 +48,7 @@ public class Reader implements AutoCloseable {
     private final KeyAlignmentStrategy keyAlignmentStrategy;
     private final ObjectCache cache;
     private final ControlPlane controlPlane;
+    private final MetadataView metadataView;
     private final ObjectFetcher objectFetcher;
     private final ExecutorService metadataExecutor;
     private final ExecutorService fetchPlannerExecutor;
@@ -59,6 +61,7 @@ public class Reader implements AutoCloseable {
                   KeyAlignmentStrategy keyAlignmentStrategy,
                   ObjectCache cache,
                   ControlPlane controlPlane,
+                    MetadataView metadataView,
                   ObjectFetcher objectFetcher) {
         this(
             time,
@@ -66,6 +69,7 @@ public class Reader implements AutoCloseable {
             keyAlignmentStrategy,
             cache,
             controlPlane,
+            metadataView,
             objectFetcher,
             Executors.newCachedThreadPool(new InklessThreadFactory("inkless-fetch-metadata-", false)),
             Executors.newCachedThreadPool(new InklessThreadFactory("inkless-fetch-planner-", false)),
@@ -76,22 +80,24 @@ public class Reader implements AutoCloseable {
 
 
     public Reader(
-            Time time,
-            ObjectKeyCreator objectKeyCreator,
-            KeyAlignmentStrategy keyAlignmentStrategy,
-            ObjectCache cache,
-            ControlPlane controlPlane,
-            ObjectFetcher objectFetcher,
-            ExecutorService metadataExecutor,
-            ExecutorService fetchPlannerExecutor,
-            ExecutorService dataExecutor,
-            ExecutorService fetchCompleterExecutor
+        Time time,
+        ObjectKeyCreator objectKeyCreator,
+        KeyAlignmentStrategy keyAlignmentStrategy,
+        ObjectCache cache,
+        ControlPlane controlPlane,
+        MetadataView metadataView,
+        ObjectFetcher objectFetcher,
+        ExecutorService metadataExecutor,
+        ExecutorService fetchPlannerExecutor,
+        ExecutorService dataExecutor,
+        ExecutorService fetchCompleterExecutor
     ) {
         this.time = time;
         this.objectKeyCreator = objectKeyCreator;
         this.keyAlignmentStrategy = keyAlignmentStrategy;
         this.cache = cache;
         this.controlPlane = controlPlane;
+        this.metadataView = metadataView;
         this.objectFetcher = objectFetcher;
         this.metadataExecutor = metadataExecutor;
         this.fetchPlannerExecutor = fetchPlannerExecutor;
@@ -109,6 +115,7 @@ public class Reader implements AutoCloseable {
             new FindBatchesJob(
                 time,
                 controlPlane,
+                metadataView,
                 params,
                 fetchInfos,
                 fetchMetrics::findBatchesFinished
