@@ -667,6 +667,11 @@ org.apache.kafka.clients.admin.internals.RemoveMembersFromConsumerGroupHandlerTe
 - testRetriableHandleResponse
 - testSuccessfulHandleResponse
 - testUnmappedHandleResponse
+org.apache.kafka.clients.consumer.CloseOptionsTest:
+- operationShouldHaveDefaultValue
+- operationShouldNotBeNull
+- timeoutCouldBeNull
+- timeoutShouldBeDefaultEmpty
 org.apache.kafka.clients.consumer.ConsumerConfigTest:
 - ensureDefaultThrowOnUnsupportedStableFlagToFalse
 - testAppendDeserializerToConfig
