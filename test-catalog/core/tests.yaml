@@ -452,6 +452,7 @@ kafka.api.PlaintextConsumerTest:
 - testInterceptorsWithWrongKeyValue
 - testListTopics
 - testNullGroupIdNotSupportedIfCommitting
+- testOffsetRelatedWhenTimeoutZero
 - testPartitionPauseAndResume
 - testPartitionsFor
 - testPartitionsForAutoCreate
