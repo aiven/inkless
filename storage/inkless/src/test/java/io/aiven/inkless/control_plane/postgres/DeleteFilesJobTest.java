@@ -25,7 +25,6 @@ import org.apache.kafka.common.utils.Time;
 
 import org.jooq.generated.enums.FileStateT;
 import org.jooq.generated.tables.records.FilesRecord;
-import org.jooq.generated.tables.records.FilesToDeleteRecord;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -147,21 +146,17 @@ class DeleteFilesJobTest {
 
         // File 1 must be `deleting` because it contained only data from the deleted TOPIC_1.
         assertThat(DBUtils.getAllFiles(pgContainer.getDataSource())).containsExactlyInAnyOrder(
-            new FilesRecord(1L, objectKey1, FORMAT, FileReason.PRODUCE, FileStateT.deleting, BROKER_ID, filesCommittedAt, (long) file1Size, 0L),
-            new FilesRecord(2L, objectKey2, FORMAT, FileReason.PRODUCE, FileStateT.uploaded, BROKER_ID, filesCommittedAt, (long) file2Size, (long) file2Batch2Size),
-            new FilesRecord(3L, objectKey3, FORMAT, FileReason.PRODUCE, FileStateT.uploaded, BROKER_ID, filesCommittedAt, (long) file3Size, (long) file3Batch3Size)
-        );
-        assertThat(DBUtils.getAllFilesToDelete(pgContainer.getDataSource())).containsExactlyInAnyOrder(
-            new FilesToDeleteRecord(1L, topicsDeletedAt)
+            new FilesRecord(1L, objectKey1, FORMAT, FileReason.PRODUCE, FileStateT.deleting, BROKER_ID, filesCommittedAt, topicsDeletedAt, (long) file1Size, 0L),
+            new FilesRecord(2L, objectKey2, FORMAT, FileReason.PRODUCE, FileStateT.uploaded, BROKER_ID, filesCommittedAt, null, (long) file2Size, (long) file2Batch2Size),
+            new FilesRecord(3L, objectKey3, FORMAT, FileReason.PRODUCE, FileStateT.uploaded, BROKER_ID, filesCommittedAt, null, (long) file3Size, (long) file3Batch3Size)
         );
 
         new DeleteFilesJob(
             time, pgContainer.getJooqCtx(), new DeleteFilesRequest(Set.of(objectKey1)), durationCallback
         ).run();
-        assertThat(DBUtils.getAllFilesToDelete(pgContainer.getDataSource())).isEmpty();
         assertThat(DBUtils.getAllFiles(pgContainer.getDataSource())).containsExactlyInAnyOrder(
-            new FilesRecord(2L, objectKey2, FORMAT, FileReason.PRODUCE, FileStateT.uploaded, BROKER_ID, filesCommittedAt, (long) file2Size, (long) file2Batch2Size),
-            new FilesRecord(3L, objectKey3, FORMAT, FileReason.PRODUCE, FileStateT.uploaded, BROKER_ID, filesCommittedAt, (long) file3Size, (long) file3Batch3Size)
+            new FilesRecord(2L, objectKey2, FORMAT, FileReason.PRODUCE, FileStateT.uploaded, BROKER_ID, filesCommittedAt, null, (long) file2Size, (long) file2Batch2Size),
+            new FilesRecord(3L, objectKey3, FORMAT, FileReason.PRODUCE, FileStateT.uploaded, BROKER_ID, filesCommittedAt, null, (long) file3Size, (long) file3Batch3Size)
         );
 
     }

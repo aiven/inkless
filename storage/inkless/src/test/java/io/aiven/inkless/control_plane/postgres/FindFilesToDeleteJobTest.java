@@ -47,7 +47,6 @@ import io.aiven.inkless.test_utils.PostgreSQLTestContainer;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.jooq.generated.Tables.FILES;
-import static org.jooq.generated.Tables.FILES_TO_DELETE;
 
 @Testcontainers
 @ExtendWith(MockitoExtension.class)
@@ -75,16 +74,10 @@ class FindFilesToDeleteJobTest {
             final DSLContext ctx = DSL.using(connection, SQLDialect.POSTGRES);
 
             fileId = ctx.insertInto(FILES,
-                FILES.OBJECT_KEY, FILES.FORMAT, FILES.REASON, FILES.STATE, FILES.UPLOADER_BROKER_ID, FILES.COMMITTED_AT, FILES.SIZE, FILES.USED_SIZE
+                FILES.OBJECT_KEY, FILES.FORMAT, FILES.REASON, FILES.STATE, FILES.UPLOADER_BROKER_ID, FILES.COMMITTED_AT, FILES.MARKED_FOR_DELETION_AT, FILES.SIZE, FILES.USED_SIZE
             ).values(
-                OBJECT_KEY, (short) ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT.id, FileReason.PRODUCE, FileStateT.uploaded, BROKER_ID, COMMITTED_AT, 1000L, 900L
+                OBJECT_KEY, (short) ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT.id, FileReason.PRODUCE, FileStateT.deleting, BROKER_ID, COMMITTED_AT, MARKED_FOR_DELETION_AT, 1000L, 900L
             ).returning(FILES.FILE_ID).fetchOne(FILES.FILE_ID);
-
-            ctx.insertInto(FILES_TO_DELETE,
-                FILES_TO_DELETE.FILE_ID, FILES_TO_DELETE.MARKED_FOR_DELETION_AT
-            ).values(
-                fileId, MARKED_FOR_DELETION_AT
-            ).execute();
 
             connection.commit();
         }
