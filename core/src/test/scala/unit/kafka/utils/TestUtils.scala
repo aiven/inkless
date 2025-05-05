@@ -1554,6 +1554,7 @@ object TestUtils extends Logging {
       props.put("inkless.control.plane.connection.string", pgContainer.getUserJdbcUrl)
       props.put("inkless.control.plane.username", pgContainer.getUsername)
       props.put("inkless.control.plane.password", pgContainer.getPassword)
+      props.put("log.inkless.enable", "true")
     }
   }
 }

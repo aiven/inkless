@@ -18,7 +18,7 @@ name: CI
 on:
   push:
     branches:
-      - 'trunk'
+      - 'main'
       - '4.0'
 
   schedule:
@@ -27,7 +27,7 @@ on:
   pull_request:
     types: [ opened, synchronize, ready_for_review, reopened ]
     branches:
-      - 'trunk'
+      - 'main'
       - '4.0'
 
 concurrency:
@@ -38,7 +38,7 @@ jobs:
   build:
     uses: ./.github/workflows/build.yml
     with:
-      is-trunk: ${{ github.ref == 'refs/heads/trunk' }}
+      is-trunk: ${{ github.ref == 'refs/heads/main' }}
       is-public-fork: ${{ github.event.pull_request.head.repo.fork || false }}
     secrets:
       inherit
