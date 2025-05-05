@@ -24,6 +24,8 @@ import org.jooq.generated.udt.records.ReleaseFileMergeWorkItemV1ResponseRecord;
 
 import java.util.concurrent.Callable;
 
+import io.aiven.inkless.control_plane.ControlPlaneException;
+
 public class ReleaseFileMergeWorkItemJob implements Callable<ReleaseFileMergeWorkItemV1ResponseRecord> {
     private final Long workItemId;
     private final DSLContext jooqCtx;
@@ -39,7 +41,11 @@ public class ReleaseFileMergeWorkItemJob implements Callable<ReleaseFileMergeWor
             return runOnce();
         } catch (final Exception e) {
             // TODO retry with backoff
-            throw new RuntimeException(e);
+            if (e instanceof ControlPlaneException) {
+                throw (ControlPlaneException) e;
+            } else {
+                throw new RuntimeException(e);
+            }
         }
     }
 

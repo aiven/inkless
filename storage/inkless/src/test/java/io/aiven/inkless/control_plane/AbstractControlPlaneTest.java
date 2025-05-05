@@ -985,6 +985,22 @@ public abstract class AbstractControlPlaneTest {
     }
 
     @Test
+    void commitDuplicateFileNames() {
+        final String objectKey = "a";
+
+        final CommitBatchRequest request1 = CommitBatchRequest.idempotent(1, EXISTING_TOPIC_1_ID_PARTITION_0, 1, 10, 10, 19, time.milliseconds(), TimestampType.CREATE_TIME, 1L, (short) 3, 0, 9);
+        final List<CommitBatchResponse> responses = controlPlane.commitFile(
+            objectKey, ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, BROKER_ID, FILE_SIZE, List.of(request1));
+        assertThat(responses).containsExactly(
+            CommitBatchResponse.success(0, time.milliseconds(), 0, request1)
+        );
+
+        assertThatThrownBy(() -> controlPlane.commitFile(objectKey, ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, BROKER_ID, FILE_SIZE, List.of(request1)))
+            .isInstanceOf(ControlPlaneException.class)
+            .hasMessage("Error committing file");
+    }
+
+    @Test
     void testCommitDuplicates() {
         final int request1BatchSize = 10;
         final CommitBatchRequest request1 = CommitBatchRequest.idempotent(1, EXISTING_TOPIC_1_ID_PARTITION_0, 1, request1BatchSize, 10, 19, time.milliseconds(), TimestampType.CREATE_TIME, 1L, (short) 3, 0, 9);

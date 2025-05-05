@@ -97,6 +97,10 @@ public class InMemoryControlPlane extends AbstractControlPlane {
             final long fileSize,
             final Stream<CommitBatchRequest> requests
     ) {
+        if (files.containsKey(objectKey)) {
+            throw new ControlPlaneException("Error committing file");
+        }
+
         try {
             final long now = time.milliseconds();
             final FileInfo fileInfo = new FileInfo(fileIdCounter.incrementAndGet(), objectKey, ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, FileReason.PRODUCE, uploaderBrokerId, fileSize);

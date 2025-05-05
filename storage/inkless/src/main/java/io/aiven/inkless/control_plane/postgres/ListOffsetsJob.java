@@ -58,7 +58,11 @@ public class ListOffsetsJob implements Callable<List<ListOffsetsResponse>> {
             return runOnce();
         } catch (final Exception e) {
             // TODO add retry with backoff (or not, let the consumers do this?)
-            throw new RuntimeException(e);
+            if (e instanceof ControlPlaneException) {
+                throw (ControlPlaneException) e;
+            } else {
+                throw new RuntimeException(e);
+            }
         }
     }
 

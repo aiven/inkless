@@ -27,6 +27,7 @@ import java.util.Set;
 import java.util.function.Consumer;
 
 import io.aiven.inkless.TimeUtils;
+import io.aiven.inkless.control_plane.ControlPlaneException;
 import io.aiven.inkless.control_plane.DeleteFilesRequest;
 
 public class DeleteFilesJob implements Runnable {
@@ -56,7 +57,11 @@ public class DeleteFilesJob implements Runnable {
             TimeUtils.measureDurationMs(time, this::runOnce, durationCallback);
         } catch (final Exception e) {
             // TODO add retry with backoff
-            throw new RuntimeException(e);
+            if (e instanceof ControlPlaneException) {
+                throw (ControlPlaneException) e;
+            } else {
+                throw new RuntimeException(e);
+            }
         }
     }
 

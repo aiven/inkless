@@ -33,6 +33,7 @@ import java.util.function.Consumer;
 
 import io.aiven.inkless.TimeUtils;
 import io.aiven.inkless.common.UuidUtil;
+import io.aiven.inkless.control_plane.ControlPlaneException;
 
 class DeleteTopicJob implements Runnable {
     private static final Logger LOGGER = LoggerFactory.getLogger(DeleteTopicJob.class);
@@ -62,7 +63,11 @@ class DeleteTopicJob implements Runnable {
             runOnce();
         } catch (final Exception e) {
             // TODO add retry with backoff
-            throw new RuntimeException(e);
+            if (e instanceof ControlPlaneException) {
+                throw (ControlPlaneException) e;
+            } else {
+                throw new RuntimeException(e);
+            }
         }
     }
 

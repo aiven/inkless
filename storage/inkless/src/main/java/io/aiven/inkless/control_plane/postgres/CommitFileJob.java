@@ -83,7 +83,11 @@ class CommitFileJob implements Callable<List<CommitBatchResponse>> {
             return TimeUtils.measureDurationMs(time, this::runOnce, durationCallback);
         } catch (final Exception e) {
             // TODO retry with backoff
-            throw new RuntimeException(e);
+            if (e instanceof ControlPlaneException) {
+                throw (ControlPlaneException) e;
+            } else {
+                throw new RuntimeException(e);
+            }
         }
     }
 

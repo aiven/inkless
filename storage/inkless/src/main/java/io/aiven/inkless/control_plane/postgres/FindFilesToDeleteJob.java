@@ -27,6 +27,7 @@ import org.slf4j.LoggerFactory;
 import java.util.List;
 import java.util.concurrent.Callable;
 
+import io.aiven.inkless.control_plane.ControlPlaneException;
 import io.aiven.inkless.control_plane.FileToDelete;
 
 import static org.jooq.generated.Tables.FILES;
@@ -48,7 +49,11 @@ public class FindFilesToDeleteJob implements Callable<List<FileToDelete>> {
             return runOnce();
         } catch (final Exception e) {
             // TODO retry with backoff
-            throw new RuntimeException(e);
+            if (e instanceof ControlPlaneException) {
+                throw (ControlPlaneException) e;
+            } else {
+                throw new RuntimeException(e);
+            }
         }
     }
 

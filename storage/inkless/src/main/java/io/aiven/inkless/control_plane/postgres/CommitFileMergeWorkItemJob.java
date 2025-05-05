@@ -32,6 +32,7 @@ import java.util.concurrent.Callable;
 
 import io.aiven.inkless.TimeUtils;
 import io.aiven.inkless.common.ObjectFormat;
+import io.aiven.inkless.control_plane.ControlPlaneException;
 import io.aiven.inkless.control_plane.MergedFileBatch;
 
 public class CommitFileMergeWorkItemJob implements Callable<CommitFileMergeWorkItemV1ResponseRecord> {
@@ -70,7 +71,11 @@ public class CommitFileMergeWorkItemJob implements Callable<CommitFileMergeWorkI
             return runOnce();
         } catch (final Exception e) {
             // TODO retry with backoff
-            throw new RuntimeException(e);
+            if (e instanceof ControlPlaneException) {
+                throw (ControlPlaneException) e;
+            } else {
+                throw new RuntimeException(e);
+            }
         }
     }
 
