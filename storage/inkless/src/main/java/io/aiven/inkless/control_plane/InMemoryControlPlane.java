@@ -140,14 +140,12 @@ public class InMemoryControlPlane extends AbstractControlPlane {
             if (latestProducerState.epoch > request.producerEpoch()) {
                 LOGGER.warn("Producer request with epoch {} is less than the latest epoch {}. Rejecting request",
                     request.producerEpoch(), latestProducerState.epoch);
-                fileInfo.usedSize -= request.size();
                 return CommitBatchResponse.invalidProducerEpoch();
             }
 
             if (latestProducerState.lastEntries.isEmpty()) {
                 if (request.baseSequence() != 0) {
                     LOGGER.warn("Producer request with base sequence {} is not 0. Rejecting request", request.baseSequence());
-                    fileInfo.usedSize -= request.size();
                     return CommitBatchResponse.sequenceOutOfOrder(request);
                 }
             } else {
@@ -158,7 +156,6 @@ public class InMemoryControlPlane extends AbstractControlPlane {
                     LOGGER.warn("Producer request with base sequence {} and last sequence {} is a duplicate. Rejecting request",
                         request.baseSequence(), request.lastSequence());
                     final ProducerStateItem batchMetadata = first.get();
-                    fileInfo.usedSize -= request.size();
                     return CommitBatchResponse.ofDuplicate(batchMetadata.assignedOffset(), batchMetadata.batchMaxTimestamp(), logInfo.logStartOffset);
                 }
 
@@ -166,7 +163,6 @@ public class InMemoryControlPlane extends AbstractControlPlane {
                 if (request.baseSequence() - 1 != lastSeq || (lastSeq == Integer.MAX_VALUE && request.baseSequence() != 0)) {
                     LOGGER.warn("Producer request with base sequence {} is not the next sequence after the last sequence {}. Rejecting request",
                         request.baseSequence(), lastSeq);
-                    fileInfo.usedSize -= request.size();
                     return CommitBatchResponse.sequenceOutOfOrder(request);
                 }
             }
@@ -200,6 +196,8 @@ public class InMemoryControlPlane extends AbstractControlPlane {
             )
         );
         coordinates.put(lastOffset, new BatchInfoInternal(batchInfo, fileInfo));
+
+        fileInfo.addBatch(batchInfo);
 
         return CommitBatchResponse.success(firstOffset, now, logInfo.logStartOffset, request);
     }
@@ -280,7 +278,7 @@ public class InMemoryControlPlane extends AbstractControlPlane {
         while (!coordinates.isEmpty() && coordinates.firstKey() < logInfo.logStartOffset) {
             final BatchInfoInternal batchInfoInternal = coordinates.remove(coordinates.firstKey());
             final FileInfo fileInfo = batchInfoInternal.fileInfo;
-            fileInfo.deleteBatch(batchInfoInternal.batchInfo.metadata().byteSize());
+            fileInfo.deleteBatch(batchInfoInternal.batchInfo);
             if (fileInfo.allBatchesDeleted()) {
                 fileInfo.markDeleted(TimeUtils.now(time));
             }
@@ -306,7 +304,7 @@ public class InMemoryControlPlane extends AbstractControlPlane {
             for (final var entry : coordinates.entrySet()) {
                 final BatchInfoInternal batchInfoInternal = entry.getValue();
                 final FileInfo fileInfo = batchInfoInternal.fileInfo;
-                fileInfo.deleteBatch(batchInfoInternal.batchInfo.metadata().byteSize());
+                fileInfo.deleteBatch(batchInfoInternal.batchInfo);
                 if (fileInfo.allBatchesDeleted()) {
                     fileInfo.markDeleted(TimeUtils.now(time));
                 }
@@ -528,7 +526,6 @@ public class InMemoryControlPlane extends AbstractControlPlane {
             final TreeMap<Long, BatchInfoInternal> coordinates = this.batches.get(batch.metadata().topicIdPartition());
             // Probably the partition was deleted -- skip the new batch (exclude it from the file too).
             if (coordinates == null) {
-                mergedFile.deleteBatch(batch.metadata().byteSize());
                 continue;
             }
 
@@ -539,20 +536,18 @@ public class InMemoryControlPlane extends AbstractControlPlane {
                 .findFirst();
             // Probably the parent batch was deleted -- skip the new batch (exclude it from the file too).
             if (parentBatchFound.isEmpty()) {
-                mergedFile.deleteBatch(batch.metadata().byteSize());
                 continue;
             }
             coordinates.remove(parentBatchFound.get().getKey());
 
-            coordinates.put(batch.metadata().lastOffset(), new BatchInfoInternal(
-                new BatchInfo(batchIdCounter.incrementAndGet(), objectKey, batch.metadata()),
-                mergedFile
-            ));
+            final BatchInfo batchInfo = new BatchInfo(batchIdCounter.incrementAndGet(), objectKey, batch.metadata());
+            coordinates.put(batch.metadata().lastOffset(), new BatchInfoInternal(batchInfo, mergedFile));
+            mergedFile.addBatch(batchInfo);
         }
 
         // It may happen that the new file is absolutely empty after taking into account all the deleted batches.
         // In this case, delete it as well.
-        if (mergedFile.usedSize <= 0) {
+        if (mergedFile.allBatchesDeleted()) {
             mergedFile.markDeleted(TimeUtils.now(time));
         }
     }
@@ -594,7 +589,7 @@ public class InMemoryControlPlane extends AbstractControlPlane {
         final int uploaderBrokerId;
         Instant markedForDeletionAt;
         final long fileSize;
-        long usedSize;
+        final List<BatchInfo> batches = new ArrayList<>();
 
         private FileInfo(final long fileId,
                          final String objectKey,
@@ -612,7 +607,6 @@ public class InMemoryControlPlane extends AbstractControlPlane {
             this.uploaderBrokerId = uploaderBrokerId;
             this.markedForDeletionAt = markedForDeletionAt;
             this.fileSize = fileSize;
-            this.usedSize = fileSize;
         }
 
         private static FileInfo createUploaded(final long fileId,
@@ -634,16 +628,16 @@ public class InMemoryControlPlane extends AbstractControlPlane {
             return new FileInfo(fileId, objectKey, format, fileReason, FileState.DELETING, uploaderBrokerId, now, fileSize);
         }
 
-        private void deleteBatch(final long batchSize) {
-            final long newUsedSize = usedSize - batchSize;
-            if (newUsedSize < 0) {
-                throw new IllegalStateException("newUsedSize < 0: " + newUsedSize);
-            }
-            this.usedSize = newUsedSize;
+        public void addBatch(final BatchInfo batchInfo) {
+            this.batches.add(batchInfo);
+        }
+
+        private void deleteBatch(final BatchInfo batchInfo) {
+            this.batches.remove(batchInfo);
         }
 
         private boolean allBatchesDeleted() {
-            return this.usedSize == 0;
+            return this.batches.isEmpty();
         }
 
         private void markDeleted(final Instant now) {
