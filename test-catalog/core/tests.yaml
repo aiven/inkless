@@ -2600,10 +2600,6 @@ kafka.server.MetadataRequestTest:
 kafka.server.MetadataVersionConfigValidatorTest:
 - testInvokesFaultHandlerOnException
 - testValidatesConfigOnMetadataChange
-kafka.server.MetadataVersionIntegrationTest:
-- testBasicMetadataVersionUpgrade
-- testDefaultIsLatestVersion
-- testUpgradeSameVersion
 kafka.server.MultipleListenersWithAdditionalJaasContextTest:
 - testProduceConsume
 kafka.server.MultipleListenersWithDefaultJaasContextTest:
