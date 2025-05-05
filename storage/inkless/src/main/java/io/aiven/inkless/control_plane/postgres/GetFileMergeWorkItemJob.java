@@ -97,7 +97,6 @@ public class GetFileMergeWorkItemJob implements Callable<FileMergeWorkItem> {
                             r.getObjectKey(),
                             ObjectFormat.forId(r.getFormat().byteValue()),
                             r.getSize(),
-                            r.getUsedSize(),
                             Arrays.stream(r.getBatches())
                                 .map(b -> {
                                         final var m = b.getMetadata();

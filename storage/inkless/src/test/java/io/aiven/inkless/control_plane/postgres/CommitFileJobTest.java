@@ -119,7 +119,7 @@ class CommitFileJobTest {
 
         assertThat(DBUtils.getAllFiles(pgContainer.getDataSource()))
             .containsExactlyInAnyOrder(
-                new FilesRecord(EXPECTED_FILE_ID_1, "obj1", FORMAT, FileReason.PRODUCE, FileStateT.uploaded, BROKER_ID, TimeUtils.now(time), null, FILE_SIZE, FILE_SIZE)
+                new FilesRecord(EXPECTED_FILE_ID_1, "obj1", FORMAT, FileReason.PRODUCE, FileStateT.uploaded, BROKER_ID, TimeUtils.now(time), null, FILE_SIZE)
             );
 
         assertThat(DBUtils.getAllBatches(pgContainer.getDataSource()))
@@ -175,8 +175,8 @@ class CommitFileJobTest {
 
         assertThat(DBUtils.getAllFiles(pgContainer.getDataSource()))
             .containsExactlyInAnyOrder(
-                new FilesRecord(EXPECTED_FILE_ID_1, "obj1", FORMAT, FileReason.PRODUCE, FileStateT.uploaded, BROKER_ID, time1, null, FILE_SIZE, FILE_SIZE),
-                new FilesRecord(EXPECTED_FILE_ID_2, "obj2", FORMAT, FileReason.PRODUCE, FileStateT.uploaded, BROKER_ID, time2, null, FILE_SIZE, FILE_SIZE)
+                new FilesRecord(EXPECTED_FILE_ID_1, "obj1", FORMAT, FileReason.PRODUCE, FileStateT.uploaded, BROKER_ID, time1, null, FILE_SIZE),
+                new FilesRecord(EXPECTED_FILE_ID_2, "obj2", FORMAT, FileReason.PRODUCE, FileStateT.uploaded, BROKER_ID, time2, null, FILE_SIZE)
             );
 
         assertThat(DBUtils.getAllBatches(pgContainer.getDataSource()))
@@ -222,7 +222,7 @@ class CommitFileJobTest {
 
         assertThat(DBUtils.getAllFiles(pgContainer.getDataSource()))
             .containsExactlyInAnyOrder(
-                new FilesRecord(EXPECTED_FILE_ID_1, "obj1", FORMAT, FileReason.PRODUCE, FileStateT.uploaded, BROKER_ID, TimeUtils.now(time), null, FILE_SIZE, FILE_SIZE - request3BatchSize)
+                new FilesRecord(EXPECTED_FILE_ID_1, "obj1", FORMAT, FileReason.PRODUCE, FileStateT.uploaded, BROKER_ID, TimeUtils.now(time), null, FILE_SIZE)
             );
 
         assertThat(DBUtils.getAllBatches(pgContainer.getDataSource()))
@@ -256,7 +256,7 @@ class CommitFileJobTest {
 
         assertThat(DBUtils.getAllFiles(pgContainer.getDataSource()))
             .containsExactlyInAnyOrder(
-                new FilesRecord(EXPECTED_FILE_ID_1, "obj1", FORMAT, FileReason.PRODUCE, FileStateT.uploaded, BROKER_ID, TimeUtils.now(time), null, FILE_SIZE, FILE_SIZE)
+                new FilesRecord(EXPECTED_FILE_ID_1, "obj1", FORMAT, FileReason.PRODUCE, FileStateT.uploaded, BROKER_ID, TimeUtils.now(time), null, FILE_SIZE)
             );
 
         assertThat(DBUtils.getAllBatches(pgContainer.getDataSource()))
@@ -290,7 +290,7 @@ class CommitFileJobTest {
 
         assertThat(DBUtils.getAllFiles(pgContainer.getDataSource()))
             .containsExactlyInAnyOrder(
-                new FilesRecord(EXPECTED_FILE_ID_1, "obj1", FORMAT, FileReason.PRODUCE, FileStateT.uploaded, BROKER_ID, TimeUtils.now(time), null, FILE_SIZE, FILE_SIZE)
+                new FilesRecord(EXPECTED_FILE_ID_1, "obj1", FORMAT, FileReason.PRODUCE, FileStateT.uploaded, BROKER_ID, TimeUtils.now(time), null, FILE_SIZE)
             );
 
         assertThat(DBUtils.getAllBatches(pgContainer.getDataSource()))
@@ -332,7 +332,7 @@ class CommitFileJobTest {
 
         assertThat(DBUtils.getAllFiles(pgContainer.getDataSource()))
             .containsExactlyInAnyOrder(
-                new FilesRecord(EXPECTED_FILE_ID_1, "obj1", FORMAT, FileReason.PRODUCE, FileStateT.uploaded, BROKER_ID, TimeUtils.now(time), null, FILE_SIZE, FILE_SIZE - request2BatchSize)
+                new FilesRecord(EXPECTED_FILE_ID_1, "obj1", FORMAT, FileReason.PRODUCE, FileStateT.uploaded, BROKER_ID, TimeUtils.now(time), null, FILE_SIZE)
             );
 
         assertThat(DBUtils.getAllBatches(pgContainer.getDataSource()))
@@ -362,9 +362,11 @@ class CommitFileJobTest {
                 new LogsRecord(TOPIC_ID_1, 0, TOPIC_1, 0L, 0L)
             );
 
+        // The file will be deleted because its only batch is rejected.
+        final Instant now = TimeUtils.now(time);
         assertThat(DBUtils.getAllFiles(pgContainer.getDataSource()))
             .containsExactlyInAnyOrder(
-                new FilesRecord(EXPECTED_FILE_ID_1, "obj1", FORMAT, FileReason.PRODUCE, FileStateT.uploaded, BROKER_ID, TimeUtils.now(time), null, FILE_SIZE, FILE_SIZE - request1BatchSize)
+                new FilesRecord(EXPECTED_FILE_ID_1, "obj1", FORMAT, FileReason.PRODUCE, FileStateT.deleting, BROKER_ID, now, now, FILE_SIZE)
             );
         assertThat(DBUtils.getAllBatches(pgContainer.getDataSource())).isEmpty();
     }
@@ -394,7 +396,7 @@ class CommitFileJobTest {
 
         assertThat(DBUtils.getAllFiles(pgContainer.getDataSource()))
             .containsExactlyInAnyOrder(
-                new FilesRecord(EXPECTED_FILE_ID_1, "obj1", FORMAT, FileReason.PRODUCE, FileStateT.uploaded, BROKER_ID, TimeUtils.now(time), null, FILE_SIZE, FILE_SIZE - request2BatchSize)
+                new FilesRecord(EXPECTED_FILE_ID_1, "obj1", FORMAT, FileReason.PRODUCE, FileStateT.uploaded, BROKER_ID, TimeUtils.now(time), null, FILE_SIZE)
             );
 
         assertThat(DBUtils.getAllBatches(pgContainer.getDataSource()))

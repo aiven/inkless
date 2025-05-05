@@ -74,9 +74,9 @@ class FindFilesToDeleteJobTest {
             final DSLContext ctx = DSL.using(connection, SQLDialect.POSTGRES);
 
             fileId = ctx.insertInto(FILES,
-                FILES.OBJECT_KEY, FILES.FORMAT, FILES.REASON, FILES.STATE, FILES.UPLOADER_BROKER_ID, FILES.COMMITTED_AT, FILES.MARKED_FOR_DELETION_AT, FILES.SIZE, FILES.USED_SIZE
+                FILES.OBJECT_KEY, FILES.FORMAT, FILES.REASON, FILES.STATE, FILES.UPLOADER_BROKER_ID, FILES.COMMITTED_AT, FILES.MARKED_FOR_DELETION_AT, FILES.SIZE
             ).values(
-                OBJECT_KEY, (short) ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT.id, FileReason.PRODUCE, FileStateT.deleting, BROKER_ID, COMMITTED_AT, MARKED_FOR_DELETION_AT, 1000L, 900L
+                OBJECT_KEY, (short) ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT.id, FileReason.PRODUCE, FileStateT.deleting, BROKER_ID, COMMITTED_AT, MARKED_FOR_DELETION_AT, 1000L
             ).returning(FILES.FILE_ID).fetchOne(FILES.FILE_ID);
 
             connection.commit();

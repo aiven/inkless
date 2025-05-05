@@ -141,7 +141,7 @@ class FileMergerMockedTest {
         final int file1UsedSize = file1Size;
         final byte[] file1Batch1 = MockInputStream.generateData(file1Batch1Size, "file1Batch1");
 
-        final FileMergeWorkItem.File file1InWorkItem = new FileMergeWorkItem.File(file1Id, obj1, ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, file1Size, file1UsedSize, List.of(
+        final FileMergeWorkItem.File file1InWorkItem = new FileMergeWorkItem.File(file1Id, obj1, ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, file1Size, List.of(
             new BatchInfo(batch1Id, obj1, BatchMetadata.of(T1P0, 0, file1Batch1Size, 1L, 11L, 1L, 2L, TimestampType.CREATE_TIME))
         ));
 
@@ -221,7 +221,7 @@ class FileMergerMockedTest {
         final List<BatchInfo> file1Batches = directBatchOrder
             ? List.of(file1Batch1InWorkItem, file1Batch2InWorkItem)
             : List.of(file1Batch2InWorkItem, file1Batch1InWorkItem);
-        final FileMergeWorkItem.File file1InWorkItem = new FileMergeWorkItem.File(file1Id, obj1, ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, file1Size, file1UsedSize, file1Batches);
+        final FileMergeWorkItem.File file1InWorkItem = new FileMergeWorkItem.File(file1Id, obj1, ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, file1Size, file1Batches);
 
         final MockInputStream file1 = new MockInputStream(file1Size);
         file1.addGap(file1Gap1Size);
@@ -248,7 +248,7 @@ class FileMergerMockedTest {
         final List<BatchInfo> file2Batches = directBatchOrder
             ? List.of(file2Batch1InWorkItem, file2Batch2InWorkItem)
             : List.of(file2Batch2InWorkItem, file2Batch1InWorkItem);
-        final FileMergeWorkItem.File file2InWorkItem = new FileMergeWorkItem.File(file2Id, obj2, ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, file2Size, file2UsedSize, file2Batches);
+        final FileMergeWorkItem.File file2InWorkItem = new FileMergeWorkItem.File(file2Id, obj2, ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, file2Size, file2Batches);
 
         final MockInputStream file2 = new MockInputStream(file2Size);
         file2.addBatch(file2Batch1);
@@ -321,7 +321,7 @@ class FileMergerMockedTest {
 
         bindFilesToObjectNames(Map.of(obj1, file1));
 
-        final FileMergeWorkItem.File file1InWorkItem = new FileMergeWorkItem.File(1, obj1, ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, 10, 10, List.of(
+        final FileMergeWorkItem.File file1InWorkItem = new FileMergeWorkItem.File(1, obj1, ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, 10, List.of(
             new BatchInfo(batch1Id, obj1, BatchMetadata.of(T1P0, 0, 10, 1L, 11L, 1L, 2L, TimestampType.CREATE_TIME))
         ));
         when(controlPlane.getFileMergeWorkItem()).thenReturn(
@@ -353,7 +353,6 @@ class FileMergerMockedTest {
 
         final int file1Batch1Size = 100;
         final int file1Size = file1Batch1Size;
-        final int file1UsedSize = file1Size;
         final byte[] file1Batch1 = MockInputStream.generateData(file1Batch1Size, "file1Batch1");
 
         final MockInputStream file1 = new MockInputStream(file1Size);
@@ -367,7 +366,7 @@ class FileMergerMockedTest {
         }).when(storage).upload(any(ObjectKey.class), any(InputStream.class), anyLong());
         bindFilesToObjectNames(Map.of(obj1, file1));
 
-        final FileMergeWorkItem.File file1InWorkItem = new FileMergeWorkItem.File(file1Id, obj1, ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, file1Size, file1UsedSize, List.of(
+        final FileMergeWorkItem.File file1InWorkItem = new FileMergeWorkItem.File(file1Id, obj1, ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, file1Size, List.of(
             new BatchInfo(batch1Id, obj1, BatchMetadata.of(T1P0, 0, file1Batch1Size, 1L, 11L, 1L, 2L, TimestampType.CREATE_TIME))
         ));
         when(controlPlane.getFileMergeWorkItem()).thenReturn(
@@ -413,7 +412,7 @@ class FileMergerMockedTest {
         }).when(storage).upload(any(ObjectKey.class), any(InputStream.class), anyLong());
         bindFilesToObjectNames(Map.of(obj1, file1));
 
-        final FileMergeWorkItem.File file1InWorkItem = new FileMergeWorkItem.File(file1Id, obj1, ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, file1Size, file1UsedSize, List.of(
+        final FileMergeWorkItem.File file1InWorkItem = new FileMergeWorkItem.File(file1Id, obj1, ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, file1Size, List.of(
             new BatchInfo(batch1Id, obj1, BatchMetadata.of(T1P0, 0, file1Batch1Size, 1L, 11L, 1L, 2L, TimestampType.CREATE_TIME))
         ));
         when(controlPlane.getFileMergeWorkItem())
@@ -459,7 +458,7 @@ class FileMergerMockedTest {
         }).when(storage).upload(any(ObjectKey.class), any(InputStream.class), anyLong());
         bindFilesToObjectNames(Map.of(obj1, file1));
 
-        final FileMergeWorkItem.File file1InWorkItem = new FileMergeWorkItem.File(file1Id, obj1, ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, file1Size, file1UsedSize, List.of(
+        final FileMergeWorkItem.File file1InWorkItem = new FileMergeWorkItem.File(file1Id, obj1, ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, file1Size, List.of(
             new BatchInfo(batch1Id, obj1, BatchMetadata.of(T1P0, 0, file1Batch1Size, 1L, 11L, 1L, 2L, TimestampType.CREATE_TIME))
         ));
         when(controlPlane.getFileMergeWorkItem())

@@ -30,7 +30,6 @@ public record FileMergeWorkItem(long workItemId,
                        String objectKey,
                        ObjectFormat format,
                        long size,
-                       long usedSize,
                        List<BatchInfo> batches) {
     }
 }

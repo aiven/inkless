@@ -77,8 +77,7 @@ CREATE TABLE files (
     uploader_broker_id broker_id_t,
     committed_at TIMESTAMP WITH TIME ZONE,
     marked_for_deletion_at TIMESTAMP WITH TIME ZONE,
-    size byte_size_t,
-    used_size byte_size_t
+    size byte_size_t
 );
 
 CREATE INDEX files_by_state_only_deleting_idx ON files (state) WHERE state = 'deleting';
@@ -100,7 +99,7 @@ CREATE TABLE batches (
         ON DELETE NO ACTION ON UPDATE CASCADE DEFERRABLE INITIALLY DEFERRED,  -- allow deleting logs before batches
     CONSTRAINT fk_batches_files FOREIGN KEY (file_id) REFERENCES files(file_id) ON DELETE RESTRICT ON UPDATE CASCADE
 );
-
+CREATE INDEX batches_by_file ON batches (file_id);
 CREATE INDEX batches_by_last_offset_idx ON batches (topic_id, partition, last_offset);
 
 CREATE TABLE producer_state (
@@ -168,8 +167,8 @@ DECLARE
     new_high_watermark offset_nullable_t;
     last_sequence_in_producer_epoch BIGINT;
 BEGIN
-    INSERT INTO files (object_key, format, reason, state, uploader_broker_id, committed_at, size, used_size)
-    VALUES (object_key, format, 'produce', 'uploaded', uploader_broker_id, now, file_size, file_size)
+    INSERT INTO files (object_key, format, reason, state, uploader_broker_id, committed_at, size)
+    VALUES (object_key, format, 'produce', 'uploaded', uploader_broker_id, now, file_size)
     RETURNING file_id
     INTO new_file_id;
 
@@ -202,9 +201,7 @@ BEGIN
             INTO log;
 
             IF NOT FOUND THEN
-                UPDATE files
-                SET used_size = used_size - request.byte_size
-                WHERE file_id = new_file_id;RETURN NEXT (request.topic_id, request.partition, NULL, NULL, -1, 'nonexistent_log')::commit_batch_response_v1;
+                RETURN NEXT (request.topic_id, request.partition, NULL, NULL, -1, 'nonexistent_log')::commit_batch_response_v1;
                 CONTINUE;
             END IF;
 
@@ -224,9 +221,6 @@ BEGIN
                     AND producer_id = request.producer_id
                     AND producer_epoch > request.producer_epoch
              ) THEN
-                UPDATE files
-                SET used_size = used_size - request.byte_size
-                WHERE file_id = new_file_id;
                 RETURN NEXT (request.topic_id, request.partition, NULL, NULL, -1, 'invalid_producer_epoch')::commit_batch_response_v1;
                 CONTINUE;
              END IF;
@@ -244,9 +238,6 @@ BEGIN
                 -- If there are no previous batches for the producer, the base sequence must be 0
                 IF request.base_sequence <> 0
                 THEN
-                    UPDATE files
-                    SET used_size = used_size - request.byte_size
-                    WHERE file_id = new_file_id;
                     RETURN NEXT (request.topic_id, request.partition, NULL, NULL, -1, 'sequence_out_of_order')::commit_batch_response_v1;
                     CONTINUE;
                 END IF;
@@ -262,9 +253,6 @@ BEGIN
                     AND last_sequence = request.last_sequence
                 INTO duplicate;
                 IF FOUND THEN
-                    UPDATE files
-                    SET used_size = used_size - request.byte_size
-                    WHERE file_id = new_file_id;
                     RETURN NEXT (request.topic_id, request.partition, log.log_start_offset, duplicate.assigned_offset, duplicate.batch_max_timestamp, 'duplicate_batch')::commit_batch_response_v1;
                     CONTINUE;
                 END IF;
@@ -273,9 +261,6 @@ BEGIN
                 -- A sequence is out of order if the base sequence is not a continuation of the last sequence
                 -- or, in case of wraparound, the base sequence must be 0 and the last sequence must be 2147483647 (Integer.MAX_VALUE).
                 IF (request.base_sequence - 1) <> last_sequence_in_producer_epoch OR (last_sequence_in_producer_epoch = 2147483647 AND request.base_sequence <> 0) THEN
-                    UPDATE files
-                    SET used_size = used_size - request.byte_size
-                    WHERE file_id = new_file_id;
                     RETURN NEXT (request.topic_id, request.partition, NULL, NULL, -1, 'sequence_out_of_order')::commit_batch_response_v1;
                     CONTINUE;
                 END IF;
@@ -347,7 +332,7 @@ BEGIN
     WHERE logs.topic_id = logs_tmp.topic_id
         AND logs.partition = logs_tmp.partition;
 
-    IF (SELECT used_size FROM files WHERE file_id = new_file_id) = 0 THEN
+    IF NOT EXISTS (SELECT 1 FROM batches WHERE file_id = new_file_id LIMIT 1) THEN
         PERFORM mark_file_to_delete_v1(now, new_file_id);
     END IF;
 END;
@@ -367,7 +352,7 @@ BEGIN
         WHERE topic_id = ANY(arg_topic_ids)
         RETURNING logs.*
     LOOP
-        PERFORM delete_batch_v1(now, topic_id, partition, base_offset)
+        PERFORM delete_batch_v1(now, batch_id)
         FROM batches
         WHERE topic_id = log.topic_id
             AND partition = log.partition;
@@ -438,7 +423,7 @@ BEGIN
             log.log_start_offset = converted_offset;
         END IF;
 
-        PERFORM delete_batch_v1(now, batches.topic_id, batches.partition, batches.base_offset)
+        PERFORM delete_batch_v1(now, batches.batch_id)
         FROM batches
         WHERE topic_id = log.topic_id
             AND partition = log.partition
@@ -452,30 +437,18 @@ $$
 
 CREATE FUNCTION delete_batch_v1(
     now TIMESTAMP WITH TIME ZONE,
-    arg_topic_id topic_id_t,
-    arg_partition partition_t,
-    arg_base_offset offset_t
+    arg_batch_id BIGINT
 )
 RETURNS VOID LANGUAGE plpgsql VOLATILE AS $$
 DECLARE
     l_file_id BIGINT;
-    batch_size byte_size_t = 0;
-    new_used_size byte_size_t = 0;
 BEGIN
     DELETE FROM batches
-    WHERE topic_id = arg_topic_id
-        AND partition = arg_partition
-        AND base_offset = arg_base_offset
-    RETURNING file_id, byte_size
-    INTO l_file_id, batch_size;
+    WHERE batch_id = arg_batch_id
+    RETURNING file_id
+    INTO l_file_id;
 
-    UPDATE files
-    SET used_size = used_size - batch_size
-    WHERE file_id = l_file_id
-    RETURNING used_size
-    INTO new_used_size;
-
-    IF new_used_size = 0 THEN
+    IF NOT EXISTS (SELECT 1 FROM batches WHERE file_id = l_file_id LIMIT 1) THEN
         PERFORM mark_file_to_delete_v1(now, l_file_id);
     END IF;
 END;
@@ -487,8 +460,6 @@ CREATE FUNCTION mark_file_to_delete_v1(
     arg_file_id BIGINT
 )
 RETURNS VOID LANGUAGE plpgsql VOLATILE AS $$
-DECLARE
-    file RECORD;
 BEGIN
     UPDATE files
     SET state = 'deleting',
@@ -688,7 +659,6 @@ CREATE TYPE file_merge_work_item_response_v1_file AS (
     object_key object_key_t,
     format format_t,
     size byte_size_t,
-    used_size byte_size_t,
     batches file_merge_work_item_response_v1_batch[]
 );
 
@@ -790,7 +760,6 @@ BEGIN
                 files.object_key,
                 files.format,
                 files.size,
-                files.used_size,
                 ARRAY(
                     SELECT (
                         batches.batch_id,
@@ -878,8 +847,8 @@ BEGIN
     LOOP
         IF array_length(merge_file_batch.parent_batch_ids, 1) IS NULL OR array_length(merge_file_batch.parent_batch_ids, 1) != 1 THEN
             -- insert new empty file to be deleted
-            INSERT INTO files (object_key, format, reason, state, uploader_broker_id, committed_at, size, used_size)
-            VALUES (object_key, format, 'merge', 'uploaded', uploader_broker_id, now, 0, 0)
+            INSERT INTO files (object_key, format, reason, state, uploader_broker_id, committed_at, size)
+            VALUES (object_key, format, 'merge', 'uploaded', uploader_broker_id, now, 0)
             RETURNING file_id
             INTO new_file_id;
             PERFORM mark_file_to_delete_v1(now, new_file_id);
@@ -908,8 +877,8 @@ BEGIN
 
     IF found_batches_size IS NULL THEN
         -- insert new empty file
-        INSERT INTO files (object_key, format, reason, state, uploader_broker_id, committed_at, size, used_size)
-        VALUES (object_key, format, 'merge', 'uploaded', uploader_broker_id, now, 0, 0)
+        INSERT INTO files (object_key, format, reason, state, uploader_broker_id, committed_at, size)
+        VALUES (object_key, format, 'merge', 'uploaded', uploader_broker_id, now, 0)
         RETURNING file_id
         INTO new_file_id;
         PERFORM mark_file_to_delete_v1(now, new_file_id);
@@ -933,8 +902,8 @@ BEGIN
         )
     LOOP
         -- insert new empty file to be deleted
-        INSERT INTO files (object_key, format, reason, state, uploader_broker_id, committed_at, size, used_size)
-        VALUES (object_key, format, 'merge', 'uploaded', uploader_broker_id, now, 0, 0)
+        INSERT INTO files (object_key, format, reason, state, uploader_broker_id, committed_at, size)
+        VALUES (object_key, format, 'merge', 'uploaded', uploader_broker_id, now, 0)
         RETURNING file_id
         INTO new_file_id;
         PERFORM mark_file_to_delete_v1(now, new_file_id);
@@ -952,8 +921,8 @@ BEGIN
     END LOOP;
 
     -- insert new file
-    INSERT INTO files (object_key, format, reason, state, uploader_broker_id, committed_at, size, used_size)
-    VALUES (object_key, format, 'merge', 'uploaded', uploader_broker_id, now, file_size, found_batches_size)
+    INSERT INTO files (object_key, format, reason, state, uploader_broker_id, committed_at, size)
+    VALUES (object_key, format, 'merge', 'uploaded', uploader_broker_id, now, file_size)
     RETURNING file_id
     INTO new_file_id;
 

@@ -24,6 +24,7 @@ import org.apache.kafka.common.utils.MockTime;
 import org.apache.kafka.common.utils.Time;
 
 import org.jooq.generated.enums.FileStateT;
+import org.jooq.generated.tables.records.BatchesRecord;
 import org.jooq.generated.tables.records.FilesRecord;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -131,9 +132,9 @@ class DeleteFilesJobTest {
         new CommitFileJob(
             time, pgContainer.getJooqCtx(), objectKey3, ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, BROKER_ID, file3Size,
             List.of(
-                CommitBatchRequest.of(0, T0P0, 0, file1Batch1Size, 0, 11, 1000, TimestampType.CREATE_TIME),
-                CommitBatchRequest.of(0, T0P1, 0, file1Batch2Size, 0, 11, 1000, TimestampType.CREATE_TIME),
-                CommitBatchRequest.of(0, T2P0, 0, file1Batch2Size, 0, 11, 1000, TimestampType.CREATE_TIME)
+                CommitBatchRequest.of(0, T0P0, 0, file3Batch1Size, 0, 11, 1000, TimestampType.CREATE_TIME),
+                CommitBatchRequest.of(0, T0P1, 0, file3Batch2Size, 0, 11, 1000, TimestampType.CREATE_TIME),
+                CommitBatchRequest.of(0, T2P0, 0, file3Batch3Size, 0, 11, 1000, TimestampType.CREATE_TIME)
             ), durationCallback
         ).call();
 
@@ -144,19 +145,21 @@ class DeleteFilesJobTest {
             TOPIC_ID_0, TOPIC_ID_1, nonexistentTopicId
         ), durationCallback).run();
 
-        // File 1 must be `deleting` because it contained only data from the deleted TOPIC_1.
+        assertThat(DBUtils.getAllBatches(pgContainer.getDataSource())).map(BatchesRecord::getTopicId).containsExactlyInAnyOrder(TOPIC_ID_2, TOPIC_ID_2);
+
+        // File 1 must be `deleting` because it contained only data from the deleted TOPIC_0.
         assertThat(DBUtils.getAllFiles(pgContainer.getDataSource())).containsExactlyInAnyOrder(
-            new FilesRecord(1L, objectKey1, FORMAT, FileReason.PRODUCE, FileStateT.deleting, BROKER_ID, filesCommittedAt, topicsDeletedAt, (long) file1Size, 0L),
-            new FilesRecord(2L, objectKey2, FORMAT, FileReason.PRODUCE, FileStateT.uploaded, BROKER_ID, filesCommittedAt, null, (long) file2Size, (long) file2Batch2Size),
-            new FilesRecord(3L, objectKey3, FORMAT, FileReason.PRODUCE, FileStateT.uploaded, BROKER_ID, filesCommittedAt, null, (long) file3Size, (long) file3Batch3Size)
+            new FilesRecord(1L, objectKey1, FORMAT, FileReason.PRODUCE, FileStateT.deleting, BROKER_ID, filesCommittedAt, topicsDeletedAt, (long) file1Size),
+            new FilesRecord(2L, objectKey2, FORMAT, FileReason.PRODUCE, FileStateT.uploaded, BROKER_ID, filesCommittedAt, null, (long) file2Size),
+            new FilesRecord(3L, objectKey3, FORMAT, FileReason.PRODUCE, FileStateT.uploaded, BROKER_ID, filesCommittedAt, null, (long) file3Size)
         );
 
         new DeleteFilesJob(
             time, pgContainer.getJooqCtx(), new DeleteFilesRequest(Set.of(objectKey1)), durationCallback
         ).run();
         assertThat(DBUtils.getAllFiles(pgContainer.getDataSource())).containsExactlyInAnyOrder(
-            new FilesRecord(2L, objectKey2, FORMAT, FileReason.PRODUCE, FileStateT.uploaded, BROKER_ID, filesCommittedAt, null, (long) file2Size, (long) file2Batch2Size),
-            new FilesRecord(3L, objectKey3, FORMAT, FileReason.PRODUCE, FileStateT.uploaded, BROKER_ID, filesCommittedAt, null, (long) file3Size, (long) file3Batch3Size)
+            new FilesRecord(2L, objectKey2, FORMAT, FileReason.PRODUCE, FileStateT.uploaded, BROKER_ID, filesCommittedAt, null, (long) file2Size),
+            new FilesRecord(3L, objectKey3, FORMAT, FileReason.PRODUCE, FileStateT.uploaded, BROKER_ID, filesCommittedAt, null, (long) file3Size)
         );
 
     }
