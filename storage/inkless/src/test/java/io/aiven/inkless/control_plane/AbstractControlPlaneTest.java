@@ -222,7 +222,6 @@ public abstract class AbstractControlPlaneTest {
 
         final List<FindBatchResponse> findResponse = controlPlane.findBatches(
             List.of(new FindBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 10, Integer.MAX_VALUE)),
-
             Integer.MAX_VALUE);
         assertThat(findResponse).containsExactly(
             new FindBatchResponse(Errors.NONE, List.of(), 0, 10)
@@ -987,7 +986,8 @@ public abstract class AbstractControlPlaneTest {
 
     @Test
     void testCommitDuplicates() {
-        final CommitBatchRequest request1 = CommitBatchRequest.idempotent(1, EXISTING_TOPIC_1_ID_PARTITION_0, 1, 10, 10, 19, time.milliseconds(), TimestampType.CREATE_TIME, 1L, (short) 3, 0, 9);
+        final int request1BatchSize = 10;
+        final CommitBatchRequest request1 = CommitBatchRequest.idempotent(1, EXISTING_TOPIC_1_ID_PARTITION_0, 1, request1BatchSize, 10, 19, time.milliseconds(), TimestampType.CREATE_TIME, 1L, (short) 3, 0, 9);
 
         final List<CommitBatchRequest> requests = List.of(
             request1,
@@ -1007,7 +1007,8 @@ public abstract class AbstractControlPlaneTest {
         );
 
         // Try to produce a duplicate.
-        final List<CommitBatchResponse> dupResponses = controlPlane.commitFile("b", ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, BROKER_ID, FILE_SIZE, List.of(request1));
+        final String duplicateFile1Key = "b";
+        final List<CommitBatchResponse> dupResponses = controlPlane.commitFile(duplicateFile1Key, ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, BROKER_ID, request1BatchSize, List.of(request1));
         assertThat(dupResponses).containsExactly(
             CommitBatchResponse.ofDuplicate(0, time.milliseconds(), 0)
         );
@@ -1029,6 +1030,8 @@ public abstract class AbstractControlPlaneTest {
                 50
             )
         );
+        // The file must be deleted as it doesn't contain alive batches after rejecting its only batch.
+        assertThat(controlPlane.getFilesToDelete()).singleElement().extracting(FileToDelete::objectKey).isEqualTo(duplicateFile1Key);
 
         // Make the control plane to forget the original.
         final List<CommitBatchRequest> requests2 = List.of(
@@ -1041,33 +1044,39 @@ public abstract class AbstractControlPlaneTest {
         );
 
         // Try to produce a duplicate again.
+        final String duplicateFile2Key = "d";
         final List<CommitBatchResponse> dupResponses2 = controlPlane.commitFile(
-            "d", ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, BROKER_ID, FILE_SIZE, List.of(request1));
+            duplicateFile2Key, ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, BROKER_ID, request1BatchSize, List.of(request1));
         assertThat(dupResponses2).containsExactly(
             CommitBatchResponse.sequenceOutOfOrder(request1)
         );
+        // The file must also be deleted.
+        assertThat(controlPlane.getFilesToDelete()).map(FileToDelete::objectKey).containsExactly(duplicateFile1Key, duplicateFile2Key);
     }
 
     @Test
     void testOutOfOrderNewEpoch() {
-        final CommitBatchRequest request = CommitBatchRequest.idempotent(0, EXISTING_TOPIC_1_ID_PARTITION_0, 1, 10, 10, 19, time.milliseconds(), TimestampType.CREATE_TIME, 1L, (short) 3, 1, 10);
-        final CommitBatchResponse response = controlPlane.commitFile("a", ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, BROKER_ID, FILE_SIZE, List.of(request)).get(0);
+        final String fileKey = "a";
+        final CommitBatchRequest request = CommitBatchRequest.idempotent(0, EXISTING_TOPIC_1_ID_PARTITION_0, 1, (int) FILE_SIZE, 10, 19, time.milliseconds(), TimestampType.CREATE_TIME, 1L, (short) 3, 1, 10);
+        final CommitBatchResponse response = controlPlane.commitFile(fileKey, ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, BROKER_ID, FILE_SIZE, List.of(request)).get(0);
 
         assertThat(response)
             .extracting(CommitBatchResponse::errors, CommitBatchResponse::isDuplicate)
             .containsExactly(Errors.OUT_OF_ORDER_SEQUENCE_NUMBER, false);
+
+        // The second file must be deleted as it doesn't contain alive batches after rejecting its only batch.
+        assertThat(controlPlane.getFilesToDelete()).singleElement().extracting(FileToDelete::objectKey).isEqualTo(fileKey);
     }
 
-
     @ParameterizedTest
+    // 15 is the first sequence number for the second batch
     @CsvSource({
         "14, 13", // lower than 15
         "14, 14", // lower than 15
         "14, 16", // larger than 15
         "2147483647, 1" // not zero
     })
-        // 15 is the first sequence number for the second batch
-    void testOutOfOrderSequence(final int lastSeq, final int nextSeq) {
+    void testOutOfOrderSequenceSameCall(final int lastSeq, final int nextSeq) {
         final CommitBatchRequest request0 = CommitBatchRequest.idempotent(0, EXISTING_TOPIC_1_ID_PARTITION_0, 1, 10, 0, 10, time.milliseconds(), TimestampType.CREATE_TIME, 1L, (short) 3, 0, lastSeq);
         final CommitBatchRequest request1 = CommitBatchRequest.idempotent(0, EXISTING_TOPIC_1_ID_PARTITION_0, 2, 10, 0, 20, time.milliseconds(), TimestampType.CREATE_TIME, 1L, (short) 3, nextSeq, nextSeq + 10);
         final List<CommitBatchResponse> responses = controlPlane.commitFile("a", ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, BROKER_ID, FILE_SIZE, List.of(request0, request1));
@@ -1077,8 +1086,37 @@ public abstract class AbstractControlPlaneTest {
             .containsExactly(Errors.NONE, Errors.OUT_OF_ORDER_SEQUENCE_NUMBER);
     }
 
+    @ParameterizedTest
+    // 15 is the first sequence number for the second batch
+    @CsvSource({
+        "14, 13", // lower than 15
+        "14, 14", // lower than 15
+        "14, 16", // larger than 15
+        "2147483647, 1" // not zero
+    })
+    void testOutOfOrderSequenceDifferentCalls(final int lastSeq, final int nextSeq) {
+        final List<CommitBatchResponse> responses0 = controlPlane.commitFile("a", ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, BROKER_ID, FILE_SIZE, List.of(
+            CommitBatchRequest.idempotent(0, EXISTING_TOPIC_1_ID_PARTITION_0, 1, (int) FILE_SIZE, 0, 10, time.milliseconds(), TimestampType.CREATE_TIME, 1L, (short) 3, 0, lastSeq)
+        ));
+        assertThat(responses0)
+            .extracting(CommitBatchResponse::errors)
+            .containsExactly(Errors.NONE);
+
+        final var file1Size = 100;
+        final String file1Key = "b";
+        final List<CommitBatchResponse> responses1 = controlPlane.commitFile(file1Key, ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, BROKER_ID, file1Size, List.of(
+            CommitBatchRequest.idempotent(0, EXISTING_TOPIC_1_ID_PARTITION_0, 2, file1Size, 0, 20, time.milliseconds(), TimestampType.CREATE_TIME, 1L, (short) 3, nextSeq, nextSeq + 10)
+        ));
+        assertThat(responses1)
+            .extracting(CommitBatchResponse::errors)
+            .containsExactly(Errors.OUT_OF_ORDER_SEQUENCE_NUMBER);
+
+        // The second file must be deleted as it doesn't contain alive batches after rejecting its only batch.
+        assertThat(controlPlane.getFilesToDelete()).singleElement().extracting(FileToDelete::objectKey).isEqualTo(file1Key);
+    }
+
     @Test
-    void testInvalidProducerEpoch() {
+    void testInvalidProducerEpochSameCall() {
         final CommitBatchRequest request0 = CommitBatchRequest.idempotent(0, EXISTING_TOPIC_1_ID_PARTITION_0, 1, 10, 10, 24, time.milliseconds(), TimestampType.CREATE_TIME, 1L, (short) 3, 0, 14);
         final CommitBatchRequest request1 = CommitBatchRequest.idempotent(0, EXISTING_TOPIC_1_ID_PARTITION_0, 2, 10, 25, 35, time.milliseconds(), TimestampType.CREATE_TIME, 1L, (short) 2, 15, 25);
         final List<CommitBatchResponse> responses = controlPlane.commitFile("a", ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, BROKER_ID, FILE_SIZE, List.of(request0, request1));
@@ -1086,6 +1124,28 @@ public abstract class AbstractControlPlaneTest {
         assertThat(responses)
             .extracting(CommitBatchResponse::errors)
             .containsExactly(Errors.NONE, Errors.INVALID_PRODUCER_EPOCH);
+    }
+
+    @Test
+    void testInvalidProducerEpochDifferentCalls() {
+        final List<CommitBatchResponse> responses0 = controlPlane.commitFile("a", ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, BROKER_ID, FILE_SIZE, List.of(
+            CommitBatchRequest.idempotent(0, EXISTING_TOPIC_1_ID_PARTITION_0, 1, (int) FILE_SIZE, 10, 24, time.milliseconds(), TimestampType.CREATE_TIME, 1L, (short) 3, 0, 14)
+        ));
+        assertThat(responses0)
+            .extracting(CommitBatchResponse::errors)
+            .containsExactly(Errors.NONE);
+
+        final var file1Size = 100;
+        final String file1Key = "b";
+        final List<CommitBatchResponse> responses1 = controlPlane.commitFile(file1Key, ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, BROKER_ID, file1Size, List.of(
+            CommitBatchRequest.idempotent(0, EXISTING_TOPIC_1_ID_PARTITION_0, 2, file1Size, 25, 35, time.milliseconds(), TimestampType.CREATE_TIME, 1L, (short) 2, 15, 25)
+        ));
+        assertThat(responses1)
+            .extracting(CommitBatchResponse::errors)
+            .containsExactly(Errors.INVALID_PRODUCER_EPOCH);
+
+        // The second file must be deleted as it doesn't contain alive batches after rejecting its only batch.
+        assertThat(controlPlane.getFilesToDelete()).singleElement().extracting(FileToDelete::objectKey).isEqualTo(file1Key);
     }
 
     @Nested

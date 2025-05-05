@@ -101,7 +101,12 @@ public class InMemoryControlPlane extends AbstractControlPlane {
             final long now = time.milliseconds();
             final FileInfo fileInfo = new FileInfo(fileIdCounter.incrementAndGet(), objectKey, ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, FileReason.PRODUCE, uploaderBrokerId, fileSize);
             final List<CommitBatchResponse> responses = requests.map(request -> commitFileForValidRequest(now, fileInfo, request)).toList();
-            files.put(objectKey, fileInfo);
+
+            if (fileInfo.allDeleted()) {
+                filesToDelete.put(fileInfo.objectKey, new FileToDeleteInternal(fileInfo, TimeUtils.now(time)));
+            } else {
+                files.put(objectKey, fileInfo);
+            }
             return responses.iterator();
         } catch (final RuntimeException e) {
             throw new ControlPlaneException("Error when committing requests", e);
@@ -133,12 +138,14 @@ public class InMemoryControlPlane extends AbstractControlPlane {
             if (latestProducerState.epoch > request.producerEpoch()) {
                 LOGGER.warn("Producer request with epoch {} is less than the latest epoch {}. Rejecting request",
                     request.producerEpoch(), latestProducerState.epoch);
+                fileInfo.usedSize -= request.size();
                 return CommitBatchResponse.invalidProducerEpoch();
             }
 
             if (latestProducerState.lastEntries.isEmpty()) {
                 if (request.baseSequence() != 0) {
                     LOGGER.warn("Producer request with base sequence {} is not 0. Rejecting request", request.baseSequence());
+                    fileInfo.usedSize -= request.size();
                     return CommitBatchResponse.sequenceOutOfOrder(request);
                 }
             } else {
@@ -149,6 +156,7 @@ public class InMemoryControlPlane extends AbstractControlPlane {
                     LOGGER.warn("Producer request with base sequence {} and last sequence {} is a duplicate. Rejecting request",
                         request.baseSequence(), request.lastSequence());
                     final ProducerStateItem batchMetadata = first.get();
+                    fileInfo.usedSize -= request.size();
                     return CommitBatchResponse.ofDuplicate(batchMetadata.assignedOffset(), batchMetadata.batchMaxTimestamp(), logInfo.logStartOffset);
                 }
 
@@ -156,6 +164,7 @@ public class InMemoryControlPlane extends AbstractControlPlane {
                 if (request.baseSequence() - 1 != lastSeq || (lastSeq == Integer.MAX_VALUE && request.baseSequence() != 0)) {
                     LOGGER.warn("Producer request with base sequence {} is not the next sequence after the last sequence {}. Rejecting request",
                         request.baseSequence(), lastSeq);
+                    fileInfo.usedSize -= request.size();
                     return CommitBatchResponse.sequenceOutOfOrder(request);
                 }
             }
