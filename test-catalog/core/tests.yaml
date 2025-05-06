@@ -1026,8 +1026,6 @@ kafka.docker.KafkaDockerWrapperTest:
 - testPrepareToolsLog4jConfigs
 - testPrepareToolsLog4jConfigsWithoutEnvVariable
 - testPrepareToolsLog4jConfigsWithoutMountedFile
-kafka.integration.MetricsDuringTopicCreationDeletionTest:
-- testMetricsDuringTopicCreateDelete
 kafka.integration.MinIsrConfigTest:
 - testDefaultKafkaConfig
 kafka.integration.UncleanLeaderElectionTest:
@@ -3306,9 +3304,3 @@ kafka.utils.SchedulerTest:
 unit.kafka.server.AllocateProducerIdsRequestTest:
 - testAllocateProducersIdSentToController
 - testAllocateProducersIdSentToNonController
-unit.kafka.server.ForwardingManagerMetricsTest:
-- testMetricsNames
-- testQueueLength
-- testQueueTimeMs
-- testRemoteTimeMs
-- testTimeoutMs

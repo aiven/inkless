@@ -52,7 +52,7 @@ org.apache.kafka.clients.InFlightRequestsTest:
 - testCompleteLastSent
 - testCompleteLastSentThrowsIfNoInFlights
 - testCompleteNext
-- testCompleteNextThrowsIfNoInflights
+- testCompleteNextThrowsIfNoInFlights
 - testTimedOutNodes
 org.apache.kafka.clients.MetadataSnapshotTest:
 - testEmptyTopicNamesCacheBuiltFromTopicIds
