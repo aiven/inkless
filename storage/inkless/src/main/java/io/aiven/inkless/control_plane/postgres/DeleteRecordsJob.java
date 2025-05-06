@@ -37,7 +37,6 @@ import java.util.List;
 import java.util.concurrent.Callable;
 
 import io.aiven.inkless.TimeUtils;
-import io.aiven.inkless.control_plane.ControlPlaneException;
 import io.aiven.inkless.control_plane.DeleteRecordsRequest;
 import io.aiven.inkless.control_plane.DeleteRecordsResponse;
 
@@ -61,17 +60,7 @@ public class DeleteRecordsJob implements Callable<List<DeleteRecordsResponse>> {
         if (requests.isEmpty()) {
             return List.of();
         }
-
-        try {
-            return runOnce();
-        } catch (final Exception e) {
-            // TODO retry with backoff (or not, let the consumers do this?)
-            if (e instanceof ControlPlaneException) {
-                throw (ControlPlaneException) e;
-            } else {
-                throw new RuntimeException(e);
-            }
-        }
+        return JobUtils.run(this::runOnce);
     }
 
     private List<DeleteRecordsResponse> runOnce() {

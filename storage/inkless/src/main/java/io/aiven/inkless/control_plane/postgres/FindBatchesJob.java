@@ -36,7 +36,6 @@ import java.util.stream.Collectors;
 import io.aiven.inkless.TimeUtils;
 import io.aiven.inkless.control_plane.BatchInfo;
 import io.aiven.inkless.control_plane.BatchMetadata;
-import io.aiven.inkless.control_plane.ControlPlaneException;
 import io.aiven.inkless.control_plane.FindBatchRequest;
 import io.aiven.inkless.control_plane.FindBatchResponse;
 
@@ -69,16 +68,7 @@ class FindBatchesJob implements Callable<List<FindBatchResponse>> {
 
     @Override
     public List<FindBatchResponse> call() {
-        try {
-            return runOnce();
-        } catch (final Exception e) {
-            // TODO add retry with backoff (or not, let the consumers do this?)
-            if (e instanceof ControlPlaneException) {
-                throw (ControlPlaneException) e;
-            } else {
-                throw new RuntimeException(e);
-            }
-        }
+        return JobUtils.run(this::runOnce);
     }
 
     private List<FindBatchResponse> runOnce()  {

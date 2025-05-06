@@ -37,7 +37,6 @@ import io.aiven.inkless.TimeUtils;
 import io.aiven.inkless.common.ObjectFormat;
 import io.aiven.inkless.control_plane.BatchInfo;
 import io.aiven.inkless.control_plane.BatchMetadata;
-import io.aiven.inkless.control_plane.ControlPlaneException;
 import io.aiven.inkless.control_plane.FileMergeWorkItem;
 
 import static org.jooq.generated.Tables.GET_FILE_MERGE_WORK_ITEM_V1;
@@ -62,16 +61,7 @@ public class GetFileMergeWorkItemJob implements Callable<FileMergeWorkItem> {
 
     @Override
     public FileMergeWorkItem call() {
-        try {
-            return runOnce();
-        } catch (final Exception e) {
-            // TODO retry with backoff
-            if (e instanceof ControlPlaneException) {
-                throw (ControlPlaneException) e;
-            } else {
-                throw new RuntimeException(e);
-            }
-        }
+        return JobUtils.run(this::runOnce);
     }
 
     private FileMergeWorkItem runOnce() {

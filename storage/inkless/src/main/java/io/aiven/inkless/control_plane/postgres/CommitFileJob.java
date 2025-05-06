@@ -78,17 +78,7 @@ class CommitFileJob implements Callable<List<CommitBatchResponse>> {
         if (requests.isEmpty()) {
             return List.of();
         }
-
-        try {
-            return TimeUtils.measureDurationMs(time, this::runOnce, durationCallback);
-        } catch (final Exception e) {
-            // TODO retry with backoff
-            if (e instanceof ControlPlaneException) {
-                throw (ControlPlaneException) e;
-            } else {
-                throw new RuntimeException(e);
-            }
-        }
+        return JobUtils.run(this::runOnce, time, durationCallback);
     }
 
     private List<CommitBatchResponse> runOnce() {

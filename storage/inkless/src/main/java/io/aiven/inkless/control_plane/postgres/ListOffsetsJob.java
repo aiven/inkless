@@ -54,16 +54,7 @@ public class ListOffsetsJob implements Callable<List<ListOffsetsResponse>> {
 
     @Override
     public List<ListOffsetsResponse> call() {
-        try {
-            return runOnce();
-        } catch (final Exception e) {
-            // TODO add retry with backoff (or not, let the consumers do this?)
-            if (e instanceof ControlPlaneException) {
-                throw (ControlPlaneException) e;
-            } else {
-                throw new RuntimeException(e);
-            }
-        }
+        return JobUtils.run(this::runOnce);
     }
 
     private List<ListOffsetsResponse> runOnce() throws Exception {

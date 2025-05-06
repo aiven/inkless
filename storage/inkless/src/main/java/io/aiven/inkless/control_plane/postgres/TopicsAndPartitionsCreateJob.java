@@ -27,7 +27,6 @@ import org.slf4j.LoggerFactory;
 import java.util.Set;
 import java.util.function.Consumer;
 
-import io.aiven.inkless.control_plane.ControlPlaneException;
 import io.aiven.inkless.control_plane.CreateTopicAndPartitionsRequest;
 
 import static org.jooq.generated.Tables.LOGS;
@@ -55,17 +54,7 @@ public class TopicsAndPartitionsCreateJob implements Runnable {
         if (requests.isEmpty()) {
             return;
         }
-
-        try {
-            runOnce();
-        } catch (final Exception e) {
-            // TODO retry with backoff
-            if (e instanceof ControlPlaneException) {
-                throw (ControlPlaneException) e;
-            } else {
-                throw new RuntimeException(e);
-            }
-        }
+        JobUtils.run(this::runOnce);
     }
 
     private void runOnce() {

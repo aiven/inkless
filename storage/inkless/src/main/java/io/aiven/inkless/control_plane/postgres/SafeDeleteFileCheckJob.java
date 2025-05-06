@@ -22,8 +22,6 @@ import org.jooq.DSLContext;
 
 import java.util.concurrent.Callable;
 
-import io.aiven.inkless.control_plane.ControlPlaneException;
-
 import static org.jooq.generated.tables.Files.FILES;
 
 /**
@@ -45,17 +43,7 @@ public class SafeDeleteFileCheckJob implements Callable<Boolean> {
         if (objectKeyPath == null || objectKeyPath.isEmpty()) {
             return true;
         }
-
-        try {
-            return runOnce();
-        } catch (final Exception e) {
-            // TODO add retry with backoff
-            if (e instanceof ControlPlaneException) {
-                throw (ControlPlaneException) e;
-            } else {
-                throw new RuntimeException(e);
-            }
-        }
+        return JobUtils.run(this::runOnce);
     }
 
     private boolean runOnce() {
