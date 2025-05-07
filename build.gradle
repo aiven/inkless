@@ -2457,7 +2457,7 @@ project(':storage:inkless') {
                 new ForcedType()
                   .withName("TIMESTAMP WITH TIME ZONE")
                   .withUserType("java.time.Instant")
-                  .withIncludeExpression("NOW|.*_AT")
+                  .withIncludeExpression("NOW|ARG_NOW|.*_AT")
                   .withConverter("io.aiven.inkless.control_plane.postgres.converters.OffsetDateTimeToInstantConverter"),
 
                 new ForcedType()

@@ -150,12 +150,12 @@ CREATE TYPE commit_batch_response_v1 AS (
 );
 
 CREATE FUNCTION commit_file_v1(
-    object_key object_key_t,
-    format format_t,
-    uploader_broker_id broker_id_t,
-    file_size byte_size_t,
-    now TIMESTAMP WITH TIME ZONE,
-    requests commit_batch_request_v1[]
+    arg_object_key object_key_t,
+    arg_format format_t,
+    arg_uploader_broker_id broker_id_t,
+    arg_file_size byte_size_t,
+    arg_now TIMESTAMP WITH TIME ZONE,
+    arg_requests commit_batch_request_v1[]
 )
 RETURNS SETOF commit_batch_response_v1 LANGUAGE plpgsql VOLATILE AS $$
 DECLARE
@@ -168,7 +168,7 @@ DECLARE
     last_sequence_in_producer_epoch BIGINT;
 BEGIN
     INSERT INTO files (object_key, format, reason, state, uploader_broker_id, committed_at, size)
-    VALUES (object_key, format, 'produce', 'uploaded', uploader_broker_id, now, file_size)
+    VALUES (arg_object_key, arg_format, 'produce', 'uploaded', arg_uploader_broker_id, arg_now, arg_file_size)
     RETURNING file_id
     INTO new_file_id;
 
@@ -187,7 +187,7 @@ BEGIN
 
     FOR request IN
         SELECT *
-        FROM unnest(requests)
+        FROM unnest(arg_requests)
     LOOP
         -- A small optimization: select the log into a variable only if it's a different topic-partition.
         -- Batches are sorted by topic-partitions, so this makes sense.
@@ -318,7 +318,7 @@ BEGIN
             new_file_id,
             request.byte_offset, request.byte_size,
             request.timestamp_type,
-            (EXTRACT(EPOCH FROM now AT TIME ZONE 'UTC') * 1000)::BIGINT,
+            (EXTRACT(EPOCH FROM arg_now AT TIME ZONE 'UTC') * 1000)::BIGINT,
             request.batch_max_timestamp
         );
 
@@ -333,14 +333,14 @@ BEGIN
         AND logs.partition = logs_tmp.partition;
 
     IF NOT EXISTS (SELECT 1 FROM batches WHERE file_id = new_file_id LIMIT 1) THEN
-        PERFORM mark_file_to_delete_v1(now, new_file_id);
+        PERFORM mark_file_to_delete_v1(arg_now, new_file_id);
     END IF;
 END;
 $$
 ;
 
 CREATE FUNCTION delete_topic_v1(
-    now TIMESTAMP WITH TIME ZONE,
+    arg_now TIMESTAMP WITH TIME ZONE,
     arg_topic_ids UUID[]
 )
 RETURNS VOID LANGUAGE plpgsql VOLATILE AS $$
@@ -352,7 +352,7 @@ BEGIN
         WHERE topic_id = ANY(arg_topic_ids)
         RETURNING logs.*
     LOOP
-        PERFORM delete_batch_v1(now, batch_id)
+        PERFORM delete_batch_v1(arg_now, batch_id)
         FROM batches
         WHERE topic_id = log.topic_id
             AND partition = log.partition;
@@ -379,8 +379,8 @@ CREATE TYPE delete_records_response_v1 AS (
 );
 
 CREATE FUNCTION delete_records_v1(
-    now TIMESTAMP WITH TIME ZONE,
-    requests delete_records_request_v1[]
+    arg_now TIMESTAMP WITH TIME ZONE,
+    arg_requests delete_records_request_v1[]
 )
 RETURNS SETOF delete_records_response_v1 LANGUAGE plpgsql VOLATILE AS $$
 DECLARE
@@ -390,7 +390,7 @@ DECLARE
 BEGIN
     FOR request IN
         SELECT *
-        FROM unnest(requests)
+        FROM unnest(arg_requests)
     LOOP
         SELECT *
         FROM logs
@@ -423,7 +423,7 @@ BEGIN
             log.log_start_offset = converted_offset;
         END IF;
 
-        PERFORM delete_batch_v1(now, batches.batch_id)
+        PERFORM delete_batch_v1(arg_now, batches.batch_id)
         FROM batches
         WHERE topic_id = log.topic_id
             AND partition = log.partition
@@ -436,7 +436,7 @@ $$
 ;
 
 CREATE FUNCTION delete_batch_v1(
-    now TIMESTAMP WITH TIME ZONE,
+    arg_now TIMESTAMP WITH TIME ZONE,
     arg_batch_id BIGINT
 )
 RETURNS VOID LANGUAGE plpgsql VOLATILE AS $$
@@ -449,28 +449,28 @@ BEGIN
     INTO l_file_id;
 
     IF NOT EXISTS (SELECT 1 FROM batches WHERE file_id = l_file_id LIMIT 1) THEN
-        PERFORM mark_file_to_delete_v1(now, l_file_id);
+        PERFORM mark_file_to_delete_v1(arg_now, l_file_id);
     END IF;
 END;
 $$
 ;
 
 CREATE FUNCTION mark_file_to_delete_v1(
-    now TIMESTAMP WITH TIME ZONE,
+    arg_now TIMESTAMP WITH TIME ZONE,
     arg_file_id BIGINT
 )
 RETURNS VOID LANGUAGE plpgsql VOLATILE AS $$
 BEGIN
     UPDATE files
     SET state = 'deleting',
-        marked_for_deletion_at = now
+        marked_for_deletion_at = arg_now
     WHERE file_id = arg_file_id;
 END;
 $$
 ;
 
 CREATE FUNCTION delete_files_v1(
-    paths object_key_t[]
+    arg_paths object_key_t[]
 )
 RETURNS VOID LANGUAGE plpgsql VOLATILE AS $$
 DECLARE
@@ -479,7 +479,7 @@ BEGIN
     FOR file IN
         SELECT *
         FROM files
-        WHERE object_key = ANY(paths)
+        WHERE object_key = ANY(arg_paths)
             AND state = 'deleting'
         FOR UPDATE
     LOOP
@@ -515,7 +515,7 @@ CREATE TYPE list_offsets_response_v1 AS (
 );
 
 CREATE FUNCTION list_offsets_v1(
-    requests list_offsets_request_v1[]
+    arg_requests list_offsets_request_v1[]
 )
 RETURNS SETOF list_offsets_response_v1 LANGUAGE plpgsql STABLE AS $$
 DECLARE
@@ -527,7 +527,7 @@ DECLARE
 BEGIN
     FOR request IN
         SELECT *
-        FROM unnest(requests)
+        FROM unnest(arg_requests)
     LOOP
         -- Note that we're not doing locking ("FOR UPDATE") here, as it's not really needed for this read-only function.
         SELECT *
@@ -669,9 +669,9 @@ CREATE TYPE file_merge_work_item_response_v1 AS (
 );
 
 CREATE FUNCTION get_file_merge_work_item_v1(
-    now TIMESTAMP WITH TIME ZONE,
-    expiration_interval INTERVAL,
-    merge_file_size_threshold byte_size_t
+    arg_now TIMESTAMP WITH TIME ZONE,
+    arg_expiration_interval INTERVAL,
+    arg_merge_file_size_threshold byte_size_t
 )
 RETURNS SETOF file_merge_work_item_response_v1 LANGUAGE plpgsql VOLATILE AS $$
 DECLARE
@@ -684,7 +684,7 @@ BEGIN
     FOR expired_work_item IN
         SELECT *
         FROM file_merge_work_items
-        WHERE created_at <= now - expiration_interval
+        WHERE created_at <= arg_now - arg_expiration_interval
     LOOP
         DELETE FROM file_merge_work_item_files
         WHERE work_item_id = expired_work_item.work_item_id;
@@ -725,7 +725,7 @@ BEGIN
     threshold_point AS (
         SELECT MIN(file_id) as last_file_id
         FROM running_sums
-        WHERE cumulative_size >= merge_file_size_threshold
+        WHERE cumulative_size >= arg_merge_file_size_threshold
     )
     SELECT array_agg(rs.file_id ORDER BY rs.file_id)
     INTO file_ids
@@ -739,7 +739,7 @@ BEGIN
 
     -- Create new work item
     INSERT INTO file_merge_work_items(created_at)
-    VALUES (now)
+    VALUES (arg_now)
     RETURNING work_item_id
     INTO new_work_item_id;
 
@@ -753,7 +753,7 @@ BEGIN
     -- Return work item
     RETURN NEXT (
         new_work_item_id,
-        now,
+        arg_now,
         ARRAY(
             SELECT (
                 f.file_id,
@@ -811,13 +811,13 @@ CREATE TYPE commit_file_merge_work_item_response_v1 AS (
 );
 
 CREATE FUNCTION commit_file_merge_work_item_v1(
-    now TIMESTAMP WITH TIME ZONE,
-    existing_work_item_id BIGINT,
-    object_key object_key_t,
-    format format_t,
-    uploader_broker_id broker_id_t,
-    file_size byte_size_t,
-    merge_file_batches commit_file_merge_work_item_batch_v1[]
+    arg_now TIMESTAMP WITH TIME ZONE,
+    arg_existing_work_item_id BIGINT,
+    arg_object_key object_key_t,
+    arg_format format_t,
+    arg_uploader_broker_id broker_id_t,
+    arg_file_size byte_size_t,
+    arg_merge_file_batches commit_file_merge_work_item_batch_v1[]
 )
 RETURNS commit_file_merge_work_item_response_v1 LANGUAGE plpgsql VOLATILE AS $$
 DECLARE
@@ -829,7 +829,7 @@ DECLARE
 BEGIN
     -- check that the work item exists
     SELECT * FROM file_merge_work_items
-    WHERE work_item_id = existing_work_item_id
+    WHERE work_item_id = arg_existing_work_item_id
     FOR UPDATE
     INTO work_item;
 
@@ -843,24 +843,24 @@ BEGIN
     -- check that the number of parent batches is 1 (limitation of the current implementation)
     FOR merge_file_batch IN
         SELECT *
-        FROM unnest(merge_file_batches) b
+        FROM unnest(arg_merge_file_batches) b
     LOOP
         IF array_length(merge_file_batch.parent_batch_ids, 1) IS NULL OR array_length(merge_file_batch.parent_batch_ids, 1) != 1 THEN
             -- insert new empty file to be deleted
             INSERT INTO files (object_key, format, reason, state, uploader_broker_id, committed_at, size)
-            VALUES (object_key, format, 'merge', 'uploaded', uploader_broker_id, now, 0)
+            VALUES (arg_object_key, arg_format, 'merge', 'uploaded', arg_uploader_broker_id, arg_now, 0)
             RETURNING file_id
             INTO new_file_id;
-            PERFORM mark_file_to_delete_v1(now, new_file_id);
+            PERFORM mark_file_to_delete_v1(arg_now, new_file_id);
 
             RETURN ROW('invalid_parent_batch_count'::commit_file_merge_work_item_error_v1, merge_file_batch)::commit_file_merge_work_item_response_v1;
         END IF;
     END LOOP;
 
-    -- filter merge_file_batches to only include the ones where logs exist
-    merge_file_batches := ARRAY(
+    -- filter arg_merge_file_batches to only include the ones where logs exist
+    arg_merge_file_batches := ARRAY(
         SELECT b
-        FROM unnest(merge_file_batches) b
+        FROM unnest(arg_merge_file_batches) b
         JOIN batches ON b.parent_batch_ids[1] = batches.batch_id
         JOIN logs ON batches.topic_id = logs.topic_id AND batches.partition = logs.partition
     );
@@ -870,7 +870,7 @@ BEGIN
     FROM batches
     WHERE EXISTS (
         SELECT 1
-        FROM unnest(merge_file_batches) b
+        FROM unnest(arg_merge_file_batches) b
         WHERE batch_id = ANY(b.parent_batch_ids)
     )
     INTO found_batches_size;
@@ -878,13 +878,13 @@ BEGIN
     IF found_batches_size IS NULL THEN
         -- insert new empty file
         INSERT INTO files (object_key, format, reason, state, uploader_broker_id, committed_at, size)
-        VALUES (object_key, format, 'merge', 'uploaded', uploader_broker_id, now, 0)
+        VALUES (arg_object_key, arg_format, 'merge', 'uploaded', arg_uploader_broker_id, arg_now, 0)
         RETURNING file_id
         INTO new_file_id;
-        PERFORM mark_file_to_delete_v1(now, new_file_id);
+        PERFORM mark_file_to_delete_v1(arg_now, new_file_id);
 
         -- delete work item
-        PERFORM release_file_merge_work_item_v1(existing_work_item_id);
+        PERFORM release_file_merge_work_item_v1(arg_existing_work_item_id);
 
         RETURN ROW('none'::commit_file_merge_work_item_error_v1, NULL)::commit_file_merge_work_item_response_v1;
     END IF;
@@ -892,21 +892,21 @@ BEGIN
     -- check that all parent batch files are part of work item files
     FOR merge_file_batch IN
         SELECT *
-        FROM unnest(merge_file_batches) b
+        FROM unnest(arg_merge_file_batches) b
         WHERE NOT EXISTS (
             SELECT 1
             FROM file_merge_work_item_files
                 JOIN batches ON file_merge_work_item_files.file_id = batches.file_id
-            WHERE work_item_id = existing_work_item_id
+            WHERE work_item_id = arg_existing_work_item_id
                 AND batch_id = ANY(b.parent_batch_ids)
         )
     LOOP
         -- insert new empty file to be deleted
         INSERT INTO files (object_key, format, reason, state, uploader_broker_id, committed_at, size)
-        VALUES (object_key, format, 'merge', 'uploaded', uploader_broker_id, now, 0)
+        VALUES (arg_object_key, arg_format, 'merge', 'uploaded', arg_uploader_broker_id, arg_now, 0)
         RETURNING file_id
         INTO new_file_id;
-        PERFORM mark_file_to_delete_v1(now, new_file_id);
+        PERFORM mark_file_to_delete_v1(arg_now, new_file_id);
 
         RETURN ROW('batch_not_part_of_work_item'::commit_file_merge_work_item_error_v1, merge_file_batch)::commit_file_merge_work_item_response_v1;
     END LOOP;
@@ -915,14 +915,14 @@ BEGIN
     FOR work_item_file IN
         SELECT file_id
         FROM file_merge_work_item_files AS f
-        WHERE work_item_id = existing_work_item_id
+        WHERE work_item_id = arg_existing_work_item_id
     LOOP
-        PERFORM mark_file_to_delete_v1(now, work_item_file.file_id);
+        PERFORM mark_file_to_delete_v1(arg_now, work_item_file.file_id);
     END LOOP;
 
     -- insert new file
     INSERT INTO files (object_key, format, reason, state, uploader_broker_id, committed_at, size)
-    VALUES (object_key, format, 'merge', 'uploaded', uploader_broker_id, now, file_size)
+    VALUES (arg_object_key, arg_format, 'merge', 'uploaded', arg_uploader_broker_id, arg_now, arg_file_size)
     RETURNING file_id
     INTO new_file_id;
 
@@ -930,7 +930,7 @@ BEGIN
     DELETE FROM batches
     WHERE EXISTS (
         SELECT 1
-        FROM unnest(merge_file_batches) b
+        FROM unnest(arg_merge_file_batches) b
         WHERE batch_id = ANY(b.parent_batch_ids)
     );
 
@@ -947,24 +947,24 @@ BEGIN
         timestamp_type
     )
     SELECT DISTINCT
-        (unnest(merge_file_batches)).metadata.magic,
-        (unnest(merge_file_batches)).metadata.topic_id,
-        (unnest(merge_file_batches)).metadata.partition,
-        (unnest(merge_file_batches)).metadata.base_offset,
-        (unnest(merge_file_batches)).metadata.last_offset,
+        (unnest(arg_merge_file_batches)).metadata.magic,
+        (unnest(arg_merge_file_batches)).metadata.topic_id,
+        (unnest(arg_merge_file_batches)).metadata.partition,
+        (unnest(arg_merge_file_batches)).metadata.base_offset,
+        (unnest(arg_merge_file_batches)).metadata.last_offset,
         new_file_id,
-        (unnest(merge_file_batches)).metadata.byte_offset,
-        (unnest(merge_file_batches)).metadata.byte_size,
-        (unnest(merge_file_batches)).metadata.log_append_timestamp,
-        (unnest(merge_file_batches)).metadata.batch_max_timestamp,
-        (unnest(merge_file_batches)).metadata.timestamp_type
-    FROM unnest(merge_file_batches)
-    ORDER BY (unnest(merge_file_batches)).metadata.topic_id,
-        (unnest(merge_file_batches)).metadata.partition,
-        (unnest(merge_file_batches)).metadata.base_offset;
+        (unnest(arg_merge_file_batches)).metadata.byte_offset,
+        (unnest(arg_merge_file_batches)).metadata.byte_size,
+        (unnest(arg_merge_file_batches)).metadata.log_append_timestamp,
+        (unnest(arg_merge_file_batches)).metadata.batch_max_timestamp,
+        (unnest(arg_merge_file_batches)).metadata.timestamp_type
+    FROM unnest(arg_merge_file_batches)
+    ORDER BY (unnest(arg_merge_file_batches)).metadata.topic_id,
+        (unnest(arg_merge_file_batches)).metadata.partition,
+        (unnest(arg_merge_file_batches)).metadata.base_offset;
 
     -- delete work item
-    PERFORM release_file_merge_work_item_v1(existing_work_item_id);
+    PERFORM release_file_merge_work_item_v1(arg_existing_work_item_id);
 
     RETURN ROW('none'::commit_file_merge_work_item_error_v1, NULL)::commit_file_merge_work_item_response_v1;
 END;
@@ -981,14 +981,14 @@ CREATE TYPE release_file_merge_work_item_response_v1 AS (
 );
 
 CREATE FUNCTION release_file_merge_work_item_v1(
-    existing_work_item_id BIGINT
+    arg_existing_work_item_id BIGINT
 )
 RETURNS release_file_merge_work_item_response_v1 LANGUAGE plpgsql VOLATILE AS $$
 DECLARE
     work_item RECORD;
 BEGIN
     SELECT * FROM file_merge_work_items
-    WHERE work_item_id = existing_work_item_id
+    WHERE work_item_id = arg_existing_work_item_id
     FOR UPDATE
     INTO work_item;
 
@@ -997,10 +997,10 @@ BEGIN
     END IF;
 
     DELETE FROM file_merge_work_item_files
-    WHERE work_item_id = existing_work_item_id;
+    WHERE work_item_id = arg_existing_work_item_id;
 
     DELETE FROM file_merge_work_items
-    WHERE work_item_id = existing_work_item_id;
+    WHERE work_item_id = arg_existing_work_item_id;
 
     RETURN ROW('none'::release_file_merge_work_item_error_v1)::release_file_merge_work_item_response_v1;
 END;
@@ -1008,17 +1008,17 @@ $$
 ;
 
 CREATE FUNCTION batch_timestamp(
-    timestamp_type timestamp_type_t,
-    batch_max_timestamp timestamp_t,
-    log_append_timestamp timestamp_t
+    arg_timestamp_type timestamp_type_t,
+    arg_batch_max_timestamp timestamp_t,
+    arg_log_append_timestamp timestamp_t
 )
 RETURNS timestamp_t LANGUAGE plpgsql IMMUTABLE AS $$
 BEGIN
     -- See how timestamps are assigned in
     -- https://github.com/aiven/inkless/blob/e124d3975bdb3a9ec85eee2fba7a1b0a6967d3a6/storage/src/main/java/org/apache/kafka/storage/internals/log/LogValidator.java#L271-L276
-    RETURN CASE timestamp_type
-       WHEN 1 THEN log_append_timestamp  -- org.apache.kafka.common.record.TimestampType.LOG_APPEND_TIME
-       ELSE batch_max_timestamp
+    RETURN CASE arg_timestamp_type
+       WHEN 1 THEN arg_log_append_timestamp  -- org.apache.kafka.common.record.TimestampType.LOG_APPEND_TIME
+       ELSE arg_batch_max_timestamp
    END;
 END
 $$
