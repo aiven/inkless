@@ -893,6 +893,7 @@ org.apache.kafka.metadata.storage.FormatterTest:
 - testInvalidFeatureFlag
 - testOneDirectoryFormattedAndOthersNotFormatted
 - testOneDirectoryFormattedAndOthersNotFormattedWithIgnoreFormatted
+- testStandaloneWithIgnoreFormatted
 org.apache.kafka.metadata.storage.ScramParserTest:
 - testConfiguredIterations
 - testConfiguredSalt
