@@ -27,8 +27,8 @@ import com.zaxxer.hikari.util.IsolationLevel;
 
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
-import org.jooq.generated.udt.records.CommitFileMergeWorkItemV1BatchRecord;
-import org.jooq.generated.udt.records.CommitFileMergeWorkItemV1ResponseRecord;
+import org.jooq.generated.udt.records.CommitFileMergeWorkItemBatchV1Record;
+import org.jooq.generated.udt.records.CommitFileMergeWorkItemResponseV1Record;
 import org.jooq.impl.DSL;
 
 import java.io.IOException;
@@ -227,8 +227,8 @@ public class PostgresControlPlane extends AbstractControlPlane {
         }
     }
 
-    private static MergedFileBatch getMergedFileBatch(CommitFileMergeWorkItemV1ResponseRecord result) {
-        final CommitFileMergeWorkItemV1BatchRecord errorBatch = result.getErrorBatch();
+    private static MergedFileBatch getMergedFileBatch(CommitFileMergeWorkItemResponseV1Record result) {
+        final CommitFileMergeWorkItemBatchV1Record errorBatch = result.getErrorBatch();
         return new MergedFileBatch(
             new BatchMetadata(
                 errorBatch.getMetadata().getMagic().byteValue(),

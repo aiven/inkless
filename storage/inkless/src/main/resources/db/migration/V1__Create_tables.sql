@@ -1,4 +1,4 @@
--- Copyright (c) 2024 Aiven, Helsinki, Finland. https://aiven.io/
+-- Copyright (c) 2024-2025 Aiven, Helsinki, Finland. https://aiven.io/
 CREATE DOMAIN broker_id_t AS INT NOT NULL;
 
 CREATE DOMAIN topic_id_t AS UUID NOT NULL;
@@ -131,7 +131,7 @@ CREATE TYPE commit_batch_request_v1 AS (
     last_sequence sequence_t
 );
 
-CREATE TYPE commit_batch_response_v1_error AS ENUM (
+CREATE TYPE commit_batch_response_error_v1 AS ENUM (
     'none',
     -- errors
     'nonexistent_log',
@@ -146,7 +146,7 @@ CREATE TYPE commit_batch_response_v1 AS (
     log_start_offset offset_nullable_t,
     assigned_base_offset offset_nullable_t,
     batch_timestamp timestamp_t,
-    error commit_batch_response_v1_error
+    error commit_batch_response_error_v1
 );
 
 CREATE FUNCTION commit_file_v1(
@@ -367,14 +367,14 @@ CREATE TYPE delete_records_request_v1 AS (
     "offset" BIGINT
 );
 
-CREATE TYPE delete_records_response_v1_error_t AS ENUM (
+CREATE TYPE delete_records_response_error_v1 AS ENUM (
     'unknown_topic_or_partition', 'offset_out_of_range'
 );
 
 CREATE TYPE delete_records_response_v1 AS (
     topic_id topic_id_t,
     partition partition_t,
-    error delete_records_response_v1_error_t,
+    error delete_records_response_error_v1,
     log_start_offset offset_nullable_t
 );
 
@@ -648,24 +648,24 @@ CREATE TYPE batch_metadata_v1 AS (
     timestamp_type timestamp_type_t
 );
 
-CREATE TYPE file_merge_work_item_response_v1_batch AS (
+CREATE TYPE file_merge_work_item_response_batch_v1 AS (
     batch_id BIGINT,
     object_key object_key_t,
     metadata batch_metadata_v1
 );
 
-CREATE TYPE file_merge_work_item_response_v1_file AS (
+CREATE TYPE file_merge_work_item_response_file_v1 AS (
     file_id BIGINT,
     object_key object_key_t,
     format format_t,
     size byte_size_t,
-    batches file_merge_work_item_response_v1_batch[]
+    batches file_merge_work_item_response_batch_v1[]
 );
 
 CREATE TYPE file_merge_work_item_response_v1 AS (
     work_item_id BIGINT,
     created_at TIMESTAMP WITH TIME ZONE,
-    file_ids file_merge_work_item_response_v1_file[]
+    file_ids file_merge_work_item_response_file_v1[]
 );
 
 CREATE FUNCTION get_file_merge_work_item_v1(
@@ -777,13 +777,13 @@ BEGIN
                             batches.batch_max_timestamp,
                             batches.timestamp_type
                         )::batch_metadata_v1
-                    )::file_merge_work_item_response_v1_batch
+                    )::file_merge_work_item_response_batch_v1
                     FROM batches
                         JOIN files ON batches.file_id = files.file_id
                         JOIN logs ON batches.topic_id = logs.topic_id AND batches.partition = logs.partition
                     WHERE batches.file_id = f.file_id
                 )
-            )::file_merge_work_item_response_v1_file
+            )::file_merge_work_item_response_file_v1
             FROM unnest(file_ids) AS f(file_id)
             JOIN files ON f.file_id = files.file_id
         )
@@ -792,12 +792,12 @@ END;
 $$
 ;
 
-CREATE TYPE commit_file_merge_work_item_v1_batch AS (
+CREATE TYPE commit_file_merge_work_item_batch_v1 AS (
     metadata batch_metadata_v1,
     parent_batch_ids BIGINT[]
 );
 
-CREATE TYPE commit_file_merge_work_item_v1_error AS ENUM (
+CREATE TYPE commit_file_merge_work_item_error_v1 AS ENUM (
     'none',
     'file_merge_work_item_not_found',
     'invalid_parent_batch_count',
@@ -805,9 +805,9 @@ CREATE TYPE commit_file_merge_work_item_v1_error AS ENUM (
 );
 
 
-CREATE TYPE commit_file_merge_work_item_v1_response AS (
-    error commit_file_merge_work_item_v1_error,
-    error_batch commit_file_merge_work_item_v1_batch
+CREATE TYPE commit_file_merge_work_item_response_v1 AS (
+    error commit_file_merge_work_item_error_v1,
+    error_batch commit_file_merge_work_item_batch_v1
 );
 
 CREATE FUNCTION commit_file_merge_work_item_v1(
@@ -817,15 +817,15 @@ CREATE FUNCTION commit_file_merge_work_item_v1(
     format format_t,
     uploader_broker_id broker_id_t,
     file_size byte_size_t,
-    merge_file_batches commit_file_merge_work_item_v1_batch[]
+    merge_file_batches commit_file_merge_work_item_batch_v1[]
 )
-RETURNS commit_file_merge_work_item_v1_response LANGUAGE plpgsql VOLATILE AS $$
+RETURNS commit_file_merge_work_item_response_v1 LANGUAGE plpgsql VOLATILE AS $$
 DECLARE
     work_item RECORD;
     new_file_id BIGINT;
     found_batches_size BIGINT;
     work_item_file RECORD;
-    merge_file_batch commit_file_merge_work_item_v1_batch;
+    merge_file_batch commit_file_merge_work_item_batch_v1;
 BEGIN
     -- check that the work item exists
     SELECT * FROM file_merge_work_items
@@ -837,7 +837,7 @@ BEGIN
         -- do not remove the file if this condition is hit because it may be a retry from a valid work item
         -- only delete the object key when a failure condition is found
 
-        RETURN ROW('file_merge_work_item_not_found'::commit_file_merge_work_item_v1_error, NULL)::commit_file_merge_work_item_v1_response;
+        RETURN ROW('file_merge_work_item_not_found'::commit_file_merge_work_item_error_v1, NULL)::commit_file_merge_work_item_response_v1;
     END IF;
 
     -- check that the number of parent batches is 1 (limitation of the current implementation)
@@ -853,7 +853,7 @@ BEGIN
             INTO new_file_id;
             PERFORM mark_file_to_delete_v1(now, new_file_id);
 
-            RETURN ROW('invalid_parent_batch_count'::commit_file_merge_work_item_v1_error, merge_file_batch)::commit_file_merge_work_item_v1_response;
+            RETURN ROW('invalid_parent_batch_count'::commit_file_merge_work_item_error_v1, merge_file_batch)::commit_file_merge_work_item_response_v1;
         END IF;
     END LOOP;
 
@@ -886,7 +886,7 @@ BEGIN
         -- delete work item
         PERFORM release_file_merge_work_item_v1(existing_work_item_id);
 
-        RETURN ROW('none'::commit_file_merge_work_item_v1_error, NULL)::commit_file_merge_work_item_v1_response;
+        RETURN ROW('none'::commit_file_merge_work_item_error_v1, NULL)::commit_file_merge_work_item_response_v1;
     END IF;
 
     -- check that all parent batch files are part of work item files
@@ -908,7 +908,7 @@ BEGIN
         INTO new_file_id;
         PERFORM mark_file_to_delete_v1(now, new_file_id);
 
-        RETURN ROW('batch_not_part_of_work_item'::commit_file_merge_work_item_v1_error, merge_file_batch)::commit_file_merge_work_item_v1_response;
+        RETURN ROW('batch_not_part_of_work_item'::commit_file_merge_work_item_error_v1, merge_file_batch)::commit_file_merge_work_item_response_v1;
     END LOOP;
 
     -- delete old files
@@ -966,24 +966,24 @@ BEGIN
     -- delete work item
     PERFORM release_file_merge_work_item_v1(existing_work_item_id);
 
-    RETURN ROW('none'::commit_file_merge_work_item_v1_error, NULL)::commit_file_merge_work_item_v1_response;
+    RETURN ROW('none'::commit_file_merge_work_item_error_v1, NULL)::commit_file_merge_work_item_response_v1;
 END;
 $$
 ;
 
-CREATE TYPE release_file_merge_work_item_v1_error AS ENUM (
+CREATE TYPE release_file_merge_work_item_error_v1 AS ENUM (
     'none',
     'file_merge_work_item_not_found'
 );
 
-CREATE TYPE release_file_merge_work_item_v1_response AS (
-    error release_file_merge_work_item_v1_error
+CREATE TYPE release_file_merge_work_item_response_v1 AS (
+    error release_file_merge_work_item_error_v1
 );
 
 CREATE FUNCTION release_file_merge_work_item_v1(
     existing_work_item_id BIGINT
 )
-RETURNS release_file_merge_work_item_v1_response LANGUAGE plpgsql VOLATILE AS $$
+RETURNS release_file_merge_work_item_response_v1 LANGUAGE plpgsql VOLATILE AS $$
 DECLARE
     work_item RECORD;
 BEGIN
@@ -993,7 +993,7 @@ BEGIN
     INTO work_item;
 
     IF NOT FOUND THEN
-        RETURN ROW('file_merge_work_item_not_found'::release_file_merge_work_item_v1_error)::release_file_merge_work_item_v1_response;
+        RETURN ROW('file_merge_work_item_not_found'::release_file_merge_work_item_error_v1)::release_file_merge_work_item_response_v1;
     END IF;
 
     DELETE FROM file_merge_work_item_files
@@ -1002,7 +1002,7 @@ BEGIN
     DELETE FROM file_merge_work_items
     WHERE work_item_id = existing_work_item_id;
 
-    RETURN ROW('none'::release_file_merge_work_item_v1_error)::release_file_merge_work_item_v1_response;
+    RETURN ROW('none'::release_file_merge_work_item_error_v1)::release_file_merge_work_item_response_v1;
 END;
 $$
 ;

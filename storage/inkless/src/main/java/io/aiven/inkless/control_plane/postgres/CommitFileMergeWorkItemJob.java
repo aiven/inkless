@@ -23,8 +23,8 @@ import org.jooq.Configuration;
 import org.jooq.DSLContext;
 import org.jooq.generated.Routines;
 import org.jooq.generated.udt.records.BatchMetadataV1Record;
-import org.jooq.generated.udt.records.CommitFileMergeWorkItemV1BatchRecord;
-import org.jooq.generated.udt.records.CommitFileMergeWorkItemV1ResponseRecord;
+import org.jooq.generated.udt.records.CommitFileMergeWorkItemBatchV1Record;
+import org.jooq.generated.udt.records.CommitFileMergeWorkItemResponseV1Record;
 
 import java.time.Instant;
 import java.util.List;
@@ -34,7 +34,7 @@ import io.aiven.inkless.TimeUtils;
 import io.aiven.inkless.common.ObjectFormat;
 import io.aiven.inkless.control_plane.MergedFileBatch;
 
-public class CommitFileMergeWorkItemJob implements Callable<CommitFileMergeWorkItemV1ResponseRecord> {
+public class CommitFileMergeWorkItemJob implements Callable<CommitFileMergeWorkItemResponseV1Record> {
     private final Time time;
     private final Long workItemId;
     private final String objectKey;
@@ -65,16 +65,16 @@ public class CommitFileMergeWorkItemJob implements Callable<CommitFileMergeWorkI
     }
 
     @Override
-    public CommitFileMergeWorkItemV1ResponseRecord call() {
+    public CommitFileMergeWorkItemResponseV1Record call() {
         return JobUtils.run(this::runOnce);
     }
 
-    private CommitFileMergeWorkItemV1ResponseRecord runOnce() {
+    private CommitFileMergeWorkItemResponseV1Record runOnce() {
         return jooqCtx.transactionResult((final Configuration conf) -> {
             final Instant now = TimeUtils.now(time);
-            CommitFileMergeWorkItemV1BatchRecord[] batches = mergedFileBatches.stream()
+            CommitFileMergeWorkItemBatchV1Record[] batches = mergedFileBatches.stream()
                 .map(b ->
-                    new CommitFileMergeWorkItemV1BatchRecord(
+                    new CommitFileMergeWorkItemBatchV1Record(
                         new BatchMetadataV1Record(
                             (short) b.metadata().magic(),
                             b.metadata().topicIdPartition().topicId(),
@@ -91,7 +91,7 @@ public class CommitFileMergeWorkItemJob implements Callable<CommitFileMergeWorkI
                         b.parentBatches().toArray(new Long[0])
                     )
                 )
-                .toArray(CommitFileMergeWorkItemV1BatchRecord[]::new);
+                .toArray(CommitFileMergeWorkItemBatchV1Record[]::new);
             return Routines.commitFileMergeWorkItemV1(conf, now, workItemId, objectKey, (short) format.id, uploaderBrokerId, fileSize, batches);
         });
     }

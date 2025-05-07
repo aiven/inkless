@@ -20,12 +20,12 @@ package io.aiven.inkless.control_plane.postgres;
 import org.jooq.Configuration;
 import org.jooq.DSLContext;
 import org.jooq.generated.Routines;
-import org.jooq.generated.udt.records.ReleaseFileMergeWorkItemV1ResponseRecord;
+import org.jooq.generated.udt.records.ReleaseFileMergeWorkItemResponseV1Record;
 
 import java.util.concurrent.Callable;
 
 
-public class ReleaseFileMergeWorkItemJob implements Callable<ReleaseFileMergeWorkItemV1ResponseRecord> {
+public class ReleaseFileMergeWorkItemJob implements Callable<ReleaseFileMergeWorkItemResponseV1Record> {
     private final Long workItemId;
     private final DSLContext jooqCtx;
 
@@ -35,11 +35,11 @@ public class ReleaseFileMergeWorkItemJob implements Callable<ReleaseFileMergeWor
     }
 
     @Override
-    public ReleaseFileMergeWorkItemV1ResponseRecord call() {
+    public ReleaseFileMergeWorkItemResponseV1Record call() {
         return JobUtils.run(this::runOnce);
     }
 
-    private ReleaseFileMergeWorkItemV1ResponseRecord runOnce() {
+    private ReleaseFileMergeWorkItemResponseV1Record runOnce() {
         return jooqCtx.transactionResult((final Configuration conf) -> Routines.releaseFileMergeWorkItemV1(conf, workItemId));
     }
 }
