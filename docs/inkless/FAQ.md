@@ -55,7 +55,6 @@
 * **Q: Why not using Tiered Storage?**  
   * A: There are several reasons why Inkless uses a different approach than tiered storage:  
     * Cost: Tiered storage often involves replicating data between brokers, as with classic Kafka topics, leading to higher costs and network overhead.  
-    * Complexity: Tiered storage can add complexity to the Kafka broker setup.  
     * Durability: Inkless leverages the inherent durability of object storage, removing the need for replication at the Kafka broker level.  
 * **Q: What is the batch coordinator?**  
   * A: The Batch Coordinator is a key component responsible for managing message batches and ensuring the total order of messages within partitions. It essentially manages the metadata about which batch is in which object and their order.  
@@ -65,8 +64,6 @@
   * A: Currently, PostgreSQL is used as the backing store for the Batch Coordinator. It ensures the total order of messages within partitions. This means that messages are written and read in the correct sequence, which is critical for Kafka's guarantees.  
 * **Q: Is there a coordinator leader in Inkless?**  
   * A: Yes, for the Batch Coordinator (currently based on PostgreSQL), there is a leader that manages metadata and ensures ordering. While the data path is designed to be leaderless, the metadata management does rely on a leader for the Batch Coordinator. This leader is responsible for ensuring consistency and ordering of metadata, which indirectly guarantees message ordering within partitions.  
-* **Q: Can we hide PostgreSQL?**  
-  * A: Yes, absolutely. The long-term goal is to abstract away the underlying PostgreSQL instance so users don't have to directly interact with it. Ideally, users should not even be aware that PostgreSQL is being used. The intent is to make this an internal implementation detail of the Batch Coordinator, which will eventually evolve into a topic-based coordinator.
 
 **Data Handling and Guarantees**
 
@@ -113,8 +110,8 @@
   * A: No, you cannot shrink partition numbers for existing topics, regardless of whether they are classic or Inkless. This is a fundamental limitation of Kafka's design. Once a topic is created with a certain number of partitions, that number remains fixed.  
 * **Q: Can I upgrade from version 2.x to Inkless?**  
   * A: Upgrading to a version that supports Inkless involves a multi-step process. Typically, you would need to upgrade to intermediate versions that support newer features and metadata formats before finally upgrading to the version that includes Inkless (or Kafka 4.0 or later, depending on the terminology used). The exact steps may vary depending on the specific versions involved.  
-* **Q: Is cluster upgrade faster with Inkless topics?**  
-  * A: Yes, cluster upgrades tend to be faster with Inkless topics because the data is not stored on the brokers. Upgrading brokers is simpler and faster when they don't have to handle data migration.  
+* **Q: Is adding a new broker in the cluster faster with Inkless topics?**  
+  * A: Yes, adding a new fresh cluster tend to be faster with Inkless topics because the data is not stored on the brokers. Adding new brokers is simpler and faster as they don't have to synchronize data.  
 * **Q: Can we have multiple buckets within a cluster and region?**  
   * A: Currently, the design focuses on using a single object storage bucket per cluster. Using multiple buckets is not supported.  
 * **Q: Is there a community behind Inkless?**  
@@ -187,13 +184,19 @@
 * **Q: What are the limitations of Inkless?**  
   * A: Current limitations include:  
     * **No Transactions:** Inkless does not currently support transactions.  
-    * **Limited Retention Policies:** Retention policies based on bytes or time are not yet fully supported in the same way as classic Kafka topics.  
+    * **Limited Retention Policies:** Retention policies based on bytes or time are not yet fully supported in the same way as classic Kafka topics.
+    * **No Compacted Topics:** Inkless topics can't be also compacted topics. This follows a similar limitation as with Tiered Storage.
+    * **No Share Groups:** Queues for Kafka are currently not supported in Inkless topics.
 * **Q: How does the producer work with Inkless?**  
   * A: The Inkless producer collects messages and buffers them according to the batching parameters. Once a batch is full (either by time or size), it writes the batch as an object to object storage. The producer then receives confirmation of the successful write and continues sending more data.  
 * **Q: How is producer rack awareness configured?**  
   * A: Producers should configure rack awareness by setting the `client.id` to a specific format. This format is `<custom_id>,inkless_az=<rack>`, where `<custom_id>` is a unique identifier for the user's application or their existing `client.id`, and `<rack>` corresponds to the `broker.rack` configuration for brokers. This allows Inkless to route producer requests to the appropriate brokers within the same availability zone.  
 * **Q: How does producer rack awareness avoid inter-zone costs?**  
-  * A: When a producer is configured with a specific rack ID, it will primarily produce data to brokers that have the same rack ID. This ensures that data transmission stays within the same availability zone. Producers that are not configured with a rack ID might send data to brokers in other zones, which can result in inter-zone data transfer costs. Therefore, properly configured producer rack awareness significantly reduces the risk of incurring these costs.  
+  * A: When a producer is configured with a specific rack ID, it will primarily produce data to brokers that have the same rack ID. This ensures that data transmission stays within the same availability zone. Producers that are not configured with a rack ID might send data to brokers in other zones, which can result in inter-zone data transfer costs. Therefore, properly configured producer rack awareness significantly reduces the risk of incurring these costs.
+* **Q: How is consumer rack awareness configured?**
+  * A: Consumers should configure rack awareness by setting the `client.id` to a specific format. This format is `<custom_id>,inkless_az=<rack>`, where `<custom_id>` is a unique identifier for the user's application or their existing `client.id`, and `<rack>` corresponds to the `broker.rack` configuration for brokers. This allows Inkless to route consumer requests to the appropriate brokers within the same availability zone.
+* **Q: How does consumer rack awareness avoid inter-zone costs?**
+  * A: When a consumer is configured with a specific rack ID, it will primarily consume data from brokers that have the same rack ID. This ensures that data transmission stays within the same availability zone. Consumers that are not configured with a rack ID might receive data from brokers in other zones, which can result in inter-zone data transfer costs. Therefore, properly configured consumer rack awareness significantly reduces the risk of incurring these costs.
 * **Q: Is there producer rack awareness for Classic Topics?**  
   * A: No but for keyless data, [KIP-1123: Rack-aware partitioning for Kafka Producer](https://cwiki.apache.org/confluence/display/KAFKA/KIP-1123:%20Rack-aware%20partitioning%20for%20Kafka%20Producer) will send keyless data to a leader in the local rack. This is a proposal that will address this in the future, but it is not implemented in the same way as the producer rack awareness with Inkless topics.  
 * **Q: How is data from multiple producers distributed to multiple consumers?**  
@@ -220,7 +223,7 @@
 * **Q: How do I avoid all inter-availability-zone traffic in Inkless?**  
   * A: To avoid inter-AZ traffic:  
     * **Use Producer Rack Awareness (PRA):** Configure producers with the `client.id` format to ensure they write primarily to brokers within the same rack/AZ.  
-    * **Use Consumer Fetch from Follower:** If supported, consumers can try to fetch data from brokers in their own rack/AZ.  
+    * **Use Consumer Rack Awareness (CRA):** Configure consumers with the `client.id` format to ensure they receive primarily from brokers within the same rack/AZ.  
     * **Strategic Replication:** Although data replication is handled by object storage, ensure the object storage configuration minimizes cross-AZ data transfer costs (e.g., ensure object storage replicas are within the same region or AZ as much as possible).  
 * **Q: Is KRaft stable?**  
   * A: Yes, KRaft (Kafka Raft metadata mode) is considered stable, and there's a plan to move to using KRaft General Availability (GA) soon. KRaft replaces ZooKeeper for metadata management and provides a more robust and integrated metadata management system.  
