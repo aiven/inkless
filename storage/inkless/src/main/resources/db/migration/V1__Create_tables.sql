@@ -99,8 +99,10 @@ CREATE TABLE batches (
         ON DELETE NO ACTION ON UPDATE CASCADE DEFERRABLE INITIALLY DEFERRED,  -- allow deleting logs before batches
     CONSTRAINT fk_batches_files FOREIGN KEY (file_id) REFERENCES files(file_id) ON DELETE RESTRICT ON UPDATE CASCADE
 );
-CREATE INDEX batches_by_file ON batches (file_id);
+-- This index should also cover fk_batches_logs.
 CREATE INDEX batches_by_last_offset_idx ON batches (topic_id, partition, last_offset);
+-- This index covers fk_batches_files.
+CREATE INDEX batches_by_file ON batches (file_id);
 
 CREATE TABLE producer_state (
     topic_id topic_id_t,
@@ -634,6 +636,7 @@ CREATE TABLE file_merge_work_item_files (
     file_id BIGINT REFERENCES files(file_id),
     PRIMARY KEY (work_item_id, file_id)
 );
+CREATE INDEX file_merge_work_item_files_by_file ON file_merge_work_item_files (file_id);
 
 CREATE TYPE batch_metadata_v1 AS (
     magic magic_t,
