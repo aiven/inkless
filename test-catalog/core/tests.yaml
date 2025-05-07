@@ -3124,6 +3124,7 @@ kafka.server.share.SharePartitionTest:
 - testContainsAbortMarker
 - testFetchAbortedTransactionRecordBatchesForAbortedAndCommittedTransactions
 - testFetchAbortedTransactionRecordBatchesForOnlyAbortedTransactions
+- testFetchLockReleasedByDifferentId
 - testFilterRecordBatchesFromAcquiredRecords
 - testFindLastOffsetAcknowledgedWhenGapAtBeginning
 - testLsoMovementAheadOfEndOffset
