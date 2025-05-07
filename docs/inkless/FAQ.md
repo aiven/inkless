@@ -54,7 +54,7 @@
     * Scalability: Easily handle growing data volumes.  
 * **Q: Why not using Tiered Storage?**  
   * A: There are several reasons why Inkless uses a different approach than tiered storage:  
-    * Cost: Tiered storage often involves replicating data between different tiers, leading to higher costs and network overhead.  
+    * Cost: Tiered storage often involves replicating data between brokers, as with classic Kafka topics, leading to higher costs and network overhead.  
     * Complexity: Tiered storage can add complexity to the Kafka broker setup.  
     * Durability: Inkless leverages the inherent durability of object storage, removing the need for replication at the Kafka broker level.  
 * **Q: What is the batch coordinator?**  
