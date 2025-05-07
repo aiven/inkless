@@ -24,7 +24,7 @@ CHECK (VALUE IS NOT NULL AND VALUE >= -1);
 CREATE DOMAIN byte_offset_t BIGINT NOT NULL
 CHECK (VALUE >= 0);
 
-CREATE DOMAIN byte_size_t BIGINT NOT NULL  -- TODO replace with INT?
+CREATE DOMAIN byte_size_t BIGINT NOT NULL
 CHECK (VALUE >= 0);
 
 CREATE DOMAIN object_key_t AS VARCHAR(1024) NOT NULL;
@@ -360,10 +360,13 @@ END;
 $$
 ;
 
+CREATE DOMAIN bigint_not_nullable_t BIGINT
+CHECK (VALUE IS NOT NULL);
 CREATE TYPE delete_records_request_v1 AS (
     topic_id topic_id_t,
     partition partition_t,
-    "offset" BIGINT
+    -- We need to accept values lower than -1 so we can return the correct offset_out_of_range error for them.
+    "offset" bigint_not_nullable_t
 );
 
 CREATE TYPE delete_records_response_error_v1 AS ENUM (
@@ -637,7 +640,6 @@ CREATE TYPE batch_metadata_v1 AS (
     topic_id topic_id_t,
     topic_name topic_name_t,
     partition partition_t,
-
     byte_offset byte_offset_t,
     byte_size byte_size_t,
     base_offset offset_t,
@@ -802,7 +804,6 @@ CREATE TYPE commit_file_merge_work_item_error_v1 AS ENUM (
     'invalid_parent_batch_count',
     'batch_not_part_of_work_item'
 );
-
 
 CREATE TYPE commit_file_merge_work_item_response_v1 AS (
     error commit_file_merge_work_item_error_v1,
