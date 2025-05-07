@@ -58,8 +58,8 @@
     * Complexity: Tiered storage can add complexity to the Kafka broker setup.  
     * Durability: Inkless leverages the inherent durability of object storage, removing the need for replication at the Kafka broker level.  
 * **Q: What is the batch coordinator?**  
-  * A: The Batch Coordinator is a key component responsible for managing the batching of messages and ensuring the total order of messages within partitions. It essentially manages the metadata about which messages are in which objects and their order.  
-    * Currently, the batch coordinator is implemented using a PostgreSQL instance per cluster.  
+  * A: The Batch Coordinator is a key component responsible for managing message batches and ensuring the total order of messages within partitions. It essentially manages the metadata about which batch is in which object and their order.  
+    * Currently, the batch coordinator is implemented using a PostgreSQL database per cluster.  
     * Future plans include transitioning to a topic-based coordinator as outlined in [KIP-1164: Topic Based Batch Coordinator](https://cwiki.apache.org/confluence/display/KAFKA/KIP-1164%3A+Topic+Based+Batch+Coordinator).  
 * **Q: What is the relationship between Inkless and PostgreSQL?**  
   * A: Currently, PostgreSQL is used as the backing store for the Batch Coordinator. It ensures the total order of messages within partitions. This means that messages are written and read in the correct sequence, which is critical for Kafka's guarantees.  
@@ -127,7 +127,7 @@
 **Performance and Cost**
 
 * **Q: Are Inkless topics as performant as classic Kafka topics?**  
-  * A: No, there is typically a latency overhead with Inkless topics compared to classic Kafka topics. This is because of the batching mechanism and the extra network hop to object storage. Classic Kafka topics have lower latency for individual messages but might face other bottlenecks with high throughput.  
+  * A: No, there is typically a latency overhead with Inkless topics compared to classic Kafka topics. This is because of the batching mechanism and the extra network hop to the object storage and batch coordinator. Classic Kafka topics have lower latency for individual messages but might face other bottlenecks with high throughput.  
 * **Q: When to use Inkless topics?**  
   * A: Inkless topics are well-suited for use cases where:  
     * **Latency tolerance:** Applications that can tolerate slightly higher latency (e.g., logs aggregation, analytics, or data warehousing).  
@@ -135,7 +135,7 @@
     * **Cost is a significant factor:** When lower storage costs and reduced operational overhead are priorities.  
 * **Q: What is the round trip?**  
   * A: The round-trip time depends on whether it's a producer or consumer and other factors:  
-    * **Producer:** The round trip for the Inkless producer includes the batching delay (e.g., 250ms by default) plus the time to write to object storage.  
+    * **Producer:** The round trip for the Inkless producer includes the batching delay (e.g., 250ms by default) plus the time to write to object storage and commit data to batch coordinator.  
     * **Consumer:** The round trip for a consumer depends on whether the data is cached or needs to be fetched from object storage. Subsequent reads from cached data will be much faster than the initial fetch.  
     * **Classic Producer:** The round trip for a classic Kafka producer is generally much lower, often just the network latency to the broker.  
 * **Q: How do you achieve performant consumers?**  
@@ -231,7 +231,7 @@
     * FreightClusters  
     * BuffStream  
     * S2  
-    * NordGuard  
+    * Northguard  
     * RedPanda R1  
 * **Q: Who is the target audience of this help document?**  
   * A: This document is intended for developers, system administrators, architects, and developer managers who are interested in understanding Inkless. The target audience includes anyone who is considering or actively working with Inkless and wants to learn how it differs from traditional Kafka and how it can be used effectively.
