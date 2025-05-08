@@ -4236,14 +4236,11 @@ org.apache.kafka.common.requests.OffsetFetchRequestTest:
 - testThrowOnFetchStableOffsetsUnsupported
 - testWithMultipleGroups
 org.apache.kafka.common.requests.OffsetFetchResponseTest:
-- testConstructor
-- testConstructorWithMultipleGroups
-- testNullableMetadataV0ToV7
-- testNullableMetadataV8AndAbove
-- testShouldThrottle
-- testStructBuild
-- testUseDefaultLeaderEpochV0ToV7
-- testUseDefaultLeaderEpochV8
+- testBuilderWithMultipleGroups
+- testBuilderWithSingleGroup
+- testGroupWithMultipleGroups
+- testGroupWithSingleGroup
+- testGroupWithSingleGroupWithTopLevelError
 org.apache.kafka.common.requests.OffsetsForLeaderEpochRequestTest:
 - testForConsumerRequiresVersion3
 - testForFollower
