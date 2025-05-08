@@ -4066,6 +4066,11 @@ org.apache.kafka.common.record.MemoryRecordsTest:
 - testHasRoomForMethodWithHeaders
 - testIterator
 - testNextBatchSize
+- testSlice
+- testSliceEmptyRecords
+- testSliceForAlreadySlicedMemoryRecords
+- testSliceInvalidPosition
+- testSliceInvalidSize
 - testUnsupportedCompress
 - testWithRecords
 org.apache.kafka.common.record.MultiRecordsSendTest:

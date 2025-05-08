@@ -2979,10 +2979,8 @@ kafka.server.share.ShareCoordinatorMetadataCacheHelperImplTest:
 - testShareCoordinatorReturnsNoNodeWhenNoInternalTopicInCache
 - testShareCoordinatorSuccess
 kafka.server.share.ShareFetchUtilsTest:
-- testMaybeSliceFetchRecordsException
-- testMaybeSliceFetchRecordsMultipleBatches
-- testMaybeSliceFetchRecordsNonFileRecords
-- testMaybeSliceFetchRecordsSingleBatch
+- FileRecords
+- MemoryRecords
 - testProcessFetchResponse
 - testProcessFetchResponseWhenNoRecordsAreAcquired
 - testProcessFetchResponseWithEmptyRecords
