@@ -170,8 +170,6 @@
     * **Batch Coordinates:** Metadata tracking which messages are in which objects and their location in object storage.  
 * **Q: Do I need Mirror-Maker to replicate between region specific clusters?**  
   * A: MirrorMaker 2 (MM2) can be used to replicate data between region-specific clusters. MM2 will replicate data with relatively low latency, similar to the replication used for Classic Kafka topics. Importantly, the batch coordinates in the destination cluster will be stored separately from the main coordinates of the source cluster. This separation ensures that the replication process doesn't interfere with the operations of the original data.  
-* **Q: How is Inkless Disaster Recovery different from MM2?**  
-  * A: MirrorMaker 2 typically uses an active-passive replication strategy (where one cluster is primary, and the other is for backup/DR). In contrast, Inkless supports an active-active strategy with the underlying object storage being replicated between regions or having multiple copies available.  
 * **Q: How does Inkless handle object loss in storage?**  
   * A: Inkless relies on the durability and redundancy of the object storage service. If an object is lost due to storage system failure, Inkless will be unable to deliver the messages within that object. Object storage services are generally designed to prevent data loss, but in the unlikely event that it happens, data would indeed be lost.  
 * **Q: Can Diskless enable topic sharing between clusters without inter-region costs?**  
