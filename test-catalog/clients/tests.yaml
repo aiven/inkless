@@ -2490,6 +2490,14 @@ org.apache.kafka.clients.consumer.internals.TimedRequestStateTest:
 - testIsExpired
 - testRemainingMs
 - testToStringUpdatesTimer
+org.apache.kafka.clients.consumer.internals.TopicIdPartitionSetTest:
+- testIsEmpty
+- testRetrieveTopicIds
+- testRetrieveTopicNames
+- testRetrieveTopicPartitions
+- testRetrievedTopicNamesAreSorted
+- testToString
+- testToStringSorted
 org.apache.kafka.clients.consumer.internals.TopicMetadataFetcherTest:
 - testGetAllTopics
 - testGetAllTopicsDisconnect

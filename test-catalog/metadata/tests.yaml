@@ -369,6 +369,7 @@ org.apache.kafka.controller.metrics.ControllerMetricsChangesTest:
 - testHandleNewUnfencedBroker
 - testInitialValues
 - testTopicChange
+- testTopicElectionResult
 org.apache.kafka.controller.metrics.QuorumControllerMetricsTest:
 - testLastAppliedRecordMetrics
 - testMetricNames
@@ -457,6 +458,8 @@ org.apache.kafka.image.TopicsImageTest:
 - testImage1RoundTrip
 - testImage2RoundTrip
 - testLocalReassignmentChanges
+- testTopicDeltaElectionStatsWithEmptyImage
+- testTopicDeltaElectionStatsWithNonEmptyImage
 - testTopicIdToNameView
 - testTopicNameToIdView
 - testUpdatedLeaders
@@ -699,8 +702,7 @@ org.apache.kafka.metadata.PartitionRegistrationTest:
 - testBuilderThrowsIllegalStateExceptionWhenMissingPartitionEpoch
 - testBuilderThrowsIllegalStateExceptionWhenMissingReplicas
 - testDirectories
-- testElectionWasClean
-- testEligibleLeaderReplicasElection
+- testElectionWasUnclean
 - testMergePartitionChangeRecordWithReassignmentData
 - testMigratingRecordDirectories
 - testPartitionControlInfoMergeAndDiff
