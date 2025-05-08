@@ -383,6 +383,7 @@ org.apache.kafka.tools.MetadataQuorumCommandUnitTest:
 - testRemoveControllerDryRun
 org.apache.kafka.tools.ProducerPerformanceTest:
 - testClientIdOverride
+- testCompareStringSplitWithScannerDelimiter
 - testConfigPostProcessor
 - testDefaultClientId
 - testEnableTransaction
@@ -401,6 +402,7 @@ org.apache.kafka.tools.ProducerPerformanceTest:
 - testNumberOfFailedSendAndClose
 - testNumberOfSuccessfulSendAndClose
 - testReadPayloadFile
+- testReadPayloadFileWithAlternateDelimiters
 - testReadProps
 - testStatsCorrectness
 - testStatsInitializationWithLargeNumRecords

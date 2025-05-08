@@ -3289,17 +3289,6 @@ kafka.utils.LoggingTest:
 - testLogNameOverride
 - testLoggerLevelIsResolved
 - testTypeOfGetLoggers
-kafka.utils.SchedulerTest:
-- testMockSchedulerLocking
-- testMockSchedulerNonPeriodicTask
-- testMockSchedulerPeriodicTask
-- testNonPeriodicTask
-- testNonPeriodicTaskWhenPeriodIsZero
-- testPendingTaskSize
-- testPeriodicTask
-- testReentrantTaskInMockScheduler
-- testRestart
-- testUnscheduleProducerTask
 unit.kafka.server.AllocateProducerIdsRequestTest:
 - testAllocateProducersIdSentToController
 - testAllocateProducersIdSentToNonController

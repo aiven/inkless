@@ -176,3 +176,14 @@ org.apache.kafka.server.share.session.ShareSessionCacheTest:
 org.apache.kafka.server.share.session.ShareSessionTest:
 - testPartitionsToLogString
 - testPartitionsToLogStringEmpty
+org.apache.kafka.server.util.SchedulerTest:
+- testMockSchedulerLocking
+- testMockSchedulerNonPeriodicTask
+- testMockSchedulerPeriodicTask
+- testNonPeriodicTask
+- testNonPeriodicTaskWhenPeriodIsZero
+- testPendingTaskSize
+- testPeriodicTask
+- testReentrantTaskInMockScheduler
+- testRestart
+- testUnscheduleProducerTask
