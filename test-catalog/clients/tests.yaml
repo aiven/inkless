@@ -2175,6 +2175,7 @@ org.apache.kafka.clients.consumer.internals.ShareConsumerImplTest:
 - testAcknowledgementCommitCallbackRegistrationEvent
 - testAcknowledgementCommitCallbackRegistrationEvent_Null
 - testBackgroundError
+- testCloseWithBackgroundQueueErrorsAfterUnsubscribe
 - testCloseWithInvalidTopicException
 - testCloseWithTopicAuthorizationException
 - testCompleteQuietly
