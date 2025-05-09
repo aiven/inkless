@@ -359,7 +359,14 @@ org.apache.kafka.clients.admin.KafkaAdminClientTest:
 - testListConsumerGroupOffsetsRetriableErrors
 - testListConsumerGroupOffsetsRetryBackoff
 - testListConsumerGroups
+- testListConsumerGroupsDeprecated
+- testListConsumerGroupsDeprecatedMetadataFailure
+- testListConsumerGroupsDeprecatedWithStates
+- testListConsumerGroupsDeprecatedWithStatesOlderBrokerVersion
+- testListConsumerGroupsDeprecatedWithTypes
+- testListConsumerGroupsDeprecatedWithTypesOlderBrokerVersion
 - testListConsumerGroupsMetadataFailure
+- testListConsumerGroupsWithProtocolTypes
 - testListConsumerGroupsWithStates
 - testListConsumerGroupsWithStatesOlderBrokerVersion
 - testListConsumerGroupsWithTypes
@@ -368,6 +375,7 @@ org.apache.kafka.clients.admin.KafkaAdminClientTest:
 - testListGroupsEmptyGroupType
 - testListGroupsEmptyProtocol
 - testListGroupsMetadataFailure
+- testListGroupsWithProtocolTypes
 - testListGroupsWithTypes
 - testListGroupsWithTypesOlderBrokerVersion
 - testListOffsets
@@ -442,6 +450,13 @@ org.apache.kafka.clients.admin.KafkaAdminClientTest:
 - testUpdateFeaturesTopLevelError
 org.apache.kafka.clients.admin.ListConsumerGroupsOptionsTest:
 - testState
+org.apache.kafka.clients.admin.ListGroupsOptionsTest:
+- testForConsumerGroups
+- testForShareGroups
+- testForStreamsGroups
+- testGroupStates
+- testProtocolTypes
+- testTypes
 org.apache.kafka.clients.admin.ListTransactionsResultTest:
 - testAllFuturesFailIfLookupFails
 - testAllFuturesSucceed
