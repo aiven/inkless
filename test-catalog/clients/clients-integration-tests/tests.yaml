@@ -55,6 +55,8 @@ org.apache.kafka.clients.admin.ListOffsetsIntegrationTest:
 org.apache.kafka.clients.admin.RackAwareAutoTopicCreationTest:
 - testAutoCreateTopic
 org.apache.kafka.clients.admin.StaticBrokerConfigTest:
+- testInternalConfigsDoNotReturnForCreateTopics
+- testInternalConfigsDoNotReturnForDescribeConfigs
 - testTopicConfigsGetImpactedIfStaticConfigsAddToBroker
 - testTopicConfigsGetImpactedIfStaticConfigsAddToController
 org.apache.kafka.clients.consumer.ConsumerIntegrationTest:
