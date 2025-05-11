@@ -377,7 +377,6 @@ kafka.api.PlaintextAdminIntegrationTest:
 - testOffsetsForTimesAfterDeleteRecords
 - testReplicaCanFetchFromLogStartOffsetAfterDeleteRecords
 - testSeekAfterDeleteRecords
-- testShareGroups
 - testValidIncrementalAlterConfigs
 kafka.api.PlaintextConsumerAssignTest:
 - testAssignAndCommitAsyncNotCommitted
