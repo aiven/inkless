@@ -1,5 +1,15 @@
 # Quickstart
 
+## Dockerized demo
+
+You need JDK 17 (or newer) and Docker installed. Run:
+
+```shell
+make demo
+```
+
+It will compile the code, build the Docker image, and start the local demo with two producers, one consumer, the PostgreSQL-backed control plane, and Minio as the object storage. Grafana with metrics will be accessible at http://localhost:3000 (login `admin`, password `admin`). Minio will be accessible at http://localhost:9001 (login `minioadmin`, password `minioadmin`). 
+
 ## Run Kafka from Intellij
 
 Adjust the module `:core` libraries to include log4j release libraries:

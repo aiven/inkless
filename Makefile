@@ -87,6 +87,11 @@ integration_test_core:
 clean:
 	./gradlew clean
 
+.PHONY: demo
+demo: core/build/distributions/kafka_2.13-$(VERSION)
+	docker compose -f docker-compose-demo.yml up
+	docker compose -f docker-compose-demo.yml down --remove-orphans
+
 core/build/distributions/kafka_2.13-$(VERSION): core/build/distributions/kafka_2.13-$(VERSION).tgz
 	tar -xf $< -C core/build/distributions
 	touch $@  # prevent rebuilds

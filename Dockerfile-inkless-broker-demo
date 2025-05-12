@@ -1,0 +1,13 @@
+FROM apache/kafka:4.0.0
+
+USER root
+ADD core/build/distributions/kafka_2.13-4.1.0-inkless-SNAPSHOT.tgz /opt
+RUN cd /opt/kafka \
+    && rm -r bin libs kafka.jsa storage.jsa \
+    && mv ../kafka_2.13-4.1.0-inkless-SNAPSHOT/bin bin \
+    && mv ../kafka_2.13-4.1.0-inkless-SNAPSHOT/libs libs \
+    && rm -r ../kafka_2.13-4.1.0-inkless-SNAPSHOT \
+    && wget https://repo1.maven.org/maven2/io/prometheus/jmx/jmx_prometheus_javaagent/1.0.1/jmx_prometheus_javaagent-1.0.1.jar
+ADD docker/extra/prometheus-jmx-exporter/kafka.yml /opt/kafka/prometheus-jmx-exporter.yaml
+
+USER appuser
