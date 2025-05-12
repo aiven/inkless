@@ -890,7 +890,7 @@ public class ReplicationControlManager {
             }
         }
         if (Topic.isInternal(topic.name()) && !inklessSet) {
-            configRecords.add(new ApiMessageAndVersion(new ConfigRecord()
+            validConfigRecord.add(new ApiMessageAndVersion(new ConfigRecord()
                 .setName(INKLESS_ENABLE_CONFIG)
                 .setValue("false")
                 .setResourceName(topic.name())
