@@ -875,7 +875,12 @@ public class ReplicationControlManager {
         final List<ApiMessageAndVersion> validConfigRecord = new ArrayList<>();
         boolean inklessSet = false;
         for (ApiMessageAndVersion configRecord: configRecords) {
-            ConfigRecord record = (ConfigRecord) configRecord.message();
+            ConfigRecord record;
+            try {
+                record = (ConfigRecord) configRecord.message();
+            } catch (ClassCastException e) {
+                continue;
+            }
             if (record.name().equals(INKLESS_ENABLE_CONFIG) && Topic.isInternal(topic.name())) {
                 ApiMessageAndVersion message = new ApiMessageAndVersion(new ConfigRecord()
                     .setName(INKLESS_ENABLE_CONFIG)
