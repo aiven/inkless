@@ -97,9 +97,12 @@ services:
               "--topic", "test-topic",
               "--partitions", "10"]
 
-  producer:
+  producer-1: &producer-config
     image: apache/kafka:4.0.0
-    scale: 2
+    environment:
+      KAFKA_OPTS: -javaagent:/opt/prometheus-jmx-exporter/jmx_prometheus_javaagent.jar=7070:/opt/prometheus-jmx-exporter/kafka-client.yml
+    volumes:
+      - ./../../../extra/prometheus-jmx-exporter:/opt/prometheus-jmx-exporter:Z
     depends_on:
       create_topic:
         condition: service_started
@@ -110,13 +113,21 @@ services:
               "--num-records", "10000000000",
               "--throughput", "-1"]
 
+  producer-2:
+    <<: *producer-config
+
   consumer:
     image: apache/kafka:4.0.0
     depends_on:
-      producer:
+      producer-1:
+        condition: service_started
+      producer-2:
         condition: service_started
     environment:
       KAFKA_HEAP_OPTS: "-Xmx1G"
+      KAFKA_OPTS: -javaagent:/opt/prometheus-jmx-exporter/jmx_prometheus_javaagent.jar=7070:/opt/prometheus-jmx-exporter/kafka-client.yml
+    volumes:
+      - ./../../../extra/prometheus-jmx-exporter:/opt/prometheus-jmx-exporter:Z
     command: ["/opt/kafka/bin/kafka-consumer-perf-test.sh",
               "--bootstrap-server", "broker:19092",
               "--topic", "test-topic",

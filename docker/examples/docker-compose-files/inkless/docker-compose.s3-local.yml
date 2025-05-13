@@ -14,6 +14,8 @@ services:
         condition: service_healthy
       storage:
         condition: service_started
+      create_bucket:
+        condition: service_completed_successfully
 
   # Object storage
   storage:

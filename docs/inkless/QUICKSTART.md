@@ -10,7 +10,9 @@ make demo
 make demo DOCKER=podman
 ```
 
-It will pull the Docker image, and start the local demo with two producers, one consumer, the PostgreSQL-backed control plane, and Minio as the object storage. Grafana with metrics will be accessible at http://localhost:3000 (login `admin`, password `admin`). Minio will be accessible at http://localhost:9001 (login `minioadmin`, password `minioadmin`). 
+It will pull the Docker image, and start the local demo with two producers, one consumer, the PostgreSQL-backed control plane, and MinIO as the object storage. 
+Grafana with metrics will be accessible at http://localhost:3000 (login `admin`, password `admin`). 
+Minio will be accessible at http://localhost:9001 (login `minioadmin`, password `minioadmin`). 
 
 If you prefer to build the image locally, you can run:
 
@@ -19,9 +21,17 @@ If you prefer to build the image locally, you can run:
 make docker_build
 ```
 
+and then run the demo.
+
+The logs will print the producer and consumer stats.
+To observe the metrics, go to the Kafka Inkless and Kafka Clients dashboards in Grafana.
+
 For more details, see the [demo docs](./../../docker/examples/docker-compose-files/inkless/README.md).
 
-## Run Kafka from Intellij
+
+## Local development: Run Kafka from IDE
+
+To run Kafka from the IDE (e.g. Intellij), you need to set up the project and dependencies correctly:
 
 Adjust the module `:core` libraries to include log4j release libraries:
 
@@ -40,18 +50,18 @@ dependencies {
      api project(':clients')
 ```
 
-Backend services:
-Start MinIO in the background:
+Start the Backend services:
+
+Run MinIO in the background:
 
 ```shell
 make local_minio
-# docker-compose up -d minio
 ```
 
 > [!NOTE]
 > If running Postgres as Control-Plane backend:
 > ```shell
-> docker-compose up -d postgres
+> make local_pg
 > ```
 
 There are 2 Kafka configurations, one to use the in-memory Control-Plane `config/inkless/single-broker-0.properties` and another to use Postgres as Control-Plane `config/inkless/single-broker-pg-0.properties`.
@@ -60,9 +70,10 @@ There are 2 Kafka configurations, one to use the in-memory Control-Plane `config
 > Before the first time running Kafka, you need to format the log directories:
 > 
 > ```shell
-> KAFKA_CLUSTER_ID="$(bin/kafka-storage.sh random-uuid)"
-> bin/kafka-storage.sh format --standalone -t $KAFKA_CLUSTER_ID -c $CONFIG_FILE
+> make kafka_storage_format
 > ```
+
+Then run the `kafka.Kafka` class in the `kafka.core.main` module:
 
 Setup Kafka run configuration on Intellij:
 
@@ -97,8 +108,15 @@ Consume messages:
 
 ```shell
 bin/kafka-consumer-perf-test.sh --bootstrap-server 127.0.0.1:9092 \
-  --messages 1000000 --from-latest \
+  --messages 100000 --from-latest \
   --topic t1
 ```
 
-Check MinIO for remote files on `http://localhost:9000/browse/inkless/` (`minioadmin:minioadmin`)
+Check MinIO for remote files on `http://localhost:9001/browse/inkless/` (`minioadmin:minioadmin`)
+
+To clean up the local environment, stop the Kafka process and run:
+
+```shell
+make cleanup
+```
+

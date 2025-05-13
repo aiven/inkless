@@ -7,12 +7,12 @@ services:
       KAFKA_INKLESS_STORAGE_AZURE_ACCOUNT_KEY: "Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw=="
       KAFKA_INKLESS_STORAGE_AZURE_ENDPOINT_URL: "http://storage:10000/devstoreaccount1"
     depends_on:
-      configure_storage:
-        condition: service_completed_successfully
       postgres:
         condition: service_healthy
       storage:
         condition: service_started
+      create_bucket:
+        condition: service_completed_successfully
 
   storage:
     image: mcr.microsoft.com/azure-storage/azurite
@@ -20,7 +20,7 @@ services:
       - "10000:10000"
     command: azurite-blob --blobHost 0.0.0.0
 
-  configure_storage:
+  create_bucket:
     image: mcr.microsoft.com/azure-cli
     restart: "no"
     depends_on:

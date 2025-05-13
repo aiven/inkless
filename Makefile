@@ -88,17 +88,17 @@ local_pg:
 .PHONY: local_minio
 local_minio:
 	cd docker/examples/docker-compose-files/inkless && \
-		$(DOCKER) compose -f docker-compose.yml -f docker-compose.minio.yml up -d create_bucket
+		$(DOCKER) compose -f docker-compose.yml -f docker-compose.s3-local.yml up -d create_bucket
 
 .PHONY: local_gcs
 local_gcs:
 	cd docker/examples/docker-compose-files/inkless && \
-		$(DOCKER) compose -f docker-compose.yml -f docker-compose.gcs.yml up -d create_bucket
+		$(DOCKER) compose -f docker-compose.yml -f docker-compose.gcs-local.yml up -d create_bucket
 
 .PHONY: local_azure
 local_azure:
 	cd docker/examples/docker-compose-files/inkless && \
-		$(DOCKER) compose -f docker-compose.yml -f docker-compose.azure.yml up -d create_bucket
+		$(DOCKER) compose -f docker-compose.yml -f docker-compose.azure-local.yml up -d create_bucket
 
 .PHONY: cleanup
 cleanup:
