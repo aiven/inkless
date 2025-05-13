@@ -596,6 +596,7 @@ org.apache.kafka.coordinator.group.OffsetMetadataManagerTest:
 - testCleanupExpiredOffsetsGroupDoesNotExist
 - testCleanupExpiredOffsetsGroupHasNoOffsets
 - testCleanupExpiredOffsetsWithPendingTransactionalOffsets
+- testCleanupExpiredOffsetsWithPendingTransactionalOffsetsOnly
 - testConsumerGroupOffsetCommit
 - testConsumerGroupOffsetCommitFromAdminClient
 - testConsumerGroupOffsetCommitWithIllegalGenerationId
