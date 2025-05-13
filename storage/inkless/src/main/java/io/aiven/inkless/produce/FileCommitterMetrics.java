@@ -47,6 +47,7 @@ class FileCommitterMetrics implements Closeable {
     private static final String COMMIT_QUEUE_FILES = "CommitQueueFiles";
     private static final String COMMIT_QUEUE_BYTES = "CommitQueueBytes";
     private static final String FILE_SIZE = "FileSize";
+    private static final String BATCHES_COUNT = "BatchesCount";
 
     private final Time time;
 
@@ -57,6 +58,7 @@ class FileCommitterMetrics implements Closeable {
     private final Histogram fileCommitTimeHistogram;
     private final Histogram appendCompletionTimeHistogram;
     private final Histogram fileSizeHistogram;
+    private final Histogram batchesCountHistogram;
     private final Histogram cacheStoreTimeHistogram;
     private final LongAdder fileUploadRate = new LongAdder();
     private final LongAdder fileCommitRate = new LongAdder();
@@ -71,6 +73,7 @@ class FileCommitterMetrics implements Closeable {
         metricsGroup.newGauge(FILE_COMMIT_RATE, fileCommitRate::intValue);
         appendCompletionTimeHistogram = metricsGroup.newHistogram(APPEND_COMPLETION_TIME, true, Map.of());
         fileSizeHistogram = metricsGroup.newHistogram(FILE_SIZE, true, Map.of());
+        batchesCountHistogram = metricsGroup.newHistogram(BATCHES_COUNT, true, Map.of());
         cacheStoreTimeHistogram = metricsGroup.newHistogram(CACHE_STORE_TIME, true, Map.of());
     }
 
@@ -84,6 +87,10 @@ class FileCommitterMetrics implements Closeable {
 
     void fileAdded(final int size) {
         fileSizeHistogram.update(size);
+    }
+
+    void batchesAdded(final int size) {
+        batchesCountHistogram.update(size);
     }
 
     void fileUploadFinished(final long durationMs) {

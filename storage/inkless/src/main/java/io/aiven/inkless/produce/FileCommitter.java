@@ -148,6 +148,7 @@ class FileCommitter implements Closeable {
                 commitFuture = CompletableFuture.completedFuture(Collections.emptyList());
             } else {
                 metrics.fileAdded(file.size());
+                metrics.batchesAdded(file.commitBatchRequests().size());
                 totalFilesInProgress.addAndGet(1);
                 totalBytesInProgress.addAndGet(file.size());
 
