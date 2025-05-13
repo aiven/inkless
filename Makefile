@@ -93,7 +93,7 @@ clean:
 	./gradlew clean
 
 .PHONY: demo
-demo: core/build/distributions/kafka_2.13-$(VERSION)
+demo:
 	docker compose -f docker-compose-demo.yml up
 	docker compose -f docker-compose-demo.yml down --remove-orphans
 

@@ -1,13 +1,11 @@
 services:
   broker:
-    build:
-      context: .
-      dockerfile: Dockerfile-inkless-broker-demo
+    image: aivenoy/kafka:4.1.0-inkless-SNAPSHOT
     restart: unless-stopped
     ports:
       - "9092:9092"  # Kafka
-#      - "7070:7070"  # Prometheus metrics
-#      - "9999:9999"  # JMX
+      - "7070:7070"  # Prometheus metrics
+      - "9999:9999"  # JMX
     environment:
       CLUSTER_ID: "4L6g3nShT-eMCtK--X86sw"
       KAFKA_PROCESS_ROLES: "broker,controller"
@@ -23,12 +21,6 @@ services:
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
       KAFKA_LOG_DIRS: "/tmp/kraft-combined-logs"
-
-      # Monitoring
-      KAFKA_JMX_PORT: 9999
-      EXTRA_ARGS: -javaagent:/opt/kafka/jmx_prometheus_javaagent-1.0.1.jar=7070:/opt/kafka/prometheus-jmx-exporter.yaml
-
-      KAFKA_HEAP_OPTS: "-Xmx2G -Xms2G"
 
       # Inkless
       KAFKA_LOG_INKLESS_ENABLE: "true"
@@ -47,6 +39,12 @@ services:
       KAFKA_INKLESS_STORAGE_S3_ENDPOINT_URL: "http://storage:9000"
       KAFKA_INKLESS_STORAGE_AWS_ACCESS_KEY_ID: "minioadmin"
       KAFKA_INKLESS_STORAGE_AWS_SECRET_ACCESS_KEY: "minioadmin"
+
+      # Monitoring
+      KAFKA_JMX_PORT: 9999
+      EXTRA_ARGS: -javaagent:/opt/prometheus-jmx-exporter/jmx_prometheus_javaagent.jar=7070:/opt/prometheus-jmx-exporter/kafka.yml
+    volumes:
+      - ./docker/extra/prometheus-jmx-exporter:/opt/prometheus-jmx-exporter
     healthcheck:
       test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server broker:19092 --list"]
       interval: 5s
@@ -99,8 +97,8 @@ services:
   # Monitoring
   prometheus:
     image: prom/prometheus:latest
-#    ports:
-#      - "9090:9090"
+    ports:
+      - "9090:9090"
     volumes:
       - ./docker/extra/prometheus/config/:/etc/prometheus/
 
@@ -111,10 +109,9 @@ services:
     volumes:
       - ./docker/extra/grafana/:/etc/grafana/provisioning/
 
+  # Demo
   create_topic:
-    build:
-      context: .
-      dockerfile: Dockerfile-inkless-broker-demo
+    image: aivenoy/kafka:4.1.0-inkless-SNAPSHOT
     restart: "no"
     depends_on:
       broker:
