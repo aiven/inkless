@@ -43,7 +43,7 @@ services:
       KAFKA_HEAP_OPTS: "-Xmx2G -Xms2G"
       EXTRA_ARGS: -javaagent:/opt/prometheus-jmx-exporter/jmx_prometheus_javaagent.jar=7070:/opt/prometheus-jmx-exporter/kafka.yml
     volumes:
-      - ./../../../extra/prometheus-jmx-exporter:/opt/prometheus-jmx-exporter
+      - ./../../../extra/prometheus-jmx-exporter:/opt/prometheus-jmx-exporter:Z
     healthcheck:
       test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server broker:19092 --list"]
       interval: 5s
@@ -74,13 +74,14 @@ services:
     ports:
       - "9090:9090"
     volumes:
-      - ./../../../extra/prometheus/config/:/etc/prometheus/
+      - ./../../../extra/prometheus/config/:/etc/prometheus/:Z
+
   grafana:
     image: grafana/grafana:latest
     ports:
       - "3000:3000"
     volumes:
-      - ./../../../extra/grafana/:/etc/grafana/provisioning/
+      - ./../../../extra/grafana/:/etc/grafana/provisioning/:Z
 
   # Demo
   create_topic:

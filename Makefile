@@ -32,10 +32,12 @@ docker_build: build_release docker_build_prep
 	cd docker && \
 	  .venv/bin/python3 docker_build_test.py -b aivenoy/kafka --image-tag=$(VERSION) --image-type=inkless
 
+DOCKER := docker
+
 .PHONY: docker_push
 docker_push: docker_build
 	# use existing docker tooling to push image
-	docker push aivenoy/kafka:$(VERSION)
+	$(DOCKER) push aivenoy/kafka:$(VERSION)
 
 .PHONY: fmt
 fmt:
@@ -80,30 +82,30 @@ kafka_storage_format:
 .PHONY: local_pg
 local_pg:
 	cd docker/examples/docker-compose-files/inkless && \
-		docker compose up -d postgres
+		$(DOCKER) compose up -d postgres
+
 
 .PHONY: local_minio
 local_minio:
 	cd docker/examples/docker-compose-files/inkless && \
-		docker compose -f docker-compose.yml -f docker-compose.minio.yml up -d create_bucket
+		$(DOCKER) compose -f docker-compose.yml -f docker-compose.minio.yml up -d create_bucket
 
 .PHONY: local_gcs
 local_gcs:
 	cd docker/examples/docker-compose-files/inkless && \
-		docker compose -f docker-compose.yml -f docker-compose.gcs.yml up -d create_bucket
+		$(DOCKER) compose -f docker-compose.yml -f docker-compose.gcs.yml up -d create_bucket
 
 .PHONY: local_azure
 local_azure:
 	cd docker/examples/docker-compose-files/inkless && \
-		docker compose -f docker-compose.yml -f docker-compose.azure.yml up -d create_bucket
+		$(DOCKER) compose -f docker-compose.yml -f docker-compose.azure.yml up -d create_bucket
 
 .PHONY: cleanup
 cleanup:
 	cd docker/examples/docker-compose-files/inkless && \
-		docker compose down --remove-orphans
+		$(DOCKER) compose down --remove-orphans
 	cd docker/examples/docker-compose-files/inkless-cluster && \
-		docker compose down --remove-orphans
-	docker compose -f docker-compose-demo.yml down --remove-orphans
+		$(DOCKER) compose down --remove-orphans
 	rm -rf ./_data
 
 # make create_topic ARGS="topic"
