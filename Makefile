@@ -1,37 +1,6 @@
 .PHONY: all
 all: clean fmt test pitest build_release
 
-.PHONY: local_pg
-local_pg:
-	docker compose up -d postgres
-
-.PHONY: local_minio
-local_minio:
-	docker compose -f docker-compose.yml -f docker-compose.minio.yml up -d create_bucket
-
-.PHONY: local_gcs
-local_gcs:
-	docker compose -f docker-compose.yml -f docker-compose.gcs.yml up -d create_bucket
-
-.PHONY: local_azure
-local_azure:
-	docker compose -f docker-compose.yml -f docker-compose.azure.yml up -d create_bucket
-
-.PHONY: bucket
-bucket:
-	AWS_ACCESS_KEY_ID='minioadmin' AWS_SECRET_KEY='minioadmin' AWS_SECRET_ACCESS_KEY='minioadmin' aws --endpoint-url http://127.0.0.1:9000 s3api create-bucket --bucket inkless1 --region us-east-1
-
-CLUSTER_ID := ervoWKqFT-qvyKLkTo494w
-
-.PHONY: kafka_storage_format
-kafka_storage_format:
-	./bin/kafka-storage.sh format -c config/inkless/single-broker-0.properties -t $(CLUSTER_ID)
-
-.PHONY: local_destroy
-local_destroy:
-	docker compose down --remove-orphans
-	rm -rf ./_data
-
 VERSION := 4.1.0-inkless-SNAPSHOT
 
 .PHONY: build
@@ -92,14 +61,50 @@ integration_test_core:
 clean:
 	./gradlew clean
 
+DEMO := s3-minio
 .PHONY: demo
 demo:
-	docker compose -f docker-compose-demo.yml up
-	docker compose -f docker-compose-demo.yml down --remove-orphans
+	$(MAKE) -C docker/examples/docker-compose-files/inkless $(DEMO)
 
 core/build/distributions/kafka_2.13-$(VERSION): core/build/distributions/kafka_2.13-$(VERSION).tgz
 	tar -xf $< -C core/build/distributions
 	touch $@  # prevent rebuilds
+
+# Local development
+CLUSTER_ID := ervoWKqFT-qvyKLkTo494w
+
+.PHONY: kafka_storage_format
+kafka_storage_format:
+	./bin/kafka-storage.sh format -c config/inkless/single-broker-0.properties -t $(CLUSTER_ID)
+
+.PHONY: local_pg
+local_pg:
+	cd docker/examples/docker-compose-files/inkless && \
+		docker compose up -d postgres
+
+.PHONY: local_minio
+local_minio:
+	cd docker/examples/docker-compose-files/inkless && \
+		docker compose -f docker-compose.yml -f docker-compose.minio.yml up -d create_bucket
+
+.PHONY: local_gcs
+local_gcs:
+	cd docker/examples/docker-compose-files/inkless && \
+		docker compose -f docker-compose.yml -f docker-compose.gcs.yml up -d create_bucket
+
+.PHONY: local_azure
+local_azure:
+	cd docker/examples/docker-compose-files/inkless && \
+		docker compose -f docker-compose.yml -f docker-compose.azure.yml up -d create_bucket
+
+.PHONY: cleanup
+cleanup:
+	cd docker/examples/docker-compose-files/inkless && \
+		docker compose down --remove-orphans
+	cd docker/examples/docker-compose-files/inkless-cluster && \
+		docker compose down --remove-orphans
+	docker compose -f docker-compose-demo.yml down --remove-orphans
+	rm -rf ./_data
 
 # make create_topic ARGS="topic"
 .PHONY: create_topic

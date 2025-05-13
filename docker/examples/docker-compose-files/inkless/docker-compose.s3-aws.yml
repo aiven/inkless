@@ -1,0 +1,33 @@
+services:
+  broker:
+    environment:
+      # AWS S3
+      KAFKA_INKLESS_STORAGE_BACKEND_CLASS: "io.aiven.inkless.storage_backend.s3.S3Storage"
+      KAFKA_INKLESS_STORAGE_S3_BUCKET_NAME: ${AWS_S3_BUCKET_NAME}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN}
+      KAFKA_INKLESS_STORAGE_AWS_CREDENTIALS_PROVIDER_CLASS: "software.amazon.awssdk.auth.credentials.EnvironmentVariableCredentialsProvider"
+      KAFKA_INKLESS_STORAGE_S3_REGION: ${AWS_REGION}
+    depends_on:
+      configure_storage:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+
+  configure_storage:
+    image: amazon/aws-cli
+    restart: "no"
+    entrypoint: >
+      /bin/sh -c "
+      until /usr/bin/aws s3api create-bucket --bucket ${AWS_S3_BUCKET_NAME} --region ${AWS_REGION}; do
+        echo 'Waiting for AWS S3...';
+        sleep 5;
+      done;
+      exit 0;
+      "
+    environment:
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN}
+      AWS_REGION: ${AWS_REGION}

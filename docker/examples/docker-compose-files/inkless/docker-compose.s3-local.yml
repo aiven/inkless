@@ -10,8 +10,10 @@ services:
       KAFKA_INKLESS_STORAGE_AWS_SECRET_ACCESS_KEY: "minioadmin"
 
     depends_on:
-      - postgres
-      - storage
+      postgres:
+        condition: service_healthy
+      storage:
+        condition: service_started
 
   # Object storage
   storage:
