@@ -34,6 +34,9 @@ public class PostgresControlPlaneConfig extends AbstractControlPlaneConfig {
     public static final String PASSWORD_CONFIG = "password";
     private static final String PASSWORD_DOC = "Password";
 
+    public static final String MAX_CONNECTIONS_CONFIG = "max.connections";
+    private static final String MAX_CONNECTIONS_DOC = "Maximum number of connections to the database";
+
     public static ConfigDef configDef() {
         return baseConfigDef()
             .define(
@@ -59,6 +62,14 @@ public class PostgresControlPlaneConfig extends AbstractControlPlaneConfig {
                 null,  // can be empty
                 ConfigDef.Importance.HIGH,
                 PASSWORD_DOC
+            )
+            .define(
+                MAX_CONNECTIONS_CONFIG,
+                ConfigDef.Type.INT,
+                10,
+                ConfigDef.Range.atLeast(1),
+                ConfigDef.Importance.MEDIUM,
+                MAX_CONNECTIONS_DOC
             );
     }
 
@@ -77,5 +88,9 @@ public class PostgresControlPlaneConfig extends AbstractControlPlaneConfig {
     public String password() {
         final Password configValue = getPassword(PASSWORD_CONFIG);
         return configValue == null ? null : configValue.value();
+    }
+
+    public int maxConnections() {
+        return getInt(MAX_CONNECTIONS_CONFIG);
     }
 }

@@ -89,6 +89,8 @@ public class PostgresControlPlane extends AbstractControlPlane {
 
         config.setTransactionIsolation(IsolationLevel.TRANSACTION_READ_COMMITTED.name());
 
+        config.setMaximumPoolSize(controlPlaneConfig.maxConnections());
+
         // We're doing interactive transactions.
         config.setAutoCommit(false);
 

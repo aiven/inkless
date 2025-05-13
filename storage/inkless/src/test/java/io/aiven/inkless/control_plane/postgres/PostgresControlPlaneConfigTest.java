@@ -35,6 +35,7 @@ class PostgresControlPlaneConfigTest {
                 "connection.string", "jdbc:postgresql://127.0.0.1:5432/inkless",
                 "username", "username",
                 "password", "password",
+                "max.connections", "11",
                 "file.merge.size.threshold.bytes", "1234",
                 "file.merge.lock.period.ms", "4567"
             )
@@ -45,6 +46,7 @@ class PostgresControlPlaneConfigTest {
         assertThat(config.password()).isEqualTo("password");
         assertThat(config.fileMergeSizeThresholdBytes()).isEqualTo(1234);
         assertThat(config.fileMergeLockPeriod()).isEqualTo(Duration.ofMillis(4567));
+        assertThat(config.maxConnections()).isEqualTo(11);
     }
 
     @Test
@@ -62,6 +64,7 @@ class PostgresControlPlaneConfigTest {
         assertThat(config.password()).isEqualTo("password");
         assertThat(config.fileMergeSizeThresholdBytes()).isEqualTo(100 * 1024 * 1024);
         assertThat(config.fileMergeLockPeriod()).isEqualTo(Duration.ofHours(1));
+        assertThat(config.maxConnections()).isEqualTo(10);
     }
 
     @Test
