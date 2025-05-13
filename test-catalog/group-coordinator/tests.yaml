@@ -142,6 +142,7 @@ org.apache.kafka.coordinator.group.GroupCoordinatorServiceTest:
 - testListGroupsWithFailure
 - testOnElection
 - testOnPartitionsDeleted
+- testOnPartitionsDeletedCleanupShareGroupState
 - testOnPartitionsDeletedWhenServiceIsNotStarted
 - testOnResignation
 - testOnResignationWithEmptyLeaderEpoch
@@ -380,6 +381,8 @@ org.apache.kafka.coordinator.group.GroupMetadataManagerTest:
 - testLeavingMemberBumpsGroupEpoch
 - testLeavingStaticMemberBumpsGroupEpoch
 - testListGroups
+- testMaybeCleanupShareGroupStateEmptyTopicIds
+- testMaybeCleanupShareGroupStateInitDeletedTopicsPresent
 - testMemberIdGeneration
 - testMemberJoinsEmptyConsumerGroup
 - testMemberJoinsEmptyStreamsGroup
@@ -623,6 +626,7 @@ org.apache.kafka.coordinator.group.OffsetMetadataManagerTest:
 - testFetchAllOffsetsWithUnknownGroup
 - testFetchOffsetsAtDifferentCommittedOffset
 - testFetchOffsetsWithPendingTransactionalOffsets
+- testFetchOffsetsWithTopicIds
 - testFetchOffsetsWithUnknownGroup
 - testGenericGroupFetchAllOffsetsWithDeadGroup
 - testGenericGroupFetchOffsetsWithDeadGroup
@@ -672,6 +676,7 @@ org.apache.kafka.coordinator.group.assignor.OptimizedUniformAssignmentBuilderTes
 - testOneMemberNoTopicSubscription
 - testOneMemberSubscribedToNonexistentTopic
 - testReassignmentForTwoMembersTwoTopicsGivenUnbalancedPrevAssignment
+- testReassignmentStickinessWhenAlreadyBalanced
 - testReassignmentWhenOneMemberAddedAfterInitialAssignmentWithTwoMembersTwoTopics
 - testReassignmentWhenOneMemberRemovedAfterInitialAssignmentWithThreeMembersTwoTopics
 - testReassignmentWhenOneSubscriptionRemovedAfterInitialAssignmentWithTwoMembersTwoTopics

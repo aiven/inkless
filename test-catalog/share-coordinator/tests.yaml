@@ -35,6 +35,8 @@ org.apache.kafka.coordinator.share.ShareCoordinatorServiceTest:
 - testInitializeStateSuccess
 - testInitializeStateValidationError
 - testInitializeStateWhenNotStarted
+- testOnTopicsDeletedDoesNotThrowExp
+- testOnTopicsDeletedEmptyList
 - testPartitionFor
 - testReadFutureReturnsError
 - testReadStateSuccess
@@ -72,6 +74,8 @@ org.apache.kafka.coordinator.share.ShareCoordinatorShardTest:
 - testInitializeTopicIdNonExistentInMetadataImage
 - testLastRedundantOffset
 - testNonSequentialBatchUpdates
+- testOnTopicsDeletedEmptyTopicIds
+- testOnTopicsDeletedTopicIds
 - testReadNullMetadataImage
 - testReadStateFencedLeaderEpochError
 - testReadStateInvalidRequestData

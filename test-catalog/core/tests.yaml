@@ -2248,6 +2248,7 @@ kafka.server.KafkaApisTest:
 - testHandleOffsetFetchWithMultipleGroups
 - testHandleOffsetFetchWithSingleGroup
 - testHandleOffsetFetchWithUnauthorizedTopicAndTopLevelError
+- testHandleOffsetFetchWithUnknownTopicIds
 - testHandleShareAcknowledgeRequestAcknowledgeThrowsError
 - testHandleShareAcknowledgeRequestBatchValidationError
 - testHandleShareAcknowledgeRequestGroupAuthorizationError
@@ -2936,6 +2937,7 @@ kafka.server.metadata.BrokerMetadataPublisherTest:
 - testExceptionInUpdateCoordinator
 - testGetTopicDelta
 - testNewImagePushedToGroupCoordinator
+- testNewShareVersionPushedToSharePartitionManager
 - testReloadUpdatedFilesWithoutConfigChange
 kafka.server.metadata.ClientQuotaMetadataManagerTest:
 - testHandleIpQuota
@@ -3008,6 +3010,7 @@ kafka.server.share.SharePartitionManagerTest:
 - testNewContextReturnsFinalContextWhenTopicPartitionsArePresentInRequestData
 - testNewContextReturnsFinalContextWithRequestData
 - testNewContextReturnsFinalContextWithoutRequestData
+- testOnShareVersionToggle
 - testPartitionLoadTimeMetricWithMultiplePartitions
 - testPendingInitializationShouldCompleteFetchRequest
 - testReleaseSessionCompletesDelayedShareFetchRequest
@@ -3030,6 +3033,7 @@ kafka.server.share.SharePartitionManagerTest:
 - testSharePartitionListenerOnDeleted
 - testSharePartitionListenerOnFailed
 - testSharePartitionPartialInitializationFailure
+- testShareSessionCacheSupportsShareGroups
 - testShareSessionUpdateTopicIdsBrokerSide
 - testSubsequentShareSession
 - testToForgetPartitions
