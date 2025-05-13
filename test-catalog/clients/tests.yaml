@@ -4516,8 +4516,6 @@ org.apache.kafka.common.security.oauthbearer.OAuthBearerExtensionsValidatorCallb
 - testUnvalidatedExtensionsAreIgnored
 - testValidatedExtensionsAreReturned
 org.apache.kafka.common.security.oauthbearer.OAuthBearerLoginCallbackHandlerTest:
-- testConfigureWithAccessClientCredentials
-- testConfigureWithAccessTokenFile
 - testFileTokenRetrieverHandlesNewline
 - testHandleSaslExtensionsCallback
 - testHandleSaslExtensionsCallbackWithInvalidExtension
@@ -4540,6 +4538,8 @@ org.apache.kafka.common.security.oauthbearer.OAuthBearerTokenCallbackTest:
 - testToken
 org.apache.kafka.common.security.oauthbearer.OAuthBearerValidatorCallbackHandlerTest:
 - testBasic
+- testHandlerCloseDoesNotThrowException
+- testHandlerInitThrowsException
 - testInvalidAccessToken
 org.apache.kafka.common.security.oauthbearer.OAuthBearerValidatorCallbackTest:
 - testError
@@ -4578,19 +4578,22 @@ org.apache.kafka.common.security.oauthbearer.internals.expiring.ExpiringCredenti
 - testRefreshWithExpirationSmallerThanConfiguredBuffersAndOlderCreateTime
 - testRefreshWithMinPeriodIntrusion
 - testRefreshWithPreExpirationBufferIntrusion
-org.apache.kafka.common.security.oauthbearer.internals.secured.AccessTokenRetrieverFactoryTest:
-- testConfigureRefreshingFileAccessTokenRetriever
-- testConfigureRefreshingFileAccessTokenRetrieverWithInvalidDirectory
-- testConfigureRefreshingFileAccessTokenRetrieverWithInvalidFile
-- testSaslOauthbearerTokenEndpointUrlIsNotAllowed
-- testUrlencodeHeader
-org.apache.kafka.common.security.oauthbearer.internals.secured.AccessTokenValidatorFactoryTest:
-- testConfigureThrowsExceptionOnAccessTokenValidatorClose
-- testConfigureThrowsExceptionOnAccessTokenValidatorInit
 org.apache.kafka.common.security.oauthbearer.internals.secured.BasicOAuthBearerTokenTest:
 - basic
 - negativeLifetime
 - noErrorIfModifyScope
+org.apache.kafka.common.security.oauthbearer.internals.secured.BrokerJwtValidatorTest:
+- testEcdsaEncryptionAlgorithm
+- testEmptySections
+- testEmptyString
+- testInvalidEncryptionAlgorithm
+- testMissingHeader
+- testMissingPayload
+- testMissingSignature
+- testMissingSubShouldBeValid
+- testNull
+- testRsaEncryptionAlgorithm
+- testWhitespace
 org.apache.kafka.common.security.oauthbearer.internals.secured.ClaimValidationUtilsTest:
 - testValidateClaimNameOverride
 - testValidateClaimNameOverrideDisallowsEmptyNullAndWhitespace
@@ -4609,6 +4612,14 @@ org.apache.kafka.common.security.oauthbearer.internals.secured.ClaimValidationUt
 - testValidateScopesResultThrowsExceptionOnMutation
 - testValidateSubject
 - testValidateSubjectDisallowsEmptyNullAndWhitespace
+org.apache.kafka.common.security.oauthbearer.internals.secured.ClientJwtValidatorTest:
+- testEmptySections
+- testEmptyString
+- testMissingHeader
+- testMissingPayload
+- testMissingSignature
+- testNull
+- testWhitespace
 org.apache.kafka.common.security.oauthbearer.internals.secured.ConfigurationUtilsTest:
 - testFile
 - testFileDoesNotExist
@@ -4628,7 +4639,18 @@ org.apache.kafka.common.security.oauthbearer.internals.secured.ConfigurationUtil
 - testUrlNull
 - testUrlWhitespace
 - testUrlWithSuperfluousWhitespace
-org.apache.kafka.common.security.oauthbearer.internals.secured.HttpAccessTokenRetrieverTest:
+org.apache.kafka.common.security.oauthbearer.internals.secured.DefaultJwtRetrieverTest:
+- testConfigureRefreshingFileJwtRetriever
+- testConfigureRefreshingFileJwtRetrieverWithInvalidDirectory
+- testConfigureRefreshingFileJwtRetrieverWithInvalidFile
+- testConfigureWithAccessClientCredentials
+- testConfigureWithAccessTokenFile
+- testSaslOauthbearerTokenEndpointUrlIsNotAllowed
+- testUrlencodeHeader
+org.apache.kafka.common.security.oauthbearer.internals.secured.DefaultJwtValidatorTest:
+- testConfigureWithVerificationKeyResolver
+- testConfigureWithoutVerificationKeyResolver
+org.apache.kafka.common.security.oauthbearer.internals.secured.HttpJwtRetrieverTest:
 - test
 - testCopy
 - testCopyError
@@ -4650,14 +4672,6 @@ org.apache.kafka.common.security.oauthbearer.internals.secured.HttpAccessTokenRe
 org.apache.kafka.common.security.oauthbearer.internals.secured.JaasOptionsUtilsTest:
 - testSSLClientConfig
 - testShouldUseSslClientConfig
-org.apache.kafka.common.security.oauthbearer.internals.secured.LoginAccessTokenValidatorTest:
-- testEmptySections
-- testEmptyString
-- testMissingHeader
-- testMissingPayload
-- testMissingSignature
-- testNull
-- testWhitespace
 org.apache.kafka.common.security.oauthbearer.internals.secured.RefreshingHttpsJwksTest:
 - testBasicScheduleRefresh
 - testLongKey
@@ -4670,18 +4684,6 @@ org.apache.kafka.common.security.oauthbearer.internals.secured.RetryTest:
 - testRuntimeExceptionFailureOnFirstAttempt
 - testRuntimeExceptionFailureOnLastAttempt
 - testUseMaxTimeout
-org.apache.kafka.common.security.oauthbearer.internals.secured.ValidatorAccessTokenValidatorTest:
-- testEcdsaEncryptionAlgorithm
-- testEmptySections
-- testEmptyString
-- testInvalidEncryptionAlgorithm
-- testMissingHeader
-- testMissingPayload
-- testMissingSignature
-- testMissingSubShouldBeValid
-- testNull
-- testRsaEncryptionAlgorithm
-- testWhitespace
 org.apache.kafka.common.security.oauthbearer.internals.secured.VerificationKeyResolverFactoryTest:
 - testConfigureRefreshingFileVerificationKeyResolver
 - testConfigureRefreshingFileVerificationKeyResolverWithInvalidDirectory
