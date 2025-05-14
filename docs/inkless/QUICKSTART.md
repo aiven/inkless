@@ -29,6 +29,31 @@ To observe the metrics, go to the Kafka Inkless and Kafka Clients dashboards in 
 For more details, see the [demo docs](./../../docker/examples/docker-compose-files/inkless/README.md).
 
 
+## Topic creation
+
+Given that Inkless introduces a new topic configuration `inkless.enable`, you need to use inkless binaries to create topics.
+
+You can either build the binaries yourself, use the Docker image, or download the prebuilt binaries from the [releases page](https://github.com/aiven/inkless/releases).
+
+To build the binaries, run:
+
+```shell
+# make clean # to rebuild the binaries
+make build_release
+```
+
+To run docker image:
+
+```shell
+docker run -it --entrypoint bash aivenoy/kafka:4.1.0-inkless-SNAPSHOT
+4e3b0026634e:/$ cd /opt/
+java/  kafka/
+4e3b0026634e:/$ cd /opt/kafka/
+4e3b0026634e:/opt/kafka$ bin/kafka-topics.sh
+```
+
+Be aware that if server default configuration is set to `log.inkless.enable=true`, topics (except internal ones) will be created with `inkless.enable=true` by default.
+
 ## Local development: Run Kafka from IDE
 
 To run Kafka from the IDE (e.g. Intellij), you need to set up the project and dependencies correctly:
