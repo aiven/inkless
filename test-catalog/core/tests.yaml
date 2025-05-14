@@ -56,7 +56,8 @@ kafka.api.AuthorizerIntegrationTest:
 - shouldThrowTransactionalIdAuthorizationExceptionWhenNoTransactionAccessDuringSend
 - shouldThrowTransactionalIdAuthorizationExceptionWhenNoTransactionAccessOnEndTransaction
 - shouldThrowTransactionalIdAuthorizationExceptionWhenNoTransactionAccessOnSendOffsetsToTxn
-- testAuthorizationFetchV12WithTopicNotExisting
+- testAuthorizationFetchVersionFromOldestTo12
+- testAuthorizationProduceVersionFromOldestTo12
 - testAuthorizationWithTopicExisting
 - testAuthorizationWithTopicNotExisting
 - testAuthorizeByResourceTypeDenyTakesPrecedence
@@ -128,6 +129,8 @@ kafka.api.AuthorizerIntegrationTest:
 - testDescribeShareGroupOffsetsWithoutTopicDescribeAcl
 - testDescribeTopicAclWithOperationAll
 - testDescribeTopicConfigsAclWithOperationAll
+- testEmptyTopicNameForFetchVersionFromOldestTo12
+- testEmptyTopicNameForProduceVersionFromOldestTo12
 - testFetchConsumerRequest
 - testFetchFollowerRequest
 - testHostAddressBasedAcls
@@ -209,6 +212,8 @@ kafka.api.AuthorizerIntegrationTest:
 - testWriteShareGroupStateWithClusterAcl
 - testWriteShareGroupStateWithOperationAll
 - testWriteShareGroupStateWithoutClusterAcl
+- testZeroTopicIdForFetchVersionFrom13ToNewest
+- testZeroTopicIdForProduceVersionFrom13ToNewest
 kafka.api.ClientIdQuotaTest:
 - testProducerConsumerOverrideLowerQuota
 - testProducerConsumerOverrideUnthrottled
@@ -1139,7 +1144,7 @@ kafka.log.LogConfigTest:
 - shouldValidateThrottledReplicasConfig
 - testDisableRemoteLogStorage
 - testEnableRemoteLogStorage
-- testEnableRemoteLogStorageOnCompactedTopic
+- testEnableRemoteLogStorageCleanupPolicy
 - testFromPropsInvalid
 - testGetConfigValue
 - testInvalidCompactionLagConfig
