@@ -2988,6 +2988,9 @@ kafka.server.share.ShareFetchUtilsTest:
 - testProcessFetchResponseWithLsoMovementForTopicPartition
 - testProcessFetchResponseWithMaxFetchRecords
 - testProcessFetchResponseWithOffsetFetchException
+kafka.server.share.SharePartitionCacheTest:
+- testComputeIfAbsent
+- testRemoveGroup
 kafka.server.share.SharePartitionManagerTest:
 - testAcknowledgeCompletesDelayedShareFetchRequest
 - testAcknowledgeDoesNotCompleteDelayedShareFetchRequest

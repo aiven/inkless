@@ -170,9 +170,12 @@ org.apache.kafka.server.share.fetch.ShareFetchTest:
 - testMaybeCompleteWithExceptionWithExistingErroneousTopicPartition
 - testMaybeCompleteWithPartialErroneousTopicPartitions
 org.apache.kafka.server.share.session.ShareSessionCacheTest:
+- testNoShareGroupListenerRegistered
 - testRemoveAllSessions
 - testRemoveConnection
 - testResizeCachedSessions
+- testShareGroupListenerEvents
+- testShareGroupListenerEventsMultipleGroups
 - testShareSessionCache
 org.apache.kafka.server.share.session.ShareSessionTest:
 - testPartitionsToLogString
