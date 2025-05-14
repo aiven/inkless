@@ -349,6 +349,8 @@ org.apache.kafka.controller.metrics.ControllerMetadataMetricsPublisherTest:
 - testPublish
 org.apache.kafka.controller.metrics.ControllerMetadataMetricsTest:
 - testActiveBrokerCountMetric
+- testBrokerRegistrationStateMetrics
+- testControlledShutdownCountMetric
 - testFencedBrokerMetric
 - testGlobalPartitionCountMetric
 - testGlobalTopicCountMetric
@@ -361,18 +363,22 @@ org.apache.kafka.controller.metrics.ControllerMetadataMetricsTest:
 - testUpdateUncleanLeaderElection
 org.apache.kafka.controller.metrics.ControllerMetricsChangesTest:
 - testDelta
+- testHandleBrokerControlledShutdown
 - testHandleBrokerFencing
+- testHandleBrokerInControlledShutdownFencing
 - testHandleBrokerUnfencing
 - testHandleDeletedTopic
 - testHandleNewFencedBroker
 - testHandleNewTopic
 - testHandleNewUnfencedBroker
+- testHandleUnregisterBroker
 - testInitialValues
 - testTopicChange
 - testTopicElectionResult
 org.apache.kafka.controller.metrics.QuorumControllerMetricsTest:
 - testLastAppliedRecordMetrics
 - testMetricNames
+- testTimeSinceLastHeartbeatReceivedMs
 - testUpdateEventQueueProcessingTime
 - testUpdateEventQueueTime
 org.apache.kafka.image.AclsDeltaTest:
