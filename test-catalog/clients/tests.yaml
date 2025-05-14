@@ -1404,6 +1404,9 @@ org.apache.kafka.clients.consumer.internals.ConsumerNetworkThreadTest:
 - testConsumerNetworkThreadPollTimeComputations
 - testEnsureCloseStopsRunningThread
 - testMaximumTimeToWait
+- testNetworkClientDelegateAndRequestManagersInitializeResourcesError
+- testNetworkClientDelegateInitializeResourcesError
+- testRequestManagersInitializeResourcesError
 - testRequestsTransferFromManagersToClientOnThreadRun
 - testRunOnceInvokesReaper
 - testRunOnceRecordApplicationEventQueueSizeAndApplicationEventQueueTime
