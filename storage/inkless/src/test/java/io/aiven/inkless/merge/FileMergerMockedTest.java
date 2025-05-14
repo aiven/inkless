@@ -115,6 +115,7 @@ class FileMergerMockedTest {
     void setup() {
         when(inklessConfig.objectKeyPrefix()).thenReturn("prefix");
         when(inklessConfig.fileMergeWorkDir()).thenReturn(WORK_DIR);
+        when(inklessConfig.cacheMaxCount()).thenReturn(10000L);
 
         sharedState = SharedState.initialize(time, "cluster-id", "rack", BROKER_ID, inklessConfig, mock(MetadataView.class), controlPlane,
             mock(BrokerTopicStats.class), mock(Supplier.class));

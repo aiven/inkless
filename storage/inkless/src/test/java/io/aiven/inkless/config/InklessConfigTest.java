@@ -36,18 +36,19 @@ class InklessConfigTest {
     @Test
     void publicConstructor() {
         final String controlPlaneClass = InMemoryControlPlane.class.getCanonicalName();
-        final InklessConfig config = new InklessConfig(new AbstractConfig(new ConfigDef(), Map.of(
-            "inkless.control.plane.class", controlPlaneClass,
-            "inkless.object.key.prefix", "prefix/",
-            "inkless.produce.commit.interval.ms", "100",
-            "inkless.produce.buffer.max.bytes", "1024",
-            "inkless.produce.max.upload.attempts", "5",
-            "inkless.produce.upload.backoff.ms", "30",
-            "inkless.storage.backend.class", ConfigTestStorageBackend.class.getCanonicalName(),
-            "inkless.file.cleaner.interval.ms", "100",
-            "inkless.file.cleaner.retention.period.ms", "200",
-            "inkless.file.merger.interval.ms", "100"
-        )));
+        final Map<String, String> configs = new HashMap<>();
+        configs.put("inkless.control.plane.class", controlPlaneClass);
+        configs.put("inkless.object.key.prefix", "prefix/");
+        configs.put("inkless.produce.commit.interval.ms", "100");
+        configs.put("inkless.produce.buffer.max.bytes", "1024");
+        configs.put("inkless.produce.max.upload.attempts", "5");
+        configs.put("inkless.produce.upload.backoff.ms", "30");
+        configs.put("inkless.storage.backend.class", ConfigTestStorageBackend.class.getCanonicalName());
+        configs.put("inkless.file.cleaner.interval.ms", "100");
+        configs.put("inkless.file.cleaner.retention.period.ms", "200");
+        configs.put("inkless.file.merger.interval.ms", "100");
+        configs.put("inkless.consume.cache.max.count", "100");
+        final InklessConfig config = new InklessConfig(new AbstractConfig(new ConfigDef(), configs));
         assertThat(config.controlPlaneClass()).isEqualTo(InMemoryControlPlane.class);
         assertThat(config.controlPlaneConfig()).isEqualTo(Map.of("class", controlPlaneClass));
         assertThat(config.objectKeyPrefix()).isEqualTo("prefix/");
@@ -59,6 +60,7 @@ class InklessConfigTest {
         assertThat(config.fileCleanerInterval()).isEqualTo(Duration.ofMillis(100));
         assertThat(config.fileCleanerRetentionPeriod()).isEqualTo(Duration.ofMillis(200));
         assertThat(config.fileMergerInterval()).isEqualTo(Duration.ofMillis(100));
+        assertThat(config.cacheMaxCount()).isEqualTo(100);
     }
 
     @Test
@@ -81,24 +83,26 @@ class InklessConfigTest {
         assertThat(config.fileCleanerInterval()).isEqualTo(Duration.ofMinutes(5));
         assertThat(config.fileCleanerRetentionPeriod()).isEqualTo(Duration.ofMinutes(1));
         assertThat(config.fileMergerInterval()).isEqualTo(Duration.ofMinutes(1));
+        assertThat(config.cacheMaxCount()).isEqualTo(1000);
     }
 
     @Test
     void fullConfig() {
         final String controlPlaneClass = InMemoryControlPlane.class.getCanonicalName();
+        Map<String, String> configs = new HashMap<>();
+        configs.put("control.plane.class", controlPlaneClass);
+        configs.put("object.key.prefix", "prefix/");
+        configs.put("produce.commit.interval.ms", "100");
+        configs.put("produce.buffer.max.bytes", "1024");
+        configs.put("produce.max.upload.attempts", "5");
+        configs.put("produce.upload.backoff.ms", "30");
+        configs.put("storage.backend.class", ConfigTestStorageBackend.class.getCanonicalName());
+        configs.put("file.cleaner.interval.ms", "100");
+        configs.put("file.cleaner.retention.period.ms", "200");
+        configs.put("file.merger.interval.ms", "100");
+        configs.put("consume.cache.max.count", "100");
         final var config = new InklessConfig(
-            Map.of(
-                "control.plane.class", controlPlaneClass,
-                "object.key.prefix", "prefix/",
-                "produce.commit.interval.ms", "100",
-                "produce.buffer.max.bytes", "1024",
-                "produce.max.upload.attempts", "5",
-                "produce.upload.backoff.ms", "30",
-                "storage.backend.class", ConfigTestStorageBackend.class.getCanonicalName(),
-                "file.cleaner.interval.ms", "100",
-                "file.cleaner.retention.period.ms", "200",
-                "file.merger.interval.ms", "100"
-            )
+            configs
         );
         assertThat(config.controlPlaneClass()).isEqualTo(InMemoryControlPlane.class);
         assertThat(config.controlPlaneConfig()).isEqualTo(Map.of("class", controlPlaneClass));
@@ -111,6 +115,7 @@ class InklessConfigTest {
         assertThat(config.fileCleanerInterval()).isEqualTo(Duration.ofMillis(100));
         assertThat(config.fileCleanerRetentionPeriod()).isEqualTo(Duration.ofMillis(200));
         assertThat(config.fileMergerInterval()).isEqualTo(Duration.ofMillis(100));
+        assertThat(config.cacheMaxCount()).isEqualTo(100);
     }
 
     @Test
@@ -210,5 +215,17 @@ class InklessConfigTest {
             "backend.class", backendClass,
             "a", "1",
             "b", "str"));
+    }
+
+    @Test
+    void consumeCacheSizeLessThanOne() {
+        final Map<String, String> config = Map.of(
+            "control.plane.class", InMemoryControlPlane.class.getCanonicalName(),
+            "storage.backend.class", ConfigTestStorageBackend.class.getCanonicalName(),
+            "consume.cache.max.count", "0"
+        );
+        assertThatThrownBy(() -> new InklessConfig(config))
+            .isInstanceOf(ConfigException.class)
+            .hasMessage("Invalid value 0 for configuration consume.cache.max.count: Value must be at least 1");
     }
 }

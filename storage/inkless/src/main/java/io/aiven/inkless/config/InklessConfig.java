@@ -77,6 +77,10 @@ public class InklessConfig extends AbstractConfig {
     private static final String CONSUME_CACHE_BLOCK_BYTES_DOC = "The number of bytes to fetch as a single block from object storage when serving fetch requests.";
     private static final int CONSUME_CACHE_BLOCK_BYTES_DEFAULT = 16 * 1024 * 1024;  // 16 MiB
 
+    public static final String CONSUME_CACHE_MAX_COUNT_CONFIG = CONSUME_PREFIX + "cache.max.count";
+    private static final String CONSUME_CACHE_MAX_COUNT_DOC = "The maximum number of objects to cache in memory.";
+    private static final int CONSUME_CACHE_MAX_COUNT_DEFAULT = 1000;
+
     public static final String FILE_CLEANER_INTERVAL_MS_CONFIG = "file.cleaner.interval.ms";
     private static final String FILE_CLEANER_INTERVAL_MS_DOC = "The interval with which to clean up files marked for deletion.";
     private static final int FILE_CLEANER_INTERVAL_MS_DEFAULT = 5 * 60 * 1000;  // 5 minutes
@@ -207,6 +211,14 @@ public class InklessConfig extends AbstractConfig {
             ConfigDef.Importance.LOW,
             FILE_MERGER_TEMP_DIR_DOC
         );
+        configDef.define(
+            CONSUME_CACHE_MAX_COUNT_CONFIG,
+            ConfigDef.Type.LONG,
+            CONSUME_CACHE_MAX_COUNT_DEFAULT,
+            ConfigDef.Range.atLeast(1),
+            ConfigDef.Importance.LOW,
+            CONSUME_CACHE_MAX_COUNT_DOC
+        );
 
         return configDef;
     }
@@ -277,5 +289,9 @@ public class InklessConfig extends AbstractConfig {
     public Path fileMergeWorkDir() {
         final String path = getString(FILE_MERGER_TEMP_DIR_CONFIG);
         return Path.of(path);
+    }
+
+    public Long cacheMaxCount() {
+        return getLong(CONSUME_CACHE_MAX_COUNT_CONFIG);
     }
 }

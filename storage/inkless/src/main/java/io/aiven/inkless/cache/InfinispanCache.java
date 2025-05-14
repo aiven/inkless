@@ -25,7 +25,9 @@ import org.infinispan.Cache;
 import org.infinispan.commons.api.CacheContainerAdmin;
 import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
+import org.infinispan.configuration.cache.StorageType;
 import org.infinispan.configuration.global.GlobalConfigurationBuilder;
+import org.infinispan.eviction.EvictionStrategy;
 import org.infinispan.manager.DefaultCacheManager;
 
 import java.io.IOException;
@@ -45,7 +47,7 @@ public class InfinispanCache implements ObjectCache {
     private final DefaultCacheManager cacheManager;
     private final Cache<CacheKey, FileExtent> cache;
 
-    public InfinispanCache(Time time, String clusterId, String rack) {
+    public InfinispanCache(Time time, String clusterId, String rack, long cacheSize) {
         this.time = time;
         GlobalConfigurationBuilder globalConfig = GlobalConfigurationBuilder.defaultClusteredBuilder();
         globalConfig.transport()
@@ -57,7 +59,12 @@ public class InfinispanCache implements ObjectCache {
                 .allowList().addClasses(CacheKey.class, FileExtent.class);
         cacheManager = new DefaultCacheManager(globalConfig.build());
         ConfigurationBuilder config = new ConfigurationBuilder();
-        config.clustering().cacheMode(CacheMode.DIST_SYNC);
+        config.clustering()
+            .cacheMode(CacheMode.DIST_SYNC)
+            .memory()
+            .storage(StorageType.HEAP)
+            .maxCount(cacheSize)
+            .whenFull(EvictionStrategy.REMOVE);
         cache = cacheManager.administration()
                 .withFlags(CacheContainerAdmin.AdminFlag.VOLATILE)
                 .getOrCreateCache("fileExtents", config.build());
