@@ -853,6 +853,8 @@ BEGIN
             INTO l_new_file_id;
             PERFORM mark_file_to_delete_v1(arg_now, l_new_file_id);
 
+            -- Do not remove the work item, because another non-buggy worker may eventually succeed.
+
             RETURN ROW('invalid_parent_batch_count'::commit_file_merge_work_item_error_v1, l_merge_file_batch)::commit_file_merge_work_item_response_v1;
         END IF;
     END LOOP;
@@ -908,17 +910,15 @@ BEGIN
         INTO l_new_file_id;
         PERFORM mark_file_to_delete_v1(arg_now, l_new_file_id);
 
+        -- Do not remove the work item, because another non-buggy worker may eventually succeed.
+
         RETURN ROW('batch_not_part_of_work_item'::commit_file_merge_work_item_error_v1, l_merge_file_batch)::commit_file_merge_work_item_response_v1;
     END LOOP;
 
     -- delete old files
-    FOR l_work_item_file IN
-        SELECT file_id
-        FROM file_merge_work_item_files AS f
-        WHERE work_item_id = arg_existing_work_item_id
-    LOOP
-        PERFORM mark_file_to_delete_v1(arg_now, l_work_item_file.file_id);
-    END LOOP;
+    PERFORM mark_file_to_delete_v1(arg_now, file_id)
+    FROM file_merge_work_item_files
+    WHERE work_item_id = arg_existing_work_item_id;
 
     -- insert new file
     INSERT INTO files (object_key, format, reason, state, uploader_broker_id, committed_at, size)
