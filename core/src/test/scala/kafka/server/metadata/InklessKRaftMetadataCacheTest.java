@@ -57,7 +57,7 @@ class InklessKRaftMetadataCacheTest {
         "regular_topic_disabled,false,false", "regular_topic_disabled,true,false",
     })
     void isInklessTopic(final String topicName, final boolean defaultInklessEnable, final boolean expectedIsInkless) {
-        Supplier<Map<?, ?>> defaultConfig = () -> CollectionConverters.asScala(
+        Supplier<Map<String, ?>> defaultConfig = () -> CollectionConverters.asScala(
             defaultInklessEnable ?
                 Collections.singletonMap(TopicConfig.INKLESS_ENABLE_CONFIG, "true") :
                 Collections.emptyMap()

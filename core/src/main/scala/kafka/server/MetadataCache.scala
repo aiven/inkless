@@ -141,7 +141,7 @@ trait MetadataCache extends ConfigRepository {
     ignoreTopicsWithExceptions: Boolean
   ): DescribeTopicPartitionsResponseData
 
-  def isInklessTopic(topic: String, defaultConfig: Supplier[Map[_, _]]): Boolean
+  def isInklessTopic(topic: String, defaultConfig: Supplier[Map[String, _]]): Boolean
 }
 
 object MetadataCache {

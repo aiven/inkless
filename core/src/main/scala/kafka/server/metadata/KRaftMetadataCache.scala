@@ -33,7 +33,6 @@ import org.apache.kafka.common.requests.MetadataResponse
 import org.apache.kafka.image.MetadataImage
 import org.apache.kafka.metadata.{BrokerRegistration, LeaderAndIsr, PartitionRegistration, Replicas}
 import org.apache.kafka.server.common.{FinalizedFeatures, KRaftVersion, MetadataVersion}
-import org.apache.kafka.storage.internals.log.LogConfig
 
 import java.util
 import java.util.concurrent.ThreadLocalRandom
@@ -529,10 +528,14 @@ class KRaftMetadataCache(
       image.highestOffsetAndEpoch().offset)
   }
 
-  override def isInklessTopic(topic: String, defaultConfig: Supplier[Map[_, _]]): Boolean = {
-    val logConfig = LogConfig.fromProps(defaultConfig.get().asJava, topicConfig(topic))
-    val inklessEnabled = logConfig.getBoolean(TopicConfig.INKLESS_ENABLE_CONFIG)
-    !Topic.isInternal(topic) && topic != Topic.CLUSTER_METADATA_TOPIC_NAME && inklessEnabled
+  override def isInklessTopic(topic: String, defaultConfig: Supplier[Map[String, _]]): Boolean = {
+    val topicConfigs = topicConfig(topic)
+    // avoid instantiating LogConfig as it is expensive
+    val defaultInklessEnable = defaultConfig.get().getOrElse(TopicConfig.INKLESS_ENABLE_CONFIG, "false").toString.toBoolean
+    val inklessEnabled = if (topicConfigs.containsKey(TopicConfig.INKLESS_ENABLE_CONFIG)) topicConfigs.getProperty(TopicConfig.INKLESS_ENABLE_CONFIG, "false").toBoolean else defaultInklessEnable
+    val isNotInternalTopic = !Topic.isInternal(topic)
+    val isNotClusterMetaTopic = topic != Topic.CLUSTER_METADATA_TOPIC_NAME
+    isNotInternalTopic && isNotClusterMetaTopic && inklessEnabled
   }
 }
 

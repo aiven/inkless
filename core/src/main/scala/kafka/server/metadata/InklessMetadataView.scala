@@ -29,7 +29,7 @@ import java.{lang, util}
 import scala.collection.Map
 import scala.jdk.CollectionConverters.{IterableHasAsJava, SetHasAsJava}
 
-class InklessMetadataView(val metadataCache: KRaftMetadataCache, val defaultConfig: Supplier[Map[_, _]]) extends MetadataView {
+class InklessMetadataView(val metadataCache: KRaftMetadataCache, val defaultConfig: Supplier[Map[String, _]]) extends MetadataView {
   override def getAliveBrokers: lang.Iterable[BrokerMetadata] = {
     metadataCache.getAliveBrokers().asJava
   }
