@@ -477,22 +477,19 @@ CREATE FUNCTION delete_files_v1(
     arg_paths object_key_t[]
 )
 RETURNS VOID LANGUAGE plpgsql VOLATILE AS $$
-DECLARE
-    l_file RECORD;
 BEGIN
-    FOR l_file IN
-        SELECT *
+    WITH file_ids_to_delete AS (
+        SELECT file_id
         FROM files
         WHERE object_key = ANY(arg_paths)
             AND state = 'deleting'
-        FOR UPDATE
-    LOOP
+    ),
+    deleted_work_items AS (
         DELETE FROM file_merge_work_item_files
-        WHERE file_id = l_file.file_id;
-
-        DELETE FROM files
-        WHERE file_id = l_file.file_id;
-    END LOOP;
+        WHERE file_id IN (SELECT file_id FROM file_ids_to_delete)
+    )
+    DELETE FROM files
+    WHERE file_id IN (SELECT file_id FROM file_ids_to_delete);
 END;
 $$
 ;
