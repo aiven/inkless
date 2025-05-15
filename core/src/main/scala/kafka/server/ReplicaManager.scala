@@ -320,7 +320,8 @@ class ReplicaManager(val config: KafkaConfig,
   private val inklessFetchOffsetHandler: Option[FetchOffsetHandler] = inklessSharedState.map(new FetchOffsetHandler(_))
   private val inklessDeleteRecordsInterceptor: Option[DeleteRecordsInterceptor] = inklessSharedState.map(new DeleteRecordsInterceptor(_))
   private val inklessFileCleaner: Option[FileCleaner] = inklessSharedState.map(new FileCleaner(_))
-  private val inklessFileMerger: Option[FileMerger] = inklessSharedState.map(new FileMerger(_))
+  // FIXME: FileMerger is having issues with hanging queries. Disabling until fixed.
+  private val inklessFileMerger: Option[FileMerger] = None // inklessSharedState.map(new FileMerger(_))
 
   /* epoch of the controller that last changed the leader */
   @volatile private[server] var controllerEpoch: Int = 0
