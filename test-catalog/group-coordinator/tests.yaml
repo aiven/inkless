@@ -664,6 +664,17 @@ org.apache.kafka.coordinator.group.ShareGroupAutoOffsetResetStrategyTest:
 - testFromString
 - testTimestamp
 - testValidator
+org.apache.kafka.coordinator.group.UtilsTest:
+- testComputeGroupHashWithDifferentOrder
+- testComputeGroupHashWithEmptyMap
+- testComputeGroupHashWithSameKeyButDifferentValue
+- testComputeTopicHash
+- testComputeTopicHashWithDifferentField
+- testComputeTopicHashWithDifferentMagicByte
+- testComputeTopicHashWithDifferentPartitionOrder
+- testComputeTopicHashWithDifferentRackOrder
+- testComputeTopicHashWithLeastSignificantBitsFirst
+- testNonExistingTopicName
 org.apache.kafka.coordinator.group.assignor.GroupSpecImplTest:
 - testIsPartitionAssigned
 - testMemberAssignment

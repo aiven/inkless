@@ -3019,6 +3019,7 @@ kafka.server.share.SharePartitionManagerTest:
 - testNewContextReturnsFinalContextWithRequestData
 - testNewContextReturnsFinalContextWithoutRequestData
 - testOnShareVersionToggle
+- testOnShareVersionToggleWhenEnabledFromConfig
 - testPartitionLoadTimeMetricWithMultiplePartitions
 - testPendingInitializationShouldCompleteFetchRequest
 - testReleaseSessionCompletesDelayedShareFetchRequest
@@ -3034,6 +3035,8 @@ kafka.server.share.SharePartitionManagerTest:
 - testReplicaManagerFetchShouldProceed
 - testShareFetchContextResponseSize
 - testShareFetchProcessingExceptions
+- testShareGroupListener
+- testShareGroupListenerWithEmptyCache
 - testSharePartitionInitializationExceptions
 - testSharePartitionInitializationFailure
 - testSharePartitionKey
@@ -3041,7 +3044,6 @@ kafka.server.share.SharePartitionManagerTest:
 - testSharePartitionListenerOnDeleted
 - testSharePartitionListenerOnFailed
 - testSharePartitionPartialInitializationFailure
-- testShareSessionCacheSupportsShareGroups
 - testShareSessionUpdateTopicIdsBrokerSide
 - testSubsequentShareSession
 - testToForgetPartitions
