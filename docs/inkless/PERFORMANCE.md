@@ -9,7 +9,7 @@ When writing to Diskless topics, the following stages are involved when a Produc
 - Commiting Batches to Batch Coordinator
 - Returning Produce Response
 
-Rotating the WAL segment is bound by the `produce.commit.interval.ms` configuration (default 250ms).
+Rotating the WAL segment is bound by the `inkless.produce.commit.interval.ms` configuration (default 250ms).
 
 Once a WAL segment is rotated, upload to remote storage is triggered.
 e.g. for AWS S3 the upload latency depends on the segment size, with observed P99 latencies of 200-400ms for 2-8MB segments.
