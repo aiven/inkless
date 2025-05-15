@@ -65,7 +65,7 @@ class SafeDeleteFileCheckJobTest {
 
     @Test
     void isSafeToDelete() throws Exception {
-        final SafeDeleteFileCheckJob job = new SafeDeleteFileCheckJob(pgContainer.getJooqCtx(), "test");
+        final SafeDeleteFileCheckJob job = new SafeDeleteFileCheckJob(time, pgContainer.getJooqCtx(), "test", duration -> {});
         assertThat(job.call()).isTrue();
     }
 
@@ -84,7 +84,7 @@ class SafeDeleteFileCheckJobTest {
             duration -> {}
         ).call();
 
-        final SafeDeleteFileCheckJob job = new SafeDeleteFileCheckJob(pgContainer.getJooqCtx(), objectKey);
+        final SafeDeleteFileCheckJob job = new SafeDeleteFileCheckJob(time, pgContainer.getJooqCtx(), objectKey, duration -> {});
         assertThat(job.call()).isFalse();
     }
 }

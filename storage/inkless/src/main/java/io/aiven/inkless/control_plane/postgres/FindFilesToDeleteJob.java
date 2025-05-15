@@ -26,6 +26,7 @@ import org.slf4j.LoggerFactory;
 
 import java.util.List;
 import java.util.concurrent.Callable;
+import java.util.function.Consumer;
 
 import io.aiven.inkless.control_plane.FileToDelete;
 
@@ -36,15 +37,19 @@ public class FindFilesToDeleteJob implements Callable<List<FileToDelete>> {
 
     private final Time time;
     private final DSLContext jooqCtx;
+    private final Consumer<Long> durationCallback;
 
-    public FindFilesToDeleteJob(final Time time, final DSLContext jooqCtx) {
+    public FindFilesToDeleteJob(final Time time,
+                                final DSLContext jooqCtx,
+                                final Consumer<Long> durationCallback) {
         this.time = time;
         this.jooqCtx = jooqCtx;
+        this.durationCallback = durationCallback;
     }
 
     @Override
     public List<FileToDelete> call() {
-        return JobUtils.run(this::runOnce);
+        return JobUtils.run(this::runOnce, time, durationCallback);
     }
 
     private List<FileToDelete> runOnce() {

@@ -17,26 +17,36 @@
  */
 package io.aiven.inkless.control_plane.postgres;
 
+import org.apache.kafka.common.utils.Time;
+
 import org.jooq.Configuration;
 import org.jooq.DSLContext;
 import org.jooq.generated.Routines;
 import org.jooq.generated.udt.records.ReleaseFileMergeWorkItemResponseV1Record;
 
 import java.util.concurrent.Callable;
+import java.util.function.Consumer;
 
 
 public class ReleaseFileMergeWorkItemJob implements Callable<ReleaseFileMergeWorkItemResponseV1Record> {
+    private final Time time;
     private final Long workItemId;
     private final DSLContext jooqCtx;
+    private final Consumer<Long> durationCallback;
 
-    public ReleaseFileMergeWorkItemJob(Long workItemId, DSLContext jooqCtx) {
+    public ReleaseFileMergeWorkItemJob(final Time time,
+                                       final Long workItemId,
+                                       final DSLContext jooqCtx,
+                                       final Consumer<Long> durationCallback) {
+        this.time = time;
         this.workItemId = workItemId;
         this.jooqCtx = jooqCtx;
+        this.durationCallback = durationCallback;
     }
 
     @Override
     public ReleaseFileMergeWorkItemResponseV1Record call() {
-        return JobUtils.run(this::runOnce);
+        return JobUtils.run(this::runOnce, time, durationCallback);
     }
 
     private ReleaseFileMergeWorkItemResponseV1Record runOnce() {

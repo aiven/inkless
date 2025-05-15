@@ -49,15 +49,15 @@ class FindBatchesJob implements Callable<List<FindBatchResponse>> {
     private final DSLContext jooqCtx;
     private final List<FindBatchRequest> requests;
     private final int fetchMaxBytes;
-    private final Consumer<Long> durationCallback;
     private final Consumer<Long> getLogsDurationCallback;
+    private final Consumer<Long> durationCallback;
 
     FindBatchesJob(final Time time,
                    final DSLContext jooqCtx,
                    final List<FindBatchRequest> requests,
                    final int fetchMaxBytes,
-                   final Consumer<Long> durationCallback,
-                   final Consumer<Long> getLogsDurationCallback) {
+                   final Consumer<Long> getLogsDurationCallback,
+                   final Consumer<Long> durationCallback) {
         this.time = time;
         this.jooqCtx = jooqCtx;
         this.requests = requests;
@@ -68,7 +68,7 @@ class FindBatchesJob implements Callable<List<FindBatchResponse>> {
 
     @Override
     public List<FindBatchResponse> call() {
-        return JobUtils.run(this::runOnce);
+        return JobUtils.run(this::runOnce, time, durationCallback);
     }
 
     private List<FindBatchResponse> runOnce()  {

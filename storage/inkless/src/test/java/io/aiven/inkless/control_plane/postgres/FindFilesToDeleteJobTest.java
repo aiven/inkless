@@ -90,7 +90,7 @@ class FindFilesToDeleteJobTest {
 
     @Test
     void test() {
-        final FindFilesToDeleteJob job = new FindFilesToDeleteJob(time, pgContainer.getJooqCtx());
+        final FindFilesToDeleteJob job = new FindFilesToDeleteJob(time, pgContainer.getJooqCtx(), duration -> {});
         assertThat(job.call()).containsExactly(
             new FileToDelete(OBJECT_KEY, MARKED_FOR_DELETION_AT)
         );

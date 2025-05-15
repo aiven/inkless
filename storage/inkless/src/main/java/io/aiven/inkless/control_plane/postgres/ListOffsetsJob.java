@@ -32,6 +32,7 @@ import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
 import java.util.concurrent.Callable;
+import java.util.function.Consumer;
 
 import io.aiven.inkless.control_plane.ControlPlaneException;
 import io.aiven.inkless.control_plane.ListOffsetsRequest;
@@ -45,16 +46,21 @@ public class ListOffsetsJob implements Callable<List<ListOffsetsResponse>> {
     private final Time time;
     private final DSLContext jooqCtx;
     private final List<ListOffsetsRequest> requests;
+    private final Consumer<Long> durationCallback;
 
-    public ListOffsetsJob(final Time time, final DSLContext jooqCtx, final List<ListOffsetsRequest> requests) {
+    public ListOffsetsJob(final Time time,
+                          final DSLContext jooqCtx,
+                          final List<ListOffsetsRequest> requests,
+                          final Consumer<Long> durationCallback) {
         this.time = time;
         this.jooqCtx = jooqCtx;
         this.requests = requests;
+        this.durationCallback = durationCallback;
     }
 
     @Override
     public List<ListOffsetsResponse> call() {
-        return JobUtils.run(this::runOnce);
+        return JobUtils.run(this::runOnce, time, durationCallback);
     }
 
     private List<ListOffsetsResponse> runOnce() throws Exception {

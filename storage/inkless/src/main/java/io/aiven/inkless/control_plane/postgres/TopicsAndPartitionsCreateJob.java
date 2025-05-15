@@ -54,7 +54,7 @@ public class TopicsAndPartitionsCreateJob implements Runnable {
         if (requests.isEmpty()) {
             return;
         }
-        JobUtils.run(this::runOnce);
+        JobUtils.run(this::runOnce, time, durationCallback);
     }
 
     private void runOnce() {

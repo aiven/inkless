@@ -17,10 +17,13 @@
  */
 package io.aiven.inkless.control_plane.postgres;
 
+import org.apache.kafka.common.utils.Time;
+
 import org.jooq.Configuration;
 import org.jooq.DSLContext;
 
 import java.util.concurrent.Callable;
+import java.util.function.Consumer;
 
 import static org.jooq.generated.tables.Files.FILES;
 
@@ -28,13 +31,19 @@ import static org.jooq.generated.tables.Files.FILES;
  * The job of ensuring an object key is not referenced by any file, so it can be safely deleted.
  */
 public class SafeDeleteFileCheckJob implements Callable<Boolean> {
+    private final Time time;
     private final DSLContext jooqCtx;
+    private final Consumer<Long> durationCallback;
 
     final String objectKeyPath;
 
-    public SafeDeleteFileCheckJob(final DSLContext jooqCtx,
-                                  final String objectKeyPath) {
+    public SafeDeleteFileCheckJob(final Time time,
+                                  final DSLContext jooqCtx,
+                                  final String objectKeyPath,
+                                  final Consumer<Long> durationCallback) {
+        this.time = time;
         this.jooqCtx = jooqCtx;
+        this.durationCallback = durationCallback;
         this.objectKeyPath = objectKeyPath;
     }
 
@@ -43,7 +52,7 @@ public class SafeDeleteFileCheckJob implements Callable<Boolean> {
         if (objectKeyPath == null || objectKeyPath.isEmpty()) {
             return true;
         }
-        return JobUtils.run(this::runOnce);
+        return JobUtils.run(this::runOnce, time, durationCallback);
     }
 
     private boolean runOnce() {

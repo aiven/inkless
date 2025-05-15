@@ -28,97 +28,117 @@ import java.util.Objects;
 import java.util.concurrent.atomic.LongAdder;
 
 public class PostgresControlPlaneMetrics implements Closeable {
-
-    private static final String FIND_BATCHES_QUERY_TIME = "FindBatchesQueryTime";
-    private static final String GET_LOGS_QUERY_TIME = "GetLogsQueryTime";
-    private static final String COMMIT_FILE_QUERY_TIME = "CommitFileQueryTime";
-    private static final String TOPIC_DELETE_QUERY_TIME = "TopicDeleteQueryTime";
-    private static final String TOPIC_CREATE_QUERY_TIME = "TopicCreateQueryTime";
-    private static final String FILES_DELETE_QUERY_TIME = "FilesDeleteQueryTime";
-
-    public static final String FIND_BATCHES_QUERY_RATE = "FindBatchesQueryRate";
-    public static final String GET_LOGS_QUERY_RATE = "GetLogsQueryRate";
-    public static final String COMMIT_FILE_QUERY_RATE = "CommitFileQueryRate";
-    public static final String TOPIC_CREATE_QUERY_RATE = "TopicCreateQueryRate";
-    public static final String TOPIC_DELETE_QUERY_RATE = "TopicDeleteQueryRate";
-    public static final String FILES_DELETE_QUERY_RATE = "FilesDeleteQueryRate";
-
     final Time time;
 
     private final KafkaMetricsGroup metricsGroup = new KafkaMetricsGroup(PostgresControlPlane.class);
-    private final Histogram findBatchesQueryTimeHistogram;
-    private final Histogram getLogsQueryTimeHistogram;
-    private final Histogram commitFileQueryTimeHistogram;
-    private final Histogram topicDeleteQueryTimeHistogram;
-    private final Histogram topicCreateQueryTimeHistogram;
-    private final Histogram filesDeleteQueryTimeHistogram;
-
-    private final LongAdder findBatchesQueryRate = new LongAdder();
-    private final LongAdder getLogsQueryRate = new LongAdder();
-    private final LongAdder commitFileQueryRate = new LongAdder();
-    private final LongAdder topicCreateQueryRate = new LongAdder();
-    private final LongAdder topicDeleteQueryRate = new LongAdder();
-    private final LongAdder filesDeleteQueryRate = new LongAdder();
+    private final QueryMetrics findBatchesMetrics = new QueryMetrics("FindBatches");
+    private final QueryMetrics getLogsMetrics = new QueryMetrics("GetLogs");
+    private final QueryMetrics commitFileMetrics = new QueryMetrics("CommitFile");
+    private final QueryMetrics commitFileMergeWorkItemMetrics = new QueryMetrics("CommitFileMergeWorkItem");
+    private final QueryMetrics topicCreateMetrics = new QueryMetrics("TopicCreate");
+    private final QueryMetrics topicDeleteMetrics = new QueryMetrics("TopicDelete");
+    private final QueryMetrics fileDeleteMetrics = new QueryMetrics("FilesDelete");
+    private final QueryMetrics listOffsetsMetrics = new QueryMetrics("ListOffsets");
+    private final QueryMetrics deleteRecordsMetrics = new QueryMetrics("DeleteRecords");
+    private final QueryMetrics getFilesToDeleteMetrics = new QueryMetrics("GetFilesToDelete");
+    private final QueryMetrics getFileMergeWorkItemMetrics = new QueryMetrics("GetFileMergeWorkItem");
+    private final QueryMetrics releaseFileMergeWorkItemMetrics = new QueryMetrics("ReleaseFileMergeWorkItem");
+    private final QueryMetrics safeDeleteFileCheckMetrics = new QueryMetrics("SafeDeleteFileCheck");
 
     public PostgresControlPlaneMetrics(Time time) {
         this.time = Objects.requireNonNull(time, "time cannot be null");
+    }
 
-        findBatchesQueryTimeHistogram = metricsGroup.newHistogram(FIND_BATCHES_QUERY_TIME, true, Map.of());
-        getLogsQueryTimeHistogram = metricsGroup.newHistogram(GET_LOGS_QUERY_TIME, true, Map.of());
-        commitFileQueryTimeHistogram = metricsGroup.newHistogram(COMMIT_FILE_QUERY_TIME, true, Map.of());
-        topicDeleteQueryTimeHistogram = metricsGroup.newHistogram(TOPIC_DELETE_QUERY_TIME, true, Map.of());
-        topicCreateQueryTimeHistogram = metricsGroup.newHistogram(TOPIC_CREATE_QUERY_TIME, true, Map.of());
-        filesDeleteQueryTimeHistogram = metricsGroup.newHistogram(FILES_DELETE_QUERY_TIME, true, Map.of());
-
-        metricsGroup.newGauge(FIND_BATCHES_QUERY_RATE, findBatchesQueryRate::intValue);
-        metricsGroup.newGauge(GET_LOGS_QUERY_RATE, getLogsQueryRate::intValue);
-        metricsGroup.newGauge(COMMIT_FILE_QUERY_RATE, commitFileQueryRate::intValue);
-        metricsGroup.newGauge(TOPIC_CREATE_QUERY_RATE, topicCreateQueryRate::intValue);
-        metricsGroup.newGauge(TOPIC_DELETE_QUERY_RATE, topicDeleteQueryRate::intValue);
-        metricsGroup.newGauge(FILES_DELETE_QUERY_RATE, filesDeleteQueryRate::intValue);
+    public void onCommitFileMergeWorkItemCompleted(final Long duration) {
+        commitFileMergeWorkItemMetrics.record(duration);
     }
 
     public void onFindBatchesCompleted(Long duration) {
-        findBatchesQueryTimeHistogram.update(duration);
-        findBatchesQueryRate.increment();
+        findBatchesMetrics.record(duration);
     }
 
     public void onGetLogsCompleted(Long duration) {
-        getLogsQueryTimeHistogram.update(duration);
-        getLogsQueryRate.increment();
+        getLogsMetrics.record(duration);
     }
 
     public void onCommitFileCompleted(Long duration) {
-        commitFileQueryTimeHistogram.update(duration);
-        commitFileQueryRate.increment();
+        commitFileMetrics.record(duration);
     }
 
     public void onTopicDeleteCompleted(Long duration) {
-        topicDeleteQueryTimeHistogram.update(duration);
-        topicDeleteQueryRate.increment();
+        topicDeleteMetrics.record(duration);
     }
 
     public void onTopicCreateCompleted(Long duration) {
-        topicCreateQueryTimeHistogram.update(duration);
-        topicCreateQueryRate.increment();
+        topicCreateMetrics.record(duration);
     }
 
     public void onFilesDeleteCompleted(Long duration) {
-        filesDeleteQueryTimeHistogram.update(duration);
-        filesDeleteQueryRate.increment();
+        fileDeleteMetrics.record(duration);
+    }
+
+    public void onListOffsetsCompleted(Long duration) {
+        listOffsetsMetrics.record(duration);
+    }
+
+    public void onDeleteRecordsCompleted(Long duration) {
+        deleteRecordsMetrics.record(duration);
+    }
+
+    public void onGetFilesToDeleteCompleted(Long duration) {
+        getFilesToDeleteMetrics.record(duration);
+    }
+
+    public void onGetFileMergeWorkItemCompleted(Long duration) {
+        getFileMergeWorkItemMetrics.record(duration);
+    }
+
+    public void onReleaseFileMergeWorkItemCompleted(Long duration) {
+        releaseFileMergeWorkItemMetrics.record(duration);
+    }
+
+    public void onSafeDeleteFileCheckCompleted(Long duration) {
+        safeDeleteFileCheckMetrics.record(duration);
     }
 
     @Override
     public void close() {
-        metricsGroup.removeMetric(FIND_BATCHES_QUERY_RATE);
-        metricsGroup.removeMetric(GET_LOGS_QUERY_RATE);
-        metricsGroup.removeMetric(COMMIT_FILE_QUERY_RATE);
-        metricsGroup.removeMetric(TOPIC_CREATE_QUERY_RATE);
-        metricsGroup.removeMetric(TOPIC_DELETE_QUERY_RATE);
-        metricsGroup.removeMetric(FIND_BATCHES_QUERY_TIME);
-        metricsGroup.removeMetric(GET_LOGS_QUERY_TIME);
-        metricsGroup.removeMetric(COMMIT_FILE_QUERY_TIME);
-        metricsGroup.removeMetric(TOPIC_CREATE_QUERY_TIME);
-        metricsGroup.removeMetric(TOPIC_DELETE_QUERY_TIME);
+        findBatchesMetrics.remove();
+        getLogsMetrics.remove();
+        commitFileMetrics.remove();
+        commitFileMergeWorkItemMetrics.remove();
+        topicCreateMetrics.remove();
+        topicDeleteMetrics.remove();
+        fileDeleteMetrics.remove();
+        listOffsetsMetrics.remove();
+        deleteRecordsMetrics.remove();
+        getFilesToDeleteMetrics.remove();
+        getFileMergeWorkItemMetrics.remove();
+        releaseFileMergeWorkItemMetrics.remove();
+        safeDeleteFileCheckMetrics.remove();
+    }
+
+    private class QueryMetrics {
+        private final String queryTimeMetricName;
+        private final String queryRateMetricName;
+        private final Histogram queryTimeHistogram;
+        private final LongAdder queryRate = new LongAdder();
+
+        private QueryMetrics(final String name) {
+            this.queryTimeMetricName = name + "QueryTime";
+            this.queryRateMetricName = name + "QueryRate";
+            this.queryTimeHistogram = metricsGroup.newHistogram(queryTimeMetricName, true, Map.of());
+            metricsGroup.newGauge(queryRateMetricName, queryRate::intValue);
+        }
+
+        private void record(final long duration) {
+            queryTimeHistogram.update(duration);
+            queryRate.increment();
+        }
+
+        private void remove() {
+            metricsGroup.removeMetric(this.queryTimeMetricName);
+            metricsGroup.removeMetric(this.queryRateMetricName);
+        }
     }
 }

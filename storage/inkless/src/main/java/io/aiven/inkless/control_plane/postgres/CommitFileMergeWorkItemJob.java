@@ -29,6 +29,7 @@ import org.jooq.generated.udt.records.CommitFileMergeWorkItemResponseV1Record;
 import java.time.Instant;
 import java.util.List;
 import java.util.concurrent.Callable;
+import java.util.function.Consumer;
 
 import io.aiven.inkless.TimeUtils;
 import io.aiven.inkless.common.ObjectFormat;
@@ -43,6 +44,7 @@ public class CommitFileMergeWorkItemJob implements Callable<CommitFileMergeWorkI
     private final long fileSize;
     private final List<MergedFileBatch> mergedFileBatches;
     private final DSLContext jooqCtx;
+    private final Consumer<Long> durationCallback;
 
     public CommitFileMergeWorkItemJob(
         final Time time,
@@ -52,7 +54,8 @@ public class CommitFileMergeWorkItemJob implements Callable<CommitFileMergeWorkI
         final int uploaderBrokerId,
         final long fileSize,
         final List<MergedFileBatch> mergedFileBatches,
-        final DSLContext jooqCtx
+        final DSLContext jooqCtx,
+        final Consumer<Long> durationCallback
     ) {
         this.time = time;
         this.workItemId = workItemId;
@@ -62,11 +65,12 @@ public class CommitFileMergeWorkItemJob implements Callable<CommitFileMergeWorkI
         this.fileSize = fileSize;
         this.mergedFileBatches = mergedFileBatches;
         this.jooqCtx = jooqCtx;
+        this.durationCallback = durationCallback;
     }
 
     @Override
     public CommitFileMergeWorkItemResponseV1Record call() {
-        return JobUtils.run(this::runOnce);
+        return JobUtils.run(this::runOnce, time, durationCallback);
     }
 
     private CommitFileMergeWorkItemResponseV1Record runOnce() {

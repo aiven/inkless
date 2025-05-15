@@ -161,7 +161,7 @@ class DeleteRecordsJobTest {
             new DeleteRecordsRequest(T0P1, 24),
             new DeleteRecordsRequest(T2P0, 0),
             new DeleteRecordsRequest(new TopicIdPartition(nonexistentTopicId, 0, "nonexistent"), 0)
-        )).call();
+        ), duration -> {}).call();
 
         assertThat(responses).containsExactly(
             new DeleteRecordsResponse(Errors.NONE, 18),

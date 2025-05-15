@@ -91,7 +91,8 @@ class ListOffsetsJobTest {
             time, pgContainer.getJooqCtx(),
             List.of(
                 new ListOffsetsRequest(T0P0, -1)
-            )
+            ),
+            duration -> {}
         );
         final List<ListOffsetsResponse> result = job.call();
 

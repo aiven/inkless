@@ -32,6 +32,7 @@ import java.time.Instant;
 import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.Callable;
+import java.util.function.Consumer;
 
 import io.aiven.inkless.TimeUtils;
 import io.aiven.inkless.common.ObjectFormat;
@@ -46,22 +47,25 @@ public class GetFileMergeWorkItemJob implements Callable<FileMergeWorkItem> {
     private final Duration expirationInterval;
     private final Long maxFileSize;
     private final DSLContext jooqCtx;
+    private final Consumer<Long> durationCallback;
 
     public GetFileMergeWorkItemJob(
         final Time time,
         final Duration expirationInterval,
         final Long maxFileSize,
-        final DSLContext jooqCtx
+        final DSLContext jooqCtx,
+        final Consumer<Long> durationCallback
     ) {
         this.time = time;
         this.expirationInterval = expirationInterval;
         this.maxFileSize = maxFileSize;
         this.jooqCtx = jooqCtx;
+        this.durationCallback = durationCallback;
     }
 
     @Override
     public FileMergeWorkItem call() {
-        return JobUtils.run(this::runOnce);
+        return JobUtils.run(this::runOnce, time, durationCallback);
     }
 
     private FileMergeWorkItem runOnce() {

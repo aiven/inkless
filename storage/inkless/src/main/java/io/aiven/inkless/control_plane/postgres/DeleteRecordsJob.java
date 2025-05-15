@@ -35,6 +35,7 @@ import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
 import java.util.concurrent.Callable;
+import java.util.function.Consumer;
 
 import io.aiven.inkless.TimeUtils;
 import io.aiven.inkless.control_plane.DeleteRecordsRequest;
@@ -48,11 +49,16 @@ public class DeleteRecordsJob implements Callable<List<DeleteRecordsResponse>> {
     private final Time time;
     private final DSLContext jooqCtx;
     private final List<DeleteRecordsRequest> requests;
+    private final Consumer<Long> durationCallback;
 
-    public DeleteRecordsJob(final Time time, final DSLContext jooqCtx, final List<DeleteRecordsRequest> requests) {
+    public DeleteRecordsJob(final Time time,
+                            final DSLContext jooqCtx,
+                            final List<DeleteRecordsRequest> requests,
+                            final Consumer<Long> durationCallback) {
         this.time = time;
         this.jooqCtx = jooqCtx;
         this.requests = requests;
+        this.durationCallback = durationCallback;
     }
 
     @Override
@@ -60,7 +66,7 @@ public class DeleteRecordsJob implements Callable<List<DeleteRecordsResponse>> {
         if (requests.isEmpty()) {
             return List.of();
         }
-        return JobUtils.run(this::runOnce);
+        return JobUtils.run(this::runOnce, time, durationCallback);
     }
 
     private List<DeleteRecordsResponse> runOnce() {

@@ -128,7 +128,7 @@ public class PostgresControlPlane extends AbstractControlPlane {
         final FindBatchesJob job = new FindBatchesJob(
             time, jooqCtx,
             requests.toList(), fetchMaxBytes,
-            metrics::onFindBatchesCompleted, metrics::onGetLogsCompleted);
+            metrics::onGetLogsCompleted, metrics::onFindBatchesCompleted);
         return job.call().iterator();
     }
 
@@ -136,7 +136,7 @@ public class PostgresControlPlane extends AbstractControlPlane {
     protected Iterator<ListOffsetsResponse> listOffsetsForExistingPartitions(Stream<ListOffsetsRequest> requests) {
             final ListOffsetsJob job = new ListOffsetsJob(
                     time, jooqCtx,
-                    requests.toList());
+                    requests.toList(), metrics::onListOffsetsCompleted);
             return job.call().iterator();
     }
 
@@ -148,14 +148,14 @@ public class PostgresControlPlane extends AbstractControlPlane {
 
     @Override
     public List<DeleteRecordsResponse> deleteRecords(final List<DeleteRecordsRequest> requests) {
-        final DeleteRecordsJob job = new DeleteRecordsJob(time, jooqCtx, requests);
+        final DeleteRecordsJob job = new DeleteRecordsJob(time, jooqCtx, requests, metrics::onDeleteRecordsCompleted);
         return job.call();
     }
 
     @Override
     public List<FileToDelete> getFilesToDelete() {
         try {
-            final FindFilesToDeleteJob job = new FindFilesToDeleteJob(time, jooqCtx);
+            final FindFilesToDeleteJob job = new FindFilesToDeleteJob(time, jooqCtx, metrics::onGetFilesToDeleteCompleted);
             return job.call();
         } catch (final Exception e) {
             throw new ControlPlaneException("Failed to get files to delete", e);
@@ -178,7 +178,8 @@ public class PostgresControlPlane extends AbstractControlPlane {
             time,
             controlPlaneConfig.fileMergeLockPeriod(),
             controlPlaneConfig.fileMergeSizeThresholdBytes(),
-            jooqCtx
+            jooqCtx,
+            metrics::onGetFileMergeWorkItemCompleted
         );
         return job.call();
     }
@@ -199,7 +200,8 @@ public class PostgresControlPlane extends AbstractControlPlane {
             uploaderBrokerId,
             fileSize,
             batches,
-            jooqCtx
+            jooqCtx,
+            metrics::onCommitFileMergeWorkItemCompleted
         );
         final var result = job.call();
         switch (result.getError()) {
@@ -253,7 +255,8 @@ public class PostgresControlPlane extends AbstractControlPlane {
 
     @Override
     public void releaseFileMergeWorkItem(final long workItemId) {
-        final ReleaseFileMergeWorkItemJob job = new ReleaseFileMergeWorkItemJob(workItemId, jooqCtx);
+        final ReleaseFileMergeWorkItemJob job =
+            new ReleaseFileMergeWorkItemJob( time, workItemId, jooqCtx, metrics::onReleaseFileMergeWorkItemCompleted);
         final var result = job.call();
         switch (result.getError()) {
             case none:
@@ -266,7 +269,8 @@ public class PostgresControlPlane extends AbstractControlPlane {
     @Override
     public boolean isSafeToDeleteFile(String objectKeyPath) {
         try {
-            final SafeDeleteFileCheckJob job = new SafeDeleteFileCheckJob(jooqCtx, objectKeyPath);
+            final SafeDeleteFileCheckJob job =
+                new SafeDeleteFileCheckJob(time, jooqCtx, objectKeyPath, metrics::onSafeDeleteFileCheckCompleted);
             return job.call();
         } catch (Exception e) {
             throw new ControlPlaneException("Error when checking if safe to delete file " + objectKeyPath, e);

@@ -43,7 +43,7 @@ class DeleteTopicJob implements Runnable {
     private final Consumer<Long> durationCallback;
 
     DeleteTopicJob(final Time time,
-                   DSLContext jooqCtx,
+                   final DSLContext jooqCtx,
                    final Set<Uuid> topicIds,
                    final Consumer<Long> durationCallback) {
         this.time = time;
@@ -57,7 +57,7 @@ class DeleteTopicJob implements Runnable {
         if (topicIds.isEmpty()) {
             return;
         }
-        JobUtils.run(this::runOnce);
+        JobUtils.run(this::runOnce, time, durationCallback);
     }
 
     private void runOnce() {
