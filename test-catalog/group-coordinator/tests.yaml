@@ -151,8 +151,6 @@ org.apache.kafka.coordinator.group.GroupCoordinatorServiceTest:
 - testPersisterInitializeGroupInitializeFailure
 - testPersisterInitializePartialFailure
 - testPersisterInitializeSuccess
-- testReconcileShareGroupInitializingState
-- testReconcileShareGroupInitializingStateNoRequests
 - testShareGroupDescribe
 - testShareGroupDescribeCoordinatorLoadInProgress
 - testShareGroupDescribeCoordinatorNotActive

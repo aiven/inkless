@@ -38,6 +38,7 @@ org.apache.kafka.coordinator.share.ShareCoordinatorServiceTest:
 - testOnTopicsDeletedDoesNotThrowExp
 - testOnTopicsDeletedEmptyList
 - testPartitionFor
+- testPeriodicJobsDoNotRunWhenShareGroupsDisabled
 - testReadFutureReturnsError
 - testReadStateSuccess
 - testReadStateSummarySuccess

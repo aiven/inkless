@@ -161,6 +161,7 @@ org.apache.kafka.clients.consumer.ShareConsumerTest:
 - testShareAutoOffsetResetMultipleGroupsWithDifferentValue
 - testShareConsumerAfterCoordinatorMovement
 - testShareGroupMaxSizeConfigExceeded
+- testShareGroupShareSessionCacheIsFull
 - testSubscribeAndPollNoRecords
 - testSubscribeOnInvalidTopicThrowsInvalidTopicException
 - testSubscribePollSubscribe

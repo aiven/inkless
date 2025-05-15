@@ -2281,6 +2281,7 @@ kafka.server.KafkaApisTest:
 - testHandleShareFetchRequestSuccessWithAcknowledgements
 - testHandleShareFetchRequestSuccessWithoutAcknowledgements
 - testHandleShareFetchRequestSuccessfulShareSessionLifecycle
+- testHandleShareFetchRequestWhenShareSessionCacheIsFull
 - testHandleShareFetchShareGroupDisabled
 - testHandleSyncGroupRequest
 - testHandleSyncGroupRequestAuthenticationFailed
@@ -3008,6 +3009,7 @@ kafka.server.share.SharePartitionManagerTest:
 - testCachedTopicPartitionsForValidShareSessions
 - testCachedTopicPartitionsWithNoTopicPartitions
 - testCloseSharePartitionManager
+- testCreateIdleShareFetchTask
 - testDelayedInitializationShouldCompleteFetchRequest
 - testFetchMessagesRotatePartitions
 - testGetErroneousAndValidTopicIdPartitions
