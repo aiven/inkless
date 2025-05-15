@@ -400,6 +400,7 @@ BEGIN
         FROM logs
         WHERE topic_id = l_request.topic_id
             AND partition = l_request.partition
+        ORDER BY topic_id, partition  -- ordering is important to prevent deadlocks
         FOR UPDATE
         INTO l_log;
 
