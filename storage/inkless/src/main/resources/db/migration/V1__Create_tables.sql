@@ -857,6 +857,18 @@ BEGIN
         END IF;
     END LOOP;
 
+    -- Lock logs to prevent concurrent modifications.
+    PERFORM
+    FROM logs
+    WHERE (topic_id, partition) IN (
+        SELECT logs.topic_id, logs.partition
+        FROM unnest(arg_merge_file_batches) AS mfb
+             INNER JOIN batches ON mfb.parent_batch_ids[1] = batches.batch_id
+             INNER JOIN logs ON batches.topic_id = logs.topic_id AND batches.partition = logs.partition
+    )
+    ORDER BY topic_id, partition  -- ordering is important to prevent deadlocks
+    FOR UPDATE;
+
     -- filter arg_merge_file_batches to only include the ones where logs exist
     arg_merge_file_batches := ARRAY(
         SELECT b
