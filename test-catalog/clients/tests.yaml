@@ -2628,6 +2628,7 @@ org.apache.kafka.clients.producer.KafkaProducerTest:
 - shouldNotInvokeFlushInCallback
 - testAbortTransaction
 - testAcksAndIdempotenceForIdempotentProducers
+- testBeginTransactionNotAllowedInPreparedTransactionState
 - testCallbackAndInterceptorHandleError
 - testClientInstanceId
 - testClientInstanceIdInvalidTimeout
@@ -2683,8 +2684,12 @@ org.apache.kafka.clients.producer.KafkaProducerTest:
 - testPartitionAddedToTransaction
 - testPartitionerClose
 - testPartitionsForWithNullTopic
+- testPrepareTransactionFailsWhen2PCDisabled
+- testPrepareTransactionSuccess
 - testProducerJmxPrefix
 - testRetriesAndIdempotenceForIdempotentProducers
+- testSendNotAllowedInPreparedTransactionState
+- testSendOffsetsNotAllowedInPreparedTransactionState
 - testSendToInvalidTopic
 - testSendTxnOffsetsWithGroupId
 - testSendTxnOffsetsWithGroupIdTransactionV2
@@ -3056,6 +3061,7 @@ org.apache.kafka.clients.producer.internals.TransactionManagerTest:
 - testNotReadyForSendAfterFatalError
 - testNotReadyForSendBeforeBeginTransaction
 - testNotReadyForSendBeforeInitTransactions
+- testPrepareTransaction
 - testProducerFencedExceptionInInitProducerId
 - testProducerFencedInAddOffSetsToTxn
 - testProducerFencedInAddPartitionToTxn
