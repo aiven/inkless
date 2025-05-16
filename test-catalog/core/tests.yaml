@@ -276,6 +276,7 @@ kafka.api.GroupCoordinatorIntegrationTest:
 - testCoordinatorFailoverAfterCompactingPartitionWithUpgradedConsumerGroup
 - testCoordinatorFailoverCompactingPartitionWithManualOffsetCommitsAndConsumerGroupMemberUnsubscribingAndResubscribing
 - testGroupCoordinatorPropagatesOffsetsTopicCompressionCodec
+- testRecreatingConsumerOffsetsTopic
 kafka.api.GroupEndToEndAuthorizationTest:
 - testAuthentications
 - testNoConsumeWithDescribeAclViaAssign
@@ -414,6 +415,7 @@ kafka.api.PlaintextConsumerCommitTest:
 - testPositionAndCommit
 - testSubscribeAndCommitSync
 kafka.api.PlaintextConsumerPollTest:
+- testConsumerRecoveryOnPollAfterDelayedRebalance
 - testMaxPollIntervalMs
 - testMaxPollIntervalMsDelayInAssignment
 - testMaxPollIntervalMsDelayInRevocation
@@ -2163,6 +2165,7 @@ kafka.server.KafkaApisTest:
 - testAddPartitionsToTxnWithInvalidPartition
 - testAlterConfigsClientMetrics
 - testAlterReplicaLogDirs
+- testAlterShareGroupOffsetsReturnsUnsupportedVersion
 - testBatchedAddPartitionsToTxnRequest
 - testConsumerGroupDescribe
 - testConsumerGroupDescribeAuthorizationFailed
@@ -2942,6 +2945,7 @@ kafka.server.logger.RuntimeLoggerManagerTest:
 kafka.server.metadata.BrokerMetadataPublisherTest:
 - testExceptionInUpdateCoordinator
 - testGetTopicDelta
+- testGroupCoordinatorTopicDeletion
 - testNewImagePushedToGroupCoordinator
 - testNewShareVersionPushedToSharePartitionManager
 - testReloadUpdatedFilesWithoutConfigChange
