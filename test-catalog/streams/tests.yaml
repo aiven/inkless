@@ -883,18 +883,20 @@ org.apache.kafka.streams.kstream.internals.KStreamForeachTest:
 - testTypeVariance
 org.apache.kafka.streams.kstream.internals.KStreamGlobalKTableJoinTest:
 - shouldClearGlobalTableEntryOnNullValueUpdates
-- shouldJoinOnNullKeyWithNonNullKeyMapperValues
+- shouldJoinOnNullKey
 - shouldJoinOnlyIfMatchFoundOnStreamUpdates
 - shouldNotJoinOnGlobalTableUpdates
 - shouldNotJoinOnNullKeyMapperValues
+- shouldNotJoinOnNullKeyMapperValuesWithNullKeys
 - shouldNotJoinWithEmptyGlobalTableOnStreamUpdates
 - shouldNotRequireCopartitioning
 org.apache.kafka.streams.kstream.internals.KStreamGlobalKTableLeftJoinTest:
 - shouldClearGlobalTableEntryOnNullValueUpdates
-- shouldJoinOnNullKeyWithNonNullKeyMapperValues
+- shouldJoinOnNullKey
+- shouldJoinOnNullKeyMapperValues
+- shouldJoinOnNullKeyMapperValuesWithNullKeys
 - shouldJoinRegardlessIfMatchFoundOnStreamUpdates
 - shouldNotJoinOnGlobalTableUpdates
-- shouldNotJoinOnNullKeyMapperValues
 - shouldNotJoinWithEmptyGlobalTableOnStreamUpdates
 - shouldNotRequireCopartitioning
 org.apache.kafka.streams.kstream.internals.KStreamImplTest:
@@ -1148,6 +1150,8 @@ org.apache.kafka.streams.kstream.internals.KStreamKTableLeftJoinTest:
 - shouldClearTableEntryOnNullValueUpdates
 - shouldJoinRegardlessIfMatchFoundOnStreamUpdates
 - shouldJoinWithEmptyTableOnStreamUpdates
+- shouldLogAndMeterWhenSkippingNullLeftValue
+- shouldNotDropLeftNullKey
 - shouldNotJoinOnTableUpdates
 - shouldRequireCopartitionedStreams
 org.apache.kafka.streams.kstream.internals.KStreamMapTest:
