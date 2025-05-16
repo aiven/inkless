@@ -535,6 +535,7 @@ org.apache.kafka.coordinator.group.GroupMetadataManagerTest:
 - testStreamsGroupDescribeOnShareGroup
 - testStreamsGroupDescribeWithErrors
 - testStreamsGroupDynamicConfigs
+- testStreamsGroupEndpointInformationOnlyWhenEpochGreater
 - testStreamsGroupHeartbeatOnConsumerGroup
 - testStreamsGroupHeartbeatOnShareGroup
 - testStreamsGroupHeartbeatPartialResponseWhenNothingChanges
