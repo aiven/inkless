@@ -2734,6 +2734,8 @@ org.apache.kafka.streams.processor.internals.StreamThreadTest:
 - shouldTransmitTaskManagerMetrics
 - shouldUpdateLagsAfterPolling
 - shouldUpdateStandbyTask
+- shouldWrapMainConsumerFromClassConfig
+- shouldWrapMainConsumerFromStringConfig
 - testGetTopicPartitionInfo
 - testNamedTopologyWithStreamsProtocol
 - testStreamsProtocolRunOnceWithProcessingThreads

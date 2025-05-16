@@ -1032,8 +1032,6 @@ kafka.docker.KafkaDockerWrapperTest:
 - testPrepareToolsLog4jConfigs
 - testPrepareToolsLog4jConfigsWithoutEnvVariable
 - testPrepareToolsLog4jConfigsWithoutMountedFile
-kafka.integration.MinIsrConfigTest:
-- testDefaultKafkaConfig
 kafka.integration.UncleanLeaderElectionTest:
 - testTopicUncleanLeaderElectionEnableWithAlterTopicConfigs
 - testUncleanLeaderElectionDisabled
