@@ -51,12 +51,15 @@ record ClosedFile(Instant start,
                   Map<Integer, Map<TopicPartition, PartitionResponse>> invalidResponseByRequest,
                   byte[] data) {
     ClosedFile {
-        Objects.requireNonNull(start, "start cannot be null");
         Objects.requireNonNull(originalRequests, "originalRequests cannot be null");
         Objects.requireNonNull(awaitingFuturesByRequest, "awaitingFuturesByRequest cannot be null");
         Objects.requireNonNull(commitBatchRequests, "commitBatchRequests cannot be null");
         Objects.requireNonNull(invalidResponseByRequest, "invalidResponseByRequest cannot be null");
         Objects.requireNonNull(data, "data cannot be null");
+
+        if (!originalRequests.isEmpty() && start == null) {
+            throw new IllegalArgumentException("start time cannot be null if there are requests processed");
+        }
 
         // Validate request maps have matching sizes
         if (originalRequests.size() != awaitingFuturesByRequest.size()) {

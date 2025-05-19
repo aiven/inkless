@@ -42,13 +42,6 @@ class ClosedFileTest {
     static final TopicIdPartition TID0P0 = new TopicIdPartition(Uuid.randomUuid(), T0P0);
 
     @Test
-    void startNull() {
-        assertThatThrownBy(() -> new ClosedFile(null, Map.of(), Map.of(), List.of(), Map.of(), new byte[1]))
-            .isInstanceOf(NullPointerException.class)
-            .hasMessage("start cannot be null");
-    }
-
-    @Test
     void originalRequestsNull() {
         assertThatThrownBy(() -> new ClosedFile(Instant.EPOCH, null, Map.of(), List.of(), Map.of(), new byte[1]))
             .isInstanceOf(NullPointerException.class)
@@ -154,5 +147,31 @@ class ClosedFileTest {
                 new byte[10]).size())
             .isInstanceOf(IllegalArgumentException.class)
             .hasMessage("Total number of valid and invalid responses doesn't match original requests for request id 1");
+    }
+
+    @Test
+    void allowEmpty() {
+        final int size = new ClosedFile(null,
+            Map.of(),
+            Map.of(),
+            List.of(),
+            Map.of(),
+            new byte[0]).size();
+        assertThat(size).isEqualTo(0);
+    }
+
+    @Test
+    void nullStartWithRequests() {
+        assertThatThrownBy(() ->
+            new ClosedFile(
+                null,
+                Map.of(1, Map.of(TID0P0, MemoryRecords.EMPTY)),
+                Map.of(1, new CompletableFuture<>()),
+                List.of(CommitBatchRequest.of(1, TID0P0, 0, 0, 0, 0, 0, TimestampType.CREATE_TIME)),
+                Map.of(),
+                new byte[10]).size()
+        )
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessage("start time cannot be null if there are requests processed");
     }
 }

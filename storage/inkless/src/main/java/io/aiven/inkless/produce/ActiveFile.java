@@ -58,7 +58,7 @@ class ActiveFile {
     private static final Logger LOGGER = LoggerFactory.getLogger(ActiveFile.class);
 
     private final Time time;
-    private final Instant start;
+    private Instant start;
 
     private int requestId = -1;
 
@@ -75,7 +75,6 @@ class ActiveFile {
                final BrokerTopicStats brokerTopicStats) {
         this.buffer = new BatchBuffer();
         this.time = time;
-        this.start = TimeUtils.durationMeasurementNow(time);
         this.brokerTopicStats = brokerTopicStats;
         this.validatorMetricsRecorder = newValidatorMetricsRecorder(brokerTopicStats.allTopicsStats());
     }
@@ -98,6 +97,10 @@ class ActiveFile {
         Objects.requireNonNull(entriesPerPartition, "entriesPerPartition cannot be null");
         Objects.requireNonNull(topicConfigs, "topicConfigs cannot be null");
         Objects.requireNonNull(requestLocal, "requestLocal cannot be null");
+
+        if (start == null) {
+            start = TimeUtils.durationMeasurementNow(time);
+        }
 
         requestId += 1;
         originalRequests.put(requestId, entriesPerPartition);
