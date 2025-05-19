@@ -149,6 +149,16 @@ org.apache.kafka.server.purgatory.DelayedFutureTest:
 - testDelayedFuture
 org.apache.kafka.server.quota.ThrottledChannelTest:
 - testThrottledChannelDelay
+org.apache.kafka.server.replica.ReplicaTest:
+- testFenceStaleUpdates
+- testInitialState
+- testIsCaughtUpWhenReplicaIsCaughtUpToLogEnd
+- testIsCaughtUpWhenReplicaIsNotCaughtUpToLogEnd
+- testResetReplicaStateWhenLeaderIsReelectedAndReplicaIsInSync
+- testResetReplicaStateWhenLeaderIsReelectedAndReplicaIsNotInSync
+- testResetReplicaStateWhenNewLeaderIsElectedAndReplicaIsInSync
+- testResetReplicaStateWhenNewLeaderIsElectedAndReplicaIsNotInSync
+- testUpdateFetchState
 org.apache.kafka.server.share.CachedSharePartitionTest:
 - testCachedSharePartitionEqualsAndHashCode
 org.apache.kafka.server.share.fetch.DelayedShareFetchKeyTest:

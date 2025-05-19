@@ -763,16 +763,6 @@ kafka.cluster.PartitionTest:
 - testUpdateFollowerFetchState
 - testUseCheckpointToInitializeHighWatermark
 - tryCompleteDelayedRequestsCatchesExceptions
-kafka.cluster.ReplicaTest:
-- testFenceStaleUpdates
-- testInitialState
-- testIsCaughtUpWhenReplicaIsCaughtUpToLogEnd
-- testIsCaughtUpWhenReplicaIsNotCaughtUpToLogEnd
-- testResetReplicaStateWhenLeaderIsReelectedAndReplicaIsInSync
-- testResetReplicaStateWhenLeaderIsReelectedAndReplicaIsNotInSync
-- testResetReplicaStateWhenNewLeaderIsElectedAndReplicaIsInSync
-- testResetReplicaStateWhenNewLeaderIsElectedAndReplicaIsNotInSync
-- testUpdateFetchState
 kafka.coordinator.group.CoordinatorLoaderImplTest:
 - testDeserializationErrorFailsTheLoading
 - testLoadGroupAndOffsetsWithCorruptedLog
