@@ -65,6 +65,7 @@ public class AppendHandler implements Closeable {
                 state.config().produceBufferMaxBytes(),
                 state.config().produceMaxUploadAttempts(),
                 state.config().produceUploadBackoff(),
+                state.config().produceUploadThreadPoolSize(),
                 state.brokerTopicStats()
             )
         );

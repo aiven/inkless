@@ -93,16 +93,19 @@ class Writer implements Closeable {
            final int maxBufferSize,
            final int maxFileUploadAttempts,
            final Duration fileUploadRetryBackoff,
-           final BrokerTopicStats brokerTopicStats) {
+           final int fileUploaderThreadPoolSize,
+           final BrokerTopicStats brokerTopicStats
+    ) {
         this(
             time,
             commitInterval,
             maxBufferSize,
             Executors.newScheduledThreadPool(1, new InklessThreadFactory("inkless-file-commit-ticker-", true)),
             new FileCommitter(
-                    brokerId, controlPlane, objectKeyCreator, storage,
-                    keyAlignmentStrategy, objectCache, time,
-                    maxFileUploadAttempts, fileUploadRetryBackoff),
+                brokerId, controlPlane, objectKeyCreator, storage,
+                keyAlignmentStrategy, objectCache, time,
+                maxFileUploadAttempts, fileUploadRetryBackoff,
+                fileUploaderThreadPoolSize),
             new WriterMetrics(time),
             brokerTopicStats
         );

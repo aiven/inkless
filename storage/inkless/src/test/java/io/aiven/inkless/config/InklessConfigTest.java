@@ -48,6 +48,7 @@ class InklessConfigTest {
         configs.put("inkless.file.cleaner.retention.period.ms", "200");
         configs.put("inkless.file.merger.interval.ms", "100");
         configs.put("inkless.consume.cache.max.count", "100");
+        configs.put("inkless.produce.upload.thread.pool.size", "16");
         final InklessConfig config = new InklessConfig(new AbstractConfig(new ConfigDef(), configs));
         assertThat(config.controlPlaneClass()).isEqualTo(InMemoryControlPlane.class);
         assertThat(config.controlPlaneConfig()).isEqualTo(Map.of("class", controlPlaneClass));
@@ -61,6 +62,7 @@ class InklessConfigTest {
         assertThat(config.fileCleanerRetentionPeriod()).isEqualTo(Duration.ofMillis(200));
         assertThat(config.fileMergerInterval()).isEqualTo(Duration.ofMillis(100));
         assertThat(config.cacheMaxCount()).isEqualTo(100);
+        assertThat(config.produceUploadThreadPoolSize()).isEqualTo(16);
     }
 
     @Test
@@ -84,6 +86,7 @@ class InklessConfigTest {
         assertThat(config.fileCleanerRetentionPeriod()).isEqualTo(Duration.ofMinutes(1));
         assertThat(config.fileMergerInterval()).isEqualTo(Duration.ofMinutes(1));
         assertThat(config.cacheMaxCount()).isEqualTo(1000);
+        assertThat(config.produceUploadThreadPoolSize()).isEqualTo(8);
     }
 
     @Test
@@ -101,6 +104,7 @@ class InklessConfigTest {
         configs.put("file.cleaner.retention.period.ms", "200");
         configs.put("file.merger.interval.ms", "100");
         configs.put("consume.cache.max.count", "100");
+        configs.put("produce.upload.thread.pool.size", "16");
         final var config = new InklessConfig(
             configs
         );
@@ -116,6 +120,7 @@ class InklessConfigTest {
         assertThat(config.fileCleanerRetentionPeriod()).isEqualTo(Duration.ofMillis(200));
         assertThat(config.fileMergerInterval()).isEqualTo(Duration.ofMillis(100));
         assertThat(config.cacheMaxCount()).isEqualTo(100);
+        assertThat(config.produceUploadThreadPoolSize()).isEqualTo(16);
     }
 
     @Test
