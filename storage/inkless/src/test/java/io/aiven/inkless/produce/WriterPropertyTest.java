@@ -237,7 +237,6 @@ class WriterPropertyTest {
             Duration.ZERO,
             uploaderHandler.executorService,
             committerHandler.executorService,
-            completerHandler.executorService,
             cacheStoreHandler.executorService,
             mock(FileCommitterMetrics.class)
         );

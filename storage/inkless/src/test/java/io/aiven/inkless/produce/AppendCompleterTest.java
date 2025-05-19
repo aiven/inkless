@@ -26,11 +26,9 @@ import org.apache.kafka.common.record.MemoryRecords;
 import org.apache.kafka.common.record.SimpleRecord;
 import org.apache.kafka.common.record.TimestampType;
 import org.apache.kafka.common.requests.ProduceResponse.PartitionResponse;
-import org.apache.kafka.common.utils.Time;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
@@ -39,24 +37,15 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.Future;
-import java.util.function.Consumer;
 
 import io.aiven.inkless.control_plane.CommitBatchRequest;
 import io.aiven.inkless.control_plane.CommitBatchResponse;
-import io.aiven.inkless.control_plane.ControlPlaneException;
-import io.aiven.inkless.storage_backend.common.ObjectDeleter;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.STRICT_STUBS)
-class AppendCompleterJobTest {
-    static final int BROKER_ID = 11;
-
+class AppendCompleterTest {
     static final Uuid TOPIC_ID_0 = new Uuid(1000, 1000);
     static final Uuid TOPIC_ID_1 = new Uuid(2000, 2000);
     static final String TOPIC_0 = "topic0";
@@ -86,13 +75,6 @@ class AppendCompleterJobTest {
 
     static final byte[] DATA = new byte[10];
 
-    @Mock
-    Time time;
-    @Mock
-    ObjectDeleter objectDeleter;
-    @Mock
-    Consumer<Long> completeTimeDurationCallback;
-
     @Test
     void commitFinishedSuccessfully() throws Exception {
         final Map<Integer, CompletableFuture<Map<TopicPartition, PartitionResponse>>> awaitingFuturesByRequest = Map.of(
@@ -107,13 +89,10 @@ class AppendCompleterJobTest {
             CommitBatchResponse.success(30, 10, 0, COMMIT_BATCH_REQUESTS.get(3))
         );
 
-        Future<List<CommitBatchResponse>> commitFuture = CompletableFuture.completedFuture(commitBatchResponses);
-        when(time.nanoseconds()).thenReturn(10_000_000L, 20_000_000L);
-
         final ClosedFile file = new ClosedFile(Instant.EPOCH, REQUESTS, awaitingFuturesByRequest, COMMIT_BATCH_REQUESTS, Map.of(), DATA);
-        final AppendCompleterJob job = new AppendCompleterJob(file, commitFuture, time, completeTimeDurationCallback);
+        final AppendCompleter job = new AppendCompleter(file);
 
-        job.run();
+        job.finishCommitSuccessfully(commitBatchResponses);
 
         assertThat(awaitingFuturesByRequest.get(0)).isCompletedWithValue(Map.of(
             T0P0.topicPartition(), new PartitionResponse(Errors.NONE, 0, -1, 0),
@@ -123,7 +102,6 @@ class AppendCompleterJobTest {
             T0P1.topicPartition(), new PartitionResponse(Errors.NONE, 20, -1, 0),
             T1P0.topicPartition(), new PartitionResponse(Errors.NONE, 30, 10, 0)
         ));
-        verify(completeTimeDurationCallback).accept(eq(10L));
     }
 
     @Test
@@ -137,17 +115,13 @@ class AppendCompleterJobTest {
 
         final List<CommitBatchResponse> commitBatchResponses = List.of();
 
-        Future<List<CommitBatchResponse>> commitFuture = CompletableFuture.completedFuture(commitBatchResponses);
-        when(time.nanoseconds()).thenReturn(10_000_000L, 20_000_000L);
-
         final ClosedFile file = new ClosedFile(Instant.EPOCH, REQUESTS, awaitingFuturesByRequest, COMMIT_BATCH_REQUESTS, Map.of(), DATA);
-        final AppendCompleterJob job = new AppendCompleterJob(file, commitFuture, time, completeTimeDurationCallback);
+        final AppendCompleter job = new AppendCompleter(file);
 
-        job.run();
+        job.finishCommitSuccessfully(commitBatchResponses);
 
         assertThat(awaitingFuturesByRequest.get(0)).isCompletedWithValue(Map.of());
         assertThat(awaitingFuturesByRequest.get(1)).isCompletedWithValue(Map.of());
-        verify(completeTimeDurationCallback).accept(eq(10L));
     }
 
 
@@ -173,12 +147,10 @@ class AppendCompleterJobTest {
 
         final List<CommitBatchResponse> commitBatchResponses = List.of();
 
-        Future<List<CommitBatchResponse>> commitFuture = CompletableFuture.completedFuture(commitBatchResponses);
-        when(time.nanoseconds()).thenReturn(10_000_000L, 20_000_000L);
         final ClosedFile file = new ClosedFile(Instant.EPOCH, REQUESTS, awaitingFuturesByRequest, List.of(), invalidResponses, new byte[0]);
-        final AppendCompleterJob job = new AppendCompleterJob(file, commitFuture, time, completeTimeDurationCallback);
+        final AppendCompleter job = new AppendCompleter(file);
 
-        job.run();
+        job.finishCommitSuccessfully(commitBatchResponses);
 
         assertThat(awaitingFuturesByRequest.get(0)).isCompletedWithValue(Map.of(
                 T0P0.topicPartition(), new PartitionResponse(Errors.INVALID_TIMESTAMP, -1, -1, -1),
@@ -188,7 +160,6 @@ class AppendCompleterJobTest {
                 T0P1.topicPartition(), new PartitionResponse(Errors.CORRUPT_MESSAGE, -1, -1, -1),
                 T1P0.topicPartition(), new PartitionResponse(Errors.INVALID_RECORD, -1, -1, -1)
         ));
-        verify(completeTimeDurationCallback).accept(eq(10L));
     }
 
     @Test
@@ -198,13 +169,10 @@ class AppendCompleterJobTest {
             1, new CompletableFuture<>()
         );
 
-        when(time.nanoseconds()).thenReturn(10_000_000L, 20_000_000L);
-
         final ClosedFile file = new ClosedFile(Instant.EPOCH, REQUESTS, awaitingFuturesByRequest, COMMIT_BATCH_REQUESTS, Map.of(), DATA);
-        final CompletableFuture<List<CommitBatchResponse>> commitFuture = CompletableFuture.failedFuture(new ControlPlaneException("test"));
-        final AppendCompleterJob job = new AppendCompleterJob(file, commitFuture, time, completeTimeDurationCallback);
+        final AppendCompleter job = new AppendCompleter(file);
 
-        job.run();
+        job.finishCommitWithError();
 
         assertThat(awaitingFuturesByRequest.get(0)).isCompletedWithValue(Map.of(
             T0P0.topicPartition(), new PartitionResponse(Errors.KAFKA_STORAGE_ERROR, "Error commiting data"),
@@ -214,6 +182,5 @@ class AppendCompleterJobTest {
             T0P1.topicPartition(), new PartitionResponse(Errors.KAFKA_STORAGE_ERROR, "Error commiting data"),
             T1P0.topicPartition(), new PartitionResponse(Errors.KAFKA_STORAGE_ERROR, "Error commiting data")
         ));
-        verify(completeTimeDurationCallback).accept(eq(10L));
     }
 }

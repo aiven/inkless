@@ -22,7 +22,6 @@ import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.record.RecordBatch;
 import org.apache.kafka.common.record.TimestampType;
 import org.apache.kafka.common.requests.ProduceResponse;
-import org.apache.kafka.common.utils.Time;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -30,61 +29,23 @@ import org.slf4j.LoggerFactory;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.Future;
-import java.util.function.Consumer;
 import java.util.stream.Collectors;
 
-import io.aiven.inkless.TimeUtils;
 import io.aiven.inkless.control_plane.CommitBatchResponse;
 
 /**
  * This job is responsible for completing the Append requests generating client responses.
  */
-class AppendCompleterJob implements Runnable {
-    private static final Logger LOGGER = LoggerFactory.getLogger(AppendCompleterJob.class);
+class AppendCompleter {
+    private static final Logger LOGGER = LoggerFactory.getLogger(AppendCompleter.class);
 
     private final ClosedFile file;
-    private final Future<List<CommitBatchResponse>> commitFuture;
-    private final Time time;
-    private final Consumer<Long> durationCallback;
 
-    public AppendCompleterJob(ClosedFile file, Future<List<CommitBatchResponse>> commitFuture, Time time, Consumer<Long> durationCallback) {
+    public AppendCompleter(ClosedFile file) {
         this.file = file;
-        this.commitFuture = commitFuture;
-        this.time = time;
-        this.durationCallback = durationCallback;
     }
 
-    @Override
-    public void run() {
-        CommitResult commitResult = waitForCommit();
-        TimeUtils.measureDurationMs(time, () -> doComplete(commitResult), durationCallback);
-    }
-
-    void doComplete(CommitResult commitResult) {
-        if (commitResult.commitBatchResponses != null) {
-            finishCommitSuccessfully(commitResult.commitBatchResponses);
-        } else {
-            finishCommitWithError();
-        }
-    }
-
-    private CommitResult waitForCommit() {
-        try {
-            final List<CommitBatchResponse> commitBatchResponses = commitFuture.get();
-            return new CommitResult(commitBatchResponses, null);
-        } catch (final ExecutionException e) {
-            LOGGER.error("Failed upload", e);
-            return new CommitResult(null, e.getCause());
-        } catch (final InterruptedException e) {
-            // This is not expected as we try to shut down the executor gracefully.
-            LOGGER.error("Interrupted", e);
-            throw new RuntimeException(e);
-        }
-    }
-
-    private void finishCommitSuccessfully(List<CommitBatchResponse> commitBatchResponses) {
+    public void finishCommitSuccessfully(List<CommitBatchResponse> commitBatchResponses) {
         LOGGER.debug("Committed successfully");
 
         // Each request must have a response.
@@ -132,7 +93,7 @@ class AppendCompleterJob implements Runnable {
         );
     }
 
-    private void finishCommitWithError() {
+    public void finishCommitWithError() {
         for (final var entry : file.awaitingFuturesByRequest().entrySet()) {
             final var originalRequest = file.originalRequests().get(entry.getKey());
             final var result = originalRequest.entrySet().stream()
@@ -141,8 +102,5 @@ class AppendCompleterJob implements Runnable {
                             ignore -> new ProduceResponse.PartitionResponse(Errors.KAFKA_STORAGE_ERROR, "Error commiting data")));
             entry.getValue().complete(result);
         }
-    }
-
-    private record CommitResult(List<CommitBatchResponse> commitBatchResponses, Throwable commitBatchError) {
     }
 }

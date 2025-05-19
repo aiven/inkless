@@ -67,7 +67,6 @@ class FileCommitter implements Closeable {
     private final Duration fileUploadRetryBackoff;
     private final ExecutorService executorServiceUpload;
     private final ExecutorService executorServiceCommit;
-    private final ExecutorService executorServiceComplete;
     private final ExecutorService executorServiceCacheStore;
 
     private final AtomicInteger totalFilesInProgress = new AtomicInteger(0);
@@ -87,7 +86,6 @@ class FileCommitter implements Closeable {
             Executors.newCachedThreadPool(new InklessThreadFactory("inkless-file-uploader-", false)),
             // It must be single-thread to preserve the commit order.
             Executors.newSingleThreadExecutor(new InklessThreadFactory("inkless-file-committer-", false)),
-            Executors.newCachedThreadPool(new InklessThreadFactory("inkless-file-uploader-finisher-", false)),
             Executors.newCachedThreadPool(new InklessThreadFactory("inkless-file-cache-store-", false)),
             new FileCommitterMetrics(time)
         );
@@ -105,7 +103,6 @@ class FileCommitter implements Closeable {
                   final Duration fileUploadRetryBackoff,
                   final ExecutorService executorServiceUpload,
                   final ExecutorService executorServiceCommit,
-                  final ExecutorService executorServiceComplete,
                   final ExecutorService executorServiceCacheStore,
                   final FileCommitterMetrics metrics) {
         this.brokerId = brokerId;
@@ -125,8 +122,6 @@ class FileCommitter implements Closeable {
             "executorServiceUpload cannot be null");
         this.executorServiceCommit = Objects.requireNonNull(executorServiceCommit,
             "executorServiceCommit cannot be null");
-        this.executorServiceComplete = Objects.requireNonNull(executorServiceComplete,
-                "executorServiceComplete cannot be null");
         this.executorServiceCacheStore = Objects.requireNonNull(executorServiceCacheStore,
                 "executorServiceCacheStore cannot be null");
 
@@ -142,7 +137,7 @@ class FileCommitter implements Closeable {
         lock.lock();
         try {
             final Instant uploadAndCommitStart = TimeUtils.durationMeasurementNow(time);
-            Future<List<CommitBatchResponse>> commitFuture;
+            CompletableFuture<List<CommitBatchResponse>> commitFuture;
             if (file.isEmpty()) {
                 // If the file is empty, skip uploading and committing, but proceed with the later steps.
                 commitFuture = CompletableFuture.completedFuture(Collections.emptyList());
@@ -193,8 +188,14 @@ class FileCommitter implements Closeable {
                 );
                 executorServiceCacheStore.submit(cacheStoreJob);
             }
-            final AppendCompleterJob completerJob = new AppendCompleterJob(file, commitFuture, time, metrics::appendCompletionFinished);
-            executorServiceComplete.submit(completerJob);
+            commitFuture.whenComplete((commitBatchResponses, throwable) -> {
+                final AppendCompleter completerJob = new AppendCompleter(file);
+                if (commitBatchResponses != null) {
+                    completerJob.finishCommitSuccessfully(commitBatchResponses);
+                } else {
+                    completerJob.finishCommitWithError();
+                }
+            });
         } finally {
             lock.unlock();
         }
