@@ -38,7 +38,6 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.Callable;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 
@@ -59,7 +58,10 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doNothing;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -106,21 +108,16 @@ class FileCommitterTest {
     FileCommitterMetrics metrics;
 
     @Captor
-    ArgumentCaptor<Callable<ObjectKey>> uploadCallableCaptor;
+    ArgumentCaptor<Runnable> uploadRunnableCaptor;
     @Captor
     ArgumentCaptor<Runnable> commitRunnableCaptor;
 
     @Test
-    @SuppressWarnings("unchecked")
     void success() throws Exception {
         doNothing()
             .when(storage).upload(eq(OBJECT_KEY), any(InputStream.class), eq((long) FILE.data().length));
 
         when(time.nanoseconds()).thenReturn(10_000_000L);
-
-        final CompletableFuture<ObjectKey> uploadFuture = CompletableFuture.completedFuture(OBJECT_KEY);
-        when(executorServiceUpload.submit(any(Callable.class)))
-            .thenReturn(uploadFuture);
 
         final FileCommitter committer = new FileCommitter(
                 BROKER_ID, controlPlane, OBJECT_KEY_CREATOR, storage,
@@ -140,10 +137,10 @@ class FileCommitterTest {
         assertThat(committer.totalFilesInProgress()).isOne();
         assertThat(committer.totalBytesInProgress()).isEqualTo(FILE.data().length);
 
-        verify(executorServiceUpload).submit(uploadCallableCaptor.capture());
-        final Callable<ObjectKey> uploadCallable = uploadCallableCaptor.getValue();
+        verify(executorServiceUpload).execute(uploadRunnableCaptor.capture());
+        final Runnable uploadRunnable = uploadRunnableCaptor.getValue();
 
-        uploadCallable.call();
+        uploadRunnable.run();
 
         verify(executorServiceCommit).execute(commitRunnableCaptor.capture());
         final Runnable commitRunnable = commitRunnableCaptor.getValue();
@@ -160,16 +157,8 @@ class FileCommitterTest {
     }
 
     @Test
-    @SuppressWarnings("unchecked")
     void commitFailed() throws Exception {
-        doNothing()
-            .when(storage).upload(eq(OBJECT_KEY), any(InputStream.class), eq((long) FILE.data().length));
-
         when(time.nanoseconds()).thenReturn(10_000_000L);
-
-        final CompletableFuture<ObjectKey> uploadFuture = CompletableFuture.failedFuture(new StorageBackendException("test"));
-        when(executorServiceUpload.submit(any(Callable.class)))
-            .thenReturn(uploadFuture);
 
         final FileCommitter committer = new FileCommitter(
                 BROKER_ID, controlPlane, OBJECT_KEY_CREATOR, storage,
@@ -186,23 +175,20 @@ class FileCommitterTest {
         assertThat(committer.totalFilesInProgress()).isOne();
         assertThat(committer.totalBytesInProgress()).isEqualTo(FILE.data().length);
 
-        verify(executorServiceUpload).submit(uploadCallableCaptor.capture());
-        final Callable<ObjectKey> uploadCallable = uploadCallableCaptor.getValue();
+        verify(executorServiceUpload).execute(uploadRunnableCaptor.capture());
+        final Runnable uploadRunnable = uploadRunnableCaptor.getValue();
+        doThrow(new StorageBackendException("test")).when(storage).upload(eq(OBJECT_KEY), any(InputStream.class), eq((long) FILE.data().length));
+        uploadRunnable.run();
 
-        uploadCallable.call();
-
-        verify(executorServiceCommit).execute(commitRunnableCaptor.capture());
-        final Runnable commitRunnable = commitRunnableCaptor.getValue();
-
-        commitRunnable.run();
+        verifyNoInteractions(executorServiceCommit);
 
         assertThat(committer.totalFilesInProgress()).isZero();
         assertThat(committer.totalBytesInProgress()).isZero();
 
         verify(metrics).fileAdded(eq(FILE.size()));
         verify(metrics).fileUploadFinished(eq(0L));
-        verify(metrics).fileCommitFinished(eq(0L));
         verify(metrics).fileFinished(eq(Instant.EPOCH), eq(Instant.ofEpochMilli(10L)));
+        verify(metrics, times(0)).fileCommitFinished(eq(0L));
     }
 
     @Test
