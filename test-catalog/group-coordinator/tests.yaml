@@ -825,10 +825,11 @@ org.apache.kafka.coordinator.group.modern.AssignmentTest:
 - testPartitionsCannotBeNull
 org.apache.kafka.coordinator.group.modern.SubscribedTopicMetadataTest:
 - testAssignablePartitions
-- testAttribute
 - testEquals
+- testMetadataImageCannotBeNull
 - testNumberOfPartitions
-- testTopicMetadataCannotBeNull
+- testRacksForPartition
+- testTopicPartitionAllowedMapCannotBeNull
 org.apache.kafka.coordinator.group.modern.TargetAssignmentBuilderTest:
 - testAssignmentHasNotChanged
 - testAssignmentSwapped
