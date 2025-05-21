@@ -3380,6 +3380,7 @@ org.apache.kafka.common.config.provider.FileConfigProviderTest:
 - testServiceLoaderDiscovery
 org.apache.kafka.common.errors.TransactionExceptionHierarchyTest:
 - testApplicationRecoverableExceptionHierarchy
+- testInvalidConfigurationExceptionHierarchy
 - testRefreshRetriableException
 - testRefreshRetriableExceptionHierarchy
 - testRetriableExceptionHierarchy
