@@ -367,6 +367,8 @@ kafka.api.PlaintextAdminIntegrationTest:
 - testInvalidIncrementalAlterConfigs
 - testListClientMetricsResources
 - testListClientMetricsResourcesTimeoutMs
+- testListConfigResources
+- testListConfigResourcesTimeoutMs
 - testListGroups
 - testListNodes
 - testListNodesWithFencedBroker

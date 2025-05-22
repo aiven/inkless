@@ -352,6 +352,9 @@ org.apache.kafka.clients.admin.KafkaAdminClientTest:
 - testListClientMetricsResources
 - testListClientMetricsResourcesEmpty
 - testListClientMetricsResourcesNotSupported
+- testListConfigResources
+- testListConfigResourcesEmpty
+- testListConfigResourcesNotSupported
 - testListConsumerGroupOffsets
 - testListConsumerGroupOffsetsNonRetriableErrors
 - testListConsumerGroupOffsetsNumRetries
@@ -4332,6 +4335,7 @@ org.apache.kafka.common.requests.RequestResponseTest:
 - testInvalidSaslAuthenticateRequest
 - testInvalidSaslHandShakeRequest
 - testInvalidTaggedFieldsWithSaslAuthenticateRequest
+- testListConfigResourcesRequestV0FailsWithConfigResourceTypeOtherThanClientMetrics
 - testListGroupRequestV3FailsWithStates
 - testProduceRequestPartitionSize
 - testResponseHeader
