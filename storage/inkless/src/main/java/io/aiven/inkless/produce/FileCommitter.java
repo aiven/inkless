@@ -81,12 +81,14 @@ class FileCommitter implements Closeable {
                   final ObjectCache objectCache,
                   final Time time,
                   final int maxFileUploadAttempts,
-                  final Duration fileUploadRetryBackoff) {
+                  final Duration fileUploadRetryBackoff,
+                  final int fileUploaderThreadPoolSize) {
         this(brokerId, controlPlane, objectKeyCreator, storage, keyAlignmentStrategy, objectCache, time, maxFileUploadAttempts, fileUploadRetryBackoff,
-            Executors.newCachedThreadPool(new InklessThreadFactory("inkless-file-uploader-", false)),
+            Executors.newFixedThreadPool(fileUploaderThreadPoolSize, new InklessThreadFactory("inkless-file-uploader-", false)),
             // It must be single-thread to preserve the commit order.
             Executors.newSingleThreadExecutor(new InklessThreadFactory("inkless-file-committer-", false)),
-            Executors.newCachedThreadPool(new InklessThreadFactory("inkless-file-cache-store-", false)),
+            // Reuse the same thread pool size as uploads, as there are no more concurrency expected to handle
+            Executors.newFixedThreadPool(fileUploaderThreadPoolSize, new InklessThreadFactory("inkless-file-cache-store-", false)),
             new FileCommitterMetrics(time)
         );
     }

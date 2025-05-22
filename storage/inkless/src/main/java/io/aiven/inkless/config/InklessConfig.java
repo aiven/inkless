@@ -97,6 +97,13 @@ public class InklessConfig extends AbstractConfig {
     private static final String FILE_MERGER_TEMP_DIR_DOC = "The temporary directory for file merging.";
     private static final String FILE_MERGER_TEMP_DIR_DEFAULT = "/tmp/inkless/merger";
 
+    public static final String PRODUCE_UPLOAD_THREAD_POOL_SIZE_CONFIG = "produce.upload.thread.pool.size";
+    private static final String PRODUCE_UPLOAD_THREAD_POOL_SIZE_DOC = "Thread pool size to concurrently upload files to remote storage";
+    // Given that S3 upload is ~400ms P99, and commits to PG are ~50ms P99, defaulting to 8
+    // to avoid starting an upload if 8 commits are executing sequentially
+    private static final int PRODUCE_UPLOAD_THREAD_POOL_SIZE_DEFAULT = 8;
+
+
     public static ConfigDef configDef() {
         final ConfigDef configDef = new ConfigDef();
 
@@ -219,6 +226,14 @@ public class InklessConfig extends AbstractConfig {
             ConfigDef.Importance.LOW,
             CONSUME_CACHE_MAX_COUNT_DOC
         );
+        configDef.define(
+            PRODUCE_UPLOAD_THREAD_POOL_SIZE_CONFIG,
+            ConfigDef.Type.INT,
+            PRODUCE_UPLOAD_THREAD_POOL_SIZE_DEFAULT,
+            ConfigDef.Range.atLeast(1),
+            ConfigDef.Importance.LOW,
+            PRODUCE_UPLOAD_THREAD_POOL_SIZE_DOC
+        );
 
         return configDef;
     }
@@ -293,5 +308,9 @@ public class InklessConfig extends AbstractConfig {
 
     public Long cacheMaxCount() {
         return getLong(CONSUME_CACHE_MAX_COUNT_CONFIG);
+    }
+
+    public int produceUploadThreadPoolSize() {
+        return getInt(PRODUCE_UPLOAD_THREAD_POOL_SIZE_CONFIG);
     }
 }
