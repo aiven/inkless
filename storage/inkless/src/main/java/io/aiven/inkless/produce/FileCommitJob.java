@@ -23,8 +23,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.List;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.Future;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 
@@ -47,7 +45,7 @@ class FileCommitJob implements Supplier<List<CommitBatchResponse>> {
 
     private final int brokerId;
     private final ClosedFile file;
-    private final Future<ObjectKey> uploadFuture;
+    private final ObjectKey objectKey;
     private final Time time;
     private final ControlPlane controlPlane;
     private final ObjectDeleter objectDeleter;
@@ -55,14 +53,14 @@ class FileCommitJob implements Supplier<List<CommitBatchResponse>> {
 
     FileCommitJob(final int brokerId,
                   final ClosedFile file,
-                  final Future<ObjectKey> uploadFuture,
+                  final ObjectKey objectKey,
                   final Time time,
                   final ControlPlane controlPlane,
                   final ObjectDeleter objectDeleter,
                   final Consumer<Long> durationCallback) {
         this.brokerId = brokerId;
         this.file = file;
-        this.uploadFuture = uploadFuture;
+        this.objectKey = objectKey;
         this.controlPlane = controlPlane;
         this.time = time;
         this.objectDeleter = objectDeleter;
@@ -71,42 +69,28 @@ class FileCommitJob implements Supplier<List<CommitBatchResponse>> {
 
     @Override
     public List<CommitBatchResponse> get() {
-        final UploadResult uploadResult = waitForUpload();
-        return TimeUtils.measureDurationMsSupplier(time, () -> doCommit(uploadResult), durationCallback);
+        return TimeUtils.measureDurationMsSupplier(time, () -> doCommit(objectKey), durationCallback);
     }
 
-    private UploadResult waitForUpload() {
+    private List<CommitBatchResponse> doCommit(final ObjectKey objectKey) {
+        LOGGER.debug("Uploaded {} successfully, committing", objectKey);
         try {
-            final ObjectKey objectKey = uploadFuture.get();
-            return new UploadResult(objectKey, null);
-        } catch (final ExecutionException e) {
-            LOGGER.error("Failed upload", e);
-            return new UploadResult(null, e.getCause());
-        } catch (final InterruptedException e) {
-            // This is not expected as we try to shut down the executor gracefully.
-            LOGGER.error("Interrupted", e);
-            throw new RuntimeException(e);
-        }
-    }
-
-    private List<CommitBatchResponse> doCommit(final UploadResult result) {
-        if (result.objectKey != null) {
-            LOGGER.debug("Uploaded {} successfully, committing", result.objectKey);
-            try {
-                final var commitBatchResponses = controlPlane.commitFile(result.objectKey.value(), ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, brokerId, file.size(), file.commitBatchRequests());
-                LOGGER.debug("Committed successfully");
-                return commitBatchResponses;
-            } catch (final Exception e) {
-                LOGGER.error("Commit failed", e);
-                if (e instanceof ControlPlaneException) {
-                    // only attempt to remove the uploaded file if it is a control plane error
-                    tryDeleteFile(result.objectKey(), e);
-                }
-                throw e;
+            final var commitBatchResponses = controlPlane.commitFile(
+                objectKey.value(),
+                ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT,
+                brokerId,
+                file.size(),
+                file.commitBatchRequests()
+            );
+            LOGGER.debug("Committed successfully");
+            return commitBatchResponses;
+        } catch (final Exception e) {
+            LOGGER.error("Commit failed", e);
+            if (e instanceof ControlPlaneException) {
+                // only attempt to remove the uploaded file if it is a control plane error
+                tryDeleteFile(objectKey, e);
             }
-        } else {
-            LOGGER.error("Upload failed: {}", result.uploadError.getMessage());
-            throw new RuntimeException("File not uploaded", result.uploadError);
+            throw e;
         }
     }
 
@@ -129,8 +113,5 @@ class FileCommitJob implements Supplier<List<CommitBatchResponse>> {
         } else {
             LOGGER.error("Error commiting data, but not removing the uploaded file {} as it is not safe", objectKey, e);
         }
-    }
-
-    private record UploadResult(ObjectKey objectKey, Throwable uploadError) {
     }
 }

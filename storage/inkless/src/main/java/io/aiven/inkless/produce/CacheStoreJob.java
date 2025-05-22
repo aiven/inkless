@@ -21,7 +21,6 @@ import org.apache.kafka.common.utils.Time;
 
 import java.util.Collections;
 import java.util.Set;
-import java.util.concurrent.Future;
 import java.util.function.Consumer;
 
 import io.aiven.inkless.TimeUtils;
@@ -38,26 +37,28 @@ public class CacheStoreJob implements Runnable {
     private final ObjectCache cache;
     private final KeyAlignmentStrategy keyAlignmentStrategy;
     private final byte[] data;
-    private final Future<ObjectKey> uploadFuture;
+    private final ObjectKey objectKey;
     private final Consumer<Long> cacheStoreDurationCallback;
 
-    public CacheStoreJob(Time time, ObjectCache cache, KeyAlignmentStrategy keyAlignmentStrategy, byte[] data, Future<ObjectKey> uploadFuture, Consumer<Long> cacheStoreDurationCallback) {
+    public CacheStoreJob(
+        Time time,
+        ObjectCache cache,
+        KeyAlignmentStrategy keyAlignmentStrategy,
+        byte[] data,
+        ObjectKey objectKey,
+        Consumer<Long> cacheStoreDurationCallback
+    ) {
         this.time = time;
         this.cache = cache;
         this.keyAlignmentStrategy = keyAlignmentStrategy;
         this.data = data;
-        this.uploadFuture = uploadFuture;
+        this.objectKey = objectKey;
         this.cacheStoreDurationCallback = cacheStoreDurationCallback;
     }
 
     @Override
     public void run() {
-        try {
-            ObjectKey objectKey = uploadFuture.get();
-            storeToCache(objectKey);
-        } catch (final Throwable e) {
-            // If the upload failed there's nothing to cache and we succeed vacuously.
-        }
+        storeToCache(objectKey);
     }
 
     private void storeToCache(ObjectKey objectKey) {

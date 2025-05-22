@@ -29,6 +29,7 @@ import java.time.Duration;
 import java.util.Objects;
 import java.util.concurrent.Callable;
 import java.util.function.Consumer;
+import java.util.function.Supplier;
 
 import io.aiven.inkless.TimeUtils;
 import io.aiven.inkless.common.ObjectKey;
@@ -40,7 +41,8 @@ import io.aiven.inkless.storage_backend.common.StorageBackendTimeoutException;
 /**
  * The job of uploading a file to the object storage.
  */
-public class FileUploadJob implements Callable<ObjectKey> {
+// TODO: fix to a single interface
+public class FileUploadJob implements Callable<ObjectKey>, Supplier<ObjectKey> {
     private static final Logger LOGGER = LoggerFactory.getLogger(FileUploadJob.class);
 
     private final ObjectKeyCreator objectKeyCreator;
@@ -152,5 +154,14 @@ public class FileUploadJob implements Callable<ObjectKey> {
 
     private static String safeGetCauseMessage(final Exception e) {
         return e.getCause() != null ? e.getCause().getMessage() : "";
+    }
+
+    @Override
+    public ObjectKey get() {
+        try {
+            return TimeUtils.measureDurationMs(time, this::callInternal, durationCallback);
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
     }
 }

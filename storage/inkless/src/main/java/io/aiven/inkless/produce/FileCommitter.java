@@ -31,7 +31,6 @@ import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
@@ -161,34 +160,38 @@ class FileCommitter implements Closeable {
                         file.data(),
                         metrics::fileUploadFinished
                 );
-                final Future<ObjectKey> uploadFuture = executorServiceUpload.submit(uploadJob);
+                CompletableFuture<ObjectKey> uploadFuture = CompletableFuture.supplyAsync(uploadJob, executorServiceUpload);
 
-                final FileCommitJob commitJob = new FileCommitJob(
-                        brokerId,
-                        file,
-                        uploadFuture,
-                        time,
-                        controlPlane,
-                        storage,
-                        metrics::fileCommitFinished
-                );
-                commitFuture = CompletableFuture.supplyAsync(commitJob, executorServiceCommit)
-                        .whenComplete((result, error) -> {
-                            totalFilesInProgress.addAndGet(-1);
-                            totalBytesInProgress.addAndGet(-file.size());
-                            metrics.fileFinished(file.start(), uploadAndCommitStart);
-                        });
+                commitFuture = uploadFuture.thenApplyAsync(objectKey -> {
+                        final FileCommitJob commitJob = new FileCommitJob(
+                            brokerId,
+                            file,
+                            objectKey,
+                            time,
+                            controlPlane,
+                            storage,
+                            metrics::fileCommitFinished
+                        );
+                        return commitJob.get();
+                    }, executorServiceCommit);
 
-
-                final CacheStoreJob cacheStoreJob = new CacheStoreJob(
+                commitFuture.thenCombine(uploadFuture, (result, uploadKey) -> uploadKey)
+                    .whenComplete((result, error) -> {
+                        totalFilesInProgress.addAndGet(-1);
+                        totalBytesInProgress.addAndGet(-file.size());
+                        metrics.fileFinished(file.start(), uploadAndCommitStart);
+                    })
+                    .thenAcceptAsync(objectKey -> {
+                        final CacheStoreJob cacheStoreJob = new CacheStoreJob(
                         time,
                         objectCache,
                         keyAlignmentStrategy,
                         file.data(),
-                        uploadFuture,
+                        objectKey,
                         metrics::cacheStoreFinished
-                );
-                executorServiceCacheStore.submit(cacheStoreJob);
+                        );
+                        cacheStoreJob.run();
+                    }, executorServiceCacheStore);
             }
             commitFuture.whenComplete((commitBatchResponses, throwable) -> {
                 final AppendCompleter completerJob = new AppendCompleter(file);
