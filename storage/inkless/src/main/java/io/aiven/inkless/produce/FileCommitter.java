@@ -17,6 +17,7 @@
  */
 package io.aiven.inkless.produce;
 
+import org.apache.kafka.common.utils.ByteBufferInputStream;
 import org.apache.kafka.common.utils.Time;
 
 import com.groupcdg.pitest.annotations.DoNotMutate;
@@ -144,21 +145,22 @@ class FileCommitter implements Closeable {
                 // If the file is empty, skip uploading and committing, but proceed with the later steps.
                 commitFuture = CompletableFuture.completedFuture(Collections.emptyList());
             } else {
-                metrics.fileAdded(file.size());
+                metrics.fileAdded(file.totalSize());
                 metrics.batchesAdded(file.commitBatchRequests().size());
                 totalFilesInProgress.addAndGet(1);
-                totalBytesInProgress.addAndGet(file.size());
+                totalBytesInProgress.addAndGet(file.totalSize());
 
                 // Start uploading and add to the commit queue (as Runnable).
                 // This ensures files are uploaded in concurrently, but committed to the control plane sequentially,
                 // because `executorServiceCommit` is single-threaded.
-                final FileUploadJob uploadJob = FileUploadJob.createFromByteArray(
+                final FileUploadJob uploadJob = new FileUploadJob(
                         objectKeyCreator,
                         storage,
                         time,
                         maxFileUploadAttempts,
                         fileUploadRetryBackoff,
-                        file.data(),
+                        new ByteBufferInputStream(file.data().rewind()), // to set position to zero
+                        file.totalSize(),
                         metrics::fileUploadFinished
                 );
                 final Future<ObjectKey> uploadFuture = executorServiceUpload.submit(uploadJob);
@@ -175,18 +177,18 @@ class FileCommitter implements Closeable {
                 commitFuture = CompletableFuture.supplyAsync(commitJob, executorServiceCommit)
                         .whenComplete((result, error) -> {
                             totalFilesInProgress.addAndGet(-1);
-                            totalBytesInProgress.addAndGet(-file.size());
+                            totalBytesInProgress.addAndGet(-file.totalSize());
                             metrics.fileFinished(file.start(), uploadAndCommitStart);
                         });
 
-
                 final CacheStoreJob cacheStoreJob = new CacheStoreJob(
-                        time,
-                        objectCache,
-                        keyAlignmentStrategy,
-                        file.data(),
-                        uploadFuture,
-                        metrics::cacheStoreFinished
+                    time,
+                    objectCache,
+                    keyAlignmentStrategy,
+                    file.data(),
+                    file.totalSize(),
+                    uploadFuture,
+                    metrics::cacheStoreFinished
                 );
                 executorServiceCacheStore.submit(cacheStoreJob);
             }

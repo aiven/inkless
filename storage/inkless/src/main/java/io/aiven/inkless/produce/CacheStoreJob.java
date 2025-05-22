@@ -19,6 +19,7 @@ package io.aiven.inkless.produce;
 
 import org.apache.kafka.common.utils.Time;
 
+import java.nio.ByteBuffer;
 import java.util.Collections;
 import java.util.Set;
 import java.util.concurrent.Future;
@@ -37,15 +38,25 @@ public class CacheStoreJob implements Runnable {
     private final Time time;
     private final ObjectCache cache;
     private final KeyAlignmentStrategy keyAlignmentStrategy;
-    private final byte[] data;
+    private final ByteBuffer data;
+    private final int totalSize;
     private final Future<ObjectKey> uploadFuture;
     private final Consumer<Long> cacheStoreDurationCallback;
 
-    public CacheStoreJob(Time time, ObjectCache cache, KeyAlignmentStrategy keyAlignmentStrategy, byte[] data, Future<ObjectKey> uploadFuture, Consumer<Long> cacheStoreDurationCallback) {
+    public CacheStoreJob(
+        Time time,
+        ObjectCache cache,
+        KeyAlignmentStrategy keyAlignmentStrategy,
+        ByteBuffer data,
+        int totalSize,
+        Future<ObjectKey> uploadFuture,
+        Consumer<Long> cacheStoreDurationCallback
+    ) {
         this.time = time;
         this.cache = cache;
         this.keyAlignmentStrategy = keyAlignmentStrategy;
         this.data = data;
+        this.totalSize = totalSize;
         this.uploadFuture = uploadFuture;
         this.cacheStoreDurationCallback = cacheStoreDurationCallback;
     }
@@ -61,7 +72,7 @@ public class CacheStoreJob implements Runnable {
     }
 
     private void storeToCache(ObjectKey objectKey) {
-        ByteRange fileRange = new ByteRange(0, data.length);
+        ByteRange fileRange = new ByteRange(0, totalSize);
         Set<ByteRange> ranges = keyAlignmentStrategy.align(Collections.singletonList(fileRange));
         String object = objectKey.value();
         for (ByteRange range : ranges) {
@@ -71,14 +82,14 @@ public class CacheStoreJob implements Runnable {
                             .setOffset(range.offset())
                             .setLength(range.size()));
             ByteRange intersect = ByteRange.intersect(range, fileRange);
-            byte[] extentBytes = new byte[intersect.bufferSize()];
-            System.arraycopy(data, intersect.bufferOffset(), extentBytes, 0, extentBytes.length);
+            final byte[] cachedData = new byte[(int) intersect.size()];
+            data.duplicate().position(intersect.bufferOffset()).get(cachedData);
             FileExtent extent = new FileExtent()
-                    .setObject(object)
-                    .setRange(new FileExtent.ByteRange()
-                            .setOffset(intersect.offset())
-                            .setLength(intersect.size()))
-                    .setData(extentBytes);
+                .setObject(object)
+                .setRange(new FileExtent.ByteRange()
+                    .setOffset(intersect.offset())
+                    .setLength(intersect.size()))
+                .setData(cachedData);
             TimeUtils.measureDurationMs(time, () -> cache.put(key, extent), cacheStoreDurationCallback);
         }
     }

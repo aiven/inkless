@@ -197,7 +197,8 @@ class ActiveFile {
             awaitingFuturesByRequest,
             closeResult.commitBatchRequests(),
             invalidBatchesByRequest,
-            closeResult.data()
+            closeResult.data(),
+            closeResult.totalSize()
         );
     }
 }

@@ -33,6 +33,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 
+import java.nio.ByteBuffer;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -76,7 +77,7 @@ class AppendCompleterTest {
     static final byte[] DATA = new byte[10];
 
     @Test
-    void commitFinishedSuccessfully() throws Exception {
+    void commitFinishedSuccessfully() {
         final Map<Integer, CompletableFuture<Map<TopicPartition, PartitionResponse>>> awaitingFuturesByRequest = Map.of(
             0, new CompletableFuture<>(),
             1, new CompletableFuture<>()
@@ -89,7 +90,7 @@ class AppendCompleterTest {
             CommitBatchResponse.success(30, 10, 0, COMMIT_BATCH_REQUESTS.get(3))
         );
 
-        final ClosedFile file = new ClosedFile(Instant.EPOCH, REQUESTS, awaitingFuturesByRequest, COMMIT_BATCH_REQUESTS, Map.of(), DATA);
+        final ClosedFile file = new ClosedFile(Instant.EPOCH, REQUESTS, awaitingFuturesByRequest, COMMIT_BATCH_REQUESTS, Map.of(), ByteBuffer.wrap(DATA), DATA.length);
         final AppendCompleter job = new AppendCompleter(file);
 
         job.finishCommitSuccessfully(commitBatchResponses);
@@ -115,7 +116,7 @@ class AppendCompleterTest {
 
         final List<CommitBatchResponse> commitBatchResponses = List.of();
 
-        final ClosedFile file = new ClosedFile(Instant.EPOCH, REQUESTS, awaitingFuturesByRequest, COMMIT_BATCH_REQUESTS, Map.of(), DATA);
+        final ClosedFile file = new ClosedFile(Instant.EPOCH, REQUESTS, awaitingFuturesByRequest, COMMIT_BATCH_REQUESTS, Map.of(), ByteBuffer.wrap(DATA), DATA.length);
         final AppendCompleter job = new AppendCompleter(file);
 
         job.finishCommitSuccessfully(commitBatchResponses);
@@ -147,7 +148,7 @@ class AppendCompleterTest {
 
         final List<CommitBatchResponse> commitBatchResponses = List.of();
 
-        final ClosedFile file = new ClosedFile(Instant.EPOCH, REQUESTS, awaitingFuturesByRequest, List.of(), invalidResponses, new byte[0]);
+        final ClosedFile file = new ClosedFile(Instant.EPOCH, REQUESTS, awaitingFuturesByRequest, List.of(), invalidResponses, ByteBuffer.wrap(new byte[0]), 0);
         final AppendCompleter job = new AppendCompleter(file);
 
         job.finishCommitSuccessfully(commitBatchResponses);
@@ -169,7 +170,7 @@ class AppendCompleterTest {
             1, new CompletableFuture<>()
         );
 
-        final ClosedFile file = new ClosedFile(Instant.EPOCH, REQUESTS, awaitingFuturesByRequest, COMMIT_BATCH_REQUESTS, Map.of(), DATA);
+        final ClosedFile file = new ClosedFile(Instant.EPOCH, REQUESTS, awaitingFuturesByRequest, COMMIT_BATCH_REQUESTS, Map.of(), ByteBuffer.wrap(DATA), DATA.length);
         final AppendCompleter job = new AppendCompleter(file);
 
         job.finishCommitWithError();
