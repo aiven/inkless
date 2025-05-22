@@ -93,7 +93,7 @@ class FileCommitJob implements Supplier<List<CommitBatchResponse>> {
         if (result.objectKey != null) {
             LOGGER.debug("Uploaded {} successfully, committing", result.objectKey);
             try {
-                final var commitBatchResponses = controlPlane.commitFile(result.objectKey.value(), ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, brokerId, file.size(), file.commitBatchRequests());
+                final var commitBatchResponses = controlPlane.commitFile(result.objectKey.value(), ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, brokerId, file.totalSize(), file.commitBatchRequests());
                 LOGGER.debug("Committed successfully");
                 return commitBatchResponses;
             } catch (final Exception e) {

@@ -76,11 +76,11 @@ class BatchBufferTest {
 
         BatchBuffer.CloseResult result = buffer.close();
         assertThat(result.commitBatchRequests()).isEmpty();
-        assertThat(result.data()).isEmpty();
+        assertThat(result.data().array()).isEmpty();
 
         result = buffer.close();
         assertThat(result.commitBatchRequests()).isEmpty();
-        assertThat(result.data()).isEmpty();
+        assertThat(result.data().array()).isEmpty();
     }
 
     public static Stream<Arguments> singleBatchParams() {
@@ -107,8 +107,8 @@ class BatchBufferTest {
 
         final BatchBuffer.CloseResult result = buffer.close();
         assertThat(result.commitBatchRequests()).containsExactly(expectedRequest);
-        assertThat(result.data()).containsExactly(batchToBytes(batch));
-        assertThat(result.data()).containsExactly(beforeAdding);
+        assertThat(result.data().array()).containsExactly(batchToBytes(batch));
+        assertThat(result.data().array()).containsExactly(beforeAdding);
         assertThat(batch.hasProducerId()).isEqualTo(expectedRequest.hasProducerId());
     }
 
@@ -171,7 +171,7 @@ class BatchBufferTest {
         t1p0b0.writeTo(expectedBytes);
         t1p0b1.writeTo(expectedBytes);
         t1p0b2.writeTo(expectedBytes);
-        assertThat(result.data()).containsExactly(expectedBytes.array());
+        assertThat(result.data().array()).containsExactly(expectedBytes.array());
     }
 
     @Test
@@ -185,7 +185,7 @@ class BatchBufferTest {
         assertThat(result1.commitBatchRequests()).containsExactly(
             CommitBatchRequest.of(0, T0P0, 0, batch1.sizeInBytes(), 19, 19, time.milliseconds(), TimestampType.LOG_APPEND_TIME)
         );
-        assertThat(result1.data()).containsExactly(batchToBytes(batch1));
+        assertThat(result1.data().array()).containsExactly(batchToBytes(batch1));
 
         final MutableRecordBatch batch2 = createBatch(TimestampType.CREATE_TIME, time, T1P0 + "-0-longer");
         assertThatThrownBy(() -> buffer.addBatch(T1P0, batch2, 1))

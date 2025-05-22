@@ -22,6 +22,7 @@ import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.record.MemoryRecords;
 import org.apache.kafka.common.requests.ProduceResponse.PartitionResponse;
 
+import java.nio.ByteBuffer;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -49,7 +50,8 @@ record ClosedFile(Instant start,
                   Map<Integer, CompletableFuture<Map<TopicPartition, PartitionResponse>>> awaitingFuturesByRequest,
                   List<CommitBatchRequest> commitBatchRequests,
                   Map<Integer, Map<TopicPartition, PartitionResponse>> invalidResponseByRequest,
-                  byte[] data) {
+                  ByteBuffer data,
+                  int totalSize) {
     ClosedFile {
         Objects.requireNonNull(originalRequests, "originalRequests cannot be null");
         Objects.requireNonNull(awaitingFuturesByRequest, "awaitingFuturesByRequest cannot be null");
@@ -59,6 +61,10 @@ record ClosedFile(Instant start,
 
         if (!originalRequests.isEmpty() && start == null) {
             throw new IllegalArgumentException("start time cannot be null if there are requests processed");
+        }
+
+        if (totalSize < 0) {
+            throw new IllegalArgumentException("totalSize cannot be negative");
         }
 
         // Validate request maps have matching sizes
@@ -113,16 +119,12 @@ record ClosedFile(Instant start,
         }
 
         // Validate data consistency
-        if (commitBatchRequests.isEmpty() != (data.length == 0)) {
+        if (commitBatchRequests.isEmpty() != (totalSize == 0)) {
             throw new IllegalArgumentException("data must be empty if commitBatchRequests is empty");
         }
     }
 
-    int size() {
-        return data.length;
-    }
-
     public boolean isEmpty() {
-        return data.length == 0;
+        return totalSize == 0;
     }
 }
