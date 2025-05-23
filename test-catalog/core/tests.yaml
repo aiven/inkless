@@ -404,19 +404,6 @@ kafka.api.PlaintextConsumerAssignorsTest:
 - testRemoteAssignorInvalid
 - testRemoteAssignorRange
 - testRoundRobinAssignment
-kafka.api.PlaintextConsumerPollTest:
-- testConsumerRecoveryOnPollAfterDelayedRebalance
-- testMaxPollIntervalMs
-- testMaxPollIntervalMsDelayInAssignment
-- testMaxPollIntervalMsDelayInRevocation
-- testMaxPollIntervalMsShorterThanPollTimeout
-- testMaxPollRecords
-- testMultiConsumerSessionTimeoutOnClose
-- testMultiConsumerSessionTimeoutOnStopPolling
-- testNoOffsetForPartitionExceptionOnPollZero
-- testPerPartitionLagWithMaxPollRecords
-- testPerPartitionLeadWithMaxPollRecords
-- testPollEventuallyReturnsRecordsWithZeroTimeout
 kafka.api.PlaintextConsumerSubscriptionTest:
 - testExpandingTopicSubscriptions
 - testPatternSubscription

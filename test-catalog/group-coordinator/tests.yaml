@@ -265,6 +265,7 @@ org.apache.kafka.coordinator.group.GroupMetadataManagerTest:
 - testClassicGroupSyncToConsumerGroupWithIllegalGeneration
 - testClassicGroupSyncToConsumerGroupWithInconsistentGroupProtocol
 - testClassicGroupSyncToConsumerGroupWithUnknownMemberId
+- testCombineInitMaps
 - testCompleteDeleteShareGroupOffsets
 - testCompleteDeleteShareGroupOffsetsEmptyResult
 - testCompleteJoinPhaseInEmptyStateSkipsRebalance
@@ -384,7 +385,6 @@ org.apache.kafka.coordinator.group.GroupMetadataManagerTest:
 - testMemberIdGeneration
 - testMemberJoinsEmptyConsumerGroup
 - testMemberJoinsEmptyStreamsGroup
-- testMergeShareGroupInitMaps
 - testNewJoiningMemberTriggersNewTargetAssignment
 - testNewMemberFailureAfterJoinGroupCompletion
 - testNewMemberIsRejectedWithMaximumMembersIsReached
