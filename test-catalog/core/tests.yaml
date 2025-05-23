@@ -2130,7 +2130,10 @@ kafka.server.KafkaApisTest:
 - testAddPartitionsToTxnWithInvalidPartition
 - testAlterConfigsClientMetrics
 - testAlterReplicaLogDirs
+- testAlterShareGroupOffsetsAuthorizationFailed
+- testAlterShareGroupOffsetsRequestGroupCoordinatorThrowsError
 - testAlterShareGroupOffsetsReturnsUnsupportedVersion
+- testAlterShareGroupOffsetsSuccess
 - testBatchedAddPartitionsToTxnRequest
 - testConsumerGroupDescribe
 - testConsumerGroupDescribeAuthorizationFailed
@@ -3212,6 +3215,7 @@ kafka.server.share.SharePartitionTest:
 - testWriteShareGroupStateWithWriteException
 kafka.tools.DumpLogSegmentsTest:
 - testBatchAndRecordMetadataOutput
+- testDumpControlRecord
 - testDumpEmptyIndex
 - testDumpIndexMismatches
 - testDumpMetadataRecords
