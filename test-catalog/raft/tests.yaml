@@ -248,9 +248,9 @@ org.apache.kafka.raft.KafkaRaftClientTest:
 - testAppendFailedWithRecordBatchTooLargeException
 - testBeginQuorumEpochHeartbeat
 - testBeginQuorumEpochRequestClusterIdValidation
-- testCandidateBackoffElection
 - testCandidateElectionTimeout
 - testCandidateIgnoreVoteRequestOnSameEpoch
+- testCandidateWaitsRestOfElectionTimeoutAfterElectionLoss
 - testCannotResignIfNotLeader
 - testCannotResignIfObserver
 - testCannotResignWithLargerEpochThanCurrentEpoch
@@ -568,8 +568,6 @@ org.apache.kafka.raft.RaftEventSimulationTest:
 - leadershipWillNotChangeDuringNetworkPartitionIfMajorityStillReachable
 org.apache.kafka.raft.RaftUtilTest:
 - testErrorResponse
-- testExponentialBoundOfExponentialElectionBackoffMs
-- testExponentialElectionBackoffMsIsCapped
 - testFetchRequestV17Compatibility
 - testSingletonBeginQuorumEpochRequestForAllVersion
 - testSingletonBeginQuorumEpochResponseForAllVersion

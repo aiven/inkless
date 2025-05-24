@@ -3285,7 +3285,6 @@ kafka.utils.LoggingTest:
 - testLogName
 - testLogNameOverride
 - testLoggerLevelIsResolved
-- testTypeOfGetLoggers
 unit.kafka.server.AllocateProducerIdsRequestTest:
 - testAllocateProducersIdSentToController
 - testAllocateProducersIdSentToNonController
