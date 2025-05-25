@@ -483,6 +483,7 @@ org.apache.kafka.tools.TopicCommandTest:
 - testCreateWithDefaultPartitions
 - testCreateWithDefaultReplication
 - testCreateWithDefaults
+- testCreateWithInternalConfig
 - testCreateWithInvalidReplicationFactor
 - testCreateWithNegativePartitionCount
 - testCreateWithNegativeReplicationFactor

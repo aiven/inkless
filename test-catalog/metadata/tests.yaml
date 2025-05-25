@@ -646,6 +646,7 @@ org.apache.kafka.metadata.KafkaConfigSchemaTest:
 - testGetConfigValueDefault
 - testIsSensitive
 - testIsSplittable
+- testResolveEffectiveDynamicInternalTopicConfig
 - testResolveEffectiveTopicConfig
 - testTranslateConfigSources
 - testTranslateConfigTypes
