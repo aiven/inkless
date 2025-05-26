@@ -17,7 +17,7 @@ build_release: core/build/distributions/kafka_2.13-$(VERSION).tgz
 docker_build_prep:
 	cd docker && \
 	  [ -d .venv ] || python3 -m venv .venv && \
-	  source .venv/bin/activate && \
+	  . .venv/bin/activate && \
 	  pip install -r requirements.txt
 
 # download prometheus jmx exporter
