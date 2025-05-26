@@ -291,7 +291,6 @@ kafka.api.PlaintextAdminIntegrationTest:
 - testConsumeAfterDeleteRecords
 - testConsumerGroupWithMemberMigration
 - testConsumerGroupWithMemberRemoval
-- testConsumerGroups
 - testConsumerGroupsDeprecatedConsumerGroupState
 - testCreateDeleteTopics
 - testCreateExistingTopicsThrowTopicExistsException
@@ -313,6 +312,7 @@ kafka.api.PlaintextAdminIntegrationTest:
 - testDescribeConfigsForTopic
 - testDescribeConfigsNonexistent
 - testDescribeConfigsNonexistentForKraft
+- testDescribeGroups
 - testDescribeLogDirs
 - testDescribeNonExistingTopic
 - testDescribeProducers
@@ -350,6 +350,8 @@ kafka.api.PlaintextAdminIntegrationTest:
 - testListClientMetricsResourcesTimeoutMs
 - testListConfigResources
 - testListConfigResourcesTimeoutMs
+- testListConsumerGroupOffsets
+- testListConsumerGroups
 - testListGroups
 - testListNodes
 - testListNodesWithFencedBroker
