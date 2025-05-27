@@ -1,0 +1,53 @@
+services:
+  create_topic:
+    image: aivenoy/kafka:4.1.0-inkless-SNAPSHOT
+    restart: "no"
+    depends_on:
+      broker:
+        condition: service_healthy
+    command: [ "/opt/kafka/bin/kafka-topics.sh",
+               "--bootstrap-server", "broker:19092",
+               "--create",
+               "--config", "inkless.enable=true",
+               "--topic", "test-topic",
+               "--partitions", "10" ]
+
+  producer-1: &producer-config
+    image: apache/kafka:4.0.0
+    environment:
+      KAFKA_OPTS: -javaagent:/opt/prometheus-jmx-exporter/jmx_prometheus_javaagent.jar=7070:/opt/prometheus-jmx-exporter/kafka-client.yml
+    volumes:
+      - ./../../../extra/prometheus-jmx-exporter:/opt/prometheus-jmx-exporter:Z
+    depends_on:
+      create_topic:
+        condition: service_started
+    command: [ "/opt/kafka/bin/kafka-producer-perf-test.sh",
+               "--producer-props", "bootstrap.servers=broker:19092", "batch.size=1000000", "linger.ms=500",
+               "--topic", "test-topic",
+               "--record-size", "1000",
+               "--num-records", "10000000000",
+               "--throughput", "-1" ]
+
+  producer-2:
+    <<: *producer-config
+
+  consumer:
+    image: apache/kafka:4.0.0
+    depends_on:
+      producer-1:
+        condition: service_started
+      producer-2:
+        condition: service_started
+    environment:
+      KAFKA_HEAP_OPTS: "-Xmx1G"
+      KAFKA_OPTS: -javaagent:/opt/prometheus-jmx-exporter/jmx_prometheus_javaagent.jar=7070:/opt/prometheus-jmx-exporter/kafka-client.yml
+    volumes:
+      - ./../../../extra/prometheus-jmx-exporter:/opt/prometheus-jmx-exporter:Z
+    command: [ "/opt/kafka/bin/kafka-consumer-perf-test.sh",
+               "--bootstrap-server", "broker:19092",
+               "--topic", "test-topic",
+               "--messages", "10000000000",
+               "--reporting-interval", "5000",
+               "--show-detailed-stats",
+               "--timeout", "60000",
+               "--fetch-size", "512000" ]

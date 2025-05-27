@@ -2,27 +2,27 @@ DOCKER := docker
 
 .PHONY: in-memory
 in-memory:
-	docker compose up
+	docker compose -f docker-compose.yml -f docker-compose.monitoring.yml -f docker-compose.demo.yml up
 	$(MAKE) destroy
 
 .PHONY: s3-minio
 s3-minio:
-	$(DOCKER) compose -f docker-compose.yml -f docker-compose.s3-local.yml up
+	$(DOCKER) compose -f docker-compose.yml -f docker-compose.monitoring.yml -f docker-compose.demo.yml -f docker-compose.s3-local.yml up
 	$(MAKE) destroy
 
 .PHONY: gcs-local
 gcs-local:
-	$(DOCKER) compose -f docker-compose.yml -f docker-compose.gcs-local.yml up
+	$(DOCKER) compose -f docker-compose.yml -f docker-compose.monitoring.yml -f docker-compose.demo.yml -f docker-compose.gcs-local.yml up
 	$(MAKE) destroy
 
 .PHONY: azure-local
 azure-local:
-	$(DOCKER) compose -f docker-compose.yml -f docker-compose.azure-local.yml up
+	$(DOCKER) compose -f docker-compose.yml -f docker-compose.monitoring.yml -f docker-compose.demo.yml -f docker-compose.azure-local.yml up
 	$(MAKE) destroy
 
 .PHONY: s3-aws
 s3-aws:
-	$(DOCKER) compose -f docker-compose.yml -f docker-compose.s3-aws.yml up
+	$(DOCKER) compose -f docker-compose.yml -f docker-compose.monitoring.yml -f docker-compose.demo.yml -f docker-compose.s3-aws.yml up
 	$(MAKE) destroy
 
 .PHONY: destroy
