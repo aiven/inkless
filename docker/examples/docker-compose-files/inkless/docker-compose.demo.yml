@@ -10,7 +10,7 @@ services:
                "--create",
                "--config", "inkless.enable=true",
                "--topic", "test-topic",
-               "--partitions", "10" ]
+               "--partitions", "64" ]
 
   producer-1: &producer-config
     image: apache/kafka:4.0.0
@@ -20,9 +20,10 @@ services:
       - ./../../../extra/prometheus-jmx-exporter:/opt/prometheus-jmx-exporter:Z
     depends_on:
       create_topic:
-        condition: service_started
+        condition: service_completed_successfully
+
     command: [ "/opt/kafka/bin/kafka-producer-perf-test.sh",
-               "--producer-props", "bootstrap.servers=broker:19092", "batch.size=1000000", "linger.ms=500",
+               "--producer-props", "bootstrap.servers=broker:19092", "batch.size=1000000", "linger.ms=100", "max.request.size=64000000",
                "--topic", "test-topic",
                "--record-size", "1000",
                "--num-records", "10000000000",
