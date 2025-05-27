@@ -52,6 +52,7 @@ class FileCommitJob implements Supplier<List<CommitBatchResponse>> {
     private final ControlPlane controlPlane;
     private final ObjectDeleter objectDeleter;
     private final Consumer<Long> durationCallback;
+    private final Consumer<Long> uploadWaitDurationCallback;
 
     FileCommitJob(final int brokerId,
                   final ClosedFile file,
@@ -59,7 +60,8 @@ class FileCommitJob implements Supplier<List<CommitBatchResponse>> {
                   final Time time,
                   final ControlPlane controlPlane,
                   final ObjectDeleter objectDeleter,
-                  final Consumer<Long> durationCallback) {
+                  final Consumer<Long> durationCallback,
+                  final Consumer<Long> uploadWaitDurationCallback) {
         this.brokerId = brokerId;
         this.file = file;
         this.uploadFuture = uploadFuture;
@@ -67,11 +69,12 @@ class FileCommitJob implements Supplier<List<CommitBatchResponse>> {
         this.time = time;
         this.objectDeleter = objectDeleter;
         this.durationCallback = durationCallback;
+        this.uploadWaitDurationCallback = uploadWaitDurationCallback;
     }
 
     @Override
     public List<CommitBatchResponse> get() {
-        final UploadResult uploadResult = waitForUpload();
+        final UploadResult uploadResult = TimeUtils.measureDurationMsSupplier(time, this::waitForUpload, uploadWaitDurationCallback);
         return TimeUtils.measureDurationMsSupplier(time, () -> doCommit(uploadResult), durationCallback);
     }
 

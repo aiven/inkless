@@ -40,6 +40,7 @@ class FileCommitterMetrics implements Closeable {
     private static final String FILE_UPLOAD_AND_COMMIT_TIME = "FileUploadAndCommitTime";
     private static final String FILE_UPLOAD_TIME = "FileUploadTime";
     private static final String FILE_UPLOAD_RATE = "FileUploadRate";
+    private static final String FILE_COMMIT_WAIT_TIME = "FileCommitWaitTime";
     private static final String FILE_COMMIT_TIME = "FileCommitTime";
     private static final String FILE_COMMIT_RATE = "FileCommitRate";
     private static final String CACHE_STORE_TIME = "CacheStoreTime";
@@ -55,6 +56,7 @@ class FileCommitterMetrics implements Closeable {
     private final Histogram fileUploadAndCommitTimeHistogram;
     private final Histogram fileUploadTimeHistogram;
     private final Histogram fileCommitTimeHistogram;
+    private final Histogram fileCommitWaitTimeHistogram;
     private final Histogram fileSizeHistogram;
     private final Histogram batchesCountHistogram;
     private final Histogram cacheStoreTimeHistogram;
@@ -68,6 +70,7 @@ class FileCommitterMetrics implements Closeable {
         fileUploadTimeHistogram = metricsGroup.newHistogram(FILE_UPLOAD_TIME, true, Map.of());
         metricsGroup.newGauge(FILE_UPLOAD_RATE, fileUploadRate::intValue);
         fileCommitTimeHistogram = metricsGroup.newHistogram(FILE_COMMIT_TIME, true, Map.of());
+        fileCommitWaitTimeHistogram = metricsGroup.newHistogram(FILE_COMMIT_WAIT_TIME, true, Map.of());
         metricsGroup.newGauge(FILE_COMMIT_RATE, fileCommitRate::intValue);
         fileSizeHistogram = metricsGroup.newHistogram(FILE_SIZE, true, Map.of());
         batchesCountHistogram = metricsGroup.newHistogram(BATCHES_COUNT, true, Map.of());
@@ -98,6 +101,10 @@ class FileCommitterMetrics implements Closeable {
     void fileCommitFinished(final long durationMs) {
         fileCommitTimeHistogram.update(durationMs);
         fileCommitRate.increment();
+    }
+
+    void fileCommitWaitFinished(final long durationMs) {
+        fileCommitWaitTimeHistogram.update(durationMs);
     }
 
     void fileFinished(final Instant fileStart, final Instant uploadAndCommitStart) {

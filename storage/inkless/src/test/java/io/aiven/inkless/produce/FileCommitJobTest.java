@@ -105,6 +105,8 @@ class FileCommitJobTest {
     ObjectDeleter objectDeleter;
     @Mock
     Consumer<Long> commitTimeDurationCallback;
+    @Mock
+    Consumer<Long> commitWaitTimeDurationCallback;
 
     @Test
     void commitFinishedSuccessfully() throws Exception {
@@ -122,14 +124,15 @@ class FileCommitJobTest {
 
         when(controlPlane.commitFile(eq(OBJECT_KEY_MAIN_PART), eq(ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT), eq(BROKER_ID), eq(FILE_SIZE), eq(COMMIT_BATCH_REQUESTS)))
             .thenReturn(commitBatchResponses);
-        when(time.nanoseconds()).thenReturn(10_000_000L, 20_000_000L);
+        when(time.nanoseconds()).thenReturn(10_000_000L, 12_000_000L, 10_000_000L, 20_000_000L);
 
         final ClosedFile file = new ClosedFile(Instant.EPOCH, REQUESTS, awaitingFuturesByRequest, COMMIT_BATCH_REQUESTS, Map.of(), DATA);
         final CompletableFuture<ObjectKey> uploadFuture = CompletableFuture.completedFuture(OBJECT_KEY);
-        final FileCommitJob job = new FileCommitJob(BROKER_ID, file, uploadFuture, time, controlPlane, objectDeleter, commitTimeDurationCallback);
+        final FileCommitJob job = new FileCommitJob(BROKER_ID, file, uploadFuture, time, controlPlane, objectDeleter, commitTimeDurationCallback, commitWaitTimeDurationCallback);
 
         job.get();
 
+        verify(commitWaitTimeDurationCallback).accept(eq(2L));
         verify(commitTimeDurationCallback).accept(eq(10L));
     }
 
@@ -146,14 +149,15 @@ class FileCommitJobTest {
 
         when(controlPlane.commitFile(eq(OBJECT_KEY_MAIN_PART), eq(ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT), eq(BROKER_ID), eq(FILE_SIZE), eq(COMMIT_BATCH_REQUESTS)))
             .thenReturn(commitBatchResponses);
-        when(time.nanoseconds()).thenReturn(10_000_000L, 20_000_000L);
+        when(time.nanoseconds()).thenReturn(10_000_000L, 12_000_000L, 10_000_000L, 20_000_000L);
 
         final ClosedFile file = new ClosedFile(Instant.EPOCH, REQUESTS, awaitingFuturesByRequest, COMMIT_BATCH_REQUESTS, Map.of(), DATA);
         final CompletableFuture<ObjectKey> uploadFuture = CompletableFuture.completedFuture(OBJECT_KEY);
-        final FileCommitJob job = new FileCommitJob(BROKER_ID, file, uploadFuture, time, controlPlane, objectDeleter, commitTimeDurationCallback);
+        final FileCommitJob job = new FileCommitJob(BROKER_ID, file, uploadFuture, time, controlPlane, objectDeleter, commitTimeDurationCallback, commitWaitTimeDurationCallback);
 
         job.get();
 
+        verify(commitWaitTimeDurationCallback).accept(eq(2L));
         verify(commitTimeDurationCallback).accept(eq(10L));
     }
 
@@ -164,14 +168,15 @@ class FileCommitJobTest {
             1, new CompletableFuture<>()
         );
 
-        when(time.nanoseconds()).thenReturn(10_000_000L, 20_000_000L);
+        when(time.nanoseconds()).thenReturn(10_000_000L, 12_000_000L, 10_000_000L, 20_000_000L);
 
         final ClosedFile file = new ClosedFile(Instant.EPOCH, REQUESTS, awaitingFuturesByRequest, COMMIT_BATCH_REQUESTS, Map.of(), DATA);
         final CompletableFuture<ObjectKey> uploadFuture = CompletableFuture.failedFuture(new StorageBackendException("test"));
-        final FileCommitJob job = new FileCommitJob(BROKER_ID, file, uploadFuture, time, controlPlane, objectDeleter, commitTimeDurationCallback);
+        final FileCommitJob job = new FileCommitJob(BROKER_ID, file, uploadFuture, time, controlPlane, objectDeleter, commitTimeDurationCallback, commitWaitTimeDurationCallback);
 
         Assert.assertThrows(RuntimeException.class, job::get);
 
+        verify(commitWaitTimeDurationCallback).accept(eq(2L));
         verify(commitTimeDurationCallback).accept(eq(10L));
     }
 
@@ -189,7 +194,7 @@ class FileCommitJobTest {
 
         final ClosedFile file = new ClosedFile(Instant.EPOCH, REQUESTS, awaitingFuturesByRequest, COMMIT_BATCH_REQUESTS, Map.of(), DATA);
         final CompletableFuture<ObjectKey> uploadFuture = CompletableFuture.completedFuture(OBJECT_KEY);
-        final FileCommitJob job = new FileCommitJob(BROKER_ID, file, uploadFuture, time, controlPlane, objectDeleter, commitTimeDurationCallback);
+        final FileCommitJob job = new FileCommitJob(BROKER_ID, file, uploadFuture, time, controlPlane, objectDeleter, commitTimeDurationCallback, commitWaitTimeDurationCallback);
 
         Assert.assertThrows(RuntimeException.class, job::get);
 
@@ -208,7 +213,7 @@ class FileCommitJobTest {
 
         final ClosedFile file = new ClosedFile(Instant.EPOCH, REQUESTS, awaitingFuturesByRequest, COMMIT_BATCH_REQUESTS, Map.of(), DATA);
         final CompletableFuture<ObjectKey> uploadFuture = CompletableFuture.completedFuture(OBJECT_KEY);
-        final FileCommitJob job = new FileCommitJob(BROKER_ID, file, uploadFuture, time, controlPlane, objectDeleter, commitTimeDurationCallback);
+        final FileCommitJob job = new FileCommitJob(BROKER_ID, file, uploadFuture, time, controlPlane, objectDeleter, commitTimeDurationCallback, commitWaitTimeDurationCallback);
 
         Assert.assertThrows(RuntimeException.class, job::get);
 

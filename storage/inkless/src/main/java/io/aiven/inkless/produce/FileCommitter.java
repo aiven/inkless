@@ -170,7 +170,8 @@ class FileCommitter implements Closeable {
                         time,
                         controlPlane,
                         storage,
-                        metrics::fileCommitFinished
+                        metrics::fileCommitFinished,
+                        metrics::fileCommitWaitFinished
                 );
                 commitFuture = CompletableFuture.supplyAsync(commitJob, executorServiceCommit)
                         .whenComplete((result, error) -> {
