@@ -109,7 +109,7 @@ class FileCommitJobTest {
     Consumer<Long> commitWaitTimeDurationCallback;
 
     @Test
-    void commitFinishedSuccessfully() throws Exception {
+    void commitFinishedSuccessfully() {
         final Map<Integer, CompletableFuture<Map<TopicPartition, PartitionResponse>>> awaitingFuturesByRequest = Map.of(
             0, new CompletableFuture<>(),
             1, new CompletableFuture<>()
@@ -137,7 +137,7 @@ class FileCommitJobTest {
     }
 
     @Test
-    void commitFinishedSuccessfullyZeroBatches() throws Exception {
+    void commitFinishedSuccessfullyZeroBatches() {
         // We sent two requests, both without any batch.
 
         final Map<Integer, CompletableFuture<Map<TopicPartition, PartitionResponse>>> awaitingFuturesByRequest = Map.of(
