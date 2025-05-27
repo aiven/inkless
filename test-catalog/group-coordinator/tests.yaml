@@ -629,6 +629,7 @@ org.apache.kafka.coordinator.group.OffsetMetadataManagerTest:
 - testFetchAllOffsetsWithUnknownGroup
 - testFetchOffsetsAtDifferentCommittedOffset
 - testFetchOffsetsWithPendingTransactionalOffsets
+- testFetchOffsetsWithRecreatedTopic
 - testFetchOffsetsWithTopicIds
 - testFetchOffsetsWithUnknownGroup
 - testGenericGroupFetchAllOffsetsWithDeadGroup
