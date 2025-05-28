@@ -360,7 +360,6 @@ org.apache.kafka.server.util.JsonTest:
 - testJsonArrayIterator
 - testJsonObjectApply
 - testJsonObjectGet
-- testJsonObjectIterator
 - testJsonValueEquals
 - testJsonValueHashCode
 - testJsonValueToString
