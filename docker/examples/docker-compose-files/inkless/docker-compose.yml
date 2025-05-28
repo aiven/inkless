@@ -63,6 +63,12 @@ services:
       POSTGRES_DB: "inkless"
       POSTGRES_USER: "admin"
       POSTGRES_PASSWORD: "admin"
+    command: >
+      postgres
+      -c shared_preload_libraries='pg_stat_statements'
+      -c pg_stat_statements.track='all'
+    volumes:
+      - ./../../../extra/postgres/init-scripts:/docker-entrypoint-initdb.d
     healthcheck:
       test: ["CMD-SHELL", "pg_isready --dbname=inkless -U admin"]
       interval: 5s
