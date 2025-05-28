@@ -16,7 +16,6 @@ org.apache.kafka.coordinator.group.GroupCoordinatorConfigTest:
 - testInvalidConfigs
 org.apache.kafka.coordinator.group.GroupCoordinatorRecordHelpersTest:
 - testEmptyGroupMetadataRecord
-- testEmptyPartitionMetadataWhenRacksUnavailableGroupSubscriptionMetadataRecord
 - testNewConsumerGroupCurrentAssignmentRecord
 - testNewConsumerGroupCurrentAssignmentTombstoneRecord
 - testNewConsumerGroupEpochRecord
@@ -25,7 +24,6 @@ org.apache.kafka.coordinator.group.GroupCoordinatorRecordHelpersTest:
 - testNewConsumerGroupMemberSubscriptionTombstoneRecord
 - testNewConsumerGroupRegularExpressionRecord
 - testNewConsumerGroupRegularExpressionTombstone
-- testNewConsumerGroupSubscriptionMetadataRecord
 - testNewConsumerGroupSubscriptionMetadataTombstoneRecord
 - testNewConsumerGroupTargetAssignmentEpochRecord
 - testNewConsumerGroupTargetAssignmentEpochTombstoneRecord
@@ -395,6 +393,7 @@ org.apache.kafka.coordinator.group.GroupMetadataManagerTest:
 - testNewMemberIsRejectedWithMaximumMembersIsReached
 - testNewMemberJoinExpiration
 - testNewMemberTimeoutCompletion
+- testNewRacksDataInMetadataImageTriggersEpochBump
 - testNoConversionWhenSizeExceedsClassicMaxGroupSize
 - testNoGroupEpochBumpWhenStaticMemberTemporarilyLeaves
 - testOnLoaded
@@ -419,6 +418,7 @@ org.apache.kafka.coordinator.group.GroupMetadataManagerTest:
 - testReconciliationInJoiningConsumerGroupWithCooperativeProtocol
 - testReconciliationInJoiningConsumerGroupWithEagerProtocol
 - testReconciliationProcess
+- testRemoveTopicCleanupTopicHash
 - testReplaceStaticMemberInCompletingRebalanceStateTriggersRebalance
 - testReplaceStaticMemberInStableStateErrors
 - testReplaceStaticMemberInStableStateNoError
@@ -432,6 +432,7 @@ org.apache.kafka.coordinator.group.GroupMetadataManagerTest:
 - testReplayConsumerGroupMetadataTombstone
 - testReplayConsumerGroupPartitionMetadata
 - testReplayConsumerGroupPartitionMetadataTombstone
+- testReplayConsumerGroupPartitionMetadataTombstoneWithExistentGroup
 - testReplayConsumerGroupRegularExpression
 - testReplayConsumerGroupRegularExpressionTombstone
 - testReplayConsumerGroupTargetAssignmentMember
@@ -569,6 +570,7 @@ org.apache.kafka.coordinator.group.GroupMetadataManagerTest:
 - testSubscribedTopicsChangeMap
 - testSubscriptionMetadataRefreshedAfterGroupIsLoaded
 - testSubscriptionMetadataRefreshedAgainAfterWriteFailure
+- testSubscriptionUpgradeToMetadataHash
 - testSyncGroupAsLeaderAppendFailureTransformsError
 - testSyncGroupEmptyAssignment
 - testSyncGroupFollowerAfterLeader
@@ -580,6 +582,7 @@ org.apache.kafka.coordinator.group.GroupMetadataManagerTest:
 - testSyncGroupReturnsAnErrorWhenProtocolTypeIsInconsistent
 - testSyncGroupSucceedWhenProtocolTypeAndNameAreConsistent
 - testSyncGroupSucceedWhenProtocolTypeAndNameAreNotProvided
+- testTopicHashIsRemoveFromCacheIfNoGroupSubscribesIt
 - testUninitializeTopics
 - testUnknownGroupId
 - testUnknownMemberIdJoinsConsumerGroup
@@ -888,6 +891,9 @@ org.apache.kafka.coordinator.group.modern.consumer.ConsumerGroupTest:
 - testAsDescribedGroup
 - testAsListedGroup
 - testClassicMembersSupportedProtocols
+- testComputeMetadataHash
+- testComputeMetadataHashIgnoreTopicHashIfItIsNotInMetadataImage
+- testComputeMetadataHashUseCacheData
 - testComputeSubscribedRegularExpressions
 - testComputeSubscribedTopicNames
 - testComputeSubscribedTopicNamesWithoutDeletedMembers

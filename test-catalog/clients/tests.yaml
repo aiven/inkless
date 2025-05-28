@@ -1316,6 +1316,7 @@ org.apache.kafka.clients.consumer.internals.ConsumerMembershipManagerTest:
 - testHeartbeatFailedResponseWhenLeavingGroupCompletesLeave
 - testHeartbeatSuccessfulResponseWhenLeavingGroupCompletesLeave
 - testIgnoreHeartbeatResponseWhenNotInGroup
+- testIgnoreLeaveResponseWhenNotLeavingGroup
 - testLeaveGroupEpoch
 - testLeaveGroupEpochOnClose
 - testLeaveGroupWhenMemberAlreadyLeaving
@@ -1323,7 +1324,6 @@ org.apache.kafka.clients.consumer.internals.ConsumerMembershipManagerTest:
 - testLeaveGroupWhenMemberFenced
 - testLeaveGroupWhenMemberIsStale
 - testLeaveGroupWhenMemberOwnsAssignment
-- testLeaveGroupWhenStateIsReconciling
 - testLeaveGroupWhenStateIsStable
 - testListenerCallbacksBasic
 - testListenerCallbacksThrowsErrorOnPartitionsAssigned
@@ -2261,6 +2261,7 @@ org.apache.kafka.clients.consumer.internals.ShareMembershipManagerTest:
 - testHeartbeatSuccessfulResponseWhenLeavingGroupCompletesLeave
 - testIgnoreHeartbeatResponseWhenNotInGroup
 - testIgnoreHeartbeatWhenLeavingGroup
+- testIgnoreLeaveResponseWhenNotLeavingGroup
 - testLeaveGroupEpoch
 - testLeaveGroupWhenMemberAlreadyLeaving
 - testLeaveGroupWhenMemberAlreadyLeft
@@ -2362,6 +2363,7 @@ org.apache.kafka.clients.consumer.internals.StreamsMembershipManagerTest:
 - testConsumerPollWhenNotJoining
 - testConsumerPollWhenSubscriptionNotUpdated
 - testForDuplicateRegistrationOfSameStateListener
+- testIgnoreLeaveResponseWhenNotLeavingGroup
 - testJoining
 - testLeaveGroupOnCloseWhenInGroupWithAssignment
 - testLeaveGroupOnCloseWhenNotInGroup
