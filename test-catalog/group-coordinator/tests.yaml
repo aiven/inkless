@@ -683,6 +683,7 @@ org.apache.kafka.coordinator.group.UtilsTest:
 - testComputeTopicHashWithLeastSignificantBitsFirst
 - testNonExistingTopicName
 org.apache.kafka.coordinator.group.assignor.GroupSpecImplTest:
+- testIsPartitionAssignable
 - testIsPartitionAssigned
 - testMemberAssignment
 - testMemberIds
@@ -734,7 +735,11 @@ org.apache.kafka.coordinator.group.assignor.SimpleAssignorTest:
 - testAssignWithOneMemberNoAssignedTopicHeterogeneous
 - testAssignWithSubscribedToNonExistentTopic
 - testAssignWithThreeMembersThreeTopicsHeterogeneous
+- testAssignWithThreeMembersThreeTopicsHeterogeneousWithAllowedMap
+- testAssignWithThreeMembersThreeTopicsHeterogeneousWithNonAssignableTopic
 - testAssignWithTwoMembersAndTwoTopicsHomogeneous
+- testAssignWithTwoMembersAndTwoTopicsHomogeneousWithAllowedMap
+- testAssignWithTwoMembersAndTwoTopicsHomogeneousWithNonAssignableTopic
 - testMemberHashAssignment
 - testName
 - testRoundRobinAssignment
@@ -833,12 +838,10 @@ org.apache.kafka.coordinator.group.modern.AssignmentTest:
 - testFromTargetAssignmentRecord
 - testPartitionsCannotBeNull
 org.apache.kafka.coordinator.group.modern.SubscribedTopicMetadataTest:
-- testAssignablePartitions
 - testEquals
 - testMetadataImageCannotBeNull
 - testNumberOfPartitions
 - testRacksForPartition
-- testTopicPartitionAllowedMapCannotBeNull
 org.apache.kafka.coordinator.group.modern.TargetAssignmentBuilderTest:
 - testAssignmentHasNotChanged
 - testAssignmentSwapped
