@@ -1,4 +1,11 @@
 services:
+  postgres_exporter:
+    image: prometheuscommunity/postgres-exporter
+    environment:
+      DATA_SOURCE_URI: "postgres:5432/inkless?sslmode=disable"
+      DATA_SOURCE_USER: "admin"
+      DATA_SOURCE_PASS: "admin"
+
   prometheus:
     image: prom/prometheus:latest
     ports:

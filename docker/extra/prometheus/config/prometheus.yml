@@ -32,3 +32,6 @@ scrape_configs:
     - targets: ['consumer:7070']
       labels:
         host: 'consumer'
+  - job_name: 'postgres'
+    static_configs:
+    - targets: ['postgres_exporter:9187']
