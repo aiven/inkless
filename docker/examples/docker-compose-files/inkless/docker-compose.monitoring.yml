@@ -5,6 +5,8 @@ services:
       DATA_SOURCE_URI: "postgres:5432/inkless?sslmode=disable"
       DATA_SOURCE_USER: "admin"
       DATA_SOURCE_PASS: "admin"
+    command:
+      - "--collector.stat_statements"
 
   prometheus:
     image: prom/prometheus:latest
