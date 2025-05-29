@@ -2647,6 +2647,8 @@ org.apache.kafka.clients.producer.KafkaProducerTest:
 - testCommitTransactionWithMetadataTimeoutForPartitionOutOfRange
 - testCommitTransactionWithRecordTooLargeException
 - testCommitTransactionWithSendToInvalidTopic
+- testCompleteTransactionWithMatchingState
+- testCompleteTransactionWithNonMatchingState
 - testConstructorFailureCloseResource
 - testConstructorWithInvalidMetricReporterClass
 - testConstructorWithNotStringKey

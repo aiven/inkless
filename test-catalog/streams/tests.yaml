@@ -5343,7 +5343,7 @@ org.apache.kafka.streams.state.internals.SegmentIteratorTest:
 org.apache.kafka.streams.state.internals.SegmentedCacheFunctionTest:
 - cacheKey
 - compareSegmentedKeys
-- key
+- testKey
 - testRoundTripping
 org.apache.kafka.streams.state.internals.SessionKeySchemaTest:
 - shouldConvertToBinaryAndBack
