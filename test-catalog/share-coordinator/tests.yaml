@@ -95,6 +95,7 @@ org.apache.kafka.coordinator.share.ShareCoordinatorShardTest:
 - testWriteStateFencedLeaderEpochError
 - testWriteStateFencedStateEpochError
 - testWriteStateInvalidRequestData
+- testWriteStateSequentialRequestsWithHigherStateEpochCreateShareSnapshots
 - testWriteStateSuccess
 org.apache.kafka.coordinator.share.metrics.ShareCoordinatorMetricsTest:
 - testCoordinatorGlobalSensors
