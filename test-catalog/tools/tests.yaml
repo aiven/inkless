@@ -29,6 +29,7 @@ org.apache.kafka.tools.ClientMetricsCommandTest:
 - testDelete
 - testDescribe
 - testDescribeAll
+- testDescribeNonExistentClientMetric
 - testList
 - testListFailsWithUnsupportedVersionException
 - testOptionsAlterAllOptionsSucceeds
@@ -60,6 +61,8 @@ org.apache.kafka.tools.ConfigCommandIntegrationTest:
 - testAlterReadOnlyConfigInKRaftThenShouldFail
 - testAlterStreamsGroupNumOfStandbyReplicas
 - testClientMetricsConfigUpdate
+- testDescribeGroupWithoutDynamicConfigs
+- testDescribeNonExistentConfigResource
 - testDescribeStreamsGroupConfigs
 - testDynamicBrokerConfigUpdateUsingKraft
 - testExitWithNonZeroStatusOnUpdatingUnallowedConfig
