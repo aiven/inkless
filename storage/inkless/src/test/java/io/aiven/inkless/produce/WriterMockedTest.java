@@ -176,6 +176,26 @@ class WriterMockedTest {
     }
 
     @Test
+    void committingDueToOverfillBeforeNextTick() throws InterruptedException {
+        when(time.nanoseconds()).thenReturn(10_000_000L);
+
+        final Writer writer = new Writer(
+            time, Duration.ofMillis(1), 8 * 1024, commitTickScheduler, fileCommitter, writerMetrics, brokerTopicStats);
+
+        // Size is not 8Ki but is close enough to trigger a commit before the next write.
+        final Map<TopicIdPartition, MemoryRecords> writeRequest = Map.of(
+            T0P0, recordCreator.create(T0P0.topicPartition(), 100),
+            T1P1, recordCreator.create(T1P1.topicPartition(), 100)
+        );
+        assertThat(writer.write(writeRequest, TOPIC_CONFIGS, REQUEST_LOCAL)).isNotCompleted();
+
+        verify(fileCommitter).commit(closedFileCaptor.capture());
+        assertThat(closedFileCaptor.getValue().start()).isEqualTo(Instant.ofEpochMilli(10));
+        assertThat(closedFileCaptor.getValue().originalRequests()).isEqualTo(Map.of(0, writeRequest));
+        assertThat(closedFileCaptor.getValue().awaitingFuturesByRequest()).hasSize(1);
+    }
+
+    @Test
     void committingOnTick() throws InterruptedException {
         final Writer writer = new Writer(
             time, Duration.ofMillis(1), 8 * 1024, commitTickScheduler, fileCommitter, writerMetrics, brokerTopicStats);

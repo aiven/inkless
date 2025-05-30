@@ -160,10 +160,13 @@ class Writer implements Closeable {
             if (openedAt == null) {
                 openedAt = TimeUtils.durationMeasurementNow(time);
             }
-
+            final var sizeBefore = this.activeFile.size();
             final var result = this.activeFile.add(entriesPerPartition, topicConfigs, requestLocal);
             writerMetrics.requestAdded();
-            if (this.activeFile.size() >= maxBufferSize) {
+            // Estimate the size of the active file after adding the next entries to avoid having files too large.
+            final int currentSize = this.activeFile.size();
+            final int sizeAdded = currentSize - sizeBefore;
+            if (currentSize + sizeAdded >= maxBufferSize) {
                 if (this.scheduledTick != null) {
                     this.scheduledTick.cancel(false);
                     this.scheduledTick = null;
