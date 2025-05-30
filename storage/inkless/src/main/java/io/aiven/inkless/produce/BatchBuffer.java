@@ -49,8 +49,6 @@ class BatchBuffer {
     }
 
     CloseResult close() {
-        int totalSize = totalSize();
-
         // Group together by topic-partition.
         // The sort is stable so the relative order of batches of the same partition won't change.
         batches.sort(
@@ -74,7 +72,7 @@ class BatchBuffer {
         }
 
         closed = true;
-        return new CloseResult(commitBatchRequests, byteBuffer.array());
+        return new CloseResult(commitBatchRequests, byteBuffer, totalSize);
     }
 
     int totalSize() {
@@ -92,6 +90,7 @@ class BatchBuffer {
      * @param commitBatchRequests commit batch requests matching in order the batches in {@code data}.
      */
     record CloseResult(List<CommitBatchRequest> commitBatchRequests,
-                       byte[] data) {
+                       ByteBuffer data,
+                       int totalSize) {
     }
 }

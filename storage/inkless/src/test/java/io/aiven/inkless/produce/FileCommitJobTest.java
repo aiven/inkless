@@ -38,6 +38,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 
+import java.nio.ByteBuffer;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -126,7 +127,7 @@ class FileCommitJobTest {
             .thenReturn(commitBatchResponses);
         when(time.nanoseconds()).thenReturn(10_000_000L, 12_000_000L, 10_000_000L, 20_000_000L);
 
-        final ClosedFile file = new ClosedFile(Instant.EPOCH, REQUESTS, awaitingFuturesByRequest, COMMIT_BATCH_REQUESTS, Map.of(), DATA);
+        final ClosedFile file = new ClosedFile(Instant.EPOCH, REQUESTS, awaitingFuturesByRequest, COMMIT_BATCH_REQUESTS, Map.of(), ByteBuffer.wrap(DATA), DATA.length);
         final CompletableFuture<ObjectKey> uploadFuture = CompletableFuture.completedFuture(OBJECT_KEY);
         final FileCommitJob job = new FileCommitJob(BROKER_ID, file, uploadFuture, time, controlPlane, objectDeleter, commitTimeDurationCallback, commitWaitTimeDurationCallback);
 
@@ -151,7 +152,7 @@ class FileCommitJobTest {
             .thenReturn(commitBatchResponses);
         when(time.nanoseconds()).thenReturn(10_000_000L, 12_000_000L, 10_000_000L, 20_000_000L);
 
-        final ClosedFile file = new ClosedFile(Instant.EPOCH, REQUESTS, awaitingFuturesByRequest, COMMIT_BATCH_REQUESTS, Map.of(), DATA);
+        final ClosedFile file = new ClosedFile(Instant.EPOCH, REQUESTS, awaitingFuturesByRequest, COMMIT_BATCH_REQUESTS, Map.of(), ByteBuffer.wrap(DATA), DATA.length);
         final CompletableFuture<ObjectKey> uploadFuture = CompletableFuture.completedFuture(OBJECT_KEY);
         final FileCommitJob job = new FileCommitJob(BROKER_ID, file, uploadFuture, time, controlPlane, objectDeleter, commitTimeDurationCallback, commitWaitTimeDurationCallback);
 
@@ -170,7 +171,7 @@ class FileCommitJobTest {
 
         when(time.nanoseconds()).thenReturn(10_000_000L, 12_000_000L, 10_000_000L, 20_000_000L);
 
-        final ClosedFile file = new ClosedFile(Instant.EPOCH, REQUESTS, awaitingFuturesByRequest, COMMIT_BATCH_REQUESTS, Map.of(), DATA);
+        final ClosedFile file = new ClosedFile(Instant.EPOCH, REQUESTS, awaitingFuturesByRequest, COMMIT_BATCH_REQUESTS, Map.of(), ByteBuffer.wrap(DATA), DATA.length);
         final CompletableFuture<ObjectKey> uploadFuture = CompletableFuture.failedFuture(new StorageBackendException("test"));
         final FileCommitJob job = new FileCommitJob(BROKER_ID, file, uploadFuture, time, controlPlane, objectDeleter, commitTimeDurationCallback, commitWaitTimeDurationCallback);
 
@@ -192,7 +193,7 @@ class FileCommitJobTest {
             .thenThrow(new ControlPlaneException("test"));
         when(controlPlane.isSafeToDeleteFile(eq(OBJECT_KEY_MAIN_PART))).thenReturn(isSafeToDelete);
 
-        final ClosedFile file = new ClosedFile(Instant.EPOCH, REQUESTS, awaitingFuturesByRequest, COMMIT_BATCH_REQUESTS, Map.of(), DATA);
+        final ClosedFile file = new ClosedFile(Instant.EPOCH, REQUESTS, awaitingFuturesByRequest, COMMIT_BATCH_REQUESTS, Map.of(), ByteBuffer.wrap(DATA), DATA.length);
         final CompletableFuture<ObjectKey> uploadFuture = CompletableFuture.completedFuture(OBJECT_KEY);
         final FileCommitJob job = new FileCommitJob(BROKER_ID, file, uploadFuture, time, controlPlane, objectDeleter, commitTimeDurationCallback, commitWaitTimeDurationCallback);
 
@@ -211,7 +212,7 @@ class FileCommitJobTest {
         when(controlPlane.commitFile(eq(OBJECT_KEY_MAIN_PART), eq(ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT), eq(BROKER_ID), eq(FILE_SIZE), eq(COMMIT_BATCH_REQUESTS)))
             .thenThrow(new RuntimeException("test"));
 
-        final ClosedFile file = new ClosedFile(Instant.EPOCH, REQUESTS, awaitingFuturesByRequest, COMMIT_BATCH_REQUESTS, Map.of(), DATA);
+        final ClosedFile file = new ClosedFile(Instant.EPOCH, REQUESTS, awaitingFuturesByRequest, COMMIT_BATCH_REQUESTS, Map.of(), ByteBuffer.wrap(DATA), DATA.length);
         final CompletableFuture<ObjectKey> uploadFuture = CompletableFuture.completedFuture(OBJECT_KEY);
         final FileCommitJob job = new FileCommitJob(BROKER_ID, file, uploadFuture, time, controlPlane, objectDeleter, commitTimeDurationCallback, commitWaitTimeDurationCallback);
 
