@@ -158,6 +158,13 @@ org.apache.kafka.clients.consumer.PlaintextConsumerPollTest:
 - testClassicConsumerPerPartitionLeadWithMaxPollRecords
 - testClassicConsumerPollEventuallyReturnsRecordsWithZeroTimeout
 - testClassicConsumerRecoveryOnPollAfterDelayedRebalance
+org.apache.kafka.clients.consumer.SaslPlainPlaintextConsumerTest:
+- testAsyncConsumeCoordinatorFailover
+- testAsyncConsumerClusterResourceListener
+- testAsyncConsumerSimpleConsumption
+- testClassicConsumerClusterResourceListener
+- testClassicConsumerCoordinatorFailover
+- testClassicConsumerSimpleConsumption
 org.apache.kafka.clients.consumer.ShareConsumerTest:
 - testAcknowledgementCommitCallbackCallsShareConsumerDisallowed
 - testAcknowledgementCommitCallbackCallsShareConsumerWakeup
