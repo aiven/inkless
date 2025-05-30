@@ -1119,6 +1119,7 @@ org.apache.kafka.clients.consumer.internals.AsyncKafkaConsumerTest:
 - testCloseLeavesGroup
 - testCloseLeavesGroupDespiteInterrupt
 - testCloseLeavesGroupDespiteOnPartitionsLostError
+- testCommitAsyncShouldCopyOffsets
 - testCommitAsyncUserSuppliedCallbackNoException
 - testCommitAsyncUserSuppliedCallbackWithException
 - testCommitAsyncWithNullCallback
@@ -1127,6 +1128,7 @@ org.apache.kafka.clients.consumer.internals.AsyncKafkaConsumerTest:
 - testCommitSyncAwaitsCommitAsyncButDoesNotFail
 - testCommitSyncAwaitsCommitAsyncCompletionWithEmptyOffsets
 - testCommitSyncAwaitsCommitAsyncCompletionWithNonEmptyOffsets
+- testCommitSyncShouldCopyOffsets
 - testCommitted
 - testCommittedExceptionThrown
 - testEmptyStreamRebalanceData
