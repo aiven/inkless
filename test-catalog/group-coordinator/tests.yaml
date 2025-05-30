@@ -722,6 +722,8 @@ org.apache.kafka.coordinator.group.assignor.RangeSetTest:
 - testHashCode
 - testIsEmpty
 - testIterator
+- testNegativeSize
+- testOverflow
 - testSize
 - testToArray
 - testToArrayWithArrayParameter

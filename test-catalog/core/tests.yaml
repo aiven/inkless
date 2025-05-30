@@ -246,11 +246,6 @@ kafka.api.DelegationTokenEndToEndAuthorizationWithOwnerTest:
 - testProduceConsumeViaSubscribe
 - testProduceConsumeWithPrefixedAcls
 - testProduceConsumeWithWildcardAcls
-kafka.api.GroupAuthorizerIntegrationTest:
-- testAuthorizedProduceAndConsume
-- testConsumeCloseWithoutGroupPermission
-- testConsumeUnsubscribeWithoutGroupPermission
-- testUnauthorizedProduceAndConsume
 kafka.api.GroupCoordinatorIntegrationTest:
 - testCoordinatorFailoverAfterCompactingPartitionWithConsumerGroupDeleted
 - testCoordinatorFailoverAfterCompactingPartitionWithConsumerGroupMemberJoiningAndLeaving
