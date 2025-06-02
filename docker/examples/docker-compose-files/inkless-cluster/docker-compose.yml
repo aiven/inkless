@@ -122,7 +122,7 @@ services:
       - minio
     entrypoint: >
       /bin/sh -c "
-      until /usr/bin/mc config host add local http://minio:9000 minioadmin minioadmin; do
+      until /usr/bin/mc alias set local http://minio:9000 minioadmin minioadmin; do
         echo 'Waiting for Minio...';
         sleep 5;
       done;
