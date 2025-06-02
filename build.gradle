@@ -1066,7 +1066,7 @@ project(':core') {
     testImplementation libs.testcontainersJunitJupiter
     testImplementation libs.testcontainersLocalstack
     testImplementation libs.testcontainersPostgresql
-    testImplementation libs.awsskdS3
+    testImplementation libs.awsSdkS3
     testImplementation project(':storage:inkless').sourceSets.test.output
 
     testRuntimeOnly runtimeTestLibs
@@ -2375,8 +2375,8 @@ project(':storage:inkless') {
     implementation libs.flywayPostgres
     implementation libs.jooq
     compileOnly libs.jooqMeta  // mostly to suppress compiler warnings, we don't use this at run time
-    implementation libs.awsskdS3
-    implementation platform(libs.azurebom)
+    implementation libs.awsSdkS3
+    implementation platform(libs.azureSdkBom)
     implementation("com.azure:azure-identity") {
       exclude group: "com.fasterxml.jackson.core"
       exclude group: "org.slf4j"
@@ -2385,7 +2385,7 @@ project(':storage:inkless') {
       exclude group: "com.fasterxml.jackson.core"
       exclude group: "org.slf4j"
     }
-    implementation(libs.gcssdk) {
+    implementation(libs.gcsSdk) {
       exclude group: 'com.google.errorprone', module: 'error_prone_annotations'
       exclude group: 'org.checkerframework', module: 'checker-qual'
       exclude group: 'com.google.code.findbugs', module: 'jsr305'
