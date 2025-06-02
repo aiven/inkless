@@ -161,9 +161,22 @@ class Writer implements Closeable {
                 openedAt = TimeUtils.durationMeasurementNow(time);
             }
 
+            // Prefer smaller files, than going above the buffer limit by rotating early if the active file is not empty
+            // and the request size (which may contain invalid batches/records) exceeds the max buffer size.
+            int nonValidatedRequestSize = entriesPerPartition.values().stream().mapToInt(MemoryRecords::sizeInBytes).sum();
+            final int beforeSize = this.activeFile.size();
+            if (!this.activeFile.isEmpty() && beforeSize + nonValidatedRequestSize > maxBufferSize) {
+                if (this.scheduledTick != null) {
+                    this.scheduledTick.cancel(false);
+                    this.scheduledTick = null;
+                }
+                rotateFile(false);
+            }
+
             final var result = this.activeFile.add(entriesPerPartition, topicConfigs, requestLocal);
             writerMetrics.requestAdded();
-            if (this.activeFile.size() >= maxBufferSize) {
+            final int afterSize = this.activeFile.size();
+            if (afterSize >= maxBufferSize) {
                 if (this.scheduledTick != null) {
                     this.scheduledTick.cancel(false);
                     this.scheduledTick = null;

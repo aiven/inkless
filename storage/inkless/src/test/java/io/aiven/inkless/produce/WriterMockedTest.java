@@ -54,6 +54,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.reset;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -149,7 +150,40 @@ class WriterMockedTest {
     }
 
     @Test
-    void committingDueToOverfillWithMultipleRequests() throws InterruptedException {
+    void committingDueToOverfillBeforeLastRequest() throws InterruptedException {
+        final Writer writer = new Writer(
+            time, Duration.ofMillis(1), 8 * 1024, commitTickScheduler, fileCommitter, writerMetrics, brokerTopicStats);
+
+        final Map<TopicIdPartition, MemoryRecords> writeRequest0 = Map.of(
+            T0P0, recordCreator.create(T0P0.topicPartition(), 1),
+            T0P1, recordCreator.create(T0P1.topicPartition(), 1),
+            T1P0, recordCreator.create(T1P0.topicPartition(), 1),
+            T1P1, recordCreator.create(T1P1.topicPartition(), 1)
+        );
+        final Map<TopicIdPartition, MemoryRecords> writeRequest1 = Map.of(
+            T0P0, recordCreator.create(T0P0.topicPartition(), 100),
+            T1P1, recordCreator.create(T1P1.topicPartition(), 100)
+        );
+        assertThat(writer.write(writeRequest0, TOPIC_CONFIGS, REQUEST_LOCAL)).isNotCompleted();
+        assertThat(writer.write(writeRequest1, TOPIC_CONFIGS, REQUEST_LOCAL)).isNotCompleted();
+
+        // Writes only trigger the first write to close and commit.
+        // The second write is not large enough to trigger a commit.
+        verify(fileCommitter).commit(closedFileCaptor.capture());
+        assertThat(closedFileCaptor.getValue().originalRequests())
+            .isEqualTo(Map.of(0, writeRequest0));
+        assertThat(closedFileCaptor.getValue().awaitingFuturesByRequest()).hasSize(1);
+
+        // The second write is committed on the next tick.
+        writer.tick();
+        verify(fileCommitter, times(2)).commit(closedFileCaptor.capture());
+        assertThat(closedFileCaptor.getValue().originalRequests())
+            .isEqualTo(Map.of(0, writeRequest1));
+        assertThat(closedFileCaptor.getValue().awaitingFuturesByRequest()).hasSize(1);
+    }
+
+    @Test
+    void committingDueToOverfillBeforeAfterLastRequest() throws InterruptedException {
         final Writer writer = new Writer(
             time, Duration.ofMillis(1), 8 * 1024, commitTickScheduler, fileCommitter, writerMetrics, brokerTopicStats);
 
@@ -169,10 +203,14 @@ class WriterMockedTest {
         assertThat(writer.write(writeRequest1, TOPIC_CONFIGS, REQUEST_LOCAL)).isNotCompleted();
 
         // As we wrote too much, commit must be triggered.
-        verify(fileCommitter).commit(closedFileCaptor.capture());
-        assertThat(closedFileCaptor.getValue().originalRequests())
-            .isEqualTo(Map.of(0, writeRequest0, 1, writeRequest1));
-        assertThat(closedFileCaptor.getValue().awaitingFuturesByRequest()).hasSize(2);
+        verify(fileCommitter, times(2)).commit(closedFileCaptor.capture());
+        assertThat(closedFileCaptor.getAllValues()).hasSize(2);
+        assertThat(closedFileCaptor.getAllValues().get(0).originalRequests())
+            .isEqualTo(Map.of(0, writeRequest0));
+        assertThat(closedFileCaptor.getAllValues().get(1).originalRequests())
+            .isEqualTo(Map.of(0, writeRequest1));
+        assertThat(closedFileCaptor.getAllValues().get(0).awaitingFuturesByRequest()).hasSize(1);
+        assertThat(closedFileCaptor.getAllValues().get(1).awaitingFuturesByRequest()).hasSize(1);
     }
 
     @Test
