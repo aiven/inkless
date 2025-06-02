@@ -2376,6 +2376,7 @@ project(':storage:inkless') {
     implementation libs.jooq
     compileOnly libs.jooqMeta  // mostly to suppress compiler warnings, we don't use this at run time
     implementation libs.awsSdkS3
+    runtimeOnly libs.awsSdkSts
     implementation platform(libs.azureSdkBom)
     implementation("com.azure:azure-identity") {
       exclude group: "com.fasterxml.jackson.core"

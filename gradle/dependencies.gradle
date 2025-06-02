@@ -157,6 +157,7 @@ libs += [
   argparse4j: "net.sourceforge.argparse4j:argparse4j:$versions.argparse4j",
   assertj: "org.assertj:assertj-core:$versions.assertj",
   awsSdkS3: "software.amazon.awssdk:s3:$versions.awsSdk",
+  awsSdkSts: "software.amazon.awssdk:sts:$versions.awsSdk",
   azureSdkBom: "com.azure:azure-sdk-bom:$versions.azureSdk",
   bcpkix: "org.bouncycastle:bcpkix-jdk18on:$versions.bcpkix",
   bndlib:"biz.aQute.bnd:biz.aQute.bndlib:$versions.bndlib",
