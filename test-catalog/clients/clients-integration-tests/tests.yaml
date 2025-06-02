@@ -7,6 +7,9 @@ org.apache.kafka.clients.ClientRebootstrapTest:
 - testConsumerRebootstrapDisabled
 - testProducerRebootstrap
 - testProducerRebootstrapDisabled
+org.apache.kafka.clients.CreateTopicsRequestWithPolicyTest:
+- testErrorCreateTopicsRequests
+- testValidCreateTopicsRequests
 org.apache.kafka.clients.MetadataVersionIntegrationTest:
 - testBasicMetadataVersionUpgrade
 - testDefaultIsLatestVersion
