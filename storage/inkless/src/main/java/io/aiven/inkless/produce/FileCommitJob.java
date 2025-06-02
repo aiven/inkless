@@ -51,8 +51,9 @@ class FileCommitJob implements Supplier<List<CommitBatchResponse>> {
     private final Time time;
     private final ControlPlane controlPlane;
     private final ObjectDeleter objectDeleter;
+    private final long commitSubmitTimeMs;
     private final Consumer<Long> durationCallback;
-    private final Consumer<Long> uploadWaitDurationCallback;
+    private final Consumer<Long> commitWaitDurationCallback;
 
     FileCommitJob(final int brokerId,
                   final ClosedFile file,
@@ -61,20 +62,26 @@ class FileCommitJob implements Supplier<List<CommitBatchResponse>> {
                   final ControlPlane controlPlane,
                   final ObjectDeleter objectDeleter,
                   final Consumer<Long> durationCallback,
-                  final Consumer<Long> uploadWaitDurationCallback) {
+                  final Consumer<Long> commitWaitDurationCallback) {
         this.brokerId = brokerId;
         this.file = file;
         this.uploadFuture = uploadFuture;
         this.controlPlane = controlPlane;
         this.time = time;
         this.objectDeleter = objectDeleter;
+        // Record the time when the commit job was submitted, so we can measure the duration of the commit wait.
+        this.commitSubmitTimeMs = time.milliseconds();
         this.durationCallback = durationCallback;
-        this.uploadWaitDurationCallback = uploadWaitDurationCallback;
+        this.commitWaitDurationCallback = commitWaitDurationCallback;
     }
 
     @Override
     public List<CommitBatchResponse> get() {
-        final UploadResult uploadResult = TimeUtils.measureDurationMsSupplier(time, this::waitForUpload, uploadWaitDurationCallback);
+        // The wait for upload is already measured, and should take the upload time or less if it was already completed.
+        final UploadResult uploadResult = waitForUpload();
+        // Measure the duration from the commit job submission to the moment we start committing.
+        // and should account for the wait time to execute the commit job on a single-threaded executor.
+        commitWaitDurationCallback.accept(time.milliseconds() - commitSubmitTimeMs);
         return TimeUtils.measureDurationMsSupplier(time, () -> doCommit(uploadResult), durationCallback);
     }
 
