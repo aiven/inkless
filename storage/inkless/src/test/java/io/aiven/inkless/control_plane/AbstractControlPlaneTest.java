@@ -466,9 +466,11 @@ public abstract class AbstractControlPlaneTest {
             List.of(new FindBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 0, Integer.MAX_VALUE)), Integer.MAX_VALUE);
 
         final List<DeleteRecordsResponse> deleteRecordsResponses = controlPlane.deleteRecords(List.of(
-            new DeleteRecordsRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 0)
+            new DeleteRecordsRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 0),
+            new DeleteRecordsRequest(EXISTING_TOPIC_1_ID_PARTITION_1, 0)
         ));
         assertThat(deleteRecordsResponses).containsExactly(
+            DeleteRecordsResponse.success(0),
             DeleteRecordsResponse.success(0)
         );
 
