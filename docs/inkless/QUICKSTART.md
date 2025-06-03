@@ -117,25 +117,34 @@ At this point all should be ready to run the Intellij configuration.
 Create topic:
 
 ```shell
-make create_topic ARGS=t1
+make create_topic ARGS="t1 --partitions 12"
 ```
 
-Produce some messages:
-
-```shell
-bin/kafka-producer-perf-test.sh \
-  --record-size 1000 --num-records 1000000 --throughput -1 \
-  --producer-props bootstrap.servers=127.0.0.1:9092 batch.size=1048576 linger.ms=100 \
-  --topic t1
-```
-
-Consume messages:
+Start consuming messages:
 
 ```shell
 bin/kafka-consumer-perf-test.sh --bootstrap-server 127.0.0.1:9092 \
-  --messages 100000 --from-latest \
+  --messages 10000000 --from-latest \
+  --reporting-interval 5000 \
+  --show-detailed-stats \
+  --timeout 60000 \
   --topic t1
 ```
+
+And then, produce messages with:
+
+```shell
+bin/kafka-producer-perf-test.sh \
+  --record-size 1000 --num-records 10000000 --throughput -1 \
+  --producer-props bootstrap.servers=127.0.0.1:9092 batch.size=1000000 linger.ms=100 max.request.size=12000000 \
+  --topic t1
+```
+
+> [!IMPORTANT]  
+> Single produce client is constraint to a single request process at a time.
+> To overcome this limitation, a producer can write to multiple partitions and increase the request max size.
+> See the [Performance](./PERFORMANCE.md) section for more details.
+
 
 Check MinIO for remote files on `http://localhost:9001/browse/inkless/` (`minioadmin:minioadmin`)
 
