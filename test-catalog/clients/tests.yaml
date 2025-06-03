@@ -2960,6 +2960,7 @@ org.apache.kafka.clients.producer.internals.SenderTest:
 - testTooLargeBatchesAreSafelyRemoved
 - testTransactionAbortableExceptionIsAnAbortableError
 - testTransactionAbortedExceptionOnAbortWithoutError
+- testTransactionShouldTransitionToAbortableForSenderAPI
 - testTransactionalRequestsSentOnShutdown
 - testTransactionalSplitBatchAndSend
 - testTransactionalUnknownProducerHandlingWhenRetentionLimitReached

@@ -861,11 +861,6 @@ org.apache.kafka.coordinator.group.modern.TopicIdsTest:
 - testTopicNamesCannotBeNull
 - testTopicResolverCannotBeNull
 - testTopicsImageCannotBeNull
-org.apache.kafka.coordinator.group.modern.TopicMetadataTest:
-- testAttributes
-- testEquals
-- testFromRecord
-- testTopicIdAndNameCannotBeNull
 org.apache.kafka.coordinator.group.modern.UnionSetTest:
 - testContains
 - testEquals
@@ -921,7 +916,6 @@ org.apache.kafka.coordinator.group.modern.consumer.ConsumerGroupTest:
 - testUpdateInvertedAssignment
 - testUpdateMember
 - testUpdateSubscribedTopicNamesAndSubscriptionType
-- testUpdateSubscriptionMetadata
 - testUpdatingMemberUpdatesPartitionEpoch
 - testUpdatingMemberUpdatesPartitionEpochWhenPartitionIsNotReleased
 - testUpdatingMemberUpdatesPartitionEpochWhenPartitionIsReassignedBeforeBeingRevoked
@@ -976,7 +970,6 @@ org.apache.kafka.coordinator.group.modern.share.ShareGroupTest:
 - testUpdateInvertedAssignment
 - testUpdateMember
 - testUpdateSubscribedTopicNamesAndSubscriptionType
-- testUpdateSubscriptionMetadata
 - testValidateDeleteGroup
 - testValidateOffsetCommit
 - testValidateOffsetDelete
