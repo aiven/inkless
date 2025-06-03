@@ -223,8 +223,6 @@ org.apache.kafka.coordinator.group.GroupCoordinatorShardTest:
 - testReplayStreamsGroupMemberMetadataWithNullValue
 - testReplayStreamsGroupMetadata
 - testReplayStreamsGroupMetadataWithNullValue
-- testReplayStreamsGroupPartitionMetadata
-- testReplayStreamsGroupPartitionMetadataWithNullValue
 - testReplayStreamsGroupTargetAssignmentMember
 - testReplayStreamsGroupTargetAssignmentMemberKeyWithNullValue
 - testReplayStreamsGroupTargetAssignmentMetadata
@@ -449,9 +447,6 @@ org.apache.kafka.coordinator.group.GroupMetadataManagerTest:
 - testReplayStreamsGroupMemberMetadataTombstoneExisting
 - testReplayStreamsGroupMemberMetadataTombstoneNotExisting
 - testReplayStreamsGroupMetadata
-- testReplayStreamsGroupPartitionMetadata
-- testReplayStreamsGroupPartitionMetadataTombstoneExisting
-- testReplayStreamsGroupPartitionMetadataTombstoneNotExisting
 - testReplayStreamsGroupTargetAssignmentMember
 - testReplayStreamsGroupTargetAssignmentMemberTombstoneExisting
 - testReplayStreamsGroupTargetAssignmentMemberTombstoneNonExisting
@@ -1027,11 +1022,6 @@ org.apache.kafka.coordinator.group.streams.StreamsCoordinatorRecordHelpersTest:
 - testNewStreamsGroupMemberTombstoneRecord
 - testNewStreamsGroupMemberTombstoneRecordNullGroupId
 - testNewStreamsGroupMemberTombstoneRecordNullMemberId
-- testNewStreamsGroupPartitionMetadataRecord
-- testNewStreamsGroupPartitionMetadataRecordNullGroupId
-- testNewStreamsGroupPartitionMetadataRecordNullNewPartitionMetadata
-- testNewStreamsGroupPartitionMetadataTombstoneRecord
-- testNewStreamsGroupPartitionMetadataTombstoneRecordNullGroupId
 - testNewStreamsGroupTargetAssignmentEpochRecord
 - testNewStreamsGroupTargetAssignmentEpochRecordNullGroupId
 - testNewStreamsGroupTargetAssignmentEpochTombstoneRecord
@@ -1067,7 +1057,7 @@ org.apache.kafka.coordinator.group.streams.StreamsGroupTest:
 - testAddTaskProcessIds
 - testAsDescribedGroup
 - testAsListedGroup
-- testComputePartitionMetadata
+- testComputeMetadataHash
 - testCreateGroupTombstoneRecords
 - testDeletingMemberRemovesProcessId
 - testGetMemberOrThrow
@@ -1083,9 +1073,6 @@ org.apache.kafka.coordinator.group.streams.StreamsGroupTest:
 - testRemoveMember
 - testRemoveStaticMember
 - testRemoveTaskProcessIds
-- testSetPartitionMetadataUpdatesStateAndConfiguredTopology
-- testSetTopologyUpdatesStateAndConfiguredTopology
-- testSetTopologyUpdatesStateAndConfiguredTopologyWithPreviousCallToSetMetadata
 - testShutdownRequestedMethods
 - testUpdateMember
 - testUpdatingMemberUpdatesProcessId
@@ -1128,15 +1115,14 @@ org.apache.kafka.coordinator.group.streams.TopicMetadataTest:
 - testConstructorWithNullUuid
 - testConstructorWithZeroNumPartitions
 - testConstructorWithZeroUuid
-- testFromRecord
 org.apache.kafka.coordinator.group.streams.TopologyMetadataTest:
 - testIsStateful
 - testIsStatefulThrowsExceptionWhenSubtopologyIdDoesNotExist
 - testMaxNumInputPartitions
 - testMaxNumInputPartitionsThrowsExceptionWhenSubtopologyContainsNoSourceTopics
 - testMaxNumInputPartitionsThrowsExceptionWhenSubtopologyIdDoesNotExist
+- testMetadataImage
 - testSubtopologies
-- testTopicMetadata
 - testTopology
 org.apache.kafka.coordinator.group.streams.assignor.GroupSpecImplTest:
 - testMembers
