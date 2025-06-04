@@ -121,7 +121,7 @@ To achieve the initial goal of 10MiB/s, and a default request size of 1MiB is gi
 we would need to increase the linger time, to avoid piling up requests and waiting for the next request to be processed,
 and increase the request size, to allow for producers to create larger requests.
 
-Let's double the request size to 2MiB, double the batch size, and increase the linger time to 50ms:
+Let's double the request size to 2MiB, double the batch size, and increase the linger time to 100ms:
 
 ```properties
   linger.ms=100
