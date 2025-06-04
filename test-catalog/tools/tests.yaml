@@ -830,6 +830,12 @@ org.apache.kafka.tools.reassign.ReassignPartitionsUnitTest:
 - testPartitionReassignStatesToString
 - testPropagateInvalidJsonError
 - testReplicaMoveStatesToString
+org.apache.kafka.tools.streams.DeleteStreamsGroupTest:
+- testDeleteAllGroupsAfterVersionDowngrade
+- testDeleteMultipleGroup
+- testDeleteSingleGroup
+- testDeleteWithUnrecognizedOption
+- testDeleteWithoutGroupOption
 org.apache.kafka.tools.streams.DescribeStreamsGroupTest:
 - testDescribeStreamsGroup
 - testDescribeStreamsGroupWithMembersAndVerboseOptions
@@ -844,6 +850,8 @@ org.apache.kafka.tools.streams.ListStreamsGroupTest:
 - testListStreamsGroupWithoutFilters
 - testListWithUnrecognizedNewOption
 org.apache.kafka.tools.streams.StreamsGroupCommandTest:
+- testDeleteNonStreamsGroup
+- testDeleteStreamsGroup
 - testDescribeStreamsGroups
 - testDescribeStreamsGroupsGetOffsets
 - testGroupStatesFromString
@@ -851,3 +859,4 @@ org.apache.kafka.tools.streams.StreamsGroupCommandTest:
 - testListStreamsGroupsWithStates
 - testListWithUnrecognizedOption
 - testPrintEmptyGroupState
+- testRetrieveInternalTopics
