@@ -837,6 +837,12 @@ org.apache.kafka.tools.streams.DescribeStreamsGroupTest:
 - testDescribeStreamsGroupWithStateAndVerboseOptions
 - testDescribeStreamsGroupWithStateOption
 - testDescribeStreamsGroupWithVerboseOption
+org.apache.kafka.tools.streams.ListStreamsGroupTest:
+- testListStreamsGroupOutput
+- testListStreamsGroupWithSpecifiedStates
+- testListStreamsGroupWithStates
+- testListStreamsGroupWithoutFilters
+- testListWithUnrecognizedNewOption
 org.apache.kafka.tools.streams.StreamsGroupCommandTest:
 - testDescribeStreamsGroups
 - testDescribeStreamsGroupsGetOffsets
