@@ -551,6 +551,7 @@ org.apache.kafka.coordinator.group.GroupMetadataManagerTest:
 - testStreamsNewJoiningMemberTriggersNewTargetAssignment
 - testStreamsNewMemberIsRejectedWithMaximumMembersIsReached
 - testStreamsOnNewMetadataImage
+- testStreamsOwnedTasksValidation
 - testStreamsPartitionMetadataRefreshedAfterGroupIsLoaded
 - testStreamsPartitionMetadataRefreshedAgainAfterWriteFailure
 - testStreamsRebalanceTimeoutExpiration
@@ -1112,7 +1113,6 @@ org.apache.kafka.coordinator.group.streams.TopologyMetadataTest:
 - testIsStateful
 - testIsStatefulThrowsExceptionWhenSubtopologyIdDoesNotExist
 - testMaxNumInputPartitions
-- testMaxNumInputPartitionsThrowsExceptionWhenSubtopologyContainsNoSourceTopics
 - testMaxNumInputPartitionsThrowsExceptionWhenSubtopologyIdDoesNotExist
 - testMetadataImage
 - testSubtopologies
@@ -1186,6 +1186,7 @@ org.apache.kafka.coordinator.group.streams.topics.ConfiguredInternalTopicTest:
 - testConstructorWithZeroPartitions
 org.apache.kafka.coordinator.group.streams.topics.ConfiguredSubtopologyTest:
 - testAsStreamsGroupDescribeSubtopology
+- testConstructorWithNegativeTaskCount
 - testConstructorWithNullRepartitionSinkTopics
 - testConstructorWithNullRepartitionSourceTopics
 - testConstructorWithNullSourceTopics
