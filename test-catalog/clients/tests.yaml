@@ -2899,6 +2899,7 @@ org.apache.kafka.clients.producer.internals.RecordAccumulatorTest:
 - testUniformBuiltInPartitioner
 org.apache.kafka.clients.producer.internals.SenderTest:
 - senderThreadShouldNotGetStuckWhenThrottledAndAddingPartitionsToTxn
+- testAbortableErrorIsConvertedToFatalErrorDuringAbort
 - testAppendInExpiryCallback
 - testAwaitPendingRecordsBeforeCommittingTransaction
 - testBatchesDrainedWithOldProducerIdShouldSucceedOnSubsequentRetry
