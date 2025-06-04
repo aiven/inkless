@@ -4532,6 +4532,59 @@ org.apache.kafka.common.security.kerberos.KerberosNameTest:
 - testToUpperCase
 org.apache.kafka.common.security.kerberos.KerberosRuleTest:
 - testReplaceParameters
+org.apache.kafka.common.security.oauthbearer.BrokerJwtValidatorTest:
+- testEcdsaEncryptionAlgorithm
+- testEmptySections
+- testEmptyString
+- testInvalidEncryptionAlgorithm
+- testMissingHeader
+- testMissingPayload
+- testMissingSignature
+- testMissingSubShouldBeValid
+- testNull
+- testRsaEncryptionAlgorithm
+- testWhitespace
+org.apache.kafka.common.security.oauthbearer.ClaimValidationUtilsTest:
+- testValidateClaimNameOverride
+- testValidateClaimNameOverrideDisallowsEmptyNullAndWhitespace
+- testValidateExpiration
+- testValidateExpirationAllowsZero
+- testValidateExpirationDisallowsNegatives
+- testValidateExpirationDisallowsNull
+- testValidateIssuedAt
+- testValidateIssuedAtAllowsNull
+- testValidateIssuedAtAllowsZero
+- testValidateIssuedAtDisallowsNegatives
+- testValidateScopes
+- testValidateScopesDisallowsDuplicates
+- testValidateScopesDisallowsEmptyNullAndWhitespace
+- testValidateScopesResultIsImmutable
+- testValidateScopesResultThrowsExceptionOnMutation
+- testValidateSubject
+- testValidateSubjectDisallowsEmptyNullAndWhitespace
+org.apache.kafka.common.security.oauthbearer.ClientJwtValidatorTest:
+- testEmptySections
+- testEmptyString
+- testMissingHeader
+- testMissingPayload
+- testMissingSignature
+- testNull
+- testWhitespace
+org.apache.kafka.common.security.oauthbearer.DefaultJwtRetrieverTest:
+- testConfigureRefreshingFileJwtRetriever
+- testConfigureRefreshingFileJwtRetrieverWithInvalidDirectory
+- testConfigureWithAccessClientCredentials
+- testConfigureWithAccessTokenFile
+- testSaslOauthbearerTokenEndpointUrlIsNotAllowed
+- testUrlencodeHeader
+org.apache.kafka.common.security.oauthbearer.DefaultJwtValidatorTest:
+- testConfigureWithVerificationKeyResolver
+- testConfigureWithoutVerificationKeyResolver
+org.apache.kafka.common.security.oauthbearer.JwtBearerJwtRetrieverTest:
+- testConfigure
+- testConfigureWithInvalidPassphrase
+- testConfigureWithMalformedPrivateKey
+- testConfigureWithStaticAssertion
 org.apache.kafka.common.security.oauthbearer.OAuthBearerExtensionsValidatorCallbackTest:
 - testCannotValidateExtensionWhichWasNotGiven
 - testInvalidExtensionsAndErrorMessagesAreReturned
@@ -4561,7 +4614,7 @@ org.apache.kafka.common.security.oauthbearer.OAuthBearerTokenCallbackTest:
 org.apache.kafka.common.security.oauthbearer.OAuthBearerValidatorCallbackHandlerTest:
 - testBasic
 - testHandlerCloseDoesNotThrowException
-- testHandlerInitThrowsException
+- testHandlerConfigureThrowsException
 - testInvalidAccessToken
 org.apache.kafka.common.security.oauthbearer.OAuthBearerValidatorCallbackTest:
 - testError
@@ -4604,44 +4657,16 @@ org.apache.kafka.common.security.oauthbearer.internals.secured.BasicOAuthBearerT
 - basic
 - negativeLifetime
 - noErrorIfModifyScope
-org.apache.kafka.common.security.oauthbearer.internals.secured.BrokerJwtValidatorTest:
-- testEcdsaEncryptionAlgorithm
-- testEmptySections
-- testEmptyString
-- testInvalidEncryptionAlgorithm
-- testMissingHeader
-- testMissingPayload
-- testMissingSignature
-- testMissingSubShouldBeValid
-- testNull
-- testRsaEncryptionAlgorithm
-- testWhitespace
-org.apache.kafka.common.security.oauthbearer.internals.secured.ClaimValidationUtilsTest:
-- testValidateClaimNameOverride
-- testValidateClaimNameOverrideDisallowsEmptyNullAndWhitespace
-- testValidateExpiration
-- testValidateExpirationAllowsZero
-- testValidateExpirationDisallowsNegatives
-- testValidateExpirationDisallowsNull
-- testValidateIssuedAt
-- testValidateIssuedAtAllowsNull
-- testValidateIssuedAtAllowsZero
-- testValidateIssuedAtDisallowsNegatives
-- testValidateScopes
-- testValidateScopesDisallowsDuplicates
-- testValidateScopesDisallowsEmptyNullAndWhitespace
-- testValidateScopesResultIsImmutable
-- testValidateScopesResultThrowsExceptionOnMutation
-- testValidateSubject
-- testValidateSubjectDisallowsEmptyNullAndWhitespace
-org.apache.kafka.common.security.oauthbearer.internals.secured.ClientJwtValidatorTest:
-- testEmptySections
-- testEmptyString
-- testMissingHeader
-- testMissingPayload
-- testMissingSignature
-- testNull
-- testWhitespace
+org.apache.kafka.common.security.oauthbearer.internals.secured.CachedFileTest:
+- testFileDoesNotExist
+- testLastModifiedPolicy
+- testStaticPolicy
+- testTransformerError
+org.apache.kafka.common.security.oauthbearer.internals.secured.ClientCredentialsRequestFormatterTest:
+- testFormatAuthorizationHeaderEncoding
+- testFormatterMissingValues
+- testMissingScopes
+- testScopeEscaping
 org.apache.kafka.common.security.oauthbearer.internals.secured.ConfigurationUtilsTest:
 - testFile
 - testFileDoesNotExist
@@ -4650,6 +4675,7 @@ org.apache.kafka.common.security.oauthbearer.internals.secured.ConfigurationUtil
 - testFileUnreadable
 - testFileWhitespace
 - testFileWithSuperfluousWhitespace
+- testThrowIfFileIsNotAllowed
 - testThrowIfURLIsNotAllowed
 - testUrl
 - testUrlCaseInsensitivity
@@ -4661,17 +4687,6 @@ org.apache.kafka.common.security.oauthbearer.internals.secured.ConfigurationUtil
 - testUrlNull
 - testUrlWhitespace
 - testUrlWithSuperfluousWhitespace
-org.apache.kafka.common.security.oauthbearer.internals.secured.DefaultJwtRetrieverTest:
-- testConfigureRefreshingFileJwtRetriever
-- testConfigureRefreshingFileJwtRetrieverWithInvalidDirectory
-- testConfigureRefreshingFileJwtRetrieverWithInvalidFile
-- testConfigureWithAccessClientCredentials
-- testConfigureWithAccessTokenFile
-- testSaslOauthbearerTokenEndpointUrlIsNotAllowed
-- testUrlencodeHeader
-org.apache.kafka.common.security.oauthbearer.internals.secured.DefaultJwtValidatorTest:
-- testConfigureWithVerificationKeyResolver
-- testConfigureWithoutVerificationKeyResolver
 org.apache.kafka.common.security.oauthbearer.internals.secured.HttpJwtRetrieverTest:
 - test
 - testCopy
@@ -4681,19 +4696,14 @@ org.apache.kafka.common.security.oauthbearer.internals.secured.HttpJwtRetrieverT
 - testErrorResponseIsInvalidJson
 - testErrorResponseRetryableCode
 - testErrorResponseUnretryableCode
-- testFormatAuthorizationHeader
-- testFormatAuthorizationHeaderEncoding
-- testFormatAuthorizationHeaderMissingValues
-- testFormatRequestBody
-- testFormatRequestBodyMissingValues
-- testFormatRequestBodyWithEscaped
-- testParseAccessToken
-- testParseAccessTokenEmptyAccessToken
-- testParseAccessTokenInvalidJson
-- testParseAccessTokenMissingAccessToken
 org.apache.kafka.common.security.oauthbearer.internals.secured.JaasOptionsUtilsTest:
 - testSSLClientConfig
 - testShouldUseSslClientConfig
+org.apache.kafka.common.security.oauthbearer.internals.secured.JwtResponseParserTest:
+- testParseJwt
+- testParseJwtEmptyAccessToken
+- testParseJwtInvalidJson
+- testParseJwtMissingAccessToken
 org.apache.kafka.common.security.oauthbearer.internals.secured.RefreshingHttpsJwksTest:
 - testBasicScheduleRefresh
 - testLongKey
@@ -4709,8 +4719,25 @@ org.apache.kafka.common.security.oauthbearer.internals.secured.RetryTest:
 org.apache.kafka.common.security.oauthbearer.internals.secured.VerificationKeyResolverFactoryTest:
 - testConfigureRefreshingFileVerificationKeyResolver
 - testConfigureRefreshingFileVerificationKeyResolverWithInvalidDirectory
-- testConfigureRefreshingFileVerificationKeyResolverWithInvalidFile
 - testSaslOauthbearerTokenEndpointUrlIsNotAllowed
+org.apache.kafka.common.security.oauthbearer.internals.secured.assertion.DefaultAssertionCreatorTest:
+- testAlgorithm
+- testInvalidAlgorithm
+- testInvalidPrivateKey
+- testPrivateKey
+- testPrivateKeyId
+org.apache.kafka.common.security.oauthbearer.internals.secured.assertion.DynamicAssertionJwtTemplateTest:
+- testBasicUsage
+- testJtiUniqueness
+org.apache.kafka.common.security.oauthbearer.internals.secured.assertion.FileAssertionCreatorTest:
+- testBasicUsage
+- testJwtWithWhitespace
+org.apache.kafka.common.security.oauthbearer.internals.secured.assertion.FileAssertionJwtTemplateTest:
+- testBasicUsage
+- testHeaderOnly
+- testMalformedFile
+- testMalformedFormat
+- testPayloadOnly
 org.apache.kafka.common.security.oauthbearer.internals.unsecured.OAuthBearerScopeUtilsTest:
 - invalidScope
 - validScope
