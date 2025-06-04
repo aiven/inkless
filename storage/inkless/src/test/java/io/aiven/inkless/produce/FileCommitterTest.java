@@ -34,6 +34,7 @@ import org.mockito.quality.Strictness;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.ByteBuffer;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
@@ -86,7 +87,8 @@ class FileCommitterTest {
         Map.of(1, new CompletableFuture<>()),
         List.of(CommitBatchRequest.of(1, TID0P0, 0, 0, 0, 0, 0, TimestampType.CREATE_TIME)),
         Map.of(),
-        new byte[10]);
+        ByteBuffer.wrap(new byte[10]),
+        10);
     static final KeyAlignmentStrategy KEY_ALIGNMENT_STRATEGY = new FixedBlockAlignment(Integer.MAX_VALUE);
     static final ObjectCache OBJECT_CACHE = new NullCache();
 
@@ -114,7 +116,7 @@ class FileCommitterTest {
     @SuppressWarnings("unchecked")
     void success() throws Exception {
         doNothing()
-            .when(storage).upload(eq(OBJECT_KEY), any(InputStream.class), eq((long) FILE.data().length));
+            .when(storage).upload(eq(OBJECT_KEY), any(InputStream.class), eq((long) FILE.data().array().length));
 
         when(time.nanoseconds()).thenReturn(10_000_000L);
 
@@ -138,7 +140,7 @@ class FileCommitterTest {
         committer.commit(FILE);
 
         assertThat(committer.totalFilesInProgress()).isOne();
-        assertThat(committer.totalBytesInProgress()).isEqualTo(FILE.data().length);
+        assertThat(committer.totalBytesInProgress()).isEqualTo(FILE.data().array().length);
 
         verify(executorServiceUpload).submit(uploadCallableCaptor.capture());
         final Callable<ObjectKey> uploadCallable = uploadCallableCaptor.getValue();
@@ -153,7 +155,7 @@ class FileCommitterTest {
         assertThat(committer.totalFilesInProgress()).isZero();
         assertThat(committer.totalBytesInProgress()).isZero();
 
-        verify(metrics).fileAdded(eq(FILE.size()));
+        verify(metrics).fileAdded(eq(FILE.totalSize()));
         verify(metrics).fileUploadFinished(eq(0L));
         verify(metrics).fileCommitFinished(eq(0L));
         verify(metrics).fileFinished(eq(Instant.EPOCH), eq(Instant.ofEpochMilli(10L)));
@@ -163,7 +165,7 @@ class FileCommitterTest {
     @SuppressWarnings("unchecked")
     void commitFailed() throws Exception {
         doNothing()
-            .when(storage).upload(eq(OBJECT_KEY), any(InputStream.class), eq((long) FILE.data().length));
+            .when(storage).upload(eq(OBJECT_KEY), any(InputStream.class), eq((long) FILE.totalSize()));
 
         when(time.nanoseconds()).thenReturn(10_000_000L);
 
@@ -184,7 +186,7 @@ class FileCommitterTest {
         committer.commit(FILE);
 
         assertThat(committer.totalFilesInProgress()).isOne();
-        assertThat(committer.totalBytesInProgress()).isEqualTo(FILE.data().length);
+        assertThat(committer.totalBytesInProgress()).isEqualTo(FILE.data().array().length);
 
         verify(executorServiceUpload).submit(uploadCallableCaptor.capture());
         final Callable<ObjectKey> uploadCallable = uploadCallableCaptor.getValue();
@@ -199,7 +201,7 @@ class FileCommitterTest {
         assertThat(committer.totalFilesInProgress()).isZero();
         assertThat(committer.totalBytesInProgress()).isZero();
 
-        verify(metrics).fileAdded(eq(FILE.size()));
+        verify(metrics).fileAdded(eq(FILE.totalSize()));
         verify(metrics).fileUploadFinished(eq(0L));
         verify(metrics).fileCommitFinished(eq(0L));
         verify(metrics).fileFinished(eq(Instant.EPOCH), eq(Instant.ofEpochMilli(10L)));
