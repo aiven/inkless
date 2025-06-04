@@ -69,6 +69,7 @@ org.apache.kafka.clients.consumer.ConsumerIntegrationTest:
 - testFetchPartitionsWithAlwaysFailedListenerWithGroupProtocolClassic
 - testFetchPartitionsWithAlwaysFailedListenerWithGroupProtocolConsumer
 - testLeaderEpoch
+- testRackAwareAssignment
 org.apache.kafka.clients.consumer.ConsumerTopicCreationTest:
 - testAsyncConsumerTopicCreationIfConsumerAllowToCreateTopic
 - testAsyncConsumerTopicCreationIfConsumerDisallowToCreateTopic

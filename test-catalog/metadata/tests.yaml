@@ -1,6 +1,7 @@
 org.apache.kafka.controller.AclControlManagerTest:
 - testAddAndDelete
 - testCreateAclDeleteAcl
+- testCreateDedupe
 - testDeleteDedupe
 - testLoadSnapshot
 - testValidateAclWithBadPrincipal

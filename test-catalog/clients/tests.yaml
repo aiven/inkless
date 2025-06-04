@@ -47,6 +47,9 @@ org.apache.kafka.clients.FetchSessionHandlerTest:
 - testTopicIdUsageGrantedOnIdUpgrade
 - testVerifyFullFetchResponsePartitions
 - testVerifyFullFetchResponsePartitionsWithTopicIds
+org.apache.kafka.clients.GroupRebalanceConfigTest:
+- testRackIdIsEmptyIfNoDefined
+- testRackIdIsNotEmptyIfDefined
 org.apache.kafka.clients.InFlightRequestsTest:
 - testClearAll
 - testCompleteLastSent
@@ -1280,6 +1283,7 @@ org.apache.kafka.clients.consumer.internals.ConsumerHeartbeatRequestManagerTest:
 - testPollOnLeaving
 - testPollTimerExpiration
 - testPollTimerExpirationShouldNotMarkMemberStaleIfMemberAlreadyLeaving
+- testRackIdInHeartbeatLifecycle
 - testRegexInHeartbeatLifecycle
 - testRegexInJoiningHeartbeat
 - testSendingLeaveGroupHeartbeatWhenPreviousOneInFlight
@@ -1338,6 +1342,7 @@ org.apache.kafka.clients.consumer.internals.ConsumerMembershipManagerTest:
 - testMemberJoiningTransitionsToStableWhenReceivingEmptyAssignment
 - testMemberKeepsUnresolvedAssignmentWaitingForMetadataUntilResolved
 - testMembershipManagerInitSupportsEmptyGroupInstanceId
+- testMembershipManagerRackId
 - testMembershipManagerServerAssignor
 - testMetadataUpdatesReconcilesUnresolvedAssignments
 - testMetadataUpdatesRequestsAnotherUpdateIfNeeded
