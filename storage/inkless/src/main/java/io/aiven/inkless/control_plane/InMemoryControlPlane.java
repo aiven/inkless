@@ -58,7 +58,6 @@ public class InMemoryControlPlane extends AbstractControlPlane {
     // LinkedHashMap to preserve the insertion order, to select files for merging in order.
     // The key is the object key.
     private final LinkedHashMap<String, FileInfo> files = new LinkedHashMap<>();
-    private final Map<String, FileToDeleteInternal> filesToDelete = new HashMap<>();
     private final HashMap<TopicIdPartition, TreeMap<Long, BatchInfoInternal>> batches = new HashMap<>();
     // The key is the ID.
     private final Map<Long, FileMergeWorkItem> fileMergeWorkItems = new HashMap<>();
@@ -103,13 +102,12 @@ public class InMemoryControlPlane extends AbstractControlPlane {
 
         try {
             final long now = time.milliseconds();
-            final FileInfo fileInfo = new FileInfo(fileIdCounter.incrementAndGet(), objectKey, ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, FileReason.PRODUCE, uploaderBrokerId, fileSize);
+            final FileInfo fileInfo = FileInfo.createUploaded(fileIdCounter.incrementAndGet(), objectKey, ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, FileReason.PRODUCE, uploaderBrokerId, fileSize);
             final List<CommitBatchResponse> responses = requests.map(request -> commitFileForValidRequest(now, fileInfo, request)).toList();
 
-            if (fileInfo.allDeleted()) {
-                filesToDelete.put(fileInfo.objectKey, new FileToDeleteInternal(fileInfo, TimeUtils.now(time)));
-            } else {
-                files.put(objectKey, fileInfo);
+            files.put(objectKey, fileInfo);
+            if (fileInfo.allBatchesDeleted()) {
+                fileInfo.markDeleted(TimeUtils.now(time));
             }
             return responses.iterator();
         } catch (final RuntimeException e) {
@@ -142,14 +140,12 @@ public class InMemoryControlPlane extends AbstractControlPlane {
             if (latestProducerState.epoch > request.producerEpoch()) {
                 LOGGER.warn("Producer request with epoch {} is less than the latest epoch {}. Rejecting request",
                     request.producerEpoch(), latestProducerState.epoch);
-                fileInfo.usedSize -= request.size();
                 return CommitBatchResponse.invalidProducerEpoch();
             }
 
             if (latestProducerState.lastEntries.isEmpty()) {
                 if (request.baseSequence() != 0) {
                     LOGGER.warn("Producer request with base sequence {} is not 0. Rejecting request", request.baseSequence());
-                    fileInfo.usedSize -= request.size();
                     return CommitBatchResponse.sequenceOutOfOrder(request);
                 }
             } else {
@@ -160,7 +156,6 @@ public class InMemoryControlPlane extends AbstractControlPlane {
                     LOGGER.warn("Producer request with base sequence {} and last sequence {} is a duplicate. Rejecting request",
                         request.baseSequence(), request.lastSequence());
                     final ProducerStateItem batchMetadata = first.get();
-                    fileInfo.usedSize -= request.size();
                     return CommitBatchResponse.ofDuplicate(batchMetadata.assignedOffset(), batchMetadata.batchMaxTimestamp(), logInfo.logStartOffset);
                 }
 
@@ -168,7 +163,6 @@ public class InMemoryControlPlane extends AbstractControlPlane {
                 if (request.baseSequence() - 1 != lastSeq || (lastSeq == Integer.MAX_VALUE && request.baseSequence() != 0)) {
                     LOGGER.warn("Producer request with base sequence {} is not the next sequence after the last sequence {}. Rejecting request",
                         request.baseSequence(), lastSeq);
-                    fileInfo.usedSize -= request.size();
                     return CommitBatchResponse.sequenceOutOfOrder(request);
                 }
             }
@@ -202,6 +196,8 @@ public class InMemoryControlPlane extends AbstractControlPlane {
             )
         );
         coordinates.put(lastOffset, new BatchInfoInternal(batchInfo, fileInfo));
+
+        fileInfo.addBatch(batchInfo);
 
         return CommitBatchResponse.success(firstOffset, now, logInfo.logStartOffset, request);
     }
@@ -282,10 +278,9 @@ public class InMemoryControlPlane extends AbstractControlPlane {
         while (!coordinates.isEmpty() && coordinates.firstKey() < logInfo.logStartOffset) {
             final BatchInfoInternal batchInfoInternal = coordinates.remove(coordinates.firstKey());
             final FileInfo fileInfo = batchInfoInternal.fileInfo;
-            fileInfo.deleteBatch(batchInfoInternal.batchInfo.metadata().byteSize());
-            if (fileInfo.allDeleted()) {
-                files.remove(fileInfo.objectKey);
-                filesToDelete.put(fileInfo.objectKey, new FileToDeleteInternal(fileInfo, TimeUtils.now(time)));
+            fileInfo.deleteBatch(batchInfoInternal.batchInfo);
+            if (fileInfo.allBatchesDeleted()) {
+                fileInfo.markDeleted(TimeUtils.now(time));
             }
         }
         return (DeleteRecordsResponse.success(logInfo.logStartOffset));
@@ -309,10 +304,9 @@ public class InMemoryControlPlane extends AbstractControlPlane {
             for (final var entry : coordinates.entrySet()) {
                 final BatchInfoInternal batchInfoInternal = entry.getValue();
                 final FileInfo fileInfo = batchInfoInternal.fileInfo;
-                fileInfo.deleteBatch(batchInfoInternal.batchInfo.metadata().byteSize());
-                if (fileInfo.allDeleted()) {
-                    files.remove(fileInfo.objectKey);
-                    filesToDelete.put(fileInfo.objectKey, new FileToDeleteInternal(fileInfo, TimeUtils.now(time)));
+                fileInfo.deleteBatch(batchInfoInternal.batchInfo);
+                if (fileInfo.allBatchesDeleted()) {
+                    fileInfo.markDeleted(TimeUtils.now(time));
                 }
             }
         }
@@ -320,15 +314,15 @@ public class InMemoryControlPlane extends AbstractControlPlane {
 
     @Override
     public List<FileToDelete> getFilesToDelete() {
-        return filesToDelete.values().stream()
-            .map(f -> new FileToDelete(f.fileInfo().objectKey, f.markedForDeletionAt()))
+        return files.values().stream()
+            .filter(f -> f.fileState == FileState.DELETING)
+            .map(f -> new FileToDelete(f.objectKey, f.markedForDeletionAt))
             .toList();
     }
 
     @Override
     public synchronized void deleteFiles(DeleteFilesRequest request) {
         for (final String objectKey : request.objectKeyPaths()) {
-            filesToDelete.remove(objectKey);
             files.remove(objectKey);
         }
     }
@@ -412,6 +406,10 @@ public class InMemoryControlPlane extends AbstractControlPlane {
             }
 
             final FileInfo fileInfo = entry.getValue();
+            // This file is deleted.
+            if (fileInfo.fileState == FileState.DELETING) {
+                continue;
+            }
             // This file is already in some merge work item -- skip.
             if (lockedFiles.contains(fileInfo.fileId)) {
                 continue;
@@ -465,8 +463,6 @@ public class InMemoryControlPlane extends AbstractControlPlane {
                                                      final int uploaderBrokerId,
                                                      final long fileSize,
                                                      final List<MergedFileBatch> batches) {
-        final Instant now = TimeUtils.now(time);
-
         final FileMergeWorkItem workItem = fileMergeWorkItems.get(workItemId);
         if (workItem == null) {
             // Do not delete the file here, it may be a retry of a successful commit.
@@ -483,7 +479,7 @@ public class InMemoryControlPlane extends AbstractControlPlane {
         for (final MergedFileBatch mergedFileBatch : batches) {
             // We don't support compaction or concatenation yet, so the only correct number of parent batches is 1.
             if (mergedFileBatch.parentBatches().size() != 1) {
-                markFileToDelete(objectKey, uploaderBrokerId, now);
+                createEmptyDeletingFile(objectKey, uploaderBrokerId);
 
                 throw new ControlPlaneException(
                     String.format("Invalid parent batch count %d in %s",
@@ -502,7 +498,7 @@ public class InMemoryControlPlane extends AbstractControlPlane {
                     .toList();
                 for (final var parentBatch : parentBatchesFound) {
                     if (!workItemFileIds.contains(parentBatch.fileInfo.fileId)) {
-                        markFileToDelete(objectKey, uploaderBrokerId, now);
+                        createEmptyDeletingFile(objectKey, uploaderBrokerId);
 
                         throw new ControlPlaneException(
                             String.format("Batch %d is not part of work item in %s",
@@ -515,19 +511,14 @@ public class InMemoryControlPlane extends AbstractControlPlane {
         // Commit after all the checks.
         fileMergeWorkItems.remove(workItemId);
 
-        // Delete the old file and insert the new ones.
-        final Set<Long> currentFilesToDelete = this.filesToDelete.values().stream().map(fd -> fd.fileInfo().fileId).collect(Collectors.toSet());
+        // Delete the old files and insert the new one.
         for (final var oldFile : workItem.files()) {
-            // A file may be already deleted.
-            if (!currentFilesToDelete.contains(oldFile.fileId())) {
-                final FileInfo oldFileInfo = this.files.remove(oldFile.objectKey());
-                // It may be also already physically deleted, without any trace in `files` or `filesToDelete`.
-                if (oldFileInfo != null) {
-                    filesToDelete.put(oldFileInfo.objectKey, new FileToDeleteInternal(oldFileInfo, now));
-                }
+            final FileInfo oldFileInfo = this.files.get(oldFile.objectKey());
+            if (oldFileInfo != null && oldFileInfo.fileState == FileState.UPLOADED) {
+                oldFileInfo.markDeleted(TimeUtils.now(time));
             }
         }
-        final FileInfo mergedFile = new FileInfo(fileIdCounter.incrementAndGet(), objectKey, format, FileReason.MERGE, uploaderBrokerId, fileSize);
+        final FileInfo mergedFile = FileInfo.createUploaded(fileIdCounter.incrementAndGet(), objectKey, format, FileReason.MERGE, uploaderBrokerId, fileSize);
         this.files.put(objectKey, mergedFile);
 
         // Delete the old batches and insert the new one.
@@ -535,7 +526,6 @@ public class InMemoryControlPlane extends AbstractControlPlane {
             final TreeMap<Long, BatchInfoInternal> coordinates = this.batches.get(batch.metadata().topicIdPartition());
             // Probably the partition was deleted -- skip the new batch (exclude it from the file too).
             if (coordinates == null) {
-                mergedFile.deleteBatch(batch.metadata().byteSize());
                 continue;
             }
 
@@ -546,28 +536,25 @@ public class InMemoryControlPlane extends AbstractControlPlane {
                 .findFirst();
             // Probably the parent batch was deleted -- skip the new batch (exclude it from the file too).
             if (parentBatchFound.isEmpty()) {
-                mergedFile.deleteBatch(batch.metadata().byteSize());
                 continue;
             }
             coordinates.remove(parentBatchFound.get().getKey());
 
-            coordinates.put(batch.metadata().lastOffset(), new BatchInfoInternal(
-                new BatchInfo(batchIdCounter.incrementAndGet(), objectKey, batch.metadata()),
-                mergedFile
-            ));
+            final BatchInfo batchInfo = new BatchInfo(batchIdCounter.incrementAndGet(), objectKey, batch.metadata());
+            coordinates.put(batch.metadata().lastOffset(), new BatchInfoInternal(batchInfo, mergedFile));
+            mergedFile.addBatch(batchInfo);
         }
 
         // It may happen that the new file is absolutely empty after taking into account all the deleted batches.
         // In this case, delete it as well.
-        if (mergedFile.usedSize <= 0) {
-            final FileInfo mergedFileInfo = this.files.remove(mergedFile.objectKey);
-            filesToDelete.put(mergedFile.objectKey, new FileToDeleteInternal(mergedFileInfo, now));
+        if (mergedFile.allBatchesDeleted()) {
+            mergedFile.markDeleted(TimeUtils.now(time));
         }
     }
 
-    private void markFileToDelete(final String objectKey, final int uploaderBrokerId, final Instant now) {
-        final FileInfo fileInfo = new FileInfo(fileIdCounter.incrementAndGet(), objectKey, ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, FileReason.MERGE, uploaderBrokerId, 0);
-        filesToDelete.put(fileInfo.objectKey, new FileToDeleteInternal(fileInfo, now));
+    private void createEmptyDeletingFile(final String objectKey, final int uploaderBrokerId) {
+        final FileInfo fileInfo = FileInfo.createDeleting(fileIdCounter.incrementAndGet(), objectKey, ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, FileReason.MERGE, uploaderBrokerId, 0, TimeUtils.now(time));
+        this.files.put(objectKey, fileInfo);
     }
 
     @Override
@@ -598,40 +585,65 @@ public class InMemoryControlPlane extends AbstractControlPlane {
         final String objectKey;
         final ObjectFormat format;
         final FileReason fileReason;
+        FileState fileState;
         final int uploaderBrokerId;
+        Instant markedForDeletionAt;
         final long fileSize;
-        long usedSize;
+        final List<BatchInfo> batches = new ArrayList<>();
 
         private FileInfo(final long fileId,
                          final String objectKey,
                          final ObjectFormat format,
                          final FileReason fileReason,
+                         final FileState fileState,
                          final int uploaderBrokerId,
+                         final Instant markedForDeletionAt,
                          final long fileSize) {
             this.fileId = fileId;
             this.objectKey = objectKey;
             this.format = format;
             this.fileReason = fileReason;
+            this.fileState = fileState;
             this.uploaderBrokerId = uploaderBrokerId;
+            this.markedForDeletionAt = markedForDeletionAt;
             this.fileSize = fileSize;
-            this.usedSize = fileSize;
         }
 
-        private void deleteBatch(final long batchSize) {
-            final long newUsedSize = usedSize - batchSize;
-            if (newUsedSize < 0) {
-                throw new IllegalStateException("newUsedSize < 0: " + newUsedSize);
-            }
-            this.usedSize = newUsedSize;
+        private static FileInfo createUploaded(final long fileId,
+                                               final String objectKey,
+                                               final ObjectFormat format,
+                                               final FileReason fileReason,
+                                               final int uploaderBrokerId,
+                                               final long fileSize) {
+            return new FileInfo(fileId, objectKey, format, fileReason, FileState.UPLOADED, uploaderBrokerId, null, fileSize);
         }
 
-        private boolean allDeleted() {
-            return this.usedSize == 0;
+        private static FileInfo createDeleting(final long fileId,
+                                               final String objectKey,
+                                               final ObjectFormat format,
+                                               final FileReason fileReason,
+                                               final int uploaderBrokerId,
+                                               final long fileSize,
+                                               final Instant now) {
+            return new FileInfo(fileId, objectKey, format, fileReason, FileState.DELETING, uploaderBrokerId, now, fileSize);
         }
-    }
 
-    private record FileToDeleteInternal(FileInfo fileInfo,
-                                        Instant markedForDeletionAt) {
+        public void addBatch(final BatchInfo batchInfo) {
+            this.batches.add(batchInfo);
+        }
+
+        private void deleteBatch(final BatchInfo batchInfo) {
+            this.batches.remove(batchInfo);
+        }
+
+        private boolean allBatchesDeleted() {
+            return this.batches.isEmpty();
+        }
+
+        private void markDeleted(final Instant now) {
+            this.fileState = FileState.DELETING;
+            this.markedForDeletionAt = now;
+        }
     }
 
     private record BatchInfoInternal(BatchInfo batchInfo,
