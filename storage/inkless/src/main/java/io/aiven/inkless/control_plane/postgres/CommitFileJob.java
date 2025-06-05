@@ -110,6 +110,7 @@ class CommitFileJob implements Callable<List<CommitBatchResponse>> {
                     CommitBatchResponseV1.LOG_START_OFFSET,
                     CommitBatchResponseV1.ASSIGNED_BASE_OFFSET,
                     CommitBatchResponseV1.BATCH_TIMESTAMP,
+                    CommitBatchResponseV1.OBJECT_KEY,
                     CommitBatchResponseV1.ERROR
                 ).from(COMMIT_FILE_V1.call(
                     objectKey,
@@ -153,7 +154,8 @@ class CommitFileJob implements Callable<List<CommitBatchResponse>> {
                 case none:
                     final long assignedOffset = record.getAssignedBaseOffset();
                     final long logStartOffset = record.getLogStartOffset();
-                    yield CommitBatchResponse.success(assignedOffset, now.toEpochMilli(), logStartOffset, request);
+                    final String objectKey = record.getObjectKey();
+                    yield CommitBatchResponse.success(assignedOffset, now.toEpochMilli(), logStartOffset, objectKey, request);
                 case nonexistent_log:
                     yield CommitBatchResponse.unknownTopicOrPartition();
                 case invalid_producer_epoch:

@@ -43,6 +43,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 
+import java.time.Duration;
 import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalInt;
@@ -51,8 +52,10 @@ import java.util.concurrent.CompletableFuture;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 
+import io.aiven.inkless.cache.BatchCoordinateCache;
 import io.aiven.inkless.cache.FixedBlockAlignment;
 import io.aiven.inkless.cache.KeyAlignmentStrategy;
+import io.aiven.inkless.cache.MemoryBatchCoordinateCache;
 import io.aiven.inkless.cache.NullCache;
 import io.aiven.inkless.cache.ObjectCache;
 import io.aiven.inkless.common.ObjectKey;
@@ -77,6 +80,7 @@ public class FetchInterceptorTest {
     private static final ObjectKeyCreator OBJECT_KEY_CREATOR = ObjectKey.creator("", false);
     private static final KeyAlignmentStrategy KEY_ALIGNMENT_STRATEGY = new FixedBlockAlignment(Integer.MAX_VALUE);
     private static final ObjectCache OBJECT_CACHE = new NullCache();
+    private static final BatchCoordinateCache BATCH_COORDINATE_CACHE = new MemoryBatchCoordinateCache(Duration.ofSeconds(30));
 
     Time time = new MockTime();
     @Mock
@@ -109,7 +113,7 @@ public class FetchInterceptorTest {
     @BeforeEach
     public void setup() {
         sharedState = new SharedState(time, BROKER_ID, inklessConfig, metadataView, controlPlane, storageBackend,
-            OBJECT_KEY_CREATOR, KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, brokerTopicStats, defaultTopicConfigs);
+            OBJECT_KEY_CREATOR, KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, BATCH_COORDINATE_CACHE, brokerTopicStats, defaultTopicConfigs);
     }
 
     @Test

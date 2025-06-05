@@ -31,6 +31,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 
+import io.aiven.inkless.cache.BatchCoordinateCache;
 import io.aiven.inkless.control_plane.CommitBatchResponse;
 
 /**
@@ -40,9 +41,11 @@ class AppendCompleter {
     private static final Logger LOGGER = LoggerFactory.getLogger(AppendCompleter.class);
 
     private final ClosedFile file;
+    private final BatchCoordinateCache batchCoordinateCache;
 
-    public AppendCompleter(ClosedFile file) {
+    public AppendCompleter(ClosedFile file, BatchCoordinateCache batchCoordinateCache) {
         this.file = file;
+        this.batchCoordinateCache = batchCoordinateCache;
     }
 
     public void finishCommitSuccessfully(List<CommitBatchResponse> commitBatchResponses) {
@@ -58,6 +61,10 @@ class AppendCompleter {
             final var commitBatchRequest = file.commitBatchRequests().get(i);
             final var result = resultsPerRequest.computeIfAbsent(commitBatchRequest.requestId(), ignore -> new HashMap<>());
             final var commitBatchResponse = commitBatchResponses.get(i);
+            final var batchInfo = commitBatchResponse.batchCoordinate();
+            if (batchInfo != null) {
+                batchCoordinateCache.put(batchInfo);
+            }
 
             result.put(
                     commitBatchRequest.topicIdPartition(),
