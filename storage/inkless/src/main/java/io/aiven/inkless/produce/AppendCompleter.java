@@ -29,8 +29,11 @@ import org.slf4j.LoggerFactory;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.stream.Collectors;
 
+import io.aiven.inkless.cache.BatchCoordinateCache;
+import io.aiven.inkless.cache.CacheBatchCoordinate;
 import io.aiven.inkless.control_plane.CommitBatchResponse;
 
 /**
@@ -40,9 +43,11 @@ class AppendCompleter {
     private static final Logger LOGGER = LoggerFactory.getLogger(AppendCompleter.class);
 
     private final ClosedFile file;
+    private final BatchCoordinateCache batchCoordinateCache;
 
-    public AppendCompleter(ClosedFile file) {
+    public AppendCompleter(ClosedFile file, BatchCoordinateCache batchCoordinateCache) {
         this.file = file;
+        this.batchCoordinateCache = Objects.requireNonNull(batchCoordinateCache, "batchCoordinateCache cannot be null");
     }
 
     public void finishCommitSuccessfully(List<CommitBatchResponse> commitBatchResponses) {
@@ -58,6 +63,15 @@ class AppendCompleter {
             final var commitBatchRequest = file.commitBatchRequests().get(i);
             final var result = resultsPerRequest.computeIfAbsent(commitBatchRequest.requestId(), ignore -> new HashMap<>());
             final var commitBatchResponse = commitBatchResponses.get(i);
+
+            final CacheBatchCoordinate cacheBatchCoordinate = commitBatchResponse.cacheBatchCoordinate();
+            if (cacheBatchCoordinate != null) {
+                try {
+                    batchCoordinateCache.put(cacheBatchCoordinate);
+                } catch (final Exception e) {
+                    LOGGER.error("Failed to put batch coordinate into cache", e);
+                }
+            }
 
             result.put(
                     commitBatchRequest.topicIdPartition(),
