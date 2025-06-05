@@ -80,4 +80,6 @@ public interface ControlPlane extends Closeable, Configurable {
     }
 
     boolean isSafeToDeleteFile(String objectKeyPath);
+
+    GetLogInfoResponse getLogInfo(Uuid topicId, int partition);
 }
