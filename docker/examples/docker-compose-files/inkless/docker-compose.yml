@@ -25,6 +25,7 @@ services:
       # Inkless
       KAFKA_LOG_INKLESS_ENABLE: "true"
       KAFKA_INKLESS_CONSUME_CACHE_MAX_COUNT: "100"
+      KAFKA_INKLESS_BATCHCOORDINATE_CACHE_MAX_COUNT: "100"
 
       ## Control Plane
       ### Postgresql

@@ -23,6 +23,9 @@ import org.apache.kafka.common.requests.FetchRequest;
 import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.server.storage.log.FetchParams;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -33,6 +36,8 @@ import java.util.concurrent.Callable;
 import java.util.function.Consumer;
 
 import io.aiven.inkless.TimeUtils;
+import io.aiven.inkless.cache.BatchCoordinateCache;
+import io.aiven.inkless.cache.LogFragment;
 import io.aiven.inkless.control_plane.ControlPlane;
 import io.aiven.inkless.control_plane.FindBatchRequest;
 import io.aiven.inkless.control_plane.FindBatchResponse;
@@ -43,19 +48,24 @@ public class FindBatchesJob implements Callable<Map<TopicIdPartition, FindBatchR
     private final Time time;
     private final ControlPlane controlPlane;
     private final MetadataView metadataView;
+    private final BatchCoordinateCache batchCoordinateCache;
     private final FetchParams params;
     private final Map<TopicIdPartition, FetchRequest.PartitionData> fetchInfos;
     private final Consumer<Long> durationCallback;
 
+    private static final Logger LOGGER = LoggerFactory.getLogger(FindBatchesJob.class);
+
     public FindBatchesJob(Time time,
                           ControlPlane controlPlane,
                           MetadataView metadataView,
+                          BatchCoordinateCache batchCoordinateCache,
                           FetchParams params,
                           Map<TopicIdPartition, FetchRequest.PartitionData> fetchInfos,
                           Consumer<Long> durationCallback) {
         this.time = time;
         this.controlPlane = controlPlane;
         this.metadataView = metadataView;
+        this.batchCoordinateCache = batchCoordinateCache;
         this.params = params;
         this.fetchInfos = fetchInfos;
         this.durationCallback = durationCallback;
@@ -86,12 +96,31 @@ public class FindBatchesJob implements Callable<Map<TopicIdPartition, FindBatchR
             requests.add(new FindBatchRequest(topicIdPartition, fetchInfo.getValue().fetchOffset, fetchInfo.getValue().maxBytes));
         }
 
-        List<FindBatchResponse> responses = controlPlane.findBatches(requests, params.maxBytes);
-
+        var controlPlaneRequests = new ArrayList<FindBatchRequest>();
         Map<TopicIdPartition, FindBatchResponse> out = new HashMap<>();
-        for (int i = 0; i < requests.size(); i++) {
-            FindBatchRequest request = requests.get(i);
-            FindBatchResponse response = responses.get(i);
+        for (var request : requests) {
+            LogFragment logFragment = batchCoordinateCache.get(request.topicIdPartition(), request.offset());
+            if (logFragment != null) {
+                var response = FindBatchResponse.success(
+                    logFragment.batches().stream().map(batchCoordinate -> batchCoordinate.batchInfo(1)).toList(),
+                    logFragment.logStartOffset(),
+                    logFragment.highWaterMark()
+                );
+                out.put(request.topicIdPartition(), response);
+            } else {
+                controlPlaneRequests.add(request);
+            }
+        }
+
+        if (controlPlaneRequests.isEmpty()) {
+            return out;
+        }
+
+        List<FindBatchResponse> controlPlaneResponses = controlPlane.findBatches(controlPlaneRequests, params.maxBytes);
+
+        for (int i = 0; i < controlPlaneRequests.size(); i++) {
+            FindBatchRequest request = controlPlaneRequests.get(i);
+            FindBatchResponse response = controlPlaneResponses.get(i);
 
             // Older fetch versions (<13) don't have topicId in the request -- backfill it for backward compatibility
             TopicIdPartition topicIdPartition = request.topicIdPartition();

@@ -135,7 +135,7 @@ public abstract class AbstractControlPlaneTest {
             )
         );
         assertThat(commitResponse1).containsExactly(
-            CommitBatchResponse.success(0, time.milliseconds(), 0, successfulRequest1),
+            CommitBatchResponse.success(0, time.milliseconds(), 0, objectKey1, successfulRequest1),
             CommitBatchResponse.of(Errors.UNKNOWN_TOPIC_OR_PARTITION, -1, -1, -1),
             CommitBatchResponse.of(Errors.UNKNOWN_TOPIC_OR_PARTITION, -1, -1, -1)
         );
@@ -151,7 +151,7 @@ public abstract class AbstractControlPlaneTest {
             )
         );
         assertThat(commitResponse2).containsExactly(
-            CommitBatchResponse.success(10, time.milliseconds(), 0, successfulRequest2),
+            CommitBatchResponse.success(10, time.milliseconds(), 0, objectKey2, successfulRequest2),
             CommitBatchResponse.of(Errors.UNKNOWN_TOPIC_OR_PARTITION, -1, -1, -1),
             CommitBatchResponse.of(Errors.UNKNOWN_TOPIC_OR_PARTITION, -1, -1, -1)
         );
@@ -992,7 +992,7 @@ public abstract class AbstractControlPlaneTest {
         final List<CommitBatchResponse> responses = controlPlane.commitFile(
             objectKey, ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, BROKER_ID, FILE_SIZE, List.of(request1));
         assertThat(responses).containsExactly(
-            CommitBatchResponse.success(0, time.milliseconds(), 0, request1)
+            CommitBatchResponse.success(0, time.milliseconds(), 0, objectKey, request1)
         );
 
         assertThatThrownBy(() -> controlPlane.commitFile(objectKey, ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, BROKER_ID, FILE_SIZE, List.of(request1)))
@@ -1015,11 +1015,11 @@ public abstract class AbstractControlPlaneTest {
         final List<CommitBatchResponse> responses = controlPlane.commitFile(
             "a", ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, BROKER_ID, FILE_SIZE, requests);
         assertThat(responses).containsExactly(
-            CommitBatchResponse.success(0, time.milliseconds(), 0, requests.get(0)),
-            CommitBatchResponse.success(10, time.milliseconds(), 0, requests.get(1)),
-            CommitBatchResponse.success(20, time.milliseconds(), 0, requests.get(2)),
-            CommitBatchResponse.success(30, time.milliseconds(), 0, requests.get(3)),
-            CommitBatchResponse.success(40, time.milliseconds(), 0, requests.get(4))
+            CommitBatchResponse.success(0, time.milliseconds(), 0, "a", requests.get(0)),
+            CommitBatchResponse.success(10, time.milliseconds(), 0, "a", requests.get(1)),
+            CommitBatchResponse.success(20, time.milliseconds(), 0, "a", requests.get(2)),
+            CommitBatchResponse.success(30, time.milliseconds(), 0, "a", requests.get(3)),
+            CommitBatchResponse.success(40, time.milliseconds(), 0, "a", requests.get(4))
         );
 
         // Try to produce a duplicate.
@@ -1056,7 +1056,7 @@ public abstract class AbstractControlPlaneTest {
         final List<CommitBatchResponse> responses2 = controlPlane.commitFile(
             "c", ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, BROKER_ID, FILE_SIZE, requests2);
         assertThat(responses2).containsExactly(
-            CommitBatchResponse.success(50, time.milliseconds(), 0, requests2.get(0))
+            CommitBatchResponse.success(50, time.milliseconds(), 0, "c", requests2.get(0))
         );
 
         // Try to produce a duplicate again.
