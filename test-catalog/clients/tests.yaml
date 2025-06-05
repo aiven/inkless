@@ -49,6 +49,7 @@ org.apache.kafka.clients.FetchSessionHandlerTest:
 - testVerifyFullFetchResponsePartitionsWithTopicIds
 org.apache.kafka.clients.GroupRebalanceConfigTest:
 - testRackIdIsEmptyIfNoDefined
+- testRackIdIsEmptyIfValueIsEmptyString
 - testRackIdIsNotEmptyIfDefined
 org.apache.kafka.clients.InFlightRequestsTest:
 - testClearAll
