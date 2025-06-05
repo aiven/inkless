@@ -134,9 +134,9 @@ class DeleteTopicJobTest {
         new CommitFileJob(
             time, pgContainer.getJooqCtx(), objectKey3, ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, BROKER_ID, file3Size,
             List.of(
-                CommitBatchRequest.of(0, T0P0, 0, file1Batch1Size, 0, 11, 1000, TimestampType.CREATE_TIME),
-                CommitBatchRequest.of(0, T0P1, 0, file1Batch2Size, 0, 11, 1000, TimestampType.CREATE_TIME),
-                CommitBatchRequest.of(0, T2P0, 0, file1Batch2Size, 0, 11, 1000, TimestampType.CREATE_TIME)
+                CommitBatchRequest.of(0, T0P0, 0, file3Batch1Size, 0, 11, 1000, TimestampType.CREATE_TIME),
+                CommitBatchRequest.of(0, T0P1, 0, file3Batch2Size, 0, 11, 1000, TimestampType.CREATE_TIME),
+                CommitBatchRequest.of(0, T2P0, 0, file3Batch3Size, 0, 11, 1000, TimestampType.CREATE_TIME)
             ), durationCallback
         ).call();
 
@@ -149,13 +149,13 @@ class DeleteTopicJobTest {
 
         // The logs of the deleted topics must be gone, i.e. only TOPIC_2 remains.
         assertThat(DBUtils.getAllLogs(pgContainer.getDataSource())).containsExactly(
-            new LogsRecord(TOPIC_ID_2, 0, TOPIC_2, 0L, 24L)
+            new LogsRecord(TOPIC_ID_2, 0, TOPIC_2, 0L, 24L, (long) file2Batch2Size + file3Batch3Size)
         );
 
         // The batches of the deleted topics must be gone, i.e. only TOPIC_2 remains.
         assertThat(DBUtils.getAllBatches(pgContainer.getDataSource())).containsExactlyInAnyOrder(
-            new BatchesRecord(4L, (short) RecordBatch.CURRENT_MAGIC_VALUE, TOPIC_ID_2, 0, 0L, 11L, 2L, 0L, 2000L, TimestampType.CREATE_TIME, filesCommittedAt.toEpochMilli(), 1000L),
-            new BatchesRecord(7L, (short) RecordBatch.CURRENT_MAGIC_VALUE, TOPIC_ID_2, 0, 12L, 23L, 3L, 0L, 2000L, TimestampType.CREATE_TIME, filesCommittedAt.toEpochMilli(), 1000L)
+            new BatchesRecord(4L, (short) RecordBatch.CURRENT_MAGIC_VALUE, TOPIC_ID_2, 0, 0L, 11L, 2L, 0L, (long) file3Batch2Size, TimestampType.CREATE_TIME, filesCommittedAt.toEpochMilli(), 1000L),
+            new BatchesRecord(7L, (short) RecordBatch.CURRENT_MAGIC_VALUE, TOPIC_ID_2, 0, 12L, 23L, 3L, 0L, (long) file3Batch3Size, TimestampType.CREATE_TIME, filesCommittedAt.toEpochMilli(), 1000L)
         );
 
         // File 1 must be `deleting` because it contained only data from the deleted TOPIC_1.

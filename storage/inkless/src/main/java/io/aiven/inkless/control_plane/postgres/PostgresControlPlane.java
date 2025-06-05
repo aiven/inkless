@@ -54,6 +54,7 @@ import io.aiven.inkless.control_plane.FileMergeWorkItemNotExist;
 import io.aiven.inkless.control_plane.FileToDelete;
 import io.aiven.inkless.control_plane.FindBatchRequest;
 import io.aiven.inkless.control_plane.FindBatchResponse;
+import io.aiven.inkless.control_plane.GetLogInfoResult;
 import io.aiven.inkless.control_plane.ListOffsetsRequest;
 import io.aiven.inkless.control_plane.ListOffsetsResponse;
 import io.aiven.inkless.control_plane.MergedFileBatch;
@@ -274,6 +275,20 @@ public class PostgresControlPlane extends AbstractControlPlane {
             return job.call();
         } catch (Exception e) {
             throw new ControlPlaneException("Error when checking if safe to delete file " + objectKeyPath, e);
+        }
+    }
+
+    @Override
+    public GetLogInfoResult getLogInfo(final Uuid topicId, final int partition) {
+        try {
+            final GetLogInfoJob job = new GetLogInfoJob(time, jooqCtx, topicId, partition, metrics::onGetLogInfoCompleted);
+            return job.call();
+        } catch (final Exception e) {
+            if (e instanceof ControlPlaneException) {
+                throw (ControlPlaneException) e;
+            } else {
+                throw new ControlPlaneException("Failed to get log info", e);
+            }
         }
     }
 
