@@ -96,18 +96,18 @@ class TopicsAndPartitionsCreateJobTest {
         final TopicsAndPartitionsCreateJob job1 = new TopicsAndPartitionsCreateJob(Time.SYSTEM, pgContainer.getJooqCtx(), createTopicAndPartitionsRequests, durationMs -> {});
         job1.run();
         assertThat(DBUtils.getAllLogs(pgContainer.getDataSource())).containsExactlyInAnyOrder(
-            new LogsRecord(TOPIC_ID1, 0, TOPIC_1, 0L, 0L),
-            new LogsRecord(TOPIC_ID1, 1, TOPIC_1, 0L, 0L),
-            new LogsRecord(TOPIC_ID2, 0, TOPIC_2, 0L, 0L)
+            new LogsRecord(TOPIC_ID1, 0, TOPIC_1, 0L, 0L, 0L),
+            new LogsRecord(TOPIC_ID1, 1, TOPIC_1, 0L, 0L, 0L),
+            new LogsRecord(TOPIC_ID2, 0, TOPIC_2, 0L, 0L, 0L)
         );
 
         // Repetition doesn't affect anything.
         final TopicsAndPartitionsCreateJob job2 = new TopicsAndPartitionsCreateJob(Time.SYSTEM, pgContainer.getJooqCtx(), createTopicAndPartitionsRequests, durationMs -> {});
         job2.run();
         assertThat(DBUtils.getAllLogs(pgContainer.getDataSource())).containsExactlyInAnyOrder(
-                new LogsRecord(TOPIC_ID1, 0, TOPIC_1, 0L, 0L),
-                new LogsRecord(TOPIC_ID1, 1, TOPIC_1, 0L, 0L),
-                new LogsRecord(TOPIC_ID2, 0, TOPIC_2, 0L, 0L)
+                new LogsRecord(TOPIC_ID1, 0, TOPIC_1, 0L, 0L, 0L),
+                new LogsRecord(TOPIC_ID1, 1, TOPIC_1, 0L, 0L, 0L),
+                new LogsRecord(TOPIC_ID2, 0, TOPIC_2, 0L, 0L, 0L)
         );
     }
 
@@ -128,10 +128,10 @@ class TopicsAndPartitionsCreateJobTest {
         job2.run();
 
         assertThat(DBUtils.getAllLogs(pgContainer.getDataSource())).containsExactlyInAnyOrder(
-            new LogsRecord(TOPIC_ID1, 0, TOPIC_1, 0L, 0L),
-            new LogsRecord(TOPIC_ID1, 1, TOPIC_1, 0L, 0L),
-            new LogsRecord(TOPIC_ID2, 0, TOPIC_2, 0L, 0L),
-            new LogsRecord(TOPIC_ID2, 1, TOPIC_2, 0L, 0L)
+            new LogsRecord(TOPIC_ID1, 0, TOPIC_1, 0L, 0L, 0L),
+            new LogsRecord(TOPIC_ID1, 1, TOPIC_1, 0L, 0L, 0L),
+            new LogsRecord(TOPIC_ID2, 0, TOPIC_2, 0L, 0L, 0L),
+            new LogsRecord(TOPIC_ID2, 1, TOPIC_2, 0L, 0L, 0L)
         );
     }
 
@@ -140,11 +140,11 @@ class TopicsAndPartitionsCreateJobTest {
         try (final Connection connection = pgContainer.getDataSource().getConnection()) {
             final DSLContext ctx = DSL.using(connection, SQLDialect.POSTGRES);
             ctx.insertInto(LOGS,
-                LOGS.TOPIC_ID, LOGS.PARTITION, LOGS.TOPIC_NAME, LOGS.LOG_START_OFFSET, LOGS.HIGH_WATERMARK
+                LOGS.TOPIC_ID, LOGS.PARTITION, LOGS.TOPIC_NAME, LOGS.LOG_START_OFFSET, LOGS.HIGH_WATERMARK, LOGS.BYTE_SIZE
             ).values(
-                TOPIC_ID1, 0, TOPIC_1, 101L, 201L
+                TOPIC_ID1, 0, TOPIC_1, 101L, 201L, 999L
             ).values(
-                TOPIC_ID2, 0, TOPIC_2, 102L, 202L
+                TOPIC_ID2, 0, TOPIC_2, 102L, 202L, 1999L
             ).execute();
             connection.commit();
         }
@@ -157,9 +157,9 @@ class TopicsAndPartitionsCreateJobTest {
         job1.run();
 
         assertThat(DBUtils.getAllLogs(pgContainer.getDataSource())).containsExactlyInAnyOrder(
-                new LogsRecord(TOPIC_ID1, 0, TOPIC_1, 101L, 201L),  // unaffected
-                new LogsRecord(TOPIC_ID1, 1, TOPIC_1, 0L, 0L),
-                new LogsRecord(TOPIC_ID2, 0, TOPIC_2, 102L, 202L)  // unaffected
+                new LogsRecord(TOPIC_ID1, 0, TOPIC_1, 101L, 201L, 999L),  // unaffected
+                new LogsRecord(TOPIC_ID1, 1, TOPIC_1, 0L, 0L, 0L),
+                new LogsRecord(TOPIC_ID2, 0, TOPIC_2, 102L, 202L, 1999L)  // unaffected
         );
     }
 }

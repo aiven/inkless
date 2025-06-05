@@ -115,6 +115,15 @@ public abstract class AbstractControlPlaneTest {
             "a", ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, BROKER_ID, FILE_SIZE, List.of()
         );
         assertThat(commitBatchResponse).isEmpty();
+        assertThat(controlPlane.getLogInfo(List.of(
+            new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0),
+            new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 1),
+            new GetLogInfoRequest(EXISTING_TOPIC_2_ID, 0)
+        ))).containsExactly(
+            GetLogInfoResponse.success(0, 0, 0),
+            GetLogInfoResponse.success(0, 0, 0),
+            GetLogInfoResponse.success(0, 0, 0)
+        );
     }
 
     @Test
@@ -139,6 +148,8 @@ public abstract class AbstractControlPlaneTest {
             CommitBatchResponse.of(Errors.UNKNOWN_TOPIC_OR_PARTITION, -1, -1, -1),
             CommitBatchResponse.of(Errors.UNKNOWN_TOPIC_OR_PARTITION, -1, -1, -1)
         );
+        assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0))))
+            .containsExactly(GetLogInfoResponse.success(0, 10, 10));
 
         final CommitBatchRequest successfulRequest2 = CommitBatchRequest.of(0, new TopicIdPartition(EXISTING_TOPIC_1_ID, 0, EXISTING_TOPIC_1), 100, 10, 1, 10, 1000, TimestampType.CREATE_TIME);
         final List<CommitBatchResponse> commitResponse2 = controlPlane.commitFile(
@@ -155,6 +166,8 @@ public abstract class AbstractControlPlaneTest {
             CommitBatchResponse.of(Errors.UNKNOWN_TOPIC_OR_PARTITION, -1, -1, -1),
             CommitBatchResponse.of(Errors.UNKNOWN_TOPIC_OR_PARTITION, -1, -1, -1)
         );
+        assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0))))
+            .containsExactly(GetLogInfoResponse.success(0, 20, 20));
 
         final List<FindBatchResponse> findResponse = controlPlane.findBatches(
             List.of(
@@ -300,6 +313,8 @@ public abstract class AbstractControlPlaneTest {
         controlPlane.createTopicAndPartitions(Set.of(
             new CreateTopicAndPartitionsRequest(newTopic1Id, newTopic1Name, 1)
         ));
+        assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(newTopic1Id, 0))))
+            .containsExactly(GetLogInfoResponse.success(0, 0, 0));
 
         // Produce some data to be sure it's not affected later.
         final String objectKey = "a1";
@@ -316,6 +331,17 @@ public abstract class AbstractControlPlaneTest {
             new CreateTopicAndPartitionsRequest(newTopic1Id, newTopic1Name, 2),
             new CreateTopicAndPartitionsRequest(newTopic2Id, newTopic2Name, 2)
         ));
+        assertThat(controlPlane.getLogInfo(List.of(
+            new GetLogInfoRequest(newTopic1Id, 0),
+            new GetLogInfoRequest(newTopic1Id, 1),
+            new GetLogInfoRequest(newTopic2Id, 0),
+            new GetLogInfoRequest(newTopic2Id, 1)
+        ))).containsExactly(
+            GetLogInfoResponse.success(0, 1, FILE_SIZE),
+            GetLogInfoResponse.success(0, 0, 0),
+            GetLogInfoResponse.success(0, 0, 0),
+            GetLogInfoResponse.success(0, 0, 0)
+        );
 
         final List<FindBatchResponse> findBatchResponsesAfterDelete = controlPlane.findBatches(findBatchRequests, Integer.MAX_VALUE);
         assertThat(findBatchResponsesBeforeDelete).isEqualTo(findBatchResponsesAfterDelete);
@@ -325,6 +351,17 @@ public abstract class AbstractControlPlaneTest {
             new CreateTopicAndPartitionsRequest(newTopic1Id, newTopic1Name, 2),
             new CreateTopicAndPartitionsRequest(newTopic2Id, newTopic2Name, 2)
         ));
+        assertThat(controlPlane.getLogInfo(List.of(
+            new GetLogInfoRequest(newTopic1Id, 0),
+            new GetLogInfoRequest(newTopic1Id, 1),
+            new GetLogInfoRequest(newTopic2Id, 0),
+            new GetLogInfoRequest(newTopic2Id, 1)
+        ))).containsExactly(
+            GetLogInfoResponse.success(0, 1, FILE_SIZE),
+            GetLogInfoResponse.success(0, 0, 0),
+            GetLogInfoResponse.success(0, 0, 0),
+            GetLogInfoResponse.success(0, 0, 0)
+        );
 
         final List<FindBatchResponse> findBatchResponsesAfterDelete2 = controlPlane.findBatches(findBatchRequests, Integer.MAX_VALUE);
         assertThat(findBatchResponsesAfterDelete2).isEqualTo(findBatchResponsesAfterDelete);
@@ -366,6 +403,9 @@ public abstract class AbstractControlPlaneTest {
         assertThat(controlPlane.getFilesToDelete()).containsExactlyInAnyOrder(
             new FileToDelete(objectKey1, TimeUtils.now(time))
         );
+
+        assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0))))
+            .containsExactly(GetLogInfoResponse.unknownTopicOrPartition());
     }
 
     @Test
@@ -378,6 +418,8 @@ public abstract class AbstractControlPlaneTest {
                 CommitBatchRequest.of(0, EXISTING_TOPIC_1_ID_PARTITION_0, 1, (int) FILE_SIZE, 1, 10, 1000, TimestampType.CREATE_TIME)
             )
         );
+        assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0))))
+            .containsExactly(GetLogInfoResponse.success(0, 10, FILE_SIZE));
 
         final List<FindBatchResponse> findResponseBeforeDelete = controlPlane.findBatches(
             List.of(new FindBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 0, Integer.MAX_VALUE)), Integer.MAX_VALUE);
@@ -398,6 +440,8 @@ public abstract class AbstractControlPlaneTest {
             new FindBatchResponse(Errors.NONE, findResponseBeforeDelete.get(0).batches(), 3, 10)
         );
         assertThat(controlPlane.getFilesToDelete()).isEmpty();
+        assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0))))
+            .containsExactly(GetLogInfoResponse.success(3, 10, FILE_SIZE));
     }
 
     @Test
@@ -412,18 +456,26 @@ public abstract class AbstractControlPlaneTest {
                 CommitBatchRequest.of(0, EXISTING_TOPIC_1_ID_PARTITION_0, 1, (int) FILE_SIZE, 1, 10, 1000, TimestampType.CREATE_TIME)
             )
         );
+        assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0))))
+            .containsExactly(GetLogInfoResponse.success(0, 10, FILE_SIZE));
+
         controlPlane.commitFile(
             objectKey2, ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, BROKER_ID, FILE_SIZE,
                 List.of(
                 CommitBatchRequest.of(0, EXISTING_TOPIC_1_ID_PARTITION_0, 2, (int) FILE_SIZE, 1, 10, 2000, TimestampType.CREATE_TIME)
             )
         );
+        assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0))))
+            .containsExactly(GetLogInfoResponse.success(0, 20, FILE_SIZE * 2));
+
         controlPlane.commitFile(
             objectKey3, ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, BROKER_ID, FILE_SIZE,
                 List.of(
                 CommitBatchRequest.of(0, EXISTING_TOPIC_1_ID_PARTITION_0, 3, (int) FILE_SIZE, 1, 10, 3000, TimestampType.CREATE_TIME)
             )
         );
+        assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0))))
+            .containsExactly(GetLogInfoResponse.success(0, 30, FILE_SIZE * 3));
 
         final List<FindBatchResponse> findResponseBeforeDelete = controlPlane.findBatches(
             List.of(new FindBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 0, Integer.MAX_VALUE)), Integer.MAX_VALUE);
@@ -449,6 +501,8 @@ public abstract class AbstractControlPlaneTest {
         assertThat(controlPlane.getFilesToDelete()).containsExactlyInAnyOrder(
             new FileToDelete(objectKey1, TimeUtils.now(time))
         );
+        assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0))))
+            .containsExactly(GetLogInfoResponse.success(19, 30, FILE_SIZE * 2));
     }
 
     @Test
@@ -461,6 +515,8 @@ public abstract class AbstractControlPlaneTest {
                 CommitBatchRequest.of(0, EXISTING_TOPIC_1_ID_PARTITION_0, 1, (int) FILE_SIZE, 1, 10, 1000, TimestampType.CREATE_TIME)
             )
         );
+        assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0))))
+            .containsExactly(GetLogInfoResponse.success(0, 10, FILE_SIZE));
 
         final List<FindBatchResponse> findResponseBeforeDelete = controlPlane.findBatches(
             List.of(new FindBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 0, Integer.MAX_VALUE)), Integer.MAX_VALUE);
@@ -479,6 +535,8 @@ public abstract class AbstractControlPlaneTest {
         assertThat(findResponse).isEqualTo(findResponseBeforeDelete);
 
         assertThat(controlPlane.getFilesToDelete()).isEmpty();
+        assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0))))
+            .containsExactly(GetLogInfoResponse.success(0, 10, FILE_SIZE));
     }
 
     @Test
@@ -491,6 +549,8 @@ public abstract class AbstractControlPlaneTest {
                 CommitBatchRequest.of(0, EXISTING_TOPIC_1_ID_PARTITION_0, 1, (int) FILE_SIZE, 1, 10, 1000, TimestampType.CREATE_TIME)
             )
         );
+        assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0))))
+            .containsExactly(GetLogInfoResponse.success(0, 10, FILE_SIZE));
 
         final List<DeleteRecordsResponse> deleteRecordsResponses = controlPlane.deleteRecords(List.of(
             new DeleteRecordsRequest(EXISTING_TOPIC_1_ID_PARTITION_0, org.apache.kafka.common.requests.DeleteRecordsRequest.HIGH_WATERMARK)
@@ -506,6 +566,8 @@ public abstract class AbstractControlPlaneTest {
         );
 
         assertThat(controlPlane.getFilesToDelete()).containsExactlyInAnyOrder(new FileToDelete(objectKey1, TimeUtils.now(time)));
+        assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0))))
+            .containsExactly(GetLogInfoResponse.success(10, 10, 0));
     }
 
     @ParameterizedTest
@@ -535,6 +597,8 @@ public abstract class AbstractControlPlaneTest {
         assertThat(findResponse).isEqualTo(findResponseBeforeDelete);
 
         assertThat(controlPlane.getFilesToDelete()).isEmpty();
+        assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0))))
+            .containsExactly(GetLogInfoResponse.success(0, 10, FILE_SIZE));
     }
 
     @Test
@@ -1004,15 +1068,15 @@ public abstract class AbstractControlPlaneTest {
 
     @Test
     void testCommitDuplicates() {
-        final int request1BatchSize = 10;
-        final CommitBatchRequest request1 = CommitBatchRequest.idempotent(1, EXISTING_TOPIC_1_ID_PARTITION_0, 1, request1BatchSize, 10, 19, time.milliseconds(), TimestampType.CREATE_TIME, 1L, (short) 3, 0, 9);
+        final int batchSize = 10;
+        final CommitBatchRequest request1 = CommitBatchRequest.idempotent(1, EXISTING_TOPIC_1_ID_PARTITION_0, 1, batchSize, 10, 19, time.milliseconds(), TimestampType.CREATE_TIME, 1L, (short) 3, 0, 9);
 
         final List<CommitBatchRequest> requests = List.of(
             request1,
-            CommitBatchRequest.idempotent(2, EXISTING_TOPIC_1_ID_PARTITION_0, 2, 10, 20, 29, time.milliseconds(), TimestampType.CREATE_TIME, 1L, (short) 3, 10, 19),
-            CommitBatchRequest.idempotent(3, EXISTING_TOPIC_1_ID_PARTITION_0, 3, 10, 30, 39, time.milliseconds(), TimestampType.CREATE_TIME, 1L, (short) 3, 20, 29),
-            CommitBatchRequest.idempotent(4, EXISTING_TOPIC_1_ID_PARTITION_0, 4, 10, 40, 49, time.milliseconds(), TimestampType.CREATE_TIME, 1L, (short) 3, 30, 39),
-            CommitBatchRequest.idempotent(5, EXISTING_TOPIC_1_ID_PARTITION_0, 5, 10, 50, 59, time.milliseconds(), TimestampType.CREATE_TIME, 1L, (short) 3, 40, 49)
+            CommitBatchRequest.idempotent(2, EXISTING_TOPIC_1_ID_PARTITION_0, 2, batchSize, 20, 29, time.milliseconds(), TimestampType.CREATE_TIME, 1L, (short) 3, 10, 19),
+            CommitBatchRequest.idempotent(3, EXISTING_TOPIC_1_ID_PARTITION_0, 3, batchSize, 30, 39, time.milliseconds(), TimestampType.CREATE_TIME, 1L, (short) 3, 20, 29),
+            CommitBatchRequest.idempotent(4, EXISTING_TOPIC_1_ID_PARTITION_0, 4, batchSize, 40, 49, time.milliseconds(), TimestampType.CREATE_TIME, 1L, (short) 3, 30, 39),
+            CommitBatchRequest.idempotent(5, EXISTING_TOPIC_1_ID_PARTITION_0, 5, batchSize, 50, 59, time.milliseconds(), TimestampType.CREATE_TIME, 1L, (short) 3, 40, 49)
         );
         final List<CommitBatchResponse> responses = controlPlane.commitFile(
             "a", ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, BROKER_ID, FILE_SIZE, requests);
@@ -1023,10 +1087,12 @@ public abstract class AbstractControlPlaneTest {
             CommitBatchResponse.success(30, time.milliseconds(), 0, requests.get(3)),
             CommitBatchResponse.success(40, time.milliseconds(), 0, requests.get(4))
         );
+        assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0))))
+            .containsExactly(GetLogInfoResponse.success(0, 50, batchSize * 5));
 
         // Try to produce a duplicate.
         final String duplicateFile1Key = "b";
-        final List<CommitBatchResponse> dupResponses = controlPlane.commitFile(duplicateFile1Key, ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, BROKER_ID, request1BatchSize, List.of(request1));
+        final List<CommitBatchResponse> dupResponses = controlPlane.commitFile(duplicateFile1Key, ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, BROKER_ID, batchSize, List.of(request1));
         assertThat(dupResponses).containsExactly(
             CommitBatchResponse.ofDuplicate(0, time.milliseconds(), 0)
         );
@@ -1050,6 +1116,8 @@ public abstract class AbstractControlPlaneTest {
         );
         // The file must be deleted as it doesn't contain alive batches after rejecting its only batch.
         assertThat(controlPlane.getFilesToDelete()).singleElement().extracting(FileToDelete::objectKey).isEqualTo(duplicateFile1Key);
+        assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0))))
+            .containsExactly(GetLogInfoResponse.success(0, 50, batchSize * 5));
 
         // Make the control plane to forget the original.
         final List<CommitBatchRequest> requests2 = List.of(
@@ -1060,16 +1128,20 @@ public abstract class AbstractControlPlaneTest {
         assertThat(responses2).containsExactly(
             CommitBatchResponse.success(50, time.milliseconds(), 0, requests2.get(0))
         );
+        assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0))))
+            .containsExactly(GetLogInfoResponse.success(0, 60, batchSize * 6));
 
         // Try to produce a duplicate again.
         final String duplicateFile2Key = "d";
         final List<CommitBatchResponse> dupResponses2 = controlPlane.commitFile(
-            duplicateFile2Key, ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, BROKER_ID, request1BatchSize, List.of(request1));
+            duplicateFile2Key, ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, BROKER_ID, batchSize, List.of(request1));
         assertThat(dupResponses2).containsExactly(
             CommitBatchResponse.sequenceOutOfOrder(request1)
         );
         // The file must also be deleted.
         assertThat(controlPlane.getFilesToDelete()).map(FileToDelete::objectKey).containsExactly(duplicateFile1Key, duplicateFile2Key);
+        assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0))))
+            .containsExactly(GetLogInfoResponse.success(0, 60, batchSize * 6));
     }
 
     @Test
@@ -1084,6 +1156,8 @@ public abstract class AbstractControlPlaneTest {
 
         // The second file must be deleted as it doesn't contain alive batches after rejecting its only batch.
         assertThat(controlPlane.getFilesToDelete()).singleElement().extracting(FileToDelete::objectKey).isEqualTo(fileKey);
+        assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0))))
+            .containsExactly(GetLogInfoResponse.success(0, 0, 0));
     }
 
     @ParameterizedTest
@@ -1095,13 +1169,16 @@ public abstract class AbstractControlPlaneTest {
         "2147483647, 1" // not zero
     })
     void testOutOfOrderSequenceSameCall(final int lastSeq, final int nextSeq) {
-        final CommitBatchRequest request0 = CommitBatchRequest.idempotent(0, EXISTING_TOPIC_1_ID_PARTITION_0, 1, 10, 0, 10, time.milliseconds(), TimestampType.CREATE_TIME, 1L, (short) 3, 0, lastSeq);
-        final CommitBatchRequest request1 = CommitBatchRequest.idempotent(0, EXISTING_TOPIC_1_ID_PARTITION_0, 2, 10, 0, 20, time.milliseconds(), TimestampType.CREATE_TIME, 1L, (short) 3, nextSeq, nextSeq + 10);
+        final int batchSize = 10;
+        final CommitBatchRequest request0 = CommitBatchRequest.idempotent(0, EXISTING_TOPIC_1_ID_PARTITION_0, 1, batchSize, 0, 10, time.milliseconds(), TimestampType.CREATE_TIME, 1L, (short) 3, 0, lastSeq);
+        final CommitBatchRequest request1 = CommitBatchRequest.idempotent(0, EXISTING_TOPIC_1_ID_PARTITION_0, 2, batchSize, 0, 20, time.milliseconds(), TimestampType.CREATE_TIME, 1L, (short) 3, nextSeq, nextSeq + 10);
         final List<CommitBatchResponse> responses = controlPlane.commitFile("a", ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, BROKER_ID, FILE_SIZE, List.of(request0, request1));
 
         assertThat(responses)
             .extracting(CommitBatchResponse::errors)
             .containsExactly(Errors.NONE, Errors.OUT_OF_ORDER_SEQUENCE_NUMBER);
+        assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0))))
+            .containsExactly(GetLogInfoResponse.success(0, 11, batchSize));  // only one batch
     }
 
     @ParameterizedTest
@@ -1113,12 +1190,15 @@ public abstract class AbstractControlPlaneTest {
         "2147483647, 1" // not zero
     })
     void testOutOfOrderSequenceDifferentCalls(final int lastSeq, final int nextSeq) {
+        final int batchSize = (int) FILE_SIZE;
         final List<CommitBatchResponse> responses0 = controlPlane.commitFile("a", ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, BROKER_ID, FILE_SIZE, List.of(
-            CommitBatchRequest.idempotent(0, EXISTING_TOPIC_1_ID_PARTITION_0, 1, (int) FILE_SIZE, 0, 10, time.milliseconds(), TimestampType.CREATE_TIME, 1L, (short) 3, 0, lastSeq)
+            CommitBatchRequest.idempotent(0, EXISTING_TOPIC_1_ID_PARTITION_0, 1, batchSize, 0, 10, time.milliseconds(), TimestampType.CREATE_TIME, 1L, (short) 3, 0, lastSeq)
         ));
         assertThat(responses0)
             .extracting(CommitBatchResponse::errors)
             .containsExactly(Errors.NONE);
+        assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0))))
+            .containsExactly(GetLogInfoResponse.success(0, 11, batchSize));
 
         final var file1Size = 100;
         final String file1Key = "b";
@@ -1131,27 +1211,35 @@ public abstract class AbstractControlPlaneTest {
 
         // The second file must be deleted as it doesn't contain alive batches after rejecting its only batch.
         assertThat(controlPlane.getFilesToDelete()).singleElement().extracting(FileToDelete::objectKey).isEqualTo(file1Key);
+        assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0))))
+            .containsExactly(GetLogInfoResponse.success(0, 11, batchSize));
     }
 
     @Test
     void testInvalidProducerEpochSameCall() {
-        final CommitBatchRequest request0 = CommitBatchRequest.idempotent(0, EXISTING_TOPIC_1_ID_PARTITION_0, 1, 10, 10, 24, time.milliseconds(), TimestampType.CREATE_TIME, 1L, (short) 3, 0, 14);
-        final CommitBatchRequest request1 = CommitBatchRequest.idempotent(0, EXISTING_TOPIC_1_ID_PARTITION_0, 2, 10, 25, 35, time.milliseconds(), TimestampType.CREATE_TIME, 1L, (short) 2, 15, 25);
+        final int batchSize = 10;
+        final CommitBatchRequest request0 = CommitBatchRequest.idempotent(0, EXISTING_TOPIC_1_ID_PARTITION_0, 1, batchSize, 10, 24, time.milliseconds(), TimestampType.CREATE_TIME, 1L, (short) 3, 0, 14);
+        final CommitBatchRequest request1 = CommitBatchRequest.idempotent(0, EXISTING_TOPIC_1_ID_PARTITION_0, 2, batchSize, 25, 35, time.milliseconds(), TimestampType.CREATE_TIME, 1L, (short) 2, 15, 25);
         final List<CommitBatchResponse> responses = controlPlane.commitFile("a", ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, BROKER_ID, FILE_SIZE, List.of(request0, request1));
 
         assertThat(responses)
             .extracting(CommitBatchResponse::errors)
             .containsExactly(Errors.NONE, Errors.INVALID_PRODUCER_EPOCH);
+        assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0))))
+            .containsExactly(GetLogInfoResponse.success(0, 15, batchSize));  // only one batch
     }
 
     @Test
     void testInvalidProducerEpochDifferentCalls() {
+        final int batchSize = (int) FILE_SIZE;
         final List<CommitBatchResponse> responses0 = controlPlane.commitFile("a", ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, BROKER_ID, FILE_SIZE, List.of(
-            CommitBatchRequest.idempotent(0, EXISTING_TOPIC_1_ID_PARTITION_0, 1, (int) FILE_SIZE, 10, 24, time.milliseconds(), TimestampType.CREATE_TIME, 1L, (short) 3, 0, 14)
+            CommitBatchRequest.idempotent(0, EXISTING_TOPIC_1_ID_PARTITION_0, 1, batchSize, 10, 24, time.milliseconds(), TimestampType.CREATE_TIME, 1L, (short) 3, 0, 14)
         ));
         assertThat(responses0)
             .extracting(CommitBatchResponse::errors)
             .containsExactly(Errors.NONE);
+        assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0))))
+            .containsExactly(GetLogInfoResponse.success(0, 15, batchSize));
 
         final var file1Size = 100;
         final String file1Key = "b";
@@ -1164,6 +1252,8 @@ public abstract class AbstractControlPlaneTest {
 
         // The second file must be deleted as it doesn't contain alive batches after rejecting its only batch.
         assertThat(controlPlane.getFilesToDelete()).singleElement().extracting(FileToDelete::objectKey).isEqualTo(file1Key);
+        assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0))))
+            .containsExactly(GetLogInfoResponse.success(0, 15, batchSize));
     }
 
     @Nested
@@ -1262,6 +1352,8 @@ public abstract class AbstractControlPlaneTest {
 
             final long fileSize4 = 1;
 
+            final int file4Batch1Size = (int) fileSize4;
+
             final long committedAt = time.milliseconds();
             controlPlane.commitFile("obj1", ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, 1, fileSize1,
                     List.of(CommitBatchRequest.of(0, EXISTING_TOPIC_1_ID_PARTITION_0, 0, file1Batch1Size, 0, 100, 1000, TimestampType.CREATE_TIME)));
@@ -1276,8 +1368,17 @@ public abstract class AbstractControlPlaneTest {
                 ));
             controlPlane.commitFile("obj_untouched", ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, 4, fileSize4,
                     List.of(
-                    CommitBatchRequest.of(0, EXISTING_TOPIC_1_ID_PARTITION_0, 0, (int) fileSize4, 0, 23, 5000, TimestampType.LOG_APPEND_TIME)
+                    CommitBatchRequest.of(0, EXISTING_TOPIC_1_ID_PARTITION_0, 0, file4Batch1Size, 0, 23, 5000, TimestampType.LOG_APPEND_TIME)
                 ));
+            final int partition0LogSize = file1Batch1Size + file2Batch1Size + file4Batch1Size;
+            final int partition1LogSize = file2Batch2Size + file3Batch1Size;
+            assertThat(controlPlane.getLogInfo(List.of(
+                new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0),
+                new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 1)
+            ))).containsExactly(
+                GetLogInfoResponse.success(0, 226, partition0LogSize),
+                GetLogInfoResponse.success(0, 252, partition1LogSize)
+            );
 
             time.sleep(1);
             final Instant mergedAt = TimeUtils.now(time);
@@ -1294,6 +1395,14 @@ public abstract class AbstractControlPlaneTest {
                 new MergedFileBatch(BatchMetadata.of(EXISTING_TOPIC_1_ID_PARTITION_1, fileSize1 + fileSize2, file3Batch1Size, 50, 250, committedAt, 4000, TimestampType.CREATE_TIME), List.of(4L))
             );
             controlPlane.commitFileMergeWorkItem(workItemId, "obj_merged", ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, 1, fileSize1 + fileSize2 + fileSize3, mergedFileBatches);
+            // Log sizes didn't change.
+            assertThat(controlPlane.getLogInfo(List.of(
+                new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0),
+                new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 1)
+            ))).containsExactly(
+                GetLogInfoResponse.success(0, 226, partition0LogSize),
+                GetLogInfoResponse.success(0, 252, partition1LogSize)
+            );
 
             final var findBatchResult = controlPlane.findBatches(
                 List.of(
@@ -1355,6 +1464,9 @@ public abstract class AbstractControlPlaneTest {
                     List.of(
                     CommitBatchRequest.of(0, EXISTING_TOPIC_2_ID_PARTITION_0, 0, file3Batch1Size, 0, 200, 4000, TimestampType.LOG_APPEND_TIME)
                 ));
+            final int expectedTopic2Partition0LogSize = file2Batch2Size + file3Batch1Size;
+            assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_2_ID, 0))))
+                .containsExactly(GetLogInfoResponse.success(0, 252, expectedTopic2Partition0LogSize));
 
             final var workItemId = controlPlane.getFileMergeWorkItem().workItemId();
 
@@ -1373,6 +1485,8 @@ public abstract class AbstractControlPlaneTest {
                 new MergedFileBatch(BatchMetadata.of(EXISTING_TOPIC_2_ID_PARTITION_0, fileSize1 + file2Batch1Size, file2Batch2Size, 0, 50, committedAt, 3000, TimestampType.CREATE_TIME), List.of(3L)),
                 new MergedFileBatch(BatchMetadata.of(EXISTING_TOPIC_2_ID_PARTITION_0, fileSize1 + fileSize2, file3Batch1Size, 50, 250, committedAt, 4000, TimestampType.CREATE_TIME), List.of(4L))
             ));
+            assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_2_ID, 0))))
+                .containsExactly(GetLogInfoResponse.success(0, 252, expectedTopic2Partition0LogSize));
 
             // Obviously, the deleted topic should not be there, but the other one should be fully retrievable.
             final var findBatchResult = controlPlane.findBatches(
@@ -1402,10 +1516,13 @@ public abstract class AbstractControlPlaneTest {
         void mergeAfterSomeBatchesWereDeletedButNotWholeTopic(final boolean deletePhysicallyBeforeMerge) {
             final long fileSize = FILE_MERGE_SIZE_THRESHOLD / 2 + 1;
             final long committedAt = time.milliseconds();
+            final int batchSize = (int) fileSize;
             controlPlane.commitFile("obj1", ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, 1, fileSize,
-                    List.of(CommitBatchRequest.of(0, EXISTING_TOPIC_1_ID_PARTITION_0, 0, (int) fileSize, 0, 100, 1000, TimestampType.CREATE_TIME)));
+                    List.of(CommitBatchRequest.of(0, EXISTING_TOPIC_1_ID_PARTITION_0, 0, batchSize, 0, 100, 1000, TimestampType.CREATE_TIME)));
             controlPlane.commitFile("obj2", ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, 3, fileSize,
-                    List.of(CommitBatchRequest.of(0, EXISTING_TOPIC_1_ID_PARTITION_0, 0, (int) fileSize, 0, 200, 2000, TimestampType.LOG_APPEND_TIME)));
+                    List.of(CommitBatchRequest.of(0, EXISTING_TOPIC_1_ID_PARTITION_0, 0, batchSize, 0, 200, 2000, TimestampType.LOG_APPEND_TIME)));
+            assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0))))
+                .containsExactly(GetLogInfoResponse.success(0, 302, batchSize * 2));
 
             final var workItemId = controlPlane.getFileMergeWorkItem().workItemId();
 
@@ -1437,6 +1554,8 @@ public abstract class AbstractControlPlaneTest {
             }
             expectedFilesToDelete.add(new FileToDelete("obj2", deletedAt));
             assertThat(controlPlane.getFilesToDelete()).hasSameElementsAs(expectedFilesToDelete);
+            assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0))))
+                .containsExactly(GetLogInfoResponse.success(110, 302, batchSize));
         }
 
         @ParameterizedTest
@@ -1444,10 +1563,13 @@ public abstract class AbstractControlPlaneTest {
         void mergeAfterAllBatchesWereDeleted(final boolean deletePhysicallyBeforeMerge) {
             final long fileSize = FILE_MERGE_SIZE_THRESHOLD / 2;
             final long committedAt = time.milliseconds();
+            final int batchSize = (int) fileSize;
             controlPlane.commitFile("obj1", ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, 1, fileSize,
-                    List.of(CommitBatchRequest.of(0, EXISTING_TOPIC_1_ID_PARTITION_0, 0, (int) fileSize, 0, 100, 1000, TimestampType.CREATE_TIME)));
+                    List.of(CommitBatchRequest.of(0, EXISTING_TOPIC_1_ID_PARTITION_0, 0, batchSize, 0, 100, 1000, TimestampType.CREATE_TIME)));
             controlPlane.commitFile("obj2", ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, 2, fileSize,
-                    List.of(CommitBatchRequest.of(0, EXISTING_TOPIC_1_ID_PARTITION_0, 0, (int) fileSize, 0, 100, 2000, TimestampType.CREATE_TIME)));
+                    List.of(CommitBatchRequest.of(0, EXISTING_TOPIC_1_ID_PARTITION_0, 0, batchSize, 0, 100, 2000, TimestampType.CREATE_TIME)));
+            assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0))))
+                .containsExactly(GetLogInfoResponse.success(0, 202, batchSize * 2));
 
             time.sleep(1);
             final Instant deletedAt = TimeUtils.now(time);
