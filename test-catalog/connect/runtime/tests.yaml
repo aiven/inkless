@@ -923,6 +923,14 @@ org.apache.kafka.connect.runtime.isolation.DelegatingClassLoaderTest:
 - testEmptyLoadClass
 - testInitializedConnectorLoader
 - testInitializedLoadClass
+org.apache.kafka.connect.runtime.isolation.MultiVersionTest:
+- testBundledPluginLoading
+- testCorrectVersionRange
+- testInvalidVersionRange
+- testLatestVersion
+- testMultipleIsolatedVersionedPluginLoading
+- testVersionedConverter
+- testVersionedPluginLoaded
 org.apache.kafka.connect.runtime.isolation.PluginDescTest:
 - testNullArguments
 - testPluginDescComparison
@@ -930,6 +938,14 @@ org.apache.kafka.connect.runtime.isolation.PluginDescTest:
 - testPluginDescWithNullVersion
 - testPluginDescWithSystemClassLoader
 - testRegularPluginDesc
+org.apache.kafka.connect.runtime.isolation.PluginRecommenderTest:
+- testConnectorVersionRecommenders
+- testConverterPluginRecommender
+- testConverterVersionRecommenders
+- testHeaderConverterPluginRecommender
+- testHeaderConverterVersionRecommenders
+- testPredicateVersionRecommenders
+- testTransformationVersionRecommenders
 org.apache.kafka.connect.runtime.isolation.PluginScannerTest:
 - testClasspathPluginIsAlsoLoadedInIsolation
 - testNonVersionedPluginHasUndefinedVersion
