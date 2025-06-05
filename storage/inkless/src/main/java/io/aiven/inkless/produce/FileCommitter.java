@@ -40,6 +40,7 @@ import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 
 import io.aiven.inkless.TimeUtils;
+import io.aiven.inkless.cache.BatchCoordinateCache;
 import io.aiven.inkless.cache.KeyAlignmentStrategy;
 import io.aiven.inkless.cache.ObjectCache;
 import io.aiven.inkless.common.InklessThreadFactory;
@@ -68,6 +69,7 @@ class FileCommitter implements Closeable {
     private final StorageBackend storage;
     private final KeyAlignmentStrategy keyAlignmentStrategy;
     private final ObjectCache objectCache;
+    private final BatchCoordinateCache batchCoordinateCache;
     private final Time time;
     private final int maxFileUploadAttempts;
     private final Duration fileUploadRetryBackoff;
@@ -86,11 +88,12 @@ class FileCommitter implements Closeable {
                   final StorageBackend storage,
                   final KeyAlignmentStrategy keyAlignmentStrategy,
                   final ObjectCache objectCache,
+                  final BatchCoordinateCache batchCoordinateCache,
                   final Time time,
                   final int maxFileUploadAttempts,
                   final Duration fileUploadRetryBackoff,
                   final int fileUploaderThreadPoolSize) {
-        this(brokerId, controlPlane, objectKeyCreator, storage, keyAlignmentStrategy, objectCache, time, maxFileUploadAttempts, fileUploadRetryBackoff,
+        this(brokerId, controlPlane, objectKeyCreator, storage, keyAlignmentStrategy, objectCache, batchCoordinateCache, time, maxFileUploadAttempts, fileUploadRetryBackoff,
             Executors.newFixedThreadPool(fileUploaderThreadPoolSize, new InklessThreadFactory("inkless-file-uploader-", false)),
             // It must be single-thread to preserve the commit order.
             Executors.newSingleThreadExecutor(new InklessThreadFactory("inkless-file-committer-", false)),
@@ -107,6 +110,7 @@ class FileCommitter implements Closeable {
                   final StorageBackend storage,
                   final KeyAlignmentStrategy keyAlignmentStrategy,
                   final ObjectCache objectCache,
+                  final BatchCoordinateCache batchCoordinateCache,
                   final Time time,
                   final int maxFileUploadAttempts,
                   final Duration fileUploadRetryBackoff,
@@ -119,6 +123,7 @@ class FileCommitter implements Closeable {
         this.objectKeyCreator = Objects.requireNonNull(objectKeyCreator, "objectKeyCreator cannot be null");
         this.storage = Objects.requireNonNull(storage, "storage cannot be null");
         this.objectCache = Objects.requireNonNull(objectCache, "objectCache cannot be null");
+        this.batchCoordinateCache = Objects.requireNonNull(batchCoordinateCache, "batchCoordinateCache cannot be null");
         this.keyAlignmentStrategy = Objects.requireNonNull(keyAlignmentStrategy, "keyAlignmentStrategy cannot be null");
         this.time = Objects.requireNonNull(time, "time cannot be null");
         if (maxFileUploadAttempts <= 0) {
@@ -215,7 +220,7 @@ class FileCommitter implements Closeable {
                 executorServiceCacheStore.submit(cacheStoreJob);
             }
             commitFuture.whenComplete((commitBatchResponses, throwable) -> {
-                final AppendCompleter completerJob = new AppendCompleter(file);
+                final AppendCompleter completerJob = new AppendCompleter(file, batchCoordinateCache);
                 if (commitBatchResponses != null) {
                     completerJob.finishCommitSuccessfully(commitBatchResponses);
                     metrics.writeCompleted();

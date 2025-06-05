@@ -159,10 +159,13 @@ class DelayedFetch(
     }
 
     // Case G
-    if (accumulatedSize >= minBytes.getOrElse(params.minBytes))
+    if (accumulatedSize >= minBytes.getOrElse(params.minBytes)) {
+      DelayedFetchMetrics.enoughBytesMeter.mark()
       forceComplete()
-    else
+    } else {
+      DelayedFetchMetrics.notEnoughBytesMeter.mark()
       false
+    }
   }
 
   /**
@@ -183,10 +186,12 @@ class DelayedFetch(
     if (requests.isEmpty) return Some(0)
 
     val response = try {
-      replicaManager.findDisklessBatches(requests, Int.MaxValue)
+      DelayedFetchMetrics.findBatchesRequestsMeter.mark()
+      replicaManager.findDisklessBatches(requests)
     } catch {
       case e: Throwable =>
         error("Error while trying to find diskless batches on delayed fetch.", e)
+        DelayedFetchMetrics.findBatchesErrorsMeter.mark()
         return None  // Case C
     }
 
@@ -201,6 +206,7 @@ class DelayedFetch(
             val fetchPartitionStatus = fetchPartitionStatusMap.get(topicIdPartition)
             if (fetchPartitionStatus.isEmpty) {
               warn(s"Fetch partition status for $topicIdPartition not found in delayed fetch $this.")
+              DelayedFetchMetrics.findBatchesErrorsMeter.mark()
               return None  // Case C
             }
 
@@ -211,13 +217,20 @@ class DelayedFetch(
             if (fetchOffset.messageOffset > endOffset) {
               // Truncation happened
               debug(s"Satisfying fetch $this since it is fetching later segments of partition $topicIdPartition.")
+              DelayedFetchMetrics.logTruncationsMeter.mark()
               return None  // Case A
             } else if (fetchOffset.messageOffset < endOffset) {
               val bytesAvailable = r.estimatedByteSize(fetchOffset.messageOffset)
               accumulatedSize += bytesAvailable // Case B: accumulate the size of the batches
-            } // Case D: same as fetchOffset == endOffset, no new data available
+            } else {
+              // Case D: same as fetchOffset == endOffset, no new data available
+              DelayedFetchMetrics.noNewDataMeter.mark()
+            }
           }
-        case _ => return None  // Case C
+        case _ => {
+          DelayedFetchMetrics.findBatchesErrorsMeter.mark()
+          return None
+        }  // Case C
       }
     }
 
@@ -297,5 +310,12 @@ object DelayedFetchMetrics {
   private val FetcherTypeKey = "fetcherType"
   val followerExpiredRequestMeter: Meter = metricsGroup.newMeter("ExpiresPerSec", "requests", TimeUnit.SECONDS, Map(FetcherTypeKey -> "follower").asJava)
   val consumerExpiredRequestMeter: Meter = metricsGroup.newMeter("ExpiresPerSec", "requests", TimeUnit.SECONDS, Map(FetcherTypeKey -> "consumer").asJava)
+  // diskless metrics
+  val findBatchesRequestsMeter: Meter = metricsGroup.newMeter("FindBatchesRequestsPerSec", "requests", TimeUnit.SECONDS)
+  val findBatchesErrorsMeter: Meter = metricsGroup.newMeter("FindBatchesErrorsPerSec", "requests", TimeUnit.SECONDS)
+  val enoughBytesMeter: Meter = metricsGroup.newMeter("EnoughBytesPerSec", "requests", TimeUnit.SECONDS)
+  val logTruncationsMeter: Meter = metricsGroup.newMeter("LogTruncationsPerSec", "requests", TimeUnit.SECONDS)
+  val noNewDataMeter: Meter = metricsGroup.newMeter("NoNewDataPerSec", "requests", TimeUnit.SECONDS)
+  val notEnoughBytesMeter: Meter = metricsGroup.newMeter("NotEnoughBytesPerSec", "requests", TimeUnit.SECONDS)
 }
 
