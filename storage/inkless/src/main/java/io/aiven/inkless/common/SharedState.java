@@ -23,8 +23,11 @@ import org.apache.kafka.storage.log.metrics.BrokerTopicStats;
 
 import java.io.Closeable;
 import java.io.IOException;
+import java.time.Duration;
 import java.util.function.Supplier;
 
+import io.aiven.inkless.cache.BatchCoordinateCache;
+import io.aiven.inkless.cache.CaffeineBatchCoordinateCache;
 import io.aiven.inkless.cache.CaffeineCache;
 import io.aiven.inkless.cache.FixedBlockAlignment;
 import io.aiven.inkless.cache.KeyAlignmentStrategy;
@@ -42,6 +45,7 @@ public record SharedState(
     ObjectKeyCreator objectKeyCreator,
     KeyAlignmentStrategy keyAlignmentStrategy,
     ObjectCache cache,
+    BatchCoordinateCache batchCoordinateCache,
     BrokerTopicStats brokerTopicStats,
     Supplier<LogConfig> defaultTopicConfigs
 ) implements Closeable {
@@ -55,6 +59,12 @@ public record SharedState(
         BrokerTopicStats brokerTopicStats,
         Supplier<LogConfig> defaultTopicConfigs
     ) {
+        Duration maxTtl = config.fileCleanerRetentionPeriod().dividedBy(2);
+        if (config.batchCoordinateCacheTtl().toMillis() > maxTtl.toMillis()) {
+            throw new IllegalArgumentException(
+                "Value of consume.batch.coordinates.cache.ttl.ms exceeds file.cleaner.retention.period.ms / 2"
+            );
+        }
         return new SharedState(
             time,
             brokerId,
@@ -69,6 +79,7 @@ public record SharedState(
                 config.cacheExpirationLifespanSec(),
                 config.cacheExpirationMaxIdleSec()
             ),
+            new CaffeineBatchCoordinateCache(config.batchCoordinateCacheTtl()),
             brokerTopicStats,
             defaultTopicConfigs
         );

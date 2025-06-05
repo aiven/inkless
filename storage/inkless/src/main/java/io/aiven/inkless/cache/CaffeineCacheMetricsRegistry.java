@@ -21,7 +21,7 @@ import org.apache.kafka.common.MetricNameTemplate;
 
 public class CaffeineCacheMetricsRegistry {
     public static final String METRIC_CONTEXT = "io.aiven.inkless.cache.caffeine";
-    public static final String METRIC_GROUP = "wal-segment-cache";
+//    public static final String METRIC_GROUP = "wal-segment-cache";
 
     public static final String CACHE_SIZE = "cache-size";
     public static final String CACHE_HIT_RATE = "cache-hits-rate";
@@ -39,42 +39,42 @@ public class CaffeineCacheMetricsRegistry {
     public final MetricNameTemplate avgReadTimeMetricName;
     public final MetricNameTemplate cacheEvictionsMetricName;
 
-    public CaffeineCacheMetricsRegistry() {
+    public CaffeineCacheMetricsRegistry(String metricGroup) {
         cacheSizeMetricName = new MetricNameTemplate(
                 CACHE_SIZE,
-                METRIC_GROUP,
+                metricGroup,
                 "Current size of the cache"
         );
         cacheHitRateMetricName = new MetricNameTemplate(
                 CACHE_HIT_RATE,
-                METRIC_GROUP,
+                metricGroup,
                 "Cache hit rate"
         );
 
         cacheHitCountMetricName = new MetricNameTemplate(
                 CACHE_HIT_COUNT,
-                METRIC_GROUP,
+                metricGroup,
                 "Number of cache hits"
         );
         cacheMissRateMetricName = new MetricNameTemplate(
                 CACHE_MISS_RATE,
-                METRIC_GROUP,
+                metricGroup,
                 "Cache miss rate"
         );
 
         cacheMissCountMetricName = new MetricNameTemplate(
                 CACHE_MISS_COUNT,
-                METRIC_GROUP,
+                metricGroup,
                 "Number of cache misses"
         );
         avgReadTimeMetricName = new MetricNameTemplate(
                 CACHE_AVG_LOAD_PENALTY_NANOSECONDS,
-                METRIC_GROUP,
+                metricGroup,
                 "Average cache load penalty in nanoseconds"
         );
         cacheEvictionsMetricName = new MetricNameTemplate(
                 CACHE_EVICTION_COUNT,
-                METRIC_GROUP,
+                metricGroup,
                 "Number of evictions from the cache"
         );
     }

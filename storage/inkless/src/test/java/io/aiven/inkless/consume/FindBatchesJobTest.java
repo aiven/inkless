@@ -39,6 +39,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
+import io.aiven.inkless.cache.BatchCoordinateCache;
 import io.aiven.inkless.control_plane.BatchInfo;
 import io.aiven.inkless.control_plane.BatchMetadata;
 import io.aiven.inkless.control_plane.ControlPlane;
@@ -60,6 +61,8 @@ public class FindBatchesJobTest {
     private ControlPlane controlPlane;
     @Mock
     private FetchParams params;
+    @Mock
+    private BatchCoordinateCache batchCoordinateCache;
 
     @Captor
     ArgumentCaptor<List<FindBatchRequest>> requestCaptor;
@@ -82,7 +85,7 @@ public class FindBatchesJobTest {
                 new BatchInfo(1L, OBJECT_KEY_MAIN_PART, BatchMetadata.of(partition0, 0, 10, 0, 0, logAppendTimestamp, maxBatchTimestamp, TimestampType.CREATE_TIME))
             ), logStartOffset, highWatermark)
         );
-        FindBatchesJob job = new FindBatchesJob(time, controlPlane, params, fetchInfos, maxBatchesPerPartition, durationMs -> {});
+        FindBatchesJob job = new FindBatchesJob(time, controlPlane, batchCoordinateCache, params, fetchInfos, maxBatchesPerPartition, durationMs -> {});
         when(controlPlane.findBatches(requestCaptor.capture(), anyInt(), anyInt())).thenReturn(new ArrayList<>(coordinates.values()));
         Map<TopicIdPartition, FindBatchResponse> result = job.get();
 
