@@ -17,6 +17,7 @@
  */
 package io.aiven.inkless.produce;
 
+import io.aiven.inkless.cache.BatchCoordinateCache;
 import org.apache.kafka.common.utils.Time;
 
 import java.util.Collections;
@@ -36,14 +37,16 @@ public class CacheStoreJob implements Runnable {
 
     private final Time time;
     private final ObjectCache cache;
+    private final BatchCoordinateCache batchCoordinateCache;
     private final KeyAlignmentStrategy keyAlignmentStrategy;
     private final byte[] data;
     private final Future<ObjectKey> uploadFuture;
     private final Consumer<Long> cacheStoreDurationCallback;
 
-    public CacheStoreJob(Time time, ObjectCache cache, KeyAlignmentStrategy keyAlignmentStrategy, byte[] data, Future<ObjectKey> uploadFuture, Consumer<Long> cacheStoreDurationCallback) {
+    public CacheStoreJob(Time time, ObjectCache cache, BatchCoordinateCache batchCoordinateCache, KeyAlignmentStrategy keyAlignmentStrategy, byte[] data, Future<ObjectKey> uploadFuture, Consumer<Long> cacheStoreDurationCallback) {
         this.time = time;
         this.cache = cache;
+        this.batchCoordinateCache = batchCoordinateCache;
         this.keyAlignmentStrategy = keyAlignmentStrategy;
         this.data = data;
         this.uploadFuture = uploadFuture;

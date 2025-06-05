@@ -37,6 +37,8 @@ import io.aiven.inkless.control_plane.ControlPlane;
 import io.aiven.inkless.control_plane.FindBatchRequest;
 import io.aiven.inkless.control_plane.FindBatchResponse;
 import io.aiven.inkless.control_plane.MetadataView;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public class FindBatchesJob implements Callable<Map<TopicIdPartition, FindBatchResponse>> {
 
@@ -46,6 +48,8 @@ public class FindBatchesJob implements Callable<Map<TopicIdPartition, FindBatchR
     private final FetchParams params;
     private final Map<TopicIdPartition, FetchRequest.PartitionData> fetchInfos;
     private final Consumer<Long> durationCallback;
+
+    private static final Logger LOGGER = LoggerFactory.getLogger(FindBatchesJob.class);
 
     public FindBatchesJob(Time time,
                           ControlPlane controlPlane,
