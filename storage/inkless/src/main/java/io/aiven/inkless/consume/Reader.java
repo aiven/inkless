@@ -32,6 +32,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
 import io.aiven.inkless.TimeUtils;
+import io.aiven.inkless.cache.BatchCoordinateCache;
 import io.aiven.inkless.cache.KeyAlignmentStrategy;
 import io.aiven.inkless.cache.ObjectCache;
 import io.aiven.inkless.common.InklessThreadFactory;
@@ -47,6 +48,7 @@ public class Reader implements AutoCloseable {
     private final ObjectKeyCreator objectKeyCreator;
     private final KeyAlignmentStrategy keyAlignmentStrategy;
     private final ObjectCache cache;
+    private final BatchCoordinateCache batchCoordinateCache;
     private final ControlPlane controlPlane;
     private final MetadataView metadataView;
     private final ObjectFetcher objectFetcher;
@@ -60,6 +62,7 @@ public class Reader implements AutoCloseable {
                   ObjectKeyCreator objectKeyCreator,
                   KeyAlignmentStrategy keyAlignmentStrategy,
                   ObjectCache cache,
+                  BatchCoordinateCache batchCoordinateCache,
                   ControlPlane controlPlane,
                     MetadataView metadataView,
                   ObjectFetcher objectFetcher) {
@@ -68,6 +71,7 @@ public class Reader implements AutoCloseable {
             objectKeyCreator,
             keyAlignmentStrategy,
             cache,
+            batchCoordinateCache,
             controlPlane,
             metadataView,
             objectFetcher,
@@ -84,6 +88,7 @@ public class Reader implements AutoCloseable {
         ObjectKeyCreator objectKeyCreator,
         KeyAlignmentStrategy keyAlignmentStrategy,
         ObjectCache cache,
+        BatchCoordinateCache batchCoordinateCache,
         ControlPlane controlPlane,
         MetadataView metadataView,
         ObjectFetcher objectFetcher,
@@ -96,6 +101,7 @@ public class Reader implements AutoCloseable {
         this.objectKeyCreator = objectKeyCreator;
         this.keyAlignmentStrategy = keyAlignmentStrategy;
         this.cache = cache;
+        this.batchCoordinateCache = batchCoordinateCache;
         this.controlPlane = controlPlane;
         this.metadataView = metadataView;
         this.objectFetcher = objectFetcher;
@@ -116,6 +122,7 @@ public class Reader implements AutoCloseable {
                 time,
                 controlPlane,
                 metadataView,
+                batchCoordinateCache,
                 params,
                 fetchInfos,
                 fetchMetrics::findBatchesFinished

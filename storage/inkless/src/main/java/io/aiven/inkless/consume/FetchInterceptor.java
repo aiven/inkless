@@ -47,7 +47,7 @@ public class FetchInterceptor implements Closeable {
     private final TopicTypeCounter topicTypeCounter;
 
     public FetchInterceptor(final SharedState state) {
-        this(state, new Reader(state.time(), state.objectKeyCreator(), state.keyAlignmentStrategy(), state.cache(), state.controlPlane(), state.metadata(), state.storage()));
+        this(state, new Reader(state.time(), state.objectKeyCreator(), state.keyAlignmentStrategy(), state.cache(), state.batchCoordinateCache(), state.controlPlane(), state.metadata(), state.storage()));
     }
 
     public FetchInterceptor(final SharedState state, final Reader reader) {

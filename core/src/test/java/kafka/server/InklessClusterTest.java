@@ -37,6 +37,8 @@ import org.apache.kafka.common.config.TopicConfig;
 import org.apache.kafka.common.record.TimestampType;
 import org.apache.kafka.common.serialization.ByteArrayDeserializer;
 import org.apache.kafka.common.serialization.ByteArraySerializer;
+import org.apache.kafka.common.serialization.IntegerDeserializer;
+import org.apache.kafka.common.serialization.IntegerSerializer;
 import org.apache.kafka.common.test.KafkaClusterTestKit;
 import org.apache.kafka.common.test.TestKitNodes;
 import org.apache.kafka.coordinator.group.GroupCoordinatorConfig;
@@ -54,6 +56,7 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
@@ -93,7 +96,7 @@ public class InklessClusterTest {
 
         final TestKitNodes nodes = new TestKitNodes.Builder()
             .setCombined(true)
-            .setNumBrokerNodes(2)
+            .setNumBrokerNodes(1)
             .setNumControllerNodes(1)
             .build();
         cluster = new KafkaClusterTestKit.Builder(nodes)
@@ -184,6 +187,81 @@ public class InklessClusterTest {
         assertEquals(numRecords, recordsProduced.get());
         consumeWithManualAssignment(timestampType, clientConfigs, topicName, now, numRecords);
         consumeWithSubscription(timestampType, clientConfigs, topicName, now, numRecords);
+    }
+
+    @Test
+    public void test() throws Exception {
+        Map<String, Object> clientConfigs = new HashMap<>();
+        clientConfigs.put(CommonClientConfigs.BOOTSTRAP_SERVERS_CONFIG, cluster.bootstrapServers());
+        clientConfigs.put(ProducerConfig.ENABLE_IDEMPOTENCE_CONFIG, String.valueOf(true));
+        clientConfigs.put(ProducerConfig.LINGER_MS_CONFIG, "1000");
+        clientConfigs.put(ProducerConfig.BATCH_SIZE_CONFIG, "100000");
+        clientConfigs.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, ByteArraySerializer.class.getName());
+        clientConfigs.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, IntegerSerializer.class.getName());
+        clientConfigs.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, ByteArrayDeserializer.class.getName());
+        clientConfigs.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, IntegerDeserializer.class.getName());
+        // by default is latest and nothing would get consumed.
+        clientConfigs.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, AutoOffsetResetStrategy.EARLIEST.name());
+        String topicName = "inkless-cache-topic";
+        int numRecords = 50;
+
+        try (Admin admin = AdminClient.create(clientConfigs)) {
+            final NewTopic topic = new NewTopic(topicName, 2, (short) 1)
+                .configs(Map.of(
+                    TopicConfig.INKLESS_ENABLE_CONFIG, "true",
+                    TopicConfig.MESSAGE_TIMESTAMP_TYPE_CONFIG, TimestampType.LOG_APPEND_TIME.name
+                ));
+            CreateTopicsResult topics = admin.createTopics(Collections.singletonList(topic));
+            topics.all().get(10, TimeUnit.SECONDS);
+        }
+
+        AtomicInteger recordsProduced = new AtomicInteger();
+        final long now = System.currentTimeMillis();
+        Callback produceCb = (metadata, exception) -> {
+            if (exception != null) {
+                log.error("Failed to send record", exception);
+            } else {
+                log.info("Committed value for topic {} at offset {} at {}", metadata.topic(), metadata.offset(), now);
+                recordsProduced.incrementAndGet();
+            }
+        };
+        var producedRecords1 = new ArrayList<Integer>(numRecords);
+        var producedRecords2 = new ArrayList<Integer>(numRecords);
+        try (Producer<byte[], Integer> producer = new KafkaProducer<>(clientConfigs)) {
+            for (int i = 0; i < numRecords; i++) {
+                producedRecords1.add(i);
+                final ProducerRecord<byte[], Integer> record1 = new ProducerRecord<>(topicName, 0, now, null, i);
+                producedRecords2.add(i + 10000);
+                final ProducerRecord<byte[], Integer> record2 = new ProducerRecord<>(topicName, 1, now, null, i + 10000);
+                producer.send(record1, produceCb);
+                Thread.sleep(100);
+                producer.send(record2, produceCb);
+                Thread.sleep(100);
+            }
+            producer.flush();
+        }
+
+        var consumedRecords1 = new ArrayList<Integer>();
+        var consumedRecords2 = new ArrayList<Integer>();
+        assertEquals(numRecords * 2, recordsProduced.get());
+        try (Consumer<byte[], Integer> consumer = new KafkaConsumer<>(clientConfigs)) {
+            consumer.assign(Collections.singletonList(new TopicPartition(topicName, 0)));
+            ConsumerRecords<byte[], Integer> poll = consumer.poll(Duration.ofSeconds(30));
+            for (ConsumerRecord<byte[], Integer> record : poll) {
+                assertTrue(record.timestamp() > now);
+                consumedRecords1.add(record.value());
+            }
+        }
+        try (Consumer<byte[], Integer> consumer = new KafkaConsumer<>(clientConfigs)) {
+            consumer.assign(Collections.singletonList(new TopicPartition(topicName, 1)));
+            ConsumerRecords<byte[], Integer> poll = consumer.poll(Duration.ofSeconds(30));
+            for (ConsumerRecord<byte[], Integer> record : poll) {
+                assertTrue(record.timestamp() > now);
+                consumedRecords2.add(record.value());
+            }
+        }
+        assertEquals(producedRecords1, consumedRecords1);
+        assertEquals(producedRecords2, consumedRecords2);
     }
 
     @Test
