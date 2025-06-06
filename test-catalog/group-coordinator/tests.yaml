@@ -14,6 +14,8 @@ org.apache.kafka.coordinator.group.GroupCoordinatorConfigTest:
 - testConsumerGroupAssignorFullClassNames
 - testConsumerGroupAssignors
 - testInvalidConfigs
+- testShareGroupAssignorFullClassNames
+- testShareGroupAssignors
 org.apache.kafka.coordinator.group.GroupCoordinatorRecordHelpersTest:
 - testEmptyGroupMetadataRecord
 - testNewConsumerGroupCurrentAssignmentRecord

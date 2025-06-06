@@ -3095,6 +3095,7 @@ org.apache.kafka.streams.processor.internals.TaskManagerTest:
 - shouldShutDownStateUpdaterAndCloseFailedTasksDirty
 - shouldShutdownSchedulingTaskManager
 - shouldSkipUnknownOffsetsWhenComputingOffsetSum
+- shouldStartStateUpdaterOnInit
 - shouldStreamsExceptionOnCommitError
 - shouldSuspendActiveTaskWithRevokedInputPartitionsInStateUpdater
 - shouldSuspendActiveTasksDuringRevocation
