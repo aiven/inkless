@@ -1,20 +1,18 @@
 package io.aiven.inkless.cache;
 
-import io.aiven.inkless.control_plane.BatchInfo;
-import io.aiven.inkless.generated.CacheKey;
-import io.aiven.inkless.generated.FileExtent;
+import org.apache.kafka.common.TopicIdPartition;
+
 import java.io.IOException;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.ListIterator;
 import java.util.function.Predicate;
-import org.apache.kafka.common.TopicIdPartition;
-import org.apache.kafka.common.cache.Cache;
-import org.apache.kafka.common.cache.LRUCache;
+
+import io.aiven.inkless.control_plane.BatchCoordinate;
 
 public class MemoryBatchCoordinateCache implements BatchCoordinateCache {
 
-    private final ItemLevelEvictionCache<TopicIdPartition, BatchInfo> backingCache = new ItemLevelEvictionCache<>(10);
+    private final ItemLevelEvictionCache<TopicIdPartition, BatchCoordinate> backingCache = new ItemLevelEvictionCache<>(10);
 
     @Override
     public void close() throws IOException {
@@ -22,43 +20,43 @@ public class MemoryBatchCoordinateCache implements BatchCoordinateCache {
     }
 
     @Override
-    public List<BatchInfo> get(BatchCoordinateCacheKey key) {
-        var allBatches = backingCache.getList(key.topicIdPartition());
+    public List<BatchCoordinate> get(TopicIdPartition topicIdPartition, long offset) {
+        var allBatches = backingCache.getList(topicIdPartition);
         if (allBatches == null) {
             return null;
         }
-        return getSublistFromMatch(allBatches, batchInfo -> key.offset() <= batchInfo.metadata().lastOffset() && key.offset() >= batchInfo.metadata().baseOffset());
+        return getSublistFromMatch(allBatches, batchCoordinate -> offset <= batchCoordinate.lastOffset() && offset >= batchCoordinate.baseOffset());
     }
 
     @Override
-    public void put(BatchCoordinateCacheKey key, List<BatchInfo> value) {
+    public void put(TopicIdPartition topicIdPartition, BatchCoordinate batchCoordinate) {
 
     }
 
     @Override
-    public boolean remove(BatchCoordinateCacheKey key) {
+    public boolean remove(TopicIdPartition topicIdPartition) {
         return false;
     }
 
-    @Override
-    public long size() {
-        return 0;
-    }
+//    @Override
+//    public long size() {
+//        return 0;
+//    }
 
-    private List<BatchInfo> getSublistFromMatch(
-        LinkedList<BatchInfo> originalList,
-        Predicate<BatchInfo> matchCondition
+    private List<BatchCoordinate> getSublistFromMatch(
+        LinkedList<BatchCoordinate> originalList,
+        Predicate<BatchCoordinate> matchCondition
     ) {
         if (originalList == null || originalList.isEmpty()) {
             return new LinkedList<>(); // Return an empty list for null or empty input
         }
 
-        LinkedList<BatchInfo> resultList = new LinkedList<>();
-        ListIterator<BatchInfo> iterator = originalList.listIterator(); // Use ListIterator
+        LinkedList<BatchCoordinate> resultList = new LinkedList<>();
+        ListIterator<BatchCoordinate> iterator = originalList.listIterator(); // Use ListIterator
 
         // Phase 1: Iterate to find the first matching element
         while (iterator.hasNext()) {
-            BatchInfo currentElement = iterator.next();
+            BatchCoordinate currentElement = iterator.next();
             if (matchCondition.test(currentElement)) {
                 // "Certain entry" found, add it to the result
                 resultList.add(currentElement);

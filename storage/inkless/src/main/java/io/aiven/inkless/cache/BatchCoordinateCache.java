@@ -17,12 +17,20 @@
  */
 package io.aiven.inkless.cache;
 
-import io.aiven.inkless.control_plane.BatchInfo;
-import io.aiven.inkless.generated.CacheKey;
-import io.aiven.inkless.generated.FileExtent;
+import org.apache.kafka.common.TopicIdPartition;
+
 import java.io.Closeable;
 import java.util.List;
-import org.apache.kafka.common.cache.Cache;
 
-public interface BatchCoordinateCache extends Cache<BatchCoordinateCacheKey, List<BatchInfo>>, Closeable {
+import io.aiven.inkless.control_plane.BatchCoordinate;
+
+public interface BatchCoordinateCache extends Closeable {
+
+    List<BatchCoordinate> get(TopicIdPartition topicIdPartition, long offset);
+
+    void put(TopicIdPartition topicIdPartition, BatchCoordinate batchCoordinate);
+
+    boolean remove(TopicIdPartition topicIdPartition);
+
+//    long size();
 }
