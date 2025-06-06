@@ -365,15 +365,6 @@ kafka.api.PlaintextAdminIntegrationTest:
 - testSeekAfterDeleteRecords
 - testShareGroups
 - testValidIncrementalAlterConfigs
-kafka.api.PlaintextConsumerAssignTest:
-- testAssignAndCommitAsyncNotCommitted
-- testAssignAndCommitSyncAllConsumed
-- testAssignAndCommitSyncNotCommitted
-- testAssignAndConsume
-- testAssignAndConsumeFromCommittedOffsets
-- testAssignAndConsumeSkippingPosition
-- testAssignAndFetchCommittedOffsets
-- testAssignAndRetrievingCommittedOffsetsMultipleTimes
 kafka.api.PlaintextConsumerAssignorsTest:
 - testMultiConsumerDefaultAssignor
 - testMultiConsumerDefaultAssignorAndVerifyAssignment
