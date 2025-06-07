@@ -392,6 +392,7 @@ org.apache.kafka.storage.internals.log.OffsetMapTest:
 org.apache.kafka.storage.internals.log.ProducerStateManagerTest:
 - testAcceptAppendWithSequenceGapsOnReplica
 - testAcceptAppendWithoutProducerStateOnReplica
+- testAllowNonZeroSequenceForTransactionsV1WithEmptyState
 - testAppendEmptyControlBatch
 - testAppendTxnMarkerWithNoProducerState
 - testBasicIdMapping
@@ -427,6 +428,8 @@ org.apache.kafka.storage.internals.log.ProducerStateManagerTest:
 - testRecoverFromSnapshotEmptyTransaction
 - testRecoverFromSnapshotFinishedTransaction
 - testRecoverFromSnapshotUnfinishedTransaction
+- testRejectNonZeroSequenceForDirectEpochBump
+- testRejectNonZeroSequenceForTransactionsV2WithEmptyState
 - testReloadSnapshots
 - testRemoveAllStraySnapshots
 - testRemoveAndMarkSnapshotForDeletion
