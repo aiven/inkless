@@ -40,6 +40,7 @@ public class PostgresControlPlaneMetrics implements Closeable {
     private final QueryMetrics fileDeleteMetrics = new QueryMetrics("FilesDelete");
     private final QueryMetrics listOffsetsMetrics = new QueryMetrics("ListOffsets");
     private final QueryMetrics deleteRecordsMetrics = new QueryMetrics("DeleteRecords");
+    private final QueryMetrics enforceRetentionMetrics = new QueryMetrics("EnforceRetention");
     private final QueryMetrics getFilesToDeleteMetrics = new QueryMetrics("GetFilesToDelete");
     private final QueryMetrics getFileMergeWorkItemMetrics = new QueryMetrics("GetFileMergeWorkItem");
     private final QueryMetrics releaseFileMergeWorkItemMetrics = new QueryMetrics("ReleaseFileMergeWorkItem");
@@ -86,6 +87,10 @@ public class PostgresControlPlaneMetrics implements Closeable {
         deleteRecordsMetrics.record(duration);
     }
 
+    public void onEnforceRetentionCompleted(Long duration) {
+        enforceRetentionMetrics.record(duration);
+    }
+
     public void onGetFilesToDeleteCompleted(Long duration) {
         getFilesToDeleteMetrics.record(duration);
     }
@@ -117,6 +122,7 @@ public class PostgresControlPlaneMetrics implements Closeable {
         fileDeleteMetrics.remove();
         listOffsetsMetrics.remove();
         deleteRecordsMetrics.remove();
+        enforceRetentionMetrics.remove();
         getFilesToDeleteMetrics.remove();
         getFileMergeWorkItemMetrics.remove();
         releaseFileMergeWorkItemMetrics.remove();
