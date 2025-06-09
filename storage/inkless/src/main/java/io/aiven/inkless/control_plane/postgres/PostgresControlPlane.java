@@ -49,6 +49,8 @@ import io.aiven.inkless.control_plane.CreateTopicAndPartitionsRequest;
 import io.aiven.inkless.control_plane.DeleteFilesRequest;
 import io.aiven.inkless.control_plane.DeleteRecordsRequest;
 import io.aiven.inkless.control_plane.DeleteRecordsResponse;
+import io.aiven.inkless.control_plane.EnforceRetentionRequest;
+import io.aiven.inkless.control_plane.EnforceRetentionResponse;
 import io.aiven.inkless.control_plane.FileMergeWorkItem;
 import io.aiven.inkless.control_plane.FileMergeWorkItemNotExist;
 import io.aiven.inkless.control_plane.FileToDelete;
@@ -152,6 +154,11 @@ public class PostgresControlPlane extends AbstractControlPlane {
     public List<DeleteRecordsResponse> deleteRecords(final List<DeleteRecordsRequest> requests) {
         final DeleteRecordsJob job = new DeleteRecordsJob(time, jooqCtx, requests, metrics::onDeleteRecordsCompleted);
         return job.call();
+    }
+
+    @Override
+    public List<EnforceRetentionResponse> enforceRetention(final List<EnforceRetentionRequest> requests) {
+        throw new RuntimeException("Not implemented");
     }
 
     @Override

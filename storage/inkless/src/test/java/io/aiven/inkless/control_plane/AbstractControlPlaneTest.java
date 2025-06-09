@@ -23,7 +23,6 @@ import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.record.RecordBatch;
 import org.apache.kafka.common.record.TimestampType;
 import org.apache.kafka.common.utils.MockTime;
-import org.apache.kafka.common.utils.Time;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -78,7 +77,8 @@ public abstract class AbstractControlPlaneTest {
         "file.merge.lock.period.ms", Long.toString(FILE_MERGE_LOCK_PERIOD.toMillis())
     );
 
-    protected Time time = new MockTime();
+    static final long START_TIME = 10000;
+    protected MockTime time = new MockTime(0, START_TIME, 0);
 
     protected ControlPlane controlPlane;
 
@@ -631,6 +631,363 @@ public abstract class AbstractControlPlaneTest {
         assertThat(controlPlane.getFilesToDelete()).isEmpty();
     }
 
+    @Nested
+    class Retention {
+        private static final String FILE_NAME = "obj1";
+        private static final long BATCH_1_RECORDS = 10;
+        private static final long BATCH_2_RECORDS = 20;
+        private static final long BATCH_3_RECORDS = 30;
+        private static final int BATCH_1_SIZE = 123;
+        private static final int BATCH_2_SIZE = 456;
+        private static final int BATCH_3_SIZE = 789;
+        private static final long BATCH_1_MAX_TIMESTAMP = START_TIME;
+        private static final long BATCH_2_MAX_TIMESTAMP = START_TIME + 10;
+        private static final long BATCH_3_MAX_TIMESTAMP = START_TIME + 30;
+
+        private static final long EXPECTED_HIGH_WATERMARK = BATCH_1_RECORDS + BATCH_2_RECORDS + BATCH_3_RECORDS;
+
+        @Test
+        void nonExistentTopicPartition() {
+            final var responses = controlPlane.enforceRetention(List.of(
+                new EnforceRetentionRequest(
+                    Uuid.ZERO_UUID, 12345, 10, 12)
+            ));
+            assertThat(responses)
+                .map(EnforceRetentionResponse::errors)
+                .containsExactly(Errors.UNKNOWN_TOPIC_OR_PARTITION);
+        }
+
+        @Nested
+        class BySize {
+            @Test
+            void empty() {
+                final var responses = controlPlane.enforceRetention(List.of(
+                    new EnforceRetentionRequest(EXISTING_TOPIC_1_ID, 0, 100, -1)
+                ));
+                assertThat(responses).containsExactly(
+                    EnforceRetentionResponse.success(0, 0, 0)
+                );
+                assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0))))
+                    .containsExactly(GetLogInfoResponse.success(0, 0, 0));
+            }
+
+            @Test
+            void deleteNothing() {
+                addBatches();
+                assertThat(getLogStartOffset()).isEqualTo(0L);
+                assertThat(getHighWatermark()).isEqualTo(EXPECTED_HIGH_WATERMARK);
+
+                final var responses = controlPlane.enforceRetention(List.of(
+                    new EnforceRetentionRequest(EXISTING_TOPIC_1_ID, 0, BATCH_1_SIZE + BATCH_2_SIZE + BATCH_3_SIZE, -1)
+                ));
+
+                assertThat(responses)
+                    .containsExactly(EnforceRetentionResponse.success(0, 0, 0));
+                assertThat(getLogStartOffset()).isEqualTo(0);
+                assertThat(getHighWatermark()).isEqualTo(EXPECTED_HIGH_WATERMARK);
+                assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0))))
+                    .containsExactly(GetLogInfoResponse.success(0, EXPECTED_HIGH_WATERMARK, BATCH_1_SIZE + BATCH_2_SIZE + BATCH_3_SIZE));
+            }
+
+            @ParameterizedTest
+            @ValueSource(booleans = {true, false})
+            void deleteSome(final boolean deleteMidBatch) {
+                addBatches();
+                assertThat(getLogStartOffset()).isEqualTo(0L);
+                assertThat(getHighWatermark()).isEqualTo(EXPECTED_HIGH_WATERMARK);
+
+                final int retentionBytes = deleteMidBatch ? BATCH_3_SIZE + 1 : BATCH_3_SIZE;
+                final var response = controlPlane.enforceRetention(List.of(
+                    new EnforceRetentionRequest(EXISTING_TOPIC_1_ID, 0, retentionBytes, -1)
+                ));
+
+                final long newLogStartOffset = BATCH_1_RECORDS + BATCH_2_RECORDS;
+                assertThat(response)
+                    .containsExactly(EnforceRetentionResponse.success(2, BATCH_1_SIZE + BATCH_2_SIZE, newLogStartOffset));
+                assertThat(getLogStartOffset()).isEqualTo(newLogStartOffset);
+                assertThat(getHighWatermark()).isEqualTo(EXPECTED_HIGH_WATERMARK);
+                assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0))))
+                    .containsExactly(GetLogInfoResponse.success(newLogStartOffset, EXPECTED_HIGH_WATERMARK, BATCH_3_SIZE));
+            }
+
+            @Test
+            void deleteAll() {
+                addBatches();
+                assertThat(getLogStartOffset()).isEqualTo(0L);
+                assertThat(getHighWatermark()).isEqualTo(EXPECTED_HIGH_WATERMARK);
+
+                final var responses = controlPlane.enforceRetention(List.of(
+                    new EnforceRetentionRequest(EXISTING_TOPIC_1_ID, 0, 0, -1)
+                ));
+
+                final long newLogStartOffset = EXPECTED_HIGH_WATERMARK;
+                assertThat(responses)
+                    .containsExactly(EnforceRetentionResponse.success(3, BATCH_1_SIZE + BATCH_2_SIZE + BATCH_3_SIZE, newLogStartOffset));
+                assertThat(getLogStartOffset()).isEqualTo(newLogStartOffset);
+                assertThat(getHighWatermark()).isEqualTo(EXPECTED_HIGH_WATERMARK);
+                assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0))))
+                    .containsExactly(GetLogInfoResponse.success(newLogStartOffset, EXPECTED_HIGH_WATERMARK, 0));
+                assertThat(controlPlane.getFilesToDelete()).containsExactly(
+                    new FileToDelete(FILE_NAME, TimeUtils.now(time))
+                );
+            }
+        }
+
+        @Nested
+        class ByTime {
+            @Test
+            void empty() {
+                final var responses = controlPlane.enforceRetention(List.of(
+                    new EnforceRetentionRequest(EXISTING_TOPIC_1_ID, 0, -1, 123456)
+                ));
+                assertThat(responses).containsExactly(EnforceRetentionResponse.success(
+                    0, 0, 0
+                ));
+                assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0))))
+                    .containsExactly(GetLogInfoResponse.success(0, 0, 0));
+            }
+
+            @Test
+            void deleteNothing() {
+                addBatches();
+                assertThat(getLogStartOffset()).isEqualTo(0L);
+                assertThat(getHighWatermark()).isEqualTo(EXPECTED_HIGH_WATERMARK);
+
+                time.setCurrentTimeMs(BATCH_3_MAX_TIMESTAMP + 1);
+                final var responses = controlPlane.enforceRetention(List.of(
+                    new EnforceRetentionRequest(EXISTING_TOPIC_1_ID, 0, -1, 1000)
+                ));
+
+                assertThat(responses)
+                    .containsExactly(EnforceRetentionResponse.success(0, 0, 0));
+                assertThat(getLogStartOffset()).isEqualTo(0);
+                assertThat(getHighWatermark()).isEqualTo(EXPECTED_HIGH_WATERMARK);
+                assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0))))
+                    .containsExactly(GetLogInfoResponse.success(0, EXPECTED_HIGH_WATERMARK, BATCH_1_SIZE + BATCH_2_SIZE + BATCH_3_SIZE));
+            }
+
+            @Test
+            void deleteSome() {
+                addBatches();
+                assertThat(getLogStartOffset()).isEqualTo(0L);
+                assertThat(getHighWatermark()).isEqualTo(EXPECTED_HIGH_WATERMARK);
+
+                time.setCurrentTimeMs(BATCH_3_MAX_TIMESTAMP);
+                final var responses = controlPlane.enforceRetention(List.of(
+                    new EnforceRetentionRequest(EXISTING_TOPIC_1_ID, 0, -1, BATCH_3_MAX_TIMESTAMP - BATCH_2_MAX_TIMESTAMP)
+                ));
+
+                final long newLogStartOffset = BATCH_1_RECORDS;
+                assertThat(responses)
+                    .containsExactly(EnforceRetentionResponse.success(1, BATCH_1_SIZE, newLogStartOffset));
+                assertThat(getLogStartOffset()).isEqualTo(newLogStartOffset);
+                assertThat(getHighWatermark()).isEqualTo(EXPECTED_HIGH_WATERMARK);
+                assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0))))
+                    .containsExactly(GetLogInfoResponse.success(newLogStartOffset, EXPECTED_HIGH_WATERMARK, BATCH_2_SIZE + BATCH_3_SIZE));
+            }
+
+            @Test
+            void deleteAll() {
+                addBatches();
+                assertThat(getLogStartOffset()).isEqualTo(0L);
+                assertThat(getHighWatermark()).isEqualTo(EXPECTED_HIGH_WATERMARK);
+
+                time.setCurrentTimeMs(BATCH_3_MAX_TIMESTAMP + 1);
+                final var responses = controlPlane.enforceRetention(List.of(
+                    new EnforceRetentionRequest(EXISTING_TOPIC_1_ID, 0, -1, 0)
+                ));
+
+                final long newLogStartOffset = EXPECTED_HIGH_WATERMARK;
+                assertThat(responses)
+                    .containsExactly(EnforceRetentionResponse.success(3, BATCH_1_SIZE + BATCH_2_SIZE + BATCH_3_SIZE, newLogStartOffset));
+                assertThat(getLogStartOffset()).isEqualTo(newLogStartOffset);
+                assertThat(getHighWatermark()).isEqualTo(EXPECTED_HIGH_WATERMARK);
+                assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0))))
+                    .containsExactly(GetLogInfoResponse.success(newLogStartOffset, EXPECTED_HIGH_WATERMARK, 0));
+                assertThat(controlPlane.getFilesToDelete()).containsExactly(
+                    new FileToDelete(FILE_NAME, TimeUtils.now(time))
+                );
+            }
+
+            @Test
+            void futureTimestamps() {
+                controlPlane.commitFile(FILE_NAME, ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, BROKER_ID, FILE_SIZE,
+                    List.of(
+                        CommitBatchRequest.of(0, EXISTING_TOPIC_1_ID_PARTITION_0, 1, BATCH_1_SIZE, 0, BATCH_1_RECORDS - 1, START_TIME * 10, TimestampType.CREATE_TIME),
+                        CommitBatchRequest.of(1, EXISTING_TOPIC_1_ID_PARTITION_0, 1, BATCH_2_SIZE, 0, BATCH_2_RECORDS - 1, BATCH_2_MAX_TIMESTAMP, TimestampType.CREATE_TIME),
+                        CommitBatchRequest.of(2, EXISTING_TOPIC_1_ID_PARTITION_0, 1, BATCH_3_SIZE, 0, BATCH_3_RECORDS - 1, BATCH_3_MAX_TIMESTAMP, TimestampType.CREATE_TIME)
+                    ));
+                assertThat(getLogStartOffset()).isEqualTo(0L);
+                assertThat(getHighWatermark()).isEqualTo(EXPECTED_HIGH_WATERMARK);
+
+                final var responses = controlPlane.enforceRetention(List.of(
+                    new EnforceRetentionRequest(EXISTING_TOPIC_1_ID, 0, -1, 0)
+                ));
+
+                assertThat(responses)
+                    .containsExactly(EnforceRetentionResponse.success(0, 0, 0));
+                assertThat(getLogStartOffset()).isEqualTo(0L);
+                assertThat(getHighWatermark()).isEqualTo(EXPECTED_HIGH_WATERMARK);
+                assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0))))
+                    .containsExactly(GetLogInfoResponse.success(0, EXPECTED_HIGH_WATERMARK, BATCH_1_SIZE + BATCH_2_SIZE + BATCH_3_SIZE));
+            }
+
+            /**
+             * Test that if we encounter a batch that doesn't breach the policy, we don't look further.
+             */
+            @Test
+            void nonBreachingBatchStopsScanning() {
+                // Timestamps relative to now are:
+                // -10 -9 -8 -1 -7 -6 -5
+                // and we want to delete everything that is older than -4.
+
+                final int batch4Size = 991;
+                final int batch5Size = 992;
+                final int batch6Size = 993;
+                final int batch7Size = 994;
+                final long batch4Records = 40;
+                final long batch5Records = 50;
+                final long batch6Records = 60;
+                final long batch7Records = 70;
+                final long expectedHighWatermark = BATCH_1_RECORDS + BATCH_2_RECORDS + BATCH_3_RECORDS
+                    + batch4Records + batch5Records + batch6Records + batch7Records;
+
+                controlPlane.commitFile(FILE_NAME, ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, BROKER_ID, FILE_SIZE,
+                    List.of(
+                        CommitBatchRequest.of(0, EXISTING_TOPIC_1_ID_PARTITION_0, 1, BATCH_1_SIZE, 0, BATCH_1_RECORDS - 1, START_TIME - 10, TimestampType.CREATE_TIME),
+                        CommitBatchRequest.of(1, EXISTING_TOPIC_1_ID_PARTITION_0, 1, BATCH_2_SIZE, 0, BATCH_2_RECORDS - 1, START_TIME - 9, TimestampType.CREATE_TIME),
+                        CommitBatchRequest.of(2, EXISTING_TOPIC_1_ID_PARTITION_0, 1, BATCH_3_SIZE, 0, BATCH_3_RECORDS - 1, START_TIME - 8, TimestampType.CREATE_TIME),
+                        CommitBatchRequest.of(2, EXISTING_TOPIC_1_ID_PARTITION_0, 1, batch4Size, 0, batch4Records - 1, START_TIME - 1, TimestampType.CREATE_TIME),
+                        CommitBatchRequest.of(2, EXISTING_TOPIC_1_ID_PARTITION_0, 1, batch5Size, 0, batch5Records - 1, START_TIME - 7, TimestampType.CREATE_TIME),
+                        CommitBatchRequest.of(2, EXISTING_TOPIC_1_ID_PARTITION_0, 1, batch6Size, 0, batch6Records - 1, START_TIME - 6, TimestampType.CREATE_TIME),
+                        CommitBatchRequest.of(2, EXISTING_TOPIC_1_ID_PARTITION_0, 1, batch7Size, 0, batch7Records - 1, START_TIME - 5, TimestampType.CREATE_TIME)
+                    ));
+                assertThat(getLogStartOffset()).isEqualTo(0L);
+                assertThat(getHighWatermark()).isEqualTo(expectedHighWatermark);
+
+                final var responses = controlPlane.enforceRetention(List.of(
+                    new EnforceRetentionRequest(EXISTING_TOPIC_1_ID, 0, -1, 4)
+                ));
+
+                // Only the first 3 batches must be deleted, despite more batches breaching the policy.
+                final long newLogStartOffset = BATCH_1_RECORDS + BATCH_2_RECORDS + BATCH_3_RECORDS;
+                assertThat(responses)
+                    .containsExactly(EnforceRetentionResponse.success(3, BATCH_1_SIZE + BATCH_2_SIZE + BATCH_3_SIZE, newLogStartOffset));
+                assertThat(getLogStartOffset()).isEqualTo(newLogStartOffset);
+                assertThat(getHighWatermark()).isEqualTo(expectedHighWatermark);
+                assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0))))
+                    .containsExactly(GetLogInfoResponse.success(newLogStartOffset, expectedHighWatermark, batch4Size + batch5Size + batch6Size + batch7Size));
+            }
+
+            /**
+             * Test that the retention policy works on batches with {@code LOG_APPEND_TIME} timestamp type.
+             */
+            @Test
+            void testAppendTime() {
+                final long batchMaxTimestamp = START_TIME * 100;  // far into the future
+
+                // START_TIME
+                controlPlane.commitFile("obj1", ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, BROKER_ID, FILE_SIZE,
+                    List.of(
+                        CommitBatchRequest.of(0, EXISTING_TOPIC_1_ID_PARTITION_0, 1, BATCH_1_SIZE, 0, BATCH_1_RECORDS - 1, batchMaxTimestamp, TimestampType.LOG_APPEND_TIME)
+                    ));
+
+                // START_TIME + 1
+                time.setCurrentTimeMs(START_TIME + 1);
+                controlPlane.commitFile("obj2", ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, BROKER_ID, FILE_SIZE,
+                    List.of(
+                        CommitBatchRequest.of(0, EXISTING_TOPIC_1_ID_PARTITION_0, 1, BATCH_2_SIZE, 0, BATCH_2_RECORDS - 1, batchMaxTimestamp, TimestampType.LOG_APPEND_TIME)
+                    ));
+
+                // START_TIME + 2
+                time.setCurrentTimeMs(START_TIME + 2);
+                controlPlane.commitFile("obj3", ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, BROKER_ID, FILE_SIZE,
+                    List.of(
+                        CommitBatchRequest.of(0, EXISTING_TOPIC_1_ID_PARTITION_0, 1, BATCH_3_SIZE, 0, BATCH_3_RECORDS - 1, batchMaxTimestamp, TimestampType.LOG_APPEND_TIME)
+                    ));
+                assertThat(getLogStartOffset()).isEqualTo(0L);
+                assertThat(getHighWatermark()).isEqualTo(EXPECTED_HIGH_WATERMARK);
+
+                final var responses = controlPlane.enforceRetention(List.of(
+                    new EnforceRetentionRequest(EXISTING_TOPIC_1_ID, 0, -1, 1)
+                ));
+
+                final long newLogStartOffset = BATCH_1_RECORDS;
+                assertThat(responses)
+                    .containsExactly(EnforceRetentionResponse.success(1, BATCH_1_SIZE, newLogStartOffset));
+                assertThat(getLogStartOffset()).isEqualTo(newLogStartOffset);
+                assertThat(getHighWatermark()).isEqualTo(EXPECTED_HIGH_WATERMARK);
+                assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0))))
+                    .containsExactly(GetLogInfoResponse.success(newLogStartOffset, EXPECTED_HIGH_WATERMARK, BATCH_2_SIZE + BATCH_3_SIZE));
+            }
+        }
+
+        /**
+         * Test both retention policies together
+         * and make sure that a batch is deleted if it breaches at least one.
+         */
+        @Test
+        void bothRetentions() {
+            addBatches();
+            assertThat(getLogStartOffset()).isEqualTo(0L);
+            assertThat(getHighWatermark()).isEqualTo(EXPECTED_HIGH_WATERMARK);
+
+            // Time retention deletes only batch 1. Size retention deletes batch 1 and 2.
+            time.setCurrentTimeMs(BATCH_3_MAX_TIMESTAMP);
+            final var responses = controlPlane.enforceRetention(List.of(
+                new EnforceRetentionRequest(EXISTING_TOPIC_1_ID, 0, BATCH_3_SIZE, BATCH_3_MAX_TIMESTAMP - BATCH_2_MAX_TIMESTAMP)
+            ));
+
+            final long newLogStartOffset = BATCH_1_RECORDS + BATCH_2_RECORDS;
+            assertThat(responses)
+                .containsExactly(EnforceRetentionResponse.success(2, BATCH_1_SIZE + BATCH_2_SIZE, newLogStartOffset));
+            assertThat(getLogStartOffset()).isEqualTo(newLogStartOffset);
+            assertThat(getHighWatermark()).isEqualTo(EXPECTED_HIGH_WATERMARK);
+            assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0))))
+                .containsExactly(GetLogInfoResponse.success(newLogStartOffset, EXPECTED_HIGH_WATERMARK, BATCH_3_SIZE));
+        }
+
+        @Test
+        void notEnforced() {
+            addBatches();
+            assertThat(getLogStartOffset()).isEqualTo(0L);
+            assertThat(getHighWatermark()).isEqualTo(EXPECTED_HIGH_WATERMARK);
+
+            time.setCurrentTimeMs(BATCH_3_MAX_TIMESTAMP * 10);
+            final var responses = controlPlane.enforceRetention(List.of(
+                new EnforceRetentionRequest(EXISTING_TOPIC_1_ID, 0, -1, -1)
+            ));
+
+            assertThat(responses)
+                .containsExactly(EnforceRetentionResponse.success(0, 0, 0));
+            assertThat(getLogStartOffset()).isEqualTo(0L);
+            assertThat(getHighWatermark()).isEqualTo(EXPECTED_HIGH_WATERMARK);
+            assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0))))
+                .containsExactly(GetLogInfoResponse.success(0, EXPECTED_HIGH_WATERMARK, BATCH_1_SIZE + BATCH_2_SIZE + BATCH_3_SIZE));
+        }
+
+        private void addBatches() {
+            controlPlane.commitFile(FILE_NAME, ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, BROKER_ID, FILE_SIZE,
+                List.of(
+                    CommitBatchRequest.of(0, EXISTING_TOPIC_1_ID_PARTITION_0, 1, BATCH_1_SIZE, 0, BATCH_1_RECORDS - 1, BATCH_1_MAX_TIMESTAMP, TimestampType.CREATE_TIME),
+                    CommitBatchRequest.of(1, EXISTING_TOPIC_1_ID_PARTITION_0, 1, BATCH_2_SIZE, 0, BATCH_2_RECORDS - 1, BATCH_2_MAX_TIMESTAMP, TimestampType.CREATE_TIME),
+                    CommitBatchRequest.of(2, EXISTING_TOPIC_1_ID_PARTITION_0, 1, BATCH_3_SIZE, 0, BATCH_3_RECORDS - 1, BATCH_3_MAX_TIMESTAMP, TimestampType.CREATE_TIME)
+                ));
+        }
+
+        private long getLogStartOffset() {
+            return controlPlane.listOffsets(List.of(
+                new ListOffsetsRequest(EXISTING_TOPIC_1_ID_PARTITION_0, EARLIEST_TIMESTAMP)
+            )).get(0).offset();
+        }
+
+        private long getHighWatermark() {
+            return controlPlane.listOffsets(List.of(
+                new ListOffsetsRequest(EXISTING_TOPIC_1_ID_PARTITION_0, LATEST_TIMESTAMP)
+            )).get(0).offset();
+        }
+    }
+
     @Test
     void deleteFiles() {
         final String objectKey1 = "a1";
@@ -1039,7 +1396,7 @@ public abstract class AbstractControlPlaneTest {
                     List.of(CommitBatchRequest.of(0, EXISTING_TOPIC_1_ID_PARTITION_0, 0, (int) batchSize, 0, 100, 4000, TimestampType.CREATE_TIME)));
 
             // File 4 is the merged file, batches 4 and 5 are in it.
-            final List<FileMergeWorkItem.File> expectedFiles2= List.of(
+            final List<FileMergeWorkItem.File> expectedFiles2 = List.of(
                 new FileMergeWorkItem.File(3L, "obj2", ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, batchSize,
                     List.of(new BatchInfo(3, "obj2", BatchMetadata.of(EXISTING_TOPIC_1_ID_PARTITION_0, 0, batchSize, 202, 302, committedAt, 3000, TimestampType.CREATE_TIME)))),
                 new FileMergeWorkItem.File(5L, "obj3", ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, batchSize,

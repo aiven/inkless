@@ -278,11 +278,7 @@ public class InMemoryControlPlane extends AbstractControlPlane {
         // coordinates.firstKey() is last offset in the batch
         while (!coordinates.isEmpty() && coordinates.firstKey() < logInfo.logStartOffset) {
             final BatchInfoInternal batchInfoInternal = coordinates.remove(coordinates.firstKey());
-            final FileInfo fileInfo = batchInfoInternal.fileInfo;
-            fileInfo.deleteBatch(batchInfoInternal.batchInfo);
-            if (fileInfo.allBatchesDeleted()) {
-                fileInfo.markDeleted(TimeUtils.now(time));
-            }
+            batchInfoInternal.fileInfo().deleteBatch(batchInfoInternal.batchInfo, TimeUtils.now(time));
             logInfo.byteSize -= batchInfoInternal.batchInfo().metadata().byteSize();
             assert logInfo.byteSize >= 0;
         }
@@ -306,13 +302,71 @@ public class InMemoryControlPlane extends AbstractControlPlane {
 
             for (final var entry : coordinates.entrySet()) {
                 final BatchInfoInternal batchInfoInternal = entry.getValue();
-                final FileInfo fileInfo = batchInfoInternal.fileInfo;
-                fileInfo.deleteBatch(batchInfoInternal.batchInfo);
-                if (fileInfo.allBatchesDeleted()) {
-                    fileInfo.markDeleted(TimeUtils.now(time));
-                }
+                batchInfoInternal.fileInfo().deleteBatch(batchInfoInternal.batchInfo, TimeUtils.now(time));
             }
         }
+    }
+
+    @Override
+    public synchronized List<EnforceRetentionResponse> enforceRetention(final List<EnforceRetentionRequest> requests) {
+        final Instant now = TimeUtils.now(time);
+
+        final List<EnforceRetentionResponse> responses = new ArrayList<>();
+        for (final EnforceRetentionRequest request : requests) {
+            final TopicIdPartition tidp = findTopicIdPartition(request.topicId(), request.partition());
+            final LogInfo logInfo;
+            final TreeMap<Long, BatchInfoInternal> coordinates;
+            if (tidp == null
+                || (logInfo = logs.get(tidp)) == null
+                || (coordinates = batches.get(tidp)) == null
+            ) {
+                responses.add(EnforceRetentionResponse.unknownTopicOrPartition());
+                continue;
+            }
+
+            final Set<Long> toDelete = new HashSet<>();
+            int batchesDeleted = 0;
+            long bytesDeleted = 0;
+
+            // Enforce the size retention.
+            if (request.retentionBytes() >= 0) {
+                long accumulatedSize = 0;
+                // Note the reverse order.
+                for (final BatchInfoInternal batch : coordinates.descendingMap().values()) {
+                    accumulatedSize += batch.batchInfo().metadata().byteSize();
+                    if (accumulatedSize > request.retentionBytes()) {
+                        toDelete.add(batch.batchInfo().metadata().lastOffset());
+                    }
+                }
+            }
+
+            // Enforce the time retention.
+            if (request.retentionMs() >= 0) {
+                final long lastRetainedTimestamp = now.toEpochMilli() - request.retentionMs();
+                // Select batches for deletion only while we see them breaching the retention threshold, but no further.
+                coordinates.values().stream()
+                    .takeWhile(b -> b.batchInfo().metadata().timestamp() < lastRetainedTimestamp)
+                    .map(b -> b.batchInfo().metadata().lastOffset())
+                    .forEach(toDelete::add);
+            }
+
+            for (final long key : toDelete) {
+                final BatchInfoInternal removed = coordinates.remove(key);
+                removed.fileInfo().deleteBatch(removed.batchInfo(), now);
+                batchesDeleted += 1;
+                bytesDeleted += removed.batchInfo().metadata().byteSize();
+            }
+
+            logInfo.byteSize -= bytesDeleted;
+            if (coordinates.isEmpty()) {
+                logInfo.logStartOffset = logInfo.highWatermark;
+                assert logInfo.byteSize == 0;
+            } else {
+                logInfo.logStartOffset = coordinates.firstEntry().getValue().batchInfo().metadata().baseOffset();
+            }
+            responses.add(EnforceRetentionResponse.success(batchesDeleted, bytesDeleted, logInfo.logStartOffset));
+        }
+        return responses;
     }
 
     @Override
@@ -662,8 +716,11 @@ public class InMemoryControlPlane extends AbstractControlPlane {
             this.batches.add(batchInfo);
         }
 
-        private void deleteBatch(final BatchInfo batchInfo) {
+        private void deleteBatch(final BatchInfo batchInfo, final Instant now) {
             this.batches.remove(batchInfo);
+            if (allBatchesDeleted()) {
+                markDeleted(now);
+            }
         }
 
         private boolean allBatchesDeleted() {
