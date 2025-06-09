@@ -966,6 +966,56 @@ public abstract class AbstractControlPlaneTest {
                 .containsExactly(GetLogInfoResponse.success(0, EXPECTED_HIGH_WATERMARK, BATCH_1_SIZE + BATCH_2_SIZE + BATCH_3_SIZE));
         }
 
+        @Test
+        void multiplePartitions() {
+            // Write the same data to two partitions, apply the same retention policies.
+
+            for (final TopicIdPartition topicIdPartition : List.of(EXISTING_TOPIC_1_ID_PARTITION_0, EXISTING_TOPIC_1_ID_PARTITION_1)) {
+                controlPlane.commitFile(topicIdPartition.toString(), ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, BROKER_ID, FILE_SIZE,
+                    List.of(
+                        CommitBatchRequest.of(0, topicIdPartition, 1, BATCH_1_SIZE, 0, BATCH_1_RECORDS - 1, BATCH_1_MAX_TIMESTAMP, TimestampType.CREATE_TIME),
+                        CommitBatchRequest.of(1, topicIdPartition, 1, BATCH_2_SIZE, 0, BATCH_2_RECORDS - 1, BATCH_2_MAX_TIMESTAMP, TimestampType.CREATE_TIME),
+                        CommitBatchRequest.of(2, topicIdPartition, 1, BATCH_3_SIZE, 0, BATCH_3_RECORDS - 1, BATCH_3_MAX_TIMESTAMP, TimestampType.CREATE_TIME)
+                    ));
+            }
+
+            assertThat(controlPlane.listOffsets(List.of(
+                new ListOffsetsRequest(EXISTING_TOPIC_1_ID_PARTITION_0, EARLIEST_TIMESTAMP),
+                new ListOffsetsRequest(EXISTING_TOPIC_1_ID_PARTITION_1, EARLIEST_TIMESTAMP)
+            ))).map(ListOffsetsResponse::offset).containsExactly(0L, 0L);
+            assertThat(controlPlane.listOffsets(List.of(
+                new ListOffsetsRequest(EXISTING_TOPIC_1_ID_PARTITION_0, LATEST_TIMESTAMP),
+                new ListOffsetsRequest(EXISTING_TOPIC_1_ID_PARTITION_1, LATEST_TIMESTAMP)
+            ))).map(ListOffsetsResponse::offset).containsExactly(EXPECTED_HIGH_WATERMARK, EXPECTED_HIGH_WATERMARK);
+
+            // Time retention deletes only batch 1. Size retention deletes batch 1 and 2.
+            time.setCurrentTimeMs(BATCH_3_MAX_TIMESTAMP);
+            final var responses = controlPlane.enforceRetention(List.of(
+                new EnforceRetentionRequest(
+                    EXISTING_TOPIC_1_ID_PARTITION_0.topicId(), EXISTING_TOPIC_1_ID_PARTITION_0.partition(),
+                    BATCH_3_SIZE, BATCH_3_MAX_TIMESTAMP - BATCH_2_MAX_TIMESTAMP),
+                new EnforceRetentionRequest(
+                    EXISTING_TOPIC_1_ID_PARTITION_1.topicId(), EXISTING_TOPIC_1_ID_PARTITION_1.partition(),
+                    BATCH_3_SIZE, BATCH_3_MAX_TIMESTAMP - BATCH_2_MAX_TIMESTAMP)
+            ));
+
+            final long newLogStartOffset = BATCH_1_RECORDS + BATCH_2_RECORDS;
+            assertThat(responses)
+                .containsExactly(
+                    EnforceRetentionResponse.success(2, BATCH_1_SIZE + BATCH_2_SIZE, newLogStartOffset),
+                    EnforceRetentionResponse.success(2, BATCH_1_SIZE + BATCH_2_SIZE, newLogStartOffset)
+                );
+
+            assertThat(controlPlane.listOffsets(List.of(
+                new ListOffsetsRequest(EXISTING_TOPIC_1_ID_PARTITION_0, EARLIEST_TIMESTAMP),
+                new ListOffsetsRequest(EXISTING_TOPIC_1_ID_PARTITION_1, EARLIEST_TIMESTAMP)
+            ))).map(ListOffsetsResponse::offset).containsExactly(newLogStartOffset, newLogStartOffset);
+            assertThat(controlPlane.listOffsets(List.of(
+                new ListOffsetsRequest(EXISTING_TOPIC_1_ID_PARTITION_0, LATEST_TIMESTAMP),
+                new ListOffsetsRequest(EXISTING_TOPIC_1_ID_PARTITION_1, LATEST_TIMESTAMP)
+            ))).map(ListOffsetsResponse::offset).containsExactly(EXPECTED_HIGH_WATERMARK, EXPECTED_HIGH_WATERMARK);
+        }
+
         private void addBatches() {
             controlPlane.commitFile(FILE_NAME, ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, BROKER_ID, FILE_SIZE,
                 List.of(

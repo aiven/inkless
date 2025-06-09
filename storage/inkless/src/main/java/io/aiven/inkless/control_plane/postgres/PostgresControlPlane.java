@@ -158,7 +158,12 @@ public class PostgresControlPlane extends AbstractControlPlane {
 
     @Override
     public List<EnforceRetentionResponse> enforceRetention(final List<EnforceRetentionRequest> requests) {
-        throw new RuntimeException("Not implemented");
+        try {
+            final EnforceRetentionJob job = new EnforceRetentionJob(time, jooqCtx, requests, metrics::onEnforceRetentionCompleted);
+            return job.call();
+        } catch (final Exception e) {
+            throw new ControlPlaneException("Failed to enforce retention", e);
+        }
     }
 
     @Override
