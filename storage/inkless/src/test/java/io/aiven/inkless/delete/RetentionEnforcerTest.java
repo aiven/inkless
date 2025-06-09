@@ -1,6 +1,6 @@
 /*
  * Inkless
- * Copyright (C) 2024 - 2025 Aiven OY
+ * Copyright (C) 2025 Aiven OY
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as published by
@@ -15,26 +15,16 @@
  * You should have received a copy of the GNU Affero General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
-package io.aiven.inkless.control_plane;
+package io.aiven.inkless.delete;
 
-import org.apache.kafka.admin.BrokerMetadata;
-import org.apache.kafka.common.TopicIdPartition;
-import org.apache.kafka.common.Uuid;
+import org.junit.jupiter.api.Test;
 
-import java.util.Map;
-import java.util.Properties;
-import java.util.Set;
+import static org.junit.jupiter.api.Assertions.*;
 
-public interface MetadataView {
-    Map<String, Object> getDefaultConfig();
-
-    Iterable<BrokerMetadata> getAliveBrokers();
-
-    Uuid getTopicId(String topicName);
-
-    boolean isInklessTopic(String topicName);
-
-    Properties getTopicConfig(String topicName);
-
-    Set<TopicIdPartition> getInklessTopicPartitions();
+class RetentionEnforcerTest {
+    @Test
+    void testDifferentSourcesOfRetentionSettings() {
+        // TODO
+        assert false;
+    }
 }

@@ -21,21 +21,21 @@ package kafka.server.metadata
 import io.aiven.inkless.control_plane.MetadataView
 import org.apache.kafka.admin.BrokerMetadata
 import org.apache.kafka.common.config.ConfigResource
-import org.apache.kafka.common.{TopicPartition, Uuid}
+import org.apache.kafka.common.{TopicIdPartition, Uuid}
 
 import java.util.Properties
 import java.util.function.Supplier
 import java.{lang, util}
 import scala.collection.Map
-import scala.jdk.CollectionConverters.{IterableHasAsJava, SetHasAsJava}
+import scala.jdk.CollectionConverters.{IterableHasAsJava, MapHasAsJava, SetHasAsJava}
 
 class InklessMetadataView(val metadataCache: KRaftMetadataCache, val defaultConfig: Supplier[Map[String, _]]) extends MetadataView {
-  override def getAliveBrokers: lang.Iterable[BrokerMetadata] = {
-    metadataCache.getAliveBrokers().asJava
+  override def getDefaultConfig: util.Map[String, AnyRef] = {
+    defaultConfig.get().asJava.asInstanceOf[util.Map[String, AnyRef]]
   }
 
-  override def getTopicPartitions(topicName: String): util.Set[TopicPartition] = {
-    metadataCache.getTopicPartitions(topicName).asJava
+  override def getAliveBrokers: lang.Iterable[BrokerMetadata] = {
+    metadataCache.getAliveBrokers().asJava
   }
 
   override def getTopicId(topicName: String): Uuid = {
@@ -48,5 +48,14 @@ class InklessMetadataView(val metadataCache: KRaftMetadataCache, val defaultConf
 
   override def getTopicConfig(topicName: String): Properties = {
     metadataCache.config(new ConfigResource(ConfigResource.Type.TOPIC, topicName))
+  }
+
+  override def getInklessTopicPartitions: util.Set[TopicIdPartition] = {
+    metadataCache.getAllTopics()
+      .filter(isInklessTopic)
+      .flatMap(metadataCache.getTopicPartitions)
+      .map(tp => new TopicIdPartition(metadataCache.getTopicId(tp.topic()), tp))
+      .toSet
+      .asJava
   }
 }
