@@ -19,7 +19,7 @@ package kafka.server
 import com.yammer.metrics.core.Meter
 import io.aiven.inkless.common.SharedState
 import io.aiven.inkless.consume.{FetchInterceptor, FetchOffsetHandler}
-import io.aiven.inkless.delete.{DeleteRecordsInterceptor, FileCleaner}
+import io.aiven.inkless.delete.{DeleteRecordsInterceptor, FileCleaner, RetentionEnforcer}
 import io.aiven.inkless.merge.FileMerger
 import io.aiven.inkless.produce.AppendHandler
 import kafka.cluster.{Partition, PartitionListener}
@@ -319,6 +319,7 @@ class ReplicaManager(val config: KafkaConfig,
   private val inklessFetchInterceptor: Option[FetchInterceptor] = inklessSharedState.map(new FetchInterceptor(_))
   private val inklessFetchOffsetHandler: Option[FetchOffsetHandler] = inklessSharedState.map(new FetchOffsetHandler(_))
   private val inklessDeleteRecordsInterceptor: Option[DeleteRecordsInterceptor] = inklessSharedState.map(new DeleteRecordsInterceptor(_))
+  private val inklessRetentionEnforcer: Option[RetentionEnforcer] = inklessSharedState.map(new RetentionEnforcer(_))
   private val inklessFileCleaner: Option[FileCleaner] = inklessSharedState.map(new FileCleaner(_))
   // FIXME: FileMerger is having issues with hanging queries. Disabling until fixed.
   private val inklessFileMerger: Option[FileMerger] = None // inklessSharedState.map(new FileMerger(_))
@@ -411,6 +412,8 @@ class ReplicaManager(val config: KafkaConfig,
 
     // Inkless threads
     inklessSharedState.map { sharedState =>
+      scheduler.schedule("inkless-retention-enforcer", () => inklessRetentionEnforcer.foreach(_.run()), 500L, 500L)  // the real interval is inside
+
       scheduler.schedule("inkless-file-cleaner", () => inklessFileCleaner.foreach(_.run()), sharedState.config().fileCleanerInterval().toMillis, sharedState.config().fileCleanerInterval().toMillis)
 
       // There are internal delays in case of errors or absence of work items, no need for extra delays here.
@@ -2688,6 +2691,7 @@ class ReplicaManager(val config: KafkaConfig,
     addPartitionsToTxnManager.foreach(_.shutdown())
     inklessAppendHandler.foreach(_.close())
     inklessFetchInterceptor.foreach(_.close())
+    inklessRetentionEnforcer.foreach(_.close())
     inklessSharedState.foreach(_.close())
     info("Shut down completely")
   }

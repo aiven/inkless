@@ -81,6 +81,13 @@ public class InklessConfig extends AbstractConfig {
     private static final String CONSUME_CACHE_MAX_COUNT_DOC = "The maximum number of objects to cache in memory.";
     private static final int CONSUME_CACHE_MAX_COUNT_DEFAULT = 1000;
 
+    public static final String RETENTION_ENFORCEMENT_INTERVAL_MS_CONFIG = "retention.enforcement.interval.ms";
+    private static final String RETENTION_ENFORCEMENT_INTERVAL_MS_DOC = "The interval with which to enforce retention policies on a partition. " +
+        "This interval is approximate, because each scheduling event is randomized. " +
+        "The retention enforcement mechanism also takes into account the total number of brokers in the cluster: " +
+        "the more brokers, the less frequently each one of them enforces retention policy.";
+    private static final int RETENTION_ENFORCEMENT_INTERVAL_MS_DEFAULT = 5 * 60 * 1000;  // 5 minutes
+
     public static final String FILE_CLEANER_INTERVAL_MS_CONFIG = "file.cleaner.interval.ms";
     private static final String FILE_CLEANER_INTERVAL_MS_DOC = "The interval with which to clean up files marked for deletion.";
     private static final int FILE_CLEANER_INTERVAL_MS_DEFAULT = 5 * 60 * 1000;  // 5 minutes
@@ -182,6 +189,15 @@ public class InklessConfig extends AbstractConfig {
                 CONSUME_CACHE_BLOCK_BYTES_DEFAULT,
                 ConfigDef.Importance.LOW,
                 CONSUME_CACHE_BLOCK_BYTES_DOC
+        );
+
+        configDef.define(
+            RETENTION_ENFORCEMENT_INTERVAL_MS_CONFIG,
+            ConfigDef.Type.INT,
+            RETENTION_ENFORCEMENT_INTERVAL_MS_DEFAULT,
+            ConfigDef.Range.atLeast(1),
+            ConfigDef.Importance.LOW,
+            RETENTION_ENFORCEMENT_INTERVAL_MS_DOC
         );
 
         configDef.define(
@@ -287,6 +303,10 @@ public class InklessConfig extends AbstractConfig {
 
     public int fetchCacheBlockBytes() {
         return getInt(CONSUME_CACHE_BLOCK_BYTES_CONFIG);
+    }
+
+    public Duration retentionEnforcementInterval() {
+        return Duration.ofMillis(getInt(RETENTION_ENFORCEMENT_INTERVAL_MS_CONFIG));
     }
 
     public Duration fileCleanerInterval() {
