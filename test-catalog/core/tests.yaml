@@ -1458,6 +1458,7 @@ kafka.raft.KafkaMetadataLogTest:
 - testMaxBatchSize
 - testRandomRecords
 - testReadMissingSnapshot
+- testSegmentMsConfigIsSetInMetadataLog
 - testSegmentsLessThanLatestSnapshot
 - testSnapshotDeletionWithInvalidSnapshotState
 - testSoftRetentionLimit

@@ -17,6 +17,7 @@ org.apache.kafka.streams.KafkaStreamsTest:
 - shouldGetClientSupplierFromConfigForConstructorWithTime
 - shouldGetQueryMetadataWithSerializerWhenRunningOrRebalancing
 - shouldInitializeTasksForLocalStateOnStart
+- shouldLogWarningIfNonDefaultClientSupplierUsedWithStreamsProtocol
 - shouldNotAddThreadWhenClosed
 - shouldNotAddThreadWhenCreated
 - shouldNotAddThreadWhenError
@@ -44,6 +45,7 @@ org.apache.kafka.streams.KafkaStreamsTest:
 - shouldThrowExceptionSettingStateListenerNotInCreateState
 - shouldThrowExceptionSettingStreamsUncaughtExceptionHandlerNotInCreateState
 - shouldThrowExceptionSettingUncaughtExceptionHandlerNotInCreateState
+- shouldThrowIfPatternSubscriptionUsedWithStreamsProtocol
 - shouldThrowNullPointerExceptionSettingStreamsUncaughtExceptionHandlerIfNull
 - shouldThrowOnCleanupWhilePaused
 - shouldThrowOnCleanupWhileRunning
@@ -248,6 +250,9 @@ org.apache.kafka.streams.StreamsConfigTest:
 - shouldGetDefaultEnsureExplicitInternalResourceNaming
 - shouldGetDefaultValueProcessingExceptionHandler
 - shouldGetEmptyMapIfClientTagsAreNotSet
+- shouldLogWarningWhenStandbyReplicasSetWithStreamsProtocol
+- shouldLogWarningWhenStreamsProtocolIsUsed
+- shouldLogWarningWhenWarmupReplicasSetWithStreamsProtocol
 - shouldNotEnableAnyOptimizationsWithNoOptimizationConfig
 - shouldNotLeakInternalDocMembers
 - shouldNotOverrideUserConfigCommitIntervalMsIfExactlyOnceV2Enabled
@@ -330,6 +335,7 @@ org.apache.kafka.streams.StreamsConfigTest:
 - shouldThrowConfigExceptionWhenMainConsumerMetricsDisabledStreamsMetricsPushEnabled
 - shouldThrowConfigExceptionWhenOptimizationConfigNotValueInRange
 - shouldThrowConfigExceptionWhenStoreTypeConfigNotValueInRange
+- shouldThrowConfigExceptionWhenStreamsProtocolUsedWithStaticMembership
 - shouldThrowExceptionIfApplicationIdIsNotSet
 - shouldThrowExceptionIfBootstrapServersIsNotSet
 - shouldThrowExceptionIfCommitIntervalMsIsNegative
