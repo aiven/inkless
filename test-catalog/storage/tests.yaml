@@ -311,6 +311,7 @@ org.apache.kafka.storage.internals.log.LogSegmentTest:
 - testTruncateFull
 org.apache.kafka.storage.internals.log.LogSegmentsTest:
 - testBasicOperations
+- testCloseClosesAllLogSegmentsOnExceptionWhileClosingOne
 - testClosestMatchOperations
 - testHigherSegments
 - testSegmentAccess
