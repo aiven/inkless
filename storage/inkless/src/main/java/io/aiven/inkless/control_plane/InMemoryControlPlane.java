@@ -180,6 +180,7 @@ public class InMemoryControlPlane extends AbstractControlPlane {
 
         final long lastOffset = firstOffset + request.offsetDelta();
         logInfo.highWatermark = lastOffset + 1;
+        logInfo.byteSize += request.size();
         final BatchInfo batchInfo = new BatchInfo(
             batchIdCounter.incrementAndGet(),
             fileInfo.objectKey,
@@ -282,6 +283,8 @@ public class InMemoryControlPlane extends AbstractControlPlane {
             if (fileInfo.allBatchesDeleted()) {
                 fileInfo.markDeleted(TimeUtils.now(time));
             }
+            logInfo.byteSize -= batchInfoInternal.batchInfo().metadata().byteSize();
+            assert logInfo.byteSize >= 0;
         }
         return (DeleteRecordsResponse.success(logInfo.logStartOffset));
     }
@@ -571,13 +574,40 @@ public class InMemoryControlPlane extends AbstractControlPlane {
     }
 
     @Override
+    public synchronized List<GetLogInfoResponse> getLogInfo(final List<GetLogInfoRequest> requests) {
+        final List<GetLogInfoResponse> result = new ArrayList<>();
+        for (final GetLogInfoRequest request : requests) {
+            final TopicIdPartition tidp = findTopicIdPartition(request.topicId(), request.partition());
+            final LogInfo logInfo;
+            if (tidp == null || (logInfo = logs.get(tidp)) == null) {
+                result.add(GetLogInfoResponse.unknownTopicOrPartition());
+            } else {
+                result.add(GetLogInfoResponse.success(
+                    logInfo.logStartOffset,
+                    logInfo.highWatermark,
+                    logInfo.byteSize
+                ));
+            }
+        }
+        return result;
+    }
+
+    @Override
     public void close() throws IOException {
         // Do nothing.
+    }
+
+    private TopicIdPartition findTopicIdPartition(final Uuid topicId, final int partition) {
+        return logs.keySet()
+            .stream().filter(tidp -> topicId.equals(tidp.topicId()) && partition == tidp.partition())
+            .findFirst()
+            .orElse(null);
     }
 
     private static class LogInfo {
         long logStartOffset = 0;
         long highWatermark = 0;
+        long byteSize = 0;
     }
 
     private static class FileInfo {
