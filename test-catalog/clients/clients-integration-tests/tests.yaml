@@ -201,6 +201,7 @@ org.apache.kafka.clients.consumer.PlaintextConsumerSubscriptionTest:
 - testClassicConsumerUnsubscribeTopic
 - testRe2JPatternSubscriptionAndTopicSubscription
 - testRe2JPatternSubscriptionInvalidRegex
+- testTopicIdSubscriptionWithRe2JRegexAndOffsetsFetch
 org.apache.kafka.clients.consumer.SaslPlainPlaintextConsumerTest:
 - testAsyncConsumeCoordinatorFailover
 - testAsyncConsumerClusterResourceListener

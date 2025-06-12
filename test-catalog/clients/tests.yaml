@@ -1388,6 +1388,9 @@ org.apache.kafka.clients.consumer.internals.ConsumerMetadataTest:
 - testNormalSubscription
 - testPatternSubscriptionIncludeInternalTopics
 - testPatternSubscriptionNoInternalTopics
+- testSubscriptionToBrokerRegexAllowsTransientTopics
+- testSubscriptionToBrokerRegexDoesNotRequestAllTopicsMetadata
+- testSubscriptionToBrokerRegexRetainsAssignedTopics
 - testTransientTopics
 - testUserAssignment
 - testValidPartitionLeadershipUpdate
@@ -2485,8 +2488,11 @@ org.apache.kafka.clients.consumer.internals.SubscriptionStateTest:
 - testAssignedPartitionsAwaitingCallbackDoesNotAffectPreviouslyOwnedPartitions
 - testAssignedPartitionsAwaitingCallbackInitializePositionsWhenCallbackCompletes
 - testAssignedPartitionsAwaitingCallbackKeepPositionDefinedInCallback
+- testAssignedPartitionsWithTopicIdsForRe2Pattern
+- testAssignedTopicIdsPreservedWhenReconciliationCompletes
 - testCompleteValidationShouldClearAwaitingValidation
 - testGroupSubscribe
+- testIsAssignedFromRe2j
 - testMarkingPartitionPending
 - testMaybeCompleteValidation
 - testMaybeCompleteValidationAfterOffsetReset
