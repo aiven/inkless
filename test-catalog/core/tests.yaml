@@ -1,3 +1,8 @@
+integration.kafka.api.ClientOAuthIntegrationTest:
+- testBasicClientCredentials
+- testBasicJwtBearer
+- testBasicJwtBearer2
+- testUnsupportedJwtRetriever
 kafka.KafkaConfigTest:
 - testBrokerRequiredProperties
 - testBrokerRoleNodeIdValidation
