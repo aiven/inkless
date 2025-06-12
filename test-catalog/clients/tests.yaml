@@ -4571,6 +4571,7 @@ org.apache.kafka.common.security.oauthbearer.ClaimValidationUtilsTest:
 org.apache.kafka.common.security.oauthbearer.ClientJwtValidatorTest:
 - testEmptySections
 - testEmptyString
+- testJwtRequiresBase64UrlDecoding
 - testMissingHeader
 - testMissingPayload
 - testMissingSignature
