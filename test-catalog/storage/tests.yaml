@@ -120,6 +120,7 @@ org.apache.kafka.server.log.remote.storage.LocalTieredStorageTest:
 - traverseSingleOffloadedRecord
 org.apache.kafka.server.log.remote.storage.RemoteLogManagerConfigTest:
 - testDefaultConfigs
+- testRemoteLogManagerFollowerThreadPoolSize
 - testThreadPoolDefaults
 - testValidConfigs
 - testValidateEmptyStringConfig
@@ -191,6 +192,7 @@ org.apache.kafka.server.log.remote.storage.RemoteLogManagerTest:
 - testStopPartitionsWithoutDeletion
 - testTierLagResetsToZeroOnBecomingFollower
 - testTopicIdCacheUpdates
+- testUpdateRemoteStorageFollowerThreads
 - testUpdateRemoteStorageReaderThreads
 org.apache.kafka.server.log.remote.storage.RemoteLogMetadataManagerTest:
 - testFetchSegments
