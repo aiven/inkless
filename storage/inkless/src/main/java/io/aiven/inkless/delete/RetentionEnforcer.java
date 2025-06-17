@@ -18,12 +18,8 @@
 package io.aiven.inkless.delete;
 
 import org.apache.kafka.common.TopicIdPartition;
-import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.storage.internals.log.LogConfig;
-
-import com.github.benmanes.caffeine.cache.Cache;
-import com.github.benmanes.caffeine.cache.Caffeine;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -33,7 +29,9 @@ import java.io.IOException;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Random;
 
@@ -47,17 +45,10 @@ import io.aiven.inkless.control_plane.MetadataView;
 public class RetentionEnforcer implements Runnable, Closeable {
     private static final Logger LOGGER = LoggerFactory.getLogger(RetentionEnforcer.class);
 
-    private static final Duration LOG_CONFIG_TTL = Duration.ofMinutes(5);
-
     private final Time time;
     private final MetadataView metadataView;
     private final ControlPlane controlPlane;
     private final RetentionEnforcementScheduler retentionEnforcementScheduler;
-
-    // TODO consider updating these values reactively instead of caching with TTL (but should be fine for now).
-    private final Cache<TopicPartition, LogConfig> logConfigCache = Caffeine.newBuilder()
-        .expireAfterWrite(LOG_CONFIG_TTL)
-        .build();
 
     private final RetentionEnforcerMetrics metrics = new RetentionEnforcerMetrics();
 
@@ -96,9 +87,10 @@ public class RetentionEnforcer implements Runnable, Closeable {
     private synchronized void runUnsafe() {
         final List<EnforceRetentionRequest> requests = new ArrayList<>();
         final List<TopicIdPartition> readyPartitions = retentionEnforcementScheduler.getReadyPartitions();
+        final Map<String, LogConfig> topicConfigs = new HashMap<>();
         for (final TopicIdPartition partition : readyPartitions) {
-            final LogConfig topicConfig = logConfigCache.get(partition.topicPartition(),
-                tp -> LogConfig.fromProps(metadataView.getDefaultConfig(), metadataView.getTopicConfig(tp.topic())));
+            final LogConfig topicConfig = topicConfigs.computeIfAbsent(partition.topic(),
+                t -> LogConfig.fromProps(metadataView.getDefaultConfig(), metadataView.getTopicConfig(t)));
 
             requests.add(new EnforceRetentionRequest(
                 partition.topicId(),
