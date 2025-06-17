@@ -116,10 +116,10 @@ class FileCommitJobTest {
         );
 
         final List<CommitBatchResponse> commitBatchResponses = List.of(
-            CommitBatchResponse.success(0, 10, 0, COMMIT_BATCH_REQUESTS.get(0)),
+            CommitBatchResponse.success(0, 10, 0, "objectKey", COMMIT_BATCH_REQUESTS.get(0)),
             CommitBatchResponse.of(Errors.INVALID_TOPIC_EXCEPTION, -1, -1, -1),  // some arbitrary uploadError
-            CommitBatchResponse.success(20, 10, 0, COMMIT_BATCH_REQUESTS.get(2)),
-            CommitBatchResponse.success(30, 10, 0, COMMIT_BATCH_REQUESTS.get(3))
+            CommitBatchResponse.success(20, 10, 0, "objectKey", COMMIT_BATCH_REQUESTS.get(2)),
+            CommitBatchResponse.success(30, 10, 0, "objectKey", COMMIT_BATCH_REQUESTS.get(3))
         );
 
         when(controlPlane.commitFile(eq(OBJECT_KEY_MAIN_PART), eq(ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT), eq(BROKER_ID), eq(FILE_SIZE), eq(COMMIT_BATCH_REQUESTS)))

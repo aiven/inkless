@@ -81,6 +81,11 @@ public class InklessConfig extends AbstractConfig {
     private static final String CONSUME_CACHE_MAX_COUNT_DOC = "The maximum number of objects to cache in memory.";
     private static final int CONSUME_CACHE_MAX_COUNT_DEFAULT = 1000;
 
+    public static final String BATCH_COORDINATE_PREFIX = "batchcoordinate.";
+    public static final String BATCH_COORDINATE_CACHE_MAX_COUNT_CONFIG = BATCH_COORDINATE_PREFIX + "cache.max.count";
+    private static final String BATCH_COORDINATE_CACHE_MAX_COUNT_DOC = "The maximum number of batch coordinates to cache in memory.";
+    private static final int BATCH_COORDINATE_CACHE_MAX_COUNT_DEFAULT = 100000;
+
     public static final String FILE_CLEANER_INTERVAL_MS_CONFIG = "file.cleaner.interval.ms";
     private static final String FILE_CLEANER_INTERVAL_MS_DOC = "The interval with which to clean up files marked for deletion.";
     private static final int FILE_CLEANER_INTERVAL_MS_DEFAULT = 5 * 60 * 1000;  // 5 minutes
@@ -227,6 +232,14 @@ public class InklessConfig extends AbstractConfig {
             CONSUME_CACHE_MAX_COUNT_DOC
         );
         configDef.define(
+            BATCH_COORDINATE_CACHE_MAX_COUNT_CONFIG,
+            ConfigDef.Type.INT,
+            BATCH_COORDINATE_CACHE_MAX_COUNT_DEFAULT,
+            ConfigDef.Range.atLeast(1),
+            ConfigDef.Importance.LOW,
+            BATCH_COORDINATE_CACHE_MAX_COUNT_DOC
+        );
+        configDef.define(
             PRODUCE_UPLOAD_THREAD_POOL_SIZE_CONFIG,
             ConfigDef.Type.INT,
             PRODUCE_UPLOAD_THREAD_POOL_SIZE_DEFAULT,
@@ -313,4 +326,6 @@ public class InklessConfig extends AbstractConfig {
     public int produceUploadThreadPoolSize() {
         return getInt(PRODUCE_UPLOAD_THREAD_POOL_SIZE_CONFIG);
     }
-}
+    public Integer batchCoordinateCacheMaxCount() {
+        return getInt(BATCH_COORDINATE_CACHE_MAX_COUNT_CONFIG);
+    }}

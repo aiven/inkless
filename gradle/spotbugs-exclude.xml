@@ -562,4 +562,12 @@ For a detailed description of spotbugs bug categories, see https://spotbugs.read
     <Match>
         <Package name="~org\.jooq\.generated(\..*)?" />
     </Match>
+
+    <Match>
+        <!-- Suppress a warning about ignoring return value because this is intentional as the get is used to update
+        the LRU tracker. -->
+        <Class name="io.aiven.inkless.cache.MemoryBatchCoordinateCache"/>
+        <Method name="get"/>
+        <Bug pattern="RV_RETURN_VALUE_IGNORED_NO_SIDE_EFFECT"/>
+    </Match>
 </FindBugsFilter>
