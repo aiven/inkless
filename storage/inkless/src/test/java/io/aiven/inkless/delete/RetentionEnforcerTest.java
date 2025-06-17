@@ -40,10 +40,12 @@ import io.aiven.inkless.control_plane.ControlPlane;
 import io.aiven.inkless.control_plane.EnforceRetentionRequest;
 import io.aiven.inkless.control_plane.MetadataView;
 
+import static org.apache.kafka.common.config.TopicConfig.CLEANUP_POLICY_CONFIG;
 import static org.apache.kafka.common.config.TopicConfig.RETENTION_BYTES_CONFIG;
 import static org.apache.kafka.common.config.TopicConfig.RETENTION_MS_CONFIG;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -51,8 +53,14 @@ import static org.mockito.Mockito.when;
 @MockitoSettings(strictness = Strictness.STRICT_STUBS)
 class RetentionEnforcerTest {
     static final String TOPIC_0 = "topic0";
-    static final Uuid TOPIC_ID_0 = new Uuid(0, 1);
+    static final Uuid TOPIC_ID_0 = new Uuid(0, 0);
     static final TopicIdPartition T0P0 = new TopicIdPartition(TOPIC_ID_0, 0, TOPIC_0);
+    static final String TOPIC_1 = "topic1";
+    static final Uuid TOPIC_ID_1 = new Uuid(0, 1);
+    static final TopicIdPartition T1P0 = new TopicIdPartition(TOPIC_ID_1, 0, TOPIC_1);
+    static final String TOPIC_2 = "topic2";
+    static final Uuid TOPIC_ID_2 = new Uuid(0, 2);
+    static final TopicIdPartition T2P0 = new TopicIdPartition(TOPIC_ID_2, 0, TOPIC_2);
 
     Time time = new MockTime();
     @Mock
@@ -117,5 +125,32 @@ class RetentionEnforcerTest {
             assertThat(requestCaptor.getValue()).map(EnforceRetentionRequest::retentionBytes).containsExactly(123000L);
             assertThat(requestCaptor.getValue()).map(EnforceRetentionRequest::retentionMs).containsExactly(567000L);
         }
+    }
+
+    @Test
+    void onlyDeleteTopics() {
+        when(retentionEnforcementScheduler.getReadyPartitions()).thenReturn(List.of(T0P0, T1P0, T2P0));
+        when(metadataView.getDefaultConfig()).thenReturn(Map.of(
+            RETENTION_BYTES_CONFIG, "123",
+            RETENTION_MS_CONFIG, "567"
+        ));
+
+        final var t0Config = new Properties();
+        t0Config.put(CLEANUP_POLICY_CONFIG, "compact");
+        when(metadataView.getTopicConfig(eq(TOPIC_0))).thenReturn(t0Config);
+        final var t1Config = new Properties();
+        t1Config.put(CLEANUP_POLICY_CONFIG, "delete,compact");
+        when(metadataView.getTopicConfig(eq(TOPIC_1))).thenReturn(t1Config);
+        final var t2Config = new Properties();
+        t2Config.put(CLEANUP_POLICY_CONFIG, "delete");
+        when(metadataView.getTopicConfig(eq(TOPIC_2))).thenReturn(t2Config);
+
+        final var enforcer = new RetentionEnforcer(time, metadataView, controlPlane, retentionEnforcementScheduler);
+        enforcer.run();
+
+        verify(controlPlane).enforceRetention(requestCaptor.capture());
+        assertThat(requestCaptor.getValue())
+            .map(EnforceRetentionRequest::topicId)
+            .containsExactly(TOPIC_ID_1, TOPIC_ID_2);
     }
 }

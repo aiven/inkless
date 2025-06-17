@@ -92,12 +92,15 @@ public class RetentionEnforcer implements Runnable, Closeable {
             final LogConfig topicConfig = topicConfigs.computeIfAbsent(partition.topic(),
                 t -> LogConfig.fromProps(metadataView.getDefaultConfig(), metadataView.getTopicConfig(t)));
 
-            requests.add(new EnforceRetentionRequest(
-                partition.topicId(),
-                partition.partition(),
-                topicConfig.retentionSize,
-                topicConfig.retentionMs
-            ));
+            // This check must be done here and not at scheduling, because the config may change at any moment.
+            if (topicConfig.delete) {
+                requests.add(new EnforceRetentionRequest(
+                    partition.topicId(),
+                    partition.partition(),
+                    topicConfig.retentionSize,
+                    topicConfig.retentionMs
+                ));
+            }
         }
 
         if (requests.isEmpty()) {
