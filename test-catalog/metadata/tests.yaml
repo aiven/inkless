@@ -267,6 +267,7 @@ org.apache.kafka.controller.ReplicationControlManagerTest:
 - testCreateTopicsWithConfigs
 - testCreateTopicsWithMutationQuotaExceeded
 - testCreateTopicsWithPolicy
+- testCreateTopicsWithPolicyUnexpectedException
 - testCreateTopicsWithValidateOnlyFlag
 - testDeleteTopics
 - testDeleteTopicsWithMutationQuotaExceeded

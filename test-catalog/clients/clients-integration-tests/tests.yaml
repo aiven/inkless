@@ -294,6 +294,10 @@ org.apache.kafka.clients.producer.ProducerIdExpirationTest:
 - testDynamicProducerIdExpirationMs
 - testProducerIdExpirationWithNoTransactions
 - testTransactionAfterTransactionIdExpiresButProducerIdRemains
+org.apache.kafka.clients.producer.ProducerSendWhileDeletionTest:
+- testSendWithRecreatedTopic
+- testSendWithTopicDeletionMidWay
+- testSendWithTopicReassignmentIsMidWay
 org.apache.kafka.clients.security.GroupAuthorizerIntegrationTest:
 - testAsyncConsumeCloseWithGroupPermission
 - testAsyncConsumeUnsubscribeWithoutGroupPermission

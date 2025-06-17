@@ -199,6 +199,12 @@ org.apache.kafka.server.share.session.ShareSessionCacheTest:
 org.apache.kafka.server.share.session.ShareSessionTest:
 - testPartitionsToLogString
 - testPartitionsToLogStringEmpty
+org.apache.kafka.server.transaction.AddPartitionsToTxnManagerTest:
+- testAddPartitionsToTxnHandlerErrorHandling
+- testAddPartitionsToTxnManagerMetrics
+- testAddTxnData
+- testGenerateRequests
+- testTransactionCoordinatorResolution
 org.apache.kafka.server.util.SchedulerTest:
 - testMockSchedulerLocking
 - testMockSchedulerNonPeriodicTask

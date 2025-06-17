@@ -191,6 +191,13 @@ kafka.api.AuthorizerIntegrationTest:
 - testShareGroupHeartbeatWithoutTopicDescribeAcl
 - testSimpleConsumeWithExplicitSeekAndNoGroupAccess
 - testSimpleConsumeWithOffsetLookupAndNoGroupAccess
+- testStreamsGroupHeartbeatWithGroupReadAndTopicDescribeAcl
+- testStreamsGroupHeartbeatWithInternalTopicCreateAcl
+- testStreamsGroupHeartbeatWithOperationAll
+- testStreamsGroupHeartbeatWithoutGroupReadAcl
+- testStreamsGroupHeartbeatWithoutGroupReadOrTopicDescribeAcl
+- testStreamsGroupHeartbeatWithoutInternalTopicCreateAcl
+- testStreamsGroupHeartbeatWithoutTopicDescribeAcl
 - testTopicIdAuthorization
 - testTransactionalProducerInitTransactionsNoDescribeTransactionalIdAcl
 - testTransactionalProducerInitTransactionsNoWriteTransactionalIdAcl
@@ -452,10 +459,6 @@ kafka.api.PlaintextProducerSendTest:
 - testValidBeforeAndAfterTimestampsAtThreshold
 - testValidBeforeAndAfterTimestampsWithinThreshold
 - testWrongSerializer
-kafka.api.ProducerSendWhileDeletionTest:
-- testSendWithRecreatedTopic
-- testSendWithTopicDeletionMidWay
-- testSendWithTopicReassignmentIsMidWay
 kafka.api.SaslClientsWithInvalidCredentialsTest:
 - testConsumerWithAuthenticationFailure
 - testKafkaAdminClientWithAuthenticationFailure
@@ -1568,12 +1571,6 @@ kafka.server.AbstractFetcherThreadTest:
 - testTruncationThrowsExceptionIfLeaderReturnsPartitionsNotRequestedInFetchEpochs
 - testUnknownLeaderEpochInTruncation
 - testUnknownLeaderEpochWhileFetching
-kafka.server.AddPartitionsToTxnManagerTest:
-- testAddPartitionsToTxnHandlerErrorHandling
-- testAddPartitionsToTxnManagerMetrics
-- testAddTxnData
-- testGenerateRequests
-- testTransactionCoordinatorResolution
 kafka.server.AddPartitionsToTxnRequestServerTest:
 - shouldReceiveOperationNotAttemptedWhenOtherPartitionHasError
 - testOneSuccessOneErrorInBatchedRequest

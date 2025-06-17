@@ -115,9 +115,15 @@ org.apache.kafka.raft.KafkaRaftClientDriverTest:
 - testShutdown
 - testUncaughtException
 org.apache.kafka.raft.KafkaRaftClientFetchTest:
+- testDefaultHwmDeferred
+- testHighWatermarkSentInFetchRequest
 - testInvalidMemoryRecords
+- testOutdatedHwmCompletedWhenLeaderKnowsHwm
 - testRandomRecords
 - testReplicationOfHigherPartitionLeaderEpoch
+- testUnchangedHighWatermarkDeferred
+- testUnknownHwmDeferredWhenLeaderDoesNotKnowHwm
+- testUpdatedHighWatermarkCompleted
 org.apache.kafka.raft.KafkaRaftClientPreVoteTest:
 - testFollowerGrantsPreVoteIfHasNotFetchedYet
 - testHandleInvalidPreVoteRequestWithOlderEpoch
