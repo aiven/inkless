@@ -2040,6 +2040,7 @@ kafka.server.KRaftClusterTest:
 - testAbandonedFutureReplicaRecovered_mainReplicaInOnlineLogDir
 - testAuthorizerFailureFoundInControllerStartup
 - testClientQuotas
+- testClusterWithLowerCaseListeners
 - testControllerFailover
 - testCreateClusterAndClose
 - testCreateClusterAndCreateAndManyTopics
@@ -2387,6 +2388,7 @@ kafka.server.KafkaConfigTest:
 - testLogRollTimeBothMsAndHoursProvided
 - testLogRollTimeMsProvided
 - testLogRollTimeNoConfigProvided
+- testLowercaseControllerListenerNames
 - testMaxConnectionsPerIpProp
 - testMetadataMaxSnapshotInterval
 - testMultipleControllerListenerNamesMapToPlaintextByDefaultForKRaft
