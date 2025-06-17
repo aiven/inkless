@@ -360,7 +360,9 @@ public class InMemoryControlPlane extends AbstractControlPlane {
             logInfo.byteSize -= bytesDeleted;
             if (coordinates.isEmpty()) {
                 logInfo.logStartOffset = logInfo.highWatermark;
-                assert logInfo.byteSize == 0;
+                if (logInfo.byteSize != 0) {
+                    throw new RuntimeException(String.format("Log size expected to be 0, but it's %d", logInfo.byteSize));
+                }
             } else {
                 logInfo.logStartOffset = coordinates.firstEntry().getValue().batchInfo().metadata().baseOffset();
             }
