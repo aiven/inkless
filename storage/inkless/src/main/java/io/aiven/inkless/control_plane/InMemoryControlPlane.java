@@ -329,7 +329,9 @@ public class InMemoryControlPlane extends AbstractControlPlane {
             long bytesDeleted = 0;
 
             // Enforce the size retention.
-            if (request.retentionBytes() >= 0) {
+            if (request.retentionBytes() >= 0
+                // Does it even make sense to start iterating?
+                && logInfo.byteSize > request.retentionBytes()) {
                 long accumulatedSize = 0;
                 // Note the reverse order.
                 for (final BatchInfoInternal batch : coordinates.descendingMap().values()) {
