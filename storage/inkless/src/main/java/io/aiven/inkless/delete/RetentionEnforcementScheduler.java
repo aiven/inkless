@@ -39,6 +39,14 @@ import io.aiven.inkless.control_plane.MetadataView;
 
 /**
  * The class responsible for scheduling per partition retention enforcement.
+ *
+ * <p>The scheduler tries to ensure that retention enforcement is performed for each partition
+ * every {@code enforcementInterval} approximately across all brokers.
+ * "Approximately" means that there's a  randomization component. The number of milliseconds to wait is selected randomly from {@code [0..2*enforcementInterval)}.
+ * As there is no coordination across brokers, each scheduler just multiply the interval to randomly choose from by the number of brokers,
+ * keeping the global frequency on average the same.
+ *
+ * <p>The global coordination is not needed because the control plane must do the appropriate locking, so we're not trying to avoid collisions.</p>
  */
 class RetentionEnforcementScheduler {
     private static final Logger LOGGER = LoggerFactory.getLogger(RetentionEnforcementScheduler.class);
