@@ -6,6 +6,7 @@ on:
   push:
     branches:
       - 'main'
+      - 'inkless-*'
   # nightly cron job
   schedule:
     - cron: '0 0 * * *'
