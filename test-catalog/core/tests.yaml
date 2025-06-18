@@ -831,6 +831,7 @@ kafka.coordinator.transaction.TransactionCoordinatorTest:
 - testInitProducerIdWithInvalidEpochAfterProducerIdRotation
 - testInitProducerIdWithNoLastProducerData
 - testRetryInitProducerIdAfterProducerIdRotation
+- testTV2AllowsEpochReBumpingAfterFailedWrite
 - testVerifyPartitionHandling
 kafka.coordinator.transaction.TransactionLogTest:
 - shouldReadWriteMessages
