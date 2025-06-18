@@ -17,22 +17,18 @@
  */
 package io.aiven.inkless.control_plane.postgres;
 
-import org.apache.kafka.common.Uuid;
+import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.utils.Time;
 
 import org.jooq.Configuration;
 import org.jooq.DSLContext;
-import org.jooq.generated.udt.CommitBatchResponseV1;
 import org.jooq.generated.udt.DeleteRecordsResponseV1;
 import org.jooq.generated.udt.records.DeleteRecordsRequestV1Record;
 import org.jooq.generated.udt.records.DeleteRecordsResponseV1Record;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.sql.SQLException;
 import java.time.Instant;
-import java.util.ArrayList;
-import java.util.Iterator;
 import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.function.Consumer;
@@ -86,52 +82,31 @@ public class DeleteRecordsJob implements Callable<List<DeleteRecordsResponse>> {
                     DeleteRecordsResponseV1.LOG_START_OFFSET
                 ).from(DELETE_RECORDS_V1.call(now, jooqRequests))
                 .fetchInto(DeleteRecordsResponseV1Record.class);
-            return processFunctionResult(functionResult);
+            return FunctionResultProcessor.processWithMappingOrder(
+                requests,
+                functionResult,
+                // We don't care about the topic name for the key.
+                r -> new TopicIdPartition(r.topicIdPartition().topicId(), r.topicIdPartition().partition(), null),
+                r -> new TopicIdPartition(r.getTopicId(), r.getPartition(), null),
+                this::responseMapper
+            );
         });
     }
 
-    private List<DeleteRecordsResponse> processFunctionResult(List<DeleteRecordsResponseV1Record> functionResult) throws SQLException {
-        final List<DeleteRecordsResponse> responses = new ArrayList<>();
-
-        final Iterator<DeleteRecordsRequest> iterator = requests.iterator();
-        for (final var record : functionResult) {
-            if (!iterator.hasNext()) {
-                throw new RuntimeException("More records returned than expected");
-            }
-            final DeleteRecordsRequest request = iterator.next();
-
-            final Uuid requestTopicId = request.topicIdPartition().topicId();
-            final int requestPartition = request.topicIdPartition().partition();
-            final Uuid resultTopicId = record.getTopicId();
-            final int resultPartition = record.get(CommitBatchResponseV1.PARTITION);
-            if (!resultTopicId.equals(requestTopicId) || resultPartition != requestPartition) {
-                throw new RuntimeException(String.format(
-                    "Returned topic ID or partition doesn't match: expected %s-%d, got %s-%d",
-                    requestTopicId, requestPartition,
-                    resultTopicId, resultPartition
-                ));
-            }
-
-            if (record.getError() == null) {
-                responses.add(DeleteRecordsResponse.success(record.getLogStartOffset()));
-            } else {
-                final var response = switch (record.getError()) {
-                    case unknown_topic_or_partition ->
-                        DeleteRecordsResponse.unknownTopicOrPartition();
-                    case offset_out_of_range ->
-                        DeleteRecordsResponse.offsetOutOfRange();
-                    default ->
-                        throw new RuntimeException(String.format("Unknown error '%s' returned for %s-%d",
-                            record.getError(), resultTopicId, resultPartition));
-                };
-                responses.add(response);
-            }
+    private DeleteRecordsResponse responseMapper(final DeleteRecordsRequest request,
+                                                 final DeleteRecordsResponseV1Record record) {
+        if (record.getError() == null) {
+            return DeleteRecordsResponse.success(record.getLogStartOffset());
+        } else {
+            return switch (record.getError()) {
+                case unknown_topic_or_partition ->
+                    DeleteRecordsResponse.unknownTopicOrPartition();
+                case offset_out_of_range ->
+                    DeleteRecordsResponse.offsetOutOfRange();
+                default ->
+                    throw new RuntimeException(String.format("Unknown error '%s' returned for %s-%d",
+                        record.getError(), record.getTopicId(), record.getPartition()));
+            };
         }
-
-        if (iterator.hasNext()) {
-            throw new RuntimeException("Fewer records returned than expected");
-        }
-
-        return responses;
     }
 }

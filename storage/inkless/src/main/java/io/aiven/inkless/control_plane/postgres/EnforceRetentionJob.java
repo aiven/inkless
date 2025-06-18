@@ -27,10 +27,7 @@ import org.jooq.generated.udt.records.EnforceRetentionRequestV1Record;
 import org.jooq.generated.udt.records.EnforceRetentionResponseV1Record;
 
 import java.time.Instant;
-import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.concurrent.Callable;
 import java.util.function.Consumer;
 
@@ -88,51 +85,32 @@ public class EnforceRetentionJob implements Callable<List<EnforceRetentionRespon
                 ).from(ENFORCE_RETENTION_V1.call(
                     now, jooqRequests
                 )).fetchInto(EnforceRetentionResponseV1Record.class);
-                return processFunctionResult(functionResult);
+                return FunctionResultProcessor.processWithMappingOrder(
+                    requests,
+                    functionResult,
+                    // We don't care about the topic name for the key.
+                    r -> new TopicIdPartition(r.topicId(), r.partition(), null),
+                    r -> new TopicIdPartition(r.getTopicId(), r.getPartition(), null),
+                    this::responseMapper
+                );
             } catch (RuntimeException e) {
                 throw new ControlPlaneException("Error enforcing retention", e);
             }
         });
     }
 
-    private List<EnforceRetentionResponse> processFunctionResult(
-        final List<EnforceRetentionResponseV1Record> functionResult
-    ) {
-        if (functionResult.size() != requests.size()) {
-            throw new RuntimeException(String.format("Expected %d items, returned %d", requests.size(), functionResult.size()));
+    private EnforceRetentionResponse responseMapper(final EnforceRetentionRequest request,
+                                                    final EnforceRetentionResponseV1Record record) {
+        if (record.getError() == null) {
+            return EnforceRetentionResponse.success(record.getBatchesDeleted(), record.getBytesDeleted(), record.getLogStartOffset());
+        } else {
+            return switch (record.getError()) {
+                case unknown_topic_or_partition ->
+                    EnforceRetentionResponse.unknownTopicOrPartition();
+                default ->
+                    throw new RuntimeException(String.format("Unknown error '%s' returned for %s-%d",
+                        record.getError(), record.getTopicId(), record.getPartition()));
+            };
         }
-
-        // The PG function reorders requests in safe locking order. We're reverting that here.
-
-        // Technically there may be multiple requests for a partition, handle this situation.
-        final Map<TopicIdPartition, List<EnforceRetentionResponseV1Record>> resultMap = new HashMap<>();
-        for (var record : functionResult) {
-            resultMap.computeIfAbsent(
-                // We don't care about the topic name.
-                new TopicIdPartition(record.getTopicId(), record.getPartition(), null),
-                k -> new ArrayList<>()
-            ).add(record);
-        }
-
-        final List<EnforceRetentionResponse> responses = new ArrayList<>();
-        for (final var request : requests) {
-            final TopicIdPartition key = new TopicIdPartition(request.topicId(), request.partition(), null);
-            final var records = resultMap.get(key);
-            if (records == null || records.isEmpty()) {
-                throw new RuntimeException("No result found for request: " + request);
-            }
-            final var record = records.remove(0);
-            final EnforceRetentionResponse response;
-            if (record.getError() == null) {
-                response = EnforceRetentionResponse.success(record.getBatchesDeleted(), record.getBytesDeleted(), record.getLogStartOffset());
-            } else {
-                response = switch (record.getError()) {
-                    case unknown_topic_or_partition ->
-                        EnforceRetentionResponse.unknownTopicOrPartition();
-                };
-            }
-            responses.add(response);
-        }
-        return responses;
     }
 }

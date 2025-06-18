@@ -30,9 +30,11 @@ import org.jooq.generated.tables.records.FilesRecord;
 import org.jooq.generated.tables.records.LogsRecord;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInfo;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
@@ -41,9 +43,11 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.time.Instant;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.function.Consumer;
+import java.util.stream.Stream;
 
 import io.aiven.inkless.TimeUtils;
 import io.aiven.inkless.common.ObjectFormat;
@@ -102,8 +106,15 @@ class DeleteRecordsJobTest {
         pgContainer.tearDown();
     }
 
-    @Test
-    void deleteRecordsFromMultipleTopics() {
+    /**
+     * This tests randomizes the order in which requests are sent to the control plane by permuting them deterministically.
+     */
+    @ParameterizedTest
+    @MethodSource("deleteRecordsFromMultipleTopicsParams")
+    void deleteRecordsFromMultipleTopics(final List<Integer> order) {
+        // Verify that order contains only unique elements.
+        assert new HashSet<>(order).size() == order.size();
+        
         final String objectKey1 = "obj1";
         final String objectKey2 = "obj2";
         final String objectKey3 = "obj3";
@@ -155,20 +166,23 @@ class DeleteRecordsJobTest {
 
         time.sleep(1000);  // advance time
         final Instant topicsDeletedAt = TimeUtils.now(time);
-        final Uuid nonexistentTopicId = Uuid.ONE_UUID;
-        final List<DeleteRecordsResponse> responses = new DeleteRecordsJob(time, pgContainer.getJooqCtx(), List.of(
+
+        final List<DeleteRecordsRequest> requests = reorder(List.of(
             new DeleteRecordsRequest(T0P0, 18),
             new DeleteRecordsRequest(T0P1, 24),
             new DeleteRecordsRequest(T2P0, 0),
-            new DeleteRecordsRequest(new TopicIdPartition(nonexistentTopicId, 0, "nonexistent"), 0)
-        ), duration -> {}).call();
+            new DeleteRecordsRequest(new TopicIdPartition(Uuid.ONE_UUID, 0, "nonexistent"), 0)
+        ), order);
+        final List<DeleteRecordsResponse> responses =
+            new DeleteRecordsJob(time, pgContainer.getJooqCtx(), requests, duration -> {}).call();
 
-        assertThat(responses).containsExactly(
+        final List<DeleteRecordsResponse> expectedResponses = reorder(List.of(
             new DeleteRecordsResponse(Errors.NONE, 18),
             new DeleteRecordsResponse(Errors.NONE, 24),
             new DeleteRecordsResponse(Errors.NONE, 0),
             new DeleteRecordsResponse(Errors.UNKNOWN_TOPIC_OR_PARTITION, -1)
-        );
+        ), order);
+        assertThat(responses).containsExactlyElementsOf(expectedResponses);
 
         assertThat(DBUtils.getAllLogs(pgContainer.getDataSource())).containsExactlyInAnyOrder(
             new LogsRecord(TOPIC_ID_0, 0, TOPIC_0, 18L, 36L, (long) file2Batch1Size + file3Batch1Size),
@@ -190,5 +204,18 @@ class DeleteRecordsJobTest {
             new FilesRecord(2L, objectKey2, FORMAT, FileReason.PRODUCE, FileStateT.uploaded, BROKER_ID, filesCommittedAt, null, (long) file2Size),  // not a single batch deleted from file 2
             new FilesRecord(3L, objectKey3, FORMAT, FileReason.PRODUCE, FileStateT.uploaded, BROKER_ID, filesCommittedAt, null, (long) file3Size)
         );
+    }
+
+    private static Stream<Arguments> deleteRecordsFromMultipleTopicsParams() {
+        return Stream.of(
+            Arguments.of(List.of(0, 1, 2, 3)),
+            Arguments.of(List.of(3, 2, 1, 0)),
+            Arguments.of(List.of(3, 0, 1, 2))
+        );
+    }
+
+    private <T> List<T> reorder(final List<T> original, final List<Integer> order) {
+        assert order.size() == original.size();
+        return order.stream().map(original::get).toList();
     }
 }
