@@ -32,7 +32,7 @@ class EmptyTestInfo extends TestInfo {
 
 object TestInfoUtils {
 
-  final val TestWithParameterizedGroupProtocolNamesAndTopicType = "{displayName}.groupProtocol={1}.topicType={2}"
+  final val TestWithParameterizedGroupProtocolNamesAndTopicType = "{displayName}.groupProtocol={0}.topicType={1}"
 
   final val TestWithParameterizedGroupProtocolNames = "{displayName}.groupProtocol={0}"
 
