@@ -2491,8 +2491,12 @@ org.apache.kafka.clients.consumer.internals.SubscriptionStateTest:
 - testAssignedPartitionsWithTopicIdsForRe2Pattern
 - testAssignedTopicIdsPreservedWhenReconciliationCompletes
 - testCompleteValidationShouldClearAwaitingValidation
+- testFetchablePartitionsPerformsCheapChecksFirst
 - testGroupSubscribe
 - testIsAssignedFromRe2j
+- testIsFetchableConsidersExplicitTopicSubscription
+- testIsFetchableOnAutoAssignment
+- testIsFetchableOnManualAssignment
 - testMarkingPartitionPending
 - testMaybeCompleteValidation
 - testMaybeCompleteValidationAfterOffsetReset
@@ -4400,6 +4404,7 @@ org.apache.kafka.common.resource.ResourceTypeTest:
 - testIsUnknown
 - testName
 org.apache.kafka.common.security.JaasContextTest:
+- testAllowedLoginModulesSystemProperty
 - testConfigNoOptions
 - testControlFlag
 - testDisallowedLoginModulesSystemProperty
