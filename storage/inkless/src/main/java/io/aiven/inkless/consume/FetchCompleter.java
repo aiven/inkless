@@ -28,7 +28,6 @@ import org.apache.kafka.server.storage.log.FetchPartitionData;
 
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
@@ -49,21 +48,21 @@ import io.aiven.inkless.control_plane.BatchInfo;
 import io.aiven.inkless.control_plane.FindBatchResponse;
 import io.aiven.inkless.generated.FileExtent;
 
-public class FetchCompleterJob implements Supplier<Map<TopicIdPartition, FetchPartitionData>> {
+public class FetchCompleter implements Supplier<Map<TopicIdPartition, FetchPartitionData>> {
 
     private final Time time;
     private final ObjectKeyCreator objectKeyCreator;
     private final Map<TopicIdPartition, FetchRequest.PartitionData> fetchInfos;
-    private final Future<Map<TopicIdPartition, FindBatchResponse>> coordinates;
-    private final Future<List<Future<FileExtent>>> backingData;
+    private final Map<TopicIdPartition, FindBatchResponse> coordinates;
+    private final List<Future<FileExtent>> backingData;
     private final Consumer<Long> durationCallback;
 
-    public FetchCompleterJob(Time time,
-                             ObjectKeyCreator objectKeyCreator,
-                             Map<TopicIdPartition, FetchRequest.PartitionData> fetchInfos,
-                             Future<Map<TopicIdPartition, FindBatchResponse>> coordinates,
-                             Future<List<Future<FileExtent>>> backingData,
-                             Consumer<Long> durationCallback) {
+    public FetchCompleter(Time time,
+                          ObjectKeyCreator objectKeyCreator,
+                          Map<TopicIdPartition, FetchRequest.PartitionData> fetchInfos,
+                          Map<TopicIdPartition, FindBatchResponse> coordinates,
+                          List<Future<FileExtent>> backingData,
+                          Consumer<Long> durationCallback) {
         this.time = time;
         this.objectKeyCreator = objectKeyCreator;
         this.fetchInfos = fetchInfos;
@@ -76,17 +75,19 @@ public class FetchCompleterJob implements Supplier<Map<TopicIdPartition, FetchPa
     public Map<TopicIdPartition, FetchPartitionData> get() {
         try {
             final Map<String, List<FileExtent>> files = waitForFileData();
-            final Map<TopicIdPartition, FindBatchResponse> metadata = coordinates.get();
-            return TimeUtils.measureDurationMs(time, () -> serveFetch(metadata, files), durationCallback);
+            return TimeUtils.measureDurationMs(time, () -> serveFetch(coordinates, files), durationCallback);
         } catch (Exception e) {
-            throw new RuntimeException(e);
+            // unwrap ExecutionException if the errors comes from dependent futures
+            if (e instanceof ExecutionException) {
+                throw new FetchException(e.getCause());
+            }
+            throw new FetchException(e);
         }
     }
 
     private Map<String, List<FileExtent>> waitForFileData() throws InterruptedException, ExecutionException {
         Map<String, List<FileExtent>> files = new HashMap<>();
-        List<Future<FileExtent>> fileFutures = backingData.get();
-        for (Future<FileExtent> fileFuture : fileFutures) {
+        for (Future<FileExtent> fileFuture : backingData) {
             FileExtent fileExtent = fileFuture.get();
             files.compute(fileExtent.object(), (k, v) -> {
                 if (v == null) {
@@ -210,25 +211,25 @@ public class FetchCompleterJob implements Supplier<Map<TopicIdPartition, FetchPa
     }
 
     private static MemoryRecords constructRecordsFromFile(BatchInfo batch, List<FileExtent> files) {
-        ByteBuffer buffer = null;
+        byte[] buffer = null;
         for (FileExtent file : files) {
             final ByteRange batchRange = batch.metadata().range();
             final ByteRange fileRange = new ByteRange(file.range().offset(), file.range().length());
             ByteRange intersection = ByteRange.intersect(batchRange, fileRange);
             if (intersection.size() > 0) {
                 if (buffer == null) {
-                    buffer = ByteBuffer.allocate(Math.toIntExact(batchRange.bufferSize()));
+                    buffer = new byte[Math.toIntExact(batchRange.bufferSize())];
                 }
-                buffer.position(intersection.bufferOffset() - batchRange.bufferOffset());
-                buffer.put(Arrays.copyOfRange(file.data(),
-                        intersection.bufferOffset() - fileRange.bufferOffset(),
-                        intersection.bufferOffset() - fileRange.bufferOffset() + intersection.bufferSize()));
+                final int position = intersection.bufferOffset() - batchRange.bufferOffset();
+                final int from = intersection.bufferOffset() - fileRange.bufferOffset();
+                final int to = intersection.bufferOffset() - fileRange.bufferOffset() + intersection.bufferSize();
+                final byte[] fileData = file.data();
+                System.arraycopy(fileData, from, buffer, position, Math.min(fileData.length - from, to - from));
             }
         }
         if (buffer == null) {
             return null;
         }
-        buffer.rewind();
-        return createMemoryRecords(buffer, batch);
+        return createMemoryRecords(ByteBuffer.wrap(buffer), batch);
     }
 }

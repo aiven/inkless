@@ -52,4 +52,33 @@ public record FindBatchResponse(Errors errors,
             UNKNOWN_OFFSET,
             UNKNOWN_OFFSET);
     }
+
+    /**
+     * Returns the size in bytes of the batches returned by this response, considering only the offsets
+     * from {@code startingOffset} onwards.
+     * When a subset of a batch needs to be considered, its fractional size is estimated by assuming
+     * that all messages in that batch have the same size.
+     */
+    public long estimatedByteSize(long startingOffset) {
+        if (errors != Errors.NONE) { return -1; }
+        if (batches.isEmpty()) { return 0; }
+
+        long firstOffset = batches.get(0).metadata().baseOffset();
+        long lastOffset = batches.get(batches.size() - 1).metadata().lastOffset();
+        if (startingOffset < firstOffset || startingOffset > lastOffset) { return 0; }
+
+        long size = 0;
+        for (var batch : batches) {
+            if (batch.metadata().lastOffset() < startingOffset) { continue; }
+            if (batch.metadata().baseOffset() >= startingOffset) {
+                size += batch.metadata().byteSize();
+                continue;
+            }
+            double percentageWithinBatch = (double)(startingOffset - batch.metadata().baseOffset()) / (double)(batch.metadata().lastOffset() - batch.metadata().baseOffset() + 1);
+
+            double estimatedBatchSize = (1.0 - percentageWithinBatch) * batch.metadata().byteSize();
+            size += (long)estimatedBatchSize;
+        }
+        return size;
+    }
 }

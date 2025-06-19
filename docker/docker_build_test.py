@@ -41,6 +41,10 @@ from common import execute, build_docker_image_runner
 import tempfile
 import os
 
+def build_inkless_docker_image(image, tag, image_type):
+    image = f'{image}:{tag}'
+    build_docker_image_runner(f"docker build -f $DOCKER_FILE -t {image} --build-arg kafka_url='' --build-arg kafka_version={tag} --build-arg build_date={date.today()} $DOCKER_DIR", image_type)
+
 def build_docker_image(image, tag, kafka_url, image_type):
     image = f'{image}:{tag}'
     build_docker_image_runner(f"docker build -f $DOCKER_FILE -t {image} --build-arg kafka_url={kafka_url} --build-arg build_date={date.today()} $DOCKER_DIR", image_type)
@@ -79,7 +83,7 @@ if __name__ == '__main__':
             build_docker_image(args.image, args.tag, args.kafka_url, args.image_type)
         else:
             if args.image_type == "inkless":
-                build_docker_image(args.image, args.tag, "", args.image_type)
+                build_inkless_docker_image(args.image, args.tag, args.image_type)
             else:
                 raise ValueError("--kafka-url is a required argument for docker image")
 

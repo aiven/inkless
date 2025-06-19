@@ -31,7 +31,9 @@ import com.groupcdg.pitest.annotations.CoverageIgnore;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.channels.Channels;
+import java.nio.channels.ReadableByteChannel;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -44,6 +46,16 @@ import io.aiven.inkless.storage_backend.common.StorageBackendException;
 
 @CoverageIgnore  // tested on integration level
 public class GcsStorage implements StorageBackend {
+    /**
+     * The file extent max size is 16 MiB. Most files are few megabytes but usually over 2 MiB.
+     * Good value here is to allow most files to be fetched in single chunk. Worst case is to load
+     * the file in two chunks.
+     */
+    private static final int READER_8MB_CHUNK_SIZE = 1024 * 1024 * 8;
+    // Use a single instance to avoid creating many metric registries
+    // meaning a single set of metrics is published and instantiated only once
+    private static final MetricCollector metricCollector = new MetricCollector();
+
     private Storage storage;
     private String bucketName;
 
@@ -56,7 +68,7 @@ public class GcsStorage implements StorageBackend {
 
         final StorageOptions.Builder builder = StorageOptions.newBuilder()
             .setCredentials(config.credentials())
-            .setTransportOptions(new MetricCollector().httpTransportOptions(httpTransportOptionsBuilder));
+            .setTransportOptions(metricCollector.httpTransportOptions(httpTransportOptionsBuilder));
         if (config.endpointUrl() != null) {
             builder.setHost(config.endpointUrl());
         }
@@ -65,9 +77,19 @@ public class GcsStorage implements StorageBackend {
 
     @Override
     public void upload(final ObjectKey key, final InputStream inputStream, final long length) throws StorageBackendException {
+        Objects.requireNonNull(key, "key cannot be null");
+        Objects.requireNonNull(inputStream, "inputStream cannot be null");
+        if (length <= 0) {
+            throw new IllegalArgumentException("length must be positive");
+        }
         try {
             final BlobInfo blobInfo = BlobInfo.newBuilder(this.bucketName, key.value()).build();
-            storage.createFrom(blobInfo, inputStream);
+            Blob blob = storage.createFrom(blobInfo, inputStream);
+            long transferred = blob.getSize();
+            if (transferred != length) {
+                throw new StorageBackendException(
+                        "Object " + key + " created with incorrect length " + transferred + " instead of " + length);
+            }
         } catch (final IOException | BaseServiceException e) {
             throw new StorageBackendException("Failed to upload " + key, e);
         }
@@ -96,25 +118,25 @@ public class GcsStorage implements StorageBackend {
     }
 
     @Override
-    public InputStream fetch(ObjectKey key, ByteRange range) throws StorageBackendException {
+    public ReadableByteChannel fetch(ObjectKey key, ByteRange range) throws StorageBackendException, IOException {
         try {
             if (range != null && range.empty()) {
-                return InputStream.nullInputStream();
+                return Channels.newChannel(InputStream.nullInputStream());
             }
 
             final Blob blob = getBlob(key);
 
             if (range != null && range.offset() >= blob.getSize()) {
-                throw new InvalidRangeException("Range start position " + range.offset()
-                    + " is outside file content. file size = " + blob.getSize());
+                throw new InvalidRangeException("Failed to fetch " + key + ": Invalid range " + range + " for blob size " + blob.getSize());
             }
 
             final ReadChannel reader = blob.reader();
+            reader.setChunkSize(READER_8MB_CHUNK_SIZE);
             if (range != null) {
                 reader.limit(range.endOffset() + 1);
                 reader.seek(range.offset());
             }
-            return Channels.newInputStream(reader);
+            return reader;
         } catch (final IOException e) {
             throw new StorageBackendException("Failed to fetch " + key, e);
         } catch (final BaseServiceException e) {
@@ -123,7 +145,7 @@ public class GcsStorage implements StorageBackend {
                 throw new KeyNotFoundException(this, key, e);
             } else if (e.getCode() == 416) {
                 // https://cloud.google.com/storage/docs/json_api/v1/status-codes#416_Requested_Range_Not_Satisfiable
-                throw new InvalidRangeException("Invalid range " + range, e);
+                throw new InvalidRangeException("Failed to fetch " + key + ": Invalid range " + range, e);
             } else {
                 throw new StorageBackendException("Failed to fetch " + key, e);
             }
@@ -143,5 +165,10 @@ public class GcsStorage implements StorageBackend {
         return "GCSStorage{"
             + "bucketName='" + bucketName + '\''
             + '}';
+    }
+
+    @Override
+    public void close() throws IOException {
+        metricCollector.close();
     }
 }

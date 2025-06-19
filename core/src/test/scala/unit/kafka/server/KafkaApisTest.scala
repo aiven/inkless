@@ -3182,7 +3182,7 @@ class KafkaApisTest extends Logging {
 
   private def createInklessSharedStateWithTopic(inklessTopic: String): SharedState = {
     val metadataView = mock(classOf[MetadataView])
-    when(metadataView.isInklessTopic(ArgumentMatchers.eq(inklessTopic))).thenReturn(true)
+    when(metadataView.isDisklessTopic(ArgumentMatchers.eq(inklessTopic))).thenReturn(true)
     val sharedState = mock(classOf[SharedState])
     when(sharedState.metadata()).thenReturn(metadataView)
     sharedState
@@ -4012,7 +4012,7 @@ class KafkaApisTest extends Logging {
     MetadataCacheTest.updateCache(metadataCache, partitionRecords)
 
     // 4. Send TopicMetadataReq using topicId
-    val metadataReqByTopicId = new MetadataRequest.Builder(util.List.of(authorizedTopicId, unauthorizedTopicId)).build()
+    val metadataReqByTopicId = MetadataRequest.Builder.forTopicIds(util.Set.of(authorizedTopicId, unauthorizedTopicId)).build()
     val repByTopicId = buildRequest(metadataReqByTopicId, plaintextListener)
     when(clientRequestQuotaManager.maybeRecordAndGetThrottleTimeMs(any[RequestChannel.Request](),
       any[Long])).thenReturn(0)

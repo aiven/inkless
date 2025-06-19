@@ -60,6 +60,7 @@ import org.apache.kafka.server.transaction.AddPartitionsToTxnManager
 import org.apache.kafka.storage.internals.log.LogDirFailureChannel
 import org.apache.kafka.storage.log.metrics.BrokerTopicStats
 
+import java.nio.file.Path
 import java.time.Duration
 import java.util
 import java.util.Optional
@@ -343,7 +344,7 @@ class BrokerServer(
        */
       val defaultActionQueue = new DelayedActionQueue
 
-      val inklessMetadataView = new InklessMetadataView(metadataCache, () => logManager.currentDefaultConfig.values().asInstanceOf[util.Map[String, AnyRef]])
+      val inklessMetadataView = new InklessMetadataView(metadataCache, () => config.extractLogConfigMap)
       val inklessSharedState = sharedServer.inklessControlPlane.map { controlPlane =>
         SharedState.initialize(
           time,
@@ -354,6 +355,7 @@ class BrokerServer(
           inklessMetadataView,
           controlPlane,
           brokerTopicStats,
+          Path.of(config.logDirs().get(0)),
           () => logManager.currentDefaultConfig
         )
       }
@@ -377,7 +379,8 @@ class BrokerServer(
         addPartitionsToTxnManager = Some(addPartitionsToTxnManager),
         directoryEventHandler = directoryEventHandler,
         defaultActionQueue = defaultActionQueue,
-        inklessSharedState = inklessSharedState
+        inklessSharedState = inklessSharedState,
+        inklessMetadataView = Some(inklessMetadataView)
       )
 
       /* start token manager */
@@ -429,7 +432,7 @@ class BrokerServer(
         config,
         "heartbeat",
         s"broker-${config.nodeId}-",
-        config.brokerSessionTimeoutMs / 2 // KAFKA-14392
+        config.brokerHeartbeatIntervalMs
       )
       lifecycleManager.start(
         () => sharedServer.loader.lastAppliedOffset(),
@@ -638,7 +641,8 @@ class BrokerServer(
       time,
       replicaManager,
       serde,
-      config.groupCoordinatorConfig.offsetsLoadBufferSize
+      config.groupCoordinatorConfig.offsetsLoadBufferSize,
+      CoordinatorLoaderImpl.DEFAULT_COMMIT_INTERVAL_OFFSETS
     )
     val writer = new CoordinatorPartitionWriter(
       replicaManager
@@ -668,7 +672,8 @@ class BrokerServer(
       time,
       replicaManager,
       serde,
-      config.shareCoordinatorConfig.shareCoordinatorLoadBufferSize()
+      config.shareCoordinatorConfig.shareCoordinatorLoadBufferSize(),
+      CoordinatorLoaderImpl.DEFAULT_COMMIT_INTERVAL_OFFSETS
     )
     val writer = new CoordinatorPartitionWriter(
       replicaManager

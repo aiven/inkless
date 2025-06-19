@@ -21,8 +21,13 @@ import org.apache.kafka.common.Node;
 import org.apache.kafka.common.message.DescribeTopicPartitionsResponseData;
 import org.apache.kafka.common.message.MetadataResponseData;
 import org.apache.kafka.common.network.ListenerName;
+import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.metadata.LeaderAndIsr;
 
+import org.slf4j.Logger;
+
+import java.io.Closeable;
+import java.io.IOException;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
@@ -32,13 +37,21 @@ import java.util.stream.StreamSupport;
 
 import io.aiven.inkless.control_plane.MetadataView;
 
-public class InklessTopicMetadataTransformer {
+public class InklessTopicMetadataTransformer implements Closeable {
+    private static final Logger LOG = org.slf4j.LoggerFactory.getLogger(InklessTopicMetadataTransformer.class);
+
     private final MetadataView metadataView;
+    private final ClientAzAwarenessMetrics metrics;
 
-    private final AtomicInteger roundRobinCounter = new AtomicInteger();
+    private final AtomicInteger roundRobinCounter;
 
-    public InklessTopicMetadataTransformer(final MetadataView metadataView) {
+    public InklessTopicMetadataTransformer(
+        final int brokerId,
+        final MetadataView metadataView
+    ) {
         this.metadataView = Objects.requireNonNull(metadataView, "metadataView cannot be null");
+        roundRobinCounter = new AtomicInteger(brokerId);
+        metrics = new ClientAzAwarenessMetrics();
     }
 
     /**
@@ -53,12 +66,13 @@ public class InklessTopicMetadataTransformer {
 
         final int leaderForInklessPartitions = selectLeaderForInklessPartitions(listenerName, clientId);
         for (final var topic : topicMetadata) {
-            if (!metadataView.isInklessTopic(topic.name())) {
+            if (!metadataView.isDisklessTopic(topic.name())) {
                 continue;
             }
             for (final var partition : topic.partitions()) {
                 partition.setLeaderId(leaderForInklessPartitions);
                 final List<Integer> list = List.of(leaderForInklessPartitions);
+                partition.setErrorCode(Errors.NONE.code());
                 partition.setReplicaNodes(list);
                 partition.setIsrNodes(list);
                 partition.setOfflineReplicas(Collections.emptyList());
@@ -79,13 +93,14 @@ public class InklessTopicMetadataTransformer {
 
         final int leaderForInklessPartitions = selectLeaderForInklessPartitions(listenerName, clientId);
         for (final var topic : responseData.topics()) {
-            if (!metadataView.isInklessTopic(topic.name())) {
+            if (!metadataView.isDisklessTopic(topic.name())) {
                 continue;
             }
 
             for (final var partition : topic.partitions()) {
                 partition.setLeaderId(leaderForInklessPartitions);
                 final List<Integer> list = List.of(leaderForInklessPartitions);
+                partition.setErrorCode(Errors.NONE.code());
                 partition.setReplicaNodes(list);
                 partition.setIsrNodes(list);
                 partition.setEligibleLeaderReplicas(Collections.emptyList());
@@ -97,7 +112,7 @@ public class InklessTopicMetadataTransformer {
     }
 
     /**
-     * Select the broker ID to be the leader of all Inkless partitions.
+     * Select the broker ID to be the leader of all diskless partitions.
      *
      * <p>The selection happens from brokers in the client AZ or from all brokers
      * (if brokers in the client AZ not found or the client AZ is not set).
@@ -112,6 +127,13 @@ public class InklessTopicMetadataTransformer {
         final List<Node> brokersToPickFrom = brokersInClientAZ.isEmpty()
             ? allAliveBrokers(listenerName)
             : brokersInClientAZ;
+
+        if (clientAZ != null && brokersToPickFrom.isEmpty()) {
+            LOG.warn("No alive brokers found from clientId {}, clientAZ {}; falling back to all brokers",
+                clientId, clientAZ);
+        }
+
+        metrics.recordClientAz(clientAZ, !brokersInClientAZ.isEmpty());
 
         // This cannot happen in a normal broker run. This will serve as a guard in tests.
         if (brokersToPickFrom.isEmpty()) {
@@ -139,5 +161,10 @@ public class InklessTopicMetadataTransformer {
             .filter(bm -> Objects.equals(bm.rack(), az))
             .sorted(Comparator.comparing(Node::id))
             .toList();
+    }
+
+    @Override
+    public void close() throws IOException {
+        metrics.close();
     }
 }

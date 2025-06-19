@@ -127,7 +127,7 @@ import java.util.function.Supplier;
 
 import static org.apache.kafka.clients.admin.AlterConfigOp.OpType.SET;
 import static org.apache.kafka.common.config.ConfigResource.Type.TOPIC;
-import static org.apache.kafka.common.config.TopicConfig.INKLESS_ENABLE_CONFIG;
+import static org.apache.kafka.common.config.TopicConfig.DISKLESS_ENABLE_CONFIG;
 import static org.apache.kafka.common.config.TopicConfig.MIN_IN_SYNC_REPLICAS_CONFIG;
 import static org.apache.kafka.common.protocol.Errors.FENCED_LEADER_EPOCH;
 import static org.apache.kafka.common.protocol.Errors.INELIGIBLE_REPLICA;
@@ -160,7 +160,8 @@ public class ReplicationControlManager {
         private LogContext logContext = null;
         private short defaultReplicationFactor = (short) 3;
         private int defaultNumPartitions = 1;
-        private boolean defaultInklessEnable = false;
+        private boolean defaultDisklessEnable = false;
+        private boolean isDisklessStorageSystemEnabled = false;
 
         private int maxElectionsPerImbalance = MAX_ELECTIONS_PER_IMBALANCE;
         private ConfigurationControlManager configurationControl = null;
@@ -188,8 +189,13 @@ public class ReplicationControlManager {
             return this;
         }
 
-        public Builder setDefaultInklessEnable(boolean defaultInklessEnable) {
-            this.defaultInklessEnable = defaultInklessEnable;
+        public Builder setDefaultDisklessEnable(boolean defaultDisklessEnable) {
+            this.defaultDisklessEnable = defaultDisklessEnable;
+            return this;
+        }
+
+        public Builder setDisklessStorageSystemEnabled(boolean isDisklessStorageSystemEnabled) {
+            this.isDisklessStorageSystemEnabled = isDisklessStorageSystemEnabled;
             return this;
         }
 
@@ -233,7 +239,8 @@ public class ReplicationControlManager {
                 logContext,
                 defaultReplicationFactor,
                 defaultNumPartitions,
-                defaultInklessEnable,
+                defaultDisklessEnable,
+                isDisklessStorageSystemEnabled,
                 maxElectionsPerImbalance,
                 configurationControl,
                 clusterControl,
@@ -307,9 +314,11 @@ public class ReplicationControlManager {
     private final int defaultNumPartitions;
 
     /**
-     * When true, enable Inkless topics if a CreateTopics request does not specify a topic type.
+     * When true, enable diskless topics if a CreateTopics request does not specify a topic type.
      */
-    private final boolean defaultInklessEnable;
+    private final boolean defaultDisklessEnable;
+
+    private final boolean isDisklessStorageSystemEnabled;
 
     /**
      * Maximum number of leader elections to perform during one partition leader balancing operation.
@@ -399,7 +408,8 @@ public class ReplicationControlManager {
         LogContext logContext,
         short defaultReplicationFactor,
         int defaultNumPartitions,
-        boolean defaultInklessEnable,
+        boolean defaultDisklessEnable,
+        boolean isDisklessStorageSystemEnabled,
         int maxElectionsPerImbalance,
         ConfigurationControlManager configurationControl,
         ClusterControlManager clusterControl,
@@ -410,7 +420,8 @@ public class ReplicationControlManager {
         this.log = logContext.logger(ReplicationControlManager.class);
         this.defaultReplicationFactor = defaultReplicationFactor;
         this.defaultNumPartitions = defaultNumPartitions;
-        this.defaultInklessEnable = defaultInklessEnable;
+        this.defaultDisklessEnable = defaultDisklessEnable;
+        this.isDisklessStorageSystemEnabled = isDisklessStorageSystemEnabled;
         this.maxElectionsPerImbalance = maxElectionsPerImbalance;
         this.configurationControl = configurationControl;
         this.createTopicPolicy = createTopicPolicy;
@@ -730,14 +741,30 @@ public class ReplicationControlManager {
         Map<String, String> creationConfigs = translateCreationConfigs(topic.configs());
         Map<Integer, PartitionRegistration> newParts = new HashMap<>();
 
-        boolean inklessEnabled = Boolean.parseBoolean(creationConfigs.getOrDefault(INKLESS_ENABLE_CONFIG, "" + defaultInklessEnable))
-            && !Topic.isInternal(topic.name());
-        if (inklessEnabled) {
+        String disklessEnableConfigValue = creationConfigs.get(DISKLESS_ENABLE_CONFIG);
+        final boolean isDisklessEnableConfigDefined = disklessEnableConfigValue != null;
+        boolean disklessConfigEnabled = defaultDisklessEnable;
+        if (isDisklessEnableConfigDefined) {
+            disklessConfigEnabled = Boolean.parseBoolean(disklessEnableConfigValue);
+        }
+        // Reject internal topic creation request where diskless is explicitly enabled
+        if (Topic.isInternal(topic.name()) && isDisklessEnableConfigDefined && disklessConfigEnabled) {
+            return new ApiError(INVALID_REQUEST,
+                "Internal topics cannot be diskless topics.");
+        }
+
+        final boolean disklessEnabled = disklessConfigEnabled && !Topic.isInternal(topic.name());
+        if (disklessEnabled) {
+            if (!isDisklessStorageSystemEnabled) {
+                return new ApiError(INVALID_REQUEST,
+                    "Cannot create diskless topics " +
+                        "when the diskless storage system is disabled. " +
+                        "Please enable the diskless storage system to create diskless topics.");
+            }
             if (Math.abs(topic.replicationFactor()) != 1) {
                 return new ApiError(Errors.INVALID_REPLICATION_FACTOR,
-                    "Replication factor for Inkless topics must be 1 or -1 to use the default value (1).");
+                    "Replication factor for diskless topics must be 1 or -1 to use the default value (1).");
             }
-
             topic.assignments().clear();
         }
 
@@ -801,7 +828,7 @@ public class ReplicationControlManager {
             try {
                 TopicAssignment topicAssignment;
                 Predicate<Integer> brokerFilter;
-                if (!inklessEnabled) {
+                if (!disklessEnabled) {
                     topicAssignment = clusterControl.replicaPlacer().place(new PlacementSpec(
                         0,
                         numPartitions,
@@ -809,11 +836,11 @@ public class ReplicationControlManager {
                     ), clusterDescriber);
                     brokerFilter = clusterControl::isActive;
                 } else {
-                    topicAssignment = createInklessAssignment(numPartitions);
+                    topicAssignment = createDisklessAssignment(numPartitions);
                     if (topicAssignment == null) {
-                        return new ApiError(Errors.BROKER_NOT_AVAILABLE, "No brokers available to create inkless topic.");
+                        return new ApiError(Errors.BROKER_NOT_AVAILABLE, "No brokers available to create diskless topic.");
                     }
-                    // For Inkless, it doesn't matter if a broker is fenced of not.
+                    // For diskless, it doesn't matter if a broker is fenced of not.
                     brokerFilter = x -> true;
                 }
 
@@ -858,7 +885,7 @@ public class ReplicationControlManager {
         records.add(new ApiMessageAndVersion(new TopicRecord().
             setName(topic.name()).
             setTopicId(topicId), (short) 0));
-        List<ApiMessageAndVersion> validConfigRecords = validConfigRecords(topic, configRecords);
+        List<ApiMessageAndVersion> validConfigRecords = validConfigRecords(topic, configRecords, disklessEnabled);
         // ConfigRecords go after TopicRecord but before PartitionRecord(s).
         records.addAll(validConfigRecords);
         for (Entry<Integer, PartitionRegistration> partEntry : newParts.entrySet()) {
@@ -871,32 +898,47 @@ public class ReplicationControlManager {
         return ApiError.NONE;
     }
 
-    private static List<ApiMessageAndVersion> validConfigRecords(CreatableTopic topic, List<ApiMessageAndVersion> configRecords) {
+    private List<ApiMessageAndVersion> validConfigRecords(CreatableTopic topic, List<ApiMessageAndVersion> configRecords, boolean disklessEnabled) {
         final List<ApiMessageAndVersion> validConfigRecord = new ArrayList<>();
-        boolean inklessSet = false;
+        boolean isDisklessEnableDefined = false;
+        boolean isInklessEnableDefined = false;
         for (ApiMessageAndVersion configRecord: configRecords) {
             ConfigRecord record;
             try {
                 record = (ConfigRecord) configRecord.message();
             } catch (ClassCastException e) {
+                log.warn("Received unexpected message type {} for config record: {}",
+                    configRecord.message().getClass().getName(), configRecord.message());
                 continue;
             }
-            if (record.name().equals(INKLESS_ENABLE_CONFIG) && Topic.isInternal(topic.name())) {
-                ApiMessageAndVersion message = new ApiMessageAndVersion(new ConfigRecord()
-                    .setName(INKLESS_ENABLE_CONFIG)
-                    .setValue("false")
+            // Ensure that diskless enabled config is disabled if it happens to be an internal topic.
+            if (record.name().equals(DISKLESS_ENABLE_CONFIG)) {
+                ApiMessageAndVersion disklessEnableMessage = new ApiMessageAndVersion(new ConfigRecord()
+                    .setName(DISKLESS_ENABLE_CONFIG)
+                    .setValue(String.valueOf(disklessEnabled))
                     .setResourceName(topic.name())
                     .setResourceType(ResourceType.TOPIC.code()), (short) 0);
-                validConfigRecord.add(message);
-
-                inklessSet = true;
+                validConfigRecord.add(disklessEnableMessage);
+                isDisklessEnableDefined = true;
             } else {
                 validConfigRecord.add(configRecord);
             }
         }
-        if (Topic.isInternal(topic.name()) && !inklessSet) {
+        // Ensure that diskless.enable config is always defined if diskless is enabled.
+        // This allows to quickly check if a topic is diskless or not from the KRaft metadata directly.
+        if (!isDisklessEnableDefined && disklessEnabled) {
             validConfigRecord.add(new ApiMessageAndVersion(new ConfigRecord()
-                .setName(INKLESS_ENABLE_CONFIG)
+                .setName(DISKLESS_ENABLE_CONFIG)
+                .setValue("true")
+                .setResourceName(topic.name())
+                .setResourceType(ResourceType.TOPIC.code()), (short) 0));
+        }
+        // Ensure that diskless.enable config is always defined if diskless feature is not set at all.
+        // This ensures that is possible to discern between cases where there's no config set (topic already created
+        // but diskless is disabled by default) and cases where no config is set because the topic is being created
+        if (isDisklessStorageSystemEnabled && !isInklessEnableDefined && !isDisklessEnableDefined && !disklessEnabled) {
+            validConfigRecord.add(new ApiMessageAndVersion(new ConfigRecord()
+                .setName(DISKLESS_ENABLE_CONFIG)
                 .setValue("false")
                 .setResourceName(topic.name())
                 .setResourceType(ResourceType.TOPIC.code()), (short) 0));
@@ -925,8 +967,8 @@ public class ReplicationControlManager {
             for (String configName : configNames) {
                 ConfigEntry entry = effectiveConfig.get(configName);
                 String value = entry.isSensitive() ? null : entry.value();
-                // If topic is internal, inkless must be disabled
-                if (Topic.isInternal(topic.name()) && configName.equals(INKLESS_ENABLE_CONFIG)) {
+                // If topic is internal, diskless must be disabled
+                if (Topic.isInternal(topic.name()) && configName.equals(DISKLESS_ENABLE_CONFIG)) {
                     value = String.valueOf(false);
                 }
                 result.configs().add(new CreateTopicsResponseData.CreatableTopicConfigs().
@@ -946,10 +988,10 @@ public class ReplicationControlManager {
     }
 
     /**
-     * Create a topic assignment for an Inkless topic.
+     * Create a topic assignment for a diskless topic.
      * @return the assignment or {@code null} if there are no brokers avaiable.
      */
-    private TopicAssignment createInklessAssignment(int numPartitions) {
+    private TopicAssignment createDisklessAssignment(int numPartitions) {
         final Iterator<UsableBroker> usableBrokers = clusterControl.usableBrokers();
         if (!usableBrokers.hasNext()) {
             return null;
@@ -2177,7 +2219,8 @@ public class ReplicationControlManager {
         int successfulAlterations = 0, totalAlterations = 0;
         for (ReassignableTopic topic : request.topics()) {
             boolean effectiveRFChange = allowRFChange
-                && !Boolean.parseBoolean(configurationControl.currentTopicConfig(topic.name()).getOrDefault(INKLESS_ENABLE_CONFIG, "false"));
+                && !Boolean.parseBoolean(configurationControl.currentTopicConfig(topic.name()).getOrDefault(
+                DISKLESS_ENABLE_CONFIG, "false"));
             ReassignableTopicResponse topicResponse = new ReassignableTopicResponse().
                 setName(topic.name());
             for (ReassignablePartition partition : topic.partitions()) {

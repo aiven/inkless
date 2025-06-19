@@ -104,7 +104,7 @@ public class MetricRegistry {
         TOTAL_DOC_PREFIX + RESUMABLE_CHUNK_UPLOAD_DOC
     );
 
-    public List<MetricNameTemplate> all() {
+    public static List<MetricNameTemplate> all() {
         return List.of(
             OBJECT_METADATA_GET_RATE_METRIC_NAME,
             OBJECT_METADATA_GET_TOTAL_METRIC_NAME,

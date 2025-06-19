@@ -454,7 +454,7 @@ public class StreamThread extends Thread implements ProcessingThread {
         final DefaultTaskManager schedulingTaskManager =
             maybeCreateSchedulingTaskManager(processingThreadsEnabled, stateUpdaterEnabled, topologyMetadata, time, threadId, tasks);
         final StateUpdater stateUpdater =
-            maybeCreateStateUpdater(
+            maybeCreateAndStartStateUpdater(
                 stateUpdaterEnabled,
                 streamsMetrics,
                 config,
@@ -633,7 +633,7 @@ public class StreamThread extends Thread implements ProcessingThread {
         return null;
     }
 
-    private static StateUpdater maybeCreateStateUpdater(final boolean stateUpdaterEnabled,
+    private static StateUpdater maybeCreateAndStartStateUpdater(final boolean stateUpdaterEnabled,
                                                                 final StreamsMetricsImpl streamsMetrics,
                                                                 final StreamsConfig streamsConfig,
                                                                 final Consumer<byte[], byte[]> restoreConsumer,
@@ -644,15 +644,17 @@ public class StreamThread extends Thread implements ProcessingThread {
                                                                 final int threadIdx) {
         if (stateUpdaterEnabled) {
             final String name = clientId + STATE_UPDATER_ID_SUBSTRING + threadIdx;
-            return new DefaultStateUpdater(
+            final StateUpdater stateUpdater = new DefaultStateUpdater(
                 name,
-                streamsMetrics.metricsRegistry(),
+                streamsMetrics,
                 streamsConfig,
                 restoreConsumer,
                 changelogReader,
                 topologyMetadata,
                 time
             );
+            stateUpdater.start();
+            return stateUpdater;
         } else {
             return null;
         }
@@ -881,9 +883,6 @@ public class StreamThread extends Thread implements ProcessingThread {
         }
         boolean cleanRun = false;
         try {
-            if (stateUpdaterEnabled) {
-                taskManager.init();
-            }
             cleanRun = runLoop();
         } catch (final Throwable e) {
             failedStreamThreadSensor.record();
@@ -1525,6 +1524,7 @@ public class StreamThread extends Thread implements ProcessingThread {
         try {
             records = mainConsumer.poll(pollTime);
         } catch (final InvalidOffsetException e) {
+            log.info("Found no valid offset for {} partitions, resetting.", e.partitions().size());
             resetOffsets(e.partitions(), e);
         }
 
@@ -1599,14 +1599,14 @@ public class StreamThread extends Thread implements ProcessingThread {
                         addToResetList(
                             partition,
                             seekToBeginning,
-                            "Setting topic '{}' to consume from earliest offset",
+                            "Setting topic '{}' to consume from 'earliest' offset",
                             loggedTopics
                         );
                     } else if (resetPolicy == AutoOffsetResetStrategy.LATEST) {
                         addToResetList(
                             partition,
                             seekToEnd,
-                            "Setting topic '{}' to consume from latest offset",
+                            "Setting topic '{}' to consume from 'latest' offset",
                             loggedTopics
                         );
                     } else if (resetPolicy.type() == AutoOffsetResetStrategy.StrategyType.BY_DURATION) {
@@ -1614,7 +1614,7 @@ public class StreamThread extends Thread implements ProcessingThread {
                             partition,
                             seekByDuration,
                             resetPolicy.duration().get(),
-                            "Setting topic '{}' to consume from by_duration:{}",
+                            "Setting topic '{}' to consume from 'by_duration:{}'",
                             resetPolicy.duration().get().toString(),
                             loggedTopics
                         );
@@ -1730,12 +1730,12 @@ public class StreamThread extends Thread implements ProcessingThread {
     private void addToResetList(
         final TopicPartition partition,
         final Set<TopicPartition> partitions,
-        final String resetPolicy,
+        final String logMessage,
         final Set<String> loggedTopics
     ) {
         final String topic = partition.topic();
         if (loggedTopics.add(topic)) {
-            log.info("Setting topic '{}' to consume from {} offset", topic, resetPolicy);
+            log.info(logMessage, topic);
         }
         partitions.add(partition);
     }

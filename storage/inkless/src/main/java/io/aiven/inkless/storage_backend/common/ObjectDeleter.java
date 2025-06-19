@@ -17,11 +17,12 @@
  */
 package io.aiven.inkless.storage_backend.common;
 
+import java.io.Closeable;
 import java.util.Set;
 
 import io.aiven.inkless.common.ObjectKey;
 
-public interface ObjectDeleter {
+public interface ObjectDeleter extends Closeable {
     /**
      * Delete the object with the specified key.
      *

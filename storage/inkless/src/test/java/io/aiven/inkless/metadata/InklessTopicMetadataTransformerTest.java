@@ -56,7 +56,7 @@ import static org.mockito.Mockito.when;
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.STRICT_STUBS)
 class InklessTopicMetadataTransformerTest {
-    static final String TOPIC_INKLESS = "inkless-topic";
+    static final String TOPIC_INKLESS = "diskless-topic";
     static final Uuid TOPIC_INKLESS_ID = new Uuid(123, 123);
     static final String TOPIC_CLASSIC = "classic-topic";
     static final Uuid TOPIC_CLASSIC_ID = new Uuid(456, 456);
@@ -67,11 +67,11 @@ class InklessTopicMetadataTransformerTest {
 
     @Test
     void nulls() {
-        assertThatThrownBy(() -> new InklessTopicMetadataTransformer(null))
+        assertThatThrownBy(() -> new InklessTopicMetadataTransformer(1, null))
             .isInstanceOf(NullPointerException.class)
             .hasMessage("metadataView cannot be null");
 
-        final var transformer = new InklessTopicMetadataTransformer(metadataView);
+        final var transformer = new InklessTopicMetadataTransformer(1, metadataView);
         assertThatThrownBy(() -> transformer.transformClusterMetadata(LISTENER_NAME, "x", null))
             .isInstanceOf(NullPointerException.class)
             .hasMessage("topicMetadata cannot be null");
@@ -92,9 +92,9 @@ class InklessTopicMetadataTransformerTest {
 
         @ParameterizedTest
         @NullSource
-        @ValueSource(strings = {"inkless_az=az1", "x=y", ""})
+        @ValueSource(strings = {"diskless_az=az1", "x=y", ""})
         void clusterMetadata(final String clientId) {
-            final var transformer = new InklessTopicMetadataTransformer(metadataView);
+            final var transformer = new InklessTopicMetadataTransformer(1, metadataView);
 
             final List<MetadataResponseTopic> topicMetadata = List.of();
             transformer.transformClusterMetadata(LISTENER_NAME, clientId, topicMetadata);
@@ -103,9 +103,9 @@ class InklessTopicMetadataTransformerTest {
 
         @ParameterizedTest
         @NullSource
-        @ValueSource(strings = {"inkless_az=az1", "x=y", ""})
+        @ValueSource(strings = {"diskless_az=az1", "x=y", ""})
         void describeTopicResponse(final String clientId) {
-            final var transformer = new InklessTopicMetadataTransformer(metadataView);
+            final var transformer = new InklessTopicMetadataTransformer(1, metadataView);
 
             final DescribeTopicPartitionsResponseData describeResponse = new DescribeTopicPartitionsResponseData();
             transformer.transformDescribeTopicResponse(LISTENER_NAME, clientId, describeResponse);
@@ -117,8 +117,8 @@ class InklessTopicMetadataTransformerTest {
     class InklessAndClassicTopics {
         @BeforeEach
         void setup() {
-            when(metadataView.isInklessTopic(eq(TOPIC_INKLESS))).thenReturn(true);
-            when(metadataView.isInklessTopic(eq(TOPIC_CLASSIC))).thenReturn(false);
+            when(metadataView.isDisklessTopic(eq(TOPIC_INKLESS))).thenReturn(true);
+            when(metadataView.isDisklessTopic(eq(TOPIC_CLASSIC))).thenReturn(false);
             when(metadataView.getAliveBrokerNodes(LISTENER_NAME)).thenReturn(List.of(
                 new Node(0, "host", 9092, "az0"),
                 new Node(2, "host", 9094, "az0"),
@@ -129,10 +129,10 @@ class InklessTopicMetadataTransformerTest {
 
         @ParameterizedTest
         @CsvSource({
-            "az0,0,2",
-            "az1,1,3",
-            "az_unknown,0,1",
-            ",0,1",
+            "az0,2,0",
+            "az1,3,1",
+            "az_unknown,1,2",
+            ",1,2",
         })
         void clusterMetadata(final String clientAZ, final int expectedLeaderId1, final int expectedLeaderId2) {
             final Supplier<MetadataResponseTopic> inklessTopicMetadata =
@@ -151,7 +151,7 @@ class InklessTopicMetadataTransformerTest {
                             .setLeaderEpoch(0),
                         new MetadataResponsePartition()
                             .setPartitionIndex(1)
-                            .setErrorCode((short) 1)
+                            .setErrorCode((short) 0)
                             .setLeaderId(-1)
                             .setReplicaNodes(List.of(1, 2, 3, 4))
                             .setIsrNodes(List.of(1, 2))
@@ -159,7 +159,7 @@ class InklessTopicMetadataTransformerTest {
                             .setLeaderEpoch(0),
                         new MetadataResponsePartition()
                             .setPartitionIndex(2)
-                            .setErrorCode((short) 2)
+                            .setErrorCode((short) 0)
                             .setLeaderId(-1)
                             .setReplicaNodes(List.of(1, 2, 3, 4))
                             .setIsrNodes(List.of(1, 2))
@@ -186,9 +186,9 @@ class InklessTopicMetadataTransformerTest {
                 inklessTopicMetadata.get(),
                 classicTopicMetadata.get()
             );
-            final var transformer = new InklessTopicMetadataTransformer(metadataView);
+            final var transformer = new InklessTopicMetadataTransformer(1, metadataView);
 
-            transformer.transformClusterMetadata(LISTENER_NAME, "inkless_az=" + clientAZ, topicMetadata);
+            transformer.transformClusterMetadata(LISTENER_NAME, "diskless_az=" + clientAZ, topicMetadata);
 
             final var expectedInklessTopicMetadata = inklessTopicMetadata.get();
             for (final int partition : List.of(0, 1, 2)) {
@@ -199,7 +199,7 @@ class InklessTopicMetadataTransformerTest {
             assertThat(topicMetadata.get(1)).isEqualTo(classicTopicMetadata.get());
 
             // Check that rotation happens by transforming again.
-            transformer.transformClusterMetadata(LISTENER_NAME, "inkless_az=" + clientAZ, topicMetadata);
+            transformer.transformClusterMetadata(LISTENER_NAME, "diskless_az=" + clientAZ, topicMetadata);
 
             for (final int partition : List.of(0, 1, 2)) {
                 setExpectedLeaderCluster(expectedInklessTopicMetadata.partitions().get(partition), expectedLeaderId2);
@@ -211,10 +211,10 @@ class InklessTopicMetadataTransformerTest {
 
         @ParameterizedTest
         @CsvSource({
-            "az0,0,2",
-            "az1,1,3",
-            "az_unknown,0,1",
-            ",0,1",
+            "az0,2,0",
+            "az1,3,1",
+            "az_unknown,1,2",
+            ",1,2",
         })
         void describeTopicResponse(final String clientAZ, final int expectedLeaderId1, final int expectedLeaderId2) {
             final Supplier<DescribeTopicPartitionsResponseTopic> inklessTopicMetadata =
@@ -235,7 +235,7 @@ class InklessTopicMetadataTransformerTest {
                             .setLeaderEpoch(0),
                         new DescribeTopicPartitionsResponsePartition()
                             .setPartitionIndex(1)
-                            .setErrorCode((short) 1)
+                            .setErrorCode((short) 0)
                             .setLeaderId(-1)
                             .setReplicaNodes(List.of(1, 2, 3, 4))
                             .setIsrNodes(List.of(1, 2))
@@ -245,7 +245,7 @@ class InklessTopicMetadataTransformerTest {
                             .setLeaderEpoch(0),
                         new DescribeTopicPartitionsResponsePartition()
                             .setPartitionIndex(2)
-                            .setErrorCode((short) 2)
+                            .setErrorCode((short) 0)
                             .setLeaderId(-1)
                             .setReplicaNodes(List.of(1, 2, 3, 4))
                             .setIsrNodes(List.of(1, 2))
@@ -279,9 +279,9 @@ class InklessTopicMetadataTransformerTest {
                         inklessTopicMetadata.get(),
                         classicTopicMetadata.get()
                     ).iterator()));
-            final var transformer = new InklessTopicMetadataTransformer(metadataView);
+            final var transformer = new InklessTopicMetadataTransformer(1, metadataView);
 
-            transformer.transformDescribeTopicResponse(LISTENER_NAME, "inkless_az=" + clientAZ, describeResponse);
+            transformer.transformDescribeTopicResponse(LISTENER_NAME, "diskless_az=" + clientAZ, describeResponse);
 
             final var expectedInklessTopicMetadata = inklessTopicMetadata.get();
             for (final int partition : List.of(0, 1, 2)) {
@@ -292,7 +292,7 @@ class InklessTopicMetadataTransformerTest {
             assertThat(describeResponse.topics().find(TOPIC_CLASSIC)).isEqualTo(classicTopicMetadata.get());
 
             // Check that rotation happens by transforming again.
-            transformer.transformDescribeTopicResponse(LISTENER_NAME, "inkless_az=" + clientAZ, describeResponse);
+            transformer.transformDescribeTopicResponse(LISTENER_NAME, "diskless_az=" + clientAZ, describeResponse);
 
             for (final int partition : List.of(0, 1, 2)) {
                 setExpectedLeaderDescribeTopicResponse(expectedInklessTopicMetadata.partitions().get(partition), expectedLeaderId2);
@@ -307,7 +307,7 @@ class InklessTopicMetadataTransformerTest {
     class SelectFromAllBrokersWhenBrokerRackIsNotSetCluster {
         @BeforeEach
         void setup() {
-            when(metadataView.isInklessTopic(eq(TOPIC_INKLESS))).thenReturn(true);
+            when(metadataView.isDisklessTopic(eq(TOPIC_INKLESS))).thenReturn(true);
             when(metadataView.getAliveBrokerNodes(LISTENER_NAME)).thenReturn(List.of(
                 new Node(1, "host", 9093),
                 new Node(0, "host", 9092)
@@ -333,15 +333,15 @@ class InklessTopicMetadataTransformerTest {
                     ));
 
             final List<MetadataResponseTopic> topicMetadata = List.of(inklessTopicMetadata.get());
-            final var transformer = new InklessTopicMetadataTransformer(metadataView);
+            final var transformer = new InklessTopicMetadataTransformer(1, metadataView);
 
-            transformer.transformClusterMetadata(LISTENER_NAME, "inkless_az=az0", topicMetadata);
+            transformer.transformClusterMetadata(LISTENER_NAME, "diskless_az=az0", topicMetadata);
             final var expectedInklessTopicMetadata = inklessTopicMetadata.get();
-            setExpectedLeaderCluster(expectedInklessTopicMetadata.partitions().get(0), 0);
+            setExpectedLeaderCluster(expectedInklessTopicMetadata.partitions().get(0), 1);
             assertThat(topicMetadata.get(0)).isEqualTo(expectedInklessTopicMetadata);
 
-            transformer.transformClusterMetadata(LISTENER_NAME, "inkless_az=az0", topicMetadata);
-            setExpectedLeaderCluster(expectedInklessTopicMetadata.partitions().get(0), 1);
+            transformer.transformClusterMetadata(LISTENER_NAME, "diskless_az=az0", topicMetadata);
+            setExpectedLeaderCluster(expectedInklessTopicMetadata.partitions().get(0), 0);
             assertThat(topicMetadata.get(0)).isEqualTo(expectedInklessTopicMetadata);
         }
 
@@ -368,17 +368,17 @@ class InklessTopicMetadataTransformerTest {
                             ))
                     ).iterator()));
 
-            final var transformer = new InklessTopicMetadataTransformer(metadataView);
+            final var transformer = new InklessTopicMetadataTransformer(1, metadataView);
 
             final DescribeTopicPartitionsResponseData describeResponse = describeResponseSupplier.get();
-            transformer.transformDescribeTopicResponse(LISTENER_NAME, "inkless_az=az0", describeResponse);
+            transformer.transformDescribeTopicResponse(LISTENER_NAME, "diskless_az=az0", describeResponse);
 
             final var expectedDescribeResponse = describeResponseSupplier.get();
-            setExpectedLeaderDescribeTopicResponse(expectedDescribeResponse.topics().find(TOPIC_INKLESS).partitions().get(0), 0);
+            setExpectedLeaderDescribeTopicResponse(expectedDescribeResponse.topics().find(TOPIC_INKLESS).partitions().get(0), 1);
             assertThat(describeResponse).isEqualTo(expectedDescribeResponse);
 
-            transformer.transformDescribeTopicResponse(LISTENER_NAME, "inkless_az=az0", describeResponse);
-            setExpectedLeaderDescribeTopicResponse(expectedDescribeResponse.topics().find(TOPIC_INKLESS).partitions().get(0), 1);
+            transformer.transformDescribeTopicResponse(LISTENER_NAME, "diskless_az=az0", describeResponse);
+            setExpectedLeaderDescribeTopicResponse(expectedDescribeResponse.topics().find(TOPIC_INKLESS).partitions().get(0), 0);
             assertThat(describeResponse).isEqualTo(expectedDescribeResponse);
         }
     }
@@ -387,7 +387,7 @@ class InklessTopicMetadataTransformerTest {
     class SelectFromAllBrokersWhenClientAZIsNotSetCluster {
         @BeforeEach
         void setup() {
-            when(metadataView.isInklessTopic(eq(TOPIC_INKLESS))).thenReturn(true);
+            when(metadataView.isDisklessTopic(eq(TOPIC_INKLESS))).thenReturn(true);
             when(metadataView.getAliveBrokerNodes(LISTENER_NAME)).thenReturn(List.of(
                 new Node(1, "host", 9093, "az1"),
                 new Node(0, "host", 9092, "az0")
@@ -413,15 +413,15 @@ class InklessTopicMetadataTransformerTest {
                     ));
 
             final List<MetadataResponseTopic> topicMetadata = List.of(inklessTopicMetadata.get());
-            final var transformer = new InklessTopicMetadataTransformer(metadataView);
+            final var transformer = new InklessTopicMetadataTransformer(1, metadataView);
 
             transformer.transformClusterMetadata(LISTENER_NAME, null, topicMetadata);
             final var expectedInklessTopicMetadata = inklessTopicMetadata.get();
-            setExpectedLeaderCluster(expectedInklessTopicMetadata.partitions().get(0), 0);
+            setExpectedLeaderCluster(expectedInklessTopicMetadata.partitions().get(0), 1);
             assertThat(topicMetadata.get(0)).isEqualTo(expectedInklessTopicMetadata);
 
             transformer.transformClusterMetadata(LISTENER_NAME, null, topicMetadata);
-            setExpectedLeaderCluster(expectedInklessTopicMetadata.partitions().get(0), 1);
+            setExpectedLeaderCluster(expectedInklessTopicMetadata.partitions().get(0), 0);
             assertThat(topicMetadata.get(0)).isEqualTo(expectedInklessTopicMetadata);
         }
 
@@ -448,17 +448,17 @@ class InklessTopicMetadataTransformerTest {
                             ))
                     ).iterator()));
 
-            final var transformer = new InklessTopicMetadataTransformer(metadataView);
+            final var transformer = new InklessTopicMetadataTransformer(1, metadataView);
             final DescribeTopicPartitionsResponseData describeResponse = describeResponseSupplier.get();
 
             transformer.transformDescribeTopicResponse(LISTENER_NAME, null, describeResponse);
 
             final var expectedDescribeResponse = describeResponseSupplier.get();
-            setExpectedLeaderDescribeTopicResponse(expectedDescribeResponse.topics().find(TOPIC_INKLESS).partitions().get(0), 0);
+            setExpectedLeaderDescribeTopicResponse(expectedDescribeResponse.topics().find(TOPIC_INKLESS).partitions().get(0), 1);
             assertThat(describeResponse).isEqualTo(expectedDescribeResponse);
 
             transformer.transformDescribeTopicResponse(LISTENER_NAME, null, describeResponse);
-            setExpectedLeaderDescribeTopicResponse(expectedDescribeResponse.topics().find(TOPIC_INKLESS).partitions().get(0), 1);
+            setExpectedLeaderDescribeTopicResponse(expectedDescribeResponse.topics().find(TOPIC_INKLESS).partitions().get(0), 0);
             assertThat(describeResponse).isEqualTo(expectedDescribeResponse);
         }
     }

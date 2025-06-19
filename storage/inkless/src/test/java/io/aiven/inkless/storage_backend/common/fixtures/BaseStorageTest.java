@@ -20,8 +20,8 @@ package io.aiven.inkless.storage_backend.common.fixtures;
 import org.assertj.core.util.Throwables;
 import org.junit.jupiter.api.Test;
 
-import java.io.IOException;
-import java.io.InputStream;
+import java.io.ByteArrayInputStream;
+import java.nio.ByteBuffer;
 import java.util.Set;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
@@ -44,186 +44,259 @@ public abstract class BaseStorageTest {
     protected abstract StorageBackend storage();
 
     @Test
-    void testUploadFetchDelete() throws IOException, StorageBackendException {
-        final StorageBackend storage = storage();
-        final byte[] data = "some file".getBytes();
+    void testUploadFetchDelete() throws Exception {
+        try (StorageBackend storage = storage()) {
+            final byte[] data = "some file".getBytes();
 
-        storage.upload(TOPIC_PARTITION_SEGMENT_KEY, data);
+            storage.upload(TOPIC_PARTITION_SEGMENT_KEY, new ByteArrayInputStream(data), data.length);
 
-        try (final InputStream fetch = storage.fetch(TOPIC_PARTITION_SEGMENT_KEY, new ByteRange(0, data.length))) {
-            final String r = new String(fetch.readAllBytes());
-            assertThat(r).isEqualTo("some file");
-        }
+            final ByteBuffer fetch1 = storage.readToByteBuffer(
+                    storage.fetch(TOPIC_PARTITION_SEGMENT_KEY, new ByteRange(0, data.length)));
+            final String r1 = new String(fetch1.array());
+            assertThat(r1).isEqualTo("some file");
 
-        final ByteRange range = new ByteRange(1, data.length - 2);
-        try (final InputStream fetch = storage.fetch(TOPIC_PARTITION_SEGMENT_KEY, range)) {
-            final String r = new String(fetch.readAllBytes());
-            assertThat(r).isEqualTo("ome fil");
-        }
+            final ByteRange range = new ByteRange(1, data.length - 2);
+            final ByteBuffer fetch2 = storage.readToByteBuffer(
+                    storage.fetch(TOPIC_PARTITION_SEGMENT_KEY, range));
+            final String r2 = new String(fetch2.array());
+            assertThat(r2).isEqualTo("ome fil");
 
-        storage.delete(TOPIC_PARTITION_SEGMENT_KEY);
+            storage.delete(TOPIC_PARTITION_SEGMENT_KEY);
 
-        assertThatThrownBy(() -> storage.fetch(TOPIC_PARTITION_SEGMENT_KEY, new ByteRange(0, data.length)))
-            .isInstanceOf(KeyNotFoundException.class)
-            .hasMessage("Key key does not exists in storage " + storage);
-    }
-
-    @Test
-    void testUploadANewFile() throws StorageBackendException {
-        final StorageBackend storage = storage();
-        final byte[] content = "content".getBytes();
-        storage.upload(TOPIC_PARTITION_SEGMENT_KEY, content);
-        assertThat(storage.fetch(TOPIC_PARTITION_SEGMENT_KEY, new ByteRange(0, content.length)))
-            .hasBinaryContent(content);
-    }
-
-    @Test
-    void testRetryUploadKeepLatestVersion() throws StorageBackendException {
-        final StorageBackend storage = storage();
-        final byte[] content1 = "content1".getBytes();
-        final byte[] content2 = "content2".getBytes();
-        storage.upload(TOPIC_PARTITION_SEGMENT_KEY, content1);
-        storage.upload(TOPIC_PARTITION_SEGMENT_KEY, content2);
-
-        assertThat(storage.fetch(TOPIC_PARTITION_SEGMENT_KEY, ByteRange.maxRange()))
-            .hasBinaryContent(content2);
-    }
-
-    @Test
-    void testFetchFailWhenNonExistingKey() {
-        final StorageBackend storage = storage();
-        assertThatThrownBy(() -> storage.fetch(new TestObjectKey("non-existing"), ByteRange.maxRange()))
-            .isInstanceOf(KeyNotFoundException.class)
-            .hasMessage("Key non-existing does not exists in storage " + storage);
-    }
-
-    @Test
-    void testFetchWithoutRange() throws IOException, StorageBackendException {
-        final StorageBackend storage = storage();
-        final String content = "AABBBBAA";
-        storage.upload(TOPIC_PARTITION_SEGMENT_KEY, content.getBytes());
-
-        try (final InputStream fetch = storage.fetch(TOPIC_PARTITION_SEGMENT_KEY, null)) {
-            assertThat(fetch).hasContent(content);
-        }
-    }
-
-    @Test
-    void testFetchWithOffsetRange() throws IOException, StorageBackendException {
-        final StorageBackend storage = storage();
-        final String content = "AABBBBAA";
-        storage.upload(TOPIC_PARTITION_SEGMENT_KEY, content.getBytes());
-
-        final int from = 2;
-        final int to = 5;
-        // Replacing end position as substring is end exclusive, and expected response is end inclusive
-        final String range = content.substring(from, to + 1);
-
-        try (final InputStream fetch = storage.fetch(TOPIC_PARTITION_SEGMENT_KEY, new ByteRange(2, 4))) {
-            assertThat(fetch).hasContent(range);
-        }
-    }
-
-    @Test
-    void testFetchSingleByte() throws IOException, StorageBackendException {
-        final StorageBackend storage = storage();
-        final String content = "ABC";
-        storage.upload(TOPIC_PARTITION_SEGMENT_KEY, content.getBytes());
-
-        try (final InputStream fetch = storage.fetch(TOPIC_PARTITION_SEGMENT_KEY, new ByteRange(2, 1))) {
-            assertThat(fetch).hasContent("C");
-        }
-    }
-
-    @Test
-    void testFetchWithOffsetRangeLargerThanFileSize() throws IOException, StorageBackendException {
-        final StorageBackend storage = storage();
-        final String content = "ABC";
-        storage.upload(TOPIC_PARTITION_SEGMENT_KEY, content.getBytes());
-
-        try (final InputStream fetch = storage.fetch(TOPIC_PARTITION_SEGMENT_KEY, new ByteRange(2, 10))) {
-            assertThat(fetch).hasContent("C");
-        }
-    }
-
-    @Test
-    protected void testFetchWithRangeOutsideFileSize() throws StorageBackendException {
-        final StorageBackend storage = storage();
-        final String content = "ABC";
-        storage.upload(TOPIC_PARTITION_SEGMENT_KEY, content.getBytes());
-
-        assertThatThrownBy(() -> storage.fetch(TOPIC_PARTITION_SEGMENT_KEY, new ByteRange(3, 10)))
-            .isInstanceOf(InvalidRangeException.class);
-        assertThatThrownBy(() -> storage.fetch(TOPIC_PARTITION_SEGMENT_KEY, new ByteRange(4, 10)))
-            .isInstanceOf(InvalidRangeException.class);
-    }
-
-    @Test
-    void testFetchNonExistingKey() {
-        final StorageBackend storage = storage();
-        assertThatThrownBy(() -> storage.fetch(new TestObjectKey("non-existing"), ByteRange.maxRange()))
-            .isInstanceOf(KeyNotFoundException.class)
-            .hasMessage("Key non-existing does not exists in storage " + storage);
-        assertThatThrownBy(() -> storage.fetch(new TestObjectKey("non-existing"), new ByteRange(0, 1)))
-            .isInstanceOf(KeyNotFoundException.class)
-            .hasMessage("Key non-existing does not exists in storage " + storage);
-    }
-
-    @Test
-    void testFetchNonExistingKeyMasking() {
-        final StorageBackend storage = storage();
-
-        final ObjectKey key = new ObjectKey() {
-            @Override
-            public String value() {
-                return "real-key";
-            }
-
-            @Override
-            public String toString() {
-                return "masked-key";
-            }
-        };
-
-        assertThatThrownBy(() -> storage.fetch(key, ByteRange.maxRange()))
-            .extracting(Throwables::getStackTrace)
-            .asString()
-            .contains("masked-key")
-            .doesNotContain("real-key");
-    }
-
-    @Test
-    protected void testDelete() throws StorageBackendException {
-        final StorageBackend storage = storage();
-        storage.upload(TOPIC_PARTITION_SEGMENT_KEY, "test".getBytes());
-        storage.delete(TOPIC_PARTITION_SEGMENT_KEY);
-
-        // Test deletion idempotence.
-        assertThatNoException().isThrownBy(() -> storage.delete(TOPIC_PARTITION_SEGMENT_KEY));
-
-        assertThatThrownBy(() -> storage.fetch(TOPIC_PARTITION_SEGMENT_KEY, ByteRange.maxRange()))
-            .isInstanceOf(KeyNotFoundException.class)
-            .hasMessage("Key key does not exists in storage " + storage);
-    }
-
-    @Test
-    protected void testDeletes() throws StorageBackendException {
-        final StorageBackend storage = storage();
-        final Set<ObjectKey> keys = IntStream.range(0, 10)
-            .mapToObj(i -> new TestObjectKey(TOPIC_PARTITION_SEGMENT_KEY.value() + i))
-            .collect(Collectors.toSet());
-        for (final var key : keys) {
-            storage.upload(key, "test".getBytes());
-        }
-        storage.delete(keys);
-
-        // Test deletion idempotence.
-        assertThatNoException().isThrownBy(() -> storage.delete(keys));
-
-        for (final var key : keys) {
-            assertThatThrownBy(() -> storage.fetch(key, ByteRange.maxRange()))
+            assertThatThrownBy(() -> storage.fetch(TOPIC_PARTITION_SEGMENT_KEY, new ByteRange(0, data.length)))
                 .isInstanceOf(KeyNotFoundException.class)
-                .hasMessage("Key " + key.value() + " does not exists in storage " + storage);
+                .hasMessage("Key key does not exists in storage " + storage);
+        }
+    }
+
+    @Test
+    void uploadNulls() throws Exception {
+        try (StorageBackend storage = storage()) {
+            byte[] data = new byte[0];
+            assertThatThrownBy(() -> storage.upload(null, new ByteArrayInputStream(data), data.length))
+                    .isInstanceOf(NullPointerException.class)
+                    .hasMessage("key cannot be null");
+            assertThatThrownBy(() -> storage.upload(TOPIC_PARTITION_SEGMENT_KEY, null, data.length))
+                    .isInstanceOf(NullPointerException.class)
+                    .hasMessage("inputStream cannot be null");
+            assertThatThrownBy(() -> storage.upload(TOPIC_PARTITION_SEGMENT_KEY, new ByteArrayInputStream(data), 0))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessage("length must be positive");
+            assertThatThrownBy(() -> storage.upload(TOPIC_PARTITION_SEGMENT_KEY, new ByteArrayInputStream(data), -1))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessage("length must be positive");
+        }
+    }
+
+    @Test
+    void testUploadANewFile() throws Exception {
+        final byte[] content;
+        final ByteBuffer fetch;
+        try (StorageBackend storage = storage()) {
+            content = "content".getBytes();
+            storage.upload(TOPIC_PARTITION_SEGMENT_KEY, new ByteArrayInputStream(content), content.length);
+            fetch = storage.readToByteBuffer(storage.fetch(TOPIC_PARTITION_SEGMENT_KEY, new ByteRange(0, content.length)));
+        }
+        assertThat(fetch.array()).isEqualTo(content);
+    }
+
+    @Test
+    protected void testUploadUndersizedStream() throws Exception {
+        try (StorageBackend storage = storage()) {
+            final byte[] content = "content".getBytes();
+            final long expectedLength = content.length + 1;
+
+            assertThatThrownBy(() -> storage.upload(TOPIC_PARTITION_SEGMENT_KEY, new ByteArrayInputStream(content), expectedLength))
+                    .isInstanceOf(StorageBackendException.class)
+                    .hasMessage("Object key created with incorrect length " + content.length + " instead of " + expectedLength);
+        }
+    }
+
+    @Test
+    protected void testUploadOversizeStream() throws Exception {
+        try (StorageBackend storage = storage()) {
+            final byte[] content = "content".getBytes();
+            final long expectedLength = content.length - 1;
+
+            assertThatThrownBy(() -> storage.upload(TOPIC_PARTITION_SEGMENT_KEY, new ByteArrayInputStream(content), expectedLength))
+                    .isInstanceOf(StorageBackendException.class)
+                    .hasMessage("Object key created with incorrect length " + content.length + " instead of " + expectedLength);
+        }
+    }
+
+    @Test
+    void testRetryUploadKeepLatestVersion() throws Exception {
+        final byte[] content2;
+        final ByteBuffer fetch;
+        try (StorageBackend storage = storage()) {
+            final byte[] content1 = "content1".getBytes();
+            content2 = "content2".getBytes();
+            storage.upload(TOPIC_PARTITION_SEGMENT_KEY, new ByteArrayInputStream(content1), content1.length);
+            storage.upload(TOPIC_PARTITION_SEGMENT_KEY, new ByteArrayInputStream(content2), content2.length);
+
+            fetch = storage.readToByteBuffer(storage.fetch(TOPIC_PARTITION_SEGMENT_KEY, new ByteRange(0, content2.length)));
+        }
+        assertThat(fetch.array()).isEqualTo(content2);
+    }
+
+    @Test
+    void testFetchFailWhenNonExistingKey() throws Exception {
+        try (StorageBackend storage = storage()) {
+            assertThatThrownBy(() -> storage.fetch(new TestObjectKey("non-existing"), ByteRange.maxRange()))
+                .isInstanceOf(KeyNotFoundException.class)
+                .hasMessage("Key non-existing does not exists in storage " + storage);
+        }
+    }
+
+    @Test
+    void testFetchWithoutRange() throws Exception {
+        final String content;
+        final ByteBuffer fetch;
+        try (StorageBackend storage = storage()) {
+            content = "AABBBBAA";
+            byte[] data = content.getBytes();
+            storage.upload(TOPIC_PARTITION_SEGMENT_KEY, new ByteArrayInputStream(data), data.length);
+
+            fetch = storage.readToByteBuffer(
+                storage.fetch(TOPIC_PARTITION_SEGMENT_KEY, null));
+        }
+        assertThat(new String(fetch.array())).isEqualTo(content);
+    }
+
+    @Test
+    void testFetchWithOffsetRange() throws Exception {
+        final String range;
+        final ByteBuffer fetch;
+        try (StorageBackend storage = storage()) {
+            final String content = "AABBBBAA";
+            byte[] data = content.getBytes();
+            storage.upload(TOPIC_PARTITION_SEGMENT_KEY, new ByteArrayInputStream(data), data.length);
+
+            final int from = 2;
+            final int to = 5;
+            // Replacing end position as substring is end exclusive, and expected response is end inclusive
+            range = content.substring(from, to + 1);
+
+            fetch = storage.readToByteBuffer(
+                storage.fetch(TOPIC_PARTITION_SEGMENT_KEY, new ByteRange(2, 4)));
+        }
+        assertThat(new String(fetch.array())).isEqualTo(range);
+    }
+
+    @Test
+    void testFetchSingleByte() throws Exception {
+        final ByteBuffer fetch;
+        try (StorageBackend storage = storage()) {
+            final String content = "ABC";
+            byte[] data = content.getBytes();
+            storage.upload(TOPIC_PARTITION_SEGMENT_KEY, new ByteArrayInputStream(data), data.length);
+
+            fetch = storage.readToByteBuffer(
+                storage.fetch(TOPIC_PARTITION_SEGMENT_KEY, new ByteRange(2, 1)));
+        }
+        assertThat(new String(fetch.array())).isEqualTo("C");
+    }
+
+    @Test
+    void testFetchWithOffsetRangeLargerThanFileSize() throws Exception {
+        final ByteBuffer fetch;
+        try (StorageBackend storage = storage()) {
+            final String content = "ABC";
+            byte[] data = content.getBytes();
+            storage.upload(TOPIC_PARTITION_SEGMENT_KEY, new ByteArrayInputStream(data), data.length);
+
+            fetch = storage.readToByteBuffer(
+                storage.fetch(TOPIC_PARTITION_SEGMENT_KEY, new ByteRange(2, 10)));
+        }
+        assertThat(new String(fetch.array())).isEqualTo("C");
+    }
+
+    @Test
+    protected void testFetchWithRangeOutsideFileSize() throws Exception {
+        try (StorageBackend storage = storage()) {
+            final String content = "ABC";
+            byte[] data = content.getBytes();
+            storage.upload(TOPIC_PARTITION_SEGMENT_KEY, new ByteArrayInputStream(data), data.length);
+
+            assertThatThrownBy(() -> storage.fetch(TOPIC_PARTITION_SEGMENT_KEY, new ByteRange(3, 10)))
+                .isInstanceOf(InvalidRangeException.class);
+            assertThatThrownBy(() -> storage.fetch(TOPIC_PARTITION_SEGMENT_KEY, new ByteRange(4, 10)))
+                .isInstanceOf(InvalidRangeException.class);
+        }
+    }
+
+    @Test
+    void testFetchNonExistingKey() throws Exception {
+        try (StorageBackend storage = storage()) {
+            assertThatThrownBy(() -> storage.fetch(new TestObjectKey("non-existing"), ByteRange.maxRange()))
+                .isInstanceOf(KeyNotFoundException.class)
+                .hasMessage("Key non-existing does not exists in storage " + storage);
+            assertThatThrownBy(() -> storage.fetch(new TestObjectKey("non-existing"), new ByteRange(0, 1)))
+                .isInstanceOf(KeyNotFoundException.class)
+                .hasMessage("Key non-existing does not exists in storage " + storage);
+        }
+    }
+
+    @Test
+    void testFetchNonExistingKeyMasking() throws Exception {
+        try (StorageBackend storage = storage()) {
+
+            final ObjectKey key = new ObjectKey() {
+                @Override
+                public String value() {
+                    return "real-key";
+                }
+
+                @Override
+                public String toString() {
+                    return "masked-key";
+                }
+            };
+
+            assertThatThrownBy(() -> storage.fetch(key, ByteRange.maxRange()))
+                .extracting(Throwables::getStackTrace)
+                .asString()
+                .contains("masked-key")
+                .doesNotContain("real-key");
+        }
+    }
+
+    @Test
+    protected void testDelete() throws Exception {
+        try (StorageBackend storage = storage()) {
+            byte[] data = "test".getBytes();
+            storage.upload(TOPIC_PARTITION_SEGMENT_KEY, new ByteArrayInputStream(data), data.length);
+            storage.delete(TOPIC_PARTITION_SEGMENT_KEY);
+
+            // Test deletion idempotence.
+            assertThatNoException().isThrownBy(() -> storage.delete(TOPIC_PARTITION_SEGMENT_KEY));
+
+            assertThatThrownBy(() -> storage.fetch(TOPIC_PARTITION_SEGMENT_KEY, ByteRange.maxRange()))
+                .isInstanceOf(KeyNotFoundException.class)
+                .hasMessage("Key key does not exists in storage " + storage);
+        }
+    }
+
+    @Test
+    protected void testDeletes() throws Exception {
+        try (StorageBackend storage = storage()) {
+            final Set<ObjectKey> keys = IntStream.range(0, 10)
+                .mapToObj(i -> new TestObjectKey(TOPIC_PARTITION_SEGMENT_KEY.value() + i))
+                .collect(Collectors.toSet());
+            for (final var key : keys) {
+                byte[] data = "test".getBytes();
+                storage.upload(key, new ByteArrayInputStream(data), data.length);
+            }
+            storage.delete(keys);
+
+            // Test deletion idempotence.
+            assertThatNoException().isThrownBy(() -> storage.delete(keys));
+
+            for (final var key : keys) {
+                assertThatThrownBy(() -> storage.fetch(key, ByteRange.maxRange()))
+                    .isInstanceOf(KeyNotFoundException.class)
+                    .hasMessage("Key " + key.value() + " does not exists in storage " + storage);
+            }
         }
     }
 }

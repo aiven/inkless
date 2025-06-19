@@ -63,6 +63,8 @@ import io.aiven.inkless.control_plane.ListOffsetsResponse;
 import io.aiven.inkless.control_plane.MergedFileBatch;
 
 public class PostgresControlPlane extends AbstractControlPlane {
+    private static final String POOL_NAME = "inkless-control-plane";
+
     private final PostgresControlPlaneMetrics metrics;
 
     private HikariDataSource hikariDataSource;
@@ -87,10 +89,11 @@ public class PostgresControlPlane extends AbstractControlPlane {
         Migrations.migrate(controlPlaneConfig);
 
         final HikariConfig config = new HikariConfig();
+        config.setPoolName(POOL_NAME);
         config.setJdbcUrl(controlPlaneConfig.connectionString());
         config.setUsername(controlPlaneConfig.username());
         config.setPassword(controlPlaneConfig.password());
-
+        config.setMetricsTrackerFactory(HikariMetricsTracker::new);
         config.setTransactionIsolation(IsolationLevel.TRANSACTION_READ_COMMITTED.name());
 
         config.setMaximumPoolSize(controlPlaneConfig.maxConnections());
@@ -127,12 +130,13 @@ public class PostgresControlPlane extends AbstractControlPlane {
     @Override
     protected Iterator<FindBatchResponse> findBatchesForExistingPartitions(
         final Stream<FindBatchRequest> requests,
-        final int fetchMaxBytes
+        final int fetchMaxBytes,
+        final int maxBatchesPerPartition
     ) {
         final FindBatchesJob job = new FindBatchesJob(
             time, jooqCtx,
-            requests.toList(), fetchMaxBytes,
-            metrics::onGetLogsCompleted, metrics::onFindBatchesCompleted);
+            requests.toList(), fetchMaxBytes, maxBatchesPerPartition,
+            metrics::onFindBatchesCompleted);
         return job.call().iterator();
     }
 
@@ -157,9 +161,9 @@ public class PostgresControlPlane extends AbstractControlPlane {
     }
 
     @Override
-    public List<EnforceRetentionResponse> enforceRetention(final List<EnforceRetentionRequest> requests) {
+    public List<EnforceRetentionResponse> enforceRetention(final List<EnforceRetentionRequest> requests, final int maxBatchesPerRequest) {
         try {
-            final EnforceRetentionJob job = new EnforceRetentionJob(time, jooqCtx, requests, metrics::onEnforceRetentionCompleted);
+            final EnforceRetentionJob job = new EnforceRetentionJob(time, jooqCtx, requests, maxBatchesPerRequest, metrics::onEnforceRetentionCompleted);
             return job.call();
         } catch (final Exception e) {
             throw new ControlPlaneException("Failed to enforce retention", e);

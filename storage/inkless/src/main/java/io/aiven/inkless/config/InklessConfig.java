@@ -78,8 +78,24 @@ public class InklessConfig extends AbstractConfig {
     private static final int CONSUME_CACHE_BLOCK_BYTES_DEFAULT = 16 * 1024 * 1024;  // 16 MiB
 
     public static final String CONSUME_CACHE_MAX_COUNT_CONFIG = CONSUME_PREFIX + "cache.max.count";
-    private static final String CONSUME_CACHE_MAX_COUNT_DOC = "The maximum number of objects to cache in memory.";
+    private static final String CONSUME_CACHE_MAX_COUNT_DOC = "The maximum number of objects to cache in memory. " +
+        "If the cache exceeds this limit, and the cache persistence is enabled, " +
+        "the least recently used objects will be persisted to disk and removed from memory.";
     private static final int CONSUME_CACHE_MAX_COUNT_DEFAULT = 1000;
+
+    public static final String CONSUME_CACHE_PERSISTENCE_ENABLE_CONFIG = CONSUME_PREFIX + "cache.persistence.enable";
+    private static final String CONSUME_CACHE_PERSISTENCE_ENABLE_DOC = "Enable cache persistence to disk. " +
+        "If this is not set, the cache will not be persisted to disk. " +
+        "If this is set, the cache will be persisted to disk when it exceeds the maximum count limit.";
+
+    public static final String CONSUME_CACHE_EXPIRATION_LIFESPAN_SEC_CONFIG = CONSUME_PREFIX + "cache.expiration.lifespan.sec";
+    private static final String CONSUME_CACHE_EXPIRATION_LIFESPAN_SEC_DOC = "The lifespan in seconds of a cache entry before it will be removed from all storages.";
+    private static final int CONSUME_CACHE_EXPIRATION_LIFESPAN_SEC_DEFAULT = 60; // Defaults to 1 minute
+
+    public static final String CONSUME_CACHE_EXPIRATION_MAX_IDLE_SEC_CONFIG = CONSUME_PREFIX + "cache.expiration.max.idle.sec";
+    private static final String CONSUME_CACHE_EXPIRATION_MAX_IDLE_SEC_DOC = "The maximum idle time in seconds before a cache entry will be removed from all storages. " +
+        "-1 means disabled, and entries will not be removed based on idle time.";
+    private static final int CONSUME_CACHE_EXPIRATION_MAX_IDLE_SEC_DEFAULT = -1; // Disabled by default
 
     public static final String RETENTION_ENFORCEMENT_INTERVAL_MS_CONFIG = "retention.enforcement.interval.ms";
     private static final String RETENTION_ENFORCEMENT_INTERVAL_MS_DOC = "The interval with which to enforce retention policies on a partition. " +
@@ -110,6 +126,25 @@ public class InklessConfig extends AbstractConfig {
     // to avoid starting an upload if 8 commits are executing sequentially
     private static final int PRODUCE_UPLOAD_THREAD_POOL_SIZE_DEFAULT = 8;
 
+    public static final String FETCH_DATA_THREAD_POOL_SIZE_CONFIG = "fetch.data.thread.pool.size";
+    public static final String FETCH_DATA_THREAD_POOL_SIZE_DOC = "Thread pool size to concurrently fetch data files from remote storage";
+    private static final int FETCH_DATA_THREAD_POOL_SIZE_DEFAULT = 32;
+
+    public static final String FETCH_METADATA_THREAD_POOL_SIZE_CONFIG = "fetch.metadata.thread.pool.size";
+    public static final String FETCH_METADATA_THREAD_POOL_SIZE_DOC = "Thread pool size to concurrently fetch metadata from batch coordinator";
+    private static final int FETCH_METADATA_THREAD_POOL_SIZE_DEFAULT = 8;
+
+    public static final String FETCH_FIND_BATCHES_MAX_BATCHES_PER_PARTITION_CONFIG = "fetch.find.batches.max.per.partition";
+    public static final String FETCH_FIND_BATCHES_MAX_BATCHES_PER_PARTITION_DOC = "The maximum number of batches to find per partition when processing a fetch request. "
+        + "A value of 0 means all available batches are fetched. "
+        + "This is primarily intended for environments where the batches fan-out on fetch requests can overload the control plane back-end.";
+    private static final int FETCH_FIND_BATCHES_MAX_BATCHES_PER_PARTITION_DEFAULT = 0;
+
+    public static final String RETENTION_ENFORCEMENT_MAX_BATCHES_PER_REQUEST_CONFIG = "retention.enforcement.max.batches.per.request";
+    public static final String RETENTION_ENFORCEMENT_MAX_BATCHES_PER_REQUEST_DOC = "The maximum number of batches to delete per partition when enforcing retention. "
+        + "A value of 0 means all eligible batches are deleted in one request. "
+        + "Setting this to a lower value can help to reduce the load on the control plane back-end.";
+    private static final int RETENTION_ENFORCEMENT_MAX_BATCHES_PER_REQUEST_DEFAULT = 0;
 
     public static ConfigDef configDef() {
         final ConfigDef configDef = new ConfigDef();
@@ -243,12 +278,67 @@ public class InklessConfig extends AbstractConfig {
             CONSUME_CACHE_MAX_COUNT_DOC
         );
         configDef.define(
+            CONSUME_CACHE_PERSISTENCE_ENABLE_CONFIG,
+            ConfigDef.Type.BOOLEAN,
+            false,
+            ConfigDef.Importance.LOW,
+            CONSUME_CACHE_PERSISTENCE_ENABLE_DOC
+        );
+        configDef.define(
+            CONSUME_CACHE_EXPIRATION_LIFESPAN_SEC_CONFIG,
+            ConfigDef.Type.INT,
+            CONSUME_CACHE_EXPIRATION_LIFESPAN_SEC_DEFAULT,
+            ConfigDef.Range.atLeast(10), // As it checks every 5 seconds, and the object lock timeout is 10 secs.
+            ConfigDef.Importance.LOW,
+            CONSUME_CACHE_EXPIRATION_LIFESPAN_SEC_DOC
+        );
+        configDef.define(
+            CONSUME_CACHE_EXPIRATION_MAX_IDLE_SEC_CONFIG,
+            ConfigDef.Type.INT,
+            CONSUME_CACHE_EXPIRATION_MAX_IDLE_SEC_DEFAULT,
+            ConfigDef.Range.atLeast(-1),
+            ConfigDef.Importance.LOW,
+            CONSUME_CACHE_EXPIRATION_MAX_IDLE_SEC_DOC
+        );
+        configDef.define(
             PRODUCE_UPLOAD_THREAD_POOL_SIZE_CONFIG,
             ConfigDef.Type.INT,
             PRODUCE_UPLOAD_THREAD_POOL_SIZE_DEFAULT,
             ConfigDef.Range.atLeast(1),
             ConfigDef.Importance.LOW,
             PRODUCE_UPLOAD_THREAD_POOL_SIZE_DOC
+        );
+        configDef.define(
+            FETCH_DATA_THREAD_POOL_SIZE_CONFIG,
+            ConfigDef.Type.INT,
+            FETCH_DATA_THREAD_POOL_SIZE_DEFAULT,
+            ConfigDef.Range.atLeast(1),
+            ConfigDef.Importance.LOW,
+            FETCH_DATA_THREAD_POOL_SIZE_DOC
+        );
+        configDef.define(
+            FETCH_METADATA_THREAD_POOL_SIZE_CONFIG,
+            ConfigDef.Type.INT,
+            FETCH_METADATA_THREAD_POOL_SIZE_DEFAULT,
+            ConfigDef.Range.atLeast(1),
+            ConfigDef.Importance.LOW,
+            FETCH_METADATA_THREAD_POOL_SIZE_DOC
+        );
+        configDef.define(
+            FETCH_FIND_BATCHES_MAX_BATCHES_PER_PARTITION_CONFIG,
+            ConfigDef.Type.INT,
+            FETCH_FIND_BATCHES_MAX_BATCHES_PER_PARTITION_DEFAULT,
+            ConfigDef.Range.atLeast(0),
+            ConfigDef.Importance.LOW,
+            FETCH_FIND_BATCHES_MAX_BATCHES_PER_PARTITION_DOC
+        );
+        configDef.define(
+            RETENTION_ENFORCEMENT_MAX_BATCHES_PER_REQUEST_CONFIG,
+            ConfigDef.Type.INT,
+            RETENTION_ENFORCEMENT_MAX_BATCHES_PER_REQUEST_DEFAULT,
+            ConfigDef.Range.atLeast(0),
+            ConfigDef.Importance.LOW,
+            RETENTION_ENFORCEMENT_MAX_BATCHES_PER_REQUEST_DOC
         );
 
         return configDef;
@@ -330,7 +420,35 @@ public class InklessConfig extends AbstractConfig {
         return getLong(CONSUME_CACHE_MAX_COUNT_CONFIG);
     }
 
+    public boolean isCachePersistenceEnabled() {
+        return getBoolean(CONSUME_CACHE_PERSISTENCE_ENABLE_CONFIG);
+    }
+
+    public int cacheExpirationLifespanSec() {
+        return getInt(CONSUME_CACHE_EXPIRATION_LIFESPAN_SEC_CONFIG);
+    }
+
+    public int cacheExpirationMaxIdleSec() {
+        return getInt(CONSUME_CACHE_EXPIRATION_MAX_IDLE_SEC_CONFIG);
+    }
+
     public int produceUploadThreadPoolSize() {
         return getInt(PRODUCE_UPLOAD_THREAD_POOL_SIZE_CONFIG);
+    }
+
+    public int fetchDataThreadPoolSize() {
+        return getInt(FETCH_DATA_THREAD_POOL_SIZE_CONFIG);
+    }
+
+    public int fetchMetadataThreadPoolSize() {
+        return getInt(FETCH_METADATA_THREAD_POOL_SIZE_CONFIG);
+    }
+
+    public int maxBatchesPerPartitionToFind() {
+        return getInt(FETCH_FIND_BATCHES_MAX_BATCHES_PER_PARTITION_CONFIG);
+    }
+
+    public int maxBatchesPerEnforcementRequest() {
+        return getInt(RETENTION_ENFORCEMENT_MAX_BATCHES_PER_REQUEST_CONFIG);
     }
 }

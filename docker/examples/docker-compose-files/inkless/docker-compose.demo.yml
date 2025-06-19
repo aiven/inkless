@@ -1,6 +1,6 @@
 services:
   create_topic:
-    image: aivenoy/kafka:4.1.0-inkless-SNAPSHOT
+    image: aivenoy/kafka:${KAFKA_VERSION}
     restart: "no"
     depends_on:
       broker:
@@ -8,7 +8,7 @@ services:
     command: [ "/opt/kafka/bin/kafka-topics.sh",
                "--bootstrap-server", "broker:19092",
                "--create",
-               "--config", "inkless.enable=true",
+               "--config", "diskless.enable=true",
                "--topic", "test-topic",
                "--partitions", "64" ]
 
@@ -21,13 +21,15 @@ services:
     depends_on:
       create_topic:
         condition: service_completed_successfully
-
     command: [ "/opt/kafka/bin/kafka-producer-perf-test.sh",
                "--producer-props", "bootstrap.servers=broker:19092", "batch.size=1000000", "linger.ms=100", "max.request.size=64000000",
+               # simulate az placement
+               # "client.rack=demo-producer,diskless_az=az1",
                "--topic", "test-topic",
                "--record-size", "1000",
-               "--num-records", "50000000",
-               "--throughput", "-1" ]
+               "--num-records", "5000000",
+               # simulate 10k msg/s, use -1 to disable throughput limit
+               "--throughput", "10000" ]
 
   producer-2:
     <<: *producer-config
@@ -47,7 +49,7 @@ services:
     command: [ "/opt/kafka/bin/kafka-consumer-perf-test.sh",
                "--bootstrap-server", "broker:19092",
                "--topic", "test-topic",
-               "--messages", "100000000",
+               "--messages", "10000000",
                "--reporting-interval", "5000",
                "--show-detailed-stats",
                "--timeout", "60000",

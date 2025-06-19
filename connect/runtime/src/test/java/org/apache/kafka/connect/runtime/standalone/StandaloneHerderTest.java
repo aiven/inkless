@@ -197,8 +197,7 @@ public class StandaloneHerderTest {
         when(worker.config()).thenReturn(workerConfig);
         when(workerConfig.getClass(WorkerConfig.HEADER_CONVERTER_CLASS_CONFIG)).thenReturn((Class) SimpleHeaderConverter.class);
         when(plugins.newConnector(anyString(), any())).thenReturn(connectorMock);
-        when(plugins.pluginLoader(anyString(), any())).thenReturn(pluginLoader);
-        when(plugins.withClassLoader(pluginLoader)).thenReturn(loaderSwap);
+        when(plugins.withClassLoader(null)).thenReturn(loaderSwap);
 
         when(connectorMock.config()).thenReturn(new ConfigDef());
         ConfigValue validatedValue = new ConfigValue("foo.bar");
@@ -889,7 +888,8 @@ public class StandaloneHerderTest {
         when(worker.config()).thenReturn(workerConfig);
         when(worker.getPlugins()).thenReturn(plugins);
         when(workerConfig.getClass(WorkerConfig.HEADER_CONVERTER_CLASS_CONFIG)).thenReturn((Class) SimpleHeaderConverter.class);
-        when(plugins.pluginLoader(anyString(), any())).thenReturn(pluginLoader);
+        //when(plugins.pluginLoader(anyString(), any(), any())).thenReturn(pluginLoader);
+        when(plugins.connectorLoader(any(), any())).thenReturn(pluginLoader);
         when(plugins.withClassLoader(pluginLoader)).thenReturn(loaderSwap);
         when(plugins.newConnector(anyString(), any())).thenReturn(connectorMock);
         when(connectorMock.config()).thenReturn(configDef);
@@ -1244,7 +1244,8 @@ public class StandaloneHerderTest {
         when(transformer.transform(configCapture.capture())).thenAnswer(invocation -> configCapture.getValue());
         when(worker.config()).thenReturn(workerConfig);
         when(workerConfig.getClass(WorkerConfig.HEADER_CONVERTER_CLASS_CONFIG)).thenReturn((Class) SimpleHeaderConverter.class);
-        when(plugins.pluginLoader(anyString(), any())).thenReturn(pluginLoader);
+        //when(plugins.pluginLoader(anyString(), any(), any())).thenReturn(pluginLoader);
+        when(plugins.connectorLoader(any(), any())).thenReturn(pluginLoader);
         when(plugins.withClassLoader(pluginLoader)).thenReturn(loaderSwap);
         // Assume the connector should always be created
         when(worker.getPlugins()).thenReturn(plugins);

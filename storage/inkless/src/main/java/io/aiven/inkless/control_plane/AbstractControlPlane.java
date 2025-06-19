@@ -84,7 +84,8 @@ public abstract class AbstractControlPlane implements ControlPlane {
     @Override
     public List<FindBatchResponse> findBatches(
         final List<FindBatchRequest> findBatchRequests,
-        final int fetchMaxBytes
+        final int fetchMaxBytes,
+        final int maxBatchesPerPartition
     ) {
         final SplitMapper<FindBatchRequest, FindBatchResponse> splitMapper = new SplitMapper<>(
             findBatchRequests, findBatchRequest -> true
@@ -96,14 +97,15 @@ public abstract class AbstractControlPlane implements ControlPlane {
         );
 
         // Process those partitions that are present in the metadata.
-        splitMapper.setTrueOut(findBatchesForExistingPartitions(splitMapper.getTrueIn(), fetchMaxBytes));
+        splitMapper.setTrueOut(findBatchesForExistingPartitions(splitMapper.getTrueIn(), fetchMaxBytes, maxBatchesPerPartition));
 
         return splitMapper.getOut();
     }
 
     protected abstract Iterator<FindBatchResponse> findBatchesForExistingPartitions(
         final Stream<FindBatchRequest> requests,
-        final int fetchMaxBytes
+        final int fetchMaxBytes,
+        final int maxBatchesPerPartition
     );
 
     @Override

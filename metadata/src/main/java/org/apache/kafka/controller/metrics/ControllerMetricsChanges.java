@@ -23,6 +23,7 @@ import org.apache.kafka.metadata.BrokerRegistration;
 import org.apache.kafka.metadata.PartitionRegistration;
 
 import java.util.Map.Entry;
+import java.util.function.Function;
 
 
 /**
@@ -31,6 +32,17 @@ import java.util.Map.Entry;
  */
 @SuppressWarnings("NPathComplexity")
 class ControllerMetricsChanges {
+
+    private final Function<String, Boolean> isDisklessTopic;
+
+    ControllerMetricsChanges() {
+        this.isDisklessTopic = topicName -> false; // Default implementation, can be overridden
+    }
+
+    ControllerMetricsChanges(Function<String, Boolean> isDisklessTopic) {
+        this.isDisklessTopic = isDisklessTopic;
+    }
+
     /**
      * Calculates the change between two boolean values, expressed as an integer.
      */
@@ -118,29 +130,32 @@ class ControllerMetricsChanges {
     }
 
     void handleDeletedTopic(TopicImage deletedTopic) {
-        deletedTopic.partitions().values().forEach(prev -> handlePartitionChange(prev, null));
+        deletedTopic.partitions().values().forEach(prev -> handlePartitionChange(prev, null, isDisklessTopic.apply(deletedTopic.name())));
         globalTopicsChange--;
     }
 
     void handleTopicChange(TopicImage prev, TopicDelta topicDelta) {
+        final Boolean isDiskless = isDisklessTopic.apply(topicDelta.name());
         if (prev == null) {
             globalTopicsChange++;
             for (PartitionRegistration nextPartition : topicDelta.partitionChanges().values()) {
-                handlePartitionChange(null, nextPartition);
+                handlePartitionChange(null, nextPartition, isDiskless);
             }
         } else {
             for (Entry<Integer, PartitionRegistration> entry : topicDelta.partitionChanges().entrySet()) {
                 int partitionId = entry.getKey();
                 PartitionRegistration prevPartition = prev.partitions().get(partitionId);
                 PartitionRegistration nextPartition = entry.getValue();
-                handlePartitionChange(prevPartition, nextPartition);
+                handlePartitionChange(prevPartition, nextPartition, isDiskless);
             }
         }
-        topicDelta.partitionToUncleanLeaderElectionCount().forEach((partitionId, count) -> uncleanLeaderElection += count);
-        topicDelta.partitionToElrElectionCount().forEach((partitionId, count) -> electionFromElr += count);
+        if (!isDiskless) {
+            topicDelta.partitionToUncleanLeaderElectionCount().forEach((partitionId, count) -> uncleanLeaderElection += count);
+            topicDelta.partitionToElrElectionCount().forEach((partitionId, count) -> electionFromElr += count);
+        }
     }
 
-    void handlePartitionChange(PartitionRegistration prev, PartitionRegistration next) {
+    void handlePartitionChange(PartitionRegistration prev, PartitionRegistration next, boolean isDiskless) {
         boolean wasPresent = false;
         boolean wasOffline = false;
         boolean wasWithoutPreferredLeader = false;
@@ -149,6 +164,11 @@ class ControllerMetricsChanges {
             wasOffline = !prev.hasLeader();
             wasWithoutPreferredLeader = !prev.hasPreferredLeader();
         }
+        if (isDiskless) {
+            wasPresent = true;
+            wasOffline = false; // Diskless partitions are always considered online
+            wasWithoutPreferredLeader = false; // Diskless partitions are always considered to have a preferred leader
+        }
         boolean isPresent = false;
         boolean isOffline = false;
         boolean isWithoutPreferredLeader = false;
@@ -156,6 +176,11 @@ class ControllerMetricsChanges {
             isPresent = true;
             isOffline = !next.hasLeader();
             isWithoutPreferredLeader = !next.hasPreferredLeader();
+        }
+        if (isDiskless) {
+            isPresent = true;
+            isOffline = false; // Diskless partitions are always considered online
+            isWithoutPreferredLeader = false; // Diskless partitions are always considered to have a preferred leader
         }
         globalPartitionsChange += delta(wasPresent, isPresent);
         offlinePartitionsChange += delta(wasOffline, isOffline);

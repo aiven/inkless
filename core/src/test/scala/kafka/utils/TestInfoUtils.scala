@@ -32,7 +32,7 @@ class EmptyTestInfo extends TestInfo {
 
 object TestInfoUtils {
 
-  final val TestWithParameterizedGroupProtocolNamesAndTopicType = "{displayName}.groupProtocol={1}.topicType={2}"
+  final val TestWithParameterizedGroupProtocolNamesAndTopicType = "{displayName}.groupProtocol={0}.topicType={1}"
 
   final val TestWithParameterizedGroupProtocolNames = "{displayName}.groupProtocol={0}"
 
@@ -48,8 +48,8 @@ object TestInfoUtils {
   def topicTypeSpecified(testInfo: TestInfo): String = {
     if (testInfo.getDisplayName.contains("topicType=classic"))
       "classic"
-    else if (testInfo.getDisplayName.contains("topicType=inkless"))
-      "inkless"
+    else if (testInfo.getDisplayName.contains("topicType=diskless"))
+      "diskless"
     else
       "classic" // default
   }
@@ -60,13 +60,5 @@ object TestInfoUtils {
    */
   def isTransactionV2Enabled(testInfo: TestInfo): Boolean = {
     !testInfo.getDisplayName.contains("isTV2Enabled=false")
-  }
-
-  /**
-   * Returns whether eligible leader replicas version 1 is enabled.
-   * When no parameter is provided, the default returned is false.
-   */
-  def isEligibleLeaderReplicasV1Enabled(testInfo: TestInfo): Boolean = {
-    testInfo.getDisplayName.contains("isELRV1Enabled=true")
   }
 }

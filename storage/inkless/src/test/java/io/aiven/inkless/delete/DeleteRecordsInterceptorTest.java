@@ -53,7 +53,6 @@ import io.aiven.inkless.control_plane.ControlPlane;
 import io.aiven.inkless.control_plane.DeleteRecordsRequest;
 import io.aiven.inkless.control_plane.DeleteRecordsResponse;
 import io.aiven.inkless.control_plane.MetadataView;
-import io.aiven.inkless.storage_backend.common.StorageBackend;
 import io.aiven.inkless.test_utils.SynchronousExecutor;
 
 import static org.apache.kafka.common.requests.DeleteRecordsResponse.INVALID_LOW_WATERMARK;
@@ -78,13 +77,11 @@ class DeleteRecordsInterceptorTest {
 
     Time time = new MockTime();
     @Mock
-    InklessConfig inklessConfig;
+    InklessConfig disklessConfig;
     @Mock
     MetadataView metadataView;
     @Mock
     ControlPlane controlPlane;
-    @Mock
-    StorageBackend storageBackend;
     @Mock
     Consumer<Map<TopicPartition, DeleteRecordsResponseData.DeleteRecordsPartitionResult>> responseCallback;
     @Mock
@@ -96,17 +93,17 @@ class DeleteRecordsInterceptorTest {
     ArgumentCaptor<List<DeleteRecordsRequest>> deleteRecordsCaptor;
 
     @Test
-    public void mixingInklessAndClassicTopicsIsNotAllowed() {
-        when(metadataView.isInklessTopic(eq("inkless"))).thenReturn(true);
-        when(metadataView.isInklessTopic(eq("non_inkless"))).thenReturn(false);
+    public void mixingDisklessAndClassicTopicsIsNotAllowed() {
+        when(metadataView.isDisklessTopic(eq("diskless"))).thenReturn(true);
+        when(metadataView.isDisklessTopic(eq("non_diskless"))).thenReturn(false);
         final DeleteRecordsInterceptor interceptor = new DeleteRecordsInterceptor(
-            new SharedState(time, BROKER_ID, inklessConfig, metadataView, controlPlane, storageBackend,
+            new SharedState(time, BROKER_ID, disklessConfig, metadataView, controlPlane,
                 OBJECT_KEY_CREATOR, KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, brokerTopicStats, DEFAULT_TOPIC_CONFIGS));
 
         final Map<TopicPartition, Long> entriesPerPartition = Map.of(
-            new TopicPartition("inkless", 0),
+            new TopicPartition("diskless", 0),
             1234L,
-            new TopicPartition("non_inkless", 0),
+            new TopicPartition("non_diskless", 0),
             4567L
         );
 
@@ -115,12 +112,12 @@ class DeleteRecordsInterceptorTest {
 
         verify(responseCallback).accept(resultCaptor.capture());
         assertThat(resultCaptor.getValue()).isEqualTo(Map.of(
-            new TopicPartition("inkless", 0),
+            new TopicPartition("diskless", 0),
             new DeleteRecordsResponseData.DeleteRecordsPartitionResult()
                 .setPartitionIndex(0)
                 .setErrorCode(Errors.INVALID_REQUEST.code())
                 .setLowWatermark(INVALID_LOW_WATERMARK),
-            new TopicPartition("non_inkless", 0),
+            new TopicPartition("non_diskless", 0),
             new DeleteRecordsResponseData.DeleteRecordsPartitionResult()
                 .setPartitionIndex(0)
                 .setErrorCode(Errors.INVALID_REQUEST.code())
@@ -131,13 +128,13 @@ class DeleteRecordsInterceptorTest {
 
     @Test
     public void notInterceptDeletingRecordsFromClassicTopics() {
-        when(metadataView.isInklessTopic(eq("non_inkless"))).thenReturn(false);
+        when(metadataView.isDisklessTopic(eq("non_diskless"))).thenReturn(false);
         final DeleteRecordsInterceptor interceptor = new DeleteRecordsInterceptor(
-            new SharedState(time, BROKER_ID, inklessConfig, metadataView, controlPlane, storageBackend,
+            new SharedState(time, BROKER_ID, disklessConfig, metadataView, controlPlane,
                 OBJECT_KEY_CREATOR, KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, brokerTopicStats, DEFAULT_TOPIC_CONFIGS));
 
         final Map<TopicPartition, Long> entriesPerPartition = Map.of(
-            new TopicPartition("non_inkless", 0), 4567L
+            new TopicPartition("non_diskless", 0), 4567L
         );
 
         final boolean result = interceptor.intercept(entriesPerPartition, responseCallback);
@@ -147,10 +144,10 @@ class DeleteRecordsInterceptorTest {
     }
 
     @Test
-    public void interceptDeletingRecordsFromInklessTopics() {
+    public void interceptDeletingRecordsFromDisklessTopics() {
         final Uuid topicId = new Uuid(1, 2);
-        when(metadataView.isInklessTopic(eq("inkless"))).thenReturn(true);
-        when(metadataView.getTopicId(eq("inkless"))).thenReturn(topicId);
+        when(metadataView.isDisklessTopic(eq("diskless"))).thenReturn(true);
+        when(metadataView.getTopicId(eq("diskless"))).thenReturn(topicId);
 
         when(controlPlane.deleteRecords(anyList())).thenAnswer(invocation -> {
             @SuppressWarnings("unchecked")
@@ -170,12 +167,12 @@ class DeleteRecordsInterceptorTest {
         });
 
         final DeleteRecordsInterceptor interceptor = new DeleteRecordsInterceptor(
-            new SharedState(time, BROKER_ID, inklessConfig, metadataView, controlPlane, storageBackend,
+            new SharedState(time, BROKER_ID, disklessConfig, metadataView, controlPlane,
                 OBJECT_KEY_CREATOR, KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, brokerTopicStats, DEFAULT_TOPIC_CONFIGS),
             new SynchronousExecutor());
 
-        final TopicPartition tp0 = new TopicPartition("inkless", 0);
-        final TopicPartition tp1 = new TopicPartition("inkless", 1);
+        final TopicPartition tp0 = new TopicPartition("diskless", 0);
+        final TopicPartition tp1 = new TopicPartition("diskless", 1);
         final Map<TopicPartition, Long> entriesPerPartition = Map.of(
             tp0, 4567L,
             tp1, 999L
@@ -191,12 +188,12 @@ class DeleteRecordsInterceptorTest {
 
         verify(responseCallback).accept(resultCaptor.capture());
         assertThat(resultCaptor.getValue()).isEqualTo(Map.of(
-            new TopicPartition("inkless", 0),
+            new TopicPartition("diskless", 0),
             new DeleteRecordsResponseData.DeleteRecordsPartitionResult()
                 .setPartitionIndex(0)
                 .setErrorCode(Errors.NONE.code())
                 .setLowWatermark(123L),
-            new TopicPartition("inkless", 1),
+            new TopicPartition("diskless", 1),
             new DeleteRecordsResponseData.DeleteRecordsPartitionResult()
                 .setPartitionIndex(1)
                 .setErrorCode(Errors.KAFKA_STORAGE_ERROR.code())
@@ -207,17 +204,17 @@ class DeleteRecordsInterceptorTest {
     @Test
     public void controlPlaneException() {
         final Uuid topicId = new Uuid(1, 2);
-        when(metadataView.isInklessTopic(eq("inkless"))).thenReturn(true);
-        when(metadataView.getTopicId(eq("inkless"))).thenReturn(topicId);
+        when(metadataView.isDisklessTopic(eq("diskless"))).thenReturn(true);
+        when(metadataView.getTopicId(eq("diskless"))).thenReturn(topicId);
 
         when(controlPlane.deleteRecords(anyList())).thenThrow(new RuntimeException("test"));
 
         final DeleteRecordsInterceptor interceptor = new DeleteRecordsInterceptor(
-            new SharedState(time, BROKER_ID, inklessConfig, metadataView, controlPlane, storageBackend,
+            new SharedState(time, BROKER_ID, disklessConfig, metadataView, controlPlane,
                 OBJECT_KEY_CREATOR, KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, brokerTopicStats, DEFAULT_TOPIC_CONFIGS),
             new SynchronousExecutor());
 
-        final TopicPartition topicPartition = new TopicPartition("inkless", 1);
+        final TopicPartition topicPartition = new TopicPartition("diskless", 1);
         final Map<TopicPartition, Long> entriesPerPartition = Map.of(
             topicPartition, 4567L
         );
@@ -230,7 +227,7 @@ class DeleteRecordsInterceptorTest {
 
         verify(responseCallback).accept(resultCaptor.capture());
         assertThat(resultCaptor.getValue()).isEqualTo(Map.of(
-            new TopicPartition("inkless", 1),
+            new TopicPartition("diskless", 1),
             new DeleteRecordsResponseData.DeleteRecordsPartitionResult()
                 .setPartitionIndex(1)
                 .setErrorCode(Errors.UNKNOWN_SERVER_ERROR.code())
@@ -240,13 +237,13 @@ class DeleteRecordsInterceptorTest {
 
     @Test
     public void topicIdNotFound() {
-        when(metadataView.isInklessTopic(eq("inkless1"))).thenReturn(true);
-        when(metadataView.isInklessTopic(eq("inkless2"))).thenReturn(true);
+        when(metadataView.isDisklessTopic(eq("diskless1"))).thenReturn(true);
+        when(metadataView.isDisklessTopic(eq("diskless2"))).thenReturn(true);
         // This instead of the normal thenReturn to not depend on the map key iteration order
         // (and not trigger the strict mock checker).
         when(metadataView.getTopicId(anyString())).thenAnswer(invocation -> {
             final String topicName = invocation.getArgument(0, String.class);
-            if (topicName.equals("inkless2")) {
+            if (topicName.equals("diskless2")) {
                 return Uuid.ZERO_UUID;
             } else {
                 return new Uuid(1, 2);
@@ -254,12 +251,12 @@ class DeleteRecordsInterceptorTest {
         });
 
         final DeleteRecordsInterceptor interceptor = new DeleteRecordsInterceptor(
-            new SharedState(time, BROKER_ID, inklessConfig, metadataView, controlPlane, storageBackend,
+            new SharedState(time, BROKER_ID, disklessConfig, metadataView, controlPlane,
                 OBJECT_KEY_CREATOR, KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, brokerTopicStats, DEFAULT_TOPIC_CONFIGS),
             new SynchronousExecutor());
 
-        final TopicPartition topicPartition1 = new TopicPartition("inkless1", 1);
-        final TopicPartition topicPartition2 = new TopicPartition("inkless2", 2);
+        final TopicPartition topicPartition1 = new TopicPartition("diskless1", 1);
+        final TopicPartition topicPartition2 = new TopicPartition("diskless2", 2);
         final Map<TopicPartition, Long> entriesPerPartition = Map.of(
             topicPartition1, 4567L,
             topicPartition2, 8590L
@@ -271,12 +268,12 @@ class DeleteRecordsInterceptorTest {
 
         verify(responseCallback).accept(resultCaptor.capture());
         assertThat(resultCaptor.getValue()).isEqualTo(Map.of(
-            new TopicPartition("inkless1", 1),
+            new TopicPartition("diskless1", 1),
             new DeleteRecordsResponseData.DeleteRecordsPartitionResult()
                 .setPartitionIndex(1)
                 .setErrorCode(Errors.UNKNOWN_SERVER_ERROR.code())
                 .setLowWatermark(INVALID_LOW_WATERMARK),
-            new TopicPartition("inkless2", 2),
+            new TopicPartition("diskless2", 2),
             new DeleteRecordsResponseData.DeleteRecordsPartitionResult()
                 .setPartitionIndex(2)
                 .setErrorCode(Errors.UNKNOWN_SERVER_ERROR.code())

@@ -1,6 +1,6 @@
 services:
   broker:
-    environment:
+    environment: &base-broker-env
       KAFKA_INKLESS_STORAGE_BACKEND_CLASS: "io.aiven.inkless.storage_backend.azure.AzureBlobStorage"
       KAFKA_INKLESS_STORAGE_AZURE_CONTAINER_NAME: "inkless"
       KAFKA_INKLESS_STORAGE_AZURE_ACCOUNT_NAME: "devstoreaccount1"
@@ -13,6 +13,10 @@ services:
         condition: service_started
       create_bucket:
         condition: service_completed_successfully
+
+  broker2:
+    environment:
+      <<: *base-broker-env
 
   storage:
     image: mcr.microsoft.com/azure-storage/azurite

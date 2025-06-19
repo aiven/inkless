@@ -57,7 +57,7 @@ abstract class BaseProducerSendTest extends KafkaServerTestHarness {
       interBrokerSecurityProtocol = Some(securityProtocol),
       trustStoreFile = trustStoreFile,
       saslProperties = serverSaslProperties,
-      inklessMode = inklessMode
+      disklessMode = disklessMode
     ).map(KafkaConfig.fromProps(_, overridingProps))
   }
 

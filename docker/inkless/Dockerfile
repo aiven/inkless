@@ -22,9 +22,9 @@ FROM eclipse-temurin:21-jre-alpine AS build-jsa
 
 USER root
 
-ENV KAFKA_VERSION=4.1.0-inkless-SNAPSHOT
+ARG kafka_version
 
-COPY ./resources/distributions/kafka_2.13-$KAFKA_VERSION.tgz /kafka.tgz
+COPY ./resources/distributions/kafka_2.13-$kafka_version.tgz /kafka.tgz
 COPY jsa_launch /etc/kafka/docker/jsa_launch
 
 RUN set -eux ; \
@@ -47,9 +47,9 @@ USER root
 
 ARG build_date
 
-ENV KAFKA_VERSION=4.1.0-inkless-SNAPSHOT
+ARG kafka_version
 
-COPY ./resources/distributions/kafka_2.13-$KAFKA_VERSION.tgz /kafka.tgz
+COPY ./resources/distributions/kafka_2.13-$kafka_version.tgz /kafka.tgz
 
 LABEL org.label-schema.name="kafka" \
       org.label-schema.description="Apache Kafka" \

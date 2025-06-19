@@ -208,7 +208,7 @@ public class ControllerMetricsChangesTest {
                 setPartitionId(1).
                 setTopicId(FOO_ID).
                 setLeader(1));
-        TOPIC_DELTA2.replay((PartitionRecord) fakePartitionRegistration(NORMAL).
+        TOPIC_DELTA2.replay((PartitionRecord) fakePartitionRegistration(OFFLINE).
                 toRecord(FOO_ID, 5, options).message());
     }
 
@@ -228,8 +228,18 @@ public class ControllerMetricsChangesTest {
         changes.handleTopicChange(TOPIC_DELTA2.image(), TOPIC_DELTA2);
         assertEquals(0, changes.globalTopicsChange());
         assertEquals(1, changes.globalPartitionsChange());
+        assertEquals(1, changes.offlinePartitionsChange());
+        assertEquals(2, changes.partitionsWithoutPreferredLeaderChange());
+    }
+
+    @Test
+    public void testNoPartitionChangesReportedOnDisklessTopics() {
+        ControllerMetricsChanges changes = new ControllerMetricsChanges(s -> true);
+        changes.handleTopicChange(TOPIC_DELTA2.image(), TOPIC_DELTA2);
+        assertEquals(0, changes.globalTopicsChange());
+        assertEquals(0, changes.globalPartitionsChange());
         assertEquals(0, changes.offlinePartitionsChange());
-        assertEquals(1, changes.partitionsWithoutPreferredLeaderChange());
+        assertEquals(0, changes.partitionsWithoutPreferredLeaderChange());
     }
 
     @Test
@@ -245,5 +255,22 @@ public class ControllerMetricsChangesTest {
         changes.handleTopicChange(image, delta);
         assertEquals(1, changes.uncleanLeaderElection());
         assertEquals(1, changes.electionFromElr());
+    }
+
+    @Test
+    public void testIgnoreElectionResultForDisklessTopics() {
+        // Given the topic is diskless
+        ControllerMetricsChanges changes = new ControllerMetricsChanges(s -> true);
+        TopicImage image = new TopicImage("foo", FOO_ID, Map.of());
+        TopicDelta delta = new TopicDelta(image);
+        delta.replay(new PartitionRecord().setPartitionId(0).setLeader(0).setIsr(List.of(0, 1)).setReplicas(List.of(0, 1, 2)));
+        delta.replay(new PartitionChangeRecord().setPartitionId(0).setLeader(2).setIsr(List.of(2)).setLeaderRecoveryState(LeaderRecoveryState.RECOVERING.value()));
+
+        delta.replay(new PartitionRecord().setPartitionId(1).setLeader(-1).setIsr(List.of()).setEligibleLeaderReplicas(List.of(0, 1)).setReplicas(List.of(0, 1, 2)));
+        delta.replay(new PartitionChangeRecord().setPartitionId(1).setLeader(1).setIsr(List.of(1)).setEligibleLeaderReplicas(List.of(0, 1)));
+        changes.handleTopicChange(image, delta);
+        // Then no changes should be reported
+        assertEquals(0, changes.uncleanLeaderElection());
+        assertEquals(0, changes.electionFromElr());
     }
 }

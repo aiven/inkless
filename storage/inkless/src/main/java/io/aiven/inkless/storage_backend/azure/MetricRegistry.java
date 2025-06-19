@@ -104,7 +104,7 @@ public class MetricRegistry {
         TOTAL_DOC_PREFIX + BLOB_GET_DOC
     );
 
-    public List<MetricNameTemplate> all() {
+    public static List<MetricNameTemplate> all() {
         return List.of(
             BLOB_DELETE_RATE_METRIC_NAME,
             BLOB_DELETE_TOTAL_METRIC_NAME,

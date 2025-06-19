@@ -1,0 +1,51 @@
+services:
+  broker1:
+    image: us-central1-docker.pkg.dev/molten-verve-216720/aiven-repository/kafka:4.1.0-inkless-SNAPSHOT
+    restart: unless-stopped
+    environment:
+      CLUSTER_ID: "4L6g3nShT-eMCtK--X86sw"
+      KAFKA_PROCESS_ROLES: "broker,controller"
+      KAFKA_NODE_ID: 1
+      KAFKA_BROKER_RACK: "az1"
+      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@broker1:29090"
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT"
+      KAFKA_LISTENERS: "CONTROLLER://:29090,PLAINTEXT://:9092"
+      KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT://broker1:9092"
+      KAFKA_INTER_BROKER_LISTENER_NAME: "PLAINTEXT"
+      KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+
+      # Inkless
+      KAFKA_DISKLESS_STORAGE_SYSTEM_ENABLE: "true"
+      KAFKA_LOG_DISKLESS_ENABLE: "true"
+      KAFKA_INKLESS_CONSUME_CACHE_MAX_COUNT: "100"
+
+      ## Control Plane
+      ## In-memory control plane
+      KAFKA_INKLESS_CONTROL_PLANE_CLASS: "io.aiven.inkless.control_plane.InMemoryControlPlane"
+
+      ### In-memory storage
+      KAFKA_INKLESS_STORAGE_BACKEND_CLASS: "io.aiven.inkless.storage_backend.in_memory.InMemoryStorage"
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server broker1:9092 --list"]
+      interval: 5s
+      timeout: 20s
+      retries: 20
+    networks:
+      - cluster-net
+
+  workload:
+    image: us-central1-docker.pkg.dev/molten-verve-216720/aiven-repository/inkless-workload
+    volumes:
+      - ./workload-config.json:/app/workload-config.json
+    networks:
+      - cluster-net
+    depends_on:
+      broker1:
+        condition: service_healthy
+
+networks:
+  cluster-net:

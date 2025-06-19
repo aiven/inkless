@@ -47,6 +47,8 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 
+import io.aiven.inkless.storage_backend.common.StorageBackend;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
@@ -86,6 +88,8 @@ class WriterMockedTest {
     @Mock
     ScheduledExecutorService commitTickScheduler;
     @Mock
+    StorageBackend storage;
+    @Mock
     FileCommitter fileCommitter;
     @Mock
     WriterMetrics writerMetrics;
@@ -106,7 +110,7 @@ class WriterMockedTest {
     @Test
     void tickWithEmptyFile() throws InterruptedException {
         final Writer writer = new Writer(
-            time, Duration.ofMillis(1), 8 * 1024, commitTickScheduler, fileCommitter, writerMetrics, brokerTopicStats);
+            time, Duration.ofMillis(1), 8 * 1024, commitTickScheduler, storage, fileCommitter, writerMetrics, brokerTopicStats);
 
         writer.tick();
 
@@ -117,7 +121,7 @@ class WriterMockedTest {
     @Test
     void tickIsScheduledWhenFileIsWrittenTo() {
         final Writer writer = new Writer(
-            time, Duration.ofMillis(1), 8 * 1024, commitTickScheduler, fileCommitter, writerMetrics, brokerTopicStats);
+            time, Duration.ofMillis(1), 8 * 1024, commitTickScheduler, storage, fileCommitter, writerMetrics, brokerTopicStats);
 
         final Map<TopicIdPartition, MemoryRecords> writeRequest = Map.of(
             T0P0, recordCreator.create(T0P0.topicPartition(), 100)
@@ -132,7 +136,7 @@ class WriterMockedTest {
         when(time.nanoseconds()).thenReturn(10_000_000L);
 
         final Writer writer = new Writer(
-            time, Duration.ofMillis(1), 15908, commitTickScheduler, fileCommitter, writerMetrics, brokerTopicStats);
+            time, Duration.ofMillis(1), 15908, commitTickScheduler, storage, fileCommitter, writerMetrics, brokerTopicStats);
 
         final Map<TopicIdPartition, MemoryRecords> writeRequest = Map.of(
             T0P0, recordCreator.create(T0P0.topicPartition(), 100),
@@ -152,7 +156,7 @@ class WriterMockedTest {
     @Test
     void committingDueToOverfillBeforeLastRequest() throws InterruptedException {
         final Writer writer = new Writer(
-            time, Duration.ofMillis(1), 8 * 1024, commitTickScheduler, fileCommitter, writerMetrics, brokerTopicStats);
+            time, Duration.ofMillis(1), 8 * 1024, commitTickScheduler, storage, fileCommitter, writerMetrics, brokerTopicStats);
 
         final Map<TopicIdPartition, MemoryRecords> writeRequest0 = Map.of(
             T0P0, recordCreator.create(T0P0.topicPartition(), 1),
@@ -185,7 +189,7 @@ class WriterMockedTest {
     @Test
     void committingDueToOverfillBeforeAfterLastRequest() throws InterruptedException {
         final Writer writer = new Writer(
-            time, Duration.ofMillis(1), 8 * 1024, commitTickScheduler, fileCommitter, writerMetrics, brokerTopicStats);
+            time, Duration.ofMillis(1), 8 * 1024, commitTickScheduler, storage, fileCommitter, writerMetrics, brokerTopicStats);
 
         final Map<TopicIdPartition, MemoryRecords> writeRequest0 = Map.of(
             T0P0, recordCreator.create(T0P0.topicPartition(), 1),
@@ -216,7 +220,7 @@ class WriterMockedTest {
     @Test
     void committingOnTick() throws InterruptedException {
         final Writer writer = new Writer(
-            time, Duration.ofMillis(1), 8 * 1024, commitTickScheduler, fileCommitter, writerMetrics, brokerTopicStats);
+            time, Duration.ofMillis(1), 8 * 1024, commitTickScheduler, storage, fileCommitter, writerMetrics, brokerTopicStats);
 
         final Map<TopicIdPartition, MemoryRecords> writeRequest = Map.of(
             T0P0, recordCreator.create(T0P0.topicPartition(), 1),
@@ -237,7 +241,7 @@ class WriterMockedTest {
     @Test
     void committingDueToClose() throws InterruptedException, IOException {
         final Writer writer = new Writer(
-            time, Duration.ofMillis(1), 8 * 1024, commitTickScheduler, fileCommitter, writerMetrics, brokerTopicStats);
+            time, Duration.ofMillis(1), 8 * 1024, commitTickScheduler, storage, fileCommitter, writerMetrics, brokerTopicStats);
 
         final Map<TopicIdPartition, MemoryRecords> writeRequest = Map.of(
             T0P0, recordCreator.create(T0P0.topicPartition(), 1),
@@ -258,7 +262,7 @@ class WriterMockedTest {
     @Test
     void writeAfterRotation() throws InterruptedException {
         final Writer writer = new Writer(
-            time, Duration.ofMillis(1), 8 * 1024, commitTickScheduler, fileCommitter, writerMetrics, brokerTopicStats);
+            time, Duration.ofMillis(1), 8 * 1024, commitTickScheduler, storage, fileCommitter, writerMetrics, brokerTopicStats);
 
         final Map<TopicIdPartition, MemoryRecords> writeRequest0 = Map.of(
             T0P0, recordCreator.create(T0P0.topicPartition(), 100),
@@ -286,7 +290,7 @@ class WriterMockedTest {
     @Test
     void close() throws IOException {
         final Writer writer = new Writer(
-            time, Duration.ofMillis(1), 8 * 1024, commitTickScheduler, fileCommitter, writerMetrics, brokerTopicStats);
+            time, Duration.ofMillis(1), 8 * 1024, commitTickScheduler, storage, fileCommitter, writerMetrics, brokerTopicStats);
         reset(commitTickScheduler);
 
         writer.close();
@@ -298,40 +302,45 @@ class WriterMockedTest {
     @Test
     void closeAfterClose() throws IOException {
         final Writer writer = new Writer(
-            time, Duration.ofMillis(1), 8 * 1024, commitTickScheduler, fileCommitter, writerMetrics, brokerTopicStats);
+            time, Duration.ofMillis(1), 8 * 1024, commitTickScheduler, storage, fileCommitter, writerMetrics, brokerTopicStats);
         writer.close();
 
         reset(commitTickScheduler);
         reset(fileCommitter);
+        reset(storage);
 
         writer.close();
 
         verifyNoInteractions(commitTickScheduler);
         verifyNoInteractions(fileCommitter);
+        verifyNoInteractions(storage);
     }
 
     @Test
     void tickAfterClose() throws IOException {
         final Writer writer = new Writer(
-            time, Duration.ofMillis(1), 8 * 1024, commitTickScheduler, fileCommitter, writerMetrics, brokerTopicStats);
+            time, Duration.ofMillis(1), 8 * 1024, commitTickScheduler, storage, fileCommitter, writerMetrics, brokerTopicStats);
         writer.close();
 
         reset(commitTickScheduler);
         reset(fileCommitter);
+        reset(storage);
 
         writer.tick();
 
         verifyNoInteractions(commitTickScheduler);
         verifyNoInteractions(fileCommitter);
+        verifyNoInteractions(storage);
     }
 
     @Test
     void writeAfterClose() throws IOException {
         final Writer writer = new Writer(
-            time, Duration.ofMillis(1), 8 * 1024, commitTickScheduler, fileCommitter, writerMetrics, brokerTopicStats);
+            time, Duration.ofMillis(1), 8 * 1024, commitTickScheduler, storage, fileCommitter, writerMetrics, brokerTopicStats);
         writer.close();
         reset(commitTickScheduler);
         reset(fileCommitter);
+        reset(storage);
 
         final var writeResult = writer.write(Map.of(T0P0, recordCreator.create(T0P0.topicPartition(), 10)), TOPIC_CONFIGS, REQUEST_LOCAL);
 
@@ -343,12 +352,13 @@ class WriterMockedTest {
 
         verifyNoInteractions(commitTickScheduler);
         verifyNoInteractions(fileCommitter);
+        verifyNoInteractions(storage);
     }
 
     @Test
     void commitInterrupted() throws InterruptedException, IOException {
         final Writer writer = new Writer(
-            time, Duration.ofMillis(1), 8 * 1024, commitTickScheduler, fileCommitter, writerMetrics, brokerTopicStats);
+            time, Duration.ofMillis(1), 8 * 1024, commitTickScheduler, storage, fileCommitter, writerMetrics, brokerTopicStats);
 
         final InterruptedException interruptedException = new InterruptedException();
         doThrow(interruptedException).when(fileCommitter).commit(any());
@@ -371,32 +381,35 @@ class WriterMockedTest {
     @Test
     void constructorInvalidArguments() {
         assertThatThrownBy(() -> new Writer(
-            null, Duration.ofMillis(1), 8 * 1024, commitTickScheduler, fileCommitter, writerMetrics, brokerTopicStats))
+            null, Duration.ofMillis(1), 8 * 1024, commitTickScheduler, storage, fileCommitter, writerMetrics, brokerTopicStats))
             .isInstanceOf(NullPointerException.class)
             .hasMessage("time cannot be null");
         assertThatThrownBy(() -> new Writer(
-            time, null, 8 * 1024, commitTickScheduler, fileCommitter, writerMetrics, brokerTopicStats))
+            time, null, 8 * 1024, commitTickScheduler, storage, fileCommitter, writerMetrics, brokerTopicStats))
             .isInstanceOf(NullPointerException.class)
             .hasMessage("commitInterval cannot be null");
         assertThatThrownBy(() -> new Writer(
-            time, Duration.ofMillis(1), 0, commitTickScheduler, fileCommitter, writerMetrics, brokerTopicStats))
+            time, Duration.ofMillis(1), 0, commitTickScheduler, storage, fileCommitter, writerMetrics, brokerTopicStats))
             .isInstanceOf(IllegalArgumentException.class)
             .hasMessage("maxBufferSize must be positive");
         assertThatThrownBy(() ->
-            new Writer(time, Duration.ofMillis(1), 8 * 1024, null, fileCommitter, writerMetrics, brokerTopicStats))
+            new Writer(time, Duration.ofMillis(1), 8 * 1024, null, storage, fileCommitter, writerMetrics, brokerTopicStats))
             .isInstanceOf(NullPointerException.class)
             .hasMessage("commitTickScheduler cannot be null");
-        assertThatThrownBy(() -> new Writer(time, Duration.ofMillis(1), 8 * 1024, commitTickScheduler, fileCommitter, null, brokerTopicStats))
+        assertThatThrownBy(() -> new Writer(time, Duration.ofMillis(1), 8 * 1024, commitTickScheduler, storage, fileCommitter, null, brokerTopicStats))
             .isInstanceOf(NullPointerException.class)
             .hasMessage("writerMetrics cannot be null");
-        assertThatThrownBy(() -> new Writer(time, Duration.ofMillis(1), 8 * 1024, commitTickScheduler, null, writerMetrics, brokerTopicStats))
+        assertThatThrownBy(() -> new Writer(time, Duration.ofMillis(1), 8 * 1024, commitTickScheduler, storage, null, writerMetrics, brokerTopicStats))
             .isInstanceOf(NullPointerException.class)
             .hasMessage("fileCommitter cannot be null");
+        assertThatThrownBy(() -> new Writer(time, Duration.ofMillis(1), 8 * 1024, commitTickScheduler, null, fileCommitter, writerMetrics, brokerTopicStats))
+            .isInstanceOf(NullPointerException.class)
+            .hasMessage("storage cannot be null");
     }
 
     @Test
     void writeNull() {
-        final Writer writer = new Writer(time, Duration.ofMillis(1), 8 * 1024, commitTickScheduler, fileCommitter, writerMetrics, brokerTopicStats);
+        final Writer writer = new Writer(time, Duration.ofMillis(1), 8 * 1024, commitTickScheduler, storage, fileCommitter, writerMetrics, brokerTopicStats);
 
         assertThatThrownBy(() -> writer.write(null, TOPIC_CONFIGS, REQUEST_LOCAL))
             .isInstanceOf(NullPointerException.class)
@@ -411,7 +424,7 @@ class WriterMockedTest {
 
     @Test
     void writeEmptyRequests() {
-        final Writer writer = new Writer(time, Duration.ofMillis(1), 8 * 1024, commitTickScheduler, fileCommitter, writerMetrics, brokerTopicStats);
+        final Writer writer = new Writer(time, Duration.ofMillis(1), 8 * 1024, commitTickScheduler, storage, fileCommitter, writerMetrics, brokerTopicStats);
 
         assertThatThrownBy(() -> writer.write(Map.of(), TOPIC_CONFIGS, REQUEST_LOCAL))
             .isInstanceOf(IllegalArgumentException.class)
@@ -420,7 +433,7 @@ class WriterMockedTest {
 
     @Test
     void entriesTopicConfigMismatch() {
-        final Writer writer = new Writer(time, Duration.ofMillis(1), 8 * 1024, commitTickScheduler, fileCommitter, writerMetrics, brokerTopicStats);
+        final Writer writer = new Writer(time, Duration.ofMillis(1), 8 * 1024, commitTickScheduler, storage, fileCommitter, writerMetrics, brokerTopicStats);
 
         assertThatThrownBy(() -> writer.write(Map.of(T0P0, MemoryRecords.withRecords(Compression.NONE, new SimpleRecord(new byte[10]))), Map.of(TOPIC_1, new LogConfig(Map.of())), REQUEST_LOCAL))
             .isInstanceOf(IllegalArgumentException.class)

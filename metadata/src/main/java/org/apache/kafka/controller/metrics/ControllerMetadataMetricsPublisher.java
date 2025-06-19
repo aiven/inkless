@@ -30,6 +30,7 @@ import org.apache.kafka.server.fault.FaultHandler;
 
 import java.util.Map.Entry;
 import java.util.Optional;
+import java.util.function.Function;
 
 
 /**
@@ -44,13 +45,16 @@ public class ControllerMetadataMetricsPublisher implements MetadataPublisher {
     private final ControllerMetadataMetrics metrics;
     private final FaultHandler faultHandler;
     private MetadataImage prevImage = MetadataImage.EMPTY;
+    private Function<String, Boolean> isDisklessTopic;
 
     public ControllerMetadataMetricsPublisher(
         ControllerMetadataMetrics metrics,
-        FaultHandler faultHandler
+        FaultHandler faultHandler,
+        Function<String, Boolean> isDisklessTopic
     ) {
         this.metrics = metrics;
         this.faultHandler = faultHandler;
+        this.isDisklessTopic = isDisklessTopic;
     }
 
     @Override
@@ -89,7 +93,7 @@ public class ControllerMetadataMetricsPublisher implements MetadataPublisher {
     }
 
     private void publishDelta(MetadataDelta delta) {
-        ControllerMetricsChanges changes = new ControllerMetricsChanges();
+        ControllerMetricsChanges changes = new ControllerMetricsChanges(isDisklessTopic);
         if (delta.clusterDelta() != null) {
             for (Entry<Integer, Optional<BrokerRegistration>> entry :
                     delta.clusterDelta().changedBrokers().entrySet()) {
@@ -139,12 +143,15 @@ public class ControllerMetadataMetricsPublisher implements MetadataPublisher {
         int offlinePartitions = 0;
         int partitionsWithoutPreferredLeader = 0;
         for (TopicImage topicImage : newImage.topics().topicsById().values()) {
+            boolean isDiskless = isDisklessTopic.apply(topicImage.name());
             for (PartitionRegistration partition : topicImage.partitions().values()) {
-                if (!partition.hasLeader()) {
-                    offlinePartitions++;
-                }
-                if (!partition.hasPreferredLeader()) {
-                    partitionsWithoutPreferredLeader++;
+                if (!isDiskless) {
+                    if (!partition.hasLeader()) {
+                        offlinePartitions++;
+                    }
+                    if (!partition.hasPreferredLeader()) {
+                        partitionsWithoutPreferredLeader++;
+                    }
                 }
                 totalPartitions++;
             }

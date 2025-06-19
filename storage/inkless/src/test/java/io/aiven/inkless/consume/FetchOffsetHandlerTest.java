@@ -23,6 +23,8 @@ import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.errors.UnknownServerException;
 import org.apache.kafka.common.message.ListOffsetsRequestData;
 import org.apache.kafka.common.record.FileRecords;
+import org.apache.kafka.common.utils.MockTime;
+import org.apache.kafka.common.utils.Time;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -54,7 +56,6 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
-import static org.postgresql.hostchooser.HostRequirement.any;
 
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.STRICT_STUBS)
@@ -71,6 +72,8 @@ class FetchOffsetHandlerTest {
     static final TopicIdPartition TIDP_T0P1 = new TopicIdPartition(TOPIC_ID_0, T0P1);
     static final TopicIdPartition TIDP_T1P1 = new TopicIdPartition(TOPIC_ID_1, T1P1);
 
+    Time time = new MockTime();
+    InklessFetchOffsetMetrics metrics = new InklessFetchOffsetMetrics(time);
     @Mock
     MetadataView metadataView;
     @Mock
@@ -82,11 +85,11 @@ class FetchOffsetHandlerTest {
 
     @Test
     void mustHandle() {
-        when(metadataView.isInklessTopic(TOPIC_0)).thenReturn(true);
-        when(metadataView.isInklessTopic(TOPIC_1)).thenReturn(true);
-        when(metadataView.isInklessTopic(TOPIC_CLASSIC)).thenReturn(false);
+        when(metadataView.isDisklessTopic(TOPIC_0)).thenReturn(true);
+        when(metadataView.isDisklessTopic(TOPIC_1)).thenReturn(true);
+        when(metadataView.isDisklessTopic(TOPIC_CLASSIC)).thenReturn(false);
 
-        final FetchOffsetHandler.Job job = new FetchOffsetHandler.Job(metadataView, controlPlane, executor);
+        final FetchOffsetHandler.Job job = new FetchOffsetHandler.Job(metadataView, controlPlane, executor, time, metrics);
         assertThat(job.mustHandle(TOPIC_0)).isTrue();
         assertThat(job.mustHandle(TOPIC_1)).isTrue();
         assertThat(job.mustHandle(TOPIC_CLASSIC)).isFalse();
@@ -94,7 +97,7 @@ class FetchOffsetHandlerTest {
 
     @Test
     void empty() {
-        final FetchOffsetHandler.Job job = new FetchOffsetHandler.Job(metadataView, controlPlane, executor);
+        final FetchOffsetHandler.Job job = new FetchOffsetHandler.Job(metadataView, controlPlane, executor, time, metrics);
 
         job.start();
 
@@ -123,7 +126,7 @@ class FetchOffsetHandlerTest {
             }).toList();
         });
 
-        final FetchOffsetHandler.Job job = new FetchOffsetHandler.Job(metadataView, controlPlane, executor);
+        final FetchOffsetHandler.Job job = new FetchOffsetHandler.Job(metadataView, controlPlane, executor, time, metrics);
         final var future1 = job.add(T0P0, new ListOffsetsRequestData.ListOffsetsPartition().setPartitionIndex(0).setTimestamp(-1));
         final var future2 = job.add(T0P1, new ListOffsetsRequestData.ListOffsetsPartition().setPartitionIndex(1).setTimestamp(1));
         final var future3 = job.add(T1P1, new ListOffsetsRequestData.ListOffsetsPartition().setPartitionIndex(1).setTimestamp(-3));
@@ -155,7 +158,7 @@ class FetchOffsetHandlerTest {
 
         when(controlPlane.listOffsets(any())).thenThrow(new UnknownServerException("error"));
 
-        final FetchOffsetHandler.Job job = new FetchOffsetHandler.Job(metadataView, controlPlane, executor);
+        final FetchOffsetHandler.Job job = new FetchOffsetHandler.Job(metadataView, controlPlane, executor, time, metrics);
         final var future1 = job.add(T0P0, new ListOffsetsRequestData.ListOffsetsPartition().setPartitionIndex(0).setTimestamp(-1));
         final var future2 = job.add(T0P1, new ListOffsetsRequestData.ListOffsetsPartition().setPartitionIndex(1).setTimestamp(1));
         final var future3 = job.add(T1P1, new ListOffsetsRequestData.ListOffsetsPartition().setPartitionIndex(1).setTimestamp(-3));
@@ -183,7 +186,7 @@ class FetchOffsetHandlerTest {
         final Future<?> submittedFuture = mock(Future.class);
         doReturn(submittedFuture).when(executor).submit((Runnable) any());
 
-        final FetchOffsetHandler.Job job = new FetchOffsetHandler.Job(metadataView, controlPlane, executor);
+        final FetchOffsetHandler.Job job = new FetchOffsetHandler.Job(metadataView, controlPlane, executor, time, metrics);
         job.add(T0P0, new ListOffsetsRequestData.ListOffsetsPartition().setPartitionIndex(0).setTimestamp(-1));
         job.add(T0P1, new ListOffsetsRequestData.ListOffsetsPartition().setPartitionIndex(1).setTimestamp(1));
         job.add(T1P1, new ListOffsetsRequestData.ListOffsetsPartition().setPartitionIndex(1).setTimestamp(-3));

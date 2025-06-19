@@ -41,8 +41,17 @@ public class InklessFetchMetrics {
     private static final String CACHE_STORE_TIME = "CacheStoreTime";
     private static final String CACHE_HIT_COUNT = "CacheHitCount";
     private static final String CACHE_MISS_COUNT = "CacheMissCount";
+    private static final String CACHE_ENTRY_SIZE = "CacheEntrySize";
     private static final String FETCH_FILE_TIME = "FetchFileTime";
     private static final String FETCH_COMPLETION_TIME = "FetchCompletionTime";
+    private static final String FETCH_RATE = "FetchRate";
+    private static final String FETCH_ERROR_RATE = "FetchErrorRate";
+    private static final String FIND_BATCHES_ERROR_RATE = "FindBatchesErrorRate";
+    private static final String FILE_FETCH_ERROR_RATE = "FileFetchErrorRate";
+    private static final String CACHE_FETCH_ERROR_RATE = "CacheFetchErrorRate";
+    private static final String FETCH_PARTITIONS_PER_FETCH_COUNT = "FetchPartitionsPerFetchCount";
+    private static final String FETCH_BATCHES_PER_FETCH_COUNT = "FetchBatchesPerPartitionCount";
+    private static final String FETCH_OBJECTS_PER_FETCH_COUNT = "FetchObjectsPerFetchCount";
 
     private final Time time;
 
@@ -52,10 +61,19 @@ public class InklessFetchMetrics {
     private final Histogram fetchPlanTimeHistogram;
     private final Histogram cacheQueryTimeHistogram;
     private final Histogram cacheStoreTimeHistogram;
+    private final Histogram cacheEntrySize;
     private final Meter cacheHits;
     private final Meter cacheMisses;
     private final Histogram fetchFileTimeHistogram;
     private final Histogram fetchCompletionTimeHistogram;
+    private final Meter fetchRate;
+    private final Meter fetchErrorRate;
+    private final Meter findBatchesErrorRate;
+    private final Meter fileFetchErrorRate;
+    private final Meter cacheFetchErrorRate;
+    private final Histogram fetchPartitionSizeHistogram;
+    private final Histogram fetchBatchesSizeHistogram;
+    private final Histogram fetchObjectsSizeHistogram;
 
     public InklessFetchMetrics(Time time) {
         this.time = Objects.requireNonNull(time, "time cannot be null");
@@ -68,6 +86,15 @@ public class InklessFetchMetrics {
         cacheMisses = metricsGroup.newMeter(CACHE_MISS_COUNT, "misses", TimeUnit.SECONDS, Map.of());
         fetchFileTimeHistogram = metricsGroup.newHistogram(FETCH_FILE_TIME, true, Map.of());
         fetchCompletionTimeHistogram = metricsGroup.newHistogram(FETCH_COMPLETION_TIME, true, Map.of());
+        fetchRate = metricsGroup.newMeter(FETCH_RATE, "fetches", TimeUnit.SECONDS, Map.of());
+        fetchErrorRate = metricsGroup.newMeter(FETCH_ERROR_RATE, "errors", TimeUnit.SECONDS, Map.of());
+        findBatchesErrorRate = metricsGroup.newMeter(FIND_BATCHES_ERROR_RATE, "errors", TimeUnit.SECONDS, Map.of());
+        fileFetchErrorRate = metricsGroup.newMeter(FILE_FETCH_ERROR_RATE, "errors", TimeUnit.SECONDS, Map.of());
+        cacheFetchErrorRate = metricsGroup.newMeter(CACHE_FETCH_ERROR_RATE, "errors", TimeUnit.SECONDS, Map.of());
+        fetchPartitionSizeHistogram = metricsGroup.newHistogram(FETCH_PARTITIONS_PER_FETCH_COUNT, true, Map.of());
+        fetchBatchesSizeHistogram = metricsGroup.newHistogram(FETCH_BATCHES_PER_FETCH_COUNT, true, Map.of());
+        fetchObjectsSizeHistogram = metricsGroup.newHistogram(FETCH_OBJECTS_PER_FETCH_COUNT, true, Map.of());
+        cacheEntrySize = metricsGroup.newHistogram(CACHE_ENTRY_SIZE, true, Map.of());
     }
 
     public void fetchCompleted(Instant startAt) {
@@ -99,6 +126,10 @@ public class InklessFetchMetrics {
         }
     }
 
+    public void cacheEntrySize(final int size) {
+        cacheEntrySize.update(size);
+    }
+
     public void fetchFileFinished(final long durationMs) {
         fetchFileTimeHistogram.update(durationMs);
     }
@@ -107,11 +138,53 @@ public class InklessFetchMetrics {
         fetchCompletionTimeHistogram.update(duration);
     }
 
+    public void fetchFailed() {
+        fetchErrorRate.mark();
+    }
+
+    public void findBatchesFailed() {
+        findBatchesErrorRate.mark();
+    }
+
+    public void fileFetchFailed() {
+        fileFetchErrorRate.mark();
+    }
+
+    public void cacheFetchFailed() {
+        cacheFetchErrorRate.mark();
+    }
+
     public void close() {
         metricsGroup.removeMetric(FETCH_TOTAL_TIME);
         metricsGroup.removeMetric(FETCH_FILE_TIME);
         metricsGroup.removeMetric(FETCH_PLAN_TIME);
+        metricsGroup.removeMetric(CACHE_QUERY_TIME);
+        metricsGroup.removeMetric(CACHE_STORE_TIME);
+        metricsGroup.removeMetric(CACHE_HIT_COUNT);
+        metricsGroup.removeMetric(CACHE_MISS_COUNT);
+        metricsGroup.removeMetric(CACHE_ENTRY_SIZE);
         metricsGroup.removeMetric(FIND_BATCHES_TIME);
         metricsGroup.removeMetric(FETCH_COMPLETION_TIME);
+        metricsGroup.removeMetric(FETCH_RATE);
+        metricsGroup.removeMetric(FETCH_ERROR_RATE);
+        metricsGroup.removeMetric(FIND_BATCHES_ERROR_RATE);
+        metricsGroup.removeMetric(FILE_FETCH_ERROR_RATE);
+        metricsGroup.removeMetric(CACHE_FETCH_ERROR_RATE);
+        metricsGroup.removeMetric(FETCH_PARTITIONS_PER_FETCH_COUNT);
+        metricsGroup.removeMetric(FETCH_BATCHES_PER_FETCH_COUNT);
+        metricsGroup.removeMetric(FETCH_OBJECTS_PER_FETCH_COUNT);
+    }
+
+    public void fetchStarted(int partitionSize) {
+        fetchRate.mark();
+        fetchPartitionSizeHistogram.update(partitionSize);
+    }
+
+    public void recordFetchBatchSize(int size) {
+        fetchBatchesSizeHistogram.update(size);
+    }
+
+    public void recordFetchObjectsSize(int size) {
+        fetchObjectsSizeHistogram.update(size);
     }
 }

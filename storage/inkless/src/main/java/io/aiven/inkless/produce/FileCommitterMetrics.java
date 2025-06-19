@@ -22,6 +22,7 @@ import org.apache.kafka.server.metrics.KafkaMetricsGroup;
 
 import com.groupcdg.pitest.annotations.CoverageIgnore;
 import com.yammer.metrics.core.Histogram;
+import com.yammer.metrics.core.Meter;
 
 import java.io.Closeable;
 import java.io.IOException;
@@ -29,7 +30,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.Map;
 import java.util.Objects;
-import java.util.concurrent.atomic.LongAdder;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
 
 import io.aiven.inkless.TimeUtils;
@@ -40,14 +41,19 @@ class FileCommitterMetrics implements Closeable {
     private static final String FILE_UPLOAD_AND_COMMIT_TIME = "FileUploadAndCommitTime";
     private static final String FILE_UPLOAD_TIME = "FileUploadTime";
     private static final String FILE_UPLOAD_RATE = "FileUploadRate";
+    private static final String FILE_UPLOAD_ERROR_RATE = "FileUploadErrorRate";
     private static final String FILE_COMMIT_WAIT_TIME = "FileCommitWaitTime";
     private static final String FILE_COMMIT_TIME = "FileCommitTime";
     private static final String FILE_COMMIT_RATE = "FileCommitRate";
+    private static final String FILE_COMMIT_ERROR_RATE = "FileCommitErrorRate";
     private static final String CACHE_STORE_TIME = "CacheStoreTime";
     private static final String COMMIT_QUEUE_FILES = "CommitQueueFiles";
     private static final String COMMIT_QUEUE_BYTES = "CommitQueueBytes";
     private static final String FILE_SIZE = "FileSize";
     private static final String BATCHES_COUNT = "BatchesCount";
+    private static final String BATCHES_COMMIT_RATE = "BatchesCommitRate";
+    private static final String WRITE_RATE = "WriteRate";
+    private static final String WRITE_ERROR_RATE = "WriteErrorRate";
 
     private final Time time;
 
@@ -60,21 +66,31 @@ class FileCommitterMetrics implements Closeable {
     private final Histogram fileSizeHistogram;
     private final Histogram batchesCountHistogram;
     private final Histogram cacheStoreTimeHistogram;
-    private final LongAdder fileUploadRate = new LongAdder();
-    private final LongAdder fileCommitRate = new LongAdder();
+    private final Meter fileUploadRate;
+    private final Meter fileUploadErrorRate;
+    private final Meter fileCommitRate;
+    private final Meter fileCommitErrorRate;
+    private final Meter batchesCommitRate;
+    private final Meter writeRate;
+    private final Meter writeErrorRate;
 
     FileCommitterMetrics(final Time time) {
         this.time = Objects.requireNonNull(time, "time cannot be null");
         fileTotalLifeTimeHistogram = metricsGroup.newHistogram(FILE_TOTAL_LIFE_TIME, true, Map.of());
         fileUploadAndCommitTimeHistogram = metricsGroup.newHistogram(FILE_UPLOAD_AND_COMMIT_TIME, true, Map.of());
         fileUploadTimeHistogram = metricsGroup.newHistogram(FILE_UPLOAD_TIME, true, Map.of());
-        metricsGroup.newGauge(FILE_UPLOAD_RATE, fileUploadRate::intValue);
+        fileUploadRate = metricsGroup.newMeter(FILE_UPLOAD_RATE, "uploads", TimeUnit.SECONDS, Map.of());
+        fileUploadErrorRate = metricsGroup.newMeter(FILE_UPLOAD_ERROR_RATE, "errors", TimeUnit.SECONDS, Map.of());
         fileCommitTimeHistogram = metricsGroup.newHistogram(FILE_COMMIT_TIME, true, Map.of());
         fileCommitWaitTimeHistogram = metricsGroup.newHistogram(FILE_COMMIT_WAIT_TIME, true, Map.of());
-        metricsGroup.newGauge(FILE_COMMIT_RATE, fileCommitRate::intValue);
+        fileCommitRate = metricsGroup.newMeter(FILE_COMMIT_RATE, "commits", TimeUnit.SECONDS, Map.of());
+        fileCommitErrorRate = metricsGroup.newMeter(FILE_COMMIT_ERROR_RATE, "errors", TimeUnit.SECONDS, Map.of());
+        batchesCommitRate = metricsGroup.newMeter(BATCHES_COMMIT_RATE, "batches", TimeUnit.SECONDS, Map.of());
         fileSizeHistogram = metricsGroup.newHistogram(FILE_SIZE, true, Map.of());
         batchesCountHistogram = metricsGroup.newHistogram(BATCHES_COUNT, true, Map.of());
         cacheStoreTimeHistogram = metricsGroup.newHistogram(CACHE_STORE_TIME, true, Map.of());
+        writeRate = metricsGroup.newMeter(WRITE_RATE, "writes", TimeUnit.SECONDS, Map.of());
+        writeErrorRate = metricsGroup.newMeter(WRITE_ERROR_RATE, "errors", TimeUnit.SECONDS, Map.of());
     }
 
     void initTotalFilesInProgressMetric(final Supplier<Integer> supplier) {
@@ -91,16 +107,25 @@ class FileCommitterMetrics implements Closeable {
 
     void batchesAdded(final int size) {
         batchesCountHistogram.update(size);
+        batchesCommitRate.mark(size);
     }
 
     void fileUploadFinished(final long durationMs) {
         fileUploadTimeHistogram.update(durationMs);
-        fileUploadRate.increment();
+        fileUploadRate.mark();
+    }
+
+    void fileUploadFailed() {
+        fileUploadErrorRate.mark();
     }
 
     void fileCommitFinished(final long durationMs) {
         fileCommitTimeHistogram.update(durationMs);
-        fileCommitRate.increment();
+        fileCommitRate.mark();
+    }
+
+    void fileCommitFailed() {
+        fileCommitErrorRate.mark();
     }
 
     void fileCommitWaitFinished(final long durationMs) {
@@ -111,6 +136,14 @@ class FileCommitterMetrics implements Closeable {
         final Instant now = TimeUtils.durationMeasurementNow(time);
         fileTotalLifeTimeHistogram.update(Duration.between(fileStart, now).toMillis());
         fileUploadAndCommitTimeHistogram.update(Duration.between(uploadAndCommitStart, now).toMillis());
+    }
+
+    void writeCompleted() {
+        writeRate.mark();
+    }
+
+    void writeFailed() {
+        writeErrorRate.mark();
     }
 
     void cacheStoreFinished(final long durationMs) {
@@ -125,8 +158,16 @@ class FileCommitterMetrics implements Closeable {
         metricsGroup.removeMetric(FILE_UPLOAD_AND_COMMIT_TIME);
         metricsGroup.removeMetric(FILE_UPLOAD_TIME);
         metricsGroup.removeMetric(FILE_UPLOAD_RATE);
+        metricsGroup.removeMetric(FILE_UPLOAD_ERROR_RATE);
         metricsGroup.removeMetric(FILE_COMMIT_TIME);
         metricsGroup.removeMetric(FILE_COMMIT_RATE);
+        metricsGroup.removeMetric(FILE_COMMIT_ERROR_RATE);
         metricsGroup.removeMetric(FILE_SIZE);
+        metricsGroup.removeMetric(FILE_COMMIT_WAIT_TIME);
+        metricsGroup.removeMetric(CACHE_STORE_TIME);
+        metricsGroup.removeMetric(BATCHES_COUNT);
+        metricsGroup.removeMetric(BATCHES_COMMIT_RATE);
+        metricsGroup.removeMetric(WRITE_RATE);
+        metricsGroup.removeMetric(WRITE_ERROR_RATE);
     }
 }

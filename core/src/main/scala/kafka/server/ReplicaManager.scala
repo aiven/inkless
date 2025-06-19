@@ -18,7 +18,8 @@ package kafka.server
 
 import com.yammer.metrics.core.Meter
 import io.aiven.inkless.common.SharedState
-import io.aiven.inkless.consume.{FetchInterceptor, FetchOffsetHandler}
+import io.aiven.inkless.consume.{FetchHandler, FetchOffsetHandler}
+import io.aiven.inkless.control_plane.{FindBatchRequest, FindBatchResponse, MetadataView}
 import io.aiven.inkless.delete.{DeleteRecordsInterceptor, FileCleaner, RetentionEnforcer}
 import io.aiven.inkless.merge.FileMerger
 import io.aiven.inkless.produce.AppendHandler
@@ -28,6 +29,7 @@ import kafka.log.LogManager
 import kafka.server.HostedPartition.Online
 import kafka.server.QuotaFactory.QuotaManagers
 import kafka.server.ReplicaManager.{AtMinIsrPartitionCountMetricName, FailedIsrUpdatesPerSecMetricName, IsrExpandsPerSecMetricName, IsrShrinksPerSecMetricName, LeaderCountMetricName, OfflineReplicaCountMetricName, PartitionCountMetricName, PartitionsWithLateTransactionsCountMetricName, ProducerIdCountMetricName, ReassigningPartitionsMetricName, UnderMinIsrPartitionCountMetricName, UnderReplicatedPartitionsMetricName, createLogReadResult, isListOffsetsTimestampUnsupported}
+import kafka.server.metadata.{InklessMetadataView, KRaftMetadataCache}
 import kafka.server.share.DelayedShareFetch
 import kafka.utils._
 import org.apache.kafka.common.{IsolationLevel, Node, TopicIdPartition, TopicPartition, Uuid}
@@ -238,7 +240,8 @@ class ReplicaManager(val config: KafkaConfig,
                      addPartitionsToTxnManager: Option[AddPartitionsToTxnManager] = None,
                      val directoryEventHandler: DirectoryEventHandler = DirectoryEventHandler.NOOP,
                      val defaultActionQueue: ActionQueue = new DelayedActionQueue,
-                     inklessSharedState: Option[SharedState] = None
+                     inklessSharedState: Option[SharedState] = None,
+                     inklessMetadataView: Option[MetadataView] = None
                      ) extends Logging {
   private val metricsGroup = new KafkaMetricsGroup(this.getClass)
   private val addPartitionsToTxnConfig = new AddPartitionsToTxnConfig(config)
@@ -268,8 +271,9 @@ class ReplicaManager(val config: KafkaConfig,
       shareFetchPurgatoryName, delayedShareFetchTimer, config.brokerId,
       config.shareGroupConfig.shareFetchPurgatoryPurgeIntervalRequests))
 
+  private val _inklessMetadataView: MetadataView = inklessMetadataView.getOrElse(new InklessMetadataView(metadataCache.asInstanceOf[KRaftMetadataCache], () => config.extractLogConfigMap))
   private val inklessAppendHandler: Option[AppendHandler] = inklessSharedState.map(new AppendHandler(_))
-  private val inklessFetchInterceptor: Option[FetchInterceptor] = inklessSharedState.map(new FetchInterceptor(_))
+  private val inklessFetchHandler: Option[FetchHandler] = inklessSharedState.map(new FetchHandler(_))
   private val inklessFetchOffsetHandler: Option[FetchOffsetHandler] = inklessSharedState.map(new FetchOffsetHandler(_))
   private val inklessDeleteRecordsInterceptor: Option[DeleteRecordsInterceptor] = inklessSharedState.map(new DeleteRecordsInterceptor(_))
   private val inklessRetentionEnforcer: Option[RetentionEnforcer] = inklessSharedState.map(new RetentionEnforcer(_))
@@ -712,34 +716,26 @@ class ReplicaManager(val config: KafkaConfig,
       return
     }
 
-    val (inklessEntries, classicEntries) = entriesPerPartition.partition { case (k, _) =>
-      inklessAppendHandler.exists(_.isInkless(k.topic()))
-    }
+    val (disklessEntries, classicEntries) = entriesPerPartition.partition { case (k, _) => _inklessMetadataView.isDisklessTopic(k.topic()) }
 
-    val inklessResponsesFuture = inklessAppendHandler match {
-      case Some(interceptor) => interceptor.handle(inklessEntries.asJava, requestLocal)
-      case _ => CompletableFuture.completedFuture(util.Map.of[TopicIdPartition, PartitionResponse]())
+    val disklessResponsesFuture = inklessAppendHandler match {
+      case Some(interceptor) => interceptor.handle(disklessEntries.asJava, requestLocal)
+      case _ =>
+        if (disklessEntries.nonEmpty)
+          error(s"Received diskless entries to append for topics ${disklessEntries.keys.map(_.topic()).mkString(", ")} but diskless storage system is not enabled. " +
+            "Returning empty response.")
+        CompletableFuture.completedFuture(util.Map.of[TopicIdPartition, PartitionResponse]())
     }
 
     def classicResponseCallback(classicResult: Map[TopicIdPartition, PartitionResponse]): Unit = {
-      inklessResponsesFuture.whenComplete { case (result, e) =>
-        val inklessResult: Map[TopicIdPartition, PartitionResponse] = if (result != null) result.asScala else {
-          error("Inkless append future failed", e)
-          inklessEntries.map{ case (tp, _) => tp -> new PartitionResponse(Errors.UNKNOWN_SERVER_ERROR)}
+      disklessResponsesFuture.whenComplete { case (result, e) =>
+        val disklessResult: Map[TopicIdPartition, PartitionResponse] = if (result != null) result.asScala else {
+          error("Diskless append future failed", e)
+          disklessEntries.map{ case (tp, _) => tp -> new PartitionResponse(Errors.UNKNOWN_SERVER_ERROR)}
         }
-        val inklessAppendResults = new mutable.HashMap[TopicIdPartition, LogAppendResult]
-        inklessResult.foreach {
-          case (tp, _) =>
-            // Consider every successful produce request as if it increased the high watermark. This is a simplification
-            // that will always result in the attempt to complete the delayed operations.
-            // The current implementation does not take into account that other brokers might have performed appends
-            // that would unblock delayed operations in the purgatories of this broker.
-            val logAppendInfo = LogAppendInfo.UNKNOWN_LOG_APPEND_INFO.copy(LeaderHwChange.INCREASED)
-            val logAppendResult =  LogAppendResult(logAppendInfo, None, hasCustomErrorMessage = false)
-            inklessAppendResults += (tp -> logAppendResult)
-        }
-        addCompletePurgatoryAction(this.defaultActionQueue, inklessAppendResults)
-        responseCallback(inklessResult ++ classicResult)
+        // Diskless append results do not complete purgatory actions to avoid overloading the control-plane.
+        // only classic append results complete purgatory actions.
+        responseCallback(disklessResult ++ classicResult)
       }
     }
 
@@ -1544,7 +1540,7 @@ class ReplicaManager(val config: KafkaConfig,
             ListOffsetsPartitionStatus.builder().responseOpt(Optional.of(buildErrorResponse(Errors.UNSUPPORTED_VERSION, partition))).build()
         } else if (maybeFetchOffsetJob.exists(_.mustHandle(topic.name()))) {
           statusByPartition += topicPartition ->
-            inklessFetchOffset(maybeFetchOffsetJob.get, topicPartition, partition)
+            disklessFetchOffset(maybeFetchOffsetJob.get, topicPartition, partition)
         } else {
           try {
             val fetchOnlyFromLeader = replicaId != ListOffsetsRequest.DEBUGGING_REPLICA_ID
@@ -1632,7 +1628,7 @@ class ReplicaManager(val config: KafkaConfig,
     if (delayedRemoteListOffsetsRequired(statusByPartition)) {
       val delayMs: Long = if (timeoutMs > 0) timeoutMs else config.remoteLogManagerConfig.remoteListOffsetsRequestTimeoutMs()
       // create delayed remote list offsets operation
-      val delayedRemoteListOffsets = new DelayedRemoteListOffsets(delayMs, version, statusByPartition.asJava, tp => getPartitionOrException(tp), isInklessTopic, responseCallback)
+      val delayedRemoteListOffsets = new DelayedRemoteListOffsets(delayMs, version, statusByPartition.asJava, tp => getPartitionOrException(tp), _inklessMetadataView.isDisklessTopic, responseCallback)
       // create a list of (topic, partition) pairs to use as keys for this delayed remote list offsets operation
       val listOffsetsRequestKeys = statusByPartition.keys.map(new TopicPartitionOperationKey(_)).toList
       // try to complete the request immediately, otherwise put it into the purgatory
@@ -1647,7 +1643,7 @@ class ReplicaManager(val config: KafkaConfig,
     }
   }
 
-  private def inklessFetchOffset(fetchOffsetJob: FetchOffsetHandler.Job,
+  private def disklessFetchOffset(fetchOffsetJob: FetchOffsetHandler.Job,
                                  topicPartition: TopicPartition,
                                  partition: ListOffsetsPartition): ListOffsetsPartitionStatus = {
     val taskFuture = fetchOffsetJob.add(topicPartition, partition)
@@ -1723,6 +1719,33 @@ class ReplicaManager(val config: KafkaConfig,
     }
   }
 
+  def findDisklessBatches(requests: Seq[FindBatchRequest], maxBytes: Int): Option[util.List[FindBatchResponse]] = {
+    inklessSharedState.map { sharedState =>
+      sharedState.controlPlane().findBatches(requests.asJava, maxBytes, sharedState.config().maxBatchesPerPartitionToFind())
+    }
+  }
+
+  def fetchDisklessMessages(params: FetchParams,
+                            fetchInfos: Seq[(TopicIdPartition, PartitionData)]): CompletableFuture[Seq[(TopicIdPartition, FetchPartitionData)]] = {
+    inklessFetchHandler match {
+      case Some(handler) => handler.handle(params, fetchInfos.toMap.asJava).thenApply(_.asScala.toSeq)
+      case None =>
+        if (fetchInfos.nonEmpty)
+          error(s"Received diskless fetch request for topics ${fetchInfos.map(_._1.topic()).distinct.mkString(", ")} but diskless fetch handler is not available. " +
+            s"Replying an empty response.")
+        CompletableFuture.completedFuture(Seq.empty)
+    }
+  }
+
+  /**
+   * Create new FetchParams by scaling the maxBytes by a percentage.
+   */
+  def fetchParamsWithNewMaxBytes(originalParams: FetchParams, percentage: Float): FetchParams = {
+    new FetchParams(originalParams.replicaId, originalParams.replicaEpoch, originalParams.maxWaitMs, originalParams.minBytes,
+      Math.max((originalParams.maxBytes * percentage).toInt, originalParams.maxBytes),
+      originalParams.isolation, originalParams.clientMetadata, originalParams.shareFetchRequest)
+  }
+
   /**
    * Fetch messages from a replica, and wait until enough data can be fetched and return;
    * the callback function will be triggered either when timeout or required fetch info is satisfied.
@@ -1732,38 +1755,90 @@ class ReplicaManager(val config: KafkaConfig,
                     fetchInfos: Seq[(TopicIdPartition, PartitionData)],
                     quota: ReplicaQuota,
                     responseCallback: Seq[(TopicIdPartition, FetchPartitionData)] => Unit): Unit = {
-    def delayFetch() = {
-      val fetchPartitionStatus = fetchInfos.map {
-        case (k, partitionData) =>
-          k -> FetchPartitionStatus(new LogOffsetMetadata(partitionData.fetchOffset), partitionData)
-      }
-
-      val delayedFetch = new DelayedFetch(
-        params = params,
-        fetchPartitionStatus = fetchPartitionStatus,
-        replicaManager = this,
-        isInklessTopic = isInklessTopic,
-        quota = quota,
-        responseCallback = responseCallback
-      )
-
-      val delayedFetchKeys = fetchPartitionStatus.map { case (tp, _) => new TopicPartitionOperationKey(tp) }.toList
-      delayedFetchPurgatory.tryCompleteElseWatch(delayedFetch, delayedFetchKeys.asJava)
-    }
-
-    if (inklessFetchInterceptor.exists(
-      _.intercept(
-        params,
-        fetchInfos.toMap.asJava,
-        r => responseCallback(r.asScala.toSeq),
-        _ => delayFetch()
-      )
-    )) {
+    if (fetchInfos.isEmpty) {
+      responseCallback(Seq.empty)
       return
     }
 
+    val (disklessFetchInfosWithoutTopicId, classicFetchInfos) = fetchInfos.partition { case (k, _) => _inklessMetadataView.isDisklessTopic(k.topic()) }
+    inklessSharedState match {
+      case None =>
+        if (disklessFetchInfosWithoutTopicId.nonEmpty) {
+          error(s"Received diskless fetch request for topics ${disklessFetchInfosWithoutTopicId.map(_._1.topic()).distinct.mkString(", ")} but diskless storage system is not enabled. " +
+            s"Replying an empty response.")
+          responseCallback(Seq.empty)
+          return
+        }
+      case Some(_) =>
+    }
+
+    // Older fetch versions (<13) don't have topicId in the request -- backfill it for backward compatibility
+    val disklessFetchInfos = disklessFetchInfosWithoutTopicId.map { disklessFetchInfo =>
+      val (topicIdPartition, partitionData) = disklessFetchInfo
+      if (topicIdPartition.topicId().equals(Uuid.ZERO_UUID)) {
+        _inklessMetadataView.getTopicId(topicIdPartition.topic()) match {
+          case Uuid.ZERO_UUID =>
+            error(s"Got null topic id from KRaft metadata for diskless topic ${topicIdPartition.topic()}")
+            responseCallback(Seq.empty)
+            return
+          case topicId =>
+            new TopicIdPartition(topicId, topicIdPartition.topicPartition()) -> partitionData
+        }
+      } else {
+        disklessFetchInfo
+      }
+    }
+
+
+    if (params.isFromFollower && disklessFetchInfos.nonEmpty) {
+      warn("Diskless topics are not supported for follower fetch requests. " +
+        s"Request from follower ${params.replicaId} contains diskless topics: ${disklessFetchInfos.map(_._1.topic()).mkString(", ")}")
+      responseCallback(Seq.empty)
+      return
+    }
+
+    // Override maxWaitMs and minBytes with lower-bound if there are diskless fetches. Otherwise, leave the consumer-provided values.
+    val maxWaitMs = if (disklessFetchInfos.nonEmpty) Math.max(config.disklessFetchMaxWaitMs.toLong, params.maxWaitMs) else params.maxWaitMs
+    val minBytes = if (disklessFetchInfos.nonEmpty) Math.max(config.disklessFetchMinBytes, params.minBytes) else params.minBytes
+
+    def delayedResponse(classicFetchPartitionStatus: Seq[(TopicIdPartition, FetchPartitionStatus)]): Boolean = {
+      val disklessFetchPartitionStatus = disklessFetchInfos.map {
+        case (k, partitionData) =>
+          k -> FetchPartitionStatus(new LogOffsetMetadata(partitionData.fetchOffset), partitionData)
+      }
+      // If there are diskless fetches, enforce a lower bound on maxWaitMs to ensure that we wait at least as long as the
+      // configured remote fetch max wait time. This is to ensure that we give enough time for the diskless fetches to complete,
+      // and do not overload the control plane with too many requests.
+      val delayedFetch = new DelayedFetch(
+        params = params,
+        classicFetchPartitionStatus = classicFetchPartitionStatus,
+        disklessFetchPartitionStatus = disklessFetchPartitionStatus,
+        replicaManager = this,
+        quota = quota,
+        maxWaitMs = Some(maxWaitMs),
+        minBytes = Some(minBytes),
+        responseCallback = responseCallback,
+      )
+
+      // create a list of (topic, partition) pairs to use as keys for this delayed fetch operation
+      val classicDelayedFetchKeys = classicFetchPartitionStatus.map { case (tp, _) => new TopicPartitionOperationKey(tp) }.toList
+      val disklessDelayedFetchKeys = disklessFetchPartitionStatus.map { case (tp, _) => new TopicPartitionOperationKey(tp) }.toList
+
+      // try to complete the request immediately, otherwise put it into the purgatory;
+      // this is because while the delayed fetch operation is being created, new requests
+      // may arrive and hence make this operation completable.
+      delayedFetchPurgatory.tryCompleteElseWatch(delayedFetch, (classicDelayedFetchKeys ++ disklessDelayedFetchKeys).asJava)
+    }
+
+    if (classicFetchInfos.isEmpty) {
+      delayedResponse(Seq.empty)
+      return
+    }
+
+    val classicParams = fetchParamsWithNewMaxBytes(params, classicFetchInfos.size.toFloat / fetchInfos.size.toFloat)
+
     // check if this fetch request can be satisfied right away
-    val logReadResults = readFromLog(params, fetchInfos, quota, readFromPurgatory = false)
+    val logReadResults = readFromLog(classicParams, classicFetchInfos, quota, readFromPurgatory = false)
     var bytesReadable: Long = 0
     var errorReadingData = false
 
@@ -1790,6 +1865,11 @@ class ReplicaManager(val config: KafkaConfig,
       logReadResultMap.put(topicIdPartition, logReadResult)
     }
 
+    val fetchPartitionData = logReadResults.map { case (tp, result) =>
+      val isReassignmentFetch = params.isFromFollower && isAddingReplica(tp.topicPartition, params.replicaId)
+      tp -> result.toFetchPartitionData(isReassignmentFetch)
+    }
+
     // Respond immediately if no remote fetches are required and any of the below conditions is true
     //                        1) fetch request does not want to wait
     //                        2) fetch request does not require any data
@@ -1797,17 +1877,13 @@ class ReplicaManager(val config: KafkaConfig,
     //                        4) some error happens while reading data
     //                        5) we found a diverging epoch
     //                        6) has a preferred read replica
-    if (!remoteFetchInfo.isPresent && (params.maxWaitMs <= 0 || fetchInfos.isEmpty || bytesReadable >= params.minBytes || errorReadingData ||
+    if (!remoteFetchInfo.isPresent && disklessFetchInfos.isEmpty && (params.maxWaitMs <= 0 || bytesReadable >= params.minBytes || errorReadingData ||
       hasDivergingEpoch || hasPreferredReadReplica)) {
-      val fetchPartitionData = logReadResults.map { case (tp, result) =>
-        val isReassignmentFetch = params.isFromFollower && isAddingReplica(tp.topicPartition, params.replicaId)
-        tp -> result.toFetchPartitionData(isReassignmentFetch)
-      }
       responseCallback(fetchPartitionData)
     } else {
       // construct the fetch results from the read results
       val fetchPartitionStatus = new mutable.ArrayBuffer[(TopicIdPartition, FetchPartitionStatus)]
-      fetchInfos.foreach { case (topicIdPartition, partitionData) =>
+      classicFetchInfos.foreach { case (topicIdPartition, partitionData) =>
         logReadResultMap.get(topicIdPartition).foreach(logReadResult => {
           val logOffsetMetadata = logReadResult.info.fetchOffsetMetadata
           fetchPartitionStatus += (topicIdPartition -> FetchPartitionStatus(logOffsetMetadata, partitionData))
@@ -1815,33 +1891,52 @@ class ReplicaManager(val config: KafkaConfig,
       }
 
       if (remoteFetchInfo.isPresent) {
-        val maybeLogReadResultWithError = processRemoteFetch(remoteFetchInfo.get(), params, responseCallback, logReadResults, fetchPartitionStatus)
+        // In case of remote fetches, synchronously wait for diskless records and then perform the remote fetch.
+        // This is currently a workaround to avoid modifying the DelayedRemoteFetch in order to correctly process
+        // diskless fetches.
+        val disklessFetchResults = try {
+          val disklessParams = fetchParamsWithNewMaxBytes(params, disklessFetchInfos.size.toFloat / fetchInfos.size.toFloat)
+          val disklessResponsesFuture = fetchDisklessMessages(disklessParams, disklessFetchInfos)
+
+          val response = disklessResponsesFuture.get(maxWaitMs, TimeUnit.MILLISECONDS)
+          response.map { case (tp, data) =>
+            val exception: Optional[Throwable] = data.error match {
+              case Errors.NONE => Optional.empty()
+              case ex => Optional.of(ex.exception())
+            }
+            tp -> new LogReadResult(
+              new FetchDataInfo(new LogOffsetMetadata(0L), data.records), // offset is ignored
+              data.divergingEpoch, data.highWatermark, data.logStartOffset, data.highWatermark, data.logStartOffset,
+              0L, // fetchTimeMs is ignored
+              data.lastStableOffset, data.preferredReadReplica,
+              exception
+            )
+          }
+        } catch {
+          case e: Throwable =>
+            disklessFetchInfos.map { case (tp, _) =>
+              tp -> new LogReadResult(
+                FetchDataInfo.empty(-1L),
+                Optional.empty(), -1L, -1L, -1L, -1L, 0L, OptionalLong.empty(), OptionalInt.empty(),
+                Optional.of(e)
+              )
+            }
+        }
+        val readResults = logReadResults ++ disklessFetchResults
+        val maybeLogReadResultWithError = processRemoteFetch(remoteFetchInfo.get(), classicParams, responseCallback, readResults, fetchPartitionStatus)
         if (maybeLogReadResultWithError.isDefined) {
           // If there is an error in scheduling the remote fetch task, return what we currently have
           // (the data read from local log segment for the other topic-partitions) and an error for the topic-partition
           // that we couldn't read from remote storage
-          val partitionToFetchPartitionData = buildPartitionToFetchPartitionData(logReadResults, remoteFetchInfo.get().topicPartition, maybeLogReadResultWithError.get)
+          val partitionToFetchPartitionData = buildPartitionToFetchPartitionData(readResults, remoteFetchInfo.get().topicPartition, maybeLogReadResultWithError.get)
           responseCallback(partitionToFetchPartitionData)
         }
       } else {
-        // If there is not enough data to respond and there is no remote data, we will let the fetch request
-        // wait for new data.
-        val delayedFetch = new DelayedFetch(
-          params = params,
-          fetchPartitionStatus = fetchPartitionStatus,
-          replicaManager = this,
-          isInklessTopic = isInklessTopic,
-          quota = quota,
-          responseCallback = responseCallback
-        )
-
-        // create a list of (topic, partition) pairs to use as keys for this delayed fetch operation
-        val delayedFetchKeys = fetchPartitionStatus.map { case (tp, _) => new TopicPartitionOperationKey(tp) }.toList
-
-        // try to complete the request immediately, otherwise put it into the purgatory;
-        // this is because while the delayed fetch operation is being created, new requests
-        // may arrive and hence make this operation completable.
-        delayedFetchPurgatory.tryCompleteElseWatch(delayedFetch, delayedFetchKeys.asJava)
+        if (disklessFetchInfos.isEmpty && (bytesReadable >= params.minBytes || params.maxWaitMs <= 0)) {
+          responseCallback(fetchPartitionData)
+        } else {
+          delayedResponse(fetchPartitionStatus)
+        }
       }
     }
   }
@@ -2616,7 +2711,7 @@ class ReplicaManager(val config: KafkaConfig,
 
     // Shrink ISRs for non offline partitions
     allPartitions.forEach { (topicPartition, _) =>
-      if (!isInklessTopic(topicPartition.topic()))
+      if (!_inklessMetadataView.isDisklessTopic(topicPartition.topic()))
         onlinePartition(topicPartition).foreach(_.maybeShrinkIsr())
     }
   }
@@ -2743,8 +2838,10 @@ class ReplicaManager(val config: KafkaConfig,
     removeAllTopicMetrics()
     addPartitionsToTxnManager.foreach(_.shutdown())
     inklessAppendHandler.foreach(_.close())
-    inklessFetchInterceptor.foreach(_.close())
+    inklessFetchHandler.foreach(_.close())
+    inklessFetchOffsetHandler.foreach(_.close())
     inklessRetentionEnforcer.foreach(_.close())
+    inklessFileCleaner.foreach(_.close())
     inklessSharedState.foreach(_.close())
     info("Shut down completely")
   }
@@ -2776,7 +2873,7 @@ class ReplicaManager(val config: KafkaConfig,
   def lastOffsetForLeaderEpoch(
     requestedEpochInfo: Seq[OffsetForLeaderTopic]
   ): Seq[OffsetForLeaderTopicResult] = {
-    // First start job to collect inkless offsets
+    // First start job to collect diskless offsets
     val inklessFetchOffsetHandlerJob: Option[FetchOffsetHandler.Job] = inklessFetchOffsetHandler.map(_.createJob())
 
     val inklessOffsetFuturesByTopic: Map[String, Seq[CompletableFuture[EpochEndOffset]]] = requestedEpochInfo
@@ -2818,7 +2915,7 @@ class ReplicaManager(val config: KafkaConfig,
     // Then build response
     requestedEpochInfo
       .map { offsetForLeaderTopic =>
-        if (isInklessTopic(offsetForLeaderTopic.topic())) {
+        if (_inklessMetadataView.isDisklessTopic(offsetForLeaderTopic.topic())) {
           inklessOffsetFuturesByTopic.get(offsetForLeaderTopic.topic())
             .map { futures =>
               // Wait until offsetForLeaderTopic is completed
@@ -2868,10 +2965,6 @@ class ReplicaManager(val config: KafkaConfig,
             .setPartitions(partitions.toList.asJava)
         }
       }
-  }
-
-  private def isInklessTopic(topic: String): Boolean = {
-    inklessSharedState.exists(_.metadata().isInklessTopic(topic))
   }
 
   def activeProducerState(requestPartition: TopicPartition): DescribeProducersResponseData.PartitionResponse = {
@@ -3001,7 +3094,7 @@ class ReplicaManager(val config: KafkaConfig,
       "local leaders.")
     replicaFetcherManager.removeFetcherForPartitions(localLeaders.keySet)
     localLeaders.foreachEntry { (tp, info) =>
-      if (!isInklessTopic(tp.topic()))
+      if (!_inklessMetadataView.isDisklessTopic(tp.topic()))
         getOrCreatePartition(tp, delta, info.topicId).foreach { case (partition, isNew) =>
           try {
             val state = info.partition.toLeaderAndIsrPartitionState(tp, isNew)
@@ -3037,7 +3130,7 @@ class ReplicaManager(val config: KafkaConfig,
     val partitionsToStopFetching = new mutable.HashMap[TopicPartition, Boolean]
     val followerTopicSet = new mutable.HashSet[String]
     localFollowers.foreachEntry { (tp, info) =>
-      if (!isInklessTopic(tp.topic()))
+      if (!_inklessMetadataView.isDisklessTopic(tp.topic()))
         getOrCreatePartition(tp, delta, info.topicId).foreach { case (partition, isNew) =>
           try {
             followerTopicSet.add(tp.topic)

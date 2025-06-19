@@ -34,7 +34,10 @@ import java.io.BufferedOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.nio.channels.Channels;
+import java.nio.channels.ReadableByteChannel;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 
 import io.aiven.inkless.common.ByteRange;
@@ -47,9 +50,12 @@ import reactor.core.Exceptions;
 
 @CoverageIgnore // tested on integration level
 public class AzureBlobStorage implements StorageBackend {
+    // Use a single instance to avoid creating many metric registries
+    // meaning a single set of metrics is published and instantiated only once
+    static final MetricCollector metricCollector = new MetricCollector();
     private AzureBlobStorageConfig config;
     private BlobContainerClient blobContainerClient;
-    private MetricCollector metricsPolicy;
+    private MetricCollector.MetricsPolicy policy;
 
     @Override
     public void configure(final Map<String, ?> configs) {
@@ -71,11 +77,9 @@ public class AzureBlobStorage implements StorageBackend {
                     new DefaultAzureCredentialBuilder().build());
             }
         }
-
-        metricsPolicy = new MetricCollector(config);
-
+        policy = metricCollector.policy(config);
         blobContainerClient = blobServiceClientBuilder
-            .addPolicy(metricsPolicy.policy())
+            .addPolicy(policy)
             .buildClient()
             .getBlobContainerClient(config.containerName());
     }
@@ -90,6 +94,11 @@ public class AzureBlobStorage implements StorageBackend {
 
     @Override
     public void upload(final ObjectKey key, InputStream inputStream, long length) throws StorageBackendException {
+        Objects.requireNonNull(key, "key cannot be null");
+        Objects.requireNonNull(inputStream, "inputStream cannot be null");
+        if (length <= 0) {
+            throw new IllegalArgumentException("length must be positive");
+        }
         final var specializedBlobClientBuilder = new SpecializedBlobClientBuilder();
         if (config.connectionString() != null) {
             specializedBlobClientBuilder.connectionString(config.connectionString());
@@ -108,7 +117,7 @@ public class AzureBlobStorage implements StorageBackend {
         }
 
         final BlockBlobClient blockBlobClient = specializedBlobClientBuilder
-            .addPolicy(metricsPolicy.policy())
+            .addPolicy(policy)
             .containerName(config.containerName())
             .blobName(key.value())
             .buildBlockBlobClient();
@@ -126,7 +135,11 @@ public class AzureBlobStorage implements StorageBackend {
         // If upload changes, change metrics instrumentation accordingly.
         try (OutputStream os = new BufferedOutputStream(
             blockBlobClient.getBlobOutputStream(options), config.uploadBlockSize())) {
-            inputStream.transferTo(os);
+            long transferred = inputStream.transferTo(os);
+            if (transferred != length) {
+                throw new StorageBackendException(
+                        "Object " + key + " created with incorrect length " + transferred + " instead of " + length);
+            }
         } catch (final IOException e) {
             throw new StorageBackendException("Failed to upload " + key, e);
         } catch (final RuntimeException e) {
@@ -135,22 +148,24 @@ public class AzureBlobStorage implements StorageBackend {
     }
 
     @Override
-    public InputStream fetch(final ObjectKey key, final ByteRange range) throws StorageBackendException {
+    public ReadableByteChannel fetch(final ObjectKey key, final ByteRange range) throws StorageBackendException, IOException {
         try {
             if (range!= null && range.empty()) {
-                return InputStream.nullInputStream();
+                return Channels.newChannel(InputStream.nullInputStream());
             }
+            final ReadableByteChannel channel;
             if (range != null) {
-                return blobContainerClient.getBlobClient(key.value()).openInputStream(
-                        new BlobRange(range.offset(), range.size()), null);
+                channel = Channels.newChannel(blobContainerClient.getBlobClient(key.value()).openInputStream(
+                        new BlobRange(range.offset(), range.size()), null));
             } else {
-                return blobContainerClient.getBlobClient(key.value()).openInputStream();
+                channel = Channels.newChannel(blobContainerClient.getBlobClient(key.value()).openInputStream());
             }
+            return channel;
         } catch (final BlobStorageException e) {
             if (e.getStatusCode() == 404) {
                 throw new KeyNotFoundException(this, key, e);
             } else if (e.getStatusCode() == 416) {
-                throw new InvalidRangeException("Invalid range " + range, e);
+                throw new InvalidRangeException("Failed to fetch " + key + ": Invalid range " + range, e);
             } else {
                 throw new StorageBackendException("Failed to fetch " + key, e);
             }
@@ -197,5 +212,10 @@ public class AzureBlobStorage implements StorageBackend {
         return "AzureStorage{"
             + "containerName='" + config.containerName() + '\''
             + '}';
+    }
+
+    @Override
+    public void close() throws IOException {
+        metricCollector.close();
     }
 }

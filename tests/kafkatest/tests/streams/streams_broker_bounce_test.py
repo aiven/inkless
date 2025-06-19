@@ -17,7 +17,6 @@ from ducktape.utils.util import wait_until
 from ducktape.tests.test import Test
 from ducktape.mark.resource import cluster
 from ducktape.mark import matrix
-from ducktape.mark import ignore
 from kafkatest.services.kafka import KafkaService, quorum
 from kafkatest.services.streams import StreamsSmokeTestDriverService, StreamsSmokeTestJobRunnerService
 import time
@@ -112,8 +111,8 @@ class StreamsBrokerBounceTest(Test):
                        'configs': {"min.insync.replicas": 2} },
             'tagg' : { 'partitions': self.partitions, 'replication-factor': self.replication,
                        'configs': {"min.insync.replicas": 2} },
-            '__consumer_offsets' : { 'partitions': 50, 'replication-factor': self.replication,
-                       'configs': {"min.insync.replicas": 2} }
+            '__consumer_offsets' : { 'partitions': self.partitions, 'replication-factor': self.replication,
+                                     'configs': {"min.insync.replicas": 2} }
         }
 
     def fail_broker_type(self, failure_mode, broker_type):
@@ -152,7 +151,10 @@ class StreamsBrokerBounceTest(Test):
     def setup_system(self, start_processor=True, num_threads=3, group_protocol='classic'):
         # Setup phase
         use_streams_groups = True if group_protocol == 'streams' else False
-        self.kafka = KafkaService(self.test_context, num_nodes=self.replication, zk=None, topics=self.topics, use_streams_groups=use_streams_groups)
+        self.kafka = KafkaService(self.test_context, num_nodes=self.replication, zk=None, topics=self.topics, server_prop_overrides=[
+            ["offsets.topic.num.partitions", self.partitions],
+            ["offsets.topic.replication.factor", self.replication]
+        ], use_streams_groups=use_streams_groups)
         self.kafka.start()
 
         # allow some time for topics to be created
@@ -226,31 +228,6 @@ class StreamsBrokerBounceTest(Test):
 
         return self.collect_results(sleep_time_secs)
 
-    @ignore
-    @cluster(num_nodes=7)
-    @matrix(failure_mode=["clean_shutdown"],
-            broker_type=["controller"],
-            sleep_time_secs=[0],
-            metadata_quorum=[quorum.combined_kraft],
-            group_protocol=["classic", "streams"])
-    def test_broker_type_bounce_at_start(self, failure_mode, broker_type, sleep_time_secs, metadata_quorum, group_protocol):
-        """
-        Start a smoke test client, then kill one particular broker immediately before streams stats
-        Streams should throw an exception since it cannot create topics with the desired
-        replication factor of 3
-        """
-        self.setup_system(start_processor=False, group_protocol=group_protocol)
-
-        # Sleep to allow test to run for a bit
-        time.sleep(sleep_time_secs)
-
-        # Fail brokers
-        self.fail_broker_type(failure_mode, broker_type)
-
-        self.processor1.start()
-
-        return self.collect_results(sleep_time_secs)
-
     @cluster(num_nodes=10)
     @matrix(failure_mode=["clean_shutdown", "hard_shutdown", "clean_bounce", "hard_bounce"],
             num_failures=[2],
@@ -285,7 +262,7 @@ class StreamsBrokerBounceTest(Test):
         # Set min.insync.replicas to 1 because in the last stage of the test there is only one broker left.
         # Otherwise the last offset commit will never succeed and time out and potentially take longer as
         # duration passed to the close method of the Kafka Streams client.
-        self.topics['__consumer_offsets'] = { 'partitions': 50, 'replication-factor': self.replication,
+        self.topics['__consumer_offsets'] = { 'partitions': self.partitions, 'replication-factor': self.replication,
                                               'configs': {"min.insync.replicas": 1} }
 
         self.setup_system(group_protocol=group_protocol)

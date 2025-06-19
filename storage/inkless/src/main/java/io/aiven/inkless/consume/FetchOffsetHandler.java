@@ -22,6 +22,7 @@ import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.errors.ApiException;
 import org.apache.kafka.common.message.ListOffsetsRequestData;
 import org.apache.kafka.common.record.FileRecords;
+import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.metadata.LeaderAndIsr;
 import org.apache.kafka.storage.internals.log.OffsetResultHolder;
 
@@ -30,6 +31,7 @@ import org.slf4j.LoggerFactory;
 
 import java.io.Closeable;
 import java.io.IOException;
+import java.time.Instant;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -41,6 +43,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.stream.Collectors;
 
+import io.aiven.inkless.TimeUtils;
 import io.aiven.inkless.common.InklessThreadFactory;
 import io.aiven.inkless.common.SharedState;
 import io.aiven.inkless.common.TopicIdEnricher;
@@ -52,19 +55,24 @@ import io.aiven.inkless.control_plane.MetadataView;
 public class FetchOffsetHandler implements Closeable {
     private final SharedState state;
     private final ExecutorService executor;
+    private final Time time;
+    private final InklessFetchOffsetMetrics metrics;
 
     public FetchOffsetHandler(SharedState state) {
         this.state = state;
         this.executor = Executors.newCachedThreadPool(new InklessThreadFactory("inkless-fetch-offset-metadata", false));
+        this.time = state.time();
+        this.metrics = new InklessFetchOffsetMetrics(state.time());
     }
 
     public Job createJob() {
-        return new Job(state.metadata(), state.controlPlane(), executor);
+        return new Job(state.metadata(), state.controlPlane(), executor, time, metrics);
     }
 
     @Override
     public void close() throws IOException {
-        this.executor.shutdown();
+        executor.shutdown();
+        metrics.close();
     }
 
     public static class Job {
@@ -78,16 +86,24 @@ public class FetchOffsetHandler implements Closeable {
         private final Map<TopicPartition, ListOffsetsRequestData.ListOffsetsPartition> requests = new HashMap<>();
         private final Map<TopicPartition, CompletableFuture<OffsetResultHolder.FileRecordsOrError>> futures = new HashMap<>();
 
+        private final Time time;
+        private final InklessFetchOffsetMetrics metrics;
+        private Instant startTime;
+
         public Job(final MetadataView metadata,
                    final ControlPlane controlPlane,
-                   final ExecutorService executor) {
+                   final ExecutorService executor,
+                   final Time time,
+                   final InklessFetchOffsetMetrics metrics) {
             this.metadata = metadata;
             this.controlPlane = controlPlane;
             this.executor = executor;
+            this.time = time;
+            this.metrics = metrics;
         }
 
         public boolean mustHandle(final String topic) {
-            return metadata.isInklessTopic(topic);
+            return metadata.isDisklessTopic(topic);
         }
 
         public Future<Void> cancelHandler() {
@@ -103,6 +119,8 @@ public class FetchOffsetHandler implements Closeable {
         }
 
         public void start() {
+            this.startTime = TimeUtils.durationMeasurementNow(time);
+
             if (requests.isEmpty()) {
                 return;
             }
@@ -111,14 +129,17 @@ public class FetchOffsetHandler implements Closeable {
             try {
                 requestsEnriched = TopicIdEnricher.enrich(metadata, requests);
             } catch (final TopicIdEnricher.TopicIdNotFoundException e) {
-                // This should not happen during normal execution, non-Inkless topics won't get here.
+                // This should not happen during normal execution, non-Diskless topics won't get here.
                 LOGGER.error("Cannot find UUID for topic {}", e.topicName);
+                metrics.fetchOffsetFailed();
                 throw new RuntimeException();
             }
             final Future<?> submitted = executor.submit(() -> queryControlPlane(requestsEnriched));
             cancelHandler.handle((_ignored, e) -> {
                 if (e instanceof CancellationException) {
-                    submitted.cancel(true);
+                    if (submitted.cancel(true)) {
+                        metrics.fetchOffsetFailed();
+                    }
                 }
                 return null;
             });
@@ -140,6 +161,7 @@ public class FetchOffsetHandler implements Closeable {
                         Optional.empty()
                     ));
                 }
+                metrics.fetchOffsetFailed();
                 return;
             }
 
@@ -158,6 +180,7 @@ public class FetchOffsetHandler implements Closeable {
                     ));
                 }
             }
+            metrics.fetchOffsetCompleted(startTime);
         }
     }
 }

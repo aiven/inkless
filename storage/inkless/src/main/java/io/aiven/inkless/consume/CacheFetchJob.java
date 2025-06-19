@@ -38,6 +38,7 @@ public class CacheFetchJob implements Callable<FileExtent> {
     private final Consumer<Long> cacheQueryDurationCallback;
     private final Consumer<Boolean> cacheHitRateCallback;
     private final Consumer<Long> cacheStoreDurationCallback;
+    private final Consumer<Integer> cacheEntrySize;
     private final CacheKey key;
     private final FileFetchJob fallback;
 
@@ -50,13 +51,15 @@ public class CacheFetchJob implements Callable<FileExtent> {
             Consumer<Long> cacheQueryDurationCallback,
             Consumer<Long> cacheStoreDurationCallback,
             Consumer<Boolean> cacheHitRateCallback,
-            Consumer<Long> fileFetchDurationCallback
+            Consumer<Long> fileFetchDurationCallback,
+            Consumer<Integer> cacheEntrySize
     ) {
         this.cache = cache;
         this.time = time;
         this.cacheQueryDurationCallback = cacheQueryDurationCallback;
         this.cacheStoreDurationCallback = cacheStoreDurationCallback;
         this.cacheHitRateCallback = cacheHitRateCallback;
+        this.cacheEntrySize = cacheEntrySize;
         this.key = createCacheKey(objectKey, byteRange);
         this.fallback = new FileFetchJob(time, objectFetcher, objectKey, byteRange, fileFetchDurationCallback);
     }
@@ -72,15 +75,25 @@ public class CacheFetchJob implements Callable<FileExtent> {
 
     @Override
     public FileExtent call() throws Exception {
-        FileExtent file = TimeUtils.measureDurationMs(time, () -> cache.get(key), cacheQueryDurationCallback);
-        cacheHitRateCallback.accept(file != null);
-        if (file != null) {
-            // cache hit
-            return file;
+        // Catch cache-related exceptions but let remote storage exceptions bubble up.
+        try {
+            FileExtent file = TimeUtils.measureDurationMs(time, () -> cache.get(key), cacheQueryDurationCallback);
+            cacheHitRateCallback.accept(file != null);
+            if (file != null) {
+                // cache hit
+                return file;
+            }
+        } catch (final Exception e) {
+            throw new CacheFetchException(e);
         }
         // cache miss
         FileExtent freshFile = fallback.call();
-        TimeUtils.measureDurationMs(time, () -> cache.put(key, freshFile), cacheStoreDurationCallback);
+        try {
+            TimeUtils.measureDurationMs(time, () -> cache.put(key, freshFile), cacheStoreDurationCallback);
+            cacheEntrySize.accept(freshFile.data().length);
+        } catch (final Exception e) {
+            throw new CacheFetchException(e);
+        }
         return freshFile;
     }
 

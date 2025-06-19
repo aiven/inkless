@@ -23,7 +23,6 @@ import org.apache.kafka.clients.NodeApiVersions;
 import org.apache.kafka.clients.consumer.CommitFailedException;
 import org.apache.kafka.clients.consumer.ConsumerGroupMetadata;
 import org.apache.kafka.clients.consumer.OffsetAndMetadata;
-import org.apache.kafka.clients.producer.PreparedTxnState;
 import org.apache.kafka.clients.producer.RecordMetadata;
 import org.apache.kafka.common.KafkaException;
 import org.apache.kafka.common.Node;
@@ -4023,56 +4022,6 @@ public class TransactionManagerTest {
         prepareEndTxnResponse(Errors.NONE, retryTransactionResult, producerId, epoch);
         runUntil(retryResult::isCompleted);
         assertFalse(transactionManager.hasOngoingTransaction());
-    }
-
-    @Test
-    public void testInitializeTransactionsWithKeepPreparedTxn() {
-        doInitTransactionsWith2PCEnabled(true);
-        runUntil(transactionManager::hasProducerId);
-
-        // Expect a bumped epoch in the response.
-        assertTrue(transactionManager.hasProducerId());
-        assertFalse(transactionManager.hasOngoingTransaction());
-        assertEquals(ongoingProducerId, transactionManager.producerIdAndEpoch().producerId);
-        assertEquals(bumpedOngoingEpoch, transactionManager.producerIdAndEpoch().epoch);
-    }
-
-    @Test
-    public void testPrepareTransaction() {
-        doInitTransactionsWith2PCEnabled(false);
-        runUntil(transactionManager::hasProducerId);
-
-        // Begin a transaction
-        transactionManager.beginTransaction();
-        assertTrue(transactionManager.hasOngoingTransaction());
-
-        // Add a partition to the transaction
-        transactionManager.maybeAddPartition(tp0);
-
-        // Capture the current producer ID and epoch before preparing the response
-        long producerId = transactionManager.producerIdAndEpoch().producerId;
-        short epoch = transactionManager.producerIdAndEpoch().epoch;
-
-        // Simulate a produce request
-        try {
-            // Prepare the response before sending to ensure it's ready
-            prepareProduceResponse(Errors.NONE, producerId, epoch);
-
-            appendToAccumulator(tp0);
-            // Wait until the request is processed
-            runUntil(() -> !client.hasPendingResponses());
-        } catch (InterruptedException e) {
-            fail("Unexpected interruption: " + e);
-        }
-
-        transactionManager.prepareTransaction();
-        assertTrue(transactionManager.isPrepared());
-
-        PreparedTxnState preparedState = transactionManager.preparedTransactionState();
-        // Validate the state contains the correct serialized producer ID and epoch
-        assertEquals(producerId + ":" + epoch, preparedState.toString());
-        assertEquals(producerId, preparedState.producerId());
-        assertEquals(epoch, preparedState.epoch());
     }
 
     private void prepareAddPartitionsToTxn(final Map<TopicPartition, Errors> errors) {

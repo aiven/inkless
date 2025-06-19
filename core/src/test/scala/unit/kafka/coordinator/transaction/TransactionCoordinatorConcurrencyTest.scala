@@ -25,6 +25,7 @@ import kafka.coordinator.AbstractCoordinatorConcurrencyTest
 import kafka.coordinator.AbstractCoordinatorConcurrencyTest._
 import kafka.coordinator.transaction.TransactionCoordinatorConcurrencyTest._
 import kafka.server.KafkaConfig
+import kafka.server.metadata.KRaftMetadataCache
 import kafka.utils.TestUtils
 import org.apache.kafka.clients.{ClientResponse, NetworkClient}
 import org.apache.kafka.common.internals.Topic
@@ -38,7 +39,6 @@ import org.apache.kafka.common.requests._
 import org.apache.kafka.common.utils.{LogContext, MockTime, ProducerIdAndEpoch}
 import org.apache.kafka.common.{Node, TopicPartition, Uuid}
 import org.apache.kafka.coordinator.transaction.{ProducerIdManager, TransactionState}
-import org.apache.kafka.metadata.MetadataCache
 import org.apache.kafka.server.common.{FinalizedFeatures, MetadataVersion, RequestLocal, TransactionVersion}
 import org.apache.kafka.server.storage.log.FetchIsolation
 import org.apache.kafka.storage.internals.log.{FetchDataInfo, LogConfig, LogOffsetMetadata, UnifiedLog}
@@ -78,7 +78,7 @@ class TransactionCoordinatorConcurrencyTest extends AbstractCoordinatorConcurren
     super.setUp()
 
     val brokerNode = new Node(0, "host", 10)
-    val metadataCache: MetadataCache = mock(classOf[MetadataCache])
+    val metadataCache: KRaftMetadataCache = mock(classOf[KRaftMetadataCache])
     when(metadataCache.getPartitionLeaderEndpoint(
       anyString,
       anyInt,

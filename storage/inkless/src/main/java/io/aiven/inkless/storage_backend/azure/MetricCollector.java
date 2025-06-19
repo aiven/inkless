@@ -31,6 +31,8 @@ import com.azure.core.http.HttpResponse;
 import com.azure.core.http.policy.HttpPipelinePolicy;
 import com.groupcdg.pitest.annotations.CoverageIgnore;
 
+import java.io.Closeable;
+import java.io.IOException;
 import java.util.List;
 import java.util.regex.Pattern;
 
@@ -55,32 +57,39 @@ import static io.aiven.inkless.storage_backend.azure.MetricRegistry.BLOCK_UPLOAD
 import static io.aiven.inkless.storage_backend.azure.MetricRegistry.METRIC_CONTEXT;
 
 @CoverageIgnore // tested on integration level
-public class MetricCollector {
+public class MetricCollector implements Closeable {
+    final Metrics metrics;
 
-    final AzureBlobStorageConfig config;
-    final MetricsPolicy policy;
-
-    public MetricCollector(final AzureBlobStorageConfig config) {
-        this.config = config;
-
+    public MetricCollector() {
         final JmxReporter reporter = new JmxReporter();
 
-        final Metrics metrics = new Metrics(
+        metrics = new Metrics(
             new MetricConfig(), List.of(reporter), Time.SYSTEM,
             new KafkaMetricsContext(METRIC_CONTEXT)
         );
-        policy = new MetricsPolicy(metrics, pathPattern());
     }
 
-    final Pattern pathPattern() {
+    final Pattern pathPattern(final AzureBlobStorageConfig config) {
         // account is in the hostname when on azure, but included on the path when testing on Azurite
         final var maybeAccountName = "(/" + config.accountName() + ")?";
         final var exp = "^" + maybeAccountName + "/" + config.containerName() + "/" + "([^/]+)";
         return Pattern.compile(exp);
     }
 
-    MetricsPolicy policy() {
-        return policy;
+    MetricsPolicy policy(final AzureBlobStorageConfig config) {
+        return new MetricsPolicy(metrics, pathPattern(config));
+    }
+
+    @Override
+    public void close() throws IOException {
+        // remove sensors to restart their counts when reconfigured
+        // instead of closing metrics which would affect other storage backends if used together
+        // TODO: consider making a single metrics to be passed to all storage backends
+        metrics.removeSensor(BLOB_GET);
+        metrics.removeSensor(BLOB_UPLOAD);
+        metrics.removeSensor(BLOCK_UPLOAD);
+        metrics.removeSensor(BLOCK_LIST_UPLOAD);
+        metrics.removeSensor(BLOB_DELETE);
     }
 
     static class MetricsPolicy implements HttpPipelinePolicy {

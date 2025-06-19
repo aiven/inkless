@@ -19,7 +19,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        java: [ 17 ]  # If we change these, make sure to adjust ci-complete.yml
+        java: [ 17, 23 ]  # If we change these, make sure to adjust ci-complete.yml
     name: JUnit tests Java ${{ matrix.java }}
     steps:
       - name: Checkout code
@@ -37,6 +37,12 @@ jobs:
           gradle-cache-read-only: ${{ inputs.gradle-cache-read-only }}
           gradle-cache-write-only: ${{ inputs.gradle-cache-write-only }}
           develocity-access-key: ${{ secrets.GE_ACCESS_TOKEN }}
+      # JOOQ classes are generated on the previous validate job,
+      # but if generated with JDK 17, there are no warning suppressions for `this-escape` needed after JDK 21.
+      # see https://github.com/jOOQ/jOOQ/issues/15619
+      - name: Regenerate JOOQ classes (needed after JDK 21)
+        if: matrix.java != '17'
+        run: ./gradlew :storage:inkless:generateJooqClasses
       - name: Test
         # Gradle flags
         # --build-cache:  Let Gradle restore the build cache

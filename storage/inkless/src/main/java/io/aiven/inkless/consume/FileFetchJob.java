@@ -20,7 +20,6 @@ package io.aiven.inkless.consume;
 import org.apache.kafka.common.utils.Time;
 
 import java.io.IOException;
-import java.io.InputStream;
 import java.nio.ByteBuffer;
 import java.util.Objects;
 import java.util.concurrent.Callable;
@@ -70,10 +69,12 @@ public class FileFetchJob implements Callable<FileExtent> {
         return TimeUtils.measureDurationMs(time, this::doWork, durationCallback);
     }
 
-    private FileExtent doWork() throws StorageBackendException, IOException {
-        try (InputStream stream = objectFetcher.fetch(key, range)) {
-            byte[] bytes = stream.readNBytes(size);
-            return createFileExtent(key, range, ByteBuffer.wrap(bytes));
+    private FileExtent doWork() throws FileFetchException {
+        try {
+            final ByteBuffer byteBuffer = objectFetcher.readToByteBuffer(objectFetcher.fetch(key, range));
+            return createFileExtent(key, range, byteBuffer);
+        } catch (final IOException | StorageBackendException e) {
+            throw new FileFetchException(e);
         }
     }
 

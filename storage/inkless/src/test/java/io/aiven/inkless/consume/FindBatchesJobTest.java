@@ -44,7 +44,6 @@ import io.aiven.inkless.control_plane.BatchMetadata;
 import io.aiven.inkless.control_plane.ControlPlane;
 import io.aiven.inkless.control_plane.FindBatchRequest;
 import io.aiven.inkless.control_plane.FindBatchResponse;
-import io.aiven.inkless.control_plane.MetadataView;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.anyInt;
@@ -55,23 +54,22 @@ import static org.mockito.Mockito.when;
 public class FindBatchesJobTest {
 
     private final Time time = new MockTime();
+    private final int maxBatchesPerPartition = 0;
 
     @Mock
     private ControlPlane controlPlane;
     @Mock
     private FetchParams params;
-    @Mock
-    private MetadataView metadataView;
 
     @Captor
     ArgumentCaptor<List<FindBatchRequest>> requestCaptor;
 
     Uuid topicId = Uuid.randomUuid();
     static final String OBJECT_KEY_MAIN_PART = "a";
-    TopicIdPartition partition0 = new TopicIdPartition(topicId, 0, "inkless-topic");
+    TopicIdPartition partition0 = new TopicIdPartition(topicId, 0, "diskless-topic");
 
     @Test
-    public void findSingleBatch() throws Exception {
+    public void findSingleBatch() {
         Map<TopicIdPartition, FetchRequest.PartitionData> fetchInfos = Map.of(
             partition0, new FetchRequest.PartitionData(topicId, 0, 0, 1000, Optional.empty())
         );
@@ -84,38 +82,11 @@ public class FindBatchesJobTest {
                 new BatchInfo(1L, OBJECT_KEY_MAIN_PART, BatchMetadata.of(partition0, 0, 10, 0, 0, logAppendTimestamp, maxBatchTimestamp, TimestampType.CREATE_TIME))
             ), logStartOffset, highWatermark)
         );
-        FindBatchesJob job = new FindBatchesJob(time, controlPlane, metadataView, params, fetchInfos, durationMs -> {});
-        when(controlPlane.findBatches(requestCaptor.capture(), anyInt())).thenReturn(new ArrayList<>(coordinates.values()));
-        Map<TopicIdPartition, FindBatchResponse> result = job.call();
+        FindBatchesJob job = new FindBatchesJob(time, controlPlane, params, fetchInfos, maxBatchesPerPartition, durationMs -> {});
+        when(controlPlane.findBatches(requestCaptor.capture(), anyInt(), anyInt())).thenReturn(new ArrayList<>(coordinates.values()));
+        Map<TopicIdPartition, FindBatchResponse> result = job.get();
 
         assertThat(result).isEqualTo(coordinates);
     }
 
-    @Test
-    public void findSingleBatchWithoutTopicId() throws Exception {
-        final Uuid noTopicId = Uuid.ZERO_UUID;
-        TopicIdPartition partition0 = new TopicIdPartition(noTopicId, 0, "inkless-topic");
-        Map<TopicIdPartition, FetchRequest.PartitionData> fetchInfos = Map.of(
-            partition0, new FetchRequest.PartitionData(noTopicId, 0, 0, 1000, Optional.empty())
-        );
-        int logStartOffset = 0;
-        long logAppendTimestamp = 10L;
-        long maxBatchTimestamp = 20L;
-        int highWatermark = 1;
-
-        // Simulate the metadata view returning a topic ID for the partition
-        when(metadataView.getTopicId(partition0.topic())).thenReturn(topicId);
-
-        Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of(
-            partition0, FindBatchResponse.success(List.of(
-                new BatchInfo(1L, OBJECT_KEY_MAIN_PART, BatchMetadata.of(partition0, 0, 10, 0, 0, logAppendTimestamp, maxBatchTimestamp, TimestampType.CREATE_TIME))
-            ), logStartOffset, highWatermark)
-        );
-        FindBatchesJob job = new FindBatchesJob(time, controlPlane, metadataView, params, fetchInfos, durationMs -> {});
-        when(controlPlane.findBatches(requestCaptor.capture(), anyInt())).thenReturn(new ArrayList<>(coordinates.values()));
-        Map<TopicIdPartition, FindBatchResponse> result = job.call();
-
-        // Verify that the request was made with the correct topic ID and the result is still with the original partition with no topic ID
-        assertThat(result).isEqualTo(coordinates);
-    }
 }

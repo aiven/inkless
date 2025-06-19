@@ -169,16 +169,20 @@ public class TopicConfig {
          "to trigger the unclean leader election immediately if needed.</p>";
 
     public static final String MIN_IN_SYNC_REPLICAS_CONFIG = "min.insync.replicas";
-    public static final String MIN_IN_SYNC_REPLICAS_DOC = "When a producer sets acks to \"all\" (or \"-1\"), " +
-        "this configuration specifies the minimum number of replicas that must acknowledge " +
-        "a write for the write to be considered successful. If this minimum cannot be met, " +
-        "then the producer will raise an exception (either <code>NotEnoughReplicas</code> or <code>NotEnoughReplicasAfterAppend</code>).<br> " +
+    public static final String MIN_IN_SYNC_REPLICAS_DOC = "Specifies the <i>minimum</i> number of in-sync replicas (including the leader) " +
+        "required for a write to succeed when a producer sets <code>acks</code> to \"all\" (or \"-1\"). In the <code>acks=all</code> " +
+        "case, every in-sync replica must acknowledge a write for it to be considered successful. E.g., if a topic has " +
+        "<code>replication.factor</code> of 3 and the ISR set includes all three replicas, then all three replicas must acknowledge an " +
+        "<code>acks=all</code> write for it to succeed, even if <code>min.insync.replicas</code> happens to be less than 3. " +
+        "If <code>acks=all</code> and the current ISR set contains fewer than <code>min.insync.replicas</code> members, then the producer " +
+        "will raise an exception (either <code>NotEnoughReplicas</code> or <code>NotEnoughReplicasAfterAppend</code>).<br> " +
         "Regardless of the <code>acks</code> setting, the messages will not be visible to the consumers until " +
         "they are replicated to all in-sync replicas and the <code>min.insync.replicas</code> condition is met.<br> " +
         "When used together, <code>min.insync.replicas</code> and <code>acks</code> allow you to enforce greater durability guarantees. " +
         "A typical scenario would be to create a topic with a replication factor of 3, " +
         "set <code>min.insync.replicas</code> to 2, and produce with <code>acks</code> of \"all\". " +
-        "This will ensure that a majority of replicas must persist a write before it's considered successful by the producer and it's visible to consumers.";
+        "This ensures that a majority of replicas must persist a write before it's considered successful by the producer and it's visible to consumers." +
+        "<p>Note that when the Eligible Leader Replicas feature is enabled, the semantics of this config changes. Please refer to <a href=\"#eligible_leader_replicas\">the ELR section</a> for more info.</p>";
 
     public static final String COMPRESSION_TYPE_CONFIG = "compression.type";
     public static final String COMPRESSION_TYPE_DOC = "Specify the final compression type for a given topic. " +
@@ -229,7 +233,7 @@ public class TopicConfig {
     public static final String MESSAGE_DOWNCONVERSION_ENABLE_DOC = "Down-conversion is not possible in Apache Kafka 4.0 and newer, " +
         "hence this configuration is no-op and it is deprecated for removal in Apache Kafka 5.0.";
 
-    public static final String INKLESS_ENABLE_CONFIG = "inkless.enable";
-    public static final String INKLESS_ENABLE_DOC = "To enable inkless mode for a topic, set this configuration as true. " +
-        "You can not disable this config once it is enabled.";
+    public static final String DISKLESS_ENABLE_CONFIG = "diskless.enable";
+    public static final String DISKLESS_ENABLE_DOC = "To enable diskless mode for a topic, set this configuration as true. " +
+            "You can not disable this config once it is enabled. If not set, defaults to server level config log.diskless.enable.";
 }

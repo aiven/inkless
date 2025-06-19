@@ -39,8 +39,10 @@ public interface ControlPlane extends Closeable, Configurable {
             List<CommitBatchRequest> batches);
 
     List<FindBatchResponse> findBatches(
-            List<FindBatchRequest> findBatchRequests,
-            int fetchMaxBytes);
+        List<FindBatchRequest> findBatchRequests,
+        int fetchMaxBytes,
+        int maxBatchesPerPartition
+    );
 
     void createTopicAndPartitions(Set<CreateTopicAndPartitionsRequest> requests);
 
@@ -48,7 +50,7 @@ public interface ControlPlane extends Closeable, Configurable {
 
     void deleteTopics(Set<Uuid> topicIds);
 
-    List<EnforceRetentionResponse> enforceRetention(List<EnforceRetentionRequest> requests);
+    List<EnforceRetentionResponse> enforceRetention(List<EnforceRetentionRequest> requests, int maxBatchesPerRequest);
 
     List<FileToDelete> getFilesToDelete();
 

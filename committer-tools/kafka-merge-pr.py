@@ -70,7 +70,7 @@ TEMP_BRANCH_PREFIX = "PR_TOOL"
 
 DEV_BRANCH_NAME = "trunk"
 
-DEFAULT_FIX_VERSION = os.environ.get("DEFAULT_FIX_VERSION", "4.1.0-inkless")
+DEFAULT_FIX_VERSION = os.environ.get("DEFAULT_FIX_VERSION", "4.1.1-inkless")
 
 ORIGINAL_HEAD = ""
 

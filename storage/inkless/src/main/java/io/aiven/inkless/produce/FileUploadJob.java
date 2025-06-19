@@ -24,11 +24,13 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.ByteArrayInputStream;
+import java.io.IOException;
 import java.io.InputStream;
 import java.time.Duration;
 import java.util.Objects;
 import java.util.concurrent.Callable;
 import java.util.function.Consumer;
+import java.util.function.Supplier;
 
 import io.aiven.inkless.TimeUtils;
 import io.aiven.inkless.common.ObjectKey;
@@ -48,7 +50,7 @@ public class FileUploadJob implements Callable<ObjectKey> {
     private final Time time;
     private final int attempts;
     private final Duration retryBackoff;
-    private final InputStream data;
+    private final Supplier<InputStream> data;
     private final long length;
     private final Consumer<Long> durationCallback;
 
@@ -57,7 +59,7 @@ public class FileUploadJob implements Callable<ObjectKey> {
                          final Time time,
                          final int attempts,
                          final Duration retryBackoff,
-                         final InputStream data,
+                         final Supplier<InputStream> data,
                          final long length,
                          final Consumer<Long> durationCallback) {
         this.objectKeyCreator = Objects.requireNonNull(objectKeyCreator, "objectKeyCreator cannot be null");
@@ -87,7 +89,7 @@ public class FileUploadJob implements Callable<ObjectKey> {
             time,
             attempts,
             retryBackoff,
-            new ByteArrayInputStream(data),
+            () -> new ByteArrayInputStream(data),
             data.length,
             durationCallback
         );
@@ -117,15 +119,15 @@ public class FileUploadJob implements Callable<ObjectKey> {
         }
     }
 
-    private Exception uploadWithRetry(final ObjectKey objectKey, final InputStream data, final long length) {
+    private Exception uploadWithRetry(final ObjectKey objectKey, final Supplier<InputStream> data, final long length) {
         LOGGER.debug("Uploading {}", objectKey);
         Exception error = null;
         for (int attempt = 0; attempt < attempts; attempt++) {
-            try {
-                objectUploader.upload(objectKey, data, length);
+            try (InputStream stream = data.get()) {
+                objectUploader.upload(objectKey, stream, length);
                 LOGGER.debug("Successfully uploaded {}", objectKey);
                 return null;
-            } catch (final StorageBackendException e) {
+            } catch (final StorageBackendException | IOException e) {
                 error = e;
                 // Sleep on all attempts but last.
                 final boolean lastAttempt = attempt == attempts - 1;

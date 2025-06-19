@@ -62,9 +62,9 @@ import static org.apache.kafka.storage.internals.log.UnifiedLog.UNKNOWN_OFFSET;
 class UnifiedLog {
     private static final Logger LOGGER = LoggerFactory.getLogger(UnifiedLog.class);
 
-    // for inkless the origin is always client
+    // for diskless the origin is always client
     public static final AppendOrigin APPEND_ORIGIN = AppendOrigin.CLIENT;
-    // Using 0 as for inkless the leader epoch is not used
+    // Using 0 as for diskless the leader epoch is not used
     public static final int LEADER_EPOCH = LeaderAndIsr.INITIAL_LEADER_EPOCH;
 
     /**
@@ -307,13 +307,13 @@ class UnifiedLog {
                 });
             }
 
-            // Ignore batch size validation against segment size as it does not apply to inkless
+            // Ignore batch size validation against segment size as it does not apply to diskless
             // if (validRecords.sizeInBytes() > config.segmentSize) {
             //     throw new RecordBatchTooLargeException("Message batch size is " + validRecords.sizeInBytes() + " bytes in append " +
             //         "to partition " + topicIdPartition.topicPartition() + ", which exceeds the maximum configured segment size of " + config.segmentSize + ".");
             // }
 
-            // after this point it comes the log-file specific, leader epoch, and duplication checks that are not relevant when appending to inkless
+            // after this point it comes the log-file specific, leader epoch, and duplication checks that are not relevant when appending to diskless
             // as batches go to the buffer instead of the log file
             // and idempotency is checked on the control plane
 

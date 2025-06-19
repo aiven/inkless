@@ -125,10 +125,11 @@ class KafkaApis(val requestChannel: RequestChannel,
   val describeTopicPartitionsRequestHandler = new DescribeTopicPartitionsRequestHandler(
     metadataCache, authHelper, config)
 
-  val inklessTopicMetadataTransformer = inklessSharedState.map(s => new InklessTopicMetadataTransformer(s.metadata()))
+  val inklessTopicMetadataTransformer = inklessSharedState.map(s => new InklessTopicMetadataTransformer(brokerId, s.metadata()))
 
   def close(): Unit = {
     aclApis.close()
+    inklessTopicMetadataTransformer.foreach(t => t.close())
     info("Shutdown complete.")
   }
 
@@ -373,8 +374,8 @@ class KafkaApis(val requestChannel: RequestChannel,
   case class LeaderNode(leaderId: Int, leaderEpoch: Int, node: Option[Node])
 
   private def getCurrentLeader(tp: TopicPartition, ln: ListenerName): LeaderNode = {
-    // Return unknown leader if the topic is inkless, as these topics do not have leaders
-    if (inklessSharedState.exists(_.metadata().isInklessTopic(tp.topic()))) {
+    // Return unknown leader if the topic is diskless, as these topics do not have leaders
+    if (inklessSharedState.exists(_.metadata().isDisklessTopic(tp.topic()))) {
       return LeaderNode(-1, -1, OptionConverters.toScala(metadataCache.getAliveBrokerNode(-1, ln)))
     }
 
@@ -1030,9 +1031,11 @@ class KafkaApis(val requestChannel: RequestChannel,
     groups.forEach { groupOffsetFetch =>
       val isAllPartitions = groupOffsetFetch.topics == null
       if (!authHelper.authorize(request.context, DESCRIBE, GROUP, groupOffsetFetch.groupId)) {
-        futures += CompletableFuture.completedFuture(new OffsetFetchResponseData.OffsetFetchResponseGroup()
-          .setGroupId(groupOffsetFetch.groupId)
-          .setErrorCode(Errors.GROUP_AUTHORIZATION_FAILED.code))
+        futures += CompletableFuture.completedFuture(OffsetFetchResponse.groupError(
+          groupOffsetFetch,
+          Errors.GROUP_AUTHORIZATION_FAILED,
+          request.header.apiVersion()
+        ))
       } else if (isAllPartitions) {
         futures += fetchAllOffsetsForGroup(
           request.context,
@@ -1057,33 +1060,35 @@ class KafkaApis(val requestChannel: RequestChannel,
 
   private def fetchAllOffsetsForGroup(
     requestContext: RequestContext,
-    offsetFetchRequest: OffsetFetchRequestData.OffsetFetchRequestGroup,
+    groupFetchRequest: OffsetFetchRequestData.OffsetFetchRequestGroup,
     requireStable: Boolean
   ): CompletableFuture[OffsetFetchResponseData.OffsetFetchResponseGroup] = {
     val useTopicIds = OffsetFetchRequest.useTopicIds(requestContext.apiVersion)
 
     groupCoordinator.fetchAllOffsets(
       requestContext,
-      offsetFetchRequest,
+      groupFetchRequest,
       requireStable
-    ).handle[OffsetFetchResponseData.OffsetFetchResponseGroup] { (offsetFetchResponse, exception) =>
+    ).handle[OffsetFetchResponseData.OffsetFetchResponseGroup] { (groupFetchResponse, exception) =>
       if (exception != null) {
-        new OffsetFetchResponseData.OffsetFetchResponseGroup()
-          .setGroupId(offsetFetchRequest.groupId)
-          .setErrorCode(Errors.forException(exception).code)
-      } else if (offsetFetchResponse.errorCode() != Errors.NONE.code) {
-        offsetFetchResponse
+        OffsetFetchResponse.groupError(
+          groupFetchRequest,
+          Errors.forException(exception),
+          requestContext.apiVersion()
+        )
+      } else if (groupFetchResponse.errorCode() != Errors.NONE.code) {
+        groupFetchResponse
       } else {
         // Clients are not allowed to see offsets for topics that are not authorized for Describe.
         val authorizedNames = authHelper.filterByAuthorized(
           requestContext,
           DESCRIBE,
           TOPIC,
-          offsetFetchResponse.topics.asScala
+          groupFetchResponse.topics.asScala
         )(_.name)
 
         val topics = new mutable.ArrayBuffer[OffsetFetchResponseData.OffsetFetchResponseTopics]
-        offsetFetchResponse.topics.forEach { topic =>
+        groupFetchResponse.topics.forEach { topic =>
           if (authorizedNames.contains(topic.name)) {
             if (useTopicIds) {
               // If the topic is not provided by the group coordinator, we set it
@@ -1101,20 +1106,20 @@ class KafkaApis(val requestChannel: RequestChannel,
             }
           }
         }
-        offsetFetchResponse.setTopics(topics.asJava)
+        groupFetchResponse.setTopics(topics.asJava)
       }
     }
   }
 
   private def fetchOffsetsForGroup(
     requestContext: RequestContext,
-    offsetFetchRequest: OffsetFetchRequestData.OffsetFetchRequestGroup,
+    groupFetchRequest: OffsetFetchRequestData.OffsetFetchRequestGroup,
     requireStable: Boolean
   ): CompletableFuture[OffsetFetchResponseData.OffsetFetchResponseGroup] = {
     val useTopicIds = OffsetFetchRequest.useTopicIds(requestContext.apiVersion)
 
     if (useTopicIds) {
-      offsetFetchRequest.topics.forEach { topic =>
+      groupFetchRequest.topics.forEach { topic =>
         if (topic.topicId != Uuid.ZERO_UUID) {
           metadataCache.getTopicName(topic.topicId).ifPresent(name => topic.setName(name))
         }
@@ -1126,7 +1131,7 @@ class KafkaApis(val requestChannel: RequestChannel,
       requestContext,
       DESCRIBE,
       TOPIC,
-      offsetFetchRequest.topics.asScala
+      groupFetchRequest.topics.asScala
     )(_.name)
 
     val authorizedTopics = new mutable.ArrayBuffer[OffsetFetchRequestData.OffsetFetchRequestTopics]
@@ -1148,7 +1153,7 @@ class KafkaApis(val requestChannel: RequestChannel,
       topicResponse
     }
 
-    offsetFetchRequest.topics.forEach { topic =>
+    groupFetchRequest.topics.forEach { topic =>
       if (useTopicIds && topic.name.isEmpty) {
         errorTopics += buildErrorResponse(topic, Errors.UNKNOWN_TOPIC_ID)
       } else if (!authorizedTopicNames.contains(topic.name)) {
@@ -1161,25 +1166,27 @@ class KafkaApis(val requestChannel: RequestChannel,
     groupCoordinator.fetchOffsets(
       requestContext,
       new OffsetFetchRequestData.OffsetFetchRequestGroup()
-        .setGroupId(offsetFetchRequest.groupId)
-        .setMemberId(offsetFetchRequest.memberId)
-        .setMemberEpoch(offsetFetchRequest.memberEpoch)
+        .setGroupId(groupFetchRequest.groupId)
+        .setMemberId(groupFetchRequest.memberId)
+        .setMemberEpoch(groupFetchRequest.memberEpoch)
         .setTopics(authorizedTopics.asJava),
       requireStable
-    ).handle[OffsetFetchResponseData.OffsetFetchResponseGroup] { (offsetFetchResponse, exception) =>
+    ).handle[OffsetFetchResponseData.OffsetFetchResponseGroup] { (groupFetchResponse, exception) =>
       if (exception != null) {
-        new OffsetFetchResponseData.OffsetFetchResponseGroup()
-          .setGroupId(offsetFetchRequest.groupId)
-          .setErrorCode(Errors.forException(exception).code)
-      } else if (offsetFetchResponse.errorCode() != Errors.NONE.code) {
-        offsetFetchResponse
+        OffsetFetchResponse.groupError(
+          groupFetchRequest,
+          Errors.forException(exception),
+          requestContext.apiVersion()
+        )
+      } else if (groupFetchResponse.errorCode() != Errors.NONE.code) {
+        groupFetchResponse
       } else {
         val topics = new util.ArrayList[OffsetFetchResponseData.OffsetFetchResponseTopics](
-          offsetFetchResponse.topics.size + errorTopics.size
+          groupFetchRequest.topics.size + errorTopics.size
         )
-        topics.addAll(offsetFetchResponse.topics)
+        topics.addAll(groupFetchResponse.topics)
         topics.addAll(errorTopics.asJava)
-        offsetFetchResponse.setTopics(topics)
+        groupFetchResponse.setTopics(topics)
       }
     }
   }
@@ -1756,8 +1763,8 @@ class KafkaApis(val requestChannel: RequestChannel,
 
       val currentErrors = new ConcurrentHashMap[TopicPartition, Errors]()
       marker.partitions.forEach { partition =>
-        if (inklessSharedState.exists(s => s.metadata().isInklessTopic(partition.topic()))) {
-          warn("Attempt to call WriteTxnMarkersRequest with Inkless topic")
+        if (inklessSharedState.exists(s => s.metadata().isDisklessTopic(partition.topic()))) {
+          warn("Attempt to call WriteTxnMarkersRequest with diskless topic")
           currentErrors.put(partition, Errors.INVALID_TOPIC_EXCEPTION)
         } else {
           replicaManager.onlinePartition(partition) match {
@@ -1921,8 +1928,8 @@ class KafkaApis(val requestChannel: RequestChannel,
             unauthorizedTopicErrors += topicPartition -> Errors.TOPIC_AUTHORIZATION_FAILED
           else if (!metadataCache.contains(topicPartition))
             nonExistingTopicErrors += topicPartition -> Errors.UNKNOWN_TOPIC_OR_PARTITION
-          else if (inklessSharedState.exists(s => s.metadata().isInklessTopic(topicPartition.topic))) {
-            warn("Attempt to call AddPartitionsToTxnRequest with Inkless topic")
+          else if (inklessSharedState.exists(s => s.metadata().isDisklessTopic(topicPartition.topic))) {
+            warn("Attempt to call AddPartitionsToTxnRequest with diskless topic")
             prohibitedInklessTopicErrors += topicPartition -> Errors.INVALID_TOPIC_EXCEPTION
           } else
             authorizedPartitions.add(topicPartition)
@@ -2073,8 +2080,8 @@ class KafkaApis(val requestChannel: RequestChannel,
           // to the response with UNKNOWN_TOPIC_OR_PARTITION.
           responseBuilder.addPartitions[TxnOffsetCommitRequestData.TxnOffsetCommitRequestPartition](
             topic.name, topic.partitions, _.partitionIndex, Errors.UNKNOWN_TOPIC_OR_PARTITION)
-        } else if (inklessSharedState.exists(s => s.metadata().isInklessTopic(topic.name()))) {
-          warn("Attempt to call TxnOffsetCommitRequest with Inkless topic")
+        } else if (inklessSharedState.exists(s => s.metadata().isDisklessTopic(topic.name()))) {
+          warn("Attempt to call TxnOffsetCommitRequest with diskless topic")
           responseBuilder.addPartitions[TxnOffsetCommitRequestData.TxnOffsetCommitRequestPartition](
             topic.name, topic.partitions, _.partitionIndex, Errors.INVALID_TOPIC_EXCEPTION)
         } else {
@@ -2819,11 +2826,19 @@ class KafkaApis(val requestChannel: RequestChannel,
               if (responseData.status() == null) {
                 responseData.setStatus(new util.ArrayList());
               }
-              responseData.status().add(
-                new StreamsGroupHeartbeatResponseData.Status()
-                  .setStatusCode(StreamsGroupHeartbeatResponse.Status.MISSING_INTERNAL_TOPICS.code())
-                  .setStatusDetail("Unauthorized to CREATE on topics " + createTopicUnauthorized.mkString(",") + ".")
-              )
+              val missingInternalTopicStatus =
+                responseData.status().stream().filter(x => x.statusCode() == StreamsGroupHeartbeatResponse.Status.MISSING_INTERNAL_TOPICS.code()).findFirst()
+              if (missingInternalTopicStatus.isPresent) {
+                missingInternalTopicStatus.get().setStatusDetail(
+                  missingInternalTopicStatus.get().statusDetail() + "; Unauthorized to CREATE on topics " + createTopicUnauthorized.mkString(", ") + "."
+                )
+              } else {
+                responseData.status().add(
+                  new StreamsGroupHeartbeatResponseData.Status()
+                    .setStatusCode(StreamsGroupHeartbeatResponse.Status.MISSING_INTERNAL_TOPICS.code())
+                    .setStatusDetail("Unauthorized to CREATE on topics " + createTopicUnauthorized.mkString(", ") + ".")
+                )
+              }
             } else {
               autoTopicCreationManager.createStreamsInternalTopics(topicsToCreate, requestContext);
             }

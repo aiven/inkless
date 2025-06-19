@@ -57,8 +57,15 @@ public class ControllerMetadataMetricsPublisherTest {
                 new MockFaultHandler("ControllerMetadataMetricsPublisher");
         ControllerMetadataMetrics metrics =
                 new ControllerMetadataMetrics(Optional.empty());
-        ControllerMetadataMetricsPublisher publisher =
-                new ControllerMetadataMetricsPublisher(metrics, faultHandler);
+        ControllerMetadataMetricsPublisher publisher;
+
+        TestEnv() {
+            this(false);
+        }
+
+        TestEnv(boolean isDisklessTopics) {
+            publisher = new ControllerMetadataMetricsPublisher(metrics, faultHandler, topicName -> isDisklessTopics);
+        }
 
         @Override
         public void close() {
@@ -153,6 +160,23 @@ public class ControllerMetadataMetricsPublisherTest {
             assertEquals(7, env.metrics.globalPartitionCount());
             assertEquals(3, env.metrics.offlinePartitionCount());
             assertEquals(4, env.metrics.preferredReplicaImbalanceCount());
+            assertEquals(0, env.metrics.metadataErrorCount());
+        }
+    }
+
+    @Test
+    public void testLoadSnapshotWithDisklessTopics() {
+        try (TestEnv env = new TestEnv(true)) {
+            MetadataDelta delta = new MetadataDelta(MetadataImage.EMPTY);
+            ImageReWriter writer = new ImageReWriter(delta);
+            IMAGE1.write(writer, new ImageWriterOptions.Builder(MetadataVersion.MINIMUM_VERSION).build());
+            env.publisher.onMetadataUpdate(delta, IMAGE1, fakeManifest(true));
+            assertEquals(0, env.metrics.activeBrokerCount());
+            assertEquals(3, env.metrics.globalTopicCount());
+            assertEquals(7, env.metrics.globalPartitionCount());
+            // Diskless topics are not counted in the metrics
+            assertEquals(0, env.metrics.offlinePartitionCount());
+            assertEquals(0, env.metrics.preferredReplicaImbalanceCount());
             assertEquals(0, env.metrics.metadataErrorCount());
         }
     }

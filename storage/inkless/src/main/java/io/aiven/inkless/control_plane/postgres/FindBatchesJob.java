@@ -17,53 +17,49 @@
  */
 package io.aiven.inkless.control_plane.postgres;
 
-import org.apache.kafka.common.TopicIdPartition;
+import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.utils.Time;
 
 import org.jooq.Configuration;
 import org.jooq.DSLContext;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.jooq.generated.udt.FindBatchesResponseV1;
+import org.jooq.generated.udt.records.BatchInfoV1Record;
+import org.jooq.generated.udt.records.FindBatchesRequestV1Record;
+import org.jooq.generated.udt.records.FindBatchesResponseV1Record;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 import java.util.concurrent.Callable;
 import java.util.function.Consumer;
-import java.util.function.Function;
-import java.util.stream.Collectors;
 
-import io.aiven.inkless.TimeUtils;
 import io.aiven.inkless.control_plane.BatchInfo;
 import io.aiven.inkless.control_plane.BatchMetadata;
+import io.aiven.inkless.control_plane.ControlPlaneException;
 import io.aiven.inkless.control_plane.FindBatchRequest;
 import io.aiven.inkless.control_plane.FindBatchResponse;
 
-import static org.jooq.generated.Tables.BATCHES;
-import static org.jooq.generated.Tables.FILES;
+import static org.jooq.generated.Tables.FIND_BATCHES_V2;
 
 class FindBatchesJob implements Callable<List<FindBatchResponse>> {
-    private static final Logger LOGGER = LoggerFactory.getLogger(FindBatchesJob.class);
-
     private final Time time;
     private final DSLContext jooqCtx;
     private final List<FindBatchRequest> requests;
     private final int fetchMaxBytes;
-    private final Consumer<Long> getLogsDurationCallback;
+    private final int maxBatchesPerPartition;
     private final Consumer<Long> durationCallback;
 
     FindBatchesJob(final Time time,
                    final DSLContext jooqCtx,
                    final List<FindBatchRequest> requests,
                    final int fetchMaxBytes,
-                   final Consumer<Long> getLogsDurationCallback,
+                   final int maxBatchesPerPartition,
                    final Consumer<Long> durationCallback) {
         this.time = time;
         this.jooqCtx = jooqCtx;
         this.requests = requests;
         this.fetchMaxBytes = fetchMaxBytes;
+        this.maxBatchesPerPartition = maxBatchesPerPartition;
         this.durationCallback = durationCallback;
-        this.getLogsDurationCallback = getLogsDurationCallback;
     }
 
     @Override
@@ -71,100 +67,102 @@ class FindBatchesJob implements Callable<List<FindBatchResponse>> {
         return JobUtils.run(this::runOnce, time, durationCallback);
     }
 
-    private List<FindBatchResponse> runOnce()  {
+    private List<FindBatchResponse> runOnce() {
+        if (requests.isEmpty()) {
+            return List.of();
+        }
+
+        final FindBatchesRequestV1Record[] dbRequests = requests.stream()
+            .map(req -> new FindBatchesRequestV1Record(
+                req.topicIdPartition().topicId(),
+                req.topicIdPartition().partition(),
+                req.offset(),
+                req.maxPartitionFetchBytes()
+            ))
+            .toArray(FindBatchesRequestV1Record[]::new);
+
         return jooqCtx.transactionResult((final Configuration conf) -> {
-            final DSLContext context = conf.dsl();
-            final Map<TopicIdPartition, LogEntity> logInfos = getLogInfos(context);
-            final List<FindBatchResponse> result = new ArrayList<>();
-            for (final FindBatchRequest request : requests) {
-                result.add(
-                    findBatchPerPartition(context, request, logInfos.get(request.topicIdPartition()))
-                );
+            try {
+                final List<FindBatchesResponseV1Record> dbResponses = conf.dsl().select(
+                    FindBatchesResponseV1.TOPIC_ID,
+                    FindBatchesResponseV1.PARTITION,
+                    FindBatchesResponseV1.LOG_START_OFFSET,
+                    FindBatchesResponseV1.HIGH_WATERMARK,
+                    FindBatchesResponseV1.BATCHES,
+                    FindBatchesResponseV1.ERROR
+                ).from(FIND_BATCHES_V2.call(dbRequests, fetchMaxBytes, maxBatchesPerPartition))
+                    .fetchInto(FindBatchesResponseV1Record.class);
+
+                if (dbResponses.size() != requests.size()) {
+                    throw new ControlPlaneException(
+                        "Number of responses from database (" + dbResponses.size() + ")"
+                            + " does not match number of requests (" + requests.size() + ")"
+                    );
+                }
+
+                final List<FindBatchResponse> responses = new ArrayList<>();
+                for (int i = 0; i < dbResponses.size(); i++) {
+                    final FindBatchesResponseV1Record record = dbResponses.get(i);
+                    final FindBatchRequest request = requests.get(i);
+
+                    validateResponse(record, request);
+
+                    var error = record.getError();
+                    if (error == null) {
+                        responses.add(FindBatchResponse.success(getBatchInfos(record, request), record.getLogStartOffset(), record.getHighWatermark()));
+                    } else {
+                        final var errorResponse = switch (error) {
+                            case offset_out_of_range ->
+                                FindBatchResponse.offsetOutOfRange(record.getLogStartOffset(), record.getHighWatermark());
+                            case unknown_topic_or_partition -> FindBatchResponse.unknownTopicOrPartition();
+                        };
+                        responses.add(errorResponse);
+                    }
+                }
+                return responses;
+
+            } catch (RuntimeException e) {
+                throw new ControlPlaneException("Error finding batches", e);
             }
-            return result;
         });
     }
 
-    private FindBatchResponse findBatchPerPartition(final DSLContext context,
-                                                    final FindBatchRequest request,
-                                                    final LogEntity logEntity) throws Exception {
-        if (logEntity == null) {
-            return FindBatchResponse.unknownTopicOrPartition();
-        }
-
-        if (request.offset() < 0) {
-            LOGGER.debug("Invalid offset {} for {}", request.offset(), request.topicIdPartition());
-            return FindBatchResponse.offsetOutOfRange(logEntity.logStartOffset(), logEntity.highWatermark());
-        }
-
-        if (request.offset() > logEntity.highWatermark()) {
-            return FindBatchResponse.offsetOutOfRange(logEntity.logStartOffset(), logEntity.highWatermark());
-        }
-
-        return TimeUtils.measureDurationMs(time, () -> getBatchResponse(context, request, logEntity), durationCallback);
-    }
-
-    private FindBatchResponse getBatchResponse(final DSLContext ctx, final FindBatchRequest request, final LogEntity logEntity) {
-        final var select = ctx.select(
-                BATCHES.BATCH_ID,
-                BATCHES.MAGIC,
-                BATCHES.BASE_OFFSET,
-                BATCHES.LAST_OFFSET,
-                FILES.OBJECT_KEY,
-                FILES.FORMAT,
-                BATCHES.BYTE_OFFSET,
-                BATCHES.BYTE_SIZE,
-                BATCHES.BASE_OFFSET,
-                BATCHES.LAST_OFFSET,
-                BATCHES.TIMESTAMP_TYPE,
-                BATCHES.LOG_APPEND_TIMESTAMP,
-                BATCHES.BATCH_MAX_TIMESTAMP
-            ).from(BATCHES)
-            .innerJoin(FILES).on(BATCHES.FILE_ID.eq(FILES.FILE_ID))
-            .where(BATCHES.TOPIC_ID.eq(request.topicIdPartition().topicId()))
-            .and(BATCHES.PARTITION.eq(request.topicIdPartition().partition()))
-            .and(BATCHES.LAST_OFFSET.ge(request.offset()))  // offset to find
-            .and(BATCHES.LAST_OFFSET.lt(logEntity.highWatermark()))
-            .orderBy(BATCHES.BASE_OFFSET);
-
+    private static List<BatchInfo> getBatchInfos(FindBatchesResponseV1Record record, FindBatchRequest request) {
         final List<BatchInfo> batches = new ArrayList<>();
-        long totalSize = 0;
-        try (final var cursor = select.fetchSize(1000).fetchLazy()) {
-            for (final var record : cursor) {
-                final BatchInfo batch = new BatchInfo(
-                    record.get(BATCHES.BATCH_ID),
-                    record.get(FILES.OBJECT_KEY),
-                        new BatchMetadata(
-                        record.get(BATCHES.MAGIC).byteValue(),
+        if (record.getBatches() != null) {
+            for (final BatchInfoV1Record batchInfo : record.getBatches()) {
+                var batchMetadata = batchInfo.getBatchMetadata();
+                batches.add(new BatchInfo(
+                    batchInfo.getBatchId(), batchInfo.getObjectKey(),
+                    new BatchMetadata(
+                        batchMetadata.getMagic().byteValue(),
                         request.topicIdPartition(),
-                        record.get(BATCHES.BYTE_OFFSET),
-                        record.get(BATCHES.BYTE_SIZE),
-                        record.get(BATCHES.BASE_OFFSET),
-                        record.get(BATCHES.LAST_OFFSET),
-                        record.get(BATCHES.LOG_APPEND_TIMESTAMP),
-                        record.get(BATCHES.BATCH_MAX_TIMESTAMP),
-                        record.get(BATCHES.TIMESTAMP_TYPE)
+                        batchMetadata.getByteOffset(),
+                        batchMetadata.getByteSize(),
+                        batchMetadata.getBaseOffset(),
+                        batchMetadata.getLastOffset(),
+                        batchMetadata.getLogAppendTimestamp(),
+                        batchMetadata.getBatchMaxTimestamp(),
+                        batchMetadata.getTimestampType()
                     )
-                );
-                batches.add(batch);
-                totalSize += batch.metadata().byteSize();
-                if (totalSize > fetchMaxBytes) {
-                    break;
-                }
+                ));
             }
         }
-        return FindBatchResponse.success(batches, logEntity.logStartOffset(), logEntity.highWatermark());
+        return batches;
     }
 
-    private Map<TopicIdPartition, LogEntity> getLogInfos(final DSLContext context) throws Exception {
-        if (requests.isEmpty()) {
-            return Map.of();
+    private void validateResponse(FindBatchesResponseV1Record record, FindBatchRequest request) {
+        // Sanity check to match returned and requested partitions (they should go in order).
+        final Uuid requestTopicId = request.topicIdPartition().topicId();
+        final int requestPartition = request.topicIdPartition().partition();
+        final Uuid resultTopicId = record.getTopicId();
+        final int resultPartition = record.get(FindBatchesResponseV1.PARTITION);
+        if (!resultTopicId.equals(requestTopicId) || resultPartition != requestPartition) {
+            throw new ControlPlaneException(String.format(
+                "Returned topic ID or partition doesn't match: expected %s-%d, got %s-%d",
+                requestTopicId, requestPartition,
+                resultTopicId, resultPartition
+            ));
         }
-
-        final List<TopicIdPartition> tidps = requests.stream()
-            .map(FindBatchRequest::topicIdPartition)
-            .toList();
-        return LogSelectQuery.execute(time, context, tidps, false, getLogsDurationCallback).stream()
-            .collect(Collectors.toMap(LogEntity::topicIdPartition, Function.identity()));
     }
 }

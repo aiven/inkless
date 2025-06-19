@@ -23,6 +23,7 @@ import org.apache.kafka.storage.log.metrics.BrokerTopicStats;
 
 import java.io.Closeable;
 import java.io.IOException;
+import java.nio.file.Path;
 import java.util.function.Supplier;
 
 import io.aiven.inkless.cache.FixedBlockAlignment;
@@ -32,20 +33,18 @@ import io.aiven.inkless.cache.ObjectCache;
 import io.aiven.inkless.config.InklessConfig;
 import io.aiven.inkless.control_plane.ControlPlane;
 import io.aiven.inkless.control_plane.MetadataView;
-import io.aiven.inkless.storage_backend.common.StorageBackend;
 
 public record SharedState(
-        Time time,
-        int brokerId,
-        InklessConfig config,
-        MetadataView metadata,
-        ControlPlane controlPlane,
-        StorageBackend storage,
-        ObjectKeyCreator objectKeyCreator,
-        KeyAlignmentStrategy keyAlignmentStrategy,
-        ObjectCache cache,
-        BrokerTopicStats brokerTopicStats,
-        Supplier<LogConfig> defaultTopicConfigs
+    Time time,
+    int brokerId,
+    InklessConfig config,
+    MetadataView metadata,
+    ControlPlane controlPlane,
+    ObjectKeyCreator objectKeyCreator,
+    KeyAlignmentStrategy keyAlignmentStrategy,
+    ObjectCache cache,
+    BrokerTopicStats brokerTopicStats,
+    Supplier<LogConfig> defaultTopicConfigs
 ) implements Closeable {
 
     public static SharedState initialize(
@@ -57,6 +56,7 @@ public record SharedState(
         MetadataView metadata,
         ControlPlane controlPlane,
         BrokerTopicStats brokerTopicStats,
+        Path logDir,
         Supplier<LogConfig> defaultTopicConfigs
     ) {
         return new SharedState(
@@ -65,10 +65,18 @@ public record SharedState(
             config,
             metadata,
             controlPlane,
-            config.storage(),
             ObjectKey.creator(config.objectKeyPrefix(), config.objectKeyLogPrefixMasked()),
             new FixedBlockAlignment(config.fetchCacheBlockBytes()),
-            new InfinispanCache(time, clusterId, rack, config.cacheMaxCount()),
+            InfinispanCache.build(
+                time,
+                clusterId,
+                rack,
+                config.cacheMaxCount(),
+                logDir,
+                config.isCachePersistenceEnabled(),
+                config.cacheExpirationLifespanSec(),
+                config.cacheExpirationMaxIdleSec()
+            ),
             brokerTopicStats,
             defaultTopicConfigs
         );

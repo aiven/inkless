@@ -1,0 +1,40 @@
+services:
+  postgres:
+    image: postgres:17.2
+    environment:
+      POSTGRES_DB: "inkless"
+      POSTGRES_USER: "admin"
+      POSTGRES_PASSWORD: "admin"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready --dbname=inkless -U admin"]
+      interval: 5s
+      timeout: 20s
+      retries: 20
+
+  flyway:
+    image: redgate/flyway:11.0.0
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./storage/inkless/src/main/resources/db/migration:/migrations
+    entrypoint: >
+      /bin/bash -c "
+      ls /migrations && flyway -url=jdbc:postgresql://postgres:5432/inkless -user=admin -password=admin -locations=filesystem:/migrations migrate 
+      "
+
+  dump-schema:
+    image: postgres:17.2
+    restart: "no"
+    depends_on:
+      flyway:
+        condition: service_completed_successfully
+    environment:
+      PGPASSWORD: "admin"
+    volumes:
+      - ./storage/inkless/build:/output
+    entrypoint: >
+      /bin/bash -c "
+      pg_dump -h postgres -U admin -d inkless --schema-only > /output/postgres_schema.sql && echo 'Schema dumped, hit Ctrl+C'
+      "

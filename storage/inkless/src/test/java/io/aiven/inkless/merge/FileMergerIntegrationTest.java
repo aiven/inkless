@@ -39,6 +39,7 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.Mock;
@@ -62,17 +63,16 @@ import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
-import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.function.Consumer;
+import java.util.concurrent.TimeoutException;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
 import io.aiven.inkless.common.SharedState;
 import io.aiven.inkless.config.InklessConfig;
-import io.aiven.inkless.consume.FetchInterceptor;
+import io.aiven.inkless.consume.FetchHandler;
 import io.aiven.inkless.control_plane.ControlPlane;
 import io.aiven.inkless.control_plane.CreateTopicAndPartitionsRequest;
 import io.aiven.inkless.control_plane.DeleteFilesRequest;
@@ -154,12 +154,11 @@ class FileMergerIntegrationTest {
 
     ControlPlane controlPlane;
     SharedState sharedState;
+    @TempDir
+    Path logDir;
 
     @BeforeEach
     void setup() {
-        for (final var entry : TOPICS.entrySet()) {
-            when(metadataView.isInklessTopic(entry.getKey())).thenReturn(true);
-        }
         when(metadataView.getTopicConfig(anyString())).thenReturn(new Properties());
         when(defaultTopicConfigs.get()).thenReturn(new LogConfig(Map.of()));
 
@@ -197,12 +196,12 @@ class FileMergerIntegrationTest {
         final InklessConfig inklessConfig = new InklessConfig(config);
 
         sharedState = SharedState.initialize(time, "cluster-id", "az1", BROKER_ID, inklessConfig,
-            metadataView, controlPlane, new BrokerTopicStats(), defaultTopicConfigs);
+            metadataView, controlPlane, new BrokerTopicStats(), logDir, defaultTopicConfigs);
 
         createTopics(controlPlane);
 
         final AppendHandler appendHandler = new AppendHandler(sharedState);
-        final FetchInterceptor fetchInterceptor = new FetchInterceptor(sharedState);
+        final FetchHandler fetchHandler = new FetchHandler(sharedState);
         final FileMerger fileMerger = new FileMerger(sharedState);
 
         // Write a bunch of records.
@@ -210,7 +209,7 @@ class FileMergerIntegrationTest {
 
         // Consume the high watermarks and the records themselves for future comparison.
         final Map<TopicIdPartition, Long> highWatermarks1 = getHighWatermarks(controlPlane);
-        final Map<TopicIdPartition, List<RecordBatch>> batches1 = read(fetchInterceptor, highWatermarks1);
+        final Map<TopicIdPartition, List<RecordBatch>> batches1 = read(fetchHandler, highWatermarks1);
         // Ensure _something_ was written.
         for (final long hwm : highWatermarks1.values()) {
             assertThat(hwm).isPositive();
@@ -238,7 +237,7 @@ class FileMergerIntegrationTest {
         // However, the watermarks and records should be exactly as before.
         final Map<TopicIdPartition, Long> highWatermarks2 = getHighWatermarks(controlPlane);
         assertThat(highWatermarks2).isEqualTo(highWatermarks1);
-        final Map<TopicIdPartition, List<RecordBatch>> batches2 = read(fetchInterceptor, highWatermarks2);
+        final Map<TopicIdPartition, List<RecordBatch>> batches2 = read(fetchHandler, highWatermarks2);
         assertThat(batches2).isEqualTo(batches1);
 
         // Ensure work dir is empty.
@@ -279,7 +278,7 @@ class FileMergerIntegrationTest {
         final List<FindBatchRequest> findBatchRequests = ALL_TOPIC_ID_PARTITIONS.stream()
             .map(tidp -> new FindBatchRequest(tidp, 0, Integer.MAX_VALUE))
             .toList();
-        final List<FindBatchResponse> findBatchResponses = controlPlane.findBatches(findBatchRequests, Integer.MAX_VALUE);
+        final List<FindBatchResponse> findBatchResponses = controlPlane.findBatches(findBatchRequests, Integer.MAX_VALUE, 0);
 
         final Map<TopicIdPartition, Long> result = new HashMap<>();
         for (int i = 0; i < findBatchResponses.size(); i++) {
@@ -291,8 +290,8 @@ class FileMergerIntegrationTest {
         return result;
     }
 
-    private Map<TopicIdPartition, List<RecordBatch>> read(final FetchInterceptor fetchInterceptor,
-                                                          final Map<TopicIdPartition, Long> highWatermarks) throws InterruptedException {
+    private Map<TopicIdPartition, List<RecordBatch>> read(final FetchHandler fetchHandler,
+                                                          final Map<TopicIdPartition, Long> highWatermarks) throws InterruptedException, ExecutionException, TimeoutException {
         final ConcurrentHashMap<TopicIdPartition, Long> fetchPositions = new ConcurrentHashMap<>(
             highWatermarks.keySet().stream().collect(Collectors.toMap(k -> k, ignored -> 0L))
         );
@@ -304,59 +303,48 @@ class FileMergerIntegrationTest {
             kv.getValue() < highWatermarks.get(kv.getKey())
         );
         while (hasMoreToRead.get()) {
-            readIteration(fetchInterceptor, fetchPositions, records);
+            readIteration(fetchHandler, fetchPositions, records);
         }
         assertThat(fetchPositions).isEqualTo(highWatermarks);
 
         return records;
     }
 
-    private void readIteration(final FetchInterceptor fetchInterceptor,
+    private void readIteration(final FetchHandler fetchHandler,
                                final ConcurrentHashMap<TopicIdPartition, Long> fetchPositions,
-                               final ConcurrentMap<TopicIdPartition, List<RecordBatch>> records) throws InterruptedException {
+                               final ConcurrentMap<TopicIdPartition, List<RecordBatch>> records) throws InterruptedException, ExecutionException, TimeoutException {
         final FetchParams params = new FetchParams(FETCH_VERSION,
             -1, -1, -1, -1,
             FetchIsolation.LOG_END, Optional.empty());
-
-        final AtomicBoolean inconsistentOffset = new AtomicBoolean(false);
-        final CountDownLatch callbackCalled = new CountDownLatch(1);
-        final Consumer<Map<TopicIdPartition, FetchPartitionData>> responseCallback = (Map<TopicIdPartition, FetchPartitionData> result) -> {
-            for (final var entry : result.entrySet()) {
-                final var tidp = entry.getKey();
-                boolean isEmpty = true;
-                for (final var record : entry.getValue().records.records()) {
-                    isEmpty = false;
-                    final long pos = fetchPositions.get(tidp);
-                    if (record.offset() != pos) {
-                        LOGGER.error("Inconsistent offset in {}: expected {}, got {}", tidp, pos, record.offset());
-                        inconsistentOffset.set(true);
-                    }
-                    fetchPositions.put(tidp, pos + 1);
-                }
-                if (!isEmpty) {
-                    records.computeIfPresent(tidp, (ignore, rs) -> {
-                        for (final var batch : entry.getValue().records.batches()) {
-                            rs.add(batch);
-                        }
-                        return rs;
-                    });
-                }
-            }
-
-            callbackCalled.countDown();
-        };
 
         final Map<TopicIdPartition, FetchRequest.PartitionData> fetchInfos = ALL_TOPIC_ID_PARTITIONS.stream().collect(Collectors.toMap(
             tidp -> tidp,
             tidp -> new FetchRequest.PartitionData(TOPIC_ID_0, fetchPositions.get(tidp), 0, 1024 * 1024, Optional.empty())
         ));
 
-        assertThat(fetchInterceptor.intercept(params, fetchInfos, responseCallback, res -> {})).isTrue();
-        callbackCalled.await();
-
-        if (inconsistentOffset.get()) {
-            throw new RuntimeException("Inconsistent offset");
+        final Map<TopicIdPartition, FetchPartitionData> fetchResult = fetchHandler.handle(params, fetchInfos).get(2L, TimeUnit.SECONDS);
+        for (final var entry : fetchResult.entrySet()) {
+            final var tidp = entry.getKey();
+            boolean isEmpty = true;
+            for (final var record : entry.getValue().records.records()) {
+                isEmpty = false;
+                final long pos = fetchPositions.get(tidp);
+                if (record.offset() != pos) {
+                    LOGGER.error("Inconsistent offset in {}: expected {}, got {}", tidp, pos, record.offset());
+                    throw new RuntimeException("Inconsistent offset");
+                }
+                fetchPositions.put(tidp, pos + 1);
+            }
+            if (!isEmpty) {
+                records.computeIfPresent(tidp, (ignore, rs) -> {
+                    for (final var batch : entry.getValue().records.batches()) {
+                        rs.add(batch);
+                    }
+                    return rs;
+                });
+            }
         }
+
     }
 
     private List<S3Object> getFiles() {

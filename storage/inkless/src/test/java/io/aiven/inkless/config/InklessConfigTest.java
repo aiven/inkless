@@ -48,7 +48,13 @@ class InklessConfigTest {
         configs.put("inkless.file.cleaner.retention.period.ms", "200");
         configs.put("inkless.file.merger.interval.ms", "100");
         configs.put("inkless.consume.cache.max.count", "100");
+        configs.put("inkless.consume.cache.persistence.enable", "true");
+        configs.put("inkless.consume.cache.expiration.lifespan.sec", "200");
+        configs.put("inkless.consume.cache.expiration.max.idle.sec", "100");
         configs.put("inkless.produce.upload.thread.pool.size", "16");
+        configs.put("inkless.fetch.data.thread.pool.size", "12");
+        configs.put("inkless.fetch.metadata.thread.pool.size", "14");
+        configs.put("inkless.retention.enforcement.max.batches.per.request", "50");
         final InklessConfig config = new InklessConfig(new AbstractConfig(new ConfigDef(), configs));
         assertThat(config.controlPlaneClass()).isEqualTo(InMemoryControlPlane.class);
         assertThat(config.controlPlaneConfig()).isEqualTo(Map.of("class", controlPlaneClass));
@@ -62,7 +68,13 @@ class InklessConfigTest {
         assertThat(config.fileCleanerRetentionPeriod()).isEqualTo(Duration.ofMillis(200));
         assertThat(config.fileMergerInterval()).isEqualTo(Duration.ofMillis(100));
         assertThat(config.cacheMaxCount()).isEqualTo(100);
+        assertThat(config.isCachePersistenceEnabled()).isTrue();
+        assertThat(config.cacheExpirationLifespanSec()).isEqualTo(200);
+        assertThat(config.cacheExpirationMaxIdleSec()).isEqualTo(100);
         assertThat(config.produceUploadThreadPoolSize()).isEqualTo(16);
+        assertThat(config.fetchDataThreadPoolSize()).isEqualTo(12);
+        assertThat(config.fetchMetadataThreadPoolSize()).isEqualTo(14);
+        assertThat(config.maxBatchesPerEnforcementRequest()).isEqualTo(50);
     }
 
     @Test
@@ -86,7 +98,13 @@ class InklessConfigTest {
         assertThat(config.fileCleanerRetentionPeriod()).isEqualTo(Duration.ofMinutes(1));
         assertThat(config.fileMergerInterval()).isEqualTo(Duration.ofMinutes(1));
         assertThat(config.cacheMaxCount()).isEqualTo(1000);
+        assertThat(config.isCachePersistenceEnabled()).isFalse();
+        assertThat(config.cacheExpirationLifespanSec()).isEqualTo(60);
+        assertThat(config.cacheExpirationMaxIdleSec()).isEqualTo(-1);
         assertThat(config.produceUploadThreadPoolSize()).isEqualTo(8);
+        assertThat(config.fetchDataThreadPoolSize()).isEqualTo(32);
+        assertThat(config.fetchMetadataThreadPoolSize()).isEqualTo(8);
+        assertThat(config.maxBatchesPerEnforcementRequest()).isEqualTo(0);
     }
 
     @Test
@@ -104,7 +122,13 @@ class InklessConfigTest {
         configs.put("file.cleaner.retention.period.ms", "200");
         configs.put("file.merger.interval.ms", "100");
         configs.put("consume.cache.max.count", "100");
+        configs.put("consume.cache.persistence.enable", "true");
+        configs.put("consume.cache.expiration.lifespan.sec", "200");
+        configs.put("consume.cache.expiration.max.idle.sec", "100");
         configs.put("produce.upload.thread.pool.size", "16");
+        configs.put("fetch.data.thread.pool.size", "12");
+        configs.put("fetch.metadata.thread.pool.size", "14");
+        configs.put("retention.enforcement.max.batches.per.request", "10");
         final var config = new InklessConfig(
             configs
         );
@@ -120,7 +144,13 @@ class InklessConfigTest {
         assertThat(config.fileCleanerRetentionPeriod()).isEqualTo(Duration.ofMillis(200));
         assertThat(config.fileMergerInterval()).isEqualTo(Duration.ofMillis(100));
         assertThat(config.cacheMaxCount()).isEqualTo(100);
+        assertThat(config.isCachePersistenceEnabled()).isTrue();
+        assertThat(config.cacheExpirationLifespanSec()).isEqualTo(200);
+        assertThat(config.cacheExpirationMaxIdleSec()).isEqualTo(100);
         assertThat(config.produceUploadThreadPoolSize()).isEqualTo(16);
+        assertThat(config.fetchDataThreadPoolSize()).isEqualTo(12);
+        assertThat(config.fetchMetadataThreadPoolSize()).isEqualTo(14);
+        assertThat(config.maxBatchesPerEnforcementRequest()).isEqualTo(10);
     }
 
     @Test

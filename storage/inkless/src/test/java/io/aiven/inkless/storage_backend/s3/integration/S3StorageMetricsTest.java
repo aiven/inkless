@@ -24,7 +24,7 @@ import org.junit.jupiter.api.Test;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
-import java.io.InputStream;
+import java.io.ByteArrayInputStream;
 import java.lang.management.ManagementFactory;
 import java.util.Map;
 import java.util.Set;
@@ -80,13 +80,9 @@ class S3StorageMetricsTest {
 
         final ObjectKey key = new TestObjectKey("x");
 
-        storage.upload(key, data);
-        try (final InputStream fetch = storage.fetch(key, ByteRange.maxRange())) {
-            fetch.readAllBytes();
-        }
-        try (final InputStream fetch = storage.fetch(key, new ByteRange(0, 1))) {
-            fetch.readAllBytes();
-        }
+        storage.upload(key, new ByteArrayInputStream(data), data.length);
+        storage.fetch(key, ByteRange.maxRange());
+        storage.fetch(key, new ByteRange(0, 1));
         storage.delete(key);
         storage.delete(Set.of(key));
 

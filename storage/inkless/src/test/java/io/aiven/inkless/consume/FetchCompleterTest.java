@@ -62,7 +62,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.STRICT_STUBS)
-public class FetchCompleterJobTest {
+public class FetchCompleterTest {
     static final String OBJECT_KEY_PREFIX = "prefix";
     static final ObjectKeyCreator OBJECT_KEY_CREATOR = ObjectKey.creator(OBJECT_KEY_PREFIX, false);
     static final String OBJECT_KEY_A_MAIN_PART = "a";
@@ -71,16 +71,16 @@ public class FetchCompleterJobTest {
     static final ObjectKey OBJECT_KEY_B = PlainObjectKey.create(OBJECT_KEY_PREFIX, OBJECT_KEY_B_MAIN_PART);
 
     Uuid topicId = Uuid.randomUuid();
-    TopicIdPartition partition0 = new TopicIdPartition(topicId, 0, "inkless-topic");
+    TopicIdPartition partition0 = new TopicIdPartition(topicId, 0, "diskless-topic");
 
     @Test
     public void testEmptyFetch() {
-        FetchCompleterJob job = new FetchCompleterJob(
+        FetchCompleter job = new FetchCompleter(
             new MockTime(),
             OBJECT_KEY_CREATOR,
             Collections.emptyMap(),
-            CompletableFuture.completedFuture(Collections.emptyMap()),
-            CompletableFuture.completedFuture(Collections.emptyList()),
+            Collections.emptyMap(),
+            Collections.emptyList(),
             durationMs -> {}
         );
         Map<TopicIdPartition, FetchPartitionData> result = job.get();
@@ -92,12 +92,12 @@ public class FetchCompleterJobTest {
         Map<TopicIdPartition, FetchRequest.PartitionData> fetchInfos = Map.of(
             partition0, new FetchRequest.PartitionData(topicId, 0, 0, 1000, Optional.empty())
         );
-        FetchCompleterJob job = new FetchCompleterJob(
+        FetchCompleter job = new FetchCompleter(
             new MockTime(),
             OBJECT_KEY_CREATOR,
             fetchInfos,
-            CompletableFuture.completedFuture(Collections.emptyMap()),
-            CompletableFuture.completedFuture(Collections.emptyList()),
+            Collections.emptyMap(),
+            Collections.emptyList(),
             durationMs -> {}
         );
         Map<TopicIdPartition, FetchPartitionData> result = job.get();
@@ -115,12 +115,12 @@ public class FetchCompleterJobTest {
         Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of(
             partition0, FindBatchResponse.success(Collections.emptyList(), logStartOffset, highWatermark)
         );
-        FetchCompleterJob job = new FetchCompleterJob(
+        FetchCompleter job = new FetchCompleter(
             new MockTime(),
             OBJECT_KEY_CREATOR,
             fetchInfos,
-            CompletableFuture.completedFuture(coordinates),
-            CompletableFuture.completedFuture(Collections.emptyList()),
+            coordinates,
+            Collections.emptyList(),
             durationMs -> {}
         );
         Map<TopicIdPartition, FetchPartitionData> result = job.get();
@@ -145,12 +145,12 @@ public class FetchCompleterJobTest {
                 new BatchInfo(1L, OBJECT_KEY_A_MAIN_PART, BatchMetadata.of(partition0, 0, 10, 0, 0, logAppendTimestamp, maxBatchTimestamp, TimestampType.CREATE_TIME))
             ), logStartOffset, highWatermark)
         );
-        FetchCompleterJob job = new FetchCompleterJob(
+        FetchCompleter job = new FetchCompleter(
             new MockTime(),
             OBJECT_KEY_CREATOR,
             fetchInfos,
-            CompletableFuture.completedFuture(coordinates),
-            CompletableFuture.completedFuture(Collections.emptyList()),
+            coordinates,
+            Collections.emptyList(),
             durationMs -> {}
         );
         Map<TopicIdPartition, FetchPartitionData> result = job.get();
@@ -178,12 +178,12 @@ public class FetchCompleterJobTest {
         List<Future<FileExtent>> files = Stream.of(
             FileFetchJob.createFileExtent(OBJECT_KEY_A, new ByteRange(0, records.sizeInBytes()), records.buffer())
         ).map(CompletableFuture::completedFuture).collect(Collectors.toList());
-        FetchCompleterJob job = new FetchCompleterJob(
+        FetchCompleter job = new FetchCompleter(
             new MockTime(),
             OBJECT_KEY_CREATOR,
             fetchInfos,
-            CompletableFuture.completedFuture(coordinates),
-            CompletableFuture.completedFuture(files),
+            coordinates,
+            files,
             durationMs -> {}
         );
         Map<TopicIdPartition, FetchPartitionData> result = job.get();
@@ -215,12 +215,12 @@ public class FetchCompleterJobTest {
             FileFetchJob.createFileExtent(OBJECT_KEY_A, new ByteRange(0, records.sizeInBytes()), records.buffer()),
             FileFetchJob.createFileExtent(OBJECT_KEY_B, new ByteRange(0, records.sizeInBytes()), records.buffer())
         ).map(CompletableFuture::completedFuture).collect(Collectors.toList());
-        FetchCompleterJob job = new FetchCompleterJob(
+        FetchCompleter job = new FetchCompleter(
             new MockTime(),
             OBJECT_KEY_CREATOR,
             fetchInfos,
-            CompletableFuture.completedFuture(coordinates),
-            CompletableFuture.completedFuture(files),
+            coordinates,
+            files,
             durationMs -> {}
         );
         Map<TopicIdPartition, FetchPartitionData> result = job.get();
@@ -264,12 +264,12 @@ public class FetchCompleterJobTest {
         }
         List<Future<FileExtent>> files = fileExtents.stream().map(CompletableFuture::completedFuture).collect(Collectors.toList());
 
-        FetchCompleterJob job = new FetchCompleterJob(
+        FetchCompleter job = new FetchCompleter(
             new MockTime(),
             OBJECT_KEY_CREATOR,
             fetchInfos,
-            CompletableFuture.completedFuture(coordinates),
-            CompletableFuture.completedFuture(files),
+            coordinates,
+            files,
             durationMs -> {}
         );
         Map<TopicIdPartition, FetchPartitionData> result = job.get();
@@ -313,12 +313,12 @@ public class FetchCompleterJobTest {
         List<Future<FileExtent>> files = Stream.of(
             FileFetchJob.createFileExtent(OBJECT_KEY_A, new ByteRange(0, totalSize), concatenatedBuffer)
         ).map(CompletableFuture::completedFuture).collect(Collectors.toList());
-        FetchCompleterJob job = new FetchCompleterJob(
+        FetchCompleter job = new FetchCompleter(
             new MockTime(),
             OBJECT_KEY_CREATOR,
             fetchInfos,
-            CompletableFuture.completedFuture(coordinates),
-            CompletableFuture.completedFuture(files),
+            coordinates,
+            files,
             durationMs -> {}
         );
         Map<TopicIdPartition, FetchPartitionData> result = job.get();
@@ -375,12 +375,12 @@ public class FetchCompleterJobTest {
         }
         List<Future<FileExtent>> files = fileExtents.stream().map(CompletableFuture::completedFuture).collect(Collectors.toList());
 
-        FetchCompleterJob job = new FetchCompleterJob(
+        FetchCompleter job = new FetchCompleter(
             new MockTime(),
             OBJECT_KEY_CREATOR,
             fetchInfos,
-            CompletableFuture.completedFuture(coordinates),
-            CompletableFuture.completedFuture(files),
+            coordinates,
+            files,
             durationMs -> {}
         );
         Map<TopicIdPartition, FetchPartitionData> result = job.get();

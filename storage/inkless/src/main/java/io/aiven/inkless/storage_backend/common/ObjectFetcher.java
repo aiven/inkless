@@ -17,11 +17,43 @@
  */
 package io.aiven.inkless.storage_backend.common;
 
-import java.io.InputStream;
+import java.io.Closeable;
+import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.nio.channels.ReadableByteChannel;
+import java.util.ArrayList;
+import java.util.List;
 
 import io.aiven.inkless.common.ByteRange;
 import io.aiven.inkless.common.ObjectKey;
 
-public interface ObjectFetcher {
-    InputStream fetch(ObjectKey key, ByteRange range) throws StorageBackendException;
+public interface ObjectFetcher extends Closeable {
+
+    /**
+     * Use large enough buffer for reading the blob content to byte buffers to reduce required number
+     * of allocations. Usually default implementations in input streams use 16 KiB buffers. The expectation
+     * of blob sizes from cloud storages are multi-megabyte.
+     */
+    int READ_BUFFER_1MiB = 1024 * 1024;
+
+    ReadableByteChannel fetch(ObjectKey key, ByteRange range) throws StorageBackendException, IOException;
+
+    default ByteBuffer readToByteBuffer(final ReadableByteChannel readableByteChannel) throws IOException {
+        final ByteBuffer byteBuffer;
+        final List<ByteBuffer> buffers = new ArrayList<>(5);
+        int readSize;
+        int totalSize = 0;
+        do {
+            final ByteBuffer tempBuffer = ByteBuffer.allocate(READ_BUFFER_1MiB);
+            readSize = readableByteChannel.read(tempBuffer);
+            if (readSize > 0) {
+                buffers.add(tempBuffer);
+                tempBuffer.flip();
+                totalSize += readSize;
+            }
+        } while (readSize >= 0);
+        byteBuffer = ByteBuffer.allocate(totalSize);
+        buffers.forEach(byteBuffer::put);
+        return byteBuffer.flip();
+    }
 }

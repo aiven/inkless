@@ -23,10 +23,12 @@ import org.apache.kafka.common.utils.Time;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.Closeable;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -45,7 +47,7 @@ import io.aiven.inkless.produce.FileUploadJob;
 import io.aiven.inkless.storage_backend.common.StorageBackend;
 import io.aiven.inkless.storage_backend.common.StorageBackendException;
 
-public class FileMerger implements Runnable {
+public class FileMerger implements Runnable, Closeable {
     private static final Logger LOGGER = LoggerFactory.getLogger(FileMerger.class);
 
     private final Path workDir;
@@ -151,9 +153,11 @@ public class FileMerger implements Runnable {
                 final var target = workDir.resolve(tmpFileName);
                 paths.add(target);
 
-                try (final var in = storage.fetch(objectKey, null);
-                     final var out = Files.newOutputStream(target)) {
-                    in.transferTo(out);
+                final var in = storage.fetch(objectKey, null);
+                try (final var out = Files.newByteChannel(target, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE)) {
+                    out.write(storage.readToByteBuffer(in));
+                } catch (Exception e) {
+                    e.printStackTrace();
                 }
 
                 final Supplier<InputStream> inputStream = () -> {
@@ -171,37 +175,35 @@ public class FileMerger implements Runnable {
                 }
             }
 
-            try (MergeBatchesInputStream mergeBatchesInputStream = builder.build()) {
-                var mergeMetadata = mergeBatchesInputStream.mergeMetadata();
+            var mergeMetadata = builder.mergeMetadata();
 
-                final ObjectKey objectKey = new FileUploadJob(
-                    objectKeyCreator, storage, time,
-                    config.produceMaxUploadAttempts(),
-                    config.produceUploadBackoff(),
-                    mergeBatchesInputStream,
+            final ObjectKey objectKey = new FileUploadJob(
+                objectKeyCreator, storage, time,
+                config.produceMaxUploadAttempts(),
+                config.produceUploadBackoff(),
+                builder::build,
+                mergeMetadata.mergedFileSize(),
+                metrics::recordFileUploadTime
+            ).call();
+
+            try {
+                controlPlane.commitFileMergeWorkItem(
+                    workItem.workItemId(),
+                    objectKey.value(),
+                    ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT,
+                    brokerId,
                     mergeMetadata.mergedFileSize(),
-                    metrics::recordFileUploadTime
-                ).call();
-
-                try {
-                    controlPlane.commitFileMergeWorkItem(
-                        workItem.workItemId(),
-                        objectKey.value(),
-                        ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT,
-                        brokerId,
-                        mergeMetadata.mergedFileSize(),
-                        mergeMetadata.mergedFileBatch()
-                    );
-                } catch (final Exception e) {
-                    if (e instanceof ControlPlaneException) {
-                        // only attempt to remove the uploaded file if it is a control plane error
-                        tryDeleteFile(objectKey, e);
-                    }
-                    // The original exception will be thrown.
-                    throw e;
+                    mergeMetadata.mergedFileBatch()
+                );
+            } catch (final Exception e) {
+                if (e instanceof ControlPlaneException) {
+                    // only attempt to remove the uploaded file if it is a control plane error
+                    tryDeleteFile(objectKey, e);
                 }
-                LOGGER.info("Merged {} files into {}", workItem.files().size(), objectKey);
+                // The original exception will be thrown.
+                throw e;
             }
+            LOGGER.info("Merged {} files into {}", workItem.files().size(), objectKey);
         } finally {
             // delete the temporary files
             paths.forEach(p -> {
@@ -235,4 +237,9 @@ public class FileMerger implements Runnable {
         }
     }
 
+    @Override
+    public void close() throws IOException {
+        storage.close();
+        metrics.close();
+    }
 }

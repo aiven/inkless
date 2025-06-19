@@ -32,6 +32,8 @@ import com.google.cloud.ServiceOptions;
 import com.google.cloud.http.HttpTransportOptions;
 import com.groupcdg.pitest.annotations.CoverageIgnore;
 
+import java.io.Closeable;
+import java.io.IOException;
 import java.util.List;
 import java.util.regex.Pattern;
 
@@ -53,7 +55,7 @@ import static io.aiven.inkless.storage_backend.gcs.MetricRegistry.RESUMABLE_UPLO
 import static io.aiven.inkless.storage_backend.gcs.MetricRegistry.RESUMABLE_UPLOAD_INITIATE_TOTAL_METRIC_NAME;
 
 @CoverageIgnore  // tested on integration level
-public class MetricCollector {
+public class MetricCollector implements Closeable {
     private final org.apache.kafka.common.metrics.Metrics metrics;
 
     /**
@@ -133,6 +135,18 @@ public class MetricCollector {
     }
 
     private final MetricResponseInterceptor metricResponseInterceptor = new MetricResponseInterceptor();
+
+    @Override
+    public void close() throws IOException {
+        // remove sensors to restart their counts when reconfigured
+        // instead of closing metrics which would affect other storage backends if used together
+        // TODO: consider making a single metrics to be passed to all storage backends
+        metrics.removeSensor(OBJECT_METADATA_GET);
+        metrics.removeSensor(OBJECT_GET);
+        metrics.removeSensor(OBJECT_DELETE);
+        metrics.removeSensor(RESUMABLE_UPLOAD_INITIATE);
+        metrics.removeSensor(RESUMABLE_CHUNK_UPLOAD);
+    }
 
     private class MetricResponseInterceptor implements HttpResponseInterceptor {
 

@@ -19,7 +19,7 @@
 package kafka.server.metadata
 
 import io.aiven.inkless.control_plane.MetadataView
-import org.apache.kafka.common.config.ConfigResource
+import org.apache.kafka.common.config.TopicConfig
 import org.apache.kafka.common.network.ListenerName
 import org.apache.kafka.common.{Node, TopicIdPartition, Uuid}
 
@@ -27,33 +27,41 @@ import java.util.Properties
 import java.util.function.Supplier
 import java.util.stream.{Collectors, IntStream}
 import java.{lang, util}
+import scala.jdk.CollectionConverters._
 
-class InklessMetadataView(val metadataCache: KRaftMetadataCache, val defaultConfig: Supplier[util.Map[String, AnyRef]]) extends MetadataView {
-  override def getDefaultConfig: util.Map[String, AnyRef] = {
-    defaultConfig.get()
+class InklessMetadataView(val metadataCache: KRaftMetadataCache, val defaultConfig: Supplier[util.Map[String, Object]]) extends MetadataView {
+  override def getDefaultConfig: util.Map[String, Object] = {
+    // Filter out null values as they break LogConfig initialization using Properties.putAll
+    val filtered = new util.HashMap[String, Object]()
+    defaultConfig.get().entrySet().asScala
+      .filter(_.getValue != null)
+      .foreach(entry => filtered.put(entry.getKey, entry.getValue))
+    filtered
   }
 
   override def getAliveBrokerNodes(listenerName: ListenerName): lang.Iterable[Node] = {
     metadataCache.getAliveBrokerNodes(listenerName)
   }
 
+  // Only method requiring specific KRaftMetadataCache functionality.
+  // If we could refactor RetentionEnforcement to not require this, we could use the MetadataView interface directly.
   override def getBrokerCount: Integer = metadataCache.currentImage().cluster().brokers().size()
 
   override def getTopicId(topicName: String): Uuid = {
     metadataCache.getTopicId(topicName)
   }
 
-  override def isInklessTopic(topicName: String): Boolean = {
-    metadataCache.isInklessTopic(topicName, defaultConfig)
+  override def isDisklessTopic(topicName: String): Boolean = {
+    metadataCache.topicConfig(topicName).getProperty(TopicConfig.DISKLESS_ENABLE_CONFIG, "false").toBoolean
   }
 
   override def getTopicConfig(topicName: String): Properties = {
-    metadataCache.config(new ConfigResource(ConfigResource.Type.TOPIC, topicName))
+    metadataCache.topicConfig(topicName)
   }
 
-  override def getInklessTopicPartitions: util.Set[TopicIdPartition] = {
+  override def getDisklessTopicPartitions: util.Set[TopicIdPartition] = {
     metadataCache.getAllTopics().stream()
-      .filter(isInklessTopic)
+      .filter(isDisklessTopic)
       .flatMap(t => IntStream.range(0, metadataCache.numPartitions(t).get())
         .mapToObj(p => new TopicIdPartition(metadataCache.getTopicId(t), p, t)))
       .collect(Collectors.toSet[TopicIdPartition]())

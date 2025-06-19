@@ -25,6 +25,7 @@ import org.apache.kafka.common.config.ConfigResource;
 import org.apache.kafka.common.config.ConfigResource.Type;
 import org.apache.kafka.common.config.TopicConfig;
 import org.apache.kafka.common.config.types.Password;
+import org.apache.kafka.common.errors.InvalidConfigurationException;
 import org.apache.kafka.common.metadata.ClearElrRecord;
 import org.apache.kafka.common.metadata.ConfigRecord;
 import org.apache.kafka.common.protocol.Errors;
@@ -275,6 +276,10 @@ public class ConfigurationControlManager {
                     newValue = opValue;
                     break;
                 case DELETE:
+                    if (Objects.equals(key, TopicConfig.DISKLESS_ENABLE_CONFIG)) {
+                        return ApiError.fromThrowable(
+                            new InvalidConfigurationException("It is not allowed to delete the diskless.enable config"));
+                    }
                     newValue = null;
                     break;
                 case APPEND:
@@ -613,7 +618,7 @@ public class ConfigurationControlManager {
 
     /**
      * Generate any configuration records that are needed to make it safe to enable ELR.
-     * Specifically, we need to remove all cluster-level configurations for min.insync.replicas,
+     * Specifically, we need to remove all broker-level configurations for min.insync.replicas,
      * and create a cluster-level configuration for min.insync.replicas. It is always safe to call
      * this function if ELR is already enabled; it will simply do nothing if the necessary
      * configurations already exist.

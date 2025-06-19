@@ -3,13 +3,13 @@
 Inkless is an extension of Apache Kafka, and so all existing functionality in Apache Kafka is still present for Traditional topics.
 No extra steps are necessary to make use of this functionality with an Inkless enabled cluster.
 
-# Inkless Topics
+# Diskless Topics
 
 The Inkless feature is enabled on a per-broker basis by passing appropriate configurations and credentials to reach both object storage and batch coordinate storage.
 Once Inkless is enabled on brokers, it can be enabled for individual topics.
-Inkless topics have a restricted set of features available, as not all functionality has been implemented and tested.
+Diskless topics have a restricted set of features available, as not all functionality has been implemented and tested.
 
-Currently Inkless topics support:
+Currently Diskless topics support:
 * Non-Idempotent Produce
 * Idempotent Produce
 * Fetch
@@ -20,18 +20,18 @@ Currently Inkless topics support:
 The following are notable unsupported features:
 * cleanup.policy=delete
 * cleanup.policy=compact
-* Adding Inkless topics to transactions
-* read_committed consumers reading Inkless topics
+* Adding Diskless topics to transactions
+* read_committed consumers reading Diskless topics
 * Producing to both inkless and traditional topics simultaneously
 
 If not specified above, features are untested and assumed to be inoperable.
 
 ## API support
 
-### Inkless topics supported (possibly with limitations)
+### Diskless topics supported (possibly with limitations)
 - `PRODUCE`
     - upload parallelism is underutilized;
-    - Inkless topics can’t participate in transactions.
+    - Diskless topics can’t participate in transactions.
 - `FETCH`
     - can't fetch from Inkless and classic topics in the same request.
 - `LIST_OFFSETS`
@@ -40,7 +40,7 @@ If not specified above, features are untested and assumed to be inoperable.
 - `DESCRIBE_TOPIC_PARTITIONS`
     - the output is modified according to client and broker racks.
 - `CREATE_TOPICS`
-    - Inkless topics cannot be created with the remote storage enabled;
+    - Diskless topics cannot be created with the remote storage enabled;
     - the replication factor must be `1` or `-1`;
     - the initial partition assignment provided by the user is ignored.
 - `DELETE_TOPICS`
@@ -48,19 +48,19 @@ If not specified above, features are untested and assumed to be inoperable.
 - `OFFSET_FOR_LEADER_EPOCH`
 - `DESCRIBE_CONFIGS`
 - `ALTER_CONFIGS`
-    - the remote storage cannot be enabled for Inkless topics.
+    - the remote storage cannot be enabled for Diskless topics.
 - `CREATE_PARTITIONS`
 - `INCREMENTAL_ALTER_CONFIGS`
-    - the remote storage cannot be enabled for Inkless topics.
+    - the remote storage cannot be enabled for Diskless topics.
 - `ALTER_PARTITION_REASSIGNMENTS`
-    - the replication factor can't be changed for Inkless topics.
+    - the replication factor can't be changed for Diskless topics.
 
-### Inkless topics are excluded
+### Diskless topics are excluded
 - `ADD_PARTITIONS_TO_TXN`
 - `WRITE_TXN_MARKERS`
 - `TXN_OFFSET_COMMIT`
 
-### Not supported for Inkless topics (WIP)
+### Not supported for Diskless topics (WIP)
 - `DESCRIBE_PRODUCERS`
 - `ASSIGN_REPLICAS_TO_DIRS`
 

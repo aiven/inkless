@@ -200,7 +200,8 @@ allprojects {
           libs.scalaReflect,
           // Workaround before `commons-validator` has new release. See KAFKA-19359.
           libs.commonsBeanutils,
-          libs.jacksonAnnotations
+          libs.jacksonAnnotations,
+          libs.commonsLang
         )
       }
     }
@@ -265,7 +266,7 @@ if (repo != null) {
   rat {
     dependsOn subprojects.collect {
       it.tasks.matching {
-        it.name == "processMessages" || it.name == "processTestMessages"
+        it.name == "processMessages" || it.name == "processTestMessages" || it.name == "generateJooqClasses"
       }
     }
 
@@ -278,6 +279,7 @@ if (repo != null) {
     excludes = new ArrayList<String>(repo.clean(ignore: false, directories: true, dryRun: true))
     // And some of the files that we have checked in should also be excluded from this check
     excludes.addAll([
+        'antithesis/**',
         '**/.git/**',
         '**/build/**',
         '.github/pull_request_template.md',
@@ -292,6 +294,20 @@ if (repo != null) {
         'checkstyle/suppressions.xml',
         'streams/quickstart/java/src/test/resources/projects/basic/goal.txt',
         'streams/streams-scala/logs/*',
+        // Ignore inkless licenses from RAT check for the time being
+        'LICENSE.md',
+        'LICENSE-AGPL',
+        'Makefile',
+        'storage/inkless/**',
+        'docker/examples/docker-compose-files/inkless/**',
+        'config/inkless/**',
+        'checkstyle/import-control-storage-inkless.xml',
+        '.github/workflows/inkless*',
+        'docker/extra',
+        'docs/inkless/**',
+        'dump-schema-compose.yml',
+        'inkless-benchmarks/**',
+        // end of inkless ignored files
         'licenses/*',
         '**/generated/**',
         'clients/src/test/resources/serializedData/*',
@@ -1066,6 +1082,7 @@ project(':core') {
     testImplementation libs.junitJupiter
     testImplementation libs.caffeine
     testImplementation testLog4j2Libs
+    testImplementation libs.mockOAuth2Server
 
     // testcontainers for inkless cluster tests
     testImplementation libs.assertj
@@ -2279,6 +2296,17 @@ project(':storage') {
     testImplementation project(':core')
     testImplementation project(':core').sourceSets.test.output
     testImplementation project(':storage:storage-api').sourceSets.test.output
+    // testcontainers for inkless cluster tests
+    testImplementation libs.assertj
+    testImplementation libs.junitJupiter
+    testImplementation libs.mockitoCore
+    testImplementation libs.mockitoJunitJupiter // supports MockitoExtension
+    testImplementation libs.testcontainers
+    testImplementation libs.testcontainersJunitJupiter
+    testImplementation libs.testcontainersLocalstack
+    testImplementation libs.testcontainersPostgresql
+    testImplementation libs.awsSdkS3
+    testImplementation project(':storage:inkless').sourceSets.test.output
     testImplementation project(':test-common:test-common-internal-api')
     testImplementation project(':test-common:test-common-runtime')
     testImplementation project(':test-common:test-common-util')
@@ -2425,7 +2453,6 @@ project(':storage:inkless') {
       exclude group: 'com.google.guava', module: 'listenablefuture'
     }
     implementation libs.metrics
-    implementation libs.commonsIo
     implementation libs.infinispan
     compileOnly libs.infinispanAnnotations // Workaround for ISPN-12461
 
@@ -2466,6 +2493,45 @@ project(':storage:inkless') {
             .withPathSensitivity(PathSensitivity.RELATIVE)
     outputs.cacheIf { true }
     outputs.dir("${projectDir}/build/generated/main/java/io/aiven/inkless/generated")
+  }
+
+  task genInklessConfigDoc(type: JavaExec) {
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'io.aiven.inkless.doc.ConfigsDocs'
+
+    // Define the outputs formally
+    outputs.file("$rootDir/docs/inkless/configs.rst")
+
+    // Set up the output in the execution phase, not configuration, and avoid removing on clean
+    doFirst {
+      standardOutput = new File("$rootDir/docs/inkless/configs.rst").newOutputStream()
+    }
+  }
+
+  task genInklessTopicConfigDoc(type: JavaExec) {
+    classpath = project(':storage:inkless').sourceSets.main.runtimeClasspath
+    mainClass = 'io.aiven.inkless.doc.TopicConfigsDocs'
+
+    // Define the outputs formally
+    outputs.file("$rootDir/docs/inkless/topic_configs.rst")
+
+    // Set up the output in the execution phase, not configuration, and avoid removing on clean
+    doFirst {
+      standardOutput = new File("$rootDir/docs/inkless/topic_configs.rst").newOutputStream()
+    }
+  }
+
+  task genInklessMetricsDoc(type: JavaExec) {
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'io.aiven.inkless.doc.MetricsDocs'
+
+    // Define the outputs formally
+    outputs.file("$rootDir/docs/inkless/metrics.rst")
+
+    // Set up the output in the execution phase, not configuration, and avoid removing on clean
+    doFirst {
+      standardOutput = new File("$rootDir/docs/inkless/metrics.rst").newOutputStream()
+    }
   }
 
   tasks {
@@ -2572,6 +2638,12 @@ project(':storage:inkless') {
     outputFormats.addAll('XML', 'HTML')
     mutators.add('ALL')
     exportLineCoverage = true
+  }
+
+  tasks.named('build') {
+    dependsOn tasks.named('genInklessConfigDoc')
+    dependsOn tasks.named('genInklessTopicConfigDoc')
+    dependsOn tasks.named('genInklessMetricsDoc')
   }
 }
 
@@ -2691,6 +2763,17 @@ project(':tools') {
     testImplementation libs.apachedsProtocolLdap
     testImplementation libs.apachedsLdifPartition
     testImplementation testLog4j2Libs
+    // testcontainers for inkless cluster tests
+    testImplementation libs.assertj
+    testImplementation libs.junitJupiter
+    testImplementation libs.mockitoCore
+    testImplementation libs.mockitoJunitJupiter // supports MockitoExtension
+    testImplementation libs.testcontainers
+    testImplementation libs.testcontainersJunitJupiter
+    testImplementation libs.testcontainersLocalstack
+    testImplementation libs.testcontainersPostgresql
+    testImplementation libs.awsSdkS3
+    testImplementation project(':storage:inkless').sourceSets.test.output
 
     testRuntimeOnly runtimeTestLibs
     testRuntimeOnly libs.hamcrest

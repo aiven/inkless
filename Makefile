@@ -8,6 +8,7 @@ build:
 	./gradlew :core:build :storage:inkless:build :metadata:build -x test
 
 core/build/distributions/kafka_2.13-$(VERSION).tgz:
+	echo "Building Kafka distribution with version $(VERSION)"
 	./gradlew releaseTarGz
 
 .PHONY: build_release
@@ -62,10 +63,10 @@ integration_test_core:
 clean:
 	./gradlew clean
 
-DEMO := s3-minio
+DEMO := s3-local
 .PHONY: demo
 demo:
-	$(MAKE) -C docker/examples/docker-compose-files/inkless $(DEMO)
+	$(MAKE) -C docker/examples/docker-compose-files/inkless $(DEMO) KAFKA_VERSION=$(VERSION)
 
 core/build/distributions/kafka_2.13-$(VERSION): core/build/distributions/kafka_2.13-$(VERSION).tgz
 	tar -xf $< -C core/build/distributions
@@ -103,11 +104,16 @@ local_azure:
 cleanup:
 	cd docker/examples/docker-compose-files/inkless && \
 		$(DOCKER) compose down --remove-orphans
-	cd docker/examples/docker-compose-files/inkless-cluster && \
-		$(DOCKER) compose down --remove-orphans
 	rm -rf ./_data
 
 # make create_topic ARGS="topic"
 .PHONY: create_topic
 create_topic: core/build/distributions/kafka_2.13-$(VERSION)
-	$</bin/kafka-topics.sh --bootstrap-server 127.0.0.1:9092 --create --config inkless.enable=true --topic $(ARGS)
+	$</bin/kafka-topics.sh --bootstrap-server 127.0.0.1:9092 --create --config diskless.enable=true --topic $(ARGS)
+
+
+.PHONY: dump_postgres_schema
+dump_postgres_schema:
+	docker compose -f dump-schema-compose.yml up
+	docker compose -f dump-schema-compose.yml down --remove-orphans
+	@echo "Dumped: ./storage/inkless/build/postgres_schema.sql"

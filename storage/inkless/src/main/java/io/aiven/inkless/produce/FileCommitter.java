@@ -21,6 +21,9 @@ import org.apache.kafka.common.utils.Time;
 
 import com.groupcdg.pitest.annotations.DoNotMutate;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.io.Closeable;
 import java.io.IOException;
 import java.time.Duration;
@@ -42,6 +45,7 @@ import io.aiven.inkless.cache.ObjectCache;
 import io.aiven.inkless.common.InklessThreadFactory;
 import io.aiven.inkless.common.ObjectKey;
 import io.aiven.inkless.common.ObjectKeyCreator;
+import io.aiven.inkless.common.metrics.ThreadPoolMonitor;
 import io.aiven.inkless.control_plane.CommitBatchResponse;
 import io.aiven.inkless.control_plane.ControlPlane;
 import io.aiven.inkless.storage_backend.common.StorageBackend;
@@ -52,6 +56,8 @@ import io.aiven.inkless.storage_backend.common.StorageBackend;
  * <p>It uploads files concurrently, but commits them to the control plan sequentially.
  */
 class FileCommitter implements Closeable {
+    private static final Logger LOGGER = LoggerFactory.getLogger(FileCommitter.class);
+
     private final FileCommitterMetrics metrics;
 
     private final Lock lock = new ReentrantLock();
@@ -68,6 +74,7 @@ class FileCommitter implements Closeable {
     private final ExecutorService executorServiceUpload;
     private final ExecutorService executorServiceCommit;
     private final ExecutorService executorServiceCacheStore;
+    private ThreadPoolMonitor threadPoolMonitor;
 
     private final AtomicInteger totalFilesInProgress = new AtomicInteger(0);
     private final AtomicInteger totalBytesInProgress = new AtomicInteger(0);
@@ -131,6 +138,12 @@ class FileCommitter implements Closeable {
         // Can't do this in the FileCommitterMetrics constructor, so initializing this way.
         this.metrics.initTotalFilesInProgressMetric(totalFilesInProgress::get);
         this.metrics.initTotalBytesInProgressMetric(totalBytesInProgress::get);
+        try {
+            this.threadPoolMonitor = new ThreadPoolMonitor("inkless-produce-uploader", executorServiceUpload);
+        } catch (final Exception e) {
+            // only expected to happen on tests passing other types of pools
+            LOGGER.warn("Failed to create ThreadPoolMonitor for inkless-produce-uploader", e);
+        }
     }
 
     void commit(final ClosedFile file) throws InterruptedException {
@@ -177,9 +190,19 @@ class FileCommitter implements Closeable {
                         .whenComplete((result, error) -> {
                             totalFilesInProgress.addAndGet(-1);
                             totalBytesInProgress.addAndGet(-file.size());
-                            metrics.fileFinished(file.start(), uploadAndCommitStart);
+                            if (error != null) {
+                                // at this point the commit has failed and need to check whether it failed on upload or commit
+                                LOGGER.error("Failed to commit diskless file {}", file, error);
+                                if (error.getCause() instanceof FileUploadException) {
+                                    metrics.fileUploadFailed();
+                                } else {
+                                    metrics.fileCommitFailed();
+                                }
+                            } else {
+                                // only mark as finished if everything succeeded
+                                metrics.fileFinished(file.start(), uploadAndCommitStart);
+                            }
                         });
-
 
                 final CacheStoreJob cacheStoreJob = new CacheStoreJob(
                         time,
@@ -195,8 +218,10 @@ class FileCommitter implements Closeable {
                 final AppendCompleter completerJob = new AppendCompleter(file);
                 if (commitBatchResponses != null) {
                     completerJob.finishCommitSuccessfully(commitBatchResponses);
+                    metrics.writeCompleted();
                 } else {
                     completerJob.finishCommitWithError();
+                    metrics.writeFailed();
                 }
             });
         } finally {
@@ -218,5 +243,6 @@ class FileCommitter implements Closeable {
         executorServiceUpload.shutdown();
         executorServiceCommit.shutdown();
         metrics.close();
+        if (threadPoolMonitor != null) threadPoolMonitor.close();
     }
 }

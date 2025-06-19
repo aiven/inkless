@@ -59,7 +59,7 @@ class PlaintextProducerSendTest extends BaseProducerSendTest {
       lingerMs = Int.MaxValue,
       deliveryTimeoutMs = Int.MaxValue,
       batchSize = 0)
-    // inkless: default timeout is not enough for the 100 requests
+    // diskless: default timeout is not enough for the 100 requests
     sendAndVerify(producer, timeoutMs = 60_000)
   }
 
@@ -286,8 +286,8 @@ object PlaintextProducerSendTest {
     for (groupProtocol <- GroupProtocol.values().map(gp => gp.name.toLowerCase(Locale.ROOT))) {
       data.add(Arguments.of(groupProtocol, TopicConfig.MESSAGE_TIMESTAMP_BEFORE_MAX_MS_CONFIG, Long.box(now - fiveMinutesInMs), "classic"))
       data.add(Arguments.of(groupProtocol, TopicConfig.MESSAGE_TIMESTAMP_AFTER_MAX_MS_CONFIG, Long.box(now + fiveMinutesInMs), "classic"))
-      data.add(Arguments.of(groupProtocol, TopicConfig.MESSAGE_TIMESTAMP_BEFORE_MAX_MS_CONFIG, Long.box(now - fiveMinutesInMs), "inkless"))
-      data.add(Arguments.of(groupProtocol, TopicConfig.MESSAGE_TIMESTAMP_AFTER_MAX_MS_CONFIG, Long.box(now + fiveMinutesInMs), "inkless"))
+      data.add(Arguments.of(groupProtocol, TopicConfig.MESSAGE_TIMESTAMP_BEFORE_MAX_MS_CONFIG, Long.box(now - fiveMinutesInMs), "diskless"))
+      data.add(Arguments.of(groupProtocol, TopicConfig.MESSAGE_TIMESTAMP_AFTER_MAX_MS_CONFIG, Long.box(now + fiveMinutesInMs), "diskless"))
     }
     data.stream()
   }

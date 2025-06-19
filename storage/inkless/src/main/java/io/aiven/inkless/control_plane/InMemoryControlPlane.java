@@ -27,6 +27,7 @@ import org.slf4j.LoggerFactory;
 import java.io.IOException;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
@@ -58,6 +59,7 @@ public class InMemoryControlPlane extends AbstractControlPlane {
     // LinkedHashMap to preserve the insertion order, to select files for merging in order.
     // The key is the object key.
     private final LinkedHashMap<String, FileInfo> files = new LinkedHashMap<>();
+    // The key is the partition. The inner map key is the last offset in the batch.
     private final HashMap<TopicIdPartition, TreeMap<Long, BatchInfoInternal>> batches = new HashMap<>();
     // The key is the ID.
     private final Map<Long, FileMergeWorkItem> fileMergeWorkItems = new HashMap<>();
@@ -206,7 +208,9 @@ public class InMemoryControlPlane extends AbstractControlPlane {
     @Override
     protected Iterator<FindBatchResponse> findBatchesForExistingPartitions(
         final Stream<FindBatchRequest> requests,
-        final int fetchMaxBytes
+        final int fetchMaxBytes,
+        // ignored for in-memory implementation
+        final int maxBatchesPerPartition
     ) {
         return requests
             .map(request -> findBatchesForExistingPartition(request, fetchMaxBytes))
@@ -287,7 +291,7 @@ public class InMemoryControlPlane extends AbstractControlPlane {
 
     @Override
     public synchronized void deleteTopics(final Set<Uuid> topicIds) {
-        // There may be some non-Inkless topics there, but they should be no-op.
+        // There may be some non-diskless topics there, but they should be no-op.
 
         final List<TopicIdPartition> partitionsToDelete = logs.keySet().stream()
             .filter(tidp -> topicIds.contains(tidp.topicId()))
@@ -308,13 +312,14 @@ public class InMemoryControlPlane extends AbstractControlPlane {
     }
 
     @Override
-    public synchronized List<EnforceRetentionResponse> enforceRetention(final List<EnforceRetentionRequest> requests) {
+    public synchronized List<EnforceRetentionResponse> enforceRetention(final List<EnforceRetentionRequest> requests, final int maxBatchesPerRequest) {
         final Instant now = TimeUtils.now(time);
 
         final List<EnforceRetentionResponse> responses = new ArrayList<>();
         for (final EnforceRetentionRequest request : requests) {
             final TopicIdPartition tidp = findTopicIdPartition(request.topicId(), request.partition());
             final LogInfo logInfo;
+            // The key is the last offset in the batch.
             final TreeMap<Long, BatchInfoInternal> coordinates;
             if (tidp == null
                 || (logInfo = logs.get(tidp)) == null
@@ -352,7 +357,15 @@ public class InMemoryControlPlane extends AbstractControlPlane {
                     .forEach(toDelete::add);
             }
 
-            for (final long key : toDelete) {
+            List<Long> sortedKeysToDelete = new ArrayList<>(toDelete);
+            // We must delete in the offset order.
+            Collections.sort(sortedKeysToDelete);
+
+            for (final long key : sortedKeysToDelete) {
+                // Enforce max batches per request
+                if (maxBatchesPerRequest > 0 && batchesDeleted >= maxBatchesPerRequest) {
+                    break;
+                }
                 final BatchInfoInternal removed = coordinates.remove(key);
                 removed.fileInfo().deleteBatch(removed.batchInfo(), now);
                 batchesDeleted += 1;
