@@ -845,8 +845,11 @@ org.apache.kafka.tools.streams.DeleteStreamsGroupOffsetTest:
 - testDeleteStreamsGroupOffsetsMultipleGroups
 org.apache.kafka.tools.streams.DeleteStreamsGroupTest:
 - testDeleteAllGroupsAfterVersionDowngrade
-- testDeleteMultipleGroup
-- testDeleteSingleGroup
+- testDeleteAllGroupsWithDeletingInternalTopics
+- testDeleteMultipleGroupsWithoutDeletingInternalTopics
+- testDeleteSingleGroupWithDeletingInternalTopics
+- testDeleteSingleGroupWithoutDeletingInternalTopics
+- testDeleteWithDeleteInternalTopicOption
 - testDeleteWithUnrecognizedOption
 - testDeleteWithoutGroupOption
 org.apache.kafka.tools.streams.DescribeStreamsGroupTest:
@@ -862,7 +865,15 @@ org.apache.kafka.tools.streams.ListStreamsGroupTest:
 - testListStreamsGroupWithStates
 - testListStreamsGroupWithoutFilters
 - testListWithUnrecognizedNewOption
+org.apache.kafka.tools.streams.ResetStreamsGroupOffsetTest:
+- testResetOffset
+- testResetOffsetsWithDeleteAllInternalTopics
+- testResetOffsetsWithDeleteInternalTopicsOption
+- testResetOffsetsWithDeleteSpecifiedInternalTopics
+- testResetOffsetsWithoutGroupOption
+- testResetWithUnrecognizedOption
 org.apache.kafka.tools.streams.StreamsGroupCommandTest:
+- testAdminRequestsForResetOffsets
 - testDeleteNonStreamsGroup
 - testDeleteStreamsGroup
 - testDescribeStreamsGroups

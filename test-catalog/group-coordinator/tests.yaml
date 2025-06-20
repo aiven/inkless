@@ -730,7 +730,6 @@ org.apache.kafka.coordinator.group.assignor.RangeSetTest:
 - testUnsupportedOperations
 org.apache.kafka.coordinator.group.assignor.SimpleAssignorTest:
 - testAssignWithCurrentAssignmentHeterogeneous
-- testAssignWithCurrentAssignmentHomogeneous
 - testAssignWithEmptyMembers
 - testAssignWithNoSubscribedTopic
 - testAssignWithOneMemberNoAssignedTopicHeterogeneous
@@ -741,11 +740,11 @@ org.apache.kafka.coordinator.group.assignor.SimpleAssignorTest:
 - testAssignWithTwoMembersAndTwoTopicsHomogeneous
 - testAssignWithTwoMembersAndTwoTopicsHomogeneousWithAllowedMap
 - testAssignWithTwoMembersAndTwoTopicsHomogeneousWithNonAssignableTopic
+- testIncrementalAssignmentDecreasingMembersHomogeneous
+- testIncrementalAssignmentIncreasingMembersHomogeneous
 - testMemberHashAssignment
 - testName
 - testRoundRobinAssignment
-- testRoundRobinAssignmentWithCount
-- testRoundRobinAssignmentWithCountTooManyPartitions
 org.apache.kafka.coordinator.group.assignor.UniformHeterogeneousAssignmentBuilderTest:
 - testFirstAssignmentNumMembersGreaterThanTotalNumPartitions
 - testFirstAssignmentTwoMembersTwoTopics
