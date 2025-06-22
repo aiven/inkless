@@ -300,10 +300,12 @@ org.apache.kafka.clients.producer.ProducerSendWhileDeletionTest:
 - testSendWithTopicReassignmentIsMidWay
 org.apache.kafka.clients.security.GroupAuthorizerIntegrationTest:
 - testAsyncConsumeCloseWithGroupPermission
+- testAsyncConsumeUnsubscribeWithGroupPermission
 - testAsyncConsumeUnsubscribeWithoutGroupPermission
 - testAuthorizedProduceAndConsumeWithAsync
 - testAuthorizedProduceAndConsumeWithClassic
 - testClassicConsumeCloseWithGroupPermission
+- testClassicConsumeUnsubscribeWithGroupPermission
 - testClassicConsumeUnsubscribeWithoutGroupPermission
 - testUnauthorizedProduceAndConsumeWithAsyncConsumer
 - testUnauthorizedProduceAndConsumeWithClassicConsumer
