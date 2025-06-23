@@ -150,6 +150,7 @@ public class InklessClusterTest {
         clientConfigs.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, ByteArrayDeserializer.class.getName());
         // by default is latest and nothing would get consumed.
         clientConfigs.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, AutoOffsetResetStrategy.EARLIEST.name());
+        clientConfigs.put(ConsumerConfig.MAX_PARTITION_FETCH_BYTES_CONFIG, "5000000");
         String topicName = "inkless-topic";
         int numRecords = 500;
 

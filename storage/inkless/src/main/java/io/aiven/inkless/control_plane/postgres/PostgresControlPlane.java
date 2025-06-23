@@ -132,7 +132,7 @@ public class PostgresControlPlane extends AbstractControlPlane {
         final FindBatchesJob job = new FindBatchesJob(
             time, jooqCtx,
             requests.toList(), fetchMaxBytes,
-            metrics::onGetLogsCompleted, metrics::onFindBatchesCompleted);
+            metrics::onFindBatchesCompleted);
         return job.call().iterator();
     }
 
