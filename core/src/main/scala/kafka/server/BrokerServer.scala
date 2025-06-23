@@ -343,7 +343,7 @@ class BrokerServer(
        */
       val defaultActionQueue = new DelayedActionQueue
 
-      val inklessMetadataView = new InklessMetadataView(metadataCache, () => logManager.currentDefaultConfig.values().asInstanceOf[util.Map[String, AnyRef]])
+      val inklessMetadataView = new InklessMetadataView(metadataCache, () => logManager.currentDefaultConfig.values().asInstanceOf[util.Map[String, Object]])
       val inklessSharedState = sharedServer.inklessControlPlane.map { controlPlane =>
         SharedState.initialize(
           time,

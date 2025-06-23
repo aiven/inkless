@@ -28,9 +28,17 @@ import java.util.function.Supplier
 import java.util.stream.{Collectors, IntStream}
 import java.{lang, util}
 
-class InklessMetadataView(val metadataCache: KRaftMetadataCache, val defaultConfig: Supplier[util.Map[String, AnyRef]]) extends MetadataView {
-  override def getDefaultConfig: util.Map[String, AnyRef] = {
-    defaultConfig.get()
+import scala.jdk.CollectionConverters._
+
+class InklessMetadataView(val metadataCache: KRaftMetadataCache, val defaultConfig: Supplier[util.Map[String, Object]]) extends MetadataView {
+  override def getDefaultConfig: util.Map[String, Object] = {
+    // Filter out null values as they break LogConfig initialization using Properties.putAll
+    defaultConfig.get().entrySet().asScala
+      .filter(_.getValue != null)
+      .foldLeft(new util.HashMap[String, Object]()) { (filtered, entry) =>
+        filtered.put(entry.getKey, entry.getValue)
+        filtered
+      }
   }
 
   override def getAliveBrokerNodes(listenerName: ListenerName): lang.Iterable[Node] = {
