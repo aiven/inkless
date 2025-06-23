@@ -67,7 +67,7 @@ export KAFKA_JVM_PERFORMANCE_OPTS="$TEMP_KAFKA_JVM_PERFORMANCE_OPTS"
 export KAFKA_JVM_PERFORMANCE_OPTS="$KAFKA_JVM_PERFORMANCE_OPTS -XX:SharedArchiveFile=/opt/kafka/kafka.jsa"
 
 # Add custom Log4j config
-export KAFKA_LOG4J_OPTS="-Dlog4j.configuration=file:/opt/kafka/config/inkless/log4j.properties"
+export KAFKA_LOG4J_OPTS="-Dlog4j2.configurationFile=/opt/kafka/config/inkless/log4j2.yaml"
 
 # Start kafka broker
 exec /opt/kafka/bin/kafka-server-start.sh /opt/kafka/config/server.properties

@@ -110,7 +110,7 @@ Setup Kafka run configuration on Intellij:
 6. Set the `Working directory` to the root of the project
 7. Set the `Use classpath of module` to `kafka.core.main`
 8. Use Java 17
-9. Set the JVM arguments to `-Dlog4j.configuration=file:config/inkless/log4j2.yaml`
+9. Set the JVM arguments to `-Dlog4j2.configurationFile=./config/inkless/log4j2.yaml`
 
 At this point all should be ready to run the Intellij configuration.
 
