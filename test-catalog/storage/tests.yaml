@@ -288,6 +288,7 @@ org.apache.kafka.storage.internals.log.LogSegmentTest:
 - testAppendForLogSegmentOffsetOverflowException
 - testAppendFromFile
 - testChangeFileSuffixes
+- testConcurrentAccessToMaxTimestampSoFar
 - testCreateWithInitFileSizeAppendMessage
 - testCreateWithInitFileSizeClearShutdown
 - testDeleteIfExistsWithGetParentIsNull
