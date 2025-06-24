@@ -21,6 +21,7 @@ import org.apache.kafka.common.Node;
 import org.apache.kafka.common.message.DescribeTopicPartitionsResponseData;
 import org.apache.kafka.common.message.MetadataResponseData;
 import org.apache.kafka.common.network.ListenerName;
+import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.metadata.LeaderAndIsr;
 
 import java.util.Collections;
@@ -33,11 +34,13 @@ import java.util.stream.StreamSupport;
 import io.aiven.inkless.control_plane.MetadataView;
 
 public class InklessTopicMetadataTransformer {
+    private final Time time;
     private final MetadataView metadataView;
 
     private final AtomicInteger roundRobinCounter = new AtomicInteger();
 
-    public InklessTopicMetadataTransformer(final MetadataView metadataView) {
+    public InklessTopicMetadataTransformer(final Time time, final MetadataView metadataView) {
+        this.time = Objects.requireNonNull(time, "time cannot be null");
         this.metadataView = Objects.requireNonNull(metadataView, "metadataView cannot be null");
     }
 
@@ -52,10 +55,12 @@ public class InklessTopicMetadataTransformer {
         Objects.requireNonNull(topicMetadata, "topicMetadata cannot be null");
 
         final int leaderForInklessPartitions = selectLeaderForInklessPartitions(listenerName, clientId);
+        boolean hasInklessTopics = false;
         for (final var topic : topicMetadata) {
             if (!metadataView.isInklessTopic(topic.name())) {
                 continue;
             }
+            hasInklessTopics = true;
             for (final var partition : topic.partitions()) {
                 partition.setLeaderId(leaderForInklessPartitions);
                 final List<Integer> list = List.of(leaderForInklessPartitions);
@@ -64,6 +69,11 @@ public class InklessTopicMetadataTransformer {
                 partition.setOfflineReplicas(Collections.emptyList());
                 partition.setLeaderEpoch(LeaderAndIsr.INITIAL_LEADER_EPOCH);
             }
+        }
+        if (hasInklessTopics) {
+            // Introduce artificial latency to avoid a race condition between the metadata update and the producer
+            // causing OutOfOrderSequenceException.
+            time.sleep(500);
         }
     }
 
