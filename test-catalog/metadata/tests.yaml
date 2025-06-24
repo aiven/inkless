@@ -3,6 +3,7 @@ org.apache.kafka.controller.AclControlManagerTest:
 - testCreateAclDeleteAcl
 - testCreateDedupe
 - testDeleteDedupe
+- testDeleteExceedsMaxRecords
 - testLoadSnapshot
 - testValidateAclWithBadPrincipal
 - testValidateAclWithEmptyPrincipal

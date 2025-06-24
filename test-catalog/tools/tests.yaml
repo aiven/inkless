@@ -795,6 +795,7 @@ org.apache.kafka.tools.reassign.ReassignPartitionsCommandArgsTest:
 org.apache.kafka.tools.reassign.ReassignPartitionsCommandTest:
 - testAlterLogDirReassignmentThrottle
 - testAlterReassignmentThrottle
+- testCancellationWithAddingAndRemovingReplicaInIsr
 - testCancellationWithAddingReplicaInIsr
 - testCancellationWithBootstrapController
 - testCancellationWithBootstrapServer
