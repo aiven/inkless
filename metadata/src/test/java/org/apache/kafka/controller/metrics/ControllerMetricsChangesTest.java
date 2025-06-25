@@ -256,4 +256,21 @@ public class ControllerMetricsChangesTest {
         assertEquals(1, changes.uncleanLeaderElection());
         assertEquals(1, changes.electionFromElr());
     }
+
+    @Test
+    public void testIgnoreElectionResultForInklessTopics() {
+        // Given the topic is inkless
+        ControllerMetricsChanges changes = new ControllerMetricsChanges(s -> true);
+        TopicImage image = new TopicImage("foo", FOO_ID, Map.of());
+        TopicDelta delta = new TopicDelta(image);
+        delta.replay(new PartitionRecord().setPartitionId(0).setLeader(0).setIsr(List.of(0, 1)).setReplicas(List.of(0, 1, 2)));
+        delta.replay(new PartitionChangeRecord().setPartitionId(0).setLeader(2).setIsr(List.of(2)).setLeaderRecoveryState(LeaderRecoveryState.RECOVERING.value()));
+
+        delta.replay(new PartitionRecord().setPartitionId(1).setLeader(-1).setIsr(List.of()).setEligibleLeaderReplicas(List.of(0, 1)).setReplicas(List.of(0, 1, 2)));
+        delta.replay(new PartitionChangeRecord().setPartitionId(1).setLeader(1).setIsr(List.of(1)).setEligibleLeaderReplicas(List.of(0, 1)));
+        changes.handleTopicChange(image, delta);
+        // Then no changes should be reported
+        assertEquals(0, changes.uncleanLeaderElection());
+        assertEquals(0, changes.electionFromElr());
+    }
 }

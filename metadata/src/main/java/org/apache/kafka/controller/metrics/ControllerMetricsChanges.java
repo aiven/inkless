@@ -149,8 +149,10 @@ class ControllerMetricsChanges {
                 handlePartitionChange(prevPartition, nextPartition, isInkless);
             }
         }
-        topicDelta.partitionToUncleanLeaderElectionCount().forEach((partitionId, count) -> uncleanLeaderElection += count);
-        topicDelta.partitionToElrElectionCount().forEach((partitionId, count) -> electionFromElr += count);
+        if (!isInkless) {
+            topicDelta.partitionToUncleanLeaderElectionCount().forEach((partitionId, count) -> uncleanLeaderElection += count);
+            topicDelta.partitionToElrElectionCount().forEach((partitionId, count) -> electionFromElr += count);
+        }
     }
 
     void handlePartitionChange(PartitionRegistration prev, PartitionRegistration next, boolean isInkless) {
