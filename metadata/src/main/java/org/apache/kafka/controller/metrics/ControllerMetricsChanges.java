@@ -135,17 +135,18 @@ class ControllerMetricsChanges {
     }
 
     void handleTopicChange(TopicImage prev, TopicDelta topicDelta) {
+        final Boolean isInkless = isInklessTopic.apply(topicDelta.name());
         if (prev == null) {
             globalTopicsChange++;
             for (PartitionRegistration nextPartition : topicDelta.partitionChanges().values()) {
-                handlePartitionChange(null, nextPartition, isInklessTopic.apply(topicDelta.name()));
+                handlePartitionChange(null, nextPartition, isInkless);
             }
         } else {
             for (Entry<Integer, PartitionRegistration> entry : topicDelta.partitionChanges().entrySet()) {
                 int partitionId = entry.getKey();
                 PartitionRegistration prevPartition = prev.partitions().get(partitionId);
                 PartitionRegistration nextPartition = entry.getValue();
-                handlePartitionChange(prevPartition, nextPartition, isInklessTopic.apply(topicDelta.name()));
+                handlePartitionChange(prevPartition, nextPartition, isInkless);
             }
         }
         topicDelta.partitionToUncleanLeaderElectionCount().forEach((partitionId, count) -> uncleanLeaderElection += count);
