@@ -1,6 +1,6 @@
 services:
   broker:
-    environment:
+    environment: &base-broker-env
       KAFKA_INKLESS_STORAGE_BACKEND_CLASS: "io.aiven.inkless.storage_backend.s3.S3Storage"
       KAFKA_INKLESS_STORAGE_S3_PATH_STYLE_ACCESS_ENABLED: "true"
       KAFKA_INKLESS_STORAGE_S3_BUCKET_NAME: "inkless"
@@ -16,6 +16,10 @@ services:
         condition: service_started
       create_bucket:
         condition: service_completed_successfully
+
+  broker2:
+    environment:
+      <<: *base-broker-env
 
   # Object storage
   storage:

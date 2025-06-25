@@ -1,6 +1,6 @@
 services:
   broker:
-    environment:
+    environment: &base-broker-env
       KAFKA_INKLESS_STORAGE_BACKEND_CLASS: "io.aiven.inkless.storage_backend.gcs.GcsStorage"
       KAFKA_INKLESS_STORAGE_GCS_BUCKET_NAME: "inkless"
       KAFKA_INKLESS_STORAGE_GCS_CREDENTIALS_DEFAULT: "false"
@@ -15,6 +15,9 @@ services:
       create_bucket:
         condition: service_completed_successfully
 
+  broker2:
+    environment:
+      <<: *base-broker-env
 
   # Should be used when Inkless broker is running in docker compose to adjust the hostname for resumable uploads.
   # In the case of local/dev setup when broker is running locally outside the container,

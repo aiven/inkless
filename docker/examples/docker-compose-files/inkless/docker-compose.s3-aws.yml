@@ -1,7 +1,6 @@
 services:
   broker:
-    environment:
-      # AWS S3
+    environment: &base-broker-env
       KAFKA_INKLESS_STORAGE_BACKEND_CLASS: "io.aiven.inkless.storage_backend.s3.S3Storage"
       KAFKA_INKLESS_STORAGE_S3_BUCKET_NAME: ${AWS_S3_BUCKET_NAME}
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
@@ -14,6 +13,10 @@ services:
         condition: service_completed_successfully
       postgres:
         condition: service_healthy
+
+  broker2:
+    environment:
+      <<: *base-broker-env
 
   configure_storage:
     image: amazon/aws-cli
