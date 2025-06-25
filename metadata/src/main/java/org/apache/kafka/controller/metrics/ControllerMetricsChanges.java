@@ -33,7 +33,7 @@ import java.util.function.Function;
 @SuppressWarnings("NPathComplexity")
 class ControllerMetricsChanges {
 
-    private Function<String, Boolean> isInklessTopic;
+    private final Function<String, Boolean> isInklessTopic;
 
     ControllerMetricsChanges() {
         this.isInklessTopic = topicName -> false; // Default implementation, can be overridden
