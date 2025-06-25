@@ -62,7 +62,7 @@ integration_test_core:
 clean:
 	./gradlew clean
 
-DEMO := s3-minio
+DEMO := s3-local
 .PHONY: demo
 demo:
 	$(MAKE) -C docker/examples/docker-compose-files/inkless $(DEMO)
