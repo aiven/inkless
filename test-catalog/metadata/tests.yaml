@@ -461,7 +461,10 @@ org.apache.kafka.image.TopicsImageTest:
 - testApplyDelta1
 - testBasicLocalChanges
 - testClearElrRecordForNonExistTopic
+- testClearElrRecordOnNonExistingTopic
 - testClearElrRecords
+- testClearElrRecords_All_ForDeletedTopics
+- testClearElrRecords_Single_ForDeletedTopics
 - testDeleteAfterChanges
 - testEmptyImageRoundTrip
 - testImage1RoundTrip
