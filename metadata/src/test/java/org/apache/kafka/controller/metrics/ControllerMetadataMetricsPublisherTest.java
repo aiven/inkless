@@ -58,7 +58,7 @@ public class ControllerMetadataMetricsPublisherTest {
         ControllerMetadataMetrics metrics =
                 new ControllerMetadataMetrics(Optional.empty());
         ControllerMetadataMetricsPublisher publisher =
-                new ControllerMetadataMetricsPublisher(metrics, faultHandler);
+                new ControllerMetadataMetricsPublisher(metrics, faultHandler, topicName -> false);
 
         @Override
         public void close() {

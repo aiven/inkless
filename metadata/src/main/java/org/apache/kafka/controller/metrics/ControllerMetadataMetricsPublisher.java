@@ -30,6 +30,7 @@ import org.apache.kafka.server.fault.FaultHandler;
 
 import java.util.Map.Entry;
 import java.util.Optional;
+import java.util.function.Function;
 
 
 /**
@@ -44,13 +45,16 @@ public class ControllerMetadataMetricsPublisher implements MetadataPublisher {
     private final ControllerMetadataMetrics metrics;
     private final FaultHandler faultHandler;
     private MetadataImage prevImage = MetadataImage.EMPTY;
+    private Function<String, Boolean> isInklessTopic;
 
     public ControllerMetadataMetricsPublisher(
         ControllerMetadataMetrics metrics,
-        FaultHandler faultHandler
+        FaultHandler faultHandler,
+        Function<String, Boolean> isInklessTopic
     ) {
         this.metrics = metrics;
         this.faultHandler = faultHandler;
+        this.isInklessTopic = isInklessTopic;
     }
 
     @Override
@@ -89,7 +93,7 @@ public class ControllerMetadataMetricsPublisher implements MetadataPublisher {
     }
 
     private void publishDelta(MetadataDelta delta) {
-        ControllerMetricsChanges changes = new ControllerMetricsChanges();
+        ControllerMetricsChanges changes = new ControllerMetricsChanges(isInklessTopic);
         if (delta.clusterDelta() != null) {
             for (Entry<Integer, Optional<BrokerRegistration>> entry :
                     delta.clusterDelta().changedBrokers().entrySet()) {

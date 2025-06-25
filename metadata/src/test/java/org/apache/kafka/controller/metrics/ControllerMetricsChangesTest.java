@@ -208,7 +208,7 @@ public class ControllerMetricsChangesTest {
                 setPartitionId(1).
                 setTopicId(FOO_ID).
                 setLeader(1));
-        TOPIC_DELTA2.replay((PartitionRecord) fakePartitionRegistration(NORMAL).
+        TOPIC_DELTA2.replay((PartitionRecord) fakePartitionRegistration(OFFLINE).
                 toRecord(FOO_ID, 5, options).message());
     }
 
@@ -228,8 +228,18 @@ public class ControllerMetricsChangesTest {
         changes.handleTopicChange(TOPIC_DELTA2.image(), TOPIC_DELTA2);
         assertEquals(0, changes.globalTopicsChange());
         assertEquals(1, changes.globalPartitionsChange());
+        assertEquals(1, changes.offlinePartitionsChange());
+        assertEquals(2, changes.partitionsWithoutPreferredLeaderChange());
+    }
+
+    @Test
+    public void testNoPartitionChangesReportedOnInklessTopics() {
+        ControllerMetricsChanges changes = new ControllerMetricsChanges(s -> true);
+        changes.handleTopicChange(TOPIC_DELTA2.image(), TOPIC_DELTA2);
+        assertEquals(0, changes.globalTopicsChange());
+        assertEquals(0, changes.globalPartitionsChange());
         assertEquals(0, changes.offlinePartitionsChange());
-        assertEquals(1, changes.partitionsWithoutPreferredLeaderChange());
+        assertEquals(0, changes.partitionsWithoutPreferredLeaderChange());
     }
 
     @Test
