@@ -1666,6 +1666,8 @@ kafka.server.ClientQuotaManagerTest:
 - testExpireThrottleTimeSensor
 - testGetMaxValueInQuotaWindowWithNonDefaultQuotaWindow
 - testQuotaConfigPrecedence
+- testQuotaTypesEnabledUpdatesWithCustomCallback
+- testQuotaTypesEnabledUpdatesWithDefaultCallback
 - testQuotaViolation
 - testSetAndRemoveDefaultUserQuota
 - testSetAndRemoveUserClientQuota

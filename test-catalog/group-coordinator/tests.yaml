@@ -170,6 +170,7 @@ org.apache.kafka.coordinator.group.GroupCoordinatorServiceTest:
 - testStreamsGroupDescribeCoordinatorNotActive
 - testStreamsGroupDescribeInvalidGroupId
 - testStreamsGroupHeartbeat
+- testStreamsGroupHeartbeatFailsForUnsupportedFeatures
 - testStreamsGroupHeartbeatWhenNotStarted
 - testStreamsGroupHeartbeatWithException
 - testStreamsHeartbeatRequestValidation
