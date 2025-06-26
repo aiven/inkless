@@ -27,6 +27,8 @@ import org.apache.kafka.common.message.MetadataResponseData.MetadataResponsePart
 import org.apache.kafka.common.message.MetadataResponseData.MetadataResponseTopic;
 import org.apache.kafka.common.network.ListenerName;
 import org.apache.kafka.common.security.auth.SecurityProtocol;
+import org.apache.kafka.common.utils.MockTime;
+import org.apache.kafka.common.utils.Time;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Nested;
@@ -62,16 +64,20 @@ class InklessTopicMetadataTransformerTest {
     static final Uuid TOPIC_CLASSIC_ID = new Uuid(456, 456);
     static final ListenerName LISTENER_NAME = ListenerName.forSecurityProtocol(SecurityProtocol.PLAINTEXT);
 
+    Time time = new MockTime();
     @Mock
     MetadataView metadataView;
 
     @Test
     void nulls() {
-        assertThatThrownBy(() -> new InklessTopicMetadataTransformer(null))
+        assertThatThrownBy(() -> new InklessTopicMetadataTransformer(null, metadataView))
+            .isInstanceOf(NullPointerException.class)
+            .hasMessage("time cannot be null");
+        assertThatThrownBy(() -> new InklessTopicMetadataTransformer(time, null))
             .isInstanceOf(NullPointerException.class)
             .hasMessage("metadataView cannot be null");
 
-        final var transformer = new InklessTopicMetadataTransformer(metadataView);
+        final var transformer = new InklessTopicMetadataTransformer(time, metadataView);
         assertThatThrownBy(() -> transformer.transformClusterMetadata(LISTENER_NAME, "x", null))
             .isInstanceOf(NullPointerException.class)
             .hasMessage("topicMetadata cannot be null");
@@ -94,7 +100,7 @@ class InklessTopicMetadataTransformerTest {
         @NullSource
         @ValueSource(strings = {"inkless_az=az1", "x=y", ""})
         void clusterMetadata(final String clientId) {
-            final var transformer = new InklessTopicMetadataTransformer(metadataView);
+            final var transformer = new InklessTopicMetadataTransformer(time, metadataView);
 
             final List<MetadataResponseTopic> topicMetadata = List.of();
             transformer.transformClusterMetadata(LISTENER_NAME, clientId, topicMetadata);
@@ -105,7 +111,7 @@ class InklessTopicMetadataTransformerTest {
         @NullSource
         @ValueSource(strings = {"inkless_az=az1", "x=y", ""})
         void describeTopicResponse(final String clientId) {
-            final var transformer = new InklessTopicMetadataTransformer(metadataView);
+            final var transformer = new InklessTopicMetadataTransformer(time, metadataView);
 
             final DescribeTopicPartitionsResponseData describeResponse = new DescribeTopicPartitionsResponseData();
             transformer.transformDescribeTopicResponse(LISTENER_NAME, clientId, describeResponse);
@@ -186,7 +192,7 @@ class InklessTopicMetadataTransformerTest {
                 inklessTopicMetadata.get(),
                 classicTopicMetadata.get()
             );
-            final var transformer = new InklessTopicMetadataTransformer(metadataView);
+            final var transformer = new InklessTopicMetadataTransformer(time, metadataView);
 
             transformer.transformClusterMetadata(LISTENER_NAME, "inkless_az=" + clientAZ, topicMetadata);
 
@@ -279,7 +285,7 @@ class InklessTopicMetadataTransformerTest {
                         inklessTopicMetadata.get(),
                         classicTopicMetadata.get()
                     ).iterator()));
-            final var transformer = new InklessTopicMetadataTransformer(metadataView);
+            final var transformer = new InklessTopicMetadataTransformer(time, metadataView);
 
             transformer.transformDescribeTopicResponse(LISTENER_NAME, "inkless_az=" + clientAZ, describeResponse);
 
@@ -333,7 +339,7 @@ class InklessTopicMetadataTransformerTest {
                     ));
 
             final List<MetadataResponseTopic> topicMetadata = List.of(inklessTopicMetadata.get());
-            final var transformer = new InklessTopicMetadataTransformer(metadataView);
+            final var transformer = new InklessTopicMetadataTransformer(time, metadataView);
 
             transformer.transformClusterMetadata(LISTENER_NAME, "inkless_az=az0", topicMetadata);
             final var expectedInklessTopicMetadata = inklessTopicMetadata.get();
@@ -368,7 +374,7 @@ class InklessTopicMetadataTransformerTest {
                             ))
                     ).iterator()));
 
-            final var transformer = new InklessTopicMetadataTransformer(metadataView);
+            final var transformer = new InklessTopicMetadataTransformer(time, metadataView);
 
             final DescribeTopicPartitionsResponseData describeResponse = describeResponseSupplier.get();
             transformer.transformDescribeTopicResponse(LISTENER_NAME, "inkless_az=az0", describeResponse);
@@ -413,7 +419,7 @@ class InklessTopicMetadataTransformerTest {
                     ));
 
             final List<MetadataResponseTopic> topicMetadata = List.of(inklessTopicMetadata.get());
-            final var transformer = new InklessTopicMetadataTransformer(metadataView);
+            final var transformer = new InklessTopicMetadataTransformer(time, metadataView);
 
             transformer.transformClusterMetadata(LISTENER_NAME, null, topicMetadata);
             final var expectedInklessTopicMetadata = inklessTopicMetadata.get();
@@ -448,7 +454,7 @@ class InklessTopicMetadataTransformerTest {
                             ))
                     ).iterator()));
 
-            final var transformer = new InklessTopicMetadataTransformer(metadataView);
+            final var transformer = new InklessTopicMetadataTransformer(time, metadataView);
             final DescribeTopicPartitionsResponseData describeResponse = describeResponseSupplier.get();
 
             transformer.transformDescribeTopicResponse(LISTENER_NAME, null, describeResponse);
