@@ -135,12 +135,15 @@ public class ControllerMetadataMetricsPublisher implements MetadataPublisher {
         int offlinePartitions = 0;
         int partitionsWithoutPreferredLeader = 0;
         for (TopicImage topicImage : newImage.topics().topicsById().values()) {
+            boolean isInkless = isInklessTopic.apply(topicImage.name());
             for (PartitionRegistration partition : topicImage.partitions().values()) {
-                if (!partition.hasLeader()) {
-                    offlinePartitions++;
-                }
-                if (!partition.hasPreferredLeader()) {
-                    partitionsWithoutPreferredLeader++;
+                if (!isInkless) {
+                    if (!partition.hasLeader()) {
+                        offlinePartitions++;
+                    }
+                    if (!partition.hasPreferredLeader()) {
+                        partitionsWithoutPreferredLeader++;
+                    }
                 }
                 totalPartitions++;
             }
