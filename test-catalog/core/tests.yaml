@@ -2569,6 +2569,7 @@ kafka.server.OffsetDeleteRequestTest:
 - testOffsetDeleteWithOldConsumerGroupProtocol
 kafka.server.OffsetFetchRequestTest:
 - testFetchOffsetWithRecreatedTopic
+- testGroupErrors
 - testMultiGroupsOffsetFetchWithNewConsumerGroupProtocol
 - testMultiGroupsOffsetFetchWithOldConsumerGroupProtocol
 - testSingleGroupAllOffsetFetchWithNewConsumerGroupProtocol
@@ -3082,6 +3083,8 @@ kafka.server.share.SharePartitionTest:
 - testAcquisitionLockTimeoutForBatchesPostStartOffsetMovement
 - testAcquisitionLockTimeoutForBatchesPostStartOffsetMovementToMiddleOfBatch
 - testAcquisitionLockTimeoutForBatchesPostStartOffsetMovementToStartOfBatch
+- testCacheUpdateWhenBatchHasOngoingTransition
+- testCacheUpdateWhenOffsetStateHasOngoingTransition
 - testCanAcquireRecordsAfterAcceptAcknowledgement
 - testCanAcquireRecordsAfterArchiveAcknowledgement
 - testCanAcquireRecordsAfterReleaseAcknowledgement

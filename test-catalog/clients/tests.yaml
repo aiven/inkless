@@ -4294,6 +4294,7 @@ org.apache.kafka.common.requests.OffsetFetchResponseTest:
 - testGroupWithMultipleGroups
 - testGroupWithSingleGroup
 - testGroupWithSingleGroupWithTopLevelError
+- testSingleGroupWithError
 org.apache.kafka.common.requests.OffsetsForLeaderEpochRequestTest:
 - testForConsumerRequiresVersion3
 - testForFollower
