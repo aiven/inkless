@@ -25,9 +25,11 @@ import java.io.Closeable;
 import java.io.IOException;
 import java.util.function.Supplier;
 
+import io.aiven.inkless.cache.BatchCoordinateCache;
 import io.aiven.inkless.cache.FixedBlockAlignment;
 import io.aiven.inkless.cache.InfinispanCache;
 import io.aiven.inkless.cache.KeyAlignmentStrategy;
+import io.aiven.inkless.cache.MemoryBatchCoordinateCache;
 import io.aiven.inkless.cache.ObjectCache;
 import io.aiven.inkless.config.InklessConfig;
 import io.aiven.inkless.control_plane.ControlPlane;
@@ -44,6 +46,7 @@ public record SharedState(
         ObjectKeyCreator objectKeyCreator,
         KeyAlignmentStrategy keyAlignmentStrategy,
         ObjectCache cache,
+        BatchCoordinateCache batchCoordinateCache,
         BrokerTopicStats brokerTopicStats,
         Supplier<LogConfig> defaultTopicConfigs
 ) implements Closeable {
@@ -69,6 +72,7 @@ public record SharedState(
             ObjectKey.creator(config.objectKeyPrefix(), config.objectKeyLogPrefixMasked()),
             new FixedBlockAlignment(config.fetchCacheBlockBytes()),
             new InfinispanCache(time, clusterId, rack, config.cacheMaxCount()),
+            new MemoryBatchCoordinateCache(config.fileCleanerRetentionPeriod().dividedBy(2)),
             brokerTopicStats,
             defaultTopicConfigs
         );
