@@ -229,7 +229,6 @@ class Writer implements Closeable {
     }
 
     private void rotateFile(final boolean swallowInterrupted) {
-        LOGGER.debug("Rotating active file");
         final ActiveFile prevActiveFile = this.activeFile;
         this.activeFile = new ActiveFile(time, brokerTopicStats);
 
@@ -237,6 +236,9 @@ class Writer implements Closeable {
             this.fileCommitter.commit(prevActiveFile.close());
             // mark metrics that the file is committed
             if (openedAt != null) {
+                LOGGER.debug("Rotating active file after {} with buffer size {} bytes",
+                    Duration.between(openedAt, TimeUtils.durationMeasurementNow(time)),
+                    prevActiveFile.size());
                 writerMetrics.fileRotated(openedAt);
                 openedAt = null;
             }
