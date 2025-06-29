@@ -62,6 +62,19 @@ org.apache.kafka.clients.admin.StaticBrokerConfigTest:
 - testInternalConfigsDoNotReturnForDescribeConfigs
 - testTopicConfigsGetImpactedIfStaticConfigsAddToBroker
 - testTopicConfigsGetImpactedIfStaticConfigsAddToController
+org.apache.kafka.clients.consumer.ConsumerBounceTest:
+- testAsyncClose
+- testAsyncCloseDuringRebalance
+- testAsyncConsumerConsumptionWithBrokerFailures
+- testAsyncConsumerReceivesFatalExceptionWhenGroupPassesMaxSize
+- testAsyncConsumerSeekAndCommitWithBrokerFailures
+- testAsyncSubscribeWhenTopicUnavailable
+- testClassicClose
+- testClassicCloseDuringRebalance
+- testClassicConsumerConsumptionWithBrokerFailures
+- testClassicConsumerReceivesFatalExceptionWhenGroupPassesMaxSize
+- testClassicConsumerSeekAndCommitWithBrokerFailures
+- testClassicSubscribeWhenTopicUnavailable
 org.apache.kafka.clients.consumer.ConsumerIntegrationTest:
 - testAsyncConsumerWithConsumerProtocolDisabled
 - testFetchPartitionsAfterFailedListenerWithGroupProtocolClassic

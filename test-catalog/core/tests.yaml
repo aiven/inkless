@@ -223,13 +223,6 @@ kafka.api.ClientIdQuotaTest:
 - testQuotaOverrideDelete
 - testThrottledProducerConsumer
 - testThrottledRequest
-kafka.api.ConsumerBounceTest:
-- testClose
-- testCloseDuringRebalance
-- testConsumerReceivesFatalExceptionWhenGroupPassesMaxSize
-- testConsumptionWithBrokerFailures
-- testSeekAndCommitWithBrokerFailures
-- testSubscribeWhenTopicUnavailable
 kafka.api.CustomQuotaCallbackTest:
 - testCustomQuotaCallback
 kafka.api.DelegationTokenEndToEndAuthorizationTest:
