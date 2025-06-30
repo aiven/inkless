@@ -15,11 +15,16 @@ org.apache.kafka.coordinator.common.runtime.CoordinatorResultTest:
 - testRecordsCannotBeNull
 org.apache.kafka.coordinator.common.runtime.CoordinatorRuntimeMetricsImplTest:
 - testEventQueueSize
+- testEventQueueSizeMetricsGroupIsolation
 - testHistogramMetrics
+- testHistogramMetricsGroupIsolation
 - testMetricNames
+- testNumPartitionsMetricsGroupIsolation
 - testPartitionLoadSensorMetrics
+- testPartitionLoadSensorMetricsGroupIsolation
 - testRecordEventPurgatoryTimeLimit
 - testThreadIdleSensor
+- testThreadIdleSensorMetricsGroupIsolation
 - testUpdateNumPartitionsMetrics
 org.apache.kafka.coordinator.common.runtime.CoordinatorRuntimeTest:
 - testAppendRecordBatchSize
