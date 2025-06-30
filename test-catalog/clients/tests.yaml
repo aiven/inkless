@@ -5155,13 +5155,6 @@ org.apache.kafka.common.utils.FixedOrderMapTest:
 - shouldForbidConditionalRemove
 - shouldForbidRemove
 - shouldMaintainOrderWhenAdding
-org.apache.kafka.common.utils.FlattenedIteratorTest:
-- testEmptyList
-- testEmptyListAtTheEnd
-- testEmptyListFollowedByNonEmpty
-- testEmptyListInBetweenNonEmpty
-- testNestedLists
-- testNestedSingleEmptyList
 org.apache.kafka.common.utils.ImplicitLinkedHashCollectionTest:
 - testCollisions
 - testEmptyListIterator
