@@ -487,6 +487,7 @@ org.apache.kafka.coordinator.group.GroupMetadataManagerTest:
 - testShareGroupMemberIdGeneration
 - testShareGroupMemberJoinsEmptyGroupWithAssignments
 - testShareGroupNewMemberIsRejectedWithMaximumMembersIsReached
+- testShareGroupRecordsNoExceptionOnReplay
 - testShareGroupStates
 - testShareGroupUnknownGroupId
 - testShareGroupUnknownMemberIdJoins
