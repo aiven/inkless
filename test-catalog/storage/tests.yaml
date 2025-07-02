@@ -81,6 +81,7 @@ org.apache.kafka.server.log.remote.metadata.storage.TopicBasedRemoteLogMetadataM
 - testRLMMAPIsAfterRestart
 org.apache.kafka.server.log.remote.metadata.storage.TopicBasedRemoteLogMetadataManagerTest:
 - testDoesTopicExist
+- testDoesTopicExistWithAdminClientExecutionError
 - testInitializationFailure
 - testNewPartitionUpdates
 - testRemoteLogSizeCalculationForUnknownTopicIdPartitionThrows
