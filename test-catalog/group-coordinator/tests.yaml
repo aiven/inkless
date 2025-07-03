@@ -88,9 +88,9 @@ org.apache.kafka.coordinator.group.GroupCoordinatorServiceTest:
 - testDeleteShareGroupOffsetsCompleteDeleteStateReturnsError
 - testDeleteShareGroupOffsetsCoordinatorNotActive
 - testDeleteShareGroupOffsetsEmptyRequest
+- testDeleteShareGroupOffsetsEmptyTopicsInRequest
 - testDeleteShareGroupOffsetsInvalidGroupId
 - testDeleteShareGroupOffsetsMetadataImageNull
-- testDeleteShareGroupOffsetsNullTopicsInRequest
 - testDeleteShareGroupOffsetsPersisterReturnsNoSuccessfulTopics
 - testDeleteShareGroupOffsetsPersisterReturnsNull
 - testDeleteShareGroupOffsetsPersisterReturnsNullTopicData
@@ -147,6 +147,8 @@ org.apache.kafka.coordinator.group.GroupCoordinatorServiceTest:
 - testOnElection
 - testOnPartitionsDeleted
 - testOnPartitionsDeletedCleanupShareGroupState
+- testOnPartitionsDeletedCleanupShareGroupStateEmptyMetadata
+- testOnPartitionsDeletedCleanupShareGroupStateTopicsNotInMetadata
 - testOnPartitionsDeletedWhenServiceIsNotStarted
 - testOnResignation
 - testOnResignationWithEmptyLeaderEpoch
@@ -470,6 +472,8 @@ org.apache.kafka.coordinator.group.GroupMetadataManagerTest:
 - testSessionTimeoutLifecycle
 - testShareGroupDeleteRequestNoDeletingTopics
 - testShareGroupDeleteRequestWithAlreadyDeletingTopics
+- testShareGroupDeleteRequestWithAlreadyDeletingTopicsButMetadataIsEmpty
+- testShareGroupDeleteRequestWithAlreadyDeletingTopicsButNotInMetadata
 - testShareGroupDeleteTombstones
 - testShareGroupDescribeNoErrors
 - testShareGroupDescribeOnConsumerGroup

@@ -207,6 +207,7 @@ org.apache.kafka.clients.admin.KafkaAdminClientTest:
 - testAlterReplicaLogDirsUnrequested
 - testAlterShareGroupOffsets
 - testAlterShareGroupOffsetsWithErrorInOnePartition
+- testAlterShareGroupOffsetsWithTopLevelError
 - testAlterStreamsGroupOffsets
 - testAlterStreamsGroupOffsetsFindCoordinatorNonRetriableErrors
 - testAlterStreamsGroupOffsetsFindCoordinatorRetriableErrors

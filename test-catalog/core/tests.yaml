@@ -3039,6 +3039,7 @@ kafka.server.share.SharePartitionTest:
 - testAcquireSameBatchAgain
 - testAcquireSingleBatchWithBatchSizeAndEndOffsetLargerThanBatchFirstOffset
 - testAcquireSingleRecord
+- testAcquireWhenBatchHasOngoingTransition
 - testAcquireWhenBatchesAreRemovedFromBetweenInSubsequentFetchData
 - testAcquireWhenBatchesRemovedForFetchOffset
 - testAcquireWhenBatchesRemovedForFetchOffsetForSameCachedBatch
@@ -3152,6 +3153,8 @@ kafka.server.share.SharePartitionTest:
 - testMaybeUpdateCachedStateWhenAllRecordsInCachedStateAreAcknowledged
 - testNextFetchOffsetInitialState
 - testNextFetchOffsetPostAcquireAndAcknowledgeFunctionality
+- testNextFetchOffsetWhenBatchHasOngoingTransition
+- testNextFetchOffsetWhenOffsetsHaveOngoingTransition
 - testNextFetchOffsetWithCachedStateAcquired
 - testNextFetchOffsetWithFindAndCachedState
 - testNextFetchOffsetWithFindAndCachedStateEmpty
