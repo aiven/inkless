@@ -491,6 +491,7 @@ org.apache.kafka.coordinator.group.GroupMetadataManagerTest:
 - testShareGroupMemberIdGeneration
 - testShareGroupMemberJoinsEmptyGroupWithAssignments
 - testShareGroupNewMemberIsRejectedWithMaximumMembersIsReached
+- testShareGroupPendingAssignments
 - testShareGroupRecordsNoExceptionOnReplay
 - testShareGroupStates
 - testShareGroupUnknownGroupId
@@ -746,11 +747,11 @@ org.apache.kafka.coordinator.group.assignor.SimpleAssignorTest:
 - testAssignWithTwoMembersAndTwoTopicsHomogeneous
 - testAssignWithTwoMembersAndTwoTopicsHomogeneousWithAllowedMap
 - testAssignWithTwoMembersAndTwoTopicsHomogeneousWithNonAssignableTopic
+- testIncrementalAssignmentDecreasingMembersHeterogeneous
 - testIncrementalAssignmentDecreasingMembersHomogeneous
+- testIncrementalAssignmentIncreasingMembersHeterogeneous
 - testIncrementalAssignmentIncreasingMembersHomogeneous
-- testMemberHashAssignment
 - testName
-- testRoundRobinAssignment
 org.apache.kafka.coordinator.group.assignor.UniformHeterogeneousAssignmentBuilderTest:
 - testFirstAssignmentNumMembersGreaterThanTotalNumPartitions
 - testFirstAssignmentTwoMembersTwoTopics
