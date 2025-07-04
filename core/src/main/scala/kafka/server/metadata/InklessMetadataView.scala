@@ -65,4 +65,8 @@ class InklessMetadataView(val metadataCache: KRaftMetadataCache, val defaultConf
       .toSet
       .asJava
   }
+
+  override def getTopicsCount: Int = {
+    metadataCache.getAllTopics().size
+  }
 }

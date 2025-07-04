@@ -76,6 +76,12 @@ class InklessTopicMetadataTransformerTest {
         assertThatThrownBy(() -> transformer.transformDescribeTopicResponse("x", null))
             .isInstanceOf(NullPointerException.class)
             .hasMessage("responseData cannot be null");
+        assertThatThrownBy(() -> transformer.transformClusterMetadataV2("x", null))
+            .isInstanceOf(NullPointerException.class)
+            .hasMessage("topicMetadata cannot be null");
+        assertThatThrownBy(() -> transformer.transformDescribeTopicResponseV2("x", null))
+            .isInstanceOf(NullPointerException.class)
+            .hasMessage("responseData cannot be null");
     }
 
     @Nested
@@ -97,6 +103,10 @@ class InklessTopicMetadataTransformerTest {
             final List<MetadataResponseTopic> topicMetadata = List.of();
             transformer.transformClusterMetadata(clientId, topicMetadata);
             assertThat(topicMetadata).isEmpty();
+
+            final List<MetadataResponseTopic> topicMetadataV2 = List.of();
+            transformer.transformClusterMetadataV2(clientId, topicMetadataV2);
+            assertThat(topicMetadataV2).isEmpty();
         }
 
         @ParameterizedTest
@@ -108,6 +118,10 @@ class InklessTopicMetadataTransformerTest {
             final DescribeTopicPartitionsResponseData describeResponse = new DescribeTopicPartitionsResponseData();
             transformer.transformDescribeTopicResponse(clientId, describeResponse);
             assertThat(describeResponse).isEqualTo(new DescribeTopicPartitionsResponseData());
+
+            final DescribeTopicPartitionsResponseData describeResponseV2 = new DescribeTopicPartitionsResponseData();
+            transformer.transformDescribeTopicResponseV2(clientId, describeResponseV2);
+            assertThat(describeResponseV2).isEqualTo(new DescribeTopicPartitionsResponseData());
         }
     }
 
@@ -475,5 +489,262 @@ class InklessTopicMetadataTransformerTest {
         partition.setOfflineReplicas(Collections.emptyList());
         partition.setEligibleLeaderReplicas(Collections.emptyList());
         partition.setLastKnownElr(Collections.emptyList());
+    }
+
+    @Nested
+    class TransformV2Tests {
+        @BeforeEach
+        void setup() {
+            when(metadataView.isInklessTopic(eq(TOPIC_INKLESS))).thenReturn(true);
+            when(metadataView.isInklessTopic(eq(TOPIC_CLASSIC))).thenReturn(false);
+            when(metadataView.getAliveBrokers()).thenReturn(List.of(
+                new BrokerMetadata(0, Optional.of("az0")),
+                new BrokerMetadata(2, Optional.of("az0")),
+                new BrokerMetadata(1, Optional.of("az1")),
+                new BrokerMetadata(3, Optional.of("az1"))
+            ));
+        }
+
+        @ParameterizedTest
+        @CsvSource({
+            "az0,true",
+            "az1,true",
+            "az_unknown,false",
+            ",false"
+        })
+        void clusterMetadataV2(final String clientAZ, final boolean isInklessAZ) {
+            final Supplier<MetadataResponseTopic> inklessTopicMetadata =
+                () -> new MetadataResponseTopic()
+                    .setName(TOPIC_INKLESS)
+                    .setErrorCode((short) 0)
+                    .setTopicId(TOPIC_INKLESS_ID)
+                    .setPartitions(List.of(
+                        new MetadataResponsePartition()
+                            .setPartitionIndex(0)
+                            .setErrorCode((short) 0)
+                            .setLeaderId(-1)
+                            .setReplicaNodes(List.of(1, 2, 3, 4))
+                            .setIsrNodes(List.of(1, 2))
+                            .setOfflineReplicas(List.of(3, 4))
+                            .setLeaderEpoch(0),
+                        new MetadataResponsePartition()
+                            .setPartitionIndex(1)
+                            .setErrorCode((short) 1)
+                            .setLeaderId(-1)
+                            .setReplicaNodes(List.of(1, 2, 3, 4))
+                            .setIsrNodes(List.of(1, 2))
+                            .setOfflineReplicas(List.of(3, 4))
+                            .setLeaderEpoch(0),
+                        new MetadataResponsePartition()
+                            .setPartitionIndex(2)
+                            .setErrorCode((short) 2)
+                            .setLeaderId(-1)
+                            .setReplicaNodes(List.of(1, 2, 3, 4))
+                            .setIsrNodes(List.of(1, 2))
+                            .setOfflineReplicas(List.of(3, 4))
+                            .setLeaderEpoch(0)
+                    ));
+
+            final Supplier<MetadataResponseTopic> classicTopicMetadata =
+                () -> new MetadataResponseTopic()
+                    .setName(TOPIC_CLASSIC)
+                    .setErrorCode((short) 0)
+                    .setTopicId(TOPIC_CLASSIC_ID)
+                    .setPartitions(List.of(
+                        new MetadataResponsePartition()
+                            .setPartitionIndex(0)
+                            .setErrorCode((short) 0)
+                            .setLeaderId(-10)
+                            .setReplicaNodes(List.of(1, 2, 3, 4))
+                            .setIsrNodes(List.of(1, 2))
+                            .setOfflineReplicas(List.of(3, 4))
+                    ));
+
+            final List<MetadataResponseTopic> topicMetadata = List.of(
+                inklessTopicMetadata.get(),
+                classicTopicMetadata.get()
+            );
+            final var transformer = new InklessTopicMetadataTransformer(metadataView);
+
+            transformer.transformClusterMetadataV2("inkless_az=" + clientAZ, topicMetadata);
+
+            // Each partition should be deterministically assigned based on hash
+            final var expectedInklessTopicMetadata = inklessTopicMetadata.get();
+
+            // Get the brokers that would be used based on the client AZ
+            List<BrokerMetadata> brokersInAZ;
+            if (isInklessAZ) {
+                // We're in a known AZ, so use brokers from that AZ
+                if ("az0".equals(clientAZ)) {
+                    brokersInAZ = List.of(
+                        new BrokerMetadata(0, Optional.of("az0")),
+                        new BrokerMetadata(2, Optional.of("az0"))
+                    );
+                } else { // az1
+                    brokersInAZ = List.of(
+                        new BrokerMetadata(1, Optional.of("az1")),
+                        new BrokerMetadata(3, Optional.of("az1"))
+                    );
+                }
+            } else {
+                // Unknown AZ, use all brokers ordered by id
+                brokersInAZ = List.of(
+                    new BrokerMetadata(0, Optional.of("az0")),
+                    new BrokerMetadata(1, Optional.of("az1")),
+                    new BrokerMetadata(2, Optional.of("az0")),
+                    new BrokerMetadata(3, Optional.of("az1"))
+                );
+            }
+
+            // Calculate expected leader IDs based on hash of topic name + partition index
+            int[] expectedLeaderIds = new int[3];
+            for (int i = 0; i < 3; i++) {
+                int partitionHash = InklessTopicMetadataTransformer.topicHash(TOPIC_INKLESS) + i;
+                int leaderIndex = partitionHash % brokersInAZ.size();
+                expectedLeaderIds[i] = brokersInAZ.get(leaderIndex).id;
+            }
+
+            for (int i = 0; i < 3; i++) {
+                setExpectedLeaderCluster(expectedInklessTopicMetadata.partitions().get(i), expectedLeaderIds[i]);
+            }
+
+            assertThat(topicMetadata.get(0)).isEqualTo(expectedInklessTopicMetadata);
+            assertThat(topicMetadata.get(1)).isEqualTo(classicTopicMetadata.get());
+
+            // Transform again - should get exactly the same results (deterministic)
+            final List<MetadataResponseTopic> topicMetadata2 = List.of(
+                inklessTopicMetadata.get(),
+                classicTopicMetadata.get()
+            );
+            transformer.transformClusterMetadataV2("inkless_az=" + clientAZ, topicMetadata2);
+            assertThat(topicMetadata2.get(0)).isEqualTo(expectedInklessTopicMetadata);
+        }
+
+        @ParameterizedTest
+        @CsvSource({
+            "az0,true",
+            "az1,true",
+            "az_unknown,false",
+            ",false"
+        })
+        void describeTopicResponseV2(final String clientAZ, final boolean isInklessAZ) {
+            final Supplier<DescribeTopicPartitionsResponseTopic> inklessTopicMetadata =
+                () -> new DescribeTopicPartitionsResponseTopic()
+                    .setName(TOPIC_INKLESS)
+                    .setErrorCode((short) 0)
+                    .setTopicId(TOPIC_INKLESS_ID)
+                    .setPartitions(List.of(
+                        new DescribeTopicPartitionsResponsePartition()
+                            .setPartitionIndex(0)
+                            .setErrorCode((short) 0)
+                            .setLeaderId(-1)
+                            .setReplicaNodes(List.of(1, 2, 3, 4))
+                            .setIsrNodes(List.of(1, 2))
+                            .setOfflineReplicas(List.of(3, 4))
+                            .setEligibleLeaderReplicas(List.of(10, 11))
+                            .setLastKnownElr(List.of(10, 11))
+                            .setLeaderEpoch(0),
+                        new DescribeTopicPartitionsResponsePartition()
+                            .setPartitionIndex(1)
+                            .setErrorCode((short) 1)
+                            .setLeaderId(-1)
+                            .setReplicaNodes(List.of(1, 2, 3, 4))
+                            .setIsrNodes(List.of(1, 2))
+                            .setOfflineReplicas(List.of(3, 4))
+                            .setEligibleLeaderReplicas(List.of(10, 11))
+                            .setLastKnownElr(List.of(10, 11))
+                            .setLeaderEpoch(0),
+                        new DescribeTopicPartitionsResponsePartition()
+                            .setPartitionIndex(2)
+                            .setErrorCode((short) 2)
+                            .setLeaderId(-1)
+                            .setReplicaNodes(List.of(1, 2, 3, 4))
+                            .setIsrNodes(List.of(1, 2))
+                            .setOfflineReplicas(List.of(3, 4))
+                            .setEligibleLeaderReplicas(List.of(10, 11))
+                            .setLastKnownElr(List.of(10, 11))
+                            .setLeaderEpoch(0)
+                    ));
+
+            final Supplier<DescribeTopicPartitionsResponseTopic> classicTopicMetadata =
+                () -> new DescribeTopicPartitionsResponseTopic()
+                    .setName(TOPIC_CLASSIC)
+                    .setErrorCode((short) 0)
+                    .setTopicId(TOPIC_CLASSIC_ID)
+                    .setPartitions(List.of(
+                        new DescribeTopicPartitionsResponsePartition()
+                            .setPartitionIndex(0)
+                            .setErrorCode((short) 0)
+                            .setLeaderId(-10)
+                            .setReplicaNodes(List.of(1, 2, 3, 4))
+                            .setIsrNodes(List.of(1, 2))
+                            .setOfflineReplicas(List.of(3, 4))
+                            .setEligibleLeaderReplicas(List.of(10, 11))
+                            .setLastKnownElr(List.of(10, 11))
+                            .setLeaderEpoch(0)
+                    ));
+
+            final DescribeTopicPartitionsResponseData describeResponse =
+                new DescribeTopicPartitionsResponseData()
+                    .setTopics(new DescribeTopicPartitionsResponseTopicCollection(List.of(
+                        inklessTopicMetadata.get(),
+                        classicTopicMetadata.get()
+                    ).iterator()));
+            final var transformer = new InklessTopicMetadataTransformer(metadataView);
+
+            transformer.transformDescribeTopicResponseV2("inkless_az=" + clientAZ, describeResponse);
+
+            final var expectedInklessTopicMetadata = inklessTopicMetadata.get();
+
+            // Get the brokers that would be used based on the client AZ
+            List<BrokerMetadata> brokersInAZ;
+            if (isInklessAZ) {
+                // We're in a known AZ, so use brokers from that AZ
+                if ("az0".equals(clientAZ)) {
+                    brokersInAZ = List.of(
+                        new BrokerMetadata(0, Optional.of("az0")),
+                        new BrokerMetadata(2, Optional.of("az0"))
+                    );
+                } else { // az1
+                    brokersInAZ = List.of(
+                        new BrokerMetadata(1, Optional.of("az1")),
+                        new BrokerMetadata(3, Optional.of("az1"))
+                    );
+                }
+            } else {
+                // Unknown AZ, use all brokers ordered by id
+                brokersInAZ = List.of(
+                    new BrokerMetadata(0, Optional.of("az0")),
+                    new BrokerMetadata(1, Optional.of("az1")),
+                    new BrokerMetadata(2, Optional.of("az0")),
+                    new BrokerMetadata(3, Optional.of("az1"))
+                );
+            }
+
+            // Calculate expected leader IDs based on hash of topic name + partition index
+            int[] expectedLeaderIds = new int[3];
+            for (int i = 0; i < 3; i++) {
+                int partitionHash = InklessTopicMetadataTransformer.topicHash(TOPIC_INKLESS) + i;
+                int leaderIndex = partitionHash % brokersInAZ.size();
+                expectedLeaderIds[i] = brokersInAZ.get(leaderIndex).id;
+            }
+
+            for (int i = 0; i < 3; i++) {
+                setExpectedLeaderDescribeTopicResponse(expectedInklessTopicMetadata.partitions().get(i), expectedLeaderIds[i]);
+            }
+
+            assertThat(describeResponse.topics().find(TOPIC_INKLESS)).isEqualTo(expectedInklessTopicMetadata);
+            assertThat(describeResponse.topics().find(TOPIC_CLASSIC)).isEqualTo(classicTopicMetadata.get());
+
+            // Transform again - should get exactly the same results (deterministic)
+            final DescribeTopicPartitionsResponseData describeResponse2 =
+                new DescribeTopicPartitionsResponseData()
+                    .setTopics(new DescribeTopicPartitionsResponseTopicCollection(List.of(
+                        inklessTopicMetadata.get(),
+                        classicTopicMetadata.get()
+                    ).iterator()));
+            transformer.transformDescribeTopicResponseV2("inkless_az=" + clientAZ, describeResponse2);
+            assertThat(describeResponse2.topics().find(TOPIC_INKLESS)).isEqualTo(expectedInklessTopicMetadata);
+        }
     }
 }

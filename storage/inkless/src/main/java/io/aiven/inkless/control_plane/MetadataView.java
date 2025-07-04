@@ -39,4 +39,6 @@ public interface MetadataView {
     Properties getTopicConfig(String topicName);
 
     Set<TopicIdPartition> getInklessTopicPartitions();
+
+    int getTopicsCount();
 }
