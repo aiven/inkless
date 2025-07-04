@@ -308,6 +308,7 @@ org.apache.kafka.clients.producer.ProducerIdExpirationTest:
 - testProducerIdExpirationWithNoTransactions
 - testTransactionAfterTransactionIdExpiresButProducerIdRemains
 org.apache.kafka.clients.producer.ProducerSendWhileDeletionTest:
+- testSendWhileTopicGetRecreated
 - testSendWithRecreatedTopic
 - testSendWithTopicDeletionMidWay
 - testSendWithTopicReassignmentIsMidWay
