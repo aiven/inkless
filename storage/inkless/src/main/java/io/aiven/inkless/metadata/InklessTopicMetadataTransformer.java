@@ -20,8 +20,10 @@ package io.aiven.inkless.metadata;
 import org.apache.kafka.admin.BrokerMetadata;
 import org.apache.kafka.common.message.DescribeTopicPartitionsResponseData;
 import org.apache.kafka.common.message.MetadataResponseData;
+import org.apache.kafka.common.utils.Utils;
 import org.apache.kafka.metadata.LeaderAndIsr;
 
+import java.nio.charset.StandardCharsets;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
@@ -65,6 +67,35 @@ public class InklessTopicMetadataTransformer {
         }
     }
 
+    public void transformClusterMetadataV2(
+        final String clientId,
+        final Iterable<MetadataResponseData.MetadataResponseTopic> topicMetadata
+    ) {
+        Objects.requireNonNull(topicMetadata, "topicMetadata cannot be null");
+
+        final var brokers = azAwareBrokers(clientId);
+        for (final var topic : topicMetadata) {
+            if (!metadataView.isInklessTopic(topic.name())) {
+                continue;
+            }
+            for (final var partition : topic.partitions()) {
+                final int partitionHash = partitionHash(topic.name(), partition.partitionIndex());
+                int leaderIndex = partitionHash % brokers.size();
+                int leaderId = brokers.get(leaderIndex).id;
+                partition.setLeaderId(leaderId);
+                final List<Integer> list = List.of(leaderId);
+                partition.setReplicaNodes(list);
+                partition.setIsrNodes(list);
+                partition.setOfflineReplicas(Collections.emptyList());
+                partition.setLeaderEpoch(LeaderAndIsr.INITIAL_LEADER_EPOCH);
+            }
+        }
+    }
+
+    static int partitionHash(String topicName, int partition) {
+        return Utils.toPositive(Utils.murmur2(topicName.getBytes(StandardCharsets.UTF_8)) + partition);
+    }
+
     /**
      * @param clientId client ID, {@code null} if not provided.
      */
@@ -93,6 +124,34 @@ public class InklessTopicMetadataTransformer {
         }
     }
 
+    public void transformDescribeTopicResponseV2(
+        final String clientId,
+        final DescribeTopicPartitionsResponseData responseData
+    ) {
+        Objects.requireNonNull(responseData, "responseData cannot be null");
+
+        final var brokers = azAwareBrokers(clientId);
+        for (final var topic : responseData.topics()) {
+            if (!metadataView.isInklessTopic(topic.name())) {
+                continue;
+            }
+
+            for (final var partition : topic.partitions()) {
+                final int partitionHash = Utils.toPositive(Utils.murmur2(topic.name().getBytes(StandardCharsets.UTF_8)) + partition.partitionIndex());
+                int leaderIndex = partitionHash % brokers.size();
+                int leaderId = brokers.get(leaderIndex).id;
+                partition.setLeaderId(leaderId);
+                final List<Integer> list = List.of(leaderId);
+                partition.setReplicaNodes(list);
+                partition.setIsrNodes(list);
+                partition.setEligibleLeaderReplicas(Collections.emptyList());
+                partition.setLastKnownElr(Collections.emptyList());
+                partition.setOfflineReplicas(Collections.emptyList());
+                partition.setLeaderEpoch(LeaderAndIsr.INITIAL_LEADER_EPOCH);
+            }
+        }
+    }
+
     /**
      * Select the broker ID to be the leader of all Inkless partitions.
      *
@@ -102,6 +161,14 @@ public class InklessTopicMetadataTransformer {
      * @return the selected broker ID.
      */
     private int selectLeaderForInklessPartitions(final String clientId) {
+        final List<BrokerMetadata> brokersToPickFrom = azAwareBrokers(clientId);
+
+        final int c = roundRobinCounter.getAndUpdate(v -> Math.max(v + 1, 0));
+        final int idx = c % brokersToPickFrom.size();
+        return brokersToPickFrom.get(idx).id;
+    }
+
+    private List<BrokerMetadata> azAwareBrokers(String clientId) {
         final String clientAZ = ClientAZExtractor.getClientAZ(clientId);
         // This gracefully handles the null client AZ, no need for a special check.
         final List<BrokerMetadata> brokersInClientAZ = brokersInAZ(clientAZ);
@@ -114,10 +181,7 @@ public class InklessTopicMetadataTransformer {
         if (brokersToPickFrom.isEmpty()) {
             throw new RuntimeException("No broker found, unexpected");
         }
-
-        final int c = roundRobinCounter.getAndUpdate(v -> Math.max(v + 1, 0));
-        final int idx = c % brokersToPickFrom.size();
-        return brokersToPickFrom.get(idx).id;
+        return brokersToPickFrom;
     }
 
     private List<BrokerMetadata> allAliveBrokers() {
