@@ -1657,7 +1657,7 @@ kafka.server.ClientQuotaManagerTest:
 - testClientIdNotSanitized
 - testExpireQuotaSensors
 - testExpireThrottleTimeSensor
-- testGetMaxValueInQuotaWindowWithNonDefaultQuotaWindow
+- testMaxValueInQuotaWindowWithNonDefaultQuotaWindow
 - testQuotaConfigPrecedence
 - testQuotaTypesEnabledUpdatesWithCustomCallback
 - testQuotaTypesEnabledUpdatesWithDefaultCallback
