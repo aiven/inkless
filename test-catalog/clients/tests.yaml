@@ -4244,6 +4244,7 @@ org.apache.kafka.common.requests.HeartbeatRequestTest:
 org.apache.kafka.common.requests.JoinGroupRequestTest:
 - shouldAcceptValidGroupInstanceIds
 - shouldThrowOnInvalidGroupInstanceIds
+- testRebalanceTimeoutDefaultsToSessionTimeoutV0
 - testRequestVersionCompatibilityFailBuild
 org.apache.kafka.common.requests.JoinGroupResponseTest:
 - testProtocolNameBackwardCompatibility
@@ -4361,6 +4362,7 @@ org.apache.kafka.common.requests.RequestResponseTest:
 - testInvalidSaslAuthenticateRequest
 - testInvalidSaslHandShakeRequest
 - testInvalidTaggedFieldsWithSaslAuthenticateRequest
+- testJoinGroupRequestV0RebalanceTimeout
 - testListConfigResourcesRequestV0FailsWithConfigResourceTypeOtherThanClientMetrics
 - testListGroupRequestV3FailsWithStates
 - testProduceRequestPartitionSize
