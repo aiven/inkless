@@ -333,4 +333,8 @@ public class InklessConfig extends AbstractConfig {
     public int produceUploadThreadPoolSize() {
         return getInt(PRODUCE_UPLOAD_THREAD_POOL_SIZE_CONFIG);
     }
+
+    public static void main(String[] args) {
+        System.out.println(configDef().toHtml(4, config -> "inkless_" + config));
+    }
 }
