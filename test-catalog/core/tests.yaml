@@ -2113,6 +2113,13 @@ kafka.server.KafkaApisTest:
 - testGetAcknowledgeBatchesFromShareFetchRequest
 - testGetAcknowledgeBatchesFromShareFetchRequestError
 - testGetAllTopicMetadataShouldNotCreateTopicOrReturnUnknownTopicPartition
+- testGetReplicaInfoRequestHappyTrail
+- testGetReplicaLogInfoLogDirNotFoundError
+- testGetReplicaLogInfoMixOfSuccessAndFailure
+- testGetReplicaLogInfoRequestTooManyTopics
+- testGetReplicaLogInfoSingleTopicManyPartitionsHasMoreData
+- testGetReplicaLogInfoSingleTopicPartitionHasMoreData
+- testGetReplicaLogInfoUnknownTopic
 - testGetTelemetrySubscriptions
 - testGetTelemetrySubscriptionsWithException
 - testHandleAcknowledgementsInvalidAcknowledgementBatches
@@ -2284,6 +2291,7 @@ kafka.server.KafkaApisTest:
 - testSyncGroupProtocolTypeAndNameAreMandatorySinceV5
 - testTransactionalParametersSetCorrectly
 - testTxnOffsetCommitWithInvalidPartition
+- testUnauthorizedGetReplicaLogInfo
 - testUnauthorizedTopicMetadataRequest
 - testWriteShareGroupStateAuthorizationFailed
 - testWriteShareGroupStateSuccess
