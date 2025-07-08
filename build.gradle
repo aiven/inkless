@@ -2586,6 +2586,10 @@ project(':storage:inkless') {
     mutators.add('ALL')
     exportLineCoverage = true
   }
+
+  tasks.named('build') {
+    dependsOn tasks.named('genInklessConfigDoc')
+  }
 }
 
 project(':tools:tools-api') {
