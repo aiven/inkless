@@ -854,12 +854,17 @@ org.apache.kafka.tools.streams.DeleteStreamsGroupTest:
 - testDeleteWithUnrecognizedOption
 - testDeleteWithoutGroupOption
 org.apache.kafka.tools.streams.DescribeStreamsGroupTest:
+- testDescribeMultipleStreamsGroupWithMembersAndVerboseOptions
+- testDescribeNonExistingStreamsGroup
 - testDescribeStreamsGroup
 - testDescribeStreamsGroupWithMembersAndVerboseOptions
 - testDescribeStreamsGroupWithMembersOption
+- testDescribeStreamsGroupWithShortTimeout
 - testDescribeStreamsGroupWithStateAndVerboseOptions
 - testDescribeStreamsGroupWithStateOption
 - testDescribeStreamsGroupWithVerboseOption
+- testDescribeWithUnrecognizedOption
+- testDescribeWithoutGroupOption
 org.apache.kafka.tools.streams.ListStreamsGroupTest:
 - testListStreamsGroupOutput
 - testListStreamsGroupWithSpecifiedStates
