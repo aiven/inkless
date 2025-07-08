@@ -233,6 +233,8 @@ org.apache.kafka.storage.internals.checkpoint.PartitionMetadataFileTest:
 - testRead
 - testSetRecordWithDifferentTopicId
 - testSetRecordWithSameTopicId
+org.apache.kafka.storage.internals.log.AbstractIndexTest:
+- testResizeInvokeUnmap
 org.apache.kafka.storage.internals.log.BrokerCompressionTest:
 - testBrokerSideCompression
 org.apache.kafka.storage.internals.log.LocalLogTest:
