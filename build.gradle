@@ -2468,6 +2468,19 @@ project(':storage:inkless') {
     outputs.dir("${projectDir}/build/generated/main/java/io/aiven/inkless/generated")
   }
 
+  task genInklessConfigDoc(type: JavaExec) {
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'io.aiven.inkless.doc.ConfigsDocs'
+
+    // Define the outputs formally
+    outputs.file("$rootDir/docs/inkless/configs.rst")
+
+    // Set up the output in the execution phase, not configuration, and avoid removing on clean
+    doFirst {
+      standardOutput = new File("$rootDir/docs/inkless/configs.rst").newOutputStream()
+    }
+  }
+
   tasks {
     generateJooqClasses {
       withContainer {
