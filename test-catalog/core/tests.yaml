@@ -386,9 +386,6 @@ kafka.api.PlaintextConsumerAssignorsTest:
 - testRoundRobinAssignment
 kafka.api.PlaintextConsumerTest:
 - testCloseLeavesGroupOnInterrupt
-- testClusterResourceListener
-- testCoordinatorFailover
-- testSimpleConsumption
 kafka.api.PlaintextEndToEndAuthorizationTest:
 - testListenerName
 - testNoConsumeWithDescribeAclViaAssign
