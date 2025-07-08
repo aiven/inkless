@@ -2481,6 +2481,19 @@ project(':storage:inkless') {
     }
   }
 
+  task genInklessTopicConfigDoc(type: JavaExec) {
+    classpath = project(':storage:inkless').sourceSets.main.runtimeClasspath
+    mainClass = 'io.aiven.inkless.doc.TopicConfigsDocs'
+
+    // Define the outputs formally
+    outputs.file("$rootDir/docs/inkless/topic_configs.rst")
+
+    // Set up the output in the execution phase, not configuration, and avoid removing on clean
+    doFirst {
+      standardOutput = new File("$rootDir/docs/inkless/topic_configs.rst").newOutputStream()
+    }
+  }
+
   tasks {
     generateJooqClasses {
       withContainer {
@@ -2589,6 +2602,7 @@ project(':storage:inkless') {
 
   tasks.named('build') {
     dependsOn tasks.named('genInklessConfigDoc')
+    dependsOn tasks.named('genInklessTopicConfigDoc')
   }
 }
 

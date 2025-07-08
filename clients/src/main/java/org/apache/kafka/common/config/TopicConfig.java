@@ -231,5 +231,5 @@ public class TopicConfig {
 
     public static final String INKLESS_ENABLE_CONFIG = "inkless.enable";
     public static final String INKLESS_ENABLE_DOC = "To enable inkless mode for a topic, set this configuration as true. " +
-        "You can not disable this config once it is enabled.";
+            "You can not disable this config once it is enabled. If not set, defaults to server level config log.inkless.enable.";
 }
