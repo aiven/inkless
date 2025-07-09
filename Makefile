@@ -8,6 +8,7 @@ build:
 	./gradlew :core:build :storage:inkless:build :metadata:build -x test
 
 core/build/distributions/kafka_2.13-$(VERSION).tgz:
+	echo "Building Kafka distribution with version $(VERSION)"
 	./gradlew releaseTarGz
 
 .PHONY: build_release
