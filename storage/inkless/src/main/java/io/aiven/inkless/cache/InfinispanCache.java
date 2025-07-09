@@ -29,6 +29,7 @@ import org.infinispan.configuration.cache.StorageType;
 import org.infinispan.configuration.global.GlobalConfigurationBuilder;
 import org.infinispan.eviction.EvictionStrategy;
 import org.infinispan.manager.DefaultCacheManager;
+import org.infinispan.stats.Stats;
 
 import java.io.IOException;
 import java.util.concurrent.TimeUnit;
@@ -46,6 +47,7 @@ public class InfinispanCache implements ObjectCache {
     private final Time time;
     private final DefaultCacheManager cacheManager;
     private final Cache<CacheKey, FileExtent> cache;
+    private final InfinispanCacheMetrics metrics;
 
     public InfinispanCache(Time time, String clusterId, String rack, long cacheSize) {
         this.time = time;
@@ -59,6 +61,7 @@ public class InfinispanCache implements ObjectCache {
                 .allowList().addClasses(CacheKey.class, FileExtent.class);
         cacheManager = new DefaultCacheManager(globalConfig.build());
         ConfigurationBuilder config = new ConfigurationBuilder();
+        config.statistics().enable();
         config.clustering()
             .cacheMode(CacheMode.DIST_SYNC)
             .memory()
@@ -69,6 +72,8 @@ public class InfinispanCache implements ObjectCache {
                 .withFlags(CacheContainerAdmin.AdminFlag.VOLATILE)
                 .getOrCreateCache("fileExtents", config.build());
         backoff = new ExponentialBackoff(1, CACHE_WRITE_BACKOFF_EXP_BASE, CACHE_WRITE_BACKOFF_EXP_BASE, CACHE_WRITE_BACKOFF_JITTER);
+
+        this.metrics = new InfinispanCacheMetrics(this, cacheSize);
     }
 
     private static String clusterName(String clusterId, String rack) {
@@ -120,5 +125,10 @@ public class InfinispanCache implements ObjectCache {
     public void close() throws IOException {
         cache.clear();
         cacheManager.close();
+        metrics.close();
+    }
+
+    public Stats metrics() {
+        return cache.getAdvancedCache().getStats();
     }
 }
