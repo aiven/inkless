@@ -65,6 +65,7 @@ import io.aiven.inkless.control_plane.MergedFileBatch;
 public class PostgresControlPlane extends AbstractControlPlane {
     private final PostgresControlPlaneMetrics metrics;
 
+
     private HikariDataSource hikariDataSource;
     private DSLContext jooqCtx;
     private PostgresControlPlaneConfig controlPlaneConfig;
@@ -87,10 +88,11 @@ public class PostgresControlPlane extends AbstractControlPlane {
         Migrations.migrate(controlPlaneConfig);
 
         final HikariConfig config = new HikariConfig();
+        config.setPoolName("inkless-control-plane");
         config.setJdbcUrl(controlPlaneConfig.connectionString());
         config.setUsername(controlPlaneConfig.username());
         config.setPassword(controlPlaneConfig.password());
-
+        config.setMetricsTrackerFactory(HikariMetricsTracker::new);
         config.setTransactionIsolation(IsolationLevel.TRANSACTION_READ_COMMITTED.name());
 
         config.setMaximumPoolSize(controlPlaneConfig.maxConnections());
