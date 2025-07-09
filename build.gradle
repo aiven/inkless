@@ -2494,6 +2494,19 @@ project(':storage:inkless') {
     }
   }
 
+  task genInklessMetricsDoc(type: JavaExec) {
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'io.aiven.inkless.doc.MetricsDocs'
+
+    // Define the outputs formally
+    outputs.file("$rootDir/docs/inkless/metrics.rst")
+
+    // Set up the output in the execution phase, not configuration, and avoid removing on clean
+    doFirst {
+      standardOutput = new File("$rootDir/docs/inkless/metrics.rst").newOutputStream()
+    }
+  }
+
   tasks {
     generateJooqClasses {
       withContainer {
@@ -2603,6 +2616,7 @@ project(':storage:inkless') {
   tasks.named('build') {
     dependsOn tasks.named('genInklessConfigDoc')
     dependsOn tasks.named('genInklessTopicConfigDoc')
+    dependsOn tasks.named('genInklessMetricsDoc')
   }
 }
 
