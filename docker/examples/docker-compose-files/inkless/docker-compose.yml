@@ -1,6 +1,6 @@
 services:
   broker: &base-broker
-    image: aivenoy/kafka:4.1.0-inkless-SNAPSHOT
+    image: aivenoy/kafka:$KAFKA_VERSION
     restart: unless-stopped
     ports:
       - "9092:9092"

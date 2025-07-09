@@ -1,6 +1,6 @@
 services:
   create_topic:
-    image: aivenoy/kafka:4.1.0-inkless-SNAPSHOT
+    image: aivenoy/kafka:$KAFKA_VERSION
     restart: "no"
     depends_on:
       broker:
