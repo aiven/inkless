@@ -31,10 +31,12 @@ import org.infinispan.eviction.EvictionStrategy;
 import org.infinispan.manager.DefaultCacheManager;
 
 import java.io.IOException;
+import java.nio.file.Path;
 import java.util.concurrent.TimeUnit;
 
 import io.aiven.inkless.generated.CacheKey;
 import io.aiven.inkless.generated.FileExtent;
+import org.infinispan.stats.Stats;
 
 public class InfinispanCache implements ObjectCache {
 
@@ -47,7 +49,7 @@ public class InfinispanCache implements ObjectCache {
     private final DefaultCacheManager cacheManager;
     private final Cache<CacheKey, FileExtent> cache;
 
-    public InfinispanCache(Time time, String clusterId, String rack, long cacheSize) {
+    public InfinispanCache(Time time, String clusterId, String rack, long cacheSize, boolean isPersistent, Path basePath) {
         this.time = time;
         GlobalConfigurationBuilder globalConfig = GlobalConfigurationBuilder.defaultClusteredBuilder();
         globalConfig.transport()
@@ -61,11 +63,24 @@ public class InfinispanCache implements ObjectCache {
         ConfigurationBuilder config = new ConfigurationBuilder();
         config.statistics().enable();
         config.clustering()
-            .cacheMode(CacheMode.DIST_SYNC)
-            .memory()
+            .cacheMode(CacheMode.DIST_SYNC);
+        config.memory()
             .storage(StorageType.HEAP)
             .maxCount(cacheSize)
             .whenFull(EvictionStrategy.REMOVE);
+        if (isPersistent) {
+            config.persistence()
+                .passivation(true)
+                .addSoftIndexFileStore()
+                .shared(false)
+                .purgeOnStartup(true)
+                .dataLocation(basePath.resolve("data").toAbsolutePath().toString())
+                .indexLocation(basePath.resolve("index").toAbsolutePath().toString());
+            config.expiration()
+                .lifespan(10, TimeUnit.MINUTES)
+                .maxIdle(5, TimeUnit.MINUTES)
+                .wakeUpInterval(10, TimeUnit.SECONDS);
+        }
         cache = cacheManager.administration()
                 .withFlags(CacheContainerAdmin.AdminFlag.VOLATILE)
                 .getOrCreateCache("fileExtents", config.build());
@@ -106,7 +121,7 @@ public class InfinispanCache implements ObjectCache {
 
     @Override
     public void put(CacheKey key, FileExtent value) {
-        cache.put(key, value, 1L, TimeUnit.MINUTES);
+        cache.put(key, value);
     }
 
     @Override

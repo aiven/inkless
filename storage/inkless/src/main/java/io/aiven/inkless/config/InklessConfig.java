@@ -21,6 +21,8 @@ import org.apache.kafka.common.config.AbstractConfig;
 import org.apache.kafka.common.config.ConfigDef;
 import org.apache.kafka.common.utils.Utils;
 
+import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.Map;
@@ -80,6 +82,9 @@ public class InklessConfig extends AbstractConfig {
     public static final String CONSUME_CACHE_MAX_COUNT_CONFIG = CONSUME_PREFIX + "cache.max.count";
     private static final String CONSUME_CACHE_MAX_COUNT_DOC = "The maximum number of objects to cache in memory.";
     private static final int CONSUME_CACHE_MAX_COUNT_DEFAULT = 1000;
+
+    public static final String CONSUME_CACHE_PERSISTENCE_DIR_CONFIG = CONSUME_PREFIX + "cache.persistence.dir";
+    private static final String CONSUME_CACHE_PERSISTENCE_DIR_DOC = "The directory to persist the cache to disk.";
 
     public static final String RETENTION_ENFORCEMENT_INTERVAL_MS_CONFIG = "retention.enforcement.interval.ms";
     private static final String RETENTION_ENFORCEMENT_INTERVAL_MS_DOC = "The interval with which to enforce retention policies on a partition. " +
@@ -243,6 +248,13 @@ public class InklessConfig extends AbstractConfig {
             CONSUME_CACHE_MAX_COUNT_DOC
         );
         configDef.define(
+            CONSUME_CACHE_PERSISTENCE_DIR_CONFIG,
+            ConfigDef.Type.STRING,
+            null,
+            ConfigDef.Importance.LOW,
+            CONSUME_CACHE_PERSISTENCE_DIR_DOC
+        );
+        configDef.define(
             PRODUCE_UPLOAD_THREAD_POOL_SIZE_CONFIG,
             ConfigDef.Type.INT,
             PRODUCE_UPLOAD_THREAD_POOL_SIZE_DEFAULT,
@@ -328,6 +340,26 @@ public class InklessConfig extends AbstractConfig {
 
     public Long cacheMaxCount() {
         return getLong(CONSUME_CACHE_MAX_COUNT_CONFIG);
+    }
+
+    public boolean isCachePersistenceEnabled() {
+        return getString(CONSUME_CACHE_PERSISTENCE_DIR_CONFIG) != null;
+    }
+
+    public Path cachePersistenceDir() {
+        final String path = getString(CONSUME_CACHE_PERSISTENCE_DIR_CONFIG);
+        if (path == null || path.isBlank()) {
+            return null;
+        }
+        final Path p = Path.of(path);
+        if (!Files.exists(p)) {
+            try {
+                return Files.createDirectories(p);
+            } catch (IOException e) {
+                throw new RuntimeException(e);
+            }
+        }
+        return p;
     }
 
     public int produceUploadThreadPoolSize() {
