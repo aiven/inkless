@@ -332,7 +332,7 @@ public class MetricRegistry {
         TOTAL_DOC_PREFIX + OTHER_ERRORS_DOC
     );
 
-    public List<MetricNameTemplate> all() {
+    public static List<MetricNameTemplate> all() {
         return List.of(
             GET_OBJECT_REQUESTS_RATE_METRIC_NAME,
             GET_OBJECT_REQUESTS_TOTAL_METRIC_NAME,
