@@ -18,6 +18,7 @@
 package kafka.server
 
 import com.yammer.metrics.core.Meter
+import io.aiven.inkless.control_plane.FindBatchResponse
 import kafka.utils.Logging
 
 import java.util.concurrent.TimeUnit
@@ -48,13 +49,13 @@ case class FetchPartitionStatus(startOffsetMetadata: LogOffsetMetadata, fetchInf
  * in the fetch operation purgatory
  */
 class DelayedFetch(
-  params: FetchParams,
-  fetchPartitionStatus: Seq[(TopicIdPartition, FetchPartitionStatus)],
-  replicaManager: ReplicaManager,
-  isInklessTopic: String => Boolean = _ => false,
-  quota: ReplicaQuota,
-  responseCallback: Seq[(TopicIdPartition, FetchPartitionData)] => Unit
-) extends DelayedOperation(params.maxWaitMs) with Logging {
+                    params: FetchParams,
+                    fetchPartitionStatus: Seq[(TopicIdPartition, FetchPartitionStatus)],
+                    replicaManager: ReplicaManager,
+                    isInklessTopic: String => Boolean = _ => false, // todo remove
+                    quota: ReplicaQuota,
+                    responseCallback: Seq[(TopicIdPartition, FetchPartitionData)] => Unit
+                  ) extends DelayedOperation(params.maxWaitMs) with Logging {
 
   override def toString: String = {
     s"DelayedFetch(params=$params" +
@@ -119,8 +120,8 @@ class DelayedFetch(
             fetchStatus.fetchInfo.lastFetchedEpoch.ifPresent { fetchEpoch =>
               val epochEndOffset = partition.lastOffsetForLeaderEpoch(fetchLeaderEpoch, fetchEpoch, fetchOnlyFromLeader = false)
               if (epochEndOffset.errorCode != Errors.NONE.code()
-                  || epochEndOffset.endOffset == UNDEFINED_EPOCH_OFFSET
-                  || epochEndOffset.leaderEpoch == UNDEFINED_EPOCH) {
+                || epochEndOffset.endOffset == UNDEFINED_EPOCH_OFFSET
+                || epochEndOffset.leaderEpoch == UNDEFINED_EPOCH) {
                 debug(s"Could not obtain last offset for leader epoch for partition $topicIdPartition, epochEndOffset=$epochEndOffset.")
                 return forceComplete()
               } else if (epochEndOffset.leaderEpoch < fetchEpoch || epochEndOffset.endOffset < fetchStatus.fetchInfo.fetchOffset) {
@@ -129,6 +130,28 @@ class DelayedFetch(
                 return forceComplete()
               }
             }
+          } else {
+            // inkless topic
+            replicaManager.findInklessBatches(topicIdPartition, fetchOffset.messageOffset, fetchStatus.fetchInfo.maxBytes) match {
+              case Some(responseList) if responseList.size() == 1 && responseList.get(0).errors() == Errors.NONE => {
+                val response: FindBatchResponse = responseList.get(0)
+                val endOffset = response.highWatermark()
+                if (fetchOffset.messageOffset > endOffset) {
+                  // Truncation happened
+                  debug(s"Satisfying fetch $this since it is fetching later segments of partition $topicIdPartition.")
+                  return forceComplete()
+                } else if (fetchOffset.messageOffset < endOffset) {
+                  // todo do better
+                  val bytesAvailable = response.batches().asScala.map(_.metadata().byteSize()).sum.toInt
+                  accumulatedSize += bytesAvailable
+                }
+              }
+              case _ =>
+              //              case Some(inklessLog) if inklessLog.errors() != Errors.NONE =>
+              //                debug(s"Could not obtain high watermark for inkless partition $topicIdPartition.")
+              //                return forceComplete()
+            }
+
           }
         } catch {
           case _: NotLeaderOrFollowerException =>  // Case A or Case B
@@ -149,7 +172,7 @@ class DelayedFetch(
 
     // Case G
     if (accumulatedSize >= params.minBytes)
-       forceComplete()
+      forceComplete()
     else
       false
   }
@@ -165,25 +188,35 @@ class DelayedFetch(
    * Upon completion, read whatever data is available and pass to the complete callback
    */
   override def onComplete(): Unit = {
+    logger.warn(s"Completing DelayedFetch with status $fetchPartitionStatus")
     val fetchInfos = fetchPartitionStatus.map { case (tp, status) =>
       tp -> status.fetchInfo
     }
 
+    val (inklessFetchInfos, classicFetchInfos) = fetchInfos.partition { case (k, _) => isInklessTopic(k.topic()) }
+    val inklessParams = replicaManager.fetchParamsWithNewMaxBytes(params, params.maxBytes * inklessFetchInfos.size / fetchInfos.size)
+    val classicParams = replicaManager.fetchParamsWithNewMaxBytes(params, params.maxBytes * classicFetchInfos.size / fetchInfos.size)
+
+    val inklessFetchResponseFuture = replicaManager.fetchInklessMessages(inklessParams, inklessFetchInfos)
+
     val logReadResults = replicaManager.readFromLog(
-      params,
-      fetchInfos,
+      classicParams,
+      classicFetchInfos,
       quota,
       readFromPurgatory = true
     )
 
-    val fetchPartitionData = logReadResults.map { case (tp, result) =>
-      val isReassignmentFetch = params.isFromFollower &&
-        replicaManager.isAddingReplica(tp.topicPartition, params.replicaId)
+    val classicFetchPartitionData = logReadResults.map { case (tp, result) =>
+      val isReassignmentFetch = classicParams.isFromFollower &&
+        replicaManager.isAddingReplica(tp.topicPartition, classicParams.replicaId)
 
       tp -> result.toFetchPartitionData(isReassignmentFetch)
     }
 
-    responseCallback(fetchPartitionData)
+    inklessFetchResponseFuture.whenComplete{ case (inklessFetchPartitionData, _) =>
+      responseCallback(classicFetchPartitionData ++ inklessFetchPartitionData)
+    }
+
   }
 }
 

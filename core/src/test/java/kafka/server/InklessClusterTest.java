@@ -197,14 +197,16 @@ public class InklessClusterTest {
         clientConfigs.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, ByteArraySerializer.class.getName());
         clientConfigs.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, ByteArrayDeserializer.class.getName());
         clientConfigs.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, ByteArrayDeserializer.class.getName());
+        clientConfigs.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, AutoOffsetResetStrategy.EARLIEST.name());
+        clientConfigs.put(ConsumerConfig.FETCH_MIN_BYTES_CONFIG, "10000000");
         String inklessTopicName = "inkless-test-topic";
         String classicTopicName = "classic-test-topic";
         int numRecords = 10;
 
         try (Admin admin = AdminClient.create(clientConfigs)) {
-            final NewTopic inklessTopic = new NewTopic(inklessTopicName, 1, (short) 1)
+            final NewTopic inklessTopic = new NewTopic(inklessTopicName, Map.of(0, List.of(0)))
                 .configs(Map.of(TopicConfig.INKLESS_ENABLE_CONFIG, "true"));
-            final NewTopic classicTopic = new NewTopic(classicTopicName, 1, (short) 1)
+            final NewTopic classicTopic = new NewTopic(classicTopicName, Map.of(0, List.of(0)))
                 .configs(Map.of(TopicConfig.INKLESS_ENABLE_CONFIG, "false"));
             CreateTopicsResult topics = admin.createTopics(List.of(inklessTopic, classicTopic));
             topics.all().get(10, TimeUnit.SECONDS);
@@ -232,6 +234,17 @@ public class InklessClusterTest {
         }
 
         assertEquals(numRecords * 2, recordsProduced.get());
+
+        int recordsConsumed = 0;
+        try (Consumer<byte[], byte[]> consumer = new KafkaConsumer<>(clientConfigs)) {
+            consumer.assign(List.of(new TopicPartition(classicTopicName, 0), new TopicPartition(inklessTopicName, 0)));
+            for (int i = 0; i < 3; i++) {
+                ConsumerRecords<byte[], byte[]> poll = consumer.poll(Duration.ofSeconds(1));
+                recordsConsumed += poll.count();
+            }
+        }
+
+        assertEquals(recordsProduced.get(), recordsConsumed);
     }
 
     private static void consumeWithManualAssignment(TimestampType timestampType, Map<String, Object> clientConfigs, String topicName, long now, int numRecords) {
