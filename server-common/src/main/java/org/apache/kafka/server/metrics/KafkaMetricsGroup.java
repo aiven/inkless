@@ -114,6 +114,10 @@ public class KafkaMetricsGroup {
         return KafkaYammerMetrics.defaultRegistry().newHistogram(metricName(name, tags), biased);
     }
 
+    public final Histogram newHistogram(MetricName metricName, boolean biased, Map<String, String> tags) {
+        return KafkaYammerMetrics.defaultRegistry().newHistogram(metricName, biased);
+    }
+
     public final Histogram newHistogram(String name) {
         return newHistogram(name, true, Map.of());
     }
@@ -172,3 +176,4 @@ public class KafkaMetricsGroup {
         }
     }
 }
+
