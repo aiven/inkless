@@ -275,6 +275,9 @@ org.apache.kafka.storage.internals.log.LocalLogTest:
 - testTruncateTo
 - testUpdateConfig
 - testWhenFetchOffsetHigherThanMaxOffset
+org.apache.kafka.storage.internals.log.LogConcurrencyTest:
+- testUncommittedDataNotConsumed
+- testUncommittedDataNotConsumedFrequentSegmentRolls
 org.apache.kafka.storage.internals.log.LogManagerTest:
 - testIsStrayKraftMissingTopicId
 - testIsStrayKraftReplicaInImage

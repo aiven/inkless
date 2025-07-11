@@ -2752,7 +2752,9 @@ org.apache.kafka.streams.processor.internals.StreamThreadTest:
 - testGetTopicPartitionInfo
 - testNamedTopologyWithStreamsProtocol
 - testStreamsProtocolRunOnceWithProcessingThreads
+- testStreamsProtocolRunOnceWithProcessingThreadsMissingSourceTopic
 - testStreamsProtocolRunOnceWithoutProcessingThreads
+- testStreamsProtocolRunOnceWithoutProcessingThreadsMissingSourceTopic
 - testStreamsRebalanceDataWithClassicProtocol
 - testStreamsRebalanceDataWithExtraCopartition
 - testStreamsRebalanceDataWithStreamsProtocol

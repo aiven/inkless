@@ -1030,9 +1030,6 @@ kafka.log.LogCleanerTest:
 - testSegmentGroupingWithSparseOffsetsAndEmptySegments
 - testSegmentWithOffsetOverflow
 - testSizeTrimmedForPreallocatedAndCompactedTopic
-kafka.log.LogConcurrencyTest:
-- testUncommittedDataNotConsumed
-- testUncommittedDataNotConsumedFrequentSegmentRolls
 kafka.log.LogConfigTest:
 - shouldValidateThrottledReplicasConfig
 - testDisableRemoteLogStorage
