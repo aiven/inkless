@@ -17,6 +17,8 @@
  */
 package io.aiven.inkless.produce;
 
+import com.yammer.metrics.core.MetricName;
+import org.apache.kafka.common.MetricNameTemplate;
 import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.server.metrics.KafkaMetricsGroup;
 
@@ -27,6 +29,7 @@ import java.io.Closeable;
 import java.io.IOException;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.atomic.LongAdder;
@@ -35,21 +38,36 @@ import io.aiven.inkless.TimeUtils;
 
 @CoverageIgnore
 public class WriterMetrics implements Closeable {
+    public static final KafkaMetricsGroup METRICS_GROUP = new KafkaMetricsGroup(WriterMetrics.class);
+
     public static final String REQUEST_RATE = "RequestRate";
+    public static final String REQUEST_RATE_DESCRIPTION = "The number of write requests per unit time.";
+
     public static final String ROTATION_RATE = "RotationRate";
+    public static final String ROTATION_RATE_DESCRIPTION = "The number of file rotations per unit time.";
+
     public static final String ROTATION_TIME = "RotationTime";
-    private final KafkaMetricsGroup metricsGroup = new KafkaMetricsGroup(WriterMetrics.class);
+    public static final String ROTATION_TIME_DESCRIPTION = "The time taken to rotate a file, in milliseconds.";
+
+    private final MetricName requestRateMetricName;
+    private final MetricName rotationRateMetricName;
+    private final MetricName rotationTimeMetricName;
+
     private final Histogram rotationTime;
 
     final Time time;
     final LongAdder requests = new LongAdder();
     final LongAdder rotations = new LongAdder();
+
     public WriterMetrics(final Time time) {
         this.time = Objects.requireNonNull(time, "time cannot be null");
 
-        metricsGroup.newGauge(REQUEST_RATE, requests::intValue);
-        metricsGroup.newGauge(ROTATION_RATE, rotations::intValue);
-        rotationTime = metricsGroup.newHistogram(ROTATION_TIME, true, Map.of());
+        this.requestRateMetricName = METRICS_GROUP.metricName(REQUEST_RATE, Map.of());
+        METRICS_GROUP.newGauge(this.requestRateMetricName, requests::intValue);
+        this.rotationRateMetricName = METRICS_GROUP.metricName(ROTATION_RATE, Map.of());
+        METRICS_GROUP.newGauge(this.rotationRateMetricName, rotations::intValue);
+        this.rotationTimeMetricName = METRICS_GROUP.metricName(ROTATION_TIME, Map.of());
+        rotationTime = METRICS_GROUP.newHistogram(this.rotationTimeMetricName, true, Map.of());
     }
 
     public void requestAdded() {
@@ -64,8 +82,28 @@ public class WriterMetrics implements Closeable {
 
     @Override
     public void close() throws IOException {
-        metricsGroup.removeMetric(REQUEST_RATE);
-        metricsGroup.removeMetric(ROTATION_RATE);
-        metricsGroup.removeMetric(ROTATION_TIME);
+        METRICS_GROUP.removeMetric(REQUEST_RATE);
+        METRICS_GROUP.removeMetric(ROTATION_RATE);
+        METRICS_GROUP.removeMetric(ROTATION_TIME);
+    }
+
+    public List<MetricNameTemplate> all() {
+        return List.of(
+            new MetricNameTemplate(
+                requestRateMetricName.getName(),
+                requestRateMetricName.getGroup(),
+                REQUEST_RATE_DESCRIPTION
+            ),
+            new MetricNameTemplate(
+                rotationRateMetricName.getName(),
+                rotationRateMetricName.getGroup(),
+                ROTATION_RATE_DESCRIPTION
+            ),
+            new MetricNameTemplate(
+                rotationTimeMetricName.getName(),
+                rotationTimeMetricName.getGroup(),
+                ROTATION_TIME_DESCRIPTION
+            )
+        );
     }
 }

@@ -64,7 +64,7 @@ import io.aiven.inkless.storage_backend.common.StorageBackend;
  *
  * <p>The class is thread-safe: all the event entry points are protected with the lock.</p>
  */
-class Writer implements Closeable {
+public class Writer implements Closeable {
     private static final Logger LOGGER = LoggerFactory.getLogger(Writer.class);
 
     private final Lock lock = new ReentrantLock();
