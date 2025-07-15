@@ -63,6 +63,8 @@ import io.aiven.inkless.control_plane.GetLogInfoResponse;
 import io.aiven.inkless.control_plane.ListOffsetsRequest;
 import io.aiven.inkless.control_plane.ListOffsetsResponse;
 import io.aiven.inkless.control_plane.MergedFileBatch;
+import io.aiven.inkless.control_plane.OffloadSegmentToTSRequest;
+import io.aiven.inkless.control_plane.OffloadSegmentToTSResponse;
 
 public class PostgresControlPlane extends AbstractControlPlane {
     private final PostgresControlPlaneMetrics metrics;
@@ -295,6 +297,11 @@ public class PostgresControlPlane extends AbstractControlPlane {
 
     @Override
     public List<GetBatchesToOffloadToTSResponse> getBatchesToOffloadToTS(final List<GetBatchesToOffloadToTSRequest> requests) {
+        throw new RuntimeException("Not implemented");
+    }
+
+    @Override
+    public List<OffloadSegmentToTSResponse> offloadSegmentsToTS(final List<OffloadSegmentToTSRequest> requests) {
         throw new RuntimeException("Not implemented");
     }
 

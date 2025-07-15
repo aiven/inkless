@@ -85,5 +85,7 @@ public interface ControlPlane extends Closeable, Configurable {
 
     List<GetBatchesToOffloadToTSResponse> getBatchesToOffloadToTS(List<GetBatchesToOffloadToTSRequest> requests);
 
+    List<OffloadSegmentToTSResponse> offloadSegmentsToTS(List<OffloadSegmentToTSRequest> requests);
+
     List<GetLogInfoResponse> getLogInfo(List<GetLogInfoRequest> requests);
 }

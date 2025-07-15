@@ -687,6 +687,72 @@ public class InMemoryControlPlane extends AbstractControlPlane {
     }
 
     @Override
+    public synchronized List<OffloadSegmentToTSResponse> offloadSegmentsToTS(final List<OffloadSegmentToTSRequest> requests) {
+        final Instant now = TimeUtils.now(time);
+
+        final List<OffloadSegmentToTSResponse> responses = new ArrayList<>();
+        for (final OffloadSegmentToTSRequest request : requests) {
+            final TopicIdPartition tidp = findTopicIdPartition(request.topicId(), request.partition());
+            final LogInfo logInfo;
+            final TreeMap<Long, BatchInfoInternal> coordinates;
+            if (tidp == null
+                || (logInfo = logs.get(tidp)) == null
+                || (coordinates = batches.get(tidp)) == null
+            ) {
+                responses.add(OffloadSegmentToTSResponse.unknownTopicOrPartition());
+                continue;
+            }
+
+            if (coordinates.isEmpty()) {
+                LOGGER.error("Cannot commit offloading segments to tiered storage when there is no batches: {}-{}",
+                    request.topicId(), request.partition());
+                responses.add(OffloadSegmentToTSResponse.invalidOffsets());
+                continue;
+            }
+
+            final var firstBatch = coordinates.firstEntry().getValue();
+            final long firstBatchBaseOffset = firstBatch.batchInfo().metadata().baseOffset();
+            if (firstBatchBaseOffset != request.startOffset()) {
+                LOGGER.error("First batch base offset {} doesn't match start offset {} in {}-{}",
+                    firstBatchBaseOffset, request.lastOffset(),
+                    request.topicId(), request.partition());
+                responses.add(OffloadSegmentToTSResponse.invalidOffsets());
+                continue;
+            }
+
+            final List<Long> toDelete = new ArrayList<>();
+            Long lastBatchKey = null;
+            for (final BatchInfoInternal value : coordinates.values()) {
+                final long currentBatchLastOffset = value.batchInfo().metadata().lastOffset();
+                toDelete.add(currentBatchLastOffset);
+                if (currentBatchLastOffset == request.lastOffset()) {
+                    lastBatchKey = currentBatchLastOffset;  // the keys are last offsets
+                    break;
+                }
+            }
+
+            if (lastBatchKey == null) {
+                LOGGER.error("Can't find batch with last offset {} in {}-{}",
+                    request.lastOffset(), request.topicId(), request.partition());
+                responses.add(OffloadSegmentToTSResponse.invalidOffsets());
+                continue;
+            }
+
+            // All checks are done, do the actual change.
+            long newSize = logInfo.byteSize;
+            for (final Long toDeleteKey : toDelete) {
+                final var batchInfoInternal = coordinates.remove(toDeleteKey);
+                newSize -= batchInfoInternal.batchInfo().metadata().byteSize();
+                batchInfoInternal.fileInfo().deleteBatch(batchInfoInternal.batchInfo(), now);
+            }
+            logInfo.byteSize = newSize;
+            logInfo.tsHighWatermark = request.lastOffset() + 1;
+            responses.add(OffloadSegmentToTSResponse.success());
+        }
+        return responses;
+    }
+
+    @Override
     public synchronized List<GetLogInfoResponse> getLogInfo(final List<GetLogInfoRequest> requests) {
         final List<GetLogInfoResponse> result = new ArrayList<>();
         for (final GetLogInfoRequest request : requests) {
