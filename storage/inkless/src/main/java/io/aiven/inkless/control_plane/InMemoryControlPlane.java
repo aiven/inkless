@@ -698,7 +698,8 @@ public class InMemoryControlPlane extends AbstractControlPlane {
                 result.add(GetLogInfoResponse.success(
                     logInfo.logStartOffset,
                     logInfo.highWatermark,
-                    logInfo.byteSize
+                    logInfo.byteSize,
+                    logInfo.tsHighWatermark
                 ));
             }
         }
@@ -721,6 +722,7 @@ public class InMemoryControlPlane extends AbstractControlPlane {
         long logStartOffset = 0;
         long highWatermark = 0;
         long byteSize = 0;
+        long tsHighWatermark = 0;
     }
 
     private static class FileInfo {

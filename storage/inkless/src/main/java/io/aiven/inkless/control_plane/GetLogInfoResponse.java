@@ -22,17 +22,20 @@ import org.apache.kafka.common.protocol.Errors;
 public record GetLogInfoResponse(Errors errors,
                                  long logStartOffset,
                                  long highWatermark,
-                                 long byteSize) {
+                                 long byteSize,
+                                 long tsHighWatermark) {
     public static final long INVALID_OFFSET = -1L;
     public static final long INVALID_BYTE_SIZE = -1L;
 
     public static GetLogInfoResponse success(final long logStartOffset,
                                              final long highWatermark,
-                                             final long byteSize) {
-        return new GetLogInfoResponse(Errors.NONE, logStartOffset, highWatermark, byteSize);
+                                             final long byteSize,
+                                             final long tsHighWatermark) {
+        return new GetLogInfoResponse(Errors.NONE, logStartOffset, highWatermark, byteSize, tsHighWatermark);
     }
 
     public static GetLogInfoResponse unknownTopicOrPartition() {
-        return new GetLogInfoResponse(Errors.UNKNOWN_TOPIC_OR_PARTITION, INVALID_OFFSET, INVALID_OFFSET, INVALID_BYTE_SIZE);
+        return new GetLogInfoResponse(Errors.UNKNOWN_TOPIC_OR_PARTITION,
+            INVALID_OFFSET, INVALID_OFFSET, INVALID_BYTE_SIZE, INVALID_OFFSET);
     }
 }

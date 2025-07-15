@@ -81,7 +81,8 @@ public class GetLogInfoJob implements Callable<List<GetLogInfoResponse>> {
                     requestsTable.field(REQUEST_PARTITION),
                     LOGS.LOG_START_OFFSET,
                     LOGS.HIGH_WATERMARK,
-                    LOGS.BYTE_SIZE
+                    LOGS.BYTE_SIZE,
+                    LOGS.TS_HIGH_WATERMARK
                 ).from(requestsTable)
                 .leftJoin(LOGS).on(LOGS.TOPIC_ID.eq(requestsTable.field(REQUEST_TOPIC_ID))
                     .and(LOGS.PARTITION.eq(requestsTable.field(REQUEST_PARTITION))));
@@ -96,7 +97,8 @@ public class GetLogInfoJob implements Callable<List<GetLogInfoResponse>> {
                         responses.add(GetLogInfoResponse.success(
                             logStartOffset,
                             record.get(LOGS.HIGH_WATERMARK),
-                            record.get(LOGS.BYTE_SIZE)
+                            record.get(LOGS.BYTE_SIZE),
+                            record.get(LOGS.TS_HIGH_WATERMARK)
                         ));
                     }
                 }

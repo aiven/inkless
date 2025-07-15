@@ -149,7 +149,7 @@ class DeleteTopicJobTest {
 
         // The logs of the deleted topics must be gone, i.e. only TOPIC_2 remains.
         assertThat(DBUtils.getAllLogs(pgContainer.getDataSource())).containsExactly(
-            new LogsRecord(TOPIC_ID_2, 0, TOPIC_2, 0L, 24L, (long) file2Batch2Size + file3Batch3Size)
+            new LogsRecord(TOPIC_ID_2, 0, TOPIC_2, 0L, 24L, (long) file2Batch2Size + file3Batch3Size, 0L)
         );
 
         // The batches of the deleted topics must be gone, i.e. only TOPIC_2 remains.
