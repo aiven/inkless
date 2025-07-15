@@ -1,5 +1,7 @@
 DOCKER := docker
 
+KAFKA_VERSION ?= 4.1.0-inkless-SNAPSHOT
+
 .PHONY: in-memory
 in-memory:
 	docker compose -f docker-compose.yml -f docker-compose.monitoring.yml -f docker-compose.demo.yml up

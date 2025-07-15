@@ -1,6 +1,6 @@
 services:
   broker: &base-broker
-    image: aivenoy/kafka:$KAFKA_VERSION
+    image: aivenoy/kafka:${KAFKA_VERSION}
     restart: unless-stopped
     ports:
       - "9092:9092"
