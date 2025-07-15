@@ -2052,6 +2052,130 @@ public abstract class AbstractControlPlaneTest {
         }
     }
 
+    @Nested
+    class GetBatchesToOffloadToTS {
+        @Test
+        void unknownTopicOrPartition() {
+            final List<GetBatchesToOffloadToTSResponse> result = controlPlane.getBatchesToOffloadToTS(List.of(
+                new GetBatchesToOffloadToTSRequest(NONEXISTENT_TOPIC_ID, 0, 1, 1)
+            ));
+            assertThat(result)
+                .containsExactly(new GetBatchesToOffloadToTSResponse(GetBatchesToOffloadToTSResponse.Errors.UNKNOWN_TOPIC_OR_PARTITION, null));
+        }
+
+        @Test
+        void emptyPartition() {
+            final List<GetBatchesToOffloadToTSResponse> result = controlPlane.getBatchesToOffloadToTS(List.of(
+                new GetBatchesToOffloadToTSRequest(EXISTING_TOPIC_1_ID, 0, 1, 1)
+            ));
+            assertThat(result)
+                .containsExactly(new GetBatchesToOffloadToTSResponse(GetBatchesToOffloadToTSResponse.Errors.NOT_ENOUGH_DATA, null));
+        }
+
+        @Test
+        void notEnoughData() {
+            controlPlane.commitFile(
+                "o1", ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, BROKER_ID, FILE_SIZE,
+                List.of(
+                    CommitBatchRequest.of(0, EXISTING_TOPIC_1_ID_PARTITION_0, 1, (int) FILE_SIZE, 1, 10, 1000, TimestampType.CREATE_TIME)
+                )
+            );
+            assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0))))
+                .containsExactly(GetLogInfoResponse.success(0, 10, FILE_SIZE));
+
+            final List<GetBatchesToOffloadToTSResponse> result = controlPlane.getBatchesToOffloadToTS(List.of(
+                new GetBatchesToOffloadToTSRequest(EXISTING_TOPIC_1_ID, 0, (int) FILE_SIZE + 1, Long.MAX_VALUE)
+            ));
+            assertThat(result)
+                .containsExactly(new GetBatchesToOffloadToTSResponse(GetBatchesToOffloadToTSResponse.Errors.NOT_ENOUGH_DATA, null));
+        }
+
+        @Test
+        void enoughDataBySize() {
+            final int batchSize = 2;
+            final String objectKey = "o1";
+
+            controlPlane.commitFile(
+                objectKey, ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, BROKER_ID, FILE_SIZE,
+                List.of(
+                    CommitBatchRequest.of(0, EXISTING_TOPIC_1_ID_PARTITION_0, 0, batchSize, 1, 10, 1000, TimestampType.CREATE_TIME),
+                    CommitBatchRequest.of(0, EXISTING_TOPIC_1_ID_PARTITION_0, 1, batchSize, 1, 10, 1000, TimestampType.CREATE_TIME),
+                    CommitBatchRequest.of(0, EXISTING_TOPIC_1_ID_PARTITION_0, 2, batchSize, 1, 10, 1000, TimestampType.CREATE_TIME),
+                    CommitBatchRequest.of(0, EXISTING_TOPIC_1_ID_PARTITION_0, 3, batchSize, 1, 10, 1000, TimestampType.CREATE_TIME),
+                    CommitBatchRequest.of(0, EXISTING_TOPIC_1_ID_PARTITION_0, 4, batchSize, 1, 10, 1000, TimestampType.CREATE_TIME)
+                )
+            );
+            assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0))))
+                .containsExactly(GetLogInfoResponse.success(0, 50, batchSize * 5));
+
+            // We request segment size enough to fit 3 batches only.
+            final List<GetBatchesToOffloadToTSResponse> result = controlPlane.getBatchesToOffloadToTS(List.of(
+                new GetBatchesToOffloadToTSRequest(EXISTING_TOPIC_1_ID, 0, batchSize * 3 + 1, Long.MAX_VALUE)
+            ));
+            assertThat(result)
+                .containsExactly(new GetBatchesToOffloadToTSResponse(GetBatchesToOffloadToTSResponse.Errors.NONE, List.of(
+                    new BatchInfo(1, objectKey, new BatchMetadata(RecordBatch.CURRENT_MAGIC_VALUE, EXISTING_TOPIC_1_ID_PARTITION_0, 0, batchSize, 0, 9, time.milliseconds(), 1000, TimestampType.CREATE_TIME)),
+                    new BatchInfo(2, objectKey, new BatchMetadata(RecordBatch.CURRENT_MAGIC_VALUE, EXISTING_TOPIC_1_ID_PARTITION_0, 1, batchSize, 10, 19, time.milliseconds(), 1000, TimestampType.CREATE_TIME)),
+                    new BatchInfo(3, objectKey, new BatchMetadata(RecordBatch.CURRENT_MAGIC_VALUE, EXISTING_TOPIC_1_ID_PARTITION_0, 2, batchSize, 20, 29, time.milliseconds(), 1000, TimestampType.CREATE_TIME))
+                )));
+        }
+
+        @Test
+        void enoughDataByTime() {
+            final int batchSize = 1;
+            final String objectKey = "o1";
+
+            final long appendTime = time.milliseconds();
+            controlPlane.commitFile(
+                objectKey, ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, BROKER_ID, FILE_SIZE,
+                List.of(
+                    CommitBatchRequest.of(0, EXISTING_TOPIC_1_ID_PARTITION_0, 0, batchSize, 1, 10, START_TIME, TimestampType.CREATE_TIME),
+                    CommitBatchRequest.of(0, EXISTING_TOPIC_1_ID_PARTITION_0, 1, batchSize, 1, 10, START_TIME + 1, TimestampType.CREATE_TIME),
+                    CommitBatchRequest.of(0, EXISTING_TOPIC_1_ID_PARTITION_0, 2, batchSize, 1, 10, START_TIME + 2, TimestampType.CREATE_TIME)
+                )
+            );
+            assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0))))
+                .containsExactly(GetLogInfoResponse.success(0, 30, batchSize * 3));
+
+            // Segments are old enough to be picked by time (but not by size).
+            time.sleep(3);
+            final List<GetBatchesToOffloadToTSResponse> result = controlPlane.getBatchesToOffloadToTS(List.of(
+                new GetBatchesToOffloadToTSRequest(EXISTING_TOPIC_1_ID, 0, batchSize * 100, 3)
+            ));
+            assertThat(result)
+                .containsExactly(new GetBatchesToOffloadToTSResponse(GetBatchesToOffloadToTSResponse.Errors.NONE, List.of(
+                    new BatchInfo(1, objectKey, new BatchMetadata(RecordBatch.CURRENT_MAGIC_VALUE, EXISTING_TOPIC_1_ID_PARTITION_0, 0, batchSize, 0, 9, appendTime, START_TIME, TimestampType.CREATE_TIME)),
+                    new BatchInfo(2, objectKey, new BatchMetadata(RecordBatch.CURRENT_MAGIC_VALUE, EXISTING_TOPIC_1_ID_PARTITION_0, 1, batchSize, 10, 19, appendTime, START_TIME + 1, TimestampType.CREATE_TIME)),
+                    new BatchInfo(3, objectKey, new BatchMetadata(RecordBatch.CURRENT_MAGIC_VALUE, EXISTING_TOPIC_1_ID_PARTITION_0, 2, batchSize, 20, 29, appendTime, START_TIME + 2, TimestampType.CREATE_TIME))
+                )));
+        }
+
+        @Test
+        void atLeastOneBatchMustBeInSegment() {
+            final int batchSize = 100;
+            final String objectKey = "o1";
+
+            controlPlane.commitFile(
+                objectKey, ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, BROKER_ID, FILE_SIZE,
+                List.of(
+                    CommitBatchRequest.of(0, EXISTING_TOPIC_1_ID_PARTITION_0, 0, batchSize, 1, 10, 1000, TimestampType.CREATE_TIME),
+                    CommitBatchRequest.of(0, EXISTING_TOPIC_1_ID_PARTITION_0, 1, batchSize, 1, 10, 1000, TimestampType.CREATE_TIME)
+                )
+            );
+            assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(EXISTING_TOPIC_1_ID, 0))))
+                .containsExactly(GetLogInfoResponse.success(0, 20, batchSize * 2));
+
+            // Segments are old enough to be picked by time (but not by size).
+            final List<GetBatchesToOffloadToTSResponse> result = controlPlane.getBatchesToOffloadToTS(List.of(
+                new GetBatchesToOffloadToTSRequest(EXISTING_TOPIC_1_ID, 0, 1, Long.MAX_VALUE)
+            ));
+            assertThat(result)
+                .containsExactly(new GetBatchesToOffloadToTSResponse(GetBatchesToOffloadToTSResponse.Errors.NONE, List.of(
+                    new BatchInfo(1, objectKey, new BatchMetadata(RecordBatch.CURRENT_MAGIC_VALUE, EXISTING_TOPIC_1_ID_PARTITION_0, 0, batchSize, 0, 9, time.milliseconds(), 1000, TimestampType.CREATE_TIME))
+                )));
+        }
+    }
+
     public record ControlPlaneAndConfigs(ControlPlane controlPlane, Map<String, ?> configs) {
     }
 }

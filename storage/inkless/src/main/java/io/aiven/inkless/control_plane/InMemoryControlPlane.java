@@ -25,6 +25,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -629,6 +630,60 @@ public class InMemoryControlPlane extends AbstractControlPlane {
     @Override
     public boolean isSafeToDeleteFile(String objectKeyPath) {
         return !files.containsKey(objectKeyPath);
+    }
+
+    @Override
+    public synchronized List<GetBatchesToOffloadToTSResponse> getBatchesToOffloadToTS(final List<GetBatchesToOffloadToTSRequest> requests) {
+        final Instant now = TimeUtils.now(time);
+
+        final List<GetBatchesToOffloadToTSResponse> responses = new ArrayList<>();
+        for (final var request : requests) {
+            final TopicIdPartition tidp = findTopicIdPartition(request.topicId(), request.partition());
+            final LogInfo logInfo;
+            final TreeMap<Long, BatchInfoInternal> coordinates;
+            if (tidp == null
+                || (logInfo = logs.get(tidp)) == null
+                || (coordinates = batches.get(tidp)) == null
+            ) {
+                responses.add(GetBatchesToOffloadToTSResponse.unknownTopicOrPartition());
+                continue;
+            }
+
+            if (coordinates.isEmpty()) {
+                responses.add(GetBatchesToOffloadToTSResponse.notEnoughData());
+                continue;
+            }
+
+            final BatchInfoInternal firstBatch = coordinates.firstEntry().getValue();
+            // Two questions:
+            // 1. Should we create a segment?
+            // Yes, if there's enough data by size; or the first batch is old enough.
+            final long msSinceFirstBatch = Duration.between(
+                Instant.ofEpochMilli(firstBatch.batchInfo().metadata().timestamp()),
+                now
+            ).toMillis();
+            if (logInfo.byteSize < request.segmentBytes()
+                && msSinceFirstBatch < request.segmentMs()) {
+                responses.add(GetBatchesToOffloadToTSResponse.notEnoughData());
+                continue;
+            }
+
+            // 2. How many batches to put into the segment?
+            // Up to segment.bytes.
+            final List<BatchInfo> batches = new ArrayList<>();
+            long totalBatchSize = 0;
+            for (final BatchInfoInternal value : coordinates.values()) {
+                final long batchSize = value.batchInfo().metadata().byteSize();
+                // At least one batch must be there.
+                if (totalBatchSize > 0 && totalBatchSize + batchSize > request.segmentBytes()) {
+                    break;
+                }
+                batches.add(value.batchInfo());
+                totalBatchSize += batchSize;
+            }
+            responses.add(GetBatchesToOffloadToTSResponse.success(batches));
+        }
+        return responses;
     }
 
     @Override

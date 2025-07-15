@@ -83,5 +83,7 @@ public interface ControlPlane extends Closeable, Configurable {
 
     boolean isSafeToDeleteFile(String objectKeyPath);
 
+    List<GetBatchesToOffloadToTSResponse> getBatchesToOffloadToTS(List<GetBatchesToOffloadToTSRequest> requests);
+
     List<GetLogInfoResponse> getLogInfo(List<GetLogInfoRequest> requests);
 }

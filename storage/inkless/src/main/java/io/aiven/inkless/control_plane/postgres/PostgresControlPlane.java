@@ -56,6 +56,8 @@ import io.aiven.inkless.control_plane.FileMergeWorkItemNotExist;
 import io.aiven.inkless.control_plane.FileToDelete;
 import io.aiven.inkless.control_plane.FindBatchRequest;
 import io.aiven.inkless.control_plane.FindBatchResponse;
+import io.aiven.inkless.control_plane.GetBatchesToOffloadToTSRequest;
+import io.aiven.inkless.control_plane.GetBatchesToOffloadToTSResponse;
 import io.aiven.inkless.control_plane.GetLogInfoRequest;
 import io.aiven.inkless.control_plane.GetLogInfoResponse;
 import io.aiven.inkless.control_plane.ListOffsetsRequest;
@@ -289,6 +291,11 @@ public class PostgresControlPlane extends AbstractControlPlane {
         } catch (Exception e) {
             throw new ControlPlaneException("Error when checking if safe to delete file " + objectKeyPath, e);
         }
+    }
+
+    @Override
+    public List<GetBatchesToOffloadToTSResponse> getBatchesToOffloadToTS(final List<GetBatchesToOffloadToTSRequest> requests) {
+        throw new RuntimeException("Not implemented");
     }
 
     @Override
