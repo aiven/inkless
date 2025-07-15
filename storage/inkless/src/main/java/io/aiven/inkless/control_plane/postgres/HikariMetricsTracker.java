@@ -54,35 +54,29 @@ public class HikariMetricsTracker implements IMetricsTracker {
 
     private final LongAdder connectionTimeoutCount = new LongAdder();
 
-    private Sensor activeConnectionsCountSensor;
-    private Sensor totalConnectionsCountSensor;
-    private Sensor idleConnectionsCountSensor;
-    private Sensor maxConnectionsCountSensor;
-    private Sensor minConnectionsCountSensor;
-    private Sensor pendingThreadsCountSensor;
-    private Sensor connectionTimeoutCountSensor;
+    private final Sensor activeConnectionsCountSensor;
+    private final Sensor totalConnectionsCountSensor;
+    private final Sensor idleConnectionsCountSensor;
+    private final Sensor maxConnectionsCountSensor;
+    private final Sensor minConnectionsCountSensor;
+    private final Sensor pendingThreadsCountSensor;
+    private final Sensor connectionTimeoutCountSensor;
 
-    private HikariMetricsTracker(final String poolName) {
+    public HikariMetricsTracker(final String poolName, final PoolStats poolStats) {
         final JmxReporter reporter = new JmxReporter();
         this.metrics = new Metrics(
             new MetricConfig(), List.of(reporter), Time.SYSTEM,
             new KafkaMetricsContext(METRIC_CONTEXT)
         );
         this.metricsRegistry = new HikariMetricsRegistry(poolName);
-    }
 
-    public static HikariMetricsTracker create(final String poolName, final PoolStats poolStats) {
-        final var tracker = new HikariMetricsTracker(poolName);
-
-        tracker.activeConnectionsCountSensor = tracker.registerSensor(tracker.metricsRegistry.activeConnectionsCountMetricName, ACTIVE_CONNECTIONS_COUNT, () -> (long) poolStats.getActiveConnections());
-        tracker.totalConnectionsCountSensor = tracker.registerSensor(tracker.metricsRegistry.totalConnectionsCountMetricName, TOTAL_CONNECTIONS_COUNT, () -> (long) poolStats.getTotalConnections());
-        tracker.idleConnectionsCountSensor = tracker.registerSensor(tracker.metricsRegistry.idleConnectionsCountMetricName, IDLE_CONNECTIONS_COUNT, () -> (long) poolStats.getIdleConnections());
-        tracker.maxConnectionsCountSensor = tracker.registerSensor(tracker.metricsRegistry.maxConnectionsCountMetricName, MAX_CONNECTIONS_COUNT, () -> (long) poolStats.getMaxConnections());
-        tracker.minConnectionsCountSensor = tracker.registerSensor(tracker.metricsRegistry.minConnectionsCountMetricName, MIN_CONNECTIONS_COUNT, () -> (long) poolStats.getMinConnections());
-        tracker.pendingThreadsCountSensor = tracker.registerSensor(tracker.metricsRegistry.pendingThreadsCountMetricName, PENDING_THREADS_COUNT, () -> (long) poolStats.getPendingThreads());
-        tracker.connectionTimeoutCountSensor = tracker.registerSensor(tracker.metricsRegistry.connectionTimeoutCountMetricName, CONNECTION_TIMEOUT_COUNT, tracker.connectionTimeoutCount::sum);
-
-        return tracker;
+        activeConnectionsCountSensor = registerSensor(metrics, metricsRegistry.activeConnectionsCountMetricName, ACTIVE_CONNECTIONS_COUNT, () -> (long) poolStats.getActiveConnections());
+        totalConnectionsCountSensor = registerSensor(metrics, metricsRegistry.totalConnectionsCountMetricName, TOTAL_CONNECTIONS_COUNT, () -> (long) poolStats.getTotalConnections());
+        idleConnectionsCountSensor = registerSensor(metrics, metricsRegistry.idleConnectionsCountMetricName, IDLE_CONNECTIONS_COUNT, () -> (long) poolStats.getIdleConnections());
+        maxConnectionsCountSensor = registerSensor(metrics, metricsRegistry.maxConnectionsCountMetricName, MAX_CONNECTIONS_COUNT, () -> (long) poolStats.getMaxConnections());
+        minConnectionsCountSensor = registerSensor(metrics, metricsRegistry.minConnectionsCountMetricName, MIN_CONNECTIONS_COUNT, () -> (long) poolStats.getMinConnections());
+        pendingThreadsCountSensor = registerSensor(metrics, metricsRegistry.pendingThreadsCountMetricName, PENDING_THREADS_COUNT, () -> (long) poolStats.getPendingThreads());
+        connectionTimeoutCountSensor = registerSensor(metrics, metricsRegistry.connectionTimeoutCountMetricName, CONNECTION_TIMEOUT_COUNT, connectionTimeoutCount::sum);
     }
 
     @Override
@@ -113,7 +107,7 @@ public class HikariMetricsTracker implements IMetricsTracker {
         metrics.close();
     }
 
-    Sensor registerSensor(final MetricNameTemplate metricName, final String sensorName, final Supplier<Long> supplier) {
+    static Sensor registerSensor(final Metrics metrics, final MetricNameTemplate metricName, final String sensorName, final Supplier<Long> supplier) {
         return new SensorProvider(metrics, sensorName)
             .with(metricName, new MeasurableValue(supplier))
             .get();

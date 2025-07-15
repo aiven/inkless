@@ -93,7 +93,7 @@ public class PostgresControlPlane extends AbstractControlPlane {
         config.setJdbcUrl(controlPlaneConfig.connectionString());
         config.setUsername(controlPlaneConfig.username());
         config.setPassword(controlPlaneConfig.password());
-        config.setMetricsTrackerFactory(HikariMetricsTracker::create);
+        config.setMetricsTrackerFactory(HikariMetricsTracker::new);
         config.setTransactionIsolation(IsolationLevel.TRANSACTION_READ_COMMITTED.name());
 
         config.setMaximumPoolSize(controlPlaneConfig.maxConnections());
