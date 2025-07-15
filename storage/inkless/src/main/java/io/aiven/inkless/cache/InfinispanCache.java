@@ -47,10 +47,19 @@ public class InfinispanCache implements ObjectCache {
     private final Time time;
     private final DefaultCacheManager cacheManager;
     private final Cache<CacheKey, FileExtent> cache;
-    private final InfinispanCacheMetrics metrics;
+    private final long maxCacheSize;
 
-    public InfinispanCache(Time time, String clusterId, String rack, long cacheSize) {
+    private InfinispanCacheMetrics metrics;
+
+    public static InfinispanCache build(Time time, String clusterId, String rack, long maxCacheSize) {
+        final InfinispanCache infinispanCache = new InfinispanCache(time, clusterId, rack, maxCacheSize);
+        infinispanCache.initializeMetrics();
+        return infinispanCache;
+    }
+
+    private InfinispanCache(Time time, String clusterId, String rack, long maxCacheSize) {
         this.time = time;
+        this.maxCacheSize = maxCacheSize;
         GlobalConfigurationBuilder globalConfig = GlobalConfigurationBuilder.defaultClusteredBuilder();
         globalConfig.transport()
             .clusterName(clusterName(clusterId, rack))
@@ -66,14 +75,16 @@ public class InfinispanCache implements ObjectCache {
             .cacheMode(CacheMode.DIST_SYNC)
             .memory()
             .storage(StorageType.HEAP)
-            .maxCount(cacheSize)
+            .maxCount(maxCacheSize)
             .whenFull(EvictionStrategy.REMOVE);
         cache = cacheManager.administration()
                 .withFlags(CacheContainerAdmin.AdminFlag.VOLATILE)
                 .getOrCreateCache("fileExtents", config.build());
         backoff = new ExponentialBackoff(1, CACHE_WRITE_BACKOFF_EXP_BASE, CACHE_WRITE_BACKOFF_EXP_BASE, CACHE_WRITE_BACKOFF_JITTER);
+    }
 
-        this.metrics = new InfinispanCacheMetrics(this, cacheSize);
+    private void initializeMetrics() {
+        this.metrics = new InfinispanCacheMetrics(this);
     }
 
     private static String clusterName(String clusterId, String rack) {
@@ -119,6 +130,10 @@ public class InfinispanCache implements ObjectCache {
     @Override
     public long size() {
         return cache.size();
+    }
+
+    public long maxCacheSize() {
+        return maxCacheSize;
     }
 
     @Override

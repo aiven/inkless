@@ -68,7 +68,7 @@ public record SharedState(
             config.storage(),
             ObjectKey.creator(config.objectKeyPrefix(), config.objectKeyLogPrefixMasked()),
             new FixedBlockAlignment(config.fetchCacheBlockBytes()),
-            new InfinispanCache(time, clusterId, rack, config.cacheMaxCount()),
+            InfinispanCache.build(time, clusterId, rack, config.cacheMaxCount()),
             brokerTopicStats,
             defaultTopicConfigs
         );

@@ -65,7 +65,7 @@ public class InfinispanCacheMetrics implements Closeable {
     private final Sensor cacheRemoveHitsSensor;
     private final Sensor cacheRemoveMissesSensor;
 
-    public InfinispanCacheMetrics(final InfinispanCache cache, final long maxCacheSize) {
+    public InfinispanCacheMetrics(final InfinispanCache cache) {
         final JmxReporter reporter = new JmxReporter();
         this.metrics = new Metrics(
             new MetricConfig(), List.of(reporter), Time.SYSTEM,
@@ -73,23 +73,22 @@ public class InfinispanCacheMetrics implements Closeable {
         );
 
         final var metricsRegistry = new InfinispanCacheMetricsRegistry();
-        cacheSizeSensor = registerSensor(metricsRegistry.cacheSizeMetricName, CACHE_SIZE, cache::size);
-        cacheMaxInMemoryEntriesSensor = registerSensor(metricsRegistry.cacheMaxInMemoryEntries, CACHE_MAX_IN_MEMORY_ENTRIES, () -> maxCacheSize);
-        approxCacheEntriesSensor = registerSensor(metricsRegistry.approxCacheEntriesMetricName, APPROX_CACHE_ENTRIES, () -> cache.metrics().getApproximateEntries());
-        approxCacheEntriesInMemorySensor = registerSensor(metricsRegistry.approxCacheEntriesInMemoryMetricName, APPROX_CACHE_ENTRIES_IN_MEMORY, () -> cache.metrics().getApproximateEntriesInMemory());
-        approxCacheEntriesUniqueSensor = registerSensor(metricsRegistry.approxCacheEntriesUniqueMetricName, APPROX_CACHE_ENTRIES_UNIQUE, () -> cache.metrics().getApproximateEntriesUnique());
-        cacheHitsSensor = registerSensor(metricsRegistry.cacheHitsMetricName, CACHE_HITS, () -> cache.metrics().getHits());
-        cacheMissesSensor = registerSensor(metricsRegistry.cacheMissesMetricName, CACHE_MISSES, () -> cache.metrics().getMisses());
-        avgReadTimeSensor = registerSensor(metricsRegistry.avgReadTimeMetricName, AVG_READ_TIME, () -> cache.metrics().getAverageReadTime());
-        cacheDataMemoryUsedSensor = registerSensor(metricsRegistry.cacheDataMemoryUsedMetricName, CACHE_DATA_MEMORY_USED, () -> cache.metrics().getDataMemoryUsed());
-        cacheOffHeapMemoryUsedSensor = registerSensor(metricsRegistry.cacheOffHeapMemoryUsedMetricName, CACHE_OFF_HEAP_MEMORY_USED, () -> cache.metrics().getOffHeapMemoryUsed());
-        cacheEvictionsSensor = registerSensor(metricsRegistry.cacheEvictionsMetricName, CACHE_EVICTIONS, () -> cache.metrics().getEvictions());
-        cacheRemoveHitsSensor = registerSensor(metricsRegistry.cacheRemoveHitsMetricName, CACHE_REMOVE_HITS, () -> cache.metrics().getRemoveHits());
-        cacheRemoveMissesSensor = registerSensor(metricsRegistry.cacheRemoveMissesMetricName, CACHE_REMOVE_MISSES, () -> cache.metrics().getRemoveMisses());
+        cacheSizeSensor = registerSensor(metrics, metricsRegistry.cacheSizeMetricName, CACHE_SIZE, cache::size);
+        cacheMaxInMemoryEntriesSensor = registerSensor(metrics, metricsRegistry.cacheMaxInMemoryEntries, CACHE_MAX_IN_MEMORY_ENTRIES, cache::maxCacheSize);
+        approxCacheEntriesSensor = registerSensor(metrics, metricsRegistry.approxCacheEntriesMetricName, APPROX_CACHE_ENTRIES, () -> cache.metrics().getApproximateEntries());
+        approxCacheEntriesInMemorySensor = registerSensor(metrics, metricsRegistry.approxCacheEntriesInMemoryMetricName, APPROX_CACHE_ENTRIES_IN_MEMORY, () -> cache.metrics().getApproximateEntriesInMemory());
+        approxCacheEntriesUniqueSensor = registerSensor(metrics, metricsRegistry.approxCacheEntriesUniqueMetricName, APPROX_CACHE_ENTRIES_UNIQUE, () -> cache.metrics().getApproximateEntriesUnique());
+        cacheHitsSensor = registerSensor(metrics, metricsRegistry.cacheHitsMetricName, CACHE_HITS, () -> cache.metrics().getHits());
+        cacheMissesSensor = registerSensor(metrics, metricsRegistry.cacheMissesMetricName, CACHE_MISSES, () -> cache.metrics().getMisses());
+        avgReadTimeSensor = registerSensor(metrics, metricsRegistry.avgReadTimeMetricName, AVG_READ_TIME, () -> cache.metrics().getAverageReadTime());
+        cacheDataMemoryUsedSensor = registerSensor(metrics, metricsRegistry.cacheDataMemoryUsedMetricName, CACHE_DATA_MEMORY_USED, () -> cache.metrics().getDataMemoryUsed());
+        cacheOffHeapMemoryUsedSensor = registerSensor(metrics, metricsRegistry.cacheOffHeapMemoryUsedMetricName, CACHE_OFF_HEAP_MEMORY_USED, () -> cache.metrics().getOffHeapMemoryUsed());
+        cacheEvictionsSensor = registerSensor(metrics, metricsRegistry.cacheEvictionsMetricName, CACHE_EVICTIONS, () -> cache.metrics().getEvictions());
+        cacheRemoveHitsSensor = registerSensor(metrics, metricsRegistry.cacheRemoveHitsMetricName, CACHE_REMOVE_HITS, () -> cache.metrics().getRemoveHits());
+        cacheRemoveMissesSensor = registerSensor(metrics, metricsRegistry.cacheRemoveMissesMetricName, CACHE_REMOVE_MISSES, () -> cache.metrics().getRemoveMisses());
     }
 
-
-    Sensor registerSensor(final MetricNameTemplate metricName, final String sensorName, final Supplier<Long> supplier) {
+    static Sensor registerSensor(final Metrics metrics, final MetricNameTemplate metricName, final String sensorName, final Supplier<Long> supplier) {
         return new SensorProvider(metrics, sensorName)
             .with(metricName, new MeasurableValue(supplier))
             .get();
