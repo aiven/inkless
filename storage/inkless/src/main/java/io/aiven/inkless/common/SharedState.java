@@ -23,6 +23,7 @@ import org.apache.kafka.storage.log.metrics.BrokerTopicStats;
 
 import java.io.Closeable;
 import java.io.IOException;
+import java.nio.file.Path;
 import java.util.function.Supplier;
 
 import io.aiven.inkless.cache.FixedBlockAlignment;
@@ -57,6 +58,7 @@ public record SharedState(
         MetadataView metadata,
         ControlPlane controlPlane,
         BrokerTopicStats brokerTopicStats,
+        Path logDir,
         Supplier<LogConfig> defaultTopicConfigs
     ) {
         return new SharedState(
@@ -68,7 +70,16 @@ public record SharedState(
             config.storage(),
             ObjectKey.creator(config.objectKeyPrefix(), config.objectKeyLogPrefixMasked()),
             new FixedBlockAlignment(config.fetchCacheBlockBytes()),
-            InfinispanCache.build(time, clusterId, rack, config.cacheMaxCount()),
+            InfinispanCache.build(
+                time,
+                clusterId,
+                rack,
+                config.cacheMaxCount(),
+                logDir,
+                config.isCachePersistenceEnabled(),
+                config.cachePersistenceLifespanSec(),
+                config.cachePersistenceMaxIdleSec()
+            ),
             brokerTopicStats,
             defaultTopicConfigs
         );

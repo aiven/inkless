@@ -41,6 +41,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.api.io.TempDir;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
@@ -51,6 +52,7 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.io.IOException;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -133,6 +135,8 @@ class FileCleanerIntegrationTest {
     MetadataView metadataView;
     @Mock
     Supplier<LogConfig> defaultTopicConfigs;
+    @TempDir
+    Path logDir;
 
     ControlPlane controlPlane;
     SharedState sharedState;
@@ -175,7 +179,7 @@ class FileCleanerIntegrationTest {
         final InklessConfig inklessConfig = new InklessConfig(config);
 
         sharedState = SharedState.initialize(time, "cluster-id", "az1", BROKER_ID, inklessConfig,
-            metadataView, controlPlane, new BrokerTopicStats(), defaultTopicConfigs);
+            metadataView, controlPlane, new BrokerTopicStats(), logDir, defaultTopicConfigs);
     }
 
     @AfterEach

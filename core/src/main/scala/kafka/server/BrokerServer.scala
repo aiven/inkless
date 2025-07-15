@@ -60,6 +60,7 @@ import org.apache.kafka.server.transaction.AddPartitionsToTxnManager
 import org.apache.kafka.storage.internals.log.LogDirFailureChannel
 import org.apache.kafka.storage.log.metrics.BrokerTopicStats
 
+import java.nio.file.Path
 import java.time.Duration
 import java.util
 import java.util.Optional
@@ -354,6 +355,7 @@ class BrokerServer(
           inklessMetadataView,
           controlPlane,
           brokerTopicStats,
+          Path.of(config.logDirs().get(0)),
           () => logManager.currentDefaultConfig
         )
       }

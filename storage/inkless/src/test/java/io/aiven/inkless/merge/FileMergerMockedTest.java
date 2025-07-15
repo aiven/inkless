@@ -27,6 +27,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
@@ -108,6 +109,8 @@ class FileMergerMockedTest {
     ArgumentCaptor<ObjectKey> objectKeyCaptor;
     @Captor
     ArgumentCaptor<Long> sleepCaptor;
+    @TempDir
+    Path logDir;
 
     SharedState sharedState;
 
@@ -118,7 +121,7 @@ class FileMergerMockedTest {
         when(inklessConfig.cacheMaxCount()).thenReturn(10000L);
 
         sharedState = SharedState.initialize(time, "cluster-id", "rack", BROKER_ID, inklessConfig, mock(MetadataView.class), controlPlane,
-            mock(BrokerTopicStats.class), mock(Supplier.class));
+            mock(BrokerTopicStats.class), logDir, mock(Supplier.class));
     }
 
     @AfterEach

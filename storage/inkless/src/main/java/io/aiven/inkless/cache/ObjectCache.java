@@ -25,4 +25,5 @@ import io.aiven.inkless.generated.CacheKey;
 import io.aiven.inkless.generated.FileExtent;
 
 public interface ObjectCache extends Cache<CacheKey, FileExtent>, Closeable {
+    String INKLESS_CACHE_DIR_NAME = "inkless-cache";
 }
