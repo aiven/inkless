@@ -35,10 +35,11 @@ import io.aiven.inkless.control_plane.MetadataView;
 public class InklessTopicMetadataTransformer {
     private final MetadataView metadataView;
 
-    private final AtomicInteger roundRobinCounter = new AtomicInteger();
+    private final AtomicInteger roundRobinCounter;
 
-    public InklessTopicMetadataTransformer(final MetadataView metadataView) {
+    public InklessTopicMetadataTransformer(final int brokerId, final MetadataView metadataView) {
         this.metadataView = Objects.requireNonNull(metadataView, "metadataView cannot be null");
+        roundRobinCounter = new AtomicInteger(brokerId);
     }
 
     /**
