@@ -269,7 +269,7 @@ public class InklessConfig extends AbstractConfig {
             CONSUME_CACHE_EXPIRATION_LIFESPAN_SEC_CONFIG,
             ConfigDef.Type.INT,
             CONSUME_CACHE_EXPIRATION_LIFESPAN_SEC_DEFAULT,
-            ConfigDef.Range.atLeast(10), // As it checks every 5 seconds
+            ConfigDef.Range.atLeast(10), // As it checks every 5 seconds, and the object lock timeout is 10 secs.
             ConfigDef.Importance.LOW,
             CONSUME_CACHE_EXPIRATION_LIFESPAN_SEC_DOC
         );
@@ -277,7 +277,7 @@ public class InklessConfig extends AbstractConfig {
             CONSUME_CACHE_EXPIRATION_MAX_IDLE_SEC_CONFIG,
             ConfigDef.Type.INT,
             CONSUME_CACHE_EXPIRATION_MAX_IDLE_SEC_DEFAULT,
-            ConfigDef.Range.atLeast(-1), // As it checks every 5 seconds
+            ConfigDef.Range.atLeast(-1),
             ConfigDef.Importance.LOW,
             CONSUME_CACHE_EXPIRATION_MAX_IDLE_SEC_DOC
         );
