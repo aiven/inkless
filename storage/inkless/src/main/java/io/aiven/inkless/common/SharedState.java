@@ -77,8 +77,8 @@ public record SharedState(
                 config.cacheMaxCount(),
                 logDir,
                 config.isCachePersistenceEnabled(),
-                config.cachePersistenceLifespanSec(),
-                config.cachePersistenceMaxIdleSec()
+                config.cacheExpirationLifespanSec(),
+                config.cacheExpirationMaxIdleSec()
             ),
             brokerTopicStats,
             defaultTopicConfigs

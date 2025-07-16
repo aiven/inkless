@@ -100,6 +100,23 @@ public class InfinispanCache implements ObjectCache {
             .storage(StorageType.HEAP)
             .maxCount(maxCacheSize)
             .whenFull(EvictionStrategy.REMOVE);
+        // There is no explicit way to define how much space the cache can use on disk,
+        // there are only two proxies: lifespan (fixed time to keep an entry)
+        // and maxIdle (how long to keep it without being accessed).
+        // Lifespan is the only that can guarantee that the cache will not grow indefinitely.
+        // To estimate the maximum disk usage use maximum buffer size and number of uploading threads.
+        // e.g. 6MB buffer size * 10 threads = 60MB maximum disk usage per sec.
+        // 5 minutes lifespan = 60MB * 300 seconds = 18GB maximum disk usage.
+        // Lifespan is enforced, but maxIdle can be disabled (it is by default).
+        config.expiration()
+            // maximum time an entry can live in the cache (fixed)
+            .lifespan(lifespanSeconds, TimeUnit.SECONDS)
+            // maximum time an entry is idle (not accessed) before it is expired
+            // entries expire based on either lifespan or maxIdle, whichever happens first
+            // when disabled and only lifespan is used
+            .maxIdle(maxIdleSeconds, TimeUnit.SECONDS)
+            // how often the cache checks for expired entries
+            .wakeUpInterval(5, TimeUnit.SECONDS);
         if (isPersistent) {
             // Prepare the cache directory within a known location. Index and data directories are created within this directory.
             final Path cacheBasePath = cachePersistenceDir(basePath);
@@ -110,23 +127,6 @@ public class InfinispanCache implements ObjectCache {
                 .purgeOnStartup(true)
                 .dataLocation(cacheBasePath.resolve("data").toAbsolutePath().toString())
                 .indexLocation(cacheBasePath.resolve("index").toAbsolutePath().toString());
-            // There is not explicit way to define how much space the cache can use on disk,
-            // there are only two proxies: lifespan (fixed time to keep an entry)
-            // and maxIdle (how long to keep it without being accessed).
-            // Lifespan is the only that can guarantee that the cache will not grow indefinitely.
-            // To estimate the maximum disk usage use maximum buffer size and number of uploading threads.
-            // e.g. 6MB buffer size * 10 threads = 60MB maximum disk usage per sec.
-            // 5 minutes lifespan = 60MB * 300 seconds = 18GB maximum disk usage.
-            // Lifespan is enforced, but maxIdle can be disabled (it is by default).
-            config.expiration()
-                // maximum time an entry can live in the cache (fixed)
-                .lifespan(lifespanSeconds, TimeUnit.SECONDS)
-                // maximum time an entry is idle (not accessed) before it is evicted
-                // entries expire based on either lifespan or maxIdle, whichever happens first
-                // when disabled and only lifespan is used
-                .maxIdle(maxIdleSeconds, TimeUnit.SECONDS)
-                // how often the cache checks for expired entries
-                .wakeUpInterval(5, TimeUnit.SECONDS);
         }
         this.cache = cacheManager.administration()
             .withFlags(CacheContainerAdmin.AdminFlag.VOLATILE)
@@ -191,7 +191,7 @@ public class InfinispanCache implements ObjectCache {
     public void close() throws IOException {
         cache.clear();
         cacheManager.close();
-        metrics.close();
+        if (metrics != null) metrics.close();
     }
 
     public Stats metrics() {

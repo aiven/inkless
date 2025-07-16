@@ -49,8 +49,8 @@ class InklessConfigTest {
         configs.put("inkless.file.merger.interval.ms", "100");
         configs.put("inkless.consume.cache.max.count", "100");
         configs.put("inkless.consume.cache.persistence.enable", "true");
-        configs.put("inkless.consume.cache.persistence.lifespan.sec", "200");
-        configs.put("inkless.consume.cache.persistence.max.idle.sec", "100");
+        configs.put("inkless.consume.cache.expiration.lifespan.sec", "200");
+        configs.put("inkless.consume.cache.expiration.max.idle.sec", "100");
         configs.put("inkless.produce.upload.thread.pool.size", "16");
         final InklessConfig config = new InklessConfig(new AbstractConfig(new ConfigDef(), configs));
         assertThat(config.controlPlaneClass()).isEqualTo(InMemoryControlPlane.class);
@@ -66,8 +66,8 @@ class InklessConfigTest {
         assertThat(config.fileMergerInterval()).isEqualTo(Duration.ofMillis(100));
         assertThat(config.cacheMaxCount()).isEqualTo(100);
         assertThat(config.isCachePersistenceEnabled()).isTrue();
-        assertThat(config.cachePersistenceLifespanSec()).isEqualTo(200);
-        assertThat(config.cachePersistenceMaxIdleSec()).isEqualTo(100);
+        assertThat(config.cacheExpirationLifespanSec()).isEqualTo(200);
+        assertThat(config.cacheExpirationMaxIdleSec()).isEqualTo(100);
         assertThat(config.produceUploadThreadPoolSize()).isEqualTo(16);
     }
 
@@ -93,8 +93,8 @@ class InklessConfigTest {
         assertThat(config.fileMergerInterval()).isEqualTo(Duration.ofMinutes(1));
         assertThat(config.cacheMaxCount()).isEqualTo(1000);
         assertThat(config.isCachePersistenceEnabled()).isFalse();
-        assertThat(config.cachePersistenceLifespanSec()).isEqualTo(60);
-        assertThat(config.cachePersistenceMaxIdleSec()).isEqualTo(-1);
+        assertThat(config.cacheExpirationLifespanSec()).isEqualTo(60);
+        assertThat(config.cacheExpirationMaxIdleSec()).isEqualTo(-1);
         assertThat(config.produceUploadThreadPoolSize()).isEqualTo(8);
     }
 
@@ -114,8 +114,8 @@ class InklessConfigTest {
         configs.put("file.merger.interval.ms", "100");
         configs.put("consume.cache.max.count", "100");
         configs.put("consume.cache.persistence.enable", "true");
-        configs.put("consume.cache.persistence.lifespan.sec", "200");
-        configs.put("consume.cache.persistence.max.idle.sec", "100");
+        configs.put("consume.cache.expiration.lifespan.sec", "200");
+        configs.put("consume.cache.expiration.max.idle.sec", "100");
         configs.put("produce.upload.thread.pool.size", "16");
         final var config = new InklessConfig(
             configs
@@ -133,8 +133,8 @@ class InklessConfigTest {
         assertThat(config.fileMergerInterval()).isEqualTo(Duration.ofMillis(100));
         assertThat(config.cacheMaxCount()).isEqualTo(100);
         assertThat(config.isCachePersistenceEnabled()).isTrue();
-        assertThat(config.cachePersistenceLifespanSec()).isEqualTo(200);
-        assertThat(config.cachePersistenceMaxIdleSec()).isEqualTo(100);
+        assertThat(config.cacheExpirationLifespanSec()).isEqualTo(200);
+        assertThat(config.cacheExpirationMaxIdleSec()).isEqualTo(100);
         assertThat(config.produceUploadThreadPoolSize()).isEqualTo(16);
     }
 
