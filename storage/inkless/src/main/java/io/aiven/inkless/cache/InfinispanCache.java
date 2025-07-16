@@ -41,6 +41,7 @@ import io.aiven.inkless.generated.CacheKey;
 import io.aiven.inkless.generated.FileExtent;
 
 public class InfinispanCache implements ObjectCache {
+    public static final String DIR_NAME = "inkless-cache";
 
     // Length of time the object is "leased" to the caller if not already present in the map
     private static final int CACHE_WRITE_LOCK_TIMEOUT_MS = 10000;
@@ -198,7 +199,7 @@ public class InfinispanCache implements ObjectCache {
     }
 
     static Path cachePersistenceDir(Path baseDir) {
-        final Path p = baseDir.resolve(INKLESS_CACHE_DIR_NAME);
+        final Path p = baseDir.resolve(DIR_NAME);
         if (!Files.exists(p)) {
             try {
                 return Files.createDirectories(p);

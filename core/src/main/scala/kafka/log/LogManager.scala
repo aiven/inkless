@@ -17,7 +17,7 @@
 
 package kafka.log
 
-import io.aiven.inkless.cache.ObjectCache
+import io.aiven.inkless.cache.InfinispanCache
 
 import java.lang.{Long => JLong}
 import java.io.{File, IOException}
@@ -43,7 +43,7 @@ import org.apache.kafka.metadata.properties.{MetaProperties, MetaPropertiesEnsem
 import java.util.{Collections, Optional, OptionalLong, Properties}
 import org.apache.kafka.server.metrics.KafkaMetricsGroup
 import org.apache.kafka.server.util.{FileLock, Scheduler}
-import org.apache.kafka.storage.internals.log.{CleanerConfig, LogCleaner, LogConfig, LogDirFailureChannel, LogOffsetsListener, ProducerStateManagerConfig, RemoteIndexCache, UnifiedLog, LogManager => JLogManager}
+import org.apache.kafka.storage.internals.log.{CleanerConfig, LogCleaner, LogConfig, LogDirFailureChannel, LogManager => JLogManager, LogOffsetsListener, ProducerStateManagerConfig, RemoteIndexCache, UnifiedLog}
 import org.apache.kafka.storage.internals.checkpoint.{CleanShutdownFileHandler, OffsetCheckpointFile}
 import org.apache.kafka.storage.log.metrics.BrokerTopicStats
 
@@ -464,7 +464,7 @@ class LogManager(logDirs: Seq[File],
             // but not any topic-partition dir.
             !logDir.getName.equals(RemoteIndexCache.DIR_NAME) &&
             // Ignore inkless-cache directory as that is a cache maintained by the inkless subsystem
-            !logDir.getName.equals(ObjectCache.INKLESS_CACHE_DIR_NAME) &&
+            !logDir.getName.equals(InfinispanCache.DIR_NAME) &&
             UnifiedLog.parseTopicPartitionName(logDir).topic != KafkaRaftServer.MetadataTopic)
         numTotalLogs += logsToLoad.length
         numRemainingLogs.put(logDirAbsolutePath, logsToLoad.length)

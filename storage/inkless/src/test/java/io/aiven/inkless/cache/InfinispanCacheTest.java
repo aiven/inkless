@@ -12,7 +12,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermissions;
 
-import static io.aiven.inkless.cache.ObjectCache.INKLESS_CACHE_DIR_NAME;
 import static org.junit.jupiter.api.Assertions.*;
 
 class InfinispanCacheTest {
@@ -57,7 +56,7 @@ class InfinispanCacheTest {
         assertEquals(0, cache.size());
 
         // Verify cache directories are created
-        Path cacheDir = baseDir.resolve(INKLESS_CACHE_DIR_NAME);
+        Path cacheDir = baseDir.resolve("inkless-cache");
         assertTrue(Files.exists(cacheDir));
         assertTrue(Files.isDirectory(cacheDir));
 
@@ -71,12 +70,12 @@ class InfinispanCacheTest {
         assertNotNull(result);
         assertTrue(Files.exists(result));
         assertTrue(Files.isDirectory(result));
-        assertEquals(baseDir.resolve(INKLESS_CACHE_DIR_NAME), result);
+        assertEquals(baseDir.resolve("inkless-cache"), result);
     }
 
     @Test
     void testCachePersistenceDirAlreadyExists() throws IOException {
-        Path cacheDir = baseDir.resolve(INKLESS_CACHE_DIR_NAME);
+        Path cacheDir = baseDir.resolve("inkless-cache");
         Files.createDirectories(cacheDir);
 
         Path result = InfinispanCache.cachePersistenceDir(baseDir);
@@ -88,7 +87,7 @@ class InfinispanCacheTest {
 
     @Test
     void testCachePersistenceDirNotDirectory() throws IOException {
-        Path notADir = baseDir.resolve(INKLESS_CACHE_DIR_NAME);
+        Path notADir = baseDir.resolve("inkless-cache");
         Files.createFile(notADir);
 
         ConfigException exception = assertThrows(ConfigException.class, () -> InfinispanCache.cachePersistenceDir(baseDir));
@@ -98,7 +97,7 @@ class InfinispanCacheTest {
 
     @Test
     void testCachePersistenceDirNotWritable() throws IOException {
-        Path cacheDir = baseDir.resolve(INKLESS_CACHE_DIR_NAME);
+        Path cacheDir = baseDir.resolve("inkless-cache");
         Files.createDirectories(cacheDir);
 
         // Make directory non-writable (Unix/Linux only)
