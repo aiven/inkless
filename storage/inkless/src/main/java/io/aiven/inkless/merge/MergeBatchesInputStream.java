@@ -30,7 +30,6 @@ public class MergeBatchesInputStream extends InputStream {
     public record MergeMetadata(List<MergedFileBatch> mergedFileBatch, long mergedFileSize) {}
 
     private final List<BatchAndStream> batchAndStreams;
-    private final MergeMetadata mergeMetadata;
     private boolean closed = false;
     private int currentStream = 0;
 
@@ -46,40 +45,40 @@ public class MergeBatchesInputStream extends InputStream {
             this.batchAndStreams.add(batchAndStream);
             return this;
         }
+
         public MergeBatchesInputStream build() {
+            batchAndStreams.sort(BatchAndStream.TOPIC_ID_PARTITION_BASE_OFFSET_COMPARATOR);
+            return new MergeBatchesInputStream(batchAndStreams);
+        }
+
+        public MergeMetadata mergeMetadata() {
             batchAndStreams.sort(BatchAndStream.TOPIC_ID_PARTITION_BASE_OFFSET_COMPARATOR);
             final List<MergedFileBatch> mergedFileBatches = new ArrayList<>();
             long fileSize = 0;
             for (final BatchAndStream bf : batchAndStreams) {
                 var batchSize = bf.batchLength();
                 mergedFileBatches.add(new MergedFileBatch(
-                    new BatchMetadata(
-                        bf.parentBatch().metadata().magic(),
-                        bf.parentBatch().metadata().topicIdPartition(),
-                        fileSize,
-                        batchSize,
-                        bf.parentBatch().metadata().baseOffset(),
-                        bf.parentBatch().metadata().lastOffset(),
-                        bf.parentBatch().metadata().logAppendTimestamp(),
-                        bf.parentBatch().metadata().batchMaxTimestamp(),
-                        bf.parentBatch().metadata().timestampType()
-                    ),
-                    List.of(bf.parentBatch().batchId())
+                        new BatchMetadata(
+                                bf.parentBatch().metadata().magic(),
+                                bf.parentBatch().metadata().topicIdPartition(),
+                                fileSize,
+                                batchSize,
+                                bf.parentBatch().metadata().baseOffset(),
+                                bf.parentBatch().metadata().lastOffset(),
+                                bf.parentBatch().metadata().logAppendTimestamp(),
+                                bf.parentBatch().metadata().batchMaxTimestamp(),
+                                bf.parentBatch().metadata().timestampType()
+                        ),
+                        List.of(bf.parentBatch().batchId())
                 ));
                 fileSize += batchSize;
             }
-            final var mergeMetadata = new MergeMetadata(mergedFileBatches, fileSize);
-            return new MergeBatchesInputStream(batchAndStreams, mergeMetadata);
+            return new MergeMetadata(mergedFileBatches, fileSize);
         }
     }
 
-    private MergeBatchesInputStream(List<BatchAndStream> batchAndStreams, MergeMetadata mergeMetadata) {
+    private MergeBatchesInputStream(List<BatchAndStream> batchAndStreams) {
         this.batchAndStreams = batchAndStreams;
-        this.mergeMetadata = mergeMetadata;
-    }
-
-    public MergeMetadata mergeMetadata() {
-        return mergeMetadata;
     }
 
     @Override

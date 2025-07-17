@@ -32,6 +32,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.lang.management.ManagementFactory;
@@ -96,7 +97,7 @@ public class GcsStorageMetricsTest {
 
         final ObjectKey key = new TestObjectKey("x");
 
-        storage.upload(key, data);
+        storage.upload(key, new ByteArrayInputStream(data), data.length);
         try (final InputStream fetch = storage.fetch(key, ByteRange.maxRange())) {
             fetch.readAllBytes();
         }

@@ -21,13 +21,16 @@ import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInfo;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
+import java.io.ByteArrayInputStream;
 import java.util.Map;
 
 import io.aiven.inkless.storage_backend.common.StorageBackend;
+import io.aiven.inkless.storage_backend.common.StorageBackendException;
 import io.aiven.inkless.storage_backend.common.fixtures.BaseStorageTest;
 import io.aiven.inkless.storage_backend.common.fixtures.TestUtils;
 import io.aiven.inkless.storage_backend.s3.S3Storage;
@@ -35,6 +38,8 @@ import io.aiven.inkless.test_utils.MinioContainer;
 import io.aiven.inkless.test_utils.S3TestContainer;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.CreateBucketRequest;
+
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 @Testcontainers
 @Tag("integration")
@@ -76,5 +81,31 @@ public class S3StorageTest extends BaseStorageTest {
         );
         s3Storage.configure(configs);
         return s3Storage;
+    }
+
+    @Override
+    protected void testUploadUndersizedStream() {
+        final StorageBackend storage = storage();
+        final byte[] content = "content".getBytes();
+        final long expectedLength = content.length + 1;
+
+        assertThatThrownBy(() -> storage.upload(TOPIC_PARTITION_SEGMENT_KEY, new ByteArrayInputStream(content), expectedLength))
+                .isInstanceOf(StorageBackendException.class)
+                // This implementation has a different message
+                .hasMessage("Failed to upload key")
+                .cause()
+                .hasMessageContaining("You did not provide the number of bytes specified by the Content-Length HTTP header");
+    }
+
+    @Test
+    protected void testUploadOversizeStream() {
+        final StorageBackend storage = storage();
+        final byte[] content = "content".getBytes();
+        final long expectedLength = content.length - 1;
+
+        assertThatThrownBy(() -> storage.upload(TOPIC_PARTITION_SEGMENT_KEY, new ByteArrayInputStream(content), expectedLength))
+                .isInstanceOf(StorageBackendException.class)
+                // This implementation has a different message
+                .hasMessage("Object key created with incorrect length, input stream has remaining content");
     }
 }

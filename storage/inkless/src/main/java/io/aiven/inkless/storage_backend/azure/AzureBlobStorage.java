@@ -35,6 +35,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 
 import io.aiven.inkless.common.ByteRange;
@@ -90,6 +91,11 @@ public class AzureBlobStorage implements StorageBackend {
 
     @Override
     public void upload(final ObjectKey key, InputStream inputStream, long length) throws StorageBackendException {
+        Objects.requireNonNull(key, "key cannot be null");
+        Objects.requireNonNull(inputStream, "inputStream cannot be null");
+        if (length <= 0) {
+            throw new IllegalArgumentException("length must be positive");
+        }
         final var specializedBlobClientBuilder = new SpecializedBlobClientBuilder();
         if (config.connectionString() != null) {
             specializedBlobClientBuilder.connectionString(config.connectionString());
@@ -126,7 +132,11 @@ public class AzureBlobStorage implements StorageBackend {
         // If upload changes, change metrics instrumentation accordingly.
         try (OutputStream os = new BufferedOutputStream(
             blockBlobClient.getBlobOutputStream(options), config.uploadBlockSize())) {
-            inputStream.transferTo(os);
+            long transferred = inputStream.transferTo(os);
+            if (transferred != length) {
+                throw new StorageBackendException(
+                        "Object " + key + " created with incorrect length " + transferred + " instead of " + length);
+            }
         } catch (final IOException e) {
             throw new StorageBackendException("Failed to upload " + key, e);
         } catch (final RuntimeException e) {
@@ -150,7 +160,7 @@ public class AzureBlobStorage implements StorageBackend {
             if (e.getStatusCode() == 404) {
                 throw new KeyNotFoundException(this, key, e);
             } else if (e.getStatusCode() == 416) {
-                throw new InvalidRangeException("Invalid range " + range, e);
+                throw new InvalidRangeException("Failed to fetch " + key + ": Invalid range " + range, e);
             } else {
                 throw new StorageBackendException("Failed to fetch " + key, e);
             }

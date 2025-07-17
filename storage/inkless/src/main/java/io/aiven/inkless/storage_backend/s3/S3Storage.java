@@ -19,6 +19,7 @@ package io.aiven.inkless.storage_backend.s3;
 
 import com.groupcdg.pitest.annotations.CoverageIgnore;
 
+import java.io.IOException;
 import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.List;
@@ -66,6 +67,9 @@ public class S3Storage implements StorageBackend {
     public void upload(final ObjectKey key, final InputStream inputStream, final long length) throws StorageBackendException {
         Objects.requireNonNull(key, "key cannot be null");
         Objects.requireNonNull(inputStream, "inputStream cannot be null");
+        if (length <= 0) {
+            throw new IllegalArgumentException("length must be positive");
+        }
         final PutObjectRequest putObjectRequest = PutObjectRequest.builder()
             .bucket(bucketName)
             .key(key.value())
@@ -73,9 +77,14 @@ public class S3Storage implements StorageBackend {
         final RequestBody requestBody = RequestBody.fromInputStream(inputStream, length);
         try {
             s3Client.putObject(putObjectRequest, requestBody);
+            int remaining = inputStream.read(new byte[]{1});
+            if (remaining != -1) {
+                throw new StorageBackendException(
+                        "Object " + key + " created with incorrect length, input stream has remaining content");
+            }
         } catch (final ApiCallTimeoutException | ApiCallAttemptTimeoutException e) {
             throw new StorageBackendTimeoutException("Failed to upload " + key, e);
-        } catch (final SdkException e) {
+        } catch (final IOException | SdkException e) {
             throw new StorageBackendException("Failed to upload " + key, e);
         }
     }
@@ -101,7 +110,7 @@ public class S3Storage implements StorageBackend {
                 throw new KeyNotFoundException(this, key, e);
             }
             if (e.statusCode() == 416) {
-                throw new InvalidRangeException("Invalid range " + range, e);
+                throw new InvalidRangeException("Failed to fetch " + key + ": Invalid range " + range, e);
             }
 
             throw new StorageBackendException("Failed to fetch " + key, e);
