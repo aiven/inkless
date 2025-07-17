@@ -676,19 +676,6 @@ kafka.cluster.PartitionTest:
 - testUpdateFollowerFetchState
 - testUseCheckpointToInitializeHighWatermark
 - tryCompleteDelayedRequestsCatchesExceptions
-kafka.coordinator.group.CoordinatorLoaderImplTest:
-- testDeserializationErrorFailsTheLoading
-- testLoadGroupAndOffsetsWithCorruptedLog
-- testLoadSummary
-- testLoading
-- testLoadingIsRejectedWhenClosed
-- testLoadingStoppedWhenClosed
-- testNonexistentPartition
-- testPartitionGoesOfflineDuringLoad
-- testUnknownRecordTypeAreIgnored
-- testUpdateLastWrittenOffsetAndUpdateLastCommittedOffsetNoRecordsRead
-- testUpdateLastWrittenOffsetOnBatchLoaded
-- testUpdateLastWrittenOffsetOnBatchLoadedWhileHighWatermarkAhead
 kafka.coordinator.group.CoordinatorPartitionWriterTest:
 - testConfig
 - testDeleteRecordsResponseContainsError

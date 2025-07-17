@@ -4,6 +4,19 @@ org.apache.kafka.coordinator.common.runtime.CoordinatorExecutorImplTest:
 - testTaskFailedLifecycle
 - testTaskSchedulingWriteOperationFailed
 - testTaskSuccessfulLifecycle
+org.apache.kafka.coordinator.common.runtime.CoordinatorLoaderImplTest:
+- testDeserializationErrorFailsTheLoading
+- testLoadGroupAndOffsetsWithCorruptedLog
+- testLoadSummary
+- testLoading
+- testLoadingIsRejectedWhenClosed
+- testLoadingStoppedWhenClosed
+- testNonexistentPartition
+- testPartitionGoesOfflineDuringLoad
+- testUnknownRecordTypeAreIgnored
+- testUpdateLastWrittenOffsetAndUpdateLastCommittedOffsetNoRecordsRead
+- testUpdateLastWrittenOffsetOnBatchLoaded
+- testUpdateLastWrittenOffsetOnBatchLoadedWhileHighWatermarkAhead
 org.apache.kafka.coordinator.common.runtime.CoordinatorRecordTest:
 - testAttributes
 - testEquals
