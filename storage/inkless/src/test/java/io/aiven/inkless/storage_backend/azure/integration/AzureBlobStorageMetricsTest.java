@@ -32,6 +32,7 @@ import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.lang.management.ManagementFactory;
@@ -121,7 +122,7 @@ public class AzureBlobStorageMetricsTest {
 
         final var storage = storage();
 
-        storage.upload(key, data);
+        storage.upload(key, new ByteArrayInputStream(data), data.length);
         try (final InputStream fetch = storage.fetch(key, null)) {
             fetch.readAllBytes();
         }

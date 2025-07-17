@@ -27,6 +27,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 
+import java.io.ByteArrayInputStream;
 import java.lang.management.ManagementFactory;
 import java.util.Map;
 
@@ -93,9 +94,10 @@ class S3ErrorMetricsTest {
             .willReturn(aResponse().withStatus(statusCode)
                 .withHeader(CONTENT_TYPE, APPLICATION_XML.getMimeType())
                 .withBody(String.format(ERROR_RESPONSE_TEMPLATE, statusCode))));
+        byte[] data = new byte[1];
         final StorageBackendException storageBackendException = catchThrowableOfType(
             StorageBackendException.class,
-            () -> storage.upload(new TestObjectKey("key"), new byte[0]));
+            () -> storage.upload(new TestObjectKey("key"), new ByteArrayInputStream(data), data.length));
         assertThat(storageBackendException.getCause()).isInstanceOf(S3Exception.class);
         final S3Exception s3Exception = (S3Exception) storageBackendException.getCause();
 

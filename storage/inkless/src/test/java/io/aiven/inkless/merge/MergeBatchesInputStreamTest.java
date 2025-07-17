@@ -69,17 +69,18 @@ public class MergeBatchesInputStreamTest {
         final Supplier<InputStream> file2InputStreamSupplier = () -> file2InputStream;
         final var file2InputStreamWithPosition = new InputStreamWithPosition(file2InputStreamSupplier, file2Size);
 
-        var mergeBatchesInputStream = new MergeBatchesInputStream.Builder()
+        MergeBatchesInputStream.Builder builder = new MergeBatchesInputStream.Builder()
             .addBatch(new BatchAndStream(batch3Info, file2InputStreamWithPosition))
             .addBatch(new BatchAndStream(batch2Info, file1InputStreamWithPosition))
-            .addBatch(new BatchAndStream(batch1Info, file1InputStreamWithPosition))
-            .build();
+            .addBatch(new BatchAndStream(batch1Info, file1InputStreamWithPosition));
+        var mergeBatchesInputStream = builder.build();
 
-        assertEquals(expectedMergedSize, mergeBatchesInputStream.mergeMetadata().mergedFileSize());
+        assertEquals(expectedMergedSize, builder.mergeMetadata().mergedFileSize());
 
         // Read all batches and write them into an output stream
         var outputStream = new ByteArrayOutputStream(expectedMergedSize);
-        mergeBatchesInputStream.transferTo(outputStream);
+        long transferred = mergeBatchesInputStream.transferTo(outputStream);
+        assertEquals(expectedMergedSize, transferred);
 
         var expected = ByteBuffer.allocate(expectedMergedSize);
         expected.put(batch1Data);

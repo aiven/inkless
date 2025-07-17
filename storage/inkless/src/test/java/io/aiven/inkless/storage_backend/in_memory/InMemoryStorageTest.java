@@ -19,6 +19,7 @@ package io.aiven.inkless.storage_backend.in_memory;
 
 import org.junit.jupiter.api.Test;
 
+import java.io.ByteArrayInputStream;
 import java.io.InputStream;
 import java.util.Set;
 
@@ -34,17 +35,6 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class InMemoryStorageTest {
     static final PlainObjectKey OBJECT_KEY = PlainObjectKey.create("a", "b");
-
-    @Test
-    void uploadNulls() {
-        final InMemoryStorage storage = new InMemoryStorage();
-        assertThatThrownBy(() -> storage.upload(null, new byte[0]))
-            .isInstanceOf(NullPointerException.class)
-            .hasMessage("key cannot be null");
-        assertThatThrownBy(() -> storage.upload(OBJECT_KEY, (byte[]) null))
-            .isInstanceOf(NullPointerException.class)
-            .hasMessage("data cannot be null");
-    }
 
     @Test
     void fetchNulls() {
@@ -79,7 +69,7 @@ class InMemoryStorageTest {
     void uploadAndFetch() throws StorageBackendException {
         final InMemoryStorage storage = new InMemoryStorage();
         final byte[] data = new byte[10];
-        storage.upload(OBJECT_KEY, data);
+        storage.upload(OBJECT_KEY, new ByteArrayInputStream(data), data.length);
 
         final InputStream fetch = storage.fetch(OBJECT_KEY, ByteRange.maxRange());
 
@@ -90,7 +80,7 @@ class InMemoryStorageTest {
     void fetchRanged() throws StorageBackendException {
         final InMemoryStorage storage = new InMemoryStorage();
         final byte[] data = new byte[]{0, 1, 2, 3, 4, 5, 6, 7};
-        storage.upload(OBJECT_KEY, data);
+        storage.upload(OBJECT_KEY, new ByteArrayInputStream(data), data.length);
 
         final InputStream fetch1 = storage.fetch(OBJECT_KEY, new ByteRange(1, 2));
         assertThat(fetch1).hasBinaryContent(new byte[]{1, 2});
@@ -103,18 +93,18 @@ class InMemoryStorageTest {
     void fetchOutsideOfSize() throws StorageBackendException {
         final InMemoryStorage storage = new InMemoryStorage();
         final byte[] data = new byte[]{0, 1, 2, 3, 4, 5, 6, 7};
-        storage.upload(OBJECT_KEY, data);
+        storage.upload(OBJECT_KEY, new ByteArrayInputStream(data), data.length);
 
         assertThatThrownBy(() -> storage.fetch(OBJECT_KEY, new ByteRange(8, 1)))
             .isInstanceOf(InvalidRangeException.class)
-            .hasMessage("Range start offset 8 is outside of data size 8");
+            .hasMessage("Failed to fetch a/b: Invalid range ByteRange[offset=8, size=1] for blob size 8");
     }
 
     @Test
     void delete() throws StorageBackendException {
         final InMemoryStorage storage = new InMemoryStorage();
         final byte[] data = new byte[]{0, 1, 2, 3, 4, 5, 6, 7};
-        storage.upload(OBJECT_KEY, data);
+        storage.upload(OBJECT_KEY, new ByteArrayInputStream(data), data.length);
 
         final InputStream fetch = storage.fetch(OBJECT_KEY, new ByteRange(1, 2));
         assertThat(fetch).hasBinaryContent(new byte[]{1, 2});
@@ -129,7 +119,7 @@ class InMemoryStorageTest {
     void deleteMany() throws StorageBackendException {
         final InMemoryStorage storage = new InMemoryStorage();
         final byte[] data = new byte[]{0, 1, 2, 3, 4, 5, 6, 7};
-        storage.upload(OBJECT_KEY, data);
+        storage.upload(OBJECT_KEY, new ByteArrayInputStream(data), data.length);
 
         final InputStream fetch = storage.fetch(OBJECT_KEY, new ByteRange(1, 2));
         assertThat(fetch).hasBinaryContent(new byte[]{1, 2});

@@ -21,6 +21,8 @@ import org.apache.kafka.common.utils.Time;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
+import org.mockito.Captor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
@@ -28,6 +30,7 @@ import org.mockito.quality.Strictness;
 
 import java.io.InputStream;
 import java.time.Duration;
+import java.util.HashSet;
 import java.util.function.Consumer;
 
 import io.aiven.inkless.common.ObjectKey;
@@ -38,6 +41,7 @@ import io.aiven.inkless.storage_backend.common.StorageBackendException;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
@@ -70,6 +74,8 @@ class FileUploadJobTest {
     Time time;
     @Mock
     Consumer<Long> uploadTimeDurationCallback;
+    @Captor
+    ArgumentCaptor<InputStream> inputStreamCaptor;
 
     @Test
     void successAtFirstAttempt() throws Exception {
@@ -96,7 +102,7 @@ class FileUploadJobTest {
         doThrow(new StorageBackendException("Test"))
             .doThrow(new StorageBackendException("Test"))
             .doNothing()
-            .when(objectUploader).upload(eq(OBJECT_KEY), any(InputStream.class), eq((long) data.length));
+            .when(objectUploader).upload(eq(OBJECT_KEY), inputStreamCaptor.capture(), eq((long) data.length));
         when(time.nanoseconds()).thenReturn(10_000_000L, 20_000_000L);
 
         final FileUploadJob fileUploadJob = FileUploadJob.createFromByteArray(
@@ -108,6 +114,8 @@ class FileUploadJobTest {
         // We don't sleep at the last attempt.
         verify(time, times(2)).sleep(eq(100L));
         verify(uploadTimeDurationCallback).accept(eq(10L));
+        // Each time the upload is called, a new input stream should be used.
+        assertEquals(3, new HashSet<>(inputStreamCaptor.getAllValues()).size());
     }
 
     @Test

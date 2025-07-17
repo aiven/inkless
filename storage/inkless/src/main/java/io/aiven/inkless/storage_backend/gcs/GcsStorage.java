@@ -32,6 +32,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.nio.channels.Channels;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -65,9 +66,19 @@ public class GcsStorage implements StorageBackend {
 
     @Override
     public void upload(final ObjectKey key, final InputStream inputStream, final long length) throws StorageBackendException {
+        Objects.requireNonNull(key, "key cannot be null");
+        Objects.requireNonNull(inputStream, "inputStream cannot be null");
+        if (length <= 0) {
+            throw new IllegalArgumentException("length must be positive");
+        }
         try {
             final BlobInfo blobInfo = BlobInfo.newBuilder(this.bucketName, key.value()).build();
-            storage.createFrom(blobInfo, inputStream);
+            Blob blob = storage.createFrom(blobInfo, inputStream);
+            long transferred = blob.getSize();
+            if (transferred != length) {
+                throw new StorageBackendException(
+                        "Object " + key + " created with incorrect length " + transferred + " instead of " + length);
+            }
         } catch (final IOException | BaseServiceException e) {
             throw new StorageBackendException("Failed to upload " + key, e);
         }
@@ -105,8 +116,7 @@ public class GcsStorage implements StorageBackend {
             final Blob blob = getBlob(key);
 
             if (range != null && range.offset() >= blob.getSize()) {
-                throw new InvalidRangeException("Range start position " + range.offset()
-                    + " is outside file content. file size = " + blob.getSize());
+                throw new InvalidRangeException("Failed to fetch " + key + ": Invalid range " + range + " for blob size " + blob.getSize());
             }
 
             final ReadChannel reader = blob.reader();
@@ -123,7 +133,7 @@ public class GcsStorage implements StorageBackend {
                 throw new KeyNotFoundException(this, key, e);
             } else if (e.getCode() == 416) {
                 // https://cloud.google.com/storage/docs/json_api/v1/status-codes#416_Requested_Range_Not_Satisfiable
-                throw new InvalidRangeException("Invalid range " + range, e);
+                throw new InvalidRangeException("Failed to fetch " + key + ": Invalid range " + range, e);
             } else {
                 throw new StorageBackendException("Failed to fetch " + key, e);
             }

@@ -52,9 +52,16 @@ public class InMemoryStorage implements StorageBackend {
     public void upload(final ObjectKey key, final InputStream inputStream, final long length) throws StorageBackendException {
         Objects.requireNonNull(key, "key cannot be null");
         Objects.requireNonNull(inputStream, "inputStream cannot be null");
+        if (length <= 0) {
+            throw new IllegalArgumentException("length must be positive");
+        }
         ByteArrayOutputStream byteArrayOutputStream = new ByteArrayOutputStream();
         try {
-            inputStream.transferTo(byteArrayOutputStream);
+            long transferred = inputStream.transferTo(byteArrayOutputStream);
+            if (transferred != length) {
+                throw new StorageBackendException(
+                        "Object " + key + " created with incorrect length " + transferred + " instead of " + length);
+            }
         } catch (final IOException e) {
             throw new StorageBackendException("Failed to upload " + key, e);
         }
@@ -73,8 +80,7 @@ public class InMemoryStorage implements StorageBackend {
         }
 
         if (range.offset() >= data.length) {
-            throw new InvalidRangeException("Range start offset " + range.offset()
-                + " is outside of data size " + data.length);
+            throw new InvalidRangeException("Failed to fetch " + key + ": Invalid range " + range + " for blob size " + data.length);
         }
 
         final ByteArrayInputStream inner = new ByteArrayInputStream(data);

@@ -20,6 +20,7 @@ package io.aiven.inkless.storage_backend.common.fixtures;
 import org.assertj.core.util.Throwables;
 import org.junit.jupiter.api.Test;
 
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.Set;
@@ -48,7 +49,7 @@ public abstract class BaseStorageTest {
         final StorageBackend storage = storage();
         final byte[] data = "some file".getBytes();
 
-        storage.upload(TOPIC_PARTITION_SEGMENT_KEY, data);
+        storage.upload(TOPIC_PARTITION_SEGMENT_KEY, new ByteArrayInputStream(data), data.length);
 
         try (final InputStream fetch = storage.fetch(TOPIC_PARTITION_SEGMENT_KEY, new ByteRange(0, data.length))) {
             final String r = new String(fetch.readAllBytes());
@@ -69,12 +70,52 @@ public abstract class BaseStorageTest {
     }
 
     @Test
+    void uploadNulls() {
+        final StorageBackend storage = storage();
+        byte[] data = new byte[0];
+        assertThatThrownBy(() -> storage.upload(null, new ByteArrayInputStream(data), data.length))
+                .isInstanceOf(NullPointerException.class)
+                .hasMessage("key cannot be null");
+        assertThatThrownBy(() -> storage.upload(TOPIC_PARTITION_SEGMENT_KEY, null, data.length))
+                .isInstanceOf(NullPointerException.class)
+                .hasMessage("inputStream cannot be null");
+        assertThatThrownBy(() -> storage.upload(TOPIC_PARTITION_SEGMENT_KEY, new ByteArrayInputStream(data), 0))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("length must be positive");
+        assertThatThrownBy(() -> storage.upload(TOPIC_PARTITION_SEGMENT_KEY, new ByteArrayInputStream(data), -1))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("length must be positive");
+    }
+
+    @Test
     void testUploadANewFile() throws StorageBackendException {
         final StorageBackend storage = storage();
         final byte[] content = "content".getBytes();
-        storage.upload(TOPIC_PARTITION_SEGMENT_KEY, content);
+        storage.upload(TOPIC_PARTITION_SEGMENT_KEY, new ByteArrayInputStream(content), content.length);
         assertThat(storage.fetch(TOPIC_PARTITION_SEGMENT_KEY, new ByteRange(0, content.length)))
             .hasBinaryContent(content);
+    }
+
+    @Test
+    protected void testUploadUndersizedStream() {
+        final StorageBackend storage = storage();
+        final byte[] content = "content".getBytes();
+        final long expectedLength = content.length + 1;
+
+        assertThatThrownBy(() -> storage.upload(TOPIC_PARTITION_SEGMENT_KEY, new ByteArrayInputStream(content), expectedLength))
+                .isInstanceOf(StorageBackendException.class)
+                .hasMessage("Object key created with incorrect length " + content.length + " instead of " + expectedLength);
+    }
+
+    @Test
+    protected void testUploadOversizeStream() {
+        final StorageBackend storage = storage();
+        final byte[] content = "content".getBytes();
+        final long expectedLength = content.length - 1;
+
+        assertThatThrownBy(() -> storage.upload(TOPIC_PARTITION_SEGMENT_KEY, new ByteArrayInputStream(content), expectedLength))
+                .isInstanceOf(StorageBackendException.class)
+                .hasMessage("Object key created with incorrect length " + content.length + " instead of " + expectedLength);
     }
 
     @Test
@@ -82,8 +123,8 @@ public abstract class BaseStorageTest {
         final StorageBackend storage = storage();
         final byte[] content1 = "content1".getBytes();
         final byte[] content2 = "content2".getBytes();
-        storage.upload(TOPIC_PARTITION_SEGMENT_KEY, content1);
-        storage.upload(TOPIC_PARTITION_SEGMENT_KEY, content2);
+        storage.upload(TOPIC_PARTITION_SEGMENT_KEY, new ByteArrayInputStream(content1), content1.length);
+        storage.upload(TOPIC_PARTITION_SEGMENT_KEY, new ByteArrayInputStream(content2), content2.length);
 
         assertThat(storage.fetch(TOPIC_PARTITION_SEGMENT_KEY, ByteRange.maxRange()))
             .hasBinaryContent(content2);
@@ -101,7 +142,8 @@ public abstract class BaseStorageTest {
     void testFetchWithoutRange() throws IOException, StorageBackendException {
         final StorageBackend storage = storage();
         final String content = "AABBBBAA";
-        storage.upload(TOPIC_PARTITION_SEGMENT_KEY, content.getBytes());
+        byte[] data = content.getBytes();
+        storage.upload(TOPIC_PARTITION_SEGMENT_KEY, new ByteArrayInputStream(data), data.length);
 
         try (final InputStream fetch = storage.fetch(TOPIC_PARTITION_SEGMENT_KEY, null)) {
             assertThat(fetch).hasContent(content);
@@ -112,7 +154,8 @@ public abstract class BaseStorageTest {
     void testFetchWithOffsetRange() throws IOException, StorageBackendException {
         final StorageBackend storage = storage();
         final String content = "AABBBBAA";
-        storage.upload(TOPIC_PARTITION_SEGMENT_KEY, content.getBytes());
+        byte[] data = content.getBytes();
+        storage.upload(TOPIC_PARTITION_SEGMENT_KEY, new ByteArrayInputStream(data), data.length);
 
         final int from = 2;
         final int to = 5;
@@ -128,7 +171,8 @@ public abstract class BaseStorageTest {
     void testFetchSingleByte() throws IOException, StorageBackendException {
         final StorageBackend storage = storage();
         final String content = "ABC";
-        storage.upload(TOPIC_PARTITION_SEGMENT_KEY, content.getBytes());
+        byte[] data = content.getBytes();
+        storage.upload(TOPIC_PARTITION_SEGMENT_KEY, new ByteArrayInputStream(data), data.length);
 
         try (final InputStream fetch = storage.fetch(TOPIC_PARTITION_SEGMENT_KEY, new ByteRange(2, 1))) {
             assertThat(fetch).hasContent("C");
@@ -139,7 +183,8 @@ public abstract class BaseStorageTest {
     void testFetchWithOffsetRangeLargerThanFileSize() throws IOException, StorageBackendException {
         final StorageBackend storage = storage();
         final String content = "ABC";
-        storage.upload(TOPIC_PARTITION_SEGMENT_KEY, content.getBytes());
+        byte[] data = content.getBytes();
+        storage.upload(TOPIC_PARTITION_SEGMENT_KEY, new ByteArrayInputStream(data), data.length);
 
         try (final InputStream fetch = storage.fetch(TOPIC_PARTITION_SEGMENT_KEY, new ByteRange(2, 10))) {
             assertThat(fetch).hasContent("C");
@@ -150,7 +195,8 @@ public abstract class BaseStorageTest {
     protected void testFetchWithRangeOutsideFileSize() throws StorageBackendException {
         final StorageBackend storage = storage();
         final String content = "ABC";
-        storage.upload(TOPIC_PARTITION_SEGMENT_KEY, content.getBytes());
+        byte[] data = content.getBytes();
+        storage.upload(TOPIC_PARTITION_SEGMENT_KEY, new ByteArrayInputStream(data), data.length);
 
         assertThatThrownBy(() -> storage.fetch(TOPIC_PARTITION_SEGMENT_KEY, new ByteRange(3, 10)))
             .isInstanceOf(InvalidRangeException.class);
@@ -195,7 +241,8 @@ public abstract class BaseStorageTest {
     @Test
     protected void testDelete() throws StorageBackendException {
         final StorageBackend storage = storage();
-        storage.upload(TOPIC_PARTITION_SEGMENT_KEY, "test".getBytes());
+        byte[] data = "test".getBytes();
+        storage.upload(TOPIC_PARTITION_SEGMENT_KEY, new ByteArrayInputStream(data), data.length);
         storage.delete(TOPIC_PARTITION_SEGMENT_KEY);
 
         // Test deletion idempotence.
@@ -213,7 +260,8 @@ public abstract class BaseStorageTest {
             .mapToObj(i -> new TestObjectKey(TOPIC_PARTITION_SEGMENT_KEY.value() + i))
             .collect(Collectors.toSet());
         for (final var key : keys) {
-            storage.upload(key, "test".getBytes());
+            byte[] data = "test".getBytes();
+            storage.upload(key, new ByteArrayInputStream(data), data.length);
         }
         storage.delete(keys);
 
