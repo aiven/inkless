@@ -1805,6 +1805,8 @@ kafka.server.DelayedRemoteFetchTest:
 - testErrorLogReadInfo
 - testFetch
 - testFollowerFetch
+- testMultiplePartitions
+- testMultiplePartitionsWithFailedResults
 - testNotLeaderOrFollower
 - testRequestExpiry
 kafka.server.DelegationTokenRequestsOnPlainTextTest:
@@ -2156,6 +2158,7 @@ kafka.server.KafkaApisTest:
 - testHandleShareAcknowledgeRequestBatchValidationError
 - testHandleShareAcknowledgeRequestGroupAuthorizationError
 - testHandleShareAcknowledgeRequestInvalidRequestOnInitialEpoch
+- testHandleShareAcknowledgeRequestQuotaTagsVerification
 - testHandleShareAcknowledgeRequestReleaseAcquiredRecordsThrowError
 - testHandleShareAcknowledgeRequestSessionNotFound
 - testHandleShareAcknowledgeRequestSuccess
@@ -2173,6 +2176,7 @@ kafka.server.KafkaApisTest:
 - testHandleShareFetchRequestInvalidRequestOnFinalEpoch
 - testHandleShareFetchRequestInvalidRequestOnInitialEpoch
 - testHandleShareFetchRequestInvalidShareSessionError
+- testHandleShareFetchRequestQuotaTagsVerification
 - testHandleShareFetchRequestReleaseAcquiredRecordsThrowError
 - testHandleShareFetchRequestShareSessionNotFoundError
 - testHandleShareFetchRequestShareSessionSuccessfullyEstablished
@@ -2181,6 +2185,7 @@ kafka.server.KafkaApisTest:
 - testHandleShareFetchRequestSuccessfulShareSessionLifecycle
 - testHandleShareFetchRequestWhenShareSessionCacheIsFull
 - testHandleShareFetchShareGroupDisabled
+- testHandleShareFetchWithAcknowledgementQuotaTagsVerification
 - testHandleSyncGroupRequest
 - testHandleSyncGroupRequestAuthenticationFailed
 - testHandleSyncGroupRequestFutureFailed
@@ -2662,6 +2667,7 @@ kafka.server.ReplicaManagerTest:
 - testMaybeAddLogDirFetchers
 - testMaybeAddLogDirFetchersPausingCleaning
 - testMonitorableReplicaSelector
+- testMultipleRemoteFetchesInOneFetchRequest
 - testNotCallStopPartitionsForNonTieredTopics
 - testOffsetOutOfRangeExceptionWhenFetchMessages
 - testOffsetOutOfRangeExceptionWhenReadFromLog
@@ -2712,6 +2718,8 @@ kafka.server.RequestQuotaTest:
 - testResponseThrottleTime
 - testResponseThrottleTimeWhenBothFetchAndRequestQuotasViolated
 - testResponseThrottleTimeWhenBothProduceAndRequestQuotasViolated
+- testResponseThrottleTimeWhenBothShareFetchAndRequestQuotasViolated
+- testShareFetchUsesSameFetchSensor
 - testUnauthorizedThrottle
 - testUnthrottledClient
 kafka.server.SaslApiVersionsRequestTest:

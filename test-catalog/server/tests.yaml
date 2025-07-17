@@ -152,6 +152,8 @@ org.apache.kafka.server.metrics.ForwardingManagerMetricsTest:
 org.apache.kafka.server.metrics.LinuxIoMetricsCollectorTest:
 - testReadProcFile
 - testUnableToReadNonexistentProcFile
+org.apache.kafka.server.metrics.NodeMetricsTest:
+- testMetricsExported
 org.apache.kafka.server.purgatory.DelayedFutureTest:
 - testDelayedFuture
 org.apache.kafka.server.quota.ThrottledChannelTest:

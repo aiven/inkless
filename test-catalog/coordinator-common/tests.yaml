@@ -28,11 +28,14 @@ org.apache.kafka.coordinator.common.runtime.CoordinatorRuntimeMetricsImplTest:
 - testUpdateNumPartitionsMetrics
 org.apache.kafka.coordinator.common.runtime.CoordinatorRuntimeTest:
 - testAppendRecordBatchSize
+- testBufferShrinkWhenMaxMessageSizeReducedBelowInitialBufferSize
 - testCancelTimer
 - testClose
 - testCompleteTransactionEventCompletesOnlyOnce
 - testCoordinatorCompleteTransactionEventWriteTimeoutTaskIsCancelledWhenHighWatermarkIsUpdated
+- testCoordinatorDoNotRetainBufferLargeThanMaxMessageSize
 - testCoordinatorExecutor
+- testCoordinatorRetainExpandedBufferLessOrEqualToMaxMessageSize
 - testEmptyBatch
 - testHighWatermarkUpdate
 - testHighWatermarkUpdateWithDeferredEventExceptions

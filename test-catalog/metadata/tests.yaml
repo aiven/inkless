@@ -489,6 +489,7 @@ org.apache.kafka.image.loader.MetadataLoaderTest:
 - testCatchingUpState
 - testCreateAndClose
 - testInstallPublishers
+- testKRaftVersionFinalizedLevelMetric
 - testLastAppliedOffset
 - testLoadEmptyBatch
 - testLoadEmptySnapshot
@@ -500,6 +501,7 @@ org.apache.kafka.image.loader.MetadataLoaderTest:
 - testRemovePublisher
 - testSnapshotDuringTransaction
 org.apache.kafka.image.loader.metrics.MetadataLoaderMetricsTest:
+- testFinalizedFeatureLevelMetrics
 - testInitialValueOfCurrentControllerId
 - testManagedMetrics
 - testMetricNames
