@@ -119,6 +119,13 @@ org.apache.kafka.coordinator.common.runtime.HdrHistogramTest:
 - testLatestHistogramRace
 - testMax
 - testRecordLimit
+org.apache.kafka.coordinator.common.runtime.KRaftCoordinatorMetadataDeltaTest:
+- testEqualsAndHashcode
+- testKRaftCoordinatorDelta
+- testKRaftCoordinatorDeltaWithNulls
+org.apache.kafka.coordinator.common.runtime.KRaftCoordinatorMetadataImageTest:
+- testEqualsAndHashcode
+- testKRaftCoordinatorMetadataImage
 org.apache.kafka.coordinator.common.runtime.KafkaMetricHistogramTest:
 - testStats
 org.apache.kafka.coordinator.common.runtime.MultiThreadedEventProcessorTest:
