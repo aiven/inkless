@@ -2677,6 +2677,7 @@ kafka.server.ReplicaManagerTest:
 - testRemoteReadQuotaExceeded
 - testRemoteReadQuotaNotExceeded
 - testReplicaAlterLogDirs
+- testReplicaAlterLogDirsMultipleReassignmentDoesNotBlockLogCleaner
 - testReplicaNotAvailable
 - testReplicaSelector
 - testReplicasAreStoppedWhileInControlledShutdown
