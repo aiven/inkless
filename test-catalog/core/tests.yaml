@@ -1616,18 +1616,6 @@ kafka.server.ClientQuotaManagerTest:
 - testSetAndRemoveUserClientQuota
 - testSetAndRemoveUserQuota
 - testUserQuotaParsingWithDefaultClientIdQuota
-kafka.server.ClientQuotasRequestTest:
-- testAlterClientQuotasBadIp
-- testAlterClientQuotasInvalidEntityCombination
-- testAlterClientQuotasInvalidRequests
-- testAlterClientQuotasRequest
-- testAlterClientQuotasRequestValidateOnly
-- testAlterIpQuotasRequest
-- testClientQuotasSanitized
-- testClientQuotasUnsupportedEntityTypes
-- testDescribeClientQuotasInvalidFilterCombination
-- testDescribeClientQuotasMatchExact
-- testDescribeClientQuotasMatchPartial
 kafka.server.ClientRequestQuotaManagerTest:
 - testRequestPercentageQuotaViolation
 kafka.server.ConfigAdminManagerTest:
