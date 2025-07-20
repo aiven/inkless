@@ -155,6 +155,7 @@ org.apache.kafka.controller.PartitionChangeBuilderTest:
 - testEligibleLeaderReplicas_IsrCanShrinkToZero
 - testEligibleLeaderReplicas_IsrExpandAboveMinISR
 - testEligibleLeaderReplicas_IsrShrinkBelowMinISR
+- testEligibleLeaderReplicas_NotEligibleLastKnownLeader
 - testEligibleLeaderReplicas_RemoveUncleanShutdownReplicasFromElr
 - testIsrChangeAndLeaderChange
 - testIsrChangeDoesntBumpLeaderEpoch
