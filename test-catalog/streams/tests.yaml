@@ -487,6 +487,9 @@ org.apache.kafka.streams.TopologyTest:
 - timeWindowedCogroupedZeroArgCountWithTopologyConfigShouldPreserveTopologyStructure
 - topologyWithDynamicRoutingShouldDescribeExtractorClass
 - topologyWithStaticTopicNameExtractorShouldRespectEqualHashcodeContract
+org.apache.kafka.streams.errors.ExceptionHandlerUtilsTest:
+- checkDeadLetterQueueRecords
+- doNotBuildDeadLetterQueueRecordsIfNotConfigured
 org.apache.kafka.streams.internals.ApiUtilsTest:
 - shouldContainsNameAndValueInFailMsgPrefix
 - shouldReturnMillisecondsOnValidDuration
@@ -2190,8 +2193,16 @@ org.apache.kafka.streams.processor.internals.ProcessorMetadataTest:
 - shouldUpdate
 - shouldUpdateCommitFlag
 org.apache.kafka.streams.processor.internals.ProcessorNodeTest:
+- shouldBuildDeadLetterQueueRecordsInDefaultProcessingExceptionHandler
+- shouldBuildDeadLetterQueueRecordsInLogAndContinueProcessingExceptionHandler
+- shouldFailWithDeadLetterQueueRecords
+- shouldFailWithoutDeadLetterQueueRecords
+- shouldNotBeModifiable
 - shouldNotHandleInternalExceptionsThrownDuringProcessing
 - shouldNotThrowFailedProcessingExceptionWhenProcessingExceptionHandlerRepliesWithContinue
+- shouldResumeWithDeadLetterQueueRecords
+- shouldResumeWithoutDeadLetterQueueRecords
+- shouldReturnsEmptyList
 - shouldThrowFailedProcessingExceptionWhenProcessingExceptionHandlerRepliesWithFail
 - shouldThrowFailedProcessingExceptionWhenProcessingExceptionHandlerThrowsAnException
 - shouldThrowStreamsExceptionIfExceptionCaughtDuringClose
@@ -2327,10 +2338,15 @@ org.apache.kafka.streams.processor.internals.ReadOnlyTaskTest:
 org.apache.kafka.streams.processor.internals.RecordCollectorTest:
 - shouldAbortTxOnCloseDirtyIfEosEnabled
 - shouldBroadcastToAllPartitions
+- shouldBuildDeadLetterQueueRecordsInDefaultExceptionHandler
+- shouldBuildDeadLetterQueueRecordsInDefaultExceptionHandlerDuringDeserialization
+- shouldCallOldImplementationWithRecordContextExceptionHandler
 - shouldClearOffsetsOnCloseClean
 - shouldClearOffsetsOnCloseDirty
 - shouldDropAllRecords
 - shouldDropRecordExceptionUsingAlwaysContinueExceptionHandler
+- shouldFailWithDeadLetterQueueRecords
+- shouldFailWithoutDeadLetterQueueRecords
 - shouldForwardFlushToStreamsProducer
 - shouldForwardFlushToStreamsProducerEosEnabled
 - shouldForwardRuntimeExceptionFromStreamPartitionerWithoutWrappingIt
@@ -2339,6 +2355,7 @@ org.apache.kafka.streams.processor.internals.RecordCollectorTest:
 - shouldHaveRawDataDuringExceptionInSerialization
 - shouldNotAbortTxOnCloseCleanIfEosEnabled
 - shouldNotAbortTxnOnEOSCloseDirtyIfNothingSent
+- shouldNotBeModifiable
 - shouldNotCallProductionExceptionHandlerOnClassCastException
 - shouldNotCloseInternalProducerForEOS
 - shouldNotCloseInternalProducerForNonEOS
@@ -2351,6 +2368,10 @@ org.apache.kafka.streams.processor.internals.RecordCollectorTest:
 - shouldNotThrowTaskCorruptedExceptionOnUnknownTopicOrPartitionExceptionUsingAlwaysContinueExceptionHandler
 - shouldPassThroughRecordHeaderToSerializer
 - shouldRecordRecordsAndBytesProduced
+- shouldResumeWithDeadLetterQueueRecords
+- shouldResumeWithoutDeadLetterQueueRecords
+- shouldRetryWithoutDeadLetterQueueRecords
+- shouldReturnsEmptyList
 - shouldSendOnlyToEvenPartitions
 - shouldSendToSpecificPartition
 - shouldSendWithNoPartition
@@ -2392,10 +2413,18 @@ org.apache.kafka.streams.processor.internals.RecordCollectorTest:
 - shouldUseDefaultPartitionerAsStreamPartitionerIsNull
 - shouldUseDefaultPartitionerViaPartitions
 org.apache.kafka.streams.processor.internals.RecordDeserializerTest:
+- shouldBuildDeadLetterQueueRecordsInDefaultDeserializationException
+- shouldBuildDeadLetterQueueRecordsInLogAndContinueDeserializationException
 - shouldFailWhenDeserializationFailsAndExceptionHandlerReturnsNull
 - shouldFailWhenDeserializationFailsAndExceptionHandlerThrows
+- shouldFailWithDeadLetterQueueRecords
+- shouldFailWithoutDeadLetterQueueRecords
+- shouldNotBeModifiable
 - shouldNotThrowStreamsExceptionWhenDeserializationFailsAndExceptionHandlerRepliesWithContinue
+- shouldResumeWithDeadLetterQueueRecords
+- shouldResumeWithoutDeadLetterQueueRecords
 - shouldReturnConsumerRecordWithDeserializedValueWhenNoExceptions
+- shouldReturnsEmptyList
 - shouldThrowStreamsExceptionWhenDeserializationFailsAndExceptionHandlerRepliesWithFail
 org.apache.kafka.streams.processor.internals.RecordQueueTest:
 - shouldDropOnNegativeTimestamp
