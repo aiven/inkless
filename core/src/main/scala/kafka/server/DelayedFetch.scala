@@ -188,7 +188,7 @@ class DelayedFetch(
                 debug(s"Satisfying fetch $this since it is fetching later segments of partition $topicIdPartition.")
                 return None
               } else if (fetchOffset.messageOffset < endOffset) {
-                val bytesAvailable = safeLongToInt(response.batches().asScala.map(_.metadata().byteSize()).sum)
+                val bytesAvailable = safeLongToInt(response.estimatedByteSize(fetchOffset.messageOffset))
                 accumulatedSize += bytesAvailable
               }
             }
