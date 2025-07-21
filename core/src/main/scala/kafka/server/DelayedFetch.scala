@@ -170,9 +170,9 @@ class DelayedFetch(
       val fetchOffset = fetchStatus.startOffsetMetadata
       new FindBatchRequest(topicIdPartition, fetchOffset.messageOffset, fetchStatus.fetchInfo.maxBytes)
     }
+    if (requests.isEmpty) { return Some(0) }
 
     val response = replicaManager.findInklessBatches(requests, Int.MaxValue)
-    if (response.isEmpty) { return Some(0) }
     val r = response.get.asScala
     r.foreach { response =>
       response.errors() match {
