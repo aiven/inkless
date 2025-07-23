@@ -164,6 +164,7 @@ org.apache.kafka.server.log.remote.storage.RemoteLogManagerTest:
 - testGetClassLoaderAwareRemoteStorageManager
 - testGetLeaderEpochCheckpoint
 - testIdempotentClose
+- testIsPartitionReady
 - testLogStartOffsetUpdatedOnStartup
 - testMetricsUpdateOnCopyLogSegmentsFailure
 - testMonitorableRemoteLogStorageManager
