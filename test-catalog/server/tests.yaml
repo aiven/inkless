@@ -193,6 +193,9 @@ org.apache.kafka.server.share.fetch.PartitionRotateStrategyTest:
 - testRoundRobinStrategy
 - testRoundRobinStrategyWithEmptyPartitions
 - testRoundRobinStrategyWithSpecialSessionEpochs
+org.apache.kafka.server.share.fetch.RecordStateTest:
+- testRecordStateForId
+- testRecordStateValidateTransition
 org.apache.kafka.server.share.fetch.ShareFetchTest:
 - testDontCacheAnyData
 - testErrorInAllPartitions

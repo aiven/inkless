@@ -3125,8 +3125,6 @@ kafka.server.share.SharePartitionTest:
 - testNumberOfWriteCallsOnUpdates
 - testReacquireSubsetWithAnotherMember
 - testRecordFetchLockRatioMetric
-- testRecordStateForId
-- testRecordStateValidateTransition
 - testReleaseAcknowledgedMultipleSubsetRecordBatch
 - testReleaseAcquiredRecordsAfterDifferentAcknowledges
 - testReleaseAcquiredRecordsBatchesPostStartOffsetMovement
