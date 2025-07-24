@@ -89,56 +89,81 @@ class KRaftMetadataCache(
                                    errorUnavailableListeners: Boolean): Option[Iterator[MetadataResponsePartition]] = {
     Option(image.topics().getTopic(topicName)) match {
       case None => None
-      case Some(topic) => Some(topic.partitions().entrySet().asScala.map { entry =>
-        val partitionId = entry.getKey
-        val partition = entry.getValue
-        val filteredReplicas = maybeFilterAliveReplicas(image, partition.replicas,
-          listenerName, errorUnavailableEndpoints)
-        val filteredIsr = maybeFilterAliveReplicas(image, partition.isr, listenerName,
-          errorUnavailableEndpoints)
-        val offlineReplicas = getOfflineReplicas(image, partition, listenerName)
-        val maybeLeader = getAliveEndpoint(image, partition.leader, listenerName)
-        maybeLeader match {
-          case None =>
-            val error = if (!image.cluster().brokers.containsKey(partition.leader)) {
-              info(s"Error while fetching metadata for $topicName-$partitionId: leader ${partition.leader} not available (Brokers ${image.cluster().brokers.keySet().asScala.mkString(",")})")
-              Errors.LEADER_NOT_AVAILABLE
-            } else {
-              info(s"Error while fetching metadata for $topicName-$partitionId: listener $listenerName " +
-                s"not found on leader ${partition.leader}")
-              if (errorUnavailableListeners) Errors.LISTENER_NOT_FOUND else Errors.LEADER_NOT_AVAILABLE
-            }
+      case Some(topic) =>
+        val topicConfig = _currentImage.configs().configProperties(new ConfigResource(ConfigResource.Type.TOPIC, topicName))
+        val isInkless = topicConfig.getProperty("inkless.enable", "false").toBoolean
+        if (isInkless) {
+          logger.info("Fetching metadata for inkless topic: " + topicName)
+          Some(topic.partitions().entrySet().asScala.map { entry =>
+            val partitionId = entry.getKey
+            val partition = entry.getValue
+            val filteredReplicas = maybeFilterAliveReplicas(image, partition.replicas,
+              listenerName, errorUnavailableEndpoints)
+            val filteredIsr = maybeFilterAliveReplicas(image, partition.isr, listenerName,
+              errorUnavailableEndpoints)
+            val offlineReplicas = getOfflineReplicas(image, partition, listenerName)
+            val leaderId: Integer = _currentImage.cluster().brokers().entrySet().stream().filter(e => e.getValue.hasOnlineDir(e.getValue.directories().get(0))).map(e => e.getKey).findFirst().orElse(-1)
             new MetadataResponsePartition()
-              .setErrorCode(error.code)
+              .setErrorCode(Errors.NONE.code)
               .setPartitionIndex(partitionId)
-              .setLeaderId(MetadataResponse.NO_LEADER_ID)
+              .setLeaderId(leaderId)
               .setLeaderEpoch(partition.leaderEpoch)
               .setReplicaNodes(filteredReplicas)
               .setIsrNodes(filteredIsr)
               .setOfflineReplicas(offlineReplicas)
-          case Some(leader) =>
-            val error = if (filteredReplicas.size < partition.replicas.length) {
-              debug(s"Error while fetching metadata for $topicName-$partitionId: replica information not available for " +
-                s"following brokers ${partition.replicas.filterNot(filteredReplicas.contains).mkString(",")}")
-              Errors.REPLICA_NOT_AVAILABLE
-            } else if (filteredIsr.size < partition.isr.length) {
-              debug(s"Error while fetching metadata for $topicName-$partitionId: in sync replica information not available for " +
-                s"following brokers ${partition.isr.filterNot(filteredIsr.contains).mkString(",")}")
-              Errors.REPLICA_NOT_AVAILABLE
-            } else {
-              Errors.NONE
-            }
+          }.iterator)
+        } else {
+          Some(topic.partitions().entrySet().asScala.map { entry =>
+            val partitionId = entry.getKey
+            val partition = entry.getValue
+            val filteredReplicas = maybeFilterAliveReplicas(image, partition.replicas,
+              listenerName, errorUnavailableEndpoints)
+            val filteredIsr = maybeFilterAliveReplicas(image, partition.isr, listenerName,
+              errorUnavailableEndpoints)
+            val offlineReplicas = getOfflineReplicas(image, partition, listenerName)
+            val maybeLeader = getAliveEndpoint(image, partition.leader, listenerName)
+            maybeLeader match {
+              case None =>
+                val error = if (!image.cluster().brokers.containsKey(partition.leader)) {
+                  info(s"Error while fetching metadata for $topicName-$partitionId: leader ${partition.leader} not available (Brokers ${image.cluster().brokers.keySet().asScala.mkString(",")})")
+                  Errors.LEADER_NOT_AVAILABLE
+                } else {
+                  info(s"Error while fetching metadata for $topicName-$partitionId: listener $listenerName " +
+                    s"not found on leader ${partition.leader}")
+                  if (errorUnavailableListeners) Errors.LISTENER_NOT_FOUND else Errors.LEADER_NOT_AVAILABLE
+                }
+                new MetadataResponsePartition()
+                  .setErrorCode(error.code)
+                  .setPartitionIndex(partitionId)
+                  .setLeaderId(MetadataResponse.NO_LEADER_ID)
+                  .setLeaderEpoch(partition.leaderEpoch)
+                  .setReplicaNodes(filteredReplicas)
+                  .setIsrNodes(filteredIsr)
+                  .setOfflineReplicas(offlineReplicas)
+              case Some(leader) =>
+                val error = if (filteredReplicas.size < partition.replicas.length) {
+                  debug(s"Error while fetching metadata for $topicName-$partitionId: replica information not available for " +
+                    s"following brokers ${partition.replicas.filterNot(filteredReplicas.contains).mkString(",")}")
+                  Errors.REPLICA_NOT_AVAILABLE
+                } else if (filteredIsr.size < partition.isr.length) {
+                  debug(s"Error while fetching metadata for $topicName-$partitionId: in sync replica information not available for " +
+                    s"following brokers ${partition.isr.filterNot(filteredIsr.contains).mkString(",")}")
+                  Errors.REPLICA_NOT_AVAILABLE
+                } else {
+                  Errors.NONE
+                }
 
-            new MetadataResponsePartition()
-              .setErrorCode(error.code)
-              .setPartitionIndex(partitionId)
-              .setLeaderId(leader.id())
-              .setLeaderEpoch(partition.leaderEpoch)
-              .setReplicaNodes(filteredReplicas)
-              .setIsrNodes(filteredIsr)
-              .setOfflineReplicas(offlineReplicas)
+                new MetadataResponsePartition()
+                  .setErrorCode(error.code)
+                  .setPartitionIndex(partitionId)
+                  .setLeaderId(leader.id())
+                  .setLeaderEpoch(partition.leaderEpoch)
+                  .setReplicaNodes(filteredReplicas)
+                  .setIsrNodes(filteredIsr)
+                  .setOfflineReplicas(offlineReplicas)
+            }
+          }.iterator)
         }
-      }.iterator)
     }
   }
 
