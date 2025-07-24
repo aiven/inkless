@@ -101,10 +101,10 @@ class KRaftMetadataCache(
         maybeLeader match {
           case None =>
             val error = if (!image.cluster().brokers.containsKey(partition.leader)) {
-              debug(s"Error while fetching metadata for $topicName-$partitionId: leader not available")
+              info(s"Error while fetching metadata for $topicName-$partitionId: leader ${partition.leader} not available (Brokers ${image.cluster().brokers.keySet().asScala.mkString(",")})")
               Errors.LEADER_NOT_AVAILABLE
             } else {
-              debug(s"Error while fetching metadata for $topicName-$partitionId: listener $listenerName " +
+              info(s"Error while fetching metadata for $topicName-$partitionId: listener $listenerName " +
                 s"not found on leader ${partition.leader}")
               if (errorUnavailableListeners) Errors.LISTENER_NOT_FOUND else Errors.LEADER_NOT_AVAILABLE
             }

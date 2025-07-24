@@ -355,7 +355,7 @@ public class PartitionChangeBuilder {
                 }
             }
         } else {
-            log.trace("Failed to find a new leader with current state: {}", this);
+            log.info("Failed to find a new leader with current state: {}", this);
         }
     }
 
