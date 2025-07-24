@@ -73,8 +73,6 @@ org.apache.kafka.server.common.MetadataVersionTest:
 - testRegisterBrokerRecordVersion
 - testShortVersion
 - testVersion
-org.apache.kafka.server.common.MetadataVersionValidatorTest:
-- testMetadataVersionValidator
 org.apache.kafka.server.common.ProducerIdsBlockTest:
 - testClaimNextId
 - testDynamicBlock
