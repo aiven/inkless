@@ -410,6 +410,10 @@ org.apache.kafka.tools.ProducerPerformanceTest:
 - testStatsCorrectness
 - testStatsInitializationWithLargeNumRecords
 - testUnexpectedArg
+- testWarmupNegativeRecordsNormalTest
+- testWarmupNumberOfSuccessfulSendAndClose
+- testWarmupRecordsFractionalValue
+- testWarmupRecordsString
 org.apache.kafka.tools.PushHttpMetricsReporterTest:
 - testClientError
 - testConfigureBadUrl
