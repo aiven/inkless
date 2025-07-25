@@ -37,5 +37,11 @@ Configuration:
       - name: org.apache.kafka
         level: WARN
 
-      - name: io.aiven.inkless
+      - name: org.apache.kafka.clients.Metadata
         level: DEBUG
+
+      - name: org.apache.kafka.controller.PartitionChangeBuilder
+        level: TRACE
+
+      - name: io.aiven.inkless
+        level: WARN

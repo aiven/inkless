@@ -555,6 +555,9 @@ public class KafkaClusterTestKit implements AutoCloseable {
         for (Entry<Integer, BrokerServer> entry : brokers.entrySet()) {
             int brokerId = entry.getKey();
             BrokerServer broker = entry.getValue();
+            if (broker.isShutdown()) {
+                continue;
+            }
             ListenerName listenerName = nodes.brokerListenerName();
             int port = broker.boundPort(listenerName);
             if (port <= 0) {

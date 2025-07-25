@@ -39,6 +39,7 @@ import org.apache.kafka.common.serialization.ByteArrayDeserializer;
 import org.apache.kafka.common.serialization.ByteArraySerializer;
 import org.apache.kafka.common.test.KafkaClusterTestKit;
 import org.apache.kafka.common.test.TestKitNodes;
+import org.apache.kafka.controller.Controller;
 import org.apache.kafka.coordinator.group.GroupCoordinatorConfig;
 
 import org.junit.jupiter.api.AfterEach;
@@ -92,12 +93,12 @@ public class InklessClusterTest {
         pgContainer.createDatabase(testInfo);
 
         final TestKitNodes nodes = new TestKitNodes.Builder()
-            .setCombined(true)
-            .setNumBrokerNodes(2)
+            .setCombined(false)
+            .setNumBrokerNodes(3)
             .setNumControllerNodes(1)
             .build();
         cluster = new KafkaClusterTestKit.Builder(nodes)
-            .setConfigProp(GroupCoordinatorConfig.OFFSETS_TOPIC_REPLICATION_FACTOR_CONFIG, "1")
+            .setConfigProp(GroupCoordinatorConfig.OFFSETS_TOPIC_REPLICATION_FACTOR_CONFIG, "2")
             // PG control plane config
             .setConfigProp(InklessConfig.PREFIX + InklessConfig.CONTROL_PLANE_CLASS_CONFIG, PostgresControlPlane.class.getName())
             .setConfigProp(InklessConfig.PREFIX + InklessConfig.CONTROL_PLANE_PREFIX + PostgresControlPlaneConfig.CONNECTION_STRING_CONFIG, pgContainer.getJdbcUrl())
@@ -116,8 +117,11 @@ public class InklessClusterTest {
             .setConfigProp(InklessConfig.PREFIX + InklessConfig.CONSUME_CACHE_BLOCK_BYTES_CONFIG, 16 * 1024)
             .build();
         cluster.format();
-        cluster.startup();
-        cluster.waitForReadyBrokers();
+        cluster.controllers().forEach((i, controller) -> controller.startup());
+        Controller controller = cluster.waitForActiveController();
+        cluster.brokers().get(0).startup();
+        cluster.brokers().get(1).startup();
+        controller.waitForReadyBrokers(2);
     }
 
     @AfterEach
@@ -183,6 +187,25 @@ public class InklessClusterTest {
         }
 
         assertEquals(numRecords, recordsProduced.get());
+        consumeWithManualAssignment(timestampType, clientConfigs, topicName, now, numRecords);
+        consumeWithSubscription(timestampType, clientConfigs, topicName, now, numRecords);
+
+        Controller controller = cluster.waitForActiveController();
+        cluster.brokers().get(2).startup();
+        controller.waitForReadyBrokers(3);
+        clientConfigs.put(CommonClientConfigs.BOOTSTRAP_SERVERS_CONFIG, cluster.bootstrapServers());
+
+        try (Admin admin = Admin.create(clientConfigs)) {
+            log.warn("Current topic state {}", admin.describeTopics(List.of(topicName)).allTopicNames().get());
+        }
+        cluster.brokers().get(0).shutdown();
+
+        try (Admin admin = Admin.create(clientConfigs)) {
+            log.warn("Current topic state {}", admin.describeTopics(List.of(topicName)).allTopicNames().get());
+        }
+
+        log.info("Finished rolling, testing consume again");
+
         consumeWithManualAssignment(timestampType, clientConfigs, topicName, now, numRecords);
         consumeWithSubscription(timestampType, clientConfigs, topicName, now, numRecords);
     }
@@ -269,7 +292,7 @@ public class InklessClusterTest {
 
     private static int poll(Consumer<byte[], byte[]> consumer, TimestampType timestampType, long now) {
         int recordsConsumed = 0;
-        ConsumerRecords<byte[], byte[]> poll = consumer.poll(Duration.ofSeconds(30));
+        ConsumerRecords<byte[], byte[]> poll = consumer.poll(Duration.ofSeconds(10));
         for (ConsumerRecord<byte[], byte[]> record : poll) {
             log.info("Received record {} at {}", recordsConsumed, record.timestamp());
             switch (timestampType) {
