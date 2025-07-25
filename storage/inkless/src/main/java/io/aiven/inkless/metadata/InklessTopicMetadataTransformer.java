@@ -21,6 +21,7 @@ import org.apache.kafka.common.Node;
 import org.apache.kafka.common.message.DescribeTopicPartitionsResponseData;
 import org.apache.kafka.common.message.MetadataResponseData;
 import org.apache.kafka.common.network.ListenerName;
+import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.metadata.LeaderAndIsr;
 
 import java.util.Collections;
@@ -60,6 +61,7 @@ public class InklessTopicMetadataTransformer {
             for (final var partition : topic.partitions()) {
                 partition.setLeaderId(leaderForInklessPartitions);
                 final List<Integer> list = List.of(leaderForInklessPartitions);
+                partition.setErrorCode(Errors.NONE.code());
                 partition.setReplicaNodes(list);
                 partition.setIsrNodes(list);
                 partition.setOfflineReplicas(Collections.emptyList());
@@ -87,6 +89,7 @@ public class InklessTopicMetadataTransformer {
             for (final var partition : topic.partitions()) {
                 partition.setLeaderId(leaderForInklessPartitions);
                 final List<Integer> list = List.of(leaderForInklessPartitions);
+                partition.setErrorCode(Errors.NONE.code());
                 partition.setReplicaNodes(list);
                 partition.setIsrNodes(list);
                 partition.setEligibleLeaderReplicas(Collections.emptyList());
