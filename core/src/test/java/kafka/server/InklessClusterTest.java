@@ -20,6 +20,8 @@ import org.apache.kafka.clients.CommonClientConfigs;
 import org.apache.kafka.clients.admin.Admin;
 import org.apache.kafka.clients.admin.AdminClient;
 import org.apache.kafka.clients.admin.CreateTopicsResult;
+import org.apache.kafka.clients.admin.ElectLeadersResult;
+import org.apache.kafka.clients.admin.NewPartitionReassignment;
 import org.apache.kafka.clients.admin.NewTopic;
 import org.apache.kafka.clients.consumer.Consumer;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
@@ -32,6 +34,7 @@ import org.apache.kafka.clients.producer.KafkaProducer;
 import org.apache.kafka.clients.producer.Producer;
 import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.clients.producer.ProducerRecord;
+import org.apache.kafka.common.ElectionType;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.config.TopicConfig;
 import org.apache.kafka.common.record.TimestampType;
@@ -59,6 +62,8 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Stream;
@@ -201,6 +206,15 @@ public class InklessClusterTest {
         cluster.brokers().get(0).shutdown();
 
         try (Admin admin = Admin.create(clientConfigs)) {
+            log.warn("Current topic state {}", admin.describeTopics(List.of(topicName)).allTopicNames().get());
+            TopicPartition tp = new TopicPartition(topicName, 0);
+            var alterPartitionReassignmentsResult = admin.alterPartitionReassignments(Map.of(
+                    tp, Optional.of(new NewPartitionReassignment(List.of(1)))
+            ));
+            log.warn("Altered partition assignments {}", alterPartitionReassignmentsResult.values().get(tp).get());
+            log.warn("Current topic state {}", admin.describeTopics(List.of(topicName)).allTopicNames().get());
+            ElectLeadersResult uncleanElection = admin.electLeaders(ElectionType.UNCLEAN, Set.of(tp));
+            log.warn("Elected unclean leader {}", uncleanElection.partitions().get().get(tp));
             log.warn("Current topic state {}", admin.describeTopics(List.of(topicName)).allTopicNames().get());
         }
 
