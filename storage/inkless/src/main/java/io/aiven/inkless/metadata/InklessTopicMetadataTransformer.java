@@ -21,9 +21,7 @@ import org.apache.kafka.common.Node;
 import org.apache.kafka.common.message.DescribeTopicPartitionsResponseData;
 import org.apache.kafka.common.message.MetadataResponseData;
 import org.apache.kafka.common.network.ListenerName;
-import org.apache.kafka.metadata.LeaderAndIsr;
 
-import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
@@ -51,21 +49,6 @@ public class InklessTopicMetadataTransformer {
         final Iterable<MetadataResponseData.MetadataResponseTopic> topicMetadata
     ) {
         Objects.requireNonNull(topicMetadata, "topicMetadata cannot be null");
-
-        final int leaderForInklessPartitions = selectLeaderForInklessPartitions(listenerName, clientId);
-        for (final var topic : topicMetadata) {
-            if (!metadataView.isInklessTopic(topic.name())) {
-                continue;
-            }
-            for (final var partition : topic.partitions()) {
-                partition.setLeaderId(leaderForInklessPartitions);
-                final List<Integer> list = List.of(leaderForInklessPartitions);
-                partition.setReplicaNodes(list);
-                partition.setIsrNodes(list);
-                partition.setOfflineReplicas(Collections.emptyList());
-                partition.setLeaderEpoch(LeaderAndIsr.INITIAL_LEADER_EPOCH);
-            }
-        }
     }
 
     /**
@@ -77,24 +60,6 @@ public class InklessTopicMetadataTransformer {
         final DescribeTopicPartitionsResponseData responseData
     ) {
         Objects.requireNonNull(responseData, "responseData cannot be null");
-
-        final int leaderForInklessPartitions = selectLeaderForInklessPartitions(listenerName, clientId);
-        for (final var topic : responseData.topics()) {
-            if (!metadataView.isInklessTopic(topic.name())) {
-                continue;
-            }
-
-            for (final var partition : topic.partitions()) {
-                partition.setLeaderId(leaderForInklessPartitions);
-                final List<Integer> list = List.of(leaderForInklessPartitions);
-                partition.setReplicaNodes(list);
-                partition.setIsrNodes(list);
-                partition.setEligibleLeaderReplicas(Collections.emptyList());
-                partition.setLastKnownElr(Collections.emptyList());
-                partition.setOfflineReplicas(Collections.emptyList());
-                partition.setLeaderEpoch(LeaderAndIsr.INITIAL_LEADER_EPOCH);
-            }
-        }
     }
 
     /**
