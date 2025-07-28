@@ -316,6 +316,8 @@ org.apache.kafka.clients.consumer.ShareConsumerTest:
 - testDeliveryCountDifferentBehaviorWhenClosingSessionWithExplicitAcknowledgement
 - testDeliveryCountNotIncreaseAfterSessionClose
 - testExplicitAcknowledgeCommitSuccess
+- testExplicitAcknowledgeOffsetThrowsNotException
+- testExplicitAcknowledgeOffsetThrowsParametersError
 - testExplicitAcknowledgeReleaseAccept
 - testExplicitAcknowledgeReleaseClose
 - testExplicitAcknowledgeReleasePollAccept
@@ -323,6 +325,7 @@ org.apache.kafka.clients.consumer.ShareConsumerTest:
 - testExplicitAcknowledgeThrowsNotInBatch
 - testExplicitAcknowledgementCommitAsync
 - testExplicitAcknowledgementCommitAsyncPartialBatch
+- testExplicitOverrideAcknowledgeCorruptedMessage
 - testFetchRecordLargerThanMaxPartitionFetchBytes
 - testHeaders
 - testHeadersSerializerDeserializer
