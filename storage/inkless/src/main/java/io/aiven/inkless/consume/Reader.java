@@ -73,7 +73,7 @@ public class Reader implements AutoCloseable {
             objectFetcher,
             Executors.newCachedThreadPool(new InklessThreadFactory("inkless-fetch-metadata-", false)),
             Executors.newCachedThreadPool(new InklessThreadFactory("inkless-fetch-planner-", false)),
-            Executors.newCachedThreadPool(new InklessThreadFactory("inkless-fetch-data-", false)),
+            Executors.newFixedThreadPool(32, new InklessThreadFactory("inkless-fetch-data-", false)),
             Executors.newCachedThreadPool(new InklessThreadFactory("inkless-fetch-completer-", false))
         );
     }

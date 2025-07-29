@@ -44,7 +44,7 @@ public class InfinispanCache implements ObjectCache {
     public static final String DIR_NAME = "inkless-cache";
 
     // Length of time the object is "leased" to the caller if not already present in the map
-    private static final int CACHE_WRITE_LOCK_TIMEOUT_MS = 10000;
+    private static final int CACHE_WRITE_LOCK_TIMEOUT_MS = 30000;
     private static final int CACHE_WRITE_BACKOFF_EXP_BASE = 2;
     private static final double CACHE_WRITE_BACKOFF_JITTER = 0.2;
     private final ExponentialBackoff backoff;
@@ -100,6 +100,10 @@ public class InfinispanCache implements ObjectCache {
             .storage(StorageType.HEAP)
             .maxCount(maxCacheSize)
             .whenFull(EvictionStrategy.REMOVE);
+        config.locking()
+            .useLockStriping(true)
+            .lockAcquisitionTimeout(20, TimeUnit.SECONDS)
+            .concurrencyLevel(500);  // 5 times * 100 concurrent threads
         // There is no explicit way to define how much space the cache can use on disk,
         // there are only two proxies: lifespan (fixed time to keep an entry)
         // and maxIdle (how long to keep it without being accessed).
