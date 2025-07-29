@@ -99,6 +99,8 @@ org.apache.kafka.server.log.remote.metadata.storage.serialization.RemoteLogSegme
 org.apache.kafka.server.log.remote.quota.RLMQuotaManagerTest:
 - testQuotaExceeded
 - testQuotaUpdate
+org.apache.kafka.server.log.remote.quota.RLMQuotaMetricsTest:
+- testNewSensorWhenExpired
 org.apache.kafka.server.log.remote.storage.ClassLoaderAwareRemoteStorageManagerTest:
 - testWithClassLoader
 org.apache.kafka.server.log.remote.storage.LocalTieredStorageTest:
