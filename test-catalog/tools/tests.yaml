@@ -737,6 +737,13 @@ org.apache.kafka.tools.consumer.group.SaslClientsWithInvalidCredentialsTest:
 - testConsumerGroupServiceWithAuthenticationFailure
 - testConsumerGroupServiceWithAuthenticationSuccess
 org.apache.kafka.tools.consumer.group.ShareGroupCommandTest:
+- testAlterShareGroupAllTopicsToDatetimeSuccess
+- testAlterShareGroupFailureFailureWithNonExistentTopic
+- testAlterShareGroupMultipleTopicsSuccess
+- testAlterShareGroupOffsetsArgsFailureWithoutResetOffsetsArgs
+- testAlterShareGroupOffsetsFailureWithNoneEmptyGroup
+- testAlterShareGroupOffsetsFailureWithoutTopic
+- testAlterShareGroupToLatestSuccess
 - testDeleteShareGroupOffsets
 - testDeleteShareGroupOffsetsArgsWithoutGroup
 - testDeleteShareGroupOffsetsArgsWithoutTopic
@@ -764,6 +771,7 @@ org.apache.kafka.tools.consumer.group.ShareGroupCommandTest:
 - testListShareGroupsWithStates
 - testListWithUnrecognizedOption
 - testPrintEmptyGroupState
+- testResetOffsetsDryRunSuccess
 org.apache.kafka.tools.consumer.group.share.ShareGroupStateMessageFormatterTest:
 - testMessageFormatter
 - testShareGroupStateMessageFormatterException

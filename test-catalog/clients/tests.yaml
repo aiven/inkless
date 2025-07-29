@@ -2142,6 +2142,7 @@ org.apache.kafka.clients.consumer.internals.ShareConsumeRequestManagerTest:
 - testAcknowledgementCommitCallbackMultiplePartitionCommitAsync
 - testBatchingAcknowledgeRequestStates
 - testCallbackHandlerConfig
+- testCloseInternalClosesShareFetchMetricsManager
 - testCloseShouldBeIdempotent
 - testCloseWithSubscriptionChange
 - testCommitAsync
@@ -2238,7 +2239,9 @@ org.apache.kafka.clients.consumer.internals.ShareFetchCollectorTest:
 - testFetchWithUnknownLeaderEpoch
 - testFetchWithUnknownServerError
 org.apache.kafka.clients.consumer.internals.ShareFetchMetricsManagerTest:
+- testAcknowledgements
 - testBytesFetched
+- testCloseRemovesAllSensors
 - testLatency
 - testNodeLatency
 - testRecordsFetched
