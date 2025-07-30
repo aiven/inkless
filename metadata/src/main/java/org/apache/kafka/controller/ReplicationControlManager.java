@@ -731,7 +731,7 @@ public class ReplicationControlManager {
         Map<String, String> creationConfigs = translateCreationConfigs(topic.configs());
         Map<Integer, PartitionRegistration> newParts = new HashMap<>();
 
-        boolean inklessEnabled = Boolean.parseBoolean(creationConfigs.getOrDefault(INKLESS_ENABLE_CONFIG, "" + defaultInklessEnable))
+        boolean inklessEnabled = Boolean.parseBoolean(creationConfigs.getOrDefault(INKLESS_ENABLE_CONFIG, String.valueOf(defaultInklessEnable)))
             && !Topic.isInternal(topic.name());
         if (inklessEnabled) {
             if (Math.abs(topic.replicationFactor()) != 1) {
@@ -858,7 +858,7 @@ public class ReplicationControlManager {
         records.add(new ApiMessageAndVersion(new TopicRecord().
             setName(topic.name()).
             setTopicId(topicId), (short) 0));
-        List<ApiMessageAndVersion> validConfigRecords = validConfigRecords(topic, configRecords);
+        List<ApiMessageAndVersion> validConfigRecords = validConfigRecords(topic, configRecords, inklessEnabled);
         // ConfigRecords go after TopicRecord but before PartitionRecord(s).
         records.addAll(validConfigRecords);
         for (Entry<Integer, PartitionRegistration> partEntry : newParts.entrySet()) {
@@ -871,7 +871,7 @@ public class ReplicationControlManager {
         return ApiError.NONE;
     }
 
-    private static List<ApiMessageAndVersion> validConfigRecords(CreatableTopic topic, List<ApiMessageAndVersion> configRecords) {
+    private List<ApiMessageAndVersion> validConfigRecords(CreatableTopic topic, List<ApiMessageAndVersion> configRecords, boolean inklessEnabled) {
         final List<ApiMessageAndVersion> validConfigRecord = new ArrayList<>();
         boolean inklessSet = false;
         for (ApiMessageAndVersion configRecord: configRecords) {
@@ -879,12 +879,15 @@ public class ReplicationControlManager {
             try {
                 record = (ConfigRecord) configRecord.message();
             } catch (ClassCastException e) {
+                log.warn("Received unexpected message type {} for config record: {}",
+                    configRecord.message().getClass().getName(), configRecord.message());
                 continue;
             }
-            if (record.name().equals(INKLESS_ENABLE_CONFIG) && Topic.isInternal(topic.name())) {
+            if (record.name().equals(INKLESS_ENABLE_CONFIG)) {
+                // Ensure that inkless enabled config is disabled if it happens to be an internal topic.
                 ApiMessageAndVersion message = new ApiMessageAndVersion(new ConfigRecord()
                     .setName(INKLESS_ENABLE_CONFIG)
-                    .setValue("false")
+                    .setValue(String.valueOf(inklessEnabled))
                     .setResourceName(topic.name())
                     .setResourceType(ResourceType.TOPIC.code()), (short) 0);
                 validConfigRecord.add(message);
@@ -894,10 +897,12 @@ public class ReplicationControlManager {
                 validConfigRecord.add(configRecord);
             }
         }
-        if (Topic.isInternal(topic.name()) && !inklessSet) {
+        // Ensure that inkless config is always set if inkless is enabled.
+        // This allows to answer if inkless is enabled for a topic from the KRaft metadata directly.
+        if (!inklessSet && inklessEnabled) {
             validConfigRecord.add(new ApiMessageAndVersion(new ConfigRecord()
                 .setName(INKLESS_ENABLE_CONFIG)
-                .setValue("false")
+                .setValue(String.valueOf(true))
                 .setResourceName(topic.name())
                 .setResourceType(ResourceType.TOPIC.code()), (short) 0));
         }

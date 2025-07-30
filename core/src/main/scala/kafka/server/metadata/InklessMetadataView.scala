@@ -50,7 +50,7 @@ class InklessMetadataView(val metadataCache: KRaftMetadataCache, val defaultConf
   }
 
   override def isInklessTopic(topicName: String): Boolean = {
-    metadataCache.isInklessTopic(topicName, defaultConfig)
+    metadataCache.isInklessTopic(topicName)
   }
 
   override def getTopicConfig(topicName: String): Properties = {

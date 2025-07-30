@@ -693,16 +693,90 @@ public class ReplicationControlManagerTest {
         assertEquals(expectedResponse4, result4.response());
     }
 
-    @Test
-    public void testCreateInklessTopic() {
-        ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder().build();
+    @ParameterizedTest
+    @CsvSource({
+        "true,false",
+        "false,false"
+    })
+    public void testNotCreateInklessTopic(boolean logInklessEnableServerConfig, String inklessEnableTopicConfig) {
+        ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder().setDefaultInklessEnable(logInklessEnableServerConfig).build();
         ReplicationControlManager replicationControl = ctx.replicationControl;
         // Given a kafka topic with inkless enabled
         CreateTopicsRequestData request = new CreateTopicsRequestData();
         CreateTopicsRequestData.CreatableTopicConfigCollection creatableTopicConfigs = new CreateTopicsRequestData.CreatableTopicConfigCollection();
-        creatableTopicConfigs.add(new CreateTopicsRequestData.CreatableTopicConfig()
-            .setName(INKLESS_ENABLE_CONFIG)
-            .setValue("true"));
+        if (inklessEnableTopicConfig != null) {
+            creatableTopicConfigs.add(new CreateTopicsRequestData.CreatableTopicConfig()
+                .setName(INKLESS_ENABLE_CONFIG)
+                .setValue(inklessEnableTopicConfig));
+        }
+        request.topics().add(new CreatableTopic().setName("foo").
+            setNumPartitions(-1).setReplicationFactor((short) -1)
+            .setConfigs(creatableTopicConfigs));
+
+        // Given all brokers unfenced
+        ControllerRequestContext requestContext = anonymousContextFor(ApiKeys.CREATE_TOPICS);
+        ctx.registerBrokers(0, 1, 2);
+        ctx.unfenceBrokers(0, 1, 2);
+
+        // When creating a topic with inkless enabled
+        ControllerResult<CreateTopicsResponseData> result =
+            replicationControl.createTopics(requestContext, request, Collections.singleton("foo"));
+        // Then the topic creation should succeed, regardless of the RF
+        CreateTopicsResponseData expectedResponse = new CreateTopicsResponseData();
+        expectedResponse.topics().add(new CreatableTopicResult().setName("foo").
+            setNumPartitions(1).setReplicationFactor((short) 3).
+            setErrorMessage(null).setErrorCode((short) 0).
+            setTopicId(result.response().topics().find("foo").topicId()));
+        assertEquals(expectedResponse, withoutConfigs(result.response()));
+        final List<ConfigRecord> inklessConfigRecords = result.records().stream()
+            .filter(m -> m.message() instanceof ConfigRecord)
+            .map(m -> (ConfigRecord) m.message())
+            .filter(c -> c.name().equals(INKLESS_ENABLE_CONFIG))
+            .toList();
+        assertEquals(1, inklessConfigRecords.size());
+        // Then always inkless is disabled
+        assertTrue(inklessConfigRecords.stream().allMatch(c -> c.value().equals("false")));
+
+        // Given the topic is registered
+        ctx.replay(result.records());
+        assertEquals(new PartitionRegistration.Builder().setReplicas(new int[] {1, 2, 0}).
+                setDirectories(new Uuid[] {
+                    Uuid.fromString("TESTBROKER00001DIRAAAA"),
+                    Uuid.fromString("TESTBROKER00002DIRAAAA"),
+                    Uuid.fromString("TESTBROKER00000DIRAAAA")
+                }).
+                setIsr(new int[] {1, 2, 0}).setLeader(1).setLeaderRecoveryState(LeaderRecoveryState.RECOVERED).setLeaderEpoch(0).setPartitionEpoch(0).build(),
+            replicationControl.getPartition(
+                ((TopicRecord) result.records().get(0).message()).topicId(), 0));
+
+        // When creating a topic with inkless enabled and already exists
+        ControllerResult<CreateTopicsResponseData> result4 =
+            replicationControl.createTopics(requestContext, request, Collections.singleton("foo"));
+        CreateTopicsResponseData expectedResponse4 = new CreateTopicsResponseData();
+        // Then the topic creation should fail with TOPIC_ALREADY_EXISTS error
+        expectedResponse4.topics().add(new CreatableTopicResult().setName("foo").
+            setErrorCode(Errors.TOPIC_ALREADY_EXISTS.code()).
+            setErrorMessage("Topic 'foo' already exists."));
+        assertEquals(expectedResponse4, result4.response());
+    }
+
+    @ParameterizedTest
+    @CsvSource({
+        "true,true",
+        "false,true",
+        "true,"
+    })
+    public void testCreateInklessTopic(boolean logInklessEnableServerConfig, String inklessEnableTopicConfig) {
+        ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder().setDefaultInklessEnable(logInklessEnableServerConfig).build();
+        ReplicationControlManager replicationControl = ctx.replicationControl;
+        // Given a kafka topic with inkless enabled
+        CreateTopicsRequestData request = new CreateTopicsRequestData();
+        CreateTopicsRequestData.CreatableTopicConfigCollection creatableTopicConfigs = new CreateTopicsRequestData.CreatableTopicConfigCollection();
+        if (inklessEnableTopicConfig != null) {
+            creatableTopicConfigs.add(new CreateTopicsRequestData.CreatableTopicConfig()
+                .setName(INKLESS_ENABLE_CONFIG)
+                .setValue(inklessEnableTopicConfig));
+        }
         request.topics().add(new CreatableTopic().setName("foo").
             setNumPartitions(-1).setReplicationFactor((short) -1)
             .setConfigs(creatableTopicConfigs));
@@ -748,6 +822,14 @@ public class ReplicationControlManagerTest {
             setErrorMessage(null).setErrorCode((short) 0).
             setTopicId(result3.response().topics().find("foo").topicId()));
         assertEquals(expectedResponse3, withoutConfigs(result3.response()));
+        final List<ConfigRecord> inklessConfigRecords = result3.records().stream()
+            .filter(m -> m.message() instanceof ConfigRecord)
+            .map(m -> (ConfigRecord) m.message())
+            .filter(c -> c.name().equals(INKLESS_ENABLE_CONFIG))
+            .toList();
+        assertEquals(1, inklessConfigRecords.size());
+        // Then always inkless is disabled
+        assertTrue(inklessConfigRecords.stream().allMatch(c -> c.value().equals("true")));
 
         // Given the topic is registered
         ctx.replay(result3.records());
@@ -858,7 +940,7 @@ public class ReplicationControlManagerTest {
             .map(m -> (ConfigRecord) m.message())
             .filter(c -> c.name().equals(INKLESS_ENABLE_CONFIG))
             .toList();
-        assertTrue(inklessConfigRecords.size() == 1);
+        assertEquals(1, inklessConfigRecords.size());
         // Then always inkless is disabled
         assertTrue(inklessConfigRecords.stream().allMatch(c -> c.value().equals("false")));
     }
