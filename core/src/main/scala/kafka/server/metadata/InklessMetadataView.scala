@@ -19,7 +19,7 @@
 package kafka.server.metadata
 
 import io.aiven.inkless.control_plane.MetadataView
-import org.apache.kafka.common.config.ConfigResource
+import org.apache.kafka.common.config.TopicConfig
 import org.apache.kafka.common.network.ListenerName
 import org.apache.kafka.common.{Node, TopicIdPartition, Uuid}
 
@@ -27,7 +27,6 @@ import java.util.Properties
 import java.util.function.Supplier
 import java.util.stream.{Collectors, IntStream}
 import java.{lang, util}
-
 import scala.jdk.CollectionConverters._
 
 class InklessMetadataView(val metadataCache: KRaftMetadataCache, val defaultConfig: Supplier[util.Map[String, Object]]) extends MetadataView {
@@ -51,11 +50,11 @@ class InklessMetadataView(val metadataCache: KRaftMetadataCache, val defaultConf
   }
 
   override def isInklessTopic(topicName: String): Boolean = {
-    metadataCache.isInklessTopic(topicName, defaultConfig)
+    metadataCache.topicConfig(topicName).getProperty(TopicConfig.INKLESS_ENABLE_CONFIG, "false").toBoolean
   }
 
   override def getTopicConfig(topicName: String): Properties = {
-    metadataCache.config(new ConfigResource(ConfigResource.Type.TOPIC, topicName))
+    metadataCache.topicConfig(topicName)
   }
 
   override def getInklessTopicPartitions: util.Set[TopicIdPartition] = {
