@@ -22,34 +22,32 @@ import org.junit.jupiter.api.{BeforeEach, Test}
 import org.junit.jupiter.api.Assertions._
 import org.mockito.Mockito._
 
-import java.util.{HashMap => JHashMap}
+import java.util
 import java.util.function.Supplier
-import scala.collection.Map
-import scala.jdk.CollectionConverters.MapHasAsScala
 
 class InklessMetadataViewTest {
   private var metadataCache: KRaftMetadataCache = _
-  private var configSupplier: Supplier[Map[String, Object]] = _
+  private var configSupplier: Supplier[util.Map[String, Object]] = _
   private var metadataView: InklessMetadataView = _
 
   @BeforeEach
   def setup(): Unit = {
     metadataCache = mock(classOf[KRaftMetadataCache])
-    configSupplier = mock(classOf[Supplier[Map[String, AnyRef]]])
+    configSupplier = mock(classOf[Supplier[util.Map[String, AnyRef]]])
     metadataView = new InklessMetadataView(metadataCache, configSupplier)
   }
 
   @Test
   def testGetDefaultConfigFiltersNullValues(): Unit = {
     // Setup a map with some null values
-    val originalConfig = new JHashMap[String, Object]()
+    val originalConfig = new util.HashMap[String, Object]()
     originalConfig.put("key1", "value1")
     originalConfig.put("key2", null)
     originalConfig.put("key3", Integer.valueOf(42))
     originalConfig.put("key4", null)
 
     // Configure the mock to return our test map
-    when(configSupplier.get()).thenReturn(originalConfig.asScala)
+    when(configSupplier.get()).thenReturn(originalConfig)
 
     // Call the method under test
     val filteredConfig = metadataView.getDefaultConfig
@@ -67,12 +65,12 @@ class InklessMetadataViewTest {
   @Test
   def testGetDefaultConfigWithNoNullValues(): Unit = {
     // Setup a map with no null values
-    val originalConfig = new JHashMap[String, Object]()
+    val originalConfig = new util.HashMap[String, Object]()
     originalConfig.put("key1", "value1")
     originalConfig.put("key2", "value2")
 
     // Configure the mock to return our test map
-    when(configSupplier.get()).thenReturn(originalConfig.asScala)
+    when(configSupplier.get()).thenReturn(originalConfig)
 
     // Call the method under test
     val filteredConfig = metadataView.getDefaultConfig
@@ -86,10 +84,10 @@ class InklessMetadataViewTest {
   @Test
   def testGetDefaultConfigWithEmptyMap(): Unit = {
     // Setup an empty map
-    val originalConfig = new JHashMap[String, Object]()
+    val originalConfig = new util.HashMap[String, Object]()
 
     // Configure the mock to return our test map
-    when(configSupplier.get()).thenReturn(originalConfig.asScala)
+    when(configSupplier.get()).thenReturn(originalConfig)
 
     // Call the method under test
     val filteredConfig = metadataView.getDefaultConfig

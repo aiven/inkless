@@ -17,8 +17,6 @@
 
 package kafka.server.metadata;
 
-import kafka.server.MetadataCache;
-
 import org.apache.kafka.common.config.TopicConfig;
 import org.apache.kafka.common.metadata.ConfigRecord;
 import org.apache.kafka.common.protocol.ApiMessage;
@@ -32,12 +30,10 @@ import org.apache.kafka.server.common.KRaftVersion;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 
-import java.util.Collections;
 import java.util.List;
-import java.util.function.Supplier;
+import java.util.Map;
 
-import scala.collection.Map;
-import scala.jdk.javaapi.CollectionConverters;
+import io.aiven.inkless.control_plane.MetadataView;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
@@ -45,25 +41,21 @@ class InklessKRaftMetadataCacheTest {
 
     @ParameterizedTest
     @CsvSource({
-        "__consumer_offsets,false,false", "__consumer_offsets,true,false",
-        "__transaction_state,false,false", "__transaction_state,true,false",
-        "__share_group_state,false,false", "__share_group_state,true,false",
-        "__cluster_metadata,false,false", "__cluster_metadata,true,false",
-        "__internal_topic_default,false,false", "__internal_topic_default,true,true",
-        "__internal_topic_enabled,false,true", "__internal_topic_enabled,true,true",
-        "__internal_topic_disabled,false,false", "__internal_topic_disabled,true,false",
-        "regular_topic_default,false,false", "regular_topic_default,true,true",
-        "regular_topic_enabled,false,true", "regular_topic_enabled,true,true",
-        "regular_topic_disabled,false,false", "regular_topic_disabled,true,false",
+        "__consumer_offsets,false",
+        "__transaction_state,false",
+        "__share_group_state,false",
+        "__cluster_metadata,false",
+        "__internal_topic_default,false",
+        "__internal_topic_enabled,true",
+        "__internal_topic_disabled,false",
+        "regular_topic_default,false",
+        "regular_topic_enabled,true",
+        "regular_topic_disabled,false",
     })
-    void isInklessTopic(final String topicName, final boolean defaultInklessEnable, final boolean expectedIsInkless) {
-        Supplier<Map<String, Object>> defaultConfig = () -> CollectionConverters.asScala(
-            defaultInklessEnable ?
-                Collections.singletonMap(TopicConfig.INKLESS_ENABLE_CONFIG, "true") :
-                Collections.emptyMap()
-        );
+    void isInklessTopic(final String topicName, final boolean expectedIsInkless) {
         // Given a cache with a couple of inkless topics
-        final KRaftMetadataCache cache = MetadataCache.kRaftMetadataCache(1, () -> KRaftVersion.KRAFT_VERSION_0);
+        final KRaftMetadataCache cache = new KRaftMetadataCache(1, () -> KRaftVersion.KRAFT_VERSION_0);
+        final MetadataView metadataView = new InklessMetadataView(cache, Map::of);
         final List<ApiMessage> configRecords = List.of(
             new ConfigRecord()
                 .setResourceType(ResourceType.TOPIC.code())
@@ -88,7 +80,7 @@ class InklessKRaftMetadataCacheTest {
         );
         updateCache(cache, configRecords);
         // When checking if a topic is inkless, then the expected result is returned
-        assertEquals(expectedIsInkless, cache.isInklessTopic(topicName, defaultConfig));
+        assertEquals(expectedIsInkless, metadataView.isInklessTopic(topicName));
     }
 
     // Similar to {@link kafka.server.MetadataCacheTest#updateCache}

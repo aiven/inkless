@@ -361,7 +361,7 @@ class ControllerServer(
       ))
 
       // Inkless metadata view needed to filter out inkless topics from offline/leadership metrics
-      val inklessMetadataView = new InklessMetadataView(metadataCache, () => config.extractLogConfigMap.asScala)
+      val inklessMetadataView = new InklessMetadataView(metadataCache, () => config.extractLogConfigMap)
       // Set up the metrics publisher.
       metadataPublishers.add(new ControllerMetadataMetricsPublisher(
         sharedServer.controllerServerMetrics,

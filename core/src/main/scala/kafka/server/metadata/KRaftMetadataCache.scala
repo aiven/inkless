@@ -21,7 +21,7 @@ import kafka.server.{CachedControllerId, KRaftCachedControllerId, MetadataCache}
 import kafka.utils.Logging
 import org.apache.kafka.admin.BrokerMetadata
 import org.apache.kafka.common._
-import org.apache.kafka.common.config.{ConfigResource, TopicConfig}
+import org.apache.kafka.common.config.ConfigResource
 import org.apache.kafka.common.errors.InvalidTopicException
 import org.apache.kafka.common.internals.Topic
 import org.apache.kafka.common.message.DescribeTopicPartitionsResponseData.{Cursor, DescribeTopicPartitionsResponsePartition, DescribeTopicPartitionsResponseTopic}
@@ -150,7 +150,7 @@ class KRaftMetadataCache(
    * @param topicName                   The name of the topic.
    * @param listenerName                The listener name.
    * @param startIndex                  The smallest index of the partitions to be included in the result.
-   * @param upperIndex                  The upper limit of the index of the partitions to be included in the result.
+   * @param maxCount                    The upper limit of the index of the partitions to be included in the result.
    *                                    Note that, the upper index can be larger than the largest partition index in
    *                                    this topic.
    * @return                            A collection of topic partition metadata and next partition index (-1 means
@@ -554,16 +554,6 @@ class KRaftMetadataCache(
       finalizedFeatures,
       image.highestOffsetAndEpoch().offset,
       true)
-  }
-
-  def isInklessTopic(topic: String, defaultConfig: Supplier[Map[String, AnyRef]]): Boolean = {
-    val topicConfigs = topicConfig(topic)
-    // avoid instantiating LogConfig as it is expensive
-    val defaultInklessEnable = defaultConfig.get().getOrElse(TopicConfig.INKLESS_ENABLE_CONFIG, "false").toString.toBoolean
-    val inklessEnabled = if (topicConfigs.containsKey(TopicConfig.INKLESS_ENABLE_CONFIG)) topicConfigs.getProperty(TopicConfig.INKLESS_ENABLE_CONFIG, "false").toBoolean else defaultInklessEnable
-    val isNotInternalTopic = !Topic.isInternal(topic)
-    val isNotClusterMetaTopic = topic != Topic.CLUSTER_METADATA_TOPIC_NAME
-    isNotInternalTopic && isNotClusterMetaTopic && inklessEnabled
   }
 }
 

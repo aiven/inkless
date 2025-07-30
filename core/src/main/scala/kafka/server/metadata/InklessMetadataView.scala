@@ -20,22 +20,21 @@ package kafka.server.metadata
 
 import io.aiven.inkless.control_plane.MetadataView
 import org.apache.kafka.admin.BrokerMetadata
-import org.apache.kafka.common.config.ConfigResource
+import org.apache.kafka.common.config.TopicConfig
 import org.apache.kafka.common.{TopicIdPartition, Uuid}
 
 import java.util.Properties
 import java.util.function.Supplier
 import java.{lang, util}
-import scala.collection.Map
-import scala.jdk.CollectionConverters.{IterableHasAsJava, SetHasAsJava}
+import scala.jdk.CollectionConverters._
 
-class InklessMetadataView(val metadataCache: KRaftMetadataCache, val defaultConfig: Supplier[Map[String, AnyRef]]) extends MetadataView {
-  override def getDefaultConfig: util.Map[String, AnyRef] = {
+class InklessMetadataView(val metadataCache: KRaftMetadataCache, val defaultConfig: Supplier[util.Map[String, Object]]) extends MetadataView {
+  override def getDefaultConfig: util.Map[String, Object] = {
     // Filter out null values as they break LogConfig initialization using Properties.putAll
     val filtered = new util.HashMap[String, Object]()
-    defaultConfig.get()
-      .filter(_._2 != null)
-      .foreach(entry => filtered.put(entry._1, entry._2))
+    defaultConfig.get().entrySet().asScala
+      .filter(_.getValue != null)
+      .foreach(entry => filtered.put(entry.getKey, entry.getValue))
     filtered
   }
 
@@ -50,11 +49,11 @@ class InklessMetadataView(val metadataCache: KRaftMetadataCache, val defaultConf
   }
 
   override def isInklessTopic(topicName: String): Boolean = {
-    metadataCache.isInklessTopic(topicName, defaultConfig)
+    metadataCache.topicConfig(topicName).getProperty(TopicConfig.INKLESS_ENABLE_CONFIG, "false").toBoolean
   }
 
   override def getTopicConfig(topicName: String): Properties = {
-    metadataCache.config(new ConfigResource(ConfigResource.Type.TOPIC, topicName))
+    metadataCache.topicConfig(topicName)
   }
 
   override def getInklessTopicPartitions: util.Set[TopicIdPartition] = {
