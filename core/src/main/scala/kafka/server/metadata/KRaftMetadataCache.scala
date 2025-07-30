@@ -19,7 +19,7 @@ package kafka.server.metadata
 
 import kafka.utils.Logging
 import org.apache.kafka.common._
-import org.apache.kafka.common.config.{ConfigResource, TopicConfig}
+import org.apache.kafka.common.config.ConfigResource
 import org.apache.kafka.common.errors.InvalidTopicException
 import org.apache.kafka.common.internals.Topic
 import org.apache.kafka.common.message.DescribeTopicPartitionsResponseData.{Cursor, DescribeTopicPartitionsResponsePartition, DescribeTopicPartitionsResponseTopic}
@@ -148,7 +148,7 @@ class KRaftMetadataCache(
    * @param topicName                   The name of the topic.
    * @param listenerName                The listener name.
    * @param startIndex                  The smallest index of the partitions to be included in the result.
-   *                                    
+   *
    * @return                            A collection of topic partition metadata and next partition index (-1 means
    *                                    no next partition).
    */
@@ -474,16 +474,6 @@ class KRaftMetadataCache(
       image.features().metadataVersionOrThrow(),
       finalizedFeatures,
       image.highestOffsetAndEpoch().offset)
-  }
-
-  def isInklessTopic(topic: String, defaultConfig: Supplier[util.Map[String, AnyRef]]): Boolean = {
-    val topicConfigs = topicConfig(topic)
-    // avoid instantiating LogConfig as it is expensive
-    val defaultInklessEnable = defaultConfig.get().getOrDefault(TopicConfig.INKLESS_ENABLE_CONFIG, "false").toString.toBoolean
-    val inklessEnabled = if (topicConfigs.containsKey(TopicConfig.INKLESS_ENABLE_CONFIG)) topicConfigs.getProperty(TopicConfig.INKLESS_ENABLE_CONFIG, "false").toBoolean else defaultInklessEnable
-    val isNotInternalTopic = !Topic.isInternal(topic)
-    val isNotClusterMetaTopic = topic != Topic.CLUSTER_METADATA_TOPIC_NAME
-    isNotInternalTopic && isNotClusterMetaTopic && inklessEnabled
   }
 }
 
