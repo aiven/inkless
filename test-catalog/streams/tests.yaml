@@ -1767,6 +1767,7 @@ org.apache.kafka.streams.processor.internals.DefaultStateUpdaterTest:
 - shouldRecordMetrics
 - shouldRemoveActiveStatefulTaskFromFailedTasks
 - shouldRemoveActiveStatefulTaskFromRestoredActiveTasks
+- shouldRemoveMetricsWithoutInterference
 - shouldRemovePausedTask
 - shouldRemoveStandbyTaskFromFailedTasks
 - shouldRemoveStatelessTaskFromRestoredActiveTasks
