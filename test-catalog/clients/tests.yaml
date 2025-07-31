@@ -4523,6 +4523,7 @@ org.apache.kafka.common.security.authenticator.SaslAuthenticatorTest:
 - testServerDynamicJaasConfiguration
 - testServerLoginCallbackOverride
 - testServerLoginOverride
+- testServerSidePendingSendDuringReauthentication
 - testSslClientAuthDisabledForSaslSslListener
 - testSslClientAuthRequestedForSaslSslListener
 - testSslClientAuthRequestedOverriddenForSaslSslListener
