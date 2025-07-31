@@ -730,6 +730,7 @@ org.apache.kafka.tools.consumer.group.ResetConsumerGroupOffsetTest:
 - testResetOffsetsToLocalDateTime
 - testResetOffsetsToSpecificOffset
 - testResetOffsetsToZonedDateTime
+- testResetOffsetsWithOfflinePartitionNotInResetTarget
 - testResetOffsetsWithPartitionNoneLeader
 - testResetOffsetsWithPartitionNotExist
 - testResetWithUnrecognizedNewConsumerOption
