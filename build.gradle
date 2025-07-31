@@ -2406,6 +2406,7 @@ project(':storage:inkless') {
     implementation libs.hikariCP
     implementation libs.flyway
     implementation libs.flywayPostgres
+    implementation libs.httpclient
     implementation libs.jooq
     compileOnly libs.jooqMeta  // mostly to suppress compiler warnings, we don't use this at run time
     implementation libs.awsSdkS3
