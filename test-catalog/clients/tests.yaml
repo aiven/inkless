@@ -1094,9 +1094,9 @@ org.apache.kafka.clients.consumer.internals.AcknowledgementsTest:
 - testNoncontiguousBatches
 - testNoncontiguousGaps
 - testOptimiseBatches
-- testSingleAcknowledgementTypeExceedingLimit
-- testSingleAcknowledgementTypeWithGap
-- testSingleAcknowledgementTypeWithinLimit
+- testSingleAcknowledgeTypeExceedingLimit
+- testSingleAcknowledgeTypeWithGap
+- testSingleAcknowledgeTypeWithinLimit
 - testSingleGap
 - testSingleGapSingleState
 - testSingleStateMultiRecord
@@ -2171,6 +2171,7 @@ org.apache.kafka.clients.consumer.internals.ShareConsumeRequestManagerTest:
 - testPiggybackAcknowledgementsInFlight
 - testPiggybackAcknowledgementsOnInitialShareSessionError
 - testPiggybackAcknowledgementsOnInitialShareSessionErrorSubscriptionChange
+- testPiggybackAcknowledgementsOnInitialShareSession_ShareSessionNotFound
 - testResultHandlerCompleteIfEmpty
 - testResultHandlerOnCommitAsync
 - testResultHandlerOnCommitSync
