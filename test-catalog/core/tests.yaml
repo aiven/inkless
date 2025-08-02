@@ -2964,6 +2964,8 @@ kafka.server.share.SharePartitionManagerTest:
 - testToForgetPartitions
 - testZeroSizeShareSession
 kafka.server.share.SharePartitionTest:
+- inFlightStateCommitSuccessAndArchiveStateTransition
+- inFlightStateRollbackAndArchiveStateTransition
 - testAcknowledgeAfterAcquisitionLockTimeout
 - testAcknowledgeBatchAndOffsetPostLsoMovement
 - testAcknowledgeBatchPostLsoMovement
@@ -3042,6 +3044,8 @@ kafka.server.share.SharePartitionTest:
 - testAcquisitionLockTimeoutForBatchesPostStartOffsetMovement
 - testAcquisitionLockTimeoutForBatchesPostStartOffsetMovementToMiddleOfBatch
 - testAcquisitionLockTimeoutForBatchesPostStartOffsetMovementToStartOfBatch
+- testAcquisitionLockTimeoutWithConcurrentAcknowledgement
+- testAcquisitionLockTimeoutWithWriteStateRPCFailure
 - testCacheUpdateWhenBatchHasOngoingTransition
 - testCacheUpdateWhenOffsetStateHasOngoingTransition
 - testCanAcquireRecordsAfterAcceptAcknowledgement
@@ -3074,6 +3078,7 @@ kafka.server.share.SharePartitionTest:
 - testLsoMovementToEndOffsetWhereEndOffsetIsAvailable
 - testLsoMovementWithGapsInCachedStateMap
 - testLsoMovementWithGapsInCachedStateMapAndAcknowledgedBatch
+- testLsoMovementWithWriteStateRPCFailuresInAcknowledgement
 - testMaxDeliveryCountLimitExceededForRecordBatch
 - testMaxDeliveryCountLimitExceededForRecordsSubset
 - testMaxDeliveryCountLimitExceededForRecordsSubsetAndCachedStateNotCleared
