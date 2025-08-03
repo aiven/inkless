@@ -4515,6 +4515,7 @@ org.apache.kafka.common.security.authenticator.SaslAuthenticatorTest:
 - testMissingUsernameSaslPlain
 - testMultipleServerMechanisms
 - testPacketSizeTooBig
+- testReauthenticateWithLargeReauthValue
 - testRepeatedValidSaslPlainOverSsl
 - testSaslAuthenticationMaxReceiveSize
 - testSaslHandshakeRequestWithUnsupportedVersion
@@ -4553,6 +4554,7 @@ org.apache.kafka.common.security.authenticator.SaslServerAuthenticatorTest:
 - testSessionExpiresAtMaxReauthTime
 - testSessionExpiresAtTokenExpiry
 - testSessionExpiresAtTokenExpiryDespiteNoReauthIsSet
+- testSessionWontExpireWithLargeExpirationTime
 - testUnexpectedRequestTypeWithValidRequestHeader
 org.apache.kafka.common.security.kerberos.KerberosNameTest:
 - testInvalidRules
@@ -5281,6 +5283,7 @@ org.apache.kafka.common.utils.UtilsTest:
 - testLoadProps
 - testMax
 - testMin
+- testMsToNs
 - testMurmur2
 - testPropsToMap
 - testPropsToMapNonStringKey
