@@ -175,6 +175,9 @@ org.apache.kafka.tools.ConsumerPerformanceTest:
 - testDetailedHeaderMatchBody
 - testNonDetailedHeaderMatchBody
 org.apache.kafka.tools.DelegationTokenCommandTest:
+- testCheckArgsInvalidArgs
+- testCheckArgsMissingRequiredArgs
+- testCheckArgsValidOperations
 - testDelegationTokenRequests
 org.apache.kafka.tools.DeleteRecordsCommandTest:
 - testCommand
