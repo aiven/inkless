@@ -73,6 +73,12 @@ org.apache.kafka.connect.json.JsonConverterTest:
 - testConnectSchemaMetadataTranslation
 - testJsonSchemaCacheSizeFromConfigFile
 - testJsonSchemaMetadataTranslation
+- testNullSchemaContentWithWrongConnectDataValue
+- testSchemaContentInValidSchema
+- testSchemaContentIsEmptyString
+- testSchemaContentIsNull
+- testSchemaContentLooksLikeSchema
+- testSchemaContentValidSchema
 - testStringHeaderToJson
 - testVersionRetrievedFromAppInfoParser
 - timeToConnect
