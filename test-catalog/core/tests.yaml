@@ -3131,6 +3131,7 @@ kafka.server.share.SharePartitionTest:
 - testNextFetchOffsetWithMultipleConsumers
 - testNumberOfWriteCallsOnUpdates
 - testReacquireSubsetWithAnotherMember
+- testRecordArchivedWithWriteStateRPCFailure
 - testRecordFetchLockRatioMetric
 - testReleaseAcknowledgedMultipleSubsetRecordBatch
 - testReleaseAcquiredRecordsAfterDifferentAcknowledges
