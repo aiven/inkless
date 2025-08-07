@@ -2781,6 +2781,8 @@ org.apache.kafka.streams.processor.internals.StreamThreadTest:
 - shouldUpdateStandbyTask
 - testGetTopicPartitionInfo
 - testNamedTopologyWithStreamsProtocol
+- testStreamsProtocolIncorrectlyPartitionedTopics
+- testStreamsProtocolMissingSourceTopicRecovery
 - testStreamsProtocolRunOnceWithProcessingThreads
 - testStreamsProtocolRunOnceWithProcessingThreadsMissingSourceTopic
 - testStreamsProtocolRunOnceWithoutProcessingThreads
