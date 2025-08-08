@@ -1686,45 +1686,38 @@ class ReplicaManager(val config: KafkaConfig,
                     quota: ReplicaQuota,
                     responseCallback: Seq[(TopicIdPartition, FetchPartitionData)] => Unit): Unit = {
     val (inklessFetchInfos, classicFetchInfos) = fetchInfos.partition { case (k, _) => isInklessTopic(k.topic()) }
-    val inklessParams = fetchParamsWithNewMaxBytes(params, inklessFetchInfos.size.toFloat / fetchInfos.size.toFloat)
     val classicParams = fetchParamsWithNewMaxBytes(params, classicFetchInfos.size.toFloat / fetchInfos.size.toFloat)
-
-    val inklessResponsesFuture = fetchInklessMessages(inklessParams, inklessFetchInfos)
 
     def responseCallbackWithInkless(classicFetchResult: Seq[(TopicIdPartition, FetchPartitionData)],
                                     classicBytesReadable: Long,
                                     classicFetchPartitionStatus: Seq[(TopicIdPartition, FetchPartitionStatus)]): Unit = {
-      inklessResponsesFuture.whenComplete { case (inklessFetchResult, _) =>
-        val inklessBytesReadable = inklessFetchResult.map { case (_, partitionData) => partitionData.records.sizeInBytes() }.sum
-        val bytesReadable = inklessBytesReadable + classicBytesReadable
-        if (bytesReadable >= params.minBytes || params.maxWaitMs <= 0) {
-          responseCallback(inklessFetchResult ++ classicFetchResult)
-        } else {
-          // If there is not enough data to respond, we will let the fetch request wait for new data.
-          val inklessFetchPartitionStatus = inklessFetchInfos.map {
-            case (k, partitionData) =>
-              k -> FetchPartitionStatus(new LogOffsetMetadata(partitionData.fetchOffset), partitionData)
-          }
-
-          val fetchPartitionStatus = classicFetchPartitionStatus ++ inklessFetchPartitionStatus
-
-          val delayedFetch = new DelayedFetch(
-            params = params,
-            fetchPartitionStatus = fetchPartitionStatus,
-            replicaManager = this,
-            isInklessTopic = isInklessTopic,
-            quota = quota,
-            responseCallback = responseCallback
-          )
-
-          // create a list of (topic, partition) pairs to use as keys for this delayed fetch operation
-          val delayedFetchKeys = fetchPartitionStatus.map { case (tp, _) => new TopicPartitionOperationKey(tp) }.toList
-
-          // try to complete the request immediately, otherwise put it into the purgatory;
-          // this is because while the delayed fetch operation is being created, new requests
-          // may arrive and hence make this operation completable.
-          delayedFetchPurgatory.tryCompleteElseWatch(delayedFetch, delayedFetchKeys.asJava)
+      if (classicBytesReadable >= params.minBytes || params.maxWaitMs <= 0) {
+        responseCallback(classicFetchResult)
+      } else {
+        // If there is not enough data to respond, we will let the fetch request wait for new data.
+        val inklessFetchPartitionStatus = inklessFetchInfos.map {
+          case (k, partitionData) =>
+            k -> FetchPartitionStatus(new LogOffsetMetadata(partitionData.fetchOffset), partitionData)
         }
+
+        val fetchPartitionStatus = classicFetchPartitionStatus ++ inklessFetchPartitionStatus
+
+        val delayedFetch = new DelayedFetch(
+          params = params,
+          fetchPartitionStatus = fetchPartitionStatus,
+          replicaManager = this,
+          isInklessTopic = isInklessTopic,
+          quota = quota,
+          responseCallback = responseCallback
+        )
+
+        // create a list of (topic, partition) pairs to use as keys for this delayed fetch operation
+        val delayedFetchKeys = fetchPartitionStatus.map { case (tp, _) => new TopicPartitionOperationKey(tp) }.toList
+
+        // try to complete the request immediately, otherwise put it into the purgatory;
+        // this is because while the delayed fetch operation is being created, new requests
+        // may arrive and hence make this operation completable.
+        delayedFetchPurgatory.tryCompleteElseWatch(delayedFetch, delayedFetchKeys.asJava)
       }
     }
 
@@ -1791,6 +1784,9 @@ class ReplicaManager(val config: KafkaConfig,
         // This is currently a workaround to avoid modifying the DelayedRemoteFetch in order to correctly process
         // inkless fetches.
         val inklessFetchResults = try {
+          val inklessParams = fetchParamsWithNewMaxBytes(params, inklessFetchInfos.size.toFloat / fetchInfos.size.toFloat)
+          val inklessResponsesFuture = fetchInklessMessages(inklessParams, inklessFetchInfos)
+
           val response = inklessResponsesFuture.get(params.maxWaitMs, TimeUnit.MILLISECONDS)
           response.map { case (tp, data) =>
             val exception: Optional[Throwable] = data.error match {
