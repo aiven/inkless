@@ -40,6 +40,7 @@ public class NewTopic {
     private final Optional<Short> replicationFactor;
     private final Map<Integer, List<Integer>> replicasAssignments;
     private Map<String, String> configs = null;
+    private Optional<String> remoteBootstrapServer = Optional.empty();
 
     /**
      * A new topic with the specified replication factor and number of partitions.
@@ -58,6 +59,14 @@ public class NewTopic {
         this.numPartitions = numPartitions;
         this.replicationFactor = replicationFactor;
         this.replicasAssignments = null;
+    }
+
+    public NewTopic(String name, Optional<Integer> numPartitions, Optional<Short> replicationFactor, Optional<String> remoteBootstrapServer) {
+        this.name = name;
+        this.numPartitions = numPartitions;
+        this.replicationFactor = replicationFactor;
+        this.replicasAssignments = null;
+        this.remoteBootstrapServer = remoteBootstrapServer;
     }
 
     /**
@@ -80,6 +89,10 @@ public class NewTopic {
      */
     public String name() {
         return name;
+    }
+
+    public Optional<String> remoteBootstrapServer() {
+        return remoteBootstrapServer;
     }
 
     /**
@@ -127,6 +140,9 @@ public class NewTopic {
             setName(name).
             setNumPartitions(numPartitions.orElse(CreateTopicsRequest.NO_NUM_PARTITIONS)).
             setReplicationFactor(replicationFactor.orElse(CreateTopicsRequest.NO_REPLICATION_FACTOR));
+        if (remoteBootstrapServer.isPresent()) {
+            creatableTopic.setRemoteBootstrapServer(remoteBootstrapServer.get());
+        }
         if (replicasAssignments != null) {
             for (Entry<Integer, List<Integer>> entry : replicasAssignments.entrySet()) {
                 creatableTopic.assignments().add(

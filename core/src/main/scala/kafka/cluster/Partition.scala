@@ -121,17 +121,20 @@ object Partition {
 
   def apply(topicIdPartition: TopicIdPartition,
             time: Time,
-            replicaManager: ReplicaManager): Partition = {
+            replicaManager: ReplicaManager,
+            remoteBootstrapServer: String): Partition = {
     Partition(
       topicPartition = topicIdPartition.topicPartition,
       topicId = Some(topicIdPartition.topicId),
       time = time,
-      replicaManager = replicaManager)
+      replicaManager = replicaManager,
+      remoteBootstrapServer = remoteBootstrapServer)
   }
   def apply(topicPartition: TopicPartition,
             time: Time,
             replicaManager: ReplicaManager,
-            topicId: Option[Uuid] = None): Partition = {
+            topicId: Option[Uuid] = None,
+            remoteBootstrapServer: String = ""): Partition = {
 
     val isrChangeListener = new AlterPartitionListener {
       override def markIsrExpand(): Unit = {
@@ -163,7 +166,8 @@ object Partition {
       delayedOperations = delayedOperations,
       metadataCache = replicaManager.metadataCache,
       logManager = replicaManager.logManager,
-      alterIsrManager = replicaManager.alterPartitionManager)
+      alterIsrManager = replicaManager.alterPartitionManager,
+      remoteBootstrapServer = remoteBootstrapServer)
   }
 
   def removeMetrics(topicPartition: TopicPartition): Unit = {
@@ -316,7 +320,8 @@ class Partition(val topicPartition: TopicPartition,
                 metadataCache: MetadataCache,
                 logManager: LogManager,
                 alterIsrManager: AlterPartitionManager,
-                @volatile private var _topicId: Option[Uuid] = None // TODO: merge topicPartition and _topicId into TopicIdPartition once TopicId persist in most of the code by KAFKA-16212
+                @volatile private var _topicId: Option[Uuid] = None, // TODO: merge topicPartition and _topicId into TopicIdPartition once TopicId persist in most of the code by KAFKA-16212
+                val remoteBootstrapServer: String
                ) extends Logging with TopicPartitionLog {
 
   import Partition.metricsGroup

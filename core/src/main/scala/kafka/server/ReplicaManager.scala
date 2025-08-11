@@ -2291,7 +2291,8 @@ class ReplicaManager(val config: KafkaConfig,
 
   private[kafka] def getOrCreatePartition(tp: TopicPartition,
                                           delta: TopicsDelta,
-                                          topicId: Uuid): Option[(Partition, Boolean)] = {
+                                          topicId: Uuid,
+                                          remoteBootstrapServer: String = ""): Option[(Partition, Boolean)] = {
     getPartition(tp) match {
       case HostedPartition.Offline(offlinePartition) =>
         if (offlinePartition.flatMap(p => p.topicId).contains(topicId)) {
@@ -2303,7 +2304,7 @@ class ReplicaManager(val config: KafkaConfig,
           stateChangeLogger.info(s"Creating new partition $tp with topic id " + s"$topicId." +
             s"A topic with the same name but different id exists but it resides in an offline log " +
             s"directory.")
-          val partition = Partition(new TopicIdPartition(topicId, tp), time, this)
+          val partition = Partition(new TopicIdPartition(topicId, tp), time, this, remoteBootstrapServer)
           allPartitions.put(tp, HostedPartition.Online(partition))
           Some(partition, true)
         }
@@ -2326,7 +2327,7 @@ class ReplicaManager(val config: KafkaConfig,
             s"$topicId.")
         }
         // it's a partition that we don't know about yet, so create it and mark it online
-        val partition = Partition(new TopicIdPartition(topicId, tp), time, this)
+        val partition = Partition(new TopicIdPartition(topicId, tp), time, this, remoteBootstrapServer)
         allPartitions.put(tp, HostedPartition.Online(partition))
         Some(partition, true)
     }
@@ -2378,6 +2379,8 @@ class ReplicaManager(val config: KafkaConfig,
         }
         if (!localChanges.followers.isEmpty) {
           applyLocalFollowersDelta(followerChangedPartitions, newImage, delta, lazyOffsetCheckpoints, localChanges.followers.asScala, localChanges.directoryIds.asScala)
+        } else if (!localChanges.readOnlyLeaders().isEmpty) {
+          applyLocalFollowersDelta(followerChangedPartitions, newImage, delta, lazyOffsetCheckpoints, localChanges.readOnlyLeaders.asScala, localChanges.directoryIds.asScala, true)
         }
 
         maybeAddLogDirFetchers(leaderChangedPartitions ++ followerChangedPartitions, lazyOffsetCheckpoints,
@@ -2434,7 +2437,8 @@ class ReplicaManager(val config: KafkaConfig,
     delta: TopicsDelta,
     offsetCheckpoints: OffsetCheckpoints,
     localFollowers: mutable.Map[TopicPartition, LocalReplicaChanges.PartitionInfo],
-    directoryIds: mutable.Map[TopicIdPartition, Uuid]
+    directoryIds: mutable.Map[TopicIdPartition, Uuid],
+    remoteLeader: Boolean = false
   ): Unit = {
     stateChangeLogger.info(s"Transitioning ${localFollowers.size} partition(s) to " +
       "local followers.")
@@ -2496,33 +2500,42 @@ class ReplicaManager(val config: KafkaConfig,
       val listenerName = config.interBrokerListenerName.value
       val partitionAndOffsets = new mutable.HashMap[TopicPartition, InitialFetchState]
 
-      partitionsToStartFetching.foreachEntry { (topicPartition, partition) =>
-        val nodeOpt = partition.leaderReplicaIdOpt
-          .flatMap(leaderId => Option(newImage.cluster.broker(leaderId)))
-          .flatMap(_.node(listenerName).toScala)
+      // luke
+      if (remoteLeader) {
+//        partitionsToStartFetching.foreachEntry { (topicPartition, partition) =>
+//          val nodeOpt = getRemoteLeaderNode(partition)
+//        }
+      } else {
 
-        nodeOpt match {
-          case Some(node) =>
-            val log = partition.localLogOrException
-            partitionAndOffsets.put(topicPartition, InitialFetchState(
-              log.topicId.toScala,
-              new BrokerEndPoint(node.id, node.host, node.port),
-              partition.getLeaderEpoch,
-              initialFetchOffset(log)
-            ))
-          case None =>
-            stateChangeLogger.trace(s"Unable to start fetching $topicPartition with topic ID ${partition.topicId} " +
-              s"from leader ${partition.leaderReplicaIdOpt} because it is not alive.")
+        partitionsToStartFetching.foreachEntry { (topicPartition, partition) =>
+          val nodeOpt = partition.leaderReplicaIdOpt
+            .flatMap(leaderId => Option(newImage.cluster.broker(leaderId)))
+            .flatMap(_.node(listenerName).toScala)
+
+          nodeOpt match {
+            case Some(node) =>
+              val log = partition.localLogOrException
+              partitionAndOffsets.put(topicPartition, InitialFetchState(
+                log.topicId.toScala,
+                new BrokerEndPoint(node.id, node.host, node.port),
+                partition.getLeaderEpoch,
+                initialFetchOffset(log)
+              ))
+            case None =>
+              stateChangeLogger.trace(s"Unable to start fetching $topicPartition with topic ID ${partition.topicId} " +
+                s"from leader ${partition.leaderReplicaIdOpt} because it is not alive.")
+          }
         }
+
+        replicaFetcherManager.addFetcherForPartitions(partitionAndOffsets)
+        stateChangeLogger.info(s"Started fetchers as part of become-follower for ${partitionsToStartFetching.size} partitions")
+
+        partitionsToStartFetching.foreach { case (topicPartition, partition) =>
+          completeDelayedOperationsWhenNotPartitionLeader(topicPartition, partition.topicId)
+        }
+
+        updateLeaderAndFollowerMetrics(followerTopicSet)
       }
-
-      replicaFetcherManager.addFetcherForPartitions(partitionAndOffsets)
-      stateChangeLogger.info(s"Started fetchers as part of become-follower for ${partitionsToStartFetching.size} partitions")
-
-      partitionsToStartFetching.foreach{ case (topicPartition, partition) =>
-        completeDelayedOperationsWhenNotPartitionLeader(topicPartition, partition.topicId)}
-
-      updateLeaderAndFollowerMetrics(followerTopicSet)
     }
 
     if (partitionsToStopFetching.nonEmpty) {
@@ -2531,6 +2544,12 @@ class ReplicaManager(val config: KafkaConfig,
       stateChangeLogger.info(s"Stopped fetchers as part of controlled shutdown for ${partitionsToStop.size} partitions")
     }
   }
+
+//  private def getRemoteLeaderNode(partition: Partition): Option[Node] = {
+//    partition.remoteBootstrapServer
+//    //new Node(id, endpoint.host, endpoint.port, rack.orElse(null), fenced)
+//    Option.empty[Node]
+//  }
 
   private def maybeUpdateTopicAssignment(partition: TopicIdPartition, partitionDirectoryId: Uuid): Unit = {
     for {

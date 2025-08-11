@@ -110,6 +110,8 @@ public abstract class TopicCommand {
                 topicService.describeTopic(opts);
             } else if (opts.hasDeleteOption()) {
                 topicService.deleteTopic(opts);
+            } else if (opts.hasCreateMirrorOption()) {
+                topicService.createMirrorTopic(opts);
             }
         } catch (ExecutionException e) {
             Throwable cause = e.getCause();
@@ -245,6 +247,7 @@ public abstract class TopicCommand {
         private final Optional<Integer> replicationFactor;
         private final Map<Integer, List<Integer>> replicaAssignment;
         private final Properties configsToAdd;
+        private final Optional<String> remoteBootstrapServers;
 
         private final TopicCommandOptions opts;
 
@@ -255,6 +258,7 @@ public abstract class TopicCommand {
             replicationFactor = options.replicationFactor();
             replicaAssignment = options.replicaAssignment().orElse(Map.of());
             configsToAdd = parseTopicConfigsToBeAdded(options);
+            remoteBootstrapServers = options.remoteBootstrapServer();
         }
 
         public boolean hasReplicaAssignment() {
@@ -453,6 +457,15 @@ public abstract class TopicCommand {
             createTopic(topic);
         }
 
+        public void createMirrorTopic(TopicCommandOptions opts) throws Exception {
+            CommandTopicPartition topic = new CommandTopicPartition(opts);
+            if (Topic.hasCollisionChars(topic.name)) {
+                System.out.println("WARNING: Due to limitations in metric names, topics with a period ('.') or underscore ('_') could " +
+                        "collide. To avoid issues it is best to use either, but not both.");
+            }
+            createTopic(topic);
+        }
+
         public void createTopic(CommandTopicPartition topic) throws Exception {
             if (topic.replicationFactor.filter(rf -> rf > Short.MAX_VALUE || rf < 1).isPresent()) {
                 throw new IllegalArgumentException("The replication factor must be between 1 and " + Short.MAX_VALUE + " inclusive");
@@ -463,7 +476,9 @@ public abstract class TopicCommand {
 
             try {
                 NewTopic newTopic;
-                if (topic.hasReplicaAssignment()) {
+                if (topic.opts.hasCreateMirrorOption()) {
+                    newTopic = new NewTopic(topic.name, topic.partitions, topic.replicationFactor.map(Integer::shortValue), topic.remoteBootstrapServers);
+                } else if (topic.hasReplicaAssignment()) {
                     newTopic = new NewTopic(topic.name, topic.replicaAssignment);
                 } else {
                     newTopic = new NewTopic(topic.name, topic.partitions, topic.replicationFactor.map(Integer::shortValue));
@@ -675,6 +690,7 @@ public abstract class TopicCommand {
 
     public static final class TopicCommandOptions extends CommandDefaultOptions {
         private final ArgumentAcceptingOptionSpec<String> bootstrapServerOpt;
+        private final ArgumentAcceptingOptionSpec<String> remoteBootstrapServerOpt;
 
         private final ArgumentAcceptingOptionSpec<String> commandConfigOpt;
 
@@ -687,6 +703,8 @@ public abstract class TopicCommand {
         private final OptionSpecBuilder alterOpt;
 
         private final OptionSpecBuilder describeOpt;
+
+        private final OptionSpecBuilder createMirrorOpt;
 
         private final ArgumentAcceptingOptionSpec<String> topicOpt;
 
@@ -739,6 +757,10 @@ public abstract class TopicCommand {
                 .withRequiredArg()
                 .describedAs("server to connect to")
                 .ofType(String.class);
+            remoteBootstrapServerOpt = parser.accepts("remote-bootstrap-server", "REQUIRED: The Kafka server to connect to.")
+                    .withRequiredArg()
+                    .describedAs("server to connect to")
+                    .ofType(String.class);
             commandConfigOpt = parser.accepts("command-config", "Property file containing configs to be passed to Admin Client.")
                 .withRequiredArg()
                 .describedAs("command config property file")
@@ -750,6 +772,7 @@ public abstract class TopicCommand {
             alterOpt = parser.accepts("alter", "Alter the number of partitions and replica assignment." +
                     KAFKA_CONFIGS_CLI_SUPPORTS_ALTERING_TOPIC_CONFIGS);
             describeOpt = parser.accepts("describe", "List details for the given topics.");
+            createMirrorOpt = parser.accepts("createMirror", "List details for the given topics.");
             topicOpt = parser.accepts("topic", "The topic to create, alter, describe or delete. It also accepts a regular " +
                             "expression, except for --create option. Put topic name in double quotes and use the '\\' prefix " +
                             "to escape regular expression symbols; e.g. \"test\\.topic\".")
@@ -847,6 +870,10 @@ public abstract class TopicCommand {
             return has(createOpt);
         }
 
+        public boolean hasCreateMirrorOption() {
+            return has(createMirrorOpt);
+        }
+
         public boolean hasAlterOption() {
             return has(alterOpt);
         }
@@ -889,6 +916,10 @@ public abstract class TopicCommand {
 
         public Optional<Integer> replicationFactor() {
             return valueAsOption(replicationFactorOpt);
+        }
+
+        public Optional<String> remoteBootstrapServer() {
+            return valueAsOption(remoteBootstrapServerOpt);
         }
 
         public Optional<Map<Integer, List<Integer>>> replicaAssignment() {

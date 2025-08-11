@@ -55,7 +55,9 @@
           "about": "The configuration name." },
         { "name": "Value", "type": "string", "versions": "0+", "nullableVersions": "0+",
           "about": "The configuration value." }
-      ]}
+      ]},
+      { "name": "remoteBootstrapServer", "type": "string", "versions": "7+", "ignorable": true,
+        "about": "If true, check that the topics can be created as specified, but don't create anything." }
     ]},
     { "name": "timeoutMs", "type": "int32", "versions": "0+", "default": "60000",
       "about": "How long to wait in milliseconds before timing out the request." },

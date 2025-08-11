@@ -39,13 +39,16 @@ public final class LocalReplicaChanges {
     // partitions for which directory id changes or newly added to the broker
     private final Map<TopicIdPartition, Uuid> directoryIds;
 
+    private final Map<TopicPartition, PartitionInfo> readOnlyLeaders;
+
     LocalReplicaChanges(
         Set<TopicPartition> deletes,
         Map<TopicPartition, PartitionInfo> electedLeaders,
         Map<TopicPartition, PartitionInfo> leaders,
         Map<TopicPartition, PartitionInfo> followers,
         Map<String, Uuid> topicIds,
-        Map<TopicIdPartition, Uuid> directoryIds
+        Map<TopicIdPartition, Uuid> directoryIds,
+        Map<TopicPartition, PartitionInfo> readOnlyLeaders
     ) {
         this.deletes = deletes;
         this.electedLeaders = electedLeaders;
@@ -53,6 +56,7 @@ public final class LocalReplicaChanges {
         this.followers = followers;
         this.topicIds = topicIds;
         this.directoryIds = directoryIds;
+        this.readOnlyLeaders = readOnlyLeaders;
     }
 
     public Set<TopicPartition> deletes() {
@@ -77,6 +81,10 @@ public final class LocalReplicaChanges {
 
     public Map<TopicIdPartition, Uuid> directoryIds() {
         return directoryIds;
+    }
+
+    public Map<TopicPartition, PartitionInfo> readOnlyLeaders() {
+        return readOnlyLeaders;
     }
 
     @Override
