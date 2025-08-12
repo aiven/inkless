@@ -21,7 +21,7 @@ import com.yammer.metrics.core.{Gauge, Meter, Timer}
 import io.aiven.inkless.common.SharedState
 import io.aiven.inkless.config.InklessConfig
 import io.aiven.inkless.consume.FetchHandler
-import io.aiven.inkless.control_plane.MetadataView
+import io.aiven.inkless.control_plane.{BatchInfo, BatchMetadata, ControlPlane, FindBatchResponse, MetadataView}
 import io.aiven.inkless.produce.AppendHandler
 import kafka.cluster.PartitionTest.MockPartitionListener
 import kafka.cluster.Partition
@@ -65,7 +65,7 @@ import org.apache.kafka.server.config.{KRaftConfigs, ReplicationConfigs, ServerL
 import org.apache.kafka.server.log.remote.storage._
 import org.apache.kafka.server.metrics.{KafkaMetricsGroup, KafkaYammerMetrics}
 import org.apache.kafka.server.network.BrokerEndPoint
-import org.apache.kafka.server.purgatory.DelayedOperationPurgatory
+import org.apache.kafka.server.purgatory.{DelayedOperationPurgatory, TopicPartitionOperationKey}
 import org.apache.kafka.server.storage.log.{FetchIsolation, FetchParams, FetchPartitionData}
 import org.apache.kafka.server.util.timer.MockTimer
 import org.apache.kafka.server.util.{MockScheduler, MockTime, Scheduler}
@@ -6282,196 +6282,336 @@ class ReplicaManagerTest {
     }
 
     @Test
-    def testFetchInklessSatisfiesMinBytes(): Unit = {
-      val minBytes = RECORDS.sizeInBytes()
-      val inklessResponse = Map(inklessTopicPartition -> new FetchPartitionData(Errors.NONE, 10L, 0L, RECORDS, Optional.empty(), OptionalLong.empty(), Optional.empty(), OptionalInt.empty(), false))
-      val inklessFutureResult = CompletableFuture.completedFuture(inklessResponse.asJava)
-      val fetchHandlerCtorMockInitializer: MockedConstruction.MockInitializer[FetchHandler] = {
-        case (mock, _) => when(mock.handle(any(), any())).thenReturn(inklessFutureResult)
+    def testFetchFailInklessWhenFromReplica(): Unit = {
+      // Given a topic partition that is inkless, we should not be able to fetch from it from a follower.
+      val replicaManager = createReplicaManager(List(inklessTopicPartition.topic()))
+      val fetchParams = new FetchParams(
+        ApiKeys.FETCH.latestVersion(),
+        1, 1L, // follower fetch
+        10L, 100, 200, FetchIsolation.HIGH_WATERMARK, Optional.empty()
+      )
+      val fetchInfos = Seq(
+        inklessTopicPartition -> new PartitionData(inklessTopicPartition.topicId(), 10L, 0L, 123, Optional.empty())
+      )
+      @volatile var responseData: Map[TopicIdPartition, FetchPartitionData] = null
+      val responseCallback = (response: Seq[(TopicIdPartition, FetchPartitionData)]) => {
+        responseData = response.toMap
       }
-      val fetchHandlerCtor = mockConstruction(classOf[FetchHandler], fetchHandlerCtorMockInitializer)
+      // When we try to fetch messages from the inkless topic partition with a follower fetch,
+      replicaManager.fetchMessages(fetchParams, fetchInfos, QuotaFactory.UNBOUNDED_QUOTA, responseCallback)
+      // Then we should get an immediate empty response.
+      assertNotNull(responseData)
+      assertEquals(0, responseData.size)
+    }
+
+    @Test
+    def testFetchInklessSatisfiesMinBytes(): Unit = {
+      // Given
+      val minBytes = RECORDS.sizeInBytes()  // Same as the size of the records to ensure it satisfies minBytes
+      val fetchOffset = 15L  // fetch offset below the high watermark
+      val hwm = fetchOffset + 10L
+      val maxWaitMs = 10L
+      val maxBytes = 10
+
+      // Prepare the FindBatchResponse to be returned by the ControlPlane when it tries to complete the delayed fetch.
+      val batchMetadata = mock(classOf[BatchMetadata])
+      when(batchMetadata.topicIdPartition()).thenReturn(inklessTopicPartition)
+      val batch = mock(classOf[BatchInfo])
+      when(batch.metadata()).thenReturn(batchMetadata)
+      val findBatchResponse = mock(classOf[FindBatchResponse])
+      when(findBatchResponse.batches()).thenReturn(util.List.of(batch))
+      when(findBatchResponse.highWatermark()).thenReturn(hwm)
+      when(findBatchResponse.estimatedByteSize(fetchOffset)).thenReturn(RECORDS.sizeInBytes())
+      when(findBatchResponse.errors()).thenReturn(Errors.NONE)
+      val cp = mock(classOf[ControlPlane])
+      when(cp.findBatches(any(), any())).thenReturn(util.List.of(findBatchResponse))
+
+      // Prepare the FetchHandler response to be called when the forceComplete method is invoked.
+      val inklessResponse = Map(inklessTopicPartition ->
+        new FetchPartitionData(
+          Errors.NONE,
+          hwm, 0L,  // log offset range
+          RECORDS,
+          Optional.empty(), OptionalLong.empty(), Optional.empty(), OptionalInt.empty(), false)
+      )
+      val fetchHandlerCtor: MockedConstruction[FetchHandler] = mockFetchHandler(inklessResponse)
+
       val replicaManager = try {
-        createReplicaManager(List(inklessTopicPartition.topic()))
+        createReplicaManager(List(inklessTopicPartition.topic()), controlPlane = Some(cp))
       } finally {
         fetchHandlerCtor.close()
       }
 
-
-      val responseCallback = mock(classOf[Function[Seq[(TopicIdPartition, FetchPartitionData)], Unit]])
+      // When we try to fetch messages from the inkless topic partition with a consumer fetch
       val fetchParams = new FetchParams(
-        ApiKeys.FETCH.latestVersion,
-        1, 1L, 1L, minBytes, 10, FetchIsolation.HIGH_WATERMARK, Optional.empty()
+        ApiKeys.FETCH.latestVersion(),
+        -1, -1L, // not follower fetch
+        maxWaitMs, minBytes, maxBytes, FetchIsolation.HIGH_WATERMARK, Optional.empty()
       )
-
       val fetchInfos = Seq(
-        inklessTopicPartition -> new PartitionData(inklessTopicPartition.topicId(), 5L, 0L, 123, Optional.empty())
+        inklessTopicPartition -> new PartitionData(inklessTopicPartition.topicId(), fetchOffset, 0L, 123, Optional.empty())
       )
-
+      @volatile var responseData: Map[TopicIdPartition, FetchPartitionData] = null
+      val responseCallback = (response: Seq[(TopicIdPartition, FetchPartitionData)]) => {
+        responseData = response.toMap
+      }
       replicaManager.fetchMessages(fetchParams, fetchInfos, QuotaFactory.UNBOUNDED_QUOTA, responseCallback)
-
-      verify(responseCallback, times(1)).apply(inklessResponse.toSeq)
+      // Then we should get a response with the inkless topic partition data,
+      // as tryComplete can fulfill the minBytes requirement and force complete the delayed fetch.
+      assertNotNull(responseData)
+      assertEquals(1, responseData.size)
+      assertEquals(inklessResponse(inklessTopicPartition), responseData(inklessTopicPartition))
     }
 
     @Test
     def testFetchInklessAndClassicSatisfiesMinBytes(): Unit = {
-      val minBytes = RECORDS.sizeInBytes() * 2
-      val inklessFetchPartitionData = new FetchPartitionData(Errors.NONE, 10L, 0L, RECORDS, Optional.empty(), OptionalLong.empty(), Optional.empty(), OptionalInt.empty(), false)
-      val inklessResponse = Map(inklessTopicPartition -> inklessFetchPartitionData)
-      val inklessFutureResult = CompletableFuture.completedFuture(inklessResponse.asJava)
-      val fetchHandlerCtorMockInitializer: MockedConstruction.MockInitializer[FetchHandler] = {
-        case (mock, _) => when(mock.handle(any(), any())).thenReturn(inklessFutureResult)
-      }
-      val fetchHandlerCtor = mockConstruction(classOf[FetchHandler], fetchHandlerCtorMockInitializer)
+      // Given
+      val minBytes = RECORDS.sizeInBytes() * 2  // Same as the size of the records from both topic types to ensure it satisfies minBytes
+      val fetchOffset = 15L  // fetch offset below the high watermark
+      val hwm = fetchOffset + 10L
+      val maxWaitMs = 10L
+      val maxBytes = 10
+
+      // Prepare the FindBatchResponse to be returned by the ControlPlane when it tries to complete the delayed fetch.
+      val batchMetadata = mock(classOf[BatchMetadata])
+      when(batchMetadata.topicIdPartition()).thenReturn(inklessTopicPartition)
+      val batch = mock(classOf[BatchInfo])
+      when(batch.metadata()).thenReturn(batchMetadata)
+      val findBatchResponse = mock(classOf[FindBatchResponse])
+      when(findBatchResponse.batches()).thenReturn(util.List.of(batch))
+      when(findBatchResponse.highWatermark()).thenReturn(hwm)
+      when(findBatchResponse.estimatedByteSize(fetchOffset)).thenReturn(RECORDS.sizeInBytes()) // first half of the bytes available from inkless
+      when(findBatchResponse.errors()).thenReturn(Errors.NONE)
+      val cp = mock(classOf[ControlPlane])
+      when(cp.findBatches(any(), any())).thenReturn(util.List.of(findBatchResponse))
+
+      // Prepare the FetchHandler response to be called when the forceComplete method is invoked.
+      val inklessResponse = Map(inklessTopicPartition ->
+        new FetchPartitionData(
+          Errors.NONE,
+          hwm, 0L,  // log offset range
+          RECORDS,
+          Optional.empty(), OptionalLong.empty(), Optional.empty(), OptionalInt.empty(), false)
+      )
+      val fetchHandlerCtor: MockedConstruction[FetchHandler] = mockFetchHandler(inklessResponse)
+
       val replicaManager = try {
-        spy(createReplicaManager(List(inklessTopicPartition.topic())))
+        // spy to inject readFromLog mock
+        spy(createReplicaManager(List(inklessTopicPartition.topic()), controlPlane = Some(cp)))
       } finally {
         fetchHandlerCtor.close()
       }
 
-      val responseCallback = mock(classOf[Function[Seq[(TopicIdPartition, FetchPartitionData)], Unit]])
-      val fetchParams = new FetchParams(
-        ApiKeys.FETCH.latestVersion,
-        1, 1L, 1L, minBytes, 10, FetchIsolation.HIGH_WATERMARK, Optional.empty()
-      )
-
+      // Prepare the classic topic partition response
       doReturn(Seq(classicTopicPartition ->
         new LogReadResult(
-          new FetchDataInfo(LogOffsetMetadata.UNKNOWN_OFFSET_METADATA, RECORDS),
-          None, 10L, 0L, 10L, 0L, 0L, None
+          new FetchDataInfo(new LogOffsetMetadata(1L, 0L, 0), RECORDS),
+          Option.empty, 10L, 0L, 10L, 0L, 0L, Option.empty
         ))
-      ).when(replicaManager).readFromLog(any(), any(), any(), any());
+      ).when(replicaManager).readFromLog(any(), any(), any(), any())
+      val partition = mock(classOf[Partition])
+      val endOffset = new LogOffsetMetadata(11L, 0L, RECORDS.sizeInBytes())  // next half of bytes available from classic
+      val offsetSnapshot = new LogOffsetSnapshot(0L, endOffset, endOffset, endOffset)
+      when(partition.fetchOffsetSnapshot(any(), any())).thenReturn(offsetSnapshot)
+      doReturn(partition)
+        .when(replicaManager).getPartitionOrException(classicTopicPartition.topicPartition())
 
-      val fetchInfos = Seq(
-        inklessTopicPartition -> new PartitionData(inklessTopicPartition.topicId(), 5L, 0L, 123, Optional.empty()),
-        classicTopicPartition -> new PartitionData(classicTopicPartition.topicId(), 6L, 0L, 123, Optional.empty()),
+      // When we try to fetch messages from both topic types partitions with a consumer fetch
+      val fetchParams = new FetchParams(
+   ApiKeys.FETCH.latestVersion(),
+        -1, -1L, // not follower fetch
+        maxWaitMs, minBytes, maxBytes, FetchIsolation.HIGH_WATERMARK, Optional.empty()
       )
-
+      val fetchInfos = Seq(
+        inklessTopicPartition -> new PartitionData(inklessTopicPartition.topicId(), fetchOffset, 0L, 123, Optional.empty()),
+        classicTopicPartition -> new PartitionData(classicTopicPartition.topicId(), 1L, 0L, 123, Optional.empty()),
+      )
+      @volatile var responseData: Map[TopicIdPartition, FetchPartitionData] = null
+      val responseCallback = (response: Seq[(TopicIdPartition, FetchPartitionData)]) => {
+        responseData = response.toMap
+      }
       replicaManager.fetchMessages(fetchParams, fetchInfos, QuotaFactory.UNBOUNDED_QUOTA, responseCallback)
-
-      val captor = ArgumentCaptor.forClass(classOf[Seq[(TopicIdPartition, FetchPartitionData)]])
-
-      verify(responseCallback, times(1)).apply(captor.capture())
-
-      val resultMap = captor.getValue.toMap
-      assertEquals(2, resultMap.size)
-
-      assertEquals(inklessFetchPartitionData, resultMap(inklessTopicPartition))
-
-      val classicPartitionData = resultMap(classicTopicPartition)
-      assertEquals(Errors.NONE, classicPartitionData.error)
-      assertEquals(0L, classicPartitionData.logStartOffset)
-      assertEquals(10L, classicPartitionData.highWatermark)
-      assertEquals(RECORDS, classicPartitionData.records)
+      // Then we should get a response with the both topic types data
+      assertNotNull(responseData)
+      assertEquals(2, responseData.size)
+      // inkless topic partition data
+      assertEquals(inklessResponse(inklessTopicPartition), responseData(inklessTopicPartition))
+      // classic topic partition data
+      val classicPartitionResponse = responseData(classicTopicPartition)
+      assertEquals(Errors.NONE, classicPartitionResponse.error)
+      assertEquals(0L, classicPartitionResponse.logStartOffset)
+      assertEquals(10L, classicPartitionResponse.highWatermark)
+      assertEquals(RECORDS, classicPartitionResponse.records)
     }
 
     @Test
     def testFetchInklessLessThanMinBytes(): Unit = {
-      val minBytes = Int.MaxValue
-      val inklessFetchPartitionData = new FetchPartitionData(Errors.NONE, 10L, 0L, RECORDS, Optional.empty(), OptionalLong.empty(), Optional.empty(), OptionalInt.empty(), false)
-      val inklessResponse = Map(inklessTopicPartition -> inklessFetchPartitionData)
-      val inklessFutureResult = CompletableFuture.completedFuture(inklessResponse.asJava)
-      val fetchHandlerCtorMockInitializer: MockedConstruction.MockInitializer[FetchHandler] = {
-        case (mock, _) => when(mock.handle(any(), any())).thenReturn(inklessFutureResult)
-      }
-      val fetchHandlerCtor = mockConstruction(classOf[FetchHandler], fetchHandlerCtorMockInitializer)
+      // Given
+      val minBytes = Int.MaxValue  // Set minBytes to a value larger than the size of the records to ensure it does not satisfy minBytes
+      val fetchOffset = 15L
+      val hwm = fetchOffset  // high watermark is the same as fetch offset, so no new data available
+      val maxWaitMs = 1000L  // wait enough for delayed fetch to expire
+      val maxBytes = 10
+
+      // Prepare the FindBatchResponse to be returned by the ControlPlane when it tries to complete the delayed fetch.
+      val batchMetadata = mock(classOf[BatchMetadata])
+      when(batchMetadata.topicIdPartition()).thenReturn(inklessTopicPartition)
+      val batch = mock(classOf[BatchInfo])
+      when(batch.metadata()).thenReturn(batchMetadata)
+      val findBatchResponse = mock(classOf[FindBatchResponse])
+      when(findBatchResponse.batches()).thenReturn(util.List.of(batch))
+      when(findBatchResponse.highWatermark()).thenReturn(hwm)
+      when(findBatchResponse.estimatedByteSize(fetchOffset)).thenReturn(RECORDS.sizeInBytes())
+      when(findBatchResponse.errors()).thenReturn(Errors.NONE)
+      val cp = mock(classOf[ControlPlane])
+      when(cp.findBatches(any(), any())).thenReturn(util.List.of(findBatchResponse))
+
+      // Prepare the FetchHandler response to be called when the forceComplete method is invoked.
+      val inklessResponse = Map(inklessTopicPartition ->
+        new FetchPartitionData(Errors.NONE, fetchOffset - 10L, 0L, RECORDS, Optional.empty(), OptionalLong.empty(), Optional.empty(), OptionalInt.empty(), false))
+      val fetchHandlerCtor: MockedConstruction[FetchHandler] = mockFetchHandler(inklessResponse)
+
       val replicaManager = try {
-        createReplicaManager(List(inklessTopicPartition.topic()))
+        createReplicaManager(List(inklessTopicPartition.topic()), controlPlane = Some(cp))
       } finally {
         fetchHandlerCtor.close()
       }
 
-      val responseCallback = mock(classOf[Function[Seq[(TopicIdPartition, FetchPartitionData)], Unit]])
       val fetchParams = new FetchParams(
-        ApiKeys.FETCH.latestVersion,
-        1, 1L, 10000L, minBytes, 10, FetchIsolation.HIGH_WATERMARK, Optional.empty()
+        ApiKeys.FETCH.latestVersion(),
+        -1, -1L, // not follower fetch
+        maxWaitMs, minBytes, maxBytes, FetchIsolation.HIGH_WATERMARK, Optional.empty()
       )
-
-      val inklessPartitionData = new PartitionData(inklessTopicPartition.topicId(), 5L, 0L, 123, Optional.empty())
       val fetchInfos = Seq(
-        inklessTopicPartition -> inklessPartitionData
+        inklessTopicPartition -> new PartitionData(inklessTopicPartition.topicId(), fetchOffset, 0L, 123, Optional.empty())
       )
-
-      val delayedFetchArguments = mutable.Buffer.empty[Any]
-      val delayedFetchCtorMockInitializer: MockedConstruction.MockInitializer[DelayedFetch] = {
-        case (_, context) => delayedFetchArguments ++= context.arguments().asScala.toSeq
+      @volatile var responseData: Map[TopicIdPartition, FetchPartitionData] = null
+      val latch = new CountDownLatch(1)
+      val responseCallback = (response: Seq[(TopicIdPartition, FetchPartitionData)]) => {
+        responseData = response.toMap
+        latch.countDown()
       }
-      val delayedFetchCtor: MockedConstruction[DelayedFetch] = mockConstruction(classOf[DelayedFetch], delayedFetchCtorMockInitializer)
-      try {
-        replicaManager.fetchMessages(fetchParams, fetchInfos, QuotaFactory.UNBOUNDED_QUOTA, responseCallback)
-        assertEquals(1, delayedFetchCtor.constructed().size())
-      } finally {
-        delayedFetchCtor.close()
-      }
+      // Ensure no delayed fetch is in the purgatory before we start
+      assertEquals(0, replicaManager.delayedFetchPurgatory.numDelayed())
+      // When we try to fetch messages from the inkless topic partition with a consumer fetch
+      // and the response does not satisfy minBytes, it should be delayed in the purgatory
+      // until the delayed fetch expires.
+      replicaManager.fetchMessages(fetchParams, fetchInfos, QuotaFactory.UNBOUNDED_QUOTA, responseCallback)
+      assertNull(responseData)
+      assertEquals(1, replicaManager.delayedFetchPurgatory.numDelayed())
 
-      val expectedFetchPartitionStatus = Seq(
-        inklessTopicPartition -> FetchPartitionStatus(new LogOffsetMetadata(inklessPartitionData.fetchOffset), inklessPartitionData),
-      )
-
-      assertEquals(expectedFetchPartitionStatus, delayedFetchArguments(1).asInstanceOf[Seq[(TopicIdPartition, FetchPartitionStatus)]])
-
-      verify(responseCallback, never()).apply(any())
+      latch.await(10, TimeUnit.SECONDS) // Wait for the delayed fetch to expire
+      replicaManager.delayedFetchPurgatory.checkAndComplete(new TopicPartitionOperationKey(inklessTopicPartition.topicPartition()))
+      assertEquals(0, replicaManager.delayedFetchPurgatory.numDelayed())
+      assertNotNull(responseData)
+      assertEquals(1, responseData.size)
+      assertEquals(inklessResponse(inklessTopicPartition), responseData(inklessTopicPartition))
     }
 
     @Test
     def testFetchInklessAndClassicLessThanMinBytes(): Unit = {
-      val minBytes = Int.MaxValue
-      val inklessFetchPartitionData = new FetchPartitionData(Errors.NONE, 10L, 0L, RECORDS, Optional.empty(), OptionalLong.empty(), Optional.empty(), OptionalInt.empty(), false)
-      val inklessResponse = Map(inklessTopicPartition -> inklessFetchPartitionData)
-      val inklessFutureResult = CompletableFuture.completedFuture(inklessResponse.asJava)
-      val fetchHandlerCtorMockInitializer: MockedConstruction.MockInitializer[FetchHandler] = {
-        case (mock, _) => when(mock.handle(any(), any())).thenReturn(inklessFutureResult)
-      }
-      val fetchHandlerCtor = mockConstruction(classOf[FetchHandler], fetchHandlerCtorMockInitializer)
+      // Given
+      val minBytes = Int.MaxValue  // Set minBytes to a value larger than the size of the records to ensure it does not satisfy minBytes
+      val fetchOffset = 15L
+      val hwm = fetchOffset  // high watermark is the same as fetch offset, so no new data available
+      val maxWaitMs = 1000L  // wait enough for delayed fetch to expire
+      val maxBytes = 10
+
+      // Prepare the FindBatchResponse to be returned by the ControlPlane when it tries to complete the delayed fetch.
+      val batchMetadata = mock(classOf[BatchMetadata])
+      when(batchMetadata.topicIdPartition()).thenReturn(inklessTopicPartition)
+      val batch = mock(classOf[BatchInfo])
+      when(batch.metadata()).thenReturn(batchMetadata)
+      val findBatchResponse = mock(classOf[FindBatchResponse])
+      when(findBatchResponse.batches()).thenReturn(util.List.of(batch))
+      when(findBatchResponse.highWatermark()).thenReturn(hwm)
+      when(findBatchResponse.estimatedByteSize(fetchOffset)).thenReturn(minBytes - 10L)
+      when(findBatchResponse.errors()).thenReturn(Errors.NONE)
+      val cp = mock(classOf[ControlPlane])
+      when(cp.findBatches(any(), any())).thenReturn(util.List.of(findBatchResponse))
+
+      // Prepare the FetchHandler response to be called when the forceComplete method is invoked.
+      val inklessResponse = Map(inklessTopicPartition ->
+        new FetchPartitionData(Errors.NONE, 10L, 0L, RECORDS, Optional.empty(), OptionalLong.empty(), Optional.empty(), OptionalInt.empty(), false))
+      val fetchHandlerCtor: MockedConstruction[FetchHandler] = mockFetchHandler(inklessResponse)
+
       val replicaManager = try {
-        spy(createReplicaManager(List(inklessTopicPartition.topic())))
+        spy(createReplicaManager(List(inklessTopicPartition.topic()), controlPlane = Some(cp)))
       } finally {
         fetchHandlerCtor.close()
       }
 
-      val responseCallback = mock(classOf[Function[Seq[(TopicIdPartition, FetchPartitionData)], Unit]])
-      val fetchParams = new FetchParams(
-        ApiKeys.FETCH.latestVersion,
-        1, 1L, 10000L, minBytes, 10, FetchIsolation.HIGH_WATERMARK, Optional.empty()
-      )
-
-      val classicLogOffsetMetadata = new LogOffsetMetadata(3)
+      // Prepare the classic topic partition response
       doReturn(Seq(classicTopicPartition ->
         new LogReadResult(
-          new FetchDataInfo(classicLogOffsetMetadata, RECORDS),
-          None, 10L, 0L, 10L, 0L, 0L, None
+          new FetchDataInfo(new LogOffsetMetadata(1L, 0L, 0), RECORDS),
+          Option.empty, 10L, 0L, 10L, 0L, 0L, Option.empty
         ))
-      ).when(replicaManager).readFromLog(any(), any(), any(), any());
+      ).when(replicaManager).readFromLog(any(), any(), any(), any())
+      val partition = mock(classOf[Partition])
+      val endOffset = new LogOffsetMetadata(11L, 0L, RECORDS.sizeInBytes())  // next half of bytes available from classic
+      val offsetSnapshot = new LogOffsetSnapshot(0L, endOffset, endOffset, endOffset)
+      when(partition.fetchOffsetSnapshot(any(), any())).thenReturn(offsetSnapshot)
+      doReturn(partition)
+        .when(replicaManager).getPartitionOrException(classicTopicPartition.topicPartition())
 
-      val inklessPartitionData = new PartitionData(inklessTopicPartition.topicId(), 5L, 0L, 123, Optional.empty())
-      val classicPartitionData = new PartitionData(classicTopicPartition.topicId(), 6L, 0L, 123, Optional.empty())
+      val fetchParams = new FetchParams(
+        ApiKeys.FETCH.latestVersion(),
+        -1, -1L, // not follower fetch
+        maxWaitMs, minBytes, maxBytes, FetchIsolation.HIGH_WATERMARK, Optional.empty()
+      )
+      val inklessPartitionData = new PartitionData(inklessTopicPartition.topicId(), fetchOffset, 0L, 123, Optional.empty())
+      val classicPartitionData = new PartitionData(classicTopicPartition.topicId(), 1L, 0L, 123, Optional.empty())
       val fetchInfos = Seq(
         inklessTopicPartition -> inklessPartitionData,
         classicTopicPartition -> classicPartitionData,
       )
-
-      val delayedFetchArguments = mutable.Buffer.empty[Any]
-      val delayedFetchCtorMockInitializer: MockedConstruction.MockInitializer[DelayedFetch] = {
-        case (_, context) => delayedFetchArguments ++= context.arguments().asScala.toSeq
+      @volatile var responseData: Map[TopicIdPartition, FetchPartitionData] = null
+      val latch = new CountDownLatch(1)
+      val responseCallback = (response: Seq[(TopicIdPartition, FetchPartitionData)]) => {
+        responseData = response.toMap
+        latch.countDown()
       }
-      val delayedFetchCtor: MockedConstruction[DelayedFetch] = mockConstruction(classOf[DelayedFetch], delayedFetchCtorMockInitializer)
-      try {
-        replicaManager.fetchMessages(fetchParams, fetchInfos, QuotaFactory.UNBOUNDED_QUOTA, responseCallback)
-        assertEquals(1, delayedFetchCtor.constructed().size())
-      } finally {
-        delayedFetchCtor.close()
-      }
+      // Ensure no delayed fetch is in the purgatory before we start
+      assertEquals(0, replicaManager.delayedFetchPurgatory.numDelayed())
+      // When we try to fetch messages from both types of topic partitions with a consumer fetch
+      // and the response does not satisfy minBytes, it should be delayed in the purgatory
+      // until the delayed fetch expires.
+      replicaManager.fetchMessages(fetchParams, fetchInfos, QuotaFactory.UNBOUNDED_QUOTA, responseCallback)
+      assertNull(responseData)
+      assertEquals(1, replicaManager.delayedFetchPurgatory.numDelayed())
 
-      val expectedFetchPartitionStatus = Seq(
-        classicTopicPartition -> FetchPartitionStatus(classicLogOffsetMetadata, classicPartitionData),
-        inklessTopicPartition -> FetchPartitionStatus(new LogOffsetMetadata(inklessPartitionData.fetchOffset), inklessPartitionData),
-      )
-
-      assertEquals(expectedFetchPartitionStatus, delayedFetchArguments(1).asInstanceOf[Seq[(TopicIdPartition, FetchPartitionStatus)]])
-
-      verify(responseCallback, never()).apply(any())
+      latch.await(10, TimeUnit.SECONDS) // Wait for the delayed fetch to expire
+      replicaManager.delayedFetchPurgatory.checkAndComplete(new TopicPartitionOperationKey(inklessTopicPartition.topicPartition()))
+      assertEquals(0, replicaManager.delayedFetchPurgatory.numDelayed())
+      assertNotNull(responseData)
+      assertEquals(2, responseData.size)
+      assertEquals(inklessResponse(inklessTopicPartition), responseData(inklessTopicPartition))
+      val classicPartitionResponse = responseData(classicTopicPartition)
+      assertEquals(Errors.NONE, classicPartitionResponse.error)
+      assertEquals(0L, classicPartitionResponse.logStartOffset)
+      assertEquals(10L, classicPartitionResponse.highWatermark)
+      assertEquals(RECORDS, classicPartitionResponse.records)
     }
 
-    private def createReplicaManager(inklessTopics: Seq[String]): ReplicaManager = {
+    // TODO: Add more fetch tests combinations, edge cases ara not covered yet.
+
+    private def mockFetchHandler(inklessResponse: Map[TopicIdPartition, FetchPartitionData]) = {
+      // We use constructor mocking here to inject a FetchHandler mock into ReplicaManager,
+      // because ReplicaManager internally constructs its own FetchHandler instance and does not
+      // provide a way to inject a mock or test double. This approach is not ideal, as it makes
+      // the test more brittle and tightly coupled to the implementation details of ReplicaManager.
+      // A cleaner alternative would be to refactor ReplicaManager to accept a FetchHandler via
+      // constructor or setter injection, which would improve testability and reduce reliance on
+      // mocking internals. Consider refactoring in the future if feasible.
+      val fetchHandlerCtorMockInitializer: MockedConstruction.MockInitializer[FetchHandler] = {
+        case (mock, _) => when(mock.handle(any(), any())).thenReturn(CompletableFuture.completedFuture(inklessResponse.asJava))
+      }
+      val fetchHandlerCtor = mockConstruction(classOf[FetchHandler], fetchHandlerCtorMockInitializer)
+      fetchHandlerCtor
+    }
+
+    private def createReplicaManager(inklessTopics: Seq[String], controlPlane: Option[ControlPlane] = None): ReplicaManager = {
       val props = TestUtils.createBrokerConfig(1, logDirCount = 2)
       val config = KafkaConfig.fromProps(props)
       val logManagerMock = mock(classOf[LogManager])
@@ -6479,6 +6619,7 @@ class ReplicaManagerTest {
       val sharedState = mock(classOf[SharedState], Answers.RETURNS_DEEP_STUBS)
       when(sharedState.time()).thenReturn(Time.SYSTEM)
       when(sharedState.config()).thenReturn(new InklessConfig(new util.HashMap[String, Object]()))
+      when(sharedState.controlPlane()).thenReturn(controlPlane.getOrElse(mock(classOf[ControlPlane])))
       val inklessMetadata = mock(classOf[MetadataView])
       when(inklessMetadata.isInklessTopic(any())).thenReturn(false)
       inklessTopics.foreach(t => when(inklessMetadata.isInklessTopic(t)).thenReturn(true))

@@ -187,7 +187,7 @@ class ReplicaManagerQuotasTest {
 
       new DelayedFetch(
         params = fetchParams,
-        fetchPartitionStatus = Seq(tp -> fetchPartitionStatus),
+        classicFetchPartitionStatus = Seq(tp -> fetchPartitionStatus),
         replicaManager = replicaManager,
         quota = null,
         responseCallback = null
@@ -239,7 +239,7 @@ class ReplicaManagerQuotasTest {
 
       new DelayedFetch(
         params = fetchParams,
-        fetchPartitionStatus = Seq(tidp -> fetchPartitionStatus),
+        classicFetchPartitionStatus = Seq(tidp -> fetchPartitionStatus),
         replicaManager = replicaManager,
         quota = null,
         responseCallback = null
