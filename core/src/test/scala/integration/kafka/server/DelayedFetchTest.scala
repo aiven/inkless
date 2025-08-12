@@ -16,9 +16,9 @@
  */
 package kafka.server
 
-import io.aiven.inkless.control_plane.{BatchInfo, BatchMetadata, FindBatchResponse}
+import io.aiven.inkless.control_plane.{BatchInfo, BatchMetadata, FindBatchRequest, FindBatchResponse}
 
-import java.util.{Optional, OptionalLong}
+import java.util.{Collections, Optional, OptionalLong}
 import scala.collection.Seq
 import kafka.cluster.Partition
 import org.apache.kafka.common.{TopicIdPartition, Uuid}
@@ -30,12 +30,12 @@ import org.apache.kafka.common.requests.FetchRequest
 import org.apache.kafka.server.LogReadResult
 import org.apache.kafka.server.storage.log.{FetchIsolation, FetchParams, FetchPartitionData}
 import org.apache.kafka.storage.internals.log.{FetchDataInfo, LogOffsetMetadata, LogOffsetSnapshot}
-import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.{Nested, Test}
 import org.junit.jupiter.api.Assertions._
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.ValueSource
-import org.mockito.ArgumentMatchers.{any, anyInt}
-import org.mockito.Mockito.{mock, when}
+import org.mockito.ArgumentMatchers.{any, anyFloat, anyInt, anyLong}
+import org.mockito.Mockito.{mock, never, verify, when}
 
 import java.util.concurrent.CompletableFuture
 
@@ -64,7 +64,7 @@ class DelayedFetchTest {
 
     val delayedFetch = new DelayedFetch(
       params = fetchParams,
-      fetchPartitionStatus = Seq(topicIdPartition -> fetchStatus),
+      classicFetchPartitionStatus = Seq(topicIdPartition -> fetchStatus),
       replicaManager = replicaManager,
       quota = replicaQuota,
       responseCallback = callback
@@ -112,7 +112,7 @@ class DelayedFetchTest {
 
     val delayedFetch = new DelayedFetch(
       params = fetchParams,
-      fetchPartitionStatus = Seq(topicIdPartition -> fetchStatus),
+      classicFetchPartitionStatus = Seq(topicIdPartition -> fetchStatus),
       replicaManager = replicaManager,
       quota = replicaQuota,
       responseCallback = callback
@@ -154,7 +154,7 @@ class DelayedFetchTest {
 
     val delayedFetch = new DelayedFetch(
       params = fetchParams,
-      fetchPartitionStatus = Seq(topicIdPartition -> fetchStatus),
+      classicFetchPartitionStatus = Seq(topicIdPartition -> fetchStatus),
       replicaManager = replicaManager,
       quota = replicaQuota,
       responseCallback = callback
@@ -207,7 +207,7 @@ class DelayedFetchTest {
 
     val delayedFetch = new DelayedFetch(
       params = fetchParams,
-      fetchPartitionStatus = Seq(topicIdPartition -> fetchStatus),
+      classicFetchPartitionStatus = Seq(topicIdPartition -> fetchStatus),
       replicaManager = replicaManager,
       quota = replicaQuota,
       responseCallback = callback
@@ -235,67 +235,6 @@ class DelayedFetchTest {
     if (fetchResultOpt.isDefined) {
       assertEquals(Errors.NONE, fetchResultOpt.get.error)
     }
-  }
-
-  @Test
-  def testWithInkless(): Unit = {
-    val classicTopicIdPartition = new TopicIdPartition(Uuid.randomUuid(), 0, "topic")
-    val inklessTopicIdPartition = new TopicIdPartition(Uuid.randomUuid(), 0, "inkless-topic")
-    val classicBytesAvailable = 100
-    val inklessBytesAvailable = 100
-    val minBytes  = classicBytesAvailable + inklessBytesAvailable
-    val fetchOffset = 0L
-    val logStartOffset = 0L
-    val currentLeaderEpoch = Optional.of[Integer](10)
-    val lastFetchedEpoch = Optional.empty[Integer]()
-    val replicaId = 1
-    val inklessBatches = java.util.List.of(
-      new BatchInfo(0L, "object", BatchMetadata.of(inklessTopicIdPartition, 0L, inklessBytesAvailable, 0L, 123L, 1L, 1L, TimestampType.CREATE_TIME))
-    )
-
-    val classicFetchStatus = FetchPartitionStatus(
-      startOffsetMetadata = new LogOffsetMetadata(fetchOffset, 0L, 0),
-      fetchInfo = new FetchRequest.PartitionData(classicTopicIdPartition.topicId, fetchOffset, logStartOffset, maxBytes, currentLeaderEpoch, lastFetchedEpoch))
-    val inklessFetchStatus = FetchPartitionStatus(
-      startOffsetMetadata = new LogOffsetMetadata(fetchOffset),
-      fetchInfo = new FetchRequest.PartitionData(inklessTopicIdPartition.topicId, fetchOffset, logStartOffset, maxBytes, currentLeaderEpoch, lastFetchedEpoch))
-    val fetchParams = buildFollowerFetchParams(replicaId, maxWaitMs = 500, minBytes = minBytes)
-
-    var fetchResultOpt: Option[FetchPartitionData] = None
-    def callback(responses: Seq[(TopicIdPartition, FetchPartitionData)]): Unit = {
-      fetchResultOpt = Some(responses.head._2)
-    }
-
-    val delayedFetch = new DelayedFetch(
-      params = fetchParams,
-      fetchPartitionStatus = Seq(classicTopicIdPartition -> classicFetchStatus, inklessTopicIdPartition -> inklessFetchStatus),
-      replicaManager = replicaManager,
-      isInklessTopic = t => t.equals(inklessTopicIdPartition.topic()),
-      quota = replicaQuota,
-      responseCallback = callback
-    )
-
-    val partition: Partition = mock(classOf[Partition])
-    when(replicaManager.getPartitionOrException(classicTopicIdPartition.topicPartition)).thenReturn(partition)
-    val endOffsetMetadata = new LogOffsetMetadata(500L, 0L, classicBytesAvailable)
-    when(partition.fetchOffsetSnapshot(
-      currentLeaderEpoch,
-      fetchOnlyFromLeader = true))
-      .thenReturn(new LogOffsetSnapshot(0L, endOffsetMetadata, endOffsetMetadata, endOffsetMetadata))
-    when(replicaManager.isAddingReplica(any(), anyInt())).thenReturn(false)
-    when(replicaManager.fetchParamsWithNewMaxBytes(any(), any())).thenAnswer(_.getArgument(0))
-    when(replicaManager.findInklessBatches(any(), any())).thenReturn(Some(java.util.List.of(
-      new FindBatchResponse(Errors.NONE, inklessBatches, 0L, 100L)
-    )))
-    when(replicaManager.fetchInklessMessages(any(), any())).thenReturn(CompletableFuture.completedFuture(Seq.empty))
-    expectReadFromReplica(fetchParams, classicTopicIdPartition, classicFetchStatus.fetchInfo, Errors.NONE)
-
-    assertTrue(delayedFetch.tryComplete())
-    assertTrue(delayedFetch.isCompleted)
-    assertTrue(fetchResultOpt.isDefined)
-
-    val fetchResult = fetchResultOpt.get
-    assertEquals(Errors.NONE, fetchResult.error)
   }
 
   private def buildFollowerFetchParams(
@@ -341,4 +280,434 @@ class DelayedFetchTest {
       if (error != Errors.NONE) Optional.of[Throwable](error.exception) else Optional.empty[Throwable]())
   }
 
+  @Nested
+  class Inkless {
+
+    @Test
+    def testCompletionWhenLogIsTruncated(): Unit = {
+      // Case A: When fetchOffset > endOffset (high watermark), it means the log has been truncated
+      // and the fetch should complete immediately
+      val topicIdPartition = new TopicIdPartition(Uuid.randomUuid(), 0, "inkless-topic")
+      val fetchOffset = 500L
+      val endOffset = 450L // endOffset < fetchOffset indicates truncation
+      val logStartOffset = 0L
+      val currentLeaderEpoch = Optional.of[Integer](10)
+      val minBytes = 100
+
+      val fetchStatus = FetchPartitionStatus(
+        startOffsetMetadata = new LogOffsetMetadata(fetchOffset),
+        fetchInfo = new FetchRequest.PartitionData(topicIdPartition.topicId(), fetchOffset, logStartOffset, maxBytes, currentLeaderEpoch)
+      )
+      val fetchParams = new FetchParams(
+        -1, // consumer replica id
+        1,
+        500L, // maxWaitMs
+        minBytes,
+        maxBytes,
+        FetchIsolation.HIGH_WATERMARK,
+        Optional.empty()
+      )
+
+      @volatile var fetchResultOpt: Option[Seq[(TopicIdPartition, FetchPartitionData)]] = None
+
+      def callback(responses: Seq[(TopicIdPartition, FetchPartitionData)]): Unit = {
+        fetchResultOpt = Some(responses)
+      }
+
+      val delayedFetch = new DelayedFetch(
+        params = fetchParams,
+        classicFetchPartitionStatus = Seq.empty,
+        inklessFetchPartitionStatus = Seq(topicIdPartition -> fetchStatus),
+        replicaManager = replicaManager,
+        quota = replicaQuota,
+        responseCallback = callback
+      )
+
+      // Create proper BatchMetadata
+      val batchMetadata = BatchMetadata.of(
+        topicIdPartition,
+        0L, // byteOffset
+        100L, // byteSize
+        endOffset, // baseOffset
+        endOffset + 10, // lastOffset
+        System.currentTimeMillis(), // logAppendTimestamp
+        System.currentTimeMillis(), // batchMaxTimestamp
+        TimestampType.CREATE_TIME
+      )
+
+      // Mock successful inkless batch finding with truncation scenario
+      val mockResponse = mock(classOf[FindBatchResponse])
+      when(mockResponse.errors()).thenReturn(Errors.NONE)
+      when(mockResponse.batches()).thenReturn(Collections.singletonList(new BatchInfo(
+        1L, // batchId
+        "test-batch-id", // objectKey
+        batchMetadata
+      )))
+      when(mockResponse.highWatermark()).thenReturn(endOffset) // endOffset < fetchOffset (truncation)
+
+      val future = Some(Collections.singletonList(mockResponse))
+      when(replicaManager.findInklessBatches(any[Seq[FindBatchRequest]], anyInt())).thenReturn(future)
+
+      // Mock fetchInklessMessages for onComplete
+      when(replicaManager.fetchParamsWithNewMaxBytes(any[FetchParams], any[Float])).thenAnswer(_.getArgument(0))
+      when(replicaManager.fetchInklessMessages(any[FetchParams], any[Seq[(TopicIdPartition, FetchRequest.PartitionData)]]))
+        .thenReturn(CompletableFuture.completedFuture(Seq((topicIdPartition, mock(classOf[FetchPartitionData])))))
+
+      when(replicaManager.readFromLog(
+        fetchParams,
+        readPartitionInfo = Seq.empty,
+        quota = replicaQuota,
+        readFromPurgatory = true
+      )).thenReturn(Seq.empty)
+
+      // Test that tryComplete returns false but force completion (Case A)
+      // The truncation case (fetchOffset > endOffset) should cause tryCompleteInkless to return None,
+      // and accumulated bytes won't exceed minBytes
+      assertFalse(delayedFetch.tryComplete())
+      assertTrue(delayedFetch.isCompleted)
+      assertTrue(fetchResultOpt.isDefined)
+
+      // Verify that estimatedByteSize is never called since we hit the truncation case
+      verify(mockResponse, never()).estimatedByteSize(anyLong())
+    }
+
+    @Test
+    def testNoCompletionWhenFetchOffsetEqualsHighWatermark(): Unit = {
+      // Case D: When fetchOffset == endOffset (high watermark), no new data is available
+      // and accumulated bytes won't exceed minBytes, so completion should not occur
+      val topicIdPartition = new TopicIdPartition(Uuid.randomUuid(), 0, "inkless-topic")
+      val fetchOffset = 500L
+      val logStartOffset = 0L
+      val currentLeaderEpoch = Optional.of[Integer](10)
+      val minBytes = 100
+      val estimatedBatchSize = 150L // This would exceed minBytes if counted, but won't be since fetchOffset == endOffset
+
+      val fetchStatus = FetchPartitionStatus(
+        startOffsetMetadata = new LogOffsetMetadata(fetchOffset),
+        fetchInfo = new FetchRequest.PartitionData(topicIdPartition.topicId(), fetchOffset, logStartOffset, maxBytes, currentLeaderEpoch)
+      )
+      val fetchParams = new FetchParams(
+        -1, // not a replica
+        1, // not a replica
+        500L, // maxWaitMs
+        minBytes,
+        maxBytes,
+        FetchIsolation.HIGH_WATERMARK,
+        Optional.empty()
+      )
+
+      @volatile var fetchResultOpt: Option[Seq[(TopicIdPartition, FetchPartitionData)]] = None
+
+      def callback(responses: Seq[(TopicIdPartition, FetchPartitionData)]): Unit = {
+        fetchResultOpt = Some(responses)
+      }
+
+      val delayedFetch = new DelayedFetch(
+        params = fetchParams,
+        classicFetchPartitionStatus = Seq.empty,
+        inklessFetchPartitionStatus = Seq(topicIdPartition -> fetchStatus),
+        replicaManager = replicaManager,
+        quota = replicaQuota,
+        responseCallback = callback
+      )
+
+      // Create proper BatchMetadata
+      val batchMetadata = BatchMetadata.of(
+        topicIdPartition,
+        0L, // byteOffset
+        100L, // byteSize
+        fetchOffset, // baseOffset
+        fetchOffset + 10, // lastOffset
+        System.currentTimeMillis(), // logAppendTimestamp
+        System.currentTimeMillis(), // batchMaxTimestamp
+        TimestampType.CREATE_TIME
+      )
+
+      // Mock successful inkless batch finding
+      val mockResponse = mock(classOf[FindBatchResponse])
+      when(mockResponse.errors()).thenReturn(Errors.NONE)
+      when(mockResponse.batches()).thenReturn(Collections.singletonList(new BatchInfo(
+        1L, // batchId
+        "test-batch-id", // objectKey
+        batchMetadata
+      )))
+      when(mockResponse.highWatermark()).thenReturn(fetchOffset) // fetchOffset == endOffset (no new data)
+      when(mockResponse.estimatedByteSize(fetchOffset)).thenReturn(estimatedBatchSize)
+
+      val future = Some(Collections.singletonList(mockResponse))
+      when(replicaManager.findInklessBatches(any[Seq[FindBatchRequest]], anyInt())).thenReturn(future)
+
+      when(replicaManager.readFromLog(
+        fetchParams,
+        readPartitionInfo = Seq.empty,
+        quota = replicaQuota,
+        readFromPurgatory = true
+      )).thenReturn(Seq.empty)
+
+      // Test that tryComplete returns false since fetchOffset == endOffset means no new data
+      // and accumulated bytes won't exceed minBytes
+      assertFalse(delayedFetch.tryComplete())
+      assertFalse(delayedFetch.isCompleted)
+      assertFalse(fetchResultOpt.isDefined)
+
+      // Verify that estimatedByteSize is never called since fetchOffset == endOffset
+      verify(replicaManager, never()).fetchInklessMessages(any[FetchParams], any[Seq[(TopicIdPartition, FetchRequest.PartitionData)]])
+      verify(mockResponse, never()).estimatedByteSize(anyLong())
+    }
+
+    @Test
+    def testNoCompletionWhenAccumulatedBytesUnderThreshold(): Unit = {
+      // Case B (partial): When fetchOffset < endOffset (data available) but accumulated bytes < minBytes
+      // The fetch should not complete and wait for more data or timeout
+      val topicIdPartition = new TopicIdPartition(Uuid.randomUuid(), 0, "inkless-topic")
+      val fetchOffset = 500L
+      val endOffset = 600L // endOffset > fetchOffset, so data is available
+      val logStartOffset = 0L
+      val currentLeaderEpoch = Optional.of[Integer](10)
+      val minBytes = 200 // Set threshold higher than available bytes
+      val estimatedBatchSize = 50L // This will NOT exceed minBytes
+
+      val fetchStatus = FetchPartitionStatus(
+        startOffsetMetadata = new LogOffsetMetadata(fetchOffset),
+        fetchInfo = new FetchRequest.PartitionData(topicIdPartition.topicId(), fetchOffset, logStartOffset, maxBytes, currentLeaderEpoch)
+      )
+      val fetchParams = new FetchParams(
+        -1, // consumer replica id
+        1,
+        500L, // maxWaitMs
+        minBytes,
+        maxBytes,
+        FetchIsolation.HIGH_WATERMARK,
+        Optional.empty()
+      )
+
+      @volatile var fetchResultOpt: Option[Seq[(TopicIdPartition, FetchPartitionData)]] = None
+
+      def callback(responses: Seq[(TopicIdPartition, FetchPartitionData)]): Unit = {
+        fetchResultOpt = Some(responses)
+      }
+
+      val delayedFetch = new DelayedFetch(
+        params = fetchParams,
+        classicFetchPartitionStatus = Seq.empty,
+        inklessFetchPartitionStatus = Seq(topicIdPartition -> fetchStatus),
+        replicaManager = replicaManager,
+        quota = replicaQuota,
+        responseCallback = callback
+      )
+
+      // Create proper BatchMetadata
+      val batchMetadata = BatchMetadata.of(
+        topicIdPartition,
+        0L, // byteOffset
+        100L, // byteSize
+        fetchOffset, // baseOffset
+        fetchOffset + 10, // lastOffset
+        System.currentTimeMillis(), // logAppendTimestamp
+        System.currentTimeMillis(), // batchMaxTimestamp
+        TimestampType.CREATE_TIME
+      )
+
+      // Mock successful inkless batch finding with available data but insufficient bytes
+      val mockResponse = mock(classOf[FindBatchResponse])
+      when(mockResponse.errors()).thenReturn(Errors.NONE)
+      when(mockResponse.batches()).thenReturn(Collections.singletonList(new BatchInfo(
+        1L, // batchId
+        "test-batch-id", // objectKey
+        batchMetadata
+      )))
+      when(mockResponse.highWatermark()).thenReturn(endOffset) // endOffset > fetchOffset (data available)
+      when(mockResponse.estimatedByteSize(fetchOffset)).thenReturn(estimatedBatchSize)
+
+      val future = Some(Collections.singletonList(mockResponse))
+      when(replicaManager.findInklessBatches(any[Seq[FindBatchRequest]], anyInt())).thenReturn(future)
+
+      when(replicaManager.readFromLog(
+        fetchParams,
+        readPartitionInfo = Seq.empty,
+        quota = replicaQuota,
+        readFromPurgatory = true
+      )).thenReturn(Seq.empty)
+
+      // Test that tryComplete returns false since accumulated bytes (50) < minBytes (200)
+      assertFalse(delayedFetch.tryComplete())
+      assertFalse(delayedFetch.isCompleted)
+      assertFalse(fetchResultOpt.isDefined)
+
+      // Verify that estimatedByteSize is called since fetchOffset < endOffset
+      verify(mockResponse).estimatedByteSize(fetchOffset)
+    }
+
+    @Test
+    def testCompletionWhenAccumulatedBytesExceedsMinBytes(): Unit = {
+      // Case B: When accumulated bytes from available batches exceeds minBytes, fetch should complete
+      val topicIdPartition = new TopicIdPartition(Uuid.randomUuid(), 0, "inkless-topic")
+      val fetchOffset = 500L
+      val endOffset = 600L // endOffset > fetchOffset, so data is available
+      val logStartOffset = 0L
+      val currentLeaderEpoch = Optional.of[Integer](10)
+      val minBytes = 100
+      val estimatedBatchSize = 150L // This will exceed minBytes
+
+      val fetchStatus = FetchPartitionStatus(
+        startOffsetMetadata = new LogOffsetMetadata(fetchOffset),
+        fetchInfo = new FetchRequest.PartitionData(topicIdPartition.topicId(), fetchOffset, logStartOffset, maxBytes, currentLeaderEpoch)
+      )
+      val fetchParams = new FetchParams(
+        -1, // consumer replica id
+        1,
+        500L, // maxWaitMs
+        minBytes,
+        maxBytes,
+        FetchIsolation.HIGH_WATERMARK,
+        Optional.empty()
+      )
+
+      @volatile var fetchResultOpt: Option[Seq[(TopicIdPartition, FetchPartitionData)]] = None
+
+      def callback(responses: Seq[(TopicIdPartition, FetchPartitionData)]): Unit = {
+        fetchResultOpt = Some(responses)
+      }
+
+      val delayedFetch = new DelayedFetch(
+        params = fetchParams,
+        classicFetchPartitionStatus = Seq.empty,
+        inklessFetchPartitionStatus = Seq(topicIdPartition -> fetchStatus),
+        replicaManager = replicaManager,
+        quota = replicaQuota,
+        responseCallback = callback
+      )
+
+      // Create proper BatchMetadata
+      val batchMetadata = BatchMetadata.of(
+        topicIdPartition,
+        0L, // byteOffset
+        100L, // byteSize
+        fetchOffset, // baseOffset
+        fetchOffset + 10, // lastOffset
+        System.currentTimeMillis(), // logAppendTimestamp
+        System.currentTimeMillis(), // batchMaxTimestamp
+        TimestampType.CREATE_TIME
+      )
+
+      // Mock successful inkless batch finding with available data
+      val mockResponse = mock(classOf[FindBatchResponse])
+      when(mockResponse.errors()).thenReturn(Errors.NONE)
+      when(mockResponse.batches()).thenReturn(Collections.singletonList(new BatchInfo(
+        1L, // batchId
+        "test-batch-id", // objectKey
+        batchMetadata
+      )))
+      when(mockResponse.highWatermark()).thenReturn(endOffset) // endOffset > fetchOffset (data available)
+      when(mockResponse.estimatedByteSize(fetchOffset)).thenReturn(estimatedBatchSize)
+
+      val future = Some(Collections.singletonList(mockResponse))
+      when(replicaManager.findInklessBatches(any[Seq[FindBatchRequest]], anyInt())).thenReturn(future)
+
+      // Mock fetchInklessMessages for onComplete
+      when(replicaManager.fetchParamsWithNewMaxBytes(any[FetchParams], anyFloat())).thenAnswer(_.getArgument(0))
+      when(replicaManager.fetchInklessMessages(any[FetchParams], any[Seq[(TopicIdPartition, FetchRequest.PartitionData)]]))
+        .thenReturn(CompletableFuture.completedFuture(Seq((topicIdPartition, mock(classOf[FetchPartitionData])))))
+
+      when(replicaManager.readFromLog(
+        fetchParams,
+        readPartitionInfo = Seq.empty,
+        quota = replicaQuota,
+        readFromPurgatory = true
+      )).thenReturn(Seq.empty)
+
+      // Test that tryComplete returns true (Case B: accumulated bytes exceeds min bytes)
+      assertTrue(delayedFetch.tryComplete())
+      assertTrue(delayedFetch.isCompleted)
+      assertTrue(fetchResultOpt.isDefined)
+
+      // Verify that estimatedByteSize is called since fetchOffset < endOffset
+      verify(mockResponse).estimatedByteSize(fetchOffset)
+    }
+
+    @Test
+    def testCompletionWhenErrorOccursDuringInklessBatchFinding(): Unit = {
+      // Case C: When an error occurs while trying to find inkless batches, fetch should complete immediately
+      val topicIdPartition = new TopicIdPartition(Uuid.randomUuid(), 0, "inkless-topic")
+      val fetchOffset = 500L
+      val logStartOffset = 0L
+      val currentLeaderEpoch = Optional.of[Integer](10)
+      val minBytes = 100
+
+      val fetchStatus = FetchPartitionStatus(
+        startOffsetMetadata = new LogOffsetMetadata(fetchOffset),
+        fetchInfo = new FetchRequest.PartitionData(topicIdPartition.topicId(), fetchOffset, logStartOffset, maxBytes, currentLeaderEpoch)
+      )
+      val fetchParams = new FetchParams(
+        -1, // consumer replica id
+        1,
+        500L, // maxWaitMs
+        minBytes,
+        maxBytes,
+        FetchIsolation.HIGH_WATERMARK,
+        Optional.empty()
+      )
+
+      @volatile var fetchResultOpt: Option[Seq[(TopicIdPartition, FetchPartitionData)]] = None
+
+      def callback(responses: Seq[(TopicIdPartition, FetchPartitionData)]): Unit = {
+        fetchResultOpt = Some(responses)
+      }
+
+      val delayedFetch = new DelayedFetch(
+        params = fetchParams,
+        classicFetchPartitionStatus = Seq.empty,
+        inklessFetchPartitionStatus = Seq(topicIdPartition -> fetchStatus),
+        replicaManager = replicaManager,
+        quota = replicaQuota,
+        responseCallback = callback
+      )
+
+      // Create proper BatchMetadata
+      val batchMetadata = BatchMetadata.of(
+        topicIdPartition,
+        0L, // byteOffset
+        100L, // byteSize
+        fetchOffset, // baseOffset
+        fetchOffset + 10, // lastOffset
+        System.currentTimeMillis(), // logAppendTimestamp
+        System.currentTimeMillis(), // batchMaxTimestamp
+        TimestampType.CREATE_TIME
+      )
+
+      // Mock error response from inkless batch finding
+      val mockResponse = mock(classOf[FindBatchResponse])
+      when(mockResponse.errors()).thenReturn(Errors.UNKNOWN_SERVER_ERROR) // Non-NONE error triggers Case C
+      when(mockResponse.batches()).thenReturn(Collections.singletonList(new BatchInfo(
+        1L, // batchId
+        "test-batch-id", // objectKey
+        batchMetadata
+      )))
+      when(mockResponse.highWatermark()).thenReturn(600L)
+
+      val future = Some(Collections.singletonList(mockResponse))
+      when(replicaManager.findInklessBatches(any[Seq[FindBatchRequest]], anyInt())).thenReturn(future)
+
+      // Mock fetchInklessMessages for onComplete
+      when(replicaManager.fetchParamsWithNewMaxBytes(any[FetchParams], anyFloat())).thenAnswer(_.getArgument(0))
+      when(replicaManager.fetchInklessMessages(any[FetchParams], any[Seq[(TopicIdPartition, FetchRequest.PartitionData)]]))
+        .thenReturn(CompletableFuture.completedFuture(Seq((topicIdPartition, mock(classOf[FetchPartitionData])))))
+
+      when(replicaManager.readFromLog(
+        fetchParams,
+        readPartitionInfo = Seq.empty,
+        quota = replicaQuota,
+        readFromPurgatory = true
+      )).thenReturn(Seq.empty)
+
+      // Test that tryComplete returns true (Case C: error forces completion)
+      assertFalse(delayedFetch.tryComplete())
+      assertTrue(delayedFetch.isCompleted)
+      assertTrue(fetchResultOpt.isDefined)
+
+      // Verify that estimatedByteSize is never called since we hit the error case
+      verify(mockResponse, never()).estimatedByteSize(anyLong())
+      verify(mockResponse, never()).highWatermark()
+    }
+  }
 }
