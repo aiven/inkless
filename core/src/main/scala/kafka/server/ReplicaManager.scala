@@ -699,19 +699,8 @@ class ReplicaManager(val config: KafkaConfig,
           error("Inkless append future failed", e)
           inklessEntries.map{ case (tp, _) => tp -> new PartitionResponse(Errors.UNKNOWN_SERVER_ERROR)}
         }
-        val inklessAppendResults = new mutable.HashMap[TopicOptionalIdPartition, LogAppendResult]
-        inklessResult.foreach {
-          case (tp, _) => {
-            // Consider every successful produce request as if it increased the high watermark. This is a simplification
-            // that will always result in the attempt to complete the delayed operations.
-            // The current implementation does not take into account that other brokers might have performed appends
-            // that would unblock delayed operations in the purgatories of this broker.
-            val logAppendInfo = LogAppendInfo.UNKNOWN_LOG_APPEND_INFO.copy(LeaderHwChange.INCREASED)
-            val logAppendResult =  LogAppendResult(logAppendInfo, None, hasCustomErrorMessage = false)
-            inklessAppendResults += (new TopicOptionalIdPartition(Optional.empty(), tp) -> logAppendResult)
-          }
-        }
-        addCompletePurgatoryAction(actionQueue, inklessAppendResults)
+        // Inkless append results do not complete purgatory actions to avoid overloading the control-plane.
+        // only classic append results complete purgatory actions.
         responseCallback(inklessResult ++ classicResult)
       }
     }
