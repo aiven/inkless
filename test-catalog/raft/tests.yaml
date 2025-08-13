@@ -106,6 +106,13 @@ org.apache.kafka.raft.KafkaNetworkChannelTest:
 - testSendToBlackedOutDestination
 - testUnsupportedVersionError
 - testWakeupClientOnSend
+org.apache.kafka.raft.KafkaRaftClientAutoJoinTest:
+- testAutoAddNewVoter
+- testAutoRemoveOldVoter
+- testObserverDoesNotAddItselfWhenAutoJoinDisabled
+- testObserverDoesNotAutoJoinWithKRaftVersion0
+- testObserverRemovesOldVoterAndAutoJoins
+- testObserversDoNotAutoJoin
 org.apache.kafka.raft.KafkaRaftClientClusterAuthTest:
 - testClusterAuthorizationFailedInBeginQuorumEpoch
 - testClusterAuthorizationFailedInEndQuorumEpoch
