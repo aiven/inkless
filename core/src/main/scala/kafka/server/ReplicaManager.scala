@@ -2503,7 +2503,17 @@ class ReplicaManager(val config: KafkaConfig,
       // luke
       if (remoteLeader) {
 //        partitionsToStartFetching.foreachEntry { (topicPartition, partition) =>
-//          val nodeOpt = getRemoteLeaderNode(partition)
+//          val metadata = new Metadata(100, 1000, config.getLong(CommonClientConfigs.METADATA_MAX_AGE_CONFIG), logContext, new ClusterResourceListeners)
+//          val addresses = ClientUtils.parseAndValidateAddresses(config.getList(CommonClientConfigs.BOOTSTRAP_SERVERS_CONFIG), config.getString(CommonClientConfigs.CLIENT_DNS_LOOKUP_CONFIG))
+//          metadata.bootstrap(addresses)
+//
+//          val logContext = new LogContext(String.format("[remote follower clientId=%s] ", localBrokerId))
+//          ClientUtils.createNetworkClient(config, this.metrics, "producer", logContext, new ApiVersions, time,
+//            1, metadata, null, null)
+//
+//          metadata.fetchMetadataSnapshot().cluster.leaderFor(topicPartition)
+//          //        partitionsToStartFetching.foreachEntry { (topicPartition, partition) =>
+//  //          val nodeOpt = getRemoteLeaderNode(partition)
 //        }
       } else {
 

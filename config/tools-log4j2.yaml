@@ -26,7 +26,7 @@ Configuration:
         pattern: "${logPattern}"
   Loggers:
     Root:
-      level: DEBUG
+      level: WARN
       AppenderRef:
         - ref: STDERR
 
