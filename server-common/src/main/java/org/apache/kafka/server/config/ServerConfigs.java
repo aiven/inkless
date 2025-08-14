@@ -101,6 +101,21 @@ public class ServerConfigs {
     public static final int FETCH_MAX_BYTES_DEFAULT = 55 * 1024 * 1024;
     public static final String FETCH_MAX_BYTES_DOC = "The maximum number of bytes we will return for a fetch request. Must be at least 1024.";
 
+    /** ********* Inkless Fetch Batch Configuration ***********/
+    public static final String INKLESS_FETCH_MIN_BYTES_CONFIG = "inkless.fetch.min.bytes";
+    public static final int INKLESS_FETCH_MIN_BYTES_DEFAULT = 1;
+    public static final String INKLESS_FETCH_MIN_BYTES_DOC = "The minimum number of bytes to return for a fetch request. " +
+            "If the number of bytes available is less than this value, the request will wait until more data is available or the maximum wait time is reached. " +
+            "This configuration will override the consumer's <code>fetch.min.bytes</code> setting for inkless fetch requests if the value is greater than the consumer's setting. " +
+            "This is a protective configuration to ensure the operator can control how often to return fetch responses";
+
+    public static final String INKLESS_FETCH_MAX_WAIT_MS_CONFIG = "inkless.fetch.max.wait.ms";
+    public static final int INKLESS_FETCH_MAX_WAIT_MS_DEFAULT = 100;  // Half of the default fetch.max.wait.ms
+    public static final String INKLESS_FETCH_MAX_WAIT_MS_DOC = "The maximum time to wait for a fetch request to be fulfilled. " +
+            "If the request is not fulfilled within this time, it will return an empty response. This is useful for reducing latency in high-throughput scenarios. " +
+            "This configuration will override the consumer's <code>fetch.max.wait.ms</code> setting for inkless fetch requests if the value is less than the consumer's setting. " +
+            "This is a protective configuration to ensure the operator can control how often to return fetch responses";
+
     /** ********* Request Limit Configuration **************/
     public static final String MAX_REQUEST_PARTITION_SIZE_LIMIT_CONFIG = "max.request.partition.size.limit";
     public static final int MAX_REQUEST_PARTITION_SIZE_LIMIT_DEFAULT = 2000;
@@ -144,6 +159,10 @@ public class ServerConfigs {
             /** ********* Fetch Configuration **************/
             .define(MAX_INCREMENTAL_FETCH_SESSION_CACHE_SLOTS_CONFIG, INT, MAX_INCREMENTAL_FETCH_SESSION_CACHE_SLOTS_DEFAULT, atLeast(0), MEDIUM, MAX_INCREMENTAL_FETCH_SESSION_CACHE_SLOTS_DOC)
             .define(FETCH_MAX_BYTES_CONFIG, INT, FETCH_MAX_BYTES_DEFAULT, atLeast(1024), MEDIUM, FETCH_MAX_BYTES_DOC)
+
+            /** ********* Inkless Fetch Batch Configuration ***********/
+            .define(INKLESS_FETCH_MIN_BYTES_CONFIG, INT, INKLESS_FETCH_MIN_BYTES_DEFAULT, atLeast(1), MEDIUM, INKLESS_FETCH_MIN_BYTES_DOC)
+            .define(INKLESS_FETCH_MAX_WAIT_MS_CONFIG, INT, INKLESS_FETCH_MAX_WAIT_MS_DEFAULT, atLeast(0), MEDIUM, INKLESS_FETCH_MAX_WAIT_MS_DOC)
 
             /** ********* Request Limit Configuration ***********/
             .define(MAX_REQUEST_PARTITION_SIZE_LIMIT_CONFIG, INT, MAX_REQUEST_PARTITION_SIZE_LIMIT_DEFAULT, atLeast(1), MEDIUM, MAX_REQUEST_PARTITION_SIZE_LIMIT_DOC)
