@@ -43,6 +43,7 @@ public class InklessFetchMetrics {
     private static final String CACHE_MISS_COUNT = "CacheMissCount";
     private static final String FETCH_FILE_TIME = "FetchFileTime";
     private static final String FETCH_COMPLETION_TIME = "FetchCompletionTime";
+    private static final String FETCH_RATE = "FetchRate";
 
     private final Time time;
 
@@ -56,6 +57,7 @@ public class InklessFetchMetrics {
     private final Meter cacheMisses;
     private final Histogram fetchFileTimeHistogram;
     private final Histogram fetchCompletionTimeHistogram;
+    private final Meter fetchRate;
 
     public InklessFetchMetrics(Time time) {
         this.time = Objects.requireNonNull(time, "time cannot be null");
@@ -68,6 +70,7 @@ public class InklessFetchMetrics {
         cacheMisses = metricsGroup.newMeter(CACHE_MISS_COUNT, "misses", TimeUnit.SECONDS, Map.of());
         fetchFileTimeHistogram = metricsGroup.newHistogram(FETCH_FILE_TIME, true, Map.of());
         fetchCompletionTimeHistogram = metricsGroup.newHistogram(FETCH_COMPLETION_TIME, true, Map.of());
+        fetchRate = metricsGroup.newMeter(FETCH_RATE, "fetches", TimeUnit.SECONDS, Map.of());
     }
 
     public void fetchCompleted(Instant startAt) {
@@ -113,5 +116,9 @@ public class InklessFetchMetrics {
         metricsGroup.removeMetric(FETCH_PLAN_TIME);
         metricsGroup.removeMetric(FIND_BATCHES_TIME);
         metricsGroup.removeMetric(FETCH_COMPLETION_TIME);
+    }
+
+    public void fetchStarted() {
+        fetchRate.mark();
     }
 }
