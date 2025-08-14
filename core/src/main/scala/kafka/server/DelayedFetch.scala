@@ -56,8 +56,10 @@ class DelayedFetch(
   inklessFetchPartitionStatus: Seq[(TopicIdPartition, FetchPartitionStatus)] = Seq.empty,
   replicaManager: ReplicaManager,
   quota: ReplicaQuota,
-  responseCallback: Seq[(TopicIdPartition, FetchPartitionData)] => Unit
-) extends DelayedOperation(params.maxWaitMs) with Logging {
+  maxWaitMs: Option[Long] = None,
+  minBytes: Option[Int] = None,
+  responseCallback: Seq[(TopicIdPartition, FetchPartitionData)] => Unit,
+) extends DelayedOperation(maxWaitMs.getOrElse(params.maxWaitMs)) with Logging {
 
   override def toString: String = {
     s"DelayedFetch(params=$params" +
@@ -157,7 +159,7 @@ class DelayedFetch(
     }
 
     // Case G
-    if (accumulatedSize >= params.minBytes)
+    if (accumulatedSize >= minBytes.getOrElse(params.minBytes))
       forceComplete()
     else
       false

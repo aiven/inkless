@@ -1687,6 +1687,10 @@ class ReplicaManager(val config: KafkaConfig,
 
     val (inklessFetchInfos, classicFetchInfos) = fetchInfos.partition { case (k, _) => isInklessTopic(k.topic()) }
 
+    // Override maxWaitMs and minBytes with lower-bound if there are inkless fetches. Otherwise, leave the consumer-provided values.
+    val maxWaitMs = if (inklessFetchInfos.nonEmpty) Math.max(config.inklessFetchMaxWaitMs.toLong, params.maxWaitMs) else params.maxWaitMs
+    val minBytes = if (inklessFetchInfos.nonEmpty) Math.max(config.inklessFetchMinBytes, params.minBytes) else params.minBytes
+
     if (params.isFromFollower && inklessFetchInfos.nonEmpty) {
       warn("Inkless topics are not supported for follower fetch requests. " +
         s"Request from follower ${params.replicaId} contains inkless topics: ${inklessFetchInfos.map(_._1.topic()).mkString(", ")}")
@@ -1699,13 +1703,18 @@ class ReplicaManager(val config: KafkaConfig,
         case (k, partitionData) =>
           k -> FetchPartitionStatus(new LogOffsetMetadata(partitionData.fetchOffset), partitionData)
       }
+      // If there are inkless fetches, enforce a lower bound on maxWaitMs to ensure that we wait at least as long as the
+      // configured remote fetch max wait time. This is to ensure that we give enough time for the inkless fetches to complete,
+      // and do not overload the control plane with too many requests.
       val delayedFetch = new DelayedFetch(
         params = params,
         classicFetchPartitionStatus = classicFetchPartitionStatus,
         inklessFetchPartitionStatus = inklessFetchPartitionStatus,
         replicaManager = this,
         quota = quota,
-        responseCallback = responseCallback
+        maxWaitMs = Some(maxWaitMs),
+        minBytes = Some(minBytes),
+        responseCallback = responseCallback,
       )
 
       // create a list of (topic, partition) pairs to use as keys for this delayed fetch operation
@@ -1786,7 +1795,7 @@ class ReplicaManager(val config: KafkaConfig,
           val inklessParams = fetchParamsWithNewMaxBytes(params, inklessFetchInfos.size.toFloat / fetchInfos.size.toFloat)
           val inklessResponsesFuture = fetchInklessMessages(inklessParams, inklessFetchInfos)
 
-          val response = inklessResponsesFuture.get(params.maxWaitMs, TimeUnit.MILLISECONDS)
+          val response = inklessResponsesFuture.get(maxWaitMs, TimeUnit.MILLISECONDS)
           response.map { case (tp, data) =>
             val exception: Optional[Throwable] = data.error match {
               case Errors.NONE => Optional.empty()
