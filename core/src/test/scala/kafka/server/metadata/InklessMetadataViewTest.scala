@@ -22,7 +22,6 @@ import org.junit.jupiter.api.{BeforeEach, Test}
 import org.junit.jupiter.api.Assertions._
 import org.mockito.Mockito._
 
-import java.util.{HashMap => JHashMap}
 import java.util.function.Supplier
 import java.util
 
@@ -41,7 +40,7 @@ class InklessMetadataViewTest {
   @Test
   def testGetDefaultConfigFiltersNullValues(): Unit = {
     // Setup a map with some null values
-    val originalConfig = new JHashMap[String, Object]()
+    val originalConfig = new util.HashMap[String, Object]()
     originalConfig.put("key1", "value1")
     originalConfig.put("key2", null)
     originalConfig.put("key3", Integer.valueOf(42))
@@ -66,7 +65,7 @@ class InklessMetadataViewTest {
   @Test
   def testGetDefaultConfigWithNoNullValues(): Unit = {
     // Setup a map with no null values
-    val originalConfig = new JHashMap[String, Object]()
+    val originalConfig = new util.HashMap[String, Object]()
     originalConfig.put("key1", "value1")
     originalConfig.put("key2", "value2")
 
@@ -85,7 +84,7 @@ class InklessMetadataViewTest {
   @Test
   def testGetDefaultConfigWithEmptyMap(): Unit = {
     // Setup an empty map
-    val originalConfig = new JHashMap[String, Object]()
+    val originalConfig = new util.HashMap[String, Object]()
 
     // Configure the mock to return our test map
     when(configSupplier.get()).thenReturn(originalConfig)
