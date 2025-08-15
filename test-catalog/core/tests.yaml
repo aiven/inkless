@@ -30,10 +30,6 @@ kafka.admin.AddPartitionsTest:
 kafka.admin.RemoteTopicCrudTest:
 - testClusterWideDisablementOfTieredStorageWithEnabledTieredTopic
 - testClusterWithoutTieredStorageStartsSuccessfullyIfTopicWithTieringDisabled
-kafka.api.AdminClientWithPoliciesIntegrationTest:
-- testInvalidAlterConfigs
-- testInvalidAlterConfigsDueToPolicy
-- testValidAlterConfigs
 kafka.api.AuthorizerIntegrationTest:
 - shouldInitTransactionsWhenAclSet
 - shouldNotIncludeUnauthorizedTopicsInDescribeTransactionsResponse
