@@ -110,6 +110,13 @@ public class ServerConfigs {
     public static final String UNSTABLE_API_VERSIONS_ENABLE_CONFIG = "unstable.api.versions.enable";
     public static final String UNSTABLE_FEATURE_VERSIONS_ENABLE_CONFIG = "unstable.feature.versions.enable";
 
+    /** Inkless Configurations **/
+    public static final String INKLESS_STORAGE_SYSTEM_ENABLE_CONFIG = "inkless.storage.system.enable";
+    public static final boolean INKLESS_STORAGE_SYSTEM_ENABLE_DEFAULT = false;
+    public static final String INKLESS_STORAGE_SYSTEM_ENABLE_DOC = "Enable the inkless storage system. " +
+        "This enables Inkless topics alongside classic topics.";
+
+
     /************* Authorizer Configuration ***********/
     public static final String AUTHORIZER_CLASS_NAME_CONFIG = "authorizer.class.name";
     public static final String AUTHORIZER_CLASS_NAME_DEFAULT = "";
@@ -147,6 +154,8 @@ public class ServerConfigs {
 
             /** ********* Request Limit Configuration ***********/
             .define(MAX_REQUEST_PARTITION_SIZE_LIMIT_CONFIG, INT, MAX_REQUEST_PARTITION_SIZE_LIMIT_DEFAULT, atLeast(1), MEDIUM, MAX_REQUEST_PARTITION_SIZE_LIMIT_DOC)
+            /** Inkless Configurations **/
+            .define(INKLESS_STORAGE_SYSTEM_ENABLE_CONFIG, BOOLEAN, INKLESS_STORAGE_SYSTEM_ENABLE_DEFAULT, HIGH, INKLESS_STORAGE_SYSTEM_ENABLE_DOC)
             /** Internal Configurations **/
             // This indicates whether unreleased APIs should be advertised by this node.
             .defineInternal(UNSTABLE_API_VERSIONS_ENABLE_CONFIG, BOOLEAN, false, HIGH)

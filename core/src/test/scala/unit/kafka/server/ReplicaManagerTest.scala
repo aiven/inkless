@@ -6862,6 +6862,7 @@ class ReplicaManagerTest {
         alterPartitionManager = alterPartitionManager,
         threadNamePrefix = Option(this.getClass.getName),
         inklessSharedState = Some(sharedState),
+        inklessMetadataView = Some(inklessMetadata),
       )
     }
   }

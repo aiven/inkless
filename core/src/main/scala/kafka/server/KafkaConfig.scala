@@ -424,6 +424,9 @@ class KafkaConfig private(doLog: Boolean, val props: util.Map[_, _])
   val unstableApiVersionsEnabled = getBoolean(ServerConfigs.UNSTABLE_API_VERSIONS_ENABLE_CONFIG)
   val unstableFeatureVersionsEnabled = getBoolean(ServerConfigs.UNSTABLE_FEATURE_VERSIONS_ENABLE_CONFIG)
 
+  /** Inkless Configuration */
+  val inklessStorageSystemEnabled: Boolean = getBoolean(ServerConfigs.INKLESS_STORAGE_SYSTEM_ENABLE_CONFIG)
+
   def addReconfigurable(reconfigurable: Reconfigurable): Unit = {
     dynamicConfig.addReconfigurable(reconfigurable)
   }

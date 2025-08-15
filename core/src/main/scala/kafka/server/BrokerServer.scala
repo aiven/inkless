@@ -379,7 +379,8 @@ class BrokerServer(
         addPartitionsToTxnManager = Some(addPartitionsToTxnManager),
         directoryEventHandler = directoryEventHandler,
         defaultActionQueue = defaultActionQueue,
-        inklessSharedState = inklessSharedState
+        inklessSharedState = inklessSharedState,
+        inklessMetadataView = Some(inklessMetadataView)
       )
 
       /* start token manager */

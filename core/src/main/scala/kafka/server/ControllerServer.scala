@@ -235,6 +235,7 @@ class ControllerServer(
           setDefaultReplicationFactor(config.defaultReplicationFactor.toShort).
           setDefaultNumPartitions(config.numPartitions.intValue()).
           setDefaultInklessEnable(config.logInklessEnable).
+          setInklessStorageSystemEnabled(config.inklessStorageSystemEnabled).
           setSessionTimeoutNs(TimeUnit.NANOSECONDS.convert(config.brokerSessionTimeoutMs.longValue(),
             TimeUnit.MILLISECONDS)).
           setLeaderImbalanceCheckIntervalNs(leaderImbalanceCheckIntervalNs).

@@ -323,6 +323,8 @@
               files="ApiVersionsResponse.java"/>
     <suppress checks="AvoidStarImport"
               files="MetadataVersionTest.java"/>
+    <suppress checks="JavaNCSS"
+              files="ReplicationControlManagerTest.java"/>
 
     <!-- group coordinator -->
     <suppress checks="CyclomaticComplexity"
