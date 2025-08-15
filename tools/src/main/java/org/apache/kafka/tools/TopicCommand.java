@@ -977,7 +977,7 @@ public abstract class TopicCommand {
 
             // should have exactly one action
             long actions =
-                Stream.of(createOpt, listOpt, alterOpt, describeOpt, deleteOpt).filter(options::has)
+                Stream.of(createOpt, listOpt, alterOpt, describeOpt, deleteOpt, createMirrorOpt).filter(options::has)
                     .count();
             if (actions != 1)
                 CommandLineUtils.printUsageAndExit(parser, "Command must include exactly one action: --list, --describe, --create, --alter or --delete");

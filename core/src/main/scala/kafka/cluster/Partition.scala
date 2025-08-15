@@ -321,7 +321,7 @@ class Partition(val topicPartition: TopicPartition,
                 logManager: LogManager,
                 alterIsrManager: AlterPartitionManager,
                 @volatile private var _topicId: Option[Uuid] = None, // TODO: merge topicPartition and _topicId into TopicIdPartition once TopicId persist in most of the code by KAFKA-16212
-                val remoteBootstrapServer: String
+                val remoteBootstrapServer: String = ""
                ) extends Logging with TopicPartitionLog {
 
   import Partition.metricsGroup

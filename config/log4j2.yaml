@@ -129,9 +129,9 @@ Configuration:
       # Controller logger
       - name: org.apache.kafka.controller
         level: INFO
-        additivity: false
-        AppenderRef:
-          ref: ControllerAppender
+#        additivity: false
+#        AppenderRef:
+#          ref: ControllerAppender
       # LogCleaner logger
       - name: org.apache.kafka.storage.internals.log.LogCleaner
         level: INFO
@@ -151,9 +151,9 @@ Configuration:
       # State change logger
       - name: state.change.logger
         level: INFO
-        additivity: false
-        AppenderRef:
-          ref: StateChangeAppender
+#        additivity: false
+#        AppenderRef:
+#          ref: StateChangeAppender
       # Authorizer logger
       - name: kafka.authorizer.logger
         level: INFO

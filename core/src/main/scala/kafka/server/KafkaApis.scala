@@ -632,14 +632,19 @@ class KafkaApis(val requestChannel: RequestChannel,
     val versionId = request.header.apiVersion
     val clientId = request.header.clientId
     val fetchRequest = request.body[FetchRequest]
+    info("!!! handleFetchRequest:" + fetchRequest)
+
     val topicNames =
-      if (fetchRequest.version() >= 13)
+      if (fetchRequest.version() >= 30)
         metadataCache.topicIdsToNames()
       else
         Collections.emptyMap[Uuid, String]()
 
     val fetchData = fetchRequest.fetchData(topicNames)
     val forgottenTopics = fetchRequest.forgottenTopics(topicNames)
+
+    info("!!! fetchData:" + fetchData)
+    info("!!! forgottenTopics:" + forgottenTopics)
 
     val fetchContext = fetchManager.newContext(
       fetchRequest.version,
@@ -655,13 +660,15 @@ class KafkaApis(val requestChannel: RequestChannel,
       // The follower must have ClusterAction on ClusterResource in order to fetch partition data.
       if (authHelper.authorize(request.context, CLUSTER_ACTION, CLUSTER, CLUSTER_NAME)) {
         fetchContext.foreachPartition { (topicIdPartition, data) =>
-          if (topicIdPartition.topic == null)
-            erroneous += topicIdPartition -> FetchResponse.partitionResponse(topicIdPartition, Errors.UNKNOWN_TOPIC_ID)
-          else if (!metadataCache.contains(topicIdPartition.topicPartition))
-            erroneous += topicIdPartition -> FetchResponse.partitionResponse(topicIdPartition, Errors.UNKNOWN_TOPIC_OR_PARTITION)
-          else
+//          if (topicIdPartition.topic == null)
+//            erroneous += topicIdPartition -> FetchResponse.partitionResponse(topicIdPartition, Errors.UNKNOWN_TOPIC_ID)
+//          else if (!metadataCache.contains(topicIdPartition.topicPartition))
+//            erroneous += topicIdPartition -> FetchResponse.partitionResponse(topicIdPartition, Errors.UNKNOWN_TOPIC_OR_PARTITION)
+//          else
             interesting += topicIdPartition -> data
         }
+        info("!!! errors:" + erroneous.mkString(","))
+        info("!!! interesting:" + interesting.mkString(","))
       } else {
         fetchContext.foreachPartition { (topicIdPartition, _) =>
           erroneous += topicIdPartition -> FetchResponse.partitionResponse(topicIdPartition, Errors.TOPIC_AUTHORIZATION_FAILED)

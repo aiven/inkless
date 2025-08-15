@@ -2342,6 +2342,7 @@ class ReplicaManager(val config: KafkaConfig,
   def applyDelta(delta: TopicsDelta, newImage: MetadataImage): Unit = {
     // Before taking the lock, compute the local changes
     val localChanges = delta.localChanges(config.nodeId)
+    logger.info("!!! localchanges = " + localChanges)
     val metadataVersion = newImage.features().metadataVersionOrThrow()
 
     replicaStateChangeLock.synchronized {
@@ -2464,7 +2465,7 @@ class ReplicaManager(val config: KafkaConfig,
             // During controlled shutdown, replica with no leaders and replica
             // where this broker is not in the ISR are stopped.
             partitionsToStopFetching.put(tp, false)
-          } else if (isNewLeaderEpoch) {
+          } else if (isNewLeaderEpoch || remoteLeader) {
             // Invoke the follower transition listeners for the partition.
             partition.invokeOnBecomingFollowerListeners()
             // Otherwise, fetcher is restarted if the leader epoch has changed.
@@ -2501,7 +2502,7 @@ class ReplicaManager(val config: KafkaConfig,
       val partitionAndOffsets = new mutable.HashMap[TopicPartition, InitialFetchState]
 
       // luke
-      if (remoteLeader) {
+      //if (remoteLeader) {
 //        partitionsToStartFetching.foreachEntry { (topicPartition, partition) =>
 //          val metadata = new Metadata(100, 1000, config.getLong(CommonClientConfigs.METADATA_MAX_AGE_CONFIG), logContext, new ClusterResourceListeners)
 //          val addresses = ClientUtils.parseAndValidateAddresses(config.getList(CommonClientConfigs.BOOTSTRAP_SERVERS_CONFIG), config.getString(CommonClientConfigs.CLIENT_DNS_LOOKUP_CONFIG))
@@ -2515,12 +2516,19 @@ class ReplicaManager(val config: KafkaConfig,
 //          //        partitionsToStartFetching.foreachEntry { (topicPartition, partition) =>
 //  //          val nodeOpt = getRemoteLeaderNode(partition)
 //        }
-      } else {
+     // } else {
 
         partitionsToStartFetching.foreachEntry { (topicPartition, partition) =>
-          val nodeOpt = partition.leaderReplicaIdOpt
-            .flatMap(leaderId => Option(newImage.cluster.broker(leaderId)))
-            .flatMap(_.node(listenerName).toScala)
+
+//          val nodeOpt = partition.leaderReplicaIdOpt
+//            .flatMap(leaderId => Option(newImage.cluster.broker(leaderId)))
+//            .flatMap(_.node(listenerName).toScala)
+
+          val nodeOpt = if (!remoteLeader)
+            partition.leaderReplicaIdOpt
+              .flatMap(leaderId => Option(newImage.cluster.broker(leaderId)))
+              .flatMap(_.node(listenerName).toScala)
+          else Option.apply(new Node(2, "localhost", 9092))
 
           nodeOpt match {
             case Some(node) =>
@@ -2545,7 +2553,7 @@ class ReplicaManager(val config: KafkaConfig,
         }
 
         updateLeaderAndFollowerMetrics(followerTopicSet)
-      }
+     // }
     }
 
     if (partitionsToStopFetching.nonEmpty) {

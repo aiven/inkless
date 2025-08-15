@@ -407,7 +407,8 @@ public class PartitionRegistration {
             setLeader(leader).
             setLeaderRecoveryState(leaderRecoveryState.value()).
             setLeaderEpoch(leaderEpoch).
-            setPartitionEpoch(partitionEpoch);
+            setPartitionEpoch(partitionEpoch).
+            setRemoteBootstrapServer(remoteBootstrapServers);
         if (options.isEligibleLeaderReplicasEnabled()) {
             // The following are tagged fields, we should only set them when there are some contents, in order to save
             // spaces.
@@ -429,6 +430,7 @@ public class PartitionRegistration {
                 }
             }
         }
+        System.out.println("!!! record:" + record);
         return new ApiMessageAndVersion(record, options.metadataVersion().partitionRecordVersion());
     }
 

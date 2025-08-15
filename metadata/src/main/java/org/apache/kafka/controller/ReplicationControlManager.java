@@ -709,6 +709,7 @@ public class ReplicationControlManager {
                                  Map<String, CreatableTopicResult> successes,
                                  List<ApiMessageAndVersion> configRecords,
                                  boolean authorizedToReturnConfigs) {
+        log.info("Creating topic {}.", topic);
         Map<String, String> creationConfigs = translateCreationConfigs(topic.configs());
         Map<Integer, PartitionRegistration> newParts = new HashMap<>();
         if (!topic.assignments().isEmpty()) {
@@ -741,7 +742,7 @@ public class ReplicationControlManager {
                 }
                 newParts.put(
                     assignment.partitionIndex(),
-                    buildPartitionRegistration(partitionAssignment, isr)
+                    buildPartitionRegistration(partitionAssignment, isr, topic.remoteBootstrapServer())
                 );
             }
             for (int i = 0; i < newParts.size(); i++) {
@@ -788,7 +789,7 @@ public class ReplicationControlManager {
                     }
                     newParts.put(
                         partitionId,
-                        buildPartitionRegistration(partitionAssignment, isr)
+                        buildPartitionRegistration(partitionAssignment, isr, topic.remoteBootstrapServer())
                     );
                 }
             } catch (InvalidReplicationFactorException e) {
@@ -852,7 +853,8 @@ public class ReplicationControlManager {
 
     private static PartitionRegistration buildPartitionRegistration(
         PartitionAssignment partitionAssignment,
-        List<Integer> isr
+        List<Integer> isr,
+        String remoteBootstrapServers
     ) {
         return new PartitionRegistration.Builder().
             setReplicas(Replicas.toArray(partitionAssignment.replicas())).
@@ -862,6 +864,7 @@ public class ReplicationControlManager {
             setLeaderRecoveryState(LeaderRecoveryState.RECOVERED).
             setLeaderEpoch(0).
             setPartitionEpoch(0).
+            setRemoteBootstrapServers(remoteBootstrapServers).
             build();
     }
 
@@ -1919,7 +1922,7 @@ public class ReplicationControlManager {
                     "Unable to replicate the partition " + replicationFactor +
                         " time(s): All brokers are currently fenced or in controlled shutdown.");
             }
-            records.add(buildPartitionRegistration(partitionAssignment, isr)
+            records.add(buildPartitionRegistration(partitionAssignment, isr, "")
                 .toRecord(topicId, partitionId, new ImageWriterOptions.Builder(featureControl.metadataVersionOrThrow()).
                         setEligibleLeaderReplicasEnabled(featureControl.isElrFeatureEnabled()).
                         build()));
