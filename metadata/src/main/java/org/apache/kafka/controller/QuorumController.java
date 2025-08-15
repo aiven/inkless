@@ -228,6 +228,7 @@ public final class QuorumController implements Controller {
         private long uncleanLeaderElectionCheckIntervalMs = TimeUnit.MINUTES.toMillis(5);
         private String interBrokerListenerName = "PLAINTEXT";
         private boolean defaultInklessEnable = false;
+        private boolean inklessStorageSystemEnabled = false;
 
         public Builder(int nodeId, String clusterId) {
             this.nodeId = nodeId;
@@ -290,6 +291,11 @@ public final class QuorumController implements Controller {
 
         public Builder setDefaultInklessEnable(boolean defaultInklessEnable) {
             this.defaultInklessEnable = defaultInklessEnable;
+            return this;
+        }
+
+        public Builder setInklessStorageSystemEnabled(boolean inklessStorageSystemEnabled) {
+            this.inklessStorageSystemEnabled = inklessStorageSystemEnabled;
             return this;
         }
 
@@ -438,6 +444,7 @@ public final class QuorumController implements Controller {
                     defaultReplicationFactor,
                     defaultNumPartitions,
                     defaultInklessEnable,
+                    inklessStorageSystemEnabled,
                     replicaPlacer,
                     leaderImbalanceCheckIntervalNs,
                     maxIdleIntervalNs,
@@ -1497,6 +1504,7 @@ public final class QuorumController implements Controller {
         short defaultReplicationFactor,
         int defaultNumPartitions,
         boolean defaultInklessEnable,
+        boolean inklessStorageSystemEnabled,
         ReplicaPlacer replicaPlacer,
         OptionalLong leaderImbalanceCheckIntervalNs,
         OptionalLong maxIdleIntervalNs,
@@ -1580,6 +1588,7 @@ public final class QuorumController implements Controller {
             setDefaultReplicationFactor(defaultReplicationFactor).
             setDefaultNumPartitions(defaultNumPartitions).
             setDefaultInklessEnable(defaultInklessEnable).
+            setInklessStorageSystemEnabled(inklessStorageSystemEnabled).
             setMaxElectionsPerImbalance(ReplicationControlManager.MAX_ELECTIONS_PER_IMBALANCE).
             setConfigurationControl(configurationControl).
             setClusterControl(clusterControl).

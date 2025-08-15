@@ -162,6 +162,7 @@ public class ReplicationControlManager {
         private short defaultReplicationFactor = (short) 3;
         private int defaultNumPartitions = 1;
         private boolean defaultInklessEnable = false;
+        private boolean isInklessStorageSystemEnabled = false;
 
         private int maxElectionsPerImbalance = MAX_ELECTIONS_PER_IMBALANCE;
         private ConfigurationControlManager configurationControl = null;
@@ -191,6 +192,11 @@ public class ReplicationControlManager {
 
         public Builder setDefaultInklessEnable(boolean defaultInklessEnable) {
             this.defaultInklessEnable = defaultInklessEnable;
+            return this;
+        }
+
+        public Builder setInklessStorageSystemEnabled(boolean isInklessStorageSystemEnabled) {
+            this.isInklessStorageSystemEnabled = isInklessStorageSystemEnabled;
             return this;
         }
 
@@ -235,6 +241,7 @@ public class ReplicationControlManager {
                 defaultReplicationFactor,
                 defaultNumPartitions,
                 defaultInklessEnable,
+                isInklessStorageSystemEnabled,
                 maxElectionsPerImbalance,
                 configurationControl,
                 clusterControl,
@@ -311,6 +318,8 @@ public class ReplicationControlManager {
      * When true, enable Inkless topics if a CreateTopics request does not specify a topic type.
      */
     private final boolean defaultInklessEnable;
+
+    private final boolean isInklessStorageSystemEnabled;
 
     /**
      * Maximum number of leader elections to perform during one partition leader balancing operation.
@@ -401,6 +410,7 @@ public class ReplicationControlManager {
         short defaultReplicationFactor,
         int defaultNumPartitions,
         boolean defaultInklessEnable,
+        boolean isInklessStorageSystemEnabled,
         int maxElectionsPerImbalance,
         ConfigurationControlManager configurationControl,
         ClusterControlManager clusterControl,
@@ -412,6 +422,7 @@ public class ReplicationControlManager {
         this.defaultReplicationFactor = defaultReplicationFactor;
         this.defaultNumPartitions = defaultNumPartitions;
         this.defaultInklessEnable = defaultInklessEnable;
+        this.isInklessStorageSystemEnabled = isInklessStorageSystemEnabled;
         this.maxElectionsPerImbalance = maxElectionsPerImbalance;
         this.configurationControl = configurationControl;
         this.createTopicPolicy = createTopicPolicy;
@@ -731,9 +742,24 @@ public class ReplicationControlManager {
         Map<String, String> creationConfigs = translateCreationConfigs(topic.configs());
         Map<Integer, PartitionRegistration> newParts = new HashMap<>();
 
-        boolean inklessEnabled = Boolean.parseBoolean(creationConfigs.getOrDefault(INKLESS_ENABLE_CONFIG, String.valueOf(defaultInklessEnable)))
-            && !Topic.isInternal(topic.name());
+        String inklessEnableConfigValue = creationConfigs.get(INKLESS_ENABLE_CONFIG);
+        final boolean isInklessEnableConfigDefined = inklessEnableConfigValue != null;
+        boolean inklessEnabled = isInklessEnableConfigDefined
+            ? Boolean.parseBoolean(inklessEnableConfigValue)
+            : defaultInklessEnable && !Topic.isInternal(topic.name());
         if (inklessEnabled) {
+            if (!isInklessStorageSystemEnabled) {
+                return new ApiError(INVALID_REQUEST,
+                    "Cannot create inkless topics " +
+                        "when the inkless storage system is disabled. " +
+                        "Please enable the inkless storage system to create inkless topics.");
+            }
+
+            if (Topic.isInternal(topic.name()) && isInklessEnableConfigDefined) {
+                return new ApiError(INVALID_REQUEST,
+                    "Internal topics cannot be inkless topics.");
+            }
+
             if (Math.abs(topic.replicationFactor()) != 1) {
                 return new ApiError(Errors.INVALID_REPLICATION_FACTOR,
                     "Replication factor for Inkless topics must be 1 or -1 to use the default value (1).");

@@ -359,6 +359,10 @@ class ControllerApis(
           .filter { case (_, name) => inklessMetadataView.isInklessTopic(name) }
           .map { case (topicId, _) => topicId }
           .toSet.asJava
+        if (!config.inklessStorageSystemEnabled && !topicIdsToDeleteFromControlPlane.isEmpty)
+          warn(s"Attempting to delete Inkless topics $topicIdsToDeleteFromControlPlane " +
+            "from the control plane, but the Inkless storage system is not enabled. " +
+            "Topic will only be removed from KRaft metadata as no control plane is available.")
         inklessControlPlane.foreach { cp => cp.deleteTopics(topicIdsToDeleteFromControlPlane) }
 
         // Finally, the idToName map contains all the topics that we are authorized to delete.

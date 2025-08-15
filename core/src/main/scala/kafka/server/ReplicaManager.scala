@@ -19,7 +19,7 @@ package kafka.server
 import com.yammer.metrics.core.Meter
 import io.aiven.inkless.common.SharedState
 import io.aiven.inkless.consume.{FetchHandler, FetchOffsetHandler}
-import io.aiven.inkless.control_plane.{FindBatchRequest, FindBatchResponse}
+import io.aiven.inkless.control_plane.{FindBatchRequest, FindBatchResponse, MetadataView}
 import io.aiven.inkless.delete.{DeleteRecordsInterceptor, FileCleaner, RetentionEnforcer}
 import io.aiven.inkless.merge.FileMerger
 import io.aiven.inkless.produce.AppendHandler
@@ -29,7 +29,8 @@ import kafka.log.remote.RemoteLogManager
 import kafka.log.{LogManager, UnifiedLog}
 import kafka.server.HostedPartition.Online
 import kafka.server.QuotaFactory.QuotaManagers
-import kafka.server.ReplicaManager.{AtMinIsrPartitionCountMetricName, FailedIsrUpdatesPerSecMetricName, IsrExpandsPerSecMetricName, IsrShrinksPerSecMetricName, LeaderCountMetricName, OfflineReplicaCountMetricName, PartitionCountMetricName, PartitionsWithLateTransactionsCountMetricName, ProducerIdCountMetricName, ReassigningPartitionsMetricName, UnderMinIsrPartitionCountMetricName, UnderReplicatedPartitionsMetricName, createLogReadResult, isListOffsetsTimestampUnsupported}
+import kafka.server.ReplicaManager._
+import kafka.server.metadata.{InklessMetadataView, KRaftMetadataCache}
 import kafka.server.share.DelayedShareFetch
 import kafka.utils._
 import org.apache.kafka.common.errors._
@@ -52,11 +53,10 @@ import org.apache.kafka.common.requests.FetchRequest.PartitionData
 import org.apache.kafka.common.requests.ProduceResponse.PartitionResponse
 import org.apache.kafka.common.requests._
 import org.apache.kafka.common.utils.{Exit, Time}
-import org.apache.kafka.common.{IsolationLevel, Node, TopicIdPartition, TopicPartition, Uuid}
+import org.apache.kafka.common._
 import org.apache.kafka.image.{LocalReplicaChanges, MetadataImage, TopicsDelta}
 import org.apache.kafka.metadata.LeaderAndIsr
 import org.apache.kafka.metadata.LeaderConstants.NO_LEADER
-import org.apache.kafka.server.{ActionQueue, DelayedActionQueue, common}
 import org.apache.kafka.server.common.{DirectoryEventHandler, RequestLocal, StopPartition, TopicOptionalIdPartition}
 import org.apache.kafka.server.metrics.KafkaMetricsGroup
 import org.apache.kafka.server.network.BrokerEndPoint
@@ -64,8 +64,9 @@ import org.apache.kafka.server.purgatory.{DelayedOperationPurgatory, TopicPartit
 import org.apache.kafka.server.share.fetch.{DelayedShareFetchKey, DelayedShareFetchPartitionKey}
 import org.apache.kafka.server.storage.log.{FetchParams, FetchPartitionData}
 import org.apache.kafka.server.util.{Scheduler, ShutdownableThread}
+import org.apache.kafka.server.{ActionQueue, DelayedActionQueue, common}
 import org.apache.kafka.storage.internals.checkpoint.{LazyOffsetCheckpoints, OffsetCheckpointFile, OffsetCheckpoints}
-import org.apache.kafka.storage.internals.log.{AppendOrigin, AsyncOffsetReadFutureHolder, FetchDataInfo, LeaderHwChange, LogAppendInfo, LogConfig, LogDirFailureChannel, LogOffsetMetadata, LogReadInfo, OffsetResultHolder, RecordValidationException, RemoteLogReadResult, RemoteStorageFetchInfo, VerificationGuard}
+import org.apache.kafka.storage.internals.log._
 import org.apache.kafka.storage.log.metrics.BrokerTopicStats
 
 import java.io.File
@@ -289,7 +290,8 @@ class ReplicaManager(val config: KafkaConfig,
                      addPartitionsToTxnManager: Option[AddPartitionsToTxnManager] = None,
                      val directoryEventHandler: DirectoryEventHandler = DirectoryEventHandler.NOOP,
                      val defaultActionQueue: ActionQueue = new DelayedActionQueue,
-                     inklessSharedState: Option[SharedState] = None
+                     inklessSharedState: Option[SharedState] = None,
+                     inklessMetadataView: Option[MetadataView] = None
                      ) extends Logging {
   private val metricsGroup = new KafkaMetricsGroup(this.getClass)
 
@@ -316,6 +318,7 @@ class ReplicaManager(val config: KafkaConfig,
       "ShareFetch", config.brokerId,
       config.shareGroupConfig.shareFetchPurgatoryPurgeIntervalRequests))
 
+  private val _inklessMetadataView: MetadataView = inklessMetadataView.getOrElse(new InklessMetadataView(metadataCache.asInstanceOf[KRaftMetadataCache], () => config.extractLogConfigMap))
   private val inklessAppendHandler: Option[AppendHandler] = inklessSharedState.map(new AppendHandler(_))
   private val inklessFetchHandler: Option[FetchHandler] = inklessSharedState.map(new FetchHandler(_))
   private val inklessFetchOffsetHandler: Option[FetchOffsetHandler] = inklessSharedState.map(new FetchOffsetHandler(_))
@@ -686,11 +689,14 @@ class ReplicaManager(val config: KafkaConfig,
       return
     }
 
-    val (inklessEntries, classicEntries) = entriesPerPartition.partition { case (k, v) => isInklessTopic(k.topic()) }
+    val (inklessEntries, classicEntries) = entriesPerPartition.partition { case (k, _) => _inklessMetadataView.isInklessTopic(k.topic()) }
 
     val inklessResponsesFuture = inklessAppendHandler match {
       case Some(interceptor) => interceptor.handle(inklessEntries.asJava, requestLocal)
-      case _ => CompletableFuture.completedFuture(util.Map.of[TopicPartition, PartitionResponse]())
+      case _ =>
+        warn(s"Received inkless entries for topics ${inklessEntries.keys.map(_.topic()).mkString(", ")} but Inkless storage system is not enabled. " +
+          "Returning empty response.")
+        CompletableFuture.completedFuture(util.Map.of[TopicPartition, PartitionResponse]())
     }
 
     def classicResponseCallback(classicResult: Map[TopicPartition, PartitionResponse]): Unit = {
@@ -1559,7 +1565,7 @@ class ReplicaManager(val config: KafkaConfig,
     if (delayedRemoteListOffsetsRequired(statusByPartition)) {
       val delayMs: Long = if (timeoutMs > 0) timeoutMs else config.remoteLogManagerConfig.remoteListOffsetsRequestTimeoutMs()
       // create delayed remote list offsets operation
-      val delayedRemoteListOffsets = new DelayedRemoteListOffsets(delayMs, version, statusByPartition, this, isInklessTopic, responseCallback)
+      val delayedRemoteListOffsets = new DelayedRemoteListOffsets(delayMs, version, statusByPartition, this, _inklessMetadataView.isInklessTopic, responseCallback)
       // create a list of (topic, partition) pairs to use as keys for this delayed remote list offsets operation
       val listOffsetsRequestKeys = statusByPartition.keys.map(new TopicPartitionOperationKey(_)).toList
       // try to complete the request immediately, otherwise put it into the purgatory
@@ -1685,7 +1691,17 @@ class ReplicaManager(val config: KafkaConfig,
       return
     }
 
-    val (inklessFetchInfos, classicFetchInfos) = fetchInfos.partition { case (k, _) => isInklessTopic(k.topic()) }
+    val (inklessFetchInfos, classicFetchInfos) = fetchInfos.partition { case (k, _) => _inklessMetadataView.isInklessTopic(k.topic()) }
+    inklessSharedState match {
+      case None =>
+        if (inklessFetchInfos.nonEmpty) {
+          error(s"Received inkless fetch request for topics ${inklessFetchInfos.map(_._1.topic()).distinct.mkString(", ")} but inkless storage system is not enabled. " +
+            s"Replying an empty response.")
+          responseCallback(Seq.empty)
+          return
+        }
+      case Some(_) =>
+    }
 
     // Override maxWaitMs and minBytes with lower-bound if there are inkless fetches. Otherwise, leave the consumer-provided values.
     val maxWaitMs = if (inklessFetchInfos.nonEmpty) Math.max(config.inklessFetchMaxWaitMs.toLong, params.maxWaitMs) else params.maxWaitMs
@@ -2607,7 +2623,7 @@ class ReplicaManager(val config: KafkaConfig,
 
     // Shrink ISRs for non offline partitions
     allPartitions.keys.foreach { topicPartition =>
-      if (!isInklessTopic(topicPartition.topic()))
+      if (!_inklessMetadataView.isInklessTopic(topicPartition.topic()))
         onlinePartition(topicPartition).foreach(_.maybeShrinkIsr())
     }
   }
@@ -2810,7 +2826,7 @@ class ReplicaManager(val config: KafkaConfig,
     // Then build response
     requestedEpochInfo
       .map { offsetForLeaderTopic =>
-        if (isInklessTopic(offsetForLeaderTopic.topic())) {
+        if (_inklessMetadataView.isInklessTopic(offsetForLeaderTopic.topic())) {
           inklessOffsetFuturesByTopic.get(offsetForLeaderTopic.topic())
             .map { futures =>
               // Wait until offsetForLeaderTopic is completed
@@ -2860,10 +2876,6 @@ class ReplicaManager(val config: KafkaConfig,
             .setPartitions(partitions.toList.asJava)
         }
       }
-  }
-
-  private def isInklessTopic(topic: String): Boolean = {
-    inklessSharedState.exists(_.metadata().isInklessTopic(topic))
   }
 
   def activeProducerState(requestPartition: TopicPartition): DescribeProducersResponseData.PartitionResponse = {
@@ -2993,7 +3005,7 @@ class ReplicaManager(val config: KafkaConfig,
       "local leaders.")
     replicaFetcherManager.removeFetcherForPartitions(localLeaders.keySet)
     localLeaders.foreachEntry { (tp, info) =>
-      if (!isInklessTopic(tp.topic()))
+      if (!_inklessMetadataView.isInklessTopic(tp.topic()))
         getOrCreatePartition(tp, delta, info.topicId).foreach { case (partition, isNew) =>
           try {
             val state = info.partition.toLeaderAndIsrPartitionState(tp, isNew)
@@ -3029,7 +3041,7 @@ class ReplicaManager(val config: KafkaConfig,
     val partitionsToStopFetching = new mutable.HashMap[TopicPartition, Boolean]
     val followerTopicSet = new mutable.HashSet[String]
     localFollowers.foreachEntry { (tp, info) =>
-      if (!isInklessTopic(tp.topic()))
+      if (!_inklessMetadataView.isInklessTopic(tp.topic()))
         getOrCreatePartition(tp, delta, info.topicId).foreach { case (partition, isNew) =>
           try {
             followerTopicSet.add(tp.topic)

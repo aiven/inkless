@@ -42,6 +42,8 @@ class InklessMetadataView(val metadataCache: KRaftMetadataCache, val defaultConf
     metadataCache.getAliveBrokers().asJava
   }
 
+  // Only method requiring specific KRaftMetadataCache functionality.
+  // If we could refactor RetentionEnforcement to not require this, we could use the MetadataView interface directly.
   override def getBrokerCount: Integer = metadataCache.currentImage().cluster().brokers().size()
 
   override def getTopicId(topicName: String): Uuid = {

@@ -24,6 +24,8 @@ import kafka.server.MetadataCache;
 import kafka.server.QuotaFactory.QuotaManagers;
 import kafka.server.ReplicaManager;
 
+import kafka.server.metadata.InklessMetadataView;
+import kafka.server.metadata.KRaftMetadataCache;
 import org.apache.kafka.common.metrics.Metrics;
 import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.server.DelayedActionQueue;
@@ -112,6 +114,7 @@ public class ReplicaManagerBuilder {
         // metrics correctly. There might be a resource leak if it is initialized and an exception occurs between
         // its initialization and creation of ReplicaManager.
         if (metrics == null) metrics = new Metrics();
+        var inklessMetadataView = new InklessMetadataView((KRaftMetadataCache) metadataCache, () -> config.extractLogConfigMap());
         return new ReplicaManager(config,
                              metrics,
                              time,
@@ -135,6 +138,8 @@ public class ReplicaManagerBuilder {
                              Option.empty(),
                              DirectoryEventHandler.NOOP,
                              new DelayedActionQueue(),
-                             Option.empty());
+                             Option.empty(),
+                             Option.apply(inklessMetadataView)
+            );
     }
 }
