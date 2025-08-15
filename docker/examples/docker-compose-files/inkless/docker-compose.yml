@@ -25,6 +25,7 @@ services:
       KAFKA_LOG_DIRS: "/tmp/kraft-combined-logs"
 
       # Inkless
+      KAFKA_INKLESS_STORAGE_SYSTEM_ENABLE: "true"
       KAFKA_LOG_INKLESS_ENABLE: "true"
       KAFKA_INKLESS_CONSUME_CACHE_MAX_COUNT: "100"
 
