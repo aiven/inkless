@@ -297,7 +297,7 @@ public class PartitionRegistration {
             newElr,
             newLastKnownElr,
             record.readOnly(),
-                record.remoteBootstrapServer());
+                record.remoteBootstrapServer().isBlank() ? remoteBootstrapServers : record.remoteBootstrapServer());
     }
 
     public String diff(PartitionRegistration prev) {

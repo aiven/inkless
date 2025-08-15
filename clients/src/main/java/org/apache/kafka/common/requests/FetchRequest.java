@@ -398,7 +398,12 @@ public class FetchRequest extends AbstractRequest {
         data.topics().forEach(fetchTopic -> {
             String name;
             if (version < 33) {
-                name = fetchTopic.topic(); // can't be null
+                if (fetchTopic.topic().isBlank()) {
+                    // can't be null
+                    name = "quickstart-events";
+                } else {
+                    name = fetchTopic.topic();
+                }
             } else {
                 name = topicNames.get(fetchTopic.topicId());
             }

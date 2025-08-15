@@ -131,6 +131,7 @@ public final class TopicDelta {
                     setTopicId(image.id()).
                     setEligibleLeaderReplicas(List.of()).
                     setLastKnownElr(List.of())
+                        .setRemoteBootstrapServer(partition.remoteBootstrapServers)
             ));
         }
     }

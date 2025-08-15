@@ -840,6 +840,7 @@ class KafkaApis(val requestChannel: RequestChannel,
         clientMetadata
       )
 
+
       // call the replica manager to fetch messages from the local replica
       replicaManager.fetchMessages(
         params = params,

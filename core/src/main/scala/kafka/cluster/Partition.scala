@@ -1425,6 +1425,7 @@ class Partition(val topicPartition: TopicPartition,
     minOneMessage: Boolean,
     updateFetchState: Boolean
   ): LogReadInfo = {
+    info("!!! fetchRecords")
     def readFromLocalLog(log: UnifiedLog): LogReadInfo = {
       readRecords(
         log,
@@ -1440,14 +1441,18 @@ class Partition(val topicPartition: TopicPartition,
     if (fetchParams.isFromFollower) {
       // Check that the request is from a valid replica before doing the read
       val (replica, logReadInfo) = inReadLock(leaderIsrUpdateLock) {
+        info("!!! localLogOrException")
         val localLog = localLogWithEpochOrThrow(
           fetchPartitionData.currentLeaderEpoch,
           fetchParams.fetchOnlyLeader
         )
+        info("!!! followerReplicaOrThrow")
         val replica = followerReplicaOrThrow(
           fetchParams.replicaId,
           fetchPartitionData
         )
+        info("!!! readFromLocallog")
+
         val logReadInfo = readFromLocalLog(localLog)
         (replica, logReadInfo)
       }
@@ -1480,7 +1485,7 @@ class Partition(val topicPartition: TopicPartition,
     fetchPartitionData: FetchRequest.PartitionData
   ): Replica = {
     getReplica(replicaId).getOrElse {
-      debug(s"Leader $localBrokerId failed to record follower $replicaId's position " +
+      info(s"Leader $localBrokerId failed to record follower $replicaId's position " +
         s"${fetchPartitionData.fetchOffset}, and last sent high watermark since the replica is " +
         s"not recognized to be one of the assigned replicas ${assignmentState.replicas.mkString(",")} " +
         s"for leader epoch $leaderEpoch with partition epoch $partitionEpoch")
