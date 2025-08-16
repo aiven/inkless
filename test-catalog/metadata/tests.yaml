@@ -127,6 +127,11 @@ org.apache.kafka.controller.FeatureControlManagerTest:
 - testUpdateFeatures
 - testUpdateFeaturesErrorCases
 - testUpgradeElrFeatureLevel
+org.apache.kafka.controller.MockRaftClientTest:
+- testClaimsLeadership
+- testCommits
+- testCreateAndClose
+- testPassLeadership
 org.apache.kafka.controller.OffsetControlManagerTest:
 - testAbortTransactionRecordNotAllowedInSnapshot
 - testActivate
@@ -945,8 +950,3 @@ org.apache.kafka.metadata.util.RecordRedactorTest:
 - testTopicRecordToString
 - testUserScramCredentialRecordToString
 - testUserScramCredentialRecordToStringWithNullName
-org.apache.kafka.metalog.LocalLogManagerTest:
-- testClaimsLeadership
-- testCommits
-- testCreateAndClose
-- testPassLeadership
