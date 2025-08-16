@@ -72,6 +72,11 @@ org.apache.kafka.server.BrokerFeaturesTest:
 - testEmpty
 - testIncompatibilitiesDueToAbsentFeature
 - testIncompatibilitiesDueToIncompatibleFeature
+org.apache.kafka.server.BrokerRegistrationRequestTest:
+- shouldRegisterWhenSupportedRangeAndNotMigrating
+- shouldRejectRegistrationWhenFeatureLevelTooHigh
+- shouldRejectRegistrationWithoutFeatureLevels
+- shouldRejectZkMigratingBrokerWhenFeatureLevelDoesNotSupportMigration
 org.apache.kafka.server.ClientMetricsManagerTest:
 - testCacheEviction
 - testCacheEvictionWithMultipleClients

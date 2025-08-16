@@ -1600,8 +1600,6 @@ kafka.server.BrokerLifecycleManagerTest:
 - testSuccessfulRegistration
 kafka.server.BrokerMetricNamesTest:
 - testMetrics
-kafka.server.BrokerRegistrationRequestTest:
-- testRegisterZkWith33Controller
 kafka.server.ClientQuotaManagerTest:
 - testClientIdNotSanitized
 - testExpireQuotaSensors
