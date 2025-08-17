@@ -730,7 +730,6 @@ org.apache.kafka.metadata.PartitionRegistrationTest:
 - testPartitionRegistrationToRecord
 - testPartitionRegistrationToRecord_ElrShouldBeNullIfEmpty
 - testRecordRoundTrip
-- testToLeaderAndIsrPartitionState
 org.apache.kafka.metadata.ReplicasTest:
 - testClone
 - testContains
