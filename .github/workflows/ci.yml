@@ -20,9 +20,13 @@ on:
     branches:
       - 'trunk'
       - '4.0'
+      - 'main'
+      - 'inkless-*'
 
   schedule:
     - cron: '0 0 * * 6,0'    # Run on Saturday and Sunday at midnight UTC
+  # on-demand
+  workflow_dispatch:
 
   pull_request:
     types: [ opened, synchronize, ready_for_review, reopened ]
