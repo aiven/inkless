@@ -289,6 +289,7 @@ public class FetchRequest extends AbstractRequest {
                        .setTopicId(partitionData.topicId)
                        .setPartitions(new ArrayList<>());
                     fetchRequestData.topics().add(fetchTopic);
+                    System.out.println("fetchTopic: " + fetchTopic + ";;" + topicPartition);
                 }
 
                 FetchRequestData.FetchPartition fetchPartition = new FetchRequestData.FetchPartition()
@@ -368,7 +369,7 @@ public class FetchRequest extends AbstractRequest {
     }
 
     public int replicaId() {
-        if (version() < 35) {
+        if (version() < 15) {
             return data.replicaId();
         }
         return data.replicaState().replicaId();
@@ -405,7 +406,7 @@ public class FetchRequest extends AbstractRequest {
                     name = fetchTopic.topic();
                 }
             } else {
-                name = topicNames.get(fetchTopic.topicId());
+                name = topicNames.getOrDefault(fetchTopic.topicId(), "quickstart-events");
             }
             fetchTopic.partitions().forEach(fetchPartition ->
                 // Topic name may be null here if the topic name was unable to be resolved using the topicNames map.

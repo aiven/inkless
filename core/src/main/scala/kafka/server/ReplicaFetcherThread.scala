@@ -51,6 +51,10 @@ class ReplicaFetcherThread(name: String,
     replicaMgr.localLogOrException(topicPartition).latestEpoch
   }
 
+  override protected def latestEpochFromLog(topicPartition: TopicPartition): Optional[Integer] = {
+    replicaMgr.localLogOrException(topicPartition).latestEpochFromLog
+  }
+
   override protected def logStartOffset(topicPartition: TopicPartition): Long = {
     replicaMgr.localLogOrException(topicPartition).logStartOffset
   }

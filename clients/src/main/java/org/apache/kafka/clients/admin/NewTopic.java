@@ -17,6 +17,7 @@
 
 package org.apache.kafka.clients.admin;
 
+import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.message.CreateTopicsRequestData.CreatableReplicaAssignment;
 import org.apache.kafka.common.message.CreateTopicsRequestData.CreatableTopic;
 import org.apache.kafka.common.message.CreateTopicsRequestData.CreatableTopicConfig;
@@ -41,6 +42,7 @@ public class NewTopic {
     private final Map<Integer, List<Integer>> replicasAssignments;
     private Map<String, String> configs = null;
     private Optional<String> remoteBootstrapServer = Optional.empty();
+    private Optional<String> topicId = Optional.empty();
 
     /**
      * A new topic with the specified replication factor and number of partitions.
@@ -61,12 +63,13 @@ public class NewTopic {
         this.replicasAssignments = null;
     }
 
-    public NewTopic(String name, Optional<Integer> numPartitions, Optional<Short> replicationFactor, Optional<String> remoteBootstrapServer) {
+    public NewTopic(String name, Optional<Integer> numPartitions, Optional<Short> replicationFactor, Optional<String> remoteBootstrapServer, Optional<String> topicId) {
         this.name = name;
         this.numPartitions = numPartitions;
         this.replicationFactor = replicationFactor;
         this.replicasAssignments = null;
         this.remoteBootstrapServer = remoteBootstrapServer;
+        this.topicId = topicId;
     }
 
     /**
@@ -142,6 +145,9 @@ public class NewTopic {
             setReplicationFactor(replicationFactor.orElse(CreateTopicsRequest.NO_REPLICATION_FACTOR));
         if (remoteBootstrapServer.isPresent()) {
             creatableTopic.setRemoteBootstrapServer(remoteBootstrapServer.get());
+        }
+        if (topicId.isPresent()) {
+            creatableTopic.setTopicId(Uuid.fromString(topicId.get()));
         }
         if (replicasAssignments != null) {
             for (Entry<Integer, List<Integer>> entry : replicasAssignments.entrySet()) {

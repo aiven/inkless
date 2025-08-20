@@ -162,6 +162,15 @@ class MockFetcherThread(val mockLeader: MockLeaderEndPoint,
       latestEpochDefault
   }
 
+  override def latestEpochFromLog(topicPartition: TopicPartition): Optional[Integer] = {
+    val state = replicaPartitionState(topicPartition)
+    val partitionLeaderEpoch: Optional[Integer] = state.log.lastOption.toJava.map(_.partitionLeaderEpoch)
+    if (partitionLeaderEpoch.isPresent)
+      partitionLeaderEpoch
+    else
+      latestEpochDefault
+  }
+
   override def logStartOffset(topicPartition: TopicPartition): Long = replicaPartitionState(topicPartition).logStartOffset
 
   override def logEndOffset(topicPartition: TopicPartition): Long = replicaPartitionState(topicPartition).logEndOffset

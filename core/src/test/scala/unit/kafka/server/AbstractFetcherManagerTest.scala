@@ -348,6 +348,8 @@ class AbstractFetcherManagerTest {
 
     override protected def latestEpoch(topicPartition: TopicPartition): Optional[Integer] = Optional.of(0)
 
+    override protected def latestEpochFromLog(topicPartition: TopicPartition): Optional[Integer] = Optional.of(0)
+
     override protected def logStartOffset(topicPartition: TopicPartition): Long = 1
 
     override protected def logEndOffset(topicPartition: TopicPartition): Long = 1

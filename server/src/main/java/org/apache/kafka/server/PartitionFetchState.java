@@ -37,7 +37,8 @@ public record PartitionFetchState(
         Optional<Long> delay,
         ReplicaState state,
         Optional<Integer> lastFetchedEpoch,
-        Optional<Long> dueMs
+        Optional<Long> dueMs,
+        boolean remoteFetch
 ) {
     public PartitionFetchState(
             Optional<Uuid> topicId,
@@ -55,12 +56,25 @@ public record PartitionFetchState(
             long fetchOffset,
             Optional<Long> lag,
             int currentLeaderEpoch,
+            ReplicaState state,
+            Optional<Integer> lastFetchedEpoch,
+            boolean remoteFetch,
+            long dueMs) {
+        this(topicId, fetchOffset, lag, currentLeaderEpoch,
+                Optional.empty(), state, lastFetchedEpoch, Optional.empty(), remoteFetch);
+    }
+
+    public PartitionFetchState(
+            Optional<Uuid> topicId,
+            long fetchOffset,
+            Optional<Long> lag,
+            int currentLeaderEpoch,
             Optional<Long> delay,
             ReplicaState state,
             Optional<Integer> lastFetchedEpoch) {
         this(topicId, fetchOffset, lag, currentLeaderEpoch,
                 delay, state, lastFetchedEpoch,
-                delay.map(aLong -> aLong + Time.SYSTEM.milliseconds()));
+                delay.map(aLong -> aLong + Time.SYSTEM.milliseconds()), false);
     }
 
     public boolean isReadyForFetch() {
@@ -87,12 +101,13 @@ public record PartitionFetchState(
                 ", lastFetchedEpoch=" + lastFetchedEpoch +
                 ", state=" + state +
                 ", lag=" + lag +
-                ", delay=" + delay.orElse(0L) + "ms)";
+                ", delay=" + delay.orElse(0L) + "ms)" +
+                ", remote=" + remoteFetch + ")";
     }
 
     public PartitionFetchState updateTopicId(Optional<Uuid> newTopicId) {
         return new PartitionFetchState(newTopicId, this.fetchOffset, this.lag,
                 this.currentLeaderEpoch, this.delay,
-                this.state, this.lastFetchedEpoch, this.dueMs);
+                this.state, this.lastFetchedEpoch, this.dueMs, this.remoteFetch);
     }
 }

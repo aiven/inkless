@@ -635,7 +635,7 @@ class KafkaApis(val requestChannel: RequestChannel,
     info("!!! handleFetchRequest:" + fetchRequest)
 
     val topicNames =
-      if (fetchRequest.version() >= 30)
+      if (fetchRequest.version() >= 33)
         metadataCache.topicIdsToNames()
       else
         Collections.emptyMap[Uuid, String]()

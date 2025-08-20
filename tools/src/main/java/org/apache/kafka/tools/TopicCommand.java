@@ -248,6 +248,7 @@ public abstract class TopicCommand {
         private final Map<Integer, List<Integer>> replicaAssignment;
         private final Properties configsToAdd;
         private final Optional<String> remoteBootstrapServers;
+        private final Optional<String> topicId;
 
         private final TopicCommandOptions opts;
 
@@ -259,6 +260,7 @@ public abstract class TopicCommand {
             replicaAssignment = options.replicaAssignment().orElse(Map.of());
             configsToAdd = parseTopicConfigsToBeAdded(options);
             remoteBootstrapServers = options.remoteBootstrapServer();
+            topicId = options.topicId();
         }
 
         public boolean hasReplicaAssignment() {
@@ -477,7 +479,7 @@ public abstract class TopicCommand {
             try {
                 NewTopic newTopic;
                 if (topic.opts.hasCreateMirrorOption()) {
-                    newTopic = new NewTopic(topic.name, topic.partitions, topic.replicationFactor.map(Integer::shortValue), topic.remoteBootstrapServers);
+                    newTopic = new NewTopic(topic.name, topic.partitions, topic.replicationFactor.map(Integer::shortValue), topic.remoteBootstrapServers, topic.topicId);
                 } else if (topic.hasReplicaAssignment()) {
                     newTopic = new NewTopic(topic.name, topic.replicaAssignment);
                 } else {
@@ -906,10 +908,6 @@ public abstract class TopicCommand {
             return valueAsOption(topicOpt);
         }
 
-        public Optional<String> topicId() {
-            return valueAsOption(topicIdOpt);
-        }
-
         public Optional<Integer> partitions() {
             return valueAsOption(partitionsOpt);
         }
@@ -920,6 +918,10 @@ public abstract class TopicCommand {
 
         public Optional<String> remoteBootstrapServer() {
             return valueAsOption(remoteBootstrapServerOpt);
+        }
+
+        public Optional<String> topicId() {
+            return valueAsOption(topicIdOpt);
         }
 
         public Optional<Map<Integer, List<Integer>>> replicaAssignment() {

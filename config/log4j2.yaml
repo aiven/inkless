@@ -104,10 +104,8 @@ Configuration:
         level: INFO
       # Kafka request logger
       - name: kafka.request.logger
-        level: WARN
-        additivity: false
-        AppenderRef:
-          ref: RequestAppender
+        level: DEBUG
+
       # Uncomment the lines below and change log4j.logger.kafka.network.RequestChannel$ to TRACE
       # for additional output related to the handling of requests
 #      - name: kafka.network.Processor
@@ -123,9 +121,7 @@ Configuration:
       # Kafka network RequestChannel$ logger
       - name: kafka.network.RequestChannel$
         level: WARN
-        additivity: false
-        AppenderRef:
-          ref: RequestAppender
+
       # Controller logger
       - name: org.apache.kafka.controller
         level: INFO

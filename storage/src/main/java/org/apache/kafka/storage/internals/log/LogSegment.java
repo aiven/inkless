@@ -600,6 +600,16 @@ public class LogSegment implements Closeable {
         return lastTimeIndexEntry;
     }
 
+    public Optional<Integer> readLastLeaderEpoch() throws IOException {
+        // Get the last time index entry. If the time index is empty, it will return (-1, baseOffset)
+        TimestampOffset lastTimeIndexEntry = timeIndex().lastEntry();
+        OffsetPosition offsetPosition = offsetIndex().lookup(lastTimeIndexEntry.offset());
+
+        // Scan the rest of the messages to see if there is a larger timestamp after the last time index entry.
+        FileRecords.TimestampAndOffset maxTimestampOffsetAfterLastEntry = log.largestTimestampAfter(offsetPosition.position());
+        return maxTimestampOffsetAfterLastEntry.leaderEpoch;
+    }
+
     /**
      * Calculate the offset that would be used for the next message to be append to this segment.
      * Note that this is expensive.

@@ -265,6 +265,6 @@ class FailedPartitions {
 
 case class BrokerAndFetcherId(broker: BrokerEndPoint, fetcherId: Int)
 
-case class InitialFetchState(topicId: Option[Uuid], leader: BrokerEndPoint, currentLeaderEpoch: Int, initOffset: Long)
+case class InitialFetchState(topicId: Option[Uuid], leader: BrokerEndPoint, currentLeaderEpoch: Int, initOffset: Long, readOnly: Boolean = false)
 
 case class BrokerIdAndFetcherId(brokerId: Int, fetcherId: Int)

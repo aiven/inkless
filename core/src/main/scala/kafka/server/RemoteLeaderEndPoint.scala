@@ -145,12 +145,12 @@ class RemoteLeaderEndPoint(logPrefix: String,
     }
 
     val epochRequest = OffsetsForLeaderEpochRequest.Builder.forFollower(topics, brokerConfig.brokerId)
-    debug(s"Sending offset for leader epoch request $epochRequest")
+    info(s"Sending offset for leader epoch request $epochRequest")
 
     try {
       val response = blockingSender.sendRequest(epochRequest)
       val responseBody = response.responseBody.asInstanceOf[OffsetsForLeaderEpochResponse]
-      debug(s"Received leaderEpoch response $response")
+      info(s"Received leaderEpoch response $response")
       responseBody.data.topics.asScala.flatMap { offsetForLeaderTopicResult =>
         offsetForLeaderTopicResult.partitions.asScala.map { offsetForLeaderPartitionResult =>
           val tp = new TopicPartition(offsetForLeaderTopicResult.topic, offsetForLeaderPartitionResult.partition)
@@ -190,6 +190,8 @@ class RemoteLeaderEndPoint(logPrefix: String,
             fetchSize,
             Optional.of(fetchState.currentLeaderEpoch()),
             lastFetchedEpoch))
+//          if (fetchState.remoteFetch())
+            // luke
         } catch {
           case _: KafkaStorageException =>
             // The replica has already been marked offline due to log directory failure and the original failure should have already been logged.
@@ -200,6 +202,7 @@ class RemoteLeaderEndPoint(logPrefix: String,
     }
 
     val fetchData = builder.build()
+    info("!!! fetchData: " + fetchData + " partitionsWithError: " + partitionsWithError)
     val fetchRequestOpt = if (fetchData.sessionPartitions.isEmpty && fetchData.toForget.isEmpty) {
       Optional.empty[ReplicaFetch]
     } else {

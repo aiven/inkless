@@ -525,8 +525,11 @@ class Partition(val topicPartition: TopicPartition,
       val localLeaderEpoch = leaderEpoch
       if (localLeaderEpoch > remoteLeaderEpoch)
         Errors.FENCED_LEADER_EPOCH
-      else if (localLeaderEpoch < remoteLeaderEpoch)
-        Errors.UNKNOWN_LEADER_EPOCH
+      else if (localLeaderEpoch < remoteLeaderEpoch) {
+        info("!!! FENCED LEADER EPOCH:" + remoteLeaderEpoch + ";;" + localLeaderEpoch)
+        //Errors.UNKNOWN_LEADER_EPOCH
+        Errors.NONE
+      }
       else
         Errors.NONE
     }
@@ -1438,7 +1441,7 @@ class Partition(val topicPartition: TopicPartition,
       )
     }
 
-    if (fetchParams.isFromFollower) {
+    if (fetchParams.isFromFollower && fetchParams.replicaId != 4) {
       // Check that the request is from a valid replica before doing the read
       val (replica, logReadInfo) = inReadLock(leaderIsrUpdateLock) {
         info("!!! localLogOrException")
@@ -1488,9 +1491,10 @@ class Partition(val topicPartition: TopicPartition,
       info(s"Leader $localBrokerId failed to record follower $replicaId's position " +
         s"${fetchPartitionData.fetchOffset}, and last sent high watermark since the replica is " +
         s"not recognized to be one of the assigned replicas ${assignmentState.replicas.mkString(",")} " +
-        s"for leader epoch $leaderEpoch with partition epoch $partitionEpoch")
+        s"for leader epoch $leaderEpoch with partition epoch $partitionEpoch and ${fetchPartitionData.currentLeaderEpoch.isPresent}")
 
       val error = if (fetchPartitionData.currentLeaderEpoch.isPresent) {
+
         // The leader epoch is present in the request and matches the local epoch, but
         // the replica is not in the replica set. This case is possible in KRaft,
         // for example, when new replicas are added as part of a reassignment.
@@ -1535,12 +1539,14 @@ class Partition(val topicPartition: TopicPartition,
       }
 
       if (epochEndOffset.endOffset == UNDEFINED_EPOCH_OFFSET || epochEndOffset.leaderEpoch == UNDEFINED_EPOCH) {
+        info("!!! epochEndOffset.leaderEpoch == UNDEFINED_EPOCH")
         throw new OffsetOutOfRangeException("Could not determine the end offset of the last fetched epoch " +
           s"$lastFetchedEpoch from the request")
       }
 
       // If fetch offset is less than log start, fail with OffsetOutOfRangeException, regardless of whether epochs are diverging
       if (fetchOffset < initialLogStartOffset) {
+        info("!!! fetchOffset < initialLogStartOffset")
         throw new OffsetOutOfRangeException(s"Received request for offset $fetchOffset for partition $topicPartition, " +
           s"but we only have log segments in the range $initialLogStartOffset to $initialLogEndOffset.")
       }

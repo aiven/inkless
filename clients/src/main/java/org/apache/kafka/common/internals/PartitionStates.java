@@ -65,6 +65,12 @@ public class PartitionStates<S> {
     }
 
     public void update(TopicPartition topicPartition, S state) {
+        System.out.println("update: " + topicPartition + "=" + state);
+        final StackTraceElement[] elements = Thread.currentThread().getStackTrace();
+        for (int i = 1; i < elements.length; i++) {
+            final StackTraceElement s = elements[i];
+            System.out.println("\tat " + s.getClassName() + "." + s.getMethodName() + "(" + s.getFileName() + ":" + s.getLineNumber() + ")");
+        }
         map.put(topicPartition, state);
         updateSize();
     }

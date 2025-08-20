@@ -809,7 +809,12 @@ public class ReplicationControlManager {
                 numPartitions, e.throttleTimeMs());
             return ApiError.fromThrowable(e);
         }
+        // luke
+
         Uuid topicId = Uuid.randomUuid();
+        if (!topic.topicId().equals(Uuid.ZERO_UUID)) {
+            topicId = topic.topicId();
+        }
         CreatableTopicResult result = new CreatableTopicResult().
             setName(topic.name()).
             setTopicId(topicId).

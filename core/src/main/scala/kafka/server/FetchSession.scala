@@ -857,7 +857,7 @@ class FetchManager(private val time: Time,
       } else {
         new FullFetchContext(time, cache, reqMetadata, fetchData, reqVersion >= 13, isFollower)
       }
-      debug(s"Created a new full FetchContext with ${partitionsToLogString(fetchData.keySet)}."+
+      info(s"!!! Created a new full FetchContext with ${partitionsToLogString(fetchData.keySet)}."+
         s"$removedFetchSessionStr$suffix")
       context
     } else {
@@ -865,23 +865,23 @@ class FetchManager(private val time: Time,
       cacheShard.synchronized {
         cacheShard.get(reqMetadata.sessionId) match {
           case None => {
-            debug(s"Session error for ${reqMetadata.sessionId}: no such session ID found.")
+            info(s"Session error for ${reqMetadata.sessionId}: no such session ID found.")
             new SessionErrorContext(Errors.FETCH_SESSION_ID_NOT_FOUND, reqMetadata)
           }
           case Some(session) => session.synchronized {
             if (session.epoch != reqMetadata.epoch) {
-              debug(s"Session error for ${reqMetadata.sessionId}: expected epoch " +
+              info(s"Session error for ${reqMetadata.sessionId}: expected epoch " +
                 s"${session.epoch}, but got ${reqMetadata.epoch} instead.")
               new SessionErrorContext(Errors.INVALID_FETCH_SESSION_EPOCH, reqMetadata)
             } else if (session.usesTopicIds && reqVersion < 13 || !session.usesTopicIds && reqVersion >= 13)  {
-              debug(s"Session error for ${reqMetadata.sessionId}: expected  " +
+              info(s"Session error for ${reqMetadata.sessionId}: expected  " +
                 s"${if (session.usesTopicIds) "to use topic IDs" else "to not use topic IDs"}" +
                 s", but request version $reqVersion means that we can not.")
               new SessionErrorContext(Errors.FETCH_SESSION_TOPIC_ID_ERROR, reqMetadata)
             } else {
               val (added, updated, removed) = session.update(fetchData, toForget)
               if (session.isEmpty) {
-                debug(s"Created a new sessionless FetchContext and closing session id ${session.id}, " +
+                info(s"Created a new sessionless FetchContext and closing session id ${session.id}, " +
                   s"epoch ${session.epoch}: after removing ${partitionsToLogString(removed)}, " +
                   s"there are no more partitions left.")
                 cacheShard.remove(session)
@@ -889,7 +889,7 @@ class FetchManager(private val time: Time,
               } else {
                 cacheShard.touch(session, time.milliseconds())
                 session.epoch = JFetchMetadata.nextEpoch(session.epoch)
-                debug(s"Created a new incremental FetchContext for session id ${session.id}, " +
+                info(s"Created a new incremental FetchContext for session id ${session.id}, " +
                   s"epoch ${session.epoch}: added ${partitionsToLogString(added)}, " +
                   s"updated ${partitionsToLogString(updated)}, " +
                   s"removed ${partitionsToLogString(removed)}")

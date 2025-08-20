@@ -198,6 +198,10 @@ class ReplicaAlterLogDirsThread(name: String,
     val partition = replicaMgr.getPartitionOrException(topicPartition)
     partition.truncateFullyAndStartAt(offset, isFuture = true)
   }
+
+  override protected def latestEpochFromLog(topicPartition: TopicPartition): Optional[Integer] = {
+    replicaMgr.localLogOrException(topicPartition).latestEpochFromLog
+  }
 }
 object ReplicaAlterLogDirsThread {
   /**

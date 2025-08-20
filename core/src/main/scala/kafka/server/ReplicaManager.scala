@@ -2542,7 +2542,8 @@ class ReplicaManager(val config: KafkaConfig,
                 log.topicId.toScala,
                 new BrokerEndPoint(node.id, node.host, node.port),
                 partition.getLeaderEpoch,
-                initialFetchOffset(log)
+                initialFetchOffset(log),
+                remoteLeader
               ))
             case None =>
               stateChangeLogger.trace(s"Unable to start fetching $topicPartition with topic ID ${partition.topicId} " +
