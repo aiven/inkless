@@ -33,6 +33,7 @@ public class FetchParams {
     public final FetchIsolation isolation;
     public final Optional<ClientMetadata> clientMetadata;
     public final boolean shareFetchRequest;
+    public final boolean readOnly;
 
     public FetchParams(int replicaId,
                        long replicaEpoch,
@@ -41,7 +42,7 @@ public class FetchParams {
                        int maxBytes,
                        FetchIsolation isolation,
                        Optional<ClientMetadata> clientMetadata) {
-        this(replicaId, replicaEpoch, maxWaitMs, minBytes, maxBytes, isolation, clientMetadata, false);
+        this(replicaId, replicaEpoch, maxWaitMs, minBytes, maxBytes, isolation, clientMetadata, false, false);
     }
 
     public FetchParams(int replicaId,
@@ -51,7 +52,8 @@ public class FetchParams {
                        int maxBytes,
                        FetchIsolation isolation,
                        Optional<ClientMetadata> clientMetadata,
-                       boolean shareFetchRequest) {
+                       boolean shareFetchRequest,
+                       boolean readOnly) {
         Objects.requireNonNull(isolation);
         Objects.requireNonNull(clientMetadata);
         this.replicaId = replicaId;
@@ -62,6 +64,7 @@ public class FetchParams {
         this.isolation = isolation;
         this.clientMetadata = clientMetadata;
         this.shareFetchRequest = shareFetchRequest;
+        this.readOnly = readOnly;
     }
 
     public boolean isFromFollower() {

@@ -635,7 +635,7 @@ class KafkaApis(val requestChannel: RequestChannel,
     info("!!! handleFetchRequest:" + fetchRequest)
 
     val topicNames =
-      if (fetchRequest.version() >= 33)
+      if (fetchRequest.version() >= 13)
         metadataCache.topicIdsToNames()
       else
         Collections.emptyMap[Uuid, String]()
@@ -3449,7 +3449,7 @@ class KafkaApis(val requestChannel: RequestChannel,
         fetchMaxBytes,
         FetchIsolation.of(FetchRequest.CONSUMER_REPLICA_ID, groupConfigManager.groupConfig(groupId).map(_.shareIsolationLevel()).orElse(GroupConfig.defaultShareIsolationLevel)),
         clientMetadata,
-        true
+        true, false
       )
 
       // call the share partition manager to fetch messages from the local replica.

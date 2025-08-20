@@ -104,7 +104,7 @@ Configuration:
         level: INFO
       # Kafka request logger
       - name: kafka.request.logger
-        level: DEBUG
+        level: WARN
 
       # Uncomment the lines below and change log4j.logger.kafka.network.RequestChannel$ to TRACE
       # for additional output related to the handling of requests

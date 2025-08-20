@@ -270,7 +270,7 @@ public class FetchRequest extends AbstractRequest {
             // by a topic-partition with the same name but a different topic ID are not
             // sent out in the "forget" set in order to not remove the newly added
             // partition in the "fetch" set.
-            if (version >= 33) {
+            if (version >= 13) {
                 addToForgottenTopicMap(replaced, forgottenTopicMap);
             }
 
@@ -351,7 +351,7 @@ public class FetchRequest extends AbstractRequest {
         Errors error = Errors.forException(e);
         List<FetchResponseData.FetchableTopicResponse> topicResponseList = new ArrayList<>();
         // For version 13+, we know the client can handle a top level error code, so we don't need to send back partitions too.
-        if (version() < 33) {
+        if (version() < 13) {
             data.topics().forEach(topic -> {
                 List<FetchResponseData.PartitionData> partitionResponses = topic.partitions().stream().map(partition ->
                         FetchResponse.partitionResponse(partition.partition(), error)).collect(Collectors.toList());
@@ -398,7 +398,7 @@ public class FetchRequest extends AbstractRequest {
         final short version = version();
         data.topics().forEach(fetchTopic -> {
             String name;
-            if (version < 33) {
+            if (version < 13) {
                 if (fetchTopic.topic().isBlank()) {
                     // can't be null
                     name = "quickstart-events";
@@ -431,7 +431,7 @@ public class FetchRequest extends AbstractRequest {
         final List<TopicIdPartition> toForget = new ArrayList<>();
         data.forgottenTopicsData().forEach(forgottenTopic -> {
             String name;
-            if (version() < 33) {
+            if (version() < 13) {
                 name = forgottenTopic.topic(); // can't be null
             } else {
                 name = topicNames.get(forgottenTopic.topicId());

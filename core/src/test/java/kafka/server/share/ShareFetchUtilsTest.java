@@ -84,7 +84,7 @@ public class ShareFetchUtilsTest {
 
     private static final FetchParams FETCH_PARAMS = new FetchParams(
         FetchRequest.ORDINARY_CONSUMER_ID, -1, 0, 1, 1024 * 1024, FetchIsolation.HIGH_WATERMARK,
-        Optional.empty(), true);
+        Optional.empty(), true, false);
     private static final int BATCH_SIZE = 500;
     private static final BiConsumer<SharePartitionKey, Throwable> EXCEPTION_HANDLER = (key, exception) -> {
         // No-op
