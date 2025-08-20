@@ -50,6 +50,7 @@ org.apache.kafka.server.log.remote.metadata.storage.RemoteLogLeaderEpochStateTes
 - testListAllRemoteLogSegmentsShouldReturnSortedSegments
 - testListAllRemoteLogSegmentsShouldThrowErrorForUnknownSegmentId
 org.apache.kafka.server.log.remote.metadata.storage.RemoteLogMetadataCacheTest:
+- testAwaitInitialized
 - testCacheAddMetadataOnInvalidArgs
 - testCacheUpdateMetadataOnInvalidArgs
 - testDropEventOnInvalidStateTransition
