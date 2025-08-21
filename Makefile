@@ -104,8 +104,6 @@ local_azure:
 cleanup:
 	cd docker/examples/docker-compose-files/inkless && \
 		$(DOCKER) compose down --remove-orphans
-	cd docker/examples/docker-compose-files/inkless-cluster && \
-		$(DOCKER) compose down --remove-orphans
 	rm -rf ./_data
 
 # make create_topic ARGS="topic"
