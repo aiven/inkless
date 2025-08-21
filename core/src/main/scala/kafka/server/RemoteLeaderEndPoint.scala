@@ -174,6 +174,7 @@ class RemoteLeaderEndPoint(logPrefix: String,
   override def buildFetch(partitions: java.util.Map[TopicPartition, PartitionFetchState]): ResultWithPartitions[java.util.Optional[ReplicaFetch]] = {
     val partitionsWithError = mutable.Set[TopicPartition]()
     val builder = fetchSessionHandler.newBuilder(partitions.size, false)
+    val readOnlyTopics = new mutable.HashSet[Uuid]()
     partitions.forEach { (topicPartition, fetchState) =>
       // We will not include a replica in the fetch request if it should be throttled.
       if (fetchState.isReadyForFetch && !shouldFollowerThrottle(quota, fetchState, topicPartition)) {
@@ -190,8 +191,10 @@ class RemoteLeaderEndPoint(logPrefix: String,
             fetchSize,
             Optional.of(fetchState.currentLeaderEpoch()),
             lastFetchedEpoch))
-//          if (fetchState.remoteFetch())
-            // luke
+          info("!!! fetchState: " + fetchState + fetchState.topicId() + " partitionsWithError: " + partitionsWithError)
+          if (fetchState.remoteFetch() && fetchState.topicId().isPresent) {
+            readOnlyTopics += fetchState.topicId().get()
+          }
         } catch {
           case _: KafkaStorageException =>
             // The replica has already been marked offline due to log directory failure and the original failure should have already been logged.
@@ -218,6 +221,7 @@ class RemoteLeaderEndPoint(logPrefix: String,
         .removed(fetchData.toForget)
         .replaced(fetchData.toReplace)
         .metadata(fetchData.metadata)
+        .setReadOnlyTopics(readOnlyTopics.asJava)
       Optional.of(new ReplicaFetch(fetchData.sessionPartitions(), requestBuilder))
     }
 

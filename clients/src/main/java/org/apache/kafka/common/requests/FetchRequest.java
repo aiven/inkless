@@ -31,11 +31,13 @@ import org.apache.kafka.common.record.RecordBatch;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 public class FetchRequest extends AbstractRequest {
@@ -61,6 +63,7 @@ public class FetchRequest extends AbstractRequest {
         public final int maxBytes;
         public final Optional<Integer> currentLeaderEpoch;
         public final Optional<Integer> lastFetchedEpoch;
+        public final Boolean readOnly;
 
         public PartitionData(
             Uuid topicId,
@@ -73,12 +76,24 @@ public class FetchRequest extends AbstractRequest {
         }
 
         public PartitionData(
+                Uuid topicId,
+                long fetchOffset,
+                long logStartOffset,
+                int maxBytes,
+                Optional<Integer> currentLeaderEpoch,
+                Optional<Integer> lastFetchedEpoch
+        ) {
+            this(topicId, fetchOffset, logStartOffset, maxBytes, currentLeaderEpoch, lastFetchedEpoch, false);
+        }
+
+        public PartitionData(
             Uuid topicId,
             long fetchOffset,
             long logStartOffset,
             int maxBytes,
             Optional<Integer> currentLeaderEpoch,
-            Optional<Integer> lastFetchedEpoch
+            Optional<Integer> lastFetchedEpoch,
+            Boolean readOnly
         ) {
             this.topicId = topicId;
             this.fetchOffset = fetchOffset;
@@ -86,6 +101,7 @@ public class FetchRequest extends AbstractRequest {
             this.maxBytes = maxBytes;
             this.currentLeaderEpoch = currentLeaderEpoch;
             this.lastFetchedEpoch = lastFetchedEpoch;
+            this.readOnly = readOnly;
         }
 
         @Override
@@ -162,6 +178,7 @@ public class FetchRequest extends AbstractRequest {
         private List<TopicIdPartition> removed = Collections.emptyList();
         private List<TopicIdPartition> replaced = Collections.emptyList();
         private String rackId = "";
+        private final Set<Uuid> readOnlyTopics = new HashSet<>();
 
         public static Builder forConsumer(short maxVersion, int maxWait, int minBytes, Map<TopicPartition, PartitionData> fetchData) {
             return new Builder(ApiKeys.FETCH.oldestVersion(), maxVersion,
@@ -209,6 +226,11 @@ public class FetchRequest extends AbstractRequest {
 
         public Builder setMaxBytes(int maxBytes) {
             this.maxBytes = maxBytes;
+            return this;
+        }
+
+        public Builder setReadOnlyTopics(Set<Uuid> readOnlyTopics) {
+            this.readOnlyTopics.addAll(readOnlyTopics);
             return this;
         }
 
@@ -287,6 +309,7 @@ public class FetchRequest extends AbstractRequest {
                     fetchTopic = new FetchRequestData.FetchTopic()
                        .setTopic(topicPartition.topic())
                        .setTopicId(partitionData.topicId)
+                       .setReadOnly(readOnlyTopics.contains(partitionData.topicId))
                        .setPartitions(new ArrayList<>());
                     fetchRequestData.topics().add(fetchTopic);
                     System.out.println("fetchTopic: " + fetchTopic + ";;" + topicPartition);
@@ -325,6 +348,7 @@ public class FetchRequest extends AbstractRequest {
                     ", replaced=" + replaced.stream().map(TopicIdPartition::toString).collect(Collectors.joining(", ")) +
                     ", metadata=" + metadata +
                     ", rackId=" + rackId +
+                    ", readOnlyTopics=" + readOnlyTopics +
                     ")";
         }
     }
@@ -417,7 +441,8 @@ public class FetchRequest extends AbstractRequest {
                         fetchPartition.logStartOffset(),
                         fetchPartition.partitionMaxBytes(),
                         optionalEpoch(fetchPartition.currentLeaderEpoch()),
-                        optionalEpoch(fetchPartition.lastFetchedEpoch())
+                        optionalEpoch(fetchPartition.lastFetchedEpoch()),
+                        fetchTopic.readOnly()
                     )
                 )
             );

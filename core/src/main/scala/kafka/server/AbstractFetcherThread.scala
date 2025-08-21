@@ -29,7 +29,7 @@ import org.apache.kafka.common.protocol.Errors
 import org.apache.kafka.common.record.{FileRecords, MemoryRecords, Records}
 import org.apache.kafka.common.requests.OffsetsForLeaderEpochResponse.{UNDEFINED_EPOCH, UNDEFINED_EPOCH_OFFSET}
 import org.apache.kafka.common.requests._
-
+import org.apache.kafka.common.utils.Time
 import org.apache.kafka.common.{ClientIdAndBroker, InvalidRecordException, TopicPartition, Uuid}
 import org.apache.kafka.server.common.OffsetAndEpoch
 import org.apache.kafka.server.LeaderEndPoint
@@ -409,7 +409,7 @@ abstract class AbstractFetcherThread(name: String,
                             if (logAppendInfo.lastLeaderEpoch.isPresent) logAppendInfo.lastLeaderEpoch else currentFetchState.lastFetchedEpoch
                           // Update partitionStates only if there is no exception during processPartitionData
                           val newFetchState = new PartitionFetchState(currentFetchState.topicId, nextOffset, Optional.of(lag),
-                            currentFetchState.currentLeaderEpoch, ReplicaState.FETCHING, lastFetchedEpoch)
+                            currentFetchState.currentLeaderEpoch, ReplicaState.FETCHING, lastFetchedEpoch, currentFetchState.remoteFetch(), 0)
                           partitionStates.updateAndMoveToEnd(topicPartition, newFetchState)
                           if (validBytes > 0) fetcherStats.byteRate.mark(validBytes)
                         }
@@ -504,7 +504,7 @@ abstract class AbstractFetcherThread(name: String,
       Option(partitionStates.stateValue(topicPartition)).foreach { state =>
         val newState = new PartitionFetchState(state.topicId, math.min(truncationOffset, state.fetchOffset),
           state.lag, state.currentLeaderEpoch, state.delay, ReplicaState.TRUNCATING,
-          Optional.empty())
+          Optional.empty(), state.delay.map(t => Long.box(t + Time.SYSTEM.milliseconds())), state.remoteFetch())
         partitionStates.updateAndMoveToEnd(topicPartition, newState)
         partitionMapCond.signalAll()
       }
@@ -537,15 +537,15 @@ abstract class AbstractFetcherThread(name: String,
 //      val lastFetchedEpoch = if (tp.topic().equals("quickstart-events"))
 //        Optional.empty() else latestEpoch(tp)
       val lastFetchedEpoch = latestEpoch(tp)
-      info("!!! find latest epoch for partition " + lastFetchedEpoch)
-//      val state = if (lastFetchedEpoch.isPresent && !initialFetchState.readOnly) ReplicaState.FETCHING else ReplicaState.TRUNCATING
-val state = if (lastFetchedEpoch.isPresent && !tp.topic().equals("quickstart-events")) ReplicaState.FETCHING else ReplicaState.TRUNCATING
+      info("!!! find latest epoch for partition " + lastFetchedEpoch + initialFetchState)
+      val state = if (lastFetchedEpoch.isPresent && !initialFetchState.readOnly) ReplicaState.FETCHING else ReplicaState.TRUNCATING
+//      val state = if (lastFetchedEpoch.isPresent && !tp.topic().equals("quickstart-events")) ReplicaState.FETCHING else ReplicaState.TRUNCATING
 
       new PartitionFetchState(initialFetchState.topicId.toJava, initialFetchState.initOffset, Optional.empty(), initialFetchState.currentLeaderEpoch,
-        state, lastFetchedEpoch)
+        state, lastFetchedEpoch, initialFetchState.readOnly, 0)
     } else {
       new PartitionFetchState(initialFetchState.topicId.toJava, initialFetchState.initOffset, Optional.empty(), initialFetchState.currentLeaderEpoch,
-        ReplicaState.TRUNCATING, Optional.empty())
+        ReplicaState.TRUNCATING, Optional.empty(), initialFetchState.readOnly, 0)
     }
   }
 
@@ -596,8 +596,10 @@ val state = if (lastFetchedEpoch.isPresent && !tp.topic().equals("quickstart-eve
               ReplicaState.FETCHING
             else
               ReplicaState.TRUNCATING
+
+            val delayMs = currentFetchState.delay.map(t => Long.box(t + Time.SYSTEM.milliseconds()))
             new PartitionFetchState(currentFetchState.topicId, offsetTruncationState.offset, currentFetchState.lag,
-              currentFetchState.currentLeaderEpoch, currentFetchState.delay, state, lastFetchedEpoch)
+              currentFetchState.currentLeaderEpoch, currentFetchState.delay, state, lastFetchedEpoch, delayMs, currentFetchState.remoteFetch())
           case None => currentFetchState
         }
         (topicPartition, maybeTruncationComplete)
@@ -852,7 +854,9 @@ val state = if (lastFetchedEpoch.isPresent && !tp.topic().equals("quickstart-eve
                 currentFetchState.currentLeaderEpoch,
                 Optional.of(delay),
                 currentFetchState.state,
-                currentFetchState.lastFetchedEpoch))
+                currentFetchState.lastFetchedEpoch,
+                Optional.of(Long.box(delay + Time.SYSTEM.milliseconds())),
+                currentFetchState.remoteFetch()))
           }
         }
       }

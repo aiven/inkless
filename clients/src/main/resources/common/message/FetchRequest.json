@@ -90,6 +90,8 @@
       { "name": "Topic", "type": "string", "versions": "0-12", "entityType": "topicName", "ignorable": true,
         "about": "The name of the topic to fetch." },
       { "name": "TopicId", "type": "uuid", "versions": "13+", "ignorable": true, "about": "The unique topic ID."},
+      { "name": "ReadOnly", "type": "bool", "versions": "2+", "default": false,
+        "about": "read only." },
       { "name": "Partitions", "type": "[]FetchPartition", "versions": "0+",
         "about": "The partitions to fetch.", "fields": [
         { "name": "Partition", "type": "int32", "versions": "0+",

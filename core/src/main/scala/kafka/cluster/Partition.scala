@@ -1441,7 +1441,7 @@ class Partition(val topicPartition: TopicPartition,
       )
     }
 
-    if (fetchParams.isFromFollower && fetchParams.replicaId != 4) {
+    if (fetchParams.isFromFollower && !fetchPartitionData.readOnly) {
       // Check that the request is from a valid replica before doing the read
       val (replica, logReadInfo) = inReadLock(leaderIsrUpdateLock) {
         info("!!! localLogOrException")
@@ -1473,6 +1473,7 @@ class Partition(val topicPartition: TopicPartition,
 
       logReadInfo
     } else {
+      info("!!! treat as consumer")
       inReadLock(leaderIsrUpdateLock) {
         val localLog = localLogWithEpochOrThrow(
           fetchPartitionData.currentLeaderEpoch,
