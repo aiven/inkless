@@ -180,6 +180,7 @@ class ReplicaManagerTest {
 
     topicIds.foreach { case (topicName, topicId) =>
       when(metadataCache.getTopicId(topicName)).thenReturn(topicId)
+      when(metadataCache.topicConfig(topicName)).thenReturn(new Properties())
     }
   }
 
@@ -363,7 +364,8 @@ class ReplicaManagerTest {
     val config = KafkaConfig.fromProps(props)
     val logManager = TestUtils.createLogManager(config.logDirs.asScala.map(new File(_)), new LogConfig(new Properties()))
     val spyLogManager = spy(logManager)
-    val metadataCache: MetadataCache = mock(classOf[MetadataCache])
+    val metadataCache: KRaftMetadataCache = mock(classOf[KRaftMetadataCache])
+    when(metadataCache.topicConfig(anyString())).thenReturn(new Properties())
     mockGetAliveBrokerFunctions(metadataCache, Seq(new Node(0, "host0", 0)))
     when(metadataCache.metadataVersion()).thenReturn(MetadataVersion.MINIMUM_VERSION)
     val tp0 = new TopicPartition(topic, 0)
@@ -3323,7 +3325,8 @@ class ReplicaManagerTest {
     val aliveBrokers = aliveBrokerIds.map(brokerId => new Node(brokerId, s"host$brokerId", brokerId))
     brokerTopicStats = new BrokerTopicStats(KafkaConfig.fromProps(props).remoteLogManagerConfig.isRemoteStorageSystemEnabled)
 
-    val metadataCache: MetadataCache = mock(classOf[MetadataCache])
+    val metadataCache: KRaftMetadataCache = mock(classOf[KRaftMetadataCache])
+    when(metadataCache.topicConfig(anyString())).thenReturn(new Properties())
     when(metadataCache.topicIdsToNames()).thenReturn(topicNames.asJava)
     when(metadataCache.metadataVersion()).thenReturn(MetadataVersion.MINIMUM_VERSION)
     mockGetAliveBrokerFunctions(metadataCache, aliveBrokers)
@@ -3656,8 +3659,10 @@ class ReplicaManagerTest {
     val mockLogMgr0 = TestUtils.createLogManager(config0.logDirs.asScala.map(new File(_)))
     val mockLogMgr1 = TestUtils.createLogManager(config1.logDirs.asScala.map(new File(_)))
 
-    val metadataCache0: MetadataCache = mock(classOf[MetadataCache])
-    val metadataCache1: MetadataCache = mock(classOf[MetadataCache])
+    val metadataCache0: KRaftMetadataCache = mock(classOf[KRaftMetadataCache])
+    val metadataCache1: KRaftMetadataCache = mock(classOf[KRaftMetadataCache])
+    when(metadataCache0.topicConfig(anyString())).thenReturn(new Properties())
+    when(metadataCache1.topicConfig(anyString())).thenReturn(new Properties())
     val aliveBrokers = Seq(new Node(0, "host0", 0), new Node(1, "host1", 1))
     mockGetAliveBrokerFunctions(metadataCache0, aliveBrokers)
     mockGetAliveBrokerFunctions(metadataCache1, aliveBrokers)
