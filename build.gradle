@@ -265,7 +265,7 @@ if (repo != null) {
   rat {
     dependsOn subprojects.collect {
       it.tasks.matching {
-        it.name == "processMessages" || it.name == "processTestMessages"
+        it.name == "processMessages" || it.name == "processTestMessages" || it.name == "generateJooqClasses"
       }
     }
 
