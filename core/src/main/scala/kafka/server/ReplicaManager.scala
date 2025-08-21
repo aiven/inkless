@@ -721,8 +721,9 @@ class ReplicaManager(val config: KafkaConfig,
     val inklessResponsesFuture = inklessAppendHandler match {
       case Some(interceptor) => interceptor.handle(inklessEntries.asJava, requestLocal)
       case _ =>
-        warn(s"Received inkless entries for topics ${inklessEntries.keys.map(_.topic()).mkString(", ")} but Inkless storage system is not enabled. " +
-          "Returning empty response.")
+        if (inklessEntries.nonEmpty)
+          error(s"Received inkless entries to append for topics ${inklessEntries.keys.map(_.topic()).mkString(", ")} but Inkless storage system is not enabled. " +
+            "Returning empty response.")
         CompletableFuture.completedFuture(util.Map.of[TopicIdPartition, PartitionResponse]())
     }
 
@@ -1728,7 +1729,11 @@ class ReplicaManager(val config: KafkaConfig,
                            fetchInfos: Seq[(TopicIdPartition, PartitionData)]): CompletableFuture[Seq[(TopicIdPartition, FetchPartitionData)]] = {
     inklessFetchHandler match {
       case Some(handler) => handler.handle(params, fetchInfos.toMap.asJava).thenApply(_.asScala.toSeq)
-      case _ => CompletableFuture.completedFuture(Seq.empty)
+      case None =>
+        if (fetchInfos.nonEmpty)
+          error(s"Received inkless fetch request for topics ${fetchInfos.map(_._1.topic()).distinct.mkString(", ")} but inkless fetch handler is not available. " +
+            s"Replying an empty response.")
+        CompletableFuture.completedFuture(Seq.empty)
     }
   }
 
