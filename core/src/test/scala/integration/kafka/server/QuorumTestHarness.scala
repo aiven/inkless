@@ -232,7 +232,7 @@ abstract class QuorumTestHarness extends Logging {
       pgContainer.createDatabase(testInfo)
       minioContainer.createBucket(testInfo)
 
-      inklessMode.foreach(mode => mode.inklessControlPlaneConfig(props))
+      inklessMode.foreach(mode => mode.inklessControllerConfigs(props))
     }
 
     info(s"Running KRAFT test $name")

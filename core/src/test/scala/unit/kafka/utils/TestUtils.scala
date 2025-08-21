@@ -316,7 +316,7 @@ object TestUtils extends Logging {
     }
 
     inklessMode.foreach { mode =>
-      mode.inklessConfigs(props)
+      mode.inklessBrokerConfigs(props)
     }
     props
   }
@@ -1534,9 +1534,18 @@ object TestUtils extends Logging {
   }
 
   class InklessMode(val pgContainer: InklessPostgreSQLContainer, val minioContainer: MinioContainer) {
-    def inklessConfigs(props: Properties): Unit = {
+    def inklessControllerConfigs(props: Properties): Unit = {
+      inklessSystemConfig(props)
       inklessControlPlaneConfig(props)
-      // Storage: S3
+    }
+
+    def inklessBrokerConfigs(props: Properties): Unit = {
+      inklessSystemConfig(props)
+      inklessControlPlaneConfig(props)
+      inklessStorageS3Config(props)
+    }
+
+    private def inklessStorageS3Config(props: Properties): Unit = {
       props.put("inkless.storage.backend.class", "io.aiven.inkless.storage_backend.s3.S3Storage")
       props.put("inkless.storage.s3.bucket.name", minioContainer.getBucketName)
       props.put("inkless.storage.s3.region", minioContainer.getRegion)
@@ -1546,12 +1555,15 @@ object TestUtils extends Logging {
       props.put("inkless.storage.aws.secret.access.key", minioContainer.getSecretKey)
     }
 
-    def inklessControlPlaneConfig(props: Properties): Unit = {
-      // Control plane: Postgres
+    private def inklessControlPlaneConfig(props: Properties): Unit = {
       props.put("inkless.control.plane.class", "io.aiven.inkless.control_plane.postgres.PostgresControlPlane")
       props.put("inkless.control.plane.connection.string", pgContainer.getUserJdbcUrl)
       props.put("inkless.control.plane.username", pgContainer.getUsername)
       props.put("inkless.control.plane.password", pgContainer.getPassword)
+    }
+
+    def inklessSystemConfig(props: Properties): Unit = {
+      props.put("inkless.storage.system.enable", "true")
     }
   }
 }
