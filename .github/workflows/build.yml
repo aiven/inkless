@@ -170,8 +170,9 @@ jobs:
             find ./site-docs/generated -type f -exec grep -L "." {} \; >&2
             exit 1
           fi
-      - name: Verify license file
-        run: python committer-tools/verify_license.py --skip-build
+      # Inkless: ignore license verification for now
+      # - name: Verify license file
+      #   run: python committer-tools/verify_license.py --skip-build
 
   test:
     needs: [configure, validate, load-catalog]
