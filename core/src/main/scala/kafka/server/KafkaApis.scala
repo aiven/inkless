@@ -644,7 +644,6 @@ class KafkaApis(val requestChannel: RequestChannel,
     val forgottenTopics = fetchRequest.forgottenTopics(topicNames)
 
     info("!!! fetchData:" + fetchData)
-    info("!!! forgottenTopics:" + forgottenTopics)
 
     val fetchContext = fetchManager.newContext(
       fetchRequest.version,
@@ -667,7 +666,6 @@ class KafkaApis(val requestChannel: RequestChannel,
 //          else
             interesting += topicIdPartition -> data
         }
-        info("!!! errors:" + erroneous.mkString(","))
         info("!!! interesting:" + interesting.mkString(","))
       } else {
         fetchContext.foreachPartition { (topicIdPartition, _) =>

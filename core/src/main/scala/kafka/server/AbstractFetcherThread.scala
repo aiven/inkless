@@ -158,7 +158,6 @@ abstract class AbstractFetcherThread(name: String,
     val partitionsWithoutEpochs = mutable.Set.empty[TopicPartition]
 
     partitionStates.partitionStateMap.forEach { (tp, state) =>
-      info("!!! state:" + state + ";;" + tp)
       if (state.isTruncating) {
 //        if (!state.remoteFetch()) {
           latestEpoch(tp).toScala match {
@@ -225,7 +224,6 @@ abstract class AbstractFetcherThread(name: String,
    * occur during truncation.
    */
   private def truncateToEpochEndOffsets(latestEpochsForPartitions: Map[TopicPartition, EpochData]): Unit = {
-    info("!!! truncateToEpochEndOffsets:" + latestEpochsForPartitions)
     val endOffsets = leader.fetchEpochEndOffsets(latestEpochsForPartitions.asJava)
     // Ensure we hold a lock during truncation
 
@@ -242,7 +240,6 @@ abstract class AbstractFetcherThread(name: String,
         curPartitionState != null && leaderEpochInRequest == curPartitionState.currentLeaderEpoch
       }
 
-      info("!!! epochEndOffsets:" + epochEndOffsets)
 
       val result = maybeTruncateToEpochEndOffsets(epochEndOffsets, latestEpochsForPartitions)
       handlePartitionsWithErrors(result.partitionsWithError.asScala, "truncateToEpochEndOffsets")
@@ -526,7 +523,6 @@ abstract class AbstractFetcherThread(name: String,
    * For older versions, we can skip the truncation step iff the leader epoch matches the existing epoch.
    */
   private def partitionFetchState(tp: TopicPartition, initialFetchState: InitialFetchState, currentState: PartitionFetchState): PartitionFetchState = {
-    info("!!! partitionFetchState:" + tp + ";;" + initialFetchState + ";;" + currentState)
     if (currentState != null && currentState.currentLeaderEpoch == initialFetchState.currentLeaderEpoch) {
       currentState
     } else if (initialFetchState.initOffset < 0) {
@@ -537,11 +533,11 @@ abstract class AbstractFetcherThread(name: String,
 //      val lastFetchedEpoch = if (tp.topic().equals("quickstart-events"))
 //        Optional.empty() else latestEpoch(tp)
       val lastFetchedEpoch = latestEpoch(tp)
-      info("!!! find latest epoch for partition " + lastFetchedEpoch + initialFetchState)
-      val state = if (lastFetchedEpoch.isPresent && !initialFetchState.readOnly) ReplicaState.FETCHING else ReplicaState.TRUNCATING
+      val state = if (lastFetchedEpoch.isPresent) ReplicaState.FETCHING else ReplicaState.TRUNCATING
+//      val state = if (lastFetchedEpoch.isPresent && !initialFetchState.readOnly) ReplicaState.FETCHING else ReplicaState.TRUNCATING
 //      val state = if (lastFetchedEpoch.isPresent && !tp.topic().equals("quickstart-events")) ReplicaState.FETCHING else ReplicaState.TRUNCATING
 
-      new PartitionFetchState(initialFetchState.topicId.toJava, initialFetchState.initOffset, Optional.empty(), initialFetchState.currentLeaderEpoch,
+      new PartitionFetchState(initialFetchState.topicId.toJava, initialFetchState.initOffset, Optional.empty(), initialFetchState.currentLeaderEpoch - 20,
         state, lastFetchedEpoch, initialFetchState.readOnly, 0)
     } else {
       new PartitionFetchState(initialFetchState.topicId.toJava, initialFetchState.initOffset, Optional.empty(), initialFetchState.currentLeaderEpoch,
@@ -556,7 +552,6 @@ abstract class AbstractFetcherThread(name: String,
 
       initialFetchStates.foreachEntry { (tp, initialFetchState) =>
         val currentState = partitionStates.stateValue(tp)
-        info("!!! currentState:" + currentState)
         val updatedState = partitionFetchState(tp, initialFetchState, currentState)
         partitionStates.updateAndMoveToEnd(tp, updatedState)
       }

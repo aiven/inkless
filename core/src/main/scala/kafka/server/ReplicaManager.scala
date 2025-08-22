@@ -1774,19 +1774,16 @@ class ReplicaManager(val config: KafkaConfig,
             s"remaining response limit $limitBytes" +
             (if (minOneMessage) s", ignoring response/partition size limits" else ""))
 
-        info("!!! getPartitionOrException:")
         partition = getPartitionOrException(tp.topicPartition)
 
         // Check if topic ID from the fetch request/session matches the ID in the log
-        val topicId = if (tp.topicId == Uuid.ZERO_UUID) None else Some(tp.topicId)
-        info("!!! tp.topicId:" + topicId + ";;" + partition.topicId)
+//        val topicId = if (tp.topicId == Uuid.ZERO_UUID) None else Some(tp.topicId)
 //        if (!hasConsistentTopicId(topicId, partition.topicId))
 //          throw new InconsistentTopicIdException("Topic ID in the fetch session did not match the topic ID in the log.")
 
         // If we are the leader, determine the preferred read-replica
         val preferredReadReplica = params.clientMetadata.toScala.flatMap(
           metadata => findPreferredReadReplica(partition, metadata, params.replicaId, fetchInfo.fetchOffset, fetchTimeMs))
-        info("!!! preferredReadReplica:" + preferredReadReplica)
         if (preferredReadReplica.isDefined) {
           replicaSelectorPlugin.foreach { selector =>
             info(s"Replica selector ${selector.get.getClass.getSimpleName} returned preferred replica " +
@@ -1806,7 +1803,6 @@ class ReplicaManager(val config: KafkaConfig,
             Optional.empty())
         } else {
           log = partition.localLogWithEpochOrThrow(fetchInfo.currentLeaderEpoch, params.fetchOnlyLeader())
-          info("!!! log:" + log)
 
           // Try the read first, this tells us whether we need all of adjustedFetchSize for this partition
           val readInfo: LogReadInfo = partition.fetchRecords(

@@ -526,7 +526,7 @@ class Partition(val topicPartition: TopicPartition,
       if (localLeaderEpoch > remoteLeaderEpoch)
         Errors.FENCED_LEADER_EPOCH
       else if (localLeaderEpoch < remoteLeaderEpoch) {
-        info("!!! FENCED LEADER EPOCH:" + remoteLeaderEpoch + ";;" + localLeaderEpoch)
+        // Luke
         //Errors.UNKNOWN_LEADER_EPOCH
         Errors.NONE
       }
@@ -1428,7 +1428,6 @@ class Partition(val topicPartition: TopicPartition,
     minOneMessage: Boolean,
     updateFetchState: Boolean
   ): LogReadInfo = {
-    info("!!! fetchRecords")
     def readFromLocalLog(log: UnifiedLog): LogReadInfo = {
       readRecords(
         log,
@@ -1444,17 +1443,14 @@ class Partition(val topicPartition: TopicPartition,
     if (fetchParams.isFromFollower && !fetchPartitionData.readOnly) {
       // Check that the request is from a valid replica before doing the read
       val (replica, logReadInfo) = inReadLock(leaderIsrUpdateLock) {
-        info("!!! localLogOrException")
         val localLog = localLogWithEpochOrThrow(
           fetchPartitionData.currentLeaderEpoch,
           fetchParams.fetchOnlyLeader
         )
-        info("!!! followerReplicaOrThrow")
         val replica = followerReplicaOrThrow(
           fetchParams.replicaId,
           fetchPartitionData
         )
-        info("!!! readFromLocallog")
 
         val logReadInfo = readFromLocalLog(localLog)
         (replica, logReadInfo)
@@ -1473,7 +1469,6 @@ class Partition(val topicPartition: TopicPartition,
 
       logReadInfo
     } else {
-      info("!!! treat as consumer")
       inReadLock(leaderIsrUpdateLock) {
         val localLog = localLogWithEpochOrThrow(
           fetchPartitionData.currentLeaderEpoch,
@@ -1534,13 +1529,13 @@ class Partition(val topicPartition: TopicPartition,
 
     lastFetchedEpoch.ifPresent { fetchEpoch =>
       val epochEndOffset = lastOffsetForLeaderEpoch(currentLeaderEpoch, fetchEpoch, fetchOnlyFromLeader = false)
+      info(s"!!! Fetching  $epochEndOffset, $currentLeaderEpoch, $fetchEpoch")
       val error = Errors.forCode(epochEndOffset.errorCode)
       if (error != Errors.NONE) {
         throw error.exception()
       }
 
       if (epochEndOffset.endOffset == UNDEFINED_EPOCH_OFFSET || epochEndOffset.leaderEpoch == UNDEFINED_EPOCH) {
-        info("!!! epochEndOffset.leaderEpoch == UNDEFINED_EPOCH")
         throw new OffsetOutOfRangeException("Could not determine the end offset of the last fetched epoch " +
           s"$lastFetchedEpoch from the request")
       }

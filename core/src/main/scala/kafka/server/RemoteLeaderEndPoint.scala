@@ -191,7 +191,6 @@ class RemoteLeaderEndPoint(logPrefix: String,
             fetchSize,
             Optional.of(fetchState.currentLeaderEpoch()),
             lastFetchedEpoch))
-          info("!!! fetchState: " + fetchState + fetchState.topicId() + " partitionsWithError: " + partitionsWithError)
           if (fetchState.remoteFetch() && fetchState.topicId().isPresent) {
             readOnlyTopics += fetchState.topicId().get()
           }
@@ -205,7 +204,6 @@ class RemoteLeaderEndPoint(logPrefix: String,
     }
 
     val fetchData = builder.build()
-    info("!!! fetchData: " + fetchData + " partitionsWithError: " + partitionsWithError)
     val fetchRequestOpt = if (fetchData.sessionPartitions.isEmpty && fetchData.toForget.isEmpty) {
       Optional.empty[ReplicaFetch]
     } else {
