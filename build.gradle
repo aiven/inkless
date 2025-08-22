@@ -2293,6 +2293,17 @@ project(':storage') {
     testImplementation project(':core')
     testImplementation project(':core').sourceSets.test.output
     testImplementation project(':storage:storage-api').sourceSets.test.output
+    // testcontainers for inkless cluster tests
+    testImplementation libs.assertj
+    testImplementation libs.junitJupiter
+    testImplementation libs.mockitoCore
+    testImplementation libs.mockitoJunitJupiter // supports MockitoExtension
+    testImplementation libs.testcontainers
+    testImplementation libs.testcontainersJunitJupiter
+    testImplementation libs.testcontainersLocalstack
+    testImplementation libs.testcontainersPostgresql
+    testImplementation libs.awsSdkS3
+    testImplementation project(':storage:inkless').sourceSets.test.output
     testImplementation project(':test-common:test-common-internal-api')
     testImplementation project(':test-common:test-common-runtime')
     testImplementation project(':test-common:test-common-util')
@@ -2750,6 +2761,17 @@ project(':tools') {
     testImplementation libs.apachedsProtocolLdap
     testImplementation libs.apachedsLdifPartition
     testImplementation testLog4j2Libs
+    // testcontainers for inkless cluster tests
+    testImplementation libs.assertj
+    testImplementation libs.junitJupiter
+    testImplementation libs.mockitoCore
+    testImplementation libs.mockitoJunitJupiter // supports MockitoExtension
+    testImplementation libs.testcontainers
+    testImplementation libs.testcontainersJunitJupiter
+    testImplementation libs.testcontainersLocalstack
+    testImplementation libs.testcontainersPostgresql
+    testImplementation libs.awsSdkS3
+    testImplementation project(':storage:inkless').sourceSets.test.output
 
     testRuntimeOnly runtimeTestLibs
     testRuntimeOnly libs.hamcrest
