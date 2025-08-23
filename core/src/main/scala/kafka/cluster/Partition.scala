@@ -525,9 +525,8 @@ class Partition(val topicPartition: TopicPartition,
       val localLeaderEpoch = leaderEpoch
       if (localLeaderEpoch > remoteLeaderEpoch)
         Errors.FENCED_LEADER_EPOCH
-      else if (localLeaderEpoch < remoteLeaderEpoch) {
+      else if (localLeaderEpoch < remoteLeaderEpoch)
         Errors.UNKNOWN_LEADER_EPOCH
-      }
       else
         Errors.NONE
     }
@@ -1541,7 +1540,6 @@ class Partition(val topicPartition: TopicPartition,
 
       // If fetch offset is less than log start, fail with OffsetOutOfRangeException, regardless of whether epochs are diverging
       if (fetchOffset < initialLogStartOffset) {
-        info("!!! fetchOffset < initialLogStartOffset")
         throw new OffsetOutOfRangeException(s"Received request for offset $fetchOffset for partition $topicPartition, " +
           s"but we only have log segments in the range $initialLogStartOffset to $initialLogEndOffset.")
       }

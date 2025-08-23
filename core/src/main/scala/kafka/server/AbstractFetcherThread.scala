@@ -521,6 +521,7 @@ abstract class AbstractFetcherThread(name: String,
       val lastFetchedEpoch = if (initialFetchState.readOnly) latestEpochFromLog(tp) else latestEpoch(tp)
       val state = if (lastFetchedEpoch.isPresent) ReplicaState.FETCHING else ReplicaState.TRUNCATING
 
+      // TODO: the leader epoch should get from metadata request, currently, it's hardcode to 0
       new PartitionFetchState(initialFetchState.topicId.toJava, initialFetchState.initOffset, Optional.empty(), 0,
         state, lastFetchedEpoch, initialFetchState.readOnly, 0)
     } else {

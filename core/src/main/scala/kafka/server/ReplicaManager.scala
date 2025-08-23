@@ -2519,6 +2519,7 @@ class ReplicaManager(val config: KafkaConfig,
 //        }
      // } else {
 
+      // TODO: the remote leader host should get from metadata request, currently, using localhost:9092
       partitionsToStartFetching.foreachEntry { (topicPartition, partition) =>
         val nodeOpt = if (!remoteLeader)
           partition.leaderReplicaIdOpt

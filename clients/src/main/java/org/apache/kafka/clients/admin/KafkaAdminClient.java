@@ -1659,14 +1659,13 @@ public class KafkaAdminClient extends AdminClient {
                     // for allowAutoTopicCreation (and it simplifies communication with
                     // older brokers)
                     return new MetadataRequest.Builder(new MetadataRequestData()
-                        .setTopics(Arrays.asList(new MetadataRequestData.MetadataRequestTopic().setName("quickstart-events")))
+                        .setTopics(Collections.emptyList())
                         .setAllowAutoTopicCreation(true));
                 }
 
                 @Override
                 public void handleResponse(AbstractResponse abstractResponse) {
                     MetadataResponse response = (MetadataResponse) abstractResponse;
-                    System.out.println("response.data() = " + response.data());
                     long now = time.milliseconds();
 
                     if (response.topLevelError() == Errors.REBOOTSTRAP_REQUIRED)

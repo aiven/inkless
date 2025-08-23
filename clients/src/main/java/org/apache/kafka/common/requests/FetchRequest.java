@@ -424,7 +424,7 @@ public class FetchRequest extends AbstractRequest {
             if (version < 13) {
                 name = fetchTopic.topic();
             } else {
-                name = topicNames.getOrDefault(fetchTopic.topicId(), "quickstart-events");
+                name = topicNames.get(fetchTopic.topicId());
             }
             fetchTopic.partitions().forEach(fetchPartition ->
                 // Topic name may be null here if the topic name was unable to be resolved using the topicNames map.

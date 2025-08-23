@@ -276,10 +276,10 @@ public class FetchSessionHandler {
             boolean canUseTopicIds = partitionsWithoutTopicIds == 0;
 
             if (nextMetadata.isFull()) {
-//                if (log.isDebugEnabled()) {
-                    log.info("Built full fetch {} for node {} with {}.",
+                if (log.isDebugEnabled()) {
+                    log.debug("Built full fetch {} for node {} with {}.",
                             nextMetadata, node, topicPartitionsToLogString(next.keySet()));
-//                }
+                }
                 sessionPartitions = next;
                 next = null;
                 // Only add topic IDs to the session if we are using topic IDs.
@@ -353,12 +353,12 @@ public class FetchSessionHandler {
                 sessionTopicNames = Collections.emptyMap();
             }
 
-//            if (log.isDebugEnabled()) {
-                log.info("Built incremental fetch {} for node {}. Added {}, altered {}, removed {}, " +
+            if (log.isDebugEnabled()) {
+                log.debug("Built incremental fetch {} for node {}. Added {}, altered {}, removed {}, " +
                           "replaced {} out of {}", nextMetadata, node, topicIdPartitionsToLogString(added),
                           topicIdPartitionsToLogString(altered), topicIdPartitionsToLogString(removed),
                           topicIdPartitionsToLogString(replaced), topicPartitionsToLogString(sessionPartitions.keySet()));
-//            }
+            }
             Map<TopicPartition, PartitionData> toSend = Collections.unmodifiableMap(next);
             Map<TopicPartition, PartitionData> curSessionPartitions = copySessionPartitions
                     ? Collections.unmodifiableMap(new LinkedHashMap<>(sessionPartitions))
