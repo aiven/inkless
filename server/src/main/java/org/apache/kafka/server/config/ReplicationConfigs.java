@@ -64,7 +64,7 @@ public class ReplicationConfigs {
             "<code>message.max.bytes</code> (broker config) or <code>max.message.bytes</code> (topic config).";
 
     public static final String REPLICA_FETCH_WAIT_MAX_MS_CONFIG = "replica.fetch.wait.max.ms";
-    public static final int REPLICA_FETCH_WAIT_MAX_MS_DEFAULT = 500;
+    public static final int REPLICA_FETCH_WAIT_MAX_MS_DEFAULT = 1000;
     public static final String REPLICA_FETCH_WAIT_MAX_MS_DOC = "The maximum wait time for each fetcher request issued by follower replicas. This value should always be less than the " +
             "replica.lag.time.max.ms at all times to prevent frequent shrinking of ISR for low throughput topics";
 

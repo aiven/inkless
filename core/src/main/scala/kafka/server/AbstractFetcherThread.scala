@@ -159,27 +159,15 @@ abstract class AbstractFetcherThread(name: String,
 
     partitionStates.partitionStateMap.forEach { (tp, state) =>
       if (state.isTruncating) {
-//        if (!state.remoteFetch()) {
-          latestEpoch(tp).toScala match {
-            case Some(epoch) =>
-              partitionsWithEpochs += tp -> new EpochData()
-                .setPartition(tp.partition)
-                .setCurrentLeaderEpoch(state.currentLeaderEpoch)
-                .setLeaderEpoch(epoch)
-            case _ =>
-              partitionsWithoutEpochs += tp
-          }
-//        } else {
-//          latestEpochFromLog(tp).toScala match {
-//            case Some(epoch) =>
-//              partitionsWithEpochs += tp -> new EpochData()
-//                .setPartition(tp.partition)
-//                .setCurrentLeaderEpoch(epoch)
-//                .setLeaderEpoch(epoch)
-//            case _ =>
-//              partitionsWithoutEpochs += tp
-//          }
-//        }
+        latestEpoch(tp).toScala match {
+          case Some(epoch) =>
+            partitionsWithEpochs += tp -> new EpochData()
+              .setPartition(tp.partition)
+              .setCurrentLeaderEpoch(state.currentLeaderEpoch)
+              .setLeaderEpoch(epoch)
+          case _ =>
+            partitionsWithoutEpochs += tp
+        }
       }
     }
 
@@ -530,14 +518,10 @@ abstract class AbstractFetcherThread(name: String,
     } else if (leader.isTruncationOnFetchSupported) {
       // With old message format, `latestEpoch` will be empty and we use Truncating state
       // to truncate to high watermark.
-//      val lastFetchedEpoch = if (tp.topic().equals("quickstart-events"))
-//        Optional.empty() else latestEpoch(tp)
-      val lastFetchedEpoch = latestEpoch(tp)
+      val lastFetchedEpoch = if (initialFetchState.readOnly) latestEpochFromLog(tp) else latestEpoch(tp)
       val state = if (lastFetchedEpoch.isPresent) ReplicaState.FETCHING else ReplicaState.TRUNCATING
-//      val state = if (lastFetchedEpoch.isPresent && !initialFetchState.readOnly) ReplicaState.FETCHING else ReplicaState.TRUNCATING
-//      val state = if (lastFetchedEpoch.isPresent && !tp.topic().equals("quickstart-events")) ReplicaState.FETCHING else ReplicaState.TRUNCATING
 
-      new PartitionFetchState(initialFetchState.topicId.toJava, initialFetchState.initOffset, Optional.empty(), initialFetchState.currentLeaderEpoch - 20,
+      new PartitionFetchState(initialFetchState.topicId.toJava, initialFetchState.initOffset, Optional.empty(), 0,
         state, lastFetchedEpoch, initialFetchState.readOnly, 0)
     } else {
       new PartitionFetchState(initialFetchState.topicId.toJava, initialFetchState.initOffset, Optional.empty(), initialFetchState.currentLeaderEpoch,
@@ -634,11 +618,6 @@ abstract class AbstractFetcherThread(name: String,
       // replica's partition state to 'truncating' and sets initial offset to its truncation offset)
       warn(s"Based on replica's leader epoch, leader replied with an unknown offset in $tp. " +
         s"The initial fetch offset ${partitionStates.stateValue(tp).fetchOffset} will be used for truncation.")
-      val elements = Thread.currentThread.getStackTrace
-      for (i <- 1 until elements.length) {
-        val s = elements(i)
-        System.out.println("\tat " + s.getClassName + "." + s.getMethodName + "(" + s.getFileName + ":" + s.getLineNumber + ")")
-      }
       OffsetTruncationState(partitionStates.stateValue(tp).fetchOffset, truncationCompleted = true)
     } else if (leaderEpochOffset.leaderEpoch == UNDEFINED_EPOCH) {
       // either leader or follower or both use inter-broker protocol version < IBP_2_0_IV0

@@ -1334,11 +1334,6 @@ public class NetworkClient implements KafkaClient {
          * Add a metadata request to the list of sends if we can make one
          */
         private long maybeUpdate(long now, Node node) {
-//            final StackTraceElement[] elements = Thread.currentThread().getStackTrace();
-//            for (int i = 1; i < elements.length; i++) {
-//                final StackTraceElement s = elements[i];
-//                System.out.println("\tat " + s.getClassName() + "." + s.getMethodName() + "(" + s.getFileName() + ":" + s.getLineNumber() + ")");
-//            }
             String nodeConnectionId = node.idString();
 
             if (canSendRequest(nodeConnectionId, now)) {

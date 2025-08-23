@@ -312,7 +312,6 @@ public class FetchRequest extends AbstractRequest {
                        .setReadOnly(readOnlyTopics.contains(partitionData.topicId))
                        .setPartitions(new ArrayList<>());
                     fetchRequestData.topics().add(fetchTopic);
-                    System.out.println("fetchTopic: " + fetchTopic + ";;" + topicPartition);
                 }
 
                 FetchRequestData.FetchPartition fetchPartition = new FetchRequestData.FetchPartition()
@@ -423,12 +422,7 @@ public class FetchRequest extends AbstractRequest {
         data.topics().forEach(fetchTopic -> {
             String name;
             if (version < 13) {
-                if (fetchTopic.topic().isBlank()) {
-                    // can't be null
-                    name = "quickstart-events";
-                } else {
-                    name = fetchTopic.topic();
-                }
+                name = fetchTopic.topic();
             } else {
                 name = topicNames.getOrDefault(fetchTopic.topicId(), "quickstart-events");
             }
@@ -468,7 +462,7 @@ public class FetchRequest extends AbstractRequest {
     }
 
     public boolean isFromFollower() {
-        return replicaId() >= -1;
+        return replicaId() >= 0;
     }
 
     public IsolationLevel isolationLevel() {

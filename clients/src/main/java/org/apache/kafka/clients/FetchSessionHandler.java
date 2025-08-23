@@ -616,11 +616,6 @@ public class FetchSessionHandler {
      */
     public void handleError(Throwable t) {
         log.info("Error sending fetch request {} to node {}:", nextMetadata, node, t);
-        final StackTraceElement[] elements = Thread.currentThread().getStackTrace();
-        for (int i = 1; i < elements.length; i++) {
-            final StackTraceElement s = elements[i];
-            System.out.println("\tat " + s.getClassName() + "." + s.getMethodName() + "(" + s.getFileName() + ":" + s.getLineNumber() + ")");
-        }
         nextMetadata = nextMetadata.nextCloseExistingAttemptNew();
     }
 

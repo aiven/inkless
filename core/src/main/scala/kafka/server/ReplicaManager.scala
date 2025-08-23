@@ -1777,9 +1777,9 @@ class ReplicaManager(val config: KafkaConfig,
         partition = getPartitionOrException(tp.topicPartition)
 
         // Check if topic ID from the fetch request/session matches the ID in the log
-//        val topicId = if (tp.topicId == Uuid.ZERO_UUID) None else Some(tp.topicId)
-//        if (!hasConsistentTopicId(topicId, partition.topicId))
-//          throw new InconsistentTopicIdException("Topic ID in the fetch session did not match the topic ID in the log.")
+        val topicId = if (tp.topicId == Uuid.ZERO_UUID) None else Some(tp.topicId)
+        if (!hasConsistentTopicId(topicId, partition.topicId))
+          throw new InconsistentTopicIdException("Topic ID in the fetch session did not match the topic ID in the log.")
 
         // If we are the leader, determine the preferred read-replica
         val preferredReadReplica = params.clientMetadata.toScala.flatMap(
@@ -2021,12 +2021,12 @@ class ReplicaManager(val config: KafkaConfig,
    * @param logTopicIdOpt the topic ID in the log if the log and the topic ID exist
    * @return true if the request topic id is consistent, false otherwise
    */
-//  private def hasConsistentTopicId(requestTopicIdOpt: Option[Uuid], logTopicIdOpt: Option[Uuid]): Boolean = {
-//    requestTopicIdOpt match {
-//      case None => true
-//      case Some(requestTopicId) => logTopicIdOpt.isEmpty || logTopicIdOpt.contains(requestTopicId)
-//    }
-//  }
+  private def hasConsistentTopicId(requestTopicIdOpt: Option[Uuid], logTopicIdOpt: Option[Uuid]): Boolean = {
+    requestTopicIdOpt match {
+      case None => true
+      case Some(requestTopicId) => logTopicIdOpt.isEmpty || logTopicIdOpt.contains(requestTopicId)
+    }
+  }
 
   /**
    * KAFKA-8392
@@ -2519,43 +2519,37 @@ class ReplicaManager(val config: KafkaConfig,
 //        }
      // } else {
 
-        partitionsToStartFetching.foreachEntry { (topicPartition, partition) =>
+      partitionsToStartFetching.foreachEntry { (topicPartition, partition) =>
+        val nodeOpt = if (!remoteLeader)
+          partition.leaderReplicaIdOpt
+            .flatMap(leaderId => Option(newImage.cluster.broker(leaderId)))
+            .flatMap(_.node(listenerName).toScala)
+        else Option.apply(new Node(2, "localhost", 9092))
 
-//          val nodeOpt = partition.leaderReplicaIdOpt
-//            .flatMap(leaderId => Option(newImage.cluster.broker(leaderId)))
-//            .flatMap(_.node(listenerName).toScala)
-
-          val nodeOpt = if (!remoteLeader)
-            partition.leaderReplicaIdOpt
-              .flatMap(leaderId => Option(newImage.cluster.broker(leaderId)))
-              .flatMap(_.node(listenerName).toScala)
-          else Option.apply(new Node(2, "localhost", 9092))
-
-          nodeOpt match {
-            case Some(node) =>
-              val log = partition.localLogOrException
-              partitionAndOffsets.put(topicPartition, InitialFetchState(
-                log.topicId.toScala,
-                new BrokerEndPoint(node.id, node.host, node.port),
-                partition.getLeaderEpoch,
-                initialFetchOffset(log),
-                remoteLeader
-              ))
-            case None =>
-              stateChangeLogger.trace(s"Unable to start fetching $topicPartition with topic ID ${partition.topicId} " +
-                s"from leader ${partition.leaderReplicaIdOpt} because it is not alive.")
-          }
+        nodeOpt match {
+          case Some(node) =>
+            val log = partition.localLogOrException
+            partitionAndOffsets.put(topicPartition, InitialFetchState(
+              log.topicId.toScala,
+              new BrokerEndPoint(node.id, node.host, node.port),
+              partition.getLeaderEpoch,
+              initialFetchOffset(log),
+              remoteLeader
+            ))
+          case None =>
+            stateChangeLogger.trace(s"Unable to start fetching $topicPartition with topic ID ${partition.topicId} " +
+              s"from leader ${partition.leaderReplicaIdOpt} because it is not alive.")
         }
+      }
 
-        replicaFetcherManager.addFetcherForPartitions(partitionAndOffsets)
-        stateChangeLogger.info(s"Started fetchers as part of become-follower for ${partitionsToStartFetching.size} partitions")
+      replicaFetcherManager.addFetcherForPartitions(partitionAndOffsets)
+      stateChangeLogger.info(s"Started fetchers as part of become-follower for ${partitionsToStartFetching.size} partitions")
 
-        partitionsToStartFetching.foreach { case (topicPartition, partition) =>
-          completeDelayedOperationsWhenNotPartitionLeader(topicPartition, partition.topicId)
-        }
+      partitionsToStartFetching.foreach { case (topicPartition, partition) =>
+        completeDelayedOperationsWhenNotPartitionLeader(topicPartition, partition.topicId)
+      }
 
-        updateLeaderAndFollowerMetrics(followerTopicSet)
-     // }
+      updateLeaderAndFollowerMetrics(followerTopicSet)
     }
 
     if (partitionsToStopFetching.nonEmpty) {

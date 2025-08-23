@@ -526,9 +526,7 @@ class Partition(val topicPartition: TopicPartition,
       if (localLeaderEpoch > remoteLeaderEpoch)
         Errors.FENCED_LEADER_EPOCH
       else if (localLeaderEpoch < remoteLeaderEpoch) {
-        // Luke
-        //Errors.UNKNOWN_LEADER_EPOCH
-        Errors.NONE
+        Errors.UNKNOWN_LEADER_EPOCH
       }
       else
         Errors.NONE
@@ -1528,6 +1526,7 @@ class Partition(val topicPartition: TopicPartition,
     val initialLastStableOffset = localLog.lastStableOffset
 
     lastFetchedEpoch.ifPresent { fetchEpoch =>
+      // get leader node's epoch and offset
       val epochEndOffset = lastOffsetForLeaderEpoch(currentLeaderEpoch, fetchEpoch, fetchOnlyFromLeader = false)
       info(s"!!! Fetching  $epochEndOffset, $currentLeaderEpoch, $fetchEpoch")
       val error = Errors.forCode(epochEndOffset.errorCode)

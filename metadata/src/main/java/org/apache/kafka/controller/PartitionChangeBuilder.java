@@ -428,12 +428,6 @@ public class PartitionChangeBuilder {
     }
 
     public Optional<ApiMessageAndVersion> build() {
-        System.out.println("PartitionChangeBuilder.build() called for topicId " + topicId + ", partitionId " + partitionId + ";;" + partition.remoteBootstrapServers);
-        final StackTraceElement[] elements = Thread.currentThread().getStackTrace();
-        for (int i = 1; i < elements.length; i++) {
-            final StackTraceElement s = elements[i];
-            System.out.println("\tat " + s.getClassName() + "." + s.getMethodName() + "(" + s.getFileName() + ":" + s.getLineNumber() + ")");
-        }
         PartitionChangeRecord record = new PartitionChangeRecord().
             setTopicId(topicId).
             setPartitionId(partitionId).

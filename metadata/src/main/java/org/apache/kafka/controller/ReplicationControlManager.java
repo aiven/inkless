@@ -709,7 +709,6 @@ public class ReplicationControlManager {
                                  Map<String, CreatableTopicResult> successes,
                                  List<ApiMessageAndVersion> configRecords,
                                  boolean authorizedToReturnConfigs) {
-        log.info("Creating topic {}.", topic);
         Map<String, String> creationConfigs = translateCreationConfigs(topic.configs());
         Map<Integer, PartitionRegistration> newParts = new HashMap<>();
         if (!topic.assignments().isEmpty()) {

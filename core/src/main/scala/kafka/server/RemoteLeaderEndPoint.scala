@@ -171,6 +171,8 @@ class RemoteLeaderEndPoint(logPrefix: String,
     }
   }
 
+
+
   override def buildFetch(partitions: java.util.Map[TopicPartition, PartitionFetchState]): ResultWithPartitions[java.util.Optional[ReplicaFetch]] = {
     val partitionsWithError = mutable.Set[TopicPartition]()
     val builder = fetchSessionHandler.newBuilder(partitions.size, false)
