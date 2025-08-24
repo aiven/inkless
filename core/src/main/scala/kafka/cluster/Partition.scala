@@ -1371,6 +1371,7 @@ class Partition(val topicPartition: TopicPartition,
 
   def appendRecordsToLeader(records: MemoryRecords, origin: AppendOrigin, requiredAcks: Int,
                             requestLocal: RequestLocal, verificationGuard: VerificationGuard = VerificationGuard.SENTINEL): LogAppendInfo = {
+    logger.info(s"!!! readOnly: ${readOnly}")
     if (readOnly) {
       throw new InvalidTopicException("Cannot append to read-only partition %s on broker %d"
         .format(topicPartition, localBrokerId))

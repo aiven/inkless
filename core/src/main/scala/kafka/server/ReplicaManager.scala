@@ -2304,8 +2304,9 @@ class ReplicaManager(val config: KafkaConfig,
           stateChangeLogger.info(s"Creating new partition $tp with topic id " + s"$topicId." +
             s"A topic with the same name but different id exists but it resides in an offline log " +
             s"directory.")
-          val readOnly = delta.image().topicsById().get(topicId).partitions().get(tp.partition()).readOnly
-          val remoteBootstrapServer = delta.image().topicsById().get(topicId).partitions().get(tp.partition()).remoteBootstrapServers
+          val readOnly = delta.changedTopics().get(topicId).partitionChanges().get(tp.partition()).readOnly
+          val remoteBootstrapServer = delta.changedTopics().get(topicId).partitionChanges().get(tp.partition()).remoteBootstrapServers
+          logger.info(s"!!! create partition with readOnly ${readOnly} and remoteBootstrapServer ${remoteBootstrapServer}")
           val partition = Partition(new TopicIdPartition(topicId, tp), time, this, readOnly, remoteBootstrapServer)
           allPartitions.put(tp, HostedPartition.Online(partition))
           Some(partition, true)
@@ -2329,8 +2330,9 @@ class ReplicaManager(val config: KafkaConfig,
             s"$topicId.")
         }
         // it's a partition that we don't know about yet, so create it and mark it online
-        val readOnly = delta.image().topicsById().get(topicId).partitions().get(tp.partition()).readOnly
-        val remoteBootstrapServer = delta.image().topicsById().get(topicId).partitions().get(tp.partition()).remoteBootstrapServers
+        val readOnly = delta.changedTopics().get(topicId).partitionChanges().get(tp.partition()).readOnly
+        val remoteBootstrapServer = delta.changedTopics().get(topicId).partitionChanges().get(tp.partition()).remoteBootstrapServers
+        logger.info(s"!!! create partition with readOnly ${readOnly} and remoteBootstrapServer ${remoteBootstrapServer}")
         val partition = Partition(new TopicIdPartition(topicId, tp), time, this, readOnly, remoteBootstrapServer)
         allPartitions.put(tp, HostedPartition.Online(partition))
         Some(partition, true)

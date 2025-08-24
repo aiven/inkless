@@ -118,6 +118,9 @@ public class PartitionRegistration {
 
         public Builder setRemoteBootstrapServers(String remoteBootstrapServers) {
             this.remoteBootstrapServers = remoteBootstrapServers;
+            if (!remoteBootstrapServers.isEmpty()) {
+                this.setReadOnly(true);
+            }
             return this;
         }
 
@@ -160,8 +163,8 @@ public class PartitionRegistration {
                 partitionEpoch,
                 elr,
                 lastKnownElr,
-                    readonly,
-                    remoteBootstrapServers
+                readonly,
+                remoteBootstrapServers
             );
         }
     }
@@ -297,7 +300,7 @@ public class PartitionRegistration {
             newElr,
             newLastKnownElr,
             record.readOnly(),
-                record.remoteBootstrapServer().isBlank() ? remoteBootstrapServers : record.remoteBootstrapServer());
+            record.remoteBootstrapServer().isBlank() ? remoteBootstrapServers : record.remoteBootstrapServer());
     }
 
     public String diff(PartitionRegistration prev) {
@@ -408,6 +411,7 @@ public class PartitionRegistration {
             setLeaderRecoveryState(leaderRecoveryState.value()).
             setLeaderEpoch(leaderEpoch).
             setPartitionEpoch(partitionEpoch).
+            setReadOnly(readOnly).
             setRemoteBootstrapServer(remoteBootstrapServers);
         if (options.isEligibleLeaderReplicasEnabled()) {
             // The following are tagged fields, we should only set them when there are some contents, in order to save
