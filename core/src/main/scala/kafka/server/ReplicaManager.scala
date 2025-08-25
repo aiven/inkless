@@ -1914,7 +1914,7 @@ class ReplicaManager(val config: KafkaConfig,
           responseCallback(partitionToFetchPartitionData)
         }
       } else {
-        if (bytesReadable >= params.minBytes || params.maxWaitMs <= 0) {
+        if (inklessFetchInfos.isEmpty && (bytesReadable >= params.minBytes || params.maxWaitMs <= 0)) {
           responseCallback(fetchPartitionData)
         } else {
           delayedResponse(fetchPartitionStatus)

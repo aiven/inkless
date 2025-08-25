@@ -6675,6 +6675,86 @@ class ReplicaManagerTest {
     }
 
     @Test
+    def testFetchInklessAndClassicSatisfiesMinBytesJustWithClassicRecords(): Unit = {
+      // Given
+      val minBytes = RECORDS.sizeInBytes()  // Satisfied just with the records from the classic topic
+      val fetchOffset = 15L  // fetch offset below the high watermark
+      val hwm = fetchOffset + 10L
+      val maxWaitMs = 10L
+      val maxBytes = 10
+
+      // Prepare the FindBatchResponse to be returned by the ControlPlane when it tries to complete the delayed fetch.
+      val batchMetadata = mock(classOf[BatchMetadata])
+      when(batchMetadata.topicIdPartition()).thenReturn(inklessTopicPartition)
+      val batch = mock(classOf[BatchInfo])
+      when(batch.metadata()).thenReturn(batchMetadata)
+      val findBatchResponse = mock(classOf[FindBatchResponse])
+      when(findBatchResponse.batches()).thenReturn(util.List.of(batch))
+      when(findBatchResponse.highWatermark()).thenReturn(hwm)
+      when(findBatchResponse.estimatedByteSize(fetchOffset)).thenReturn(RECORDS.sizeInBytes()) // first half of the bytes available from inkless
+      when(findBatchResponse.errors()).thenReturn(Errors.NONE)
+      val cp = mock(classOf[ControlPlane])
+      when(cp.findBatches(any(), any())).thenReturn(util.List.of(findBatchResponse))
+
+      // Prepare the FetchHandler response to be called when the forceComplete method is invoked.
+      val inklessResponse = Map(inklessTopicPartition ->
+        new FetchPartitionData(
+          Errors.NONE,
+          hwm, 0L,  // log offset range
+          RECORDS,
+          Optional.empty(), OptionalLong.empty(), Optional.empty(), OptionalInt.empty(), false)
+      )
+      val fetchHandlerCtor: MockedConstruction[FetchHandler] = mockFetchHandler(inklessResponse)
+
+      val replicaManager = try {
+        // spy to inject readFromLog mock
+        spy(createReplicaManager(List(inklessTopicPartition.topic()), controlPlane = Some(cp)))
+      } finally {
+        fetchHandlerCtor.close()
+      }
+
+      // Prepare the classic topic partition response
+      doReturn(Seq(classicTopicPartition ->
+        new LogReadResult(
+          new FetchDataInfo(new LogOffsetMetadata(1L, 0L, 0), RECORDS),
+          Optional.empty(), 10L, 0L, 10L, 0L, 0L, OptionalLong.empty()
+        ))
+      ).when(replicaManager).readFromLog(any(), any(), any(), any())
+      val partition = mock(classOf[Partition])
+      val endOffset = new LogOffsetMetadata(11L, 0L, RECORDS.sizeInBytes())  // next half of bytes available from classic
+      val offsetSnapshot = new LogOffsetSnapshot(0L, endOffset, endOffset, endOffset)
+      when(partition.fetchOffsetSnapshot(any(), any())).thenReturn(offsetSnapshot)
+      doReturn(partition)
+        .when(replicaManager).getPartitionOrException(classicTopicPartition.topicPartition())
+
+      // When we try to fetch messages from both topic types partitions with a consumer fetch
+      val fetchParams = new FetchParams(
+        -1, -1L, // not follower fetch
+        maxWaitMs, minBytes, maxBytes, FetchIsolation.HIGH_WATERMARK, Optional.empty()
+      )
+      val fetchInfos = Seq(
+        inklessTopicPartition -> new PartitionData(inklessTopicPartition.topicId(), fetchOffset, 0L, 123, Optional.empty()),
+        classicTopicPartition -> new PartitionData(classicTopicPartition.topicId(), 1L, 0L, 123, Optional.empty()),
+      )
+      @volatile var responseData: Map[TopicIdPartition, FetchPartitionData] = null
+      val responseCallback = (response: Seq[(TopicIdPartition, FetchPartitionData)]) => {
+        responseData = response.toMap
+      }
+      replicaManager.fetchMessages(fetchParams, fetchInfos, QuotaFactory.UNBOUNDED_QUOTA, responseCallback)
+      // Then we should get a response with the both topic types data
+      assertNotNull(responseData)
+      assertEquals(2, responseData.size)
+      // inkless topic partition data
+      assertEquals(inklessResponse(inklessTopicPartition), responseData(inklessTopicPartition))
+      // classic topic partition data
+      val classicPartitionResponse = responseData(classicTopicPartition)
+      assertEquals(Errors.NONE, classicPartitionResponse.error)
+      assertEquals(0L, classicPartitionResponse.logStartOffset)
+      assertEquals(10L, classicPartitionResponse.highWatermark)
+      assertEquals(RECORDS, classicPartitionResponse.records)
+    }
+
+    @Test
     def testFetchInklessLessThanMinBytes(): Unit = {
       // Given
       val minBytes = Int.MaxValue  // Set minBytes to a value larger than the size of the records to ensure it does not satisfy minBytes
