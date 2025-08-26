@@ -106,14 +106,14 @@ public class ServerConfigs {
     public static final int INKLESS_FETCH_MIN_BYTES_DEFAULT = 1;
     public static final String INKLESS_FETCH_MIN_BYTES_DOC = "The minimum number of bytes to return for a fetch request. " +
             "If the number of bytes available is less than this value, the request will wait until more data is available or the maximum wait time is reached. " +
-            "This configuration will override the consumer's <code>fetch.min.bytes</code> setting for inkless fetch requests if the value is greater than the consumer's setting. " +
+            "This configuration will override the consumer's <code>fetch.min.bytes</code> setting for inkless fetch requests if the consumer config value is lower than the broker's setting. " +
             "This is a protective configuration to ensure the operator can control how often to return fetch responses";
 
     public static final String INKLESS_FETCH_MAX_WAIT_MS_CONFIG = "inkless.fetch.max.wait.ms";
     public static final int INKLESS_FETCH_MAX_WAIT_MS_DEFAULT = 100;  // Half of the default fetch.max.wait.ms
     public static final String INKLESS_FETCH_MAX_WAIT_MS_DOC = "The maximum time to wait for a fetch request to be fulfilled. " +
             "If the request is not fulfilled within this time, it will return an empty response. This is useful for reducing latency in high-throughput scenarios. " +
-            "This configuration will override the consumer's <code>fetch.max.wait.ms</code> setting for inkless fetch requests if the value is less than the consumer's setting. " +
+            "This configuration will override the consumer's <code>fetch.max.wait.ms</code> setting for inkless fetch requests if the consumer config value is lower than the broker's setting. " +
             "This is a protective configuration to ensure the operator can control how often to return fetch responses";
 
     /** ********* Request Limit Configuration **************/
