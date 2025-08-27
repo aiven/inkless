@@ -79,21 +79,21 @@ flowchart LR
     Producer[Producer]
     Consumer[Consumer]
     subgraph Broker1[Broker]
-        BatchIndex[Batch Coordinator\n<i>Assign Offsets</i>]
+        BatchIndex[Batch Coordinator<br><i>Assign Offsets</i>]
     end
     subgraph Broker2[Broker]
-        Broker2Diskless[Diskless Writer\n<i>Validate Data</i>]
+        Broker2Diskless[Diskless Writer<br><i>Validate Data</i>]
     end
     subgraph Broker3[Replica]
-        Broker3Diskless[Diskless Reader\n<i>Inject Offsets</i>]
+        Broker3Diskless[Diskless Reader<br><i>Inject Offsets</i>]
         Broker3Local[Local Segments]
     end
     subgraph Cloud[Object Storage]
         ObjectStorage[WAL Segments]
     end
     Producer == ProduceRequest ==> Broker2Diskless
-    Broker2Diskless == Unordered\nBatch Data ==> ObjectStorage == Unordered\nBatch Data ==> Broker3Diskless
-    Broker2Diskless -- Locally Ordered\nBatch Coordinates --> BatchIndex -- Globally Ordered\nBatch Coordinates --> Broker3Diskless
+    Broker2Diskless == Unordered<br>Batch Data ==> ObjectStorage == Unordered<br>Batch Data ==> Broker3Diskless
+    Broker2Diskless -- Locally Ordered<br>Batch Coordinates --> BatchIndex -- Globally Ordered<br>Batch Coordinates --> Broker3Diskless
     Broker3Diskless == Append ==> Broker3Local
     Broker3Local == FetchResponse ==> Consumer
 ```
