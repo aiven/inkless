@@ -428,17 +428,7 @@ class PartitionTest extends AbstractPartitionTest {
     val mockTime = new MockTime()
     val prevLeaderEpoch = 0
 
-    partition = new Partition(
-      topicPartition,
-      replicaLagTimeMaxMs = ReplicationConfigs.REPLICA_LAG_TIME_MAX_MS_DEFAULT,
-      localBrokerId = brokerId,
-      () => defaultBrokerEpoch(brokerId),
-      time,
-      alterPartitionListener,
-      delayedOperations,
-      metadataCache,
-      logManager,
-      alterPartitionManager) {
+    partition = new Partition(topicPartition, replicaLagTimeMaxMs = ReplicationConfigs.REPLICA_LAG_TIME_MAX_MS_DEFAULT, localBrokerId = brokerId, () => defaultBrokerEpoch(brokerId), time, alterPartitionListener, delayedOperations, metadataCache, logManager, alterPartitionManager) {
 
       override def createLog(isNew: Boolean, isFutureReplica: Boolean, offsetCheckpoints: OffsetCheckpoints, topicId: Option[Uuid], targetLogDirectoryId: Option[Uuid]): UnifiedLog = {
         val log = super.createLog(isNew, isFutureReplica, offsetCheckpoints, None, None)
@@ -1305,16 +1295,7 @@ class PartitionTest extends AbstractPartitionTest {
   @Test
   def testIsUnderMinIsr(): Unit = {
     configRepository.setTopicConfig(topicPartition.topic, TopicConfig.MIN_IN_SYNC_REPLICAS_CONFIG, "2")
-    partition = new Partition(topicPartition,
-      replicaLagTimeMaxMs = ReplicationConfigs.REPLICA_LAG_TIME_MAX_MS_DEFAULT,
-      localBrokerId = brokerId,
-      () => defaultBrokerEpoch(brokerId),
-      time,
-      alterPartitionListener,
-      delayedOperations,
-      metadataCache,
-      logManager,
-      alterPartitionManager)
+    partition = new Partition(topicPartition, replicaLagTimeMaxMs = ReplicationConfigs.REPLICA_LAG_TIME_MAX_MS_DEFAULT, localBrokerId = brokerId, () => defaultBrokerEpoch(brokerId), time, alterPartitionListener, delayedOperations, metadataCache, logManager, alterPartitionManager)
     partition.createLogIfNotExists(isNew = false, isFutureReplica = false, offsetCheckpoints, topicId = None)
     partition.makeLeader(
       new JPartitionState()
@@ -1391,16 +1372,7 @@ class PartitionTest extends AbstractPartitionTest {
 
   @Test
   def testIsReplicaIsrEligibleWithEmptyReplicaMap(): Unit = {
-    val partition = spy(new Partition(topicPartition,
-      replicaLagTimeMaxMs = ReplicationConfigs.REPLICA_LAG_TIME_MAX_MS_DEFAULT,
-      localBrokerId = brokerId,
-      () => defaultBrokerEpoch(brokerId),
-      time,
-      alterPartitionListener,
-      delayedOperations,
-      metadataCache,
-      logManager,
-      alterPartitionManager))
+    val partition = spy(new Partition(topicPartition, replicaLagTimeMaxMs = ReplicationConfigs.REPLICA_LAG_TIME_MAX_MS_DEFAULT, localBrokerId = brokerId, () => defaultBrokerEpoch(brokerId), time, alterPartitionListener, delayedOperations, metadataCache, logManager, alterPartitionManager))
 
     when(offsetCheckpoints.fetch(ArgumentMatchers.anyString, ArgumentMatchers.eq(topicPartition)))
       .thenReturn(Optional.empty[JLong])
@@ -1614,18 +1586,7 @@ class PartitionTest extends AbstractPartitionTest {
 
     addBrokerEpochToMockMetadataCache(metadataCache, replicas)
 
-    val partition = new Partition(
-      topicPartition,
-      replicaLagTimeMaxMs = ReplicationConfigs.REPLICA_LAG_TIME_MAX_MS_DEFAULT,
-      localBrokerId = brokerId,
-      () => defaultBrokerEpoch(brokerId),
-      time,
-      alterPartitionListener,
-      delayedOperations,
-      metadataCache,
-      logManager,
-      alterPartitionManager
-    )
+    val partition = new Partition(topicPartition, replicaLagTimeMaxMs = ReplicationConfigs.REPLICA_LAG_TIME_MAX_MS_DEFAULT, localBrokerId = brokerId, () => defaultBrokerEpoch(brokerId), time, alterPartitionListener, delayedOperations, metadataCache, logManager, alterPartitionManager)
 
     partition.createLogIfNotExists(isNew = false, isFutureReplica = false, offsetCheckpoints, None)
     assertTrue(
@@ -1716,18 +1677,7 @@ class PartitionTest extends AbstractPartitionTest {
       when(metadataCache.isBrokerFenced(remoteBrokerId)).thenReturn(!eligible)
     }
 
-    val partition = new Partition(
-      topicPartition,
-      replicaLagTimeMaxMs = ReplicationConfigs.REPLICA_LAG_TIME_MAX_MS_DEFAULT,
-      localBrokerId = brokerId,
-      () => defaultBrokerEpoch(brokerId),
-      time,
-      alterPartitionListener,
-      delayedOperations,
-      metadataCache,
-      logManager,
-      alterPartitionManager
-    )
+    val partition = new Partition(topicPartition, replicaLagTimeMaxMs = ReplicationConfigs.REPLICA_LAG_TIME_MAX_MS_DEFAULT, localBrokerId = brokerId, () => defaultBrokerEpoch(brokerId), time, alterPartitionListener, delayedOperations, metadataCache, logManager, alterPartitionManager)
 
     partition.createLogIfNotExists(isNew = false, isFutureReplica = false, offsetCheckpoints, None)
     assertTrue(partition.makeLeader(
@@ -1820,18 +1770,7 @@ class PartitionTest extends AbstractPartitionTest {
     when(metadataCache.isBrokerFenced(remoteBrokerId1)).thenReturn(false)
     when(metadataCache.isBrokerShuttingDown(remoteBrokerId1)).thenReturn(false)
 
-    val partition = new Partition(
-      topicPartition,
-      replicaLagTimeMaxMs = ReplicationConfigs.REPLICA_LAG_TIME_MAX_MS_DEFAULT,
-      localBrokerId = brokerId,
-      () => defaultBrokerEpoch(brokerId),
-      time,
-      alterPartitionListener,
-      delayedOperations,
-      metadataCache,
-      logManager,
-      alterPartitionManager,
-    )
+    val partition = new Partition(topicPartition, replicaLagTimeMaxMs = ReplicationConfigs.REPLICA_LAG_TIME_MAX_MS_DEFAULT, localBrokerId = brokerId, () => defaultBrokerEpoch(brokerId), time, alterPartitionListener, delayedOperations, metadataCache, logManager, alterPartitionManager)
 
     partition.createLogIfNotExists(isNew = false, isFutureReplica = false, offsetCheckpoints, None)
     assertTrue(partition.makeLeader(
@@ -1908,18 +1847,7 @@ class PartitionTest extends AbstractPartitionTest {
 
     addBrokerEpochToMockMetadataCache(metadataCache, replicas)
 
-    val partition = new Partition(
-      topicPartition,
-      replicaLagTimeMaxMs = ReplicationConfigs.REPLICA_LAG_TIME_MAX_MS_DEFAULT,
-      localBrokerId = brokerId,
-      () => defaultBrokerEpoch(brokerId),
-      time,
-      alterPartitionListener,
-      delayedOperations,
-      metadataCache,
-      logManager,
-      alterPartitionManager
-    )
+    val partition = new Partition(topicPartition, replicaLagTimeMaxMs = ReplicationConfigs.REPLICA_LAG_TIME_MAX_MS_DEFAULT, localBrokerId = brokerId, () => defaultBrokerEpoch(brokerId), time, alterPartitionListener, delayedOperations, metadataCache, logManager, alterPartitionManager)
 
     partition.createLogIfNotExists(isNew = false, isFutureReplica = false, offsetCheckpoints, None)
     assertTrue(partition.makeLeader(
@@ -1970,18 +1898,7 @@ class PartitionTest extends AbstractPartitionTest {
     val isr = util.List.of[Integer](brokerId)
 
     addBrokerEpochToMockMetadataCache(metadataCache, replicas)
-    val partition = new Partition(
-      topicPartition,
-      replicaLagTimeMaxMs = ReplicationConfigs.REPLICA_LAG_TIME_MAX_MS_DEFAULT,
-      localBrokerId = brokerId,
-      () => defaultBrokerEpoch(brokerId),
-      time,
-      alterPartitionListener,
-      delayedOperations,
-      metadataCache,
-      logManager,
-      alterPartitionManager
-    )
+    val partition = new Partition(topicPartition, replicaLagTimeMaxMs = ReplicationConfigs.REPLICA_LAG_TIME_MAX_MS_DEFAULT, localBrokerId = brokerId, () => defaultBrokerEpoch(brokerId), time, alterPartitionListener, delayedOperations, metadataCache, logManager, alterPartitionManager)
 
     partition.createLogIfNotExists(isNew = false, isFutureReplica = false, offsetCheckpoints, None)
     assertTrue(partition.makeLeader(
@@ -2121,18 +2038,7 @@ class PartitionTest extends AbstractPartitionTest {
     val metadataCache = mock(classOf[KRaftMetadataCache])
     addBrokerEpochToMockMetadataCache(metadataCache, replicas)
 
-    val partition = new Partition(
-      topicPartition,
-      replicaLagTimeMaxMs = ReplicationConfigs.REPLICA_LAG_TIME_MAX_MS_DEFAULT,
-      localBrokerId = brokerId,
-      () => defaultBrokerEpoch(brokerId),
-      time,
-      alterPartitionListener,
-      delayedOperations,
-      metadataCache,
-      logManager,
-      alterPartitionManager
-    )
+    val partition = new Partition(topicPartition, replicaLagTimeMaxMs = ReplicationConfigs.REPLICA_LAG_TIME_MAX_MS_DEFAULT, localBrokerId = brokerId, () => defaultBrokerEpoch(brokerId), time, alterPartitionListener, delayedOperations, metadataCache, logManager, alterPartitionManager)
     partition.createLogIfNotExists(isNew = false, isFutureReplica = false, offsetCheckpoints, None)
 
     assertTrue(partition.makeLeader(
@@ -2200,18 +2106,7 @@ class PartitionTest extends AbstractPartitionTest {
 
     addBrokerEpochToMockMetadataCache(metadataCache, replicas)
 
-    val partition = new Partition(
-      topicPartition,
-      replicaLagTimeMaxMs = ReplicationConfigs.REPLICA_LAG_TIME_MAX_MS_DEFAULT,
-      localBrokerId = brokerId,
-      () => defaultBrokerEpoch(brokerId),
-      time,
-      alterPartitionListener,
-      delayedOperations,
-      metadataCache,
-      logManager,
-      alterPartitionManager
-    )
+    val partition = new Partition(topicPartition, replicaLagTimeMaxMs = ReplicationConfigs.REPLICA_LAG_TIME_MAX_MS_DEFAULT, localBrokerId = brokerId, () => defaultBrokerEpoch(brokerId), time, alterPartitionListener, delayedOperations, metadataCache, logManager, alterPartitionManager)
     partition.createLogIfNotExists(isNew = false, isFutureReplica = false, offsetCheckpoints, None)
 
     assertTrue(partition.makeLeader(
@@ -2567,16 +2462,7 @@ class PartitionTest extends AbstractPartitionTest {
       brokerEpochSupplier = () => 0
     )
 
-    partition = new Partition(topicPartition,
-      replicaLagTimeMaxMs = ReplicationConfigs.REPLICA_LAG_TIME_MAX_MS_DEFAULT,
-      localBrokerId = brokerId,
-      () => defaultBrokerEpoch(brokerId),
-      time,
-      alterPartitionListener,
-      delayedOperations,
-      metadataCache,
-      logManager,
-      alterPartitionManager)
+    partition = new Partition(topicPartition, replicaLagTimeMaxMs = ReplicationConfigs.REPLICA_LAG_TIME_MAX_MS_DEFAULT, localBrokerId = brokerId, () => defaultBrokerEpoch(brokerId), time, alterPartitionListener, delayedOperations, metadataCache, logManager, alterPartitionManager)
 
     val log = logManager.getOrCreateLog(topicPartition, topicId = topicId.toJava)
     seedLogData(log, numRecords = 10, leaderEpoch = 4)
@@ -2707,16 +2593,7 @@ class PartitionTest extends AbstractPartitionTest {
     checkTopicId(topicId, partition)
 
     // Create new Partition object for same topicPartition
-    val partition2 = new Partition(topicPartition,
-      replicaLagTimeMaxMs = ReplicationConfigs.REPLICA_LAG_TIME_MAX_MS_DEFAULT,
-      localBrokerId = brokerId,
-      () => defaultBrokerEpoch(brokerId),
-      time,
-      alterPartitionListener,
-      delayedOperations,
-      metadataCache,
-      logManager,
-      alterPartitionManager)
+    val partition2 = new Partition(topicPartition, replicaLagTimeMaxMs = ReplicationConfigs.REPLICA_LAG_TIME_MAX_MS_DEFAULT, localBrokerId = brokerId, () => defaultBrokerEpoch(brokerId), time, alterPartitionListener, delayedOperations, metadataCache, logManager, alterPartitionManager)
 
     // partition2 should not yet be associated with the log, but should be able to get ID
     assertTrue(partition2.topicId.isDefined)
@@ -2749,16 +2626,7 @@ class PartitionTest extends AbstractPartitionTest {
     checkTopicId(topicId, partition)
 
     // Create new Partition object for same topicPartition
-    val partition2 = new Partition(topicPartition,
-      replicaLagTimeMaxMs = ReplicationConfigs.REPLICA_LAG_TIME_MAX_MS_DEFAULT,
-      localBrokerId = brokerId,
-      () => defaultBrokerEpoch(brokerId),
-      time,
-      alterPartitionListener,
-      delayedOperations,
-      metadataCache,
-      logManager,
-      alterPartitionManager)
+    val partition2 = new Partition(topicPartition, replicaLagTimeMaxMs = ReplicationConfigs.REPLICA_LAG_TIME_MAX_MS_DEFAULT, localBrokerId = brokerId, () => defaultBrokerEpoch(brokerId), time, alterPartitionListener, delayedOperations, metadataCache, logManager, alterPartitionManager)
 
     // partition2 should not yet be associated with the log, but should be able to get ID
     assertTrue(partition2.topicId.isDefined)
@@ -2830,10 +2698,7 @@ class PartitionTest extends AbstractPartitionTest {
   @Test
   def testUpdateAssignmentAndIsr(): Unit = {
     val topicPartition = new TopicPartition("test", 1)
-    val partition = new Partition(
-      topicPartition, 1000, 0, () => defaultBrokerEpoch(0),
-      Time.SYSTEM, mock(classOf[AlterPartitionListener]), mock(classOf[DelayedOperations]),
-      mock(classOf[KRaftMetadataCache]), mock(classOf[LogManager]), mock(classOf[AlterPartitionManager]))
+    val partition = new Partition(topicPartition, 1000, 0, () => defaultBrokerEpoch(0), Time.SYSTEM, mock(classOf[AlterPartitionListener]), mock(classOf[DelayedOperations]), mock(classOf[KRaftMetadataCache]), mock(classOf[LogManager]), mock(classOf[AlterPartitionManager]))
 
     val replicas = Seq(0, 1, 2, 3)
     val followers = Seq(1, 2, 3)
@@ -2904,16 +2769,7 @@ class PartitionTest extends AbstractPartitionTest {
       logDirs = Seq(logDir1, logDir2), defaultConfig = logConfig, configRepository = spyConfigRepository,
       cleanerConfig = new CleanerConfig(false), time = time)
     val spyLogManager = spy(logManager)
-    val partition = new Partition(topicPartition,
-      replicaLagTimeMaxMs = ReplicationConfigs.REPLICA_LAG_TIME_MAX_MS_DEFAULT,
-      localBrokerId = brokerId,
-      () => defaultBrokerEpoch(brokerId),
-      time,
-      alterPartitionListener,
-      delayedOperations,
-      metadataCache,
-      spyLogManager,
-      alterPartitionManager)
+    val partition = new Partition(topicPartition, replicaLagTimeMaxMs = ReplicationConfigs.REPLICA_LAG_TIME_MAX_MS_DEFAULT, localBrokerId = brokerId, () => defaultBrokerEpoch(brokerId), time, alterPartitionListener, delayedOperations, metadataCache, spyLogManager, alterPartitionManager)
 
     partition.createLog(isNew = true, isFutureReplica = false, offsetCheckpoints, topicId = None, targetLogDirectoryId = None)
 
@@ -2942,16 +2798,7 @@ class PartitionTest extends AbstractPartitionTest {
       logManager.topicConfigUpdated(topicPartition.topic())
     }).when(spyLogManager).initializingLog(ArgumentMatchers.eq(topicPartition))
 
-    val partition = new Partition(topicPartition,
-      replicaLagTimeMaxMs = ReplicationConfigs.REPLICA_LAG_TIME_MAX_MS_DEFAULT,
-      localBrokerId = brokerId,
-      () => defaultBrokerEpoch(brokerId),
-      time,
-      alterPartitionListener,
-      delayedOperations,
-      metadataCache,
-      spyLogManager,
-      alterPartitionManager)
+    val partition = new Partition(topicPartition, replicaLagTimeMaxMs = ReplicationConfigs.REPLICA_LAG_TIME_MAX_MS_DEFAULT, localBrokerId = brokerId, () => defaultBrokerEpoch(brokerId), time, alterPartitionListener, delayedOperations, metadataCache, spyLogManager, alterPartitionManager)
 
     partition.createLog(isNew = true, isFutureReplica = false, offsetCheckpoints, topicId = None, targetLogDirectoryId = None)
 
@@ -2983,16 +2830,7 @@ class PartitionTest extends AbstractPartitionTest {
       logManager.brokerConfigUpdated()
     }).when(spyLogManager).initializingLog(ArgumentMatchers.eq(topicPartition))
 
-    val partition = new Partition(topicPartition,
-      replicaLagTimeMaxMs = ReplicationConfigs.REPLICA_LAG_TIME_MAX_MS_DEFAULT,
-      localBrokerId = brokerId,
-      () => defaultBrokerEpoch(brokerId),
-      time,
-      alterPartitionListener,
-      delayedOperations,
-      metadataCache,
-      spyLogManager,
-      alterPartitionManager)
+    val partition = new Partition(topicPartition, replicaLagTimeMaxMs = ReplicationConfigs.REPLICA_LAG_TIME_MAX_MS_DEFAULT, localBrokerId = brokerId, () => defaultBrokerEpoch(brokerId), time, alterPartitionListener, delayedOperations, metadataCache, spyLogManager, alterPartitionManager)
 
     partition.createLog(isNew = true, isFutureReplica = false, offsetCheckpoints, topicId = None, targetLogDirectoryId = None)
 
@@ -3723,16 +3561,7 @@ class PartitionTest extends AbstractPartitionTest {
       logDirs = Seq(logDir1, logDir2), defaultConfig = logConfig, configRepository = spyConfigRepository,
       cleanerConfig = new CleanerConfig(false), time = time)
     val spyLogManager = spy(logManager)
-    val partition = new Partition(topicPartition,
-      replicaLagTimeMaxMs = ReplicationConfigs.REPLICA_LAG_TIME_MAX_MS_DEFAULT,
-      localBrokerId = brokerId,
-      () => defaultBrokerEpoch(brokerId),
-      time,
-      alterPartitionListener,
-      delayedOperations,
-      metadataCache,
-      spyLogManager,
-      alterPartitionManager)
+    val partition = new Partition(topicPartition, replicaLagTimeMaxMs = ReplicationConfigs.REPLICA_LAG_TIME_MAX_MS_DEFAULT, localBrokerId = brokerId, () => defaultBrokerEpoch(brokerId), time, alterPartitionListener, delayedOperations, metadataCache, spyLogManager, alterPartitionManager)
     val leaderEpoch = 1
     val replicas = util.List.of[Integer](brokerId, brokerId + 1)
     val isr = replicas
@@ -3766,16 +3595,7 @@ class PartitionTest extends AbstractPartitionTest {
       logDirs = Seq(logDir1, logDir2), defaultConfig = logConfig, configRepository = spyConfigRepository,
       cleanerConfig = new CleanerConfig(false), time = time)
     val spyLogManager = spy(logManager)
-    val partition = new Partition(topicPartition,
-      replicaLagTimeMaxMs = ReplicationConfigs.REPLICA_LAG_TIME_MAX_MS_DEFAULT,
-      localBrokerId = brokerId,
-      () => defaultBrokerEpoch(brokerId),
-      time,
-      alterPartitionListener,
-      delayedOperations,
-      metadataCache,
-      spyLogManager,
-      alterPartitionManager)
+    val partition = new Partition(topicPartition, replicaLagTimeMaxMs = ReplicationConfigs.REPLICA_LAG_TIME_MAX_MS_DEFAULT, localBrokerId = brokerId, () => defaultBrokerEpoch(brokerId), time, alterPartitionListener, delayedOperations, metadataCache, spyLogManager, alterPartitionManager)
     val leaderEpoch = 1
     val replicas = util.List.of[Integer](brokerId, brokerId + 1)
     val isr = replicas
@@ -3809,16 +3629,7 @@ class PartitionTest extends AbstractPartitionTest {
       logDirs = Seq(logDir1, logDir2), defaultConfig = logConfig, configRepository = spyConfigRepository,
       cleanerConfig = new CleanerConfig(false), time = time)
     val spyLogManager = spy(logManager)
-    val partition = new Partition(topicPartition,
-      replicaLagTimeMaxMs = ReplicationConfigs.REPLICA_LAG_TIME_MAX_MS_DEFAULT,
-      localBrokerId = brokerId,
-      () => defaultBrokerEpoch(brokerId),
-      time,
-      alterPartitionListener,
-      delayedOperations,
-      metadataCache,
-      spyLogManager,
-      alterPartitionManager)
+    val partition = new Partition(topicPartition, replicaLagTimeMaxMs = ReplicationConfigs.REPLICA_LAG_TIME_MAX_MS_DEFAULT, localBrokerId = brokerId, () => defaultBrokerEpoch(brokerId), time, alterPartitionListener, delayedOperations, metadataCache, spyLogManager, alterPartitionManager)
     val leaderEpoch = 1
     val replicas = util.List.of[Integer](brokerId, brokerId + 1)
     val isr = replicas
@@ -3852,16 +3663,7 @@ class PartitionTest extends AbstractPartitionTest {
       logDirs = Seq(logDir1, logDir2), defaultConfig = logConfig, configRepository = spyConfigRepository,
       cleanerConfig = new CleanerConfig(false), time = time)
     val spyLogManager = spy(logManager)
-    val partition = new Partition(topicPartition,
-      replicaLagTimeMaxMs = ReplicationConfigs.REPLICA_LAG_TIME_MAX_MS_DEFAULT,
-      localBrokerId = brokerId,
-      () => defaultBrokerEpoch(brokerId),
-      time,
-      alterPartitionListener,
-      delayedOperations,
-      metadataCache,
-      spyLogManager,
-      alterPartitionManager)
+    val partition = new Partition(topicPartition, replicaLagTimeMaxMs = ReplicationConfigs.REPLICA_LAG_TIME_MAX_MS_DEFAULT, localBrokerId = brokerId, () => defaultBrokerEpoch(brokerId), time, alterPartitionListener, delayedOperations, metadataCache, spyLogManager, alterPartitionManager)
     val leaderEpoch = 1
     val replicas = util.List.of[Integer](brokerId, brokerId + 1)
     val isr = replicas
@@ -3895,16 +3697,7 @@ class PartitionTest extends AbstractPartitionTest {
       logDirs = Seq(logDir1, logDir2), defaultConfig = logConfig, configRepository = spyConfigRepository,
       cleanerConfig = new CleanerConfig(false), time = time)
     val spyLogManager = spy(logManager)
-    val partition = new Partition(topicPartition,
-      replicaLagTimeMaxMs = ReplicationConfigs.REPLICA_LAG_TIME_MAX_MS_DEFAULT,
-      localBrokerId = brokerId,
-      () => defaultBrokerEpoch(brokerId),
-      time,
-      alterPartitionListener,
-      delayedOperations,
-      metadataCache,
-      spyLogManager,
-      alterPartitionManager)
+    val partition = new Partition(topicPartition, replicaLagTimeMaxMs = ReplicationConfigs.REPLICA_LAG_TIME_MAX_MS_DEFAULT, localBrokerId = brokerId, () => defaultBrokerEpoch(brokerId), time, alterPartitionListener, delayedOperations, metadataCache, spyLogManager, alterPartitionManager)
     val leaderEpoch = 1
     val replicas = util.List.of[Integer](brokerId, brokerId + 1)
     val isr = replicas
@@ -3939,16 +3732,7 @@ class PartitionTest extends AbstractPartitionTest {
       logDirs = Seq(logDir1, logDir2), defaultConfig = logConfig, configRepository = spyConfigRepository,
       cleanerConfig = new CleanerConfig(false), time = time)
     val spyLogManager = spy(logManager)
-    val partition = new Partition(topicPartition,
-      replicaLagTimeMaxMs = ReplicationConfigs.REPLICA_LAG_TIME_MAX_MS_DEFAULT,
-      localBrokerId = brokerId,
-      () => defaultBrokerEpoch(brokerId),
-      time,
-      alterPartitionListener,
-      delayedOperations,
-      metadataCache,
-      spyLogManager,
-      alterPartitionManager)
+    val partition = new Partition(topicPartition, replicaLagTimeMaxMs = ReplicationConfigs.REPLICA_LAG_TIME_MAX_MS_DEFAULT, localBrokerId = brokerId, () => defaultBrokerEpoch(brokerId), time, alterPartitionListener, delayedOperations, metadataCache, spyLogManager, alterPartitionManager)
     val leaderEpoch = 1
     val replicas = util.List.of[Integer](brokerId, brokerId + 1)
     val isr = replicas
@@ -3991,16 +3775,7 @@ class PartitionTest extends AbstractPartitionTest {
 
     val delayedOperations = new DelayedOperations(topicId, topicPartition, produce, fetch, deleteRecords, shareFetch)
     val spyLogManager = spy(logManager)
-    val partition = new Partition(topicPartition,
-      replicaLagTimeMaxMs = ReplicationConfigs.REPLICA_LAG_TIME_MAX_MS_DEFAULT,
-      localBrokerId = brokerId,
-      () => defaultBrokerEpoch(brokerId),
-      time,
-      alterPartitionListener,
-      delayedOperations,
-      metadataCache,
-      spyLogManager,
-      alterPartitionManager)
+    val partition = new Partition(topicPartition, replicaLagTimeMaxMs = ReplicationConfigs.REPLICA_LAG_TIME_MAX_MS_DEFAULT, localBrokerId = brokerId, () => defaultBrokerEpoch(brokerId), time, alterPartitionListener, delayedOperations, metadataCache, spyLogManager, alterPartitionManager)
     partition.tryCompleteDelayedRequests()
   }
 }

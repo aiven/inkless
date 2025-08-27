@@ -26,6 +26,7 @@ import kafka.server._
 import kafka.server.share.DelayedShareFetch
 import kafka.utils.CoreUtils.{inReadLock, inWriteLock}
 import kafka.utils._
+import org.apache.kafka.common.config.TopicConfig
 import org.apache.kafka.common.{DirectoryId, IsolationLevel, TopicIdPartition, TopicPartition, Uuid}
 import org.apache.kafka.common.errors._
 import org.apache.kafka.common.message.AlterPartitionRequestData.BrokerState
@@ -122,21 +123,18 @@ object Partition {
   def apply(topicIdPartition: TopicIdPartition,
             time: Time,
             replicaManager: ReplicaManager,
-            readOnly: Boolean,
             remoteBootstrapServer: String): Partition = {
     Partition(
       topicPartition = topicIdPartition.topicPartition,
       topicId = Some(topicIdPartition.topicId),
       time = time,
       replicaManager = replicaManager,
-      readOnly = readOnly,
       remoteBootstrapServer = remoteBootstrapServer)
   }
   def apply(topicPartition: TopicPartition,
             time: Time,
             replicaManager: ReplicaManager,
             topicId: Option[Uuid] = None,
-            readOnly: Boolean = false,
             remoteBootstrapServer: String = ""): Partition = {
 
     val isrChangeListener = new AlterPartitionListener {
@@ -170,7 +168,6 @@ object Partition {
       metadataCache = replicaManager.metadataCache,
       logManager = replicaManager.logManager,
       alterIsrManager = replicaManager.alterPartitionManager,
-      readOnly = readOnly,
       remoteBootstrapServer = remoteBootstrapServer)
   }
 
@@ -325,7 +322,6 @@ class Partition(val topicPartition: TopicPartition,
                 logManager: LogManager,
                 alterIsrManager: AlterPartitionManager,
                 @volatile private var _topicId: Option[Uuid] = None, // TODO: merge topicPartition and _topicId into TopicIdPartition once TopicId persist in most of the code by KAFKA-16212
-                val readOnly: Boolean = false,
                 val remoteBootstrapServer: String = ""
                ) extends Logging with TopicPartitionLog {
 
@@ -1371,14 +1367,13 @@ class Partition(val topicPartition: TopicPartition,
 
   def appendRecordsToLeader(records: MemoryRecords, origin: AppendOrigin, requiredAcks: Int,
                             requestLocal: RequestLocal, verificationGuard: VerificationGuard = VerificationGuard.SENTINEL): LogAppendInfo = {
-    logger.info(s"!!! readOnly: ${readOnly}")
-    if (readOnly) {
-      throw new InvalidTopicException("Cannot append to read-only partition %s on broker %d"
-        .format(topicPartition, localBrokerId))
-    }
     val (info, leaderHWIncremented) = inReadLock(leaderIsrUpdateLock) {
       leaderLogIfLocal match {
         case Some(leaderLog) =>
+          if (leaderLog.config().getBoolean(TopicConfig.READ_ONLY_CONFIG)) {
+            throw new InvalidTopicException("Cannot append to read-only partition %s on broker %d"
+              .format(topicPartition, localBrokerId))
+          }
           val minIsr = effectiveMinIsr(leaderLog)
           val inSyncSize = partitionState.isr.size
 

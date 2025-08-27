@@ -271,16 +271,7 @@ class PartitionLockTest extends Logging {
     val alterIsrManager: AlterPartitionManager = mock(classOf[AlterPartitionManager])
 
     logManager.startup(Set.empty)
-    val partition = new Partition(topicPartition,
-      replicaLagTimeMaxMs = ReplicationConfigs.REPLICA_LAG_TIME_MAX_MS_DEFAULT,
-      localBrokerId = brokerId,
-      () => 1L,
-      mockTime,
-      isrChangeListener,
-      delayedOperations,
-      metadataCache,
-      logManager,
-      alterIsrManager) {
+    val partition = new Partition(topicPartition, replicaLagTimeMaxMs = ReplicationConfigs.REPLICA_LAG_TIME_MAX_MS_DEFAULT, localBrokerId = brokerId, () => 1L, mockTime, isrChangeListener, delayedOperations, metadataCache, logManager, alterIsrManager) {
 
       override def prepareIsrShrink(
         currentState: CommittedPartitionState,
