@@ -21,10 +21,10 @@ import org.apache.kafka.common.TopicPartition
 import org.apache.kafka.common.requests.FetchResponse
 import org.apache.kafka.server.common.OffsetAndEpoch
 import org.apache.kafka.storage.internals.log.{LogAppendInfo, LogStartOffsetIncrementReason}
-import org.apache.kafka.server.LeaderEndPoint
+import org.apache.kafka.server.{LeaderEndPoint, PartitionFetchState}
 
 import java.util.Optional
-import scala.collection.mutable
+import scala.collection.{Map, mutable, Set}
 
 class ReplicaFetcherThread(name: String,
                            leader: LeaderEndPoint,
@@ -65,6 +65,14 @@ class ReplicaFetcherThread(name: String,
 
   override protected def endOffsetForEpoch(topicPartition: TopicPartition, epoch: Int): Optional[OffsetAndEpoch] = {
     replicaMgr.localLogOrException(topicPartition).endOffsetForEpoch(epoch)
+  }
+
+  override protected def removeFetcherForPartitions(partitions: Set[TopicPartition]): Map[TopicPartition, PartitionFetchState] = {
+    replicaMgr.replicaFetcherManager.removeFetcherForPartitions(partitions)
+  }
+
+  override protected def addFetcherForPartitions(partitionAndOffsets: Map[TopicPartition, InitialFetchState]) = {
+    replicaMgr.replicaFetcherManager.addFetcherForPartitions(partitionAndOffsets)
   }
 
   override def initiateShutdown(): Boolean = {

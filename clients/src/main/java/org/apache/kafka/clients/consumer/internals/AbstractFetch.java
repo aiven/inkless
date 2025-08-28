@@ -224,7 +224,6 @@ public abstract class AbstractFetch implements Closeable {
 
             if (!partitionsWithUpdatedLeaderInfo.isEmpty()) {
                 List<Node> leaderNodes = new ArrayList<>();
-
                 for (FetchResponseData.NodeEndpoint e : response.data().nodeEndpoints()) {
                     Node node = new Node(e.nodeId(), e.host(), e.port(), e.rack());
 

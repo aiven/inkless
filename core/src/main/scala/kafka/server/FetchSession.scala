@@ -476,6 +476,15 @@ class IncrementalFetchContext(private val time: Time,
         if (session.usesTopicIds)
           part.maybeResolveUnknownName(topicNames)
         fun(new TopicIdPartition(part.topicId, new TopicPartition(part.topic, part.partition)), part.reqData)
+        //new PartitionData(
+        //                        fetchTopic.topicId(),
+        //                        fetchPartition.fetchOffset(),
+        //                        fetchPartition.logStartOffset(),
+        //                        fetchPartition.partitionMaxBytes(),
+        //                        optionalEpoch(fetchPartition.currentLeaderEpoch()),
+        //                        optionalEpoch(fetchPartition.lastFetchedEpoch()),
+        //                        fetchTopic.readOnly()
+        //                    )
       }
     }
   }

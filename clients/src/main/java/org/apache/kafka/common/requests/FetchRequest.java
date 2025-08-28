@@ -131,6 +131,7 @@ public class FetchRequest extends AbstractRequest {
                 ", maxBytes=" + maxBytes +
                 ", currentLeaderEpoch=" + currentLeaderEpoch +
                 ", lastFetchedEpoch=" + lastFetchedEpoch +
+                ", readOnly=" + readOnly +
                 ')';
         }
     }

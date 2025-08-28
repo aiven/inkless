@@ -103,6 +103,13 @@ abstract class AbstractFetcherThread(name: String,
 
   protected def endOffsetForEpoch(topicPartition: TopicPartition, epoch: Int): Optional[OffsetAndEpoch]
 
+  protected def removeFetcherForPartitions(partitions: Set[TopicPartition]): Map[TopicPartition, PartitionFetchState] = {
+    // do nothing
+    Map.empty
+  }
+
+  protected def addFetcherForPartitions(partitionAndOffsets: Map[TopicPartition, InitialFetchState]): Unit = {}
+
   override def shutdown(): Unit = {
     initiateShutdown()
     inLock(partitionMapLock) {
@@ -244,6 +251,78 @@ abstract class AbstractFetcherThread(name: String,
     }
   }
 
+  private def updateLeaderEpochForReadOnly(fetchedEpochs: Map[TopicPartition, PartitionData]): Unit = {
+    val newStates: Map[TopicPartition, PartitionFetchState] = partitionStates.partitionStateMap.asScala
+      .map { case (topicPartition, currentFetchState) =>
+        val updatedInitFetchState = fetchedEpochs.get(topicPartition) match {
+          case Some(partitionData) =>
+//            val delayMs = currentFetchState.delay.map(t => Long.box(t + Time.SYSTEM.milliseconds()))
+            // luke
+            // if we can't get the log from the log, assume it's starting from the beginning
+            val latestEpochInLog = latestEpochFromLog(topicPartition).orElse(0)
+            // (topicId: Option[Uuid], leader: BrokerEndPoint, currentLeaderEpoch: Int, initOffset: Long, readOnly: Boolean = false)
+
+            // leader.lastSeenEndpoints().get(partitionData.currentLeader().leaderId())
+            // InitialFetchState(
+            //              log.topicId.toScala,
+            //              new BrokerEndPoint(node.id, node.host, node.port),
+            //              partition.getLeaderEpoch,
+            //              initialFetchOffset(log),
+            //              remoteLeader
+            //InitialFetchState(currentFetchState.topicId().toScala, brokerEndpoint, partitionData.currentLeader().leaderEpoch(), currentFetchState.fetchOffset(), true)
+            new PartitionFetchState(currentFetchState.topicId, currentFetchState.fetchOffset(), currentFetchState.lag,
+              partitionData.currentLeader().leaderEpoch(), currentFetchState.delay, currentFetchState.state(), Optional.of(latestEpochInLog), currentFetchState.delay(), currentFetchState.remoteFetch())
+          case None => currentFetchState
+        }
+        (topicPartition, updatedInitFetchState)
+      }
+    info("!!! updateLeaderEpochForReadOnly:" + newStates)
+    partitionStates.set(newStates.asJava)
+//    removeFetcherForPartitions(fetchedEpochs.keySet)
+//    addFetcherForPartitions(newStates)
+//    removePartitionsWithoutRemovePartitionState(fetchedEpochs.keySet)
+//    addPartitions()
+    // luke
+  }
+
+  private def recreateFetcherForReadOnly(fetchedEpochs: Map[TopicPartition, PartitionData]): Unit = {
+    val newStates: Map[TopicPartition, InitialFetchState] = partitionStates.partitionStateMap.asScala
+      .map { case (topicPartition, currentFetchState) =>
+        val updatedInitFetchState = fetchedEpochs.get(topicPartition) match {
+          case Some(partitionData) =>
+            //            val delayMs = currentFetchState.delay.map(t => Long.box(t + Time.SYSTEM.milliseconds()))
+            // luke
+            // if we can't get the log from the log, assume it's starting from the beginning
+            //            val latestEpochInLog = latestEpochFromLog(topicPartition).orElse(0)
+            // (topicId: Option[Uuid], leader: BrokerEndPoint, currentLeaderEpoch: Int, initOffset: Long, readOnly: Boolean = false)
+            val leaderNode = if (leader.lastSeenEndpoints().isEmpty) Optional.empty() else Optional.of(leader.lastSeenEndpoints().get(partitionData.currentLeader().leaderId()))
+            val brokerEndpoint = if (leaderNode.isPresent) {
+              new org.apache.kafka.server.network.BrokerEndPoint(leaderNode.get.id(), leaderNode.get.host, leaderNode.get.port)
+            } else leader.brokerEndPoint()
+
+            // leader.lastSeenEndpoints().get(partitionData.currentLeader().leaderId())
+            // InitialFetchState(
+            //              log.topicId.toScala,
+            //              new BrokerEndPoint(node.id, node.host, node.port),
+            //              partition.getLeaderEpoch,
+            //              initialFetchOffset(log),
+            //              remoteLeader
+            InitialFetchState(currentFetchState.topicId().toScala, brokerEndpoint, partitionData.currentLeader().leaderEpoch(), currentFetchState.fetchOffset(), true)
+          //            (currentFetchState.topicId, currentFetchState.fetchOffset(), currentFetchState.lag,
+          //              leaderEpoch.leaderEpoch(), currentFetchState.delay, currentFetchState.state(), Optional.of(latestEpochInLog), currentFetchState.delay(), currentFetchState.remoteFetch())
+          case None => InitialFetchState(currentFetchState.topicId().toScala, leader.brokerEndPoint(), currentFetchState.currentLeaderEpoch(), currentFetchState.fetchOffset(), true)
+        }
+        (topicPartition, updatedInitFetchState)
+      }
+    info("!!! recreateFetcherForReadOnly:" + newStates)
+    //    partitionStates.set(newStates.asJava)
+    removeFetcherForPartitions(fetchedEpochs.keySet)
+    addFetcherForPartitions(newStates)
+    //    removePartitionsWithoutRemovePartitionState(fetchedEpochs.keySet)
+    //    addPartitions()
+    // luke
+  }
+
   // Visible for testing
   private[server] def truncateToHighWatermark(partitions: Set[TopicPartition]): Unit = inLock(partitionMapLock) {
     val fetchOffsets = mutable.HashMap.empty[TopicPartition, OffsetTruncationState]
@@ -323,12 +402,13 @@ abstract class AbstractFetcherThread(name: String,
                                   fetchRequest: FetchRequest.Builder): Unit = {
     val partitionsWithError = mutable.Set[TopicPartition]()
     val divergingEndOffsets = mutable.Map.empty[TopicPartition, EpochEndOffset]
+    val readOnlyEndOffsets = mutable.Map.empty[TopicPartition, PartitionData]
+    val recreateFetchers = mutable.Map.empty[TopicPartition, PartitionData]
     var responseData: Map[TopicPartition, FetchData] = Map.empty
 
     try {
       info(s"!!! Sending fetch request $fetchRequest")
       responseData = leader.fetch(fetchRequest).asScala
-      info(s"!!! responded fetch request $responseData")
     } catch {
       case t: Throwable =>
         if (isRunning) {
@@ -425,13 +505,21 @@ abstract class AbstractFetcherThread(name: String,
                     partitionsWithError += topicPartition
 
                 case Errors.UNKNOWN_LEADER_EPOCH =>
-                  debug(s"Remote broker has a smaller leader epoch for partition $topicPartition than " +
-                    s"this replica's current leader epoch of ${currentFetchState.currentLeaderEpoch}.")
-                  partitionsWithError += topicPartition
+                  if (!currentFetchState.remoteFetch() && partitionData.currentLeader().leaderEpoch() > -1) {
+                    debug(s"Remote broker has a smaller leader epoch for partition $topicPartition than " +
+                      s"this replica's current leader epoch of ${currentFetchState.currentLeaderEpoch}.")
+                    partitionsWithError += topicPartition
+                  } else {
+                    readOnlyEndOffsets += topicPartition -> partitionData
+                  }
 
                 case Errors.FENCED_LEADER_EPOCH =>
-                  if (onPartitionFenced(topicPartition, fetchPartitionData.currentLeaderEpoch))
-                    partitionsWithError += topicPartition
+                  if (!currentFetchState.remoteFetch()) {
+                    if (onPartitionFenced(topicPartition, fetchPartitionData.currentLeaderEpoch))
+                      partitionsWithError += topicPartition
+                  } else {
+                    readOnlyEndOffsets += topicPartition -> partitionData
+                  }
 
                 case Errors.OFFSET_MOVED_TO_TIERED_STORAGE =>
                   debug(s"Received error ${Errors.OFFSET_MOVED_TO_TIERED_STORAGE}, " +
@@ -440,9 +528,13 @@ abstract class AbstractFetcherThread(name: String,
                     partitionsWithError += topicPartition
 
                 case Errors.NOT_LEADER_OR_FOLLOWER =>
-                  debug(s"Remote broker is not the leader for partition $topicPartition, which could indicate " +
-                    "that the partition is being moved")
-                  partitionsWithError += topicPartition
+                  if (!currentFetchState.remoteFetch()) {
+                    info(s"!!! Remote broker is not the leader for partition $topicPartition, which could indicate " +
+                      "that the partition is being moved")
+                    partitionsWithError += topicPartition
+                  } else {
+                    recreateFetchers += topicPartition -> partitionData
+                  }
 
                 case Errors.UNKNOWN_TOPIC_OR_PARTITION =>
                   warn(s"Received ${Errors.UNKNOWN_TOPIC_OR_PARTITION} from the leader for partition $topicPartition. " +
@@ -474,6 +566,10 @@ abstract class AbstractFetcherThread(name: String,
 
     if (divergingEndOffsets.nonEmpty)
       truncateOnFetchResponse(divergingEndOffsets)
+    if (readOnlyEndOffsets.nonEmpty)
+      updateLeaderEpochForReadOnly(readOnlyEndOffsets)
+    if (recreateFetchers.nonEmpty)
+      recreateFetcherForReadOnly(recreateFetchers)
     if (partitionsWithError.nonEmpty) {
       handlePartitionsWithErrors(partitionsWithError, "processFetchRequest")
     }
@@ -518,11 +614,18 @@ abstract class AbstractFetcherThread(name: String,
     } else if (leader.isTruncationOnFetchSupported) {
       // With old message format, `latestEpoch` will be empty and we use Truncating state
       // to truncate to high watermark.
-      val lastFetchedEpoch = if (initialFetchState.readOnly) latestEpochFromLog(tp) else latestEpoch(tp)
+      val latestEpochInLog = latestEpochFromLog(tp)
+      val lastFetchedEpoch: Optional[Integer] = if (initialFetchState.readOnly) {
+        if (latestEpochInLog.isPresent)
+          latestEpochInLog
+        else Optional.of(0) // this should only happen when no data in local log
+      } else latestEpoch(tp)
       val state = if (lastFetchedEpoch.isPresent) ReplicaState.FETCHING else ReplicaState.TRUNCATING
 
+      // if it's readonly, always assume it's 0 so that we can get the current leader epoch from fetch response
+      val leaderEpoch = if (initialFetchState.readOnly) 0 else initialFetchState.currentLeaderEpoch
       // TODO: the leader epoch should get from metadata request, currently, it's hardcode to 0
-      new PartitionFetchState(initialFetchState.topicId.toJava, initialFetchState.initOffset, Optional.empty(), 0,
+      new PartitionFetchState(initialFetchState.topicId.toJava, initialFetchState.initOffset, Optional.empty(), leaderEpoch,
         state, lastFetchedEpoch, initialFetchState.readOnly, 0)
     } else {
       new PartitionFetchState(initialFetchState.topicId.toJava, initialFetchState.initOffset, Optional.empty(), initialFetchState.currentLeaderEpoch,
@@ -845,6 +948,17 @@ abstract class AbstractFetcherThread(name: String,
       topicPartitions.map { topicPartition =>
         val state = partitionStates.stateValue(topicPartition)
         partitionStates.remove(topicPartition)
+        fetcherLagStats.unregister(topicPartition)
+        topicPartition -> state
+      }.filter(_._2 != null).toMap
+    } finally partitionMapLock.unlock()
+  }
+
+  def removePartitionsWithoutRemovePartitionState(topicPartitions: Set[TopicPartition]): Map[TopicPartition, PartitionFetchState] = {
+    partitionMapLock.lockInterruptibly()
+    try {
+      topicPartitions.map { topicPartition =>
+        val state = partitionStates.stateValue(topicPartition)
         fetcherLagStats.unregister(topicPartition)
         topicPartition -> state
       }.filter(_._2 != null).toMap

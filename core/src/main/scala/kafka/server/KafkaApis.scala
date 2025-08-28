@@ -47,6 +47,7 @@ import org.apache.kafka.common.protocol.{ApiKeys, ApiMessage, Errors}
 import org.apache.kafka.common.record._
 import org.apache.kafka.common.replica.ClientMetadata
 import org.apache.kafka.common.replica.ClientMetadata.DefaultClientMetadata
+import org.apache.kafka.common.requests.FetchRequest.PartitionData
 import org.apache.kafka.common.requests.FindCoordinatorRequest.CoordinatorType
 import org.apache.kafka.common.requests.ProduceResponse.PartitionResponse
 import org.apache.kafka.common.requests._
@@ -640,6 +641,7 @@ class KafkaApis(val requestChannel: RequestChannel,
       else
         Collections.emptyMap[Uuid, String]()
 
+    val containsReadOnlyTopics = fetchRequest.data().topics().stream().anyMatch(t => t.readOnly())
     val fetchData = fetchRequest.fetchData(topicNames)
     val forgottenTopics = fetchRequest.forgottenTopics(topicNames)
 
@@ -664,7 +666,8 @@ class KafkaApis(val requestChannel: RequestChannel,
           else if (!metadataCache.contains(topicIdPartition.topicPartition))
             erroneous += topicIdPartition -> FetchResponse.partitionResponse(topicIdPartition, Errors.UNKNOWN_TOPIC_OR_PARTITION)
           else
-            interesting += topicIdPartition -> data
+            interesting += topicIdPartition -> new PartitionData(data.topicId, data.fetchOffset, data.logStartOffset, data.maxBytes, data.currentLeaderEpoch, data.lastFetchedEpoch,
+              if (fetchData.containsKey(topicIdPartition)) fetchData.get(topicIdPartition).readOnly else false)
         }
         info("!!! interesting:" + interesting.mkString(","))
       } else {
@@ -757,7 +760,9 @@ class KafkaApis(val requestChannel: RequestChannel,
 
       if (fetchRequest.isFromFollower) {
         // We've already evaluated against the quota and are good to go. Just need to record it now.
-        val fetchResponse = fetchContext.updateAndGenerateResponseData(partitions, Seq.empty.asJava)
+        // luke
+        info("!!! nodeEndpoints:" + nodeEndpoints + containsReadOnlyTopics)
+        val fetchResponse = fetchContext.updateAndGenerateResponseData(partitions, if (containsReadOnlyTopics) nodeEndpoints.values.toSeq.asJava else Seq.empty.asJava)
         val responseSize = KafkaApis.sizeOfThrottledPartitions(versionId, fetchResponse, quotas.leader)
         quotas.leader.record(responseSize)
         val responsePartitionsSize = fetchResponse.data().responses().stream().mapToInt(_.partitions().size()).sum()

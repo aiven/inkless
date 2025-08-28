@@ -17,6 +17,7 @@
 
 package org.apache.kafka.server;
 
+import org.apache.kafka.common.Node;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.message.FetchResponseData;
 import org.apache.kafka.common.message.OffsetForLeaderEpochRequestData.OffsetForLeaderPartition;
@@ -25,6 +26,8 @@ import org.apache.kafka.common.requests.FetchRequest;
 import org.apache.kafka.server.common.OffsetAndEpoch;
 import org.apache.kafka.server.network.BrokerEndPoint;
 
+import java.util.Collections;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
@@ -63,6 +66,11 @@ public interface LeaderEndPoint {
      * @return A map of topic partition -> fetch data
      */
     Map<TopicPartition, FetchResponseData.PartitionData> fetch(FetchRequest.Builder fetchRequest);
+
+    default Map<Integer, Node> lastSeenEndpoints() {
+        return Collections.emptyMap();
+    }
+
 
     /**
      * Fetches the epoch and log start offset of the given topic partition from the leader.
