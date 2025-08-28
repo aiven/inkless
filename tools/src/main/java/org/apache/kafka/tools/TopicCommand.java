@@ -488,6 +488,9 @@ public abstract class TopicCommand {
 
                 Map<String, String> configsMap = topic.configsToAdd.stringPropertyNames().stream()
                     .collect(Collectors.toMap(name -> name, topic.configsToAdd::getProperty));
+                if (topic.opts.hasCreateMirrorOption()) {
+                    configsMap.put(TopicConfig.READ_ONLY_CONFIG, "true");
+                }
 
                 newTopic.configs(configsMap);
                 CreateTopicsResult createResult = adminClient.createTopics(Set.of(newTopic),
