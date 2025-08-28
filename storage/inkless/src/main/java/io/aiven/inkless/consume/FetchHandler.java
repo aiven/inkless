@@ -43,7 +43,18 @@ public class FetchHandler implements Closeable {
     private final Reader reader;
 
     public FetchHandler(final SharedState state) {
-        this(new Reader(state.time(), state.objectKeyCreator(), state.keyAlignmentStrategy(), state.cache(), state.controlPlane(), state.metadata(), state.storage()));
+        this(
+            new Reader(
+                state.time(),
+                state.objectKeyCreator(),
+                state.keyAlignmentStrategy(),
+                state.cache(),
+                state.controlPlane(),
+                state.metadata(),
+                state.storage(),
+                state.brokerTopicStats()
+            )
+        );
     }
 
     public FetchHandler(final Reader reader) {

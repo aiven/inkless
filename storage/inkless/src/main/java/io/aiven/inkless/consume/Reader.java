@@ -18,11 +18,13 @@
 package io.aiven.inkless.consume;
 
 import org.apache.kafka.common.TopicIdPartition;
+import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.requests.FetchRequest;
 import org.apache.kafka.common.utils.ThreadUtils;
 import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.server.storage.log.FetchParams;
 import org.apache.kafka.server.storage.log.FetchPartitionData;
+import org.apache.kafka.storage.log.metrics.BrokerTopicStats;
 
 import java.time.Instant;
 import java.util.Map;
@@ -55,14 +57,16 @@ public class Reader implements AutoCloseable {
     private final ExecutorService dataExecutor;
     private final ExecutorService fetchCompleterExecutor;
     private final InklessFetchMetrics fetchMetrics;
+    private final BrokerTopicStats brokerTopicStats;
 
     public Reader(Time time,
                   ObjectKeyCreator objectKeyCreator,
                   KeyAlignmentStrategy keyAlignmentStrategy,
                   ObjectCache cache,
                   ControlPlane controlPlane,
-                    MetadataView metadataView,
-                  ObjectFetcher objectFetcher) {
+                  MetadataView metadataView,
+                  ObjectFetcher objectFetcher,
+                  BrokerTopicStats brokerTopicStats) {
         this(
             time,
             objectKeyCreator,
@@ -74,10 +78,10 @@ public class Reader implements AutoCloseable {
             Executors.newCachedThreadPool(new InklessThreadFactory("inkless-fetch-metadata-", false)),
             Executors.newCachedThreadPool(new InklessThreadFactory("inkless-fetch-planner-", false)),
             Executors.newCachedThreadPool(new InklessThreadFactory("inkless-fetch-data-", false)),
-            Executors.newCachedThreadPool(new InklessThreadFactory("inkless-fetch-completer-", false))
+            Executors.newCachedThreadPool(new InklessThreadFactory("inkless-fetch-completer-", false)),
+            brokerTopicStats
         );
     }
-
 
     public Reader(
         Time time,
@@ -90,7 +94,8 @@ public class Reader implements AutoCloseable {
         ExecutorService metadataExecutor,
         ExecutorService fetchPlannerExecutor,
         ExecutorService dataExecutor,
-        ExecutorService fetchCompleterExecutor
+        ExecutorService fetchCompleterExecutor,
+        BrokerTopicStats brokerTopicStats
     ) {
         this.time = time;
         this.objectKeyCreator = objectKeyCreator;
@@ -104,6 +109,7 @@ public class Reader implements AutoCloseable {
         this.dataExecutor = dataExecutor;
         this.fetchCompleterExecutor = fetchCompleterExecutor;
         this.fetchMetrics = new InklessFetchMetrics(time);
+        this.brokerTopicStats = brokerTopicStats;
     }
 
     public CompletableFuture<Map<TopicIdPartition, FetchPartitionData>> fetch(
@@ -150,6 +156,25 @@ public class Reader implements AutoCloseable {
                 fetchCompleterExecutor
             )
             .whenComplete((topicIdPartitionFetchPartitionDataMap, throwable) -> {
+                // Mark broker side fetch metrics
+                if (throwable != null) {
+                    for (final var entry : fetchInfos.entrySet()) {
+                        final String topic = entry.getKey().topic();
+                        brokerTopicStats.allTopicsStats().failedFetchRequestRate().mark();
+                        brokerTopicStats.topicStats(topic).failedFetchRequestRate().mark();
+                    }
+                } else {
+                    for (final var entry : topicIdPartitionFetchPartitionDataMap.entrySet()) {
+                        final String topic = entry.getKey().topic();
+                        if (entry.getValue().error == Errors.NONE) {
+                            brokerTopicStats.allTopicsStats().totalFetchRequestRate().mark();
+                            brokerTopicStats.topicStats(topic).totalFetchRequestRate().mark();
+                        } else {
+                            brokerTopicStats.allTopicsStats().failedFetchRequestRate().mark();
+                            brokerTopicStats.topicStats(topic).failedFetchRequestRate().mark();
+                        }
+                    }
+                }
                 fetchMetrics.fetchCompleted(startAt);
             });
     }
