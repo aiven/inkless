@@ -25,6 +25,7 @@ import kafka.server.QuotaFactory.QuotaManagers
 import kafka.server.ReplicaManager.{AtMinIsrPartitionCountMetricName, FailedIsrUpdatesPerSecMetricName, IsrExpandsPerSecMetricName, IsrShrinksPerSecMetricName, LeaderCountMetricName, OfflineReplicaCountMetricName, PartitionCountMetricName, PartitionsWithLateTransactionsCountMetricName, ProducerIdCountMetricName, ReassigningPartitionsMetricName, UnderMinIsrPartitionCountMetricName, UnderReplicatedPartitionsMetricName, createLogReadResult, isListOffsetsTimestampUnsupported}
 import kafka.server.share.DelayedShareFetch
 import kafka.utils._
+import org.apache.kafka.common.config.{ConfigResource, TopicConfig}
 import org.apache.kafka.common.{IsolationLevel, Node, TopicIdPartition, TopicPartition, Uuid}
 import org.apache.kafka.common.errors._
 import org.apache.kafka.common.internals.{Plugin, Topic}
@@ -489,6 +490,13 @@ class ReplicaManager(val config: KafkaConfig,
 
   def getPartition(topicPartition: TopicPartition): HostedPartition = {
     Option(allPartitions.get(topicPartition)).getOrElse(HostedPartition.None)
+  }
+
+  def getPartitionByTopic(topic: String): util.List[HostedPartition] = {
+    allPartitions.entrySet().stream()
+      .filter(entry => entry.getKey.topic() == topic)
+      .map(entry => entry.getValue)
+      .collect(util.stream.Collectors.toList())
   }
 
   def isAddingReplica(topicPartition: TopicPartition, replicaId: Int): Boolean = {
@@ -2293,6 +2301,7 @@ class ReplicaManager(val config: KafkaConfig,
   private[kafka] def getOrCreatePartition(tp: TopicPartition,
                                           delta: TopicsDelta,
                                           topicId: Uuid): Option[(Partition, Boolean)] = {
+    val localChanges = delta.localChanges(config.nodeId)
     getPartition(tp) match {
       case HostedPartition.Offline(offlinePartition) =>
         if (offlinePartition.flatMap(p => p.topicId).contains(topicId)) {
@@ -2304,10 +2313,13 @@ class ReplicaManager(val config: KafkaConfig,
           stateChangeLogger.info(s"Creating new partition $tp with topic id " + s"$topicId." +
             s"A topic with the same name but different id exists but it resides in an offline log " +
             s"directory.")
-          val readOnly = delta.changedTopics().get(topicId).partitionChanges().get(tp.partition()).readOnly
-          val remoteBootstrapServer = delta.changedTopics().get(topicId).partitionChanges().get(tp.partition()).remoteBootstrapServers
-          logger.info(s"!!! create partition with readOnly ${readOnly} and remoteBootstrapServer ${remoteBootstrapServer}")
-          val partition = Partition(new TopicIdPartition(topicId, tp), time, this, readOnly, remoteBootstrapServer)
+          val remoteBootstrapServer = if (localChanges.readOnlyLeaders().containsKey(tp)) {
+            delta.changedTopics().get(topicId).partitionChanges().get(tp.partition()).remoteBootstrapServers
+          } else {
+            ""
+          }
+          logger.info("!!! create new partition: " + tp + " " + topicId + " " + remoteBootstrapServer)
+          val partition = Partition(new TopicIdPartition(topicId, tp), time, this, remoteBootstrapServer)
           allPartitions.put(tp, HostedPartition.Online(partition))
           Some(partition, true)
         }
@@ -2330,10 +2342,13 @@ class ReplicaManager(val config: KafkaConfig,
             s"$topicId.")
         }
         // it's a partition that we don't know about yet, so create it and mark it online
-        val readOnly = delta.changedTopics().get(topicId).partitionChanges().get(tp.partition()).readOnly
-        val remoteBootstrapServer = delta.changedTopics().get(topicId).partitionChanges().get(tp.partition()).remoteBootstrapServers
-        logger.info(s"!!! create partition with readOnly ${readOnly} and remoteBootstrapServer ${remoteBootstrapServer}")
-        val partition = Partition(new TopicIdPartition(topicId, tp), time, this, readOnly, remoteBootstrapServer)
+        val remoteBootstrapServer = if (localChanges.readOnlyLeaders().containsKey(tp)) {
+          delta.changedTopics().get(topicId).partitionChanges().get(tp.partition()).remoteBootstrapServers
+        } else {
+          ""
+        }
+        logger.info("!!! create new partition: " + tp + " " + topicId + " " + remoteBootstrapServer)
+        val partition = Partition(new TopicIdPartition(topicId, tp), time, this, remoteBootstrapServer)
         allPartitions.put(tp, HostedPartition.Online(partition))
         Some(partition, true)
     }
@@ -2455,6 +2470,12 @@ class ReplicaManager(val config: KafkaConfig,
     localFollowers.foreachEntry { (tp, info) =>
       getOrCreatePartition(tp, delta, info.topicId).foreach { case (partition, isNew) =>
         try {
+          val readonly: Boolean = newImage.configs().configProperties(new ConfigResource(ConfigResource.Type.TOPIC, tp.topic)).getOrDefault(TopicConfig.READ_ONLY_CONFIG, "false").asInstanceOf[String].toBoolean
+          logger.info("!!! tp = " + tp + ", remoteLeader = " + remoteLeader + ", readonly = " + readonly)
+          if (remoteLeader && !readonly) {
+            // skip remote leader with read.only=false topic
+            return
+          }
           followerTopicSet.add(tp.topic)
 
           // We always update the follower state.
@@ -2464,17 +2485,19 @@ class ReplicaManager(val config: KafkaConfig,
           //   high watermark in the checkpoint file (see KAFKA-1647).
           val state = info.partition.toLeaderAndIsrPartitionState(tp, isNew)
           val partitionAssignedDirectoryId = directoryIds.find(_._1.topicPartition() == tp).map(_._2)
-          val isNewLeaderEpoch = partition.makeFollower(state, offsetCheckpoints, Some(info.topicId), partitionAssignedDirectoryId)
+          val isNewLeaderEpoch = !remoteLeader && partition.makeFollower(state, offsetCheckpoints, Some(info.topicId), partitionAssignedDirectoryId)
 
           if (isInControlledShutdown && (info.partition.leader == NO_LEADER ||
               !info.partition.isr.contains(config.brokerId))) {
             // During controlled shutdown, replica with no leaders and replica
             // where this broker is not in the ISR are stopped.
             partitionsToStopFetching.put(tp, false)
-          } else if (isNewLeaderEpoch || remoteLeader) {
+          } else if (isNewLeaderEpoch) {
             // Invoke the follower transition listeners for the partition.
             partition.invokeOnBecomingFollowerListeners()
             // Otherwise, fetcher is restarted if the leader epoch has changed.
+            partitionsToStartFetching.put(tp, partition)
+          } else if (remoteLeader) {
             partitionsToStartFetching.put(tp, partition)
           }
 

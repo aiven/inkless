@@ -50,8 +50,6 @@
     { "name": "LastKnownElr", "type": "[]int32", "default": "null", "entityType": "brokerId",
       "versions": "2+", "nullableVersions": "2+", "taggedVersions": "2+", "tag": 2,
       "about": "The last known eligible leader replicas of this partition." },
-    { "name": "ReadOnly", "type": "bool", "versions": "2+", "default": false,
-      "about": "read only." },
     { "name": "RemoteBootstrapServer", "type": "string", "versions": "2+", "default": "",
       "about": "read only." }
   ]

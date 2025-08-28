@@ -80,16 +80,7 @@ class AbstractPartitionTest {
 
     alterPartitionManager = TestUtils.createAlterIsrManager()
     alterPartitionListener = createIsrChangeListener()
-    partition = new Partition(topicPartition,
-      replicaLagTimeMaxMs = ReplicationConfigs.REPLICA_LAG_TIME_MAX_MS_DEFAULT,
-      localBrokerId = brokerId,
-      () => defaultBrokerEpoch(brokerId),
-      time,
-      alterPartitionListener,
-      delayedOperations,
-      metadataCache,
-      logManager,
-      alterPartitionManager)
+    partition = new Partition(topicPartition, replicaLagTimeMaxMs = ReplicationConfigs.REPLICA_LAG_TIME_MAX_MS_DEFAULT, localBrokerId = brokerId, () => defaultBrokerEpoch(brokerId), time, alterPartitionListener, delayedOperations, metadataCache, logManager, alterPartitionManager)
 
     when(offsetCheckpoints.fetch(ArgumentMatchers.anyString, ArgumentMatchers.eq(topicPartition)))
       .thenReturn(Optional.empty[JLong])

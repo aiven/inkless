@@ -21,6 +21,7 @@ import java.util.{Collections, Properties}
 import kafka.server.QuotaFactory.QuotaManagers
 import kafka.utils.Logging
 import org.apache.kafka.server.config.QuotaConfig
+import org.apache.kafka.common.config.TopicConfig
 import org.apache.kafka.common.metrics.Quota._
 import org.apache.kafka.coordinator.group.GroupCoordinator
 import org.apache.kafka.server.ClientMetricsManager
@@ -49,6 +50,18 @@ class TopicConfigHandler(private val replicaManager: ReplicaManager,
   private def updateLogConfig(topic: String,
                               topicConfig: Properties): Unit = {
     val logManager = replicaManager.logManager
+
+    if (!topicConfig.getProperty(TopicConfig.READ_ONLY_CONFIG).toBoolean) {
+      replicaManager.getPartitionByTopic(topic).forEach {
+        case HostedPartition.Online(partition) =>
+          logger.info(s"!!! partition.remoteBootstrapServer: ${partition.remoteBootstrapServer}")
+          if (partition.remoteBootstrapServer.nonEmpty) {
+            replicaManager.replicaFetcherManager.removeFetcherForPartitions(Set(partition.topicPartition))
+            replicaManager.replicaAlterLogDirsManager.removeFetcherForPartitions(Set(partition.topicPartition))
+          }
+        case _ =>
+      }
+    }
 
     val logs = logManager.logsByTopic(topic)
     val wasRemoteLogEnabled = logs.exists(_.remoteLogEnabled())
