@@ -83,6 +83,7 @@ class DelayedFetch(
    */
   override def tryComplete(): Boolean = {
     var accumulatedSize = 0L
+    info(s"Trying to complete fetch $this")
     classicFetchPartitionStatus.foreach {
       case (topicIdPartition, fetchStatus) =>
         val fetchOffset = fetchStatus.startOffsetMetadata
@@ -152,17 +153,23 @@ class DelayedFetch(
             return forceComplete()
         }
     }
-
+    info(s"Fetch $this accumulated size from classic partitions: $accumulatedSize")
     tryCompleteInkless(inklessFetchPartitionStatus) match {
       case Some(inklessAccumulatedSize) => accumulatedSize += inklessAccumulatedSize
       case None => forceComplete()
     }
-
+    info(s"Fetch $this total accumulated size from classic and inkless partitions: $accumulatedSize")
     // Case G
-    if (accumulatedSize >= minBytes.getOrElse(params.minBytes))
+    val actualMinBytes = minBytes.getOrElse(params.minBytes)
+    if (accumulatedSize >= actualMinBytes) {
+      info(s"Satisfying fetch $this since it has accumulated $accumulatedSize bytes " +
+        s"which is greater than or equal to the minimum bytes $actualMinBytes")
       forceComplete()
-    else
+    } else {
+      info(s"Not satisfying fetch $this since it has only accumulated $accumulatedSize bytes " +
+        s"which is less than the minimum bytes $actualMinBytes")
       false
+    }
   }
 
   /**
@@ -180,9 +187,11 @@ class DelayedFetch(
     val requests = fetchPartitionStatus.map { case (topicIdPartition, fetchStatus) =>
       new FindBatchRequest(topicIdPartition, fetchStatus.startOffsetMetadata.messageOffset, fetchStatus.fetchInfo.maxBytes)
     }
-    if (requests.isEmpty) return Some(0)
 
+    if (requests.isEmpty) return Some(0)
+    info(s"Finding inkless batches for fetch $this with requests: $requests")
     val response = replicaManager.findInklessBatches(requests, Int.MaxValue)
+    info(s"Inkless fetch $this found ${response.get.size()} responses for ${requests.size} requests.")
     response.get.asScala.foreach { r =>
       r.errors() match {
         case Errors.NONE =>
@@ -198,22 +207,27 @@ class DelayedFetch(
             }
 
             val fetchOffset = fetchPartitionStatus.get.startOffsetMetadata
+            info(s"Fetch $this found ${r.batches().size()} inkless batches for partition $topicIdPartition " +
+              s"from offset ${fetchOffset.messageOffset} to high watermark $endOffset.")
             // If the fetch offset is greater than the end offset, it means that the log has been truncated
             // If it is equal to the end offset, it means that we have reached the end of the log
             // If the fetch offset is less than the end offset, we can accumulate the size of the batches
             if (fetchOffset.messageOffset > endOffset) {
               // Truncation happened
-              debug(s"Satisfying fetch $this since it is fetching later segments of partition $topicIdPartition.")
+              warn(s"Satisfying fetch $this since it is fetching later segments of partition $topicIdPartition.")
               return None  // Case A
             } else if (fetchOffset.messageOffset < endOffset) {
               val bytesAvailable = r.estimatedByteSize(fetchOffset.messageOffset)
               accumulatedSize += bytesAvailable // Case B: accumulate the size of the batches
             } // Case D: same as fetchOffset == endOffset, no new data available
           }
-        case _ => return None  // Case C
+        case e =>
+          warn(s"Error while trying to find inkless batches for request $r: $e")
+          return None  // Case C
       }
     }
 
+    info(s"Inkless fetch $this accumulated size: $accumulatedSize")
     Some(accumulatedSize)
   }
 
@@ -264,6 +278,8 @@ class DelayedFetch(
     } else Seq.empty
 
     if (inklessRequestsSize > 0) {
+      info(s"Fetch $this completing with ${classicFetchPartitionStatus.size} classic partitions and " +
+        s"${inklessFetchPartitionStatus.size} inkless partitions.")
       // Classic fetches are complete, now handle inkless fetches
       // adjust the max bytes for inkless fetches based on the percentage of inkless partitions
       val inklessPercentage = inklessRequestsSize / totalRequestsSize

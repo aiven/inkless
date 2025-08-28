@@ -1727,6 +1727,9 @@ class ReplicaManager(val config: KafkaConfig,
       // If there are inkless fetches, enforce a lower bound on maxWaitMs to ensure that we wait at least as long as the
       // configured remote fetch max wait time. This is to ensure that we give enough time for the inkless fetches to complete,
       // and do not overload the control plane with too many requests.
+      if (inklessFetchInfos.nonEmpty)
+        logger.info("Delaying fetch response for {} classic partitions and {} inkless partitions with maxWaitMs={} and minBytes={} (fetch params={})",
+          classicFetchPartitionStatus.size, inklessFetchPartitionStatus.size, maxWaitMs, minBytes, params)
       val delayedFetch = new DelayedFetch(
         params = params,
         classicFetchPartitionStatus = classicFetchPartitionStatus,
