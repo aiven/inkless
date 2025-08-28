@@ -68,6 +68,14 @@ class ReplicaAlterLogDirsThread(name: String,
     replicaMgr.futureLocalLogOrException(topicPartition).endOffsetForEpoch(epoch)
   }
 
+  override protected def removeFetcherForPartitions(partitions: Set[TopicPartition]): Map[TopicPartition, PartitionFetchState] = {
+    replicaMgr.replicaFetcherManager.removeFetcherForPartitions(partitions)
+  }
+
+  override protected def addFetcherForPartitions(partitionAndOffsets: Map[TopicPartition, InitialFetchState]) = {
+    replicaMgr.replicaFetcherManager.addFetcherForPartitions(partitionAndOffsets)
+  }
+
   // process fetched data
   override def processPartitionData(
     topicPartition: TopicPartition,

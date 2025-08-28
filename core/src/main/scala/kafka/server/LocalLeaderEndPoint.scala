@@ -87,6 +87,7 @@ class LocalLeaderEndPoint(sourceBroker: BrokerEndPoint,
           .setAbortedTransactions(abortedTransactions)
           .setRecords(data.records)
       }
+
     }
 
     val fetchData = request.fetchData(topicNames.asJava)

@@ -21,7 +21,7 @@ import java.util.{Collections, Optional}
 import kafka.utils.Logging
 import org.apache.kafka.clients.FetchSessionHandler
 import org.apache.kafka.common.errors.KafkaStorageException
-import org.apache.kafka.common.{TopicPartition, Uuid}
+import org.apache.kafka.common.{Node, TopicPartition, Uuid}
 import org.apache.kafka.common.message.{FetchResponseData, OffsetForLeaderEpochRequestData}
 import org.apache.kafka.common.message.ListOffsetsRequestData.{ListOffsetsPartition, ListOffsetsTopic}
 import org.apache.kafka.common.message.OffsetForLeaderEpochRequestData.{OffsetForLeaderTopic, OffsetForLeaderTopicCollection}
@@ -33,6 +33,7 @@ import org.apache.kafka.server.network.BrokerEndPoint
 import org.apache.kafka.server.LeaderEndPoint
 import org.apache.kafka.server.{PartitionFetchState, ReplicaFetch, ResultWithPartitions}
 
+import java.util
 import scala.jdk.CollectionConverters._
 import scala.collection.mutable
 
@@ -63,6 +64,7 @@ class RemoteLeaderEndPoint(logPrefix: String,
   private val minBytes = brokerConfig.replicaFetchMinBytes
   private val maxBytes = brokerConfig.replicaFetchResponseMaxBytes
   private val fetchSize = brokerConfig.replicaFetchMaxBytes
+  private val lastSeenEndpointList = new util.HashMap[Integer, Node]()
 
   override def isTruncationOnFetchSupported: Boolean = true
 
@@ -71,6 +73,8 @@ class RemoteLeaderEndPoint(logPrefix: String,
   override def close(): Unit = blockingSender.close()
 
   override def brokerEndPoint(): BrokerEndPoint = blockingSender.brokerEndPoint()
+
+  override def lastSeenEndpoints(): util.HashMap[Integer, Node] = lastSeenEndpointList
 
   override def fetch(fetchRequest: FetchRequest.Builder): java.util.Map[TopicPartition, FetchResponseData.PartitionData] = {
     val clientResponse = try {
@@ -81,6 +85,10 @@ class RemoteLeaderEndPoint(logPrefix: String,
         throw t
     }
     val fetchResponse = clientResponse.responseBody.asInstanceOf[FetchResponse]
+    info("!!! fetchResponse:" + fetchResponse)
+    lastSeenEndpointList.clear()
+    fetchResponse.data().nodeEndpoints().forEach(
+      node => lastSeenEndpointList.put(node.nodeId(), new Node(node.nodeId(), node.host(), node.port(), node.rack())))
     if (!fetchSessionHandler.handleResponse(fetchResponse, clientResponse.requestHeader().apiVersion())) {
       // If we had a session topic ID related error, throw it, otherwise return an empty fetch data map.
       if (fetchResponse.error == Errors.FETCH_SESSION_TOPIC_ID_ERROR) {

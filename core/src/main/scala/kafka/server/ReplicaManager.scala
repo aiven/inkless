@@ -26,6 +26,7 @@ import kafka.server.ReplicaManager.{AtMinIsrPartitionCountMetricName, FailedIsrU
 import kafka.server.share.DelayedShareFetch
 import kafka.utils._
 import org.apache.kafka.common.config.{ConfigResource, TopicConfig}
+import org.apache.kafka.clients.{ClientUtils}
 import org.apache.kafka.common.{IsolationLevel, Node, TopicIdPartition, TopicPartition, Uuid}
 import org.apache.kafka.common.errors._
 import org.apache.kafka.common.internals.{Plugin, Topic}
@@ -2531,29 +2532,41 @@ class ReplicaManager(val config: KafkaConfig,
       val partitionAndOffsets = new mutable.HashMap[TopicPartition, InitialFetchState]
 
       // luke
-      //if (remoteLeader) {
-//        partitionsToStartFetching.foreachEntry { (topicPartition, partition) =>
-//          val metadata = new Metadata(100, 1000, config.getLong(CommonClientConfigs.METADATA_MAX_AGE_CONFIG), logContext, new ClusterResourceListeners)
-//          val addresses = ClientUtils.parseAndValidateAddresses(config.getList(CommonClientConfigs.BOOTSTRAP_SERVERS_CONFIG), config.getString(CommonClientConfigs.CLIENT_DNS_LOOKUP_CONFIG))
-//          metadata.bootstrap(addresses)
-//
-//          val logContext = new LogContext(String.format("[remote follower clientId=%s] ", localBrokerId))
-//          ClientUtils.createNetworkClient(config, this.metrics, "producer", logContext, new ApiVersions, time,
-//            1, metadata, null, null)
-//
-//          metadata.fetchMetadataSnapshot().cluster.leaderFor(topicPartition)
-//          //        partitionsToStartFetching.foreachEntry { (topicPartition, partition) =>
-//  //          val nodeOpt = getRemoteLeaderNode(partition)
-//        }
-     // } else {
 
       // TODO: the remote leader host should get from metadata request, currently, using localhost:9092
       partitionsToStartFetching.foreachEntry { (topicPartition, partition) =>
+
+//        val logContext = new LogContext(String.format("[remote follower clientId=%s] ", localBrokerId))
+////        val metadata = new Metadata(100, 1000, 300000, logContext, new ClusterResourceListeners)
+//        val addresses = ClientUtils.parseAndValidateAddresses(remoteBootstrapServers, "use_all_dns_ips")
+////
+////        metadata.bootstrap(addresses)
+//        val metadataManager: AdminMetadataManager = new AdminMetadataManager(logContext, 100, 1000, false)
+//        metadataManager.update(Cluster.bootstrap(addresses), time.milliseconds)
+//
+//        val networkClient = ClientUtils.createNetworkClient(config, "clientId", metrics, "admin-client", logContext, new ApiVersions, time, 1, TimeUnit.HOURS.toMillis(1).toInt, null, metadataManager.updater, new DefaultHostResolver
+//        , null, null)
+//
+//        val requestBuilder = new MetadataRequest.Builder(
+//          new MetadataRequestData().setTopics(util.Arrays.asList(new MetadataRequestData.MetadataRequestTopic().setName(partition.topic))).setAllowAutoTopicCreation(true))
+//        val clientRequest = networkClient.newClientRequest("3000", requestBuilder,
+//          time.milliseconds(), true)
+//        val response: MetadataResponse = NetworkClientUtils.sendAndReceive(networkClient, clientRequest, time)
+//        val now = time.milliseconds
+//
+//        if (response.topLevelError eq Errors.REBOOTSTRAP_REQUIRED) metadataManager.initiateRebootstrap()
+//        else metadataManager.update(response.buildCluster, now)
+//        metadataManager.fetchMetadataSnapshot().cluster.leaderFor(topicPartition)
+
         val nodeOpt = if (!remoteLeader)
           partition.leaderReplicaIdOpt
             .flatMap(leaderId => Option(newImage.cluster.broker(leaderId)))
             .flatMap(_.node(listenerName).toScala)
-        else Option.apply(new Node(2, "localhost", 9092))
+        else {
+          val remoteBootstrapServers = partition.remoteBootstrapServer.split(",").map(_.trim).toList.asJava
+          val addresses = ClientUtils.parseAndValidateAddresses(remoteBootstrapServers, "use_all_dns_ips")
+          Option.apply(new Node(3000, addresses.get(0).getHostString, addresses.get(0).getPort))
+        }
 
         nodeOpt match {
           case Some(node) =>
