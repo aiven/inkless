@@ -48,6 +48,7 @@ class FileCommitterMetrics implements Closeable {
     private static final String COMMIT_QUEUE_BYTES = "CommitQueueBytes";
     private static final String FILE_SIZE = "FileSize";
     private static final String BATCHES_COUNT = "BatchesCount";
+    private static final String BATCHES_COMMIT_RATE = "BatchesCommitRate";
 
     private final Time time;
 
@@ -62,6 +63,7 @@ class FileCommitterMetrics implements Closeable {
     private final Histogram cacheStoreTimeHistogram;
     private final LongAdder fileUploadRate = new LongAdder();
     private final LongAdder fileCommitRate = new LongAdder();
+    private final LongAdder batchesCommitRate = new LongAdder();
 
     FileCommitterMetrics(final Time time) {
         this.time = Objects.requireNonNull(time, "time cannot be null");
@@ -72,6 +74,7 @@ class FileCommitterMetrics implements Closeable {
         fileCommitTimeHistogram = metricsGroup.newHistogram(FILE_COMMIT_TIME, true, Map.of());
         fileCommitWaitTimeHistogram = metricsGroup.newHistogram(FILE_COMMIT_WAIT_TIME, true, Map.of());
         metricsGroup.newGauge(FILE_COMMIT_RATE, fileCommitRate::intValue);
+        metricsGroup.newGauge(BATCHES_COMMIT_RATE, batchesCommitRate::intValue);
         fileSizeHistogram = metricsGroup.newHistogram(FILE_SIZE, true, Map.of());
         batchesCountHistogram = metricsGroup.newHistogram(BATCHES_COUNT, true, Map.of());
         cacheStoreTimeHistogram = metricsGroup.newHistogram(CACHE_STORE_TIME, true, Map.of());
@@ -91,6 +94,7 @@ class FileCommitterMetrics implements Closeable {
 
     void batchesAdded(final int size) {
         batchesCountHistogram.update(size);
+        batchesCommitRate.add(size);
     }
 
     void fileUploadFinished(final long durationMs) {
@@ -128,5 +132,9 @@ class FileCommitterMetrics implements Closeable {
         metricsGroup.removeMetric(FILE_COMMIT_TIME);
         metricsGroup.removeMetric(FILE_COMMIT_RATE);
         metricsGroup.removeMetric(FILE_SIZE);
+        metricsGroup.removeMetric(FILE_COMMIT_WAIT_TIME);
+        metricsGroup.removeMetric(CACHE_STORE_TIME);
+        metricsGroup.removeMetric(BATCHES_COUNT);
+        metricsGroup.removeMetric(BATCHES_COMMIT_RATE);
     }
 }
