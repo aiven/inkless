@@ -223,13 +223,16 @@ class RemoteLeaderEndPoint(logPrefix: String,
       } else {
         metadataVersion.fetchRequestVersion
       }
-      val requestBuilder = FetchRequest.Builder
-        .forReplica(version, brokerConfig.brokerId, brokerEpochSupplier(), maxWait, minBytes, fetchData.toSend)
+      val requestBuilder = if (readOnlyTopics.isEmpty) {
+        FetchRequest.Builder.forReplica(version, brokerConfig.brokerId, brokerEpochSupplier(), maxWait, minBytes, fetchData.toSend)
+      } else {
+        FetchRequest.Builder.forConsumer(version, maxWait, minBytes, fetchData.toSend)
+      }
+      requestBuilder
         .setMaxBytes(maxBytes)
         .removed(fetchData.toForget)
         .replaced(fetchData.toReplace)
         .metadata(fetchData.metadata)
-        .setReadOnlyTopics(readOnlyTopics.asJava)
       Optional.of(new ReplicaFetch(fetchData.sessionPartitions(), requestBuilder))
     }
 

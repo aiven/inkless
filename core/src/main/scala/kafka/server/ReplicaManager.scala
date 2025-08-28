@@ -2473,9 +2473,15 @@ class ReplicaManager(val config: KafkaConfig,
         try {
           val readonly: Boolean = newImage.configs().configProperties(new ConfigResource(ConfigResource.Type.TOPIC, tp.topic)).getOrDefault(TopicConfig.READ_ONLY_CONFIG, "false").asInstanceOf[String].toBoolean
           logger.info("!!! tp = " + tp + ", remoteLeader = " + remoteLeader + ", readonly = " + readonly)
-          if (remoteLeader && !readonly) {
-            // skip remote leader with read.only=false topic
-            return
+          if (remoteLeader) {
+            if (!readonly) {
+              // skip remote leader with read.only=false topic
+              return
+            }
+            // When a broker restarts, it brings up partition as follower first.
+            // We don't set remote bootstrap server when a partition is follower.
+            // If it becomes remote leader later, we need to set remote bootstrap server here.
+            partition.setRemoteBootstrapServer(info.partition.remoteBootstrapServers)
           }
           followerTopicSet.add(tp.topic)
 
@@ -2584,6 +2590,9 @@ class ReplicaManager(val config: KafkaConfig,
         }
       }
 
+      // TODO: All topic partitions in a fetcher go to same broker. If a fetcher is to source cluster, all partitions has
+      // remoteLeader=true. We can improve RemoteLeaderEndPoint to include remoteLeader flag. It will be easier to know
+      // when to build replica or consumer fetch request.
       replicaFetcherManager.addFetcherForPartitions(partitionAndOffsets)
       stateChangeLogger.info(s"Started fetchers as part of become-follower for ${partitionsToStartFetching.size} partitions")
 
