@@ -1760,11 +1760,11 @@ class ReplicaManager(val config: KafkaConfig,
       return
     }
 
-    val (inklessFetchInfos, classicFetchInfos) = fetchInfos.partition { case (k, _) => _inklessMetadataView.isInklessTopic(k.topic()) }
+    val (inklessFetchInfosWithoutTopicId, classicFetchInfos) = fetchInfos.partition { case (k, _) => _inklessMetadataView.isInklessTopic(k.topic()) }
     inklessSharedState match {
       case None =>
-        if (inklessFetchInfos.nonEmpty) {
-          error(s"Received inkless fetch request for topics ${inklessFetchInfos.map(_._1.topic()).distinct.mkString(", ")} but inkless storage system is not enabled. " +
+        if (inklessFetchInfosWithoutTopicId.nonEmpty) {
+          error(s"Received inkless fetch request for topics ${inklessFetchInfosWithoutTopicId.map(_._1.topic()).distinct.mkString(", ")} but inkless storage system is not enabled. " +
             s"Replying an empty response.")
           responseCallback(Seq.empty)
           return
@@ -1772,9 +1772,23 @@ class ReplicaManager(val config: KafkaConfig,
       case Some(_) =>
     }
 
-    // Override maxWaitMs and minBytes with lower-bound if there are inkless fetches. Otherwise, leave the consumer-provided values.
-    val maxWaitMs = if (inklessFetchInfos.nonEmpty) Math.max(config.inklessFetchMaxWaitMs.toLong, params.maxWaitMs) else params.maxWaitMs
-    val minBytes = if (inklessFetchInfos.nonEmpty) Math.max(config.inklessFetchMinBytes, params.minBytes) else params.minBytes
+    // Older fetch versions (<13) don't have topicId in the request -- backfill it for backward compatibility
+    val inklessFetchInfos = inklessFetchInfosWithoutTopicId.map { inklessFetchInfo =>
+      val (topicIdPartition, partitionData) = inklessFetchInfo
+      if (topicIdPartition.topicId().equals(Uuid.ZERO_UUID)) {
+        _inklessMetadataView.getTopicId(topicIdPartition.topic()) match {
+          case Uuid.ZERO_UUID =>
+            error(s"Got null topic id from KRaft metadata for inkless topic ${topicIdPartition.topic()}")
+            responseCallback(Seq.empty)
+            return
+          case topicId =>
+            new TopicIdPartition(topicId, topicIdPartition.topicPartition()) -> partitionData
+        }
+      } else {
+        inklessFetchInfo
+      }
+    }
+
 
     if (params.isFromFollower && inklessFetchInfos.nonEmpty) {
       warn("Inkless topics are not supported for follower fetch requests. " +
@@ -1782,6 +1796,10 @@ class ReplicaManager(val config: KafkaConfig,
       responseCallback(Seq.empty)
       return
     }
+
+    // Override maxWaitMs and minBytes with lower-bound if there are inkless fetches. Otherwise, leave the consumer-provided values.
+    val maxWaitMs = if (inklessFetchInfos.nonEmpty) Math.max(config.inklessFetchMaxWaitMs.toLong, params.maxWaitMs) else params.maxWaitMs
+    val minBytes = if (inklessFetchInfos.nonEmpty) Math.max(config.inklessFetchMinBytes, params.minBytes) else params.minBytes
 
     def delayedResponse(classicFetchPartitionStatus: Seq[(TopicIdPartition, FetchPartitionStatus)]): Boolean = {
       val inklessFetchPartitionStatus = inklessFetchInfos.map {

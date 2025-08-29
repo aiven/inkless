@@ -6537,6 +6537,69 @@ class ReplicaManagerTest {
     }
 
     @Test
+    def testFindBatches(): Unit = {
+      // Given
+      val inklessTopicPartition2 = new TopicIdPartition(Uuid.randomUuid(), 0, "inkless2")
+      val fetchOffset = 15L  // fetch offset below the high watermark
+      val hwm = fetchOffset + 10L
+
+      // Prepare the FindBatchResponse to be returned by the ControlPlane for the requests that will be executed
+      val batchMetadata = mock(classOf[BatchMetadata])
+      when(batchMetadata.topicIdPartition()).thenReturn(inklessTopicPartition)
+      val batch = mock(classOf[BatchInfo])
+      when(batch.metadata()).thenReturn(batchMetadata)
+      val findBatchResponse = mock(classOf[FindBatchResponse])
+      when(findBatchResponse.batches()).thenReturn(util.List.of(batch))
+      when(findBatchResponse.highWatermark()).thenReturn(hwm)
+      when(findBatchResponse.estimatedByteSize(fetchOffset)).thenReturn(RECORDS.sizeInBytes())
+      when(findBatchResponse.errors()).thenReturn(Errors.NONE)
+      val cp = mock(classOf[ControlPlane])
+      when(cp.findBatches(any(), any())).thenReturn(util.List.of(findBatchResponse, findBatchResponse))
+
+      // Prepare the FetchHandler response to be called when the forceComplete method is invoked.
+      val inklessResponse = Map(
+        inklessTopicPartition -> new FetchPartitionData(
+          Errors.NONE, hwm, 0L, RECORDS, Optional.empty(), OptionalLong.empty(), Optional.empty(), OptionalInt.empty(), false
+        ),
+        inklessTopicPartition2 -> new FetchPartitionData(
+          Errors.NONE, hwm, 0L, RECORDS, Optional.empty(), OptionalLong.empty(), Optional.empty(), OptionalInt.empty(), false
+        )
+      )
+      val fetchHandlerCtor: MockedConstruction[FetchHandler] = mockFetchHandler(inklessResponse)
+      val replicaManager = try {
+        createReplicaManager(
+          List(inklessTopicPartition.topic(), inklessTopicPartition2.topic()),
+          controlPlane = Some(cp),
+          topicIdMapping = Map(inklessTopicPartition2.topic() -> inklessTopicPartition2.topicId())
+        )
+      } finally {
+        fetchHandlerCtor.close()
+      }
+
+      // When we try to fetch messages from the inkless topic partitions with a consumer fetch, with a request that
+      // does not specify the topic id
+      val fetchParams = new FetchParams(
+        -1, -1L, // not follower fetch
+        100, 100, 100, FetchIsolation.HIGH_WATERMARK, Optional.empty()
+      )
+      val fetchInfos = Seq(
+        inklessTopicPartition -> new PartitionData(inklessTopicPartition.topicId(), fetchOffset, 0L, 123, Optional.empty()),
+        // fetch from inkless2 without specifying the topic id
+        new TopicIdPartition(Uuid.ZERO_UUID, inklessTopicPartition2.topicPartition()) -> new PartitionData(Uuid.ZERO_UUID, fetchOffset, 0L, 123, Optional.empty()),
+      )
+      @volatile var responseData: Map[TopicIdPartition, FetchPartitionData] = null
+      val responseCallback = (response: Seq[(TopicIdPartition, FetchPartitionData)]) => {
+        responseData = response.toMap
+      }
+      replicaManager.fetchMessages(fetchParams, fetchInfos, QuotaFactory.UNBOUNDED_QUOTA, responseCallback)
+
+      // Response also includes records from the topic without topic id
+      assertNotNull(responseData)
+      assertEquals(2, responseData.size)
+      assertEquals(inklessResponse, responseData)
+    }
+
+    @Test
     def testFetchInklessSatisfiesMinBytes(): Unit = {
       // Given
       val minBytes = RECORDS.sizeInBytes()  // Same as the size of the records to ensure it satisfies minBytes
@@ -6919,7 +6982,11 @@ class ReplicaManagerTest {
       fetchHandlerCtor
     }
 
-    private def createReplicaManager(inklessTopics: Seq[String], controlPlane: Option[ControlPlane] = None): ReplicaManager = {
+    private def createReplicaManager(
+      inklessTopics: Seq[String],
+      controlPlane: Option[ControlPlane] = None,
+      topicIdMapping: Map[String, Uuid] = Map.empty
+    ): ReplicaManager = {
       val props = TestUtils.createBrokerConfig(1, logDirCount = 2)
       val config = KafkaConfig.fromProps(props)
       val logManagerMock = mock(classOf[LogManager])
@@ -6930,6 +6997,10 @@ class ReplicaManagerTest {
       when(sharedState.controlPlane()).thenReturn(controlPlane.getOrElse(mock(classOf[ControlPlane])))
       val inklessMetadata = mock(classOf[MetadataView])
       when(inklessMetadata.isInklessTopic(any())).thenReturn(false)
+      when(inklessMetadata.getTopicId(anyString())).thenAnswer{ invocation =>
+        val topicName = invocation.getArgument(0, classOf[String])
+        topicIdMapping.getOrElse(topicName, Uuid.ZERO_UUID)
+      }
       inklessTopics.foreach(t => when(inklessMetadata.isInklessTopic(t)).thenReturn(true))
       when(sharedState.metadata()).thenReturn(inklessMetadata)
 

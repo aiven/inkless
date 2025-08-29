@@ -122,7 +122,6 @@ public class Reader implements AutoCloseable {
             new FindBatchesJob(
                 time,
                 controlPlane,
-                metadataView,
                 params,
                 fetchInfos,
                 fetchMetrics::findBatchesFinished
