@@ -1696,16 +1696,24 @@ class ReplicaManager(val config: KafkaConfig,
       return
     }
 
-    val (inklessFetchInfos, classicFetchInfos) = fetchInfos.partition { case (k, _) => _inklessMetadataView.isInklessTopic(k.topic()) }
+    val (rawInklessFetchInfos, classicFetchInfos) = fetchInfos.partition { case (k, _) => _inklessMetadataView.isInklessTopic(k.topic()) }
     inklessSharedState match {
       case None =>
-        if (inklessFetchInfos.nonEmpty) {
-          error(s"Received inkless fetch request for topics ${inklessFetchInfos.map(_._1.topic()).distinct.mkString(", ")} but inkless storage system is not enabled. " +
+        if (rawInklessFetchInfos.nonEmpty) {
+          error(s"Received inkless fetch request for topics ${rawInklessFetchInfos.map(_._1.topic()).distinct.mkString(", ")} but inkless storage system is not enabled. " +
             s"Replying an empty response.")
           responseCallback(Seq.empty)
           return
         }
       case Some(_) =>
+    }
+    val inklessFetchInfos = rawInklessFetchInfos.map {
+      case (k, v) =>
+        val topicIdPartition = if (k.topicId() == Uuid.ZERO_UUID) {
+          val foundTopicId = metadataCache.topicNamesToIds().get(k.topic())
+          new TopicIdPartition(foundTopicId, k.topicPartition())
+        } else k
+        (topicIdPartition, v)
     }
 
     // Override maxWaitMs and minBytes with lower-bound if there are inkless fetches. Otherwise, leave the consumer-provided values.
