@@ -132,3 +132,74 @@ class BrokerBlockingSender(sourceBroker: BrokerEndPoint,
     s"BrokerBlockingSender(sourceBroker=$sourceBroker, fetcherId=$fetcherId)"
   }
 }
+
+class RemoteBrokerBlockingSender(sourceBroker: BrokerEndPoint,
+                                 brokerConfig: KafkaConfig,
+                                 metrics: Metrics,
+                                 time: Time,
+                                 fetcherId: Int,
+                                 clientId: String,
+                                 logContext: LogContext) extends BlockingSend {
+
+  private val sourceNode = new Node(sourceBroker.id, sourceBroker.host, sourceBroker.port)
+  private val socketTimeout: Int = brokerConfig.replicaSocketTimeoutMs
+
+  private val (networkClient, reconfigurableChannelBuilder) = {
+
+    val channelBuilder = ClientUtils.createChannelBuilder(brokerConfig, time, logContext)
+    val selector = new Selector(
+      brokerConfig.getLong(CommonClientConfigs.CONNECTIONS_MAX_IDLE_MS_CONFIG),
+      metrics, time, "remote-readonly", channelBuilder, logContext)
+    val networkClient = new NetworkClient(
+      selector,
+      new ManualMetadataUpdater(),
+      clientId,
+      1,
+      0,
+      0,
+      Selectable.USE_DEFAULT_BUFFER_SIZE,
+      brokerConfig.replicaSocketReceiveBufferBytes,
+      brokerConfig.requestTimeoutMs,
+      brokerConfig.connectionSetupTimeoutMs,
+      brokerConfig.connectionSetupTimeoutMaxMs,
+      time,
+      false,
+      new ApiVersions,
+      logContext,
+      MetadataRecoveryStrategy.NONE
+    )
+    (networkClient, None)
+  }
+
+  override def brokerEndPoint(): BrokerEndPoint = sourceBroker
+
+  override def sendRequest(requestBuilder: Builder[_ <: AbstractRequest]): ClientResponse = {
+    try {
+      if (!NetworkClientUtils.awaitReady(networkClient, sourceNode, time, socketTimeout))
+        throw new SocketTimeoutException(s"Failed to connect within $socketTimeout ms")
+      else {
+        val clientRequest = networkClient.newClientRequest(sourceBroker.id.toString, requestBuilder,
+          time.milliseconds(), true)
+        NetworkClientUtils.sendAndReceive(networkClient, clientRequest, time)
+      }
+    }
+    catch {
+      case e: Throwable =>
+        networkClient.close(sourceBroker.id.toString)
+        throw e
+    }
+  }
+
+  override def initiateClose(): Unit = {
+    reconfigurableChannelBuilder.foreach(brokerConfig.removeReconfigurable)
+    networkClient.initiateClose()
+  }
+
+  def close(): Unit = {
+    networkClient.close()
+  }
+
+  override def toString: String = {
+    s"RemoteBrokerBlockingSender(sourceBroker=$sourceBroker, fetcherId=$fetcherId)"
+  }
+}

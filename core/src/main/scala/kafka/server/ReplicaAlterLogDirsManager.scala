@@ -34,7 +34,7 @@ class ReplicaAlterLogDirsManager(brokerConfig: KafkaConfig,
     clientId = "ReplicaAlterLogDirs",
     numFetchers = brokerConfig.getNumReplicaAlterLogDirsThreads) {
 
-  override def createFetcherThread(fetcherId: Int, sourceBroker: BrokerEndPoint): ReplicaAlterLogDirsThread = {
+  override def createFetcherThread(fetcherId: Int, sourceBroker: BrokerEndPoint, readOnly: Boolean): ReplicaAlterLogDirsThread = {
     val threadName = s"ReplicaAlterLogDirsThread-$fetcherId"
     val leader: LeaderEndPoint = new LocalLeaderEndPoint(sourceBroker, brokerConfig, replicaManager, quotaManager)
     new ReplicaAlterLogDirsThread(threadName, leader, failedPartitions, replicaManager,
