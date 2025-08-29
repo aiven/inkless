@@ -322,7 +322,7 @@ class Partition(val topicPartition: TopicPartition,
                 logManager: LogManager,
                 alterIsrManager: AlterPartitionManager,
                 @volatile private var _topicId: Option[Uuid] = None, // TODO: merge topicPartition and _topicId into TopicIdPartition once TopicId persist in most of the code by KAFKA-16212
-                val remoteBootstrapServer: String = ""
+                @volatile var remoteBootstrapServer: String = ""
                ) extends Logging with TopicPartitionLog {
 
   import Partition.metricsGroup
@@ -376,6 +376,10 @@ class Partition(val topicPartition: TopicPartition,
   metricsGroup.newGauge("AtMinIsr", () => if (isAtMinIsr) 1 else 0, tags)
   metricsGroup.newGauge("ReplicasCount", () => if (isLeader) assignmentState.replicationFactor else 0, tags)
   metricsGroup.newGauge("LastStableOffsetLag", () => log.map(_.lastStableOffsetLag).getOrElse(0), tags)
+
+  def setRemoteBootstrapServer(server: String): Unit = {
+    this.remoteBootstrapServer = server
+  }
 
   def unifiedLog(): Optional[UnifiedLog] = log.toJava
 
@@ -1442,7 +1446,7 @@ class Partition(val topicPartition: TopicPartition,
       )
     }
 
-    if (fetchParams.isFromFollower && !fetchPartitionData.readOnly) {
+    if (fetchParams.isFromFollower) {
       // Check that the request is from a valid replica before doing the read
       val (replica, logReadInfo) = inReadLock(leaderIsrUpdateLock) {
         val localLog = localLogWithEpochOrThrow(

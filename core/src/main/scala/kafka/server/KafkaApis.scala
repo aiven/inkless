@@ -641,7 +641,6 @@ class KafkaApis(val requestChannel: RequestChannel,
       else
         Collections.emptyMap[Uuid, String]()
 
-    val containsReadOnlyTopics = fetchRequest.data().topics().stream().anyMatch(t => t.readOnly())
     val fetchData = fetchRequest.fetchData(topicNames)
     val forgottenTopics = fetchRequest.forgottenTopics(topicNames)
 
@@ -666,8 +665,7 @@ class KafkaApis(val requestChannel: RequestChannel,
           else if (!metadataCache.contains(topicIdPartition.topicPartition))
             erroneous += topicIdPartition -> FetchResponse.partitionResponse(topicIdPartition, Errors.UNKNOWN_TOPIC_OR_PARTITION)
           else
-            interesting += topicIdPartition -> new PartitionData(data.topicId, data.fetchOffset, data.logStartOffset, data.maxBytes, data.currentLeaderEpoch, data.lastFetchedEpoch,
-              if (fetchData.containsKey(topicIdPartition)) fetchData.get(topicIdPartition).readOnly else false)
+            interesting += topicIdPartition -> new PartitionData(data.topicId, data.fetchOffset, data.logStartOffset, data.maxBytes, data.currentLeaderEpoch, data.lastFetchedEpoch)
         }
         info("!!! interesting:" + interesting.mkString(","))
       } else {
@@ -760,9 +758,7 @@ class KafkaApis(val requestChannel: RequestChannel,
 
       if (fetchRequest.isFromFollower) {
         // We've already evaluated against the quota and are good to go. Just need to record it now.
-        // luke
-        info("!!! nodeEndpoints:" + nodeEndpoints + containsReadOnlyTopics)
-        val fetchResponse = fetchContext.updateAndGenerateResponseData(partitions, if (containsReadOnlyTopics) nodeEndpoints.values.toSeq.asJava else Seq.empty.asJava)
+        val fetchResponse = fetchContext.updateAndGenerateResponseData(partitions, Seq.empty.asJava)
         val responseSize = KafkaApis.sizeOfThrottledPartitions(versionId, fetchResponse, quotas.leader)
         quotas.leader.record(responseSize)
         val responsePartitionsSize = fetchResponse.data().responses().stream().mapToInt(_.partitions().size()).sum()
