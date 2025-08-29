@@ -17,6 +17,7 @@
  */
 package io.aiven.inkless.control_plane.postgres;
 
+import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.utils.Time;
 
@@ -70,18 +71,23 @@ class FindBatchesJob implements Callable<List<FindBatchResponse>> {
         }
 
         final FindBatchesRequestV1Record[] dbRequests = requests.stream()
-            .map(req -> new FindBatchesRequestV1Record(
-                req.topicIdPartition().topicId(),
-                req.topicIdPartition().partition(),
-                req.offset(),
-                req.maxPartitionFetchBytes()
-            ))
+            .map(req -> {
+                Uuid topicId = req.topicIdPartition().topicId();
+                return new FindBatchesRequestV1Record(
+                    !topicId.equals(Uuid.ZERO_UUID) ? topicId : null,
+                    req.topicIdPartition().topic(),
+                    req.topicIdPartition().partition(),
+                    req.offset(),
+                    req.maxPartitionFetchBytes()
+                );
+            })
             .toArray(FindBatchesRequestV1Record[]::new);
 
         return jooqCtx.transactionResult((final Configuration conf) -> {
             try {
                 final List<FindBatchesResponseV1Record> dbResponses = conf.dsl().select(
                     FindBatchesResponseV1.TOPIC_ID,
+                    FindBatchesResponseV1.TOPIC_NAME,
                     FindBatchesResponseV1.PARTITION,
                     FindBatchesResponseV1.LOG_START_OFFSET,
                     FindBatchesResponseV1.HIGH_WATERMARK,
@@ -106,7 +112,7 @@ class FindBatchesJob implements Callable<List<FindBatchResponse>> {
 
                     var error = record.getError();
                     if (error == null) {
-                        responses.add(FindBatchResponse.success(getBatchInfos(record, request), record.getLogStartOffset(), record.getHighWatermark()));
+                        responses.add(FindBatchResponse.success(getBatchInfos(record), record.getLogStartOffset(), record.getHighWatermark()));
                     } else {
                         final var errorResponse = switch (error) {
                             case offset_out_of_range ->
@@ -124,7 +130,7 @@ class FindBatchesJob implements Callable<List<FindBatchResponse>> {
         });
     }
 
-    private static List<BatchInfo> getBatchInfos(FindBatchesResponseV1Record record, FindBatchRequest request) {
+    private static List<BatchInfo> getBatchInfos(FindBatchesResponseV1Record record) {
         final List<BatchInfo> batches = new ArrayList<>();
         if (record.getBatches() != null) {
             for (final BatchInfoV1Record batchInfo : record.getBatches()) {
@@ -133,7 +139,7 @@ class FindBatchesJob implements Callable<List<FindBatchResponse>> {
                     batchInfo.getBatchId(), batchInfo.getObjectKey(),
                     new BatchMetadata(
                         batchMetadata.getMagic().byteValue(),
-                        request.topicIdPartition(),
+                        new TopicIdPartition(record.getTopicId(), record.getPartition(), record.getTopicName()),
                         batchMetadata.getByteOffset(),
                         batchMetadata.getByteSize(),
                         batchMetadata.getBaseOffset(),
@@ -151,10 +157,16 @@ class FindBatchesJob implements Callable<List<FindBatchResponse>> {
     private void validateResponse(FindBatchesResponseV1Record record, FindBatchRequest request) {
         // Sanity check to match returned and requested partitions (they should go in order).
         final Uuid requestTopicId = request.topicIdPartition().topicId();
+        final String requestTopicName = request.topicIdPartition().topic();
         final int requestPartition = request.topicIdPartition().partition();
         final Uuid resultTopicId = record.getTopicId();
+        final String resultTopicName = record.getTopicName();
         final int resultPartition = record.get(FindBatchesResponseV1.PARTITION);
-        if (!resultTopicId.equals(requestTopicId) || resultPartition != requestPartition) {
+        if (
+            (!requestTopicId.equals(Uuid.ZERO_UUID) && !resultTopicId.equals(requestTopicId)) ||
+                !requestTopicName.equals(resultTopicName) ||
+                resultPartition != requestPartition
+        ) {
             throw new ControlPlaneException(String.format(
                 "Returned topic ID or partition doesn't match: expected %s-%d, got %s-%d",
                 requestTopicId, requestPartition,

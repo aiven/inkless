@@ -71,6 +71,7 @@ class FindBatchesJobTest {
     static final TopicIdPartition T0P0 = new TopicIdPartition(TOPIC_ID_0, 0, TOPIC_0);
     static final TopicIdPartition T0P1 = new TopicIdPartition(TOPIC_ID_0, 1, TOPIC_0);
     static final TopicIdPartition T1P0 = new TopicIdPartition(TOPIC_ID_1, 0, TOPIC_1);
+    static final TopicIdPartition T0P0_TOPIC_ID_NULL = new TopicIdPartition(Uuid.ZERO_UUID, 0, TOPIC_0);
     static final TopicIdPartition NON_EXISTENT_PARTITION = new TopicIdPartition(TOPIC_ID_0, 2, TOPIC_0);
     static final TopicIdPartition NON_EXISTENT_TOPIC_ID_PARTITION = new TopicIdPartition(NON_EXISTENT_TOPIC_ID, 2, NON_EXISTENT_TOPIC);
 
@@ -132,6 +133,24 @@ class FindBatchesJobTest {
         final List<FindBatchResponse> result = new FindBatchesJob(
             time, pgContainer.getJooqCtx(),
             List.of(new FindBatchRequest(T0P0, 0, 1500)),
+            2000,
+            duration -> {}
+        ).call();
+
+        assertThat(result).containsExactlyInAnyOrder(
+            new FindBatchResponse(Errors.NONE, List.of(
+                new BatchInfo(1L, OBJECT_KEY, BatchMetadata.of(T0P0, 0, 1234, 0, 9, time.milliseconds(), time.milliseconds(), TimestampType.CREATE_TIME))
+            ), 0, 10)
+        );
+    }
+
+    @Test
+    void simpleFindWithNullTopicId() {
+        commitBatches(OBJECT_KEY, List.of(T0P0), 1, 1234, 10);
+
+        final List<FindBatchResponse> result = new FindBatchesJob(
+            time, pgContainer.getJooqCtx(),
+            List.of(new FindBatchRequest(T0P0_TOPIC_ID_NULL, 0, 1500)),
             2000,
             duration -> {}
         ).call();
