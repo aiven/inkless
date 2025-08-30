@@ -51,7 +51,8 @@ class TopicConfigHandler(private val replicaManager: ReplicaManager,
                               topicConfig: Properties): Unit = {
     val logManager = replicaManager.logManager
 
-    if (!topicConfig.getProperty(TopicConfig.READ_ONLY_CONFIG).toBoolean) {
+    val readOnly = topicConfig.getProperty(TopicConfig.READ_ONLY_CONFIG)
+    if (readOnly != null && !readOnly.toBoolean) {
       replicaManager.getPartitionByTopic(topic).forEach {
         case HostedPartition.Online(partition) =>
           logger.info(s"!!! partition.remoteBootstrapServer: ${partition.remoteBootstrapServer}")

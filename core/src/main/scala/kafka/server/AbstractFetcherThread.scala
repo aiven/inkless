@@ -268,22 +268,25 @@ abstract class AbstractFetcherThread(name: String,
     partitionStates.set(newStates.asJava)
   }
 
-  private def recreateFetcherForReadOnly(fetchedEpochs: Map[TopicPartition, PartitionData]): Unit = {
-    val newStates: Map[TopicPartition, InitialFetchState] = partitionStates.partitionStateMap.asScala
-      .map { case (topicPartition, currentFetchState) =>
-        val updatedInitFetchState = fetchedEpochs.get(topicPartition) match {
+  private def maybeRecreateFetcherForReadOnly(fetchedEpochs: Map[TopicPartition, PartitionData]): Unit = {
+    var newStates: Map[TopicPartition, InitialFetchState] = scala.collection.mutable.Map.empty[TopicPartition, InitialFetchState]
+      partitionStates.partitionStateMap.asScala
+      .foreach { case (topicPartition, currentFetchState) =>
+        fetchedEpochs.get(topicPartition) match {
           case Some(partitionData) =>
             val leaderNode = if (leader.lastSeenEndpoints().isEmpty) Optional.empty() else Optional.of(leader.lastSeenEndpoints().get(partitionData.currentLeader().leaderId()))
-            val brokerEndpoint = if (leaderNode.isPresent) {
-              new org.apache.kafka.server.network.BrokerEndPoint(leaderNode.get.id(), leaderNode.get.host, leaderNode.get.port)
-            } else leader.brokerEndPoint()
-            InitialFetchState(currentFetchState.topicId().toScala, brokerEndpoint, partitionData.currentLeader().leaderEpoch(), currentFetchState.fetchOffset(), true)
-          case None => InitialFetchState(currentFetchState.topicId().toScala, leader.brokerEndPoint(), currentFetchState.currentLeaderEpoch(), currentFetchState.fetchOffset(), true)
+            // if leader node change, we need to update it.
+            // Note: we can't compare the node id because it might be different from the original node id (ex: replied as consumer id -1)
+            if (leaderNode.isPresent && (!leaderNode.get().host.equals(leader.brokerEndPoint().host()) ||
+              leaderNode.get().port != leader.brokerEndPoint().port)) {
+                val brokerEndpoint = new org.apache.kafka.server.network.BrokerEndPoint(leaderNode.get.id(), leaderNode.get.host, leaderNode.get.port)
+                newStates += topicPartition -> InitialFetchState(currentFetchState.topicId().toScala, brokerEndpoint, partitionData.currentLeader().leaderEpoch(), currentFetchState.fetchOffset(), true)
+            }
+          case _ =>
         }
-        (topicPartition, updatedInitFetchState)
       }
     info("!!! recreateFetcherForReadOnly:" + newStates)
-    removeFetcherForPartitions(fetchedEpochs.keySet)
+    removeFetcherForPartitions(newStates.keySet)
     addFetcherForPartitions(newStates)
   }
 
@@ -482,7 +485,9 @@ abstract class AbstractFetcherThread(name: String,
                     if (onPartitionFenced(topicPartition, fetchPartitionData.currentLeaderEpoch))
                       partitionsWithError += topicPartition
                   } else {
+                    // luke
                     readOnlyEndOffsets += topicPartition -> partitionData
+                    recreateFetchers += topicPartition -> partitionData
                   }
 
                 case Errors.OFFSET_MOVED_TO_TIERED_STORAGE =>
@@ -533,7 +538,7 @@ abstract class AbstractFetcherThread(name: String,
     if (readOnlyEndOffsets.nonEmpty)
       updateLeaderEpochForReadOnly(readOnlyEndOffsets)
     if (recreateFetchers.nonEmpty)
-      recreateFetcherForReadOnly(recreateFetchers)
+      maybeRecreateFetcherForReadOnly(recreateFetchers)
     if (partitionsWithError.nonEmpty) {
       handlePartitionsWithErrors(partitionsWithError, "processFetchRequest")
     }
