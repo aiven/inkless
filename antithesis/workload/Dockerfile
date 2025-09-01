@@ -1,4 +1,4 @@
-FROM docker.io/rust:1.73 as builder
+FROM docker.io/rust:1.89 as builder
 WORKDIR /app
 RUN apt-get update && apt-get install -y cmake
 COPY src /app/src
@@ -6,7 +6,7 @@ COPY Cargo.toml /app/Cargo.toml
 COPY Cargo.lock /app/Cargo.lock
 RUN cargo install --locked --path .
 
-FROM docker.io/debian:bookworm-slim
+FROM docker.io/debian:trixie-slim
 COPY --from=builder /usr/local/cargo/bin/workload /app/workload
 COPY --from=builder /usr/local/cargo/bin/validation /app/validation
 COPY --from=builder /usr/local/cargo/bin/load /app/load
