@@ -91,6 +91,7 @@ pub struct TestTopic {
     pub name: String,
     pub num_partitions: i32,
     pub replication_factor: i32,
+    pub inkless_enabled: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

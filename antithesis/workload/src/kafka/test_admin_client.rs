@@ -100,7 +100,8 @@ impl TestAdminClient {
             let mut topic_config = TopicConfig::new();
             topic_config
                 .set("min.insync.replicas", "3")
-                .set("flush.messages", "1");
+                .set("flush.messages", "1")
+                .set("inkless.enable", topic.inkless_enabled.to_string().as_str());
             let create_topic_result = self
                 .inner_admin_client
                 .as_ref()
