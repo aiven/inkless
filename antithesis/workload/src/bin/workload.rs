@@ -140,7 +140,7 @@ async fn main() -> Result<()> {
         let topic = TestTopic {
             name: uuid::Uuid::new_v4().to_string(),
             num_partitions: config.topic_partition_count.get_random_value() as i32,
-            replication_factor: 3,
+            replication_factor: config.topic_replication_factor,
         };
         // If the config is strict we always create the topic prior to sending.
         // This is because auto-created topics often have a replication factor of 1

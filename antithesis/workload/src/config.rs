@@ -42,6 +42,7 @@ pub struct WorkloadConfig {
     pub enable_debug: bool,
     pub topic_count: U64Range,
     pub topic_partition_count: U64Range,
+    pub topic_replication_factor: i32,
     pub producer_count: U64Range,
     pub producer_startup_delay_ms: U64Range,
     pub producer_unique_sequence_count: U64Range,
