@@ -1366,6 +1366,11 @@ public class MockAdminClient extends AdminClient {
     }
 
     @Override
+    public CreateClusterLinkResult createClusterLink(String clusterLinkName, Map<String, String> configs, CreateClusterLinkOptions options) {
+        throw new UnsupportedOperationException("Not implemented yet");
+    }
+
+    @Override
     public DescribeProducersResult describeProducers(Collection<TopicPartition> partitions, DescribeProducersOptions options) {
         throw new UnsupportedOperationException("Not implemented yet");
     }

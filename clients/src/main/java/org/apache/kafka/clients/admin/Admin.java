@@ -1664,6 +1664,9 @@ public interface Admin extends AutoCloseable {
     @InterfaceStability.Unstable
     UnregisterBrokerResult unregisterBroker(int brokerId, UnregisterBrokerOptions options);
 
+
+    CreateClusterLinkResult createClusterLink(String clusterLinkName, Map<String, String> configs, CreateClusterLinkOptions options);
+
     /**
      * Describe producer state on a set of topic partitions. See
      * {@link #describeProducers(Collection, DescribeProducersOptions)} for more details.

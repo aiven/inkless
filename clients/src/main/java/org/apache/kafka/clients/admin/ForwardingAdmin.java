@@ -271,6 +271,11 @@ public class ForwardingAdmin implements Admin {
     }
 
     @Override
+    public CreateClusterLinkResult createClusterLink(String clusterLinkName, Map<String, String> configs, CreateClusterLinkOptions options) {
+        return delegate.createClusterLink(clusterLinkName, configs, options);
+    }
+
+    @Override
     public DescribeProducersResult describeProducers(Collection<TopicPartition> partitions, DescribeProducersOptions options) {
         return delegate.describeProducers(partitions, options);
     }

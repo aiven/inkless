@@ -121,6 +121,7 @@ import org.apache.kafka.common.message.ApiVersionsResponseData.SupportedFeatureK
 import org.apache.kafka.common.message.CreateAclsRequestData;
 import org.apache.kafka.common.message.CreateAclsRequestData.AclCreation;
 import org.apache.kafka.common.message.CreateAclsResponseData.AclCreationResult;
+import org.apache.kafka.common.message.CreateClusterLinkRequestData;
 import org.apache.kafka.common.message.CreateDelegationTokenRequestData;
 import org.apache.kafka.common.message.CreateDelegationTokenRequestData.CreatableRenewers;
 import org.apache.kafka.common.message.CreateDelegationTokenResponseData;
@@ -197,6 +198,8 @@ import org.apache.kafka.common.requests.ApiVersionsRequest;
 import org.apache.kafka.common.requests.ApiVersionsResponse;
 import org.apache.kafka.common.requests.CreateAclsRequest;
 import org.apache.kafka.common.requests.CreateAclsResponse;
+import org.apache.kafka.common.requests.CreateClusterLinkRequest;
+import org.apache.kafka.common.requests.CreateClusterLinkResponse;
 import org.apache.kafka.common.requests.CreateDelegationTokenRequest;
 import org.apache.kafka.common.requests.CreateDelegationTokenResponse;
 import org.apache.kafka.common.requests.CreatePartitionsRequest;
@@ -4761,6 +4764,48 @@ public class KafkaAdminClient extends AdminClient {
 
         runnable.call(call, now);
         return new DescribeMetadataQuorumResult(future);
+    }
+
+
+    // luke
+    @Override
+    public CreateClusterLinkResult createClusterLink(String clusterLinkName, Map<String, String> configs, CreateClusterLinkOptions options) {
+        final KafkaFutureImpl<Void> future = new KafkaFutureImpl<>();
+        final long now = time.milliseconds();
+        final Call call = new Call("createClusterLink", calcDeadlineMs(now, options.timeoutMs()),
+                new LeastLoadedBrokerOrActiveKController()) {
+
+            @Override
+            CreateClusterLinkRequest.Builder createRequest(int timeoutMs) {
+                return new CreateClusterLinkRequest.Builder(clusterLinkName, configs);
+            }
+
+            @Override
+            void handleResponse(AbstractResponse abstractResponse) {
+                final CreateClusterLinkResponse response =
+                        (CreateClusterLinkResponse) abstractResponse;
+                Errors error = Errors.forCode(response.data().errorCode());
+                switch (error) {
+                    case NONE:
+                        future.complete(null);
+                        break;
+                    case REQUEST_TIMED_OUT:
+                        throw error.exception(response.data().errorMessage());
+                    default:
+                        log.error("create cluster link {} failed: {}",
+                                clusterLinkName, response.data().errorMessage());
+                        future.completeExceptionally(error.exception(response.data().errorMessage()));
+                        break;
+                }
+            }
+
+            @Override
+            void handleFailure(Throwable throwable) {
+                future.completeExceptionally(throwable);
+            }
+        };
+        runnable.call(call, now);
+        return new CreateClusterLinkResult(future);
     }
 
     @Override

@@ -43,6 +43,8 @@ import org.apache.kafka.clients.admin.AlterUserScramCredentialsOptions;
 import org.apache.kafka.clients.admin.AlterUserScramCredentialsResult;
 import org.apache.kafka.clients.admin.CreateAclsOptions;
 import org.apache.kafka.clients.admin.CreateAclsResult;
+import org.apache.kafka.clients.admin.CreateClusterLinkOptions;
+import org.apache.kafka.clients.admin.CreateClusterLinkResult;
 import org.apache.kafka.clients.admin.CreateDelegationTokenOptions;
 import org.apache.kafka.clients.admin.CreateDelegationTokenResult;
 import org.apache.kafka.clients.admin.CreatePartitionsOptions;
@@ -406,6 +408,11 @@ public class TestingMetricsInterceptingAdminClient extends AdminClient {
     @Override
     public UnregisterBrokerResult unregisterBroker(final int brokerId, final UnregisterBrokerOptions options) {
         return adminDelegate.unregisterBroker(brokerId, options);
+    }
+
+    @Override
+    public CreateClusterLinkResult createClusterLink(String clusterLinkName, Map<String, String> configs, CreateClusterLinkOptions options) {
+        return adminDelegate.createClusterLink(clusterLinkName, configs, options);
     }
 
     @Override

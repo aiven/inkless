@@ -56,6 +56,8 @@ import org.apache.kafka.common.message.ControllerRegistrationRequestDataJsonConv
 import org.apache.kafka.common.message.ControllerRegistrationResponseDataJsonConverter;
 import org.apache.kafka.common.message.CreateAclsRequestDataJsonConverter;
 import org.apache.kafka.common.message.CreateAclsResponseDataJsonConverter;
+import org.apache.kafka.common.message.CreateClusterLinkRequestDataJsonConverter;
+import org.apache.kafka.common.message.CreateClusterLinkResponseDataJsonConverter;
 import org.apache.kafka.common.message.CreateDelegationTokenRequestDataJsonConverter;
 import org.apache.kafka.common.message.CreateDelegationTokenResponseDataJsonConverter;
 import org.apache.kafka.common.message.CreatePartitionsRequestDataJsonConverter;
@@ -240,6 +242,8 @@ import org.apache.kafka.common.requests.ControllerRegistrationRequest;
 import org.apache.kafka.common.requests.ControllerRegistrationResponse;
 import org.apache.kafka.common.requests.CreateAclsRequest;
 import org.apache.kafka.common.requests.CreateAclsResponse;
+import org.apache.kafka.common.requests.CreateClusterLinkRequest;
+import org.apache.kafka.common.requests.CreateClusterLinkResponse;
 import org.apache.kafka.common.requests.CreateDelegationTokenRequest;
 import org.apache.kafka.common.requests.CreateDelegationTokenResponse;
 import org.apache.kafka.common.requests.CreatePartitionsRequest;
@@ -577,6 +581,8 @@ public class RequestConvertToJson {
                 return WriteTxnMarkersRequestDataJsonConverter.write(((WriteTxnMarkersRequest) request).data(), request.version());
             case GET_REPLICA_LOG_INFO:
                 return GetReplicaLogInfoRequestDataJsonConverter.write(((GetReplicaLogInfoRequest) request).data(), request.version());
+            case CREATE_CLUSTER_LINK:
+                return CreateClusterLinkRequestDataJsonConverter.write(((CreateClusterLinkRequest) request).data(), request.version());
             default:
                 throw new IllegalStateException("ApiKey " + request.apiKey() + " is not currently handled in `request`, the " +
                     "code should be updated to do so.");
@@ -765,6 +771,8 @@ public class RequestConvertToJson {
                 return WriteTxnMarkersResponseDataJsonConverter.write(((WriteTxnMarkersResponse) response).data(), version);
             case GET_REPLICA_LOG_INFO:
                 return GetReplicaLogInfoResponseDataJsonConverter.write(((GetReplicaLogInfoResponse) response).data(), version);
+            case CREATE_CLUSTER_LINK:
+                return CreateClusterLinkResponseDataJsonConverter.write(((CreateClusterLinkResponse) response).data(), version);
             default:
                 throw new IllegalStateException("ApiKey " + response.apiKey() + " is not currently handled in `response`, the " +
                     "code should be updated to do so.");
