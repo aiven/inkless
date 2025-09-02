@@ -741,6 +741,16 @@ public class ReplicationControlManager {
         Map<String, String> creationConfigs = translateCreationConfigs(topic.configs());
         Map<Integer, PartitionRegistration> newParts = new HashMap<>();
 
+        Uuid topicId;
+        if (topic.id() == null || topic.id() == Uuid.ZERO_UUID) {
+            topicId = Uuid.randomUuid();
+        } else {
+            if (topics.containsKey(topic.id())) {
+                return ApiError.fromThrowable(new InvalidTopicException("Topic id " + topic.id() + " already exists"));
+            }
+            topicId = topic.id();
+        }
+
         String inklessEnableConfigValue = creationConfigs.get(INKLESS_ENABLE_CONFIG);
         final boolean isInklessEnableConfigDefined = inklessEnableConfigValue != null;
         boolean inklessEnabled = isInklessEnableConfigDefined
@@ -877,7 +887,6 @@ public class ReplicationControlManager {
                 numPartitions, e.throttleTimeMs());
             return ApiError.fromThrowable(e);
         }
-        Uuid topicId = Uuid.randomUuid();
         final CreatableTopicResult result = buildCreatableTopicResult(topic, authorizedToReturnConfigs, topicId, creationConfigs, numPartitions, newParts);
 
         successes.put(topic.name(), result);
