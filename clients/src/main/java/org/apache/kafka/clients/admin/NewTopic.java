@@ -17,6 +17,7 @@
 
 package org.apache.kafka.clients.admin;
 
+import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.message.CreateTopicsRequestData.CreatableReplicaAssignment;
 import org.apache.kafka.common.message.CreateTopicsRequestData.CreatableTopic;
 import org.apache.kafka.common.message.CreateTopicsRequestData.CreatableTopicConfig;
@@ -35,6 +36,7 @@ import java.util.Optional;
  */
 public class NewTopic {
 
+    private final Uuid id;
     private final String name;
     private final Optional<Integer> numPartitions;
     private final Optional<Short> replicationFactor;
@@ -48,12 +50,17 @@ public class NewTopic {
         this(name, Optional.of(numPartitions), Optional.of(replicationFactor));
     }
 
+    public NewTopic(String name, Optional<Integer> numPartitions, Optional<Short> replicationFactor) {
+        this(null, name, numPartitions, replicationFactor);
+    }
+
     /**
      * A new topic that optionally defaults {@code numPartitions} and {@code replicationFactor} to
      * the broker configurations for {@code num.partitions} and {@code default.replication.factor}
      * respectively.
      */
-    public NewTopic(String name, Optional<Integer> numPartitions, Optional<Short> replicationFactor) {
+    public NewTopic(Uuid id, String name, Optional<Integer> numPartitions, Optional<Short> replicationFactor) {
+        this.id = id;
         this.name = name;
         this.numPartitions = numPartitions;
         this.replicationFactor = replicationFactor;
@@ -68,10 +75,15 @@ public class NewTopic {
      *                            generally a good idea for all partitions to have the same number of replicas.
      */
     public NewTopic(String name, Map<Integer, List<Integer>> replicasAssignments) {
+        this.id = null;
         this.name = name;
         this.numPartitions = Optional.empty();
         this.replicationFactor = Optional.empty();
         this.replicasAssignments = Collections.unmodifiableMap(replicasAssignments);
+    }
+
+    public Uuid id() {
+        return id;
     }
 
     /**
@@ -126,6 +138,9 @@ public class NewTopic {
             setName(name).
             setNumPartitions(numPartitions.orElse(CreateTopicsRequest.NO_NUM_PARTITIONS)).
             setReplicationFactor(replicationFactor.orElse(CreateTopicsRequest.NO_REPLICATION_FACTOR));
+        if (id != null) {
+            creatableTopic.setId(id);
+        }
         if (replicasAssignments != null) {
             for (Entry<Integer, List<Integer>> entry : replicasAssignments.entrySet()) {
                 creatableTopic.assignments().add(
