@@ -336,6 +336,15 @@ class BrokerServer(
        */
       val defaultActionQueue = new DelayedActionQueue
 
+      val remoteClusterMetadataManager = new RemoteClusterMetadataManager(
+        config,
+        metrics,
+        time,
+        kafkaScheduler,
+        clientToControllerChannelManager
+      )
+      kafkaScheduler.schedule("remote-cluster-metadata-refresh", () => remoteClusterMetadataManager.refreshRemoteMetadata(), 5000L, 30000L)
+
       this._replicaManager = new ReplicaManager(
         config = config,
         metrics = metrics,
@@ -352,7 +361,8 @@ class BrokerServer(
         brokerEpochSupplier = () => lifecycleManager.brokerEpoch,
         addPartitionsToTxnManager = Some(addPartitionsToTxnManager),
         directoryEventHandler = directoryEventHandler,
-        defaultActionQueue = defaultActionQueue
+        defaultActionQueue = defaultActionQueue,
+        remoteClusterMetadataManager = Some(remoteClusterMetadataManager)
       )
 
       /* start token manager */
@@ -514,7 +524,8 @@ class BrokerServer(
           authorizerPlugin.toJava
         ),
         sharedServer.initialBrokerMetadataLoadFaultHandler,
-        sharedServer.metadataPublishingFaultHandler
+        sharedServer.metadataPublishingFaultHandler,
+        remoteClusterMetadataManager
       )
       // If the BrokerLifecycleManager's initial catch-up future fails, it means we timed out
       // or are shutting down before we could catch up. Therefore, also fail the firstPublishFuture.

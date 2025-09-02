@@ -44,7 +44,7 @@ class ReplicaFetcherManager(brokerConfig: KafkaConfig,
 
     val endpoint = if (readOnly)
       new RemoteBrokerBlockingSender(sourceBroker, brokerConfig, metrics, time, fetcherId,
-        s"broker-${brokerConfig.brokerId}-fetcher-$fetcherId", logContext)
+        s"broker-${brokerConfig.brokerId}-remote-fetcher-$fetcherId", logContext)
     else
       new BrokerBlockingSender(sourceBroker, brokerConfig, metrics, time, fetcherId,
       s"broker-${brokerConfig.brokerId}-fetcher-$fetcherId", logContext)

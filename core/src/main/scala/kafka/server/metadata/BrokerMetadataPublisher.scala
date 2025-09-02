@@ -21,7 +21,7 @@ import java.util.OptionalInt
 import kafka.coordinator.transaction.TransactionCoordinator
 import kafka.log.LogManager
 import kafka.server.share.SharePartitionManager
-import kafka.server.{KafkaConfig, ReplicaManager}
+import kafka.server.{KafkaConfig, ReplicaManager, RemoteClusterMetadataManager}
 import kafka.utils.Logging
 import org.apache.kafka.common.TopicPartition
 import org.apache.kafka.common.errors.TimeoutException
@@ -83,7 +83,8 @@ class BrokerMetadataPublisher(
   delegationTokenPublisher: DelegationTokenPublisher,
   aclPublisher: AclPublisher,
   fatalFaultHandler: FaultHandler,
-  metadataPublishingFaultHandler: FaultHandler
+  metadataPublishingFaultHandler: FaultHandler,
+  remoteClusterMetadataManager: RemoteClusterMetadataManager
 ) extends MetadataPublisher with Logging {
   logIdent = s"[BrokerMetadataPublisher id=${config.nodeId}] "
 
@@ -142,6 +143,8 @@ class BrokerMetadataPublisher(
       } else if (isDebugEnabled) {
         debug(s"Publishing metadata at offset $highestOffsetAndEpoch with $metadataVersionLogMsg.")
       }
+
+      remoteClusterMetadataManager.onMetadataUpdate(delta, newImage)
 
       // Apply topic deltas.
       Option(delta.topicsDelta()).foreach { topicsDelta =>

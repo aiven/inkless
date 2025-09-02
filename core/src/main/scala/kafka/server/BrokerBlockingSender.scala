@@ -149,7 +149,7 @@ class RemoteBrokerBlockingSender(sourceBroker: BrokerEndPoint,
     val channelBuilder = ClientUtils.createChannelBuilder(brokerConfig, time, logContext)
     val selector = new Selector(
       brokerConfig.getLong(CommonClientConfigs.CONNECTIONS_MAX_IDLE_MS_CONFIG),
-      metrics, time, "remote-readonly", channelBuilder, logContext)
+      metrics, time, "remote-readonly-" + clientId, channelBuilder, logContext)
     val networkClient = new NetworkClient(
       selector,
       new ManualMetadataUpdater(),
