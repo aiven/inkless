@@ -140,7 +140,7 @@ public class RemoteClusterMetadataManager implements AutoCloseable {
                         metrics,
                         time,
                         brokerEndpoint.id(),
-                        "broker-" + nodeId + "-remote-cluster-metadata-manager-" + k,
+                        "broker-" + nodeId + "-remote-cluster-metadata-manager-" + k.replace(":", "-"),
                         logContext
                     );
                 });
@@ -192,7 +192,8 @@ public class RemoteClusterMetadataManager implements AutoCloseable {
                         partitionLeaders.put(partitionMetadata.topicPartition, remoteClusterNodes.get(remoteBootstrapServers).get(partitionMetadata.leaderId.get()));
                     });
 
-                    if (metadataImage.topics().getTopic(topicMetadata.topicId()).partitions().size() < partitionLeaders.size()) {
+                    if (metadataImage.topics().getTopic(topicMetadata.topicId()) != null &&
+                            metadataImage.topics().getTopic(topicMetadata.topicId()).partitions().size() < partitionLeaders.size()) {
                         createPartitionsTopics.add(new CreatePartitionsRequestData.CreatePartitionsTopic()
                             .setName(topicMetadata.topic())
                             .setCount(partitionLeaders.size())
