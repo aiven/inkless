@@ -36,12 +36,17 @@ class ReplicaFetcherManager(brokerConfig: KafkaConfig,
         clientId = "Replica",
         numFetchers = brokerConfig.numReplicaFetchers) {
 
-  override def createFetcherThread(fetcherId: Int, sourceBroker: BrokerEndPoint): ReplicaFetcherThread = {
-    info("!!! createFetcherThread: sourceBroker = " + sourceBroker + " fetcherId = " + fetcherId)
+  override def createFetcherThread(fetcherId: Int, sourceBroker: BrokerEndPoint, readOnly: Boolean): ReplicaFetcherThread = {
+    info("!!! createFetcherThread: sourceBroker = " + sourceBroker + " fetcherId = " + fetcherId + " readOnly = " + readOnly)
     val threadName = s"ReplicaFetcherThread-$fetcherId-${sourceBroker.id}"
     val logContext = new LogContext(s"[ReplicaFetcher replicaId=${brokerConfig.brokerId}, leaderId=${sourceBroker.id}, " +
-      s"fetcherId=$fetcherId] ")
-    val endpoint = new BrokerBlockingSender(sourceBroker, brokerConfig, metrics, time, fetcherId,
+      s"fetcherId=$fetcherId, readOnly=$readOnly] ")
+
+    val endpoint = if (readOnly)
+      new RemoteBrokerBlockingSender(sourceBroker, brokerConfig, metrics, time, fetcherId,
+        s"broker-${brokerConfig.brokerId}-remote-fetcher-$fetcherId", logContext)
+    else
+      new BrokerBlockingSender(sourceBroker, brokerConfig, metrics, time, fetcherId,
       s"broker-${brokerConfig.brokerId}-fetcher-$fetcherId", logContext)
     val fetchSessionHandler = new FetchSessionHandler(logContext, sourceBroker.id)
     val leader: LeaderEndPoint = new RemoteLeaderEndPoint(logContext.logPrefix, endpoint, fetchSessionHandler, brokerConfig,
