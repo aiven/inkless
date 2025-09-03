@@ -1,6 +1,6 @@
 services:
   broker1:
-    image: aivenoy/kafka:4.1.0-inkless-SNAPSHOT
+    image: us-central1-docker.pkg.dev/molten-verve-216720/aiven-repository/kafka:4.1.0-inkless-SNAPSHOT
     restart: unless-stopped
     environment:
       CLUSTER_ID: "4L6g3nShT-eMCtK--X86sw"
@@ -38,9 +38,9 @@ services:
       - cluster-net
 
   workload:
-    image: antithesis-kafka-workload:latest
+    image: us-central1-docker.pkg.dev/molten-verve-216720/aiven-repository/inkless-workload
     volumes:
-      - ./single-broker-in-memory.workload-config.json:/app/workload-config.json
+      - ./workload-config.json:/app/workload-config.json
     networks:
       - cluster-net
     depends_on:
@@ -49,7 +49,3 @@ services:
 
 networks:
   cluster-net:
-#    driver: bridge
-#    ipam:
-#      config:
-#        - subnet: 10.0.1.0/24
