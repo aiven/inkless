@@ -24,7 +24,7 @@ import java.util.Set;
 import io.aiven.inkless.control_plane.MetadataView;
 
 /**
- * A utility for interceptors to count topic types (Inkless/classic) in requests.
+ * A utility for interceptors to count topic types (diskless/classic) in requests.
  */
 public class TopicTypeCounter {
     private final MetadataView metadata;
@@ -34,26 +34,26 @@ public class TopicTypeCounter {
     }
 
     public Result count(final Set<TopicPartition> topicPartitions) {
-        int entitiesForInklessTopics = 0;
-        int entitiesForNonInklessTopics = 0;
+        int entitiesForDisklessTopics = 0;
+        int entitiesForNonDisklessTopics = 0;
         for (final var tp : topicPartitions) {
-            if (metadata.isInklessTopic(tp.topic())) {
-                entitiesForInklessTopics += 1;
+            if (metadata.isDisklessTopic(tp.topic())) {
+                entitiesForDisklessTopics += 1;
             } else {
-                entitiesForNonInklessTopics += 1;
+                entitiesForNonDisklessTopics += 1;
             }
         }
-        return new Result(entitiesForInklessTopics, entitiesForNonInklessTopics);
+        return new Result(entitiesForDisklessTopics, entitiesForNonDisklessTopics);
     }
 
-    public record Result(int entityCountForInklessTopics,
-                         int entityCountForNonInklessTopics) {
+    public record Result(int entityCountForDisklessTopics,
+                         int entityCountForNonDisklessTopics) {
         public boolean bothTypesPresent() {
-            return entityCountForInklessTopics > 0 && entityCountForNonInklessTopics > 0;
+            return entityCountForDisklessTopics > 0 && entityCountForNonDisklessTopics > 0;
         }
 
-        public boolean noInkless() {
-            return entityCountForInklessTopics == 0;
+        public boolean noDiskless() {
+            return entityCountForDisklessTopics == 0;
         }
     }
 }

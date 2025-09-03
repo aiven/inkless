@@ -47,13 +47,13 @@ case class FetchPartitionStatus(startOffsetMetadata: LogOffsetMetadata, fetchInf
 /**
  * A delayed fetch operation that can be created by the replica manager and watched
  * in the fetch operation purgatory.
- * It includes classic and inkless fetch partition requests.
+ * It includes classic and diskless fetch partition requests.
  * These cannot be completed separately because they need to serve the same callback.
  */
 class DelayedFetch(
   params: FetchParams,
   classicFetchPartitionStatus: Seq[(TopicIdPartition, FetchPartitionStatus)],
-  inklessFetchPartitionStatus: Seq[(TopicIdPartition, FetchPartitionStatus)] = Seq.empty,
+  disklessFetchPartitionStatus: Seq[(TopicIdPartition, FetchPartitionStatus)] = Seq.empty,
   replicaManager: ReplicaManager,
   quota: ReplicaQuota,
   maxWaitMs: Option[Long] = None,
@@ -64,7 +64,7 @@ class DelayedFetch(
   override def toString: String = {
     s"DelayedFetch(params=$params" +
       s", numClassicPartitions=${classicFetchPartitionStatus.size}" +
-      s", numInklessPartitions=${inklessFetchPartitionStatus.size}" +
+      s", numDisklessPartitions=${disklessFetchPartitionStatus.size}" +
       ")"
   }
 
@@ -153,8 +153,8 @@ class DelayedFetch(
         }
     }
 
-    tryCompleteInkless(inklessFetchPartitionStatus) match {
-      case Some(inklessAccumulatedSize) => accumulatedSize += inklessAccumulatedSize
+    tryCompleteDiskless(disklessFetchPartitionStatus) match {
+      case Some(disklessAccumulatedSize) => accumulatedSize += disklessAccumulatedSize
       case None => forceComplete()
     }
 
@@ -170,11 +170,11 @@ class DelayedFetch(
    *
    * Case A: The fetch offset locates not on the last segment of the log
    * Case B: The accumulated bytes from all the fetching partitions exceeds the minimum bytes
-   * Case C: An error occurs while trying to find inkless batches
+   * Case C: An error occurs while trying to find diskless batches
    * Case D: The fetch offset is equal to the end offset, meaning that we have reached the end of the log
    * Upon completion, should return whatever data is available for each valid partition
    */
-  private def tryCompleteInkless(fetchPartitionStatus: Seq[(TopicIdPartition, FetchPartitionStatus)]): Option[Long] = {
+  private def tryCompleteDiskless(fetchPartitionStatus: Seq[(TopicIdPartition, FetchPartitionStatus)]): Option[Long] = {
     var accumulatedSize = 0L
     val fetchPartitionStatusMap = fetchPartitionStatus.toMap
     val requests = fetchPartitionStatus.map { case (topicIdPartition, fetchStatus) =>
@@ -182,7 +182,7 @@ class DelayedFetch(
     }
     if (requests.isEmpty) return Some(0)
 
-    val response = replicaManager.findInklessBatches(requests, Int.MaxValue)
+    val response = replicaManager.findDisklessBatches(requests, Int.MaxValue)
     response.get.asScala.foreach { r =>
       r.errors() match {
         case Errors.NONE =>
@@ -234,8 +234,8 @@ class DelayedFetch(
     }
 
     val classicRequestsSize = classicFetchPartitionStatus.size.toFloat
-    val inklessRequestsSize = inklessFetchPartitionStatus.size.toFloat
-    val totalRequestsSize = classicRequestsSize + inklessRequestsSize
+    val disklessRequestsSize = disklessFetchPartitionStatus.size.toFloat
+    val totalRequestsSize = classicRequestsSize + disklessRequestsSize
 
     if (totalRequestsSize == 0) {
       // No partitions to fetch, just return an empty response
@@ -263,23 +263,23 @@ class DelayedFetch(
       }
     } else Seq.empty
 
-    if (inklessRequestsSize > 0) {
-      // Classic fetches are complete, now handle inkless fetches
-      // adjust the max bytes for inkless fetches based on the percentage of inkless partitions
-      val inklessPercentage = inklessRequestsSize / totalRequestsSize
-      val inklessParams = replicaManager.fetchParamsWithNewMaxBytes(params, inklessPercentage)
-      val inklessFetchInfos = inklessFetchPartitionStatus.map { case (tp, status) =>
+    if (disklessRequestsSize > 0) {
+      // Classic fetches are complete, now handle diskless fetches
+      // adjust the max bytes for diskless fetches based on the percentage of diskless partitions
+      val disklessPercentage = disklessRequestsSize / totalRequestsSize
+      val disklessParams = replicaManager.fetchParamsWithNewMaxBytes(params, disklessPercentage)
+      val disklessFetchInfos = disklessFetchPartitionStatus.map { case (tp, status) =>
         tp -> status.fetchInfo
       }
-      val inklessFetchResponseFuture = replicaManager.fetchInklessMessages(inklessParams, inklessFetchInfos)
+      val disklessFetchResponseFuture = replicaManager.fetchDisklessMessages(disklessParams, disklessFetchInfos)
 
-      // Combine the classic fetch results with the inkless fetch results
-      inklessFetchResponseFuture.whenComplete { case (inklessFetchPartitionData, _) =>
-        // Do a single response callback with both classic and inkless fetch results
-        responseCallback(fetchPartitionData ++ inklessFetchPartitionData)
+      // Combine the classic fetch results with the diskless fetch results
+      disklessFetchResponseFuture.whenComplete { case (disklessFetchPartitionData, _) =>
+        // Do a single response callback with both classic and diskless fetch results
+        responseCallback(fetchPartitionData ++ disklessFetchPartitionData)
       }
     } else {
-      // No inkless fetches, just return the classic fetch results
+      // No diskless fetches, just return the classic fetch results
       responseCallback(fetchPartitionData)
     }
   }

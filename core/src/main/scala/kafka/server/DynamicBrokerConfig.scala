@@ -647,8 +647,8 @@ object DynamicLogConfig {
    * configuration).
    */
   val ReconfigurableConfigs: Set[String] = {
-    // LOG_INKLESS_ENABLE is not reconfigurable, as changing the storage type of an existing topic is unsupported
-    ServerTopicConfigSynonyms.TOPIC_CONFIG_SYNONYMS.asScala.values.toSet -- Set(ServerLogConfigs.INKLESS_ENABLE_CONFIG)
+    // LOG_DISKLESS_ENABLE is not reconfigurable, as changing the storage type of an existing topic is unsupported
+    ServerTopicConfigSynonyms.TOPIC_CONFIG_SYNONYMS.asScala.values.toSet -- Set(ServerLogConfigs.DISKLESS_ENABLE_CONFIG)
   }
 }
 

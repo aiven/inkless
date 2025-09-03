@@ -149,7 +149,7 @@ public class AppendHandlerTest {
 
     @Test
     public void acceptNotTransactionalProduceForInklessTopics() throws Exception {
-        final TopicIdPartition topicIdPartition = new TopicIdPartition(Uuid.randomUuid(), new TopicPartition("inkless", 0));
+        final TopicIdPartition topicIdPartition = new TopicIdPartition(Uuid.randomUuid(), new TopicPartition("diskless", 0));
         final Map<TopicIdPartition, MemoryRecords> entriesPerPartition = Map.of(
             topicIdPartition, RECORDS_WITHOUT_PRODUCER_ID
         );
@@ -172,7 +172,7 @@ public class AppendHandlerTest {
 
     @Test
     public void writeFutureFailed() {
-        final TopicIdPartition topicIdPartition = new TopicIdPartition(Uuid.randomUuid(), 0, "inkless");
+        final TopicIdPartition topicIdPartition = new TopicIdPartition(Uuid.randomUuid(), 0, "diskless");
         final Map<TopicIdPartition, MemoryRecords> entriesPerPartition = Map.of(
             topicIdPartition,
             RECORDS_WITHOUT_PRODUCER_ID

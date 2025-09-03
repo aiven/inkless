@@ -35,4 +35,4 @@ destroy:
 .PHONY: create_topic
 create_topic:
 	$(DOCKER) compose exec broker \
-		/opt/kafka/bin/kafka-topics.sh --bootstrap-server 127.0.0.1:9092 --create --config inkless.enable=true --topic $(ARGS)
+		/opt/kafka/bin/kafka-topics.sh --bootstrap-server 127.0.0.1:9092 --create --config diskless.enable=true --topic $(ARGS)

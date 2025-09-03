@@ -65,7 +65,7 @@ public class FindBatchesJobTest {
 
     Uuid topicId = Uuid.randomUuid();
     static final String OBJECT_KEY_MAIN_PART = "a";
-    TopicIdPartition partition0 = new TopicIdPartition(topicId, 0, "inkless-topic");
+    TopicIdPartition partition0 = new TopicIdPartition(topicId, 0, "diskless-topic");
 
     @Test
     public void findSingleBatch() throws Exception {

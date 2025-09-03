@@ -12,19 +12,19 @@
 **Inkless Architecture and Concepts**
 
 * **Q: Are you really leaderless?**  
-  * A: Yes, at the data layer for Inkless topics, there is no designated leader for each partition. This means that any broker can serve read requests for any partition data stored in object storage. However, there is still a central coordinator, specifically the "Batch Coordinator," for metadata management, which is currently backed by PostgreSQL. So, it's more accurate to say we are "leaderless" for the data path but not entirely leaderless for metadata management.  
-* **Q: Are there partitions in Inkless topics?**  
-  * A: Yes, Inkless topics still use partitions. Partitions are fundamental to how Kafka distributes and parallelizes data, and this concept remains in Inkless. Even though the data storage is different, partitions provide the necessary structure for consumers and producers to work efficiently.  
-* **Q: Are Inkless partitions the same as classic Kafka partitions?**  
-  * A: The core concept is the same, and they maintain API compatibility. They still represent a sequential, ordered log of messages. The primary difference is in how the data within those partitions is physically stored. In classic Kafka, partitions reside on local disks and are replicated. In Inkless, partitions are stored in object storage.  
-* **Q: Why do you still use partitions in Inkless?**  
+  * A: Yes, at the data layer for diskless topics, there is no designated leader for each partition. This means that any broker can serve read requests for any partition data stored in object storage. However, there is still a central coordinator, specifically the "Batch Coordinator," for metadata management, which is currently backed by PostgreSQL. So, it's more accurate to say we are "leaderless" for the data path but not entirely leaderless for metadata management.  
+* **Q: Are there partitions in diskless topics?**  
+  * A: Yes, diskless topics still use partitions. Partitions are fundamental to how Kafka distributes and parallelizes data, and this concept remains in Inkless. Even though the data storage is different, partitions provide the necessary structure for consumers and producers to work efficiently.  
+* **Q: Are diskless partitions the same as classic Kafka partitions?**  
+  * A: The core concept is the same, and they maintain API compatibility. They still represent a sequential, ordered log of messages. The primary difference is in how the data within those partitions is physically stored. In classic Kafka, partitions reside on local disks and are replicated. In diskless topics, partitions are stored in object storage.  
+* **Q: Why do you still use partitions in diskless topics?**  
   * A: Partitions are used for distributing the load of producers and consumers. They allow for parallelism, meaning multiple consumers can read from different partitions simultaneously, and multiple producers can write to them concurrently. This parallelism significantly improves the throughput and scalability of the system. Without partitions, the system would be less efficient and harder to scale.  
 * **Q: Should I still use more than one partition?**  
   * A: Yes, consumer parallelism is still limited by the partition count, and so multiple partitions will permit multiple consumers to process data in parallel. Each consumer consumes from one partition, so having more partitions than consumers will not work. This ensures that multiple consumers can work concurrently without stepping on each other's toes.  
-* **Q: Is there a topic leader in Inkless?**  
-  * A: No, for Inkless topics, there is no leader for each partition in the traditional Kafka sense. This is one of the key aspects of being "leaderless" at the data layer. Any broker can serve data from any partition, which simplifies the architecture and improves availability.  
+* **Q: Is there a partition leader in diskless topics?**  
+  * A: No, for diskless topics, there is no leader for each partition in the traditional Kafka sense. This is one of the key aspects of being "leaderless" at the data layer. Any broker can serve data from any partition, which simplifies the architecture and improves availability.  
 * **Q: What about replications in Inkless?**  
-  * A: Replication for Inkless topics is delegated to the storage layer, meaning the object storage system handles data redundancy and durability. Services like AWS S3, GCS, or Azure Blob Storage have built-in replication mechanisms, which Inkless leverages instead of managing replication at the Kafka broker level.  
+  * A: Replication for diskless topics is delegated to the storage layer, meaning the object storage system handles data redundancy and durability. Services like AWS S3, GCS, or Azure Blob Storage have built-in replication mechanisms, which Inkless leverages instead of managing replication at the Kafka broker level.  
 * **Q: Are there under-replicated partitions in Inkless?**  
   * A: No, there are no under-replicated partitions in Inkless by design because the storage layer handles data replication. Object storage services are designed to be highly durable and redundant, typically providing multiple copies of data across different storage units or even different physical locations. This eliminates the traditional Kafka problem of under-replicated partitions.  
 * **Q: What is the storage backed with?**  
@@ -68,7 +68,7 @@
 **Data Handling and Guarantees**
 
 * **Q: Do you have the same guarantees as classic topics?**  
-  * A: Yes, Inkless aims to provide the same core guarantees as classic Kafka topics:  
+  * A: Yes, diskless topics aims to provide the same core guarantees as classic Kafka topics:  
     * **Ordering:** Message ordering within partitions is preserved. Messages are delivered in the same order they were produced.  
     * **Consistency:** Data consistency is maintained. Consumers will see a consistent view of the data.  
     * **Deliveries:** Message delivery is assured, meaning that messages will not be lost (assuming the object storage system is functioning correctly).  
@@ -84,34 +84,34 @@
 
 **Usage and Operations**
 
-* **Q: Can I change the topic type from classic to Inkless?**  
-  * A: Currently, the topic type (classic or Inkless) is set at topic creation and cannot be changed afterward. This is because the storage mechanism is fundamentally different between the two types. In the future, there might be mechanisms to facilitate data migration between classic and Inkless topics, but direct conversion is not supported right now.  
+* **Q: Can I change the topic type from classic to diskless?**  
+  * A: Currently, the topic type (classic or diskless) is set at topic creation and cannot be changed afterward. This is because the storage mechanism is fundamentally different between the two types. In the future, there might be mechanisms to facilitate data migration between classic and diskless topics, but direct conversion is not supported right now.  
 * **Q: Do you have local disks for Inkless data?**  
   * A: No, Inkless data is stored in object storage, not on local disks. The Kafka brokers in an Inkless setup primarily manage metadata and coordinate data transfer. The data itself is persisted in external object storage.  
 * **Q: What data is on the local disks in a mixed cluster?**  
-  * A: In a mixed cluster (with both classic and Inkless topics), local disks are used to store data for classic Kafka topics. Metadata for all topics (both classic and Inkless) is also stored locally.  
-* **Q: Can we have both classic and Inkless topics in the same cluster/broker?**  
-  * A: Yes, a Kafka cluster can contain both classic and Inkless topics. This allows for a gradual transition to Inkless or the flexibility to use the best storage mechanism for different use cases.  
-* **Q: Can we have Inkless topics only?**  
-  * A: Yes, you can have a cluster consisting entirely of Inkless topics. In this case, all data is stored in object storage, and the brokers primarily handle metadata. This provides a cleaner, simpler architecture.  
-* **Q: What data is stored in Inkless-only clusters?**  
+  * A: In a mixed cluster (with both classic and diskless topics), local disks are used to store data for classic Kafka topics. Metadata for all topics (both classic and diskless) is also stored locally.  
+* **Q: Can we have both classic and diskless topics in the same cluster/broker?**  
+  * A: Yes, a Kafka cluster can contain both classic and diskless topics. This allows for a gradual transition to diskless or the flexibility to use the best storage mechanism for different use cases.  
+* **Q: Can we have diskless topics only?**  
+  * A: Yes, you can have a cluster consisting entirely of diskless topics. In this case, all data is stored in object storage, and the brokers primarily handle metadata. This provides a cleaner, simpler architecture.  
+* **Q: What data is stored in diskless-only clusters?**  
   * A: In an Inkless-only cluster, Kafka brokers primarily store metadata. This includes:  
     * Topic configuration.  
     * Partition information.  
     * Batch coordinates (pointers to the objects in object storage that contain the message data).  
     * Consumer group offsets.  
-* **Q: How do you migrate topics to Inkless?**  
-  * A: Direct topic migration from classic to Inkless is not currently possible. Common methods for moving data from classic to Inkless topics include:  
-    * **MirrorMaker:** Using Kafka MirrorMaker to replicate data from the classic topic to a new Inkless topic.  
-    * **Dual Writes/Reads:** Implementing a strategy where applications write to both the old and new topics, then transition to reading only from the new Inkless topic.  
+* **Q: How do you migrate topics to diskless?**  
+  * A: Direct topic migration from classic to Inkless is not currently possible. Common methods for moving data from classic to diskless topics include:  
+    * **MirrorMaker:** Using Kafka MirrorMaker to replicate data from the classic topic to a new diskless topic.  
+    * **Dual Writes/Reads:** Implementing a strategy where applications write to both the old and new topics, then transition to reading only from the new diskless topic.  
 * **Q: Can you shrink your cluster?**  
-  * A: Yes, you can shrink a cluster containing only Inkless topics, as data storage is independent of the number of brokers. Shrinking a mixed cluster is more complex and has similar challenges to shrinking a standard Kafka cluster, as data for classic topics resides on the brokers.  
+  * A: Yes, you can shrink a cluster containing only diskless topics, as data storage is independent of the number of brokers. Shrinking a mixed cluster is more complex and has similar challenges to shrinking a standard Kafka cluster, as data for classic topics resides on the brokers.  
 * **Q: Can you shrink partition numbers?**  
   * A: No, you cannot shrink partition numbers for existing topics, regardless of whether they are classic or Inkless. This is a fundamental limitation of Kafka's design. Once a topic is created with a certain number of partitions, that number remains fixed.  
 * **Q: Can I upgrade from version 2.x to Inkless?**  
   * A: Upgrading to a version that supports Inkless involves a multi-step process. Typically, you would need to upgrade to intermediate versions that support newer features and metadata formats before finally upgrading to the version that includes Inkless (or Kafka 4.0 or later, depending on the terminology used). The exact steps may vary depending on the specific versions involved.  
-* **Q: Is adding a new broker in the cluster faster with Inkless topics?**  
-  * A: Yes, adding a new fresh cluster tend to be faster with Inkless topics because the data is not stored on the brokers. Adding new brokers is simpler and faster as they don't have to synchronize data.  
+* **Q: Is adding a new broker in the cluster faster with diskless topics?**  
+  * A: Yes, adding a new fresh cluster tend to be faster with diskless topics because the data is not stored on the brokers. Adding new brokers is simpler and faster as they don't have to synchronize data.  
 * **Q: Can we have multiple buckets within a cluster and region?**  
   * A: Currently, the design focuses on using a single object storage bucket per cluster. Using multiple buckets is not supported.  
 * **Q: Is there a community behind Inkless?**  
@@ -123,10 +123,10 @@
 
 **Performance and Cost**
 
-* **Q: Are Inkless topics as performant as classic Kafka topics?**  
-  * A: No, there is typically a latency overhead with Inkless topics compared to classic Kafka topics. This is because of the batching mechanism and the extra network hop to the object storage and batch coordinator. Classic Kafka topics have lower latency for individual messages but might face other bottlenecks with high throughput.  
-* **Q: When to use Inkless topics?**  
-  * A: Inkless topics are well-suited for use cases where:  
+* **Q: Are diskless topics as performant as classic Kafka topics?**  
+  * A: No, there is typically a latency overhead with diskless topics compared to classic Kafka topics. This is because of the batching mechanism and the extra network hop to the object storage and batch coordinator. Classic Kafka topics have lower latency for individual messages but might face other bottlenecks with high throughput.  
+* **Q: When to use diskless topics?**  
+  * A: Diskless topics are well-suited for use cases where:  
     * **Latency tolerance:** Applications that can tolerate slightly higher latency (e.g., logs aggregation, analytics, or data warehousing).  
     * **Batching is already done:** Workloads that naturally batch data before sending it to Kafka.  
     * **Cost is a significant factor:** When lower storage costs and reduced operational overhead are priorities.  
@@ -138,7 +138,7 @@
 * **Q: How do you achieve performant consumers?**  
   * A: Performant consumers are achieved through caching. When a consumer fetches data from object storage, the fetched object is cached on a broker within the same availability zone (AZ). Subsequent reads of data from that same object are served from the cache, resulting in much lower latency.  
 * **Q: I’m producing a lot of data, does it scale?**  
-  * A: Yes, Inkless scales well, particularly with high data throughput. The higher the overall throughput across all Inkless topics, the lower the average latency tends to be. This is because larger batches can be formed more quickly, making the object storage writes more efficient. High volume production aligns well with the design of Inkless.  
+  * A: Yes, Inkless scales well, particularly with high data throughput. The higher the overall throughput across all diskless topics, the lower the average latency tends to be. This is because larger batches can be formed more quickly, making the object storage writes more efficient. High volume production aligns well with the design of Inkless.  
 * **Q: Can I tune it for my use case?**  
   * A: Yes, you can tune some parameters, primarily the batching interval and the batch size. However, we have provided sensible default values (e.g., 250ms for the batching interval and 8MB for the batch size) that are designed to work well for most common use cases. Tuning should be done carefully based on your specific requirements and after thorough testing.  
 * **Q: Are there downsides to tuning it?**  
@@ -183,8 +183,8 @@
   * A: Current limitations include:  
     * **No Transactions:** Inkless does not currently support transactions.  
     * **Limited Retention Policies:** Retention policies based on bytes or time are not yet fully supported in the same way as classic Kafka topics.
-    * **No Compacted Topics:** Inkless topics can't be also compacted topics. This follows a similar limitation as with Tiered Storage.
-    * **No Share Groups:** Queues for Kafka are currently not supported in Inkless topics.
+    * **No Compacted Topics:** diskless topics can't be also compacted topics. This follows a similar limitation as with Tiered Storage.
+    * **No Share Groups:** Queues for Kafka are currently not supported in diskless topics.
 * **Q: How does the producer work with Inkless?**  
   * A: The Inkless producer collects messages and buffers them according to the batching parameters. Once a batch is full (either by time or size), it writes the batch as an object to object storage. The producer then receives confirmation of the successful write and continues sending more data.  
 * **Q: How is producer rack awareness configured?**  
@@ -196,14 +196,14 @@
 * **Q: How does consumer rack awareness avoid inter-zone costs?**
   * A: When a consumer is configured with a specific rack ID, it will primarily consume data from brokers that have the same rack ID. This ensures that data transmission stays within the same availability zone. Consumers that are not configured with a rack ID might receive data from brokers in other zones, which can result in inter-zone data transfer costs. Therefore, properly configured consumer rack awareness significantly reduces the risk of incurring these costs.
 * **Q: Is there producer rack awareness for Classic Topics?**  
-  * A: No but for keyless data, [KIP-1123: Rack-aware partitioning for Kafka Producer](https://cwiki.apache.org/confluence/display/KAFKA/KIP-1123:%20Rack-aware%20partitioning%20for%20Kafka%20Producer) will send keyless data to a leader in the local rack. This is a proposal that will address this in the future, but it is not implemented in the same way as the producer rack awareness with Inkless topics.  
+  * A: No but for keyless data, [KIP-1123: Rack-aware partitioning for Kafka Producer](https://cwiki.apache.org/confluence/display/KAFKA/KIP-1123:%20Rack-aware%20partitioning%20for%20Kafka%20Producer) will send keyless data to a leader in the local rack. This is a proposal that will address this in the future, but it is not implemented in the same way as the producer rack awareness with diskless topics.  
 * **Q: How is data from multiple producers distributed to multiple consumers?**  
   * A: In Inkless, each object containing batched messages is cached by one broker per availability zone. When consumers make fetch requests, these cached objects are then distributed by inter-broker requests to other brokers that are serving the fetch requests. This way, data produced by multiple producers gets distributed across different brokers and made available to multiple consumers in different parts of the system. This caching and distribution mechanism ensures that:  
     * Consumers can access data with low latency, particularly for frequently accessed or recently produced data.  
     * The load is balanced across multiple brokers as they cooperate to serve consumer requests.  
     * The overall system scales well as the number of producers and consumers increases.  
 * **Q: Do inter-broker connections cross availability zones?**  
-  * A: No, generally, inter-broker connections for Inkless topics stay within the same availability zone (AZ). This is a key design principle to reduce cross-AZ traffic and associated costs. The distribution of cached objects between brokers occurs within the same AZ.  
+  * A: No, generally, inter-broker connections for diskless topics stay within the same availability zone (AZ). This is a key design principle to reduce cross-AZ traffic and associated costs. The distribution of cached objects between brokers occurs within the same AZ.  
 * **Q: How does Read-ahead work in Inkless?**  
   * A: Read-ahead behavior depends on whether the data being read is part of the "hot set" (frequently accessed) or trailing data (older data).  
     * **Hot Set Data:** For hot set data, read-ahead is relatively straightforward. The data is likely to be cached on a broker within the same AZ, making reads fast.  

@@ -109,7 +109,7 @@ cleanup:
 # make create_topic ARGS="topic"
 .PHONY: create_topic
 create_topic: core/build/distributions/kafka_2.13-$(VERSION)
-	$</bin/kafka-topics.sh --bootstrap-server 127.0.0.1:9092 --create --config inkless.enable=true --topic $(ARGS)
+	$</bin/kafka-topics.sh --bootstrap-server 127.0.0.1:9092 --create --config diskless.enable=true --topic $(ARGS)
 
 
 .PHONY: dump_postgres_schema

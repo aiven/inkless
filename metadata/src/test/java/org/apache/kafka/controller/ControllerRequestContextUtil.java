@@ -65,12 +65,12 @@ public class ControllerRequestContextUtil {
         );
     }
 
-    // For inkless
+    // For diskless
     public static ControllerRequestContext anonymousContextFor(ApiKeys apiKeys, String clientId) {
         return anonymousContextFor(apiKeys, apiKeys.latestVersion(), clientId, __ -> { });
     }
 
-    // For inkless
+    // For diskless
     public static ControllerRequestContext anonymousContextFor(
         ApiKeys apiKeys,
         short version,

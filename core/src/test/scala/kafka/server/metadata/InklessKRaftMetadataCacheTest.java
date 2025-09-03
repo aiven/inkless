@@ -52,35 +52,35 @@ class InklessKRaftMetadataCacheTest {
         "regular_topic_enabled,true",
         "regular_topic_disabled,false",
     })
-    void isInklessTopic(final String topicName, final boolean expectedIsInkless) {
-        // Given a cache with a couple of inkless topics
+    void isDisklessTopic(final String topicName, final boolean expectedIsDiskless) {
+        // Given a cache with a couple of diskless topics
         final KRaftMetadataCache cache = new KRaftMetadataCache(1, () -> KRaftVersion.KRAFT_VERSION_0);
         final MetadataView metadataView = new InklessMetadataView(cache, Map::of);
         final List<ApiMessage> configRecords = List.of(
             new ConfigRecord()
                 .setResourceType(ResourceType.TOPIC.code())
                 .setResourceName("__internal_topic_enabled")
-                .setName(TopicConfig.INKLESS_ENABLE_CONFIG)
+                .setName(TopicConfig.DISKLESS_ENABLE_CONFIG)
                 .setValue("true"),
             new ConfigRecord()
                 .setResourceType(ResourceType.TOPIC.code())
                 .setResourceName("__internal_topic_disabled")
-                .setName(TopicConfig.INKLESS_ENABLE_CONFIG)
+                .setName(TopicConfig.DISKLESS_ENABLE_CONFIG)
                 .setValue("false"),
             new ConfigRecord()
                 .setResourceType(ResourceType.TOPIC.code())
                 .setResourceName("regular_topic_enabled")
-                .setName(TopicConfig.INKLESS_ENABLE_CONFIG)
+                .setName(TopicConfig.DISKLESS_ENABLE_CONFIG)
                 .setValue("true"),
             new ConfigRecord()
                 .setResourceType(ResourceType.TOPIC.code())
                 .setResourceName("regular_topic_disabled")
-                .setName(TopicConfig.INKLESS_ENABLE_CONFIG)
+                .setName(TopicConfig.DISKLESS_ENABLE_CONFIG)
                 .setValue("false")
         );
         updateCache(cache, configRecords);
-        // When checking if a topic is inkless, then the expected result is returned
-        assertEquals(expectedIsInkless, metadataView.isInklessTopic(topicName));
+        // When checking if a topic is diskless, then the expected result is returned
+        assertEquals(expectedIsDiskless, metadataView.isDisklessTopic(topicName));
     }
 
     // Similar to {@link kafka.server.MetadataCacheTest#updateCache}

@@ -31,7 +31,7 @@ For more details, see the [demo docs](./../../docker/examples/docker-compose-fil
 
 ## Topic creation
 
-Given that Inkless introduces a new topic configuration `inkless.enable`, you need to use inkless binaries to create topics.
+Given that Inkless introduces a new topic configuration `diskless.enable`, you need to use inkless binaries to create topics.
 
 You can either build the binaries yourself, use the Docker image, or download the prebuilt binaries from the [releases page](https://github.com/aiven/inkless/releases).
 
@@ -52,7 +52,7 @@ java/  kafka/
 4e3b0026634e:/opt/kafka$ bin/kafka-topics.sh
 ```
 
-Be aware that if server default configuration is set to `log.inkless.enable=true`, topics (except internal ones) will be created with `inkless.enable=true` by default.
+Be aware that if server default configuration is set to `log.diskless.enable=true`, topics (except internal ones) will be created with `diskless.enable=true` by default.
 
 ## Local development: Run Kafka from IDE
 

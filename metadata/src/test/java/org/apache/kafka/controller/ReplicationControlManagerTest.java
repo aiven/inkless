@@ -128,7 +128,7 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
-import static org.apache.kafka.common.config.TopicConfig.INKLESS_ENABLE_CONFIG;
+import static org.apache.kafka.common.config.TopicConfig.DISKLESS_ENABLE_CONFIG;
 import static org.apache.kafka.common.config.TopicConfig.SEGMENT_BYTES_CONFIG;
 import static org.apache.kafka.common.metadata.MetadataRecordType.CLEAR_ELR_RECORD;
 import static org.apache.kafka.common.protocol.Errors.ELECTION_NOT_NEEDED;
@@ -176,8 +176,8 @@ public class ReplicationControlManagerTest {
             private MockTime mockTime = new MockTime();
             private boolean isElrEnabled = false;
             private final Map<String, Object> staticConfig = new HashMap<>();
-            private boolean defaultInklessEnable = false;
-            private boolean inklessStorageSystemEnable = false;
+            private boolean defaultDisklessEnable = false;
+            private boolean disklessStorageSystemEnable = false;
 
             Builder setCreateTopicPolicy(CreateTopicPolicy createTopicPolicy) {
                 this.createTopicPolicy = Optional.of(createTopicPolicy);
@@ -204,13 +204,13 @@ public class ReplicationControlManagerTest {
                 return this;
             }
 
-            Builder setDefaultInklessEnable(boolean inklessEnable) {
-                this.defaultInklessEnable = inklessEnable;
+            Builder setDefaultDisklessEnable(boolean disklessEnable) {
+                this.defaultDisklessEnable = disklessEnable;
                 return this;
             }
 
-            Builder setInklessStorageSystemEnabled(boolean inklessStorageSystemEnable) {
-                this.inklessStorageSystemEnable = inklessStorageSystemEnable;
+            Builder setDisklessStorageSystemEnabled(boolean disklessStorageSystemEnable) {
+                this.disklessStorageSystemEnable = disklessStorageSystemEnable;
                 return this;
             }
 
@@ -220,8 +220,8 @@ public class ReplicationControlManagerTest {
                     mockTime,
                     isElrEnabled,
                     staticConfig,
-                    defaultInklessEnable,
-                    inklessStorageSystemEnable);
+                    defaultDisklessEnable,
+                    disklessStorageSystemEnable);
             }
         }
 
@@ -247,8 +247,8 @@ public class ReplicationControlManagerTest {
             MockTime time,
             boolean isElrEnabled,
             Map<String, Object> staticConfig,
-            boolean defaultInklessEnable,
-            boolean inklessStorageSystemEnable
+            boolean defaultDisklessEnable,
+            boolean disklessStorageSystemEnable
         ) {
             this.time = time;
             this.featureControl = new FeatureControlManager.Builder().
@@ -292,8 +292,8 @@ public class ReplicationControlManagerTest {
                 setClusterControl(clusterControl).
                 setCreateTopicPolicy(createTopicPolicy).
                 setFeatureControl(featureControl).
-                setDefaultInklessEnable(defaultInklessEnable).
-                setInklessStorageSystemEnabled(inklessStorageSystemEnable).
+                setDefaultDisklessEnable(defaultDisklessEnable).
+                setDisklessStorageSystemEnabled(disklessStorageSystemEnable).
                 build();
             clusterControl.activate();
         }
@@ -706,19 +706,19 @@ public class ReplicationControlManagerTest {
         "true,false",
         "false,false"
     })
-    public void testNotCreateInklessTopic(boolean logInklessEnableServerConfig, String inklessEnableTopicConfig) {
+    public void testNotCreateDisklessTopic(boolean logDisklessEnableServerConfig, String disklessEnableTopicConfig) {
         ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
-            .setDefaultInklessEnable(logInklessEnableServerConfig)
-            .setInklessStorageSystemEnabled(true)
+            .setDefaultDisklessEnable(logDisklessEnableServerConfig)
+            .setDisklessStorageSystemEnabled(true)
             .build();
         ReplicationControlManager replicationControl = ctx.replicationControl;
-        // Given a kafka topic with inkless enabled
+        // Given a kafka topic with diskless enabled
         CreateTopicsRequestData request = new CreateTopicsRequestData();
         CreateTopicsRequestData.CreatableTopicConfigCollection creatableTopicConfigs = new CreateTopicsRequestData.CreatableTopicConfigCollection();
-        if (inklessEnableTopicConfig != null) {
+        if (disklessEnableTopicConfig != null) {
             creatableTopicConfigs.add(new CreateTopicsRequestData.CreatableTopicConfig()
-                .setName(INKLESS_ENABLE_CONFIG)
-                .setValue(inklessEnableTopicConfig));
+                .setName(DISKLESS_ENABLE_CONFIG)
+                .setValue(disklessEnableTopicConfig));
         }
         request.topics().add(new CreatableTopic().setName("foo").
             setNumPartitions(-1).setReplicationFactor((short) -1)
@@ -729,7 +729,7 @@ public class ReplicationControlManagerTest {
         ctx.registerBrokers(0, 1, 2);
         ctx.unfenceBrokers(0, 1, 2);
 
-        // When creating a topic with inkless enabled
+        // When creating a topic with diskless enabled
         ControllerResult<CreateTopicsResponseData> result =
             replicationControl.createTopics(requestContext, request, Collections.singleton("foo"));
         // Then the topic creation should succeed, regardless of the RF
@@ -739,14 +739,14 @@ public class ReplicationControlManagerTest {
             setErrorMessage(null).setErrorCode((short) 0).
             setTopicId(result.response().topics().find("foo").topicId()));
         assertEquals(expectedResponse, withoutConfigs(result.response()));
-        final List<ConfigRecord> inklessConfigRecords = result.records().stream()
+        final List<ConfigRecord> disklessConfigRecords = result.records().stream()
             .filter(m -> m.message() instanceof ConfigRecord)
             .map(m -> (ConfigRecord) m.message())
-            .filter(c -> c.name().equals(INKLESS_ENABLE_CONFIG))
+            .filter(c -> c.name().equals(DISKLESS_ENABLE_CONFIG))
             .toList();
-        assertEquals(1, inklessConfigRecords.size());
-        // Then always inkless is disabled
-        assertTrue(inklessConfigRecords.stream().allMatch(c -> c.value().equals("false")));
+        assertEquals(1, disklessConfigRecords.size());
+        // Then always diskless is disabled
+        assertTrue(disklessConfigRecords.stream().allMatch(c -> c.value().equals("false")));
 
         // Given the topic is registered
         ctx.replay(result.records());
@@ -760,7 +760,7 @@ public class ReplicationControlManagerTest {
             replicationControl.getPartition(
                 ((TopicRecord) result.records().get(0).message()).topicId(), 0));
 
-        // When creating a topic with inkless enabled and already exists
+        // When creating a topic with diskless enabled and already exists
         ControllerResult<CreateTopicsResponseData> result4 =
             replicationControl.createTopics(requestContext, request, Collections.singleton("foo"));
         CreateTopicsResponseData expectedResponse4 = new CreateTopicsResponseData();
@@ -777,19 +777,19 @@ public class ReplicationControlManagerTest {
         "false,true",
         "true,"
     })
-    public void testCreateInklessTopic(boolean logInklessEnableServerConfig, String inklessEnableTopicConfig) {
+    public void testCreateDisklessTopic(boolean logDisklessEnableServerConfig, String disklessEnableTopicConfig) {
         ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
-            .setDefaultInklessEnable(logInklessEnableServerConfig)
-            .setInklessStorageSystemEnabled(true)
+            .setDefaultDisklessEnable(logDisklessEnableServerConfig)
+            .setDisklessStorageSystemEnabled(true)
             .build();
         ReplicationControlManager replicationControl = ctx.replicationControl;
-        // Given a kafka topic with inkless enabled
+        // Given a kafka topic with diskless enabled
         CreateTopicsRequestData request = new CreateTopicsRequestData();
         CreateTopicsRequestData.CreatableTopicConfigCollection creatableTopicConfigs = new CreateTopicsRequestData.CreatableTopicConfigCollection();
-        if (inklessEnableTopicConfig != null) {
+        if (disklessEnableTopicConfig != null) {
             creatableTopicConfigs.add(new CreateTopicsRequestData.CreatableTopicConfig()
-                .setName(INKLESS_ENABLE_CONFIG)
-                .setValue(inklessEnableTopicConfig));
+                .setName(DISKLESS_ENABLE_CONFIG)
+                .setValue(disklessEnableTopicConfig));
         }
         request.topics().add(new CreatableTopic().setName("foo").
             setNumPartitions(-1).setReplicationFactor((short) -1)
@@ -803,7 +803,7 @@ public class ReplicationControlManagerTest {
         CreateTopicsResponseData expectedResponse = new CreateTopicsResponseData();
         expectedResponse.topics().add(new CreatableTopicResult().setName("foo").
             setErrorCode(Errors.BROKER_NOT_AVAILABLE.code()).
-            setErrorMessage("No brokers available to create inkless topic."));
+            setErrorMessage("No brokers available to create diskless topic."));
         assertEquals(expectedResponse, withoutConfigs(result.response()));
 
         // Given brokers are registered
@@ -811,7 +811,7 @@ public class ReplicationControlManagerTest {
         ctx.unfenceBrokers(0);
         ctx.inControlledShutdownBrokers(0);
 
-        // When creating a topic with inkless enabled
+        // When creating a topic with diskless enabled
         ControllerResult<CreateTopicsResponseData> result2 =
             replicationControl.createTopics(requestContext, request, Set.of("foo"));
         // Then the topic creation should succeed, regardless of fenced brokers
@@ -826,7 +826,7 @@ public class ReplicationControlManagerTest {
         ctx.registerBrokers(0, 1, 2);
         ctx.unfenceBrokers(0, 1, 2);
 
-        // When creating a topic with inkless enabled
+        // When creating a topic with diskless enabled
         ControllerResult<CreateTopicsResponseData> result3 =
             replicationControl.createTopics(requestContext, request, Set.of("foo"));
         // Then the topic creation should succeed, regardless of the RF
@@ -836,14 +836,14 @@ public class ReplicationControlManagerTest {
             setErrorMessage(null).setErrorCode((short) 0).
             setTopicId(result3.response().topics().find("foo").topicId()));
         assertEquals(expectedResponse3, withoutConfigs(result3.response()));
-        final List<ConfigRecord> inklessConfigRecords = result3.records().stream()
+        final List<ConfigRecord> disklessConfigRecords = result3.records().stream()
             .filter(m -> m.message() instanceof ConfigRecord)
             .map(m -> (ConfigRecord) m.message())
-            .filter(c -> c.name().equals(INKLESS_ENABLE_CONFIG))
+            .filter(c -> c.name().equals(DISKLESS_ENABLE_CONFIG))
             .toList();
-        assertEquals(1, inklessConfigRecords.size());
-        // Then always inkless is disabled
-        assertTrue(inklessConfigRecords.stream().allMatch(c -> c.value().equals("true")));
+        assertEquals(1, disklessConfigRecords.size());
+        // Then always diskless is disabled
+        assertTrue(disklessConfigRecords.stream().allMatch(c -> c.value().equals("true")));
 
         // Given the topic is registered
         ctx.replay(result3.records());
@@ -860,7 +860,7 @@ public class ReplicationControlManagerTest {
                 .build(),
             replicationControl.getPartition(((TopicRecord) result3.records().get(0).message()).topicId(), 0));
 
-        // When creating a topic with inkless enabled and already exists
+        // When creating a topic with diskless enabled and already exists
         ControllerResult<CreateTopicsResponseData> result4 =
             replicationControl.createTopics(requestContext, request, Set.of("foo"));
         CreateTopicsResponseData expectedResponse4 = new CreateTopicsResponseData();
@@ -879,9 +879,9 @@ public class ReplicationControlManagerTest {
         "-2, 1, INVALID_PARTITIONS",
         "0, 1, INVALID_PARTITIONS",
     })
-    public void testCreateInklessTopicWithInvalidInput(int numPartitions, short replicationFactor, String expectedError) {
+    public void testCreateDisklessTopicWithInvalidInput(int numPartitions, short replicationFactor, String expectedError) {
         ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
-            .setInklessStorageSystemEnabled(true)
+            .setDisklessStorageSystemEnabled(true)
             .build();
         ReplicationControlManager replicationControl = ctx.replicationControl;
         ctx.registerBrokers(0, 1, 2);
@@ -889,18 +889,18 @@ public class ReplicationControlManagerTest {
 
         ControllerRequestContext requestContext = anonymousContextFor(ApiKeys.CREATE_TOPICS);
 
-        CreateTopicsRequestData.CreatableTopicConfigCollection inklessConfig =
+        CreateTopicsRequestData.CreatableTopicConfigCollection disklessConfig =
             new CreateTopicsRequestData.CreatableTopicConfigCollection();
-        inklessConfig.add(
+        disklessConfig.add(
             new CreateTopicsRequestData.CreatableTopicConfig()
-                .setName("inkless.enable")
+                .setName("diskless.enable")
                 .setValue("true")
         );
 
         CreateTopicsRequestData request1 = new CreateTopicsRequestData();
         request1.topics().add(new CreatableTopic().setName("baz")
             .setNumPartitions(numPartitions).setReplicationFactor(replicationFactor)
-            .setConfigs(inklessConfig));
+            .setConfigs(disklessConfig));
 
         ControllerResult<CreateTopicsResponseData> result1 =
             replicationControl.createTopics(requestContext, request1, Set.of("baz"));
@@ -912,23 +912,23 @@ public class ReplicationControlManagerTest {
     @CsvSource({
         "true,false",
         "true,"
-        // "false,true", // This case is not valid because no internal topic should be explicitly created with inkless enabled. Tested in another case
+        // "false,true", // This case is not valid because no internal topic should be explicitly created with diskless enabled. Tested in another case
     })
-    public void testCreateInternalTopicWithInklessEnabled(boolean logInklessEnableServerConfig, String inklessEnableTopicConfig) {
-        // Given a setup with inkless defined at the server level
+    public void testCreateInternalTopicWithDisklessEnabled(boolean logDisklessEnableServerConfig, String disklessEnableTopicConfig) {
+        // Given a setup with diskless defined at the server level
         ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
-            .setDefaultInklessEnable(logInklessEnableServerConfig)
-            .setInklessStorageSystemEnabled(true)
+            .setDefaultDisklessEnable(logDisklessEnableServerConfig)
+            .setDisklessStorageSystemEnabled(true)
             .build();
         ReplicationControlManager replicationControl = ctx.replicationControl;
-        // Given an internal kafka topic with inkless enabled
+        // Given an internal kafka topic with diskless enabled
         CreateTopicsRequestData request = new CreateTopicsRequestData();
         CreateTopicsRequestData.CreatableTopicConfigCollection creatableTopicConfigs = new CreateTopicsRequestData.CreatableTopicConfigCollection();
-        if (inklessEnableTopicConfig != null) {
-            // If the inkless enable config is set, it should be added to the topic configs
+        if (disklessEnableTopicConfig != null) {
+            // If the diskless enable config is set, it should be added to the topic configs
             creatableTopicConfigs.add(new CreateTopicsRequestData.CreatableTopicConfig()
-                .setName(INKLESS_ENABLE_CONFIG)
-                .setValue(inklessEnableTopicConfig));
+                .setName(DISKLESS_ENABLE_CONFIG)
+                .setValue(disklessEnableTopicConfig));
         }
         final String internalTopic = Topic.GROUP_METADATA_TOPIC_NAME;
         request.topics().add(new CreatableTopic().setName(internalTopic).
@@ -937,7 +937,7 @@ public class ReplicationControlManagerTest {
         // Given all brokers unfenced
         ctx.registerBrokers(0, 1, 2);
         ctx.unfenceBrokers(0, 1, 2);
-        // When creating an internal topic with inkless enabled, disable it
+        // When creating an internal topic with diskless enabled, disable it
         ControllerRequestContext requestContext = anonymousContextFor(ApiKeys.CREATE_TOPICS);
         ControllerResult<CreateTopicsResponseData> result =
             replicationControl.createTopics(requestContext, request, Set.of(internalTopic));
@@ -954,36 +954,36 @@ public class ReplicationControlManagerTest {
         assertTrue(result.response().topics().find(internalTopic)
             .configs()
             .stream()
-            .noneMatch(c -> c.name().equals(INKLESS_ENABLE_CONFIG)));
-        final List<ConfigRecord> inklessConfigRecords = result.records().stream()
+            .noneMatch(c -> c.name().equals(DISKLESS_ENABLE_CONFIG)));
+        final List<ConfigRecord> disklessConfigRecords = result.records().stream()
             .filter(m -> m.message() instanceof ConfigRecord)
             .map(m -> (ConfigRecord) m.message())
-            .filter(c -> c.name().equals(INKLESS_ENABLE_CONFIG))
+            .filter(c -> c.name().equals(DISKLESS_ENABLE_CONFIG))
             .toList();
-        // Then always inkless is disabled
-        assertTrue(inklessConfigRecords.stream().allMatch(c -> c.value().equals("false")));
+        // Then always diskless is disabled
+        assertTrue(disklessConfigRecords.stream().allMatch(c -> c.value().equals("false")));
     }
 
     @Test
-    public void testInvalidInklessTopicCreationForInternalTopics() {
-        // Given a setup with inkless defined at the server level
+    public void testInvalidDisklessTopicCreationForInternalTopics() {
+        // Given a setup with diskless defined at the server level
         ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
-            .setInklessStorageSystemEnabled(true)
+            .setDisklessStorageSystemEnabled(true)
             .build();
         ReplicationControlManager replicationControl = ctx.replicationControl;
-        // Given an internal kafka topic with inkless enabled
+        // Given an internal kafka topic with diskless enabled
         final String internalTopic = Topic.GROUP_METADATA_TOPIC_NAME;
         CreateTopicsRequestData request = new CreateTopicsRequestData();
         CreateTopicsRequestData.CreatableTopicConfigCollection topicConfigs = new CreateTopicsRequestData.CreatableTopicConfigCollection();
         topicConfigs.add(new CreateTopicsRequestData.CreatableTopicConfig()
-            .setName(INKLESS_ENABLE_CONFIG)
+            .setName(DISKLESS_ENABLE_CONFIG)
             .setValue("true"));
         request.topics().add(new CreatableTopic().setName(internalTopic).
             setConfigs(topicConfigs));
         // Given all brokers unfenced
         ctx.registerBrokers(0, 1, 2);
         ctx.unfenceBrokers(0, 1, 2);
-        // When creating an internal topic with inkless enabled, disable it
+        // When creating an internal topic with diskless enabled, disable it
         ControllerRequestContext requestContext = anonymousContextFor(ApiKeys.CREATE_TOPICS);
         ControllerResult<CreateTopicsResponseData> result =
             replicationControl.createTopics(requestContext, request, Set.of(internalTopic));
@@ -993,7 +993,7 @@ public class ReplicationControlManagerTest {
             new CreatableTopicResult()
                 .setName(internalTopic)
                 .setErrorCode(Errors.INVALID_REQUEST.code())
-                .setErrorMessage("Internal topics cannot be inkless topics."));
+                .setErrorMessage("Internal topics cannot be diskless topics."));
         assertEquals(expectedResponse, withoutConfigs(result.response()));
     }
 
@@ -1002,28 +1002,28 @@ public class ReplicationControlManagerTest {
         "false,true",
         "true,"
     })
-    public void testInvalidInklessTopicCreationWithoutSystemEnabled(boolean logInklessEnableServerConfig, String inklessEnableTopicConfig) {
-        // Given a setup with inkless defined at the server level
+    public void testInvalidDisklessTopicCreationWithoutSystemEnabled(boolean logDisklessEnableServerConfig, String disklessEnableTopicConfig) {
+        // Given a setup with diskless defined at the server level
         ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
-            .setInklessStorageSystemEnabled(false)
-            .setDefaultInklessEnable(logInklessEnableServerConfig)
+            .setDisklessStorageSystemEnabled(false)
+            .setDefaultDisklessEnable(logDisklessEnableServerConfig)
             .build();
         ReplicationControlManager replicationControl = ctx.replicationControl;
-        // Given an internal kafka topic with inkless enabled
+        // Given an internal kafka topic with diskless enabled
         CreateTopicsRequestData request = new CreateTopicsRequestData();
         CreateTopicsRequestData.CreatableTopicConfigCollection topicConfigs = new CreateTopicsRequestData.CreatableTopicConfigCollection();
-        if (inklessEnableTopicConfig != null) {
-            // If the inkless enable config is set, it should be added to the topic configs
+        if (disklessEnableTopicConfig != null) {
+            // If the diskless enable config is set, it should be added to the topic configs
             topicConfigs.add(new CreateTopicsRequestData.CreatableTopicConfig()
-                .setName(INKLESS_ENABLE_CONFIG)
-                .setValue(inklessEnableTopicConfig));
+                .setName(DISKLESS_ENABLE_CONFIG)
+                .setValue(disklessEnableTopicConfig));
         }
         final String topicName = "foo";
         request.topics().add(new CreatableTopic().setName(topicName).setConfigs(topicConfigs));
         // Given all brokers unfenced
         ctx.registerBrokers(0, 1, 2);
         ctx.unfenceBrokers(0, 1, 2);
-        // When creating an internal topic with inkless enabled, disable it
+        // When creating an internal topic with diskless enabled, disable it
         ControllerRequestContext requestContext = anonymousContextFor(ApiKeys.CREATE_TOPICS);
         ControllerResult<CreateTopicsResponseData> result =
             replicationControl.createTopics(requestContext, request, Set.of(topicName));
@@ -1033,7 +1033,7 @@ public class ReplicationControlManagerTest {
             new CreatableTopicResult()
                 .setName(topicName)
                 .setErrorCode(Errors.INVALID_REQUEST.code())
-                .setErrorMessage("Cannot create inkless topics when the inkless storage system is disabled. Please enable the inkless storage system to create inkless topics."));
+                .setErrorMessage("Cannot create diskless topics when the diskless storage system is disabled. Please enable the diskless storage system to create diskless topics."));
         assertEquals(expectedResponse, withoutConfigs(result.response()));
     }
 
@@ -2407,17 +2407,17 @@ public class ReplicationControlManagerTest {
 
     @ParameterizedTest
     @ApiKeyVersionsSource(apiKey = ApiKeys.ALTER_PARTITION)
-    public void testReassignPartitionsInkless(short version) {
+    public void testReassignPartitionsDiskless(short version) {
         MetadataVersion metadataVersion = MetadataVersion.latestTesting();
         ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
             .setMetadataVersion(metadataVersion)
-            .setInklessStorageSystemEnabled(true)
+            .setDisklessStorageSystemEnabled(true)
             .build();
         ReplicationControlManager replication = ctx.replicationControl;
         ctx.registerBrokers(0, 1);
         ctx.unfenceBrokers(0, 1);
         String topic = "foo";
-        ctx.createTestTopic(topic, new int[][] {new int[] {0}}, Map.of(INKLESS_ENABLE_CONFIG, "true"), (short) 0).topicId();
+        ctx.createTestTopic(topic, new int[][] {new int[] {0}}, Map.of(DISKLESS_ENABLE_CONFIG, "true"), (short) 0).topicId();
 
         // No change in the replication factor.
         ControllerResult<AlterPartitionReassignmentsResponseData> alterResult1 =

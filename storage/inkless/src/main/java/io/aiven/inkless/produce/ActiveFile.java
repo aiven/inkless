@@ -140,7 +140,7 @@ class ActiveFile {
                 brokerTopicStats.topicStats(topicIdPartition.topic()).messagesInRate().mark(appendInfo.numMessages());
                 brokerTopicStats.allTopicsStats().messagesInRate().mark(appendInfo.numMessages());
             // case e@ (_: UnknownTopicOrPartitionException |  // Handled earlier
-            //          _: NotLeaderOrFollowerException | // Not relevant for inkless
+            //          _: NotLeaderOrFollowerException | // Not relevant for diskless
             //          _: RecordTooLargeException |
             //          _: RecordBatchTooLargeException | // validation ignored during validation
             //          _: CorruptRecordException |

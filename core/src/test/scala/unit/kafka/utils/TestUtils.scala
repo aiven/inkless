@@ -162,13 +162,13 @@ object TestUtils extends Logging {
     defaultReplicationFactor: Short = 1,
     startingIdNumber: Int = 0,
     enableFetchFromFollower: Boolean = false,
-    inklessMode: Option[InklessMode] = None): Seq[Properties] = {
+    disklessMode: Option[DisklessMode] = None): Seq[Properties] = {
     val endingIdNumber = startingIdNumber + numConfigs - 1
     (startingIdNumber to endingIdNumber).map { node =>
       createBrokerConfig(node, enableControlledShutdown, enableDeleteTopic, RandomPort,
         interBrokerSecurityProtocol, trustStoreFile, saslProperties, enablePlaintext = enablePlaintext, enableSsl = enableSsl,
         enableSaslPlaintext = enableSaslPlaintext, enableSaslSsl = enableSaslSsl, rack = rackInfo.get(node), logDirCount = logDirCount, enableToken = enableToken,
-        numPartitions = numPartitions, defaultReplicationFactor = defaultReplicationFactor, enableFetchFromFollower = enableFetchFromFollower, inklessMode = inklessMode)
+        numPartitions = numPartitions, defaultReplicationFactor = defaultReplicationFactor, enableFetchFromFollower = enableFetchFromFollower, disklessMode = disklessMode)
     }
   }
 
@@ -232,7 +232,7 @@ object TestUtils extends Logging {
                          numPartitions: Int = 1,
                          defaultReplicationFactor: Short = 1,
                          enableFetchFromFollower: Boolean = false,
-                         inklessMode: Option[InklessMode] = None): Properties = {
+                         disklessMode: Option[DisklessMode] = None): Properties = {
     def shouldEnable(protocol: SecurityProtocol) = interBrokerSecurityProtocol.fold(false)(_ == protocol)
 
     val protocolAndPorts = ArrayBuffer[(SecurityProtocol, Int)]()
@@ -315,8 +315,8 @@ object TestUtils extends Logging {
       props.put(ReplicationConfigs.REPLICA_SELECTOR_CLASS_CONFIG, "org.apache.kafka.common.replica.RackAwareReplicaSelector")
     }
 
-    inklessMode.foreach { mode =>
-      mode.inklessBrokerConfigs(props)
+    disklessMode.foreach { mode =>
+      mode.disklessBrokerConfigs(props)
     }
     props
   }
@@ -389,8 +389,8 @@ object TestUtils extends Logging {
     val innerTopicConfig = new Properties()
     innerTopicConfig.putAll(topicConfig)
     var rf = replicationFactor
-    if (topicType == "inkless") {
-      innerTopicConfig.put("inkless.enable", "true")
+    if (topicType == "diskless") {
+      innerTopicConfig.put("diskless.enable", "true")
       rf = 1
     }
 
@@ -1533,14 +1533,14 @@ object TestUtils extends Logging {
     }
   }
 
-  class InklessMode(val pgContainer: InklessPostgreSQLContainer, val minioContainer: MinioContainer) {
-    def inklessControllerConfigs(props: Properties): Unit = {
-      inklessSystemConfig(props)
+  class DisklessMode(val pgContainer: InklessPostgreSQLContainer, val minioContainer: MinioContainer) {
+    def disklessControllerConfigs(props: Properties): Unit = {
+      disklessSystemConfig(props)
       inklessControlPlaneConfig(props)
     }
 
-    def inklessBrokerConfigs(props: Properties): Unit = {
-      inklessSystemConfig(props)
+    def disklessBrokerConfigs(props: Properties): Unit = {
+      disklessSystemConfig(props)
       inklessControlPlaneConfig(props)
       inklessStorageS3Config(props)
     }
@@ -1562,8 +1562,8 @@ object TestUtils extends Logging {
       props.put("inkless.control.plane.password", pgContainer.getPassword)
     }
 
-    def inklessSystemConfig(props: Properties): Unit = {
-      props.put("inkless.storage.system.enable", "true")
+    def disklessSystemConfig(props: Properties): Unit = {
+      props.put("diskless.storage.system.enable", "true")
     }
   }
 }

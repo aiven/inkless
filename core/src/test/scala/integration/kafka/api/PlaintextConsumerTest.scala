@@ -699,7 +699,7 @@ class PlaintextConsumerTest extends BaseConsumerTest {
 
     val admin = createAdminClient()
     val props = new util.HashMap[String, String]
-    props.put("inkless.enable", "true")
+    props.put("diskless.enable", "true")
     admin.createTopics(util.Set.of(new NewTopic(foo, 1, 1.toShort).configs(props))).all.get
 
     val consumerConfig = new Properties

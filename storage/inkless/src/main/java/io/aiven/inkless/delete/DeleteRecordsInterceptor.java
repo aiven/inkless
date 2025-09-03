@@ -70,13 +70,13 @@ public class DeleteRecordsInterceptor {
                              final Consumer<Map<TopicPartition, DeleteRecordsResponseData.DeleteRecordsPartitionResult>> responseCallback) {
         final TopicTypeCounter.Result countResult = topicTypeCounter.count(offsetPerPartition.keySet());
         if (countResult.bothTypesPresent()) {
-            LOGGER.warn("Deleting records from Inkless and classic topic in same request isn't supported");
+            LOGGER.warn("Deleting records from diskless and classic topic in same request isn't supported");
             respondAllWithError(offsetPerPartition, responseCallback, Errors.INVALID_REQUEST);
             return true;
         }
 
         // This request produces only to classic topics, don't intercept.
-        if (countResult.noInkless()) {
+        if (countResult.noDiskless()) {
             return false;
         }
 

@@ -76,8 +76,8 @@ public class FetchPlannerTest {
     ByteRange requestRange = new ByteRange(0, Integer.MAX_VALUE);
     Time time = new MockTime();
     Uuid topicId = Uuid.randomUuid();
-    TopicIdPartition partition0 = new TopicIdPartition(topicId, 0, "inkless-topic");
-    TopicIdPartition partition1 = new TopicIdPartition(topicId, 1, "inkless-topic");
+    TopicIdPartition partition0 = new TopicIdPartition(topicId, 0, "diskless-topic");
+    TopicIdPartition partition1 = new TopicIdPartition(topicId, 1, "diskless-topic");
 
     @Test
     public void planEmptyRequest() throws Exception {

@@ -233,7 +233,7 @@ public class ControllerMetricsChangesTest {
     }
 
     @Test
-    public void testNoPartitionChangesReportedOnInklessTopics() {
+    public void testNoPartitionChangesReportedOnDisklessTopics() {
         ControllerMetricsChanges changes = new ControllerMetricsChanges(s -> true);
         changes.handleTopicChange(TOPIC_DELTA2.image(), TOPIC_DELTA2);
         assertEquals(0, changes.globalTopicsChange());
@@ -258,8 +258,8 @@ public class ControllerMetricsChangesTest {
     }
 
     @Test
-    public void testIgnoreElectionResultForInklessTopics() {
-        // Given the topic is inkless
+    public void testIgnoreElectionResultForDisklessTopics() {
+        // Given the topic is diskless
         ControllerMetricsChanges changes = new ControllerMetricsChanges(s -> true);
         TopicImage image = new TopicImage("foo", FOO_ID, Map.of());
         TopicDelta delta = new TopicDelta(image);
