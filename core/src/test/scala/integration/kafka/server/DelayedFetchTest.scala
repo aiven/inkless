@@ -79,7 +79,7 @@ class DelayedFetchTest {
         .thenThrow(new FencedLeaderEpochException("Requested epoch has been fenced"))
     when(replicaManager.isAddingReplica(any(), anyInt())).thenReturn(false)
     when(replicaManager.fetchParamsWithNewMaxBytes(any(), any())).thenAnswer(_.getArgument(0))
-    when(replicaManager.fetchInklessMessages(any(), any())).thenReturn(CompletableFuture.completedFuture(Seq.empty))
+    when(replicaManager.fetchDisklessMessages(any(), any())).thenReturn(CompletableFuture.completedFuture(Seq.empty))
 
     expectReadFromReplica(fetchParams, topicIdPartition, fetchStatus.fetchInfo, Errors.FENCED_LEADER_EPOCH)
 
@@ -122,7 +122,7 @@ class DelayedFetchTest {
     expectReadFromReplica(fetchParams, topicIdPartition, fetchStatus.fetchInfo, Errors.NOT_LEADER_OR_FOLLOWER)
     when(replicaManager.isAddingReplica(any(), anyInt())).thenReturn(false)
     when(replicaManager.fetchParamsWithNewMaxBytes(any(), any())).thenAnswer(_.getArgument(0))
-    when(replicaManager.fetchInklessMessages(any(), any())).thenReturn(CompletableFuture.completedFuture(Seq.empty))
+    when(replicaManager.fetchDisklessMessages(any(), any())).thenReturn(CompletableFuture.completedFuture(Seq.empty))
 
     assertTrue(delayedFetch.tryComplete())
     assertTrue(delayedFetch.isCompleted)
@@ -174,7 +174,7 @@ class DelayedFetchTest {
         .setEndOffset(fetchOffset - 1))
     when(replicaManager.isAddingReplica(any(), anyInt())).thenReturn(false)
     when(replicaManager.fetchParamsWithNewMaxBytes(any(), any())).thenAnswer(_.getArgument(0))
-    when(replicaManager.fetchInklessMessages(any(), any())).thenReturn(CompletableFuture.completedFuture(Seq.empty))
+    when(replicaManager.fetchDisklessMessages(any(), any())).thenReturn(CompletableFuture.completedFuture(Seq.empty))
     expectReadFromReplica(fetchParams, topicIdPartition, fetchStatus.fetchInfo, Errors.NONE)
 
     assertTrue(delayedFetch.tryComplete())
@@ -222,7 +222,7 @@ class DelayedFetchTest {
       .thenReturn(new LogOffsetSnapshot(0L, endOffsetMetadata, endOffsetMetadata, endOffsetMetadata))
     when(replicaManager.isAddingReplica(any(), anyInt())).thenReturn(false)
     when(replicaManager.fetchParamsWithNewMaxBytes(any(), any())).thenAnswer(_.getArgument(0))
-    when(replicaManager.fetchInklessMessages(any(), any())).thenReturn(CompletableFuture.completedFuture(Seq.empty))
+    when(replicaManager.fetchDisklessMessages(any(), any())).thenReturn(CompletableFuture.completedFuture(Seq.empty))
     expectReadFromReplica(fetchParams, topicIdPartition, fetchStatus.fetchInfo, Errors.NONE)
 
     // 1. When `endOffset` is 0, it refers to the truncation case
@@ -287,7 +287,7 @@ class DelayedFetchTest {
     def testCompletionWhenLogIsTruncated(): Unit = {
       // Case A: When fetchOffset > endOffset (high watermark), it means the log has been truncated
       // and the fetch should complete immediately
-      val topicIdPartition = new TopicIdPartition(Uuid.randomUuid(), 0, "inkless-topic")
+      val topicIdPartition = new TopicIdPartition(Uuid.randomUuid(), 0, "diskless-topic")
       val fetchOffset = 500L
       val endOffset = 450L // endOffset < fetchOffset indicates truncation
       val logStartOffset = 0L
@@ -318,7 +318,7 @@ class DelayedFetchTest {
       val delayedFetch = new DelayedFetch(
         params = fetchParams,
         classicFetchPartitionStatus = Seq.empty,
-        inklessFetchPartitionStatus = Seq(topicIdPartition -> fetchStatus),
+        disklessFetchPartitionStatus = Seq(topicIdPartition -> fetchStatus),
         replicaManager = replicaManager,
         quota = replicaQuota,
         responseCallback = callback
@@ -336,7 +336,7 @@ class DelayedFetchTest {
         TimestampType.CREATE_TIME
       )
 
-      // Mock successful inkless batch finding with truncation scenario
+      // Mock successful diskless batch finding with truncation scenario
       val mockResponse = mock(classOf[FindBatchResponse])
       when(mockResponse.errors()).thenReturn(Errors.NONE)
       when(mockResponse.batches()).thenReturn(Collections.singletonList(new BatchInfo(
@@ -347,11 +347,11 @@ class DelayedFetchTest {
       when(mockResponse.highWatermark()).thenReturn(endOffset) // endOffset < fetchOffset (truncation)
 
       val future = Some(Collections.singletonList(mockResponse))
-      when(replicaManager.findInklessBatches(any[Seq[FindBatchRequest]], anyInt())).thenReturn(future)
+      when(replicaManager.findDisklessBatches(any[Seq[FindBatchRequest]], anyInt())).thenReturn(future)
 
-      // Mock fetchInklessMessages for onComplete
+      // Mock fetchDisklessMessages for onComplete
       when(replicaManager.fetchParamsWithNewMaxBytes(any[FetchParams], any[Float])).thenAnswer(_.getArgument(0))
-      when(replicaManager.fetchInklessMessages(any[FetchParams], any[Seq[(TopicIdPartition, FetchRequest.PartitionData)]]))
+      when(replicaManager.fetchDisklessMessages(any[FetchParams], any[Seq[(TopicIdPartition, FetchRequest.PartitionData)]]))
         .thenReturn(CompletableFuture.completedFuture(Seq((topicIdPartition, mock(classOf[FetchPartitionData])))))
 
       when(replicaManager.readFromLog(
@@ -362,7 +362,7 @@ class DelayedFetchTest {
       )).thenReturn(Seq.empty)
 
       // Test that tryComplete returns false but force completion (Case A)
-      // The truncation case (fetchOffset > endOffset) should cause tryCompleteInkless to return None,
+      // The truncation case (fetchOffset > endOffset) should cause tryCompleteDiskless to return None,
       // and accumulated bytes won't exceed minBytes
       assertFalse(delayedFetch.tryComplete())
       assertTrue(delayedFetch.isCompleted)
@@ -376,7 +376,7 @@ class DelayedFetchTest {
     def testNoCompletionWhenFetchOffsetEqualsHighWatermark(): Unit = {
       // Case D: When fetchOffset == endOffset (high watermark), no new data is available
       // and accumulated bytes won't exceed minBytes, so completion should not occur
-      val topicIdPartition = new TopicIdPartition(Uuid.randomUuid(), 0, "inkless-topic")
+      val topicIdPartition = new TopicIdPartition(Uuid.randomUuid(), 0, "diskless-topic")
       val fetchOffset = 500L
       val logStartOffset = 0L
       val currentLeaderEpoch = Optional.of[Integer](10)
@@ -407,7 +407,7 @@ class DelayedFetchTest {
       val delayedFetch = new DelayedFetch(
         params = fetchParams,
         classicFetchPartitionStatus = Seq.empty,
-        inklessFetchPartitionStatus = Seq(topicIdPartition -> fetchStatus),
+        disklessFetchPartitionStatus = Seq(topicIdPartition -> fetchStatus),
         replicaManager = replicaManager,
         quota = replicaQuota,
         responseCallback = callback
@@ -425,7 +425,7 @@ class DelayedFetchTest {
         TimestampType.CREATE_TIME
       )
 
-      // Mock successful inkless batch finding
+      // Mock successful diskless batch finding
       val mockResponse = mock(classOf[FindBatchResponse])
       when(mockResponse.errors()).thenReturn(Errors.NONE)
       when(mockResponse.batches()).thenReturn(Collections.singletonList(new BatchInfo(
@@ -437,7 +437,7 @@ class DelayedFetchTest {
       when(mockResponse.estimatedByteSize(fetchOffset)).thenReturn(estimatedBatchSize)
 
       val future = Some(Collections.singletonList(mockResponse))
-      when(replicaManager.findInklessBatches(any[Seq[FindBatchRequest]], anyInt())).thenReturn(future)
+      when(replicaManager.findDisklessBatches(any[Seq[FindBatchRequest]], anyInt())).thenReturn(future)
 
       when(replicaManager.readFromLog(
         fetchParams,
@@ -453,7 +453,7 @@ class DelayedFetchTest {
       assertFalse(fetchResultOpt.isDefined)
 
       // Verify that estimatedByteSize is never called since fetchOffset == endOffset
-      verify(replicaManager, never()).fetchInklessMessages(any[FetchParams], any[Seq[(TopicIdPartition, FetchRequest.PartitionData)]])
+      verify(replicaManager, never()).fetchDisklessMessages(any[FetchParams], any[Seq[(TopicIdPartition, FetchRequest.PartitionData)]])
       verify(mockResponse, never()).estimatedByteSize(anyLong())
     }
 
@@ -461,7 +461,7 @@ class DelayedFetchTest {
     def testNoCompletionWhenAccumulatedBytesUnderThreshold(): Unit = {
       // Case B (partial): When fetchOffset < endOffset (data available) but accumulated bytes < minBytes
       // The fetch should not complete and wait for more data or timeout
-      val topicIdPartition = new TopicIdPartition(Uuid.randomUuid(), 0, "inkless-topic")
+      val topicIdPartition = new TopicIdPartition(Uuid.randomUuid(), 0, "diskless-topic")
       val fetchOffset = 500L
       val endOffset = 600L // endOffset > fetchOffset, so data is available
       val logStartOffset = 0L
@@ -493,7 +493,7 @@ class DelayedFetchTest {
       val delayedFetch = new DelayedFetch(
         params = fetchParams,
         classicFetchPartitionStatus = Seq.empty,
-        inklessFetchPartitionStatus = Seq(topicIdPartition -> fetchStatus),
+        disklessFetchPartitionStatus = Seq(topicIdPartition -> fetchStatus),
         replicaManager = replicaManager,
         quota = replicaQuota,
         responseCallback = callback
@@ -511,7 +511,7 @@ class DelayedFetchTest {
         TimestampType.CREATE_TIME
       )
 
-      // Mock successful inkless batch finding with available data but insufficient bytes
+      // Mock successful diskless batch finding with available data but insufficient bytes
       val mockResponse = mock(classOf[FindBatchResponse])
       when(mockResponse.errors()).thenReturn(Errors.NONE)
       when(mockResponse.batches()).thenReturn(Collections.singletonList(new BatchInfo(
@@ -523,7 +523,7 @@ class DelayedFetchTest {
       when(mockResponse.estimatedByteSize(fetchOffset)).thenReturn(estimatedBatchSize)
 
       val future = Some(Collections.singletonList(mockResponse))
-      when(replicaManager.findInklessBatches(any[Seq[FindBatchRequest]], anyInt())).thenReturn(future)
+      when(replicaManager.findDisklessBatches(any[Seq[FindBatchRequest]], anyInt())).thenReturn(future)
 
       when(replicaManager.readFromLog(
         fetchParams,
@@ -544,7 +544,7 @@ class DelayedFetchTest {
     @Test
     def testCompletionWhenAccumulatedBytesExceedsMinBytes(): Unit = {
       // Case B: When accumulated bytes from available batches exceeds minBytes, fetch should complete
-      val topicIdPartition = new TopicIdPartition(Uuid.randomUuid(), 0, "inkless-topic")
+      val topicIdPartition = new TopicIdPartition(Uuid.randomUuid(), 0, "diskless-topic")
       val fetchOffset = 500L
       val endOffset = 600L // endOffset > fetchOffset, so data is available
       val logStartOffset = 0L
@@ -576,7 +576,7 @@ class DelayedFetchTest {
       val delayedFetch = new DelayedFetch(
         params = fetchParams,
         classicFetchPartitionStatus = Seq.empty,
-        inklessFetchPartitionStatus = Seq(topicIdPartition -> fetchStatus),
+        disklessFetchPartitionStatus = Seq(topicIdPartition -> fetchStatus),
         replicaManager = replicaManager,
         quota = replicaQuota,
         responseCallback = callback
@@ -594,7 +594,7 @@ class DelayedFetchTest {
         TimestampType.CREATE_TIME
       )
 
-      // Mock successful inkless batch finding with available data
+      // Mock successful diskless batch finding with available data
       val mockResponse = mock(classOf[FindBatchResponse])
       when(mockResponse.errors()).thenReturn(Errors.NONE)
       when(mockResponse.batches()).thenReturn(Collections.singletonList(new BatchInfo(
@@ -606,11 +606,11 @@ class DelayedFetchTest {
       when(mockResponse.estimatedByteSize(fetchOffset)).thenReturn(estimatedBatchSize)
 
       val future = Some(Collections.singletonList(mockResponse))
-      when(replicaManager.findInklessBatches(any[Seq[FindBatchRequest]], anyInt())).thenReturn(future)
+      when(replicaManager.findDisklessBatches(any[Seq[FindBatchRequest]], anyInt())).thenReturn(future)
 
-      // Mock fetchInklessMessages for onComplete
+      // Mock fetchDisklessMessages for onComplete
       when(replicaManager.fetchParamsWithNewMaxBytes(any[FetchParams], anyFloat())).thenAnswer(_.getArgument(0))
-      when(replicaManager.fetchInklessMessages(any[FetchParams], any[Seq[(TopicIdPartition, FetchRequest.PartitionData)]]))
+      when(replicaManager.fetchDisklessMessages(any[FetchParams], any[Seq[(TopicIdPartition, FetchRequest.PartitionData)]]))
         .thenReturn(CompletableFuture.completedFuture(Seq((topicIdPartition, mock(classOf[FetchPartitionData])))))
 
       when(replicaManager.readFromLog(
@@ -630,9 +630,9 @@ class DelayedFetchTest {
     }
 
     @Test
-    def testCompletionWhenErrorOccursDuringInklessBatchFinding(): Unit = {
-      // Case C: When an error occurs while trying to find inkless batches, fetch should complete immediately
-      val topicIdPartition = new TopicIdPartition(Uuid.randomUuid(), 0, "inkless-topic")
+    def testCompletionWhenErrorOccursDuringDisklessBatchFinding(): Unit = {
+      // Case C: When an error occurs while trying to find diskless batches, fetch should complete immediately
+      val topicIdPartition = new TopicIdPartition(Uuid.randomUuid(), 0, "diskless-topic")
       val fetchOffset = 500L
       val logStartOffset = 0L
       val currentLeaderEpoch = Optional.of[Integer](10)
@@ -662,7 +662,7 @@ class DelayedFetchTest {
       val delayedFetch = new DelayedFetch(
         params = fetchParams,
         classicFetchPartitionStatus = Seq.empty,
-        inklessFetchPartitionStatus = Seq(topicIdPartition -> fetchStatus),
+        disklessFetchPartitionStatus = Seq(topicIdPartition -> fetchStatus),
         replicaManager = replicaManager,
         quota = replicaQuota,
         responseCallback = callback
@@ -680,7 +680,7 @@ class DelayedFetchTest {
         TimestampType.CREATE_TIME
       )
 
-      // Mock error response from inkless batch finding
+      // Mock error response from diskless batch finding
       val mockResponse = mock(classOf[FindBatchResponse])
       when(mockResponse.errors()).thenReturn(Errors.UNKNOWN_SERVER_ERROR) // Non-NONE error triggers Case C
       when(mockResponse.batches()).thenReturn(Collections.singletonList(new BatchInfo(
@@ -691,11 +691,11 @@ class DelayedFetchTest {
       when(mockResponse.highWatermark()).thenReturn(600L)
 
       val future = Some(Collections.singletonList(mockResponse))
-      when(replicaManager.findInklessBatches(any[Seq[FindBatchRequest]], anyInt())).thenReturn(future)
+      when(replicaManager.findDisklessBatches(any[Seq[FindBatchRequest]], anyInt())).thenReturn(future)
 
-      // Mock fetchInklessMessages for onComplete
+      // Mock fetchDisklessMessages for onComplete
       when(replicaManager.fetchParamsWithNewMaxBytes(any[FetchParams], anyFloat())).thenAnswer(_.getArgument(0))
-      when(replicaManager.fetchInklessMessages(any[FetchParams], any[Seq[(TopicIdPartition, FetchRequest.PartitionData)]]))
+      when(replicaManager.fetchDisklessMessages(any[FetchParams], any[Seq[(TopicIdPartition, FetchRequest.PartitionData)]]))
         .thenReturn(CompletableFuture.completedFuture(Seq((topicIdPartition, mock(classOf[FetchPartitionData])))))
 
       when(replicaManager.readFromLog(

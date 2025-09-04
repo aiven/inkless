@@ -21,31 +21,31 @@ import org.apache.kafka.common.config.ConfigDef;
 import org.apache.kafka.common.config.TopicConfig;
 
 /**
- * Class to generate documentation for Inkless topic-level configurations.
+ * Class to generate documentation for diskless topic-level configurations.
  */
 public class TopicConfigsDocs {
     /**
-     * Returns a ConfigDef with all Inkless topic-level configurations.
+     * Returns a ConfigDef with all diskless topic-level configurations.
      */
     public static ConfigDef configDef() {
         final ConfigDef configDef = new ConfigDef();
 
         configDef.define(
-                TopicConfig.INKLESS_ENABLE_CONFIG,
+                TopicConfig.DISKLESS_ENABLE_CONFIG,
                 ConfigDef.Type.BOOLEAN,
                 false,
                 ConfigDef.Importance.HIGH,
-                TopicConfig.INKLESS_ENABLE_DOC
+                TopicConfig.DISKLESS_ENABLE_DOC
         );
 
         return configDef;
     }
 
     public static void main(String[] args) {
-        System.out.println("Inkless Topic Configurations");
+        System.out.println("Diskless Topic Configurations");
         System.out.println("============================");
         System.out.println();
-        System.out.println("This document describes the topic-level configurations for Inkless.");
+        System.out.println("This document describes the topic-level configurations for diskless.");
         System.out.println();
 
         final ConfigDef configDef = TopicConfigsDocs.configDef();

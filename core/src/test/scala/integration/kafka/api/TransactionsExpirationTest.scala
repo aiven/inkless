@@ -51,7 +51,7 @@ class TransactionsExpirationTest extends KafkaServerTestHarness {
   var admin: Admin = _
 
   override def generateConfigs: Seq[KafkaConfig] = {
-    TestUtils.createBrokerConfigs(3, inklessMode = inklessMode).map(KafkaConfig.fromProps(_, serverProps()))
+    TestUtils.createBrokerConfigs(3, disklessMode = disklessMode).map(KafkaConfig.fromProps(_, serverProps()))
   }
 
   @BeforeEach

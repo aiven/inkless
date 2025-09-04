@@ -2921,7 +2921,7 @@ class KafkaApisTest extends Logging {
 
   private def createInklessSharedStateWithTopic(inklessTopic: String): SharedState = {
     val metadataView = mock(classOf[MetadataView])
-    when(metadataView.isInklessTopic(ArgumentMatchers.eq(inklessTopic))).thenReturn(true)
+    when(metadataView.isDisklessTopic(ArgumentMatchers.eq(inklessTopic))).thenReturn(true)
     val sharedState = mock(classOf[SharedState])
     when(sharedState.metadata()).thenReturn(metadataView)
     sharedState

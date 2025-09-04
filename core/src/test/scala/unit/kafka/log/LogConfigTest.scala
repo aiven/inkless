@@ -449,45 +449,45 @@ class LogConfigTest {
 
   @ParameterizedTest
   @ValueSource(booleans = Array(true, false))
-  def testValidInklessEnable(enable: Boolean): Unit = {
+  def testValidDisklessEnable(enable: Boolean): Unit = {
     val kafkaProps = TestUtils.createDummyBrokerConfig()
     val logProps = new Properties
-    logProps.put(TopicConfig.INKLESS_ENABLE_CONFIG, enable.toString)
+    logProps.put(TopicConfig.DISKLESS_ENABLE_CONFIG, enable.toString)
     val kafkaConfig = KafkaConfig.fromProps(kafkaProps)
-    // Should be possible to set inkless to true/false at creation time
+    // Should be possible to set diskless to true/false at creation time
     LogConfig.validate(Collections.emptyMap(), logProps, kafkaConfig.extractLogConfigMap, false)
     // But fail to reset value after creation
     assertThrows(
       classOf[InvalidConfigurationException],
-      () => LogConfig.validate(Collections.singletonMap(TopicConfig.INKLESS_ENABLE_CONFIG, (!enable).toString), logProps, kafkaConfig.extractLogConfigMap, false))
+      () => LogConfig.validate(Collections.singletonMap(TopicConfig.DISKLESS_ENABLE_CONFIG, (!enable).toString), logProps, kafkaConfig.extractLogConfigMap, false))
   }
 
   @Test
-  def testValidInklessAndRemoteStorageEnable(): Unit = {
+  def testValidDisklessAndRemoteStorageEnable(): Unit = {
     val kafkaProps = TestUtils.createDummyBrokerConfig()
     val kafkaConfig = KafkaConfig.fromProps(kafkaProps)
 
     val logProps = new Properties
-    logProps.put(TopicConfig.INKLESS_ENABLE_CONFIG, "true")
+    logProps.put(TopicConfig.DISKLESS_ENABLE_CONFIG, "true")
     logProps.put(TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG, "true")
 
-    // Add Inkless
+    // Add diskless
     val t1 = assertThrows(
       classOf[InvalidConfigurationException],
       () => LogConfig.validate(Map(TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG -> "true").asJava, logProps, kafkaConfig.extractLogConfigMap, true))
-    assertEquals("Inkless and remote storage cannot be enabled simultaneously", t1.getMessage)
+    assertEquals("Diskless and remote storage cannot be enabled simultaneously", t1.getMessage)
 
     // Add remote storage
     val t2 = assertThrows(
       classOf[InvalidConfigurationException],
-      () => LogConfig.validate(Map(TopicConfig.INKLESS_ENABLE_CONFIG -> "true").asJava, logProps, kafkaConfig.extractLogConfigMap, true))
-    assertEquals("Inkless and remote storage cannot be enabled simultaneously", t2.getMessage)
+      () => LogConfig.validate(Map(TopicConfig.DISKLESS_ENABLE_CONFIG -> "true").asJava, logProps, kafkaConfig.extractLogConfigMap, true))
+    assertEquals("Diskless and remote storage cannot be enabled simultaneously", t2.getMessage)
 
     // Add both
     val t3 = assertThrows(
       classOf[InvalidConfigurationException],
       () => LogConfig.validate(Collections.emptyMap(), logProps, kafkaConfig.extractLogConfigMap, true))
-    assertEquals("Inkless and remote storage cannot be enabled simultaneously", t3.getMessage)
+    assertEquals("Diskless and remote storage cannot be enabled simultaneously", t3.getMessage)
   }
 
   @Test

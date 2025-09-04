@@ -71,7 +71,7 @@ public class FetchCompleterJobTest {
     static final ObjectKey OBJECT_KEY_B = PlainObjectKey.create(OBJECT_KEY_PREFIX, OBJECT_KEY_B_MAIN_PART);
 
     Uuid topicId = Uuid.randomUuid();
-    TopicIdPartition partition0 = new TopicIdPartition(topicId, 0, "inkless-topic");
+    TopicIdPartition partition0 = new TopicIdPartition(topicId, 0, "diskless-topic");
 
     @Test
     public void testEmptyFetch() {

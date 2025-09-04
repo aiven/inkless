@@ -151,7 +151,7 @@ public class LogConfig extends AbstractConfig {
             TopicConfig.REMOTE_LOG_COPY_DISABLE_CONFIG,
             QuotaConfig.LEADER_REPLICATION_THROTTLED_REPLICAS_CONFIG,
             QuotaConfig.FOLLOWER_REPLICATION_THROTTLED_REPLICAS_CONFIG,
-            TopicConfig.INKLESS_ENABLE_CONFIG
+            TopicConfig.DISKLESS_ENABLE_CONFIG
     );
 
     public static final ConfigDef SERVER_CONFIG_DEF = new ConfigDef()
@@ -192,7 +192,7 @@ public class LogConfig extends AbstractConfig {
             .define(ServerLogConfigs.ALTER_CONFIG_POLICY_CLASS_NAME_CONFIG, CLASS, null, LOW, ServerLogConfigs.ALTER_CONFIG_POLICY_CLASS_NAME_DOC)
             .define(ServerLogConfigs.LOG_DIR_FAILURE_TIMEOUT_MS_CONFIG, LONG, ServerLogConfigs.LOG_DIR_FAILURE_TIMEOUT_MS_DEFAULT, atLeast(1), LOW, ServerLogConfigs.LOG_DIR_FAILURE_TIMEOUT_MS_DOC)
             .defineInternal(ServerLogConfigs.LOG_INITIAL_TASK_DELAY_MS_CONFIG, LONG, ServerLogConfigs.LOG_INITIAL_TASK_DELAY_MS_DEFAULT, atLeast(0), LOW, ServerLogConfigs.LOG_INITIAL_TASK_DELAY_MS_DOC)
-            .defineInternal(ServerLogConfigs.INKLESS_ENABLE_CONFIG, BOOLEAN, ServerLogConfigs.INKLESS_ENABLE_DEFAULT, null, LOW, ServerLogConfigs.INKLESS_ENABLE_DOC);
+            .defineInternal(ServerLogConfigs.DISKLESS_ENABLE_CONFIG, BOOLEAN, ServerLogConfigs.DISKLESS_ENABLE_DEFAULT, null, LOW, ServerLogConfigs.DISKLESS_ENABLE_DOC);
 
     private static final LogConfigDef CONFIG = new LogConfigDef();
     static {
@@ -260,7 +260,7 @@ public class LogConfig extends AbstractConfig {
                         TopicConfig.LOCAL_LOG_RETENTION_BYTES_DOC)
                 .define(TopicConfig.REMOTE_LOG_COPY_DISABLE_CONFIG, BOOLEAN, false, MEDIUM, TopicConfig.REMOTE_LOG_COPY_DISABLE_DOC)
                 .define(TopicConfig.REMOTE_LOG_DELETE_ON_DISABLE_CONFIG, BOOLEAN, false, MEDIUM, TopicConfig.REMOTE_LOG_DELETE_ON_DISABLE_DOC)
-                .define(TopicConfig.INKLESS_ENABLE_CONFIG, BOOLEAN, false, MEDIUM, TopicConfig.INKLESS_ENABLE_DOC);
+                .define(TopicConfig.DISKLESS_ENABLE_CONFIG, BOOLEAN, false, MEDIUM, TopicConfig.DISKLESS_ENABLE_DOC);
     }
 
     public final Set<String> overriddenConfigs;
@@ -527,22 +527,22 @@ public class LogConfig extends AbstractConfig {
             boolean wasRemoteLogEnabled = Boolean.parseBoolean(existingConfigs.getOrDefault(TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG, "false"));
             validateTurningOffRemoteStorageWithDelete(newConfigs, wasRemoteLogEnabled, isRemoteLogStorageEnabled);
         }
-        boolean isInklessEnabled = (Boolean) newConfigs.get(TopicConfig.INKLESS_ENABLE_CONFIG);
-        if (isInklessEnabled) {
-            if (existingConfigs.containsKey(TopicConfig.INKLESS_ENABLE_CONFIG)) {
-                boolean wasInklessEnabled = Boolean.parseBoolean(existingConfigs.get(TopicConfig.INKLESS_ENABLE_CONFIG));
-                if (!wasInklessEnabled) {
-                    throw new InvalidConfigurationException("It is invalid to enable Inkless");
+        boolean isDisklessEnabled = (Boolean) newConfigs.get(TopicConfig.DISKLESS_ENABLE_CONFIG);
+        if (isDisklessEnabled) {
+            if (existingConfigs.containsKey(TopicConfig.DISKLESS_ENABLE_CONFIG)) {
+                boolean wasDisklessEnabled = Boolean.parseBoolean(existingConfigs.get(TopicConfig.DISKLESS_ENABLE_CONFIG));
+                if (!wasDisklessEnabled) {
+                    throw new InvalidConfigurationException("It is invalid to enable diskless");
                 }
             }
 
             if (isRemoteLogStorageEnabled) {
-                throw new InvalidConfigurationException("Inkless and remote storage cannot be enabled simultaneously");
+                throw new InvalidConfigurationException("Diskless and remote storage cannot be enabled simultaneously");
             }
         } else {
-            boolean wasInklessEnabled = Boolean.parseBoolean(existingConfigs.getOrDefault(TopicConfig.INKLESS_ENABLE_CONFIG, "false"));
-            if (wasInklessEnabled) {
-                throw new InvalidConfigurationException("It is invalid to disable Inkless");
+            boolean wasDisklessEnabled = Boolean.parseBoolean(existingConfigs.getOrDefault(TopicConfig.DISKLESS_ENABLE_CONFIG, "false"));
+            if (wasDisklessEnabled) {
+                throw new InvalidConfigurationException("It is invalid to disable diskless");
             }
         }
     }

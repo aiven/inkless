@@ -135,15 +135,15 @@ public class AppendHandlerTest {
                 OBJECT_KEY_CREATOR, KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, brokerTopicStats, DEFAULT_TOPIC_CONFIGS), writer);
 
         final Map<TopicPartition, MemoryRecords> entriesPerPartition = Map.of(
-            new TopicPartition("inkless1", 0), RECORDS_WITHOUT_PRODUCER_ID,
-            new TopicPartition("inkless2", 0), TRANSACTIONAL_RECORDS
+            new TopicPartition("diskless1", 0), RECORDS_WITHOUT_PRODUCER_ID,
+            new TopicPartition("diskless2", 0), TRANSACTIONAL_RECORDS
         );
 
         final var result = interceptor.handle(entriesPerPartition, requestLocal).get();
         assertThat(result).isEqualTo(
             Map.of(
-                new TopicPartition("inkless1", 0), new PartitionResponse(Errors.INVALID_REQUEST),
-                new TopicPartition("inkless2", 0), new PartitionResponse(Errors.INVALID_REQUEST)
+                new TopicPartition("diskless1", 0), new PartitionResponse(Errors.INVALID_REQUEST),
+                new TopicPartition("diskless2", 0), new PartitionResponse(Errors.INVALID_REQUEST)
             )
         );
         verify(writer, never()).write(any(), anyMap(), any());
@@ -166,17 +166,17 @@ public class AppendHandlerTest {
     @Test
     public void acceptNotTransactionalProduceForInklessTopics() throws Exception {
         final Map<TopicPartition, MemoryRecords> entriesPerPartition = Map.of(
-            new TopicPartition("inkless", 0), RECORDS_WITHOUT_PRODUCER_ID
+            new TopicPartition("diskless", 0), RECORDS_WITHOUT_PRODUCER_ID
         );
 
         final var writeResult = Map.of(
-            new TopicPartition("inkless", 0), new PartitionResponse(Errors.NONE)
+            new TopicPartition("diskless", 0), new PartitionResponse(Errors.NONE)
         );
         when(writer.write(any(), anyMap(), any())).thenReturn(
             CompletableFuture.completedFuture(writeResult)
         );
 
-        when(metadataView.getTopicId(eq("inkless"))).thenReturn(new Uuid(123, 456));
+        when(metadataView.getTopicId(eq("diskless"))).thenReturn(new Uuid(123, 456));
         when(metadataView.getTopicConfig(any())).thenReturn(new Properties());
         final AppendHandler interceptor = new AppendHandler(
             new SharedState(time, BROKER_ID, inklessConfig, metadataView, controlPlane, storageBackend,
@@ -189,12 +189,12 @@ public class AppendHandlerTest {
     @Test
     public void topicIdNotFound() {
         final Map<TopicPartition, MemoryRecords> entriesPerPartition = Map.of(
-            new TopicPartition("inkless", 0),
+            new TopicPartition("diskless", 0),
             RECORDS_WITHOUT_PRODUCER_ID
         );
 
-        when(metadataView.getTopicId(eq("inkless"))).thenAnswer(invocation -> {
-            throw new TopicIdEnricher.TopicIdNotFoundException("inkless");
+        when(metadataView.getTopicId(eq("diskless"))).thenAnswer(invocation -> {
+            throw new TopicIdEnricher.TopicIdNotFoundException("diskless");
         });
         final AppendHandler interceptor = new AppendHandler(
             new SharedState(time, BROKER_ID, inklessConfig, metadataView, controlPlane, storageBackend,
@@ -203,7 +203,7 @@ public class AppendHandlerTest {
         interceptor.handle(entriesPerPartition, requestLocal)
             .whenComplete((r, ex) -> assertThat(r).isEqualTo(
                 Map.of(
-                    new TopicPartition("inkless", 0), new PartitionResponse(Errors.UNKNOWN_SERVER_ERROR)
+                    new TopicPartition("diskless", 0), new PartitionResponse(Errors.UNKNOWN_SERVER_ERROR)
                 )
             ));
         verify(writer, never()).write(any(), anyMap(), any());
@@ -212,7 +212,7 @@ public class AppendHandlerTest {
     @Test
     public void writeFutureFailed() {
         final Map<TopicPartition, MemoryRecords> entriesPerPartition = Map.of(
-            new TopicPartition("inkless", 0),
+            new TopicPartition("diskless", 0),
             RECORDS_WITHOUT_PRODUCER_ID
         );
 
@@ -221,7 +221,7 @@ public class AppendHandlerTest {
             CompletableFuture.failedFuture(exception)
         );
 
-        when(metadataView.getTopicId(eq("inkless"))).thenReturn(new Uuid(123, 456));
+        when(metadataView.getTopicId(eq("diskless"))).thenReturn(new Uuid(123, 456));
         when(metadataView.getTopicConfig(any())).thenReturn(new Properties());
         final AppendHandler interceptor = new AppendHandler(
             new SharedState(time, BROKER_ID, inklessConfig, metadataView, controlPlane, storageBackend,

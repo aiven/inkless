@@ -1126,9 +1126,9 @@ class KafkaConfigTest {
         case QuotaConfig.FOLLOWER_REPLICATION_THROTTLED_REPLICAS_CONFIG =>
         // topic only config
         case QuotaConfig.LEADER_REPLICATION_THROTTLED_REPLICAS_CONFIG =>
-        // inkless topic only config
-        case TopicConfig.INKLESS_ENABLE_CONFIG =>
-          assertDynamic(kafkaConfigProp, true, () => config.logInklessEnable)
+        // diskless topic only config
+        case TopicConfig.DISKLESS_ENABLE_CONFIG =>
+          assertDynamic(kafkaConfigProp, true, () => config.logDisklessEnable)
         // topic only config
         case prop =>
           fail(prop + " must be explicitly checked for dynamic updatability. Note that LogConfig(s) require that KafkaConfig value lookups are dynamic and not static values.")

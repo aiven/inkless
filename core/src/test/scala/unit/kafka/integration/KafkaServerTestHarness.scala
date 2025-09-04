@@ -170,8 +170,8 @@ abstract class KafkaServerTestHarness extends QuorumTestHarness {
     var innerReplicationFactor = replicationFactor
     val innerTopicConfig = new Properties()
     innerTopicConfig.putAll(topicConfig)
-    if (topicTypeSpecified() == "inkless") {
-      innerTopicConfig.put("inkless.enable", "true")
+    if (topicTypeSpecified() == "diskless") {
+      innerTopicConfig.put("diskless.enable", "true")
       innerReplicationFactor = 1
     }
 
@@ -188,12 +188,12 @@ abstract class KafkaServerTestHarness extends QuorumTestHarness {
     }
   }
 
-  def createInklessTopic(topic: String,
-                         numPartitions: Int = 1,
-                         topicConfig: Properties = new Properties,
-                         listenerName: ListenerName = listenerName,
-                         adminClientConfig: Properties = new Properties): Map[Int, Int] = {
-    topicConfig.put("inkless.enable", "true")
+  def createDisklessTopic(topic: String,
+                          numPartitions: Int = 1,
+                          topicConfig: Properties = new Properties,
+                          listenerName: ListenerName = listenerName,
+                          adminClientConfig: Properties = new Properties): Map[Int, Int] = {
+    topicConfig.put("diskless.enable", "true")
 
     createTopic(topic, numPartitions, 1, topicConfig, listenerName, adminClientConfig)
   }

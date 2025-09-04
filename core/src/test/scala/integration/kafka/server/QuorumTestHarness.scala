@@ -19,7 +19,7 @@ package kafka.server
 
 import io.aiven.inkless.test_utils.{InklessPostgreSQLContainer, MinioContainer, PostgreSQLTestContainer, S3TestContainer}
 import kafka.server.QuorumTestHarness.{minioContainer, pgContainer}
-import kafka.utils.TestUtils.InklessMode
+import kafka.utils.TestUtils.DisklessMode
 
 import java.io.File
 import java.net.InetSocketAddress
@@ -195,7 +195,7 @@ abstract class QuorumTestHarness extends Logging {
 
   val faultHandler = faultHandlerFactory.faultHandler
 
-  var inklessMode: Option[InklessMode] = None
+  var disklessMode: Option[DisklessMode] = None
 
   // Note: according to the junit documentation: "JUnit Jupiter does not guarantee the execution
   // order of multiple @BeforeEach methods that are declared within a single test class or test
@@ -205,8 +205,8 @@ abstract class QuorumTestHarness extends Logging {
   @BeforeEach
   def setUp(testInfo: TestInfo): Unit = {
     this.testInfo = testInfo
-    val inklessEnabled = testInfo.getTags.contains("inkless")
-    if (inklessEnabled) this.inklessMode = Some(new InklessMode(pgContainer, minioContainer))
+    val disklessEnabled = testInfo.getTags.contains("inkless")
+    if (disklessEnabled) this.disklessMode = Some(new DisklessMode(pgContainer, minioContainer))
     Exit.setExitProcedure((code, message) => {
       try {
         throw new RuntimeException(s"exit($code, $message) called!")
@@ -232,11 +232,11 @@ abstract class QuorumTestHarness extends Logging {
       .getOrElse("[unspecified]")
 
     val props = new Properties()
-    if (inklessEnabled) {
+    if (disklessEnabled) {
       pgContainer.createDatabase(testInfo)
       minioContainer.createBucket(testInfo)
 
-      inklessMode.foreach(mode => mode.inklessControllerConfigs(props))
+      disklessMode.foreach(mode => mode.disklessControllerConfigs(props))
     }
 
     info(s"Running KRAFT test $name")
@@ -492,8 +492,8 @@ class QuorumAndGroupProtocolAndMaybeTopicTypeProvider extends ArgumentsProvider 
       Stream.of(
         Arguments.of("kraft", GroupProtocol.CLASSIC.name.toLowerCase(Locale.ROOT), "classic"),
         Arguments.of("kraft", GroupProtocol.CONSUMER.name.toLowerCase(Locale.ROOT), "classic"),
-        Arguments.of("kraft", GroupProtocol.CLASSIC.name.toLowerCase(Locale.ROOT), "inkless"),
-        Arguments.of("kraft", GroupProtocol.CONSUMER.name.toLowerCase(Locale.ROOT), "inkless")
+        Arguments.of("kraft", GroupProtocol.CLASSIC.name.toLowerCase(Locale.ROOT), "diskless"),
+        Arguments.of("kraft", GroupProtocol.CONSUMER.name.toLowerCase(Locale.ROOT), "diskless")
       )
     } else {
       Stream.of(

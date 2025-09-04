@@ -18,7 +18,6 @@
 package kafka.server
 
 import io.aiven.inkless.config.InklessConfig
-
 import java.util
 import java.util.concurrent.TimeUnit
 import java.util.Properties
@@ -373,7 +372,7 @@ class KafkaConfig private(doLog: Boolean, val props: util.Map[_, _])
   def logMessageTimestampAfterMaxMs: Long = getLong(ServerLogConfigs.LOG_MESSAGE_TIMESTAMP_AFTER_MAX_MS_CONFIG)
 
   def logDirFailureTimeoutMs: Long = getLong(ServerLogConfigs.LOG_DIR_FAILURE_TIMEOUT_MS_CONFIG)
-  def logInklessEnable = getBoolean(ServerLogConfigs.INKLESS_ENABLE_CONFIG)
+  def logDisklessEnable = getBoolean(ServerLogConfigs.DISKLESS_ENABLE_CONFIG)
 
   /** ********* Replication configuration ***********/
   val controllerSocketTimeoutMs: Int = getInt(ReplicationConfigs.CONTROLLER_SOCKET_TIMEOUT_MS_CONFIG)
@@ -455,8 +454,8 @@ class KafkaConfig private(doLog: Boolean, val props: util.Map[_, _])
   val maxIncrementalFetchSessionCacheSlots = getInt(ServerConfigs.MAX_INCREMENTAL_FETCH_SESSION_CACHE_SLOTS_CONFIG)
   val fetchMaxBytes = getInt(ServerConfigs.FETCH_MAX_BYTES_CONFIG)
 
-  val inklessFetchMinBytes = getInt(ServerConfigs.INKLESS_FETCH_MIN_BYTES_CONFIG)
-  val inklessFetchMaxWaitMs = getInt(ServerConfigs.INKLESS_FETCH_MAX_WAIT_MS_CONFIG)
+  val disklessFetchMinBytes = getInt(ServerConfigs.DISKLESS_FETCH_MIN_BYTES_CONFIG)
+  val disklessFetchMaxWaitMs = getInt(ServerConfigs.DISKLESS_FETCH_MAX_WAIT_MS_CONFIG)
 
   /** ********* Request Limit Configuration ***********/
   val maxRequestPartitionSizeLimit = getInt(ServerConfigs.MAX_REQUEST_PARTITION_SIZE_LIMIT_CONFIG)
@@ -472,8 +471,8 @@ class KafkaConfig private(doLog: Boolean, val props: util.Map[_, _])
   val unstableApiVersionsEnabled = getBoolean(ServerConfigs.UNSTABLE_API_VERSIONS_ENABLE_CONFIG)
   val unstableFeatureVersionsEnabled = getBoolean(ServerConfigs.UNSTABLE_FEATURE_VERSIONS_ENABLE_CONFIG)
 
-  /** Inkless Configuration */
-  val inklessStorageSystemEnabled: Boolean = getBoolean(ServerConfigs.INKLESS_STORAGE_SYSTEM_ENABLE_CONFIG)
+  /** Diskless Configuration */
+  val disklessStorageSystemEnabled: Boolean = getBoolean(ServerConfigs.DISKLESS_STORAGE_SYSTEM_ENABLE_CONFIG)
 
   def addReconfigurable(reconfigurable: Reconfigurable): Unit = {
     dynamicConfig.addReconfigurable(reconfigurable)
@@ -821,7 +820,7 @@ class KafkaConfig private(doLog: Boolean, val props: util.Map[_, _])
     logProps.put(TopicConfig.MESSAGE_TIMESTAMP_AFTER_MAX_MS_CONFIG, logMessageTimestampAfterMaxMs: java.lang.Long)
     logProps.put(TopicConfig.LOCAL_LOG_RETENTION_MS_CONFIG, remoteLogManagerConfig.logLocalRetentionMs: java.lang.Long)
     logProps.put(TopicConfig.LOCAL_LOG_RETENTION_BYTES_CONFIG, remoteLogManagerConfig.logLocalRetentionBytes: java.lang.Long)
-    logProps.put(TopicConfig.INKLESS_ENABLE_CONFIG, logInklessEnable)
+    logProps.put(TopicConfig.DISKLESS_ENABLE_CONFIG, logDisklessEnable)
     logProps
   }
 }

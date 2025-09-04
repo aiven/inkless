@@ -173,7 +173,7 @@ public class ControllerMetricsChangesTest {
     }
 
     @Test
-    public void testNoPartitionChangesReportedOnInklessTopics() {
+    public void testNoPartitionChangesReportedOnDisklessTopics() {
         ControllerMetricsChanges changes = new ControllerMetricsChanges(s -> true);
         changes.handleTopicChange(TOPIC_DELTA2.image(), TOPIC_DELTA2);
         assertEquals(0, changes.globalTopicsChange());

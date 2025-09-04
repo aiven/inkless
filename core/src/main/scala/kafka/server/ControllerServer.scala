@@ -226,8 +226,8 @@ class ControllerServer(
           setQuorumFeatures(quorumFeatures).
           setDefaultReplicationFactor(config.defaultReplicationFactor.toShort).
           setDefaultNumPartitions(config.numPartitions.intValue()).
-          setDefaultInklessEnable(config.logInklessEnable).
-          setInklessStorageSystemEnabled(config.inklessStorageSystemEnabled).
+          setDefaultDisklessEnable(config.logDisklessEnable).
+          setDisklessStorageSystemEnabled(config.disklessStorageSystemEnabled).
           setSessionTimeoutNs(TimeUnit.NANOSECONDS.convert(config.brokerSessionTimeoutMs.longValue(),
             TimeUnit.MILLISECONDS)).
           setLeaderImbalanceCheckIntervalNs(leaderImbalanceCheckIntervalNs).
@@ -361,13 +361,13 @@ class ControllerServer(
           new DelegationTokenManager(config, tokenCache, time)
       ))
 
-      // Inkless metadata view needed to filter out inkless topics from offline/leadership metrics
+      // Inkless metadata view needed to filter out Diskless topics from offline/leadership metrics
       val inklessMetadataView = new InklessMetadataView(metadataCache, () => config.extractLogConfigMap)
       // Set up the metrics publisher.
       metadataPublishers.add(new ControllerMetadataMetricsPublisher(
         sharedServer.controllerServerMetrics,
         sharedServer.metadataPublishingFaultHandler,
-        t => inklessMetadataView.isInklessTopic(t)
+        t => inklessMetadataView.isDisklessTopic(t)
       ))
 
       // Set up the ACL publisher.

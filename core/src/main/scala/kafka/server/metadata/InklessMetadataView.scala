@@ -50,17 +50,17 @@ class InklessMetadataView(val metadataCache: KRaftMetadataCache, val defaultConf
     metadataCache.getTopicId(topicName)
   }
 
-  override def isInklessTopic(topicName: String): Boolean = {
-    metadataCache.topicConfig(topicName).getProperty(TopicConfig.INKLESS_ENABLE_CONFIG, "false").toBoolean
+  override def isDisklessTopic(topicName: String): Boolean = {
+    metadataCache.topicConfig(topicName).getProperty(TopicConfig.DISKLESS_ENABLE_CONFIG, "false").toBoolean
   }
 
   override def getTopicConfig(topicName: String): Properties = {
     metadataCache.topicConfig(topicName)
   }
 
-  override def getInklessTopicPartitions: util.Set[TopicIdPartition] = {
+  override def getDisklessTopicPartitions: util.Set[TopicIdPartition] = {
     metadataCache.getAllTopics()
-      .filter(isInklessTopic)
+      .filter(isDisklessTopic)
       .flatMap(metadataCache.getTopicPartitions)
       .map(tp => new TopicIdPartition(metadataCache.getTopicId(tp.topic()), tp))
       .toSet

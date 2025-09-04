@@ -34,9 +34,9 @@ public interface MetadataView {
 
     Uuid getTopicId(String topicName);
 
-    boolean isInklessTopic(String topicName);
+    boolean isDisklessTopic(String topicName);
 
     Properties getTopicConfig(String topicName);
 
-    Set<TopicIdPartition> getInklessTopicPartitions();
+    Set<TopicIdPartition> getDisklessTopicPartitions();
 }

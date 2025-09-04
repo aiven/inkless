@@ -63,8 +63,8 @@ public class ControllerMetadataMetricsPublisherTest {
             this(false);
         }
 
-        TestEnv(boolean isInklessTopics) {
-            publisher = new ControllerMetadataMetricsPublisher(metrics, faultHandler, topicName -> isInklessTopics);
+        TestEnv(boolean isDisklessTopics) {
+            publisher = new ControllerMetadataMetricsPublisher(metrics, faultHandler, topicName -> isDisklessTopics);
         }
 
         @Override
@@ -165,7 +165,7 @@ public class ControllerMetadataMetricsPublisherTest {
     }
 
     @Test
-    public void testLoadSnapshotWithInklessTopics() {
+    public void testLoadSnapshotWithDisklessTopics() {
         try (TestEnv env = new TestEnv(true)) {
             MetadataDelta delta = new MetadataDelta(MetadataImage.EMPTY);
             ImageReWriter writer = new ImageReWriter(delta);
@@ -174,7 +174,7 @@ public class ControllerMetadataMetricsPublisherTest {
             assertEquals(0, env.metrics.activeBrokerCount());
             assertEquals(3, env.metrics.globalTopicCount());
             assertEquals(7, env.metrics.globalPartitionCount());
-            // Inkless topics are not counted in the metrics
+            // Diskless topics are not counted in the metrics
             assertEquals(0, env.metrics.offlinePartitionCount());
             assertEquals(0, env.metrics.preferredReplicaImbalanceCount());
             assertEquals(0, env.metrics.metadataErrorCount());

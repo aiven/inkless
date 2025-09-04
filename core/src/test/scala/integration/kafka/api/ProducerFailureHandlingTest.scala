@@ -53,7 +53,7 @@ class ProducerFailureHandlingTest extends KafkaServerTestHarness {
   overridingProps.put(GroupCoordinatorConfig.OFFSETS_TOPIC_PARTITIONS_CONFIG, 1.toString)
 
   def generateConfigs =
-    TestUtils.createBrokerConfigs(numServers, enableControlledShutdown = false, inklessMode = inklessMode).map(KafkaConfig.fromProps(_, overridingProps))
+    TestUtils.createBrokerConfigs(numServers, enableControlledShutdown = false, disklessMode = disklessMode).map(KafkaConfig.fromProps(_, overridingProps))
 
   private var producer1: KafkaProducer[Array[Byte], Array[Byte]] = _
   private var producer2: KafkaProducer[Array[Byte], Array[Byte]] = _

@@ -32,14 +32,14 @@ import java.util.function.Function;
  */
 class ControllerMetricsChanges {
 
-    private final Function<String, Boolean> isInklessTopic;
+    private final Function<String, Boolean> isDisklessTopic;
 
     ControllerMetricsChanges() {
-        this.isInklessTopic = topicName -> false; // Default implementation, can be overridden
+        this.isDisklessTopic = topicName -> false; // Default implementation, can be overridden
     }
 
-    ControllerMetricsChanges(Function<String, Boolean> isInklessTopic) {
-        this.isInklessTopic = isInklessTopic;
+    ControllerMetricsChanges(Function<String, Boolean> isDisklessTopic) {
+        this.isDisklessTopic = isDisklessTopic;
     }
 
     /**
@@ -103,28 +103,28 @@ class ControllerMetricsChanges {
     }
 
     void handleDeletedTopic(TopicImage deletedTopic) {
-        deletedTopic.partitions().values().forEach(prev -> handlePartitionChange(prev, null, isInklessTopic.apply(deletedTopic.name())));
+        deletedTopic.partitions().values().forEach(prev -> handlePartitionChange(prev, null, isDisklessTopic.apply(deletedTopic.name())));
         globalTopicsChange--;
     }
 
     void handleTopicChange(TopicImage prev, TopicDelta topicDelta) {
-        final Boolean isInkless = isInklessTopic.apply(topicDelta.name());
+        final Boolean isDiskless = isDisklessTopic.apply(topicDelta.name());
         if (prev == null) {
             globalTopicsChange++;
             for (PartitionRegistration nextPartition : topicDelta.partitionChanges().values()) {
-                handlePartitionChange(null, nextPartition, isInkless);
+                handlePartitionChange(null, nextPartition, isDiskless);
             }
         } else {
             for (Entry<Integer, PartitionRegistration> entry : topicDelta.partitionChanges().entrySet()) {
                 int partitionId = entry.getKey();
                 PartitionRegistration prevPartition = prev.partitions().get(partitionId);
                 PartitionRegistration nextPartition = entry.getValue();
-                handlePartitionChange(prevPartition, nextPartition, isInkless);
+                handlePartitionChange(prevPartition, nextPartition, isDiskless);
             }
         }
     }
 
-    void handlePartitionChange(PartitionRegistration prev, PartitionRegistration next, boolean isInkless) {
+    void handlePartitionChange(PartitionRegistration prev, PartitionRegistration next, boolean isDiskless) {
         boolean wasPresent = false;
         boolean wasOffline = false;
         boolean wasWithoutPreferredLeader = false;
@@ -133,10 +133,10 @@ class ControllerMetricsChanges {
             wasOffline = !prev.hasLeader();
             wasWithoutPreferredLeader = !prev.hasPreferredLeader();
         }
-        if (isInkless) {
+        if (isDiskless) {
             wasPresent = true;
-            wasOffline = false; // Inkless partitions are always considered online
-            wasWithoutPreferredLeader = false; // Inkless partitions are always considered to have a preferred leader
+            wasOffline = false; // Diskless partitions are always considered online
+            wasWithoutPreferredLeader = false; // Diskless partitions are always considered to have a preferred leader
         }
         boolean isPresent = false;
         boolean isOffline = false;
@@ -152,10 +152,10 @@ class ControllerMetricsChanges {
                 uncleanLeaderElection++;
             }
         }
-        if (isInkless) {
+        if (isDiskless) {
             isPresent = true;
-            isOffline = false; // Inkless partitions are always considered online
-            isWithoutPreferredLeader = false; // Inkless partitions are always considered to have a preferred leader
+            isOffline = false; // Diskless partitions are always considered online
+            isWithoutPreferredLeader = false; // Diskless partitions are always considered to have a preferred leader
         }
         globalPartitionsChange += delta(wasPresent, isPresent);
         offlinePartitionsChange += delta(wasOffline, isOffline);

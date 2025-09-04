@@ -50,7 +50,7 @@ class TransactionsWithMaxInFlightOneTest extends KafkaServerTestHarness {
   val transactionalConsumers = mutable.Buffer[Consumer[Array[Byte], Array[Byte]]]()
 
   override def generateConfigs: Seq[KafkaConfig] = {
-    TestUtils.createBrokerConfigs(numBrokers, inklessMode = inklessMode).map(KafkaConfig.fromProps(_, serverProps()))
+    TestUtils.createBrokerConfigs(numBrokers, disklessMode = disklessMode).map(KafkaConfig.fromProps(_, serverProps()))
   }
 
   @BeforeEach

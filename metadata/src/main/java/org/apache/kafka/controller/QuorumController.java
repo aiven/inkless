@@ -227,8 +227,8 @@ public final class QuorumController implements Controller {
         private long delegationTokenExpiryCheckIntervalMs = TimeUnit.MINUTES.toMillis(5);
         private long uncleanLeaderElectionCheckIntervalMs = TimeUnit.MINUTES.toMillis(5);
         private String interBrokerListenerName = "PLAINTEXT";
-        private boolean defaultInklessEnable = false;
-        private boolean inklessStorageSystemEnabled = false;
+        private boolean defaultDisklessEnable = false;
+        private boolean disklessStorageSystemEnabled = false;
 
         public Builder(int nodeId, String clusterId) {
             this.nodeId = nodeId;
@@ -289,13 +289,13 @@ public final class QuorumController implements Controller {
             return this;
         }
 
-        public Builder setDefaultInklessEnable(boolean defaultInklessEnable) {
-            this.defaultInklessEnable = defaultInklessEnable;
+        public Builder setDefaultDisklessEnable(boolean defaultDisklessEnable) {
+            this.defaultDisklessEnable = defaultDisklessEnable;
             return this;
         }
 
-        public Builder setInklessStorageSystemEnabled(boolean inklessStorageSystemEnabled) {
-            this.inklessStorageSystemEnabled = inklessStorageSystemEnabled;
+        public Builder setDisklessStorageSystemEnabled(boolean disklessStorageSystemEnabled) {
+            this.disklessStorageSystemEnabled = disklessStorageSystemEnabled;
             return this;
         }
 
@@ -443,8 +443,8 @@ public final class QuorumController implements Controller {
                     quorumFeatures,
                     defaultReplicationFactor,
                     defaultNumPartitions,
-                    defaultInklessEnable,
-                    inklessStorageSystemEnabled,
+                    defaultDisklessEnable,
+                    disklessStorageSystemEnabled,
                     replicaPlacer,
                     leaderImbalanceCheckIntervalNs,
                     maxIdleIntervalNs,
@@ -1503,8 +1503,8 @@ public final class QuorumController implements Controller {
         QuorumFeatures quorumFeatures,
         short defaultReplicationFactor,
         int defaultNumPartitions,
-        boolean defaultInklessEnable,
-        boolean inklessStorageSystemEnabled,
+        boolean defaultDisklessEnable,
+        boolean disklessStorageSystemEnabled,
         ReplicaPlacer replicaPlacer,
         OptionalLong leaderImbalanceCheckIntervalNs,
         OptionalLong maxIdleIntervalNs,
@@ -1587,8 +1587,8 @@ public final class QuorumController implements Controller {
             setLogContext(logContext).
             setDefaultReplicationFactor(defaultReplicationFactor).
             setDefaultNumPartitions(defaultNumPartitions).
-            setDefaultInklessEnable(defaultInklessEnable).
-            setInklessStorageSystemEnabled(inklessStorageSystemEnabled).
+            setDefaultDisklessEnable(defaultDisklessEnable).
+            setDisklessStorageSystemEnabled(disklessStorageSystemEnabled).
             setMaxElectionsPerImbalance(ReplicationControlManager.MAX_ELECTIONS_PER_IMBALANCE).
             setConfigurationControl(configurationControl).
             setClusterControl(clusterControl).

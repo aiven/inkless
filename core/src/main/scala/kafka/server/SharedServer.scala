@@ -282,7 +282,7 @@ class SharedServer(
 
         val externalKRaftMetrics = new DefaultExternalKRaftMetrics(Option(brokerMetrics), Option(controllerServerMetrics))
 
-        if (brokerConfig.inklessStorageSystemEnabled)
+        if (brokerConfig.disklessStorageSystemEnabled)
           inklessControlPlane = Some(ControlPlane.create(sharedServerConfig.inklessConfig, time))
 
         val _raftManager = new KafkaRaftManager[ApiMessageAndVersion](

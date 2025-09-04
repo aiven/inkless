@@ -363,8 +363,8 @@ class KafkaApis(val requestChannel: RequestChannel,
   case class LeaderNode(leaderId: Int, leaderEpoch: Int, node: Option[Node])
 
   private def getCurrentLeader(tp: TopicPartition, ln: ListenerName): LeaderNode = {
-    // Return unknown leader if the topic is inkless, as these topics do not have leaders
-    if (inklessSharedState.exists(_.metadata().isInklessTopic(tp.topic()))) {
+    // Return unknown leader if the topic is diskless, as these topics do not have leaders
+    if (inklessSharedState.exists(_.metadata().isDisklessTopic(tp.topic()))) {
       return LeaderNode(-1, -1, metadataCache.getAliveBrokerNode(-1, ln))
     }
 
@@ -1709,8 +1709,8 @@ class KafkaApis(val requestChannel: RequestChannel,
 
       val currentErrors = new ConcurrentHashMap[TopicPartition, Errors]()
       marker.partitions.forEach { partition =>
-        if (inklessSharedState.exists(s => s.metadata().isInklessTopic(partition.topic()))) {
-          warn("Attempt to call WriteTxnMarkersRequest with Inkless topic")
+        if (inklessSharedState.exists(s => s.metadata().isDisklessTopic(partition.topic()))) {
+          warn("Attempt to call WriteTxnMarkersRequest with diskless topic")
           currentErrors.put(partition, Errors.INVALID_TOPIC_EXCEPTION)
         } else {
           replicaManager.onlinePartition(partition) match {
@@ -1875,8 +1875,8 @@ class KafkaApis(val requestChannel: RequestChannel,
             unauthorizedTopicErrors += topicPartition -> Errors.TOPIC_AUTHORIZATION_FAILED
           else if (!metadataCache.contains(topicPartition))
             nonExistingTopicErrors += topicPartition -> Errors.UNKNOWN_TOPIC_OR_PARTITION
-          else if (inklessSharedState.exists(s => s.metadata().isInklessTopic(topicPartition.topic))) {
-            warn("Attempt to call AddPartitionsToTxnRequest with Inkless topic")
+          else if (inklessSharedState.exists(s => s.metadata().isDisklessTopic(topicPartition.topic))) {
+            warn("Attempt to call AddPartitionsToTxnRequest with diskless topic")
             prohibitedInklessTopicErrors += topicPartition -> Errors.INVALID_TOPIC_EXCEPTION
           } else
             authorizedPartitions.add(topicPartition)
@@ -2027,8 +2027,8 @@ class KafkaApis(val requestChannel: RequestChannel,
           // to the response with UNKNOWN_TOPIC_OR_PARTITION.
           responseBuilder.addPartitions[TxnOffsetCommitRequestData.TxnOffsetCommitRequestPartition](
             topic.name, topic.partitions, _.partitionIndex, Errors.UNKNOWN_TOPIC_OR_PARTITION)
-        } else if (inklessSharedState.exists(s => s.metadata().isInklessTopic(topic.name()))) {
-          warn("Attempt to call TxnOffsetCommitRequest with Inkless topic")
+        } else if (inklessSharedState.exists(s => s.metadata().isDisklessTopic(topic.name()))) {
+          warn("Attempt to call TxnOffsetCommitRequest with diskless topic")
           responseBuilder.addPartitions[TxnOffsetCommitRequestData.TxnOffsetCommitRequestPartition](
             topic.name, topic.partitions, _.partitionIndex, Errors.INVALID_TOPIC_EXCEPTION)
         } else {

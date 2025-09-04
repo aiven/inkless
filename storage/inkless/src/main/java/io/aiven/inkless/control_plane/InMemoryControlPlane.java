@@ -287,7 +287,7 @@ public class InMemoryControlPlane extends AbstractControlPlane {
 
     @Override
     public synchronized void deleteTopics(final Set<Uuid> topicIds) {
-        // There may be some non-Inkless topics there, but they should be no-op.
+        // There may be some non-diskless topics there, but they should be no-op.
 
         final List<TopicIdPartition> partitionsToDelete = logs.keySet().stream()
             .filter(tidp -> topicIds.contains(tidp.topicId()))

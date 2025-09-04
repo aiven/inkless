@@ -230,7 +230,7 @@ public class TopicConfig {
     public static final String MESSAGE_DOWNCONVERSION_ENABLE_DOC = "Down-conversion is not possible in Apache Kafka 4.0 and newer, " +
         "hence this configuration is no-op and it is deprecated for removal in Apache Kafka 5.0.";
 
-    public static final String INKLESS_ENABLE_CONFIG = "inkless.enable";
-    public static final String INKLESS_ENABLE_DOC = "To enable inkless mode for a topic, set this configuration as true. " +
-            "You can not disable this config once it is enabled. If not set, defaults to server level config log.inkless.enable.";
+    public static final String DISKLESS_ENABLE_CONFIG = "diskless.enable";
+    public static final String DISKLESS_ENABLE_DOC = "To enable diskless mode for a topic, set this configuration as true. " +
+            "You can not disable this config once it is enabled. If not set, defaults to server level config log.diskless.enable.";
 }

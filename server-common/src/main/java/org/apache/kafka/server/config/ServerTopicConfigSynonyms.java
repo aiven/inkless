@@ -88,7 +88,7 @@ public final class ServerTopicConfigSynonyms {
         sameNameWithLogPrefix(TopicConfig.MESSAGE_TIMESTAMP_AFTER_MAX_MS_CONFIG),
         sameNameWithLogPrefix(TopicConfig.LOCAL_LOG_RETENTION_MS_CONFIG),
         sameNameWithLogPrefix(TopicConfig.LOCAL_LOG_RETENTION_BYTES_CONFIG),
-        sameNameWithLogPrefix(TopicConfig.INKLESS_ENABLE_CONFIG)
+        sameNameWithLogPrefix(TopicConfig.DISKLESS_ENABLE_CONFIG)
     ));
 
     /**

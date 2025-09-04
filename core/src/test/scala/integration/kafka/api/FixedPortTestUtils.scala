@@ -17,7 +17,7 @@ import java.io.IOException
 import java.net.ServerSocket
 import java.util.Properties
 import kafka.utils.TestUtils
-import kafka.utils.TestUtils.InklessMode
+import kafka.utils.TestUtils.DisklessMode
 
 /**
  * DO NOT USE THESE UTILITIES UNLESS YOU ABSOLUTELY MUST
@@ -41,10 +41,10 @@ object FixedPortTestUtils {
   def createBrokerConfigs(numConfigs: Int,
     enableControlledShutdown: Boolean = true,
     enableDeleteTopic: Boolean = false,
-    inklessMode: Option[InklessMode] = None): Seq[Properties] = {
+    disklessMode: Option[DisklessMode] = None): Seq[Properties] = {
     val ports = FixedPortTestUtils.choosePorts(numConfigs)
     (0 until numConfigs).map { node =>
-      TestUtils.createBrokerConfig(node, enableControlledShutdown, enableDeleteTopic, ports(node), inklessMode = inklessMode)
+      TestUtils.createBrokerConfig(node, enableControlledShutdown, enableDeleteTopic, ports(node), disklessMode = disklessMode)
     }
   }
 

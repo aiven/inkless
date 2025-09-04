@@ -54,7 +54,6 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
-import static org.postgresql.hostchooser.HostRequirement.any;
 
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.STRICT_STUBS)
@@ -82,9 +81,9 @@ class FetchOffsetHandlerTest {
 
     @Test
     void mustHandle() {
-        when(metadataView.isInklessTopic(TOPIC_0)).thenReturn(true);
-        when(metadataView.isInklessTopic(TOPIC_1)).thenReturn(true);
-        when(metadataView.isInklessTopic(TOPIC_CLASSIC)).thenReturn(false);
+        when(metadataView.isDisklessTopic(TOPIC_0)).thenReturn(true);
+        when(metadataView.isDisklessTopic(TOPIC_1)).thenReturn(true);
+        when(metadataView.isDisklessTopic(TOPIC_CLASSIC)).thenReturn(false);
 
         final FetchOffsetHandler.Job job = new FetchOffsetHandler.Job(metadataView, controlPlane, executor);
         assertThat(job.mustHandle(TOPIC_0)).isTrue();
