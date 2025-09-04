@@ -32,7 +32,7 @@ import static java.lang.System.out;
  **/
 public class ConfigsDocs {
     public static void main(final String[] args) {
-        printSectionTitle("Inkless Configs");
+        printSectionTitle("Diskless Configs");
         out.println(".. Generated from *Config.java classes by " + ConfigsDocs.class.getCanonicalName());
         out.println();
 

@@ -161,7 +161,7 @@ public class ServerLogConfigs {
     public static final int MAX_MESSAGE_BYTES_DEFAULT = 1024 * 1024 + Records.LOG_OVERHEAD;
     public static final String COMPRESSION_TYPE_DEFAULT = BrokerCompressionType.PRODUCER.name;
 
-    public static final String INKLESS_ENABLE_CONFIG = ServerTopicConfigSynonyms.serverSynonym(TopicConfig.INKLESS_ENABLE_CONFIG);
-    public static final boolean INKLESS_ENABLE_DEFAULT = false;
-    public static final String INKLESS_ENABLE_DOC = TopicConfig.INKLESS_ENABLE_DOC;
+    public static final String DISKLESS_ENABLE_CONFIG = ServerTopicConfigSynonyms.serverSynonym(TopicConfig.DISKLESS_ENABLE_CONFIG);
+    public static final boolean DISKLESS_ENABLE_DEFAULT = false;
+    public static final String DISKLESS_ENABLE_DOC = TopicConfig.DISKLESS_ENABLE_DOC;
 }

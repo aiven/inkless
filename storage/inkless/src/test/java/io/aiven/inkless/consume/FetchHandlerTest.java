@@ -67,7 +67,7 @@ public class FetchHandlerTest {
 
     private final short fetchVersion = ApiMessageType.FETCH.highestSupportedVersion(true);
     private final Uuid inklessUuid = Uuid.randomUuid();
-    private final TopicIdPartition topicIdPartition = new TopicIdPartition(inklessUuid, 0, "inkless");
+    private final TopicIdPartition topicIdPartition = new TopicIdPartition(inklessUuid, 0, "diskless");
 
 
     @Test

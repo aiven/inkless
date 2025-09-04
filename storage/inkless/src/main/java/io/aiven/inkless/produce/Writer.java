@@ -54,9 +54,9 @@ import io.aiven.inkless.control_plane.ControlPlane;
 import io.aiven.inkless.storage_backend.common.StorageBackend;
 
 /**
- * The entry point for Inkless writing.
+ * The entry point for diskless writing.
  *
- * <p>This class encapsulates all the machinery of writing to Inkless:
+ * <p>This class encapsulates all the machinery of writing to diskless:
  * buffers, timers, uploading files, committing to the control plane.
  *
  * <p>The Writer has the active file, the queue of files being uploaded.

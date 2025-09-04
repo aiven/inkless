@@ -53,7 +53,7 @@ class ProducerSendWhileDeletionTest extends IntegrationTestHarness {
    * succeed as long as the partition is included in the metadata.
    */
   @ParameterizedTest(name = "{displayName}.topicType={1}")
-  @CsvSource(Array("classic", "inkless"))
+  @CsvSource(Array("classic", "diskless"))
   def testSendWithTopicDeletionMidWay(topicType: String): Unit = {
     val numRecords = 10
     val topic = "topic"

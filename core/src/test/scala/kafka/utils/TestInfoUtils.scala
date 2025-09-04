@@ -48,8 +48,8 @@ object TestInfoUtils {
   def topicTypeSpecified(testInfo: TestInfo): String = {
     if (testInfo.getDisplayName.contains("topicType=classic"))
       "classic"
-    else if (testInfo.getDisplayName.contains("topicType=inkless"))
-      "inkless"
+    else if (testInfo.getDisplayName.contains("topicType=diskless"))
+      "diskless"
     else
       "classic" // default
   }

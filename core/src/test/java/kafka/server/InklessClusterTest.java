@@ -99,7 +99,7 @@ public class InklessClusterTest {
             .build();
         cluster = new KafkaClusterTestKit.Builder(nodes)
             .setConfigProp(GroupCoordinatorConfig.OFFSETS_TOPIC_REPLICATION_FACTOR_CONFIG, "1")
-            .setConfigProp(ServerConfigs.INKLESS_STORAGE_SYSTEM_ENABLE_CONFIG, "true")
+            .setConfigProp(ServerConfigs.DISKLESS_STORAGE_SYSTEM_ENABLE_CONFIG, "true")
             // PG control plane config
             .setConfigProp(InklessConfig.PREFIX + InklessConfig.CONTROL_PLANE_CLASS_CONFIG, PostgresControlPlane.class.getName())
             .setConfigProp(InklessConfig.PREFIX + InklessConfig.CONTROL_PLANE_PREFIX + PostgresControlPlaneConfig.CONNECTION_STRING_CONFIG, pgContainer.getJdbcUrl())
@@ -140,7 +140,7 @@ public class InklessClusterTest {
 
     @ParameterizedTest
     @MethodSource("params")
-    public void createInklessTopic(final boolean idempotenceEnable, final TimestampType timestampType) throws Exception {
+    public void createDisklessTopic(final boolean idempotenceEnable, final TimestampType timestampType) throws Exception {
         Map<String, Object> clientConfigs = new HashMap<>();
         clientConfigs.put(CommonClientConfigs.BOOTSTRAP_SERVERS_CONFIG, cluster.bootstrapServers());
         clientConfigs.put(ProducerConfig.ENABLE_IDEMPOTENCE_CONFIG, String.valueOf(idempotenceEnable));
@@ -153,13 +153,13 @@ public class InklessClusterTest {
         // by default is latest and nothing would get consumed.
         clientConfigs.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, AutoOffsetResetStrategy.EARLIEST.name());
         clientConfigs.put(ConsumerConfig.MAX_PARTITION_FETCH_BYTES_CONFIG, "5000000");
-        String topicName = "inkless-topic";
+        String topicName = "diskless-topic";
         int numRecords = 500;
 
         try (Admin admin = AdminClient.create(clientConfigs)) {
             final NewTopic topic = new NewTopic(topicName, 1, (short) 1)
                 .configs(Map.of(
-                    TopicConfig.INKLESS_ENABLE_CONFIG, "true",
+                    TopicConfig.DISKLESS_ENABLE_CONFIG, "true",
                     TopicConfig.MESSAGE_TIMESTAMP_TYPE_CONFIG, timestampType.name
                 ));
             CreateTopicsResult topics = admin.createTopics(Collections.singletonList(topic));
@@ -190,7 +190,7 @@ public class InklessClusterTest {
     }
 
     @Test
-    public void produceToInklessAndClassic() throws Exception {
+    public void produceToDisklessAndClassic() throws Exception {
         Map<String, Object> clientConfigs = new HashMap<>();
         clientConfigs.put(CommonClientConfigs.BOOTSTRAP_SERVERS_CONFIG, cluster.bootstrapServers());
         clientConfigs.put(ProducerConfig.LINGER_MS_CONFIG, "1000");
@@ -201,16 +201,16 @@ public class InklessClusterTest {
         clientConfigs.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, ByteArrayDeserializer.class.getName());
         clientConfigs.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, AutoOffsetResetStrategy.EARLIEST.name());
         clientConfigs.put(ConsumerConfig.FETCH_MIN_BYTES_CONFIG, "10000000");
-        String inklessTopicName = "inkless-test-topic";
+        String disklessTopicName = "diskless-test-topic";
         String classicTopicName = "classic-test-topic";
         int numRecords = 10;
 
         try (Admin admin = AdminClient.create(clientConfigs)) {
-            final NewTopic inklessTopic = new NewTopic(inklessTopicName, Map.of(0, List.of(0)))
-                .configs(Map.of(TopicConfig.INKLESS_ENABLE_CONFIG, "true"));
+            final NewTopic disklessTopic = new NewTopic(disklessTopicName, Map.of(0, List.of(0)))
+                .configs(Map.of(TopicConfig.DISKLESS_ENABLE_CONFIG, "true"));
             final NewTopic classicTopic = new NewTopic(classicTopicName, Map.of(0, List.of(0)))
-                .configs(Map.of(TopicConfig.INKLESS_ENABLE_CONFIG, "false"));
-            CreateTopicsResult topics = admin.createTopics(List.of(inklessTopic, classicTopic));
+                .configs(Map.of(TopicConfig.DISKLESS_ENABLE_CONFIG, "false"));
+            CreateTopicsResult topics = admin.createTopics(List.of(disklessTopic, classicTopic));
             topics.all().get(10, TimeUnit.SECONDS);
         }
 
@@ -227,8 +227,8 @@ public class InklessClusterTest {
         try (Producer<byte[], byte[]> producer = new KafkaProducer<>(clientConfigs)) {
             for (int i = 0; i < numRecords; i++) {
                 byte[] value = new byte[10000];
-                final ProducerRecord<byte[], byte[]> inklessRecord = new ProducerRecord<>(inklessTopicName, 0, now, null, value);
-                producer.send(inklessRecord, produceCb);
+                final ProducerRecord<byte[], byte[]> disklessRecord = new ProducerRecord<>(disklessTopicName, 0, now, null, value);
+                producer.send(disklessRecord, produceCb);
                 final ProducerRecord<byte[], byte[]> classicRecord = new ProducerRecord<>(classicTopicName, 0, now, null, value);
                 producer.send(classicRecord, produceCb);
             }
@@ -239,7 +239,7 @@ public class InklessClusterTest {
 
         int recordsConsumed = 0;
         try (Consumer<byte[], byte[]> consumer = new KafkaConsumer<>(clientConfigs)) {
-            consumer.assign(List.of(new TopicPartition(classicTopicName, 0), new TopicPartition(inklessTopicName, 0)));
+            consumer.assign(List.of(new TopicPartition(classicTopicName, 0), new TopicPartition(disklessTopicName, 0)));
             for (int i = 0; i < 3; i++) {
                 ConsumerRecords<byte[], byte[]> poll = consumer.poll(Duration.ofSeconds(1));
                 recordsConsumed += poll.count();

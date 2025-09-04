@@ -67,7 +67,7 @@ abstract class IntegrationTestHarness extends KafkaServerTestHarness {
 
   override def generateConfigs: Seq[KafkaConfig] = {
     val cfgs = TestUtils.createBrokerConfigs(brokerCount, interBrokerSecurityProtocol = Some(securityProtocol),
-      trustStoreFile = trustStoreFile, saslProperties = serverSaslProperties, logDirCount = logDirCount, inklessMode = inklessMode)
+      trustStoreFile = trustStoreFile, saslProperties = serverSaslProperties, logDirCount = logDirCount, disklessMode = disklessMode)
     configureListeners(cfgs)
     modifyConfigs(cfgs)
     cfgs.foreach(_.setProperty(MetadataLogConfig.METADATA_LOG_DIR_CONFIG, TestUtils.tempDir().getAbsolutePath))

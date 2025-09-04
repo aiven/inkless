@@ -55,7 +55,7 @@ public class InklessTopicMetadataTransformer {
 
         final int leaderForInklessPartitions = selectLeaderForInklessPartitions(listenerName, clientId);
         for (final var topic : topicMetadata) {
-            if (!metadataView.isInklessTopic(topic.name())) {
+            if (!metadataView.isDisklessTopic(topic.name())) {
                 continue;
             }
             for (final var partition : topic.partitions()) {
@@ -82,7 +82,7 @@ public class InklessTopicMetadataTransformer {
 
         final int leaderForInklessPartitions = selectLeaderForInklessPartitions(listenerName, clientId);
         for (final var topic : responseData.topics()) {
-            if (!metadataView.isInklessTopic(topic.name())) {
+            if (!metadataView.isDisklessTopic(topic.name())) {
                 continue;
             }
 
@@ -101,7 +101,7 @@ public class InklessTopicMetadataTransformer {
     }
 
     /**
-     * Select the broker ID to be the leader of all Inkless partitions.
+     * Select the broker ID to be the leader of all diskless partitions.
      *
      * <p>The selection happens from brokers in the client AZ or from all brokers
      * (if brokers in the client AZ not found or the client AZ is not set).

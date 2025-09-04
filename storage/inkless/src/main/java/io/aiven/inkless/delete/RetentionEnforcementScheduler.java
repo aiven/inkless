@@ -109,7 +109,7 @@ class RetentionEnforcementScheduler {
 
     private void updateKnownPartitionsIfNeeded(final Instant now) {
         if (lastKnownPartitionsUpdate.plus(KNOWN_PARTITION_UPDATE_INTERVAL).isBefore(now)) {
-            final Set<TopicIdPartition> newKnownPartitions = metadataView.getInklessTopicPartitions();
+            final Set<TopicIdPartition> newKnownPartitions = metadataView.getDisklessTopicPartitions();
             for (final TopicIdPartition partition : newKnownPartitions) {
                 // Schedule the new partitions.
                 if (!this.knownPartitions.contains(partition)) {

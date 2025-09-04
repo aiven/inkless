@@ -56,7 +56,7 @@ import static org.mockito.Mockito.when;
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.STRICT_STUBS)
 class InklessTopicMetadataTransformerTest {
-    static final String TOPIC_INKLESS = "inkless-topic";
+    static final String TOPIC_INKLESS = "diskless-topic";
     static final Uuid TOPIC_INKLESS_ID = new Uuid(123, 123);
     static final String TOPIC_CLASSIC = "classic-topic";
     static final Uuid TOPIC_CLASSIC_ID = new Uuid(456, 456);
@@ -117,8 +117,8 @@ class InklessTopicMetadataTransformerTest {
     class InklessAndClassicTopics {
         @BeforeEach
         void setup() {
-            when(metadataView.isInklessTopic(eq(TOPIC_INKLESS))).thenReturn(true);
-            when(metadataView.isInklessTopic(eq(TOPIC_CLASSIC))).thenReturn(false);
+            when(metadataView.isDisklessTopic(eq(TOPIC_INKLESS))).thenReturn(true);
+            when(metadataView.isDisklessTopic(eq(TOPIC_CLASSIC))).thenReturn(false);
             when(metadataView.getAliveBrokerNodes(LISTENER_NAME)).thenReturn(List.of(
                 new Node(0, "host", 9092, "az0"),
                 new Node(2, "host", 9094, "az0"),
@@ -307,7 +307,7 @@ class InklessTopicMetadataTransformerTest {
     class SelectFromAllBrokersWhenBrokerRackIsNotSetCluster {
         @BeforeEach
         void setup() {
-            when(metadataView.isInklessTopic(eq(TOPIC_INKLESS))).thenReturn(true);
+            when(metadataView.isDisklessTopic(eq(TOPIC_INKLESS))).thenReturn(true);
             when(metadataView.getAliveBrokerNodes(LISTENER_NAME)).thenReturn(List.of(
                 new Node(1, "host", 9093),
                 new Node(0, "host", 9092)
@@ -387,7 +387,7 @@ class InklessTopicMetadataTransformerTest {
     class SelectFromAllBrokersWhenClientAZIsNotSetCluster {
         @BeforeEach
         void setup() {
-            when(metadataView.isInklessTopic(eq(TOPIC_INKLESS))).thenReturn(true);
+            when(metadataView.isDisklessTopic(eq(TOPIC_INKLESS))).thenReturn(true);
             when(metadataView.getAliveBrokerNodes(LISTENER_NAME)).thenReturn(List.of(
                 new Node(1, "host", 9093, "az1"),
                 new Node(0, "host", 9092, "az0")

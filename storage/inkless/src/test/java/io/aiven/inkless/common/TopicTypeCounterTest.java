@@ -58,8 +58,8 @@ class TopicTypeCounterTest {
 
     @Test
     void onlyInkless() {
-        when(metadataView.isInklessTopic(TOPIC_0)).thenReturn(true);
-        when(metadataView.isInklessTopic(TOPIC_1)).thenReturn(true);
+        when(metadataView.isDisklessTopic(TOPIC_0)).thenReturn(true);
+        when(metadataView.isDisklessTopic(TOPIC_1)).thenReturn(true);
 
         final TopicTypeCounter counter = new TopicTypeCounter(metadataView);
         final TopicTypeCounter.Result result = counter.count(Set.of(T0P0, T0P1, T1P0, T1P1));
@@ -68,8 +68,8 @@ class TopicTypeCounterTest {
 
     @Test
     void onlyClassic() {
-        when(metadataView.isInklessTopic(TOPIC_0)).thenReturn(false);
-        when(metadataView.isInklessTopic(TOPIC_1)).thenReturn(false);
+        when(metadataView.isDisklessTopic(TOPIC_0)).thenReturn(false);
+        when(metadataView.isDisklessTopic(TOPIC_1)).thenReturn(false);
 
         final TopicTypeCounter counter = new TopicTypeCounter(metadataView);
         final TopicTypeCounter.Result result = counter.count(Set.of(T0P0, T0P1, T1P0, T1P1));
@@ -78,8 +78,8 @@ class TopicTypeCounterTest {
 
     @Test
     void mix() {
-        when(metadataView.isInklessTopic(TOPIC_0)).thenReturn(false);
-        when(metadataView.isInklessTopic(TOPIC_1)).thenReturn(true);
+        when(metadataView.isDisklessTopic(TOPIC_0)).thenReturn(false);
+        when(metadataView.isDisklessTopic(TOPIC_1)).thenReturn(true);
 
         final TopicTypeCounter counter = new TopicTypeCounter(metadataView);
         final TopicTypeCounter.Result result = counter.count(Set.of(T0P0, T0P1, T1P0, T1P1));
@@ -98,11 +98,11 @@ class TopicTypeCounterTest {
 
     @Test
     void noInkless() {
-        assertThat(new TopicTypeCounter.Result(2, 2).noInkless())
+        assertThat(new TopicTypeCounter.Result(2, 2).noDiskless())
             .isFalse();
-        assertThat(new TopicTypeCounter.Result(0, 2).noInkless())
+        assertThat(new TopicTypeCounter.Result(0, 2).noDiskless())
             .isTrue();
-        assertThat(new TopicTypeCounter.Result(2, 0).noInkless())
+        assertThat(new TopicTypeCounter.Result(2, 0).noDiskless())
             .isFalse();
     }
 }

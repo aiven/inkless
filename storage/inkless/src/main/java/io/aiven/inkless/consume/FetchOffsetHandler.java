@@ -87,7 +87,7 @@ public class FetchOffsetHandler implements Closeable {
         }
 
         public boolean mustHandle(final String topic) {
-            return metadata.isInklessTopic(topic);
+            return metadata.isDisklessTopic(topic);
         }
 
         public Future<Void> cancelHandler() {
@@ -111,7 +111,7 @@ public class FetchOffsetHandler implements Closeable {
             try {
                 requestsEnriched = TopicIdEnricher.enrich(metadata, requests);
             } catch (final TopicIdEnricher.TopicIdNotFoundException e) {
-                // This should not happen during normal execution, non-Inkless topics won't get here.
+                // This should not happen during normal execution, non-Diskless topics won't get here.
                 LOGGER.error("Cannot find UUID for topic {}", e.topicName);
                 throw new RuntimeException();
             }

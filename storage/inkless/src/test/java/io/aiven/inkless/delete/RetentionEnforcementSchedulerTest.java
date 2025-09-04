@@ -71,7 +71,7 @@ class RetentionEnforcementSchedulerTest {
     void intervalsDependOnBrokerCount() {
         final var scheduler = new RetentionEnforcementScheduler(time, metadataView, ENFORCEMENT_INTERVAL, random);
 
-        when(metadataView.getInklessTopicPartitions()).thenReturn(Set.of(T0P0, T0P1));
+        when(metadataView.getDisklessTopicPartitions()).thenReturn(Set.of(T0P0, T0P1));
         when(metadataView.getBrokerCount()).thenReturn(1);
 
         // The first run is the initial scheduling.
@@ -131,7 +131,7 @@ class RetentionEnforcementSchedulerTest {
     void newPartitionsAreScheduled() {
         final var scheduler = new RetentionEnforcementScheduler(time, metadataView, ENFORCEMENT_INTERVAL, random);
 
-        when(metadataView.getInklessTopicPartitions()).thenReturn(Set.of(T0P0));
+        when(metadataView.getDisklessTopicPartitions()).thenReturn(Set.of(T0P0));
         when(metadataView.getBrokerCount()).thenReturn(1);
 
         // The first run is the initial scheduling.
@@ -139,7 +139,7 @@ class RetentionEnforcementSchedulerTest {
 
         // Sleep enough for known partitions to be invalidated.
         time.sleep(Duration.ofMinutes(10).toMillis());
-        when(metadataView.getInklessTopicPartitions()).thenReturn(Set.of(T0P0, T0P1));
+        when(metadataView.getDisklessTopicPartitions()).thenReturn(Set.of(T0P0, T0P1));
 
         assertThat(scheduler.getReadyPartitions()).containsExactlyInAnyOrder(T0P0);
 
@@ -155,7 +155,7 @@ class RetentionEnforcementSchedulerTest {
     void removedPartitionsAreForgotten() {
         final var scheduler = new RetentionEnforcementScheduler(time, metadataView, ENFORCEMENT_INTERVAL, random);
 
-        when(metadataView.getInklessTopicPartitions()).thenReturn(Set.of(T0P0, T0P1));
+        when(metadataView.getDisklessTopicPartitions()).thenReturn(Set.of(T0P0, T0P1));
         when(metadataView.getBrokerCount()).thenReturn(1);
 
         // The first run is the initial scheduling.
@@ -163,7 +163,7 @@ class RetentionEnforcementSchedulerTest {
 
         // Sleep enough for known partitions to be invalidated.
         time.sleep(Duration.ofMinutes(10).toMillis());
-        when(metadataView.getInklessTopicPartitions()).thenReturn(Set.of(T0P1));
+        when(metadataView.getDisklessTopicPartitions()).thenReturn(Set.of(T0P1));
 
         assertThat(scheduler.getReadyPartitions()).containsExactlyInAnyOrder(T0P1);
         

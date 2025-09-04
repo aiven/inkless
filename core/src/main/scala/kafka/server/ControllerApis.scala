@@ -353,15 +353,15 @@ class ControllerApis(
         // Deletes topics from the Inkless control plane before removing them from the Kafka quorum metadata.
         // This ordering is crucial because the disappearance of the topics from the quorum metadata
         // signals successful topic removal and is where retry attempts for this entire operation cease.
-        // If errors occur, the Inkless removal is retried, ensuring that the Inkless side is in sync
-        // with Kafka. The Inkless deletion is idempotent (provided topics with the same names aren't created in between).
+        // If errors occur, the diskless removal is retried, ensuring that the diskless side is in sync
+        // with Kafka. The diskless deletion is idempotent (provided topics with the same names aren't created in between).
         val topicIdsToDeleteFromControlPlane = idToName.asScala
-          .filter { case (_, name) => inklessMetadataView.isInklessTopic(name) }
+          .filter { case (_, name) => inklessMetadataView.isDisklessTopic(name) }
           .map { case (topicId, _) => topicId }
           .toSet.asJava
-        if (!config.inklessStorageSystemEnabled && !topicIdsToDeleteFromControlPlane.isEmpty)
-          warn(s"Attempting to delete Inkless topics $topicIdsToDeleteFromControlPlane " +
-            "from the control plane, but the Inkless storage system is not enabled. " +
+        if (!config.disklessStorageSystemEnabled && !topicIdsToDeleteFromControlPlane.isEmpty)
+          warn(s"Attempting to delete diskless topics $topicIdsToDeleteFromControlPlane " +
+            "from the control plane, but the diskless storage system is not enabled. " +
             "Topic will only be removed from KRaft metadata as no control plane is available.")
         inklessControlPlane.foreach { cp => cp.deleteTopics(topicIdsToDeleteFromControlPlane) }
 
@@ -464,31 +464,31 @@ class ControllerApis(
         }
       }
 
-      createTopicsInkless(response)
+      createTopicsDiskless(response)
 
       response
     }
   }
 
-  private def createTopicsInkless(response: CreateTopicsResponseData): Unit = {
+  private def createTopicsDiskless(response: CreateTopicsResponseData): Unit = {
     inklessControlPlane.foreach { cp =>
       val successfullyCreatedTopics = response.topics.asScala
-        // Include only inkless topics
+        // Include only diskless topics
         .filter(t =>
           t.configs().stream()
-            .filter(c => c.name() == TopicConfig.INKLESS_ENABLE_CONFIG)
+            .filter(c => c.name() == TopicConfig.DISKLESS_ENABLE_CONFIG)
             .filter(c => c.value() == "true")
             .findAny()
             .isPresent
         )
         // It's OK if we retry creating for already existing topics,
-        // this may save some trouble when Inkless creation failed for some reason and the user retries.
+        // this may save some trouble when diskless creation failed for some reason and the user retries.
         .filter(t => t.errorCode() == Errors.NONE.code() || t.errorCode() == Errors.TOPIC_ALREADY_EXISTS.code())
 
       // We need to be sure the newly created topic exist in the metadata.
       // As this is the same process, this should happen very quickly.
       // We could have probably bound to the context deadline,
-      // but since Inkless operations themselves aren't time-bound now, this doesn't make much sense.
+      // but since diskless operations themselves aren't time-bound now, this doesn't make much sense.
       val timer = time.timer(Duration.ofSeconds(10))
       while (timer.notExpired()
         // `getTopicId` returns `ZERO_UUID` when not found
@@ -502,7 +502,7 @@ class ControllerApis(
       }
 
       val createTopicRequests = successfullyCreatedTopics
-        .filter(t => inklessMetadataView.isInklessTopic(t.name()))
+        .filter(t => inklessMetadataView.isDisklessTopic(t.name()))
         .map(t => new CreateTopicAndPartitionsRequest(t.topicId(), t.name(), t.numPartitions()))
         .toSet.asJava
       cp.createTopicAndPartitions(createTopicRequests)
@@ -919,12 +919,12 @@ class ControllerApis(
     controller.createPartitions(context, topics, request.validateOnly).thenCompose { results =>
       results.forEach(response => responses.add(response))
 
-      createInklessPartitions(request.validateOnly, context, topics, results)
+      createDisklessPartitions(request.validateOnly, context, topics, results)
         .thenApply(_ => responses)
     }
   }
 
-  private def createInklessPartitions(validateOnly: Boolean,
+  private def createDisklessPartitions(validateOnly: Boolean,
                                       context: ControllerRequestContext,
                                       topics: java.util.List[CreatePartitionsTopic],
                                       results: java.util.List[CreatePartitionsTopicResult]): CompletableFuture[Unit] = {
@@ -941,7 +941,7 @@ class ControllerApis(
           .filter { case (_, res) => res.errorCode() == Errors.NONE.code() || res.errorCode() == Errors.TOPIC_ALREADY_EXISTS.code() }
           // In contrast to the topic creation, we only create new partitions to existing topics.
           // Hence, the topics themselves must be in the metadata already, no need to wait.
-          .filter { case (req, _) => inklessMetadataView.isInklessTopic(req.name()) }
+          .filter { case (req, _) => inklessMetadataView.isDisklessTopic(req.name()) }
           .map { case (req, _) => req }
           .toSet
         val topicNames = successfulCreations.map(_.name()).toList.asJava
