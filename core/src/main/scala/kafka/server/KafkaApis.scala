@@ -272,6 +272,9 @@ class KafkaApis(val requestChannel: RequestChannel,
 
     val createClusterLinkRequest = request.body[CreateClusterLinkRequest]
     info("!!! create cluster link request: " + createClusterLinkRequest)
+    val clusterLinkData = new CreateClusterLinkResponseData()
+    clusterLinkData.setErrorCode(0)
+    requestHelper.sendMaybeThrottle(request, new CreateClusterLinkResponse(clusterLinkData))
   }
 
   def handleGetReplicaLogInfo(request: RequestChannel.Request): Unit = {

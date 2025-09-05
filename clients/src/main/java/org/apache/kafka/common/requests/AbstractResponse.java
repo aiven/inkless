@@ -294,7 +294,7 @@ public abstract class AbstractResponse implements AbstractRequestResponse {
             case GET_REPLICA_LOG_INFO:
                 return GetReplicaLogInfoResponse.parse(readable, version);
             case CREATE_CLUSTER_LINK:
-                return GetReplicaLogInfoResponse.parse(readable, version);
+                return CreateClusterLinkResponse.parse(readable, version);
             default:
                 throw new AssertionError(String.format("ApiKey %s is not currently handled in `parseResponse`, the " +
                         "code should be updated to do so.", apiKey));
