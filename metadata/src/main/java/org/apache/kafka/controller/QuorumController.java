@@ -1299,7 +1299,7 @@ public final class QuorumController implements Controller {
                 break;
             case INKLESS_TEST_RECORD:
                 final InklessTestRecord record = (InklessTestRecord) message;
-                log.error("Replaying INKLESS_TEST_RECORD {}", record.counter());
+                log.error("Replaying INKLESS_TEST_RECORD {}", record.batchId());
                 break;
             default:
                 throw new RuntimeException("Unhandled record type " + type);
@@ -1642,15 +1642,27 @@ public final class QuorumController implements Controller {
                     final List<ApiMessageAndVersion> records = new ArrayList<>();
                     for (int i = 0; i < 30; i++) {
                         records.add(new ApiMessageAndVersion(new InklessTestRecord()
-                            .setCounter(testCounter.getAndIncrement())
-                            .setOpaqueData(new byte[100 * 1024]), (short) 0));
+                            .setBatchId(batchIdCounter.getAndIncrement())
+                            .setMagic((byte) 0)
+                            .setTopicId(Uuid.METADATA_TOPIC_ID)
+                            .setPartition(0)
+                            .setBaseOffset(0L)
+                            .setLastOffset(100L)
+                            .setFileId(12345L)
+                            .setByteOffset(20)
+                            .setByteSize(10)
+                            .setTimestampType((byte) 0)
+                            .setLogAppendTimestamp(999999L)
+                            .setBatchMaxTimestamp(999999L),
+                            (short) 0
+                        ));
                     }
                     return ControllerResult.atomicOf(records, "rrr");
                 });
         }, 250, 250, MILLISECONDS);
     }
 
-    private final AtomicLong testCounter = new AtomicLong();
+    private final AtomicLong batchIdCounter = new AtomicLong();
     private final ScheduledExecutorService scheduledExecutorService = Executors.newSingleThreadScheduledExecutor();
 
     /**

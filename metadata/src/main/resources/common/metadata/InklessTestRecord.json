@@ -20,7 +20,17 @@
   "validVersions": "0",
   "flexibleVersions": "0+",
   "fields": [
-    { "name": "Counter", "type": "int64", "versions": "0+", "about": "" },
-    { "name": "OpaqueData", "type": "bytes", "versions": "0+", "about": "" }
+    { "name": "BatchId", "type": "int64", "versions": "0+", "about": "" },
+    { "name": "Magic", "type": "int8", "versions": "0+", "about": "" },
+    { "name": "TopicId", "type": "uuid", "versions": "0+", "about": "" },
+    { "name": "Partition", "type": "int32", "versions": "0+", "about": "" },
+    { "name": "BaseOffset", "type": "int64", "versions": "0+", "about": "" },
+    { "name": "LastOffset", "type": "int64", "versions": "0+", "about": "" },
+    { "name": "FileId", "type": "int64", "versions": "0+", "about": "" },
+    { "name": "ByteOffset", "type": "int32", "versions": "0+", "about": "" },
+    { "name": "ByteSize", "type": "int32", "versions": "0+", "about": "" },
+    { "name": "TimestampType", "type": "int8", "versions": "0+", "about": "" },
+    { "name": "LogAppendTimestamp", "type": "int64", "versions": "0+", "about": "" },
+    { "name": "BatchMaxTimestamp", "type": "int64", "versions": "0+", "about": "" }
   ]
 }
