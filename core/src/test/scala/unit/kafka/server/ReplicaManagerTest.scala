@@ -6400,7 +6400,7 @@ class ReplicaManagerTest {
     }
 
     @Test
-    def testAppendDisklessAndClassicEntries(): Unit = {
+    def testAppendValidDisklessAndInvalidClassic(): Unit = {
       val entriesPerPartition = Map(
         disklessTopicPartition -> RECORDS,
         classicTopicPartition -> RECORDS,
@@ -6439,7 +6439,63 @@ class ReplicaManagerTest {
     }
 
     @Test
-    def testInvalidRequest(): Unit = {
+    def testAppendDisklessAndClassicEntries(): Unit = {
+      val entriesPerPartition = Map(
+        disklessTopicPartition -> RECORDS,
+        classicTopicPartition -> RECORDS,
+      )
+      val disklessResponse = Map(disklessTopicPartition -> new PartitionResponse(Errors.NONE))
+      val disklessFutureResult = CompletableFuture.completedFuture[util.Map[TopicIdPartition, PartitionResponse]](
+        disklessResponse.asJava
+      )
+      val appendHandlerCtorMockInitializer: MockedConstruction.MockInitializer[AppendHandler] = {
+        case (mock, _) =>
+          when(mock.handle(any(), any())).thenReturn(disklessFutureResult)
+      }
+      val appendHandlerCtor = mockConstruction(classOf[AppendHandler], appendHandlerCtorMockInitializer)
+      val replicaManager = try {
+        createReplicaManager(List(disklessTopicPartition.topic()))
+      } finally {
+        appendHandlerCtor.close()
+      }
+
+      val topicDelta = new TopicsDelta(TopicsImage.EMPTY)
+      topicDelta.replay(new TopicRecord()
+        .setName(classicTopicPartition.topic)
+        .setTopicId(classicTopicPartition.topicId)
+      )
+      topicDelta.replay(new PartitionRecord()
+        .setTopicId(classicTopicPartition.topicId)
+        .setPartitionId(classicTopicPartition.partition)
+        .setLeader(1)
+        .setLeaderEpoch(0)
+        .setPartitionEpoch(0)
+        .setReplicas(List[Integer](1).asJava)
+        .setIsr(List[Integer](1).asJava)
+      )
+
+      val metadataImage = imageFromTopics(topicDelta.apply())
+      replicaManager.applyDelta(topicDelta, metadataImage)
+
+      val responseCallback = mock(classOf[Function[Map[TopicIdPartition, PartitionResponse], Unit]])
+      replicaManager.appendRecords(
+        timeout = 0,
+        requiredAcks = -1,
+        internalTopicsAllowed = true,
+        origin = AppendOrigin.CLIENT,
+        entriesPerPartition = entriesPerPartition,
+        responseCallback = responseCallback,
+      )
+
+      verify(responseCallback, times(1))
+        .apply(
+          disklessResponse ++
+            Map(classicTopicPartition -> new PartitionResponse(Errors.NONE, 0, -1, 0))
+        )
+    }
+
+    @Test
+    def testAppendWithInvalidDisklessAndValidCLassic(): Unit = {
       val entriesPerPartition = Map(
         disklessTopicPartition -> RECORDS,
         classicTopicPartition -> RECORDS,
@@ -6457,6 +6513,24 @@ class ReplicaManagerTest {
         appendHandlerCtor.close()
       }
 
+      val topicDelta = new TopicsDelta(TopicsImage.EMPTY)
+      topicDelta.replay(new TopicRecord()
+        .setName(classicTopicPartition.topic)
+        .setTopicId(classicTopicPartition.topicId)
+      )
+      topicDelta.replay(new PartitionRecord()
+        .setTopicId(classicTopicPartition.topicId)
+        .setPartitionId(classicTopicPartition.partition)
+        .setLeader(1)
+        .setLeaderEpoch(0)
+        .setPartitionEpoch(0)
+        .setReplicas(List[Integer](1).asJava)
+        .setIsr(List[Integer](1).asJava)
+      )
+
+      val metadataImage = imageFromTopics(topicDelta.apply())
+      replicaManager.applyDelta(topicDelta, metadataImage)
+
       val responseCallback = mock(classOf[Function[Map[TopicIdPartition, PartitionResponse], Unit]])
       replicaManager.appendRecords(
         timeout = 0,
@@ -6472,12 +6546,12 @@ class ReplicaManagerTest {
           // diskless entries get an INVALID_REQUEST
           disklessTopicPartition -> new PartitionResponse(Errors.INVALID_REQUEST),
           // classic entries get a regular response, in this case the topic does not exist
-          classicTopicPartition -> new PartitionResponse(Errors.UNKNOWN_TOPIC_OR_PARTITION),
+          classicTopicPartition -> new PartitionResponse(Errors.NONE, 0, -1, 0)
         ))
     }
 
     @Test
-    def testDisklessWriteFailure(): Unit = {
+    def testAppendWithInvalidDisklessAndClassic(): Unit = {
       val entriesPerPartition = Map(
         disklessTopicPartition -> RECORDS,
         classicTopicPartition -> RECORDS,
@@ -6989,8 +7063,7 @@ class ReplicaManagerTest {
     ): ReplicaManager = {
       val props = TestUtils.createBrokerConfig(1, logDirCount = 2)
       val config = KafkaConfig.fromProps(props)
-      val logManagerMock = mock(classOf[LogManager])
-      when(logManagerMock.liveLogDirs).thenReturn(Seq.empty)
+      val mockLogMgr = TestUtils.createLogManager(config.logDirs.asScala.map(new File(_)), new LogConfig(new Properties()))
       val sharedState = mock(classOf[SharedState], Answers.RETURNS_DEEP_STUBS)
       when(sharedState.time()).thenReturn(Time.SYSTEM)
       when(sharedState.config()).thenReturn(new InklessConfig(new util.HashMap[String, Object]()))
@@ -7011,7 +7084,7 @@ class ReplicaManagerTest {
         config = config,
         time = time,
         scheduler = time.scheduler,
-        logManager = logManagerMock,
+        logManager = mockLogMgr,
         quotaManagers = quotaManager,
         metadataCache = new KRaftMetadataCache(config.brokerId, () => KRaftVersion.KRAFT_VERSION_0),
         logDirFailureChannel = logDirFailureChannel,
