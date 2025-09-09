@@ -21,7 +21,7 @@ import com.yammer.metrics.core.{Gauge, Meter, Timer}
 import io.aiven.inkless.common.SharedState
 import io.aiven.inkless.config.InklessConfig
 import io.aiven.inkless.consume.FetchHandler
-import io.aiven.inkless.control_plane.{BatchInfo, BatchMetadata, ControlPlane, FindBatchResponse, MetadataView}
+import io.aiven.inkless.control_plane.{BatchInfo, BatchMetadata, ControlPlane, ControlPlaneException, FindBatchResponse, MetadataView}
 import io.aiven.inkless.produce.AppendHandler
 import kafka.cluster.PartitionTest.MockPartitionListener
 import kafka.cluster.Partition
@@ -7029,6 +7029,78 @@ class ReplicaManagerTest {
       latch.await(10, TimeUnit.SECONDS) // Wait for the delayed fetch to expire
       replicaManager.delayedFetchPurgatory.checkAndComplete(new TopicPartitionOperationKey(disklessTopicPartition.topicPartition()))
       assertEquals(0, replicaManager.delayedFetchPurgatory.numDelayed())
+      assertNotNull(responseData)
+      assertEquals(2, responseData.size)
+      assertEquals(disklessResponse(disklessTopicPartition), responseData(disklessTopicPartition))
+      val classicPartitionResponse = responseData(classicTopicPartition)
+      assertEquals(Errors.NONE, classicPartitionResponse.error)
+      assertEquals(0L, classicPartitionResponse.logStartOffset)
+      assertEquals(10L, classicPartitionResponse.highWatermark)
+      assertEquals(RECORDS, classicPartitionResponse.records)
+    }
+
+    @Test
+    def testFetchFailingDisklessAndValidClassicLessThanMinBytes(): Unit = {
+      // Given
+      val minBytes = Int.MaxValue  // Set minBytes to a value larger than the size of the records to ensure it does not satisfy minBytes
+      val fetchOffset = 15L
+      val maxWaitMs = 1000L  // wait enough for delayed fetch to expire
+      val maxBytes = 10
+
+      // Prepare the FindBatchResponse to be returned by the ControlPlane when it tries to complete the delayed fetch.
+      val cp = mock(classOf[ControlPlane])
+      when(cp.findBatches(any(), any())).thenThrow(new ControlPlaneException("Error in control plane"))
+
+      // Prepare the FetchHandler response to be called when the forceComplete method is invoked.
+      val disklessResponse = Map(disklessTopicPartition ->
+        new FetchPartitionData(Errors.KAFKA_STORAGE_ERROR, -1, -1, MemoryRecords.EMPTY, Optional.empty, OptionalLong.empty, Optional.empty, OptionalInt.empty, false))
+      val fetchHandlerCtor: MockedConstruction[FetchHandler] = mockFetchHandler(disklessResponse)
+
+      val replicaManager = try {
+        spy(createReplicaManager(List(disklessTopicPartition.topic()), controlPlane = Some(cp)))
+      } finally {
+        fetchHandlerCtor.close()
+      }
+
+      // Prepare the classic topic partition response
+      doReturn(Seq(classicTopicPartition ->
+        new LogReadResult(
+          new FetchDataInfo(new LogOffsetMetadata(1L, 0L, 0), RECORDS),
+          Optional.empty(), 10L, 0L, 10L, 0L, 0L, OptionalLong.empty()
+        ))
+      ).when(replicaManager).readFromLog(any(), any(), any(), any())
+      val partition = mock(classOf[Partition])
+      val endOffset = new LogOffsetMetadata(11L, 0L, RECORDS.sizeInBytes())  // next half of bytes available from classic
+      val offsetSnapshot = new LogOffsetSnapshot(0L, endOffset, endOffset, endOffset)
+      when(partition.fetchOffsetSnapshot(any(), any())).thenReturn(offsetSnapshot)
+      doReturn(partition)
+        .when(replicaManager).getPartitionOrException(classicTopicPartition.topicPartition())
+
+      val fetchParams = new FetchParams(
+        -1, -1L, // not follower fetch
+        maxWaitMs, minBytes, maxBytes, FetchIsolation.HIGH_WATERMARK, Optional.empty()
+      )
+      val disklessPartitionData = new PartitionData(disklessTopicPartition.topicId(), fetchOffset, 0L, 123, Optional.empty())
+      val classicPartitionData = new PartitionData(classicTopicPartition.topicId(), 1L, 0L, 123, Optional.empty())
+      val fetchInfos = Seq(
+        disklessTopicPartition -> disklessPartitionData,
+        classicTopicPartition -> classicPartitionData,
+      )
+      @volatile var responseData: Map[TopicIdPartition, FetchPartitionData] = null
+      val latch = new CountDownLatch(1)
+      val responseCallback = (response: Seq[(TopicIdPartition, FetchPartitionData)]) => {
+        responseData = response.toMap
+        latch.countDown()
+      }
+      // Ensure no delayed fetch is in the purgatory before we start
+      assertEquals(0, replicaManager.delayedFetchPurgatory.numDelayed())
+      // When we try to fetch messages from both types of topic partitions with a consumer fetch
+      // and the response does not satisfy minBytes, it should be delayed in the purgatory
+      // until the delayed fetch expires.
+      replicaManager.fetchMessages(fetchParams, fetchInfos, QuotaFactory.UNBOUNDED_QUOTA, responseCallback)
+      assertEquals(0, replicaManager.delayedFetchPurgatory.numDelayed())
+
+      latch.await(10, TimeUnit.SECONDS) // Wait for the delayed fetch to expire
       assertNotNull(responseData)
       assertEquals(2, responseData.size)
       assertEquals(disklessResponse(disklessTopicPartition), responseData(disklessTopicPartition))
