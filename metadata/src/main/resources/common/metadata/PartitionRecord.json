@@ -51,6 +51,6 @@
       "versions": "2+", "nullableVersions": "2+", "taggedVersions": "2+", "tag": 2,
       "about": "The last known eligible leader replicas of this partition." },
     { "name": "RemoteBootstrapServer", "type": "string", "versions": "2+", "default": "",
-      "about": "read only." }
+      "about": "The bootstrap server for the remote cluster leader, used for cluster linking." }
   ]
 }

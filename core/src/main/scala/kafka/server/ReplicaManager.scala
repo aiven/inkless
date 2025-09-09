@@ -2585,12 +2585,6 @@ class ReplicaManager(val config: KafkaConfig,
     }
   }
 
-//  private def getRemoteLeaderNode(partition: Partition): Option[Node] = {
-//    partition.remoteBootstrapServer
-//    //new Node(id, endpoint.host, endpoint.port, rack.orElse(null), fenced)
-//    Option.empty[Node]
-//  }
-
   private def maybeUpdateTopicAssignment(partition: TopicIdPartition, partitionDirectoryId: Uuid): Unit = {
     for {
       topicPartitionActualLog <- logManager.getLog(partition.topicPartition())

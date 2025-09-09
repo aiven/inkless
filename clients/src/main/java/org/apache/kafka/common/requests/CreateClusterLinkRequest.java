@@ -19,14 +19,10 @@ package org.apache.kafka.common.requests;
 
 import org.apache.kafka.common.message.CreateClusterLinkRequestData;
 import org.apache.kafka.common.message.CreateClusterLinkResponseData;
-import org.apache.kafka.common.message.GetReplicaLogInfoRequestData;
-import org.apache.kafka.common.message.GetReplicaLogInfoResponseData;
 import org.apache.kafka.common.protocol.ApiKeys;
 import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.protocol.Readable;
 
-import java.util.ArrayList;
-import java.util.List;
 import java.util.Map;
 
 public class CreateClusterLinkRequest extends AbstractRequest {
