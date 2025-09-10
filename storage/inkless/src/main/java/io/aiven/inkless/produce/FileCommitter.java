@@ -21,6 +21,9 @@ import org.apache.kafka.common.utils.Time;
 
 import com.groupcdg.pitest.annotations.DoNotMutate;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.io.Closeable;
 import java.io.IOException;
 import java.time.Duration;
@@ -52,6 +55,8 @@ import io.aiven.inkless.storage_backend.common.StorageBackend;
  * <p>It uploads files concurrently, but commits them to the control plan sequentially.
  */
 class FileCommitter implements Closeable {
+    private static final Logger LOGGER = LoggerFactory.getLogger(FileCommitter.class);
+
     private final FileCommitterMetrics metrics;
 
     private final Lock lock = new ReentrantLock();
@@ -177,9 +182,17 @@ class FileCommitter implements Closeable {
                         .whenComplete((result, error) -> {
                             totalFilesInProgress.addAndGet(-1);
                             totalBytesInProgress.addAndGet(-file.size());
-                            metrics.fileFinished(file.start(), uploadAndCommitStart);
+                            if (error != null) {
+                                LOGGER.error("Failed to commit file {}", file, error);
+                                if (error.getCause() instanceof FileUploadException) {
+                                    metrics.fileUploadFailed();
+                                } else {
+                                    metrics.fileCommitFailed();
+                                }
+                            } else {
+                                metrics.fileFinished(file.start(), uploadAndCommitStart);
+                            }
                         });
-
 
                 final CacheStoreJob cacheStoreJob = new CacheStoreJob(
                         time,

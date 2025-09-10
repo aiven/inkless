@@ -115,8 +115,7 @@ class FileCommitJob implements Supplier<List<CommitBatchResponse>> {
                 throw e;
             }
         } else {
-            LOGGER.error("Upload failed: {}", result.uploadError.getMessage());
-            throw new RuntimeException("File not uploaded", result.uploadError);
+            throw new FileUploadException(result.uploadError);
         }
     }
 

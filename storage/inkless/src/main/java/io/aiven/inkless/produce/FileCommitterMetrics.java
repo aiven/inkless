@@ -40,9 +40,11 @@ class FileCommitterMetrics implements Closeable {
     private static final String FILE_UPLOAD_AND_COMMIT_TIME = "FileUploadAndCommitTime";
     private static final String FILE_UPLOAD_TIME = "FileUploadTime";
     private static final String FILE_UPLOAD_RATE = "FileUploadRate";
+    private static final String FILE_UPLOAD_ERROR_RATE = "FileUploadErrorRate";
     private static final String FILE_COMMIT_WAIT_TIME = "FileCommitWaitTime";
     private static final String FILE_COMMIT_TIME = "FileCommitTime";
     private static final String FILE_COMMIT_RATE = "FileCommitRate";
+    private static final String FILE_COMMIT_ERROR_RATE = "FileCommitErrorRate";
     private static final String CACHE_STORE_TIME = "CacheStoreTime";
     private static final String COMMIT_QUEUE_FILES = "CommitQueueFiles";
     private static final String COMMIT_QUEUE_BYTES = "CommitQueueBytes";
@@ -62,7 +64,9 @@ class FileCommitterMetrics implements Closeable {
     private final Histogram batchesCountHistogram;
     private final Histogram cacheStoreTimeHistogram;
     private final LongAdder fileUploadRate = new LongAdder();
+    private final LongAdder fileUploadErrorRate = new LongAdder();
     private final LongAdder fileCommitRate = new LongAdder();
+    private final LongAdder fileCommitErrorRate = new LongAdder();
     private final LongAdder batchesCommitRate = new LongAdder();
 
     FileCommitterMetrics(final Time time) {
@@ -71,9 +75,11 @@ class FileCommitterMetrics implements Closeable {
         fileUploadAndCommitTimeHistogram = metricsGroup.newHistogram(FILE_UPLOAD_AND_COMMIT_TIME, true, Map.of());
         fileUploadTimeHistogram = metricsGroup.newHistogram(FILE_UPLOAD_TIME, true, Map.of());
         metricsGroup.newGauge(FILE_UPLOAD_RATE, fileUploadRate::intValue);
+        metricsGroup.newGauge(FILE_UPLOAD_ERROR_RATE, fileUploadErrorRate::intValue);
         fileCommitTimeHistogram = metricsGroup.newHistogram(FILE_COMMIT_TIME, true, Map.of());
         fileCommitWaitTimeHistogram = metricsGroup.newHistogram(FILE_COMMIT_WAIT_TIME, true, Map.of());
         metricsGroup.newGauge(FILE_COMMIT_RATE, fileCommitRate::intValue);
+        metricsGroup.newGauge(FILE_COMMIT_ERROR_RATE, fileCommitErrorRate::intValue);
         metricsGroup.newGauge(BATCHES_COMMIT_RATE, batchesCommitRate::intValue);
         fileSizeHistogram = metricsGroup.newHistogram(FILE_SIZE, true, Map.of());
         batchesCountHistogram = metricsGroup.newHistogram(BATCHES_COUNT, true, Map.of());
@@ -102,9 +108,17 @@ class FileCommitterMetrics implements Closeable {
         fileUploadRate.increment();
     }
 
+    void fileUploadFailed() {
+        fileUploadErrorRate.increment();
+    }
+
     void fileCommitFinished(final long durationMs) {
         fileCommitTimeHistogram.update(durationMs);
         fileCommitRate.increment();
+    }
+
+    public void fileCommitFailed() {
+        fileCommitErrorRate.increment();
     }
 
     void fileCommitWaitFinished(final long durationMs) {
@@ -129,8 +143,10 @@ class FileCommitterMetrics implements Closeable {
         metricsGroup.removeMetric(FILE_UPLOAD_AND_COMMIT_TIME);
         metricsGroup.removeMetric(FILE_UPLOAD_TIME);
         metricsGroup.removeMetric(FILE_UPLOAD_RATE);
+        metricsGroup.removeMetric(FILE_UPLOAD_ERROR_RATE);
         metricsGroup.removeMetric(FILE_COMMIT_TIME);
         metricsGroup.removeMetric(FILE_COMMIT_RATE);
+        metricsGroup.removeMetric(FILE_COMMIT_ERROR_RATE);
         metricsGroup.removeMetric(FILE_SIZE);
         metricsGroup.removeMetric(FILE_COMMIT_WAIT_TIME);
         metricsGroup.removeMetric(CACHE_STORE_TIME);
