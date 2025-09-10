@@ -72,15 +72,23 @@ public class CacheFetchJob implements Callable<FileExtent> {
 
     @Override
     public FileExtent call() throws Exception {
-        FileExtent file = TimeUtils.measureDurationMs(time, () -> cache.get(key), cacheQueryDurationCallback);
-        cacheHitRateCallback.accept(file != null);
-        if (file != null) {
-            // cache hit
-            return file;
+        try {
+            FileExtent file = TimeUtils.measureDurationMs(time, () -> cache.get(key), cacheQueryDurationCallback);
+            cacheHitRateCallback.accept(file != null);
+            if (file != null) {
+                // cache hit
+                return file;
+            }
+        } catch (final Exception e) {
+            throw new CacheFetchException(e);
         }
         // cache miss
         FileExtent freshFile = fallback.call();
-        TimeUtils.measureDurationMs(time, () -> cache.put(key, freshFile), cacheStoreDurationCallback);
+        try {
+            TimeUtils.measureDurationMs(time, () -> cache.put(key, freshFile), cacheStoreDurationCallback);
+        } catch (final Exception e) {
+            throw new CacheFetchException(e);
+        }
         return freshFile;
     }
 

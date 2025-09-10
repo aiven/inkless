@@ -19,7 +19,6 @@ package io.aiven.inkless.consume;
 
 import org.apache.kafka.common.utils.Time;
 
-import java.io.IOException;
 import java.io.InputStream;
 import java.nio.ByteBuffer;
 import java.util.Objects;
@@ -31,7 +30,6 @@ import io.aiven.inkless.common.ByteRange;
 import io.aiven.inkless.common.ObjectKey;
 import io.aiven.inkless.generated.FileExtent;
 import io.aiven.inkless.storage_backend.common.ObjectFetcher;
-import io.aiven.inkless.storage_backend.common.StorageBackendException;
 
 public class FileFetchJob implements Callable<FileExtent> {
 
@@ -70,10 +68,12 @@ public class FileFetchJob implements Callable<FileExtent> {
         return TimeUtils.measureDurationMs(time, this::doWork, durationCallback);
     }
 
-    private FileExtent doWork() throws StorageBackendException, IOException {
+    private FileExtent doWork() throws Exception {
         try (InputStream stream = objectFetcher.fetch(key, range)) {
             byte[] bytes = stream.readNBytes(size);
             return createFileExtent(key, range, ByteBuffer.wrap(bytes));
+        } catch (final Exception e) {
+            throw new FileFetchException(e);
         }
     }
 

@@ -156,6 +156,16 @@ public class Reader implements AutoCloseable {
                         brokerTopicStats.allTopicsStats().failedFetchRequestRate().mark();
                         brokerTopicStats.topicStats(topic).failedFetchRequestRate().mark();
                     }
+                    if (throwable.getCause() instanceof FindBatchesException) {
+                        fetchMetrics.findBatchesFailed();
+                    }
+                    if (throwable.getCause() instanceof FileFetchException) {
+                        fetchMetrics.fileFetchFailed();
+                    }
+                    if (throwable.getCause() instanceof CacheFetchException) {
+                        fetchMetrics.cacheFetchFailed();
+                    }
+                    fetchMetrics.fetchFailed();
                 } else {
                     for (final var entry : topicIdPartitionFetchPartitionDataMap.entrySet()) {
                         final String topic = entry.getKey().topic();
@@ -167,8 +177,8 @@ public class Reader implements AutoCloseable {
                             brokerTopicStats.topicStats(topic).failedFetchRequestRate().mark();
                         }
                     }
+                    fetchMetrics.fetchCompleted(startAt);
                 }
-                fetchMetrics.fetchCompleted(startAt);
             });
     }
 
