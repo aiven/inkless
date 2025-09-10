@@ -75,11 +75,17 @@ public class FetchCompleterJob implements Supplier<Map<TopicIdPartition, FetchPa
     @Override
     public Map<TopicIdPartition, FetchPartitionData> get() {
         try {
-            final Map<String, List<FileExtent>> files = waitForFileData();
+            // first wait for metadata: if this fails, let's propagate the errors in order
             final Map<TopicIdPartition, FindBatchResponse> metadata = coordinates.get();
+            // then wait for data only if metadata was successful
+            final Map<String, List<FileExtent>> files = waitForFileData();
             return TimeUtils.measureDurationMs(time, () -> serveFetch(metadata, files), durationCallback);
         } catch (Exception e) {
-            throw new RuntimeException(e);
+            // unwrap ExecutionException if the errors comes from dependent futures
+            if (e instanceof ExecutionException) {
+                throw new FetchException(e.getCause());
+            }
+            throw new FetchException(e);
         }
     }
 

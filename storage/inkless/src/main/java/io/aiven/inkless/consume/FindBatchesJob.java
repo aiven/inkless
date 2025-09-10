@@ -59,21 +59,25 @@ public class FindBatchesJob implements Callable<Map<TopicIdPartition, FindBatchR
         return TimeUtils.measureDurationMs(time, this::doWork, durationCallback);
     }
 
-    private Map<TopicIdPartition, FindBatchResponse> doWork() {
-        List<FindBatchRequest> requests = new ArrayList<>();
-        for (Map.Entry<TopicIdPartition, FetchRequest.PartitionData> fetchInfo : fetchInfos.entrySet()) {
-            TopicIdPartition topicIdPartition = fetchInfo.getKey();
-            requests.add(new FindBatchRequest(topicIdPartition, fetchInfo.getValue().fetchOffset, fetchInfo.getValue().maxBytes));
-        }
+    private Map<TopicIdPartition, FindBatchResponse> doWork() throws Exception {
+        try {
+            List<FindBatchRequest> requests = new ArrayList<>();
+            for (Map.Entry<TopicIdPartition, FetchRequest.PartitionData> fetchInfo : fetchInfos.entrySet()) {
+                TopicIdPartition topicIdPartition = fetchInfo.getKey();
+                requests.add(new FindBatchRequest(topicIdPartition, fetchInfo.getValue().fetchOffset, fetchInfo.getValue().maxBytes));
+            }
 
-        List<FindBatchResponse> responses = controlPlane.findBatches(requests, params.maxBytes);
+            List<FindBatchResponse> responses = controlPlane.findBatches(requests, params.maxBytes);
 
-        Map<TopicIdPartition, FindBatchResponse> out = new HashMap<>();
-        for (int i = 0; i < requests.size(); i++) {
-            FindBatchRequest request = requests.get(i);
-            FindBatchResponse response = responses.get(i);
-            out.put(request.topicIdPartition(), response);
+            Map<TopicIdPartition, FindBatchResponse> out = new HashMap<>();
+            for (int i = 0; i < requests.size(); i++) {
+                FindBatchRequest request = requests.get(i);
+                FindBatchResponse response = responses.get(i);
+                out.put(request.topicIdPartition(), response);
+            }
+            return out;
+        } catch (Exception e) {
+            throw new FindBatchesException(e);
         }
-        return out;
     }
 }
