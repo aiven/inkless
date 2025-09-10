@@ -22,7 +22,10 @@ import org.junit.jupiter.api.Test;
 
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
-import java.io.InputStream;
+import java.nio.ByteBuffer;
+import java.nio.channels.ReadableByteChannel;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
@@ -51,16 +54,16 @@ public abstract class BaseStorageTest {
 
         storage.upload(TOPIC_PARTITION_SEGMENT_KEY, new ByteArrayInputStream(data), data.length);
 
-        try (final InputStream fetch = storage.fetch(TOPIC_PARTITION_SEGMENT_KEY, new ByteRange(0, data.length))) {
-            final String r = new String(fetch.readAllBytes());
-            assertThat(r).isEqualTo("some file");
-        }
+        final ByteBuffer fetch1 = readToByteBuffer(
+                storage.fetch(TOPIC_PARTITION_SEGMENT_KEY, new ByteRange(0, data.length)));
+        final String r1 = new String(fetch1.array());
+        assertThat(r1).isEqualTo("some file");
 
         final ByteRange range = new ByteRange(1, data.length - 2);
-        try (final InputStream fetch = storage.fetch(TOPIC_PARTITION_SEGMENT_KEY, range)) {
-            final String r = new String(fetch.readAllBytes());
-            assertThat(r).isEqualTo("ome fil");
-        }
+        final ByteBuffer fetch2 = readToByteBuffer(
+                storage.fetch(TOPIC_PARTITION_SEGMENT_KEY, range));
+        final String r2 = new String(fetch2.array());
+        assertThat(r2).isEqualTo("ome fil");
 
         storage.delete(TOPIC_PARTITION_SEGMENT_KEY);
 
@@ -88,12 +91,12 @@ public abstract class BaseStorageTest {
     }
 
     @Test
-    void testUploadANewFile() throws StorageBackendException {
+    void testUploadANewFile() throws StorageBackendException, IOException {
         final StorageBackend storage = storage();
         final byte[] content = "content".getBytes();
         storage.upload(TOPIC_PARTITION_SEGMENT_KEY, new ByteArrayInputStream(content), content.length);
-        assertThat(storage.fetch(TOPIC_PARTITION_SEGMENT_KEY, new ByteRange(0, content.length)))
-            .hasBinaryContent(content);
+        final ByteBuffer fetch = readToByteBuffer(storage.fetch(TOPIC_PARTITION_SEGMENT_KEY, new ByteRange(0, content.length)));
+        assertThat(fetch.array()).isEqualTo(content);
     }
 
     @Test
@@ -119,15 +122,15 @@ public abstract class BaseStorageTest {
     }
 
     @Test
-    void testRetryUploadKeepLatestVersion() throws StorageBackendException {
+    void testRetryUploadKeepLatestVersion() throws StorageBackendException, IOException {
         final StorageBackend storage = storage();
         final byte[] content1 = "content1".getBytes();
         final byte[] content2 = "content2".getBytes();
         storage.upload(TOPIC_PARTITION_SEGMENT_KEY, new ByteArrayInputStream(content1), content1.length);
         storage.upload(TOPIC_PARTITION_SEGMENT_KEY, new ByteArrayInputStream(content2), content2.length);
 
-        assertThat(storage.fetch(TOPIC_PARTITION_SEGMENT_KEY, ByteRange.maxRange()))
-            .hasBinaryContent(content2);
+        final ByteBuffer fetch = readToByteBuffer(storage.fetch(TOPIC_PARTITION_SEGMENT_KEY, new ByteRange(0, content2.length)));
+        assertThat(fetch.array()).isEqualTo(content2);
     }
 
     @Test
@@ -145,9 +148,9 @@ public abstract class BaseStorageTest {
         byte[] data = content.getBytes();
         storage.upload(TOPIC_PARTITION_SEGMENT_KEY, new ByteArrayInputStream(data), data.length);
 
-        try (final InputStream fetch = storage.fetch(TOPIC_PARTITION_SEGMENT_KEY, null)) {
-            assertThat(fetch).hasContent(content);
-        }
+        final ByteBuffer fetch = readToByteBuffer(
+                storage.fetch(TOPIC_PARTITION_SEGMENT_KEY, null));
+        assertThat(new String(fetch.array())).isEqualTo(content);
     }
 
     @Test
@@ -162,9 +165,9 @@ public abstract class BaseStorageTest {
         // Replacing end position as substring is end exclusive, and expected response is end inclusive
         final String range = content.substring(from, to + 1);
 
-        try (final InputStream fetch = storage.fetch(TOPIC_PARTITION_SEGMENT_KEY, new ByteRange(2, 4))) {
-            assertThat(fetch).hasContent(range);
-        }
+        final ByteBuffer fetch = readToByteBuffer(
+                storage.fetch(TOPIC_PARTITION_SEGMENT_KEY,  new ByteRange(2, 4)));
+        assertThat(new String(fetch.array())).isEqualTo(range);
     }
 
     @Test
@@ -174,9 +177,9 @@ public abstract class BaseStorageTest {
         byte[] data = content.getBytes();
         storage.upload(TOPIC_PARTITION_SEGMENT_KEY, new ByteArrayInputStream(data), data.length);
 
-        try (final InputStream fetch = storage.fetch(TOPIC_PARTITION_SEGMENT_KEY, new ByteRange(2, 1))) {
-            assertThat(fetch).hasContent("C");
-        }
+        final ByteBuffer fetch = readToByteBuffer(
+                storage.fetch(TOPIC_PARTITION_SEGMENT_KEY, new ByteRange(2, 1)));
+        assertThat(new String(fetch.array())).isEqualTo("C");
     }
 
     @Test
@@ -186,9 +189,9 @@ public abstract class BaseStorageTest {
         byte[] data = content.getBytes();
         storage.upload(TOPIC_PARTITION_SEGMENT_KEY, new ByteArrayInputStream(data), data.length);
 
-        try (final InputStream fetch = storage.fetch(TOPIC_PARTITION_SEGMENT_KEY, new ByteRange(2, 10))) {
-            assertThat(fetch).hasContent("C");
-        }
+        final ByteBuffer fetch = readToByteBuffer(
+                storage.fetch(TOPIC_PARTITION_SEGMENT_KEY, new ByteRange(2, 10)));
+        assertThat(new String(fetch.array())).isEqualTo("C");
     }
 
     @Test
@@ -274,4 +277,24 @@ public abstract class BaseStorageTest {
                 .hasMessage("Key " + key.value() + " does not exists in storage " + storage);
         }
     }
+
+    public static ByteBuffer readToByteBuffer(final ReadableByteChannel readableByteChannel) throws IOException {
+        final ByteBuffer byteBuffer;
+        final List<ByteBuffer> buffers = new ArrayList<>(5);
+        int readSize;
+        int totalSize = 0;
+        do {
+            final ByteBuffer tempBuffer = ByteBuffer.allocate(1024);
+            readSize = readableByteChannel.read(tempBuffer);
+            if (readSize > 0) {
+                buffers.add(tempBuffer);
+                tempBuffer.flip();
+                totalSize += readSize;
+            }
+        } while (readSize >= 0);
+        byteBuffer = ByteBuffer.allocate(totalSize);
+        buffers.forEach(byteBuffer::put);
+        return byteBuffer.flip();
+    }
+
 }
