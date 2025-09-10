@@ -79,7 +79,7 @@ public class ReaderTest {
 
     @BeforeEach
     public void setup() {
-        reader = new Reader(time, OBJECT_KEY_CREATOR, KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, controlPlane, metadataView, objectFetcher, metadataExecutor, fetchPlannerExecutor, dataExecutor, fetchCompleterExecutor, new BrokerTopicStats());
+        reader = new Reader(time, OBJECT_KEY_CREATOR, KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, controlPlane, objectFetcher, metadataExecutor, fetchPlannerExecutor, dataExecutor, fetchCompleterExecutor, new BrokerTopicStats());
     }
 
     @Test
