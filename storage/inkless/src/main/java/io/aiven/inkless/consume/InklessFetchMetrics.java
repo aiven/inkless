@@ -44,6 +44,10 @@ public class InklessFetchMetrics {
     private static final String FETCH_FILE_TIME = "FetchFileTime";
     private static final String FETCH_COMPLETION_TIME = "FetchCompletionTime";
     private static final String FETCH_RATE = "FetchRate";
+    private static final String FETCH_ERROR_RATE = "FetchErrorRate";
+    private static final String FIND_BATCHES_ERROR_RATE = "FindBatchesErrorRate";
+    private static final String FILE_FETCH_ERROR_RATE = "FileFetchErrorRate";
+    private static final String CACHE_FETCH_ERROR_RATE = "CacheFetchErrorRate";
 
     private final Time time;
 
@@ -58,6 +62,10 @@ public class InklessFetchMetrics {
     private final Histogram fetchFileTimeHistogram;
     private final Histogram fetchCompletionTimeHistogram;
     private final Meter fetchRate;
+    private final Meter fetchErrorRate;
+    private final Meter findBatchesErrorRate;
+    private final Meter fileFetchErrorRate;
+    private final Meter cacheFetchErrorRate;
 
     public InklessFetchMetrics(Time time) {
         this.time = Objects.requireNonNull(time, "time cannot be null");
@@ -71,6 +79,10 @@ public class InklessFetchMetrics {
         fetchFileTimeHistogram = metricsGroup.newHistogram(FETCH_FILE_TIME, true, Map.of());
         fetchCompletionTimeHistogram = metricsGroup.newHistogram(FETCH_COMPLETION_TIME, true, Map.of());
         fetchRate = metricsGroup.newMeter(FETCH_RATE, "fetches", TimeUnit.SECONDS, Map.of());
+        fetchErrorRate = metricsGroup.newMeter(FETCH_ERROR_RATE, "errors", TimeUnit.SECONDS, Map.of());
+        findBatchesErrorRate = metricsGroup.newMeter(FIND_BATCHES_ERROR_RATE, "errors", TimeUnit.SECONDS, Map.of());
+        fileFetchErrorRate = metricsGroup.newMeter(FILE_FETCH_ERROR_RATE, "errors", TimeUnit.SECONDS, Map.of());
+        cacheFetchErrorRate = metricsGroup.newMeter(CACHE_FETCH_ERROR_RATE, "errors", TimeUnit.SECONDS, Map.of());
     }
 
     public void fetchCompleted(Instant startAt) {
@@ -110,12 +122,36 @@ public class InklessFetchMetrics {
         fetchCompletionTimeHistogram.update(duration);
     }
 
+    public void fetchFailed() {
+        fetchErrorRate.mark();
+    }
+
+    public void findBatchesFailed() {
+        findBatchesErrorRate.mark();
+    }
+
+    public void fileFetchFailed() {
+        fileFetchErrorRate.mark();
+    }
+
+    public void cacheFetchFailed() {
+        cacheFetchErrorRate.mark();
+    }
+
     public void close() {
         metricsGroup.removeMetric(FETCH_TOTAL_TIME);
         metricsGroup.removeMetric(FETCH_FILE_TIME);
         metricsGroup.removeMetric(FETCH_PLAN_TIME);
+        metricsGroup.removeMetric(CACHE_QUERY_TIME);
+        metricsGroup.removeMetric(CACHE_STORE_TIME);
+        metricsGroup.removeMetric(CACHE_HIT_COUNT);
+        metricsGroup.removeMetric(CACHE_MISS_COUNT);
         metricsGroup.removeMetric(FIND_BATCHES_TIME);
         metricsGroup.removeMetric(FETCH_COMPLETION_TIME);
+        metricsGroup.removeMetric(FETCH_RATE);
+        metricsGroup.removeMetric(FETCH_ERROR_RATE);
+        metricsGroup.removeMetric(FIND_BATCHES_ERROR_RATE);
+        metricsGroup.removeMetric(FILE_FETCH_ERROR_RATE);
     }
 
     public void fetchStarted() {

@@ -26,9 +26,13 @@ import org.apache.kafka.server.storage.log.FetchParams;
 import org.apache.kafka.server.storage.log.FetchPartitionData;
 import org.apache.kafka.storage.log.metrics.BrokerTopicStats;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.time.Instant;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -39,18 +43,16 @@ import io.aiven.inkless.cache.ObjectCache;
 import io.aiven.inkless.common.InklessThreadFactory;
 import io.aiven.inkless.common.ObjectKeyCreator;
 import io.aiven.inkless.control_plane.ControlPlane;
-import io.aiven.inkless.control_plane.MetadataView;
 import io.aiven.inkless.storage_backend.common.ObjectFetcher;
 
 public class Reader implements AutoCloseable {
-
+    private static final Logger LOGGER = LoggerFactory.getLogger(Reader.class);
     private static final long EXECUTOR_SHUTDOWN_TIMEOUT_SECONDS = 5;
     private final Time time;
     private final ObjectKeyCreator objectKeyCreator;
     private final KeyAlignmentStrategy keyAlignmentStrategy;
     private final ObjectCache cache;
     private final ControlPlane controlPlane;
-    private final MetadataView metadataView;
     private final ObjectFetcher objectFetcher;
     private final ExecutorService metadataExecutor;
     private final ExecutorService fetchPlannerExecutor;
@@ -64,7 +66,6 @@ public class Reader implements AutoCloseable {
                   KeyAlignmentStrategy keyAlignmentStrategy,
                   ObjectCache cache,
                   ControlPlane controlPlane,
-                  MetadataView metadataView,
                   ObjectFetcher objectFetcher,
                   BrokerTopicStats brokerTopicStats) {
         this(
@@ -73,7 +74,6 @@ public class Reader implements AutoCloseable {
             keyAlignmentStrategy,
             cache,
             controlPlane,
-            metadataView,
             objectFetcher,
             Executors.newCachedThreadPool(new InklessThreadFactory("inkless-fetch-metadata-", false)),
             Executors.newCachedThreadPool(new InklessThreadFactory("inkless-fetch-planner-", false)),
@@ -89,7 +89,6 @@ public class Reader implements AutoCloseable {
         KeyAlignmentStrategy keyAlignmentStrategy,
         ObjectCache cache,
         ControlPlane controlPlane,
-        MetadataView metadataView,
         ObjectFetcher objectFetcher,
         ExecutorService metadataExecutor,
         ExecutorService fetchPlannerExecutor,
@@ -102,7 +101,6 @@ public class Reader implements AutoCloseable {
         this.keyAlignmentStrategy = keyAlignmentStrategy;
         this.cache = cache;
         this.controlPlane = controlPlane;
-        this.metadataView = metadataView;
         this.objectFetcher = objectFetcher;
         this.metadataExecutor = metadataExecutor;
         this.fetchPlannerExecutor = fetchPlannerExecutor;
@@ -157,11 +155,24 @@ public class Reader implements AutoCloseable {
             .whenComplete((topicIdPartitionFetchPartitionDataMap, throwable) -> {
                 // Mark broker side fetch metrics
                 if (throwable != null) {
+                    LOGGER.warn("Fetch failed", throwable);
                     for (final var entry : fetchInfos.entrySet()) {
                         final String topic = entry.getKey().topic();
                         brokerTopicStats.allTopicsStats().failedFetchRequestRate().mark();
                         brokerTopicStats.topicStats(topic).failedFetchRequestRate().mark();
                     }
+                    // Check if the exception was caused by a fetch related exception and increment the relevant metric
+                    if (throwable instanceof CompletionException && throwable.getCause() instanceof FetchException) {
+                        final Throwable fetchException = throwable.getCause();
+                        if (fetchException.getCause() instanceof FindBatchesException) {
+                            fetchMetrics.findBatchesFailed();
+                        } else if (fetchException.getCause() instanceof FileFetchException) {
+                            fetchMetrics.fileFetchFailed();
+                        } else if (fetchException.getCause() instanceof CacheFetchException) {
+                            fetchMetrics.cacheFetchFailed();
+                        }
+                    }
+                    fetchMetrics.fetchFailed();
                 } else {
                     for (final var entry : topicIdPartitionFetchPartitionDataMap.entrySet()) {
                         final String topic = entry.getKey().topic();
@@ -173,8 +184,8 @@ public class Reader implements AutoCloseable {
                             brokerTopicStats.topicStats(topic).failedFetchRequestRate().mark();
                         }
                     }
+                    fetchMetrics.fetchCompleted(startAt);
                 }
-                fetchMetrics.fetchCompleted(startAt);
             });
     }
 
