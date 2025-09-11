@@ -21,7 +21,7 @@ import com.yammer.metrics.core.{Gauge, Meter, Timer}
 import io.aiven.inkless.common.SharedState
 import io.aiven.inkless.config.InklessConfig
 import io.aiven.inkless.consume.FetchHandler
-import io.aiven.inkless.control_plane.{BatchInfo, BatchMetadata, ControlPlane, FindBatchResponse, MetadataView}
+import io.aiven.inkless.control_plane.{BatchInfo, BatchMetadata, ControlPlane, ControlPlaneException, FindBatchResponse, MetadataView}
 import io.aiven.inkless.produce.AppendHandler
 import kafka.cluster.PartitionTest.MockPartitionListener
 import kafka.cluster.Partition
@@ -6400,7 +6400,7 @@ class ReplicaManagerTest {
     }
 
     @Test
-    def testAppendDisklessAndClassicEntries(): Unit = {
+    def testAppendValidDisklessAndInvalidClassic(): Unit = {
       val entriesPerPartition = Map(
         disklessTopicPartition -> RECORDS,
         classicTopicPartition -> RECORDS,
@@ -6439,7 +6439,63 @@ class ReplicaManagerTest {
     }
 
     @Test
-    def testInvalidRequest(): Unit = {
+    def testAppendDisklessAndClassicEntries(): Unit = {
+      val entriesPerPartition = Map(
+        disklessTopicPartition -> RECORDS,
+        classicTopicPartition -> RECORDS,
+      )
+      val disklessResponse = Map(disklessTopicPartition -> new PartitionResponse(Errors.NONE))
+      val disklessFutureResult = CompletableFuture.completedFuture[util.Map[TopicIdPartition, PartitionResponse]](
+        disklessResponse.asJava
+      )
+      val appendHandlerCtorMockInitializer: MockedConstruction.MockInitializer[AppendHandler] = {
+        case (mock, _) =>
+          when(mock.handle(any(), any())).thenReturn(disklessFutureResult)
+      }
+      val appendHandlerCtor = mockConstruction(classOf[AppendHandler], appendHandlerCtorMockInitializer)
+      val replicaManager = try {
+        createReplicaManager(List(disklessTopicPartition.topic()))
+      } finally {
+        appendHandlerCtor.close()
+      }
+
+      val topicDelta = new TopicsDelta(TopicsImage.EMPTY)
+      topicDelta.replay(new TopicRecord()
+        .setName(classicTopicPartition.topic)
+        .setTopicId(classicTopicPartition.topicId)
+      )
+      topicDelta.replay(new PartitionRecord()
+        .setTopicId(classicTopicPartition.topicId)
+        .setPartitionId(classicTopicPartition.partition)
+        .setLeader(1)
+        .setLeaderEpoch(0)
+        .setPartitionEpoch(0)
+        .setReplicas(List[Integer](1).asJava)
+        .setIsr(List[Integer](1).asJava)
+      )
+
+      val metadataImage = imageFromTopics(topicDelta.apply())
+      replicaManager.applyDelta(topicDelta, metadataImage)
+
+      val responseCallback = mock(classOf[Function[Map[TopicIdPartition, PartitionResponse], Unit]])
+      replicaManager.appendRecords(
+        timeout = 0,
+        requiredAcks = -1,
+        internalTopicsAllowed = true,
+        origin = AppendOrigin.CLIENT,
+        entriesPerPartition = entriesPerPartition,
+        responseCallback = responseCallback,
+      )
+
+      verify(responseCallback, times(1))
+        .apply(
+          disklessResponse ++
+            Map(classicTopicPartition -> new PartitionResponse(Errors.NONE, 0, -1, 0))
+        )
+    }
+
+    @Test
+    def testAppendWithInvalidDisklessAndValidCLassic(): Unit = {
       val entriesPerPartition = Map(
         disklessTopicPartition -> RECORDS,
         classicTopicPartition -> RECORDS,
@@ -6457,6 +6513,24 @@ class ReplicaManagerTest {
         appendHandlerCtor.close()
       }
 
+      val topicDelta = new TopicsDelta(TopicsImage.EMPTY)
+      topicDelta.replay(new TopicRecord()
+        .setName(classicTopicPartition.topic)
+        .setTopicId(classicTopicPartition.topicId)
+      )
+      topicDelta.replay(new PartitionRecord()
+        .setTopicId(classicTopicPartition.topicId)
+        .setPartitionId(classicTopicPartition.partition)
+        .setLeader(1)
+        .setLeaderEpoch(0)
+        .setPartitionEpoch(0)
+        .setReplicas(List[Integer](1).asJava)
+        .setIsr(List[Integer](1).asJava)
+      )
+
+      val metadataImage = imageFromTopics(topicDelta.apply())
+      replicaManager.applyDelta(topicDelta, metadataImage)
+
       val responseCallback = mock(classOf[Function[Map[TopicIdPartition, PartitionResponse], Unit]])
       replicaManager.appendRecords(
         timeout = 0,
@@ -6472,12 +6546,12 @@ class ReplicaManagerTest {
           // diskless entries get an INVALID_REQUEST
           disklessTopicPartition -> new PartitionResponse(Errors.INVALID_REQUEST),
           // classic entries get a regular response, in this case the topic does not exist
-          classicTopicPartition -> new PartitionResponse(Errors.UNKNOWN_TOPIC_OR_PARTITION),
+          classicTopicPartition -> new PartitionResponse(Errors.NONE, 0, -1, 0)
         ))
     }
 
     @Test
-    def testDisklessWriteFailure(): Unit = {
+    def testAppendWithInvalidDisklessAndClassic(): Unit = {
       val entriesPerPartition = Map(
         disklessTopicPartition -> RECORDS,
         classicTopicPartition -> RECORDS,
@@ -6965,6 +7039,78 @@ class ReplicaManagerTest {
       assertEquals(RECORDS, classicPartitionResponse.records)
     }
 
+    @Test
+    def testFetchFailingDisklessAndValidClassicLessThanMinBytes(): Unit = {
+      // Given
+      val minBytes = Int.MaxValue  // Set minBytes to a value larger than the size of the records to ensure it does not satisfy minBytes
+      val fetchOffset = 15L
+      val maxWaitMs = 1000L  // wait enough for delayed fetch to expire
+      val maxBytes = 10
+
+      // Prepare the FindBatchResponse to be returned by the ControlPlane when it tries to complete the delayed fetch.
+      val cp = mock(classOf[ControlPlane])
+      when(cp.findBatches(any(), any())).thenThrow(new ControlPlaneException("Error in control plane"))
+
+      // Prepare the FetchHandler response to be called when the forceComplete method is invoked.
+      val disklessResponse = Map(disklessTopicPartition ->
+        new FetchPartitionData(Errors.KAFKA_STORAGE_ERROR, -1, -1, MemoryRecords.EMPTY, Optional.empty, OptionalLong.empty, Optional.empty, OptionalInt.empty, false))
+      val fetchHandlerCtor: MockedConstruction[FetchHandler] = mockFetchHandler(disklessResponse)
+
+      val replicaManager = try {
+        spy(createReplicaManager(List(disklessTopicPartition.topic()), controlPlane = Some(cp)))
+      } finally {
+        fetchHandlerCtor.close()
+      }
+
+      // Prepare the classic topic partition response
+      doReturn(Seq(classicTopicPartition ->
+        new LogReadResult(
+          new FetchDataInfo(new LogOffsetMetadata(1L, 0L, 0), RECORDS),
+          Optional.empty(), 10L, 0L, 10L, 0L, 0L, OptionalLong.empty()
+        ))
+      ).when(replicaManager).readFromLog(any(), any(), any(), any())
+      val partition = mock(classOf[Partition])
+      val endOffset = new LogOffsetMetadata(11L, 0L, RECORDS.sizeInBytes())  // next half of bytes available from classic
+      val offsetSnapshot = new LogOffsetSnapshot(0L, endOffset, endOffset, endOffset)
+      when(partition.fetchOffsetSnapshot(any(), any())).thenReturn(offsetSnapshot)
+      doReturn(partition)
+        .when(replicaManager).getPartitionOrException(classicTopicPartition.topicPartition())
+
+      val fetchParams = new FetchParams(
+        -1, -1L, // not follower fetch
+        maxWaitMs, minBytes, maxBytes, FetchIsolation.HIGH_WATERMARK, Optional.empty()
+      )
+      val disklessPartitionData = new PartitionData(disklessTopicPartition.topicId(), fetchOffset, 0L, 123, Optional.empty())
+      val classicPartitionData = new PartitionData(classicTopicPartition.topicId(), 1L, 0L, 123, Optional.empty())
+      val fetchInfos = Seq(
+        disklessTopicPartition -> disklessPartitionData,
+        classicTopicPartition -> classicPartitionData,
+      )
+      @volatile var responseData: Map[TopicIdPartition, FetchPartitionData] = null
+      val latch = new CountDownLatch(1)
+      val responseCallback = (response: Seq[(TopicIdPartition, FetchPartitionData)]) => {
+        responseData = response.toMap
+        latch.countDown()
+      }
+      // Ensure no delayed fetch is in the purgatory before we start
+      assertEquals(0, replicaManager.delayedFetchPurgatory.numDelayed())
+      // When we try to fetch messages from both types of topic partitions with a consumer fetch
+      // and the response does not satisfy minBytes, it should be delayed in the purgatory
+      // until the delayed fetch expires.
+      replicaManager.fetchMessages(fetchParams, fetchInfos, QuotaFactory.UNBOUNDED_QUOTA, responseCallback)
+      assertEquals(0, replicaManager.delayedFetchPurgatory.numDelayed())
+
+      latch.await(10, TimeUnit.SECONDS) // Wait for the delayed fetch to expire
+      assertNotNull(responseData)
+      assertEquals(2, responseData.size)
+      assertEquals(disklessResponse(disklessTopicPartition), responseData(disklessTopicPartition))
+      val classicPartitionResponse = responseData(classicTopicPartition)
+      assertEquals(Errors.NONE, classicPartitionResponse.error)
+      assertEquals(0L, classicPartitionResponse.logStartOffset)
+      assertEquals(10L, classicPartitionResponse.highWatermark)
+      assertEquals(RECORDS, classicPartitionResponse.records)
+    }
+
     // TODO: Add more fetch tests combinations, edge cases ara not covered yet.
 
     private def mockFetchHandler(disklessResponse: Map[TopicIdPartition, FetchPartitionData]) = {
@@ -6989,8 +7135,7 @@ class ReplicaManagerTest {
     ): ReplicaManager = {
       val props = TestUtils.createBrokerConfig(1, logDirCount = 2)
       val config = KafkaConfig.fromProps(props)
-      val logManagerMock = mock(classOf[LogManager])
-      when(logManagerMock.liveLogDirs).thenReturn(Seq.empty)
+      val mockLogMgr = TestUtils.createLogManager(config.logDirs.asScala.map(new File(_)), new LogConfig(new Properties()))
       val sharedState = mock(classOf[SharedState], Answers.RETURNS_DEEP_STUBS)
       when(sharedState.time()).thenReturn(Time.SYSTEM)
       when(sharedState.config()).thenReturn(new InklessConfig(new util.HashMap[String, Object]()))
@@ -7011,7 +7156,7 @@ class ReplicaManagerTest {
         config = config,
         time = time,
         scheduler = time.scheduler,
-        logManager = logManagerMock,
+        logManager = mockLogMgr,
         quotaManagers = quotaManager,
         metadataCache = new KRaftMetadataCache(config.brokerId, () => KRaftVersion.KRAFT_VERSION_0),
         logDirFailureChannel = logDirFailureChannel,
