@@ -45,6 +45,13 @@ import io.aiven.inkless.storage_backend.common.StorageBackendException;
 
 @CoverageIgnore  // tested on integration level
 public class GcsStorage implements StorageBackend {
+    /**
+     * The file extent max size is 16 MiB. Most files are few megabytes but usually over 2 MiB.
+     * Good value here is to allow most files to be fetched in single chunk. Worst case is to load
+     * the file in two chunks.
+     */
+    private static final int READER_8MB_CHUNK_SIZE = 1024 * 1024 * 8;
+
     private Storage storage;
     private String bucketName;
 
@@ -120,6 +127,7 @@ public class GcsStorage implements StorageBackend {
             }
 
             final ReadChannel reader = blob.reader();
+            reader.setChunkSize(READER_8MB_CHUNK_SIZE);
             if (range != null) {
                 reader.limit(range.endOffset() + 1);
                 reader.seek(range.offset());
