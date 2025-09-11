@@ -17,12 +17,12 @@
  */
 package io.aiven.inkless.storage_backend.in_memory;
 
-import org.apache.commons.io.input.BoundedInputStream;
-
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.channels.Channels;
+import java.nio.channels.ReadableByteChannel;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -70,7 +70,7 @@ public class InMemoryStorage implements StorageBackend {
     }
 
     @Override
-    public InputStream fetch(final ObjectKey key, final ByteRange range) throws StorageBackendException {
+    public ReadableByteChannel fetch(final ObjectKey key, final ByteRange range) throws StorageBackendException, IOException {
         Objects.requireNonNull(key, "key cannot be null");
         Objects.requireNonNull(range, "range cannot be null");
 
@@ -83,9 +83,17 @@ public class InMemoryStorage implements StorageBackend {
             throw new InvalidRangeException("Failed to fetch " + key + ": Invalid range " + range + " for blob size " + data.length);
         }
 
-        final ByteArrayInputStream inner = new ByteArrayInputStream(data);
-        inner.skip(range.offset());
-        return new BoundedInputStream(inner, range.size());
+        final int dataSize;
+        if (range.size() > data.length - range.offset()) {
+            dataSize = Math.toIntExact((data.length - range.offset()));
+        }  else {
+            dataSize = Math.toIntExact(Math.min(range.size(), data.length));
+        }
+        final int copyLength = Math.toIntExact(Math.min(range.size(), data.length - 1));
+        final byte[] dstData = new byte[dataSize];
+        System.arraycopy(data, range.bufferOffset(), dstData, 0, copyLength);
+
+        return Channels.newChannel(new ByteArrayInputStream(dstData));
     }
 
     @Override

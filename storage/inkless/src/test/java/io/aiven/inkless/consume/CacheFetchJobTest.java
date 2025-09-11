@@ -27,8 +27,8 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 
-import java.io.ByteArrayInputStream;
 import java.nio.ByteBuffer;
+import java.nio.channels.ReadableByteChannel;
 
 import io.aiven.inkless.cache.MemoryCache;
 import io.aiven.inkless.cache.NullCache;
@@ -40,6 +40,7 @@ import io.aiven.inkless.generated.FileExtent;
 import io.aiven.inkless.storage_backend.common.ObjectFetcher;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
@@ -62,7 +63,10 @@ public class CacheFetchJobTest {
         }
         ByteRange range = new ByteRange(0, size);
         FileExtent expectedFile = FileFetchJob.createFileExtent(objectA, range, ByteBuffer.wrap(array));
-        when(fetcher.fetch(objectA, range)).thenReturn(new ByteArrayInputStream(array));
+
+        final ReadableByteChannel channel = mock(ReadableByteChannel.class);
+        when(fetcher.fetch(objectA, range)).thenReturn(channel);
+        when(fetcher.readToByteBuffer(channel)).thenReturn(ByteBuffer.wrap(array));
 
         ObjectCache cache = new NullCache();
         CacheFetchJob cacheFetchJob = cacheFetchJob(cache, objectA, range);

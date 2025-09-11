@@ -27,6 +27,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -151,9 +152,11 @@ public class FileMerger implements Runnable {
                 final var target = workDir.resolve(tmpFileName);
                 paths.add(target);
 
-                try (final var in = storage.fetch(objectKey, null);
-                     final var out = Files.newOutputStream(target)) {
-                    in.transferTo(out);
+                final var in = storage.fetch(objectKey, null);
+                try (final var out = Files.newByteChannel(target, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE)) {
+                    out.write(storage.readToByteBuffer(in));
+                } catch (Exception e) {
+                    e.printStackTrace();
                 }
 
                 final Supplier<InputStream> inputStream = () -> {
