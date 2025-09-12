@@ -28,7 +28,6 @@ import org.apache.kafka.server.storage.log.FetchPartitionData;
 
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
@@ -220,9 +219,14 @@ public class FetchCompleterJob implements Supplier<Map<TopicIdPartition, FetchPa
                     buffer = ByteBuffer.allocate(Math.toIntExact(batchRange.bufferSize()));
                 }
                 buffer.position(intersection.bufferOffset() - batchRange.bufferOffset());
-                buffer.put(Arrays.copyOfRange(file.data(),
-                        intersection.bufferOffset() - fileRange.bufferOffset(),
-                        intersection.bufferOffset() - fileRange.bufferOffset() + intersection.bufferSize()));
+                final int from = intersection.bufferOffset() - fileRange.bufferOffset();
+                final int to = intersection.bufferOffset() - fileRange.bufferOffset() + intersection.bufferSize();
+                final byte[] fileData = file.data();
+                if (from == 0 && to == fileData.length) {
+                    buffer.put(fileData);
+                } else {
+                    System.arraycopy(fileData, from, buffer.array(), buffer.position(), Math.min(fileData.length - from, to - from));
+                }
             }
         }
         if (buffer == null) {
