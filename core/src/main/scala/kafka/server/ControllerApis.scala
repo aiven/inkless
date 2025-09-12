@@ -133,6 +133,7 @@ class ControllerApis(
         case ApiKeys.ADD_RAFT_VOTER => handleAddRaftVoter(request)
         case ApiKeys.REMOVE_RAFT_VOTER => handleRemoveRaftVoter(request)
         case ApiKeys.UPDATE_RAFT_VOTER => handleUpdateRaftVoter(request)
+        case ApiKeys.CREATE_CLUSTER_LINK => handleCreateClusterLink(request)
         case _ => throw new ApiException(s"Unsupported ApiKey ${request.context.header.apiKey}")
       }
 
@@ -160,6 +161,42 @@ class ControllerApis(
       }
     }
   }
+
+  def handleCreateClusterLink(request: RequestChannel.Request): CompletableFuture[Unit] = {
+    // test
+    authHelper.authorizeClusterOperation(request, CLUSTER_ACTION)
+    val createClusterLinkRequest = request.body[CreateClusterLinkRequest]
+    info("!!! create cluster link request: " + createClusterLinkRequest)
+    val context = new ControllerRequestContext(request.context.header.data, request.context.principal,
+      OptionalLong.empty())
+    val altersByName = new util.HashMap[String, Entry[AlterConfigOp.OpType, String]]()
+    val configChanges = new util.HashMap[ConfigResource,
+      util.Map[String, Entry[AlterConfigOp.OpType, String]]]()
+    // set resource to cluster_link, and name as cluster_link name
+    val resource = new ConfigResource(ConfigResource.Type.forId(64), createClusterLinkRequest.data().clusterLinkName())
+    createClusterLinkRequest.data().configs.forEach { config =>
+      // TODO: currently assume always SET value
+      altersByName.put(config.name, new util.AbstractMap.SimpleEntry[AlterConfigOp.OpType, String](
+        AlterConfigOp.OpType.forId(0), config.value))
+    }
+    configChanges.put(resource, altersByName)
+
+    controller.createClusterLink(context, configChanges)
+      .handle[Unit] { (response, exception) =>
+        logger.info("!!! create cluster link response: " + response + " exception: " + exception)
+        if (exception != null) {
+          requestHelper.handleError(request, exception)
+        } else {
+
+          requestHelper.sendResponseMaybeThrottle(request, throttleMs =>
+            new CreateClusterLinkResponse(response.setThrottleTimeMs(throttleMs)))
+        }
+      }
+
+    CompletableFuture.completedFuture[Unit](())
+
+  }
+
 
   def handleEnvelopeRequest(request: RequestChannel.Request, requestLocal: RequestLocal): CompletableFuture[Unit] = {
     if (!authHelper.authorize(request.context, CLUSTER_ACTION, CLUSTER, CLUSTER_NAME)) {

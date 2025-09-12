@@ -249,7 +249,7 @@ class KafkaApis(val requestChannel: RequestChannel,
         case ApiKeys.STREAMS_GROUP_DESCRIBE => handleStreamsGroupDescribe(request).exceptionally(handleError)
         case ApiKeys.STREAMS_GROUP_HEARTBEAT => handleStreamsGroupHeartbeat(request).exceptionally(handleError)
         case ApiKeys.GET_REPLICA_LOG_INFO => handleGetReplicaLogInfo(request)
-        case ApiKeys.CREATE_CLUSTER_LINK => handleCreateClusterLink(request)
+        case ApiKeys.CREATE_CLUSTER_LINK => forwardToController(request)
         case _ => throw new IllegalStateException(s"No handler for request api key ${request.header.apiKey}")
       }
     } catch {
@@ -265,16 +265,6 @@ class KafkaApis(val requestChannel: RequestChannel,
       if (request.apiLocalCompleteTimeNanos < 0)
         request.apiLocalCompleteTimeNanos = time.nanoseconds
     }
-  }
-
-  def handleCreateClusterLink(request: RequestChannel.Request): Unit = {
-    // test
-
-    val createClusterLinkRequest = request.body[CreateClusterLinkRequest]
-    info("!!! create cluster link request: " + createClusterLinkRequest)
-    val clusterLinkData = new CreateClusterLinkResponseData()
-    clusterLinkData.setErrorCode(0)
-    requestHelper.sendMaybeThrottle(request, new CreateClusterLinkResponse(clusterLinkData))
   }
 
   def handleGetReplicaLogInfo(request: RequestChannel.Request): Unit = {

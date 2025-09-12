@@ -17,6 +17,7 @@
 
 package org.apache.kafka.controller;
 
+import org.apache.kafka.clients.admin.AlterConfigOp;
 import org.apache.kafka.clients.admin.AlterConfigOp.OpType;
 import org.apache.kafka.clients.admin.FeatureUpdate;
 import org.apache.kafka.common.Uuid;
@@ -41,6 +42,7 @@ import org.apache.kafka.common.message.AssignReplicasToDirsResponseData;
 import org.apache.kafka.common.message.BrokerHeartbeatRequestData;
 import org.apache.kafka.common.message.BrokerRegistrationRequestData;
 import org.apache.kafka.common.message.ControllerRegistrationRequestData;
+import org.apache.kafka.common.message.CreateClusterLinkResponseData;
 import org.apache.kafka.common.message.CreateDelegationTokenRequestData;
 import org.apache.kafka.common.message.CreateDelegationTokenResponseData;
 import org.apache.kafka.common.message.CreatePartitionsRequestData.CreatePartitionsTopic;
@@ -1762,6 +1764,18 @@ public final class QuorumController implements Controller {
         }
         return appendWriteEvent("createTopics", context.deadlineNs(),
             () -> replicationControl.createTopics(context, request, describable));
+    }
+
+    @Override
+    public CompletableFuture<CreateClusterLinkResponseData> createClusterLink(
+            ControllerRequestContext context,
+            Map<ConfigResource, Map<String, Map.Entry<AlterConfigOp.OpType, String>>> configChanges
+    ) {
+        return appendWriteEvent("createClusterLink", context.deadlineNs(), () -> {
+            ControllerResult<CreateClusterLinkResponseData> result =
+                    configurationControl.addClusterLinkConfigs(configChanges, false);
+            return result;
+        });
     }
 
     @Override
