@@ -137,8 +137,11 @@ class KafkaApis(val requestChannel: RequestChannel,
         case None => handleInvalidVersionsDuringForwarding(request)
       }
     }
-    val controllerMutationQuota = quotas.controllerMutation.newPermissiveQuotaFor(request.session, request.header.clientId)
-    autoTopicCreationManager.createTopics(Seq(CLUSTER_LINK_TOPIC_NAME).toSet, controllerMutationQuota, None)
+    val topicMetadata = metadataCache.getTopicMetadata(Set(CLUSTER_LINK_TOPIC_NAME).asJava, request.context.listenerName, false, false).asScala
+    if (topicMetadata.headOption.isEmpty) {
+      val controllerMutationQuota = quotas.controllerMutation.newPermissiveQuotaFor(request.session, request.header.clientId)
+      autoTopicCreationManager.createTopics(Seq(CLUSTER_LINK_TOPIC_NAME).toSet, controllerMutationQuota, None)
+    }
     forwardingManager.forwardRequest(request, responseCallback)
   }
 
