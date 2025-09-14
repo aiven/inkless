@@ -40,6 +40,7 @@ import org.apache.kafka.server.logger.LoggingController
 import org.apache.kafka.server.metrics.ClientMetricsConfigs
 import org.apache.kafka.storage.internals.log.LogConfig
 
+import java.util
 import scala.collection.{Map, mutable}
 import scala.jdk.CollectionConverters._
 import scala.jdk.OptionConverters.RichOptional
@@ -53,7 +54,7 @@ class ConfigHelper(metadataCache: MetadataCache, config: KafkaConfig, configRepo
     val describeConfigsRequest = request.body[DescribeConfigsRequest]
     val (authorizedResources, unauthorizedResources) = describeConfigsRequest.data.resources.asScala.partition { resource =>
       ConfigResource.Type.forId(resource.resourceType) match {
-        case ConfigResource.Type.BROKER | ConfigResource.Type.BROKER_LOGGER | ConfigResource.Type.CLIENT_METRICS =>
+        case ConfigResource.Type.BROKER | ConfigResource.Type.BROKER_LOGGER | ConfigResource.Type.CLIENT_METRICS | ConfigResource.Type.CLUSTER_LINK =>
           authHelper.authorize(request.context, DESCRIBE_CONFIGS, CLUSTER, CLUSTER_NAME)
         case ConfigResource.Type.TOPIC =>
           authHelper.authorize(request.context, DESCRIBE_CONFIGS, TOPIC, resource.resourceName)
@@ -65,7 +66,7 @@ class ConfigHelper(metadataCache: MetadataCache, config: KafkaConfig, configRepo
     val authorizedConfigs = describeConfigs(authorizedResources.toList, describeConfigsRequest.data.includeSynonyms, describeConfigsRequest.data.includeDocumentation)
     val unauthorizedConfigs = unauthorizedResources.map { resource =>
       val error = ConfigResource.Type.forId(resource.resourceType) match {
-        case ConfigResource.Type.BROKER | ConfigResource.Type.BROKER_LOGGER | ConfigResource.Type.CLIENT_METRICS => Errors.CLUSTER_AUTHORIZATION_FAILED
+        case ConfigResource.Type.BROKER | ConfigResource.Type.BROKER_LOGGER | ConfigResource.Type.CLIENT_METRICS | ConfigResource.Type.CLUSTER_LINK => Errors.CLUSTER_AUTHORIZATION_FAILED
         case ConfigResource.Type.TOPIC => Errors.TOPIC_AUTHORIZATION_FAILED
         case ConfigResource.Type.GROUP => Errors.GROUP_AUTHORIZATION_FAILED
         case rt => throw new InvalidRequestException(s"Unexpected resource type $rt for resource ${resource.resourceName}")
@@ -135,6 +136,22 @@ class ConfigHelper(metadataCache: MetadataCache, config: KafkaConfig, configRepo
               val groupProps = configRepository.groupConfig(group)
               val groupConfig = GroupConfig.fromProps(config.groupCoordinatorConfig.extractGroupConfigMap(config.shareGroupConfig), groupProps)
               createResponseConfig(resource, groupConfig, createGroupConfigEntry(groupConfig, groupProps, includeSynonyms, includeDocumentation)(_, _))
+            }
+
+          case ConfigResource.Type.CLUSTER_LINK =>
+            val cluster = resource.resourceName
+            if (cluster == null || cluster.isEmpty) {
+              throw new InvalidRequestException("Cluster name must not be empty")
+            } else {
+              val clusterConfigProps = configRepository.config(new ConfigResource(ConfigResource.Type.CLUSTER_LINK, resource.resourceName))
+              val configEntries = new util.ArrayList[DescribeConfigsResponseData.DescribeConfigsResourceResult]()
+              clusterConfigProps.entrySet().forEach(entry =>
+                configEntries.add(new DescribeConfigsResponseData.DescribeConfigsResourceResult().setName(entry.getKey.toString).setValue(entry.getValue.toString).setConfigType(DescribeConfigsResponse.ConfigType.STRING.id()).setConfigSource(ConfigSource.DYNAMIC_BROKER_CONFIG.id))
+              )
+              // createBrokerConfigEntry(perBrokerConfig = true, includeSynonyms, includeDocumentation)(_, _))
+              new DescribeConfigsResponseData.DescribeConfigsResult()
+                .setErrorCode(Errors.NONE.code())
+                .setConfigs(configEntries)
             }
 
           case resourceType => throw new InvalidRequestException(s"Unsupported resource type: $resourceType")

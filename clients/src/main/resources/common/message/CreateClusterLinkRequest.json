@@ -16,7 +16,7 @@
 {
   "apiKey":94,
   "type": "request",
-  "listeners": ["broker"],
+  "listeners": ["broker", "controller"],
   "name": "CreateClusterLinkRequest",
   "validVersions": "0",
   "flexibleVersions": "0+",

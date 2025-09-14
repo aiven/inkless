@@ -25,10 +25,13 @@ import org.apache.kafka.common.config.ConfigResource;
 import org.apache.kafka.common.config.ConfigResource.Type;
 import org.apache.kafka.common.config.TopicConfig;
 import org.apache.kafka.common.config.types.Password;
+import org.apache.kafka.common.message.CreateClusterLinkRequestData;
+import org.apache.kafka.common.message.CreateClusterLinkResponseData;
 import org.apache.kafka.common.metadata.ClearElrRecord;
 import org.apache.kafka.common.metadata.ConfigRecord;
 import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.requests.ApiError;
+import org.apache.kafka.common.requests.CreateClusterLinkResponse;
 import org.apache.kafka.common.utils.LogContext;
 import org.apache.kafka.metadata.KafkaConfigSchema;
 import org.apache.kafka.server.common.ApiMessageAndVersion;
@@ -212,6 +215,31 @@ public class ConfigurationControlManager {
         }
         outputRecords.addAll(createClearElrRecordsAsNeeded(outputRecords));
         return ControllerResult.atomicOf(outputRecords, outputResults);
+    }
+
+    // luke
+    ControllerResult<CreateClusterLinkResponseData> addClusterLinkConfigs(
+            Map<ConfigResource, Map<String, Entry<OpType, String>>> configChanges,
+            boolean newlyCreatedResource
+    ) {
+        List<ApiMessageAndVersion> outputRecords =
+                BoundedList.newArrayBacked(MAX_RECORDS_PER_USER_OP);
+        CreateClusterLinkResponseData data = new CreateClusterLinkResponseData();
+
+        for (Entry<ConfigResource, Map<String, Entry<OpType, String>>> resourceEntry :
+                configChanges.entrySet()) {
+            ApiError apiError = incrementalAlterConfigResource(resourceEntry.getKey(),
+                    resourceEntry.getValue(),
+                    newlyCreatedResource,
+                    outputRecords);
+            // TODO: Should handle the error here
+            log.info("!!! addClusterLinkConfigs apiError: {} for {}", apiError, resourceEntry);
+        }
+        outputRecords.addAll(outputRecords);
+
+        data.setErrorCode((short) 0);
+
+        return ControllerResult.atomicOf(outputRecords, data);
     }
 
     List<ApiMessageAndVersion> createClearElrRecordsAsNeeded(List<ApiMessageAndVersion> input) {

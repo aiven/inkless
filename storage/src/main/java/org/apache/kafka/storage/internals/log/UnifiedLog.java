@@ -1270,7 +1270,6 @@ public class UnifiedLog implements AutoCloseable {
     }
 
     public Optional<OffsetAndEpoch> endOffsetForEpoch(int leaderEpoch) {
-        System.out.println("endOffsetForEpoch: " + leaderEpoch + ";;" + latestEpoch());
         Map.Entry<Integer, Long> entry = leaderEpochCache.endOffsetFor(leaderEpoch, logEndOffset());
         int foundEpoch = entry.getKey();
         long foundOffset = entry.getValue();

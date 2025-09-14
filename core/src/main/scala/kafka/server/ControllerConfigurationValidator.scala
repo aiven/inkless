@@ -20,6 +20,7 @@ package kafka.server
 import java.util
 import java.util.Properties
 import org.apache.kafka.common.config.ConfigResource
+import org.apache.kafka.common.config.ConfigResource.Type
 import org.apache.kafka.common.config.ConfigResource.Type.{BROKER, CLIENT_METRICS, GROUP, TOPIC}
 import org.apache.kafka.controller.ConfigurationValidator
 import org.apache.kafka.common.errors.{InvalidConfigurationException, InvalidRequestException}
@@ -140,6 +141,7 @@ class ControllerConfigurationValidator(kafkaConfig: KafkaConfig) extends Configu
             nullGroupConfigs.mkString(","))
         }
         GroupConfigManager.validate(properties, kafkaConfig.groupCoordinatorConfig, kafkaConfig.shareGroupConfig)
+      case Type.CLUSTER_LINK =>
       case _ => throwExceptionForUnknownResourceType(resource)
     }
   }
