@@ -22,9 +22,10 @@ import java.util.{Collections, Properties}
 import kafka.coordinator.transaction.TransactionCoordinator
 import kafka.utils.Logging
 import org.apache.kafka.clients.ClientResponse
+import org.apache.kafka.common.config.TopicConfig
 import org.apache.kafka.common.errors.InvalidTopicException
 import org.apache.kafka.common.internals.Topic
-import org.apache.kafka.common.internals.Topic.{GROUP_METADATA_TOPIC_NAME, SHARE_GROUP_STATE_TOPIC_NAME, TRANSACTION_STATE_TOPIC_NAME}
+import org.apache.kafka.common.internals.Topic.{CLUSTER_LINK_TOPIC_NAME, GROUP_METADATA_TOPIC_NAME, SHARE_GROUP_STATE_TOPIC_NAME, TRANSACTION_STATE_TOPIC_NAME}
 import org.apache.kafka.common.message.CreateTopicsRequestData
 import org.apache.kafka.common.message.CreateTopicsRequestData.{CreatableTopic, CreatableTopicConfig, CreatableTopicConfigCollection}
 import org.apache.kafka.common.message.MetadataResponseData.MetadataResponseTopic
@@ -35,6 +36,7 @@ import org.apache.kafka.coordinator.share.ShareCoordinator
 import org.apache.kafka.coordinator.transaction.TransactionLogConfig
 import org.apache.kafka.server.common.{ControllerRequestCompletionHandler, NodeToControllerChannelManager}
 import org.apache.kafka.server.quota.ControllerMutationQuota
+import org.apache.kafka.server.record.BrokerCompressionType
 
 import scala.collection.{Map, Seq, Set, mutable}
 import scala.jdk.CollectionConverters._
@@ -204,6 +206,19 @@ class DefaultAutoTopicCreationManager(
           .setNumPartitions(config.shareCoordinatorConfig.shareCoordinatorStateTopicNumPartitions())
           .setReplicationFactor(config.shareCoordinatorConfig.shareCoordinatorStateTopicReplicationFactor())
           .setConfigs(convertToTopicConfigCollections(shareCoordinator.shareGroupStateTopicConfigs()))
+      case CLUSTER_LINK_TOPIC_NAME =>
+        // TODO
+        // these properties I think we should define in the CLusterLinkCoordinator but now, I will hardcode
+        // them here
+        val properties = new Properties
+        properties.put(TopicConfig.CLEANUP_POLICY_CONFIG, TopicConfig.CLEANUP_POLICY_COMPACT)
+        properties.put(TopicConfig.COMPRESSION_TYPE_CONFIG, BrokerCompressionType.PRODUCER.name)
+        properties.put(TopicConfig.RETENTION_MS_CONFIG, -1)
+        new CreatableTopic()
+          .setName(topic)
+          .setNumPartitions(config.clusterLinksConfig.clusterLinkTopicNumPartitions())
+          .setReplicationFactor(config.clusterLinksConfig.clusterLinkTopicReplicationFactor())
+          .setConfigs(convertToTopicConfigCollections(properties))
       case topicName =>
         new CreatableTopic()
           .setName(topicName)
