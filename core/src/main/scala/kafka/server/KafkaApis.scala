@@ -29,7 +29,7 @@ import org.apache.kafka.common.acl.AclOperation
 import org.apache.kafka.common.acl.AclOperation._
 import org.apache.kafka.common.config.ConfigResource
 import org.apache.kafka.common.errors._
-import org.apache.kafka.common.internals.Topic.{GROUP_METADATA_TOPIC_NAME, SHARE_GROUP_STATE_TOPIC_NAME, TRANSACTION_STATE_TOPIC_NAME, isInternal}
+import org.apache.kafka.common.internals.Topic.{CLUSTER_LINK_TOPIC_NAME, GROUP_METADATA_TOPIC_NAME, SHARE_GROUP_STATE_TOPIC_NAME, TRANSACTION_STATE_TOPIC_NAME, isInternal}
 import org.apache.kafka.common.internals.{FatalExitError, Plugin, Topic}
 import org.apache.kafka.common.message.AddPartitionsToTxnResponseData.{AddPartitionsToTxnResult, AddPartitionsToTxnResultCollection}
 import org.apache.kafka.common.message.DeleteRecordsResponseData.{DeleteRecordsPartitionResult, DeleteRecordsTopicResult}
@@ -137,7 +137,8 @@ class KafkaApis(val requestChannel: RequestChannel,
         case None => handleInvalidVersionsDuringForwarding(request)
       }
     }
-
+    val controllerMutationQuota = quotas.controllerMutation.newPermissiveQuotaFor(request.session, request.header.clientId)
+    autoTopicCreationManager.createTopics(Seq(CLUSTER_LINK_TOPIC_NAME).toSet, controllerMutationQuota, None)
     forwardingManager.forwardRequest(request, responseCallback)
   }
 
