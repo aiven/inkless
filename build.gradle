@@ -1634,7 +1634,7 @@ project(':cluster-link-coordinator') {
     task processMessages(type:JavaExec) {
         mainClass = "org.apache.kafka.message.MessageGenerator"
         classpath = configurations.generator
-        args = [ "-p", "org.apache.kafka.coordinator.transaction.generated",
+        args = [ "-p", "org.apache.kafka.coordinator.clusterlink.generated",
                  "-o", "${projectDir}/build/generated/main/java/org/apache/kafka/coordinator/clusterlink/generated",
                  "-i", "src/main/resources/common/message",
                  "-m", "MessageDataGenerator", "JsonConverterGenerator",
