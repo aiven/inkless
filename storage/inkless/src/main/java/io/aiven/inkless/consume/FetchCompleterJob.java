@@ -28,7 +28,6 @@ import org.apache.kafka.server.storage.log.FetchPartitionData;
 
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
@@ -216,25 +215,25 @@ public class FetchCompleterJob implements Supplier<Map<TopicIdPartition, FetchPa
     }
 
     private static MemoryRecords constructRecordsFromFile(BatchInfo batch, List<FileExtent> files) {
-        ByteBuffer buffer = null;
+        byte[] buffer = null;
         for (FileExtent file : files) {
             final ByteRange batchRange = batch.metadata().range();
             final ByteRange fileRange = new ByteRange(file.range().offset(), file.range().length());
             ByteRange intersection = ByteRange.intersect(batchRange, fileRange);
             if (intersection.size() > 0) {
                 if (buffer == null) {
-                    buffer = ByteBuffer.allocate(Math.toIntExact(batchRange.bufferSize()));
+                    buffer = new byte[Math.toIntExact(batchRange.bufferSize())];
                 }
-                buffer.position(intersection.bufferOffset() - batchRange.bufferOffset());
-                buffer.put(Arrays.copyOfRange(file.data(),
-                        intersection.bufferOffset() - fileRange.bufferOffset(),
-                        intersection.bufferOffset() - fileRange.bufferOffset() + intersection.bufferSize()));
+                final int position = intersection.bufferOffset() - batchRange.bufferOffset();
+                final int from = intersection.bufferOffset() - fileRange.bufferOffset();
+                final int to = intersection.bufferOffset() - fileRange.bufferOffset() + intersection.bufferSize();
+                final byte[] fileData = file.data();
+                System.arraycopy(fileData, from, buffer, position, Math.min(fileData.length - from, to - from));
             }
         }
         if (buffer == null) {
             return null;
         }
-        buffer.rewind();
-        return createMemoryRecords(buffer, batch);
+        return createMemoryRecords(ByteBuffer.wrap(buffer), batch);
     }
 }
