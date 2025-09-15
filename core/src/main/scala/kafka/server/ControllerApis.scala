@@ -50,7 +50,7 @@ import org.apache.kafka.common.resource.ResourceType.{CLUSTER, GROUP, TOPIC, USE
 import org.apache.kafka.common.utils.Time
 import org.apache.kafka.common.Uuid
 import org.apache.kafka.common.internals.Topic.CLUSTER_LINK_TOPIC_NAME
-import org.apache.kafka.common.message.CreateTopicsRequestData.{CreatableTopic, CreatableTopicCollection, CreatableTopicConfig, CreatableTopicConfigCollection}
+import org.apache.kafka.common.message.CreateTopicsRequestData.{CreatableTopic, CreatableTopicConfig, CreatableTopicConfigCollection}
 import org.apache.kafka.controller.ControllerRequestContext.requestTimeoutMsToDeadlineNs
 import org.apache.kafka.controller.{Controller, ControllerRequestContext}
 import org.apache.kafka.image.publisher.ControllerRegistrationsPublisher
