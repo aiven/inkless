@@ -20,7 +20,8 @@ package io.aiven.inkless.storage_backend.in_memory;
 import org.junit.jupiter.api.Test;
 
 import java.io.ByteArrayInputStream;
-import java.io.InputStream;
+import java.io.IOException;
+import java.nio.ByteBuffer;
 import java.util.Set;
 
 import io.aiven.inkless.common.ByteRange;
@@ -66,27 +67,27 @@ class InMemoryStorageTest {
     }
 
     @Test
-    void uploadAndFetch() throws StorageBackendException {
+    void uploadAndFetch() throws StorageBackendException, IOException {
         final InMemoryStorage storage = new InMemoryStorage();
         final byte[] data = new byte[10];
         storage.upload(OBJECT_KEY, new ByteArrayInputStream(data), data.length);
 
-        final InputStream fetch = storage.fetch(OBJECT_KEY, ByteRange.maxRange());
+        final ByteBuffer fetch = storage.readToByteBuffer(storage.fetch(OBJECT_KEY, ByteRange.maxRange()));
 
-        assertThat(fetch).hasBinaryContent(data);
+        assertThat(fetch.array()).isEqualTo(data);
     }
 
     @Test
-    void fetchRanged() throws StorageBackendException {
+    void fetchRanged() throws StorageBackendException, IOException {
         final InMemoryStorage storage = new InMemoryStorage();
         final byte[] data = new byte[]{0, 1, 2, 3, 4, 5, 6, 7};
         storage.upload(OBJECT_KEY, new ByteArrayInputStream(data), data.length);
 
-        final InputStream fetch1 = storage.fetch(OBJECT_KEY, new ByteRange(1, 2));
-        assertThat(fetch1).hasBinaryContent(new byte[]{1, 2});
+        final ByteBuffer fetch1 = storage.readToByteBuffer(storage.fetch(OBJECT_KEY, new ByteRange(1, 2)));
+        assertThat(fetch1.array()).isEqualTo(new byte[]{1, 2});
 
-        final InputStream fetch2 = storage.fetch(OBJECT_KEY, new ByteRange(1, 100));
-        assertThat(fetch2).hasBinaryContent(new byte[]{1, 2, 3, 4, 5, 6, 7});
+        final ByteBuffer fetch2 = storage.readToByteBuffer(storage.fetch(OBJECT_KEY, new ByteRange(1, 100)));
+        assertThat(fetch2.array()).isEqualTo(new byte[]{1, 2, 3, 4, 5, 6, 7});
     }
 
     @Test
@@ -101,13 +102,13 @@ class InMemoryStorageTest {
     }
 
     @Test
-    void delete() throws StorageBackendException {
+    void delete() throws StorageBackendException, IOException {
         final InMemoryStorage storage = new InMemoryStorage();
         final byte[] data = new byte[]{0, 1, 2, 3, 4, 5, 6, 7};
         storage.upload(OBJECT_KEY, new ByteArrayInputStream(data), data.length);
 
-        final InputStream fetch = storage.fetch(OBJECT_KEY, new ByteRange(1, 2));
-        assertThat(fetch).hasBinaryContent(new byte[]{1, 2});
+        final ByteBuffer fetch = storage.readToByteBuffer(storage.fetch(OBJECT_KEY, new ByteRange(1, 2)));
+        assertThat(fetch.array()).isEqualTo(new byte[]{1, 2});
 
         storage.delete(OBJECT_KEY);
 
@@ -116,13 +117,13 @@ class InMemoryStorageTest {
     }
 
     @Test
-    void deleteMany() throws StorageBackendException {
+    void deleteMany() throws StorageBackendException, IOException {
         final InMemoryStorage storage = new InMemoryStorage();
         final byte[] data = new byte[]{0, 1, 2, 3, 4, 5, 6, 7};
         storage.upload(OBJECT_KEY, new ByteArrayInputStream(data), data.length);
 
-        final InputStream fetch = storage.fetch(OBJECT_KEY, new ByteRange(1, 2));
-        assertThat(fetch).hasBinaryContent(new byte[]{1, 2});
+        final ByteBuffer fetch = storage.readToByteBuffer(storage.fetch(OBJECT_KEY, new ByteRange(1, 2)));
+        assertThat(fetch.array()).isEqualTo(new byte[]{1, 2});
 
         storage.delete(Set.of(OBJECT_KEY, PlainObjectKey.create("un", "related")));
 
