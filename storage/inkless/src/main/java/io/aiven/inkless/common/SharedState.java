@@ -33,20 +33,18 @@ import io.aiven.inkless.cache.ObjectCache;
 import io.aiven.inkless.config.InklessConfig;
 import io.aiven.inkless.control_plane.ControlPlane;
 import io.aiven.inkless.control_plane.MetadataView;
-import io.aiven.inkless.storage_backend.common.StorageBackend;
 
 public record SharedState(
-        Time time,
-        int brokerId,
-        InklessConfig config,
-        MetadataView metadata,
-        ControlPlane controlPlane,
-        StorageBackend storage,
-        ObjectKeyCreator objectKeyCreator,
-        KeyAlignmentStrategy keyAlignmentStrategy,
-        ObjectCache cache,
-        BrokerTopicStats brokerTopicStats,
-        Supplier<LogConfig> defaultTopicConfigs
+    Time time,
+    int brokerId,
+    InklessConfig config,
+    MetadataView metadata,
+    ControlPlane controlPlane,
+    ObjectKeyCreator objectKeyCreator,
+    KeyAlignmentStrategy keyAlignmentStrategy,
+    ObjectCache cache,
+    BrokerTopicStats brokerTopicStats,
+    Supplier<LogConfig> defaultTopicConfigs
 ) implements Closeable {
 
     public static SharedState initialize(
@@ -67,7 +65,6 @@ public record SharedState(
             config,
             metadata,
             controlPlane,
-            config.storage(),
             ObjectKey.creator(config.objectKeyPrefix(), config.objectKeyLogPrefixMasked()),
             new FixedBlockAlignment(config.fetchCacheBlockBytes()),
             InfinispanCache.build(
