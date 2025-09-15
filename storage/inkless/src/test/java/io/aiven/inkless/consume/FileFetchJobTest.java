@@ -27,8 +27,8 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 
-import java.io.ByteArrayInputStream;
 import java.nio.ByteBuffer;
+import java.nio.channels.ReadableByteChannel;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -42,6 +42,7 @@ import io.aiven.inkless.storage_backend.common.ObjectFetcher;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -70,7 +71,9 @@ public class FileFetchJobTest {
         FileFetchJob job = new FileFetchJob(time, fetcher, objectA, range, durationMs -> { });
         FileExtent expectedFile = FileFetchJob.createFileExtent(objectA, range, ByteBuffer.wrap(array));
 
-        when(fetcher.fetch(objectA, range)).thenReturn(new ByteArrayInputStream(array));
+        final ReadableByteChannel channel = mock(ReadableByteChannel.class);
+        when(fetcher.fetch(objectA, range)).thenReturn(channel);
+        when(fetcher.readToByteBuffer(channel)).thenReturn(ByteBuffer.wrap(array));
         FileExtent actualFile = job.call();
 
         assertThat(actualFile).isEqualTo(expectedFile);

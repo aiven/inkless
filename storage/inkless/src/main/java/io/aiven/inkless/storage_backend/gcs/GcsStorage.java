@@ -31,6 +31,7 @@ import com.groupcdg.pitest.annotations.CoverageIgnore;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.channels.Channels;
+import java.nio.channels.ReadableByteChannel;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -114,10 +115,10 @@ public class GcsStorage implements StorageBackend {
     }
 
     @Override
-    public InputStream fetch(ObjectKey key, ByteRange range) throws StorageBackendException {
+    public ReadableByteChannel fetch(ObjectKey key, ByteRange range) throws StorageBackendException, IOException {
         try {
             if (range != null && range.empty()) {
-                return InputStream.nullInputStream();
+                return Channels.newChannel(InputStream.nullInputStream());
             }
 
             final Blob blob = getBlob(key);
@@ -132,7 +133,7 @@ public class GcsStorage implements StorageBackend {
                 reader.limit(range.endOffset() + 1);
                 reader.seek(range.offset());
             }
-            return Channels.newInputStream(reader);
+            return reader;
         } catch (final IOException e) {
             throw new StorageBackendException("Failed to fetch " + key, e);
         } catch (final BaseServiceException e) {

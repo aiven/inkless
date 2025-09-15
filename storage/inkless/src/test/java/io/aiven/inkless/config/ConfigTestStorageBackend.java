@@ -17,7 +17,9 @@
  */
 package io.aiven.inkless.config;
 
+import java.io.IOException;
 import java.io.InputStream;
+import java.nio.channels.ReadableByteChannel;
 import java.util.Map;
 import java.util.Set;
 
@@ -43,7 +45,7 @@ public class ConfigTestStorageBackend implements StorageBackend {
     }
 
     @Override
-    public InputStream fetch(ObjectKey key, ByteRange range) throws StorageBackendException {
+    public ReadableByteChannel fetch(ObjectKey key, ByteRange range) throws StorageBackendException, IOException {
         return null;
     }
 
