@@ -19,7 +19,7 @@ package kafka.server
 
 import java.{lang, util}
 import java.nio.ByteBuffer
-import java.util.{Collections, OptionalLong}
+import java.util.{Collections, OptionalLong, Properties}
 import java.util.Map.Entry
 import java.util.concurrent.CompletableFuture
 import java.util.function.Consumer
@@ -32,7 +32,7 @@ import kafka.utils.Logging
 import org.apache.kafka.clients.admin.{AlterConfigOp, EndpointType}
 import org.apache.kafka.common.Uuid.ZERO_UUID
 import org.apache.kafka.common.acl.AclOperation.{ALTER, ALTER_CONFIGS, CLUSTER_ACTION, CREATE, CREATE_TOKENS, DELETE, DESCRIBE, DESCRIBE_CONFIGS}
-import org.apache.kafka.common.config.ConfigResource
+import org.apache.kafka.common.config.{ConfigResource, TopicConfig}
 import org.apache.kafka.common.errors.{ApiException, ClusterAuthorizationException, InvalidRequestException, TopicDeletionDisabledException, UnsupportedVersionException}
 import org.apache.kafka.common.internals.{FatalExitError, Plugin, Topic}
 import org.apache.kafka.common.message.AlterConfigsResponseData.{AlterConfigsResourceResponse => OldAlterConfigsResourceResponse}
@@ -49,6 +49,8 @@ import org.apache.kafka.common.resource.Resource.CLUSTER_NAME
 import org.apache.kafka.common.resource.ResourceType.{CLUSTER, GROUP, TOPIC, USER}
 import org.apache.kafka.common.utils.Time
 import org.apache.kafka.common.Uuid
+import org.apache.kafka.common.internals.Topic.CLUSTER_LINK_TOPIC_NAME
+import org.apache.kafka.common.message.CreateTopicsRequestData.{CreatableTopic, CreatableTopicCollection, CreatableTopicConfig, CreatableTopicConfigCollection}
 import org.apache.kafka.controller.ControllerRequestContext.requestTimeoutMsToDeadlineNs
 import org.apache.kafka.controller.{Controller, ControllerRequestContext}
 import org.apache.kafka.image.publisher.ControllerRegistrationsPublisher
@@ -59,6 +61,7 @@ import org.apache.kafka.server.{ApiVersionManager, DelegationTokenManager, Proce
 import org.apache.kafka.server.authorizer.Authorizer
 import org.apache.kafka.server.common.{ApiMessageAndVersion, RequestLocal}
 import org.apache.kafka.server.quota.ControllerMutationQuota
+import org.apache.kafka.server.record.BrokerCompressionType
 
 import scala.jdk.CollectionConverters._
 
@@ -192,6 +195,35 @@ class ControllerApis(
             new CreateClusterLinkResponse(response.setThrottleTimeMs(throttleMs)))
         }
       }
+    val topicMetadata = metadataCache.getTopicMetadata(Set(CLUSTER_LINK_TOPIC_NAME).asJava, request.context.listenerName).asScala
+    if (topicMetadata.headOption.isEmpty) {
+      val properties = new Properties
+      properties.put(TopicConfig.CLEANUP_POLICY_CONFIG, TopicConfig.CLEANUP_POLICY_COMPACT)
+      properties.put(TopicConfig.COMPRESSION_TYPE_CONFIG, BrokerCompressionType.PRODUCER.name)
+      properties.put(TopicConfig.RETENTION_MS_CONFIG, -1)
+      val clusterLinkTopic = new CreatableTopic()
+        .setName(CLUSTER_LINK_TOPIC_NAME)
+        .setNumPartitions(config.clusterLinksConfig.clusterLinkTopicNumPartitions())
+        .setReplicationFactor(config.clusterLinksConfig.clusterLinkTopicReplicationFactor())
+        .setConfigs(convertToTopicConfigCollections(properties))
+      val topicsToCreate = new CreateTopicsRequestData.CreatableTopicCollection(1)
+      topicsToCreate.add(clusterLinkTopic)
+
+      val createTopicsRequest = new CreateTopicsRequest.Builder(
+        new CreateTopicsRequestData()
+          .setTimeoutMs(config.requestTimeoutMs)
+          .setTopics(topicsToCreate)
+      ).build()
+      val controllerMutationQuota = quotas.controllerMutation.newQuotaFor(request.session, request.header, 6)
+      val context = new ControllerRequestContext(
+        request.context.header.data, request.context.principal,
+        requestTimeoutMsToDeadlineNs(time, createTopicsRequest.data.timeoutMs()),
+        controllerMutationQuotaRecorderFor(controllerMutationQuota))
+      createTopics(context, createTopicsRequest.data,
+        authHelper.authorize(request.context, CREATE, CLUSTER, CLUSTER_NAME, logIfDenied = false),
+        names => authHelper.filterByAuthorized(request.context, CREATE, TOPIC, names)(identity),
+        names => authHelper.filterByAuthorized(request.context, DESCRIBE_CONFIGS, TOPIC, names, logIfDenied = false)(identity))
+    }
 
     CompletableFuture.completedFuture[Unit](())
 
@@ -1138,5 +1170,16 @@ class ControllerApis(
   def handleUpdateRaftVoter(request: RequestChannel.Request): CompletableFuture[Unit] = {
     authHelper.authorizeClusterOperation(request, CLUSTER_ACTION)
     handleRaftRequest(request, response => new UpdateRaftVoterResponse(response.asInstanceOf[UpdateRaftVoterResponseData]))
+  }
+
+  private def convertToTopicConfigCollections(config: Properties): CreatableTopicConfigCollection = {
+    val topicConfigs = new CreatableTopicConfigCollection()
+    config.forEach {
+      case (name, value) =>
+        topicConfigs.add(new CreatableTopicConfig()
+          .setName(name.toString)
+          .setValue(value.toString))
+    }
+    topicConfigs
   }
 }
