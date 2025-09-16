@@ -188,6 +188,10 @@ jobs:
       - name: Regenerate JOOQ classes (needed after JDK 21)
         if: matrix.java != '17'
         run: ./gradlew :storage:inkless:generateJooqClasses
+      - name: Verify JOOQ classes are up-to-date in release branches
+        if: startsWith(github.ref_name, 'inkless-')
+        run: |
+          git diff --exit-code --stat -- storage/inkless/src/main/generated-jooq || (echo "JOOQ classes are not up-to-date, please run './gradlew :storage:inkless:generateJooqClasses' and commit the changes" && exit 1)
       - name: JUnit Tests
         id: junit-test
         uses: ./.github/actions/run-gradle
