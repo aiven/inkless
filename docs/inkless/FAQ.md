@@ -212,7 +212,9 @@
     * **Hot Set Data:** For hot set data, read-ahead is relatively straightforward. The data is likely to be cached on a broker within the same AZ, making reads fast.  
     * **Trailing Reads:** For trailing reads, efficiency depends on file merging. If file merging has been performed, retrieving older data is more efficient. Otherwise, multiple object reads may be needed, potentially increasing latency.  
 * **Q: How does file merging work?**  
-  * A: A broker will read from objects written by several other brokers, and work to reorganize the data into output files. These files will be optimized for retention and read access. Data is currently merged into single output files, but this may be improved in the future to merge data in smaller groups or with a more complex method. File merging is primarily aimed at improving the efficiency of reading older, trailing data by combining many smaller objects into larger, more consolidated files.  
+  * A: A broker will read from objects written by several other brokers, and work to reorganize the data into output files. These files will be optimized for retention and read access. Data is currently merged into single output files, but this may be improved in the future to merge data in smaller groups or with a more complex method. File merging is primarily aimed at improving the efficiency of reading older, trailing data by combining many smaller objects into larger, more consolidated files.
+* **Q: How does client-side compression affect the buffer size (`inkless.produce.buffer.max.bytes`)?**  
+  * A: The broker accumulates data against the buffer **as is** - is not modified by the broker. It therefore depends on whether the client has enabled compression or not - a compression-enabled client would accumulate compressed bytes and a non-enabled one would accumulate uncompressed bytes.
 * **Q: What metrics are available for Inkless?**  
   * A: You get the standard Kafka metrics (e.g., throughput, latency, consumer lag) plus new metrics specific to Inkless. These additional metrics typically provide insights into:  
     * Object storage operations (writes, reads, latency, errors).  
