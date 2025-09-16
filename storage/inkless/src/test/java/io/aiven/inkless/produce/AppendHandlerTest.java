@@ -55,7 +55,6 @@ import io.aiven.inkless.common.SharedState;
 import io.aiven.inkless.config.InklessConfig;
 import io.aiven.inkless.control_plane.ControlPlane;
 import io.aiven.inkless.control_plane.MetadataView;
-import io.aiven.inkless.storage_backend.common.StorageBackend;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -84,8 +83,6 @@ public class AppendHandlerTest {
     @Mock
     ControlPlane controlPlane;
     @Mock
-    StorageBackend storageBackend;
-    @Mock
     Writer writer;
     @Mock
     BrokerTopicStats brokerTopicStats;
@@ -113,7 +110,7 @@ public class AppendHandlerTest {
     @Test
     public void rejectTransactionalProduce() throws Exception {
         final AppendHandler interceptor = new AppendHandler(
-            new SharedState(time, BROKER_ID, inklessConfig, metadataView, controlPlane, storageBackend,
+            new SharedState(time, BROKER_ID, inklessConfig, metadataView, controlPlane,
                 OBJECT_KEY_CREATOR, KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, brokerTopicStats, DEFAULT_TOPIC_CONFIGS), writer);
 
         final TopicIdPartition topicIdPartition1 = new TopicIdPartition(Uuid.randomUuid(), 0, "inkless1");
@@ -136,7 +133,7 @@ public class AppendHandlerTest {
     @Test
     public void emptyRequests() throws Exception {
         final AppendHandler interceptor = new AppendHandler(
-            new SharedState(time, BROKER_ID, inklessConfig, metadataView, controlPlane, storageBackend,
+            new SharedState(time, BROKER_ID, inklessConfig, metadataView, controlPlane,
                 OBJECT_KEY_CREATOR, KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, brokerTopicStats, DEFAULT_TOPIC_CONFIGS), writer);
 
         final Map<TopicIdPartition, MemoryRecords> entriesPerPartition = Map.of();
@@ -163,7 +160,7 @@ public class AppendHandlerTest {
 
         when(metadataView.getTopicConfig(any())).thenReturn(new Properties());
         final AppendHandler interceptor = new AppendHandler(
-            new SharedState(time, BROKER_ID, inklessConfig, metadataView, controlPlane, storageBackend,
+            new SharedState(time, BROKER_ID, inklessConfig, metadataView, controlPlane,
                 OBJECT_KEY_CREATOR, KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, brokerTopicStats, DEFAULT_TOPIC_CONFIGS), writer);
 
         final var result = interceptor.handle(entriesPerPartition, requestLocal).get();
@@ -185,7 +182,7 @@ public class AppendHandlerTest {
 
         when(metadataView.getTopicConfig(any())).thenReturn(new Properties());
         final AppendHandler interceptor = new AppendHandler(
-            new SharedState(time, BROKER_ID, inklessConfig, metadataView, controlPlane, storageBackend,
+            new SharedState(time, BROKER_ID, inklessConfig, metadataView, controlPlane,
                 OBJECT_KEY_CREATOR, KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, brokerTopicStats, DEFAULT_TOPIC_CONFIGS), writer);
 
         assertThatThrownBy(() -> interceptor.handle(entriesPerPartition, requestLocal).get()).hasCause(exception);
@@ -194,7 +191,7 @@ public class AppendHandlerTest {
     @Test
     public void close() throws IOException {
         final AppendHandler interceptor = new AppendHandler(
-            new SharedState(time, BROKER_ID, inklessConfig, metadataView, controlPlane, storageBackend,
+            new SharedState(time, BROKER_ID, inklessConfig, metadataView, controlPlane,
                 OBJECT_KEY_CREATOR, KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, brokerTopicStats, DEFAULT_TOPIC_CONFIGS), writer);
 
         interceptor.close();

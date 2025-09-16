@@ -61,7 +61,7 @@ public class FileCleaner implements Runnable {
         this(
             sharedState.time(),
             sharedState.controlPlane(),
-            sharedState.storage(),
+            sharedState.config().storage(),
             sharedState.objectKeyCreator(),
             sharedState.config().fileCleanerRetentionPeriod()
         );
