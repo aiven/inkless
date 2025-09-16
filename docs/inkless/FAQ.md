@@ -149,7 +149,7 @@
     * **Object Storage Costs:** These costs are tied to the amount of data stored and retrieved from object storage, as well as the number of write operations. Costs depend on the pricing model of the chosen object storage provider.  
     * **Network Costs:** Network costs can significantly decrease with Inkless because inter-broker data transfer is minimized. Data is not replicated between brokers, and traffic stays largely within the same availability zone (AZ).  
     * **Total Cost of Ownership (TCO):** Overall, the TCO for Inkless can be lower than classic Kafka due to reduced storage costs, lower network costs, and simplified broker operations, especially at large scale.
-* **Q: Why am I seeing seconds-high produce latencies when my buffer time is significantly? **  
+* **Q: Why am I seeing seconds-high produce latencies when `inkless.produce.commit.interval.ms` is significantly lower?**  
   * A: Common problems could be
     * **Single Producer and Single Partition:** The most simple tests may opt for a single client producing to a single partition. In such cases, the client may hit the bottleneck of sequential request processing. Per broker-connection, the client maintains at most `max.requests.per.connection` requests in flight. On the server, future queued requests (by client-connection) have to wait for all preceding requests (by the same client) to be completed before being processed. The latency on the client-side can therefore grow to be the equivalent of `max.requests.per.connection` or more requests. To alleviate this with a single client - larger and more aggressive batching must be configured on the producer. It is generally recommended to run with multiple producers. See (the performance tuning guide)[./PERFORMANCE.md]
 
