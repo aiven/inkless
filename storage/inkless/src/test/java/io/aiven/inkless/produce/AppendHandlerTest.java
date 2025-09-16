@@ -57,7 +57,6 @@ import io.aiven.inkless.common.TopicIdEnricher;
 import io.aiven.inkless.config.InklessConfig;
 import io.aiven.inkless.control_plane.ControlPlane;
 import io.aiven.inkless.control_plane.MetadataView;
-import io.aiven.inkless.storage_backend.common.StorageBackend;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -86,8 +85,6 @@ public class AppendHandlerTest {
     MetadataView metadataView;
     @Mock
     ControlPlane controlPlane;
-    @Mock
-    StorageBackend storageBackend;
     @Mock
     Writer writer;
     @Mock
@@ -131,7 +128,7 @@ public class AppendHandlerTest {
     @Test
     public void rejectTransactionalProduce() throws Exception {
         final AppendHandler interceptor = new AppendHandler(
-            new SharedState(time, BROKER_ID, inklessConfig, metadataView, controlPlane, storageBackend,
+            new SharedState(time, BROKER_ID, inklessConfig, metadataView, controlPlane,
                 OBJECT_KEY_CREATOR, KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, brokerTopicStats, DEFAULT_TOPIC_CONFIGS), writer);
 
         final Map<TopicPartition, MemoryRecords> entriesPerPartition = Map.of(
@@ -152,7 +149,7 @@ public class AppendHandlerTest {
     @Test
     public void emptyRequests() throws Exception {
         final AppendHandler interceptor = new AppendHandler(
-            new SharedState(time, BROKER_ID, inklessConfig, metadataView, controlPlane, storageBackend,
+            new SharedState(time, BROKER_ID, inklessConfig, metadataView, controlPlane,
                 OBJECT_KEY_CREATOR, KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, brokerTopicStats, DEFAULT_TOPIC_CONFIGS), writer);
 
         final Map<TopicPartition, MemoryRecords> entriesPerPartition = Map.of();
@@ -179,7 +176,7 @@ public class AppendHandlerTest {
         when(metadataView.getTopicId(eq("diskless"))).thenReturn(new Uuid(123, 456));
         when(metadataView.getTopicConfig(any())).thenReturn(new Properties());
         final AppendHandler interceptor = new AppendHandler(
-            new SharedState(time, BROKER_ID, inklessConfig, metadataView, controlPlane, storageBackend,
+            new SharedState(time, BROKER_ID, inklessConfig, metadataView, controlPlane,
                 OBJECT_KEY_CREATOR, KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, brokerTopicStats, DEFAULT_TOPIC_CONFIGS), writer);
 
         final var result = interceptor.handle(entriesPerPartition, requestLocal).get();
@@ -197,7 +194,7 @@ public class AppendHandlerTest {
             throw new TopicIdEnricher.TopicIdNotFoundException("diskless");
         });
         final AppendHandler interceptor = new AppendHandler(
-            new SharedState(time, BROKER_ID, inklessConfig, metadataView, controlPlane, storageBackend,
+            new SharedState(time, BROKER_ID, inklessConfig, metadataView, controlPlane,
                 OBJECT_KEY_CREATOR, KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, brokerTopicStats, DEFAULT_TOPIC_CONFIGS), writer);
 
         interceptor.handle(entriesPerPartition, requestLocal)
@@ -224,7 +221,7 @@ public class AppendHandlerTest {
         when(metadataView.getTopicId(eq("diskless"))).thenReturn(new Uuid(123, 456));
         when(metadataView.getTopicConfig(any())).thenReturn(new Properties());
         final AppendHandler interceptor = new AppendHandler(
-            new SharedState(time, BROKER_ID, inklessConfig, metadataView, controlPlane, storageBackend,
+            new SharedState(time, BROKER_ID, inklessConfig, metadataView, controlPlane,
                 OBJECT_KEY_CREATOR, KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, brokerTopicStats, DEFAULT_TOPIC_CONFIGS), writer);
 
         assertThatThrownBy(() -> interceptor.handle(entriesPerPartition, requestLocal).get()).hasCause(exception);
@@ -233,7 +230,7 @@ public class AppendHandlerTest {
     @Test
     public void close() throws IOException {
         final AppendHandler interceptor = new AppendHandler(
-            new SharedState(time, BROKER_ID, inklessConfig, metadataView, controlPlane, storageBackend,
+            new SharedState(time, BROKER_ID, inklessConfig, metadataView, controlPlane,
                 OBJECT_KEY_CREATOR, KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, brokerTopicStats, DEFAULT_TOPIC_CONFIGS), writer);
 
         interceptor.close();

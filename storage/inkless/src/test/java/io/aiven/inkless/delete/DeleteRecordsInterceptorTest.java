@@ -53,7 +53,6 @@ import io.aiven.inkless.control_plane.ControlPlane;
 import io.aiven.inkless.control_plane.DeleteRecordsRequest;
 import io.aiven.inkless.control_plane.DeleteRecordsResponse;
 import io.aiven.inkless.control_plane.MetadataView;
-import io.aiven.inkless.storage_backend.common.StorageBackend;
 import io.aiven.inkless.test_utils.SynchronousExecutor;
 
 import static org.apache.kafka.common.requests.DeleteRecordsResponse.INVALID_LOW_WATERMARK;
@@ -84,8 +83,6 @@ class DeleteRecordsInterceptorTest {
     @Mock
     ControlPlane controlPlane;
     @Mock
-    StorageBackend storageBackend;
-    @Mock
     Consumer<Map<TopicPartition, DeleteRecordsResponseData.DeleteRecordsPartitionResult>> responseCallback;
     @Mock
     BrokerTopicStats brokerTopicStats;
@@ -100,7 +97,7 @@ class DeleteRecordsInterceptorTest {
         when(metadataView.isDisklessTopic(eq("diskless"))).thenReturn(true);
         when(metadataView.isDisklessTopic(eq("non_diskless"))).thenReturn(false);
         final DeleteRecordsInterceptor interceptor = new DeleteRecordsInterceptor(
-            new SharedState(time, BROKER_ID, disklessConfig, metadataView, controlPlane, storageBackend,
+            new SharedState(time, BROKER_ID, disklessConfig, metadataView, controlPlane,
                 OBJECT_KEY_CREATOR, KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, brokerTopicStats, DEFAULT_TOPIC_CONFIGS));
 
         final Map<TopicPartition, Long> entriesPerPartition = Map.of(
@@ -133,7 +130,7 @@ class DeleteRecordsInterceptorTest {
     public void notInterceptDeletingRecordsFromClassicTopics() {
         when(metadataView.isDisklessTopic(eq("non_diskless"))).thenReturn(false);
         final DeleteRecordsInterceptor interceptor = new DeleteRecordsInterceptor(
-            new SharedState(time, BROKER_ID, disklessConfig, metadataView, controlPlane, storageBackend,
+            new SharedState(time, BROKER_ID, disklessConfig, metadataView, controlPlane,
                 OBJECT_KEY_CREATOR, KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, brokerTopicStats, DEFAULT_TOPIC_CONFIGS));
 
         final Map<TopicPartition, Long> entriesPerPartition = Map.of(
@@ -170,7 +167,7 @@ class DeleteRecordsInterceptorTest {
         });
 
         final DeleteRecordsInterceptor interceptor = new DeleteRecordsInterceptor(
-            new SharedState(time, BROKER_ID, disklessConfig, metadataView, controlPlane, storageBackend,
+            new SharedState(time, BROKER_ID, disklessConfig, metadataView, controlPlane,
                 OBJECT_KEY_CREATOR, KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, brokerTopicStats, DEFAULT_TOPIC_CONFIGS),
             new SynchronousExecutor());
 
@@ -213,7 +210,7 @@ class DeleteRecordsInterceptorTest {
         when(controlPlane.deleteRecords(anyList())).thenThrow(new RuntimeException("test"));
 
         final DeleteRecordsInterceptor interceptor = new DeleteRecordsInterceptor(
-            new SharedState(time, BROKER_ID, disklessConfig, metadataView, controlPlane, storageBackend,
+            new SharedState(time, BROKER_ID, disklessConfig, metadataView, controlPlane,
                 OBJECT_KEY_CREATOR, KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, brokerTopicStats, DEFAULT_TOPIC_CONFIGS),
             new SynchronousExecutor());
 
@@ -254,7 +251,7 @@ class DeleteRecordsInterceptorTest {
         });
 
         final DeleteRecordsInterceptor interceptor = new DeleteRecordsInterceptor(
-            new SharedState(time, BROKER_ID, disklessConfig, metadataView, controlPlane, storageBackend,
+            new SharedState(time, BROKER_ID, disklessConfig, metadataView, controlPlane,
                 OBJECT_KEY_CREATOR, KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, brokerTopicStats, DEFAULT_TOPIC_CONFIGS),
             new SynchronousExecutor());
 
