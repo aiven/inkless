@@ -126,6 +126,13 @@ public class InklessConfig extends AbstractConfig {
     // to avoid starting an upload if 8 commits are executing sequentially
     private static final int PRODUCE_UPLOAD_THREAD_POOL_SIZE_DEFAULT = 8;
 
+    public static final String FETCH_DATA_THREAD_POOL_SIZE_CONFIG = "fetch.data.thread.pool.size";
+    public static final String FETCH_DATA_THREAD_POOL_SIZE_DOC = "Thread pool size to concurrently fetch data files from remote storage";
+    private static final int FETCH_DATA_THREAD_POOL_SIZE_DEFAULT = 32;
+
+    public static final String FETCH_METADATA_THREAD_POOL_SIZE_CONFIG = "fetch.metadata.thread.pool.size";
+    public static final String FETCH_METADATA_THREAD_POOL_SIZE_DOC = "Thread pool size to concurrently fetch metadata from batch coordinator";
+    private static final int FETCH_METADATA_THREAD_POOL_SIZE_DEFAULT = 8;
 
     public static ConfigDef configDef() {
         final ConfigDef configDef = new ConfigDef();
@@ -289,6 +296,22 @@ public class InklessConfig extends AbstractConfig {
             ConfigDef.Importance.LOW,
             PRODUCE_UPLOAD_THREAD_POOL_SIZE_DOC
         );
+        configDef.define(
+            FETCH_DATA_THREAD_POOL_SIZE_CONFIG,
+            ConfigDef.Type.INT,
+            FETCH_DATA_THREAD_POOL_SIZE_DEFAULT,
+            ConfigDef.Range.atLeast(1),
+            ConfigDef.Importance.LOW,
+            FETCH_DATA_THREAD_POOL_SIZE_DOC
+        );
+        configDef.define(
+            FETCH_METADATA_THREAD_POOL_SIZE_CONFIG,
+            ConfigDef.Type.INT,
+            FETCH_METADATA_THREAD_POOL_SIZE_DEFAULT,
+            ConfigDef.Range.atLeast(1),
+            ConfigDef.Importance.LOW,
+            FETCH_METADATA_THREAD_POOL_SIZE_DOC
+        );
 
         return configDef;
     }
@@ -383,5 +406,13 @@ public class InklessConfig extends AbstractConfig {
 
     public int produceUploadThreadPoolSize() {
         return getInt(PRODUCE_UPLOAD_THREAD_POOL_SIZE_CONFIG);
+    }
+
+    public int fetchDataThreadPoolSize() {
+        return getInt(FETCH_DATA_THREAD_POOL_SIZE_CONFIG);
+    }
+
+    public int fetchMetadataThreadPoolSize() {
+        return getInt(FETCH_METADATA_THREAD_POOL_SIZE_CONFIG);
     }
 }

@@ -52,6 +52,8 @@ class InklessConfigTest {
         configs.put("inkless.consume.cache.expiration.lifespan.sec", "200");
         configs.put("inkless.consume.cache.expiration.max.idle.sec", "100");
         configs.put("inkless.produce.upload.thread.pool.size", "16");
+        configs.put("inkless.fetch.data.thread.pool.size", "12");
+        configs.put("inkless.fetch.metadata.thread.pool.size", "14");
         final InklessConfig config = new InklessConfig(new AbstractConfig(new ConfigDef(), configs));
         assertThat(config.controlPlaneClass()).isEqualTo(InMemoryControlPlane.class);
         assertThat(config.controlPlaneConfig()).isEqualTo(Map.of("class", controlPlaneClass));
@@ -69,6 +71,8 @@ class InklessConfigTest {
         assertThat(config.cacheExpirationLifespanSec()).isEqualTo(200);
         assertThat(config.cacheExpirationMaxIdleSec()).isEqualTo(100);
         assertThat(config.produceUploadThreadPoolSize()).isEqualTo(16);
+        assertThat(config.fetchDataThreadPoolSize()).isEqualTo(12);
+        assertThat(config.fetchMetadataThreadPoolSize()).isEqualTo(14);
     }
 
     @Test
@@ -96,6 +100,8 @@ class InklessConfigTest {
         assertThat(config.cacheExpirationLifespanSec()).isEqualTo(60);
         assertThat(config.cacheExpirationMaxIdleSec()).isEqualTo(-1);
         assertThat(config.produceUploadThreadPoolSize()).isEqualTo(8);
+        assertThat(config.fetchDataThreadPoolSize()).isEqualTo(32);
+        assertThat(config.fetchMetadataThreadPoolSize()).isEqualTo(8);
     }
 
     @Test
@@ -117,6 +123,8 @@ class InklessConfigTest {
         configs.put("consume.cache.expiration.lifespan.sec", "200");
         configs.put("consume.cache.expiration.max.idle.sec", "100");
         configs.put("produce.upload.thread.pool.size", "16");
+        configs.put("fetch.data.thread.pool.size", "12");
+        configs.put("fetch.metadata.thread.pool.size", "14");
         final var config = new InklessConfig(
             configs
         );
@@ -136,6 +144,8 @@ class InklessConfigTest {
         assertThat(config.cacheExpirationLifespanSec()).isEqualTo(200);
         assertThat(config.cacheExpirationMaxIdleSec()).isEqualTo(100);
         assertThat(config.produceUploadThreadPoolSize()).isEqualTo(16);
+        assertThat(config.fetchDataThreadPoolSize()).isEqualTo(12);
+        assertThat(config.fetchMetadataThreadPoolSize()).isEqualTo(14);
     }
 
     @Test

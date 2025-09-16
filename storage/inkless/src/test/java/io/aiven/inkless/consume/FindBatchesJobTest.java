@@ -68,7 +68,7 @@ public class FindBatchesJobTest {
     TopicIdPartition partition0 = new TopicIdPartition(topicId, 0, "diskless-topic");
 
     @Test
-    public void findSingleBatch() throws Exception {
+    public void findSingleBatch() {
         Map<TopicIdPartition, FetchRequest.PartitionData> fetchInfos = Map.of(
             partition0, new FetchRequest.PartitionData(topicId, 0, 0, 1000, Optional.empty())
         );
@@ -83,7 +83,7 @@ public class FindBatchesJobTest {
         );
         FindBatchesJob job = new FindBatchesJob(time, controlPlane, params, fetchInfos, durationMs -> {});
         when(controlPlane.findBatches(requestCaptor.capture(), anyInt())).thenReturn(new ArrayList<>(coordinates.values()));
-        Map<TopicIdPartition, FindBatchResponse> result = job.call();
+        Map<TopicIdPartition, FindBatchResponse> result = job.get();
 
         assertThat(result).isEqualTo(coordinates);
     }
