@@ -137,7 +137,6 @@ class KafkaApis(val requestChannel: RequestChannel,
         case None => handleInvalidVersionsDuringForwarding(request)
       }
     }
-
     forwardingManager.forwardRequest(request, responseCallback)
   }
 

@@ -601,12 +601,6 @@ class BrokerServer(
         enableRequestProcessingFuture, startupDeadline, time)
 
       maybeChangeStatus(STARTING, STARTED)
-      // TODO this topic should created after cluster link, but now we automatically create it here to
-      autoTopicCreationManager.createTopics(
-        Seq("__cluster_link").toSet,
-        null,
-        None
-      )
     } catch {
       case e: Throwable =>
         maybeChangeStatus(STARTING, STARTED)
