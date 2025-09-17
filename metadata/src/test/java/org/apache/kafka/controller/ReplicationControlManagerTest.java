@@ -132,6 +132,7 @@ import static java.util.Arrays.asList;
 import static java.util.Collections.singletonList;
 import static java.util.Collections.singletonMap;
 import static org.apache.kafka.common.config.TopicConfig.DISKLESS_ENABLE_CONFIG;
+import static org.apache.kafka.common.config.TopicConfig.INKLESS_ENABLE_CONFIG;
 import static org.apache.kafka.common.config.TopicConfig.SEGMENT_BYTES_CONFIG;
 import static org.apache.kafka.common.metadata.MetadataRecordType.CLEAR_ELR_RECORD;
 import static org.apache.kafka.common.protocol.Errors.ELECTION_NOT_NEEDED;
@@ -710,6 +711,42 @@ public class ReplicationControlManagerTest {
                 setErrorMessage("Topic 'foo' already exists."));
         assertEquals(expectedResponse4, result4.response());
     }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"true", "false"})
+    public void testCannotCreateInklessTopic(String inklessEnableValue) {
+        ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+            .setDefaultDisklessEnable(false)
+            .setDisklessStorageSystemEnabled(true)
+            .build();
+        ReplicationControlManager replicationControl = ctx.replicationControl;
+        // Given a request to create a kafka topic with inkless.enable config
+        CreateTopicsRequestData request = new CreateTopicsRequestData();
+        CreateTopicsRequestData.CreatableTopicConfigCollection creatableTopicConfigs = new CreateTopicsRequestData.CreatableTopicConfigCollection();
+        creatableTopicConfigs.add(new CreateTopicsRequestData.CreatableTopicConfig()
+            .setName(INKLESS_ENABLE_CONFIG)
+            .setValue(inklessEnableValue));
+        request.topics().add(new CreatableTopic().setName("foo").
+            setNumPartitions(-1).setReplicationFactor((short) -1)
+            .setConfigs(creatableTopicConfigs));
+
+        // Given all brokers unfenced
+        ControllerRequestContext requestContext = anonymousContextFor(ApiKeys.CREATE_TOPICS);
+        ctx.registerBrokers(0, 1, 2);
+        ctx.unfenceBrokers(0, 1, 2);
+
+        // When creating a topic with inkless.enable
+        ControllerResult<CreateTopicsResponseData> result =
+            replicationControl.createTopics(requestContext, request, Collections.singleton("foo"));
+        // Then the topic creation should fail, regardless of the value of the config
+        CreateTopicsResponseData expectedResponse = new CreateTopicsResponseData();
+        expectedResponse.topics().add(new CreatableTopicResult().setName("foo").
+            setNumPartitions(-1).setReplicationFactor((short) -1).
+            setErrorMessage("Creation of new topics with config `inkless.enable` is deprecated. Use `diskless.enable` instead.").setErrorCode((short) 42).
+            setTopicId(result.response().topics().find("foo").topicId()));
+        assertEquals(expectedResponse, withoutConfigs(result.response()));
+    }
+
 
     @ParameterizedTest
     @ValueSource(booleans = {true, false})

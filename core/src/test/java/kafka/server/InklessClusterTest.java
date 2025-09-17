@@ -59,6 +59,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Stream;
@@ -74,6 +75,7 @@ import io.aiven.inkless.test_utils.PostgreSQLTestContainer;
 import io.aiven.inkless.test_utils.S3TestContainer;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 @Testcontainers
@@ -247,6 +249,19 @@ public class InklessClusterTest {
         }
 
         assertEquals(recordsProduced.get(), recordsConsumed);
+    }
+
+    @Test
+    public void creatingNewInklessTopicIsNotAllowed() {
+        Map<String, Object> clientConfigs = new HashMap<>();
+        clientConfigs.put(CommonClientConfigs.BOOTSTRAP_SERVERS_CONFIG, cluster.bootstrapServers());
+        try (Admin admin = AdminClient.create(clientConfigs)) {
+            final NewTopic topic = new NewTopic("inklessTopic", 1, (short) 1)
+                .configs(Map.of(TopicConfig.INKLESS_ENABLE_CONFIG, "true"));
+            CreateTopicsResult topics = admin.createTopics(Collections.singletonList(topic));
+            assertThrows(ExecutionException.class, () -> topics.all().get(10, TimeUnit.SECONDS),
+                "Creation of new topics with config `inkless.enable` is deprecated. Use `diskless.enable` instead.");
+        }
     }
 
     private static void consumeWithManualAssignment(TimestampType timestampType, Map<String, Object> clientConfigs, String topicName, long now, int numRecords) {

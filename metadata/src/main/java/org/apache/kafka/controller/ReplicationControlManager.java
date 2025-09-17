@@ -129,6 +129,7 @@ import java.util.stream.Collectors;
 import static org.apache.kafka.clients.admin.AlterConfigOp.OpType.SET;
 import static org.apache.kafka.common.config.ConfigResource.Type.TOPIC;
 import static org.apache.kafka.common.config.TopicConfig.DISKLESS_ENABLE_CONFIG;
+import static org.apache.kafka.common.config.TopicConfig.INKLESS_ENABLE_CONFIG;
 import static org.apache.kafka.common.config.TopicConfig.MIN_IN_SYNC_REPLICAS_CONFIG;
 import static org.apache.kafka.common.protocol.Errors.FENCED_LEADER_EPOCH;
 import static org.apache.kafka.common.protocol.Errors.INELIGIBLE_REPLICA;
@@ -750,6 +751,12 @@ public class ReplicationControlManager {
                 return ApiError.fromThrowable(new InvalidTopicException("Topic id " + topic.id() + " already exists"));
             }
             topicId = topic.id();
+        }
+
+        if (creationConfigs.get(INKLESS_ENABLE_CONFIG) != null) {
+            return new ApiError(INVALID_REQUEST,
+                "Creation of new topics with config `inkless.enable` is deprecated. " +
+                    "Use `diskless.enable` instead.");
         }
 
         String disklessEnableConfigValue = creationConfigs.get(DISKLESS_ENABLE_CONFIG);
@@ -2214,7 +2221,9 @@ public class ReplicationControlManager {
                 new AlterPartitionReassignmentsResponseData().setErrorMessage(null);
         int successfulAlterations = 0, totalAlterations = 0;
         for (ReassignableTopic topic : request.topics()) {
-            boolean effectiveRFChange = !Boolean.parseBoolean(configurationControl.currentTopicConfig(topic.name()).getOrDefault(DISKLESS_ENABLE_CONFIG, "false"));
+            boolean disklessEnabled = Boolean.parseBoolean(configurationControl.currentTopicConfig(topic.name()).getOrDefault(DISKLESS_ENABLE_CONFIG, "false"));
+            boolean inklessEnabled = Boolean.parseBoolean(configurationControl.currentTopicConfig(topic.name()).getOrDefault(INKLESS_ENABLE_CONFIG, "false"));
+            boolean effectiveRFChange = !(disklessEnabled || inklessEnabled);
             ReassignableTopicResponse topicResponse = new ReassignableTopicResponse().
                 setName(topic.name());
             for (ReassignablePartition partition : topic.partitions()) {

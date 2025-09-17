@@ -31,6 +31,14 @@ public class TopicConfigsDocs {
         final ConfigDef configDef = new ConfigDef();
 
         configDef.define(
+            TopicConfig.INKLESS_ENABLE_CONFIG,
+            ConfigDef.Type.BOOLEAN,
+            false,
+            ConfigDef.Importance.HIGH,
+            TopicConfig.INKLESS_ENABLE_DOC
+        );
+
+        configDef.define(
                 TopicConfig.DISKLESS_ENABLE_CONFIG,
                 ConfigDef.Type.BOOLEAN,
                 false,

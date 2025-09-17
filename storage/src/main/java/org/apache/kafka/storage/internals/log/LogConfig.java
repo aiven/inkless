@@ -151,6 +151,7 @@ public class LogConfig extends AbstractConfig {
             TopicConfig.REMOTE_LOG_COPY_DISABLE_CONFIG,
             QuotaConfig.LEADER_REPLICATION_THROTTLED_REPLICAS_CONFIG,
             QuotaConfig.FOLLOWER_REPLICATION_THROTTLED_REPLICAS_CONFIG,
+            TopicConfig.INKLESS_ENABLE_CONFIG,
             TopicConfig.DISKLESS_ENABLE_CONFIG
     );
 
@@ -260,6 +261,7 @@ public class LogConfig extends AbstractConfig {
                         TopicConfig.LOCAL_LOG_RETENTION_BYTES_DOC)
                 .define(TopicConfig.REMOTE_LOG_COPY_DISABLE_CONFIG, BOOLEAN, false, MEDIUM, TopicConfig.REMOTE_LOG_COPY_DISABLE_DOC)
                 .define(TopicConfig.REMOTE_LOG_DELETE_ON_DISABLE_CONFIG, BOOLEAN, false, MEDIUM, TopicConfig.REMOTE_LOG_DELETE_ON_DISABLE_DOC)
+                .define(TopicConfig.INKLESS_ENABLE_CONFIG, BOOLEAN, null, MEDIUM, TopicConfig.INKLESS_ENABLE_DOC)
                 .define(TopicConfig.DISKLESS_ENABLE_CONFIG, BOOLEAN, false, MEDIUM, TopicConfig.DISKLESS_ENABLE_DOC);
     }
 
@@ -527,11 +529,23 @@ public class LogConfig extends AbstractConfig {
             boolean wasRemoteLogEnabled = Boolean.parseBoolean(existingConfigs.getOrDefault(TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG, "false"));
             validateTurningOffRemoteStorageWithDelete(newConfigs, wasRemoteLogEnabled, isRemoteLogStorageEnabled);
         }
+
+        if (newConfigs.get(TopicConfig.INKLESS_ENABLE_CONFIG) != null) {
+            throw new InvalidConfigurationException("`inkless.enable` is deprecated. Please use `diskless.enable` instead.");
+        }
+
         boolean isDisklessEnabled = (Boolean) newConfigs.get(TopicConfig.DISKLESS_ENABLE_CONFIG);
         if (isDisklessEnabled) {
             if (existingConfigs.containsKey(TopicConfig.DISKLESS_ENABLE_CONFIG)) {
                 boolean wasDisklessEnabled = Boolean.parseBoolean(existingConfigs.get(TopicConfig.DISKLESS_ENABLE_CONFIG));
                 if (!wasDisklessEnabled) {
+                    throw new InvalidConfigurationException("It is invalid to enable diskless");
+                }
+            }
+
+            if (existingConfigs.containsKey(TopicConfig.INKLESS_ENABLE_CONFIG)) {
+                boolean wasInklessEnabled = Boolean.parseBoolean(existingConfigs.get(TopicConfig.INKLESS_ENABLE_CONFIG));
+                if (!wasInklessEnabled) {
                     throw new InvalidConfigurationException("It is invalid to enable diskless");
                 }
             }
@@ -542,6 +556,11 @@ public class LogConfig extends AbstractConfig {
         } else {
             boolean wasDisklessEnabled = Boolean.parseBoolean(existingConfigs.getOrDefault(TopicConfig.DISKLESS_ENABLE_CONFIG, "false"));
             if (wasDisklessEnabled) {
+                throw new InvalidConfigurationException("It is invalid to disable diskless");
+            }
+
+            boolean wasInklessEnabled = Boolean.parseBoolean(existingConfigs.getOrDefault(TopicConfig.INKLESS_ENABLE_CONFIG, "false"));
+            if (wasInklessEnabled) {
                 throw new InvalidConfigurationException("It is invalid to disable diskless");
             }
         }
