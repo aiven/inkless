@@ -447,19 +447,245 @@ class LogConfigTest {
     LogConfig.validate(logProps)
   }
 
+
   @ParameterizedTest
   @ValueSource(booleans = Array(true, false))
-  def testValidDisklessEnable(enable: Boolean): Unit = {
+  def testDisklessConfigsAtCreation(enable: Boolean): Unit = {
     val kafkaProps = TestUtils.createDummyBrokerConfig()
-    val logProps = new Properties
-    logProps.put(TopicConfig.DISKLESS_ENABLE_CONFIG, enable.toString)
     val kafkaConfig = KafkaConfig.fromProps(kafkaProps)
-    // Should be possible to set diskless to true/false at creation time
-    LogConfig.validate(Collections.emptyMap(), logProps, kafkaConfig.extractLogConfigMap, false)
-    // But fail to reset value after creation
+    val emptyExistingConfigs = Map[String, String]().asJava
+
+    // Should be possible to set inkless and diskless both to true/false at creation time
+    val setInklessAndDiskless = new Properties
+    setInklessAndDiskless.put(TopicConfig.DISKLESS_ENABLE_CONFIG, enable.toString)
+    setInklessAndDiskless.put(TopicConfig.INKLESS_ENABLE_CONFIG, enable.toString)
+    LogConfig.validate(emptyExistingConfigs, setInklessAndDiskless, kafkaConfig.extractLogConfigMap, false)
+
+    val setInkless = new Properties
+    setInkless.put(TopicConfig.INKLESS_ENABLE_CONFIG, enable.toString)
+    if (enable) {
+      // Should NOT be possible to set only inkless to true at creation time (diskless.enable is false by default)
+      assertThrows(
+        classOf[InvalidConfigurationException],
+        () => LogConfig.validate(emptyExistingConfigs, setInkless, kafkaConfig.extractLogConfigMap, false)
+      )
+    } else {
+      // Should be possible to set only inkless to false at creation time
+      LogConfig.validate(emptyExistingConfigs, setInkless, kafkaConfig.extractLogConfigMap, false)
+    }
+
+    // Should be possible to set only diskless to true/false at creation time
+    val setDiskless = new Properties
+    setDiskless.put(TopicConfig.DISKLESS_ENABLE_CONFIG, enable.toString)
+    LogConfig.validate(emptyExistingConfigs, setDiskless, kafkaConfig.extractLogConfigMap, false)
+
+    // Should not be possible to set inkless and diskless to different values at creation time
+    val setInklessAndDisklessDiscording1 = new Properties
+    setInklessAndDisklessDiscording1.put(TopicConfig.INKLESS_ENABLE_CONFIG, enable.toString)
+    setInklessAndDisklessDiscording1.put(TopicConfig.DISKLESS_ENABLE_CONFIG, (!enable).toString)
     assertThrows(
       classOf[InvalidConfigurationException],
-      () => LogConfig.validate(Collections.singletonMap(TopicConfig.DISKLESS_ENABLE_CONFIG, (!enable).toString), logProps, kafkaConfig.extractLogConfigMap, false))
+      () => LogConfig.validate(emptyExistingConfigs, setInklessAndDisklessDiscording1, kafkaConfig.extractLogConfigMap, false)
+    )
+    val setInklessAndDisklessDiscording2 = new Properties
+    setInklessAndDisklessDiscording2.put(TopicConfig.INKLESS_ENABLE_CONFIG, (!enable).toString)
+    setInklessAndDisklessDiscording2.put(TopicConfig.DISKLESS_ENABLE_CONFIG, enable.toString)
+    assertThrows(
+      classOf[InvalidConfigurationException],
+      () => LogConfig.validate(emptyExistingConfigs, setInklessAndDisklessDiscording2, kafkaConfig.extractLogConfigMap, false)
+    )
+  }
+
+  @Test
+  def testDisklessConfigsAtUpdate(): Unit = {
+    val kafkaProps = TestUtils.createDummyBrokerConfig()
+    val kafkaConfig = KafkaConfig.fromProps(kafkaProps)
+
+    val inklessAlreadyEnabled = Collections.singletonMap(TopicConfig.INKLESS_ENABLE_CONFIG, "true")
+    val disklessAlreadyEnabled = Collections.singletonMap(TopicConfig.DISKLESS_ENABLE_CONFIG, "true")
+    val inklessAndDisklessAlreadyEnabled = Map(TopicConfig.INKLESS_ENABLE_CONFIG -> "true", TopicConfig.DISKLESS_ENABLE_CONFIG -> "true").asJava
+    val inklessAlreadyDisabled = Collections.singletonMap(TopicConfig.INKLESS_ENABLE_CONFIG, "false")
+    val disklessAlreadyDisabled = Collections.singletonMap(TopicConfig.DISKLESS_ENABLE_CONFIG, "false")
+    val inklessAndDisklessAlreadyDisabled = Map(TopicConfig.INKLESS_ENABLE_CONFIG -> "false", TopicConfig.DISKLESS_ENABLE_CONFIG -> "false").asJava
+
+    // 1
+    val setInklessTrue = new Properties()
+    setInklessTrue.put(TopicConfig.INKLESS_ENABLE_CONFIG, "true")
+    // 2
+    val setDisklessTrue = new Properties()
+    setDisklessTrue.put(TopicConfig.DISKLESS_ENABLE_CONFIG, "true")
+    // 3
+    val setInklessDisklessTrue = new Properties()
+    setInklessDisklessTrue.put(TopicConfig.INKLESS_ENABLE_CONFIG, "true")
+    setInklessDisklessTrue.put(TopicConfig.DISKLESS_ENABLE_CONFIG, "true")
+    // 4
+    val setInklessFalse = new Properties()
+    setInklessFalse.put(TopicConfig.INKLESS_ENABLE_CONFIG, "false")
+    // 5
+    val setDisklessFalse = new Properties()
+    setDisklessFalse.put(TopicConfig.DISKLESS_ENABLE_CONFIG, "false")
+    // 6
+    val setInklessDisklessFalse = new Properties()
+    setInklessDisklessFalse.put(TopicConfig.INKLESS_ENABLE_CONFIG, "false")
+    setInklessDisklessFalse.put(TopicConfig.DISKLESS_ENABLE_CONFIG, "false")
+
+    // 1. Given inkless.enable=true:
+    // 1.1 should NOT be possible to set inkless.enable to true (as diskless.enable is not specified and its default is false)
+    assertThrows(
+      classOf[InvalidConfigurationException],
+      () => LogConfig.validate(inklessAlreadyEnabled, setInklessTrue, kafkaConfig.extractLogConfigMap, false)
+    )
+    // 1.2 should be possible to set diskless.enable to true
+    LogConfig.validate(inklessAlreadyEnabled, setDisklessTrue, kafkaConfig.extractLogConfigMap, false)
+    // 1.3 should be possible to set inkless.enable and diskless.enable to true
+    LogConfig.validate(inklessAlreadyEnabled, setInklessDisklessTrue, kafkaConfig.extractLogConfigMap, false)
+    // 1.4 Should NOT be possible to set inkless.enable to false
+    assertThrows(
+      classOf[InvalidConfigurationException],
+      () => LogConfig.validate(inklessAlreadyEnabled, setInklessFalse, kafkaConfig.extractLogConfigMap, false)
+    )
+    // 1.5 Should NOT be possible to set diskless.enable to false
+    assertThrows(
+      classOf[InvalidConfigurationException],
+      () => LogConfig.validate(inklessAlreadyEnabled, setDisklessFalse, kafkaConfig.extractLogConfigMap, false)
+    )
+    // 1.6 Should NOT be possible to set inkless.enable and diskless.enable to false
+    assertThrows(
+      classOf[InvalidConfigurationException],
+      () => LogConfig.validate(inklessAlreadyEnabled, setInklessDisklessFalse, kafkaConfig.extractLogConfigMap, false)
+    )
+
+    // 2. Given diskless.enable=true:
+    // 2.1 should NOT be possible to set inkless.enable to true (as diskless.enable is not specified and its default is false)
+    assertThrows(
+      classOf[InvalidConfigurationException],
+      () => LogConfig.validate(disklessAlreadyEnabled, setInklessTrue, kafkaConfig.extractLogConfigMap, false)
+    )
+    // 2.2 should be possible to set diskless.enable to true
+    LogConfig.validate(disklessAlreadyEnabled, setDisklessTrue, kafkaConfig.extractLogConfigMap, false)
+    // 2.3 should be possible to set inkless.enable and diskless.enable to true
+    LogConfig.validate(disklessAlreadyEnabled, setInklessDisklessTrue, kafkaConfig.extractLogConfigMap, false)
+    // 2.4 Should NOT be possible to set inkless.enable to false
+    assertThrows(
+      classOf[InvalidConfigurationException],
+      () => LogConfig.validate(disklessAlreadyEnabled, setInklessFalse, kafkaConfig.extractLogConfigMap, false)
+    )
+    // 2.5 Should NOT be possible to set diskless.enable to false
+    assertThrows(
+      classOf[InvalidConfigurationException],
+      () => LogConfig.validate(disklessAlreadyEnabled, setDisklessFalse, kafkaConfig.extractLogConfigMap, false)
+    )
+    // 2.6 Should NOT be possible to set inkless.enable and diskless.enable to false
+    assertThrows(
+      classOf[InvalidConfigurationException],
+      () => LogConfig.validate(disklessAlreadyEnabled, setInklessDisklessFalse, kafkaConfig.extractLogConfigMap, false)
+    )
+
+    // 3. Given inkless.enable and diskless.enable=true:
+    // 3.1 should NOT be possible to set inkless.enable to true (as diskless.enable is not specified and its default is false)
+    assertThrows(
+      classOf[InvalidConfigurationException],
+      () => LogConfig.validate(inklessAndDisklessAlreadyEnabled, setInklessTrue, kafkaConfig.extractLogConfigMap, false)
+    )
+    // 3.2 should be possible to set diskless.enable to true
+    LogConfig.validate(inklessAndDisklessAlreadyEnabled, setDisklessTrue, kafkaConfig.extractLogConfigMap, false)
+    // 3.3 should be possible to set inkless.enable and diskless.enable to true
+    LogConfig.validate(inklessAndDisklessAlreadyEnabled, setInklessDisklessTrue, kafkaConfig.extractLogConfigMap, false)
+    // 3.4 Should NOT be possible to set inkless.enable to false
+    assertThrows(
+      classOf[InvalidConfigurationException],
+      () => LogConfig.validate(inklessAndDisklessAlreadyEnabled, setInklessFalse, kafkaConfig.extractLogConfigMap, false)
+    )
+    // 3.5 Should NOT be possible to set diskless.enable to false
+    assertThrows(
+      classOf[InvalidConfigurationException],
+      () => LogConfig.validate(inklessAndDisklessAlreadyEnabled, setDisklessFalse, kafkaConfig.extractLogConfigMap, false)
+    )
+    // 3.6 Should NOT be possible to set inkless.enable and diskless.enable to false
+    assertThrows(
+      classOf[InvalidConfigurationException],
+      () => LogConfig.validate(inklessAndDisklessAlreadyEnabled, setInklessDisklessFalse, kafkaConfig.extractLogConfigMap, false)
+    )
+
+    // 4. Given inkless.enable=false:
+    // 4.1 should NOT be possible to set inkless.enable to true
+    assertThrows(
+      classOf[InvalidConfigurationException],
+      () => LogConfig.validate(inklessAlreadyDisabled, setInklessTrue, kafkaConfig.extractLogConfigMap, false)
+    )
+    // 4.2 should NOT be possible to set diskless.enable to true
+    assertThrows(
+      classOf[InvalidConfigurationException],
+      () => LogConfig.validate(inklessAlreadyDisabled, setDisklessTrue, kafkaConfig.extractLogConfigMap, false)
+    )
+    // 4.3 should NOT be possible to set inkless.enable and diskless.enable to true
+    assertThrows(
+      classOf[InvalidConfigurationException],
+      () => LogConfig.validate(inklessAlreadyDisabled, setInklessDisklessTrue, kafkaConfig.extractLogConfigMap, false)
+    )
+    // 4.4 Should be possible to set inkless.enable to false
+    LogConfig.validate(inklessAlreadyDisabled, setInklessFalse, kafkaConfig.extractLogConfigMap, false)
+    // 4.5 Should be possible to set diskless.enable to false
+    LogConfig.validate(inklessAlreadyDisabled, setDisklessFalse, kafkaConfig.extractLogConfigMap, false)
+    // 4.6 Should be possible to set inkless.enable and diskless.enable to false
+    LogConfig.validate(inklessAlreadyDisabled, setInklessDisklessFalse, kafkaConfig.extractLogConfigMap, false)
+
+    // 5. Given diskless.enable=false:
+    // 5.1 should NOT be possible to set inkless.enable to true
+    assertThrows(
+      classOf[InvalidConfigurationException],
+      () => LogConfig.validate(disklessAlreadyDisabled, setInklessTrue, kafkaConfig.extractLogConfigMap, false)
+    )
+    // 5.2 should NOT be possible to set diskless.enable to true
+    assertThrows(
+      classOf[InvalidConfigurationException],
+      () => LogConfig.validate(disklessAlreadyDisabled, setDisklessTrue, kafkaConfig.extractLogConfigMap, false)
+    )
+    // 5.3 should NOT be possible to set inkless.enable and diskless.enable to true
+    assertThrows(
+      classOf[InvalidConfigurationException],
+      () => LogConfig.validate(disklessAlreadyDisabled, setInklessDisklessTrue, kafkaConfig.extractLogConfigMap, false)
+    )
+    // 5.4 Should be possible to set inkless.enable to false
+    LogConfig.validate(disklessAlreadyDisabled, setInklessFalse, kafkaConfig.extractLogConfigMap, false)
+    // 5.5 Should be possible to set diskless.enable to false
+    LogConfig.validate(disklessAlreadyDisabled, setDisklessFalse, kafkaConfig.extractLogConfigMap, false)
+    // 5.6 Should be possible to set inkless.enable and diskless.enable to false
+    LogConfig.validate(disklessAlreadyDisabled, setInklessDisklessFalse, kafkaConfig.extractLogConfigMap, false)
+
+    // 6. Given inkless.enable=false and diskless.enable=false:
+    // 6.1 should NOT be possible to set inkless.enable to true
+    assertThrows(
+      classOf[InvalidConfigurationException],
+      () => LogConfig.validate(inklessAndDisklessAlreadyDisabled, setInklessTrue, kafkaConfig.extractLogConfigMap, false)
+    )
+    // 6.2 should NOT be possible to set diskless.enable to true
+    assertThrows(
+      classOf[InvalidConfigurationException],
+      () => LogConfig.validate(inklessAndDisklessAlreadyDisabled, setDisklessTrue, kafkaConfig.extractLogConfigMap, false)
+    )
+    // 6.3 should NOT be possible to set inkless.enable and diskless.enable to true
+    assertThrows(
+      classOf[InvalidConfigurationException],
+      () => LogConfig.validate(inklessAndDisklessAlreadyDisabled, setInklessDisklessTrue, kafkaConfig.extractLogConfigMap, false)
+    )
+    // 6.4 Should be possible to set inkless.enable to false
+    LogConfig.validate(inklessAndDisklessAlreadyDisabled, setInklessFalse, kafkaConfig.extractLogConfigMap, false)
+    // 6.5 Should be possible to set diskless.enable to false
+    LogConfig.validate(inklessAndDisklessAlreadyDisabled, setDisklessFalse, kafkaConfig.extractLogConfigMap, false)
+    // 6.6 Should be possible to set inkless.enable and diskless.enable to false
+    LogConfig.validate(inklessAndDisklessAlreadyDisabled, setInklessDisklessFalse, kafkaConfig.extractLogConfigMap, false)
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = Array(true, false))
+  def testSettingDisklessWithTheSameValueOfInklessIsValid(enable: Boolean): Unit = {
+    val kafkaProps = TestUtils.createDummyBrokerConfig()
+    val kafkaConfig = KafkaConfig.fromProps(kafkaProps)
+    val logProps = new Properties
+    logProps.put(TopicConfig.DISKLESS_ENABLE_CONFIG, enable.toString)
+    // Should be possible to set diskless.enable to the same value as inkless.enable
+    LogConfig.validate(Collections.singletonMap(TopicConfig.INKLESS_ENABLE_CONFIG, enable.toString), logProps, kafkaConfig.extractLogConfigMap, false)
   }
 
   @Test
@@ -482,6 +708,10 @@ class LogConfigTest {
       classOf[InvalidConfigurationException],
       () => LogConfig.validate(Map(TopicConfig.DISKLESS_ENABLE_CONFIG -> "true").asJava, logProps, kafkaConfig.extractLogConfigMap, true))
     assertEquals("Diskless and remote storage cannot be enabled simultaneously", t2.getMessage)
+    val t2WithInklessEnable = assertThrows(
+      classOf[InvalidConfigurationException],
+      () => LogConfig.validate(Collections.singletonMap(TopicConfig.INKLESS_ENABLE_CONFIG, "true"), logProps, kafkaConfig.extractLogConfigMap, true))
+    assertEquals("Diskless and remote storage cannot be enabled simultaneously", t2WithInklessEnable.getMessage)
 
     // Add both
     val t3 = assertThrows(
