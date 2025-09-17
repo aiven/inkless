@@ -55,19 +55,21 @@ public class Reader implements AutoCloseable {
     private final ControlPlane controlPlane;
     private final ObjectFetcher objectFetcher;
     private final ExecutorService metadataExecutor;
-    private final ExecutorService fetchPlannerExecutor;
     private final ExecutorService dataExecutor;
-    private final ExecutorService fetchCompleterExecutor;
     private final InklessFetchMetrics fetchMetrics;
     private final BrokerTopicStats brokerTopicStats;
 
-    public Reader(Time time,
-                  ObjectKeyCreator objectKeyCreator,
-                  KeyAlignmentStrategy keyAlignmentStrategy,
-                  ObjectCache cache,
-                  ControlPlane controlPlane,
-                  ObjectFetcher objectFetcher,
-                  BrokerTopicStats brokerTopicStats) {
+    public Reader(
+        Time time,
+        ObjectKeyCreator objectKeyCreator,
+        KeyAlignmentStrategy keyAlignmentStrategy,
+        ObjectCache cache,
+        ControlPlane controlPlane,
+        ObjectFetcher objectFetcher,
+        BrokerTopicStats brokerTopicStats,
+        int fetchMetadataThreadPoolSize,
+        int fetchDataThreadPoolSize
+    ) {
         this(
             time,
             objectKeyCreator,
@@ -75,10 +77,8 @@ public class Reader implements AutoCloseable {
             cache,
             controlPlane,
             objectFetcher,
-            Executors.newCachedThreadPool(new InklessThreadFactory("inkless-fetch-metadata-", false)),
-            Executors.newCachedThreadPool(new InklessThreadFactory("inkless-fetch-planner-", false)),
-            Executors.newCachedThreadPool(new InklessThreadFactory("inkless-fetch-data-", false)),
-            Executors.newCachedThreadPool(new InklessThreadFactory("inkless-fetch-completer-", false)),
+            Executors.newFixedThreadPool(fetchMetadataThreadPoolSize, new InklessThreadFactory("inkless-fetch-metadata-", false)),
+            Executors.newFixedThreadPool(fetchDataThreadPoolSize, new InklessThreadFactory("inkless-fetch-data-", false)),
             brokerTopicStats
         );
     }
@@ -91,9 +91,7 @@ public class Reader implements AutoCloseable {
         ControlPlane controlPlane,
         ObjectFetcher objectFetcher,
         ExecutorService metadataExecutor,
-        ExecutorService fetchPlannerExecutor,
         ExecutorService dataExecutor,
-        ExecutorService fetchCompleterExecutor,
         BrokerTopicStats brokerTopicStats
     ) {
         this.time = time;
@@ -103,9 +101,7 @@ public class Reader implements AutoCloseable {
         this.controlPlane = controlPlane;
         this.objectFetcher = objectFetcher;
         this.metadataExecutor = metadataExecutor;
-        this.fetchPlannerExecutor = fetchPlannerExecutor;
         this.dataExecutor = dataExecutor;
-        this.fetchCompleterExecutor = fetchCompleterExecutor;
         this.fetchMetrics = new InklessFetchMetrics(time);
         this.brokerTopicStats = brokerTopicStats;
     }
@@ -116,41 +112,42 @@ public class Reader implements AutoCloseable {
     ) {
         final Instant startAt = TimeUtils.durationMeasurementNow(time);
         fetchMetrics.fetchStarted();
-        final var batchCoordinates = metadataExecutor.submit(
+        final var batchCoordinates = CompletableFuture.supplyAsync(
             new FindBatchesJob(
                 time,
                 controlPlane,
                 params,
                 fetchInfos,
                 fetchMetrics::findBatchesFinished
-            )
+            ),
+            metadataExecutor
         );
-        final var fetchedData = fetchPlannerExecutor.submit(
-            new FetchPlannerJob(
-                time,
-                objectKeyCreator,
-                keyAlignmentStrategy,
-                cache,
-                objectFetcher,
-                dataExecutor,
-                batchCoordinates,
-                fetchMetrics::fetchPlanFinished,
-                fetchMetrics::cacheQueryFinished,
-                fetchMetrics::cacheStoreFinished,
-                fetchMetrics::cacheHit,
-                fetchMetrics::fetchFileFinished
+        return batchCoordinates.thenApply(
+                coordinates ->
+                    new FetchPlanner(
+                        time,
+                        objectKeyCreator,
+                        keyAlignmentStrategy,
+                        cache,
+                        objectFetcher,
+                        dataExecutor,
+                        coordinates,
+                        fetchMetrics::fetchPlanFinished,
+                        fetchMetrics::cacheQueryFinished,
+                        fetchMetrics::cacheStoreFinished,
+                        fetchMetrics::cacheHit,
+                        fetchMetrics::fetchFileFinished
+                    ).get()
             )
-        );
-        return CompletableFuture.supplyAsync(
-                new FetchCompleterJob(
+            .thenCombineAsync(batchCoordinates, (fileExtents, coordinates) ->
+                new FetchCompleter(
                     time,
                     objectKeyCreator,
                     fetchInfos,
-                    batchCoordinates,
-                    fetchedData,
+                    coordinates,
+                    fileExtents,
                     fetchMetrics::fetchCompletionFinished
-                ),
-                fetchCompleterExecutor
+                ).get()
             )
             .whenComplete((topicIdPartitionFetchPartitionDataMap, throwable) -> {
                 // Mark broker side fetch metrics
@@ -162,14 +159,18 @@ public class Reader implements AutoCloseable {
                         brokerTopicStats.topicStats(topic).failedFetchRequestRate().mark();
                     }
                     // Check if the exception was caused by a fetch related exception and increment the relevant metric
-                    if (throwable instanceof CompletionException && throwable.getCause() instanceof FetchException) {
-                        final Throwable fetchException = throwable.getCause();
-                        if (fetchException.getCause() instanceof FindBatchesException) {
+                    if (throwable instanceof CompletionException) {
+                        // Finding batches fails on the initial stage
+                        if (throwable.getCause() instanceof FindBatchesException) {
                             fetchMetrics.findBatchesFailed();
-                        } else if (fetchException.getCause() instanceof FileFetchException) {
-                            fetchMetrics.fileFetchFailed();
-                        } else if (fetchException.getCause() instanceof CacheFetchException) {
-                            fetchMetrics.cacheFetchFailed();
+                        } else if (throwable.getCause() instanceof FetchException) {
+                            // but storage-related exceptions are wrapped twice as they happen within the fetch completer
+                            final Throwable fetchException = throwable.getCause();
+                            if (fetchException.getCause() instanceof FileFetchException) {
+                                fetchMetrics.fileFetchFailed();
+                            } else if (fetchException.getCause() instanceof CacheFetchException) {
+                                fetchMetrics.cacheFetchFailed();
+                            }
                         }
                     }
                     fetchMetrics.fetchFailed();
@@ -192,8 +193,6 @@ public class Reader implements AutoCloseable {
     @Override
     public void close() {
         ThreadUtils.shutdownExecutorServiceQuietly(metadataExecutor, EXECUTOR_SHUTDOWN_TIMEOUT_SECONDS, TimeUnit.SECONDS);
-        ThreadUtils.shutdownExecutorServiceQuietly(fetchPlannerExecutor, EXECUTOR_SHUTDOWN_TIMEOUT_SECONDS, TimeUnit.SECONDS);
         ThreadUtils.shutdownExecutorServiceQuietly(dataExecutor, EXECUTOR_SHUTDOWN_TIMEOUT_SECONDS, TimeUnit.SECONDS);
-        ThreadUtils.shutdownExecutorServiceQuietly(fetchCompleterExecutor, EXECUTOR_SHUTDOWN_TIMEOUT_SECONDS, TimeUnit.SECONDS);
     }
 }

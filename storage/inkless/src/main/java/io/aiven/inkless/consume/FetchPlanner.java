@@ -27,6 +27,7 @@ import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
 import java.util.function.Consumer;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
 import io.aiven.inkless.TimeUtils;
@@ -38,7 +39,7 @@ import io.aiven.inkless.control_plane.FindBatchResponse;
 import io.aiven.inkless.generated.FileExtent;
 import io.aiven.inkless.storage_backend.common.ObjectFetcher;
 
-public class FetchPlannerJob implements Callable<List<Future<FileExtent>>> {
+public class FetchPlanner implements Supplier<List<Future<FileExtent>>> {
 
     private final Time time;
     private final ObjectKeyCreator objectKeyCreator;
@@ -46,25 +47,25 @@ public class FetchPlannerJob implements Callable<List<Future<FileExtent>>> {
     private final ObjectCache cache;
     private final ObjectFetcher objectFetcher;
     private final ExecutorService dataExecutor;
-    private final Future<Map<TopicIdPartition, FindBatchResponse>> batchCoordinatesFuture;
+    private final Map<TopicIdPartition, FindBatchResponse> batchCoordinates;
     private final Consumer<Long> fetchPlanDurationCallback;
     private final Consumer<Long> cacheQueryDurationCallback;
     private final Consumer<Long> cacheStoreDurationCallback;
     private final Consumer<Boolean> cacheHitRateCallback;
     private final Consumer<Long> fileFetchDurationCallback;
 
-    public FetchPlannerJob(Time time,
-                           ObjectKeyCreator objectKeyCreator,
-                           KeyAlignmentStrategy keyAlignment,
-                           ObjectCache cache,
-                           ObjectFetcher objectFetcher,
-                           ExecutorService dataExecutor,
-                           Future<Map<TopicIdPartition, FindBatchResponse>> batchCoordinatesFuture,
-                           Consumer<Long> fetchPlanDurationCallback,
-                           Consumer<Long> cacheQueryDurationCallback,
-                           Consumer<Long> cacheStoreDurationCallback,
-                           Consumer<Boolean> cacheHitRateCallback,
-                           Consumer<Long> fileFetchDurationCallback
+    public FetchPlanner(Time time,
+                        ObjectKeyCreator objectKeyCreator,
+                        KeyAlignmentStrategy keyAlignment,
+                        ObjectCache cache,
+                        ObjectFetcher objectFetcher,
+                        ExecutorService dataExecutor,
+                        Map<TopicIdPartition, FindBatchResponse> batchCoordinates,
+                        Consumer<Long> fetchPlanDurationCallback,
+                        Consumer<Long> cacheQueryDurationCallback,
+                        Consumer<Long> cacheStoreDurationCallback,
+                        Consumer<Boolean> cacheHitRateCallback,
+                        Consumer<Long> fileFetchDurationCallback
     ) {
         this.time = time;
         this.objectKeyCreator = objectKeyCreator;
@@ -72,17 +73,12 @@ public class FetchPlannerJob implements Callable<List<Future<FileExtent>>> {
         this.cache = cache;
         this.objectFetcher = objectFetcher;
         this.dataExecutor = dataExecutor;
-        this.batchCoordinatesFuture = batchCoordinatesFuture;
+        this.batchCoordinates = batchCoordinates;
         this.fetchPlanDurationCallback = fetchPlanDurationCallback;
         this.cacheQueryDurationCallback = cacheQueryDurationCallback;
         this.cacheStoreDurationCallback = cacheStoreDurationCallback;
         this.cacheHitRateCallback = cacheHitRateCallback;
         this.fileFetchDurationCallback = fileFetchDurationCallback;
-    }
-
-    public List<Future<FileExtent>> call() throws Exception {
-        final Map<TopicIdPartition, FindBatchResponse> batchCoordinates = batchCoordinatesFuture.get();
-        return TimeUtils.measureDurationMs(time, () -> doWork(batchCoordinates), fetchPlanDurationCallback);
     }
 
     private List<Future<FileExtent>> doWork(final Map<TopicIdPartition, FindBatchResponse> batchCoordinates) {
@@ -112,5 +108,10 @@ public class FetchPlannerJob implements Callable<List<Future<FileExtent>>> {
         return jobs.stream()
             .map(dataExecutor::submit)
             .collect(Collectors.toList());
+    }
+
+    @Override
+    public List<Future<FileExtent>> get() {
+        return TimeUtils.measureDurationMsSupplier(time, () -> doWork(batchCoordinates), fetchPlanDurationCallback);
     }
 }
