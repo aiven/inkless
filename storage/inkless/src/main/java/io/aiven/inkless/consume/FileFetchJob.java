@@ -69,9 +69,13 @@ public class FileFetchJob implements Callable<FileExtent> {
         return TimeUtils.measureDurationMs(time, this::doWork, durationCallback);
     }
 
-    private FileExtent doWork() throws StorageBackendException, IOException {
-        final ByteBuffer byteBuffer = objectFetcher.readToByteBuffer(objectFetcher.fetch(key, range));
-        return createFileExtent(key, range, byteBuffer);
+    private FileExtent doWork() throws FileFetchException {
+        try {
+            final ByteBuffer byteBuffer = objectFetcher.readToByteBuffer(objectFetcher.fetch(key, range));
+            return createFileExtent(key, range, byteBuffer);
+        } catch (final IOException | StorageBackendException e) {
+            throw new FileFetchException(e);
+        }
     }
 
 
