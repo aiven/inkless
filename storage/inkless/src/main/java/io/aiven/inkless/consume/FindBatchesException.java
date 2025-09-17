@@ -17,7 +17,7 @@
  */
 package io.aiven.inkless.consume;
 
-public class FindBatchesException extends Exception {
+public class FindBatchesException extends RuntimeException {
     public FindBatchesException(Throwable cause) {
         super(cause);
     }

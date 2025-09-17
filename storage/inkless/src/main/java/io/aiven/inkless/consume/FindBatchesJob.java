@@ -26,15 +26,15 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.Callable;
 import java.util.function.Consumer;
+import java.util.function.Supplier;
 
 import io.aiven.inkless.TimeUtils;
 import io.aiven.inkless.control_plane.ControlPlane;
 import io.aiven.inkless.control_plane.FindBatchRequest;
 import io.aiven.inkless.control_plane.FindBatchResponse;
 
-public class FindBatchesJob implements Callable<Map<TopicIdPartition, FindBatchResponse>> {
+public class FindBatchesJob implements Supplier<Map<TopicIdPartition, FindBatchResponse>> {
 
     private final Time time;
     private final ControlPlane controlPlane;
@@ -55,11 +55,11 @@ public class FindBatchesJob implements Callable<Map<TopicIdPartition, FindBatchR
     }
 
     @Override
-    public Map<TopicIdPartition, FindBatchResponse> call() throws Exception {
-        return TimeUtils.measureDurationMs(time, this::doWork, durationCallback);
+    public Map<TopicIdPartition, FindBatchResponse> get() {
+        return TimeUtils.measureDurationMsSupplier(time, this::doWork, durationCallback);
     }
 
-    private Map<TopicIdPartition, FindBatchResponse> doWork() throws Exception {
+    private Map<TopicIdPartition, FindBatchResponse> doWork() {
         try {
             List<FindBatchRequest> requests = new ArrayList<>();
             for (Map.Entry<TopicIdPartition, FetchRequest.PartitionData> fetchInfo : fetchInfos.entrySet()) {

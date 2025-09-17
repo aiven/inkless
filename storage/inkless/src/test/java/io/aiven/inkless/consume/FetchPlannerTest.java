@@ -36,7 +36,6 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 
 import io.aiven.inkless.cache.FixedBlockAlignment;
@@ -80,17 +79,17 @@ public class FetchPlannerTest {
     TopicIdPartition partition1 = new TopicIdPartition(topicId, 1, "diskless-topic");
 
     @Test
-    public void planEmptyRequest() throws Exception {
+    public void planEmptyRequest() {
         Map<TopicIdPartition, FindBatchResponse> coordinates = new HashMap<>();
-        FetchPlannerJob job = fetchPlannerJob(coordinates);
+        FetchPlanner job = fetchPlannerJob(coordinates);
 
-        job.call();
+        job.get();
 
         verifyNoInteractions(dataExecutor);
     }
 
     @Test
-    public void planSingleRequest() throws Exception {
+    public void planSingleRequest() {
         assertBatchPlan(
             Map.of(
                 partition0, FindBatchResponse.success(List.of(
@@ -104,7 +103,7 @@ public class FetchPlannerTest {
     }
 
     @Test
-    public void planRequestsForMultipleObjects() throws Exception {
+    public void planRequestsForMultipleObjects() {
         assertBatchPlan(
             Map.of(
                 partition0, FindBatchResponse.success(List.of(
@@ -120,7 +119,7 @@ public class FetchPlannerTest {
     }
 
     @Test
-    public void planRequestsForMultiplePartitions() throws Exception {
+    public void planRequestsForMultiplePartitions() {
         assertBatchPlan(
             Map.of(
                 partition0, FindBatchResponse.success(List.of(
@@ -138,7 +137,7 @@ public class FetchPlannerTest {
     }
 
     @Test
-    public void planMergedRequestsForSameObject() throws Exception {
+    public void planMergedRequestsForSameObject() {
         assertBatchPlan(
             Map.of(
                 partition0, FindBatchResponse.success(List.of(
@@ -155,7 +154,7 @@ public class FetchPlannerTest {
     }
 
     @Test
-    public void planOffsetOutOfRange() throws Exception {
+    public void planOffsetOutOfRange() {
         assertBatchPlan(
             Map.of(
                 partition0, FindBatchResponse.offsetOutOfRange(0, 1),
@@ -170,7 +169,7 @@ public class FetchPlannerTest {
     }
 
     @Test
-    public void planUnknownTopicOrPartition() throws Exception {
+    public void planUnknownTopicOrPartition() {
         assertBatchPlan(
             Map.of(
                 partition0, FindBatchResponse.unknownTopicOrPartition(),
@@ -185,7 +184,7 @@ public class FetchPlannerTest {
     }
 
     @Test
-    public void planUnknownServerError() throws Exception {
+    public void planUnknownServerError() {
         assertBatchPlan(
             Map.of(
                 partition0, FindBatchResponse.unknownServerError(),
@@ -199,12 +198,12 @@ public class FetchPlannerTest {
         );
     }
 
-    private FetchPlannerJob fetchPlannerJob(
+    private FetchPlanner fetchPlannerJob(
             Map<TopicIdPartition, FindBatchResponse> batchCoordinatesFuture
     ) {
-        return new FetchPlannerJob(
+        return new FetchPlanner(
                 time, FetchPlannerTest.OBJECT_KEY_CREATOR, keyAlignmentStrategy,
-                cache, fetcher, dataExecutor, CompletableFuture.completedFuture(batchCoordinatesFuture),
+                cache, fetcher, dataExecutor, batchCoordinatesFuture,
                 durationMs -> {}, durationMs -> {}, durationMs -> {}, hitBool -> {}, durationMs -> {}
         );
     }
@@ -217,13 +216,13 @@ public class FetchPlannerTest {
                 durationMs -> {}, durationMs -> {}, hitBool -> {}, durationMs -> {});
     }
 
-    private void assertBatchPlan(Map<TopicIdPartition, FindBatchResponse> coordinates, Set<CacheFetchJob> jobs) throws Exception {
+    private void assertBatchPlan(Map<TopicIdPartition, FindBatchResponse> coordinates, Set<CacheFetchJob> jobs) {
         ArgumentCaptor<CacheFetchJob> submittedCallables = ArgumentCaptor.captor();
         when(dataExecutor.submit(submittedCallables.capture())).thenReturn(null);
 
-        FetchPlannerJob job = fetchPlannerJob(coordinates);
+        FetchPlanner job = fetchPlannerJob(coordinates);
 
-        job.call();
+        job.get();
 
         assertEquals(jobs, new HashSet<>(submittedCallables.getAllValues()));
     }
