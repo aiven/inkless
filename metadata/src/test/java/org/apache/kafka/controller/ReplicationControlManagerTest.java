@@ -702,24 +702,19 @@ public class ReplicationControlManagerTest {
     }
 
     @ParameterizedTest
-    @CsvSource({
-        "true,false",
-        "false,false"
-    })
-    public void testNotCreateDisklessTopic(boolean logDisklessEnableServerConfig, String disklessEnableTopicConfig) {
+    @ValueSource(booleans = {true, false})
+    public void testNotCreateDisklessTopic(boolean logDisklessEnableServerConfig) {
         ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
             .setDefaultDisklessEnable(logDisklessEnableServerConfig)
             .setDisklessStorageSystemEnabled(true)
             .build();
         ReplicationControlManager replicationControl = ctx.replicationControl;
-        // Given a kafka topic with diskless enabled
+        // Given a request to create a kafka topic with diskless disabled
         CreateTopicsRequestData request = new CreateTopicsRequestData();
         CreateTopicsRequestData.CreatableTopicConfigCollection creatableTopicConfigs = new CreateTopicsRequestData.CreatableTopicConfigCollection();
-        if (disklessEnableTopicConfig != null) {
-            creatableTopicConfigs.add(new CreateTopicsRequestData.CreatableTopicConfig()
-                .setName(DISKLESS_ENABLE_CONFIG)
-                .setValue(disklessEnableTopicConfig));
-        }
+        creatableTopicConfigs.add(new CreateTopicsRequestData.CreatableTopicConfig()
+            .setName(DISKLESS_ENABLE_CONFIG)
+            .setValue("false"));
         request.topics().add(new CreatableTopic().setName("foo").
             setNumPartitions(-1).setReplicationFactor((short) -1)
             .setConfigs(creatableTopicConfigs));
@@ -783,7 +778,7 @@ public class ReplicationControlManagerTest {
             .setDisklessStorageSystemEnabled(true)
             .build();
         ReplicationControlManager replicationControl = ctx.replicationControl;
-        // Given a kafka topic with diskless enabled
+        // Given a request to create a kafka topic with diskless enabled
         CreateTopicsRequestData request = new CreateTopicsRequestData();
         CreateTopicsRequestData.CreatableTopicConfigCollection creatableTopicConfigs = new CreateTopicsRequestData.CreatableTopicConfigCollection();
         if (disklessEnableTopicConfig != null) {
@@ -842,7 +837,7 @@ public class ReplicationControlManagerTest {
             .filter(c -> c.name().equals(DISKLESS_ENABLE_CONFIG))
             .toList();
         assertEquals(1, disklessConfigRecords.size());
-        // Then always diskless is disabled
+        // Then always diskless is enabled
         assertTrue(disklessConfigRecords.stream().allMatch(c -> c.value().equals("true")));
 
         // Given the topic is registered
