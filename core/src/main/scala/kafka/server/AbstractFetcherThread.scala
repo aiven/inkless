@@ -235,7 +235,6 @@ abstract class AbstractFetcherThread(name: String,
         curPartitionState != null && leaderEpochInRequest == curPartitionState.currentLeaderEpoch
       }
 
-
       val result = maybeTruncateToEpochEndOffsets(epochEndOffsets, latestEpochsForPartitions)
       handlePartitionsWithErrors(result.partitionsWithError.asScala, "truncateToEpochEndOffsets")
       updateFetchOffsetAndMaybeMarkTruncationComplete(result.result)

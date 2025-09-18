@@ -179,8 +179,6 @@ class RemoteLeaderEndPoint(logPrefix: String,
     }
   }
 
-
-
   override def buildFetch(partitions: java.util.Map[TopicPartition, PartitionFetchState]): ResultWithPartitions[java.util.Optional[ReplicaFetch]] = {
     val partitionsWithError = mutable.Set[TopicPartition]()
     val builder = fetchSessionHandler.newBuilder(partitions.size, false)
@@ -224,8 +222,10 @@ class RemoteLeaderEndPoint(logPrefix: String,
         metadataVersion.fetchRequestVersion
       }
       val requestBuilder = if (readOnlyTopics.isEmpty) {
+        // regular replication: use replica fetch request
         FetchRequest.Builder.forReplica(version, brokerConfig.brokerId, brokerEpochSupplier(), maxWait, minBytes, fetchData.toSend)
       } else {
+        // cluster linking: use consumer fetch request
         FetchRequest.Builder.forConsumer(version, maxWait, minBytes, fetchData.toSend).isolationLevel(IsolationLevel.READ_COMMITTED)
       }
       requestBuilder

@@ -61,7 +61,6 @@ import java.util.AbstractMap;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
-import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -523,7 +522,7 @@ public abstract class TopicCommand {
 
         // luke
         public void createLink(TopicCommandOptions opts) throws ExecutionException, InterruptedException {
-            CreateClusterLinkResult result = adminClient.createClusterLink(opts.linkNmae().orElse(""), linkConfigs, new CreateClusterLinkOptions());
+            CreateClusterLinkResult result = adminClient.createClusterLink(opts.linkName().orElse(""), linkConfigs, new CreateClusterLinkOptions());
             result.all().get();
         }
 
@@ -788,9 +787,9 @@ public abstract class TopicCommand {
                 .withRequiredArg()
                 .describedAs("server to connect to")
                 .ofType(String.class);
-            remoteBootstrapServerOpt = parser.accepts("remote-bootstrap-server", "REQUIRED: The Kafka server to connect to.")
+            remoteBootstrapServerOpt = parser.accepts("remote-bootstrap-server", "REQUIRED: The remote Kafka server to connect to.")
                     .withRequiredArg()
-                    .describedAs("server to connect to")
+                    .describedAs("remote server to connect to")
                     .ofType(String.class);
             commandConfigOpt = parser.accepts("command-config", "Property file containing configs to be passed to Admin Client.")
                 .withRequiredArg()
@@ -808,8 +807,8 @@ public abstract class TopicCommand {
             alterOpt = parser.accepts("alter", "Alter the number of partitions and replica assignment." +
                     KAFKA_CONFIGS_CLI_SUPPORTS_ALTERING_TOPIC_CONFIGS);
             describeOpt = parser.accepts("describe", "List details for the given topics.");
-            createMirrorOpt = parser.accepts("createMirror", "List details for the given topics.");
-            createLinkOpt = parser.accepts("createLink", "List details for the given topics.");
+            createMirrorOpt = parser.accepts("createMirror", "Create a new mirror topic.");
+            createLinkOpt = parser.accepts("createLink", "Create a new link for mirroring remote topics.");
             topicOpt = parser.accepts("topic", "The topic to create, alter, describe or delete. It also accepts a regular " +
                             "expression, except for --create option. Put topic name in double quotes and use the '\\' prefix " +
                             "to escape regular expression symbols; e.g. \"test\\.topic\".")
@@ -817,9 +816,7 @@ public abstract class TopicCommand {
                 .describedAs("topic")
                 .ofType(String.class);
 
-            linkNameOpt = parser.accepts("link", "The topic to create, alter, describe or delete. It also accepts a regular " +
-                            "expression, except for --create option. Put topic name in double quotes and use the '\\' prefix " +
-                            "to escape regular expression symbols; e.g. \"test\\.topic\".")
+            linkNameOpt = parser.accepts("link", "Name of the link for creating new mirror topics.")
                     .withRequiredArg()
                     .describedAs("link")
                     .ofType(String.class);
@@ -975,7 +972,7 @@ public abstract class TopicCommand {
             return valueAsOption(remoteBootstrapServerOpt);
         }
 
-        public Optional<String> linkNmae() {
+        public Optional<String> linkName() {
             return valueAsOption(linkNameOpt);
         }
 
