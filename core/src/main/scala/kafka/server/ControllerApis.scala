@@ -138,6 +138,7 @@ class ControllerApis(
         case ApiKeys.ADD_RAFT_VOTER => handleAddRaftVoter(request)
         case ApiKeys.REMOVE_RAFT_VOTER => handleRemoveRaftVoter(request)
         case ApiKeys.UPDATE_RAFT_VOTER => handleUpdateRaftVoter(request)
+        case ApiKeys.INKLESS_COMMIT => handleInklessCommit(request)
         case _ => throw new ApiException(s"Unsupported ApiKey ${request.context.header.apiKey}")
       }
 
@@ -1205,5 +1206,20 @@ class ControllerApis(
   def handleUpdateRaftVoter(request: RequestChannel.Request): CompletableFuture[Unit] = {
     authHelper.authorizeClusterOperation(request, CLUSTER_ACTION)
     handleRaftRequest(request, response => new UpdateRaftVoterResponse(response.asInstanceOf[UpdateRaftVoterResponseData]))
+  }
+
+  def handleInklessCommit(request: RequestChannel.Request): CompletableFuture[Unit] = {
+    authHelper.authorizeClusterOperation(request, CLUSTER_ACTION)
+    val context = new ControllerRequestContext(request.context.header.data, request.context.principal, OptionalLong.empty())
+    val commitRequest = request.body[InklessCommitRequest]
+    val future = controller.inklessCommit(context, commitRequest.data())
+    future.handle[Unit] { (result, exception) =>
+      val response = if (exception != null) {
+        commitRequest.getErrorResponse(exception)
+      } else {
+        new InklessCommitResponse(result)
+      }
+      requestHelper.sendResponseExemptThrottle(request, response, None)
+    }
   }
 }

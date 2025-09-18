@@ -38,6 +38,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.Future;
 
 /**
  * {@code ForwardingAdmin} is the default value of {@code forwarding.admin.class} in MirrorMaker.
@@ -379,5 +380,10 @@ public class ForwardingAdmin implements Admin {
     @Override
     public Map<MetricName, ? extends Metric> metrics() {
         return delegate.metrics();
+    }
+
+    @Override
+    public Future<Void> inklessCommit() {
+        throw new RuntimeException("Not implemented");
     }
 }

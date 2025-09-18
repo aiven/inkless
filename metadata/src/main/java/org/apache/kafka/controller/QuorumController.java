@@ -51,6 +51,8 @@ import org.apache.kafka.common.message.ElectLeadersRequestData;
 import org.apache.kafka.common.message.ElectLeadersResponseData;
 import org.apache.kafka.common.message.ExpireDelegationTokenRequestData;
 import org.apache.kafka.common.message.ExpireDelegationTokenResponseData;
+import org.apache.kafka.common.message.InklessCommitRequestData;
+import org.apache.kafka.common.message.InklessCommitResponseData;
 import org.apache.kafka.common.message.ListPartitionReassignmentsRequestData;
 import org.apache.kafka.common.message.ListPartitionReassignmentsResponseData;
 import org.apache.kafka.common.message.RenewDelegationTokenRequestData;
@@ -91,6 +93,7 @@ import org.apache.kafka.common.requests.ApiError;
 import org.apache.kafka.common.security.token.delegation.internals.DelegationTokenCache;
 import org.apache.kafka.common.utils.LogContext;
 import org.apache.kafka.common.utils.Time;
+import org.apache.kafka.common.utils.Timer;
 import org.apache.kafka.common.utils.Utils;
 import org.apache.kafka.controller.errors.ControllerExceptions;
 import org.apache.kafka.controller.errors.EventHandlerExceptionInfo;
@@ -1299,12 +1302,26 @@ public final class QuorumController implements Controller {
                 break;
             case INKLESS_TEST_RECORD:
                 final InklessTestRecord record = (InklessTestRecord) message;
-                log.error("Replaying INKLESS_TEST_RECORD {}", record.batchId());
+//                log.error("Replaying INKLESS_TEST_RECORD {}", record.batchId());
+                
+                long recordCount = inklessTestRecordCount.incrementAndGet();
+
+                long currentTimeMs = time.milliseconds();
+                inklessTestRecordRateDumpTimer.update(currentTimeMs);
+                if (inklessTestRecordRateDumpTimer.isExpired()) {
+                    double recordsPerSecond = recordCount / 30.0;
+                    log.error("INKLESS TEST RECORD RATE: {} total records, {} records/sec [is active controller: {}]",
+                             recordCount, recordsPerSecond, isActiveController());
+                    inklessTestRecordCount.set(0);
+                    inklessTestRecordRateDumpTimer.reset(30000);
+                }
                 break;
             default:
                 throw new RuntimeException("Unhandled record type " + type);
         }
     }
+    private final AtomicLong inklessTestRecordCount = new AtomicLong(0);
+    private final Timer inklessTestRecordRateDumpTimer;
 
     /**
      * Handles faults that cause a controller failover, but which don't abort the process.
@@ -1630,36 +1647,7 @@ public final class QuorumController implements Controller {
             build();
         log.info("Creating new QuorumController with clusterId {}", clusterId);
         this.raftClient.register(metaLogListener);
-
-
-        scheduledExecutorService.scheduleWithFixedDelay(() -> {
-            if (!isActiveController()) {
-                return;
-            }
-            log.error("Appending test events");
-            appendWriteEvent("testEvents", OptionalLong.empty(),
-                () -> {
-                    final List<ApiMessageAndVersion> records = new ArrayList<>();
-                    for (int i = 0; i < 30; i++) {
-                        records.add(new ApiMessageAndVersion(new InklessTestRecord()
-                            .setBatchId(batchIdCounter.getAndIncrement())
-                            .setMagic((byte) 0)
-                            .setTopicId(Uuid.METADATA_TOPIC_ID)
-                            .setPartition(0)
-                            .setBaseOffset(0L)
-                            .setLastOffset(100L)
-                            .setFileId(12345L)
-                            .setByteOffset(20)
-                            .setByteSize(10)
-                            .setTimestampType((byte) 0)
-                            .setLogAppendTimestamp(999999L)
-                            .setBatchMaxTimestamp(999999L),
-                            (short) 0
-                        ));
-                    }
-                    return ControllerResult.atomicOf(records, "rrr");
-                });
-        }, 250, 250, MILLISECONDS);
+        this.inklessTestRecordRateDumpTimer = time.timer(30000);
     }
 
     private final AtomicLong batchIdCounter = new AtomicLong();
@@ -2182,6 +2170,32 @@ public final class QuorumController implements Controller {
     ) {
         return appendWriteEvent("assignReplicasToDirs", context.deadlineNs(),
                 () -> replicationControl.handleAssignReplicasToDirs(request));
+    }
+
+    @Override
+    public CompletableFuture<InklessCommitResponseData> inklessCommit(final ControllerRequestContext context, final InklessCommitRequestData request) {
+        final List<ApiMessageAndVersion> records = new ArrayList<>();
+        for (int i = 0; i < 4; i++) {
+            final ApiMessageAndVersion record = new ApiMessageAndVersion(new InklessTestRecord()
+                .setBatchId(batchIdCounter.getAndIncrement())
+                .setMagic((byte) 0)
+                .setTopicId(Uuid.METADATA_TOPIC_ID)
+                .setPartition(0)
+                .setBaseOffset(0L)
+                .setLastOffset(100L)
+                .setFileId(12345L)
+                .setByteOffset(20)
+                .setByteSize(10)
+                .setTimestampType((byte) 0)
+                .setLogAppendTimestamp(999999L)
+                .setBatchMaxTimestamp(999999L),
+                (short) 0
+            );
+            records.add(record);
+        }
+
+        return appendWriteEvent("inklessCommit", context.deadlineNs(),
+            () -> ControllerResult.of(records, new InklessCommitResponseData()));
     }
 
     @Override

@@ -49,6 +49,8 @@ import org.apache.kafka.common.message.ElectLeadersRequestData;
 import org.apache.kafka.common.message.ElectLeadersResponseData;
 import org.apache.kafka.common.message.ExpireDelegationTokenRequestData;
 import org.apache.kafka.common.message.ExpireDelegationTokenResponseData;
+import org.apache.kafka.common.message.InklessCommitRequestData;
+import org.apache.kafka.common.message.InklessCommitResponseData;
 import org.apache.kafka.common.message.ListPartitionReassignmentsRequestData;
 import org.apache.kafka.common.message.ListPartitionReassignmentsResponseData;
 import org.apache.kafka.common.message.RenewDelegationTokenRequestData;
@@ -543,6 +545,11 @@ public class MockController implements Controller {
 
     @Override
     public CompletableFuture<AssignReplicasToDirsResponseData> assignReplicasToDirs(ControllerRequestContext context, AssignReplicasToDirsRequestData request) {
+        throw new java.lang.UnsupportedOperationException("not implemented");
+    }
+
+    @Override
+    public CompletableFuture<InklessCommitResponseData> inklessCommit(final ControllerRequestContext context, final InklessCommitRequestData request) {
         throw new java.lang.UnsupportedOperationException("not implemented");
     }
 }

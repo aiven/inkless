@@ -67,6 +67,7 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.concurrent.Future;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -1599,5 +1600,10 @@ public class MockAdminClient extends AdminClient {
     @Override
     public void unregisterMetricFromSubscription(KafkaMetric metric) {
         addedMetrics.remove(metric);
+    }
+
+    @Override
+    public Future<Void> inklessCommit() {
+        throw new RuntimeException("not implemented");
     }
 }

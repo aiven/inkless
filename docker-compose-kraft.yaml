@@ -1,0 +1,41 @@
+services:
+  broker: &base-broker
+    image: aivenoy/kafka:4.1.0-inkless-SNAPSHOT
+    restart: unless-stopped
+    network_mode: host
+    environment: &base-broker-env
+      CLUSTER_ID: "4L6g3nShT-eMCtK--X86sw"
+      KAFKA_PROCESS_ROLES: "controller,broker"
+      KAFKA_NODE_ID: 1
+      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@localhost:29090,2@localhost:29091,3@localhost:29092"
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT"
+      KAFKA_LISTENERS: "CONTROLLER://:29090,PLAINTEXT_HOST://:9092,PLAINTEXT://:19092"
+      KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT_HOST://localhost:9092,PLAINTEXT://localhost:19092"
+      KAFKA_INTER_BROKER_LISTENER_NAME: "PLAINTEXT"
+      KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 3
+      KAFKA_LOG_DIRS: "/tmp/kraft-combined-logs"
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:19092 --list"]
+      interval: 5s
+      timeout: 20s
+      retries: 20
+
+  broker2:
+    <<: *base-broker
+    environment:
+      <<: *base-broker-env
+      KAFKA_NODE_ID: 2
+      KAFKA_LISTENERS: "CONTROLLER://:29091,PLAINTEXT_HOST://:9093,PLAINTEXT://:19093"
+      KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT_HOST://localhost:9093,PLAINTEXT://localhost:19093"
+
+  broker3:
+    <<: *base-broker
+    environment:
+      <<: *base-broker-env
+      KAFKA_NODE_ID: 3
+      KAFKA_LISTENERS: "CONTROLLER://:29092,PLAINTEXT_HOST://:9094,PLAINTEXT://:19094"
+      KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT_HOST://localhost:9094,PLAINTEXT://localhost:19094"

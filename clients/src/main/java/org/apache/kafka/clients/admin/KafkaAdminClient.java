@@ -158,6 +158,7 @@ import org.apache.kafka.common.message.DescribeUserScramCredentialsRequestData;
 import org.apache.kafka.common.message.DescribeUserScramCredentialsRequestData.UserName;
 import org.apache.kafka.common.message.DescribeUserScramCredentialsResponseData;
 import org.apache.kafka.common.message.ExpireDelegationTokenRequestData;
+import org.apache.kafka.common.message.InklessCommitRequestData;
 import org.apache.kafka.common.message.LeaveGroupRequestData.MemberIdentity;
 import org.apache.kafka.common.message.ListConfigResourcesRequestData;
 import org.apache.kafka.common.message.ListGroupsRequestData;
@@ -232,6 +233,8 @@ import org.apache.kafka.common.requests.ExpireDelegationTokenRequest;
 import org.apache.kafka.common.requests.ExpireDelegationTokenResponse;
 import org.apache.kafka.common.requests.IncrementalAlterConfigsRequest;
 import org.apache.kafka.common.requests.IncrementalAlterConfigsResponse;
+import org.apache.kafka.common.requests.InklessCommitRequest;
+import org.apache.kafka.common.requests.InklessCommitResponse;
 import org.apache.kafka.common.requests.JoinGroupRequest;
 import org.apache.kafka.common.requests.ListConfigResourcesRequest;
 import org.apache.kafka.common.requests.ListConfigResourcesResponse;
@@ -286,6 +289,7 @@ import java.util.Optional;
 import java.util.OptionalLong;
 import java.util.Set;
 import java.util.TreeMap;
+import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
@@ -5164,5 +5168,43 @@ public class KafkaAdminClient extends AdminClient {
         } else {
             return subLevelErrors.get(subKey).exception();
         }
+    }
+
+    @Override
+    public Future<Void> inklessCommit() {
+        NodeProvider provider = new LeastLoadedBrokerOrActiveKController();
+
+        final KafkaFutureImpl<Void> future = new KafkaFutureImpl<>();
+        final long now = time.milliseconds();
+        final Call call = new Call(
+            "inklessCommit", calcDeadlineMs(now, null), provider) {
+
+            @Override
+            InklessCommitRequest.Builder createRequest(int timeoutMs) {
+                return new InklessCommitRequest.Builder(
+                    new InklessCommitRequestData());
+            }
+
+            @Override
+            void handleResponse(AbstractResponse response) {
+                handleNotControllerError(response);
+                InklessCommitResponse inklessCommitResponse = (InklessCommitResponse) response;
+                if (inklessCommitResponse.data().errorCode() != Errors.NONE.code()) {
+                    ApiError error = new ApiError(
+                        inklessCommitResponse.data().errorCode(),
+                        "qiiii");
+                    future.completeExceptionally(error.exception());
+                } else {
+                    future.complete(null);
+                }
+            }
+
+            @Override
+            void handleFailure(Throwable throwable) {
+                future.completeExceptionally(throwable);
+            }
+        };
+        runnable.call(call, now);
+        return future;
     }
 }

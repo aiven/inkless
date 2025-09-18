@@ -291,6 +291,8 @@ public abstract class AbstractResponse implements AbstractRequestResponse {
                 return AlterShareGroupOffsetsResponse.parse(readable, version);
             case DELETE_SHARE_GROUP_OFFSETS:
                 return DeleteShareGroupOffsetsResponse.parse(readable, version);
+            case INKLESS_COMMIT:
+                return InklessCommitResponse.parse(readable, version);
             default:
                 throw new AssertionError(String.format("ApiKey %s is not currently handled in `parseResponse`, the " +
                         "code should be updated to do so.", apiKey));

@@ -46,6 +46,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Properties;
 import java.util.Set;
+import java.util.concurrent.Future;
 
 /**
  * The administrative client for Kafka, which supports managing and inspecting topics, brokers, configurations and ACLs.
@@ -2129,4 +2130,6 @@ public interface Admin extends AutoCloseable {
      */
     TerminateTransactionResult forceTerminateTransaction(String transactionalId, 
                                                         TerminateTransactionOptions options);
+
+    Future<Void> inklessCommit();
 }
