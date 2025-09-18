@@ -20,8 +20,9 @@ package kafka.server.metadata
 import java.util.OptionalInt
 import kafka.coordinator.transaction.TransactionCoordinator
 import kafka.log.LogManager
+import kafka.server.coordinator.TopicMirrorLinkCoordinator
 import kafka.server.share.SharePartitionManager
-import kafka.server.{KafkaConfig, ReplicaManager, RemoteClusterMetadataManager}
+import kafka.server.{KafkaConfig, RemoteClusterMetadataManager, ReplicaManager}
 import kafka.utils.Logging
 import org.apache.kafka.common.TopicPartition
 import org.apache.kafka.common.errors.TimeoutException
@@ -75,6 +76,7 @@ class BrokerMetadataPublisher(
   groupCoordinator: GroupCoordinator,
   txnCoordinator: TransactionCoordinator,
   shareCoordinator: ShareCoordinator,
+  topicMirrorLinkCoordinator: TopicMirrorLinkCoordinator,
   sharePartitionManager: SharePartitionManager,
   var dynamicConfigPublisher: DynamicConfigPublisher,
   dynamicClientQuotaPublisher: DynamicClientQuotaPublisher,
@@ -214,6 +216,17 @@ class BrokerMetadataPublisher(
         } catch {
           case t: Throwable => metadataPublishingFaultHandler.handleFault("Error updating share " +
             s"coordinator with deleted partitions in $deltaName", t)
+        }
+        try {
+          // Update the transaction coordinator of local changes
+          updateCoordinator(newImage,
+            delta,
+            Topic.CLUSTER_LINK_TOPIC_NAME,
+            topicMirrorLinkCoordinator.onElection,
+            (partitionIndex, leaderEpochOpt) => topicMirrorLinkCoordinator.onResignation(partitionIndex, toOptionalInt(leaderEpochOpt)))
+        } catch {
+          case t: Throwable => metadataPublishingFaultHandler.handleFault("Error updating txn " +
+            s"coordinator with local changes in $deltaName", t)
         }
       }
 
@@ -389,6 +402,12 @@ class BrokerMetadataPublisher(
         .orElse(config.shareCoordinatorConfig.shareCoordinatorStateTopicNumPartitions()))
     } catch {
       case t: Throwable => fatalFaultHandler.handleFault("Error starting Share coordinator", t)
+    }
+    try {
+      // Start the topic mirror coordinator.
+      topicMirrorLinkCoordinator.startup()
+    } catch {
+      case t: Throwable => fatalFaultHandler.handleFault("Error starting topic link coordinator", t)
     }
   }
 

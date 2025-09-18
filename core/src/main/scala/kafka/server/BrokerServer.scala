@@ -22,6 +22,7 @@ import kafka.coordinator.transaction.TransactionCoordinator
 import kafka.log.LogManager
 import kafka.network.SocketServer
 import kafka.raft.KafkaRaftManager
+import kafka.server.coordinator.TopicMirrorLinkCoordinator
 import kafka.server.metadata._
 import kafka.server.share.{ShareCoordinatorMetadataCacheHelperImpl, SharePartitionManager}
 import kafka.utils.CoreUtils
@@ -123,6 +124,8 @@ class BrokerServer(
   var groupConfigManager: GroupConfigManager = _
 
   var transactionCoordinator: TransactionCoordinator = _
+
+  var topicMirrorLinkCoordinator: TopicMirrorLinkCoordinator = _
 
   var shareCoordinator: ShareCoordinator = _
 
@@ -395,6 +398,9 @@ class BrokerServer(
         new KafkaScheduler(1, true, "transaction-log-manager-"),
         producerIdManagerSupplier, metrics, metadataCache, Time.SYSTEM)
 
+      topicMirrorLinkCoordinator = new TopicMirrorLinkCoordinator(config, replicaManager,
+        new KafkaScheduler(1, true, "transaction-log-manager-"), metrics, metadataCache, Time.SYSTEM)
+
       autoTopicCreationManager = new DefaultAutoTopicCreationManager(
         config, clientToControllerChannelManager, groupCoordinator,
         transactionCoordinator, shareCoordinator)
@@ -457,6 +463,7 @@ class BrokerServer(
         groupCoordinator = groupCoordinator,
         txnCoordinator = transactionCoordinator,
         shareCoordinator = shareCoordinator,
+        topicMirrorLinkCoordinator = topicMirrorLinkCoordinator,
         autoTopicCreationManager = autoTopicCreationManager,
         brokerId = config.nodeId,
         config = config,
@@ -488,6 +495,7 @@ class BrokerServer(
         groupCoordinator,
         transactionCoordinator,
         shareCoordinator,
+        topicMirrorLinkCoordinator,
         sharePartitionManager,
         new DynamicConfigPublisher(
           config,
@@ -791,6 +799,9 @@ class BrokerServer(
         CoreUtils.swallow(groupCoordinator.shutdown(), this)
       if (shareCoordinator != null)
         CoreUtils.swallow(shareCoordinator.shutdown(), this)
+
+      if (topicMirrorLinkCoordinator != null)
+        CoreUtils.swallow(topicMirrorLinkCoordinator.shutdown(), this)
 
       if (assignmentsManager != null)
         CoreUtils.swallow(assignmentsManager.close(), this)

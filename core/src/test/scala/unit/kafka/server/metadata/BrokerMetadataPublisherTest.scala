@@ -23,6 +23,7 @@ import java.util.Collections.{singleton, singletonList, singletonMap}
 import java.util.{OptionalInt, Properties}
 import java.util.concurrent.atomic.{AtomicInteger, AtomicReference}
 import kafka.log.LogManager
+import kafka.server.coordinator.TopicMirrorLinkCoordinator
 import kafka.server.share.SharePartitionManager
 import kafka.server.{BrokerServer, KafkaConfig, RemoteClusterMetadataManager, ReplicaManager}
 import kafka.utils.TestUtils
@@ -203,6 +204,7 @@ class BrokerMetadataPublisherTest {
       groupCoordinator,
       mock(classOf[TransactionCoordinator]),
       mock(classOf[ShareCoordinator]),
+      mock(classOf[TopicMirrorLinkCoordinator]),
       mock(classOf[SharePartitionManager]),
       mock(classOf[DynamicConfigPublisher]),
       mock(classOf[DynamicClientQuotaPublisher]),
@@ -268,6 +270,7 @@ class BrokerMetadataPublisherTest {
       groupCoordinator,
       mock(classOf[TransactionCoordinator]),
       mock(classOf[ShareCoordinator]),
+      mock(classOf[TopicMirrorLinkCoordinator]),
       mock(classOf[SharePartitionManager]),
       mock(classOf[DynamicConfigPublisher]),
       mock(classOf[DynamicClientQuotaPublisher]),
@@ -310,6 +313,7 @@ class BrokerMetadataPublisherTest {
       mock(classOf[GroupCoordinator]),
       mock(classOf[TransactionCoordinator]),
       mock(classOf[ShareCoordinator]),
+      mock(classOf[TopicMirrorLinkCoordinator]),
       sharePartitionManager,
       mock(classOf[DynamicConfigPublisher]),
       mock(classOf[DynamicClientQuotaPublisher]),
