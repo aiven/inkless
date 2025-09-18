@@ -53,7 +53,6 @@ import org.apache.kafka.common.message.UpdateFeaturesResponseData;
 import org.apache.kafka.common.quota.ClientQuotaAlteration;
 import org.apache.kafka.common.quota.ClientQuotaEntity;
 import org.apache.kafka.common.requests.ApiError;
-import org.apache.kafka.common.requests.CreateClusterLinkRequest;
 import org.apache.kafka.metadata.BrokerHeartbeatReply;
 import org.apache.kafka.metadata.BrokerRegistrationReply;
 import org.apache.kafka.metadata.FinalizedControllerFeatures;
@@ -64,7 +63,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
-
 
 public interface Controller extends AclMutator, AutoCloseable {
     /**
