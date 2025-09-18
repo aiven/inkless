@@ -399,7 +399,7 @@ class BrokerServer(
         producerIdManagerSupplier, metrics, metadataCache, Time.SYSTEM)
 
       topicMirrorLinkCoordinator = new TopicMirrorLinkCoordinator(config, replicaManager,
-        new KafkaScheduler(1, true, "transaction-log-manager-"), metrics, metadataCache, Time.SYSTEM)
+        new KafkaScheduler(1, true, "topic-mirror-link-manager-"), metrics, metadataCache, Time.SYSTEM, clientToControllerChannelManager)
 
       autoTopicCreationManager = new DefaultAutoTopicCreationManager(
         config, clientToControllerChannelManager, groupCoordinator,
