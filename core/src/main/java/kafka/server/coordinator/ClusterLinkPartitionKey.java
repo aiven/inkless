@@ -16,15 +16,12 @@
  */
 package kafka.server.coordinator;
 
-import org.apache.kafka.common.Uuid;
-
 import java.util.Objects;
 
-public record ClusterLinkPartitionKey(String clusterLinkId, Uuid topicId) {
+public record ClusterLinkPartitionKey(String clusterLinkId) {
 
-    public ClusterLinkPartitionKey(String clusterLinkId, Uuid topicId) {
+    public ClusterLinkPartitionKey(String clusterLinkId) {
         this.clusterLinkId = Objects.requireNonNull(clusterLinkId, "clusterLinkId cannot be null");
-        this.topicId = Objects.requireNonNull(topicId, "topicId cannot be null");
     }
 
     /**
@@ -32,23 +29,15 @@ public record ClusterLinkPartitionKey(String clusterLinkId, Uuid topicId) {
      */
     public static ClusterLinkPartitionKey getInstance(String key) {
         validate(key);
-        String[] tokens = key.split(":");
-        return new ClusterLinkPartitionKey(
-            tokens[0].trim(),
-            Uuid.fromString(tokens[1])
-        );
-    }
-
-    public static ClusterLinkPartitionKey getInstance(String groupId, Uuid topicId) {
-        return new ClusterLinkPartitionKey(groupId, topicId);
+        return new ClusterLinkPartitionKey(key);
     }
 
     public String asCoordinatorKey() {
-        return asCoordinatorKey(clusterLinkId, topicId);
+        return asCoordinatorKey(clusterLinkId);
     }
 
-    public static String asCoordinatorKey(String clusterLinkId, Uuid topicId) {
-        return String.format("%s:%s", clusterLinkId, topicId);
+    public static String asCoordinatorKey(String clusterLinkId) {
+        return clusterLinkId;
     }
 
     public static void validate(String key) {
@@ -56,28 +45,5 @@ public record ClusterLinkPartitionKey(String clusterLinkId, Uuid topicId) {
         if (key.isEmpty()) {
             throw new IllegalArgumentException("Cluster link key cannot be empty");
         }
-
-        String[] tokens = key.split(":");
-        if (tokens.length != 3) {
-            throw new IllegalArgumentException("Invalid key format: expected - clusterLinkId:topicId, found -  " + key);
-        }
-
-        if (tokens[0].trim().isEmpty()) {
-            throw new IllegalArgumentException("clusterLinkId must be alphanumeric string");
-        }
-
-        try {
-            Uuid.fromString(tokens[1]);
-        } catch (Exception e) {
-            throw new IllegalArgumentException("Invalid topic ID: " + tokens[1], e);
-        }
-    }
-
-    @Override
-    public String toString() {
-        return "ClusterLinkPartitionKey{" +
-                "clusterLinkId='" + clusterLinkId + '\'' +
-                ", topicId=" + topicId +
-                '}';
     }
 }
