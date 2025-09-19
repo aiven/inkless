@@ -20,6 +20,10 @@
   "name": "ClusterLinkMirrorTopicsValue",
   "validVersions": "0",
   "flexibleVersions": "0+",
+  "fields": [
+    { "name": "topics", "type": "[]Topic", "versions": "0+",
+      "about": "The topics." }
+  ],
   "commonStructs": [
     { "name": "Topic", "versions": "0+", "fields": [
       { "name": "name", "type": "string", "versions": "0+",
