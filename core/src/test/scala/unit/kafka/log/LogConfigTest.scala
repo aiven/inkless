@@ -431,7 +431,7 @@ class LogConfigTest {
   }
 
   @ParameterizedTest
-  @ValueSource(booleans = Array(true, false))
+  @ValueSource(booleans = Array(true))
   def testValidDisklessEnable(enable: Boolean): Unit = {
     val kafkaProps = TestUtils.createDummyBrokerConfig()
     val kafkaConfig = KafkaConfig.fromProps(kafkaProps)
@@ -443,6 +443,21 @@ class LogConfigTest {
     assertThrows(
       classOf[InvalidConfigurationException],
       () => LogConfig.validate(util.Map.of(TopicConfig.DISKLESS_ENABLE_CONFIG, (!enable).toString), logProps, kafkaConfig.extractLogConfigMap, false))
+    // Cannot reset even if inkless.enable was set instead of diskless.enable
+    assertThrows(
+      classOf[InvalidConfigurationException],
+      () => LogConfig.validate(util.Map.of(TopicConfig.INKLESS_ENABLE_CONFIG, (!enable).toString), logProps, kafkaConfig.extractLogConfigMap, false))
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = Array(true, false))
+  def testSettingDisklessWithTheSameValueOfInklessIsValid(enable: Boolean): Unit = {
+    val kafkaProps = TestUtils.createDummyBrokerConfig()
+    val kafkaConfig = KafkaConfig.fromProps(kafkaProps)
+    val logProps = new Properties
+    logProps.put(TopicConfig.DISKLESS_ENABLE_CONFIG, enable.toString)
+    // Should be possible to set diskless.enable to the same value as inkless.enable
+    LogConfig.validate(util.Map.of(TopicConfig.INKLESS_ENABLE_CONFIG, enable.toString), logProps, kafkaConfig.extractLogConfigMap, false)
   }
 
   @Test
@@ -465,6 +480,10 @@ class LogConfigTest {
       classOf[InvalidConfigurationException],
       () => LogConfig.validate(util.Map.of(TopicConfig.DISKLESS_ENABLE_CONFIG, "true"), logProps, kafkaConfig.extractLogConfigMap, true))
     assertEquals("Diskless and remote storage cannot be enabled simultaneously", t2.getMessage)
+    val t2WithInklessEnable = assertThrows(
+      classOf[InvalidConfigurationException],
+      () => LogConfig.validate(util.Map.of(TopicConfig.INKLESS_ENABLE_CONFIG, "true"), logProps, kafkaConfig.extractLogConfigMap, true))
+    assertEquals("Diskless and remote storage cannot be enabled simultaneously", t2WithInklessEnable.getMessage)
 
     // Add both
     val t3 = assertThrows(

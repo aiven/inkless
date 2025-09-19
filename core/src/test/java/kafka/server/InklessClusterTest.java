@@ -19,6 +19,9 @@ package kafka.server;
 import org.apache.kafka.clients.CommonClientConfigs;
 import org.apache.kafka.clients.admin.Admin;
 import org.apache.kafka.clients.admin.AdminClient;
+import org.apache.kafka.clients.admin.AlterConfigOp;
+import org.apache.kafka.clients.admin.AlterConfigsResult;
+import org.apache.kafka.clients.admin.ConfigEntry;
 import org.apache.kafka.clients.admin.CreateTopicsResult;
 import org.apache.kafka.clients.admin.NewTopic;
 import org.apache.kafka.clients.consumer.Consumer;
@@ -33,7 +36,9 @@ import org.apache.kafka.clients.producer.Producer;
 import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.common.TopicPartition;
+import org.apache.kafka.common.config.ConfigResource;
 import org.apache.kafka.common.config.TopicConfig;
+import org.apache.kafka.common.errors.UnknownTopicOrPartitionException;
 import org.apache.kafka.common.record.TimestampType;
 import org.apache.kafka.common.serialization.ByteArrayDeserializer;
 import org.apache.kafka.common.serialization.ByteArraySerializer;
@@ -55,11 +60,14 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.time.Duration;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Stream;
 
@@ -74,6 +82,7 @@ import io.aiven.inkless.test_utils.PostgreSQLTestContainer;
 import io.aiven.inkless.test_utils.S3TestContainer;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 @Testcontainers
@@ -247,6 +256,186 @@ public class InklessClusterTest {
         }
 
         assertEquals(recordsProduced.get(), recordsConsumed);
+    }
+
+    @Test
+    public void disklessTopicConfigs() throws ExecutionException, InterruptedException, TimeoutException {
+        Map<String, Object> clientConfigs = new HashMap<>();
+        clientConfigs.put(CommonClientConfigs.BOOTSTRAP_SERVERS_CONFIG, cluster.bootstrapServers());
+
+        try (Admin admin = AdminClient.create(clientConfigs)) {
+            // When creating a new topic with inkless.enable=true
+            final String inklessTopic = "inklessTopic";
+            admin.createTopics(Collections.singletonList(
+                new NewTopic(inklessTopic, 1, (short) 1)
+                    .configs(Map.of(TopicConfig.INKLESS_ENABLE_CONFIG, "true"))
+            )).all().get(10, TimeUnit.SECONDS);
+            var inklessTopicConfig = getTopicConfig(admin, inklessTopic);
+            // Then both diskless.enable and inkless.enable are set to true
+            assertEquals("true", inklessTopicConfig.get(TopicConfig.INKLESS_ENABLE_CONFIG));
+            assertEquals("true", inklessTopicConfig.get(TopicConfig.DISKLESS_ENABLE_CONFIG));
+
+            // When creating a new topic with diskless.enable=true
+            final String disklessTopic = "disklessTopic";
+            admin.createTopics(Collections.singletonList(
+                new NewTopic(disklessTopic, 1, (short) 1)
+                    .configs(Map.of(TopicConfig.DISKLESS_ENABLE_CONFIG, "true"))
+            )).all().get(10, TimeUnit.SECONDS);
+            var disklessTopicConfig = getTopicConfig(admin, disklessTopic);
+            // Then both diskless.enable and inkless.enable are set to true
+            assertEquals("true", disklessTopicConfig.get(TopicConfig.INKLESS_ENABLE_CONFIG));
+            assertEquals("true", disklessTopicConfig.get(TopicConfig.DISKLESS_ENABLE_CONFIG));
+
+            // When creating a new topic with both diskless.enable=true and inkless.enable=true
+            final String disklessInklessTopic = "disklessInklessTopic";
+            admin.createTopics(Collections.singletonList(
+                new NewTopic(disklessInklessTopic, 1, (short) 1)
+                    .configs(Map.of(TopicConfig.DISKLESS_ENABLE_CONFIG, "true"))
+                    .configs(Map.of(TopicConfig.INKLESS_ENABLE_CONFIG, "true"))
+            )).all().get(10, TimeUnit.SECONDS);
+            var disklessInklessTopicConfig = getTopicConfig(admin, disklessInklessTopic);
+            // Then both diskless.enable and inkless.enable are set to true
+            assertEquals("true", disklessInklessTopicConfig.get(TopicConfig.INKLESS_ENABLE_CONFIG));
+            assertEquals("true", disklessInklessTopicConfig.get(TopicConfig.DISKLESS_ENABLE_CONFIG));
+
+
+        }
+    }
+
+    @Test
+    public void classicTopicConfigs() throws ExecutionException, InterruptedException, TimeoutException {
+        Map<String, Object> clientConfigs = new HashMap<>();
+        clientConfigs.put(CommonClientConfigs.BOOTSTRAP_SERVERS_CONFIG, cluster.bootstrapServers());
+
+        try (Admin admin = AdminClient.create(clientConfigs)) {
+            // When creating a new topic without specifying any inkless or diskless config
+            final String classicTopic = "classicTopic";
+            admin.createTopics(Collections.singletonList(
+                new NewTopic(classicTopic, 1, (short) 1)
+            )).all().get(10, TimeUnit.SECONDS);
+            var classicTopicConfig = getTopicConfig(admin, classicTopic);
+            // Then both diskless.enable and inkless.enable are set to false
+            assertEquals("false", classicTopicConfig.get(TopicConfig.INKLESS_ENABLE_CONFIG));
+            assertEquals("false", classicTopicConfig.get(TopicConfig.DISKLESS_ENABLE_CONFIG));
+            // Then it's not possible turn on diskless after the topic is created
+            assertThrows(ExecutionException.class, () -> alterTopicConfig(admin, classicTopic, Map.of(TopicConfig.DISKLESS_ENABLE_CONFIG, "true")));
+            assertThrows(ExecutionException.class, () -> alterTopicConfig(admin, classicTopic, Map.of(TopicConfig.INKLESS_ENABLE_CONFIG, "true")));
+            assertThrows(ExecutionException.class, () -> alterTopicConfig(admin, classicTopic,
+                Map.of(TopicConfig.DISKLESS_ENABLE_CONFIG, "true", TopicConfig.INKLESS_ENABLE_CONFIG, "true")));
+
+            // When creating a new topic with inkless.enable=false
+            final String inklessDisabledTopic = "inklessDisabledTopic";
+            admin.createTopics(Collections.singletonList(
+                new NewTopic(inklessDisabledTopic, 1, (short) 1)
+                    .configs(Map.of(TopicConfig.INKLESS_ENABLE_CONFIG, "false"))
+            )).all().get(10, TimeUnit.SECONDS);
+            var inklessDisabledTopicConfig = getTopicConfig(admin, inklessDisabledTopic);
+            // Then both diskless.enable and inkless.enable are set to false
+            assertEquals("false", inklessDisabledTopicConfig.get(TopicConfig.INKLESS_ENABLE_CONFIG));
+            assertEquals("false", inklessDisabledTopicConfig.get(TopicConfig.DISKLESS_ENABLE_CONFIG));
+            // Then it's not possible turn on diskless after the topic is created
+            assertThrows(ExecutionException.class, () -> alterTopicConfig(admin, inklessDisabledTopic, Map.of(TopicConfig.DISKLESS_ENABLE_CONFIG, "true")));
+            assertThrows(ExecutionException.class, () -> alterTopicConfig(admin, inklessDisabledTopic, Map.of(TopicConfig.INKLESS_ENABLE_CONFIG, "true")));
+            assertThrows(ExecutionException.class, () -> alterTopicConfig(admin, inklessDisabledTopic,
+                Map.of(TopicConfig.DISKLESS_ENABLE_CONFIG, "true", TopicConfig.INKLESS_ENABLE_CONFIG, "true")));
+
+            // When creating a new topic with diskless.enable=false
+            final String disklessDisabledTopic = "disklessDisabledTopic";
+            admin.createTopics(Collections.singletonList(
+                new NewTopic(disklessDisabledTopic, 1, (short) 1)
+                    .configs(Map.of(TopicConfig.DISKLESS_ENABLE_CONFIG, "false"))
+            )).all().get(10, TimeUnit.SECONDS);
+            var disklessDisabledTopicConfig = getTopicConfig(admin, disklessDisabledTopic);
+            // Then both diskless.enable and inkless.enable are set to false
+            assertEquals("false", disklessDisabledTopicConfig.get(TopicConfig.INKLESS_ENABLE_CONFIG));
+            assertEquals("false", disklessDisabledTopicConfig.get(TopicConfig.DISKLESS_ENABLE_CONFIG));
+            // Then it's not possible turn on diskless after the topic is created
+            assertThrows(ExecutionException.class, () -> alterTopicConfig(admin, disklessDisabledTopic, Map.of(TopicConfig.DISKLESS_ENABLE_CONFIG, "true")));
+            assertThrows(ExecutionException.class, () -> alterTopicConfig(admin, disklessDisabledTopic, Map.of(TopicConfig.INKLESS_ENABLE_CONFIG, "true")));
+            assertThrows(ExecutionException.class, () -> alterTopicConfig(admin, disklessDisabledTopic,
+                Map.of(TopicConfig.DISKLESS_ENABLE_CONFIG, "true", TopicConfig.INKLESS_ENABLE_CONFIG, "true")));
+
+            // When creating a new topic with both diskless.enable=false and inkless.enable=false
+            final String disklessInklessDisabledTopic = "disklessInklessDisabledTopic";
+            admin.createTopics(Collections.singletonList(
+                new NewTopic(disklessInklessDisabledTopic, 1, (short) 1)
+                    .configs(Map.of(TopicConfig.DISKLESS_ENABLE_CONFIG, "false"))
+                    .configs(Map.of(TopicConfig.INKLESS_ENABLE_CONFIG, "false"))
+            )).all().get(10, TimeUnit.SECONDS);
+            var disklessInklessDisabledTopicConfig = getTopicConfig(admin, disklessInklessDisabledTopic);
+            // Then both diskless.enable and inkless.enable are set to false
+            assertEquals("false", disklessInklessDisabledTopicConfig.get(TopicConfig.INKLESS_ENABLE_CONFIG));
+            assertEquals("false", disklessInklessDisabledTopicConfig.get(TopicConfig.DISKLESS_ENABLE_CONFIG));
+            // Then it's not possible turn on diskless after the topic is created
+            assertThrows(ExecutionException.class, () -> alterTopicConfig(admin, disklessInklessDisabledTopic, Map.of(TopicConfig.DISKLESS_ENABLE_CONFIG, "true")));
+            assertThrows(ExecutionException.class, () -> alterTopicConfig(admin, disklessInklessDisabledTopic, Map.of(TopicConfig.INKLESS_ENABLE_CONFIG, "true")));
+            assertThrows(ExecutionException.class, () -> alterTopicConfig(admin, disklessInklessDisabledTopic,
+                Map.of(TopicConfig.DISKLESS_ENABLE_CONFIG, "true", TopicConfig.INKLESS_ENABLE_CONFIG, "true")));
+        }
+    }
+
+    private Map<String, String> getTopicConfig(Admin admin, String topic)
+        throws ExecutionException, InterruptedException, TimeoutException {
+        int maxRetries = 3;
+        long retryDelayMs = 1000; // 1 second
+
+        for (int attempt = 1; attempt <= maxRetries; attempt++) {
+            try {
+                var topicResource = new ConfigResource(ConfigResource.Type.TOPIC, topic);
+                var describeConfigsResult = admin.describeConfigs(Collections.singletonList(topicResource));
+                var allConfigs = describeConfigsResult.all().get(10, TimeUnit.SECONDS);
+
+                return allConfigs
+                    .get(topicResource).entries().stream()
+                    .collect(
+                        HashMap::new,
+                        (map, entry) -> map.put(entry.name(), entry.value()),
+                        HashMap::putAll
+                    );
+            } catch (ExecutionException e) {
+                if (e.getCause() instanceof UnknownTopicOrPartitionException) {
+                    System.err.println(
+                        "Attempt " + attempt + " failed: " + e.getCause().getMessage() + ". Retrying..."
+                    );
+                    if (attempt == maxRetries) {
+                        throw e;
+                    }
+                    Thread.sleep(retryDelayMs);
+                } else {
+                    throw e;
+                }
+            }
+        }
+        throw new IllegalStateException("Exited retry loop unexpectedly.");
+    }
+
+    private void alterTopicConfig(Admin admin, String topic, Map<String, String> newConfigs)
+        throws ExecutionException, InterruptedException, TimeoutException {
+
+        var topicResource = new ConfigResource(ConfigResource.Type.TOPIC, topic);
+
+        // 1. Transform the input map into a collection of AlterConfigOp
+        Collection<AlterConfigOp> operations = newConfigs.entrySet().stream()
+            .map(entry -> {
+                // A null value signifies a deletion
+                if (entry.getValue() == null) {
+                    return new AlterConfigOp(
+                        new ConfigEntry(entry.getKey(), ""), AlterConfigOp.OpType.DELETE
+                    );
+                } else { // Otherwise, it's a standard SET operation
+                    return new AlterConfigOp(
+                        new ConfigEntry(entry.getKey(), entry.getValue()), AlterConfigOp.OpType.SET
+                    );
+                }
+            })
+            .toList();
+
+        // 2. Call the incremental alter API
+        var alterRequest = Map.of(topicResource, operations);
+        AlterConfigsResult result = admin.incrementalAlterConfigs(alterRequest);
+
+        // 3. Wait for the operation to complete
+        result.all().get(10, TimeUnit.SECONDS);
     }
 
     private static void consumeWithManualAssignment(TimestampType timestampType, Map<String, Object> clientConfigs, String topicName, long now, int numRecords) {

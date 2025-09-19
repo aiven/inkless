@@ -249,6 +249,7 @@ public class LogConfig extends AbstractConfig {
                 .define(TopicConfig.REMOTE_LOG_COPY_DISABLE_CONFIG, BOOLEAN, false, MEDIUM, TopicConfig.REMOTE_LOG_COPY_DISABLE_DOC)
                 .define(TopicConfig.REMOTE_LOG_DELETE_ON_DISABLE_CONFIG, BOOLEAN, false, MEDIUM, TopicConfig.REMOTE_LOG_DELETE_ON_DISABLE_DOC)
                 .defineInternal(INTERNAL_SEGMENT_BYTES_CONFIG, INT, null, null, MEDIUM, INTERNAL_SEGMENT_BYTES_DOC)
+                .define(TopicConfig.INKLESS_ENABLE_CONFIG, BOOLEAN, false, MEDIUM, TopicConfig.INKLESS_ENABLE_DOC)
                 .define(TopicConfig.DISKLESS_ENABLE_CONFIG, BOOLEAN, false, MEDIUM, TopicConfig.DISKLESS_ENABLE_DOC);
     }
 
@@ -527,11 +528,22 @@ public class LogConfig extends AbstractConfig {
             boolean wasRemoteLogEnabled = Boolean.parseBoolean(existingConfigs.getOrDefault(TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG, "false"));
             validateTurningOffRemoteStorageWithDelete(newConfigs, wasRemoteLogEnabled, isRemoteLogStorageEnabled);
         }
+
         boolean isDisklessEnabled = (Boolean) newConfigs.get(TopicConfig.DISKLESS_ENABLE_CONFIG);
         if (isDisklessEnabled) {
+            // diskless.enable = true -> inkless.enable and diskless.enable must be already set to true
             if (existingConfigs.containsKey(TopicConfig.DISKLESS_ENABLE_CONFIG)) {
                 boolean wasDisklessEnabled = Boolean.parseBoolean(existingConfigs.get(TopicConfig.DISKLESS_ENABLE_CONFIG));
                 if (!wasDisklessEnabled) {
+                    // cannot change from diskless.enable = false to diskless.enable = true
+                    throw new InvalidConfigurationException("It is invalid to enable diskless");
+                }
+            }
+
+            if (existingConfigs.containsKey(TopicConfig.INKLESS_ENABLE_CONFIG)) {
+                boolean wasInklessEnabled = Boolean.parseBoolean(existingConfigs.get(TopicConfig.INKLESS_ENABLE_CONFIG));
+                if (!wasInklessEnabled) {
+                    // cannot set diskless.enable = true if inkless.enable was set to false
                     throw new InvalidConfigurationException("It is invalid to enable diskless");
                 }
             }
@@ -540,9 +552,36 @@ public class LogConfig extends AbstractConfig {
                 throw new InvalidConfigurationException("Diskless and remote storage cannot be enabled simultaneously");
             }
         } else {
+            // diskless.enable = false -> inkless.enable and diskless.enable must be not set or set to false
             boolean wasDisklessEnabled = Boolean.parseBoolean(existingConfigs.getOrDefault(TopicConfig.DISKLESS_ENABLE_CONFIG, "false"));
             if (wasDisklessEnabled) {
+                // cannot change from diskless.enable = true to diskless.enable = false
                 throw new InvalidConfigurationException("It is invalid to disable diskless");
+            }
+
+            boolean wasInklessEnabled = Boolean.parseBoolean(existingConfigs.getOrDefault(TopicConfig.INKLESS_ENABLE_CONFIG, "false"));
+            if (wasInklessEnabled) {
+                // cannot set diskless.enable = false if inkless.enable was set to true
+                throw new InvalidConfigurationException("It is invalid to disable diskless");
+            }
+        }
+
+        boolean isInklessEnabled = (Boolean) newConfigs.get(TopicConfig.INKLESS_ENABLE_CONFIG);
+        if (isInklessEnabled) {
+            // inkless.enable = true -> diskless.enable must be set to true
+            if (existingConfigs.containsKey(TopicConfig.DISKLESS_ENABLE_CONFIG)) {
+                boolean wasDisklessEnabled = Boolean.parseBoolean(existingConfigs.get(TopicConfig.DISKLESS_ENABLE_CONFIG));
+                if (!wasDisklessEnabled) {
+                    throw new InvalidConfigurationException("inkless.enable and diskless.enable must have the same value");
+                }
+            }
+        } else {
+            // inkless.enable = false -> diskless.enable must be set false
+            if (existingConfigs.containsKey(TopicConfig.DISKLESS_ENABLE_CONFIG)) {
+                boolean wasDisklessEnabled = Boolean.parseBoolean(existingConfigs.get(TopicConfig.DISKLESS_ENABLE_CONFIG));
+                if (wasDisklessEnabled) {
+                    throw new InvalidConfigurationException("inkless.enable and diskless.enable must have the same value");
+                }
             }
         }
     }
