@@ -20,7 +20,7 @@ package kafka.server
 import kafka.coordinator.transaction.{InitProducerIdResult, TransactionCoordinator}
 import kafka.network.RequestChannel
 import kafka.server.QuotaFactory.{QuotaManagers, UNBOUNDED_QUOTA}
-import kafka.server.coordinator.{ClusterLinkPartitionKey, TopicMirrorLinkCoordinator}
+import kafka.server.coordinator.{ClusterLinkKey, TopicMirrorLinkCoordinator}
 import kafka.server.handlers.DescribeTopicPartitionsRequestHandler
 import kafka.server.share.{ShareFetchUtils, SharePartitionManager}
 import kafka.utils.Logging
@@ -1341,7 +1341,7 @@ class KafkaApis(val requestChannel: RequestChannel,
         }
       } else if (keyType == CoordinatorType.CLUSTER_LINK.id) {
         try {
-          ClusterLinkPartitionKey.validate(key)
+          ClusterLinkKey.validate(key)
         } catch {
           case e: IllegalArgumentException =>
             error(s"Cluster link coordinator key is invalid", e)
@@ -1359,7 +1359,7 @@ class KafkaApis(val requestChannel: RequestChannel,
           // We know that shareCoordinator is defined at this stage.
           (shareCoordinator.partitionFor(SharePartitionKey.getInstance(key)), SHARE_GROUP_STATE_TOPIC_NAME)
         case CoordinatorType.CLUSTER_LINK =>
-          (topicMirrorLinkCoordinator.partitionFor(ClusterLinkPartitionKey.getInstance(key)), CLUSTER_LINK_TOPIC_NAME)
+          (topicMirrorLinkCoordinator.partitionFor(ClusterLinkKey.getInstance(key)), CLUSTER_LINK_TOPIC_NAME)
       }
 
       val topicMetadata = metadataCache.getTopicMetadata(Set(internalTopicName).asJava, request.context.listenerName, false, false).asScala

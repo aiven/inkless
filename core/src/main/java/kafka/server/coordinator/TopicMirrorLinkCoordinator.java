@@ -103,7 +103,7 @@ public class TopicMirrorLinkCoordinator {
      * Return the partition index for the given key.
      *
      */
-    public int partitionFor(ClusterLinkPartitionKey key) {
+    public int partitionFor(ClusterLinkKey key) {
         throwIfNotActive();
         return Utils.abs(key.asCoordinatorKey().hashCode()) % numPartitions;
     }

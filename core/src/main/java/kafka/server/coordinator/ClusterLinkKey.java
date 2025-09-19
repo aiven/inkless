@@ -18,18 +18,18 @@ package kafka.server.coordinator;
 
 import java.util.Objects;
 
-public record ClusterLinkPartitionKey(String clusterLinkId) {
+public record ClusterLinkKey(String clusterLinkId) {
 
-    public ClusterLinkPartitionKey(String clusterLinkId) {
+    public ClusterLinkKey(String clusterLinkId) {
         this.clusterLinkId = Objects.requireNonNull(clusterLinkId, "clusterLinkId cannot be null");
     }
 
     /**
      * Returns a ClusterLinkPartitionKey from input string of format - clusterLinkId:topicId
      */
-    public static ClusterLinkPartitionKey getInstance(String key) {
+    public static ClusterLinkKey getInstance(String key) {
         validate(key);
-        return new ClusterLinkPartitionKey(key);
+        return new ClusterLinkKey(key);
     }
 
     public String asCoordinatorKey() {
