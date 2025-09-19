@@ -20,7 +20,7 @@ package kafka.server
 import kafka.coordinator.transaction.{InitProducerIdResult, TransactionCoordinator}
 import kafka.network.RequestChannel
 import kafka.server.QuotaFactory.{QuotaManagers, UNBOUNDED_QUOTA}
-import kafka.server.coordinator.TopicMirrorLinkCoordinator
+import kafka.server.coordinator.{ClusterLinkKey, TopicMirrorLinkCoordinator}
 import kafka.server.handlers.DescribeTopicPartitionsRequestHandler
 import kafka.server.share.{ShareFetchUtils, SharePartitionManager}
 import kafka.utils.Logging
@@ -30,7 +30,7 @@ import org.apache.kafka.common.acl.AclOperation
 import org.apache.kafka.common.acl.AclOperation._
 import org.apache.kafka.common.config.ConfigResource
 import org.apache.kafka.common.errors._
-import org.apache.kafka.common.internals.Topic.{GROUP_METADATA_TOPIC_NAME, SHARE_GROUP_STATE_TOPIC_NAME, TRANSACTION_STATE_TOPIC_NAME, isInternal}
+import org.apache.kafka.common.internals.Topic.{CLUSTER_LINK_TOPIC_NAME, GROUP_METADATA_TOPIC_NAME, SHARE_GROUP_STATE_TOPIC_NAME, TRANSACTION_STATE_TOPIC_NAME, isInternal}
 import org.apache.kafka.common.internals.{FatalExitError, Plugin, Topic}
 import org.apache.kafka.common.message.AddPartitionsToTxnResponseData.{AddPartitionsToTxnResult, AddPartitionsToTxnResultCollection}
 import org.apache.kafka.common.message.DeleteRecordsResponseData.{DeleteRecordsPartitionResult, DeleteRecordsTopicResult}
@@ -1327,6 +1327,8 @@ class KafkaApis(val requestChannel: RequestChannel,
       (Errors.TRANSACTIONAL_ID_AUTHORIZATION_FAILED, Node.noNode)
     else if (keyType == CoordinatorType.SHARE.id && request.context.apiVersion < 6)
       (Errors.INVALID_REQUEST, Node.noNode)
+    else if (keyType == CoordinatorType.CLUSTER_LINK.id && request.context.apiVersion < 7)
+      (Errors.INVALID_REQUEST, Node.noNode)
     else {
       if (keyType == CoordinatorType.SHARE.id) {
         authHelper.authorizeClusterOperation(request, CLUSTER_ACTION)
@@ -1335,6 +1337,14 @@ class KafkaApis(val requestChannel: RequestChannel,
         } catch {
           case e: IllegalArgumentException =>
             error(s"Share coordinator key is invalid", e)
+            return (Errors.INVALID_REQUEST, Node.noNode)
+        }
+      } else if (keyType == CoordinatorType.CLUSTER_LINK.id) {
+        try {
+          ClusterLinkKey.validate(key)
+        } catch {
+          case e: IllegalArgumentException =>
+            error(s"Cluster link coordinator key is invalid", e)
             return (Errors.INVALID_REQUEST, Node.noNode)
         }
       }
@@ -1348,6 +1358,8 @@ class KafkaApis(val requestChannel: RequestChannel,
         case CoordinatorType.SHARE =>
           // We know that shareCoordinator is defined at this stage.
           (shareCoordinator.partitionFor(SharePartitionKey.getInstance(key)), SHARE_GROUP_STATE_TOPIC_NAME)
+        case CoordinatorType.CLUSTER_LINK =>
+          (topicMirrorLinkCoordinator.partitionFor(ClusterLinkKey.getInstance(key)), CLUSTER_LINK_TOPIC_NAME)
       }
 
       val topicMetadata = metadataCache.getTopicMetadata(Set(internalTopicName).asJava, request.context.listenerName, false, false).asScala

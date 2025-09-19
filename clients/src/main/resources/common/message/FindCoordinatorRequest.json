@@ -30,7 +30,9 @@
   //
   // Version 6 adds support for share groups (KIP-932).
   // For key type SHARE (2), the coordinator key format is "groupId:topicId:partition".
-  "validVersions": "0-6",
+  // Version 7 adds support for cluster link
+  // For key type CLUSTER_LINK(3), the coordinator key format is "clusterLinkId,topicId"
+  "validVersions": "0-7",
   "flexibleVersions": "3+",
   "fields": [
     { "name": "Key", "type": "string", "versions": "0-3",
