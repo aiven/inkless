@@ -908,6 +908,7 @@ project(':server') {
     implementation project(':storage')
     implementation project(':group-coordinator')
     implementation project(':transaction-coordinator')
+    implementation project(':cluster-link-coordinator')
     implementation project(':raft')
     implementation project(':share-coordinator')
     implementation project(':storage:storage-api')
@@ -1020,6 +1021,7 @@ project(':core') {
     implementation project(':server')
     implementation project(':coordinator-common')
     implementation project(':share-coordinator')
+    implementation project(':cluster-link-coordinator')
 
     implementation libs.argparse4j
     implementation libs.commonsValidator

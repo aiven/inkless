@@ -185,7 +185,7 @@ class KafkaApis(val requestChannel: RequestChannel,
         case ApiKeys.LIST_GROUPS => handleListGroupsRequest(request).exceptionally(handleError)
         case ApiKeys.SASL_HANDSHAKE => handleSaslHandshakeRequest(request)
         case ApiKeys.API_VERSIONS => handleApiVersionsRequest(request)
-        case ApiKeys.CREATE_TOPICS => forwardToController(request)
+        case ApiKeys.CREATE_TOPICS => handleCreateTopics(request)
         case ApiKeys.DELETE_TOPICS => forwardToController(request)
         case ApiKeys.DELETE_RECORDS => handleDeleteRecordsRequest(request)
         case ApiKeys.INIT_PRODUCER_ID => handleInitProducerIdRequest(request, requestLocal)
@@ -266,6 +266,16 @@ class KafkaApis(val requestChannel: RequestChannel,
       if (request.apiLocalCompleteTimeNanos < 0)
         request.apiLocalCompleteTimeNanos = time.nanoseconds
     }
+  }
+
+  def handleCreateTopics(request: RequestChannel.Request): Unit = {
+    val createTopicsRequest = request.body[CreateTopicsRequest]
+    // TODO: might need to have a better way to pass the cluster link and bootstrap server info
+    val clusterLinkTopic = createTopicsRequest.data.topics.stream().filter(t => t.clusterLink() != null && !t.clusterLink().isEmpty).findFirst()
+    if (clusterLinkTopic.isPresent) {
+      topicMirrorLinkCoordinator.addTopicsInCoordinator(clusterLinkTopic.get().clusterLink(), clusterLinkTopic.get().name());
+    }
+    forwardToController(request)
   }
 
   def handleGetReplicaLogInfo(request: RequestChannel.Request): Unit = {
