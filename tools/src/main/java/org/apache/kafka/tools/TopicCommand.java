@@ -492,7 +492,7 @@ public abstract class TopicCommand {
             try {
                 NewTopic newTopic;
                 if (topic.opts.hasCreateMirrorOption()) {
-                    newTopic = new NewTopic(topic.name, topic.partitions, topic.replicationFactor.map(Integer::shortValue), topic.remoteBootstrapServers, topic.topicId);
+                    newTopic = new NewTopic(topic.name, topic.partitions, topic.replicationFactor.map(Integer::shortValue), topic.remoteBootstrapServers, topic.topicId, topic.opts.linkName());
                 } else if (topic.hasReplicaAssignment()) {
                     newTopic = new NewTopic(topic.name, topic.replicaAssignment);
                 } else {

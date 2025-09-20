@@ -58,6 +58,8 @@
       ]},
       { "name": "remoteBootstrapServer", "type": "string", "versions": "7+", "ignorable": true,
         "about": "If true, check that the topics can be created as specified, but don't create anything." },
+      { "name": "clusterLink", "type": "string", "versions": "7+", "ignorable": true,
+        "about": "If true, check that the topics can be created as specified, but don't create anything." },
       { "name": "TopicId", "type": "uuid", "versions": "7+", "ignorable": true, "about": "The unique topic ID."}
     ]},
     { "name": "timeoutMs", "type": "int32", "versions": "0+", "default": "60000",
