@@ -98,6 +98,10 @@ public class TopicMirrorLinkCoordinator {
         numPartitions = config.clusterLinksConfig().clusterLinkTopicNumPartitions();
     }
 
+    public void addTopicsInCoordinator(String clusterLinkName, String topics) {
+        // TODO: update this clusterLink(key) with the new topics in the internal topics
+    }
+
     // periodically query source cluster to get the metadata
     void querySourceCluster() {
 

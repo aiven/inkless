@@ -43,6 +43,7 @@ public class NewTopic {
     private Map<String, String> configs = null;
     private Optional<String> remoteBootstrapServer = Optional.empty();
     private Optional<String> topicId = Optional.empty();
+    private Optional<String> linkName = Optional.empty();
 
     /**
      * A new topic with the specified replication factor and number of partitions.
@@ -63,13 +64,14 @@ public class NewTopic {
         this.replicasAssignments = null;
     }
 
-    public NewTopic(String name, Optional<Integer> numPartitions, Optional<Short> replicationFactor, Optional<String> remoteBootstrapServer, Optional<String> topicId) {
+    public NewTopic(String name, Optional<Integer> numPartitions, Optional<Short> replicationFactor, Optional<String> remoteBootstrapServer, Optional<String> topicId, Optional<String> linkName) {
         this.name = name;
         this.numPartitions = numPartitions;
         this.replicationFactor = replicationFactor;
         this.replicasAssignments = null;
         this.remoteBootstrapServer = remoteBootstrapServer;
         this.topicId = topicId;
+        this.linkName = linkName;
     }
 
     /**
@@ -148,6 +150,10 @@ public class NewTopic {
         }
         if (topicId.isPresent()) {
             creatableTopic.setTopicId(Uuid.fromString(topicId.get()));
+        }
+
+        if (linkName.isPresent()) {
+            creatableTopic.setClusterLink(linkName.get());
         }
         if (replicasAssignments != null) {
             for (Entry<Integer, List<Integer>> entry : replicasAssignments.entrySet()) {
