@@ -271,9 +271,11 @@ class KafkaApis(val requestChannel: RequestChannel,
   def handleCreateTopics(request: RequestChannel.Request): Unit = {
     val createTopicsRequest = request.body[CreateTopicsRequest]
     // TODO: might need to have a better way to pass the cluster link and bootstrap server info
+    logger.info(s"!!! Handling create topics request")
     val clusterLinkTopic = createTopicsRequest.data.topics.stream().filter(t => t.clusterLink() != null && !t.clusterLink().isEmpty).findFirst()
     if (clusterLinkTopic.isPresent) {
-      topicMirrorLinkCoordinator.addTopicsInCoordinator(clusterLinkTopic.get().clusterLink(), clusterLinkTopic.get().name());
+      logger.info(s"!!! Handling create mirror topics request: ${clusterLinkTopic.get().clusterLink()}")
+      topicMirrorLinkCoordinator.addTopicsInCoordinator(clusterLinkTopic.get().clusterLink(), util.List.of(clusterLinkTopic.get().name()));
     }
     forwardToController(request)
   }
