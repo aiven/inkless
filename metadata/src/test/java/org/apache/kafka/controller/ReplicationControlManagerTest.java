@@ -1207,14 +1207,14 @@ public class ReplicationControlManagerTest {
         assertEquals((short) 0, result1.response().topics().find("foo").errorCode());
 
         List<ApiMessageAndVersion> records1 = result1.records();
-        assertEquals(5, records1.size()); // 3 + 2 config records for inkless/diskless configs
+        assertEquals(3, records1.size());
         ApiMessageAndVersion record0 = records1.get(0);
         assertEquals(TopicRecord.class, record0.message().getClass());
 
         ApiMessageAndVersion record1 = records1.get(1);
         assertEquals(ConfigRecord.class, record1.message().getClass());
 
-        ApiMessageAndVersion lastRecord = records1.get(4);
+        ApiMessageAndVersion lastRecord = records1.get(2);
         assertEquals(PartitionRecord.class, lastRecord.message().getClass());
 
         ctx.replay(result1.records());
@@ -1273,7 +1273,7 @@ public class ReplicationControlManagerTest {
         assertEquals(Errors.NONE.code(), result4.response().topics().find(batchedTopic1).errorCode());
         assertEquals(INVALID_REPLICATION_FACTOR.code(), result4.response().topics().find(batchedTopic2).errorCode());
 
-        assertEquals(5, result4.records().size());
+        assertEquals(3, result4.records().size());
         assertEquals(TopicRecord.class, result4.records().get(0).message().getClass());
         TopicRecord batchedTopic1Record = (TopicRecord) result4.records().get(0).message();
         assertEquals(batchedTopic1, batchedTopic1Record.name());
@@ -1283,8 +1283,8 @@ public class ReplicationControlManagerTest {
             .setName("foo")
             .setValue("notNull"),
             result4.records().get(1).message());
-        assertEquals(PartitionRecord.class, result4.records().get(4).message().getClass());
-        assertEquals(batchedTopic1Record.topicId(), ((PartitionRecord) result4.records().get(4).message()).topicId());
+        assertEquals(PartitionRecord.class, result4.records().get(2).message().getClass());
+        assertEquals(batchedTopic1Record.topicId(), ((PartitionRecord) result4.records().get(2).message()).topicId());
     }
 
     @ParameterizedTest(name = "testCreateTopicsWithValidateOnlyFlag with mutationQuotaExceeded: {0}")
@@ -1864,7 +1864,7 @@ public class ReplicationControlManagerTest {
     ) {
         Map<String, String> configs = ctx.configurationControl.getConfigs(
             new ConfigResource(ConfigResource.Type.TOPIC, topic));
-        assertEquals(requestConfigs.size(), configs.size() - 2); // 2 config records for inkless/diskless configs
+        assertEquals(requestConfigs.size(), configs.size());
         for (CreateTopicsRequestData.CreatableTopicConfig requestConfig : requestConfigs) {
             String value = configs.get(requestConfig.name());
             assertEquals(requestConfig.value(), value);
