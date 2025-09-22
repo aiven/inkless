@@ -21,6 +21,7 @@ import kafka.server.RemoteBrokerBlockingSender;
 import kafka.server.ReplicaManager;
 
 import org.apache.kafka.common.TopicPartition;
+import org.apache.kafka.common.compress.Compression;
 import org.apache.kafka.common.internals.Topic;
 import org.apache.kafka.common.metrics.Metrics;
 import org.apache.kafka.common.protocol.ByteBufferAccessor;
@@ -28,29 +29,37 @@ import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.record.FileRecords;
 import org.apache.kafka.common.record.MemoryRecords;
 import org.apache.kafka.common.record.MutableRecordBatch;
+import org.apache.kafka.common.record.SimpleRecord;
 import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.common.utils.Utils;
 import org.apache.kafka.coordinator.clusterlink.generated.ClusterLinkMirrorTopicsKey;
 import org.apache.kafka.coordinator.clusterlink.generated.ClusterLinkMirrorTopicsValue;
 import org.apache.kafka.coordinator.clusterlink.generated.CoordinatorRecordType;
+import org.apache.kafka.coordinator.common.runtime.CoordinatorRecord;
 import org.apache.kafka.metadata.MetadataCache;
+import org.apache.kafka.server.common.ApiMessageAndVersion;
 import org.apache.kafka.server.common.NodeToControllerChannelManager;
+import org.apache.kafka.server.common.RequestLocal;
 import org.apache.kafka.server.storage.log.FetchIsolation;
 import org.apache.kafka.server.util.Scheduler;
-
+import org.apache.kafka.storage.internals.log.AppendOrigin;
 import org.apache.kafka.storage.internals.log.FetchDataInfo;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.nio.ByteBuffer;
+import java.time.Duration;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
+import java.util.List;
 import java.util.Map;
 import java.util.OptionalInt;
 import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
+
+import scala.jdk.javaapi.CollectionConverters;
 
 import static org.apache.kafka.common.utils.Utils.require;
 
@@ -68,6 +77,7 @@ public class TopicMirrorLinkCoordinator {
     private final Map<String, RemoteBrokerBlockingSender> remoteBrokers = new HashMap<>();
     // cluster-link name(or id) map to all subscribed topics
     private final Map<String, Set<String>> mirroredTopicsInLink = new HashMap<>();
+    private final TopicMirrorLinkRecordSerde serde = new TopicMirrorLinkRecordSerde();
 
     public TopicMirrorLinkCoordinator(
             KafkaConfig config,
@@ -87,7 +97,11 @@ public class TopicMirrorLinkCoordinator {
     }
 
     public void startup() {
-        isActive.set(true);
+        if (!isActive.compareAndSet(false, true)) {
+            logger.warn("Topic mirror link coordinator is already running.");
+            return;
+        }
+
         logger.info("Starting up.");
         scheduler.startup();
         scheduler.schedule("topic-mirror-link-query",
@@ -98,8 +112,38 @@ public class TopicMirrorLinkCoordinator {
         numPartitions = config.clusterLinksConfig().clusterLinkTopicNumPartitions();
     }
 
-    public void addTopicsInCoordinator(String clusterLinkName, String topics) {
-        // TODO: update this clusterLink(key) with the new topics in the internal topics
+    // TODO: handle response
+    public void addTopicsInCoordinator(String clusterLinkName, List<String> topics) {
+        var clusterLinkTopicPartition = new TopicPartition(Topic.CLUSTER_LINK_TOPIC_NAME, partitionFor(new ClusterLinkKey(clusterLinkName)));
+        var clusterLinkTopicIdPartition = replicaManager.topicIdPartition(clusterLinkTopicPartition);
+
+        var record = generateClusterLinkMirrorTopics(clusterLinkName, topics);
+        var keyBytes = serde.serializeKey(record);
+        var valueBytes = serde.serializeValue(record);
+        var timestamp = time.milliseconds();
+        var memRecord = MemoryRecords.withRecords(Compression.NONE, new SimpleRecord(timestamp, keyBytes, valueBytes));
+
+        logger.info("!!! Appending record to {}: {}", clusterLinkTopicPartition, record);
+        replicaManager.appendRecords(
+                // TODO: replace this with topic mirror link specific timeout
+                Duration.ofSeconds(5).toMillis(),
+                (short) -1,
+                true,
+                AppendOrigin.COORDINATOR,
+                CollectionConverters.asScala(Map.of(clusterLinkTopicIdPartition, memRecord)),
+                ignored -> null,
+                ignored -> null,
+                RequestLocal.noCaching(),
+                CollectionConverters.asScala(Map.of())
+        );
+    }
+
+    private static CoordinatorRecord generateClusterLinkMirrorTopics(String clusterLinkId, List<String> topics) {
+        var key = new ClusterLinkMirrorTopicsKey().setClusterLinkId(clusterLinkId);
+        var val = new ClusterLinkMirrorTopicsValue().setTopics(
+                topics.stream().map(topic -> new ClusterLinkMirrorTopicsValue.Topic().setName(topic)).toList());
+        var apiVersion = new ApiMessageAndVersion(val, (short) 0);
+        return CoordinatorRecord.record(key, apiVersion);
     }
 
     // periodically query source cluster to get the metadata
@@ -180,7 +224,7 @@ public class TopicMirrorLinkCoordinator {
                             mirroredTopicsInLink.put(clusterName, topics);
                         });
                         currOffset = batch.nextOffset();
-                    };
+                    }
                 }
             } catch (Throwable t) {
                 logger.error("Error loading transactions from transaction log P{}", topicPartition, t);
@@ -205,7 +249,6 @@ public class TopicMirrorLinkCoordinator {
     ) {
         // clear the cache
         clear();
-
     }
 
     private void clear() {
@@ -214,7 +257,14 @@ public class TopicMirrorLinkCoordinator {
     }
 
     public void shutdown() {
-        isActive.set(false);
+        if (!isActive.compareAndSet(true, false)) {
+            logger.warn("Topic mirror link coordinator is already shutting down.");
+            return;
+        }
+
+        logger.info("Shutting down.");
+        Utils.closeQuietly(metrics, "topic mirror link coordinator metrics");
+        logger.info("Shutdown complete.");
     }
 
     /**
