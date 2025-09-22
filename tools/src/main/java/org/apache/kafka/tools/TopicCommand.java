@@ -522,6 +522,7 @@ public abstract class TopicCommand {
 
         // luke
         public void createLink(TopicCommandOptions opts) throws ExecutionException, InterruptedException {
+            System.out.println("!!! link name: " + opts.linkName().orElse(""));
             CreateClusterLinkResult result = adminClient.createClusterLink(opts.linkName().orElse(""), linkConfigs, new CreateClusterLinkOptions());
             result.all().get();
         }

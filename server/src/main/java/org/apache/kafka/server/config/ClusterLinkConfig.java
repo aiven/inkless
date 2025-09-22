@@ -35,13 +35,9 @@ public class ClusterLinkConfig {
     public static final String CLUSTER_LINK_TOPIC_REPLICATION_FACTOR_DOC = "Replication factor for the cluster link topic. " +
             "Topic creation will fail until the cluster size meets this replication factor requirement.";
 
-    public static final String CLUSTER_LINK_NAME_CONFIG = "cluster.link.topic.replication.factor";
-    public static final String CLUSTER_LINK_NAME_DOC = "Cluster link name.";
-
     public static final ConfigDef CONFIG_DEF = new ConfigDef()
             .define(CLUSTER_LINK_TOPIC_NUM_PARTITIONS_CONFIG, INT, CLUSTER_LINK_TOPIC_NUM_PARTITIONS_DEFAULT, atLeast(1), HIGH, CLUSTER_LINK_TOPIC_NUM_PARTITIONS_DOC)
-            .define(CLUSTER_LINK_TOPIC_REPLICATION_FACTOR_CONFIG, SHORT, CLUSTER_LINK_TOPIC_REPLICATION_FACTOR_DEFAULT, atLeast(1), HIGH, CLUSTER_LINK_TOPIC_REPLICATION_FACTOR_DOC)
-            .define(CLUSTER_LINK_NAME_CONFIG, ConfigDef.Type.STRING, ConfigDef.NO_DEFAULT_VALUE, HIGH, CLUSTER_LINK_NAME_DOC);
+            .define(CLUSTER_LINK_TOPIC_REPLICATION_FACTOR_CONFIG, SHORT, CLUSTER_LINK_TOPIC_REPLICATION_FACTOR_DEFAULT, atLeast(1), HIGH, CLUSTER_LINK_TOPIC_REPLICATION_FACTOR_DOC);
 
 
     private final int clusterLinkTopicNumPartitions;

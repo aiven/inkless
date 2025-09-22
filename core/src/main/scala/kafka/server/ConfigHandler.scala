@@ -55,8 +55,8 @@ class TopicConfigHandler(private val replicaManager: ReplicaManager,
     if (readOnly != null && !readOnly.toBoolean) {
       replicaManager.getPartitionByTopic(topic).forEach {
         case HostedPartition.Online(partition) =>
-          logger.info(s"!!! partition.remoteBootstrapServer: ${partition.remoteBootstrapServer}")
-          if (partition.remoteBootstrapServer.nonEmpty) {
+          logger.info(s"!!! partition.remoteBootstrapServer: ${partition.clusterLinkName}")
+          if (partition.clusterLinkName.nonEmpty) {
             replicaManager.replicaFetcherManager.removeFetcherForPartitions(Set(partition.topicPartition))
             replicaManager.replicaAlterLogDirsManager.removeFetcherForPartitions(Set(partition.topicPartition))
           }

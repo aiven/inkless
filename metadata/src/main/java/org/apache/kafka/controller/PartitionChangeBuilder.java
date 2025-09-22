@@ -431,7 +431,7 @@ public class PartitionChangeBuilder {
         PartitionChangeRecord record = new PartitionChangeRecord().
             setTopicId(topicId).
             setPartitionId(partitionId).
-            setRemoteBootstrapServer(partition.remoteBootstrapServers);
+            setClusterLinkName(partition.clusterLinkName);
 
         completeReassignmentIfNeeded();
 

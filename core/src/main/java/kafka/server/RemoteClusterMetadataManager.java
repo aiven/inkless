@@ -43,6 +43,7 @@ import org.slf4j.LoggerFactory;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import java.util.Random;
@@ -61,22 +62,23 @@ public class RemoteClusterMetadataManager implements AutoCloseable {
     private final int nodeId;
     // Mapping from remote bootstrap servers to its corresponding broker sender and topics.
     // TODO: A better key might be a cluster id or cluster-link. For now, we use remote bootstrap servers for demo.
-    private final Map<String, RemoteBrokerBlockingSender> remoteBrokers;
+    private final Map<String, List<RemoteBrokerBlockingSender>> remoteBrokers;
     private final Map<String, Set<String>> topics;
     private final Map<String, Map<Integer, Node>> remoteClusterNodes;
     private final Map<String, Map<TopicPartition, Node>> remotePartitionLeaders;
     private final Metrics metrics;
     private final Time time;
-    private final NodeToControllerChannelManager channelManager;
     private final Random random;
     private MetadataImage metadataImage;
     private MetadataCache metadataCache;
+    private NodeToControllerChannelManager channelManager;
 
     public RemoteClusterMetadataManager(
         KafkaConfig config,
         Metrics metrics,
         Time time,
-        MetadataCache metadataCache
+        MetadataCache metadataCache,
+        NodeToControllerChannelManager channelManager
     ) {
         this.brokerConfig = config;
         this.nodeId = config.nodeId();
@@ -89,6 +91,7 @@ public class RemoteClusterMetadataManager implements AutoCloseable {
         this.metadataImage = MetadataImage.EMPTY;
         this.random = new Random();
         this.metadataCache = metadataCache;
+        this.channelManager = channelManager;
     }
 
     public void onMetadataUpdate(MetadataDelta delta, MetadataImage newImage) {
@@ -112,111 +115,129 @@ public class RemoteClusterMetadataManager implements AutoCloseable {
     }
 
     private void handleFollowerChanges(Map<TopicPartition, LocalReplicaChanges.PartitionInfo> followers) {
-        followers.forEach((tp, info) -> {
-            var remoteBrokerTopics = topics.get(info.partition().remoteBootstrapServers);
-            if (remoteBrokerTopics != null) {
-                remoteBrokerTopics.remove(tp.topic());
-                if (remoteBrokerTopics.isEmpty()) {
-                    var sender = remoteBrokers.remove(info.partition().remoteBootstrapServers);
-                    if (sender != null) {
-                        sender.close();
-                    }
-                    topics.remove(info.partition().remoteBootstrapServers);
-                }
-            }
-        });
+//        followers.forEach((tp, info) -> {
+//            var remoteBrokerTopics = topics.get(info.partition().remoteBootstrapServers);
+//            if (remoteBrokerTopics != null) {
+//                remoteBrokerTopics.remove(tp.topic());
+//                if (remoteBrokerTopics.isEmpty()) {
+//                    var sender = remoteBrokers.remove(info.partition().remoteBootstrapServers);
+//                    if (sender != null) {
+//                        sender.forEach(RemoteBrokerBlockingSender::close);
+//                    }
+//                    topics.remove(info.partition().remoteBootstrapServers);
+//                }
+//            }
+//        });
     }
 
     private void handleReadOnlyLeadersChanges(Map<TopicPartition, LocalReplicaChanges.PartitionInfo> readOnlyLeaders) {
-        var updateRemoteBootstrapServers = new HashSet<String>();
-        readOnlyLeaders.forEach((tp, info) -> {
-            remoteBrokers.computeIfAbsent(
-                info.partition().remoteBootstrapServers,
-                k -> {
-                    var remoteBootstrapServers = Arrays.stream(k.split(",")).toList();
-                    var addresses = ClientUtils.parseAndValidateAddresses(remoteBootstrapServers, "use_all_dns_ips");
-                    // Use random node id here because we don't know node id of remote brokers.
-                    var brokerEndpoint = new BrokerEndPoint(random.nextInt(), addresses.get(0).getHostString(), addresses.get(0).getPort());
-                    var logContext = new LogContext("[" + RemoteClusterMetadataManager.class.getName() + " replicaId=" + nodeId + ", remoteBootstrapServers=" + k + ", " +
+//        var updateRemoteBootstrapServers = new HashSet<String>();
+//        readOnlyLeaders.forEach((tp, info) -> {
+//            remoteBrokers.computeIfAbsent(
+//                info.partition().remoteBootstrapServers,
+//                k -> {
+//                    var remoteBootstrapServers = Arrays.stream(k.split(",")).toList();
+//                    var addresses = ClientUtils.parseAndValidateAddresses(remoteBootstrapServers, "use_all_dns_ips");
+//                    // Use random node id here because we don't know node id of remote brokers.
+//                    var brokerEndpoint = new BrokerEndPoint(random.nextInt(), addresses.get(0).getHostString(), addresses.get(0).getPort());
+//                    var logContext = new LogContext("[" + RemoteClusterMetadataManager.class.getName() + " replicaId=" + nodeId + ", remoteBootstrapServers=" + k + ", " +
+//                        "readOnly=true] ");
+//                    return List.of(new RemoteBrokerBlockingSender(
+//                        brokerEndpoint,
+//                        brokerConfig,
+//                        metrics,
+//                        time,
+//                        brokerEndpoint.id(),
+//                        "broker-" + nodeId + "-remote-cluster-metadata-manager-" + k.replace(":", "-"),
+//                        logContext
+//                    ));
+//                });
+//            updateRemoteBootstrapServers.add(info.partition().remoteBootstrapServers);
+//            topics.computeIfAbsent(info.partition().remoteBootstrapServers, k -> new HashSet<>()).add(tp.topic());
+//        });
+
+//        log.info("!!! Updating remote cluster metadata for bootstrap servers: {}", updateRemoteBootstrapServers);
+//        updateRemoteBootstrapServers.forEach(remoteBootstrapServers -> {
+//            var sender = remoteBrokers.get(remoteBootstrapServers);
+//            var updatedTopics = topics.get(remoteBootstrapServers);
+//            var response = sender.sendRequest(MetadataRequest.Builder.forTopicNames(updatedTopics.stream().toList(), false));
+//            if (response.responseBody() instanceof MetadataResponse metadataResponse) {
+//                log.info("!!! metadataResponse: {}", metadataResponse);
+//                metadataResponse.brokers().forEach(broker -> {
+//                    remoteClusterNodes.computeIfAbsent(remoteBootstrapServers, k -> new HashMap<>()).put(broker.id(), broker);
+//                });
+//                metadataResponse.topicMetadata().forEach(topicMetadata -> {
+//                    var partitionLeaders = remotePartitionLeaders.computeIfAbsent(remoteBootstrapServers, k -> new HashMap<>());
+//                    topicMetadata.partitionMetadata().forEach(partitionMetadata -> {
+//                        partitionLeaders.put(partitionMetadata.topicPartition, remoteClusterNodes.get(remoteBootstrapServers).get(partitionMetadata.leaderId.get()));
+//                    });
+//                });
+//            }
+//        });
+    }
+
+    public Node getRemotePartitionLeader(String clusterLinkName, TopicPartition tp) {
+        var partitionLeaders = remotePartitionLeaders.get(clusterLinkName);
+        if (partitionLeaders != null) {
+            return partitionLeaders.get(tp);
+        }
+        // return a random node if no leader info
+        Properties props = metadataCache.config(new ConfigResource(ConfigResource.Type.CLUSTER_LINK, clusterLinkName));
+        log.info("!!! getRemotePartitionLeader: clusterLinkName={}, tp={}, props={}", clusterLinkName, tp, props);
+        String bootstrapServers = props.get(BOOTSTRAP_SERVERS_CONFIG).toString();
+        // get the 1st one bootstrap server
+        var addresses = ClientUtils.parseAndValidateAddresses(Arrays.stream(bootstrapServers.split(",")).toList(), "use_all_dns_ips");
+        int rand = random.nextInt(addresses.size());
+        // Use random node id here because we don't know node id of remote brokers.
+        return new Node(random.nextInt(), addresses.get(rand).getHostString(), addresses.get(rand).getPort());
+    }
+
+    public void updateMirroredTopics(String clusterName, Set<String> topics) {
+        this.topics.put(clusterName, topics);
+    }
+
+    public void refreshRemoteMetadata() {
+        log.info("!!! Refreshing remote cluster metadata:" + topics);
+        topics.keySet().forEach(clusterLinkName -> {
+            // create a connection for the clusterLinkName
+            if (!remoteBrokers.containsKey(clusterLinkName)) {
+                // should get the cluster name from records
+                Properties props = metadataCache.config(new ConfigResource(ConfigResource.Type.CLUSTER_LINK, clusterLinkName));
+                String bootstrapServers = props.get(BOOTSTRAP_SERVERS_CONFIG).toString();
+                // get the 1st one bootstrap server
+                var addresses = ClientUtils.parseAndValidateAddresses(Arrays.stream(bootstrapServers.split(",")).toList(), "use_all_dns_ips");
+                int rand = random.nextInt(addresses.size());
+                // Use random node id here because we don't know node id of remote brokers.
+                var brokerEndpoint = new BrokerEndPoint(random.nextInt(), addresses.get(rand).getHostString(), addresses.get(rand).getPort());
+                var logContext = new LogContext("[" + RemoteClusterMetadataManager.class.getName() + " replicaId=" + nodeId + ", remoteBootstrapServers=" + clusterLinkName + ", " +
                         "readOnly=true] ");
-                    return new RemoteBrokerBlockingSender(
+                remoteBrokers.put(clusterLinkName, List.of(new RemoteBrokerBlockingSender(
                         brokerEndpoint,
                         brokerConfig,
                         metrics,
                         time,
                         brokerEndpoint.id(),
-                        "broker-" + nodeId + "-remote-cluster-metadata-manager-" + k.replace(":", "-"),
+                        "broker-" + nodeId + "-remote-cluster-metadata-manager-" + clusterLinkName,
                         logContext
-                    );
-                });
-            updateRemoteBootstrapServers.add(info.partition().remoteBootstrapServers);
-            topics.computeIfAbsent(info.partition().remoteBootstrapServers, k -> new HashSet<>()).add(tp.topic());
-        });
+                )));
 
-        log.info("!!! Updating remote cluster metadata for bootstrap servers: {}", updateRemoteBootstrapServers);
-        updateRemoteBootstrapServers.forEach(remoteBootstrapServers -> {
-            var sender = remoteBrokers.get(remoteBootstrapServers);
-            var updatedTopics = topics.get(remoteBootstrapServers);
-            var response = sender.sendRequest(MetadataRequest.Builder.forTopicNames(updatedTopics.stream().toList(), false));
-            if (response.responseBody() instanceof MetadataResponse metadataResponse) {
-                log.info("!!! metadataResponse: {}", metadataResponse);
-                metadataResponse.brokers().forEach(broker -> {
-                    remoteClusterNodes.computeIfAbsent(remoteBootstrapServers, k -> new HashMap<>()).put(broker.id(), broker);
-                });
-                metadataResponse.topicMetadata().forEach(topicMetadata -> {
-                    var partitionLeaders = remotePartitionLeaders.computeIfAbsent(remoteBootstrapServers, k -> new HashMap<>());
-                    topicMetadata.partitionMetadata().forEach(partitionMetadata -> {
-                        partitionLeaders.put(partitionMetadata.topicPartition, remoteClusterNodes.get(remoteBootstrapServers).get(partitionMetadata.leaderId.get()));
-                    });
-                });
             }
         });
-    }
-
-    public Node getRemotePartitionLeader(String remoteBootstrapServers, TopicPartition tp) {
-        var partitionLeaders = remotePartitionLeaders.get(remoteBootstrapServers);
-        if (partitionLeaders != null) {
-            return partitionLeaders.get(tp);
-        }
-        return null;
-    }
-
-    public void refreshRemoteMetadata() {
-        log.info("!!! Refreshing remote cluster metadata");
-        if (remoteBrokers.isEmpty()) {
-            // should get the cluster name from records
-            Properties props = metadataCache.config(new ConfigResource(ConfigResource.Type.CLUSTER_LINK, "my-link"));
-            String bootstrapServers = props.get(BOOTSTRAP_SERVERS_CONFIG).toString();
-            // get the 1st one bootstrap server
-            var addresses = ClientUtils.parseAndValidateAddresses(Arrays.stream(bootstrapServers.split(",")).toList(), "use_all_dns_ips");
-            // Use random node id here because we don't know node id of remote brokers.
-            var brokerEndpoint = new BrokerEndPoint(random.nextInt(), addresses.get(0).getHostString(), addresses.get(0).getPort());
-            var logContext = new LogContext("[" + RemoteClusterMetadataManager.class.getName() + " replicaId=" + nodeId + ", remoteBootstrapServers=" + k + ", " +
-                    "readOnly=true] ");
-            return new RemoteBrokerBlockingSender(
-                    brokerEndpoint,
-                    brokerConfig,
-                    metrics,
-                    time,
-                    brokerEndpoint.id(),
-                    "broker-" + nodeId + "-remote-cluster-metadata-manager-" + ,
-                    logContext
-            );
-
-        }
-        remoteBrokers.forEach((remoteBootstrapServers, sender) -> {
-            var response = sender.sendRequest(MetadataRequest.Builder.forTopicNames(topics.get(remoteBootstrapServers).stream().toList(), false));
+        log.info("!!! Updating remote cluster metadata for topics: {}", remoteBrokers);
+        remoteBrokers.forEach((clusterLinkName, senders) -> {
+            // get a random node in source cluster
+            var response = senders.get(random.nextInt(senders.size())).sendRequest(MetadataRequest.Builder.forTopicNames(topics.get(clusterLinkName).stream().toList(), false));
             if (response.responseBody() instanceof MetadataResponse metadataResponse) {
                 log.info("!!! periodic metadataResponse: {}", metadataResponse);
                 metadataResponse.brokers().forEach(broker -> {
-                    remoteClusterNodes.computeIfAbsent(remoteBootstrapServers, k -> new HashMap<>()).put(broker.id(), broker);
+                    remoteClusterNodes.computeIfAbsent(clusterLinkName, k -> new HashMap<>()).put(broker.id(), broker);
                 });
 
                 var createPartitionsTopics = new CreatePartitionsRequestData.CreatePartitionsTopicCollection();
                 metadataResponse.topicMetadata().forEach(topicMetadata -> {
-                    var partitionLeaders = remotePartitionLeaders.computeIfAbsent(remoteBootstrapServers, k -> new HashMap<>());
+                    var partitionLeaders = remotePartitionLeaders.computeIfAbsent(clusterLinkName, k -> new HashMap<>());
                     topicMetadata.partitionMetadata().forEach(partitionMetadata -> {
-                        partitionLeaders.put(partitionMetadata.topicPartition, remoteClusterNodes.get(remoteBootstrapServers).get(partitionMetadata.leaderId.get()));
+                        partitionLeaders.put(partitionMetadata.topicPartition, remoteClusterNodes.get(clusterLinkName).get(partitionMetadata.leaderId.get()));
                     });
 
                     if (metadataImage.topics().getTopic(topicMetadata.topicId()) != null &&
@@ -240,6 +261,11 @@ public class RemoteClusterMetadataManager implements AutoCloseable {
                 }
             }
         });
+    }
+
+    public void clear() {
+        topics.clear();
+        remoteBrokers.clear();
     }
 
     private static class TimeoutHandler implements ControllerRequestCompletionHandler {

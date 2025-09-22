@@ -741,7 +741,7 @@ public class ReplicationControlManager {
                 }
                 newParts.put(
                     assignment.partitionIndex(),
-                    buildPartitionRegistration(partitionAssignment, isr, topic.remoteBootstrapServer())
+                    buildPartitionRegistration(partitionAssignment, isr, topic.clusterLink())
                 );
             }
             for (int i = 0; i < newParts.size(); i++) {
@@ -788,7 +788,7 @@ public class ReplicationControlManager {
                     }
                     newParts.put(
                         partitionId,
-                        buildPartitionRegistration(partitionAssignment, isr, topic.remoteBootstrapServer())
+                        buildPartitionRegistration(partitionAssignment, isr, topic.clusterLink())
                     );
                 }
             } catch (InvalidReplicationFactorException e) {
@@ -858,7 +858,7 @@ public class ReplicationControlManager {
     private static PartitionRegistration buildPartitionRegistration(
         PartitionAssignment partitionAssignment,
         List<Integer> isr,
-        String remoteBootstrapServers
+        String clusterLinkName
     ) {
         return new PartitionRegistration.Builder().
             setReplicas(Replicas.toArray(partitionAssignment.replicas())).
@@ -868,7 +868,7 @@ public class ReplicationControlManager {
             setLeaderRecoveryState(LeaderRecoveryState.RECOVERED).
             setLeaderEpoch(0).
             setPartitionEpoch(0).
-            setRemoteBootstrapServers(remoteBootstrapServers).
+            setClusterLink(clusterLinkName).
             build();
     }
 

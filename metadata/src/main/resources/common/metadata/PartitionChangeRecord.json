@@ -52,7 +52,7 @@
     { "name": "LastKnownElr", "type": "[]int32", "default": "null", "entityType": "brokerId",
       "versions": "2+", "nullableVersions": "2+", "taggedVersions": "2+", "tag": 7,
       "about": "null if the LastKnownElr didn't change; the last known eligible leader replicas otherwise." },
-    { "name": "RemoteBootstrapServer", "type": "string", "versions": "2+", "default": "",
-      "about": "read only." }
+    { "name": "clusterLinkName", "type": "string", "versions": "2+", "default": "",
+      "about": "clusterLinkName." }
   ]
 }

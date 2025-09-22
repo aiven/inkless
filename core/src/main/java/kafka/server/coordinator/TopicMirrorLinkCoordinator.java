@@ -18,6 +18,7 @@ package kafka.server.coordinator;
 
 import kafka.server.KafkaConfig;
 import kafka.server.RemoteBrokerBlockingSender;
+import kafka.server.RemoteClusterMetadataManager;
 import kafka.server.ReplicaManager;
 
 import org.apache.kafka.common.TopicPartition;
@@ -50,6 +51,7 @@ import org.slf4j.LoggerFactory;
 
 import java.nio.ByteBuffer;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
@@ -75,9 +77,8 @@ public class TopicMirrorLinkCoordinator {
     private final Time time;
     private volatile int numPartitions = -1;
     private final Map<String, RemoteBrokerBlockingSender> remoteBrokers = new HashMap<>();
-    // cluster-link name(or id) map to all subscribed topics
-    private final Map<String, Set<String>> mirroredTopicsInLink = new HashMap<>();
     private final TopicMirrorLinkRecordSerde serde = new TopicMirrorLinkRecordSerde();
+    private final RemoteClusterMetadataManager remoteClusterMetadataManager;
 
     public TopicMirrorLinkCoordinator(
             KafkaConfig config,
@@ -86,7 +87,7 @@ public class TopicMirrorLinkCoordinator {
             Metrics metrics,
             MetadataCache metadataCache,
             Time time,
-            NodeToControllerChannelManager nodeToControllerChannelManager
+            RemoteClusterMetadataManager remoteClusterMetadataManager
     ) {
         this.config = config;
         this.replicaManager = replicaManager;
@@ -94,6 +95,7 @@ public class TopicMirrorLinkCoordinator {
         this.metrics = metrics;
         this.metadataCache = metadataCache;
         this.time = time;
+        this.remoteClusterMetadataManager = remoteClusterMetadataManager;
     }
 
     public void startup() {
@@ -104,8 +106,9 @@ public class TopicMirrorLinkCoordinator {
 
         logger.info("Starting up.");
         scheduler.startup();
+        // periodically query source cluster to get the metadata
         scheduler.schedule("topic-mirror-link-query",
-                this::querySourceCluster,
+                remoteClusterMetadataManager::refreshRemoteMetadata,
                 5000,
                 5000
         );
@@ -113,11 +116,12 @@ public class TopicMirrorLinkCoordinator {
     }
 
     // TODO: handle response
-    public void addTopicsInCoordinator(String clusterLinkName, List<String> topics) {
+    public void addTopicsInCoordinator(String clusterLinkName, Set<String> topics) {
         var clusterLinkTopicPartition = new TopicPartition(Topic.CLUSTER_LINK_TOPIC_NAME, partitionFor(new ClusterLinkKey(clusterLinkName)));
         var clusterLinkTopicIdPartition = replicaManager.topicIdPartition(clusterLinkTopicPartition);
 
-        var record = generateClusterLinkMirrorTopics(clusterLinkName, topics);
+        var record = generateClusterLinkMirrorTopics(clusterLinkName, new ArrayList<>(topics) {
+        });
         var keyBytes = serde.serializeKey(record);
         var valueBytes = serde.serializeValue(record);
         var timestamp = time.milliseconds();
@@ -136,6 +140,7 @@ public class TopicMirrorLinkCoordinator {
                 RequestLocal.noCaching(),
                 CollectionConverters.asScala(Map.of())
         );
+        remoteClusterMetadataManager.updateMirroredTopics(clusterLinkName, topics);
     }
 
     private static CoordinatorRecord generateClusterLinkMirrorTopics(String clusterLinkId, List<String> topics) {
@@ -144,11 +149,6 @@ public class TopicMirrorLinkCoordinator {
                 topics.stream().map(topic -> new ClusterLinkMirrorTopicsValue.Topic().setName(topic)).toList());
         var apiVersion = new ApiMessageAndVersion(val, (short) 0);
         return CoordinatorRecord.record(key, apiVersion);
-    }
-
-    // periodically query source cluster to get the metadata
-    void querySourceCluster() {
-
     }
 
     private String readClusterLinkRecordKey(ByteBuffer buffer) {
@@ -172,6 +172,7 @@ public class TopicMirrorLinkCoordinator {
     }
 
     private void loadClusterLinkData(TopicPartition topicPartition) {
+        logger.info("Loading cluster link data from {}.", topicPartition);
         long logEndOffset = replicaManager.getLogEndOffset(topicPartition).getOrElse(() -> -1L);
 
         replicaManager.getLog(topicPartition).foreach(log -> {
@@ -187,6 +188,7 @@ public class TopicMirrorLinkCoordinator {
             try {
                 // might need a lock
                 while (currOffset < logEndOffset && readAtLeastOneRecord && !isActive.get()) {
+                    logger.info("Reading cluster link data from {} at offset {}.", topicPartition, currOffset);
                     FetchDataInfo fetchDataInfo = log.read(currOffset, maxLength, FetchIsolation.LOG_END, true);
 
                     readAtLeastOneRecord = fetchDataInfo.records.sizeInBytes() > 0;
@@ -221,7 +223,7 @@ public class TopicMirrorLinkCoordinator {
                             require(record.hasKey(), "cluster link log's key should not be null");
                             String clusterName = readClusterLinkRecordKey(record.key());
                             Set<String> topics = readClusterLinkRecordValue(record.value());
-                            mirroredTopicsInLink.put(clusterName, topics);
+                            remoteClusterMetadataManager.updateMirroredTopics(clusterName, topics);
                         });
                         currOffset = batch.nextOffset();
                     }
@@ -253,7 +255,7 @@ public class TopicMirrorLinkCoordinator {
 
     private void clear() {
         remoteBrokers.clear();
-        mirroredTopicsInLink.clear();
+        remoteClusterMetadataManager.clear();
     }
 
     public void shutdown() {

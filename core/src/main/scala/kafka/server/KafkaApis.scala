@@ -275,7 +275,7 @@ class KafkaApis(val requestChannel: RequestChannel,
     val clusterLinkTopic = createTopicsRequest.data.topics.stream().filter(t => t.clusterLink() != null && !t.clusterLink().isEmpty).findFirst()
     if (clusterLinkTopic.isPresent) {
       logger.info(s"!!! Handling create mirror topics request: ${clusterLinkTopic.get().clusterLink()}")
-      topicMirrorLinkCoordinator.addTopicsInCoordinator(clusterLinkTopic.get().clusterLink(), util.List.of(clusterLinkTopic.get().name()));
+      topicMirrorLinkCoordinator.addTopicsInCoordinator(clusterLinkTopic.get().clusterLink(), util.Set.of(clusterLinkTopic.get().name()));
     }
     forwardToController(request)
   }

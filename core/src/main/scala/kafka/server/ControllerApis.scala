@@ -60,7 +60,6 @@ import org.apache.kafka.common.security.auth.SecurityProtocol
 import org.apache.kafka.server.{ApiVersionManager, DelegationTokenManager, ProcessRole}
 import org.apache.kafka.server.authorizer.Authorizer
 import org.apache.kafka.server.common.{ApiMessageAndVersion, RequestLocal}
-import org.apache.kafka.server.config.ClusterLinkConfig
 import org.apache.kafka.server.quota.ControllerMutationQuota
 import org.apache.kafka.server.record.BrokerCompressionType
 
@@ -183,9 +182,6 @@ class ControllerApis(
       altersByName.put(config.name, new util.AbstractMap.SimpleEntry[AlterConfigOp.OpType, String](
         AlterConfigOp.OpType.forId(0), config.value))
     }
-    // store the cluster_link name into clusterlink config
-    altersByName.put(ClusterLinkConfig.CLUSTER_LINK_NAME_CONFIG, new util.AbstractMap.SimpleEntry[AlterConfigOp.OpType, String](
-      AlterConfigOp.OpType.forId(0), createClusterLinkRequest.data().clusterLinkName()))
     configChanges.put(resource, altersByName)
 
     controller.createClusterLink(context, configChanges)
