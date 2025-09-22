@@ -995,7 +995,7 @@ public class ReplicationControlManager {
         // Ensure that diskless.enable and inkless.enable configs are always defined if diskless feature is not set at all.
         // This ensures that is possible to discern between cases where there's no config set (topic already created
         // but diskless is disabled by default) and cases where no config is set because the topic is being created
-        if (!isInklessEnableDefined && !isDisklessEnableDefined && !disklessEnabled) {
+        if (isDisklessStorageSystemEnabled && !isInklessEnableDefined && !isDisklessEnableDefined && !disklessEnabled) {
             validConfigRecord.add(new ApiMessageAndVersion(new ConfigRecord()
                 .setName(DISKLESS_ENABLE_CONFIG)
                 .setValue("false")
