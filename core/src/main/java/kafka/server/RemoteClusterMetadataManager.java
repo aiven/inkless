@@ -18,12 +18,16 @@ package kafka.server;
 
 import org.apache.kafka.clients.ClientResponse;
 import org.apache.kafka.clients.ClientUtils;
+import org.apache.kafka.clients.admin.ConfigEntry;
 import org.apache.kafka.common.Node;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.config.ConfigResource;
 import org.apache.kafka.common.message.CreatePartitionsRequestData;
+import org.apache.kafka.common.message.DescribeConfigsRequestData;
 import org.apache.kafka.common.metrics.Metrics;
 import org.apache.kafka.common.requests.CreatePartitionsRequest;
+import org.apache.kafka.common.requests.DescribeConfigsRequest;
+import org.apache.kafka.common.requests.DescribeConfigsResponse;
 import org.apache.kafka.common.requests.MetadataRequest;
 import org.apache.kafka.common.requests.MetadataResponse;
 import org.apache.kafka.common.utils.LogContext;
@@ -40,6 +44,7 @@ import org.apache.kafka.server.util.Scheduler;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -227,7 +232,7 @@ public class RemoteClusterMetadataManager implements AutoCloseable {
             // get a random node in source cluster
             var response = senders.get(random.nextInt(senders.size())).sendRequest(MetadataRequest.Builder.forTopicNames(topics.get(clusterLinkName).stream().toList(), false));
             if (response.responseBody() instanceof MetadataResponse metadataResponse) {
-                log.info("!!! periodic metadataResponse: {}", metadataResponse);
+                log.debug("!!! periodic metadataResponse: {}", metadataResponse);
                 metadataResponse.brokers().forEach(broker -> {
                     remoteClusterNodes.computeIfAbsent(clusterLinkName, k -> new HashMap<>()).put(broker.id(), broker);
                 });
@@ -259,7 +264,36 @@ public class RemoteClusterMetadataManager implements AutoCloseable {
                     ), new TimeoutHandler());
                 }
             }
+
+            List<DescribeConfigsRequestData.DescribeConfigsResource> describeConfigsResources = topics.get(clusterLinkName).stream().map(
+                    topic -> new DescribeConfigsRequestData.DescribeConfigsResource().
+                    setResourceType(ConfigResource.Type.TOPIC.id()).setResourceName(topic)).toList();
+            DescribeConfigsRequest.Builder describeConfigsRequest = new DescribeConfigsRequest.Builder(new DescribeConfigsRequestData().setResources(describeConfigsResources));
+
+            Map<String, Map<String, String>> configsToChange = new HashMap<>();
+            Map<String, String> conChange = new HashMap<>();
+            var describeConfigResponse = senders.get(random.nextInt(senders.size())).sendRequest(describeConfigsRequest);
+            if (describeConfigResponse.responseBody() instanceof DescribeConfigsResponse describeConfigsRes) {
+                log.info("!!! periodic describeConfigsRes: {}", describeConfigsRes);
+                describeConfigsRes.data().results().forEach(describeConfigResult -> {
+                    if (describeConfigResult.resourceType() == ConfigResource.Type.TOPIC.id() && topics.get(clusterLinkName).contains(describeConfigResult.resourceName())) {
+                        describeConfigResult.configs().forEach(con -> {
+                            if (con.configSource() == DescribeConfigsResponse.ConfigSource.TOPIC_CONFIG.id()) {
+                                log.info("!!! periodic config change: {}", con);
+                                conChange.put(con.name(), con.value());
+                            }
+                        });
+                    }
+                    configsToChange.put(clusterLinkName, conChange);
+                });
+
+//                describeConfigsRes.data().
+
+            }
+
+            // // apply the change
         });
+
     }
 
     public void clear() {

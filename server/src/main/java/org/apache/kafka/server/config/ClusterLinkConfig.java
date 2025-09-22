@@ -27,7 +27,7 @@ import static org.apache.kafka.common.config.ConfigDef.Type.SHORT;
 public class ClusterLinkConfig {
 
     public static final String CLUSTER_LINK_TOPIC_NUM_PARTITIONS_CONFIG = "cluster.link.topic.num.partitions";
-    public static final int CLUSTER_LINK_TOPIC_NUM_PARTITIONS_DEFAULT = 50;
+    public static final int CLUSTER_LINK_TOPIC_NUM_PARTITIONS_DEFAULT = 3; // default to 3 for PoC testing
     public static final String CLUSTER_LINK_TOPIC_NUM_PARTITIONS_DOC = "The number of partitions for the cluster link topic (should not change after deployment).";
 
     public static final String CLUSTER_LINK_TOPIC_REPLICATION_FACTOR_CONFIG = "cluster.link.topic.replication.factor";
