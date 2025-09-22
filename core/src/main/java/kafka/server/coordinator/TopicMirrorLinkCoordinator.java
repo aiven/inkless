@@ -109,8 +109,8 @@ public class TopicMirrorLinkCoordinator {
         // periodically query source cluster to get the metadata
         scheduler.schedule("topic-mirror-link-query",
                 remoteClusterMetadataManager::refreshRemoteMetadata,
-                5000,
-                5000
+                10000,
+                10000
         );
         numPartitions = config.clusterLinksConfig().clusterLinkTopicNumPartitions();
     }
@@ -172,7 +172,7 @@ public class TopicMirrorLinkCoordinator {
     }
 
     private void loadClusterLinkData(TopicPartition topicPartition) {
-        logger.info("Loading cluster link data from {}.", topicPartition);
+        logger.info("!!! Loading cluster link data from {}.", topicPartition);
         long logEndOffset = replicaManager.getLogEndOffset(topicPartition).getOrElse(() -> -1L);
 
         replicaManager.getLog(topicPartition).foreach(log -> {
@@ -187,7 +187,7 @@ public class TopicMirrorLinkCoordinator {
 
             try {
                 // might need a lock
-                while (currOffset < logEndOffset && readAtLeastOneRecord && !isActive.get()) {
+                while (currOffset < logEndOffset && readAtLeastOneRecord && isActive.get()) {
                     logger.info("Reading cluster link data from {} at offset {}.", topicPartition, currOffset);
                     FetchDataInfo fetchDataInfo = log.read(currOffset, maxLength, FetchIsolation.LOG_END, true);
 

@@ -131,7 +131,6 @@ class BrokerMetadataPublisher(
       if (isTraceEnabled) {
         trace(s"Publishing delta $delta with highest offset $highestOffsetAndEpoch")
       }
-      info(s"Publishing delta $delta with highest offset $highestOffsetAndEpoch")
 
       // Publish the new metadata image to the metadata cache.
       metadataCache.setImage(newImage)

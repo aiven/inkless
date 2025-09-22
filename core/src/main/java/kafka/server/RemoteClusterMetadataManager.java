@@ -183,7 +183,6 @@ public class RemoteClusterMetadataManager implements AutoCloseable {
         }
         // return a random node if no leader info
         Properties props = metadataCache.config(new ConfigResource(ConfigResource.Type.CLUSTER_LINK, clusterLinkName));
-        log.info("!!! getRemotePartitionLeader: clusterLinkName={}, tp={}, props={}", clusterLinkName, tp, props);
         String bootstrapServers = props.get(BOOTSTRAP_SERVERS_CONFIG).toString();
         // get the 1st one bootstrap server
         var addresses = ClientUtils.parseAndValidateAddresses(Arrays.stream(bootstrapServers.split(",")).toList(), "use_all_dns_ips");

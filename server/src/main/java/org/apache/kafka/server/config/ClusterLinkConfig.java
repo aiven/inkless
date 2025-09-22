@@ -31,7 +31,7 @@ public class ClusterLinkConfig {
     public static final String CLUSTER_LINK_TOPIC_NUM_PARTITIONS_DOC = "The number of partitions for the cluster link topic (should not change after deployment).";
 
     public static final String CLUSTER_LINK_TOPIC_REPLICATION_FACTOR_CONFIG = "cluster.link.topic.replication.factor";
-    public static final short CLUSTER_LINK_TOPIC_REPLICATION_FACTOR_DEFAULT = 3;
+    public static final short CLUSTER_LINK_TOPIC_REPLICATION_FACTOR_DEFAULT = 1; // default to 1 for PoC testing
     public static final String CLUSTER_LINK_TOPIC_REPLICATION_FACTOR_DOC = "Replication factor for the cluster link topic. " +
             "Topic creation will fail until the cluster size meets this replication factor requirement.";
 
