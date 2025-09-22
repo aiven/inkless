@@ -20,6 +20,7 @@ import org.apache.kafka.clients.ClientResponse;
 import org.apache.kafka.clients.ClientUtils;
 import org.apache.kafka.common.Node;
 import org.apache.kafka.common.TopicPartition;
+import org.apache.kafka.common.config.ConfigResource;
 import org.apache.kafka.common.message.CreatePartitionsRequestData;
 import org.apache.kafka.common.metrics.Metrics;
 import org.apache.kafka.common.requests.CreatePartitionsRequest;
@@ -30,6 +31,7 @@ import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.image.LocalReplicaChanges;
 import org.apache.kafka.image.MetadataDelta;
 import org.apache.kafka.image.MetadataImage;
+import org.apache.kafka.metadata.MetadataCache;
 import org.apache.kafka.server.common.ControllerRequestCompletionHandler;
 import org.apache.kafka.server.common.NodeToControllerChannelManager;
 import org.apache.kafka.server.network.BrokerEndPoint;
@@ -42,8 +44,11 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
+import java.util.Properties;
 import java.util.Random;
 import java.util.Set;
+
+import static org.apache.kafka.clients.CommonClientConfigs.BOOTSTRAP_SERVERS_CONFIG;
 
 /**
  * A manager to handle metadata related to remote clusters. It watches topic leader changes,
@@ -65,13 +70,13 @@ public class RemoteClusterMetadataManager implements AutoCloseable {
     private final NodeToControllerChannelManager channelManager;
     private final Random random;
     private MetadataImage metadataImage;
+    private MetadataCache metadataCache;
 
     public RemoteClusterMetadataManager(
         KafkaConfig config,
         Metrics metrics,
         Time time,
-        Scheduler scheduler,
-        NodeToControllerChannelManager channelManager
+        MetadataCache metadataCache
     ) {
         this.brokerConfig = config;
         this.nodeId = config.nodeId();
@@ -81,9 +86,9 @@ public class RemoteClusterMetadataManager implements AutoCloseable {
         this.remotePartitionLeaders = new HashMap<>();
         this.metrics = metrics;
         this.time = time;
-        this.channelManager = channelManager;
         this.metadataImage = MetadataImage.EMPTY;
         this.random = new Random();
+        this.metadataCache = metadataCache;
     }
 
     public void onMetadataUpdate(MetadataDelta delta, MetadataImage newImage) {
@@ -177,6 +182,28 @@ public class RemoteClusterMetadataManager implements AutoCloseable {
     }
 
     public void refreshRemoteMetadata() {
+        log.info("!!! Refreshing remote cluster metadata");
+        if (remoteBrokers.isEmpty()) {
+            // should get the cluster name from records
+            Properties props = metadataCache.config(new ConfigResource(ConfigResource.Type.CLUSTER_LINK, "my-link"));
+            String bootstrapServers = props.get(BOOTSTRAP_SERVERS_CONFIG).toString();
+            // get the 1st one bootstrap server
+            var addresses = ClientUtils.parseAndValidateAddresses(Arrays.stream(bootstrapServers.split(",")).toList(), "use_all_dns_ips");
+            // Use random node id here because we don't know node id of remote brokers.
+            var brokerEndpoint = new BrokerEndPoint(random.nextInt(), addresses.get(0).getHostString(), addresses.get(0).getPort());
+            var logContext = new LogContext("[" + RemoteClusterMetadataManager.class.getName() + " replicaId=" + nodeId + ", remoteBootstrapServers=" + k + ", " +
+                    "readOnly=true] ");
+            return new RemoteBrokerBlockingSender(
+                    brokerEndpoint,
+                    brokerConfig,
+                    metrics,
+                    time,
+                    brokerEndpoint.id(),
+                    "broker-" + nodeId + "-remote-cluster-metadata-manager-" + ,
+                    logContext
+            );
+
+        }
         remoteBrokers.forEach((remoteBootstrapServers, sender) -> {
             var response = sender.sendRequest(MetadataRequest.Builder.forTopicNames(topics.get(remoteBootstrapServers).stream().toList(), false));
             if (response.responseBody() instanceof MetadataResponse metadataResponse) {
