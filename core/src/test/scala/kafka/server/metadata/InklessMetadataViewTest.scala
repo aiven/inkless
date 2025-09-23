@@ -18,12 +18,14 @@
 
 package kafka.server.metadata
 
+import org.apache.kafka.common.config.TopicConfig
 import org.junit.jupiter.api.{BeforeEach, Test}
 import org.junit.jupiter.api.Assertions._
 import org.mockito.Mockito._
 
 import java.util.function.Supplier
 import java.util
+import java.util.Properties
 
 class InklessMetadataViewTest {
   private var metadataCache: KRaftMetadataCache = _
@@ -95,5 +97,37 @@ class InklessMetadataViewTest {
     // Verify the filtered map is empty
     assertTrue(filteredConfig.isEmpty)
   }
-}
 
+  @Test
+  def testIsDisklessTopic(): Unit = {
+    val metadataCache = mock(classOf[KRaftMetadataCache])
+    val metadataView = new InklessMetadataView(metadataCache, null)
+
+    // Each tuple contains: (description, properties object, expected result)
+    val testCases = Seq(
+      ("both true", createTopicProps(diskless = Some("true"), inkless = Some("true")), true),
+      ("diskless true only", createTopicProps(diskless = Some("true")), true),
+      ("inkless true only", createTopicProps(inkless = Some("true")), true),
+      ("diskless true inkless false", createTopicProps(diskless=Some("true"), inkless = Some("false")), true),
+      ("diskless false inkless true", createTopicProps(diskless=Some("false"), inkless = Some("true")), true),
+      ("case-insensitive TRUE", createTopicProps(diskless = Some("TRUE")), true),
+      ("both false", createTopicProps(diskless = Some("false"), inkless = Some("false")), false),
+      ("empty properties", new Properties(), false),
+      ("unrelated properties", {val p = new Properties(); p.put("foo", "bar"); p}, false),
+    )
+
+    testCases.foreach { case (description, props, expected) =>
+      val topicName = description.replaceAll(" ", "-")
+      when(metadataCache.topicConfig(topicName)).thenReturn(props)
+      assertEquals(expected, metadataView.isDisklessTopic(topicName), s"Failed on case: '$description'")
+    }
+  }
+
+  private def createTopicProps(diskless: Option[String] = None, inkless: Option[String] = None): Properties = {
+    val props = new Properties()
+    diskless.foreach(v => props.put(TopicConfig.DISKLESS_ENABLE_CONFIG, v))
+    inkless.foreach(v => props.put(TopicConfig.INKLESS_ENABLE_CONFIG, v))
+    props
+  }
+
+}
