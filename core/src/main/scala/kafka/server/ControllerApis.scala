@@ -476,7 +476,7 @@ class ControllerApis(
         // Include only diskless topics
         .filter(t =>
           t.configs().stream()
-            .filter(c => c.name() == TopicConfig.DISKLESS_ENABLE_CONFIG)
+            .filter(c => c.name() == TopicConfig.DISKLESS_ENABLE_CONFIG || c.name() == TopicConfig.INKLESS_ENABLE_CONFIG)
             .filter(c => c.value() == "true")
             .findAny()
             .isPresent
