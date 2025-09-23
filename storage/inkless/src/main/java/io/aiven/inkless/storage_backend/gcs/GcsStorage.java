@@ -18,6 +18,7 @@
 
 package io.aiven.inkless.storage_backend.gcs;
 
+import com.google.api.client.http.HttpTransport;
 import com.google.cloud.BaseServiceException;
 import com.google.cloud.ReadChannel;
 import com.google.cloud.http.HttpTransportOptions;
@@ -34,6 +35,7 @@ import java.nio.channels.Channels;
 import java.nio.channels.ReadableByteChannel;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -43,6 +45,8 @@ import io.aiven.inkless.storage_backend.common.InvalidRangeException;
 import io.aiven.inkless.storage_backend.common.KeyNotFoundException;
 import io.aiven.inkless.storage_backend.common.StorageBackend;
 import io.aiven.inkless.storage_backend.common.StorageBackendException;
+import io.aiven.inkless.storage_backend.gcs.nettyhttpclient.ReactorNettyTransport;
+
 
 @CoverageIgnore  // tested on integration level
 public class GcsStorage implements StorageBackend {
@@ -60,8 +64,12 @@ public class GcsStorage implements StorageBackend {
     public void configure(final Map<String, ?> configs) {
         final GcsStorageConfig config = new GcsStorageConfig(configs);
         this.bucketName = config.bucketName();
+        final String gcsUrl = Optional.ofNullable(config.endpointUrl()).orElse("https://www.googleapis.com");
 
-        final HttpTransportOptions.Builder httpTransportOptionsBuilder = HttpTransportOptions.newBuilder();
+        final HttpTransportOptions.Builder httpTransportOptionsBuilder = HttpTransportOptions.newBuilder()
+                .setHttpTransportFactory(() -> {
+                    return (HttpTransport) ReactorNettyTransport.get(gcsUrl);
+                });
 
         final StorageOptions.Builder builder = StorageOptions.newBuilder()
             .setCredentials(config.credentials())

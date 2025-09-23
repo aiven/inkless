@@ -2442,6 +2442,13 @@ project(':storage:inkless') {
       exclude group: "com.fasterxml.jackson.core"
       exclude group: "org.slf4j"
     }
+
+    implementation(libs.nettyReactorCore)
+    implementation(libs.nettyReactorHttp)
+    implementation(libs.nettyTcNativeBoringSSLStatic)
+    implementation(libs.nettyTcNativeBoringSSLStaticLinuxAarch64)
+    implementation(libs.nettyTcNativeBoringSSLStaticLinuxX86_64)
+
     implementation(libs.gcsSdk) {
       exclude group: 'com.google.errorprone', module: 'error_prone_annotations'
       exclude group: 'org.checkerframework', module: 'checker-qual'
