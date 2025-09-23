@@ -141,6 +141,7 @@ public class LogConfig extends AbstractConfig {
     public static final boolean DEFAULT_REMOTE_STORAGE_ENABLE = false;
     public static final boolean DEFAULT_REMOTE_LOG_COPY_DISABLE_CONFIG = false;
     public static final boolean DEFAULT_REMOTE_LOG_DELETE_ON_DISABLE_CONFIG = false;
+    public static final boolean DEFAULT_DISKLESS_ENABLE = false;
     public static final long DEFAULT_LOCAL_RETENTION_BYTES = -2; // It indicates the value to be derived from RetentionBytes
     public static final long DEFAULT_LOCAL_RETENTION_MS = -2; // It indicates the value to be derived from RetentionMs
 
@@ -151,7 +152,7 @@ public class LogConfig extends AbstractConfig {
             TopicConfig.REMOTE_LOG_COPY_DISABLE_CONFIG,
             QuotaConfig.LEADER_REPLICATION_THROTTLED_REPLICAS_CONFIG,
             QuotaConfig.FOLLOWER_REPLICATION_THROTTLED_REPLICAS_CONFIG,
-            TopicConfig.DISKLESS_ENABLE_CONFIG
+            TopicConfig.INKLESS_ENABLE_CONFIG
     );
 
     public static final ConfigDef SERVER_CONFIG_DEF = new ConfigDef()
@@ -260,7 +261,8 @@ public class LogConfig extends AbstractConfig {
                         TopicConfig.LOCAL_LOG_RETENTION_BYTES_DOC)
                 .define(TopicConfig.REMOTE_LOG_COPY_DISABLE_CONFIG, BOOLEAN, false, MEDIUM, TopicConfig.REMOTE_LOG_COPY_DISABLE_DOC)
                 .define(TopicConfig.REMOTE_LOG_DELETE_ON_DISABLE_CONFIG, BOOLEAN, false, MEDIUM, TopicConfig.REMOTE_LOG_DELETE_ON_DISABLE_DOC)
-                .define(TopicConfig.DISKLESS_ENABLE_CONFIG, BOOLEAN, false, MEDIUM, TopicConfig.DISKLESS_ENABLE_DOC);
+                .define(TopicConfig.INKLESS_ENABLE_CONFIG, BOOLEAN, null, MEDIUM, TopicConfig.INKLESS_ENABLE_DOC)
+                .define(TopicConfig.DISKLESS_ENABLE_CONFIG, BOOLEAN, DEFAULT_DISKLESS_ENABLE, MEDIUM, TopicConfig.DISKLESS_ENABLE_DOC);
     }
 
     public final Set<String> overriddenConfigs;
@@ -502,6 +504,54 @@ public class LogConfig extends AbstractConfig {
         }
     }
 
+
+    private static void validateDiskless(Map<String, String> existingConfigs,
+                                         Map<?, ?> newConfigs,
+                                         boolean isRemoteLogStorageEnabled) {
+        Optional<Boolean> newDiskless = Optional.ofNullable((Boolean) newConfigs.get(TopicConfig.DISKLESS_ENABLE_CONFIG));
+        Optional<Boolean> newInkless = Optional.ofNullable((Boolean) newConfigs.get(TopicConfig.INKLESS_ENABLE_CONFIG));
+        Optional<Boolean> wasDiskless = Optional.ofNullable(existingConfigs.get(TopicConfig.DISKLESS_ENABLE_CONFIG)).map(Boolean::parseBoolean);
+        Optional<Boolean> wasInkless = Optional.ofNullable(existingConfigs.get(TopicConfig.INKLESS_ENABLE_CONFIG)).map(Boolean::parseBoolean);
+
+        if (newDiskless.isPresent() && newInkless.isPresent() && !newDiskless.equals(newInkless)) {
+            throw new InvalidConfigurationException("inkless.enable and diskless.enable must have the same value");
+        }
+
+        Optional<Boolean> effectiveNewValue = newDiskless.or(() -> newInkless);
+        if (effectiveNewValue.isEmpty()) {
+            return;
+        }
+
+        boolean isBeingEnabled = effectiveNewValue.get();
+        if (isBeingEnabled) {
+            // diskless.enable=true -> inkless.enable and diskless.enable must be already set to true
+            if (wasDiskless.isPresent() && !wasDiskless.get()) {
+                // cannot change from diskless.enable = false to diskless.enable = true
+                throw new InvalidConfigurationException("It is invalid to enable diskless");
+            }
+
+            if (wasInkless.isPresent() && !wasInkless.get()) {
+                // cannot set diskless.enable = true if inkless.enable was set to false
+                throw new InvalidConfigurationException("It is invalid to enable diskless");
+            }
+
+            if (isRemoteLogStorageEnabled) {
+                throw new InvalidConfigurationException("Diskless and remote storage cannot be enabled simultaneously");
+            }
+        } else {
+            // diskless.enable = false -> inkless.enable and diskless.enable must be not set or set to false
+            if (wasDiskless.isPresent() && wasDiskless.get()) {
+                // cannot change from diskless.enable = true to diskless.enable = false
+                throw new InvalidConfigurationException("It is invalid to disable diskless");
+            }
+
+            if (wasInkless.isPresent() && wasInkless.get()) {
+                // cannot set diskless.enable = false if inkless.enable was set to true
+                throw new InvalidConfigurationException("It is invalid to disable diskless");
+            }
+        }
+    }
+
     /**
      * Validates the values of the given properties. Should be called only by the broker.
      * The `newConfigs` supplied contains the topic-level configs,
@@ -527,24 +577,8 @@ public class LogConfig extends AbstractConfig {
             boolean wasRemoteLogEnabled = Boolean.parseBoolean(existingConfigs.getOrDefault(TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG, "false"));
             validateTurningOffRemoteStorageWithDelete(newConfigs, wasRemoteLogEnabled, isRemoteLogStorageEnabled);
         }
-        boolean isDisklessEnabled = (Boolean) newConfigs.get(TopicConfig.DISKLESS_ENABLE_CONFIG);
-        if (isDisklessEnabled) {
-            if (existingConfigs.containsKey(TopicConfig.DISKLESS_ENABLE_CONFIG)) {
-                boolean wasDisklessEnabled = Boolean.parseBoolean(existingConfigs.get(TopicConfig.DISKLESS_ENABLE_CONFIG));
-                if (!wasDisklessEnabled) {
-                    throw new InvalidConfigurationException("It is invalid to enable diskless");
-                }
-            }
 
-            if (isRemoteLogStorageEnabled) {
-                throw new InvalidConfigurationException("Diskless and remote storage cannot be enabled simultaneously");
-            }
-        } else {
-            boolean wasDisklessEnabled = Boolean.parseBoolean(existingConfigs.getOrDefault(TopicConfig.DISKLESS_ENABLE_CONFIG, "false"));
-            if (wasDisklessEnabled) {
-                throw new InvalidConfigurationException("It is invalid to disable diskless");
-            }
-        }
+        validateDiskless(existingConfigs, newConfigs, isRemoteLogStorageEnabled);
     }
 
     public static void validateTurningOffRemoteStorageWithDelete(Map<?, ?> newConfigs, boolean wasRemoteLogEnabled, boolean isRemoteLogStorageEnabled) {

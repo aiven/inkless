@@ -129,6 +129,7 @@ import java.util.stream.Collectors;
 import static org.apache.kafka.clients.admin.AlterConfigOp.OpType.SET;
 import static org.apache.kafka.common.config.ConfigResource.Type.TOPIC;
 import static org.apache.kafka.common.config.TopicConfig.DISKLESS_ENABLE_CONFIG;
+import static org.apache.kafka.common.config.TopicConfig.INKLESS_ENABLE_CONFIG;
 import static org.apache.kafka.common.config.TopicConfig.MIN_IN_SYNC_REPLICAS_CONFIG;
 import static org.apache.kafka.common.protocol.Errors.FENCED_LEADER_EPOCH;
 import static org.apache.kafka.common.protocol.Errors.INELIGIBLE_REPLICA;
@@ -680,6 +681,11 @@ public class ReplicationControlManager {
             Map<String, Entry<OpType, String>> keyToOps = configChanges.get(configResource);
             List<ApiMessageAndVersion> configRecords;
             if (keyToOps != null) {
+                // For backward compatibility, allow to enable/disable the diskless feature by specifying only inkless.enable
+                Entry<OpType, String> inklessOp = keyToOps.get(INKLESS_ENABLE_CONFIG);
+                if (inklessOp != null && inklessOp.getKey() == SET && !keyToOps.containsKey(DISKLESS_ENABLE_CONFIG)) {
+                    keyToOps.put(DISKLESS_ENABLE_CONFIG, inklessOp);
+                }
                 ControllerResult<ApiError> configResult =
                     configurationControl.incrementalAlterConfig(configResource, keyToOps, true);
                 if (configResult.response().isFailure()) {
@@ -752,11 +758,21 @@ public class ReplicationControlManager {
             topicId = topic.id();
         }
 
-        String disklessEnableConfigValue = creationConfigs.get(DISKLESS_ENABLE_CONFIG);
-        final boolean isDisklessEnableConfigDefined = disklessEnableConfigValue != null;
-        boolean disklessEnabled = isDisklessEnableConfigDefined
-            ? Boolean.parseBoolean(disklessEnableConfigValue)
-            : defaultDisklessEnable && !Topic.isInternal(topic.name());
+        Boolean diskless = Optional.ofNullable(creationConfigs.get(DISKLESS_ENABLE_CONFIG)).map(Boolean::parseBoolean).orElse(null);
+        Boolean inkless = Optional.ofNullable(creationConfigs.get(INKLESS_ENABLE_CONFIG)).map(Boolean::parseBoolean).orElse(null);
+
+        if (diskless != null && inkless != null && !diskless.equals(inkless)) {
+            return new ApiError(INVALID_REQUEST, "Cannot set both diskless.enable and inkless.enable with different values.");
+        }
+
+        boolean disklessConfigEnabled = diskless != null ? diskless : (inkless != null ? inkless : defaultDisklessEnable);
+
+        if (Topic.isInternal(topic.name()) && (diskless != null || inkless != null) && disklessConfigEnabled) {
+            return new ApiError(INVALID_REQUEST,
+                "Internal topics cannot be diskless topics.");
+        }
+
+        final boolean disklessEnabled = disklessConfigEnabled && !Topic.isInternal(topic.name());
         if (disklessEnabled) {
             if (!isDisklessStorageSystemEnabled) {
                 return new ApiError(INVALID_REQUEST,
@@ -764,17 +780,10 @@ public class ReplicationControlManager {
                         "when the diskless storage system is disabled. " +
                         "Please enable the diskless storage system to create diskless topics.");
             }
-
-            if (Topic.isInternal(topic.name()) && isDisklessEnableConfigDefined) {
-                return new ApiError(INVALID_REQUEST,
-                    "Internal topics cannot be diskless topics.");
-            }
-
             if (Math.abs(topic.replicationFactor()) != 1) {
                 return new ApiError(Errors.INVALID_REPLICATION_FACTOR,
                     "Replication factor for diskless topics must be 1 or -1 to use the default value (1).");
             }
-
             topic.assignments().clear();
         }
 
@@ -909,6 +918,7 @@ public class ReplicationControlManager {
     private List<ApiMessageAndVersion> validConfigRecords(CreatableTopic topic, List<ApiMessageAndVersion> configRecords, boolean disklessEnabled) {
         final List<ApiMessageAndVersion> validConfigRecord = new ArrayList<>();
         boolean isDisklessEnableDefined = false;
+        boolean isInklessEnableDefined = false;
         for (ApiMessageAndVersion configRecord: configRecords) {
             ConfigRecord record;
             try {
@@ -918,16 +928,23 @@ public class ReplicationControlManager {
                     configRecord.message().getClass().getName(), configRecord.message());
                 continue;
             }
+            // Ensure that diskless enabled config is disabled if it happens to be an internal topic.
             if (record.name().equals(DISKLESS_ENABLE_CONFIG)) {
-                // Ensure that diskless enabled config is disabled if it happens to be an internal topic.
-                ApiMessageAndVersion message = new ApiMessageAndVersion(new ConfigRecord()
+                ApiMessageAndVersion disklessEnableMessage = new ApiMessageAndVersion(new ConfigRecord()
                     .setName(DISKLESS_ENABLE_CONFIG)
                     .setValue(String.valueOf(disklessEnabled))
                     .setResourceName(topic.name())
                     .setResourceType(ResourceType.TOPIC.code()), (short) 0);
-                validConfigRecord.add(message);
-
+                validConfigRecord.add(disklessEnableMessage);
                 isDisklessEnableDefined = true;
+            } else if (record.name().equals(INKLESS_ENABLE_CONFIG)) {
+                ApiMessageAndVersion inklessEnableMessage = new ApiMessageAndVersion(new ConfigRecord()
+                    .setName(INKLESS_ENABLE_CONFIG)
+                    .setValue(String.valueOf(disklessEnabled))
+                    .setResourceName(topic.name())
+                    .setResourceType(ResourceType.TOPIC.code()), (short) 0);
+                validConfigRecord.add(inklessEnableMessage);
+                isInklessEnableDefined = true;
             } else {
                 validConfigRecord.add(configRecord);
             }
@@ -938,6 +955,39 @@ public class ReplicationControlManager {
             validConfigRecord.add(new ApiMessageAndVersion(new ConfigRecord()
                 .setName(DISKLESS_ENABLE_CONFIG)
                 .setValue("true")
+                .setResourceName(topic.name())
+                .setResourceType(ResourceType.TOPIC.code()), (short) 0));
+        }
+        // Ensure that inkless.enable config is always defined if diskless is enabled.
+        // This ensures that both configs are always aligned
+        if (!isInklessEnableDefined && !isDisklessEnableDefined && disklessEnabled) {
+            validConfigRecord.add(new ApiMessageAndVersion(new ConfigRecord()
+                .setName(INKLESS_ENABLE_CONFIG)
+                .setValue("true")
+                .setResourceName(topic.name())
+                .setResourceType(ResourceType.TOPIC.code()), (short) 0));
+        }
+        // Ensure that inkless.enable config is always defined if diskless.enable is defined.
+        // This ensures that both configs are always aligned
+        if (!isInklessEnableDefined && isDisklessEnableDefined) {
+            validConfigRecord.add(new ApiMessageAndVersion(new ConfigRecord()
+                .setName(INKLESS_ENABLE_CONFIG)
+                .setValue(String.valueOf(disklessEnabled))
+                .setResourceName(topic.name())
+                .setResourceType(ResourceType.TOPIC.code()), (short) 0));
+        }
+        // Ensure that diskless.enable and inkless.enable configs are always defined if diskless feature is not set at all.
+        // This ensures that is possible to discern between cases where there's no config set (topic already created
+        // but diskless is disabled by default) and cases where no config is set because the topic is being created
+        if (isDisklessStorageSystemEnabled && !isInklessEnableDefined && !isDisklessEnableDefined && !disklessEnabled) {
+            validConfigRecord.add(new ApiMessageAndVersion(new ConfigRecord()
+                .setName(DISKLESS_ENABLE_CONFIG)
+                .setValue("false")
+                .setResourceName(topic.name())
+                .setResourceType(ResourceType.TOPIC.code()), (short) 0));
+            validConfigRecord.add(new ApiMessageAndVersion(new ConfigRecord()
+                .setName(INKLESS_ENABLE_CONFIG)
+                .setValue("false")
                 .setResourceName(topic.name())
                 .setResourceType(ResourceType.TOPIC.code()), (short) 0));
         }
@@ -2214,7 +2264,9 @@ public class ReplicationControlManager {
                 new AlterPartitionReassignmentsResponseData().setErrorMessage(null);
         int successfulAlterations = 0, totalAlterations = 0;
         for (ReassignableTopic topic : request.topics()) {
-            boolean effectiveRFChange = !Boolean.parseBoolean(configurationControl.currentTopicConfig(topic.name()).getOrDefault(DISKLESS_ENABLE_CONFIG, "false"));
+            String inklessEnableConfigValue = configurationControl.currentTopicConfig(topic.name()).getOrDefault(INKLESS_ENABLE_CONFIG, "false");
+            boolean disklessEnabled = Boolean.parseBoolean(configurationControl.currentTopicConfig(topic.name()).getOrDefault(DISKLESS_ENABLE_CONFIG, inklessEnableConfigValue));
+            boolean effectiveRFChange = !disklessEnabled;
             ReassignableTopicResponse topicResponse = new ReassignableTopicResponse().
                 setName(topic.name());
             for (ReassignablePartition partition : topic.partitions()) {
