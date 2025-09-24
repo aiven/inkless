@@ -36,6 +36,7 @@ import java.util.concurrent.CompletionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Supplier;
 
 import io.aiven.inkless.TimeUtils;
 import io.aiven.inkless.cache.KeyAlignmentStrategy;
@@ -53,7 +54,7 @@ public class Reader implements AutoCloseable {
     private final KeyAlignmentStrategy keyAlignmentStrategy;
     private final ObjectCache cache;
     private final ControlPlane controlPlane;
-    private final ObjectFetcher objectFetcher;
+    private final Supplier<ObjectFetcher> objectFetcherSupplier;
     private final ExecutorService metadataExecutor;
     private final ExecutorService dataExecutor;
     private final InklessFetchMetrics fetchMetrics;
@@ -65,7 +66,7 @@ public class Reader implements AutoCloseable {
         KeyAlignmentStrategy keyAlignmentStrategy,
         ObjectCache cache,
         ControlPlane controlPlane,
-        ObjectFetcher objectFetcher,
+        Supplier<ObjectFetcher> objectFetcherSupplier,
         BrokerTopicStats brokerTopicStats,
         int fetchMetadataThreadPoolSize,
         int fetchDataThreadPoolSize
@@ -76,7 +77,7 @@ public class Reader implements AutoCloseable {
             keyAlignmentStrategy,
             cache,
             controlPlane,
-            objectFetcher,
+            objectFetcherSupplier,
             Executors.newFixedThreadPool(fetchMetadataThreadPoolSize, new InklessThreadFactory("inkless-fetch-metadata-", false)),
             Executors.newFixedThreadPool(fetchDataThreadPoolSize, new InklessThreadFactory("inkless-fetch-data-", false)),
             brokerTopicStats
@@ -89,7 +90,7 @@ public class Reader implements AutoCloseable {
         KeyAlignmentStrategy keyAlignmentStrategy,
         ObjectCache cache,
         ControlPlane controlPlane,
-        ObjectFetcher objectFetcher,
+        Supplier<ObjectFetcher> objectFetcherSupplier,
         ExecutorService metadataExecutor,
         ExecutorService dataExecutor,
         BrokerTopicStats brokerTopicStats
@@ -99,7 +100,7 @@ public class Reader implements AutoCloseable {
         this.keyAlignmentStrategy = keyAlignmentStrategy;
         this.cache = cache;
         this.controlPlane = controlPlane;
-        this.objectFetcher = objectFetcher;
+        this.objectFetcherSupplier = objectFetcherSupplier;
         this.metadataExecutor = metadataExecutor;
         this.dataExecutor = dataExecutor;
         this.fetchMetrics = new InklessFetchMetrics(time);
@@ -129,7 +130,7 @@ public class Reader implements AutoCloseable {
                         objectKeyCreator,
                         keyAlignmentStrategy,
                         cache,
-                        objectFetcher,
+                        objectFetcherSupplier,
                         dataExecutor,
                         coordinates,
                         fetchMetrics::fetchPlanFinished,

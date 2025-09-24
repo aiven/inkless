@@ -24,6 +24,7 @@ import java.nio.ByteBuffer;
 import java.util.Objects;
 import java.util.concurrent.Callable;
 import java.util.function.Consumer;
+import java.util.function.Supplier;
 
 import io.aiven.inkless.TimeUtils;
 import io.aiven.inkless.common.ByteRange;
@@ -35,19 +36,19 @@ import io.aiven.inkless.storage_backend.common.StorageBackendException;
 public class FileFetchJob implements Callable<FileExtent> {
 
     private final Time time;
-    private final ObjectFetcher objectFetcher;
+    private final ThreadLocal<ObjectFetcher> objectFetcher;
     private final ObjectKey key;
     private final ByteRange range;
     private final int size;
     private final Consumer<Long> durationCallback;
 
     public FileFetchJob(Time time,
-                        ObjectFetcher objectFetcher,
+                        Supplier<ObjectFetcher> objectFetcherSupplier,
                         ObjectKey key,
                         ByteRange range,
                         Consumer<Long> durationCallback) {
         this.time = time;
-        this.objectFetcher = objectFetcher;
+        this.objectFetcher = ThreadLocal.withInitial(objectFetcherSupplier);
         this.key = key;
         this.range = range;
         this.durationCallback = durationCallback;
@@ -71,13 +72,13 @@ public class FileFetchJob implements Callable<FileExtent> {
 
     private FileExtent doWork() throws FileFetchException {
         try {
-            final ByteBuffer byteBuffer = objectFetcher.readToByteBuffer(objectFetcher.fetch(key, range));
+            final ObjectFetcher fetcher = objectFetcher.get();
+            final ByteBuffer byteBuffer = fetcher.readToByteBuffer(fetcher.fetch(key, range));
             return createFileExtent(key, range, byteBuffer);
         } catch (final IOException | StorageBackendException e) {
             throw new FileFetchException(e);
         }
     }
-
 
     @Override
     public boolean equals(Object o) {
@@ -85,13 +86,12 @@ public class FileFetchJob implements Callable<FileExtent> {
         if (o == null || getClass() != o.getClass()) return false;
         FileFetchJob that = (FileFetchJob) o;
         return size == that.size
-                && Objects.equals(objectFetcher, that.objectFetcher)
                 && Objects.equals(key, that.key)
                 && Objects.equals(range, that.range);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(objectFetcher, key, range, size);
+        return Objects.hash(key, range, size);
     }
 }

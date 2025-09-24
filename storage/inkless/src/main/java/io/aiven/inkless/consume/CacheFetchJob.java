@@ -22,6 +22,7 @@ import org.apache.kafka.common.utils.Time;
 import java.util.Objects;
 import java.util.concurrent.Callable;
 import java.util.function.Consumer;
+import java.util.function.Supplier;
 
 import io.aiven.inkless.TimeUtils;
 import io.aiven.inkless.cache.ObjectCache;
@@ -46,7 +47,7 @@ public class CacheFetchJob implements Callable<FileExtent> {
             ObjectKey objectKey,
             ByteRange byteRange,
             Time time,
-            ObjectFetcher objectFetcher,
+            Supplier<ObjectFetcher> objectFetcherSupplier,
             Consumer<Long> cacheQueryDurationCallback,
             Consumer<Long> cacheStoreDurationCallback,
             Consumer<Boolean> cacheHitRateCallback,
@@ -58,7 +59,7 @@ public class CacheFetchJob implements Callable<FileExtent> {
         this.cacheStoreDurationCallback = cacheStoreDurationCallback;
         this.cacheHitRateCallback = cacheHitRateCallback;
         this.key = createCacheKey(objectKey, byteRange);
-        this.fallback = new FileFetchJob(time, objectFetcher, objectKey, byteRange, fileFetchDurationCallback);
+        this.fallback = new FileFetchJob(time, objectFetcherSupplier, objectKey, byteRange, fileFetchDurationCallback);
     }
 
     // visible for testing

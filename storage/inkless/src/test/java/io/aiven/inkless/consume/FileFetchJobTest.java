@@ -57,7 +57,7 @@ public class FileFetchJobTest {
 
     @Test
     public void testOversizeFileFetch() {
-        assertThrows(IllegalArgumentException.class, () -> new FileFetchJob(time, fetcher, objectA, ByteRange.maxRange(), durationMs -> {}));
+        assertThrows(IllegalArgumentException.class, () -> new FileFetchJob(time, () -> fetcher, objectA, ByteRange.maxRange(), durationMs -> {}));
     }
 
     @Test
@@ -68,7 +68,7 @@ public class FileFetchJobTest {
             array[i] = (byte) i;
         }
         ByteRange range = new ByteRange(0, size);
-        FileFetchJob job = new FileFetchJob(time, fetcher, objectA, range, durationMs -> { });
+        FileFetchJob job = new FileFetchJob(time, () -> fetcher, objectA, range, durationMs -> { });
         FileExtent expectedFile = FileFetchJob.createFileExtent(objectA, range, ByteBuffer.wrap(array));
 
         final ReadableByteChannel channel = mock(ReadableByteChannel.class);

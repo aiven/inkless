@@ -198,21 +198,16 @@ public class FetchPlannerTest {
         );
     }
 
-    private FetchPlanner fetchPlannerJob(
-            Map<TopicIdPartition, FindBatchResponse> batchCoordinatesFuture
-    ) {
+    private FetchPlanner fetchPlannerJob(Map<TopicIdPartition, FindBatchResponse> batchCoordinatesFuture) {
         return new FetchPlanner(
                 time, FetchPlannerTest.OBJECT_KEY_CREATOR, keyAlignmentStrategy,
-                cache, fetcher, dataExecutor, batchCoordinatesFuture,
+                cache, () -> fetcher, dataExecutor, batchCoordinatesFuture,
                 durationMs -> {}, durationMs -> {}, durationMs -> {}, hitBool -> {}, durationMs -> {}
         );
     }
 
-    private CacheFetchJob cacheFetchJob(
-            ObjectKey objectKey,
-            ByteRange byteRange
-    ) {
-        return new CacheFetchJob(cache, objectKey, byteRange, time, fetcher,
+    private CacheFetchJob cacheFetchJob(ObjectKey objectKey, ByteRange byteRange) {
+        return new CacheFetchJob(cache, objectKey, byteRange, time, () -> fetcher,
                 durationMs -> {}, durationMs -> {}, hitBool -> {}, durationMs -> {});
     }
 

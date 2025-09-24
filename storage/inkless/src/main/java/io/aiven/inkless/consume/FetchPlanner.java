@@ -33,6 +33,7 @@ import java.util.stream.Collectors;
 import io.aiven.inkless.TimeUtils;
 import io.aiven.inkless.cache.KeyAlignmentStrategy;
 import io.aiven.inkless.cache.ObjectCache;
+import io.aiven.inkless.common.ByteRange;
 import io.aiven.inkless.common.ObjectKeyCreator;
 import io.aiven.inkless.control_plane.BatchInfo;
 import io.aiven.inkless.control_plane.FindBatchResponse;
@@ -45,7 +46,7 @@ public class FetchPlanner implements Supplier<List<Future<FileExtent>>> {
     private final ObjectKeyCreator objectKeyCreator;
     private final KeyAlignmentStrategy keyAlignment;
     private final ObjectCache cache;
-    private final ObjectFetcher objectFetcher;
+    private final Supplier<ObjectFetcher> objectFetcherSupplier;
     private final ExecutorService dataExecutor;
     private final Map<TopicIdPartition, FindBatchResponse> batchCoordinates;
     private final Consumer<Long> fetchPlanDurationCallback;
@@ -58,7 +59,7 @@ public class FetchPlanner implements Supplier<List<Future<FileExtent>>> {
                         ObjectKeyCreator objectKeyCreator,
                         KeyAlignmentStrategy keyAlignment,
                         ObjectCache cache,
-                        ObjectFetcher objectFetcher,
+                        Supplier<ObjectFetcher> objectFetcherSupplier,
                         ExecutorService dataExecutor,
                         Map<TopicIdPartition, FindBatchResponse> batchCoordinates,
                         Consumer<Long> fetchPlanDurationCallback,
@@ -71,7 +72,7 @@ public class FetchPlanner implements Supplier<List<Future<FileExtent>>> {
         this.objectKeyCreator = objectKeyCreator;
         this.keyAlignment = keyAlignment;
         this.cache = cache;
-        this.objectFetcher = objectFetcher;
+        this.objectFetcherSupplier = objectFetcherSupplier;
         this.dataExecutor = dataExecutor;
         this.batchCoordinates = batchCoordinates;
         this.fetchPlanDurationCallback = fetchPlanDurationCallback;
@@ -88,20 +89,28 @@ public class FetchPlanner implements Supplier<List<Future<FileExtent>>> {
 
     private List<Callable<FileExtent>> planJobs(Map<TopicIdPartition, FindBatchResponse> batchCoordinates) {
         return batchCoordinates.values().stream()
-                .filter(findBatch -> findBatch.errors() == Errors.NONE)
-                .map(FindBatchResponse::batches)
-                .flatMap(List::stream)
-                // Merge batch requests
-                .collect(Collectors.groupingBy(BatchInfo::objectKey, Collectors.mapping(b -> b.metadata().range(), Collectors.toList())))
-                .entrySet()
-                .stream()
-                .flatMap(e -> keyAlignment.align(e.getValue())
-                        .stream()
-                        .map(byteRange ->
-                                new CacheFetchJob(cache, objectKeyCreator.from(e.getKey()), byteRange, time, objectFetcher,
-                                        cacheQueryDurationCallback, cacheStoreDurationCallback, cacheHitRateCallback, fileFetchDurationCallback)
-                        ))
-                .collect(Collectors.toList());
+            .filter(findBatch -> findBatch.errors() == Errors.NONE)
+            .map(FindBatchResponse::batches)
+            .flatMap(List::stream)
+            // Merge batch requests
+            .collect(Collectors.groupingBy(BatchInfo::objectKey, Collectors.mapping(b -> b.metadata().range(), Collectors.toList())))
+            .entrySet()
+            .stream()
+            .flatMap(e ->
+                keyAlignment.align(e.getValue())
+                    .stream()
+                    .map(byteRange -> getCacheFetchJob(e.getKey(), byteRange)))
+            .collect(Collectors.toList());
+    }
+
+    private CacheFetchJob getCacheFetchJob(String objectKey, ByteRange byteRange) {
+        return new CacheFetchJob(
+            cache,
+            objectKeyCreator.from(objectKey),
+            byteRange,
+            time,
+            objectFetcherSupplier,
+            cacheQueryDurationCallback, cacheStoreDurationCallback, cacheHitRateCallback, fileFetchDurationCallback);
     }
 
     private List<Future<FileExtent>> submitAll(List<Callable<FileExtent>> jobs) {

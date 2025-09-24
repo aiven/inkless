@@ -99,7 +99,7 @@ public class CacheFetchJobTest {
             ObjectKey objectKey,
             ByteRange byteRange
     ) {
-        return new CacheFetchJob(cache, objectKey, byteRange, time, fetcher,
+        return new CacheFetchJob(cache, objectKey, byteRange, time, () -> fetcher,
                 durationMs -> {}, durationMs -> {}, hitBool -> {}, durationMs -> {});
     }
 
