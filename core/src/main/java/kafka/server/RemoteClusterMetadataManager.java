@@ -18,18 +18,28 @@ package kafka.server;
 
 import org.apache.kafka.clients.ClientResponse;
 import org.apache.kafka.clients.ClientUtils;
+import org.apache.kafka.clients.admin.Admin;
+import org.apache.kafka.clients.admin.AdminClient;
+import org.apache.kafka.clients.admin.AlterConfigOp;
 import org.apache.kafka.clients.admin.ConfigEntry;
+import org.apache.kafka.clients.admin.KafkaAdminClient;
 import org.apache.kafka.common.Node;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.config.ConfigResource;
 import org.apache.kafka.common.message.CreatePartitionsRequestData;
 import org.apache.kafka.common.message.DescribeConfigsRequestData;
+import org.apache.kafka.common.message.IncrementalAlterConfigsRequestData;
 import org.apache.kafka.common.metrics.Metrics;
+import org.apache.kafka.common.network.ListenerName;
 import org.apache.kafka.common.requests.CreatePartitionsRequest;
 import org.apache.kafka.common.requests.DescribeConfigsRequest;
 import org.apache.kafka.common.requests.DescribeConfigsResponse;
+import org.apache.kafka.common.requests.IncrementalAlterConfigsRequest;
+import org.apache.kafka.common.requests.IncrementalAlterConfigsResponse;
 import org.apache.kafka.common.requests.MetadataRequest;
 import org.apache.kafka.common.requests.MetadataResponse;
+import org.apache.kafka.common.resource.ResourceType;
+import org.apache.kafka.common.security.auth.SecurityProtocol;
 import org.apache.kafka.common.utils.LogContext;
 import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.image.LocalReplicaChanges;
@@ -46,6 +56,7 @@ import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -53,6 +64,9 @@ import java.util.Map;
 import java.util.Properties;
 import java.util.Random;
 import java.util.Set;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 import static org.apache.kafka.clients.CommonClientConfigs.BOOTSTRAP_SERVERS_CONFIG;
 
@@ -77,6 +91,7 @@ public class RemoteClusterMetadataManager implements AutoCloseable {
     private MetadataImage metadataImage;
     private MetadataCache metadataCache;
     private NodeToControllerChannelManager channelManager;
+    private Admin adminClient = null;
 
     public RemoteClusterMetadataManager(
         KafkaConfig config,
@@ -202,6 +217,11 @@ public class RemoteClusterMetadataManager implements AutoCloseable {
 
     public void refreshRemoteMetadata() {
         log.info("!!! Refreshing remote cluster metadata:" + topics);
+        if (adminClient == null) {
+            // TODO: this should not assume to have plaintext in local listener. This should get from listener config
+            Node node = metadataCache.getBrokerNodes(ListenerName.forSecurityProtocol(SecurityProtocol.PLAINTEXT)).get(0);
+            adminClient = AdminClient.create(Map.of(BOOTSTRAP_SERVERS_CONFIG, node.host() + ":" + node.port()));
+        }
         topics.keySet().forEach(clusterLinkName -> {
             // create a connection for the clusterLinkName
             if (!remoteBrokers.containsKey(clusterLinkName)) {
@@ -274,24 +294,49 @@ public class RemoteClusterMetadataManager implements AutoCloseable {
             Map<String, String> conChange = new HashMap<>();
             var describeConfigResponse = senders.get(random.nextInt(senders.size())).sendRequest(describeConfigsRequest);
             if (describeConfigResponse.responseBody() instanceof DescribeConfigsResponse describeConfigsRes) {
-                log.info("!!! periodic describeConfigsRes: {}", describeConfigsRes);
+                log.debug("!!! periodic describeConfigsRes: {}", describeConfigsRes);
                 describeConfigsRes.data().results().forEach(describeConfigResult -> {
                     if (describeConfigResult.resourceType() == ConfigResource.Type.TOPIC.id() && topics.get(clusterLinkName).contains(describeConfigResult.resourceName())) {
+                        Properties props = metadataCache.topicConfig(describeConfigResult.resourceName());
                         describeConfigResult.configs().forEach(con -> {
                             if (con.configSource() == DescribeConfigsResponse.ConfigSource.TOPIC_CONFIG.id()) {
-                                log.info("!!! periodic config change: {}", con);
-                                conChange.put(con.name(), con.value());
+                                if (props.containsKey(con.name())) {
+                                    if (!props.get(con.name()).equals(con.value())) {
+                                        conChange.put(con.name(), con.value());
+                                    }
+                                } else {
+                                    conChange.put(con.name(), con.value());
+                                }
+
                             }
                         });
+                        if (!conChange.isEmpty()) {
+                            configsToChange.put(describeConfigResult.resourceName(), new HashMap<>(conChange));
+                            conChange.clear();
+                        }
+
                     }
-                    configsToChange.put(clusterLinkName, conChange);
+
                 });
-
-//                describeConfigsRes.data().
-
             }
 
-            // // apply the change
+            log.info("!!! periodic config change: {}", configsToChange);
+            // apply the change
+            Map<ConfigResource, Collection<AlterConfigOp>> configOps = new HashMap<>();
+            configsToChange.forEach((name, changes) -> {
+                var changeList = changes.entrySet().stream().map(entry -> new AlterConfigOp(new ConfigEntry(entry.getKey(), entry.getValue()),  AlterConfigOp.OpType.SET)).toList();
+                configOps.put(new ConfigResource(ConfigResource.Type.TOPIC, name), changeList);
+            });
+
+            if (!configOps.isEmpty()) {
+                try {
+                    var result = adminClient.incrementalAlterConfigs(configOps).all().get(60, TimeUnit.SECONDS);
+                    log.info("!!! periodic incremental alter config: {}", result);
+                } catch (Throwable e) {
+                    throw new RuntimeException(e);
+                }
+            }
+
         });
 
     }

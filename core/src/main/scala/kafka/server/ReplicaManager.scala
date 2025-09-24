@@ -2546,8 +2546,6 @@ class ReplicaManager(val config: KafkaConfig,
             .flatMap(leaderId => Option(newImage.cluster.broker(leaderId)))
             .flatMap(_.node(listenerName).toScala)
         else {
-          metadataCache.ali.getClusterLInk()
-          // clusterlink -> topics
           Some(remoteClusterMetadataManager.get.getRemotePartitionLeader(partition.clusterLinkName, partition.topicPartition))
         }
 
