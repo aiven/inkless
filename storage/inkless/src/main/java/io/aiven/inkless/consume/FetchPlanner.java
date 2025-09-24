@@ -23,7 +23,6 @@ import org.apache.kafka.common.utils.Time;
 
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
@@ -76,31 +75,39 @@ public class FetchPlanner implements Supplier<List<Future<FileExtent>>> {
         return submitAll(jobs);
     }
 
-    private List<Callable<FileExtent>> planJobs(final Map<TopicIdPartition, FindBatchResponse> batchCoordinates) {
-        final Set<Map.Entry<String, List<ByteRange>>> objectKeysToRanges = batchCoordinates.values().stream()
+    private List<Callable<FileExtent>> planJobs(Map<TopicIdPartition, FindBatchResponse> batchCoordinates) {
+        return batchCoordinates.values().stream()
             .filter(findBatch -> findBatch.errors() == Errors.NONE)
             .map(FindBatchResponse::batches)
-            .peek(batches -> metrics.recordFetchBatchSize(batches.size()))
             .flatMap(List::stream)
             // Merge batch requests
-            .collect(Collectors.groupingBy(BatchInfo::objectKey, Collectors.mapping(b -> b.metadata().range(), Collectors.toList())))
-            .entrySet();
-        metrics.recordFetchObjectsSize(objectKeysToRanges.size());
-        return objectKeysToRanges.stream()
-            .flatMap(e ->
-                keyAlignment.align(e.getValue())
-                    .stream()
-                    .map(byteRange -> getCacheFetchJob(e.getKey(), byteRange)))
+            .collect(Collectors.groupingBy(BatchInfo::objectKey, Collectors.mapping(b -> b, Collectors.toList())))
+            .entrySet()
+            .stream()
+            .map(e -> {
+                // IDEA: let's have a single job that gets the whole range a single GET request, but caches per topic partition.
+                // the fan-out can be large as N cache put, but could be down to a single put if fetches are for a single partition.
+                // I don't see much value on the alignment strategy, as the cache is per topic partition offset pointing to a batch.
+                    return buildCacheFetchJob(e.getKey(), e.getValue()); // Let's redefine this, the general batch can be defined inside the cache job
+//                    return keyAlignment.align(ranges)
+//                        .stream()
+//                        .map(byteRange -> buildCacheFetchJob(e.getKey(), batches, byteRange));
+                }
+            )
             .collect(Collectors.toList());
     }
 
-    private CacheFetchJob getCacheFetchJob(final String objectKey, final ByteRange byteRange) {
+    private CacheFetchJob buildCacheFetchJob(
+        final String objectKey,
+        final List<ByteRange> ranges,
+        final ByteRange byteRange
+    ) {
         return new CacheFetchJob(
             cache,
+            objectFetcher,
             objectKeyCreator.from(objectKey),
             byteRange,
             time,
-            objectFetcher,
             metrics::cacheQueryFinished,
             metrics::cacheStoreFinished,
             metrics::cacheHit,

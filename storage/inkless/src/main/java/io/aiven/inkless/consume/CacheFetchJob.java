@@ -43,16 +43,16 @@ public class CacheFetchJob implements Callable<FileExtent> {
     private final FileFetchJob fallback;
 
     public CacheFetchJob(
-            ObjectCache cache,
-            ObjectKey objectKey,
-            ByteRange byteRange,
-            Time time,
-            ObjectFetcher objectFetcher,
-            Consumer<Long> cacheQueryDurationCallback,
-            Consumer<Long> cacheStoreDurationCallback,
-            Consumer<Boolean> cacheHitRateCallback,
-            Consumer<Long> fileFetchDurationCallback,
-            Consumer<Integer> cacheEntrySize
+        final ObjectCache cache,
+        final ObjectFetcher objectFetcher,
+        final ObjectKey objectKey,
+        final ByteRange byteRange,
+        final Time time,
+        final Consumer<Long> cacheQueryDurationCallback,
+        final Consumer<Long> cacheStoreDurationCallback,
+        final Consumer<Boolean> cacheHitRateCallback,
+        final Consumer<Long> fileFetchDurationCallback,
+        final Consumer<Integer> cacheEntrySize
     ) {
         this.cache = cache;
         this.time = time;
@@ -67,10 +67,10 @@ public class CacheFetchJob implements Callable<FileExtent> {
     // visible for testing
     static CacheKey createCacheKey(ObjectKey object, ByteRange byteRange) {
         return new CacheKey().
-                setObject(object.value())
-                .setRange(new CacheKey.ByteRange()
-                        .setOffset(byteRange.offset())
-                        .setLength(byteRange.size()));
+            setObject(object.value())
+            .setRange(new CacheKey.ByteRange()
+                .setOffset(byteRange.offset())
+                .setLength(byteRange.size()));
     }
 
     @Override
@@ -97,15 +97,14 @@ public class CacheFetchJob implements Callable<FileExtent> {
         return freshFile;
     }
 
-
     @Override
     public boolean equals(Object o) {
         if (this == o) return true;
         if (o == null || getClass() != o.getClass()) return false;
         CacheFetchJob that = (CacheFetchJob) o;
         return Objects.equals(cache, that.cache)
-                && Objects.equals(key, that.key)
-                && Objects.equals(fallback, that.fallback);
+            && Objects.equals(key, that.key)
+            && Objects.equals(fallback, that.fallback);
     }
 
     @Override
