@@ -145,6 +145,10 @@ public class RemoteClusterMetadataManager implements AutoCloseable {
             Node node = metadataCache.getBrokerNodes(ListenerName.forSecurityProtocol(SecurityProtocol.PLAINTEXT)).get(0);
             adminClient = AdminClient.create(Map.of(BOOTSTRAP_SERVERS_CONFIG, node.host() + ":" + node.port()));
         }
+
+
+        // make sure all clusterLinkNames has at least one connections ready
+        // TODO: we should find another connection if it is not accessible
         topics.keySet().forEach(clusterLinkName -> {
             // create a connection for the clusterLinkName
             if (!remoteBrokers.containsKey(clusterLinkName)) {
@@ -170,7 +174,7 @@ public class RemoteClusterMetadataManager implements AutoCloseable {
 
             }
         });
-        log.info("!!! Updating remote cluster metadata for topics: {}", remoteBrokers);
+        log.info("!!! Updating remote cluster metadata for topics: {}, and maybe update the partition size", topics);
         remoteBrokers.forEach((clusterLinkName, senders) -> {
             // get a random node in source cluster
             var response = senders.get(random.nextInt(senders.size())).sendRequest(MetadataRequest.Builder.forTopicNames(topics.get(clusterLinkName).stream().toList(), false));
@@ -208,6 +212,8 @@ public class RemoteClusterMetadataManager implements AutoCloseable {
                 }
             }
 
+            // get the topic configs in the source cluster
+            log.info("!!! describing topic configs for topics: {}", topics);
             List<DescribeConfigsRequestData.DescribeConfigsResource> describeConfigsResources = topics.get(clusterLinkName).stream().map(
                     topic -> new DescribeConfigsRequestData.DescribeConfigsResource().
                     setResourceType(ConfigResource.Type.TOPIC.id()).setResourceName(topic)).toList();
@@ -243,7 +249,7 @@ public class RemoteClusterMetadataManager implements AutoCloseable {
                 });
             }
 
-            log.info("!!! periodic config change: {}", configsToChange);
+            log.info("!!! applying config change: {}", configsToChange);
             // apply the change
             Map<ConfigResource, Collection<AlterConfigOp>> configOps = new HashMap<>();
             configsToChange.forEach((name, changes) -> {
@@ -254,7 +260,7 @@ public class RemoteClusterMetadataManager implements AutoCloseable {
             if (!configOps.isEmpty()) {
                 try {
                     var result = adminClient.incrementalAlterConfigs(configOps).all().get(60, TimeUnit.SECONDS);
-                    log.info("!!! periodic incremental alter config: {}", result);
+                    log.info("!!! incremental alter config result: {}", result);
                 } catch (Throwable e) {
                     throw new RuntimeException(e);
                 }
