@@ -114,86 +114,9 @@ public class RemoteClusterMetadataManager implements AutoCloseable {
         this.channelManager = channelManager;
     }
 
-    public void onMetadataUpdate(MetadataDelta delta, MetadataImage newImage) {
-        // TODO: Use ClusterLinkDelta to manage remote brokers / topics.
-        metadataImage = newImage;
-        if (delta.topicsDelta() == null) {
-            return;
-        }
-        var localChanges = delta.topicsDelta().localChanges(nodeId);
-        if (!localChanges.followers().isEmpty()) {
-            handleFollowerChanges(localChanges.followers());
-        }
-        if (!localChanges.readOnlyLeaders().isEmpty()) {
-            handleReadOnlyLeadersChanges(localChanges.readOnlyLeaders());
-        }
-    }
-
     @Override
     public void close() throws Exception {
 
-    }
-
-    private void handleFollowerChanges(Map<TopicPartition, LocalReplicaChanges.PartitionInfo> followers) {
-//        followers.forEach((tp, info) -> {
-//            var remoteBrokerTopics = topics.get(info.partition().remoteBootstrapServers);
-//            if (remoteBrokerTopics != null) {
-//                remoteBrokerTopics.remove(tp.topic());
-//                if (remoteBrokerTopics.isEmpty()) {
-//                    var sender = remoteBrokers.remove(info.partition().remoteBootstrapServers);
-//                    if (sender != null) {
-//                        sender.forEach(RemoteBrokerBlockingSender::close);
-//                    }
-//                    topics.remove(info.partition().remoteBootstrapServers);
-//                }
-//            }
-//        });
-    }
-
-    private void handleReadOnlyLeadersChanges(Map<TopicPartition, LocalReplicaChanges.PartitionInfo> readOnlyLeaders) {
-//        var updateRemoteBootstrapServers = new HashSet<String>();
-//        readOnlyLeaders.forEach((tp, info) -> {
-//            remoteBrokers.computeIfAbsent(
-//                info.partition().remoteBootstrapServers,
-//                k -> {
-//                    var remoteBootstrapServers = Arrays.stream(k.split(",")).toList();
-//                    var addresses = ClientUtils.parseAndValidateAddresses(remoteBootstrapServers, "use_all_dns_ips");
-//                    // Use random node id here because we don't know node id of remote brokers.
-//                    var brokerEndpoint = new BrokerEndPoint(random.nextInt(), addresses.get(0).getHostString(), addresses.get(0).getPort());
-//                    var logContext = new LogContext("[" + RemoteClusterMetadataManager.class.getName() + " replicaId=" + nodeId + ", remoteBootstrapServers=" + k + ", " +
-//                        "readOnly=true] ");
-//                    return List.of(new RemoteBrokerBlockingSender(
-//                        brokerEndpoint,
-//                        brokerConfig,
-//                        metrics,
-//                        time,
-//                        brokerEndpoint.id(),
-//                        "broker-" + nodeId + "-remote-cluster-metadata-manager-" + k.replace(":", "-"),
-//                        logContext
-//                    ));
-//                });
-//            updateRemoteBootstrapServers.add(info.partition().remoteBootstrapServers);
-//            topics.computeIfAbsent(info.partition().remoteBootstrapServers, k -> new HashSet<>()).add(tp.topic());
-//        });
-
-//        log.info("!!! Updating remote cluster metadata for bootstrap servers: {}", updateRemoteBootstrapServers);
-//        updateRemoteBootstrapServers.forEach(remoteBootstrapServers -> {
-//            var sender = remoteBrokers.get(remoteBootstrapServers);
-//            var updatedTopics = topics.get(remoteBootstrapServers);
-//            var response = sender.sendRequest(MetadataRequest.Builder.forTopicNames(updatedTopics.stream().toList(), false));
-//            if (response.responseBody() instanceof MetadataResponse metadataResponse) {
-//                log.info("!!! metadataResponse: {}", metadataResponse);
-//                metadataResponse.brokers().forEach(broker -> {
-//                    remoteClusterNodes.computeIfAbsent(remoteBootstrapServers, k -> new HashMap<>()).put(broker.id(), broker);
-//                });
-//                metadataResponse.topicMetadata().forEach(topicMetadata -> {
-//                    var partitionLeaders = remotePartitionLeaders.computeIfAbsent(remoteBootstrapServers, k -> new HashMap<>());
-//                    topicMetadata.partitionMetadata().forEach(partitionMetadata -> {
-//                        partitionLeaders.put(partitionMetadata.topicPartition, remoteClusterNodes.get(remoteBootstrapServers).get(partitionMetadata.leaderId.get()));
-//                    });
-//                });
-//            }
-//        });
     }
 
     public Node getRemotePartitionLeader(String clusterLinkName, TopicPartition tp) {
