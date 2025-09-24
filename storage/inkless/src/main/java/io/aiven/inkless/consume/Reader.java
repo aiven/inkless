@@ -122,22 +122,21 @@ public class Reader implements AutoCloseable {
             ),
             metadataExecutor
         );
-        return batchCoordinates.thenApply(
-                coordinates ->
-                    new FetchPlanner(
-                        time,
-                        objectKeyCreator,
-                        keyAlignmentStrategy,
-                        cache,
-                        objectFetcher,
-                        dataExecutor,
-                        coordinates,
-                        fetchMetrics::fetchPlanFinished,
-                        fetchMetrics::cacheQueryFinished,
-                        fetchMetrics::cacheStoreFinished,
-                        fetchMetrics::cacheHit,
-                        fetchMetrics::fetchFileFinished
-                    ).get()
+        return batchCoordinates.thenApply(coordinates ->
+                new FetchPlanner(
+                    time,
+                    objectKeyCreator,
+                    keyAlignmentStrategy,
+                    cache,
+                    objectFetcher,
+                    dataExecutor,
+                    coordinates,
+                    fetchMetrics::fetchPlanFinished,
+                    fetchMetrics::cacheQueryFinished,
+                    fetchMetrics::cacheStoreFinished,
+                    fetchMetrics::cacheHit,
+                    fetchMetrics::fetchFileFinished
+                ).get()
             )
             .thenCombineAsync(batchCoordinates, (fileExtents, coordinates) ->
                 new FetchCompleter(

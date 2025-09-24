@@ -95,12 +95,21 @@ public class CacheFetchJobTest {
     }
 
     private CacheFetchJob cacheFetchJob(
-            ObjectCache cache,
-            ObjectKey objectKey,
-            ByteRange byteRange
+        ObjectCache cache,
+        ObjectKey objectKey,
+        ByteRange byteRange
     ) {
-        return new CacheFetchJob(cache, objectKey, byteRange, time, fetcher,
-                durationMs -> {}, durationMs -> {}, hitBool -> {}, durationMs -> {});
+        return new CacheFetchJob(
+            cache,
+            fetcher,
+            objectKey,
+            byteRange,
+            time,
+            durationMs -> {},
+            durationMs -> {},
+            hitBool -> {},
+            durationMs -> {}
+        );
     }
 
 }

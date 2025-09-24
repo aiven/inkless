@@ -17,12 +17,14 @@
  */
 package io.aiven.inkless.consume;
 
+import io.aiven.inkless.common.ByteRange;
 import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.utils.Time;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
@@ -54,18 +56,19 @@ public class FetchPlanner implements Supplier<List<Future<FileExtent>>> {
     private final Consumer<Boolean> cacheHitRateCallback;
     private final Consumer<Long> fileFetchDurationCallback;
 
-    public FetchPlanner(Time time,
-                        ObjectKeyCreator objectKeyCreator,
-                        KeyAlignmentStrategy keyAlignment,
-                        ObjectCache cache,
-                        ObjectFetcher objectFetcher,
-                        ExecutorService dataExecutor,
-                        Map<TopicIdPartition, FindBatchResponse> batchCoordinates,
-                        Consumer<Long> fetchPlanDurationCallback,
-                        Consumer<Long> cacheQueryDurationCallback,
-                        Consumer<Long> cacheStoreDurationCallback,
-                        Consumer<Boolean> cacheHitRateCallback,
-                        Consumer<Long> fileFetchDurationCallback
+    public FetchPlanner(
+        Time time,
+        ObjectKeyCreator objectKeyCreator,
+        KeyAlignmentStrategy keyAlignment,
+        ObjectCache cache,
+        ObjectFetcher objectFetcher,
+        ExecutorService dataExecutor,
+        Map<TopicIdPartition, FindBatchResponse> batchCoordinates,
+        Consumer<Long> fetchPlanDurationCallback,
+        Consumer<Long> cacheQueryDurationCallback,
+        Consumer<Long> cacheStoreDurationCallback,
+        Consumer<Boolean> cacheHitRateCallback,
+        Consumer<Long> fileFetchDurationCallback
     ) {
         this.time = time;
         this.objectKeyCreator = objectKeyCreator;
@@ -88,20 +91,42 @@ public class FetchPlanner implements Supplier<List<Future<FileExtent>>> {
 
     private List<Callable<FileExtent>> planJobs(Map<TopicIdPartition, FindBatchResponse> batchCoordinates) {
         return batchCoordinates.values().stream()
-                .filter(findBatch -> findBatch.errors() == Errors.NONE)
-                .map(FindBatchResponse::batches)
-                .flatMap(List::stream)
-                // Merge batch requests
-                .collect(Collectors.groupingBy(BatchInfo::objectKey, Collectors.mapping(b -> b.metadata().range(), Collectors.toList())))
-                .entrySet()
-                .stream()
-                .flatMap(e -> keyAlignment.align(e.getValue())
-                        .stream()
-                        .map(byteRange ->
-                                new CacheFetchJob(cache, objectKeyCreator.from(e.getKey()), byteRange, time, objectFetcher,
-                                        cacheQueryDurationCallback, cacheStoreDurationCallback, cacheHitRateCallback, fileFetchDurationCallback)
-                        ))
-                .collect(Collectors.toList());
+            .filter(findBatch -> findBatch.errors() == Errors.NONE)
+            .map(FindBatchResponse::batches)
+            .flatMap(List::stream)
+            // Merge batch requests
+            .collect(Collectors.groupingBy(BatchInfo::objectKey, Collectors.mapping(b -> b, Collectors.toList())))
+            .entrySet()
+            .stream()
+            .map(e -> {
+                // IDEA: let's have a single job that gets the whole range a single GET request, but caches per topic partition.
+                // the fan-out can be large as N cache put, but could be down to a single put if fetches are for a single partition.
+                // I don't see much value on the alignment strategy, as the cache is per topic partition offset pointing to a batch.
+                    return buildCacheFetchJob(e.getKey(), e.getValue()); // Let's redefine this, the general batch can be defined inside the cache job
+//                    return keyAlignment.align(ranges)
+//                        .stream()
+//                        .map(byteRange -> buildCacheFetchJob(e.getKey(), batches, byteRange));
+                }
+            )
+            .collect(Collectors.toList());
+    }
+
+    private CacheFetchJob buildCacheFetchJob(
+        final String objectKey,
+        final List<ByteRange> ranges,
+        final ByteRange byteRange
+    ) {
+        return new CacheFetchJob(
+            cache,
+            objectFetcher,
+            objectKeyCreator.from(objectKey),
+            byteRange,
+            time,
+            cacheQueryDurationCallback,
+            cacheStoreDurationCallback,
+            cacheHitRateCallback,
+            fileFetchDurationCallback
+        );
     }
 
     private List<Future<FileExtent>> submitAll(List<Callable<FileExtent>> jobs) {

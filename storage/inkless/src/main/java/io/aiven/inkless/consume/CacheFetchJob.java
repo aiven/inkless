@@ -42,15 +42,15 @@ public class CacheFetchJob implements Callable<FileExtent> {
     private final FileFetchJob fallback;
 
     public CacheFetchJob(
-            ObjectCache cache,
-            ObjectKey objectKey,
-            ByteRange byteRange,
-            Time time,
-            ObjectFetcher objectFetcher,
-            Consumer<Long> cacheQueryDurationCallback,
-            Consumer<Long> cacheStoreDurationCallback,
-            Consumer<Boolean> cacheHitRateCallback,
-            Consumer<Long> fileFetchDurationCallback
+        ObjectCache cache,
+        ObjectFetcher objectFetcher,
+        ObjectKey objectKey,
+        ByteRange byteRange,
+        Time time,
+        Consumer<Long> cacheQueryDurationCallback,
+        Consumer<Long> cacheStoreDurationCallback,
+        Consumer<Boolean> cacheHitRateCallback,
+        Consumer<Long> fileFetchDurationCallback
     ) {
         this.cache = cache;
         this.time = time;
@@ -64,10 +64,10 @@ public class CacheFetchJob implements Callable<FileExtent> {
     // visible for testing
     static CacheKey createCacheKey(ObjectKey object, ByteRange byteRange) {
         return new CacheKey().
-                setObject(object.value())
-                .setRange(new CacheKey.ByteRange()
-                        .setOffset(byteRange.offset())
-                        .setLength(byteRange.size()));
+            setObject(object.value())
+            .setRange(new CacheKey.ByteRange()
+                .setOffset(byteRange.offset())
+                .setLength(byteRange.size()));
     }
 
     @Override
@@ -93,15 +93,14 @@ public class CacheFetchJob implements Callable<FileExtent> {
         return freshFile;
     }
 
-
     @Override
     public boolean equals(Object o) {
         if (this == o) return true;
         if (o == null || getClass() != o.getClass()) return false;
         CacheFetchJob that = (CacheFetchJob) o;
         return Objects.equals(cache, that.cache)
-                && Objects.equals(key, that.key)
-                && Objects.equals(fallback, that.fallback);
+            && Objects.equals(key, that.key)
+            && Objects.equals(fallback, that.fallback);
     }
 
     @Override

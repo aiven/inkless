@@ -209,11 +209,20 @@ public class FetchPlannerTest {
     }
 
     private CacheFetchJob cacheFetchJob(
-            ObjectKey objectKey,
-            ByteRange byteRange
+        ObjectKey objectKey,
+        ByteRange byteRange
     ) {
-        return new CacheFetchJob(cache, objectKey, byteRange, time, fetcher,
-                durationMs -> {}, durationMs -> {}, hitBool -> {}, durationMs -> {});
+        return new CacheFetchJob(
+            cache,
+            fetcher,
+            objectKey,
+            byteRange,
+            time,
+            durationMs -> {},
+            durationMs -> {},
+            hitBool -> {},
+            durationMs -> {}
+        );
     }
 
     private void assertBatchPlan(Map<TopicIdPartition, FindBatchResponse> coordinates, Set<CacheFetchJob> jobs) {
