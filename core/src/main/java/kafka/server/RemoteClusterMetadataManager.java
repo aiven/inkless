@@ -18,11 +18,8 @@ package kafka.server;
 
 import org.apache.kafka.clients.ClientResponse;
 import org.apache.kafka.clients.ClientUtils;
-import org.apache.kafka.clients.admin.Admin;
-import org.apache.kafka.clients.admin.AdminClient;
 import org.apache.kafka.clients.admin.AlterConfigOp;
 import org.apache.kafka.clients.admin.ConfigEntry;
-import org.apache.kafka.clients.admin.KafkaAdminClient;
 import org.apache.kafka.common.Node;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.config.ConfigResource;
@@ -91,7 +88,6 @@ public class RemoteClusterMetadataManager implements AutoCloseable {
     private MetadataImage metadataImage;
     private MetadataCache metadataCache;
     private NodeToControllerChannelManager channelManager;
-    private Admin adminClient = null;
 
     public RemoteClusterMetadataManager(
         KafkaConfig config,
@@ -140,13 +136,6 @@ public class RemoteClusterMetadataManager implements AutoCloseable {
 
     public void refreshRemoteMetadata() {
         log.info("!!! Refreshing remote cluster metadata:" + topics);
-        if (adminClient == null) {
-            // TODO: this should not assume to have plaintext in local listener. This should get from listener config
-            Node node = metadataCache.getBrokerNodes(ListenerName.forSecurityProtocol(SecurityProtocol.PLAINTEXT)).get(0);
-            adminClient = AdminClient.create(Map.of(BOOTSTRAP_SERVERS_CONFIG, node.host() + ":" + node.port()));
-        }
-
-
         // make sure all clusterLinkNames has at least one connections ready
         // TODO: we should find another connection if it is not accessible
         topics.keySet().forEach(clusterLinkName -> {
@@ -258,12 +247,21 @@ public class RemoteClusterMetadataManager implements AutoCloseable {
             });
 
             if (!configOps.isEmpty()) {
-                try {
-                    var result = adminClient.incrementalAlterConfigs(configOps).all().get(60, TimeUnit.SECONDS);
-                    log.info("!!! incremental alter config result: {}", result);
-                } catch (Throwable e) {
-                    throw new RuntimeException(e);
+                IncrementalAlterConfigsRequestData data = new IncrementalAlterConfigsRequestData().setValidateOnly(false);
+                for (ConfigResource resource : configOps.keySet()) {
+                    IncrementalAlterConfigsRequestData.AlterableConfigCollection alterableConfigSet =
+                            new IncrementalAlterConfigsRequestData.AlterableConfigCollection();
+                    for (AlterConfigOp configEntry : configOps.get(resource))
+                        alterableConfigSet.add(new IncrementalAlterConfigsRequestData.AlterableConfig()
+                                .setName(configEntry.configEntry().name())
+                                .setValue(configEntry.configEntry().value())
+                                .setConfigOperation(configEntry.opType().id()));
+                    IncrementalAlterConfigsRequestData.AlterConfigsResource alterConfigsResource = new IncrementalAlterConfigsRequestData.AlterConfigsResource();
+                    alterConfigsResource.setResourceType(resource.type().id())
+                            .setResourceName(resource.name()).setConfigs(alterableConfigSet);
+                    data.resources().add(alterConfigsResource);
                 }
+                channelManager.sendRequest(new IncrementalAlterConfigsRequest.Builder(data), new TimeoutHandler());
             }
 
         });

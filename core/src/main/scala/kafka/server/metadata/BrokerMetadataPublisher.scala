@@ -147,8 +147,6 @@ class BrokerMetadataPublisher(
         debug(s"Publishing metadata at offset $highestOffsetAndEpoch with $metadataVersionLogMsg.")
       }
 
-      remoteClusterMetadataManager.onMetadataUpdate(delta, newImage)
-
       // Apply topic deltas.
       Option(delta.topicsDelta()).foreach { topicsDelta =>
         try {
