@@ -55,6 +55,7 @@ import java.util.function.Consumer;
 
 import static org.apache.kafka.clients.admin.AlterConfigOp.OpType.APPEND;
 import static org.apache.kafka.common.config.ConfigResource.Type.BROKER;
+import static org.apache.kafka.common.config.TopicConfig.INKLESS_ENABLE_CONFIG;
 import static org.apache.kafka.common.config.TopicConfig.MIN_IN_SYNC_REPLICAS_CONFIG;
 import static org.apache.kafka.common.config.TopicConfig.UNCLEAN_LEADER_ELECTION_ENABLE_CONFIG;
 import static org.apache.kafka.common.metadata.MetadataRecordType.CONFIG_RECORD;
@@ -700,6 +701,15 @@ public class ConfigurationControlManager {
     boolean uncleanLeaderElectionEnabledForTopic(String topicName) {
         String uncleanLeaderElection = getTopicConfig(topicName, UNCLEAN_LEADER_ELECTION_ENABLE_CONFIG).value();
         if (!uncleanLeaderElection.isEmpty()) {
+            final String inklessEnabled = getTopicConfig(topicName, INKLESS_ENABLE_CONFIG).value();
+            if (!inklessEnabled.isEmpty() && Boolean.parseBoolean(inklessEnabled)) {
+                // Inkless topics have unclean leader election enabled by default.
+                // Inkless topics always have a single partition and leadership is dynamically defined,
+                // while data consistency is guaranteed by the Inkless batch coordinator.
+                // In order to keep KRaft metadata consistent, allow the unclean leader election
+                // so stored leadership is refreshed on every controller restart.
+                return true;
+            }
             return Boolean.parseBoolean(uncleanLeaderElection);
         }
         return false;
