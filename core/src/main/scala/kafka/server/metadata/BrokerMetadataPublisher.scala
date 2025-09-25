@@ -60,6 +60,7 @@ object BrokerMetadataPublisher extends Logging {
   def getTopicDelta(topicName: String,
                     newImage: MetadataImage,
                     delta: MetadataDelta): Option[TopicDelta] = {
+    logger.info(s"!!! Looking for topic delta for topic ${newImage.topics().getTopic(topicName)} ;; ${delta.topicsDelta()}")
     Option(newImage.topics().getTopic(topicName)).flatMap {
       topicImage => Option(delta.topicsDelta()).flatMap {
         topicDelta => Option(topicDelta.changedTopic(topicImage.id()))
@@ -145,8 +146,6 @@ class BrokerMetadataPublisher(
       } else if (isDebugEnabled) {
         debug(s"Publishing metadata at offset $highestOffsetAndEpoch with $metadataVersionLogMsg.")
       }
-
-      remoteClusterMetadataManager.onMetadataUpdate(delta, newImage)
 
       // Apply topic deltas.
       Option(delta.topicsDelta()).foreach { topicsDelta =>
@@ -324,6 +323,7 @@ class BrokerMetadataPublisher(
     election: (Int, Int) => Unit,
     resignation: (Int, Option[Int]) => Unit
   ): Unit = {
+
     // Handle the case where the topic was deleted
     Option(delta.topicsDelta()).foreach { topicsDelta =>
       if (topicsDelta.topicWasDeleted(topicName)) {
@@ -338,6 +338,8 @@ class BrokerMetadataPublisher(
     // Handle the case where the replica was reassigned, made a leader or made a follower
     getTopicDelta(topicName, image, delta).foreach { topicDelta =>
       val changes = topicDelta.localChanges(brokerId)
+
+      logger.info(s"!!! Updating coordinator for topic $topicName: $changes")
 
       changes.deletes.forEach { topicPartition =>
         resignation(topicPartition.partition, None)

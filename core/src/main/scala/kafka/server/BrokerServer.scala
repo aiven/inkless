@@ -343,7 +343,7 @@ class BrokerServer(
         config,
         metrics,
         time,
-        kafkaScheduler,
+        metadataCache,
         clientToControllerChannelManager
       )
       kafkaScheduler.schedule("remote-cluster-metadata-refresh", () => remoteClusterMetadataManager.refreshRemoteMetadata(), 5000L, 30000L)
@@ -399,7 +399,7 @@ class BrokerServer(
         producerIdManagerSupplier, metrics, metadataCache, Time.SYSTEM)
 
       topicMirrorLinkCoordinator = new TopicMirrorLinkCoordinator(config, replicaManager,
-        new KafkaScheduler(1, true, "topic-mirror-link-manager-"), metrics, metadataCache, Time.SYSTEM, clientToControllerChannelManager)
+        new KafkaScheduler(1, true, "topic-mirror-link-manager-"), metrics, metadataCache, Time.SYSTEM, remoteClusterMetadataManager)
 
       autoTopicCreationManager = new DefaultAutoTopicCreationManager(
         config, clientToControllerChannelManager, groupCoordinator,
