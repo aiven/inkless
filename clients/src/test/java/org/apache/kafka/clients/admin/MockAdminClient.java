@@ -423,6 +423,11 @@ public class MockAdminClient extends AdminClient {
         return new CreateTopicsResult(createTopicResult);
     }
 
+    @Override
+    public FindCoordinatorResult findCoordinator(String key) {
+        return null;
+    }
+
     private static Config config(NewTopic newTopic) {
         Collection<ConfigEntry> configEntries = new ArrayList<>();
         if (newTopic.configs() != null) {
@@ -1478,7 +1483,7 @@ public class MockAdminClient extends AdminClient {
     public synchronized DescribeStreamsGroupsResult describeStreamsGroups(Collection<String> groupIds, DescribeStreamsGroupsOptions options) {
         throw new UnsupportedOperationException("Not implemented yet");
     }
-    
+
     @Override
     public synchronized DescribeClassicGroupsResult describeClassicGroups(Collection<String> groupIds, DescribeClassicGroupsOptions options) {
         throw new UnsupportedOperationException("Not implemented yet");

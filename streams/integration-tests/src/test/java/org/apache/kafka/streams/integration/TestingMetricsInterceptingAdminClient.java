@@ -110,6 +110,7 @@ import org.apache.kafka.clients.admin.ExpireDelegationTokenResult;
 import org.apache.kafka.clients.admin.FeatureUpdate;
 import org.apache.kafka.clients.admin.FenceProducersOptions;
 import org.apache.kafka.clients.admin.FenceProducersResult;
+import org.apache.kafka.clients.admin.FindCoordinatorResult;
 import org.apache.kafka.clients.admin.ListClientMetricsResourcesOptions;
 import org.apache.kafka.clients.admin.ListClientMetricsResourcesResult;
 import org.apache.kafka.clients.admin.ListConfigResourcesOptions;
@@ -197,6 +198,11 @@ public class TestingMetricsInterceptingAdminClient extends AdminClient {
     @Override
     public CreateTopicsResult createTopics(final Collection<NewTopic> newTopics, final CreateTopicsOptions options) {
         return adminDelegate.createTopics(newTopics, options);
+    }
+
+    @Override
+    public FindCoordinatorResult findCoordinator(String key) {
+        return null;
     }
 
     @Override
@@ -475,7 +481,7 @@ public class TestingMetricsInterceptingAdminClient extends AdminClient {
     public DescribeShareGroupsResult describeShareGroups(final Collection<String> groupIds, final DescribeShareGroupsOptions options) {
         return adminDelegate.describeShareGroups(groupIds, options);
     }
-    
+
     @Override
     public DescribeStreamsGroupsResult describeStreamsGroups(final Collection<String> groupIds, final DescribeStreamsGroupsOptions options) {
         return adminDelegate.describeStreamsGroups(groupIds, options);

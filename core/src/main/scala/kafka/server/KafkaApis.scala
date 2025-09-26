@@ -1274,7 +1274,9 @@ class KafkaApis(val requestChannel: RequestChannel,
   }
 
   def handleFindCoordinatorRequest(request: RequestChannel.Request): Unit = {
+    logger.info("================================handleFindCoordinatorRequest========================")
     val version = request.header.apiVersion
+    logger.info("the version of FindCoordinatorRequest is " + version)
     if (version < 4) {
       handleFindCoordinatorRequestLessThanV4(request)
     } else {
@@ -1287,6 +1289,7 @@ class KafkaApis(val requestChannel: RequestChannel,
 
     val coordinators = findCoordinatorRequest.data.coordinatorKeys.asScala.map { key =>
       val (error, node) = getCoordinator(request, findCoordinatorRequest.data.keyType, key)
+      logger.info("the node is " + node + ", the error is " + error)
       new FindCoordinatorResponseData.Coordinator()
         .setKey(key)
         .setErrorCode(error.code)
@@ -1301,6 +1304,7 @@ class KafkaApis(val requestChannel: RequestChannel,
                 .setThrottleTimeMs(requestThrottleMs))
       trace("Sending FindCoordinator response %s for correlation id %d to client %s."
               .format(response, request.header.correlationId, request.header.clientId))
+      logger.info("the response of FindCoordinatorRequest is " + response)
       response
     }
     requestHelper.sendResponseMaybeThrottle(request, createResponse)
@@ -1339,9 +1343,11 @@ class KafkaApis(val requestChannel: RequestChannel,
       (Errors.TRANSACTIONAL_ID_AUTHORIZATION_FAILED, Node.noNode)
     else if (keyType == CoordinatorType.SHARE.id && request.context.apiVersion < 6)
       (Errors.INVALID_REQUEST, Node.noNode)
-    else if (keyType == CoordinatorType.CLUSTER_LINK.id && request.context.apiVersion < 7)
+    else if (keyType == CoordinatorType.CLUSTER_LINK.id && request.context.apiVersion < 7) {
+      logger.warn("Cluster link coordinator type is not supported for " +
+        s"FindCoordinatorRequest version ${request.context.apiVersion}")
       (Errors.INVALID_REQUEST, Node.noNode)
-    else {
+    } else {
       if (keyType == CoordinatorType.SHARE.id) {
         authHelper.authorizeClusterOperation(request, CLUSTER_ACTION)
         try {
@@ -1374,9 +1380,13 @@ class KafkaApis(val requestChannel: RequestChannel,
           (topicMirrorLinkCoordinator.partitionFor(ClusterLinkKey.getInstance(key)), CLUSTER_LINK_TOPIC_NAME)
       }
 
+      logger.info("The partition of coordinator key " + key + " is " + partition + ", the internal topic name is " + internalTopicName)
+
       val topicMetadata = metadataCache.getTopicMetadata(Set(internalTopicName).asJava, request.context.listenerName, false, false).asScala
 
       if (topicMetadata.headOption.isEmpty) {
+        logger.info("The internal topic " + internalTopicName + " does not exist when finding coordinator for key " + key +
+          ". Attempting to create the topic.")
         val controllerMutationQuota = quotas.controllerMutation.newPermissiveQuotaFor(request.session, request.header.clientId)
         autoTopicCreationManager.createTopics(Seq(internalTopicName).toSet, controllerMutationQuota, None)
         (Errors.COORDINATOR_NOT_AVAILABLE, Node.noNode)
@@ -1391,6 +1401,7 @@ class KafkaApis(val requestChannel: RequestChannel,
             .findFirst()
 
           if (coordinatorEndpoint.isPresent) {
+            logger.info("The coordinator for key " + key + " is " + coordinatorEndpoint.get())
             (Errors.NONE, coordinatorEndpoint.get)
           } else {
             (Errors.COORDINATOR_NOT_AVAILABLE, Node.noNode)

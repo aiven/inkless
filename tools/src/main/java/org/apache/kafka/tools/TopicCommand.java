@@ -28,6 +28,7 @@ import org.apache.kafka.clients.admin.CreateTopicsOptions;
 import org.apache.kafka.clients.admin.CreateTopicsResult;
 import org.apache.kafka.clients.admin.DeleteTopicsOptions;
 import org.apache.kafka.clients.admin.DescribeTopicsOptions;
+import org.apache.kafka.clients.admin.FindCoordinatorResult;
 import org.apache.kafka.clients.admin.ListTopicsOptions;
 import org.apache.kafka.clients.admin.ListTopicsResult;
 import org.apache.kafka.clients.admin.NewPartitions;
@@ -491,7 +492,11 @@ public abstract class TopicCommand {
 
             try {
                 NewTopic newTopic;
+                Optional<Node> coordinator = Optional.empty();
                 if (topic.opts.hasCreateMirrorOption()) {
+                    FindCoordinatorResult findCoordinatorResult = adminClient.findCoordinator(topic.opts.linkName().get());
+                    coordinator = Optional.ofNullable(findCoordinatorResult.node().get());
+                    System.out.println("Found coordinator " + coordinator.map(Node::idString).orElse("none") + " for link " + topic.opts.linkName().get() + ".");
                     newTopic = new NewTopic(topic.name, topic.partitions, topic.replicationFactor.map(Integer::shortValue), topic.remoteBootstrapServers, topic.topicId, topic.opts.linkName());
                 } else if (topic.hasReplicaAssignment()) {
                     newTopic = new NewTopic(topic.name, topic.replicaAssignment);
@@ -505,11 +510,25 @@ public abstract class TopicCommand {
                     configsMap.put(TopicConfig.READ_ONLY_CONFIG, "true");
                 }
 
-                newTopic.configs(configsMap);
-                CreateTopicsResult createResult = adminClient.createTopics(Set.of(newTopic),
-                    new CreateTopicsOptions().retryOnQuotaViolation(false));
-                createResult.all().get();
-                System.out.println("Created topic " + topic.name + ".");
+                if (coordinator.isPresent()) {
+                    Node node = coordinator.get();
+                    System.out.println("Node info: " + node);
+                    String bootstrapServer = node.host() + ":" + node.port();
+                    System.out.println("Creating topic " + topic.name + " using bootstrap server " + bootstrapServer + ".");
+                    try (Admin admin = createAdminClient(new Properties(), Optional.of(bootstrapServer))) {
+                        newTopic.configs(configsMap);
+                        CreateTopicsResult createResult = admin.createTopics(Set.of(newTopic),
+                                new CreateTopicsOptions().retryOnQuotaViolation(false));
+                        createResult.all().get();
+                        System.out.println("Created topic " + topic.name + ".");
+                    }
+                } else {
+                    newTopic.configs(configsMap);
+                    CreateTopicsResult createResult = adminClient.createTopics(Set.of(newTopic),
+                            new CreateTopicsOptions().retryOnQuotaViolation(false));
+                    createResult.all().get();
+                    System.out.println("Created topic " + topic.name + ".");
+                }
             } catch (ExecutionException e) {
                 if (e.getCause() == null) {
                     throw e;
