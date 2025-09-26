@@ -1721,7 +1721,7 @@ class ReplicaManager(val config: KafkaConfig,
 
   def findDisklessBatches(requests: Seq[FindBatchRequest], maxBytes: Int): Option[util.List[FindBatchResponse]] = {
     inklessSharedState.map { sharedState =>
-      sharedState.controlPlane().findBatches(requests.asJava, maxBytes)
+      sharedState.controlPlane().findBatches(requests.asJava, maxBytes, sharedState.config().maxBatchesPerPartitionToFind())
     }
   }
 

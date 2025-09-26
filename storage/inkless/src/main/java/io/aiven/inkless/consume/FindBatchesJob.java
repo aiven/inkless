@@ -40,17 +40,20 @@ public class FindBatchesJob implements Supplier<Map<TopicIdPartition, FindBatchR
     private final ControlPlane controlPlane;
     private final FetchParams params;
     private final Map<TopicIdPartition, FetchRequest.PartitionData> fetchInfos;
+    private final int maxBatchesPerPartition;
     private final Consumer<Long> durationCallback;
 
     public FindBatchesJob(Time time,
                           ControlPlane controlPlane,
                           FetchParams params,
                           Map<TopicIdPartition, FetchRequest.PartitionData> fetchInfos,
+                          int maxBatchesPerPartition,
                           Consumer<Long> durationCallback) {
         this.time = time;
         this.controlPlane = controlPlane;
         this.params = params;
         this.fetchInfos = fetchInfos;
+        this.maxBatchesPerPartition = maxBatchesPerPartition;
         this.durationCallback = durationCallback;
     }
 
@@ -67,7 +70,7 @@ public class FindBatchesJob implements Supplier<Map<TopicIdPartition, FindBatchR
                 requests.add(new FindBatchRequest(topicIdPartition, fetchInfo.getValue().fetchOffset, fetchInfo.getValue().maxBytes));
             }
 
-            List<FindBatchResponse> responses = controlPlane.findBatches(requests, params.maxBytes);
+            List<FindBatchResponse> responses = controlPlane.findBatches(requests, params.maxBytes, maxBatchesPerPartition);
 
             Map<TopicIdPartition, FindBatchResponse> out = new HashMap<>();
             for (int i = 0; i < requests.size(); i++) {

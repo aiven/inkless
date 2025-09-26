@@ -38,24 +38,27 @@ import io.aiven.inkless.control_plane.ControlPlaneException;
 import io.aiven.inkless.control_plane.FindBatchRequest;
 import io.aiven.inkless.control_plane.FindBatchResponse;
 
-import static org.jooq.generated.Tables.FIND_BATCHES_V1;
+import static org.jooq.generated.Tables.FIND_BATCHES_V2;
 
 class FindBatchesJob implements Callable<List<FindBatchResponse>> {
     private final Time time;
     private final DSLContext jooqCtx;
     private final List<FindBatchRequest> requests;
     private final int fetchMaxBytes;
+    private final int maxBatchesPerPartition;
     private final Consumer<Long> durationCallback;
 
     FindBatchesJob(final Time time,
                    final DSLContext jooqCtx,
                    final List<FindBatchRequest> requests,
                    final int fetchMaxBytes,
+                   final int maxBatchesPerPartition,
                    final Consumer<Long> durationCallback) {
         this.time = time;
         this.jooqCtx = jooqCtx;
         this.requests = requests;
         this.fetchMaxBytes = fetchMaxBytes;
+        this.maxBatchesPerPartition = maxBatchesPerPartition;
         this.durationCallback = durationCallback;
     }
 
@@ -87,7 +90,7 @@ class FindBatchesJob implements Callable<List<FindBatchResponse>> {
                     FindBatchesResponseV1.HIGH_WATERMARK,
                     FindBatchesResponseV1.BATCHES,
                     FindBatchesResponseV1.ERROR
-                ).from(FIND_BATCHES_V1.call(dbRequests, fetchMaxBytes))
+                ).from(FIND_BATCHES_V2.call(dbRequests, fetchMaxBytes, maxBatchesPerPartition))
                     .fetchInto(FindBatchesResponseV1Record.class);
 
                 if (dbResponses.size() != requests.size()) {

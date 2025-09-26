@@ -6628,7 +6628,7 @@ class ReplicaManagerTest {
       when(findBatchResponse.estimatedByteSize(fetchOffset)).thenReturn(RECORDS.sizeInBytes())
       when(findBatchResponse.errors()).thenReturn(Errors.NONE)
       val cp = mock(classOf[ControlPlane])
-      when(cp.findBatches(any(), any())).thenReturn(util.List.of(findBatchResponse, findBatchResponse))
+      when(cp.findBatches(any(), any(), any())).thenReturn(util.List.of(findBatchResponse, findBatchResponse))
 
       // Prepare the FetchHandler response to be called when the forceComplete method is invoked.
       val disklessResponse = Map(
@@ -6693,7 +6693,7 @@ class ReplicaManagerTest {
       when(findBatchResponse.estimatedByteSize(fetchOffset)).thenReturn(RECORDS.sizeInBytes())
       when(findBatchResponse.errors()).thenReturn(Errors.NONE)
       val cp = mock(classOf[ControlPlane])
-      when(cp.findBatches(any(), any())).thenReturn(util.List.of(findBatchResponse))
+      when(cp.findBatches(any(), any(), any())).thenReturn(util.List.of(findBatchResponse))
 
       // Prepare the FetchHandler response to be called when the forceComplete method is invoked.
       val disklessResponse = Map(disklessTopicPartition ->
@@ -6751,7 +6751,7 @@ class ReplicaManagerTest {
       when(findBatchResponse.estimatedByteSize(fetchOffset)).thenReturn(RECORDS.sizeInBytes()) // first half of the bytes available from diskless
       when(findBatchResponse.errors()).thenReturn(Errors.NONE)
       val cp = mock(classOf[ControlPlane])
-      when(cp.findBatches(any(), any())).thenReturn(util.List.of(findBatchResponse))
+      when(cp.findBatches(any(), any(), any())).thenReturn(util.List.of(findBatchResponse))
 
       // Prepare the FetchHandler response to be called when the forceComplete method is invoked.
       val disklessResponse = Map(disklessTopicPartition ->
@@ -6831,7 +6831,7 @@ class ReplicaManagerTest {
       when(findBatchResponse.estimatedByteSize(fetchOffset)).thenReturn(RECORDS.sizeInBytes()) // first half of the bytes available from diskless
       when(findBatchResponse.errors()).thenReturn(Errors.NONE)
       val cp = mock(classOf[ControlPlane])
-      when(cp.findBatches(any(), any())).thenReturn(util.List.of(findBatchResponse))
+      when(cp.findBatches(any(), any(), any())).thenReturn(util.List.of(findBatchResponse))
 
       // Prepare the FetchHandler response to be called when the forceComplete method is invoked.
       val disklessResponse = Map(disklessTopicPartition ->
@@ -6911,7 +6911,7 @@ class ReplicaManagerTest {
       when(findBatchResponse.estimatedByteSize(fetchOffset)).thenReturn(RECORDS.sizeInBytes())
       when(findBatchResponse.errors()).thenReturn(Errors.NONE)
       val cp = mock(classOf[ControlPlane])
-      when(cp.findBatches(any(), any())).thenReturn(util.List.of(findBatchResponse))
+      when(cp.findBatches(any(), any(), any())).thenReturn(util.List.of(findBatchResponse))
 
       // Prepare the FetchHandler response to be called when the forceComplete method is invoked.
       val disklessResponse = Map(disklessTopicPartition ->
@@ -6974,7 +6974,7 @@ class ReplicaManagerTest {
       when(findBatchResponse.estimatedByteSize(fetchOffset)).thenReturn(minBytes - 10L)
       when(findBatchResponse.errors()).thenReturn(Errors.NONE)
       val cp = mock(classOf[ControlPlane])
-      when(cp.findBatches(any(), any())).thenReturn(util.List.of(findBatchResponse))
+      when(cp.findBatches(any(), any(), any())).thenReturn(util.List.of(findBatchResponse))
 
       // Prepare the FetchHandler response to be called when the forceComplete method is invoked.
       val disklessResponse = Map(disklessTopicPartition ->
@@ -7049,7 +7049,7 @@ class ReplicaManagerTest {
 
       // Prepare the FindBatchResponse to be returned by the ControlPlane when it tries to complete the delayed fetch.
       val cp = mock(classOf[ControlPlane])
-      when(cp.findBatches(any(), any())).thenThrow(new ControlPlaneException("Error in control plane"))
+      when(cp.findBatches(any(), any(), any())).thenThrow(new ControlPlaneException("Error in control plane"))
 
       // Prepare the FetchHandler response to be called when the forceComplete method is invoked.
       val disklessResponse = Map(disklessTopicPartition ->
