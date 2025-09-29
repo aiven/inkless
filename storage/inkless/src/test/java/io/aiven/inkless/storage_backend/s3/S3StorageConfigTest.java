@@ -19,14 +19,19 @@ package io.aiven.inkless.storage_backend.s3;
 
 import org.apache.kafka.common.config.ConfigException;
 
+import org.assertj.core.util.Files;
 import org.junit.jupiter.api.Test;
 
+import java.io.File;
+import java.io.FileWriter;
+import java.io.IOException;
 import java.net.URI;
 import java.time.Duration;
 import java.util.Map;
 
 import software.amazon.awssdk.auth.credentials.AnonymousCredentialsProvider;
 import software.amazon.awssdk.auth.credentials.AwsCredentialsProvider;
+import software.amazon.awssdk.auth.credentials.AwsSessionCredentials;
 import software.amazon.awssdk.auth.credentials.EnvironmentVariableCredentialsProvider;
 import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
 import software.amazon.awssdk.regions.Region;
@@ -147,6 +152,36 @@ class S3StorageConfigTest {
         assertThat(config.apiCallAttemptTimeout()).isNull();
     }
 
+    @Test
+    void configWithCredentialsInFile() throws IOException {
+        final Region region = Region.US_EAST_2;
+        final String username = "username";
+        final String password = "password";
+        final String sessiontoken = "sessiontoken";
+        final File credentialsFile = Files.newTemporaryFile();
+        try (FileWriter writer = new FileWriter(credentialsFile)) {
+            writer.write("inkless.storage.aws.access.key.id=" + username + "\n");
+            writer.write("inkless.storage.aws.secret.access.key=" + password + "\n");
+            writer.write("inkless.storage.aws.session.token=" + sessiontoken + "\n");
+        }
+
+        final Map<String, Object> configs = Map.of(
+            "s3.bucket.name", BUCKET_NAME,
+            "s3.region", region.id(),
+            "s3.endpoint.url", MINIO_URL,
+            "aws.credentials.file", credentialsFile.getAbsolutePath());
+
+        final var config = new S3StorageConfig(configs);
+
+        final AwsCredentialsProvider credentialsProvider = config.credentialsProvider();
+        assertThat(credentialsProvider).isInstanceOf(S3RotatingCredentialsProvider.class);
+        final var awsCredentials = credentialsProvider.resolveCredentials();
+        assertThat(awsCredentials).isInstanceOf(AwsSessionCredentials.class);
+        assertThat(awsCredentials.accessKeyId()).isEqualTo(username);
+        assertThat(awsCredentials.secretAccessKey()).isEqualTo(password);
+        assertThat(((AwsSessionCredentials) awsCredentials).sessionToken()).isEqualTo(sessiontoken);
+    }
+
     //   - With missing static credentials
     @Test
     void configWithMissingStaticConfig() {
@@ -201,8 +236,7 @@ class S3StorageConfigTest {
             .isInstanceOf(ConfigException.class)
             .hasMessage("Either  static credential pair aws.access.key.id and aws.secret.access.key "
                 + "must be set together, "
-                + "or a custom provider class aws.credentials.provider.class. "
-                + "If both are null, default S3 credentials provider is used.");
+                + "or a custom provider class aws.credentials.provider.class.");
     }
 
     // - Failing configs scenarios
