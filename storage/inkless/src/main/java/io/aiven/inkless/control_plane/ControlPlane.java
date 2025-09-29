@@ -39,8 +39,10 @@ public interface ControlPlane extends Closeable, Configurable {
             List<CommitBatchRequest> batches);
 
     List<FindBatchResponse> findBatches(
-            List<FindBatchRequest> findBatchRequests,
-            int fetchMaxBytes);
+        List<FindBatchRequest> findBatchRequests,
+        int fetchMaxBytes,
+        int maxBatchesPerPartition
+    );
 
     void createTopicAndPartitions(Set<CreateTopicAndPartitionsRequest> requests);
 

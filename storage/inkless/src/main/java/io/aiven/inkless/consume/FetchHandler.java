@@ -53,7 +53,8 @@ public class FetchHandler implements Closeable {
                 state.config().storage(),
                 state.brokerTopicStats(),
                 state.config().fetchMetadataThreadPoolSize(),
-                state.config().fetchDataThreadPoolSize()
+                state.config().fetchDataThreadPoolSize(),
+                state.config().maxBatchesPerPartitionToFind()
             )
         );
     }

@@ -130,11 +130,12 @@ public class PostgresControlPlane extends AbstractControlPlane {
     @Override
     protected Iterator<FindBatchResponse> findBatchesForExistingPartitions(
         final Stream<FindBatchRequest> requests,
-        final int fetchMaxBytes
+        final int fetchMaxBytes,
+        final int maxBatchesPerPartition
     ) {
         final FindBatchesJob job = new FindBatchesJob(
             time, jooqCtx,
-            requests.toList(), fetchMaxBytes,
+            requests.toList(), fetchMaxBytes, maxBatchesPerPartition,
             metrics::onFindBatchesCompleted);
         return job.call().iterator();
     }

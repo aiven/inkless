@@ -116,7 +116,9 @@ class FindBatchesJobTest {
                 new FindBatchRequest(NON_EXISTENT_TOPIC_ID_PARTITION, 0, 1000)
             ),
             2000,
-            duration -> {});
+            0,
+            duration -> {}
+        );
         final List<FindBatchResponse> result = job.call();
 
         assertThat(result).containsExactlyInAnyOrder(
@@ -133,6 +135,7 @@ class FindBatchesJobTest {
             time, pgContainer.getJooqCtx(),
             List.of(new FindBatchRequest(T0P0, 0, 1500)),
             2000,
+            0,
             duration -> {}
         ).call();
 
@@ -158,6 +161,7 @@ class FindBatchesJobTest {
                 new FindBatchRequest(T1P0, 10, 1000)
             ),
             2000,
+            0,
             duration -> {}
         ).call();
 
@@ -183,6 +187,7 @@ class FindBatchesJobTest {
                 new FindBatchRequest(T0P0, 13, 100000)
             ),
             3000,
+            0,
             duration -> {}
         ).call();
 
@@ -207,6 +212,7 @@ class FindBatchesJobTest {
             time, pgContainer.getJooqCtx(),
             List.of(new FindBatchRequest(T0P0, 0, Integer.MAX_VALUE)),
             fetchMaxBytes,
+            0,
             duration -> {
             }
         ).call();
@@ -228,6 +234,7 @@ class FindBatchesJobTest {
             time, pgContainer.getJooqCtx(),
             List.of(new FindBatchRequest(T0P0, 0, Integer.MAX_VALUE)),
             fetchMaxBytes,
+            0,
             duration -> {
             }
         ).call();
@@ -252,8 +259,9 @@ class FindBatchesJobTest {
                 new FindBatchRequest(T0P0, 0, maxPartitionFetchBytes),
                 new FindBatchRequest(T0P1, 0, maxPartitionFetchBytes)
             ),
-            Integer.MAX_VALUE, duration -> {
-        }
+            Integer.MAX_VALUE,
+            0,
+            duration -> {}
         ).call();
 
         assertThat(result).containsExactlyInAnyOrder(
@@ -278,8 +286,9 @@ class FindBatchesJobTest {
                 new FindBatchRequest(T0P0, 0, maxPartitionFetchBytes),
                 new FindBatchRequest(T0P1, 0, maxPartitionFetchBytes)
             ),
-            Integer.MAX_VALUE, duration -> {
-        }
+            Integer.MAX_VALUE,
+            0,
+            duration -> {}
         ).call();
 
         assertThat(result).containsExactlyInAnyOrder(
@@ -313,8 +322,9 @@ class FindBatchesJobTest {
                 new FindBatchRequest(T0P0, 0, maxPartitionFetchBytes),
                 new FindBatchRequest(T0P1, 0, maxPartitionFetchBytes)
             ),
-            fetchMaxBytes, duration -> {
-        }
+            fetchMaxBytes,
+            0,
+            duration -> {}
         ).call();
 
         assertThat(result).containsExactlyInAnyOrder(
@@ -340,11 +350,12 @@ class FindBatchesJobTest {
         final List<FindBatchResponse> result = new FindBatchesJob(
             time, pgContainer.getJooqCtx(),
             List.of(
-                new FindBatchRequest(T0P0, 0, 1001),
-                new FindBatchRequest(T0P1, 0, 1001)
+                new FindBatchRequest(T0P0, 0, maxPartitionFetchBytes),
+                new FindBatchRequest(T0P1, 0, maxPartitionFetchBytes)
             ),
-            2000, duration -> {
-        }
+            fetchMaxBytes,
+            0,
+            duration -> {}
         ).call();
 
         // With the given limits, we expect both batches for T0P0, but only the first for T0P1 because of the overall fetchMaxBytes limit.
@@ -377,8 +388,9 @@ class FindBatchesJobTest {
                 new FindBatchRequest(T0P0, 0, maxPartitionFetchBytes),
                 new FindBatchRequest(T0P1, 0, maxPartitionFetchBytes)
             ),
-            fetchMaxBytes, duration -> {
-        }
+            fetchMaxBytes,
+            0,
+            duration -> {}
         ).call();
 
         assertThat(result).containsExactlyInAnyOrder(
@@ -389,6 +401,40 @@ class FindBatchesJobTest {
             new FindBatchResponse(Errors.NONE, List.of(
                 new BatchInfo(11L, OBJECT_KEY, BatchMetadata.of(T0P1, 10000, 1000, 0, 9, time.milliseconds(), time.milliseconds(), TimestampType.CREATE_TIME)),
                 new BatchInfo(12L, OBJECT_KEY, BatchMetadata.of(T0P1, 11000, 1000, 10, 19, time.milliseconds(), time.milliseconds(), TimestampType.CREATE_TIME))
+            ), 0, 100)
+        );
+    }
+
+    @ParameterizedTest(name = "maxPartitionFetchBytes = {0}, fetchMaxBytes = {1}")
+    @CsvSource({
+        "1001, 4000",
+        "1001, 4500",
+        "1001, 100000",
+        "2000, 4000",
+        "2000, 4500",
+        "2000, 100000",
+    })
+    void findWithCombinedLimitsReturnsOneBatchPerPartitionsAsLimit(int maxPartitionFetchBytes, int fetchMaxBytes) {
+        commitBatches(OBJECT_KEY, List.of(T0P0, T0P1), 10, 1000, 10);
+
+        final List<FindBatchResponse> result = new FindBatchesJob(
+            time, pgContainer.getJooqCtx(),
+            List.of(
+                new FindBatchRequest(T0P0, 0, maxPartitionFetchBytes),
+                new FindBatchRequest(T0P1, 0, maxPartitionFetchBytes)
+            ),
+            fetchMaxBytes,
+            1,  // give the limit of 1 batch per partition
+            duration -> {}
+        ).call();
+
+        // then we expect only one batch per partition, even if the limits would allow more
+        assertThat(result).containsExactlyInAnyOrder(
+            new FindBatchResponse(Errors.NONE, List.of(
+                new BatchInfo(1L, OBJECT_KEY, BatchMetadata.of(T0P0, 0, 1000, 0, 9, time.milliseconds(), time.milliseconds(), TimestampType.CREATE_TIME))
+            ), 0, 100),
+            new FindBatchResponse(Errors.NONE, List.of(
+                new BatchInfo(11L, OBJECT_KEY, BatchMetadata.of(T0P1, 10000, 1000, 0, 9, time.milliseconds(), time.milliseconds(), TimestampType.CREATE_TIME))
             ), 0, 100)
         );
     }
@@ -407,8 +453,9 @@ class FindBatchesJobTest {
                 new FindBatchRequest(T0P0, 0, maxPartitionFetchBytes),
                 new FindBatchRequest(T0P1, 0, maxPartitionFetchBytes)
             ),
-            fetchMaxBytes, duration -> {
-        }
+            fetchMaxBytes,
+            0,
+            duration -> {}
         ).call();
 
         assertThat(result).containsExactlyInAnyOrder(

@@ -54,6 +54,7 @@ import static org.mockito.Mockito.when;
 public class FindBatchesJobTest {
 
     private final Time time = new MockTime();
+    private final int maxBatchesPerPartition = 0;
 
     @Mock
     private ControlPlane controlPlane;
@@ -81,8 +82,8 @@ public class FindBatchesJobTest {
                 new BatchInfo(1L, OBJECT_KEY_MAIN_PART, BatchMetadata.of(partition0, 0, 10, 0, 0, logAppendTimestamp, maxBatchTimestamp, TimestampType.CREATE_TIME))
             ), logStartOffset, highWatermark)
         );
-        FindBatchesJob job = new FindBatchesJob(time, controlPlane, params, fetchInfos, durationMs -> {});
-        when(controlPlane.findBatches(requestCaptor.capture(), anyInt())).thenReturn(new ArrayList<>(coordinates.values()));
+        FindBatchesJob job = new FindBatchesJob(time, controlPlane, params, fetchInfos, maxBatchesPerPartition, durationMs -> {});
+        when(controlPlane.findBatches(requestCaptor.capture(), anyInt(), anyInt())).thenReturn(new ArrayList<>(coordinates.values()));
         Map<TopicIdPartition, FindBatchResponse> result = job.get();
 
         assertThat(result).isEqualTo(coordinates);
