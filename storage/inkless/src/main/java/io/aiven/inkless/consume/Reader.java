@@ -111,7 +111,7 @@ public class Reader implements AutoCloseable {
         final Map<TopicIdPartition, FetchRequest.PartitionData> fetchInfos
     ) {
         final Instant startAt = TimeUtils.durationMeasurementNow(time);
-        fetchMetrics.fetchStarted();
+        fetchMetrics.fetchStarted(fetchInfos.size());
         final var batchCoordinates = CompletableFuture.supplyAsync(
             new FindBatchesJob(
                 time,
@@ -132,11 +132,7 @@ public class Reader implements AutoCloseable {
                         objectFetcher,
                         dataExecutor,
                         coordinates,
-                        fetchMetrics::fetchPlanFinished,
-                        fetchMetrics::cacheQueryFinished,
-                        fetchMetrics::cacheStoreFinished,
-                        fetchMetrics::cacheHit,
-                        fetchMetrics::fetchFileFinished
+                        fetchMetrics
                     ).get()
             )
             .thenCombineAsync(batchCoordinates, (fileExtents, coordinates) ->
