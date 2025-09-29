@@ -134,6 +134,12 @@ public class InklessConfig extends AbstractConfig {
     public static final String FETCH_METADATA_THREAD_POOL_SIZE_DOC = "Thread pool size to concurrently fetch metadata from batch coordinator";
     private static final int FETCH_METADATA_THREAD_POOL_SIZE_DEFAULT = 8;
 
+    public static final String FETCH_FIND_BATCHES_MAX_BATCHES_PER_PARTITION_CONFIG = "fetch.find.batches.max.per.partition";
+    public static final String FETCH_FIND_BATCHES_MAX_BATCHES_PER_PARTITION_DOC = "The maximum number of batches to find per partition when processing a fetch request. "
+        + "A value of 0 means all available batches are fetched. "
+        + "This is primarily intended for environments where the batches fan-out on fetch requests can overload the control plane back-end.";
+    private static final int FETCH_FIND_BATCHES_MAX_BATCHES_PER_PARTITION_DEFAULT = 0;
+
     public static ConfigDef configDef() {
         final ConfigDef configDef = new ConfigDef();
 
@@ -312,6 +318,14 @@ public class InklessConfig extends AbstractConfig {
             ConfigDef.Importance.LOW,
             FETCH_METADATA_THREAD_POOL_SIZE_DOC
         );
+        configDef.define(
+            FETCH_FIND_BATCHES_MAX_BATCHES_PER_PARTITION_CONFIG,
+            ConfigDef.Type.INT,
+            FETCH_FIND_BATCHES_MAX_BATCHES_PER_PARTITION_DEFAULT,
+            ConfigDef.Range.atLeast(0),
+            ConfigDef.Importance.LOW,
+            FETCH_FIND_BATCHES_MAX_BATCHES_PER_PARTITION_DOC
+        );
 
         return configDef;
     }
@@ -414,5 +428,9 @@ public class InklessConfig extends AbstractConfig {
 
     public int fetchMetadataThreadPoolSize() {
         return getInt(FETCH_METADATA_THREAD_POOL_SIZE_CONFIG);
+    }
+
+    public int maxBatchesPerPartitionToFind() {
+        return getInt(FETCH_FIND_BATCHES_MAX_BATCHES_PER_PARTITION_CONFIG);
     }
 }

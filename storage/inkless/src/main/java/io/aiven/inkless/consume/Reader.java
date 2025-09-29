@@ -54,6 +54,7 @@ public class Reader implements AutoCloseable {
     private final ObjectCache cache;
     private final ControlPlane controlPlane;
     private final ObjectFetcher objectFetcher;
+    private final int maxBatchesPerPartitionToFind;
     private final ExecutorService metadataExecutor;
     private final ExecutorService dataExecutor;
     private final InklessFetchMetrics fetchMetrics;
@@ -68,7 +69,8 @@ public class Reader implements AutoCloseable {
         ObjectFetcher objectFetcher,
         BrokerTopicStats brokerTopicStats,
         int fetchMetadataThreadPoolSize,
-        int fetchDataThreadPoolSize
+        int fetchDataThreadPoolSize,
+        int maxBatchesPerPartitionToFind
     ) {
         this(
             time,
@@ -77,6 +79,7 @@ public class Reader implements AutoCloseable {
             cache,
             controlPlane,
             objectFetcher,
+            maxBatchesPerPartitionToFind,
             Executors.newFixedThreadPool(fetchMetadataThreadPoolSize, new InklessThreadFactory("inkless-fetch-metadata-", false)),
             Executors.newFixedThreadPool(fetchDataThreadPoolSize, new InklessThreadFactory("inkless-fetch-data-", false)),
             brokerTopicStats
@@ -90,6 +93,7 @@ public class Reader implements AutoCloseable {
         ObjectCache cache,
         ControlPlane controlPlane,
         ObjectFetcher objectFetcher,
+        int maxBatchesPerPartitionToFind,
         ExecutorService metadataExecutor,
         ExecutorService dataExecutor,
         BrokerTopicStats brokerTopicStats
@@ -100,6 +104,7 @@ public class Reader implements AutoCloseable {
         this.cache = cache;
         this.controlPlane = controlPlane;
         this.objectFetcher = objectFetcher;
+        this.maxBatchesPerPartitionToFind = maxBatchesPerPartitionToFind;
         this.metadataExecutor = metadataExecutor;
         this.dataExecutor = dataExecutor;
         this.fetchMetrics = new InklessFetchMetrics(time);
@@ -118,6 +123,7 @@ public class Reader implements AutoCloseable {
                 controlPlane,
                 params,
                 fetchInfos,
+                maxBatchesPerPartitionToFind,
                 fetchMetrics::findBatchesFinished
             ),
             metadataExecutor

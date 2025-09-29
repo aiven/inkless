@@ -206,7 +206,9 @@ public class InMemoryControlPlane extends AbstractControlPlane {
     @Override
     protected Iterator<FindBatchResponse> findBatchesForExistingPartitions(
         final Stream<FindBatchRequest> requests,
-        final int fetchMaxBytes
+        final int fetchMaxBytes,
+        // ignored for in-memory implementation
+        final int maxBatchesPerPartition
     ) {
         return requests
             .map(request -> findBatchesForExistingPartition(request, fetchMaxBytes))
