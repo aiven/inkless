@@ -344,7 +344,8 @@ class BrokerServer(
         metrics,
         time,
         metadataCache,
-        clientToControllerChannelManager
+        clientToControllerChannelManager,
+        () => groupCoordinator
       )
       kafkaScheduler.schedule("remote-cluster-metadata-refresh", () => remoteClusterMetadataManager.refreshRemoteMetadata(), 5000L, 30000L)
 

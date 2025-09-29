@@ -20,37 +20,57 @@ import org.apache.kafka.clients.ClientResponse;
 import org.apache.kafka.clients.ClientUtils;
 import org.apache.kafka.clients.admin.AlterConfigOp;
 import org.apache.kafka.clients.admin.ConfigEntry;
+import org.apache.kafka.clients.admin.ListGroupsOptions;
+import org.apache.kafka.common.ConsumerGroupState;
+import org.apache.kafka.common.GroupState;
+import org.apache.kafka.common.GroupType;
 import org.apache.kafka.common.Node;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.config.ConfigResource;
 import org.apache.kafka.common.message.CreatePartitionsRequestData;
 import org.apache.kafka.common.message.DescribeConfigsRequestData;
 import org.apache.kafka.common.message.IncrementalAlterConfigsRequestData;
+import org.apache.kafka.common.message.ListGroupsRequestData;
+import org.apache.kafka.common.message.OffsetCommitRequestData;
+import org.apache.kafka.common.message.OffsetFetchRequestData;
 import org.apache.kafka.common.metrics.Metrics;
+import org.apache.kafka.common.network.ClientInformation;
 import org.apache.kafka.common.network.ListenerName;
+import org.apache.kafka.common.protocol.ApiKeys;
 import org.apache.kafka.common.requests.CreatePartitionsRequest;
 import org.apache.kafka.common.requests.DescribeConfigsRequest;
 import org.apache.kafka.common.requests.DescribeConfigsResponse;
 import org.apache.kafka.common.requests.IncrementalAlterConfigsRequest;
 import org.apache.kafka.common.requests.IncrementalAlterConfigsResponse;
+import org.apache.kafka.common.requests.ListGroupsRequest;
+import org.apache.kafka.common.requests.ListGroupsResponse;
 import org.apache.kafka.common.requests.MetadataRequest;
 import org.apache.kafka.common.requests.MetadataResponse;
+import org.apache.kafka.common.requests.OffsetFetchRequest;
+import org.apache.kafka.common.requests.OffsetFetchResponse;
+import org.apache.kafka.common.requests.RequestContext;
+import org.apache.kafka.common.requests.RequestHeader;
 import org.apache.kafka.common.resource.ResourceType;
+import org.apache.kafka.common.security.auth.KafkaPrincipal;
 import org.apache.kafka.common.security.auth.SecurityProtocol;
 import org.apache.kafka.common.utils.LogContext;
 import org.apache.kafka.common.utils.Time;
+import org.apache.kafka.coordinator.group.GroupCoordinator;
 import org.apache.kafka.image.LocalReplicaChanges;
 import org.apache.kafka.image.MetadataDelta;
 import org.apache.kafka.image.MetadataImage;
 import org.apache.kafka.metadata.MetadataCache;
+import org.apache.kafka.server.authorizer.AuthorizableRequestContext;
 import org.apache.kafka.server.common.ControllerRequestCompletionHandler;
 import org.apache.kafka.server.common.NodeToControllerChannelManager;
+import org.apache.kafka.server.common.RequestLocal;
 import org.apache.kafka.server.network.BrokerEndPoint;
 import org.apache.kafka.server.util.Scheduler;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.net.InetAddress;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
@@ -64,7 +84,9 @@ import java.util.Set;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.function.Supplier;
 
+import static java.util.Collections.singletonList;
 import static org.apache.kafka.clients.CommonClientConfigs.BOOTSTRAP_SERVERS_CONFIG;
 
 /**
@@ -88,13 +110,15 @@ public class RemoteClusterMetadataManager implements AutoCloseable {
     private MetadataImage metadataImage;
     private MetadataCache metadataCache;
     private NodeToControllerChannelManager channelManager;
+    private final Supplier<GroupCoordinator> groupCoordinatorSupplier;
 
     public RemoteClusterMetadataManager(
         KafkaConfig config,
         Metrics metrics,
         Time time,
         MetadataCache metadataCache,
-        NodeToControllerChannelManager channelManager
+        NodeToControllerChannelManager channelManager,
+        Supplier<GroupCoordinator> groupCoordinatorSupplier
     ) {
         this.brokerConfig = config;
         this.nodeId = config.nodeId();
@@ -108,6 +132,7 @@ public class RemoteClusterMetadataManager implements AutoCloseable {
         this.random = new Random();
         this.metadataCache = metadataCache;
         this.channelManager = channelManager;
+        this.groupCoordinatorSupplier = groupCoordinatorSupplier;
     }
 
     @Override
@@ -265,7 +290,83 @@ public class RemoteClusterMetadataManager implements AutoCloseable {
             }
 
         });
+        updateConsumerGroupOffsets();
+    }
 
+    private void updateConsumerGroupOffsets() {
+        remoteBrokers.forEach((clusterLinkName, senders) -> {
+
+            // 1. list group
+            ListGroupsRequest.Builder builder = new ListGroupsRequest.Builder(new ListGroupsRequestData()
+                    .setTypesFilter(List.of(GroupType.CLASSIC.name(), GroupType.CONSUMER.name()))
+                    .setStatesFilter(singletonList(GroupState.STABLE.name())));
+            var listGroupResponse = senders.get(random.nextInt(senders.size())).sendRequest(builder);
+            if (listGroupResponse.responseBody() instanceof ListGroupsResponse listGroupsRes) {
+                log.info("!!! periodic list group: {}", listGroupsRes);
+
+                // 2. get committed offsets for each group
+                OffsetFetchRequest.Builder offsetFetchBuilder = OffsetFetchRequest.Builder.forTopicNames(
+                        new OffsetFetchRequestData()
+                                .setRequireStable(false)
+                                .setGroups(listGroupsRes.data().groups().stream().map(group -> new OffsetFetchRequestData.OffsetFetchRequestGroup()
+                                                .setGroupId(group.groupId())
+                                                .setTopics(null)).toList())
+                                , false);
+                var offsetFetchResponse = senders.get(random.nextInt(senders.size())).sendRequest(offsetFetchBuilder);
+                if (offsetFetchResponse.responseBody() instanceof OffsetFetchResponse offsetFetchRes) {
+                    log.info("!!! periodic offset fetch: {}", offsetFetchRes);
+
+                    // 3. commit offsets to consumer group coordinator
+                    // TODO: need to find the current group coordinator for each group
+                    offsetFetchRes.data().groups().forEach(group -> {
+                        List<OffsetCommitRequestData.OffsetCommitRequestTopic> topicList = new ArrayList<>();
+                        group.topics().stream().forEach(t -> {
+                                List<OffsetCommitRequestData.OffsetCommitRequestPartition> parList = new ArrayList<>();
+                                t.partitions().forEach(par -> {
+                                    parList.add(new OffsetCommitRequestData.OffsetCommitRequestPartition()
+                                            .setPartitionIndex(par.partitionIndex())
+                                            .setCommittedOffset(par.committedOffset())
+                                            .setCommittedLeaderEpoch(par.committedLeaderEpoch())
+                                            .setCommittedMetadata(par.metadata()));
+                                });
+                                topicList.add(new OffsetCommitRequestData.OffsetCommitRequestTopic()
+                                        .setTopicId(t.topicId())
+                                        .setName(t.name())
+                                        .setPartitions(parList));
+
+                        });
+                        groupCoordinatorSupplier.get().commitOffsets(
+                                new RequestContext(
+                                        new RequestHeader(
+                                                ApiKeys.OFFSET_COMMIT,
+                                                ApiKeys.OFFSET_COMMIT.latestVersion(),
+                                                "client",
+                                                0
+                                        ),
+                                        "1",
+                                        InetAddress.getLoopbackAddress(),
+                                        KafkaPrincipal.ANONYMOUS,
+                                        ListenerName.forSecurityProtocol(SecurityProtocol.PLAINTEXT),
+                                        SecurityProtocol.PLAINTEXT,
+                                        ClientInformation.EMPTY,
+                                        true
+                                ),
+                                new OffsetCommitRequestData()
+                                        .setGroupId(group.groupId())
+                                        .setMemberId("")
+                                        .setGenerationIdOrMemberEpoch(-1)
+                                        .setRetentionTimeMs(-1)
+                                        .setGroupInstanceId("")
+                                        .setTopics(topicList),
+                                RequestLocal.noCaching().bufferSupplier()
+                        ).handle((data, exception) -> {
+                            log.info("!!! periodic offset commit: {} ;; {}", data, exception);
+                            return null;
+                        });
+                    });
+                }
+            }
+        });
     }
 
     public void clear() {

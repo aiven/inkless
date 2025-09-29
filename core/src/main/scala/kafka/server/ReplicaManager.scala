@@ -1666,8 +1666,6 @@ class ReplicaManager(val config: KafkaConfig,
                     fetchInfos: Seq[(TopicIdPartition, PartitionData)],
                     quota: ReplicaQuota,
                     responseCallback: Seq[(TopicIdPartition, FetchPartitionData)] => Unit): Unit = {
-    info("!!! fetchMessages:" + fetchInfos)
-
     // check if this fetch request can be satisfied right away
     val logReadResults = readFromLog(params, fetchInfos, quota, readFromPurgatory = false)
     var bytesReadable: Long = 0
@@ -1768,7 +1766,6 @@ class ReplicaManager(val config: KafkaConfig,
     }
 
     def read(tp: TopicIdPartition, fetchInfo: PartitionData, limitBytes: Int, minOneMessage: Boolean): LogReadResult = {
-      info("!!! readFromLog:" + tp + " " + fetchInfo)
       val offset = fetchInfo.fetchOffset
       val partitionFetchSize = fetchInfo.maxBytes
       val followerLogStartOffset = fetchInfo.logStartOffset

@@ -198,6 +198,8 @@ public class ConsoleConsumer {
                 if (!recordIter.hasNext() && (time.milliseconds() - startTimeMs > timeoutMs)) {
                     throw new TimeoutException();
                 }
+                System.out.println("!!! committing");
+                consumer.commitSync();
             }
             return recordIter.next();
         }
