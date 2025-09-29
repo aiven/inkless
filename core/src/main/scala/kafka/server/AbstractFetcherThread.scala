@@ -250,10 +250,17 @@ abstract class AbstractFetcherThread(name: String,
     }
   }
 
-  private def updateLeaderEpochForReadOnly(fetchedEpochs: Map[TopicPartition, PartitionData]): Unit = {
+  /**
+   * Updates the leader epoch for read-only partitions.
+   * This method updates the partition fetch states with the latest leader epoch information
+   * while preserving other fetch state properties.
+   *
+   * @param partitionToData Partitions with their updated leader epoch data
+   */
+  private def updateLeaderEpochForReadOnly(partitionToData: Map[TopicPartition, PartitionData]): Unit = {
     val newStates: Map[TopicPartition, PartitionFetchState] = partitionStates.partitionStateMap.asScala
       .map { case (topicPartition, currentFetchState) =>
-        val updatedInitFetchState = fetchedEpochs.get(topicPartition) match {
+        val updatedInitFetchState = partitionToData.get(topicPartition) match {
           case Some(partitionData) =>
             // if we can't get the log from the log, assume it's starting from the beginning
             val latestEpochInLog = latestEpochFromLog(topicPartition).orElse(0)
@@ -267,11 +274,17 @@ abstract class AbstractFetcherThread(name: String,
     partitionStates.set(newStates.asJava)
   }
 
-  private def maybeRecreateFetcherForReadOnly(fetchedEpochs: Map[TopicPartition, PartitionData]): Unit = {
+  /**
+   * Creates or reuses remote fetcher threads for read-only partitions.
+   * Fetchers are shutdown when idle (no partition assigned) or during system shutdown.
+   *
+   * @param partitionToData Partitions with their current leader information to be processed
+   */
+  private def maybeCreateFetcherForReadOnly(partitionToData: Map[TopicPartition, PartitionData]): Unit = {
     var newStates: Map[TopicPartition, InitialFetchState] = scala.collection.mutable.Map.empty[TopicPartition, InitialFetchState]
       partitionStates.partitionStateMap.asScala
       .foreach { case (topicPartition, currentFetchState) =>
-        fetchedEpochs.get(topicPartition) match {
+        partitionToData.get(topicPartition) match {
           case Some(partitionData) =>
             val leaderNode = if (leader.lastSeenEndpoints().isEmpty) Optional.empty() else Optional.of(leader.lastSeenEndpoints().get(partitionData.currentLeader().leaderId()))
             // if leader node change, we need to update it.
@@ -284,7 +297,7 @@ abstract class AbstractFetcherThread(name: String,
           case _ =>
         }
       }
-    info("!!! recreateFetcherForReadOnly:" + newStates)
+    info("!!! createFetcherForReadOnly:" + newStates)
     removeFetcherForPartitions(newStates.keySet)
     addFetcherForPartitions(newStates)
   }
@@ -537,7 +550,7 @@ abstract class AbstractFetcherThread(name: String,
     if (readOnlyEndOffsets.nonEmpty)
       updateLeaderEpochForReadOnly(readOnlyEndOffsets)
     if (recreateFetchers.nonEmpty)
-      maybeRecreateFetcherForReadOnly(recreateFetchers)
+      maybeCreateFetcherForReadOnly(recreateFetchers)
     if (partitionsWithError.nonEmpty) {
       handlePartitionsWithErrors(partitionsWithError, "processFetchRequest")
     }
