@@ -69,6 +69,8 @@ public class FetchPlannerTest {
     ObjectFetcher fetcher;
     @Mock
     ExecutorService dataExecutor;
+    @Mock
+    InklessFetchMetrics metrics;
 
     ObjectCache cache = new NullCache();
     KeyAlignmentStrategy keyAlignmentStrategy = new FixedBlockAlignment(Integer.MAX_VALUE);
@@ -198,22 +200,18 @@ public class FetchPlannerTest {
         );
     }
 
-    private FetchPlanner fetchPlannerJob(
-            Map<TopicIdPartition, FindBatchResponse> batchCoordinatesFuture
-    ) {
+    private FetchPlanner fetchPlannerJob(Map<TopicIdPartition, FindBatchResponse> batchCoordinatesFuture) {
         return new FetchPlanner(
-                time, FetchPlannerTest.OBJECT_KEY_CREATOR, keyAlignmentStrategy,
-                cache, fetcher, dataExecutor, batchCoordinatesFuture,
-                durationMs -> {}, durationMs -> {}, durationMs -> {}, hitBool -> {}, durationMs -> {}
+            time, FetchPlannerTest.OBJECT_KEY_CREATOR, keyAlignmentStrategy,
+            cache, fetcher, dataExecutor, batchCoordinatesFuture, metrics
         );
     }
 
-    private CacheFetchJob cacheFetchJob(
-            ObjectKey objectKey,
-            ByteRange byteRange
-    ) {
-        return new CacheFetchJob(cache, objectKey, byteRange, time, fetcher,
-                durationMs -> {}, durationMs -> {}, hitBool -> {}, durationMs -> {});
+    private CacheFetchJob cacheFetchJob(         ObjectKey objectKey, ByteRange byteRange) {
+        return new CacheFetchJob(
+            cache, objectKey, byteRange, time, fetcher,
+            durationMs -> {}, durationMs -> {}, hitBool -> {}, durationMs -> {}
+        );
     }
 
     private void assertBatchPlan(Map<TopicIdPartition, FindBatchResponse> coordinates, Set<CacheFetchJob> jobs) {

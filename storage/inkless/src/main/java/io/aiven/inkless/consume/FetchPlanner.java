@@ -23,16 +23,17 @@ import org.apache.kafka.common.utils.Time;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
-import java.util.function.Consumer;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
 import io.aiven.inkless.TimeUtils;
 import io.aiven.inkless.cache.KeyAlignmentStrategy;
 import io.aiven.inkless.cache.ObjectCache;
+import io.aiven.inkless.common.ByteRange;
 import io.aiven.inkless.common.ObjectKeyCreator;
 import io.aiven.inkless.control_plane.BatchInfo;
 import io.aiven.inkless.control_plane.FindBatchResponse;
@@ -48,24 +49,17 @@ public class FetchPlanner implements Supplier<List<Future<FileExtent>>> {
     private final ObjectFetcher objectFetcher;
     private final ExecutorService dataExecutor;
     private final Map<TopicIdPartition, FindBatchResponse> batchCoordinates;
-    private final Consumer<Long> fetchPlanDurationCallback;
-    private final Consumer<Long> cacheQueryDurationCallback;
-    private final Consumer<Long> cacheStoreDurationCallback;
-    private final Consumer<Boolean> cacheHitRateCallback;
-    private final Consumer<Long> fileFetchDurationCallback;
+    private final InklessFetchMetrics metrics;
 
-    public FetchPlanner(Time time,
-                        ObjectKeyCreator objectKeyCreator,
-                        KeyAlignmentStrategy keyAlignment,
-                        ObjectCache cache,
-                        ObjectFetcher objectFetcher,
-                        ExecutorService dataExecutor,
-                        Map<TopicIdPartition, FindBatchResponse> batchCoordinates,
-                        Consumer<Long> fetchPlanDurationCallback,
-                        Consumer<Long> cacheQueryDurationCallback,
-                        Consumer<Long> cacheStoreDurationCallback,
-                        Consumer<Boolean> cacheHitRateCallback,
-                        Consumer<Long> fileFetchDurationCallback
+    public FetchPlanner(
+        Time time,
+        ObjectKeyCreator objectKeyCreator,
+        KeyAlignmentStrategy keyAlignment,
+        ObjectCache cache,
+        ObjectFetcher objectFetcher,
+        ExecutorService dataExecutor,
+        Map<TopicIdPartition, FindBatchResponse> batchCoordinates,
+        InklessFetchMetrics metrics
     ) {
         this.time = time;
         this.objectKeyCreator = objectKeyCreator;
@@ -74,11 +68,7 @@ public class FetchPlanner implements Supplier<List<Future<FileExtent>>> {
         this.objectFetcher = objectFetcher;
         this.dataExecutor = dataExecutor;
         this.batchCoordinates = batchCoordinates;
-        this.fetchPlanDurationCallback = fetchPlanDurationCallback;
-        this.cacheQueryDurationCallback = cacheQueryDurationCallback;
-        this.cacheStoreDurationCallback = cacheStoreDurationCallback;
-        this.cacheHitRateCallback = cacheHitRateCallback;
-        this.fileFetchDurationCallback = fileFetchDurationCallback;
+        this.metrics = metrics;
     }
 
     private List<Future<FileExtent>> doWork(final Map<TopicIdPartition, FindBatchResponse> batchCoordinates) {
@@ -86,22 +76,36 @@ public class FetchPlanner implements Supplier<List<Future<FileExtent>>> {
         return submitAll(jobs);
     }
 
-    private List<Callable<FileExtent>> planJobs(Map<TopicIdPartition, FindBatchResponse> batchCoordinates) {
-        return batchCoordinates.values().stream()
-                .filter(findBatch -> findBatch.errors() == Errors.NONE)
-                .map(FindBatchResponse::batches)
-                .flatMap(List::stream)
-                // Merge batch requests
-                .collect(Collectors.groupingBy(BatchInfo::objectKey, Collectors.mapping(b -> b.metadata().range(), Collectors.toList())))
-                .entrySet()
-                .stream()
-                .flatMap(e -> keyAlignment.align(e.getValue())
-                        .stream()
-                        .map(byteRange ->
-                                new CacheFetchJob(cache, objectKeyCreator.from(e.getKey()), byteRange, time, objectFetcher,
-                                        cacheQueryDurationCallback, cacheStoreDurationCallback, cacheHitRateCallback, fileFetchDurationCallback)
-                        ))
-                .collect(Collectors.toList());
+    private List<Callable<FileExtent>> planJobs(final Map<TopicIdPartition, FindBatchResponse> batchCoordinates) {
+        final Set<Map.Entry<String, List<ByteRange>>> objectKeysToRanges = batchCoordinates.values().stream()
+            .filter(findBatch -> findBatch.errors() == Errors.NONE)
+            .map(FindBatchResponse::batches)
+            .peek(batches -> metrics.recordFetchBatchSize(batches.size()))
+            .flatMap(List::stream)
+            // Merge batch requests
+            .collect(Collectors.groupingBy(BatchInfo::objectKey, Collectors.mapping(b -> b.metadata().range(), Collectors.toList())))
+            .entrySet();
+        metrics.recordFetchObjectsSize(objectKeysToRanges.size());
+        return objectKeysToRanges.stream()
+            .flatMap(e ->
+                keyAlignment.align(e.getValue())
+                    .stream()
+                    .map(byteRange -> getCacheFetchJob(e.getKey(), byteRange)))
+            .collect(Collectors.toList());
+    }
+
+    private CacheFetchJob getCacheFetchJob(final String objectKey, final ByteRange byteRange) {
+        return new CacheFetchJob(
+            cache,
+            objectKeyCreator.from(objectKey),
+            byteRange,
+            time,
+            objectFetcher,
+            metrics::cacheQueryFinished,
+            metrics::cacheStoreFinished,
+            metrics::cacheHit,
+            metrics::fetchFileFinished
+        );
     }
 
     private List<Future<FileExtent>> submitAll(List<Callable<FileExtent>> jobs) {
@@ -112,6 +116,6 @@ public class FetchPlanner implements Supplier<List<Future<FileExtent>>> {
 
     @Override
     public List<Future<FileExtent>> get() {
-        return TimeUtils.measureDurationMsSupplier(time, () -> doWork(batchCoordinates), fetchPlanDurationCallback);
+        return TimeUtils.measureDurationMsSupplier(time, () -> doWork(batchCoordinates), metrics::fetchPlanFinished);
     }
 }
