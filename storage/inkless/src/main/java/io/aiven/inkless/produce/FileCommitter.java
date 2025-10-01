@@ -40,7 +40,6 @@ import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 
 import io.aiven.inkless.TimeUtils;
-import io.aiven.inkless.cache.KeyAlignmentStrategy;
 import io.aiven.inkless.cache.ObjectCache;
 import io.aiven.inkless.common.InklessThreadFactory;
 import io.aiven.inkless.common.ObjectKey;
@@ -66,7 +65,6 @@ class FileCommitter implements Closeable {
     private final ControlPlane controlPlane;
     private final ObjectKeyCreator objectKeyCreator;
     private final StorageBackend storage;
-    private final KeyAlignmentStrategy keyAlignmentStrategy;
     private final ObjectCache objectCache;
     private final Time time;
     private final int maxFileUploadAttempts;
@@ -84,13 +82,12 @@ class FileCommitter implements Closeable {
                   final ControlPlane controlPlane,
                   final ObjectKeyCreator objectKeyCreator,
                   final StorageBackend storage,
-                  final KeyAlignmentStrategy keyAlignmentStrategy,
                   final ObjectCache objectCache,
                   final Time time,
                   final int maxFileUploadAttempts,
                   final Duration fileUploadRetryBackoff,
                   final int fileUploaderThreadPoolSize) {
-        this(brokerId, controlPlane, objectKeyCreator, storage, keyAlignmentStrategy, objectCache, time, maxFileUploadAttempts, fileUploadRetryBackoff,
+        this(brokerId, controlPlane, objectKeyCreator, storage, objectCache, time, maxFileUploadAttempts, fileUploadRetryBackoff,
             Executors.newFixedThreadPool(fileUploaderThreadPoolSize, new InklessThreadFactory("inkless-file-uploader-", false)),
             // It must be single-thread to preserve the commit order.
             Executors.newSingleThreadExecutor(new InklessThreadFactory("inkless-file-committer-", false)),
@@ -105,7 +102,6 @@ class FileCommitter implements Closeable {
                   final ControlPlane controlPlane,
                   final ObjectKeyCreator objectKeyCreator,
                   final StorageBackend storage,
-                  final KeyAlignmentStrategy keyAlignmentStrategy,
                   final ObjectCache objectCache,
                   final Time time,
                   final int maxFileUploadAttempts,
@@ -119,7 +115,6 @@ class FileCommitter implements Closeable {
         this.objectKeyCreator = Objects.requireNonNull(objectKeyCreator, "objectKeyCreator cannot be null");
         this.storage = Objects.requireNonNull(storage, "storage cannot be null");
         this.objectCache = Objects.requireNonNull(objectCache, "objectCache cannot be null");
-        this.keyAlignmentStrategy = Objects.requireNonNull(keyAlignmentStrategy, "keyAlignmentStrategy cannot be null");
         this.time = Objects.requireNonNull(time, "time cannot be null");
         if (maxFileUploadAttempts <= 0) {
             throw new IllegalArgumentException("maxFileUploadAttempts must be positive");
@@ -152,10 +147,12 @@ class FileCommitter implements Closeable {
         lock.lock();
         try {
             final Instant uploadAndCommitStart = TimeUtils.durationMeasurementNow(time);
-            CompletableFuture<List<CommitBatchResponse>> commitFuture;
+            final Future<ObjectKey> uploadFuture;
+            final CompletableFuture<List<CommitBatchResponse>> commitFuture;
             if (file.isEmpty()) {
                 // If the file is empty, skip uploading and committing, but proceed with the later steps.
                 commitFuture = CompletableFuture.completedFuture(Collections.emptyList());
+                uploadFuture = CompletableFuture.completedFuture(null);
             } else {
                 metrics.fileAdded(file.size());
                 metrics.batchesAdded(file.commitBatchRequests().size());
@@ -174,7 +171,7 @@ class FileCommitter implements Closeable {
                         file.data(),
                         metrics::fileUploadFinished
                 );
-                final Future<ObjectKey> uploadFuture = executorServiceUpload.submit(uploadJob);
+                uploadFuture = executorServiceUpload.submit(uploadJob);
 
                 final FileCommitJob commitJob = new FileCommitJob(
                         brokerId,
@@ -203,20 +200,20 @@ class FileCommitter implements Closeable {
                                 metrics.fileFinished(file.start(), uploadAndCommitStart);
                             }
                         });
-
-                final CacheStoreJob cacheStoreJob = new CacheStoreJob(
-                        time,
-                        objectCache,
-                        keyAlignmentStrategy,
-                        file.data(),
-                        uploadFuture,
-                        metrics::cacheStoreFinished
-                );
-                executorServiceCacheStore.submit(cacheStoreJob);
             }
             commitFuture.whenComplete((commitBatchResponses, throwable) -> {
                 final AppendCompleter completerJob = new AppendCompleter(file);
                 if (commitBatchResponses != null) {
+                    final CacheStoreJob cacheStoreJob = new CacheStoreJob(
+                            time,
+                            objectCache,
+                            file.data(),
+                            uploadFuture,
+                            commitBatchResponses,
+                            metrics::cacheStoreFinished
+                    );
+                    executorServiceCacheStore.submit(cacheStoreJob);
+
                     completerJob.finishCommitSuccessfully(commitBatchResponses);
                     metrics.writeCompleted();
                 } else {

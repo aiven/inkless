@@ -17,6 +17,9 @@
  */
 package io.aiven.inkless.consume;
 
+import org.apache.kafka.common.TopicIdPartition;
+import org.apache.kafka.common.Uuid;
+import org.apache.kafka.common.record.TimestampType;
 import org.apache.kafka.common.utils.MockTime;
 import org.apache.kafka.common.utils.Time;
 
@@ -29,6 +32,8 @@ import org.mockito.quality.Strictness;
 
 import java.nio.ByteBuffer;
 import java.nio.channels.ReadableByteChannel;
+import java.util.List;
+import java.util.Set;
 
 import io.aiven.inkless.cache.MemoryCache;
 import io.aiven.inkless.cache.NullCache;
@@ -36,6 +41,9 @@ import io.aiven.inkless.cache.ObjectCache;
 import io.aiven.inkless.common.ByteRange;
 import io.aiven.inkless.common.ObjectKey;
 import io.aiven.inkless.common.PlainObjectKey;
+import io.aiven.inkless.common.cache.CacheKeyCreator;
+import io.aiven.inkless.control_plane.BatchInfo;
+import io.aiven.inkless.control_plane.BatchMetadata;
 import io.aiven.inkless.generated.FileExtent;
 import io.aiven.inkless.storage_backend.common.ObjectFetcher;
 
@@ -69,10 +77,11 @@ public class CacheFetchJobTest {
         when(fetcher.readToByteBuffer(channel)).thenReturn(ByteBuffer.wrap(array));
 
         ObjectCache cache = new NullCache();
-        CacheFetchJob cacheFetchJob = cacheFetchJob(cache, objectA, range);
-        FileExtent actualFile = cacheFetchJob.call();
-
-        assertThat(actualFile).isEqualTo(expectedFile);
+        final BatchInfo batchInfo = new BatchInfo(1L, "objkey", BatchMetadata.of(
+                new TopicIdPartition(Uuid.randomUuid(), 0, "topic-a"), 0, 10, 0, 9, 10, 21, TimestampType.CREATE_TIME));
+        CacheFetchJob cacheFetchJob = cacheFetchJob(cache, objectA, List.of(batchInfo));
+        final Set<FileExtent> actualFiles = cacheFetchJob.call();
+        assertThat(actualFiles).contains(expectedFile);
     }
 
     @Test
@@ -82,25 +91,35 @@ public class CacheFetchJobTest {
         for (int i = 0; i < size; i++) {
             array[i] = (byte) i;
         }
-        ByteRange range = new ByteRange(0, size);
-        FileExtent expectedFile = FileFetchJob.createFileExtent(objectA, range, ByteBuffer.wrap(array));
+        final ByteRange range = new ByteRange(0, size);
+        final FileExtent expectedFile = FileFetchJob.createFileExtent(objectA, range, ByteBuffer.wrap(array));
 
-        ObjectCache cache = new MemoryCache();
-        cache.put(CacheFetchJob.createCacheKey(objectA, range), expectedFile);
-        CacheFetchJob cacheFetchJob = cacheFetchJob(cache, objectA, range);
-        FileExtent actualFile = cacheFetchJob.call();
-
-        assertThat(actualFile).isEqualTo(expectedFile);
+        final ObjectCache cache = new MemoryCache();
+        cache.put(CacheKeyCreator.create(objectA, range), expectedFile);
+        final BatchInfo batchInfo = new BatchInfo(1L, "objkey", BatchMetadata.of(
+                new TopicIdPartition(Uuid.randomUuid(), 0, "topic-a"), 0, 10, 0, 9, 10, 21, TimestampType.CREATE_TIME));
+        CacheFetchJob cacheFetchJob = cacheFetchJob(cache, objectA, List.of(batchInfo));
+        final Set<FileExtent> actualFiles = cacheFetchJob.call();
+        assertThat(actualFiles).contains(expectedFile);
         verifyNoInteractions(fetcher);
     }
 
     private CacheFetchJob cacheFetchJob(
-            ObjectCache cache,
-            ObjectKey objectKey,
-            ByteRange byteRange
+        final ObjectCache cache,
+        final ObjectKey objectKey,
+        final List<BatchInfo> batchInfoList
     ) {
-        return new CacheFetchJob(cache, objectKey, byteRange, time, fetcher,
-                durationMs -> {}, durationMs -> {}, hitBool -> {}, durationMs -> {}, cacheEntrySize -> {});
-    }
-
+        return new CacheFetchJob(
+            cache,
+            fetcher,
+            objectKey,
+            batchInfoList,
+            time,
+            durationMs -> {},
+            durationMs -> {},
+            hitBool -> {},
+            durationMs -> {},
+            cacheEntrySize -> {}
+        );
+   }
 }

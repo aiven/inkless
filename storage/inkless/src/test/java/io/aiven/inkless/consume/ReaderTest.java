@@ -39,8 +39,6 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
-import io.aiven.inkless.cache.FixedBlockAlignment;
-import io.aiven.inkless.cache.KeyAlignmentStrategy;
 import io.aiven.inkless.cache.NullCache;
 import io.aiven.inkless.cache.ObjectCache;
 import io.aiven.inkless.common.ObjectKey;
@@ -58,7 +56,6 @@ import static org.mockito.Mockito.verifyNoInteractions;
 @MockitoSettings(strictness = Strictness.STRICT_STUBS)
 public class ReaderTest {
     private static final ObjectKeyCreator OBJECT_KEY_CREATOR = ObjectKey.creator("", false);
-    private static final KeyAlignmentStrategy KEY_ALIGNMENT_STRATEGY = new FixedBlockAlignment(Integer.MAX_VALUE);
     private static final ObjectCache OBJECT_CACHE = new NullCache();
 
     @Spy
@@ -78,7 +75,7 @@ public class ReaderTest {
 
     @BeforeEach
     public void setup() {
-        reader = new Reader(time, OBJECT_KEY_CREATOR, KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, controlPlane, objectFetcher, 0, metadataExecutor, dataExecutor, new BrokerTopicStats());
+        reader = new Reader(time, OBJECT_KEY_CREATOR, OBJECT_CACHE, controlPlane, objectFetcher, 0, metadataExecutor, dataExecutor, new BrokerTopicStats());
     }
 
     @Test

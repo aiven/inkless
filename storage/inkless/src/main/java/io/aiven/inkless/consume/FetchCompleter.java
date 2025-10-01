@@ -35,6 +35,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.OptionalLong;
+import java.util.Set;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
 import java.util.function.Consumer;
@@ -54,14 +55,14 @@ public class FetchCompleter implements Supplier<Map<TopicIdPartition, FetchParti
     private final ObjectKeyCreator objectKeyCreator;
     private final Map<TopicIdPartition, FetchRequest.PartitionData> fetchInfos;
     private final Map<TopicIdPartition, FindBatchResponse> coordinates;
-    private final List<Future<FileExtent>> backingData;
+    private final List<Future<Set<FileExtent>>> backingData;
     private final Consumer<Long> durationCallback;
 
     public FetchCompleter(Time time,
                           ObjectKeyCreator objectKeyCreator,
                           Map<TopicIdPartition, FetchRequest.PartitionData> fetchInfos,
                           Map<TopicIdPartition, FindBatchResponse> coordinates,
-                          List<Future<FileExtent>> backingData,
+                          List<Future<Set<FileExtent>>> backingData,
                           Consumer<Long> durationCallback) {
         this.time = time;
         this.objectKeyCreator = objectKeyCreator;
@@ -87,17 +88,19 @@ public class FetchCompleter implements Supplier<Map<TopicIdPartition, FetchParti
 
     private Map<String, List<FileExtent>> waitForFileData() throws InterruptedException, ExecutionException {
         Map<String, List<FileExtent>> files = new HashMap<>();
-        for (Future<FileExtent> fileFuture : backingData) {
-            FileExtent fileExtent = fileFuture.get();
-            files.compute(fileExtent.object(), (k, v) -> {
-                if (v == null) {
-                    List<FileExtent> out = new ArrayList<>(1);
-                    out.add(fileExtent);
-                    return out;
-                } else {
-                    v.add(fileExtent);
-                    return v;
-                }
+        for (Future<Set<FileExtent>> fileFuture : backingData) {
+            Set<FileExtent> fileExtents = fileFuture.get();
+            fileExtents.forEach(fileExtent -> {
+                files.compute(fileExtent.object(), (k, v) -> {
+                    if (v == null) {
+                        List<FileExtent> out = new ArrayList<>(1);
+                        out.add(fileExtent);
+                        return out;
+                    } else {
+                        v.add(fileExtent);
+                        return v;
+                    }
+                });
             });
         }
         return files;
