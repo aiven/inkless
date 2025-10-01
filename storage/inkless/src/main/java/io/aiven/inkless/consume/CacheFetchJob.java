@@ -22,7 +22,7 @@ import org.apache.kafka.common.utils.Time;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.util.List;
+import java.util.Collections;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.Callable;
@@ -51,14 +51,14 @@ public class CacheFetchJob implements Callable<Set<FileExtent>> {
     private final Consumer<Integer> cacheEntrySize;
     final Consumer<Long> fileFetchDurationCallback;
     private final ObjectKey objectKey;
-    private final List<BatchInfo> batchInfoList;
+    private final Set<BatchInfo> batchInfoList;
     final ObjectFetcher objectFetcher;
 
     public CacheFetchJob(
         final ObjectCache cache,
         final ObjectFetcher objectFetcher,
         final ObjectKey objectKey,
-        final List<BatchInfo> batchInfoList,
+        final Set<BatchInfo> batchInfoList,
         final Time time,
         final Consumer<Long> cacheQueryDurationCallback,
         final Consumer<Long> cacheStoreDurationCallback,
@@ -75,7 +75,7 @@ public class CacheFetchJob implements Callable<Set<FileExtent>> {
         this.fileFetchDurationCallback = fileFetchDurationCallback;
         this.objectKey = objectKey;
         this.objectFetcher = objectFetcher;
-        this.batchInfoList = batchInfoList;
+        this.batchInfoList = Collections.unmodifiableSet(batchInfoList);
     }
 
     @Override

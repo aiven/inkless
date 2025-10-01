@@ -32,7 +32,6 @@ import org.mockito.quality.Strictness;
 
 import java.nio.ByteBuffer;
 import java.nio.channels.ReadableByteChannel;
-import java.util.List;
 import java.util.Set;
 
 import io.aiven.inkless.cache.MemoryCache;
@@ -79,7 +78,7 @@ public class CacheFetchJobTest {
         ObjectCache cache = new NullCache();
         final BatchInfo batchInfo = new BatchInfo(1L, "objkey", BatchMetadata.of(
                 new TopicIdPartition(Uuid.randomUuid(), 0, "topic-a"), 0, 10, 0, 9, 10, 21, TimestampType.CREATE_TIME));
-        CacheFetchJob cacheFetchJob = cacheFetchJob(cache, objectA, List.of(batchInfo));
+        CacheFetchJob cacheFetchJob = cacheFetchJob(cache, objectA, Set.of(batchInfo));
         final Set<FileExtent> actualFiles = cacheFetchJob.call();
         assertThat(actualFiles).contains(expectedFile);
     }
@@ -98,7 +97,7 @@ public class CacheFetchJobTest {
         cache.put(CacheKeyCreator.create(objectA, range), expectedFile);
         final BatchInfo batchInfo = new BatchInfo(1L, "objkey", BatchMetadata.of(
                 new TopicIdPartition(Uuid.randomUuid(), 0, "topic-a"), 0, 10, 0, 9, 10, 21, TimestampType.CREATE_TIME));
-        CacheFetchJob cacheFetchJob = cacheFetchJob(cache, objectA, List.of(batchInfo));
+        CacheFetchJob cacheFetchJob = cacheFetchJob(cache, objectA, Set.of(batchInfo));
         final Set<FileExtent> actualFiles = cacheFetchJob.call();
         assertThat(actualFiles).contains(expectedFile);
         verifyNoInteractions(fetcher);
@@ -107,7 +106,7 @@ public class CacheFetchJobTest {
     private CacheFetchJob cacheFetchJob(
         final ObjectCache cache,
         final ObjectKey objectKey,
-        final List<BatchInfo> batchInfoList
+        final Set<BatchInfo> batchInfoList
     ) {
         return new CacheFetchJob(
             cache,

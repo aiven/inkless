@@ -21,6 +21,7 @@ import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.utils.Time;
 
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -80,13 +81,13 @@ public final class FetchPlanner implements Supplier<List<Future<Set<FileExtent>>
                 .entrySet()
                 .stream()
                 .map(e -> {
-                    return buildCacheFetchJob(e.getKey(), e.getValue());
+                    return buildCacheFetchJob(e.getKey(), new HashSet<>(e.getValue()));
                 }).collect(Collectors.toList());
     }
 
     private CacheFetchJob buildCacheFetchJob(
         final String objectKey,
-        final List<BatchInfo> batchInfoList
+        final Set<BatchInfo> batchInfoList
     ) {
         return new CacheFetchJob(
             cache,
