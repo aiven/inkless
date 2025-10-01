@@ -23,6 +23,7 @@ import org.apache.kafka.common.utils.Time;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
@@ -32,14 +33,13 @@ import java.util.stream.Collectors;
 import io.aiven.inkless.TimeUtils;
 import io.aiven.inkless.cache.KeyAlignmentStrategy;
 import io.aiven.inkless.cache.ObjectCache;
-import io.aiven.inkless.common.ByteRange;
 import io.aiven.inkless.common.ObjectKeyCreator;
 import io.aiven.inkless.control_plane.BatchInfo;
 import io.aiven.inkless.control_plane.FindBatchResponse;
 import io.aiven.inkless.generated.FileExtent;
 import io.aiven.inkless.storage_backend.common.ObjectFetcher;
 
-public class FetchPlanner implements Supplier<List<Future<FileExtent>>> {
+public final class FetchPlanner implements Supplier<List<Future<Set<FileExtent>>>> {
 
     private final Time time;
     private final ObjectKeyCreator objectKeyCreator;
@@ -70,12 +70,12 @@ public class FetchPlanner implements Supplier<List<Future<FileExtent>>> {
         this.metrics = metrics;
     }
 
-    private List<Future<FileExtent>> doWork(final Map<TopicIdPartition, FindBatchResponse> batchCoordinates) {
-        final List<Callable<FileExtent>> jobs = planJobs(batchCoordinates);
+    private List<Future<Set<FileExtent>>> doWork(final Map<TopicIdPartition, FindBatchResponse> batchCoordinates) {
+        final List<Callable<Set<FileExtent>>> jobs = planJobs(batchCoordinates);
         return submitAll(jobs);
     }
 
-    private List<Callable<FileExtent>> planJobs(Map<TopicIdPartition, FindBatchResponse> batchCoordinates) {
+    private List<Callable<Set<FileExtent>>> planJobs(final Map<TopicIdPartition, FindBatchResponse> batchCoordinates) {
         return batchCoordinates.values().stream()
             .filter(findBatch -> findBatch.errors() == Errors.NONE)
             .map(FindBatchResponse::batches)
@@ -99,14 +99,13 @@ public class FetchPlanner implements Supplier<List<Future<FileExtent>>> {
 
     private CacheFetchJob buildCacheFetchJob(
         final String objectKey,
-        final List<ByteRange> ranges,
-        final ByteRange byteRange
+        final List<BatchInfo> batchInfoList
     ) {
         return new CacheFetchJob(
             cache,
             objectFetcher,
             objectKeyCreator.from(objectKey),
-            byteRange,
+            batchInfoList,
             time,
             metrics::cacheQueryFinished,
             metrics::cacheStoreFinished,
@@ -116,14 +115,14 @@ public class FetchPlanner implements Supplier<List<Future<FileExtent>>> {
         );
     }
 
-    private List<Future<FileExtent>> submitAll(List<Callable<FileExtent>> jobs) {
+    private List<Future<Set<FileExtent>>> submitAll(final List<Callable<Set<FileExtent>>> jobs) {
         return jobs.stream()
             .map(dataExecutor::submit)
             .collect(Collectors.toList());
     }
 
     @Override
-    public List<Future<FileExtent>> get() {
+    public List<Future<Set<FileExtent>>> get() {
         return TimeUtils.measureDurationMsSupplier(time, () -> doWork(batchCoordinates), metrics::fetchPlanFinished);
     }
 }
