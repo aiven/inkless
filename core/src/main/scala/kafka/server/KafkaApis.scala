@@ -658,8 +658,6 @@ class KafkaApis(val requestChannel: RequestChannel,
     val fetchData = fetchRequest.fetchData(topicNames)
     val forgottenTopics = fetchRequest.forgottenTopics(topicNames)
 
-    info("!!! fetchData:" + fetchData)
-
     val fetchContext = fetchManager.newContext(
       fetchRequest.version,
       fetchRequest.metadata,
@@ -1152,6 +1150,7 @@ class KafkaApis(val requestChannel: RequestChannel,
       groupFetchRequest,
       requireStable
     ).handle[OffsetFetchResponseData.OffsetFetchResponseGroup] { (groupFetchResponse, exception) =>
+
       if (exception != null) {
         OffsetFetchResponse.groupError(
           groupFetchRequest,
