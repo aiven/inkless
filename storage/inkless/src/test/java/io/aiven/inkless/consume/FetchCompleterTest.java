@@ -42,6 +42,7 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Future;
 import java.util.stream.Collectors;
@@ -175,8 +176,8 @@ public class FetchCompleterTest {
             ), logStartOffset, highWatermark)
         );
 
-        List<Future<FileExtent>> files = Stream.of(
-            FileFetchJob.createFileExtent(OBJECT_KEY_A, new ByteRange(0, records.sizeInBytes()), records.buffer())
+        List<Future<Set<FileExtent>>> files = Stream.of(
+            Set.of(FileFetchJob.createFileExtent(OBJECT_KEY_A, new ByteRange(0, records.sizeInBytes()), records.buffer()))
         ).map(CompletableFuture::completedFuture).collect(Collectors.toList());
         FetchCompleter job = new FetchCompleter(
             new MockTime(),
@@ -211,9 +212,11 @@ public class FetchCompleterTest {
             ), logStartOffset, highWatermark)
         );
 
-        List<Future<FileExtent>> files = Stream.of(
-            FileFetchJob.createFileExtent(OBJECT_KEY_A, new ByteRange(0, records.sizeInBytes()), records.buffer()),
-            FileFetchJob.createFileExtent(OBJECT_KEY_B, new ByteRange(0, records.sizeInBytes()), records.buffer())
+        List<Future<Set<FileExtent>>> files = Stream.of(
+            Set.of(
+                FileFetchJob.createFileExtent(OBJECT_KEY_A, new ByteRange(0, records.sizeInBytes()), records.buffer()),
+                FileFetchJob.createFileExtent(OBJECT_KEY_B, new ByteRange(0, records.sizeInBytes()), records.buffer())
+            )
         ).map(CompletableFuture::completedFuture).collect(Collectors.toList());
         FetchCompleter job = new FetchCompleter(
             new MockTime(),
@@ -253,16 +256,16 @@ public class FetchCompleterTest {
         var fixedAlignment = new FixedBlockAlignment(blockSize);
         var ranges = fixedAlignment.align(List.of(new ByteRange(0, records.sizeInBytes())));
 
-        var fileExtents = new ArrayList<FileExtent>();
+        List<Set<FileExtent>> fileExtents = new ArrayList<Set<FileExtent>>();
         for (ByteRange range : ranges) {
             var startOffset = Math.toIntExact(range.offset());
             var length = Math.min(blockSize, records.sizeInBytes() - startOffset);
             var endOffset = startOffset + length;
             ByteBuffer copy = ByteBuffer.allocate(length);
             copy.put(records.buffer().duplicate().position(startOffset).limit(endOffset).slice());
-            fileExtents.add(FileFetchJob.createFileExtent(OBJECT_KEY_A, range, copy));
+            fileExtents.add(Set.of(FileFetchJob.createFileExtent(OBJECT_KEY_A, range, copy)));
         }
-        List<Future<FileExtent>> files = fileExtents.stream().map(CompletableFuture::completedFuture).collect(Collectors.toList());
+        List<Future<Set<FileExtent>>> files = fileExtents.stream().map(CompletableFuture::completedFuture).collect(Collectors.toList());
 
         FetchCompleter job = new FetchCompleter(
             new MockTime(),
@@ -310,8 +313,8 @@ public class FetchCompleterTest {
             ), logStartOffset, highWatermark)
         );
 
-        List<Future<FileExtent>> files = Stream.of(
-            FileFetchJob.createFileExtent(OBJECT_KEY_A, new ByteRange(0, totalSize), concatenatedBuffer)
+        List<Future<Set<FileExtent>>> files = Stream.of(
+            Set.of(FileFetchJob.createFileExtent(OBJECT_KEY_A, new ByteRange(0, totalSize), concatenatedBuffer))
         ).map(CompletableFuture::completedFuture).collect(Collectors.toList());
         FetchCompleter job = new FetchCompleter(
             new MockTime(),
@@ -364,16 +367,16 @@ public class FetchCompleterTest {
         var fixedAlignment = new FixedBlockAlignment(blockSize);
         var ranges = fixedAlignment.align(List.of(new ByteRange(0, totalSize)));
 
-        var fileExtents = new ArrayList<FileExtent>();
+        List<Set<FileExtent>> fileExtents = new ArrayList<Set<FileExtent>>();
         for (ByteRange range : ranges) {
             var startOffset = Math.toIntExact(range.offset());
             var length = Math.min(blockSize, totalSize - startOffset);
             var endOffset = startOffset + length;
             ByteBuffer copy = ByteBuffer.allocate(blockSize);
             copy.put(concatenatedBuffer.duplicate().position(startOffset).limit(endOffset).slice());
-            fileExtents.add(FileFetchJob.createFileExtent(OBJECT_KEY_A, range, copy));
+            fileExtents.add(Set.of(FileFetchJob.createFileExtent(OBJECT_KEY_A, range, copy)));
         }
-        List<Future<FileExtent>> files = fileExtents.stream().map(CompletableFuture::completedFuture).collect(Collectors.toList());
+        List<Future<Set<FileExtent>>> files = fileExtents.stream().map(CompletableFuture::completedFuture).collect(Collectors.toList());
 
         FetchCompleter job = new FetchCompleter(
             new MockTime(),

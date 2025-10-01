@@ -42,7 +42,6 @@ import io.aiven.inkless.cache.FixedBlockAlignment;
 import io.aiven.inkless.cache.KeyAlignmentStrategy;
 import io.aiven.inkless.cache.NullCache;
 import io.aiven.inkless.cache.ObjectCache;
-import io.aiven.inkless.common.ByteRange;
 import io.aiven.inkless.common.ObjectKey;
 import io.aiven.inkless.common.ObjectKeyCreator;
 import io.aiven.inkless.common.PlainObjectKey;
@@ -74,7 +73,6 @@ public class FetchPlannerTest {
 
     ObjectCache cache = new NullCache();
     KeyAlignmentStrategy keyAlignmentStrategy = new FixedBlockAlignment(Integer.MAX_VALUE);
-    ByteRange requestRange = new ByteRange(0, Integer.MAX_VALUE);
     Time time = new MockTime();
     Uuid topicId = Uuid.randomUuid();
     TopicIdPartition partition0 = new TopicIdPartition(topicId, 0, "diskless-topic");
@@ -99,7 +97,7 @@ public class FetchPlannerTest {
                 ), 0, 1)
             ),
             Set.of(
-                cacheFetchJob(OBJECT_KEY_A, requestRange)
+                cacheFetchJob(OBJECT_KEY_A, List.of(new BatchInfo(1L, OBJECT_KEY_A.value(), BatchMetadata.of(partition0, 0, 10, 0, 0, 10, 20, TimestampType.CREATE_TIME))))
             )
         );
     }
@@ -114,8 +112,8 @@ public class FetchPlannerTest {
                 ), 0, 2)
             ),
             Set.of(
-                cacheFetchJob(OBJECT_KEY_A, requestRange),
-                cacheFetchJob(OBJECT_KEY_B, requestRange)
+                cacheFetchJob(OBJECT_KEY_A, List.of(new BatchInfo(1L, OBJECT_KEY_A.value(), BatchMetadata.of(partition0, 0, 10, 0, 0, 10, 20, TimestampType.CREATE_TIME)))),
+                cacheFetchJob(OBJECT_KEY_B, List.of(new BatchInfo(2L, OBJECT_KEY_B.value(), BatchMetadata.of(partition0, 0, 10, 1, 1, 11, 21, TimestampType.CREATE_TIME))))
             )
         );
     }
@@ -132,8 +130,8 @@ public class FetchPlannerTest {
                 ), 0, 1)
             ),
             Set.of(
-                cacheFetchJob(OBJECT_KEY_A, requestRange),
-                cacheFetchJob(OBJECT_KEY_B, requestRange)
+                cacheFetchJob(OBJECT_KEY_A, List.of(new BatchInfo(1L, OBJECT_KEY_A.value(), BatchMetadata.of(partition0, 0, 10, 0, 0, 10, 20, TimestampType.CREATE_TIME)))),
+                cacheFetchJob(OBJECT_KEY_B, List.of(new BatchInfo(2L, OBJECT_KEY_B.value(), BatchMetadata.of(partition1, 0, 10, 0, 0, 11, 21, TimestampType.CREATE_TIME))))
             )
         );
     }
@@ -150,7 +148,11 @@ public class FetchPlannerTest {
                 ), 0,  1)
             ),
             Set.of(
-                cacheFetchJob(OBJECT_KEY_A, requestRange)
+                cacheFetchJob(OBJECT_KEY_A, List.of(
+                    new BatchInfo(2L, OBJECT_KEY_A.value(), BatchMetadata.of(partition1, 30, 10, 0, 0, 11, 21, TimestampType.CREATE_TIME)),
+                    new BatchInfo(1L, OBJECT_KEY_A.value(), BatchMetadata.of(partition0, 0, 10, 0, 0, 10, 20, TimestampType.CREATE_TIME))
+
+                ))
             )
         );
     }
@@ -165,7 +167,7 @@ public class FetchPlannerTest {
                 ), 0, 1)
             ),
             Set.of(
-                cacheFetchJob(OBJECT_KEY_B, requestRange)
+                cacheFetchJob(OBJECT_KEY_B, List.of(new BatchInfo(1L, OBJECT_KEY_B.value(), BatchMetadata.of(partition1, 0, 10, 0, 0, 11, 21, TimestampType.CREATE_TIME))))
             )
         );
     }
@@ -180,7 +182,7 @@ public class FetchPlannerTest {
                 ), 0, 1)
             ),
             Set.of(
-                cacheFetchJob(OBJECT_KEY_B, requestRange)
+                cacheFetchJob(OBJECT_KEY_B, List.of(new BatchInfo(1L, OBJECT_KEY_B.value(), BatchMetadata.of(partition1, 0, 10, 0, 0, 11, 21, TimestampType.CREATE_TIME))))
             )
         );
     }
@@ -195,7 +197,7 @@ public class FetchPlannerTest {
                 ), 0, 1)
             ),
             Set.of(
-                cacheFetchJob(OBJECT_KEY_B, requestRange)
+                cacheFetchJob(OBJECT_KEY_B, List.of(new BatchInfo(1L, OBJECT_KEY_B.value(), BatchMetadata.of(partition1, 0, 10, 0, 0, 11, 21, TimestampType.CREATE_TIME))))
             )
         );
     }
@@ -209,13 +211,13 @@ public class FetchPlannerTest {
 
     private CacheFetchJob cacheFetchJob(
         ObjectKey objectKey,
-        ByteRange byteRange
+        List<BatchInfo> batchInfoList
     ) {
         return new CacheFetchJob(
             cache,
             fetcher,
             objectKey,
-            byteRange,
+            batchInfoList,
             time,
             durationMs -> {},
             durationMs -> {},
