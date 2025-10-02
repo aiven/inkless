@@ -129,6 +129,7 @@ class KafkaApis(val requestChannel: RequestChannel,
 
   def close(): Unit = {
     aclApis.close()
+    inklessTopicMetadataTransformer.foreach(t => t.close())
     info("Shutdown complete.")
   }
 
