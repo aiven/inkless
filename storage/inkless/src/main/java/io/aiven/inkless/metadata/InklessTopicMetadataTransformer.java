@@ -18,16 +18,19 @@
 package io.aiven.inkless.metadata;
 
 import org.apache.kafka.common.Node;
+import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.message.DescribeTopicPartitionsResponseData;
 import org.apache.kafka.common.message.MetadataResponseData;
 import org.apache.kafka.common.network.ListenerName;
 import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.metadata.LeaderAndIsr;
 
+import org.apache.commons.codec.digest.MurmurHash2;
 import org.slf4j.Logger;
 
 import java.io.Closeable;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
@@ -64,12 +67,12 @@ public class InklessTopicMetadataTransformer implements Closeable {
     ) {
         Objects.requireNonNull(topicMetadata, "topicMetadata cannot be null");
 
-        final int leaderForInklessPartitions = selectLeaderForInklessPartitions(listenerName, clientId);
         for (final var topic : topicMetadata) {
             if (!metadataView.isDisklessTopic(topic.name())) {
                 continue;
             }
             for (final var partition : topic.partitions()) {
+                final int leaderForInklessPartitions = selectLeaderForInklessPartitions(listenerName, clientId, topic.topicId(), partition.partitionIndex());
                 partition.setLeaderId(leaderForInklessPartitions);
                 final List<Integer> list = List.of(leaderForInklessPartitions);
                 partition.setErrorCode(Errors.NONE.code());
@@ -91,13 +94,13 @@ public class InklessTopicMetadataTransformer implements Closeable {
     ) {
         Objects.requireNonNull(responseData, "responseData cannot be null");
 
-        final int leaderForInklessPartitions = selectLeaderForInklessPartitions(listenerName, clientId);
         for (final var topic : responseData.topics()) {
             if (!metadataView.isDisklessTopic(topic.name())) {
                 continue;
             }
 
             for (final var partition : topic.partitions()) {
+                final int leaderForInklessPartitions = selectLeaderForInklessPartitions(listenerName, clientId, topic.topicId(), partition.partitionIndex());
                 partition.setLeaderId(leaderForInklessPartitions);
                 final List<Integer> list = List.of(leaderForInklessPartitions);
                 partition.setErrorCode(Errors.NONE.code());
@@ -119,7 +122,9 @@ public class InklessTopicMetadataTransformer implements Closeable {
      *
      * @return the selected broker ID.
      */
-    private int selectLeaderForInklessPartitions(final ListenerName listenerName, final String clientId) {
+    private int selectLeaderForInklessPartitions(final ListenerName listenerName, final String clientId,
+                                                 final Uuid topicId,
+                                                 final int partitionIndex) {
         final String clientAZ = ClientAZExtractor.getClientAZ(clientId);
         // This gracefully handles the null client AZ, no need for a special check.
         final List<Node> brokersInClientAZ = brokersInAZ(listenerName, clientAZ);
@@ -140,8 +145,10 @@ public class InklessTopicMetadataTransformer implements Closeable {
             throw new RuntimeException("No broker found, unexpected");
         }
 
-        final int c = roundRobinCounter.getAndUpdate(v -> Math.max(v + 1, 0));
-        final int idx = c % brokersToPickFrom.size();
+        final byte[] input = String.format("%s-%s-%s", clientId, topicId, partitionIndex).getBytes(StandardCharsets.UTF_8);
+        final long hash = MurmurHash2.hash64(input, input.length);
+        final int idx = Math.toIntExact(hash % brokersToPickFrom.size());
+
         return brokersToPickFrom.get(idx).id();
     }
 
