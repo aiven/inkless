@@ -23,6 +23,10 @@ import org.apache.kafka.common.message.MetadataResponseData;
 import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.metadata.LeaderAndIsr;
 
+import org.slf4j.Logger;
+
+import java.io.Closeable;
+import java.io.IOException;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
@@ -32,14 +36,21 @@ import java.util.stream.StreamSupport;
 
 import io.aiven.inkless.control_plane.MetadataView;
 
-public class InklessTopicMetadataTransformer {
+public class InklessTopicMetadataTransformer implements Closeable {
+    private static final Logger LOG = org.slf4j.LoggerFactory.getLogger(InklessTopicMetadataTransformer.class);
+
     private final MetadataView metadataView;
+    private final ClientAzAwarenessMetrics metrics;
 
     private final AtomicInteger roundRobinCounter;
 
-    public InklessTopicMetadataTransformer(final int brokerId, final MetadataView metadataView) {
+    public InklessTopicMetadataTransformer(
+        final int brokerId,
+        final MetadataView metadataView
+    ) {
         this.metadataView = Objects.requireNonNull(metadataView, "metadataView cannot be null");
         roundRobinCounter = new AtomicInteger(brokerId);
+        metrics = new ClientAzAwarenessMetrics();
     }
 
     /**
@@ -114,6 +125,13 @@ public class InklessTopicMetadataTransformer {
             ? allAliveBrokers()
             : brokersInClientAZ;
 
+        if (clientAZ != null && brokersToPickFrom.isEmpty()) {
+            LOG.warn("No alive brokers found from clientId {}, clientAZ {}; falling back to all brokers",
+                clientId, clientAZ);
+        }
+
+        metrics.recordClientAz(clientAZ, brokersInClientAZ.isEmpty());
+
         // This cannot happen in a normal broker run. This will serve as a guard in tests.
         if (brokersToPickFrom.isEmpty()) {
             throw new RuntimeException("No broker found, unexpected");
@@ -140,5 +158,10 @@ public class InklessTopicMetadataTransformer {
             .filter(bm -> Objects.equals(bm.rack.orElse(null), az))
             .sorted(Comparator.comparing(bm -> bm.id))
             .toList();
+    }
+
+    @Override
+    public void close() throws IOException {
+        metrics.close();
     }
 }
