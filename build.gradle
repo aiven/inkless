@@ -1013,7 +1013,7 @@ project(':core') {
   }
 
   dependencies {
-    releaseOnly log4jReleaseLibs
+    implementation log4jReleaseLibs
     // `core` is often used in users' tests, define the following dependencies as `api` for backwards compatibility
     // even though the `core` module doesn't expose any public API
     api project(':clients')
@@ -2421,6 +2421,8 @@ project(':storage:inkless') {
     implementation project(':server-common')
     implementation project(':storage')
     implementation project(':metadata')
+
+    implementation 'org.xerial:sqlite-jdbc:3.50.3.0'
 
     api libs.pitestAnnotations
 

@@ -51,6 +51,7 @@ import org.apache.kafka.common.errors.UnknownTopicIdException;
 import org.apache.kafka.common.errors.UnknownTopicOrPartitionException;
 import org.apache.kafka.common.errors.UnsupportedVersionException;
 import org.apache.kafka.common.internals.KafkaFutureImpl;
+import org.apache.kafka.common.message.DisklessCommitRequestData;
 import org.apache.kafka.common.metrics.KafkaMetric;
 import org.apache.kafka.common.quota.ClientQuotaAlteration;
 import org.apache.kafka.common.quota.ClientQuotaFilter;
@@ -1599,5 +1600,10 @@ public class MockAdminClient extends AdminClient {
     @Override
     public void unregisterMetricFromSubscription(KafkaMetric metric) {
         addedMetrics.remove(metric);
+    }
+
+    @Override
+    public DisklessCommitResult disklessCommit(final DisklessCommitRequestData requestData, final DisklessCommitOptions options) {
+        return null;
     }
 }

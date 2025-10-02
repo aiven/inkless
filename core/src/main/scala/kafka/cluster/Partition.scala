@@ -1984,4 +1984,104 @@ class Partition(val topicPartition: TopicPartition,
     partitionString.append("; LeaderRecoveryState: " + partitionState.leaderRecoveryState)
     partitionString.toString
   }
+//
+//
+//  ///////////// DISKLESS
+//
+//  private val dbLock = new ReentrantReadWriteLock()
+//  // TODO close properly
+//  private var dbConnection: Option[Connection] = None
+//
+//
+//  def disklessCommit(objectName: String,
+//                     partitionData: DisklessCommitRequestData.PartitionDisklessCommitData
+//                    ): DisklessCommitResponseData.PartitionDisklessCommitResponse = {
+//      inWriteLock(dbLock) {
+//        error(s"QQQQQ Initializing SQLite DB for ${topicPartition}")
+//
+//        // TODO what if DB fails
+//        initDBIfNeeded()
+//        Using(dbConnection.get.createStatement()) { stmt =>
+//          partitionData.batches().forEach { batch =>
+//            val firstOffset = Using (stmt.executeQuery("SELECT high_watermark FROM log")) { rs =>
+//              rs.next()
+//              rs.getLong("high_watermark")
+//            }.get
+//
+//            val lastOffset = firstOffset + (batch.lastOffset() - batch.baseOffset())
+//
+//          val pstmt = dbConnection.get.prepareStatement("UPDATE log SET high_watermark = ?")
+//          pstmt.setLong(1, lastOffset + 1)
+//          pstmt.executeUpdate()
+//          pstmt.close()
+//          }
+//        }
+//      }
+//
+//    //        val recordsArray = partitionData.batches().asScala.map { b =>
+//    //          new SimpleRecord(0, Array[Byte]())
+//    //        }.toArray
+//    //        val records = MemoryRecords.withRecords(Compression.NONE, recordsArray:_*)
+//    //        val appendInfo = partition.appendRecordsToLeader(
+//    //          records,
+//    //          AppendOrigin.COORDINATOR,
+//    //          -1,
+//    //          RequestLocal.noCaching
+//    //        )
+//    //        error(s"Appended ${appendInfo.numMessages()} records")
+//    //
+//    //        (topicIdPartition, new org.apache.kafka.common.message.DisklessCommitResponseData.PartitionDisklessCommitResponse()
+//    //          .setPartition(partitionData.partition())
+//    //          .setErrorCode(Errors.NONE.code)
+//    //          .setErrorMessage(null))
+//
+////    val appendInfo = appendRecordsToLeader(
+////      records,
+////      AppendOrigin.COORDINATOR,
+////      -1,
+////      RequestLocal.noCaching
+////    )
+////    error(s"Appended ${appendInfo.numMessages()} records")
+//
+//    new org.apache.kafka.common.message.DisklessCommitResponseData.PartitionDisklessCommitResponse()
+//      .setPartition(partitionData.partition())
+//      .setErrorCode(Errors.NONE.code)
+//      .setErrorMessage(null)
+//  }
+//
+//
+//  private def initDBIfNeeded(): Unit = {
+//    val dbUrl = "jdbc:sqlite:" + log.get.dir.toPath.resolve("state.db")
+//    this.dbConnection = Some(java.sql.DriverManager.getConnection(dbUrl))
+//
+//    Using(dbConnection.get.createStatement) { stmt =>
+//      stmt.execute(
+//        """
+//          |CREATE TABLE IF NOT EXISTS log (
+//          |  id INTEGER PRIMARY KEY,
+//          |  log_start_offset BIGINT NOT NULL,
+//          |  high_watermark BIGINT NOT NULL
+//          |)""".stripMargin
+//      )
+//
+//      stmt.execute(
+//        "INSERT OR IGNORE INTO log (id, log_start_offset, high_watermark) VALUES (0, 0, 0)"
+//      )
+//
+//      stmt.execute(
+//        "CREATE TABLE IF NOT EXISTS batches (" +
+//          "batch_id INTEGER PRIMARY KEY AUTOINCREMENT," +
+//          "magic INTEGER NOT NULL," +
+//          "base_offset BIGINT NOT NULL," +
+//          "last_offset BIGINT NOT NULL," +
+//          "object_name TEXT," +
+//          "byte_offset BIGINT NOT NULL," +
+//          "byte_size BIGINT NOT NULL," +
+//          "timestamp_type INTEGER NOT NULL," +
+//          "log_append_timestamp BIGINT," +
+//          "batch_max_timestamp BIGINT" +
+//          ")"
+//      )
+//    }
+//  }
 }

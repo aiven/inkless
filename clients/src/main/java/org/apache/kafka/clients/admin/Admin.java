@@ -2129,4 +2129,20 @@ public interface Admin extends AutoCloseable {
      */
     TerminateTransactionResult forceTerminateTransaction(String transactionalId, 
                                                         TerminateTransactionOptions options);
+
+    default DisklessCommitResult disklessCommit(org.apache.kafka.common.message.DisklessCommitRequestData requestData) {
+        return disklessCommit(requestData, new DisklessCommitOptions());
+    }
+
+    /**
+     * Send a diskless commit request.
+     * <p>
+     * This operation sends a diskless commit request to the broker to commit data without writing to disk.
+     *
+     * @param requestData The diskless commit request data.
+     * @param options     The options to use when sending the diskless commit request.
+     * @return The DisklessCommitResult.
+     */
+    DisklessCommitResult disklessCommit(org.apache.kafka.common.message.DisklessCommitRequestData requestData, 
+                                       DisklessCommitOptions options);
 }
