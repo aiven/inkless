@@ -130,17 +130,17 @@ public class InklessClusterTest {
     public static Stream<Arguments> params() {
         return Stream.of(
             Arguments.of(
-                true, TimestampType.CREATE_TIME, TopicConfig.DISKLESS_ENABLE_CONFIG
+                true, TimestampType.CREATE_TIME
             ),
             Arguments.of(
-                false, TimestampType.LOG_APPEND_TIME, TopicConfig.INKLESS_ENABLE_CONFIG
+                false, TimestampType.LOG_APPEND_TIME
             )
         );
     }
 
     @ParameterizedTest
     @MethodSource("params")
-    public void createDisklessTopic(final boolean idempotenceEnable, final TimestampType timestampType, final String disklessTopicConfig) throws Exception {
+    public void createDisklessTopic(final boolean idempotenceEnable, final TimestampType timestampType) throws Exception {
         Map<String, Object> clientConfigs = new HashMap<>();
         clientConfigs.put(CommonClientConfigs.BOOTSTRAP_SERVERS_CONFIG, cluster.bootstrapServers());
         clientConfigs.put(ProducerConfig.ENABLE_IDEMPOTENCE_CONFIG, String.valueOf(idempotenceEnable));
@@ -159,7 +159,7 @@ public class InklessClusterTest {
         try (Admin admin = AdminClient.create(clientConfigs)) {
             final NewTopic topic = new NewTopic(topicName, 1, (short) 1)
                 .configs(Map.of(
-                    disklessTopicConfig, "true",
+                    TopicConfig.DISKLESS_ENABLE_CONFIG, "true",
                     TopicConfig.MESSAGE_TIMESTAMP_TYPE_CONFIG, timestampType.name
                 ));
             CreateTopicsResult topics = admin.createTopics(Collections.singletonList(topic));
