@@ -41,6 +41,7 @@ public class InklessFetchMetrics {
     private static final String CACHE_STORE_TIME = "CacheStoreTime";
     private static final String CACHE_HIT_COUNT = "CacheHitCount";
     private static final String CACHE_MISS_COUNT = "CacheMissCount";
+    private static final String CACHE_ENTRY_SIZE = "CacheEntrySize";
     private static final String FETCH_FILE_TIME = "FetchFileTime";
     private static final String FETCH_COMPLETION_TIME = "FetchCompletionTime";
     private static final String FETCH_RATE = "FetchRate";
@@ -60,6 +61,7 @@ public class InklessFetchMetrics {
     private final Histogram fetchPlanTimeHistogram;
     private final Histogram cacheQueryTimeHistogram;
     private final Histogram cacheStoreTimeHistogram;
+    private final Histogram cacheEntrySize;
     private final Meter cacheHits;
     private final Meter cacheMisses;
     private final Histogram fetchFileTimeHistogram;
@@ -92,6 +94,7 @@ public class InklessFetchMetrics {
         fetchPartitionSizeHistogram = metricsGroup.newHistogram(FETCH_PARTITIONS_PER_FETCH_COUNT, true, Map.of());
         fetchBatchesSizeHistogram = metricsGroup.newHistogram(FETCH_BATCHES_PER_FETCH_COUNT, true, Map.of());
         fetchObjectsSizeHistogram = metricsGroup.newHistogram(FETCH_OBJECTS_PER_FETCH_COUNT, true, Map.of());
+        cacheEntrySize = metricsGroup.newHistogram(CACHE_ENTRY_SIZE, true, Map.of());
     }
 
     public void fetchCompleted(Instant startAt) {
@@ -121,6 +124,10 @@ public class InklessFetchMetrics {
         } else {
             cacheMisses.mark();
         }
+    }
+
+    public void cacheEntrySize(final int size) {
+        cacheEntrySize.update(size);
     }
 
     public void fetchFileFinished(final long durationMs) {
@@ -155,6 +162,7 @@ public class InklessFetchMetrics {
         metricsGroup.removeMetric(CACHE_STORE_TIME);
         metricsGroup.removeMetric(CACHE_HIT_COUNT);
         metricsGroup.removeMetric(CACHE_MISS_COUNT);
+        metricsGroup.removeMetric(CACHE_ENTRY_SIZE);
         metricsGroup.removeMetric(FIND_BATCHES_TIME);
         metricsGroup.removeMetric(FETCH_COMPLETION_TIME);
         metricsGroup.removeMetric(FETCH_RATE);

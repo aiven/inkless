@@ -104,7 +104,8 @@ public class FetchPlanner implements Supplier<List<Future<FileExtent>>> {
             metrics::cacheQueryFinished,
             metrics::cacheStoreFinished,
             metrics::cacheHit,
-            metrics::fetchFileFinished
+            metrics::fetchFileFinished,
+            metrics::cacheEntrySize
         );
     }
 
