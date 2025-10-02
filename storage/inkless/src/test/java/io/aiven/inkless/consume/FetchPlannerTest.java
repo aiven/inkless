@@ -216,9 +216,6 @@ public class FetchPlannerTest {
             batchInfoList,
             time,
             durationMs -> {},
-            durationMs -> {},
-            hitBool -> {},
-            durationMs -> {},
             cacheEntrySize -> {}
         );
     }

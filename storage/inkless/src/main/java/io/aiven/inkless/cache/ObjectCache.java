@@ -20,9 +20,11 @@ package io.aiven.inkless.cache;
 import org.apache.kafka.common.cache.Cache;
 
 import java.io.Closeable;
+import java.util.function.Function;
 
 import io.aiven.inkless.generated.CacheKey;
 import io.aiven.inkless.generated.FileExtent;
 
 public interface ObjectCache extends Cache<CacheKey, FileExtent>, Closeable {
+    FileExtent computeIfAbsent(CacheKey key, Function<CacheKey, FileExtent> mappingFunction);
 }

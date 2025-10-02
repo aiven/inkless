@@ -23,10 +23,9 @@ import org.apache.kafka.storage.log.metrics.BrokerTopicStats;
 
 import java.io.Closeable;
 import java.io.IOException;
-import java.nio.file.Path;
 import java.util.function.Supplier;
 
-import io.aiven.inkless.cache.InfinispanCache;
+import io.aiven.inkless.cache.CaffeineCache;
 import io.aiven.inkless.cache.ObjectCache;
 import io.aiven.inkless.config.InklessConfig;
 import io.aiven.inkless.control_plane.ControlPlane;
@@ -46,14 +45,11 @@ public record SharedState(
 
     public static SharedState initialize(
         Time time,
-        String clusterId,
-        String rack,
         int brokerId,
         InklessConfig config,
         MetadataView metadata,
         ControlPlane controlPlane,
         BrokerTopicStats brokerTopicStats,
-        Path logDir,
         Supplier<LogConfig> defaultTopicConfigs
     ) {
         return new SharedState(
@@ -63,13 +59,9 @@ public record SharedState(
             metadata,
             controlPlane,
             ObjectKey.creator(config.objectKeyPrefix(), config.objectKeyLogPrefixMasked()),
-            InfinispanCache.build(
-                time,
-                clusterId,
-                rack,
+            // TODO: add metrics adaptation.
+            new CaffeineCache(
                 config.cacheMaxCount(),
-                logDir,
-                config.isCachePersistenceEnabled(),
                 config.cacheExpirationLifespanSec(),
                 config.cacheExpirationMaxIdleSec()
             ),
