@@ -119,6 +119,9 @@ versions += [
   mavenArtifact: "3.9.6",
   metrics: "2.2.0",
   mockito: "5.14.2",
+  // Required to be compatible with BoringSSL version
+  nettyReactor: "1.1.22",
+  nettyTcNativeBoringSSL: "2.0.65.Final",
   opentelemetryProto: "1.3.2-alpha",
   postgresql: "42.7.4",
   protobuf: "3.25.5", // a dependency of opentelemetryProto
@@ -238,6 +241,11 @@ libs += [
   metrics: "com.yammer.metrics:metrics-core:$versions.metrics",
   mockitoCore: "org.mockito:mockito-core:$versions.mockito",
   mockitoJunitJupiter: "org.mockito:mockito-junit-jupiter:$versions.mockito",
+  nettyReactorCore: "io.projectreactor.netty:reactor-netty-core:$versions.nettyReactor",
+  nettyReactorHttp: "io.projectreactor.netty:reactor-netty-http:$versions.nettyReactor",
+  nettyTcNativeBoringSSLStatic: "io.netty:netty-tcnative-boringssl-static:$versions.nettyTcNativeBoringSSL",
+  nettyTcNativeBoringSSLStaticLinuxAarch64: "io.netty:netty-tcnative-boringssl-static:$versions.nettyTcNativeBoringSSL:linux-aarch_64",
+  nettyTcNativeBoringSSLStaticLinuxX86_64: "io.netty:netty-tcnative-boringssl-static:$versions.nettyTcNativeBoringSSL:linux-x86_64",
   pcollections: "org.pcollections:pcollections:$versions.pcollections",
   opentelemetryProto: "io.opentelemetry.proto:opentelemetry-proto:$versions.opentelemetryProto",
   postgresql: "org.postgresql:postgresql:$versions.postgresql",
