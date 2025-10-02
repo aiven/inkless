@@ -105,6 +105,7 @@ public final class FetchPlanner implements Supplier<List<Future<Set<FileExtent>>
             cache,
             objectFetcher,
             objectKeyCreator.from(objectKey),
+            objectKeyCreator,
             batchInfoList,
             time,
             metrics::cacheQueryFinished,

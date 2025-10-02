@@ -26,8 +26,8 @@ import java.io.IOException;
 import java.nio.file.Path;
 import java.util.function.Supplier;
 
+import io.aiven.inkless.cache.CaffeineCache;
 import io.aiven.inkless.cache.FixedBlockAlignment;
-import io.aiven.inkless.cache.InfinispanCache;
 import io.aiven.inkless.cache.KeyAlignmentStrategy;
 import io.aiven.inkless.cache.ObjectCache;
 import io.aiven.inkless.config.InklessConfig;
@@ -67,6 +67,12 @@ public record SharedState(
             controlPlane,
             ObjectKey.creator(config.objectKeyPrefix(), config.objectKeyLogPrefixMasked()),
             new FixedBlockAlignment(config.fetchCacheBlockBytes()),
+            new CaffeineCache(
+                config.cacheMaxCount(),
+                config.cacheExpirationLifespanSec(),
+                config.cacheExpirationMaxIdleSec()
+            ),
+            /*
             InfinispanCache.build(
                 time,
                 clusterId,
@@ -77,6 +83,7 @@ public record SharedState(
                 config.cacheExpirationLifespanSec(),
                 config.cacheExpirationMaxIdleSec()
             ),
+             */
             brokerTopicStats,
             defaultTopicConfigs
         );

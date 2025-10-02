@@ -26,6 +26,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.Callable;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
 
@@ -33,6 +34,7 @@ import io.aiven.inkless.TimeUtils;
 import io.aiven.inkless.cache.ObjectCache;
 import io.aiven.inkless.common.ByteRange;
 import io.aiven.inkless.common.ObjectKey;
+import io.aiven.inkless.common.ObjectKeyCreator;
 import io.aiven.inkless.control_plane.BatchInfo;
 import io.aiven.inkless.generated.CacheKey;
 import io.aiven.inkless.generated.FileExtent;
@@ -50,6 +52,7 @@ public class CacheFetchJob implements Callable<Set<FileExtent>> {
     private final Consumer<Integer> cacheEntrySize;
     final Consumer<Long> fileFetchDurationCallback;
     private final ObjectKey objectKey;
+    private final ObjectKeyCreator objectKeyCreator;
     private final List<BatchInfo> batchInfoList;
     final ObjectFetcher objectFetcher;
 
@@ -57,6 +60,7 @@ public class CacheFetchJob implements Callable<Set<FileExtent>> {
         final ObjectCache cache,
         final ObjectFetcher objectFetcher,
         final ObjectKey objectKey,
+        final ObjectKeyCreator objectKeyCreator,
         final List<BatchInfo> batchInfoList,
         final Time time,
         final Consumer<Long> cacheQueryDurationCallback,
@@ -73,6 +77,7 @@ public class CacheFetchJob implements Callable<Set<FileExtent>> {
         this.cacheEntrySize = cacheEntrySize;
         this.fileFetchDurationCallback = fileFetchDurationCallback;
         this.objectKey = objectKey;
+        this.objectKeyCreator = objectKeyCreator;
         this.objectFetcher = objectFetcher;
         this.batchInfoList = batchInfoList;
     }
@@ -91,33 +96,52 @@ public class CacheFetchJob implements Callable<Set<FileExtent>> {
         // Catch cache-related exceptions but let remote storage exceptions bubble up.
         return batchInfoList.stream().map(batchInfo -> {
             final ByteRange batchRange = batchInfo.metadata().range();
-            CacheKey key = createCacheKey(objectKey, batchRange);
-            try {
-                FileExtent file = TimeUtils.measureDurationMs(time, () -> cache.get(key), cacheQueryDurationCallback);
-                cacheHitRateCallback.accept(file != null);
-                if (file != null) {
-                    // cache hit
-                    return file;
+            final ObjectKey objectKey = objectKeyCreator.from(batchInfo.objectKey());
+            final CacheKey key = createCacheKey(objectKey, batchRange);
+
+            if (cache.supportsComputeIfAbsent()) {
+                final AtomicBoolean cacheHit = new AtomicBoolean(true);
+                final FileExtent fileExtent = cache.computeIfAbsent(key, mappingKey -> {
+                    final FileExtent freshFile = loadFileExtent(mappingKey, batchRange);
+                    cacheHit.set(false);
+                    cacheEntrySize.accept(freshFile.data().length);
+                    return freshFile;
+                });
+                cacheHitRateCallback.accept(cacheHit.get());
+                return fileExtent;
+            } else{
+                try {
+                    FileExtent file = TimeUtils.measureDurationMs(time, () -> cache.get(key), cacheQueryDurationCallback);
+                    cacheHitRateCallback.accept(file != null);
+                    if (file != null) {
+                        // cache hit
+                        return file;
+                    }
+                } catch (final Exception e) {
+                    LOGGER.warn("Cache get exception", new CacheFetchException(e));
                 }
-            } catch (final Exception e) {
-                LOGGER.warn("Cache get exception", new CacheFetchException(e));
+                // cache miss
+                final FileExtent freshFile = loadFileExtent(key, batchRange);
+                try {
+                    TimeUtils.measureDurationMs(time, () -> cache.put(key, freshFile), cacheStoreDurationCallback);
+                    cacheEntrySize.accept(freshFile.data().length);
+                } catch (final Exception e) {
+                    LOGGER.warn("Cache put exception", new CacheFetchException(e));
+                }
+                return freshFile;
             }
-            // cache miss
-            final FileExtent freshFile;
-            final FileFetchJob fallback = new FileFetchJob(time, objectFetcher, objectKey, batchRange, fileFetchDurationCallback);
-            try {
-                freshFile = fallback.call();
-            } catch (Exception e) {
-                throw new FetchException(e);
-            }
-            try {
-                TimeUtils.measureDurationMs(time, () -> cache.put(key, freshFile), cacheStoreDurationCallback);
-                cacheEntrySize.accept(freshFile.data().length);
-            } catch (final Exception e) {
-                LOGGER.warn("Cache put exception", new CacheFetchException(e));
-            }
-            return freshFile;
         }).collect(Collectors.toSet());
+    }
+
+    private FileExtent loadFileExtent(final CacheKey key, final ByteRange batchRange) {
+        final FileExtent freshFile;
+        final FileFetchJob fallback = new FileFetchJob(time, objectFetcher, objectKey, batchRange, fileFetchDurationCallback);
+        try {
+            freshFile = fallback.call();
+        } catch (Exception e) {
+            throw new FetchException(e);
+        }
+        return freshFile;
     }
 
     @Override

@@ -40,6 +40,7 @@ import io.aiven.inkless.cache.NullCache;
 import io.aiven.inkless.cache.ObjectCache;
 import io.aiven.inkless.common.ByteRange;
 import io.aiven.inkless.common.ObjectKey;
+import io.aiven.inkless.common.ObjectKeyCreator;
 import io.aiven.inkless.common.PlainObjectKey;
 import io.aiven.inkless.control_plane.BatchInfo;
 import io.aiven.inkless.control_plane.BatchMetadata;
@@ -58,8 +59,20 @@ public class CacheFetchJobTest {
     @Mock
     ObjectFetcher fetcher;
 
-    Time time = new MockTime();
-    ObjectKey objectA = PlainObjectKey.create("a", "a");
+    final Time time = new MockTime();
+    final static ObjectKey objectA = PlainObjectKey.create("a", "a");
+
+    static final ObjectKeyCreator OBJECT_KEY_CREATOR = new ObjectKeyCreator("prefix") {
+        @Override
+        public ObjectKey from(String value) {
+            return objectA;
+        }
+
+        @Override
+        public ObjectKey create(String value) {
+            return objectA;
+        }
+    };
 
     @Test
     public void testCacheMiss() throws Exception {
@@ -112,6 +125,7 @@ public class CacheFetchJobTest {
             cache,
             fetcher,
             objectKey,
+            OBJECT_KEY_CREATOR,
             batchInfoList,
             time,
             durationMs -> {},
@@ -121,5 +135,4 @@ public class CacheFetchJobTest {
             cacheEntrySize -> {}
         );
     }
-
 }
