@@ -25,6 +25,7 @@ import org.apache.kafka.common.config.ConfigResource;
 import org.apache.kafka.common.config.ConfigResource.Type;
 import org.apache.kafka.common.config.TopicConfig;
 import org.apache.kafka.common.config.types.Password;
+import org.apache.kafka.common.errors.InvalidConfigurationException;
 import org.apache.kafka.common.metadata.ClearElrRecord;
 import org.apache.kafka.common.metadata.ConfigRecord;
 import org.apache.kafka.common.protocol.Errors;
@@ -276,6 +277,10 @@ public class ConfigurationControlManager {
                     newValue = opValue;
                     break;
                 case DELETE:
+                    if (Objects.equals(key, TopicConfig.DISKLESS_ENABLE_CONFIG)) {
+                        return ApiError.fromThrowable(
+                            new InvalidConfigurationException("It is not allowed to delete the diskless.enable config"));
+                    }
                     newValue = null;
                     break;
                 case APPEND:

@@ -60,7 +60,6 @@ import io.aiven.inkless.test_utils.PostgreSQLTestContainer;
 import io.aiven.inkless.test_utils.S3TestContainer;
 
 import static org.apache.kafka.common.config.TopicConfig.DISKLESS_ENABLE_CONFIG;
-import static org.apache.kafka.common.config.TopicConfig.INKLESS_ENABLE_CONFIG;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
@@ -119,70 +118,16 @@ public class InklessConfigsTest {
         clientConfigs.put(CommonClientConfigs.BOOTSTRAP_SERVERS_CONFIG, cluster.bootstrapServers());
         Admin admin = AdminClient.create(clientConfigs);
 
-        // When creating a new topic with inkless.enable=true
-        final String inklessTopic = "inklessTopic";
-        createTopic(admin, inklessTopic, Map.of(INKLESS_ENABLE_CONFIG, "true"));
-        var inklessTopicConfig = getTopicConfig(admin, inklessTopic);
-        // Then both diskless.enable and inkless.enable are set to true
-        assertEquals("true", inklessTopicConfig.get(INKLESS_ENABLE_CONFIG));
-        assertEquals("true", inklessTopicConfig.get(DISKLESS_ENABLE_CONFIG));
-        // Then it's not possible turn off diskless after the topic is created
-        assertThrows(ExecutionException.class, () -> alterTopicConfig(admin, inklessTopic, Map.of(DISKLESS_ENABLE_CONFIG, "false")));
-        assertThrows(ExecutionException.class, () -> alterTopicConfig(admin, inklessTopic, Map.of(INKLESS_ENABLE_CONFIG, "false")));
-
-        if (!defaultDisklessEnableConfig) {
-            // When diskless is not enabled by default, then it's not possible to delete the diskless.enable config
-            assertThrows(ExecutionException.class, () -> deleteTopicConfigs(admin, inklessTopic, List.of(DISKLESS_ENABLE_CONFIG)));
-        } else {
-            // When diskless is enabled by default, then it's possible to delete then diskless.enable config
-            deleteTopicConfigs(admin, inklessTopic, List.of(DISKLESS_ENABLE_CONFIG));
-        }
-        // Then it's always possible to delete the inkless.enable config
-        deleteTopicConfigs(admin, inklessTopic, List.of(INKLESS_ENABLE_CONFIG));
-
-
         // When creating a new topic with diskless.enable=true
         final String disklessTopic = "disklessTopic";
         createTopic(admin, disklessTopic, Map.of(DISKLESS_ENABLE_CONFIG, "true"));
+        // Then diskless.enable is set to true in the topic config
         var disklessTopicConfig = getTopicConfig(admin, disklessTopic);
-        // Then both diskless.enable and inkless.enable are set to true
-        assertEquals("true", disklessTopicConfig.get(INKLESS_ENABLE_CONFIG));
         assertEquals("true", disklessTopicConfig.get(DISKLESS_ENABLE_CONFIG));
         // Then it's not possible turn off diskless after the topic is created
         assertThrows(ExecutionException.class, () -> alterTopicConfig(admin, disklessTopic, Map.of(DISKLESS_ENABLE_CONFIG, "false")));
-        assertThrows(ExecutionException.class, () -> alterTopicConfig(admin, disklessTopic, Map.of(INKLESS_ENABLE_CONFIG, "false")));
-
-        if (!defaultDisklessEnableConfig) {
-            // When diskless is not enabled by default, then it's not possible to delete the diskless.enable config
-            assertThrows(ExecutionException.class, () -> deleteTopicConfigs(admin, disklessTopic, List.of(DISKLESS_ENABLE_CONFIG)));
-        } else {
-            // When diskless is enabled by default, then it's possible to delete then diskless.enable config
-            deleteTopicConfigs(admin, disklessTopic, List.of(DISKLESS_ENABLE_CONFIG));
-        }
-        // Then it's always possible to delete the inkless.enable config
-        deleteTopicConfigs(admin, disklessTopic, List.of(INKLESS_ENABLE_CONFIG));
-
-
-        // When creating a new topic with both diskless.enable=true and inkless.enable=true
-        final String disklessInklessTopic = "disklessInklessTopic";
-        createTopic(admin, disklessInklessTopic, Map.of(DISKLESS_ENABLE_CONFIG, "true", INKLESS_ENABLE_CONFIG, "true"));
-        var disklessInklessTopicConfig = getTopicConfig(admin, disklessInklessTopic);
-        // Then both diskless.enable and inkless.enable are set to true
-        assertEquals("true", disklessInklessTopicConfig.get(INKLESS_ENABLE_CONFIG));
-        assertEquals("true", disklessInklessTopicConfig.get(DISKLESS_ENABLE_CONFIG));
-        // Then it's not possible turn off diskless after the topic is created
-        assertThrows(ExecutionException.class, () -> alterTopicConfig(admin, disklessInklessTopic, Map.of(DISKLESS_ENABLE_CONFIG, "false")));
-        assertThrows(ExecutionException.class, () -> alterTopicConfig(admin, disklessInklessTopic, Map.of(INKLESS_ENABLE_CONFIG, "false")));
-
-        if (!defaultDisklessEnableConfig) {
-            // When diskless is not enabled by default, then it's not possible to delete the diskless.enable config
-            assertThrows(ExecutionException.class, () -> deleteTopicConfigs(admin, disklessInklessTopic, List.of(DISKLESS_ENABLE_CONFIG)));
-        } else {
-            // When diskless is enabled by default, then it's possible to delete then diskless.enable config
-            deleteTopicConfigs(admin, disklessInklessTopic, List.of(DISKLESS_ENABLE_CONFIG));
-        }
-        // Then it's always possible to delete the inkless.enable config
-        deleteTopicConfigs(admin, disklessInklessTopic, List.of(INKLESS_ENABLE_CONFIG));
+        // Then it's not possible to delete the diskless.enable config
+        assertThrows(ExecutionException.class, () -> deleteTopicConfigs(admin, disklessTopic, List.of(DISKLESS_ENABLE_CONFIG)));
 
         admin.close();
         cluster.close();
@@ -196,53 +141,28 @@ public class InklessConfigsTest {
         clientConfigs.put(CommonClientConfigs.BOOTSTRAP_SERVERS_CONFIG, cluster.bootstrapServers());
         Admin admin = AdminClient.create(clientConfigs);
 
-        // When creating a new topic without specifying any inkless or diskless config
+        // When creating a new topic without specifying diskless.enable
         final String classicTopic = "classicTopic";
         createTopic(admin, classicTopic, Map.of());
+        // Then diskless.enable is set to false in the topic config
         var classicTopicConfig = getTopicConfig(admin, classicTopic);
-        // Then both diskless.enable and inkless.enable are set to false
-        assertEquals("false", classicTopicConfig.get(INKLESS_ENABLE_CONFIG));
         assertEquals("false", classicTopicConfig.get(DISKLESS_ENABLE_CONFIG));
         // Then it's not possible turn on diskless after the topic is created
         assertThrows(ExecutionException.class, () -> alterTopicConfig(admin, classicTopic, Map.of(DISKLESS_ENABLE_CONFIG, "true")));
-        assertThrows(ExecutionException.class, () -> alterTopicConfig(admin, classicTopic, Map.of(INKLESS_ENABLE_CONFIG, "true")));
-
-        // When creating a new topic with inkless.enable=false
-        final String inklessDisabledTopic = "inklessDisabledTopic";
-        createTopic(admin, inklessDisabledTopic, Map.of(INKLESS_ENABLE_CONFIG, "false"));
-        var inklessDisabledTopicConfig = getTopicConfig(admin, inklessDisabledTopic);
-        // Then both diskless.enable and inkless.enable are set to false
-        assertEquals("false", inklessDisabledTopicConfig.get(INKLESS_ENABLE_CONFIG));
-        assertEquals("false", inklessDisabledTopicConfig.get(DISKLESS_ENABLE_CONFIG));
-        // Then it's not possible turn on diskless after the topic is created
-        assertThrows(ExecutionException.class, () -> alterTopicConfig(admin, inklessDisabledTopic, Map.of(DISKLESS_ENABLE_CONFIG, "true")));
-        assertThrows(ExecutionException.class, () -> alterTopicConfig(admin, inklessDisabledTopic, Map.of(INKLESS_ENABLE_CONFIG, "true")));
+        // Then it's not possible to delete the diskless.enable config
+        assertThrows(ExecutionException.class, () -> deleteTopicConfigs(admin, classicTopic, List.of(DISKLESS_ENABLE_CONFIG)));
 
         // When creating a new topic with diskless.enable=false
         final String disklessDisabledTopic = "disklessDisabledTopic";
         createTopic(admin, disklessDisabledTopic, Map.of(DISKLESS_ENABLE_CONFIG, "false"));
+        // Then diskless.enable is set to false in the topic config
         var disklessDisabledTopicConfig = getTopicConfig(admin, disklessDisabledTopic);
-        // Then both diskless.enable and inkless.enable are set to false
-        assertEquals("false", disklessDisabledTopicConfig.get(INKLESS_ENABLE_CONFIG));
         assertEquals("false", disklessDisabledTopicConfig.get(DISKLESS_ENABLE_CONFIG));
         // Then it's not possible turn on diskless after the topic is created
         assertThrows(ExecutionException.class, () -> alterTopicConfig(admin, disklessDisabledTopic, Map.of(
             DISKLESS_ENABLE_CONFIG, "true")));
-        assertThrows(ExecutionException.class, () -> alterTopicConfig(admin, disklessDisabledTopic, Map.of(
-            INKLESS_ENABLE_CONFIG, "true")));
-        assertThrows(ExecutionException.class, () -> alterTopicConfig(admin, disklessDisabledTopic,
-            Map.of(DISKLESS_ENABLE_CONFIG, "true", INKLESS_ENABLE_CONFIG, "true")));
-
-        // When creating a new topic with both diskless.enable=false and inkless.enable=false
-        final String disklessInklessDisabledTopic = "disklessInklessDisabledTopic";
-        createTopic(admin, disklessInklessDisabledTopic, Map.of(DISKLESS_ENABLE_CONFIG, "false", INKLESS_ENABLE_CONFIG, "false"));
-        var disklessInklessDisabledTopicConfig = getTopicConfig(admin, disklessInklessDisabledTopic);
-        // Then both diskless.enable and inkless.enable are set to false
-        assertEquals("false", disklessInklessDisabledTopicConfig.get(INKLESS_ENABLE_CONFIG));
-        assertEquals("false", disklessInklessDisabledTopicConfig.get(DISKLESS_ENABLE_CONFIG));
-        // Then it's not possible turn on diskless after the topic is created
-        assertThrows(ExecutionException.class, () -> alterTopicConfig(admin, disklessInklessDisabledTopic, Map.of(DISKLESS_ENABLE_CONFIG, "true")));
-        assertThrows(ExecutionException.class, () -> alterTopicConfig(admin, disklessInklessDisabledTopic, Map.of(INKLESS_ENABLE_CONFIG, "true")));
+        // Then it's not possible to delete the diskless.enable config
+        assertThrows(ExecutionException.class, () -> deleteTopicConfigs(admin, classicTopic, List.of(DISKLESS_ENABLE_CONFIG)));
 
         admin.close();
         cluster.close();
@@ -255,42 +175,17 @@ public class InklessConfigsTest {
         clientConfigs.put(CommonClientConfigs.BOOTSTRAP_SERVERS_CONFIG, cluster.bootstrapServers());
 
         try (Admin admin = AdminClient.create(clientConfigs)) {
-            // When creating a new topic with inkless.enable=false
-            final String inklessDisabledTopic = "inklessDisabledTopic";
-            createTopic(admin, inklessDisabledTopic, Map.of(INKLESS_ENABLE_CONFIG, "false"));
-            var inklessDisabledTopicConfig = getTopicConfig(admin, inklessDisabledTopic);
-            // Then both diskless.enable and inkless.enable are set to false
-            assertEquals("false", inklessDisabledTopicConfig.get(INKLESS_ENABLE_CONFIG));
-            assertEquals("false", inklessDisabledTopicConfig.get(DISKLESS_ENABLE_CONFIG));
-            // Then it's not possible turn on diskless after the topic is created
-            assertThrows(ExecutionException.class, () -> alterTopicConfig(admin, inklessDisabledTopic, Map.of(DISKLESS_ENABLE_CONFIG, "true")));
-            assertThrows(ExecutionException.class, () -> alterTopicConfig(admin, inklessDisabledTopic, Map.of(INKLESS_ENABLE_CONFIG, "true")));
-
             // When creating a new topic with diskless.enable=false
             final String disklessDisabledTopic = "disklessDisabledTopic";
             createTopic(admin, disklessDisabledTopic, Map.of(DISKLESS_ENABLE_CONFIG, "false"));
+            // Then diskless.enable is set to false in the topic config
             var disklessDisabledTopicConfig = getTopicConfig(admin, disklessDisabledTopic);
-            // Then both diskless.enable and inkless.enable are set to false
-            assertEquals("false", disklessDisabledTopicConfig.get(INKLESS_ENABLE_CONFIG));
             assertEquals("false", disklessDisabledTopicConfig.get(DISKLESS_ENABLE_CONFIG));
             // Then it's not possible turn on diskless after the topic is created
             assertThrows(ExecutionException.class, () -> alterTopicConfig(admin, disklessDisabledTopic, Map.of(
                 DISKLESS_ENABLE_CONFIG, "true")));
-            assertThrows(ExecutionException.class, () -> alterTopicConfig(admin, disklessDisabledTopic, Map.of(
-                INKLESS_ENABLE_CONFIG, "true")));
-            assertThrows(ExecutionException.class, () -> alterTopicConfig(admin, disklessDisabledTopic,
-                Map.of(DISKLESS_ENABLE_CONFIG, "true", INKLESS_ENABLE_CONFIG, "true")));
-
-            // When creating a new topic with both diskless.enable=false and inkless.enable=false
-            final String disklessInklessDisabledTopic = "disklessInklessDisabledTopic";
-            createTopic(admin, disklessInklessDisabledTopic, Map.of(DISKLESS_ENABLE_CONFIG, "false", INKLESS_ENABLE_CONFIG, "false"));
-            var disklessInklessDisabledTopicConfig = getTopicConfig(admin, disklessInklessDisabledTopic);
-            // Then both diskless.enable and inkless.enable are set to false
-            assertEquals("false", disklessInklessDisabledTopicConfig.get(INKLESS_ENABLE_CONFIG));
-            assertEquals("false", disklessInklessDisabledTopicConfig.get(DISKLESS_ENABLE_CONFIG));
-            // Then it's not possible turn on diskless after the topic is created
-            assertThrows(ExecutionException.class, () -> alterTopicConfig(admin, disklessInklessDisabledTopic, Map.of(DISKLESS_ENABLE_CONFIG, "true")));
-            assertThrows(ExecutionException.class, () -> alterTopicConfig(admin, disklessInklessDisabledTopic, Map.of(INKLESS_ENABLE_CONFIG, "true")));
+            // Then it's not possible to delete diskless.enable=false because the default is true and it would enable diskless
+            assertThrows(ExecutionException.class, () -> deleteTopicConfigs(admin, disklessDisabledTopic, List.of(DISKLESS_ENABLE_CONFIG)));
         }
         cluster.close();
     }
