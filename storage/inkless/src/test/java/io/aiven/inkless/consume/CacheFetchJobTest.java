@@ -51,8 +51,8 @@ public class CacheFetchJobTest {
     @Mock
     ObjectFetcher fetcher;
 
-    Time time = new MockTime();
-    ObjectKey objectA = PlainObjectKey.create("a", "a");
+    final Time time = new MockTime();
+    final static ObjectKey objectA = PlainObjectKey.create("a", "a");
 
     @Test
     public void testCacheMiss() throws Exception {
@@ -99,8 +99,7 @@ public class CacheFetchJobTest {
             ObjectKey objectKey,
             ByteRange byteRange
     ) {
-        return new CacheFetchJob(cache, objectKey, byteRange, time, fetcher,
-                durationMs -> {}, durationMs -> {}, hitBool -> {}, durationMs -> {}, cacheEntrySize -> {});
+        return new CacheFetchJob(cache, fetcher, objectKey, byteRange, time,
+                durationMs -> {}, cacheEntrySize -> {});
     }
-
 }
