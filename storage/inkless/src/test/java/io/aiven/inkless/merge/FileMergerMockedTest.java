@@ -122,8 +122,8 @@ class FileMergerMockedTest {
         when(inklessConfig.fileMergeWorkDir()).thenReturn(WORK_DIR);
         when(inklessConfig.cacheMaxCount()).thenReturn(10000L);
 
-        sharedState = SharedState.initialize(time, "cluster-id", "rack", BROKER_ID, inklessConfig, mock(MetadataView.class), controlPlane,
-            mock(BrokerTopicStats.class), logDir, mock(Supplier.class));
+        sharedState = SharedState.initialize(time, BROKER_ID, inklessConfig, mock(MetadataView.class), controlPlane,
+            mock(BrokerTopicStats.class), mock(Supplier.class));
     }
 
     @AfterEach

@@ -104,7 +104,7 @@ public class Reader implements AutoCloseable {
         this.maxBatchesPerPartitionToFind = maxBatchesPerPartitionToFind;
         this.metadataExecutor = metadataExecutor;
         this.dataExecutor = dataExecutor;
-        this.fetchMetrics = new InklessFetchMetrics(time);
+        this.fetchMetrics = new InklessFetchMetrics(time, cache);
         this.brokerTopicStats = brokerTopicStats;
         try {
             this.metadataThreadPoolMonitor = new ThreadPoolMonitor("inkless-fetch-metadata", metadataExecutor);
