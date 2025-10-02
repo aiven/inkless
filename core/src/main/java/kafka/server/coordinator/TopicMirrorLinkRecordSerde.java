@@ -18,8 +18,8 @@ package kafka.server.coordinator;
 
 import org.apache.kafka.common.errors.UnsupportedVersionException;
 import org.apache.kafka.common.protocol.ApiMessage;
-import org.apache.kafka.coordinator.common.runtime.CoordinatorRecordSerde;
 import org.apache.kafka.coordinator.clusterlink.generated.CoordinatorRecordType;
+import org.apache.kafka.coordinator.common.runtime.CoordinatorRecordSerde;
 
 public class TopicMirrorLinkRecordSerde extends CoordinatorRecordSerde {
     @Override

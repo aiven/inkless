@@ -20,14 +20,13 @@ import org.apache.kafka.clients.ClientResponse;
 import org.apache.kafka.clients.ClientUtils;
 import org.apache.kafka.clients.admin.AlterConfigOp;
 import org.apache.kafka.clients.admin.ConfigEntry;
-import org.apache.kafka.clients.admin.ListGroupsOptions;
-import org.apache.kafka.common.ConsumerGroupState;
 import org.apache.kafka.common.GroupState;
 import org.apache.kafka.common.GroupType;
 import org.apache.kafka.common.Node;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.config.ConfigResource;
 import org.apache.kafka.common.message.CreatePartitionsRequestData;
+import org.apache.kafka.common.message.DeleteTopicsRequestData;
 import org.apache.kafka.common.message.DescribeConfigsRequestData;
 import org.apache.kafka.common.message.IncrementalAlterConfigsRequestData;
 import org.apache.kafka.common.message.ListGroupsRequestData;
@@ -37,11 +36,12 @@ import org.apache.kafka.common.metrics.Metrics;
 import org.apache.kafka.common.network.ClientInformation;
 import org.apache.kafka.common.network.ListenerName;
 import org.apache.kafka.common.protocol.ApiKeys;
+import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.requests.CreatePartitionsRequest;
+import org.apache.kafka.common.requests.DeleteTopicsRequest;
 import org.apache.kafka.common.requests.DescribeConfigsRequest;
 import org.apache.kafka.common.requests.DescribeConfigsResponse;
 import org.apache.kafka.common.requests.IncrementalAlterConfigsRequest;
-import org.apache.kafka.common.requests.IncrementalAlterConfigsResponse;
 import org.apache.kafka.common.requests.ListGroupsRequest;
 import org.apache.kafka.common.requests.ListGroupsResponse;
 import org.apache.kafka.common.requests.MetadataRequest;
@@ -50,22 +50,17 @@ import org.apache.kafka.common.requests.OffsetFetchRequest;
 import org.apache.kafka.common.requests.OffsetFetchResponse;
 import org.apache.kafka.common.requests.RequestContext;
 import org.apache.kafka.common.requests.RequestHeader;
-import org.apache.kafka.common.resource.ResourceType;
 import org.apache.kafka.common.security.auth.KafkaPrincipal;
 import org.apache.kafka.common.security.auth.SecurityProtocol;
 import org.apache.kafka.common.utils.LogContext;
 import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.coordinator.group.GroupCoordinator;
-import org.apache.kafka.image.LocalReplicaChanges;
-import org.apache.kafka.image.MetadataDelta;
 import org.apache.kafka.image.MetadataImage;
 import org.apache.kafka.metadata.MetadataCache;
-import org.apache.kafka.server.authorizer.AuthorizableRequestContext;
 import org.apache.kafka.server.common.ControllerRequestCompletionHandler;
 import org.apache.kafka.server.common.NodeToControllerChannelManager;
 import org.apache.kafka.server.common.RequestLocal;
 import org.apache.kafka.server.network.BrokerEndPoint;
-import org.apache.kafka.server.util.Scheduler;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -75,15 +70,11 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import java.util.Random;
 import java.util.Set;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
 import java.util.function.Supplier;
 
 import static java.util.Collections.singletonList;
@@ -199,7 +190,8 @@ public class RemoteClusterMetadataManager implements AutoCloseable {
                 });
 
                 var createPartitionsTopics = new CreatePartitionsRequestData.CreatePartitionsTopicCollection();
-                metadataResponse.topicMetadata().forEach(topicMetadata -> {
+                Collection<MetadataResponse.TopicMetadata> topicMetadataResp = metadataResponse.topicMetadata();
+                topicMetadataResp.forEach(topicMetadata -> {
                     var partitionLeaders = remotePartitionLeaders.computeIfAbsent(clusterLinkName, k -> new HashMap<>());
                     topicMetadata.partitionMetadata().forEach(partitionMetadata -> {
                         partitionLeaders.put(partitionMetadata.topicPartition, remoteClusterNodes.get(clusterLinkName).get(partitionMetadata.leaderId.get()));
@@ -212,8 +204,11 @@ public class RemoteClusterMetadataManager implements AutoCloseable {
                             .setCount(partitionLeaders.size())
                             .setAssignments(null)
                         );
+
                     }
                 });
+
+                maybeDeleteTopic(clusterLinkName, topicMetadataResp);
 
                 if (!createPartitionsTopics.isEmpty()) {
                     log.info("!!! Detected partition count change, sending CreatePartitionsRequest: {}", createPartitionsTopics);
@@ -291,6 +286,30 @@ public class RemoteClusterMetadataManager implements AutoCloseable {
 
         });
         updateConsumerGroupOffsets();
+    }
+
+    private void maybeDeleteTopic(String clusterLinkName, Collection<MetadataResponse.TopicMetadata> topicMetadataResp) {
+        log.info("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
+        log.info("!!! periodic topicMetadataResp: {}", topicMetadataResp);
+        List<String> deletedTopics = new ArrayList<>();
+        // deleted topics if needed
+        topics.get(clusterLinkName).forEach(name -> {
+            List<String> remoteTopicNamesDeleted = topicMetadataResp.stream()
+                    .filter(topicMetadata -> topicMetadata.error() == Errors.UNKNOWN_TOPIC_OR_PARTITION)
+                    .map(MetadataResponse.TopicMetadata::topic).toList();
+
+            if (remoteTopicNamesDeleted.contains(name)) {
+                log.info("!!! Detected topic {} deleted in remote cluster {}, removing it locally too", name, clusterLinkName);
+                // send a delete topic request to the controller
+                channelManager.sendRequest(new DeleteTopicsRequest.Builder(
+                        new DeleteTopicsRequestData()
+                                .setTopicNames(List.of(name))
+                                .setTimeoutMs(10000)), new TimeoutHandler());
+                log.info("!!! Sent delete topic request for {}", name);
+                deletedTopics.add(name);
+            }
+        });
+        deletedTopics.forEach(name -> topics.get(clusterLinkName).remove(name));
     }
 
     private void updateConsumerGroupOffsets() {
