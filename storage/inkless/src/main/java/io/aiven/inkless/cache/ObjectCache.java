@@ -20,9 +20,18 @@ package io.aiven.inkless.cache;
 import org.apache.kafka.common.cache.Cache;
 
 import java.io.Closeable;
+import java.util.function.Function;
 
 import io.aiven.inkless.generated.CacheKey;
 import io.aiven.inkless.generated.FileExtent;
 
 public interface ObjectCache extends Cache<CacheKey, FileExtent>, Closeable {
+
+    default boolean supportsComputeIfAbsent() {
+        return false;
+    }
+
+    default FileExtent computeIfAbsent(CacheKey key, Function<CacheKey, FileExtent> mappingFunction) {
+        throw new UnsupportedOperationException("The computeIfAbsent is not supported");
+    }
 }

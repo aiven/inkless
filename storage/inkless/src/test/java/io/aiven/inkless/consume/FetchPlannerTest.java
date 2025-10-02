@@ -217,6 +217,7 @@ public class FetchPlannerTest {
             cache,
             fetcher,
             objectKey,
+            OBJECT_KEY_CREATOR,
             batchInfoList,
             time,
             durationMs -> {},

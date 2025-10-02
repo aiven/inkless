@@ -122,7 +122,8 @@ public class InklessTopicMetadataTransformer implements Closeable {
      *
      * @return the selected broker ID.
      */
-    private int selectLeaderForInklessPartitions(final ListenerName listenerName, final String clientId,
+    private int selectLeaderForInklessPartitions(final ListenerName listenerName,
+                                                 final String clientId,
                                                  final Uuid topicId,
                                                  final int partitionIndex) {
         final String clientAZ = ClientAZExtractor.getClientAZ(clientId);
@@ -145,9 +146,9 @@ public class InklessTopicMetadataTransformer implements Closeable {
             throw new RuntimeException("No broker found, unexpected");
         }
 
-        final byte[] input = String.format("%s-%s-%s", clientId, topicId, partitionIndex).getBytes(StandardCharsets.UTF_8);
-        final long hash = MurmurHash2.hash64(input, input.length);
-        final int idx = Math.toIntExact(hash % brokersToPickFrom.size());
+        final byte[] input = String.format("%s-%s", topicId, partitionIndex).getBytes(StandardCharsets.UTF_8);
+        final long hash = Integer.toUnsignedLong(MurmurHash2.hash32(input, input.length));
+        final int idx = Math.toIntExact(Math.abs(hash) % brokersToPickFrom.size());
 
         return brokersToPickFrom.get(idx).id();
     }
