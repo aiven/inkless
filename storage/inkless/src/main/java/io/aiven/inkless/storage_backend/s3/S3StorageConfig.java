@@ -77,7 +77,9 @@ public class S3StorageConfig extends AbstractConfig {
         + " received temporary permission to access some resource.";
     public static final String AWS_CREDENTIALS_FILE_CONFIG = "aws.credentials.file";
     private static final String AWS_CREDENTIALS_FILE_DOC =
-        "This property is used to define a file where credentials are defind. "
+        "This property is used to define a file where credentials are defined. "
+            + "The file must contain AWS credentials in the format as those would be in the properties file ie. "
+            + "inkless.storage.aws.access.key.id=, inkless.storage.aws.secret.access.key=, and inkless.storage.aws.session.token=."
             + "The file might be updated during process life cycle, "
             + "and the credentials will be reloaded from the file.";
 
