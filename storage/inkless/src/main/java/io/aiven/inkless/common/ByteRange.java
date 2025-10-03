@@ -17,6 +17,8 @@
  */
 package io.aiven.inkless.common;
 
+import java.util.Objects;
+
 public record ByteRange(long offset, long size) {
     public ByteRange {
         if (offset < 0) {
@@ -62,6 +64,22 @@ public record ByteRange(long offset, long size) {
         long minOffset = Long.max(a.offset, b.offset);
         long maxOffset = Long.min(a.offset + a.size, b.offset + b.size);
         return new ByteRange(minOffset, Long.max(0, maxOffset - minOffset));
+    }
+
+    public static ByteRange union(final ByteRange a, final ByteRange b) {
+        Objects.requireNonNull(a, "a cannot be null");
+        Objects.requireNonNull(b, "b cannot be null");
+
+        if (a.empty()) {
+            return b;
+        }
+        if (b.empty()) {
+            return a;
+        }
+        
+        final long minOffset = Long.min(a.offset, b.offset);
+        final long maxEndOffset = Long.max(a.offset + a.size, b.offset + b.size);
+        return new ByteRange(minOffset, maxEndOffset - minOffset);
     }
 
     public boolean contains(ByteRange range) {
