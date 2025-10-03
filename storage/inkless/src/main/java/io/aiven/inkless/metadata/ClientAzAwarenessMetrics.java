@@ -58,7 +58,7 @@ public class ClientAzAwarenessMetrics implements Closeable {
             CLIENT_AZ_HIT_RATE,
             "requests",
             TimeUnit.SECONDS,
-            Map.of("az", clientAZ)
+            Map.of("client-az", clientAZ)
         )).mark();
     }
 
