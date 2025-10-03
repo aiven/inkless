@@ -28,15 +28,15 @@ import java.util.function.Supplier;
  * to avoid unnecessary calls to {@link Sensor#record()} that under the hood has a synchronized block and affects
  * performance because of that.
  */
-public class MeasurableValue extends Value {
-    private final Supplier<Long> value;
+public class MeasurableValue<T extends Number> extends Value {
+    private final Supplier<T> value;
 
-    public MeasurableValue(final Supplier<Long> value) {
+    public MeasurableValue(final Supplier<T> value) {
         this.value = value;
     }
 
     @Override
     public double measure(final MetricConfig config, final long now) {
-        return value.get();
+        return value.get().doubleValue();
     }
 }

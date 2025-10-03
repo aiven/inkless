@@ -90,7 +90,7 @@ public class InfinispanCacheMetrics implements Closeable {
 
     static Sensor registerSensor(final Metrics metrics, final MetricNameTemplate metricName, final String sensorName, final Supplier<Long> supplier) {
         return new SensorProvider(metrics, sensorName)
-            .with(metricName, new MeasurableValue(supplier))
+            .with(metricName, new MeasurableValue<>(supplier))
             .get();
     }
 

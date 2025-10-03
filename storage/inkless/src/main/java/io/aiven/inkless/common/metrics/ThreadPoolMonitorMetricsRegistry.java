@@ -37,15 +37,16 @@ public class ThreadPoolMonitorMetricsRegistry {
     static final String QUEUED_TASK_COUNT_TOTAL = QUEUED_TASK_COUNT + "-total";
     static final String QUEUED_TASK_COUNT_TOTAL_DOC = "Tasks submitted to the pool "
         + "that have not yet begun executing.";
+    static final String AVG_IDLE_PERCENT = "avg-idle-percent";
+    static final String AVG_IDLE_PERCENT_DOC = "Average idle percent of the pool";
 
-    final String groupName;
     final MetricNameTemplate activeThreadsTotalMetricName;
     final MetricNameTemplate poolSizeTotalMetricName;
     final MetricNameTemplate parallelismTotalMetricName;
     final MetricNameTemplate queuedTaskCountTotalMetricName;
+    final MetricNameTemplate avgIdlePercentMetricName;
 
     public ThreadPoolMonitorMetricsRegistry(final String groupName) {
-        this.groupName = groupName;
         activeThreadsTotalMetricName = new MetricNameTemplate(
             ACTIVE_THREADS_TOTAL,
             groupName,
@@ -65,6 +66,11 @@ public class ThreadPoolMonitorMetricsRegistry {
             QUEUED_TASK_COUNT_TOTAL,
             groupName,
             QUEUED_TASK_COUNT_TOTAL_DOC
+        );
+        avgIdlePercentMetricName = new MetricNameTemplate(
+            "avg-idle-percent",
+            groupName,
+            "Average idle percent of the pool"
         );
     }
 
