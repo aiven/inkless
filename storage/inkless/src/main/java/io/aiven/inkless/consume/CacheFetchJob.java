@@ -96,13 +96,13 @@ public class CacheFetchJob implements Callable<Set<FileExtent>> {
         // Catch cache-related exceptions but let remote storage exceptions bubble up.
         return batchInfoList.stream().map(batchInfo -> {
             final ByteRange batchRange = batchInfo.metadata().range();
-            final ObjectKey objectKey = objectKeyCreator.from(batchInfo.objectKey());
-            final CacheKey key = createCacheKey(objectKey, batchRange);
+            final ObjectKey batchObjectKey = objectKeyCreator.from(batchInfo.objectKey());
+            final CacheKey cacheKey = createCacheKey(objectKey, batchRange);
 
             if (cache.supportsComputeIfAbsent()) {
                 final AtomicBoolean cacheHit = new AtomicBoolean(true);
-                final FileExtent fileExtent = cache.computeIfAbsent(key, mappingKey -> {
-                    final FileExtent freshFile = loadFileExtent(mappingKey, batchRange);
+                final FileExtent fileExtent = cache.computeIfAbsent(cacheKey, mappingKey -> {
+                    final FileExtent freshFile = loadFileExtent(batchObjectKey, batchRange);
                     cacheHit.set(false);
                     cacheEntrySize.accept(freshFile.data().length);
                     return freshFile;
@@ -111,7 +111,7 @@ public class CacheFetchJob implements Callable<Set<FileExtent>> {
                 return fileExtent;
             } else{
                 try {
-                    FileExtent file = TimeUtils.measureDurationMs(time, () -> cache.get(key), cacheQueryDurationCallback);
+                    FileExtent file = TimeUtils.measureDurationMs(time, () -> cache.get(cacheKey), cacheQueryDurationCallback);
                     cacheHitRateCallback.accept(file != null);
                     if (file != null) {
                         // cache hit
@@ -121,9 +121,9 @@ public class CacheFetchJob implements Callable<Set<FileExtent>> {
                     LOGGER.warn("Cache get exception", new CacheFetchException(e));
                 }
                 // cache miss
-                final FileExtent freshFile = loadFileExtent(key, batchRange);
+                final FileExtent freshFile = loadFileExtent(objectKey, batchRange);
                 try {
-                    TimeUtils.measureDurationMs(time, () -> cache.put(key, freshFile), cacheStoreDurationCallback);
+                    TimeUtils.measureDurationMs(time, () -> cache.put(cacheKey, freshFile), cacheStoreDurationCallback);
                     cacheEntrySize.accept(freshFile.data().length);
                 } catch (final Exception e) {
                     LOGGER.warn("Cache put exception", new CacheFetchException(e));
@@ -133,9 +133,9 @@ public class CacheFetchJob implements Callable<Set<FileExtent>> {
         }).collect(Collectors.toSet());
     }
 
-    private FileExtent loadFileExtent(final CacheKey key, final ByteRange batchRange) {
+    private FileExtent loadFileExtent(final ObjectKey loadObjectKey, final ByteRange batchRange) {
         final FileExtent freshFile;
-        final FileFetchJob fallback = new FileFetchJob(time, objectFetcher, objectKey, batchRange, fileFetchDurationCallback);
+        final FileFetchJob fallback = new FileFetchJob(time, objectFetcher, loadObjectKey, batchRange, fileFetchDurationCallback);
         try {
             freshFile = fallback.call();
         } catch (Exception e) {
