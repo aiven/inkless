@@ -45,6 +45,7 @@ import io.aiven.inkless.cache.ObjectCache;
 import io.aiven.inkless.common.InklessThreadFactory;
 import io.aiven.inkless.common.ObjectKey;
 import io.aiven.inkless.common.ObjectKeyCreator;
+import io.aiven.inkless.common.metrics.ThreadPoolMonitor;
 import io.aiven.inkless.control_plane.CommitBatchResponse;
 import io.aiven.inkless.control_plane.ControlPlane;
 import io.aiven.inkless.storage_backend.common.StorageBackend;
@@ -73,6 +74,7 @@ class FileCommitter implements Closeable {
     private final ExecutorService executorServiceUpload;
     private final ExecutorService executorServiceCommit;
     private final ExecutorService executorServiceCacheStore;
+    private ThreadPoolMonitor threadPoolMonitor;
 
     private final AtomicInteger totalFilesInProgress = new AtomicInteger(0);
     private final AtomicInteger totalBytesInProgress = new AtomicInteger(0);
@@ -136,6 +138,12 @@ class FileCommitter implements Closeable {
         // Can't do this in the FileCommitterMetrics constructor, so initializing this way.
         this.metrics.initTotalFilesInProgressMetric(totalFilesInProgress::get);
         this.metrics.initTotalBytesInProgressMetric(totalBytesInProgress::get);
+        try {
+            this.threadPoolMonitor = new ThreadPoolMonitor("inkless-produce-uploader", executorServiceUpload);
+        } catch (final Exception e) {
+            // only expected to happen on tests passing other types of pools
+            LOGGER.warn("Failed to create ThreadPoolMonitor for inkless-produce-uploader", e);
+        }
     }
 
     void commit(final ClosedFile file) throws InterruptedException {
@@ -235,5 +243,6 @@ class FileCommitter implements Closeable {
         executorServiceUpload.shutdown();
         executorServiceCommit.shutdown();
         metrics.close();
+        if (threadPoolMonitor != null) threadPoolMonitor.close();
     }
 }
