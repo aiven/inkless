@@ -210,7 +210,7 @@ public class FetchPlannerTest {
     private CacheFetchJob cacheFetchJob(         ObjectKey objectKey, ByteRange byteRange) {
         return new CacheFetchJob(
             cache, objectKey, byteRange, time, fetcher,
-            durationMs -> {}, durationMs -> {}, hitBool -> {}, durationMs -> {}
+            durationMs -> {}, durationMs -> {}, hitBool -> {}, durationMs -> {}, cacheEntrySize -> {}
         );
     }
 
