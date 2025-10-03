@@ -42,6 +42,7 @@ import io.aiven.inkless.cache.KeyAlignmentStrategy;
 import io.aiven.inkless.cache.ObjectCache;
 import io.aiven.inkless.common.InklessThreadFactory;
 import io.aiven.inkless.common.ObjectKeyCreator;
+import io.aiven.inkless.common.metrics.ThreadPoolMonitor;
 import io.aiven.inkless.control_plane.ControlPlane;
 import io.aiven.inkless.storage_backend.common.ObjectFetcher;
 
@@ -59,6 +60,8 @@ public class Reader implements AutoCloseable {
     private final ExecutorService dataExecutor;
     private final InklessFetchMetrics fetchMetrics;
     private final BrokerTopicStats brokerTopicStats;
+    private ThreadPoolMonitor metadataThreadPoolMonitor;
+    private ThreadPoolMonitor dataThreadPoolMonitor;
 
     public Reader(
         Time time,
@@ -109,6 +112,13 @@ public class Reader implements AutoCloseable {
         this.dataExecutor = dataExecutor;
         this.fetchMetrics = new InklessFetchMetrics(time);
         this.brokerTopicStats = brokerTopicStats;
+        try {
+            this.metadataThreadPoolMonitor = new ThreadPoolMonitor("inkless-fetch-metadata", metadataExecutor);
+            this.dataThreadPoolMonitor = new ThreadPoolMonitor("inkless-fetch-data", dataExecutor);
+        } catch (final Exception e) {
+            // only expected to happen on tests passing other types of pools
+            LOGGER.warn("Failed to create thread pool monitors", e);
+        }
     }
 
     public CompletableFuture<Map<TopicIdPartition, FetchPartitionData>> fetch(
@@ -196,5 +206,7 @@ public class Reader implements AutoCloseable {
     public void close() {
         ThreadUtils.shutdownExecutorServiceQuietly(metadataExecutor, EXECUTOR_SHUTDOWN_TIMEOUT_SECONDS, TimeUnit.SECONDS);
         ThreadUtils.shutdownExecutorServiceQuietly(dataExecutor, EXECUTOR_SHUTDOWN_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+        if (metadataThreadPoolMonitor != null) metadataThreadPoolMonitor.close();
+        if (dataThreadPoolMonitor != null) dataThreadPoolMonitor.close();
     }
 }
