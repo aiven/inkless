@@ -247,6 +247,8 @@ class BrokerMetadataPublisher(
       // Apply ACL delta.
       aclPublisher.onMetadataUpdate(delta, newImage, manifest)
 
+      remoteClusterMetadataManager.onMetadataUpdate(delta, newImage, manifest)
+
       try {
         // Propagate the new image to the group coordinator.
         groupCoordinator.onNewMetadataImage(new KRaftCoordinatorMetadataImage(newImage), new KRaftCoordinatorMetadataDelta(delta))

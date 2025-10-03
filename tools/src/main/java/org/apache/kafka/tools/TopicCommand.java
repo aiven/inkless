@@ -443,19 +443,24 @@ public abstract class TopicCommand {
     public static class TopicService implements AutoCloseable {
         private final Admin adminClient;
         private final Map<String, String> linkConfigs;
+        // TODO: remove this once we remove find coordinator of mirror topic creation logic out of this class
+        private final Properties commandConfig;
 
         public TopicService(Properties commandConfig, Optional<String> bootstrapServer) {
             this.adminClient = createAdminClient(commandConfig, bootstrapServer);
+            this.commandConfig = commandConfig;
             linkConfigs = new HashMap<>();
         }
 
         public TopicService(Properties commandConfig, Optional<String> bootstrapServer, Map<String, String> linkConfigs) {
             this.adminClient = createAdminClient(commandConfig, bootstrapServer);
+            this.commandConfig = commandConfig;
             this.linkConfigs = linkConfigs;
         }
 
         public TopicService(Admin admin) {
             this.adminClient = admin;
+            this.commandConfig = new Properties();
             this.linkConfigs = new HashMap<>();
         }
 
@@ -515,7 +520,7 @@ public abstract class TopicCommand {
                     System.out.println("Node info: " + node);
                     String bootstrapServer = node.host() + ":" + node.port();
                     System.out.println("Creating topic " + topic.name + " using bootstrap server " + bootstrapServer + ".");
-                    try (Admin admin = createAdminClient(new Properties(), Optional.of(bootstrapServer))) {
+                    try (Admin admin = createAdminClient(commandConfig, Optional.of(bootstrapServer))) {
                         newTopic.configs(configsMap);
                         CreateTopicsResult createResult = admin.createTopics(Set.of(newTopic),
                                 new CreateTopicsOptions().retryOnQuotaViolation(false));
@@ -815,7 +820,7 @@ public abstract class TopicCommand {
                 .describedAs("command config property file")
                 .ofType(String.class);
 
-            clusterLinkConfigOpt = parser.accepts("cluster-link-config", "Property file containing configs to be passed to Admin Client.")
+            clusterLinkConfigOpt = parser.accepts("cluster-link-config", "Property file source cluster cluster configs")
                     .withRequiredArg()
                     .describedAs("cluster link config property file")
                     .ofType(String.class);
@@ -1084,6 +1089,9 @@ public abstract class TopicCommand {
                 Set<OptionSpec<?>> invalidOptions = Set.of(alterOpt);
                 CommandLineUtils.checkInvalidArgsSet(parser, options, usedOptions, invalidOptions, Optional.of(KAFKA_CONFIGS_CLI_SUPPORTS_ALTERING_TOPIC_CONFIGS));
                 CommandLineUtils.checkRequiredArgs(parser, options, partitionsOpt);
+            }
+            if (has(createLinkOpt)) {
+                CommandLineUtils.checkRequiredArgs(parser, options, linkNameOpt, clusterLinkConfigOpt);
             }
         }
 

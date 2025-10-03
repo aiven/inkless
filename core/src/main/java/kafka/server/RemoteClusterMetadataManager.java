@@ -24,8 +24,13 @@ import org.apache.kafka.common.GroupState;
 import org.apache.kafka.common.GroupType;
 import org.apache.kafka.common.Node;
 import org.apache.kafka.common.TopicPartition;
+import org.apache.kafka.common.acl.AccessControlEntryFilter;
+import org.apache.kafka.common.acl.AclBinding;
+import org.apache.kafka.common.acl.AclBindingFilter;
 import org.apache.kafka.common.config.ConfigResource;
+import org.apache.kafka.common.message.CreateAclsRequestData;
 import org.apache.kafka.common.message.CreatePartitionsRequestData;
+import org.apache.kafka.common.message.DeleteAclsRequestData;
 import org.apache.kafka.common.message.DeleteTopicsRequestData;
 import org.apache.kafka.common.message.DescribeConfigsRequestData;
 import org.apache.kafka.common.message.IncrementalAlterConfigsRequestData;
@@ -37,8 +42,12 @@ import org.apache.kafka.common.network.ClientInformation;
 import org.apache.kafka.common.network.ListenerName;
 import org.apache.kafka.common.protocol.ApiKeys;
 import org.apache.kafka.common.protocol.Errors;
+import org.apache.kafka.common.requests.CreateAclsRequest;
 import org.apache.kafka.common.requests.CreatePartitionsRequest;
+import org.apache.kafka.common.requests.DeleteAclsRequest;
 import org.apache.kafka.common.requests.DeleteTopicsRequest;
+import org.apache.kafka.common.requests.DescribeAclsRequest;
+import org.apache.kafka.common.requests.DescribeAclsResponse;
 import org.apache.kafka.common.requests.DescribeConfigsRequest;
 import org.apache.kafka.common.requests.DescribeConfigsResponse;
 import org.apache.kafka.common.requests.IncrementalAlterConfigsRequest;
@@ -50,13 +59,20 @@ import org.apache.kafka.common.requests.OffsetFetchRequest;
 import org.apache.kafka.common.requests.OffsetFetchResponse;
 import org.apache.kafka.common.requests.RequestContext;
 import org.apache.kafka.common.requests.RequestHeader;
+import org.apache.kafka.common.resource.PatternType;
+import org.apache.kafka.common.resource.ResourcePatternFilter;
+import org.apache.kafka.common.resource.ResourceType;
 import org.apache.kafka.common.security.auth.KafkaPrincipal;
 import org.apache.kafka.common.security.auth.SecurityProtocol;
 import org.apache.kafka.common.utils.LogContext;
 import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.coordinator.group.GroupCoordinator;
+import org.apache.kafka.image.MetadataDelta;
 import org.apache.kafka.image.MetadataImage;
+import org.apache.kafka.image.loader.LoaderManifest;
+import org.apache.kafka.image.publisher.MetadataPublisher;
 import org.apache.kafka.metadata.MetadataCache;
+import org.apache.kafka.metadata.authorizer.StandardAcl;
 import org.apache.kafka.server.common.ControllerRequestCompletionHandler;
 import org.apache.kafka.server.common.NodeToControllerChannelManager;
 import org.apache.kafka.server.common.RequestLocal;
@@ -72,6 +88,7 @@ import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Properties;
 import java.util.Random;
 import java.util.Set;
@@ -85,8 +102,11 @@ import static org.apache.kafka.clients.CommonClientConfigs.BOOTSTRAP_SERVERS_CON
  * topic partitions changes, and topic configuration changes in remote clusters and updates
  * the local metadata accordingly.
  */
-public class RemoteClusterMetadataManager implements AutoCloseable {
+public class RemoteClusterMetadataManager implements MetadataPublisher, AutoCloseable {
     private static final Logger log = LoggerFactory.getLogger(RemoteClusterMetadataManager.class);
+    private static final ResourcePatternFilter ANY_RESOURCE = new ResourcePatternFilter(ResourceType.ANY, null, PatternType.ANY);
+    private static final AclBindingFilter ANY_RESOURCE_ACL = new AclBindingFilter(ANY_RESOURCE, AccessControlEntryFilter.ANY);
+
     private final KafkaConfig brokerConfig;
     private final int nodeId;
     // Mapping from remote bootstrap servers to its corresponding broker sender and topics.
@@ -127,6 +147,16 @@ public class RemoteClusterMetadataManager implements AutoCloseable {
     }
 
     @Override
+    public String name() {
+        return "RemoteClusterMetadataManager(id=" + brokerConfig.nodeId() + ")";
+    }
+
+    @Override
+    public void onMetadataUpdate(MetadataDelta delta, MetadataImage newImage, LoaderManifest manifest) {
+        this.metadataImage = newImage;
+    }
+
+    @Override
     public void close() throws Exception {
 
     }
@@ -138,7 +168,9 @@ public class RemoteClusterMetadataManager implements AutoCloseable {
         }
         // return a random node if no leader info
         Properties props = metadataCache.config(new ConfigResource(ConfigResource.Type.CLUSTER_LINK, clusterLinkName));
-        String bootstrapServers = props.get(BOOTSTRAP_SERVERS_CONFIG).toString();
+        String bootstrapServers = Optional.ofNullable(props.get(BOOTSTRAP_SERVERS_CONFIG))
+                .map(Object::toString)
+                .orElseThrow(() -> new IllegalArgumentException("remote bootstrap server not found in cluster link config: " + clusterLinkName));
         // get the 1st one bootstrap server
         var addresses = ClientUtils.parseAndValidateAddresses(Arrays.stream(bootstrapServers.split(",")).toList(), "use_all_dns_ips");
         int rand = random.nextInt(addresses.size());
@@ -159,7 +191,9 @@ public class RemoteClusterMetadataManager implements AutoCloseable {
             if (!remoteBrokers.containsKey(clusterLinkName)) {
                 // should get the cluster name from records
                 Properties props = metadataCache.config(new ConfigResource(ConfigResource.Type.CLUSTER_LINK, clusterLinkName));
-                String bootstrapServers = props.get(BOOTSTRAP_SERVERS_CONFIG).toString();
+                String bootstrapServers = Optional.ofNullable(props.get(BOOTSTRAP_SERVERS_CONFIG))
+                        .map(Object::toString)
+                        .orElseThrow(() -> new IllegalArgumentException("remote bootstrap server not found in cluster link config: " + clusterLinkName));
                 // get the 1st one bootstrap server
                 var addresses = ClientUtils.parseAndValidateAddresses(Arrays.stream(bootstrapServers.split(",")).toList(), "use_all_dns_ips");
                 int rand = random.nextInt(addresses.size());
@@ -204,7 +238,6 @@ public class RemoteClusterMetadataManager implements AutoCloseable {
                             .setCount(partitionLeaders.size())
                             .setAssignments(null)
                         );
-
                     }
                 });
 
@@ -286,6 +319,7 @@ public class RemoteClusterMetadataManager implements AutoCloseable {
 
         });
         updateConsumerGroupOffsets();
+        updateACLs();
     }
 
     private void maybeDeleteTopic(String clusterLinkName, Collection<MetadataResponse.TopicMetadata> topicMetadataResp) {
@@ -328,8 +362,8 @@ public class RemoteClusterMetadataManager implements AutoCloseable {
                         new OffsetFetchRequestData()
                                 .setRequireStable(false)
                                 .setGroups(listGroupsRes.data().groups().stream().map(group -> new OffsetFetchRequestData.OffsetFetchRequestGroup()
-                                                .setGroupId(group.groupId())
-                                                .setTopics(null)).toList())
+                                        .setGroupId(group.groupId())
+                                        .setTopics(null)).toList())
                                 , false);
                 var offsetFetchResponse = senders.get(random.nextInt(senders.size())).sendRequest(offsetFetchBuilder);
                 if (offsetFetchResponse.responseBody() instanceof OffsetFetchResponse offsetFetchRes) {
@@ -339,19 +373,19 @@ public class RemoteClusterMetadataManager implements AutoCloseable {
                     // TODO: need to find the current group coordinator for each group
                     offsetFetchRes.data().groups().forEach(group -> {
                         List<OffsetCommitRequestData.OffsetCommitRequestTopic> topicList = new ArrayList<>();
-                        group.topics().stream().forEach(t -> {
-                                List<OffsetCommitRequestData.OffsetCommitRequestPartition> parList = new ArrayList<>();
-                                t.partitions().forEach(par -> {
-                                    parList.add(new OffsetCommitRequestData.OffsetCommitRequestPartition()
-                                            .setPartitionIndex(par.partitionIndex())
-                                            .setCommittedOffset(par.committedOffset())
-                                            .setCommittedLeaderEpoch(par.committedLeaderEpoch())
-                                            .setCommittedMetadata(par.metadata()));
-                                });
-                                topicList.add(new OffsetCommitRequestData.OffsetCommitRequestTopic()
-                                        .setTopicId(t.topicId())
-                                        .setName(t.name())
-                                        .setPartitions(parList));
+                        group.topics().forEach(t -> {
+                            List<OffsetCommitRequestData.OffsetCommitRequestPartition> parList = new ArrayList<>();
+                            t.partitions().forEach(par -> {
+                                parList.add(new OffsetCommitRequestData.OffsetCommitRequestPartition()
+                                        .setPartitionIndex(par.partitionIndex())
+                                        .setCommittedOffset(par.committedOffset())
+                                        .setCommittedLeaderEpoch(par.committedLeaderEpoch())
+                                        .setCommittedMetadata(par.metadata()));
+                            });
+                            topicList.add(new OffsetCommitRequestData.OffsetCommitRequestTopic()
+                                    .setTopicId(t.topicId())
+                                    .setName(t.name())
+                                    .setPartitions(parList));
 
                         });
                         groupCoordinatorSupplier.get().commitOffsets(
@@ -384,6 +418,83 @@ public class RemoteClusterMetadataManager implements AutoCloseable {
                         });
                     });
                 }
+            }
+        });
+    }
+
+    private void updateACLs() {
+        remoteBrokers.forEach((clusterLinkName, senders) -> {
+            // TODO: We currently mirror all ACLs from the source to the target.
+            //       Any ACLs added/removed directly on the target will be overwritten
+            //       on the next sync to match the source.
+            //
+            // TODO: How do we disambiguate ACLs that reference the same resource name
+            //       when multiple ClusterLinks exist?
+            // list remote acls
+            var describeAclsRequest = new DescribeAclsRequest.Builder(ANY_RESOURCE_ACL);
+            var describeAclsResponse = senders.get(random.nextInt(senders.size())).sendRequest(describeAclsRequest);
+            if (!(describeAclsResponse.responseBody() instanceof DescribeAclsResponse aclsResponse)) {
+                log.warn("!!! describeAclsResponse is not DescribeAclsResponse: {}", describeAclsResponse);
+                return;
+            }
+
+            log.info("!!! describeAclsResponse from remote cluster {}: {}", clusterLinkName, aclsResponse);
+
+            // check delta
+            var allRemoteAcls = DescribeAclsResponse.aclBindings(aclsResponse.acls());
+            var addACLsList = new ArrayList<AclBinding>();
+            var deleteACLsList = new ArrayList<AclBinding>();
+            var current = metadataImage.acls().acls().values();
+
+            // collect missing acls list
+            allRemoteAcls.forEach(acl -> {
+                if (current.stream().map(StandardAcl::toBinding).noneMatch(a -> a.equals(acl))) {
+                    log.info("!!! Add ACL from remote cluster {}: {}", clusterLinkName, acl);
+                    addACLsList.add(acl);
+                }
+            });
+
+            // collect remove acls list
+            metadataImage.acls().acls().values().forEach(acl -> {
+                if (!allRemoteAcls.contains(acl.toBinding())) {
+                    log.info("!!! Remove ACL from remote cluster {}: {}", clusterLinkName, acl);
+                    deleteACLsList.add(acl.toBinding());
+                }
+            });
+
+            // send createAcls request
+            if (!addACLsList.isEmpty())  {
+                var requestData = addACLsList.stream().map(
+                        aclBinding -> new CreateAclsRequestData.AclCreation()
+                                .setResourceType(aclBinding.pattern().resourceType().code())
+                                .setResourceName(aclBinding.pattern().name())
+                                .setResourcePatternType(aclBinding.pattern().patternType().code())
+                                .setPrincipal(aclBinding.entry().principal())
+                                .setHost(aclBinding.entry().host())
+                                .setOperation(aclBinding.entry().operation().code())
+                                .setPermissionType(aclBinding.entry().permissionType().code()))
+                        .toList();
+                channelManager.sendRequest(
+                        new CreateAclsRequest.Builder(new CreateAclsRequestData().setCreations(requestData)),
+                        new TimeoutHandler()
+                );
+            }
+            // send deleteAcls request
+            if (!deleteACLsList.isEmpty()) {
+                var requestData = deleteACLsList.stream().map(
+                        aclBinding -> new DeleteAclsRequestData.DeleteAclsFilter()
+                                .setResourceTypeFilter(aclBinding.pattern().resourceType().code())
+                                .setResourceNameFilter(aclBinding.pattern().name())
+                                .setPatternTypeFilter(aclBinding.pattern().patternType().code())
+                                .setPrincipalFilter(aclBinding.entry().principal())
+                                .setHostFilter(aclBinding.entry().host())
+                                .setOperation(aclBinding.entry().operation().code())
+                                .setPermissionType(aclBinding.entry().permissionType().code()))
+                        .toList();
+                channelManager.sendRequest(
+                        new DeleteAclsRequest.Builder(new DeleteAclsRequestData().setFilters(requestData)),
+                        new TimeoutHandler()
+                );
             }
         });
     }
