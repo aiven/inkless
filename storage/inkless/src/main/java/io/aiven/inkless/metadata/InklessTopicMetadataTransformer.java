@@ -133,7 +133,7 @@ public class InklessTopicMetadataTransformer implements Closeable {
                 clientId, clientAZ);
         }
 
-        metrics.recordClientAz(clientAZ, brokersInClientAZ.isEmpty());
+        metrics.recordClientAz(clientAZ, !brokersInClientAZ.isEmpty());
 
         // This cannot happen in a normal broker run. This will serve as a guard in tests.
         if (brokersToPickFrom.isEmpty()) {
