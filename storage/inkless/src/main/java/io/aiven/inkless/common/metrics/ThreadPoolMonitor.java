@@ -60,19 +60,19 @@ public class ThreadPoolMonitor implements Closeable {
 
         // ThreadPoolExecutor monitoring
         this.activeThreadsSensor = new SensorProvider(metrics, ACTIVE_THREADS)
-            .with(metricsRegistry.activeThreadsTotalMetricName, new MeasurableValue(() -> (long) threadPoolExecutor.getActiveCount()))
+            .with(metricsRegistry.activeThreadsTotalMetricName, new MeasurableValue<>(() -> (long) threadPoolExecutor.getActiveCount()))
             .get();
 
         this.poolSizeSensor = new SensorProvider(metrics, POOL_SIZE)
-            .with(metricsRegistry.poolSizeTotalMetricName, new MeasurableValue(() -> (long) threadPoolExecutor.getPoolSize()))
+            .with(metricsRegistry.poolSizeTotalMetricName, new MeasurableValue<>(() -> (long) threadPoolExecutor.getPoolSize()))
             .get();
 
         this.parallelismSensor = new SensorProvider(metrics, PARALLELISM)
-            .with(metricsRegistry.parallelismTotalMetricName, new MeasurableValue(() -> (long) threadPoolExecutor.getCorePoolSize()))
+            .with(metricsRegistry.parallelismTotalMetricName, new MeasurableValue<>(() -> (long) threadPoolExecutor.getCorePoolSize()))
             .get();
 
         this.queuedTaskCountSensor = new SensorProvider(metrics, QUEUED_TASK_COUNT)
-            .with(metricsRegistry.queuedTaskCountTotalMetricName, new MeasurableValue(() -> (long) threadPoolExecutor.getQueue().size()))
+            .with(metricsRegistry.queuedTaskCountTotalMetricName, new MeasurableValue<>(() -> (long) threadPoolExecutor.getQueue().size()))
             .get();
     }
 
