@@ -109,7 +109,7 @@ public class HikariMetricsTracker implements IMetricsTracker {
 
     static Sensor registerSensor(final Metrics metrics, final MetricNameTemplate metricName, final String sensorName, final Supplier<Long> supplier) {
         return new SensorProvider(metrics, sensorName)
-            .with(metricName, new MeasurableValue(supplier))
+            .with(metricName, new MeasurableValue<>(supplier))
             .get();
     }
 
