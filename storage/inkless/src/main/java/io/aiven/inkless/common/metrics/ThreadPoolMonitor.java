@@ -30,6 +30,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.ThreadPoolExecutor;
 
 import static io.aiven.inkless.common.metrics.ThreadPoolMonitorMetricsRegistry.ACTIVE_THREADS;
+import static io.aiven.inkless.common.metrics.ThreadPoolMonitorMetricsRegistry.AVG_IDLE_PERCENT;
 import static io.aiven.inkless.common.metrics.ThreadPoolMonitorMetricsRegistry.METRIC_CONFIG;
 import static io.aiven.inkless.common.metrics.ThreadPoolMonitorMetricsRegistry.PARALLELISM;
 import static io.aiven.inkless.common.metrics.ThreadPoolMonitorMetricsRegistry.POOL_SIZE;
@@ -42,6 +43,7 @@ public class ThreadPoolMonitor implements Closeable {
     private final Sensor poolSizeSensor;
     private final Sensor parallelismSensor;
     private final Sensor queuedTaskCountSensor;
+    private final Sensor avgIdlePercentSensor;
 
     // only thread-pool executor is supported
     public ThreadPoolMonitor(final String groupName, final ExecutorService pool) {
@@ -60,19 +62,23 @@ public class ThreadPoolMonitor implements Closeable {
 
         // ThreadPoolExecutor monitoring
         this.activeThreadsSensor = new SensorProvider(metrics, ACTIVE_THREADS)
-            .with(metricsRegistry.activeThreadsTotalMetricName, new MeasurableValue(() -> (long) threadPoolExecutor.getActiveCount()))
+            .with(metricsRegistry.activeThreadsTotalMetricName, new MeasurableValue<>(() -> (long) threadPoolExecutor.getActiveCount()))
             .get();
 
         this.poolSizeSensor = new SensorProvider(metrics, POOL_SIZE)
-            .with(metricsRegistry.poolSizeTotalMetricName, new MeasurableValue(() -> (long) threadPoolExecutor.getPoolSize()))
+            .with(metricsRegistry.poolSizeTotalMetricName, new MeasurableValue<>(() -> (long) threadPoolExecutor.getPoolSize()))
             .get();
 
         this.parallelismSensor = new SensorProvider(metrics, PARALLELISM)
-            .with(metricsRegistry.parallelismTotalMetricName, new MeasurableValue(() -> (long) threadPoolExecutor.getCorePoolSize()))
+            .with(metricsRegistry.parallelismTotalMetricName, new MeasurableValue<>(() -> (long) threadPoolExecutor.getCorePoolSize()))
             .get();
 
         this.queuedTaskCountSensor = new SensorProvider(metrics, QUEUED_TASK_COUNT)
-            .with(metricsRegistry.queuedTaskCountTotalMetricName, new MeasurableValue(() -> (long) threadPoolExecutor.getQueue().size()))
+            .with(metricsRegistry.queuedTaskCountTotalMetricName, new MeasurableValue<>(() -> (long) threadPoolExecutor.getQueue().size()))
+            .get();
+
+        this.avgIdlePercentSensor = new SensorProvider(metrics, AVG_IDLE_PERCENT)
+            .with(metricsRegistry.avgIdlePercentMetricName,  new MeasurableValue<>(() -> 1 - (double) threadPoolExecutor.getActiveCount() / (double) threadPoolExecutor.getPoolSize()))
             .get();
     }
 
@@ -89,6 +95,7 @@ public class ThreadPoolMonitor implements Closeable {
                ", poolSizeSensor=" + poolSizeSensor +
                ", parallelismSensor=" + parallelismSensor +
                ", queuedTaskCountSensor=" + queuedTaskCountSensor +
+               ", avgIdlePercentSensor=" + avgIdlePercentSensor +
                '}';
     }
 }
