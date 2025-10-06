@@ -17,11 +17,13 @@
  */
 package io.aiven.inkless.log;
 
-import io.aiven.inkless.common.ByteRange;
 import io.aiven.inkless.common.ObjectKey;
 import org.apache.kafka.common.utils.Time;
 
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.DelayQueue;
 import java.util.concurrent.Delayed;
@@ -43,7 +45,9 @@ class RangeFetchRequestQueue {
     private final Time time;
     private final long delayMs;
 
-    private final RangeBlockingMultiMap requests = new RangeBlockingMultiMap();
+    private final Lock lock = new ReentrantLock();
+    private final Condition nonEmptyCondition = lock.newCondition();
+    private final Map<ObjectKey, List<ByteRangeWithFuture>> requests = new HashMap<>();
     private final DelayQueue<ObjectDelayed> keyQueue = new DelayQueue<>();
 
     RangeFetchRequestQueue(final Time time, final long delayMs) {
@@ -56,44 +60,45 @@ class RangeFetchRequestQueue {
     }
 
     void addRequest(final ObjectKey objectKey,
-                    final ByteRange range) {
-        // We permit duplicates in `keyQueue` to simplify synchronization and get the most straightforward access
-        // to the blocking `take` method of `keyQueue`. When there are multiple instances of the same key in the queue,
-        // the first dequeued will grab all the waiting ranges from `requests`, others will be considered "ghosts" and ignored.
-        // An example:
-        // requests = {key: [range1]}, keyQueue = [key].
-        // 1. Thread A puts `range2` in `requests`: requests = {key: [range1, range2]}
-        // 2. Thread B dequeues `key` from `keyQueue`: keyQueue = []
-        // 3. Thread B removes `range1,range2` from `requests`: requests = {}
-        // 4. Thread A enqueues `key` in `keyQueue`: keyQueue = [key]
-        // 5. Thread C dequeues `key` from `keyQueue`.
-        // 6. Thread C finds that `requests` has no value for `key`.
-        // In this case, thread C just ignores the dequeued and loops.
-        // IOW, having duplicates in the queue is safe, albeit undesirable. This should happen rarely.
+                    final ByteRangeWithFuture range) {
+        Objects.requireNonNull(objectKey, "objectKey cannot be null");
+        Objects.requireNonNull(range, "range cannot be null");
 
-        // It's important to first put into `requests` map and only after that add to `keyQueue`,
-        // because otherwise the following scheduling is possible:
-        // 1. Thread A enqueues `key` in `keyQueue`: keyQueue = [key]
-        // 2. Thread B dequeues `key` from `keyQueue`: keyQueue = []
-        // 3. Thread B checks if there are requests in `requests`. There are none, and it discards the dequeued element.
-        // 4. Thread A puts `range` in `requests`: requests = {key: [range1]}
-        // Here, `range1` may be effectively lost.
-
-        final boolean shouldEnqueue = requests.put(objectKey, range);
-        if (shouldEnqueue) {
-            keyQueue.put(new ObjectDelayed(objectKey));
+        lock.lock();
+        try {
+            final List<ByteRangeWithFuture> ranges;
+            if (requests.containsKey(objectKey)) {
+                ranges = requests.get(objectKey);
+            } else {
+                ranges = new ArrayList<>();
+                requests.put(objectKey, ranges);
+                keyQueue.put(new ObjectDelayed(objectKey));
+                nonEmptyCondition.signal();
+            }
+            ranges.add(range);
+        } finally {
+           lock.unlock();
         }
     }
 
     RangeFetchRequest take() throws InterruptedException {
-        do {
-            final ObjectDelayed objectDelayed = keyQueue.take();
-            final List<ByteRange> ranges = requests.remove(objectDelayed.objectKey);
-            // Ignore "ghost" items in the queue by continue iterating.
-            if (ranges != null) {
-                return new RangeFetchRequest(objectDelayed.objectKey, ranges);
+        lock.lockInterruptibly();
+        try {
+            while (true) {
+                final ObjectDelayed objectDelayed = keyQueue.poll();
+                if (objectDelayed == null) {
+                    nonEmptyCondition.await();
+                } else {
+                    final List<ByteRangeWithFuture> ranges = requests.remove(objectDelayed.objectKey);
+                    if (ranges == null) {
+                        throw new IllegalStateException();
+                    }
+                    return new RangeFetchRequest(objectDelayed.objectKey, ranges);
+                }
             }
-        } while (true);
+        } finally {
+            lock.unlock();
+        }
     }
 
     private class ObjectDelayed implements Delayed {
