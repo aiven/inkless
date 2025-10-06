@@ -78,7 +78,7 @@ public class ThreadPoolMonitor implements Closeable {
             .get();
 
         this.avgIdlePercentSensor = new SensorProvider(metrics, AVG_IDLE_PERCENT)
-            .with(metricsRegistry.avgIdlePercentMetricName,  new MeasurableValue<>(() -> 1 - (double) threadPoolExecutor.getActiveCount() / (double) threadPoolExecutor.getCorePoolSize()))
+            .with(metricsRegistry.avgIdlePercentMetricName,  new MeasurableValue<>(() -> 1 - (double) threadPoolExecutor.getActiveCount() / (double) threadPoolExecutor.getPoolSize()))
             .get();
     }
 
