@@ -17,16 +17,251 @@
  */
 package io.aiven.inkless.log;
 
+import io.aiven.inkless.common.ByteRange;
+import io.aiven.inkless.common.ObjectKey;
+import io.aiven.inkless.common.PlainObjectKey;
 import org.apache.kafka.common.utils.MockTime;
 import org.apache.kafka.common.utils.Time;
 import org.junit.jupiter.api.Test;
 
-class RangeFetchRequestQueueTest {
-    @Test
-    void x() {
-        final Time time = new MockTime();
-        final RangeFetchRequestQueue queue = new RangeFetchRequestQueue(time, 5);
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Random;
+import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.TimeUnit;
 
-        queue.
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
+class RangeFetchRequestQueueTest {
+    static final PlainObjectKey KEY1 = PlainObjectKey.create("x", "y1");
+    static final PlainObjectKey KEY2 = PlainObjectKey.create("x", "y2");
+    static final PlainObjectKey KEY3 = PlainObjectKey.create("x", "y3");
+    static final PlainObjectKey[] KEYS = new PlainObjectKey[]{KEY1, KEY2, KEY3};
+
+    static final ByteRange BR1 = new ByteRange(0, 1);
+    static final ByteRange BR2 = new ByteRange(0, 2);
+    static final ByteRange BR3 = new ByteRange(0, 3);
+
+    static final CompletableFuture<byte[]> F1 = new CompletableFuture<>();
+    static final CompletableFuture<byte[]> F2 = new CompletableFuture<>();
+    static final CompletableFuture<byte[]> F3 = new CompletableFuture<>();
+    static final CompletableFuture<byte[]> F4 = new CompletableFuture<>();
+
+    @Test
+    void empty() throws InterruptedException {
+        final MockTime time = new MockTime();
+        final RangeFetchRequestQueue queue = new RangeFetchRequestQueue(time, 100);
+
+        final RangeFetchRequests result = queue.poll(100, TimeUnit.MILLISECONDS);
+        assertThat(result).isNull();
+    }
+
+    @Test
+    void singleKey() throws InterruptedException {
+        final MockTime time = new MockTime();
+        final RangeFetchRequestQueue queue = new RangeFetchRequestQueue(time, 100);
+
+        final ByteRangeWithFuture r1 = new ByteRangeWithFuture(BR1, F1);
+        final ByteRangeWithFuture r2 = new ByteRangeWithFuture(BR2, F2);
+        queue.addRequest(KEY1, r1);
+        queue.addRequest(KEY1, r2);
+        time.sleep(100);
+
+        final RangeFetchRequests result = queue.poll(100, TimeUnit.MILLISECONDS);
+        assertThat(result.objectKey()).isEqualTo(KEY1);
+        assertThat(result.requests()).containsExactly(r1, r2);
+    }
+
+    @Test
+    void multipleKeys() throws InterruptedException {
+        final MockTime time = new MockTime();
+        final RangeFetchRequestQueue queue = new RangeFetchRequestQueue(time, 100);
+
+        final ByteRangeWithFuture r1 = new ByteRangeWithFuture(BR1, F1);
+        final ByteRangeWithFuture r2 = new ByteRangeWithFuture(BR2, F2);
+        final ByteRangeWithFuture r3 = new ByteRangeWithFuture(BR3, F3);
+        queue.addRequest(KEY1, r1);
+        queue.addRequest(KEY2, r2);
+        queue.addRequest(KEY1, r3);
+        time.sleep(100);
+
+        final RangeFetchRequests result1 = queue.poll(100, TimeUnit.MILLISECONDS);
+        assertThat(result1.objectKey()).isEqualTo(KEY1);
+        assertThat(result1.requests()).containsExactly(r1, r3);
+
+        final RangeFetchRequests result2 = queue.poll(100, TimeUnit.MILLISECONDS);
+        assertThat(result2.objectKey()).isEqualTo(KEY2);
+        assertThat(result2.requests()).containsExactly(r2);
+    }
+
+    @Test
+    void addBeforeAndAfterPoll() throws InterruptedException {
+        final MockTime time = new MockTime();
+        final RangeFetchRequestQueue queue = new RangeFetchRequestQueue(time, 100);
+
+        final ByteRangeWithFuture r1 = new ByteRangeWithFuture(BR1, F1);
+        final ByteRangeWithFuture r2 = new ByteRangeWithFuture(BR2, F2);
+        queue.addRequest(KEY1, r1);
+        time.sleep(20);
+        queue.addRequest(KEY1, r2);
+        time.sleep(100);
+
+        final RangeFetchRequests result1 = queue.poll(100, TimeUnit.MILLISECONDS);
+        assertThat(result1.objectKey()).isEqualTo(KEY1);
+        assertThat(result1.requests()).containsExactly(r1, r2);
+
+        final ByteRangeWithFuture r3 = new ByteRangeWithFuture(BR3, F3);
+        queue.addRequest(KEY1, r3);
+        time.sleep(100);
+
+        final RangeFetchRequests result2 = queue.poll(100, TimeUnit.MILLISECONDS);
+        assertThat(result2.objectKey()).isEqualTo(KEY1);
+        assertThat(result2.requests()).containsExactly(r3);
+    }
+
+    @Test
+    void multipleRequestsWithSameRange() throws InterruptedException {
+        final MockTime time = new MockTime();
+        final RangeFetchRequestQueue queue = new RangeFetchRequestQueue(time, 100);
+
+        queue.addRequest(KEY1, new ByteRangeWithFuture(BR1, F1));
+        queue.addRequest(KEY1, new ByteRangeWithFuture(BR1, F2));
+        queue.addRequest(KEY1, new ByteRangeWithFuture(BR1, F3));
+        time.sleep(100);
+
+        final RangeFetchRequests result = queue.poll(100, TimeUnit.MILLISECONDS);
+        assertThat(result.objectKey()).isEqualTo(KEY1);
+        assertThat(result.requests()).containsExactly(
+            new ByteRangeWithFuture(BR1, F1),
+            new ByteRangeWithFuture(BR1, F2),
+            new ByteRangeWithFuture(BR1, F3)
+        );
+    }
+
+    @Test
+    void zeroDelay() throws InterruptedException {
+        final MockTime time = new MockTime();
+        final RangeFetchRequestQueue queue = new RangeFetchRequestQueue(time, 0);
+
+        queue.addRequest(KEY1, new ByteRangeWithFuture(BR1, F1));
+
+        // Should be immediately available.
+        final RangeFetchRequests result = queue.poll(0, TimeUnit.MILLISECONDS);
+        assertThat(result.objectKey()).isEqualTo(KEY1);
+        assertThat(result.requests()).containsExactly(new ByteRangeWithFuture(BR1, F1));
+    }
+
+    @Test
+    void concurrentAccessNoRequestLost() throws InterruptedException {
+        final int requestsPerProducer = 1000;
+
+        final RangeFetchRequestQueue queue = new RangeFetchRequestQueue(Time.SYSTEM, 10);
+
+        final ConcurrentLinkedQueue<RangeFetchRequests> sentRequests = new ConcurrentLinkedQueue<>();
+        final ConcurrentLinkedQueue<RangeFetchRequests> receivedRequests = new ConcurrentLinkedQueue<>();
+
+        final List<Thread> allThreads = new ArrayList<>();
+        // 3 producers
+        for (int threadId = 0; threadId < 3; threadId++) {
+            final int finalThreadId = threadId;
+            final Thread thread = new Thread(() -> {
+                final Random random = new Random();
+                for (int reqId = 0; reqId < requestsPerProducer; reqId++) {
+                    final var objectKey = KEYS[random.nextInt(3)];
+                    final long offset = 100_000_000 * finalThreadId + reqId;
+                    final long size = random.nextLong(1000);
+                    final CompletableFuture<byte[]> f = new CompletableFuture<>();
+                    final ByteRangeWithFuture r = new ByteRangeWithFuture(new ByteRange(offset, size), f);
+                    queue.addRequest(objectKey, r);
+                    sentRequests.add(new RangeFetchRequests(objectKey, List.of(r)));
+
+                    final int sleep = random.nextInt(5);
+                    try {
+                        Thread.sleep(sleep);
+                    } catch (final InterruptedException e) {
+                        throw new RuntimeException(e);
+                    }
+                }
+            });
+            allThreads.add(thread);
+        }
+
+        // 3 consumers
+        for (int i = 0; i < 3; i++) {
+            final Thread thread = new Thread(() -> {
+                final Random random = new Random();
+                int waitedUnsuccessfully = 0;
+                while (waitedUnsuccessfully < 10) {
+                    final RangeFetchRequests result;
+                    try {
+                        result = queue.poll(100, TimeUnit.MILLISECONDS);
+                    } catch (final InterruptedException e) {
+                        throw new RuntimeException(e);
+                    }
+
+                    if (result == null) {
+                        waitedUnsuccessfully += 1;
+                    } else {
+                        receivedRequests.add(result);
+                    }
+
+                    final int sleep = random.nextInt(100);
+                    try {
+                        Thread.sleep(sleep);
+                    } catch (final InterruptedException e) {
+                        throw new RuntimeException(e);
+                    }
+                }
+            });
+            allThreads.add(thread);
+        }
+
+        for (final Thread t : allThreads) {
+            t.start();
+        }
+        for (final Thread t : allThreads) {
+            t.join();
+        }
+
+        final HashMap<ObjectKey, Set<ByteRangeWithFuture>> sentAggregated = new HashMap<>();
+        for (final var r : sentRequests) {
+            sentAggregated.putIfAbsent(r.objectKey(), new HashSet<>());
+            sentAggregated.get(r.objectKey()).addAll(r.requests());
+        }
+
+        final HashMap<ObjectKey, Set<ByteRangeWithFuture>> receivedAggregated = new HashMap<>();
+        for (final var r : receivedRequests) {
+            receivedAggregated.putIfAbsent(r.objectKey(), new HashSet<>());
+            receivedAggregated.get(r.objectKey()).addAll(r.requests());
+        }
+
+        assertThat(receivedAggregated).isEqualTo(sentAggregated);
+    }
+
+    @Test
+    void constructorValidation() {
+        assertThatThrownBy(() -> new RangeFetchRequestQueue(null, 1000))
+            .isInstanceOf(NullPointerException.class)
+            .hasMessage("time cannot be null");
+
+        assertThatThrownBy(() -> new RangeFetchRequestQueue(new MockTime(), -1))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessage("delayMs cannot be negative");
+    }
+
+    @Test
+    void addRequestValidation() {
+        final RangeFetchRequestQueue queue = new RangeFetchRequestQueue(new MockTime(), 1000);
+        assertThatThrownBy(() -> queue.addRequest(null, new ByteRangeWithFuture(BR1, F1)))
+            .isInstanceOf(NullPointerException.class)
+            .hasMessage("objectKey cannot be null");
+        assertThatThrownBy(() -> queue.addRequest(KEY1, null))
+            .isInstanceOf(NullPointerException.class)
+            .hasMessage("range cannot be null");
     }
 }

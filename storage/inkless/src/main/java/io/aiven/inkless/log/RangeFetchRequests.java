@@ -17,10 +17,9 @@
  */
 package io.aiven.inkless.log;
 
-import io.aiven.inkless.common.ByteRange;
 import io.aiven.inkless.common.ObjectKey;
 
 import java.util.List;
 
-record RangeFetchRequest(ObjectKey objectKey, List<ByteRange> range) {
+record RangeFetchRequests(ObjectKey objectKey, List<ByteRangeWithFuture> requests) {
 }

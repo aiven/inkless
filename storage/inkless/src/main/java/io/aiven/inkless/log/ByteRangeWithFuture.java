@@ -1,4 +1,4 @@
-/*
+package io.aiven.inkless.log;/*
  * Inkless
  * Copyright (C) 2024 - 2025 Aiven OY
  *
@@ -15,30 +15,12 @@
  * You should have received a copy of the GNU Affero General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
-package io.aiven.inkless.log;
+
 
 import io.aiven.inkless.common.ByteRange;
-import io.aiven.inkless.common.ObjectKey;
-import io.aiven.inkless.storage_backend.common.ObjectFetcher;
-import org.apache.kafka.common.utils.Time;
 
-import java.nio.channels.ReadableByteChannel;
-import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 
-public class RangeFetcher {
-    private final Time time;
-    private final ObjectFetcher fetcher;
-
-    public RangeFetcher(
-        final Time time,
-        final ObjectFetcher fetcher
-    ) {
-        this.time = Objects.requireNonNull(time, "time cannot be null");
-        this.fetcher = Objects.requireNonNull(fetcher, "fetcher cannot be null");
-    }
-
-    public CompletableFuture<ReadableByteChannel> request(final ObjectKey objectKey, final ByteRange range) {
-         return null;
-    }
+record ByteRangeWithFuture(ByteRange range,
+                           CompletableFuture<byte[]> future) {
 }

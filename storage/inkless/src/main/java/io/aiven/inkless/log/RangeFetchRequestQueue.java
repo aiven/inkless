@@ -39,16 +39,22 @@ import java.util.concurrent.locks.ReentrantLock;
  * the requests for this file is not available for taking.
  *
  * <p>It groups requested ranges per file. I.e. if multiple ranges are requested while a file is in the queue,
- * all the ranges will be returned with {@link RangeFetchRequestQueue#take()}.
+ * all the ranges will be returned with {@link RangeFetchRequestQueue#poll(long, TimeUnit)}.
  */
 class RangeFetchRequestQueue {
     private final Time time;
     private final long delayMs;
 
+    private final DelayQueue<FetchRequestsDelayed> requestQueue = new DelayQueue<>();
+    private final Map<ObjectKey, FetchRequestsDelayed> requestMap = new HashMap<>();
+    /**
+     * The lock that protects access to requestQueue and requestMap.
+     */
     private final Lock lock = new ReentrantLock();
-    private final Condition nonEmptyCondition = lock.newCondition();
-    private final Map<ObjectKey, List<ByteRangeWithFuture>> requests = new HashMap<>();
-    private final DelayQueue<ObjectDelayed> keyQueue = new DelayQueue<>();
+    /**
+     * The condition that the queue has elements.
+     */
+    private final Condition nonEmpty = lock.newCondition();
 
     RangeFetchRequestQueue(final Time time, final long delayMs) {
         this.time = Objects.requireNonNull(time, "time cannot be null");
@@ -66,48 +72,54 @@ class RangeFetchRequestQueue {
 
         lock.lock();
         try {
-            final List<ByteRangeWithFuture> ranges;
-            if (requests.containsKey(objectKey)) {
-                ranges = requests.get(objectKey);
+            final FetchRequestsDelayed fetchRequests;
+            if (requestMap.containsKey(objectKey)) {
+                fetchRequests = requestMap.get(objectKey);
             } else {
-                ranges = new ArrayList<>();
-                requests.put(objectKey, ranges);
-                keyQueue.put(new ObjectDelayed(objectKey));
-                nonEmptyCondition.signal();
+                fetchRequests = new FetchRequestsDelayed(objectKey);
+                requestMap.put(objectKey, fetchRequests);
+                requestQueue.put(fetchRequests);
+                nonEmpty.signal();
             }
-            ranges.add(range);
+            fetchRequests.addRange(range);
         } finally {
            lock.unlock();
         }
     }
 
-    RangeFetchRequest take() throws InterruptedException {
+    RangeFetchRequests poll(final long delay, final TimeUnit unit) throws InterruptedException {
+        long remainingNanos = unit.toNanos(delay);
+        
         lock.lockInterruptibly();
         try {
-            while (true) {
-                final ObjectDelayed objectDelayed = keyQueue.poll();
-                if (objectDelayed == null) {
-                    nonEmptyCondition.await();
-                } else {
-                    final List<ByteRangeWithFuture> ranges = requests.remove(objectDelayed.objectKey);
-                    if (ranges == null) {
-                        throw new IllegalStateException();
-                    }
-                    return new RangeFetchRequest(objectDelayed.objectKey, ranges);
+            do {
+                final FetchRequestsDelayed requests = requestQueue.poll();
+                if (requests != null) {
+                    requestMap.remove(requests.objectKey);
+                    return new RangeFetchRequests(requests.objectKey, requests.ranges);
                 }
-            }
+            } while ((remainingNanos = nonEmpty.awaitNanos(remainingNanos)) > 0);
+            return null;
         } finally {
             lock.unlock();
         }
     }
 
-    private class ObjectDelayed implements Delayed {
+    private class FetchRequestsDelayed implements Delayed {
         private final long endTimeNanos;
         private final ObjectKey objectKey;
+        private final List<ByteRangeWithFuture> ranges;
 
-        private ObjectDelayed(final ObjectKey objectKey) {
+        private FetchRequestsDelayed(final ObjectKey objectKey) {
             this.objectKey = Objects.requireNonNull(objectKey, "objectKey cannot be null");
             this.endTimeNanos = time.nanoseconds() + TimeUnit.MILLISECONDS.toNanos(delayMs);
+            this.ranges = new ArrayList<>();
+        }
+
+        private void addRange(final ByteRangeWithFuture range) {
+            ranges.add(
+                Objects.requireNonNull(range, "range cannot be null")
+            );
         }
 
         @Override
@@ -118,7 +130,7 @@ class RangeFetchRequestQueue {
         @Override
         public int compareTo(final Delayed other) {
             Objects.requireNonNull(other, "other cannot be null");
-            ObjectDelayed otherChannel = (ObjectDelayed) other;
+            final FetchRequestsDelayed otherChannel = (FetchRequestsDelayed) other;
             return Long.compare(this.endTimeNanos, otherChannel.endTimeNanos);
         }
     }
