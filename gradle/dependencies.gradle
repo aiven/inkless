@@ -61,7 +61,6 @@ versions += [
   bndlib: "7.1.0",
   checkstyle: project.hasProperty('checkstyleVersion') ? checkstyleVersion : "10.20.2",
   commonsBeanutils: "1.11.0",
-  commonsIo: "2.14.0", // ZooKeeper dependency. Do not use, this is going away. // Inkless: Used in InMemoryStorage, check if could be replaced/removed
   commonsValidator: "1.9.0",
   classgraph: "4.8.179",
   gcsSdk: "2.45.0",
@@ -167,7 +166,6 @@ libs += [
   caffeine: "com.github.ben-manes.caffeine:caffeine:$versions.caffeine",
   classgraph: "io.github.classgraph:classgraph:$versions.classgraph",
   commonsBeanutils: "commons-beanutils:commons-beanutils:$versions.commonsBeanutils",
-  commonsIo: "commons-io:commons-io:$versions.commonsIo",
   commonsValidator: "commons-validator:commons-validator:$versions.commonsValidator",
   gcsSdk: "com.google.cloud:google-cloud-storage:$versions.gcsSdk",
   infinispan: "org.infinispan:infinispan-core:$versions.infinispan",
