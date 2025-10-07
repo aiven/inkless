@@ -48,15 +48,27 @@ class RangeFetchRequestsPerformer {
 
         final ByteBuffer buffer = ByteBuffer.allocate(unitedRange.bufferSize());
         try (final ReadableByteChannel fetched = fetcher.fetch(requests.objectKey(), unitedRange)) {
-            fetched.read(buffer);
+            int bytesRead;
+            do {
+                bytesRead = fetched.read(buffer);
+            } while (bytesRead > 0);
+            if (buffer.hasRemaining()) {
+                // This shouldn't normally happen, just a precaution.
+                for (final ByteRangeWithFuture r : requests.requests()) {
+                    r.future().completeExceptionally(new RuntimeException("Not enough data to fill buffer"));
+                }
+                return;
+            }
         } catch (final InvalidRangeException | KeyNotFoundException e) {
             // These are fatal errors, we can only fail the futures.
             for (final ByteRangeWithFuture r : requests.requests()) {
                 r.future().completeExceptionally(e);
             }
+            return;
         } catch (final StorageBackendException | IOException e) {
             // These are retriable errors. Retry indefinitely.
             // TODO retries
+            return;
         }
 
         final long globalOffset = unitedRange.offset();
@@ -65,12 +77,12 @@ class RangeFetchRequestsPerformer {
             if (range.empty()) {
                 r.future().complete(ByteBuffer.allocate(0));
             } else {
+                final ByteBuffer rangeBuffer = buffer.duplicate();
                 final int start = Math.toIntExact(range.offset() - globalOffset);
-                final int end = Math.toIntExact(range.endOffset() - globalOffset);
-                buffer.rewind();
-                buffer.position(start);
-                buffer.limit(end);
-                r.future().complete(buffer.slice());
+                final int end = Math.toIntExact(range.endOffset() - globalOffset + 1);
+                rangeBuffer.position(start);
+                rangeBuffer.limit(end);
+                r.future().complete(rangeBuffer.slice());
             }
         }
     }

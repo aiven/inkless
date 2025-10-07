@@ -85,12 +85,21 @@ class RangeFetchRequestsPerformerTest {
         final RangeFetchRequestsPerformer performer = new RangeFetchRequestsPerformer(fetcher);
         performer.perform(requests);
 
-        final byte[] arr1 = new byte[range1.bufferSize()];
-        f1.get().get(arr1);
-        assertThat(arr1).isEqualTo(Arrays.copyOfRange(data, range1.bufferOffset(), (int) range1.endOffset() + 1));
+        checkFutureResult(data, f1, range1);
+        checkFutureResult(data, f2, range2);
+        checkFutureResult(data, f3, range3);
+        checkFutureResult(data, f4, range4);
+        checkFutureResult(data, f5, range5);
     }
 
-    void checkFutureResult(final CompletableFuture<ByteBuffer> f) {
+    void checkFutureResult(final byte[] data,
+                           final CompletableFuture<ByteBuffer> future,
+                           final ByteRange range) throws ExecutionException, InterruptedException {
+        final byte[] arr1 = new byte[range.bufferSize()];
+        future.get().get(arr1);
+        assertThat(arr1).isEqualTo(Arrays.copyOfRange(data, range.bufferOffset(), (int) range.endOffset() + 1));
 
     }
+
+
 }
