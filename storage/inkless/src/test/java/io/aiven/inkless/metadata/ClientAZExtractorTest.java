@@ -37,11 +37,11 @@ class ClientAZExtractorTest {
 
     @ParameterizedTest
     @ValueSource(strings = {
-        "inkless_az=az1",
-        "aaa=bbb,inkless_az=az1",
-        "aaa=bbb, inkless_az=az1",
-        "inkless_az=az1,aaa=bbb",
-        "inkless_az=az1, aaa=bbb"
+        "diskless_az=az1",
+        "aaa=bbb,diskless_az=az1",
+        "aaa=bbb, diskless_az=az1",
+        "diskless_az=az1,aaa=bbb",
+        "diskless_az=az1, aaa=bbb"
     })
     void getClientAZWhenProvided(final String clientId) {
         assertThat(ClientAZExtractor.getClientAZ(clientId)).isEqualTo("az1");
@@ -49,18 +49,18 @@ class ClientAZExtractorTest {
 
     @ParameterizedTest
     @ValueSource(strings = {
-        "inkless_az=",
-        "aaa=bbb,inkless_az=",
-        "aaa=bbb, inkless_az=",
-        "inkless_az=,aaa=bbb",
-        "inkless_az=, aaa=bbb"
+        "diskless_az=",
+        "aaa=bbb,diskless_az=",
+        "aaa=bbb, diskless_az=",
+        "diskless_az=,aaa=bbb",
+        "diskless_az=, aaa=bbb"
     })
     void getClientAZWhenProvidedEmptyValue(final String clientId) {
         assertThat(ClientAZExtractor.getClientAZ(clientId)).isEqualTo("");
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"aaainkless_az=az1"})
+    @ValueSource(strings = {"aaadiskless_az=az1"})
     void getClientAZWhenOnlySeeminglyCorrect(final String clientId) {
         assertThat(ClientAZExtractor.getClientAZ(clientId)).isNull();
     }

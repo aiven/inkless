@@ -21,7 +21,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 class ClientAZExtractor {
-    private static final Pattern CLIENT_AZ_PATTERN = Pattern.compile("(^|[ ,])inkless_az=(?<az>[^=, ]*)");
+    private static final Pattern CLIENT_AZ_PATTERN = Pattern.compile("(^|[ ,])diskless_az=(?<az>[^=, ]*)");
 
     // Visible for testing
     static String getClientAZ(final String clientId) {
