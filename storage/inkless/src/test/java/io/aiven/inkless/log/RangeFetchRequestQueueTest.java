@@ -17,11 +17,9 @@
  */
 package io.aiven.inkless.log;
 
-import io.aiven.inkless.common.ByteRange;
-import io.aiven.inkless.common.ObjectKey;
-import io.aiven.inkless.common.PlainObjectKey;
 import org.apache.kafka.common.utils.MockTime;
 import org.apache.kafka.common.utils.Time;
+
 import org.junit.jupiter.api.Test;
 
 import java.nio.ByteBuffer;
@@ -34,6 +32,10 @@ import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.TimeUnit;
+
+import io.aiven.inkless.common.ByteRange;
+import io.aiven.inkless.common.ObjectKey;
+import io.aiven.inkless.common.PlainObjectKey;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;

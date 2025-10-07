@@ -17,6 +17,16 @@
  */
 package io.aiven.inkless.log;
 
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
+
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.nio.ByteBuffer;
@@ -36,20 +46,13 @@ import io.aiven.inkless.storage_backend.common.KeyNotFoundException;
 import io.aiven.inkless.storage_backend.common.ObjectFetcher;
 import io.aiven.inkless.storage_backend.common.StorageBackendException;
 
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.Arguments;
-import org.junit.jupiter.params.provider.MethodSource;
-import org.mockito.Mock;
-import org.mockito.junit.jupiter.MockitoExtension;
-import org.mockito.junit.jupiter.MockitoSettings;
-import org.mockito.quality.Strictness;
-
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -145,7 +148,7 @@ class RangeFetchRequestsPerformerTest {
 
     @Test
     void byteChannelDoesNotReturnInOneGo() throws IOException, StorageBackendException, ExecutionException, InterruptedException {
-        final ReadableByteChannel readableByteChannel = new ReadableByteChannel() {
+        final ReadableByteChannel mockReadableByteChannel = new ReadableByteChannel() {
             private int call = 0;
 
             @Override
@@ -170,7 +173,7 @@ class RangeFetchRequestsPerformerTest {
             public void close() {
             }
         };
-        when(fetcher.fetch(eq(KEY), any())).thenReturn(readableByteChannel);
+        when(fetcher.fetch(eq(KEY), any())).thenReturn(mockReadableByteChannel);
 
         final CompletableFuture<ByteBuffer> future = new CompletableFuture<>();
         final RangeFetchRequests requests = new RangeFetchRequests(KEY, List.of(
@@ -180,16 +183,12 @@ class RangeFetchRequestsPerformerTest {
         final RangeFetchRequestsPerformer performer = new RangeFetchRequestsPerformer(fetcher);
         performer.perform(requests);
 
-        final byte[] bytes = new byte[9];
-        final ByteBuffer byteBuffer = future.get();
-        byteBuffer.get(bytes);
-        assertThat(byteBuffer.hasRemaining()).isFalse();
-        assertThat(bytes).isEqualTo(new byte[]{1,1,1,1,1,1,1,1,1});
+        verifyBufferContent(future.get(), 9, new byte[]{1,1,1,1,1,1,1,1,1});
     }
 
     @ParameterizedTest
     @MethodSource
-    void invalidRangeException(final Exception exception) throws IOException, StorageBackendException {
+    void nonRetriableExceptions(final Exception exception) throws IOException, StorageBackendException {
         when(fetcher.fetch(eq(KEY), any())).thenThrow(exception);
 
         final CompletableFuture<ByteBuffer> future = new CompletableFuture<>();
@@ -204,10 +203,67 @@ class RangeFetchRequestsPerformerTest {
             .hasRootCause(exception);
     }
 
-    private static Stream<Arguments> invalidRangeException() {
+    private static Stream<Arguments> nonRetriableExceptions() {
         return Stream.of(
             Arguments.of(new InvalidRangeException("test")),
             Arguments.of(new KeyNotFoundException(null, KEY))
         );
+    }
+
+    @Test
+    void retriableStorageBackendException() throws IOException, StorageBackendException, ExecutionException, InterruptedException {
+        final StorageBackendException exception = new StorageBackendException("test");
+        when(fetcher.fetch(eq(KEY), any()))
+            .thenThrow(exception)
+            .thenReturn(Channels.newChannel(new ByteArrayInputStream(new byte[2])));
+
+        final CompletableFuture<ByteBuffer> future = new CompletableFuture<>();
+        final RangeFetchRequests requests = new RangeFetchRequests(KEY, List.of(
+            new ByteRangeWithFuture(new ByteRange(0, 2), future)
+        ));
+
+        final RangeFetchRequestsPerformer performer = new RangeFetchRequestsPerformer(fetcher);
+        performer.perform(requests);
+
+        verifyBufferContent(future.get(), 2, new byte[]{0,0});
+
+        verify(fetcher, times(2)).fetch(eq(KEY), any());
+    }
+
+    @Test
+    void retriableIOException() throws IOException, StorageBackendException, ExecutionException, InterruptedException {
+        final IOException exception = new IOException("test");
+        final ReadableByteChannel failingChannel = mock(ReadableByteChannel.class);
+        when(failingChannel.read(any())).thenThrow(exception);
+
+        final ReadableByteChannel nonFailingChannel = mock(ReadableByteChannel.class);
+        when(nonFailingChannel.read(any()))
+            .thenAnswer(inv -> {
+                inv.getArgument(0, ByteBuffer.class).put(new byte[2]);
+                return 2;
+            })
+            .thenReturn(-1);
+
+        when(fetcher.fetch(eq(KEY), any()))
+            .thenReturn(failingChannel, nonFailingChannel);
+
+        final CompletableFuture<ByteBuffer> future = new CompletableFuture<>();
+        final RangeFetchRequests requests = new RangeFetchRequests(KEY, List.of(
+            new ByteRangeWithFuture(new ByteRange(0, 2), future)
+        ));
+
+        final RangeFetchRequestsPerformer performer = new RangeFetchRequestsPerformer(fetcher);
+        performer.perform(requests);
+
+        verifyBufferContent(future.get(), 2, new byte[]{0,0});
+
+        verify(fetcher, times(2)).fetch(eq(KEY), any());
+    }
+
+    private static void verifyBufferContent(final ByteBuffer byteBuffer, final int size, final byte[] expected) {
+        final byte[] bytes = new byte[size];
+        byteBuffer.get(bytes);
+        assertThat(byteBuffer.hasRemaining()).isFalse();
+        assertThat(bytes).isEqualTo(expected);
     }
 }

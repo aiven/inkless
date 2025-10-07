@@ -17,7 +17,6 @@
  */
 package io.aiven.inkless.log;
 
-import io.aiven.inkless.common.ObjectKey;
 import org.apache.kafka.common.utils.Time;
 
 import java.util.ArrayList;
@@ -31,6 +30,8 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
+
+import io.aiven.inkless.common.ObjectKey;
 
 /**
  * The queue for range fetch requests.

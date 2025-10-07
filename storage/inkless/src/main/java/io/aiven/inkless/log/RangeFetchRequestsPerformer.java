@@ -17,6 +17,8 @@
  */
 package io.aiven.inkless.log;
 
+import org.apache.kafka.common.utils.ExponentialBackoff;
+
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.channels.ReadableByteChannel;
@@ -28,7 +30,12 @@ import io.aiven.inkless.storage_backend.common.KeyNotFoundException;
 import io.aiven.inkless.storage_backend.common.ObjectFetcher;
 import io.aiven.inkless.storage_backend.common.StorageBackendException;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 class RangeFetchRequestsPerformer {
+    private static final Logger LOG = LoggerFactory.getLogger(RangeFetchRequestsPerformer.class);
+
     private final ObjectFetcher fetcher;
 
     RangeFetchRequestsPerformer(final ObjectFetcher fetcher) {
@@ -46,28 +53,9 @@ class RangeFetchRequestsPerformer {
             .reduce(ByteRange::union)
             .get();
 
-        final ByteBuffer buffer = ByteBuffer.allocate(unitedRange.bufferSize());
-        try (final ReadableByteChannel fetched = fetcher.fetch(requests.objectKey(), unitedRange)) {
-            int bytesRead;
-            do {
-                bytesRead = fetched.read(buffer);
-            } while (bytesRead > 0);
-            if (buffer.hasRemaining()) {
-                // This shouldn't normally happen, just a precaution.
-                for (final ByteRangeWithFuture r : requests.requests()) {
-                    r.future().completeExceptionally(new RuntimeException("Not enough data to fill buffer"));
-                }
-                return;
-            }
-        } catch (final InvalidRangeException | KeyNotFoundException e) {
-            // These are fatal errors, we can only fail the futures.
-            for (final ByteRangeWithFuture r : requests.requests()) {
-                r.future().completeExceptionally(e);
-            }
-            return;
-        } catch (final StorageBackendException | IOException e) {
-            // These are retriable errors. Retry indefinitely.
-            // TODO retries
+        final ByteBuffer buffer = fetchWithRetries(unitedRange, requests);
+        if (buffer == null) {
+            // All futures are completed exceptionally, nothing to do here.
             return;
         }
 
@@ -84,6 +72,47 @@ class RangeFetchRequestsPerformer {
                 rangeBuffer.limit(end);
                 r.future().complete(rangeBuffer.slice());
             }
+        }
+    }
+
+    private ByteBuffer fetchWithRetries(final ByteRange unitedRange,
+                                        final RangeFetchRequests requests) {
+        final ExponentialBackoff backoff = new ExponentialBackoff(100, 2, 60 * 1000, 0.2);
+        long attempt = 0;
+        while (true) {
+            final ByteBuffer buffer = ByteBuffer.allocate(unitedRange.bufferSize());
+            try (final ReadableByteChannel fetched = fetcher.fetch(requests.objectKey(), unitedRange)) {
+                int bytesRead;
+                do {
+                    bytesRead = fetched.read(buffer);
+                } while (bytesRead > 0);
+                if (buffer.hasRemaining()) {
+                    // This shouldn't normally happen, just a precaution.
+                    completeAllFuturesExceptionally(requests, new RuntimeException("Not enough data to fill buffer"));
+                    return null;
+                }
+                return buffer;
+            } catch (final InvalidRangeException | KeyNotFoundException e) {
+                // These are fatal errors, we can only fail the futures.
+                completeAllFuturesExceptionally(requests, e);
+                return null;
+            } catch (final StorageBackendException | IOException e) {
+                // These are retriable errors. Retry indefinitely.
+                final long delay = backoff.backoff(attempt++);
+                LOG.error("Error while reading {}, retrying after {} ms", requests.objectKey(), delay, e);
+                try {
+                    Thread.sleep(delay);
+                } catch (final InterruptedException e1) {
+                    completeAllFuturesExceptionally(requests, e1);
+                    return null;
+                }
+            }
+        }
+    }
+
+    private void completeAllFuturesExceptionally(final RangeFetchRequests requests, final Exception exception) {
+        for (final ByteRangeWithFuture r : requests.requests()) {
+            r.future().completeExceptionally(exception);
         }
     }
 }

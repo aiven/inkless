@@ -17,10 +17,10 @@ package io.aiven.inkless.log;/*
  */
 
 
-import io.aiven.inkless.common.ByteRange;
-
 import java.nio.ByteBuffer;
 import java.util.concurrent.CompletableFuture;
+
+import io.aiven.inkless.common.ByteRange;
 
 record ByteRangeWithFuture(ByteRange range,
                            CompletableFuture<ByteBuffer> future) {

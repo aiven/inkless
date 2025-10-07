@@ -17,10 +17,6 @@
  */
 package io.aiven.inkless.log;
 
-import io.aiven.inkless.common.ByteRange;
-import io.aiven.inkless.common.InklessThreadFactory;
-import io.aiven.inkless.common.ObjectKey;
-import io.aiven.inkless.storage_backend.common.ObjectFetcher;
 import org.apache.kafka.common.utils.Time;
 
 import java.nio.ByteBuffer;
@@ -29,6 +25,11 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+
+import io.aiven.inkless.common.ByteRange;
+import io.aiven.inkless.common.InklessThreadFactory;
+import io.aiven.inkless.common.ObjectKey;
+import io.aiven.inkless.storage_backend.common.ObjectFetcher;
 
 public class ObjectFetchManager {
     private final Time time;
