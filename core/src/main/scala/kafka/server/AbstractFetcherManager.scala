@@ -73,7 +73,7 @@ abstract class AbstractFetcherManager[T <: AbstractFetcherThread](val name: Stri
         partitionStates.foreachEntry { (topicPartition, currentFetchState) =>
             val initialFetchState = InitialFetchState(currentFetchState.topicId.toScala, thread.leader.brokerEndPoint(),
               currentLeaderEpoch = currentFetchState.currentLeaderEpoch,
-              initOffset = currentFetchState.fetchOffset)
+              initOffset = currentFetchState.fetchOffset, readOnly = false, clusterLinkName = "")
             allRemovedPartitionsMap += topicPartition -> initialFetchState
         }
       }
@@ -265,6 +265,6 @@ class FailedPartitions {
 
 case class BrokerAndFetcherId(broker: BrokerEndPoint, fetcherId: Int, readOnly: Boolean = false)
 
-case class InitialFetchState(topicId: Option[Uuid], leader: BrokerEndPoint, currentLeaderEpoch: Int, initOffset: Long, readOnly: Boolean = false)
+case class InitialFetchState(topicId: Option[Uuid], leader: BrokerEndPoint, currentLeaderEpoch: Int, initOffset: Long, readOnly: Boolean = false, clusterLinkName: String = "")
 
 case class BrokerIdAndFetcherId(brokerId: Int, fetcherId: Int)

@@ -208,7 +208,8 @@ public class RemoteClusterMetadataManager implements MetadataPublisher, AutoClos
                         time,
                         brokerEndpoint.id(),
                         "broker-" + nodeId + "-remote-cluster-metadata-manager-" + clusterLinkName,
-                        logContext
+                        logContext,
+                        props
                 )));
 
             }

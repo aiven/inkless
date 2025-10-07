@@ -26,8 +26,14 @@ import org.apache.kafka.common.utils.{LogContext, Time}
 import org.apache.kafka.clients.{ApiVersions, ClientResponse, ManualMetadataUpdater, NetworkClient}
 import org.apache.kafka.common.{Node, Reconfigurable}
 import org.apache.kafka.common.requests.AbstractRequest.Builder
+import org.apache.kafka.common.security.auth.SecurityProtocol
 import org.apache.kafka.server.network.BrokerEndPoint
+import org.apache.kafka.common.config.{AbstractConfig, ConfigDef}
+import org.apache.kafka.clients.CommonClientConfigs
+import org.apache.kafka.common.config.SaslConfigs
+import org.apache.kafka.common.config.types.Password
 
+import java.util.Properties
 import scala.jdk.CollectionConverters._
 
 trait BlockingSend {
@@ -139,17 +145,41 @@ class RemoteBrokerBlockingSender(sourceBroker: BrokerEndPoint,
                                  time: Time,
                                  fetcherId: Int,
                                  clientId: String,
-                                 logContext: LogContext) extends BlockingSend {
+                                 logContext: LogContext,
+                                 clusterLinkProperties: Properties = new Properties()) extends BlockingSend {
 
   private val sourceNode = new Node(sourceBroker.id, sourceBroker.host, sourceBroker.port)
   private val socketTimeout: Int = brokerConfig.replicaSocketTimeoutMs
 
   private val (networkClient, reconfigurableChannelBuilder) = {
-
-    val channelBuilder = ClientUtils.createChannelBuilder(brokerConfig, time, logContext)
+    // Configure network client with cluster link properties
+    val securityProtocol = Option(clusterLinkProperties.getProperty(CommonClientConfigs.SECURITY_PROTOCOL_CONFIG))
+      .map(SecurityProtocol.forName)
+      .getOrElse(SecurityProtocol.PLAINTEXT)
+    val saslMechanism = Option(clusterLinkProperties.getProperty(SaslConfigs.SASL_MECHANISM))
+      .getOrElse("PLAIN")
+    val saslJaasConfig = clusterLinkProperties.getProperty(SaslConfigs.SASL_JAAS_CONFIG)
+    if (saslJaasConfig != null) {
+      clusterLinkProperties.put(SaslConfigs.SASL_JAAS_CONFIG, new Password(saslJaasConfig))
+    }
+    val channelBuilder = ChannelBuilders.clientChannelBuilder(
+      securityProtocol,
+      JaasContext.Type.CLIENT,
+      new AbstractConfig(new ConfigDef(), clusterLinkProperties) {},
+      brokerConfig.interBrokerListenerName,
+      saslMechanism,
+      time,
+      logContext
+    )
+    val reconfigurableChannelBuilder = channelBuilder match {
+      case reconfigurable: Reconfigurable =>
+        brokerConfig.addReconfigurable(reconfigurable)
+        Some(reconfigurable)
+      case _ => None
+    }
     val selector = new Selector(
       NetworkReceive.UNLIMITED,
-      brokerConfig.getLong(CommonClientConfigs.CONNECTIONS_MAX_IDLE_MS_CONFIG),
+      brokerConfig.connectionsMaxIdleMs,
       metrics,
       time,
       "remote-readonly-" + clientId,
@@ -175,7 +205,7 @@ class RemoteBrokerBlockingSender(sourceBroker: BrokerEndPoint,
       logContext,
       MetadataRecoveryStrategy.NONE
     )
-    (networkClient, None)
+    (networkClient, reconfigurableChannelBuilder)
   }
 
   override def brokerEndPoint(): BrokerEndPoint = sourceBroker
