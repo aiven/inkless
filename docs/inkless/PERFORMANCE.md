@@ -5,7 +5,7 @@
 Before sending data to the Diskless topic, the producer will request topic metadata from the Kafka broker.
 Given that Diskless topics are not replicated, and have no leaders, the metadata will return any broker in the cluster;
 or find brokers within the same availability zone (AZ) if the client has included the AZ within the `client.id` property
-following the pattern `client.id=...,inkless_az=<AZ>`. 
+following the pattern `client.id=...,diskless_az=<AZ>`. 
 
 When writing to Diskless topics, the following stages are involved when a Produce request is received:
 
