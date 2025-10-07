@@ -26,8 +26,8 @@ import java.io.IOException;
 import java.nio.file.Path;
 import java.util.function.Supplier;
 
-import io.aiven.inkless.cache.CaffeineCache;
 import io.aiven.inkless.cache.FixedBlockAlignment;
+import io.aiven.inkless.cache.InfinispanCache;
 import io.aiven.inkless.cache.KeyAlignmentStrategy;
 import io.aiven.inkless.cache.ObjectCache;
 import io.aiven.inkless.config.InklessConfig;
@@ -47,6 +47,8 @@ public record SharedState(
     Supplier<LogConfig> defaultTopicConfigs
 ) implements Closeable {
 
+    private static SharedState instance;
+
     public static SharedState initialize(
         Time time,
         String clusterId,
@@ -59,34 +61,41 @@ public record SharedState(
         Path logDir,
         Supplier<LogConfig> defaultTopicConfigs
     ) {
-        return new SharedState(
-            time,
-            brokerId,
-            config,
-            metadata,
-            controlPlane,
-            ObjectKey.creator(config.objectKeyPrefix(), config.objectKeyLogPrefixMasked()),
-            new FixedBlockAlignment(config.fetchCacheBlockBytes()),
-            new CaffeineCache(
-                config.cacheMaxCount(),
-                config.cacheExpirationLifespanSec(),
-                config.cacheExpirationMaxIdleSec()
-            ),
-            /*
-            InfinispanCache.build(
-                time,
-                clusterId,
-                rack,
-                config.cacheMaxCount(),
-                logDir,
-                config.isCachePersistenceEnabled(),
-                config.cacheExpirationLifespanSec(),
-                config.cacheExpirationMaxIdleSec()
-            ),
-             */
-            brokerTopicStats,
-            defaultTopicConfigs
-        );
+        if (instance == null) {
+            instance = new SharedState(
+                    time,
+                    brokerId,
+                    config,
+                    metadata,
+                    controlPlane,
+                    ObjectKey.creator(config.objectKeyPrefix(), config.objectKeyLogPrefixMasked()),
+                    new FixedBlockAlignment(config.fetchCacheBlockBytes()),
+                    /*
+                    new CaffeineCache(
+                            config.cacheMaxCount(),
+                            config.cacheExpirationLifespanSec(),
+                            config.cacheExpirationMaxIdleSec()
+                    ),
+                     */
+                    InfinispanCache.build(
+                            time,
+                            clusterId,
+                            rack,
+                            config.cacheMaxCount(),
+                            logDir,
+                            config.isCachePersistenceEnabled(),
+                            config.cacheExpirationLifespanSec(),
+                            config.cacheExpirationMaxIdleSec()
+                    ),
+                    brokerTopicStats,
+                    defaultTopicConfigs
+            );
+        }
+        return instance;
+    }
+
+    public static SharedState sharedState() {
+        return instance;
     }
 
     @Override

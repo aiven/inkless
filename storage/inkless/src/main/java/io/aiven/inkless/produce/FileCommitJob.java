@@ -29,11 +29,15 @@ import java.util.function.Consumer;
 import java.util.function.Supplier;
 
 import io.aiven.inkless.TimeUtils;
+import io.aiven.inkless.common.ByteRange;
 import io.aiven.inkless.common.ObjectFormat;
 import io.aiven.inkless.common.ObjectKey;
+import io.aiven.inkless.common.SharedState;
 import io.aiven.inkless.control_plane.CommitBatchResponse;
 import io.aiven.inkless.control_plane.ControlPlane;
 import io.aiven.inkless.control_plane.ControlPlaneException;
+import io.aiven.inkless.generated.CacheKey;
+import io.aiven.inkless.generated.FileExtent;
 import io.aiven.inkless.storage_backend.common.ObjectDeleter;
 import io.aiven.inkless.storage_backend.common.StorageBackendException;
 
@@ -105,6 +109,23 @@ class FileCommitJob implements Supplier<List<CommitBatchResponse>> {
             try {
                 final var commitBatchResponses = controlPlane.commitFile(result.objectKey.value(), ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT, brokerId, file.size(), file.commitBatchRequests());
                 LOGGER.debug("Committed successfully");
+                // Cache the data
+                if (SharedState.sharedState() != null) {
+                    file.commitBatchRequests().forEach((batchRequest) -> {
+                        final int offset = batchRequest.byteOffset();
+                        final int length = batchRequest.size();
+                        final CacheKey cacheKey = createCacheKey(result.objectKey, new ByteRange(offset, length));
+                        final byte[] cacheData = new byte[length];
+                        System.arraycopy(file.data(), offset, cacheData, 0, length);
+                        final FileExtent fileExtent = new FileExtent()
+                                .setObject(result.objectKey.value())
+                                .setRange(new FileExtent.ByteRange()
+                                        .setOffset(offset)
+                                        .setLength(length))
+                                .setData(cacheData);
+                        SharedState.sharedState().cache().put(cacheKey, fileExtent);
+                    });
+                }
                 return commitBatchResponses;
             } catch (final Exception e) {
                 LOGGER.error("Commit failed", e);
@@ -142,5 +163,14 @@ class FileCommitJob implements Supplier<List<CommitBatchResponse>> {
     }
 
     private record UploadResult(ObjectKey objectKey, Throwable uploadError) {
+    }
+
+    // visible for testing
+    static CacheKey createCacheKey(ObjectKey object, ByteRange byteRange) {
+        return new CacheKey().
+                setObject(object.value())
+                .setRange(new CacheKey.ByteRange()
+                        .setOffset(byteRange.offset())
+                        .setLength(byteRange.size()));
     }
 }
