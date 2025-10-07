@@ -21,25 +21,33 @@ import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.channels.Channels;
+import java.nio.channels.ReadableByteChannel;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Random;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
+import java.util.stream.Stream;
 
 import io.aiven.inkless.common.ByteRange;
 import io.aiven.inkless.common.PlainObjectKey;
+import io.aiven.inkless.storage_backend.common.InvalidRangeException;
+import io.aiven.inkless.storage_backend.common.KeyNotFoundException;
 import io.aiven.inkless.storage_backend.common.ObjectFetcher;
 import io.aiven.inkless.storage_backend.common.StorageBackendException;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
@@ -96,10 +104,110 @@ class RangeFetchRequestsPerformerTest {
                            final CompletableFuture<ByteBuffer> future,
                            final ByteRange range) throws ExecutionException, InterruptedException {
         final byte[] arr1 = new byte[range.bufferSize()];
-        future.get().get(arr1);
+        final ByteBuffer byteBuffer = future.get();
+        byteBuffer.get(arr1);
+        assertThat(byteBuffer.hasRemaining()).isFalse();
         assertThat(arr1).isEqualTo(Arrays.copyOfRange(data, range.bufferOffset(), (int) range.endOffset() + 1));
 
     }
 
+    @Test
+    void validArguments() {
+        assertThatThrownBy(() -> new RangeFetchRequestsPerformer(null))
+            .isInstanceOf(NullPointerException.class)
+            .hasMessage("fetcher cannot be null");
 
+        final RangeFetchRequestsPerformer performer = new RangeFetchRequestsPerformer(fetcher);
+        assertThatThrownBy(() -> performer.perform(null))
+            .isInstanceOf(NullPointerException.class)
+            .hasMessage("requests cannot be null");
+        assertThatThrownBy(() -> performer.perform(new RangeFetchRequests(KEY, List.of())))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessage("At least one range must be requested");
+    }
+
+    @Test
+    void returnedTooFewBytes() throws IOException, StorageBackendException {
+        when(fetcher.fetch(eq(KEY), any())).thenReturn(Channels.newChannel(new ByteArrayInputStream(new byte[5])));
+
+        final CompletableFuture<ByteBuffer> future = new CompletableFuture<>();
+        final RangeFetchRequests requests = new RangeFetchRequests(KEY, List.of(
+            new ByteRangeWithFuture(new ByteRange(0, 10), future)
+        ));
+
+        final RangeFetchRequestsPerformer performer = new RangeFetchRequestsPerformer(fetcher);
+        performer.perform(requests);
+
+        assertThatThrownBy(future::get)
+            .hasRootCauseInstanceOf(RuntimeException.class)
+            .hasRootCauseMessage("Not enough data to fill buffer");
+    }
+
+    @Test
+    void byteChannelDoesNotReturnInOneGo() throws IOException, StorageBackendException, ExecutionException, InterruptedException {
+        final ReadableByteChannel readableByteChannel = new ReadableByteChannel() {
+            private int call = 0;
+
+            @Override
+            public int read(final ByteBuffer dst) {
+                if (call < 3) {
+                    dst.put((byte) 1);
+                    dst.put((byte) 1);
+                    dst.put((byte) 1);
+                    call++;
+                    return 3;
+                } else {
+                    return -1;
+                }
+            }
+
+            @Override
+            public boolean isOpen() {
+                return true;
+            }
+
+            @Override
+            public void close() {
+            }
+        };
+        when(fetcher.fetch(eq(KEY), any())).thenReturn(readableByteChannel);
+
+        final CompletableFuture<ByteBuffer> future = new CompletableFuture<>();
+        final RangeFetchRequests requests = new RangeFetchRequests(KEY, List.of(
+            new ByteRangeWithFuture(new ByteRange(0, 9), future)
+        ));
+
+        final RangeFetchRequestsPerformer performer = new RangeFetchRequestsPerformer(fetcher);
+        performer.perform(requests);
+
+        final byte[] bytes = new byte[9];
+        final ByteBuffer byteBuffer = future.get();
+        byteBuffer.get(bytes);
+        assertThat(byteBuffer.hasRemaining()).isFalse();
+        assertThat(bytes).isEqualTo(new byte[]{1,1,1,1,1,1,1,1,1});
+    }
+
+    @ParameterizedTest
+    @MethodSource
+    void invalidRangeException(final Exception exception) throws IOException, StorageBackendException {
+        when(fetcher.fetch(eq(KEY), any())).thenThrow(exception);
+
+        final CompletableFuture<ByteBuffer> future = new CompletableFuture<>();
+        final RangeFetchRequests requests = new RangeFetchRequests(KEY, List.of(
+            new ByteRangeWithFuture(new ByteRange(0, 10), future)
+        ));
+
+        final RangeFetchRequestsPerformer performer = new RangeFetchRequestsPerformer(fetcher);
+        performer.perform(requests);
+
+        assertThatThrownBy(future::get)
+            .hasRootCause(exception);
+    }
+
+    private static Stream<Arguments> invalidRangeException() {
+        return Stream.of(
+            Arguments.of(new InvalidRangeException("test")),
+            Arguments.of(new KeyNotFoundException(null, KEY))
+        );
+    }
 }
