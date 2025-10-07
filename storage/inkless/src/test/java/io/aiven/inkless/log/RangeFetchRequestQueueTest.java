@@ -24,6 +24,7 @@ import org.apache.kafka.common.utils.MockTime;
 import org.apache.kafka.common.utils.Time;
 import org.junit.jupiter.api.Test;
 
+import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -47,10 +48,9 @@ class RangeFetchRequestQueueTest {
     static final ByteRange BR2 = new ByteRange(0, 2);
     static final ByteRange BR3 = new ByteRange(0, 3);
 
-    static final CompletableFuture<byte[]> F1 = new CompletableFuture<>();
-    static final CompletableFuture<byte[]> F2 = new CompletableFuture<>();
-    static final CompletableFuture<byte[]> F3 = new CompletableFuture<>();
-    static final CompletableFuture<byte[]> F4 = new CompletableFuture<>();
+    static final CompletableFuture<ByteBuffer> F1 = new CompletableFuture<>();
+    static final CompletableFuture<ByteBuffer> F2 = new CompletableFuture<>();
+    static final CompletableFuture<ByteBuffer> F3 = new CompletableFuture<>();
 
     @Test
     void empty() throws InterruptedException {
@@ -175,7 +175,7 @@ class RangeFetchRequestQueueTest {
                     final var objectKey = KEYS[random.nextInt(3)];
                     final long offset = 100_000_000 * finalThreadId + reqId;
                     final long size = random.nextLong(1000);
-                    final CompletableFuture<byte[]> f = new CompletableFuture<>();
+                    final CompletableFuture<ByteBuffer> f = new CompletableFuture<>();
                     final ByteRangeWithFuture r = new ByteRangeWithFuture(new ByteRange(offset, size), f);
                     queue.addRequest(objectKey, r);
                     sentRequests.add(new RangeFetchRequests(objectKey, List.of(r)));

@@ -23,6 +23,7 @@ import io.aiven.inkless.common.ObjectKey;
 import io.aiven.inkless.storage_backend.common.ObjectFetcher;
 import org.apache.kafka.common.utils.Time;
 
+import java.nio.ByteBuffer;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executors;
@@ -71,9 +72,8 @@ public class ObjectFetchManager {
         pool.shutdownNow();
     }
 
-    // TODO probably replace byte[] with something else?
-    public CompletableFuture<byte[]> request(final ObjectKey objectKey, final ByteRange range) {
-        final CompletableFuture<byte[]> future = new CompletableFuture<>();
+    public CompletableFuture<ByteBuffer> request(final ObjectKey objectKey, final ByteRange range) {
+        final CompletableFuture<ByteBuffer> future = new CompletableFuture<>();
         requests.addRequest(objectKey, new ByteRangeWithFuture(range, future));
         return future;
     }
