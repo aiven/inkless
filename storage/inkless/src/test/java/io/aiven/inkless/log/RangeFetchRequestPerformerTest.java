@@ -57,7 +57,7 @@ import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.STRICT_STUBS)
-class RangeFetchRequestsPerformerTest {
+class RangeFetchRequestPerformerTest {
     static final PlainObjectKey KEY = PlainObjectKey.create("x", "y");
 
     @Mock
@@ -93,7 +93,7 @@ class RangeFetchRequestsPerformerTest {
             new ByteRangeWithFuture(range5, f5)
         ));
 
-        final RangeFetchRequestsPerformer performer = new RangeFetchRequestsPerformer(fetcher);
+        final RangeFetchRequestPerformer performer = new RangeFetchRequestPerformer(fetcher);
         performer.perform(requests);
 
         checkFutureResult(data, f1, range1);
@@ -116,11 +116,11 @@ class RangeFetchRequestsPerformerTest {
 
     @Test
     void validArguments() {
-        assertThatThrownBy(() -> new RangeFetchRequestsPerformer(null))
+        assertThatThrownBy(() -> new RangeFetchRequestPerformer(null))
             .isInstanceOf(NullPointerException.class)
             .hasMessage("fetcher cannot be null");
 
-        final RangeFetchRequestsPerformer performer = new RangeFetchRequestsPerformer(fetcher);
+        final RangeFetchRequestPerformer performer = new RangeFetchRequestPerformer(fetcher);
         assertThatThrownBy(() -> performer.perform(null))
             .isInstanceOf(NullPointerException.class)
             .hasMessage("requests cannot be null");
@@ -138,7 +138,7 @@ class RangeFetchRequestsPerformerTest {
             new ByteRangeWithFuture(new ByteRange(0, 10), future)
         ));
 
-        final RangeFetchRequestsPerformer performer = new RangeFetchRequestsPerformer(fetcher);
+        final RangeFetchRequestPerformer performer = new RangeFetchRequestPerformer(fetcher);
         performer.perform(requests);
 
         assertThatThrownBy(future::get)
@@ -180,7 +180,7 @@ class RangeFetchRequestsPerformerTest {
             new ByteRangeWithFuture(new ByteRange(0, 9), future)
         ));
 
-        final RangeFetchRequestsPerformer performer = new RangeFetchRequestsPerformer(fetcher);
+        final RangeFetchRequestPerformer performer = new RangeFetchRequestPerformer(fetcher);
         performer.perform(requests);
 
         verifyBufferContent(future.get(), 9, new byte[]{1,1,1,1,1,1,1,1,1});
@@ -196,7 +196,7 @@ class RangeFetchRequestsPerformerTest {
             new ByteRangeWithFuture(new ByteRange(0, 10), future)
         ));
 
-        final RangeFetchRequestsPerformer performer = new RangeFetchRequestsPerformer(fetcher);
+        final RangeFetchRequestPerformer performer = new RangeFetchRequestPerformer(fetcher);
         performer.perform(requests);
 
         assertThatThrownBy(future::get)
@@ -222,7 +222,7 @@ class RangeFetchRequestsPerformerTest {
             new ByteRangeWithFuture(new ByteRange(0, 2), future)
         ));
 
-        final RangeFetchRequestsPerformer performer = new RangeFetchRequestsPerformer(fetcher);
+        final RangeFetchRequestPerformer performer = new RangeFetchRequestPerformer(fetcher);
         performer.perform(requests);
 
         verifyBufferContent(future.get(), 2, new byte[]{0,0});
@@ -252,7 +252,7 @@ class RangeFetchRequestsPerformerTest {
             new ByteRangeWithFuture(new ByteRange(0, 2), future)
         ));
 
-        final RangeFetchRequestsPerformer performer = new RangeFetchRequestsPerformer(fetcher);
+        final RangeFetchRequestPerformer performer = new RangeFetchRequestPerformer(fetcher);
         performer.perform(requests);
 
         verifyBufferContent(future.get(), 2, new byte[]{0,0});

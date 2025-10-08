@@ -17,6 +17,7 @@
  */
 package io.aiven.inkless.log;
 
+import org.apache.kafka.common.utils.ThreadUtils;
 import org.apache.kafka.common.utils.Time;
 
 import java.nio.ByteBuffer;
@@ -27,15 +28,18 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 
 import io.aiven.inkless.common.ByteRange;
-import io.aiven.inkless.common.InklessThreadFactory;
 import io.aiven.inkless.common.ObjectKey;
 import io.aiven.inkless.storage_backend.common.ObjectFetcher;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 public class ObjectFetchManager {
-    private final Time time;
-    private final ObjectFetcher fetcher;
+    private static final Logger LOG = LoggerFactory.getLogger(ObjectFetchManager.class);
+
+    private final RangeFetchRequestPerformer requestPerformer;
     private final ScheduledExecutorService pool;
-    private final RangeFetchRequestQueue requests;
+    private final RangeFetchRequestQueue requestQueue;
 
     ObjectFetchManager(
         final Time time,
@@ -44,7 +48,10 @@ public class ObjectFetchManager {
         final int numThreads
     ) {
         this(time, fetcher, requestDelayMs, numThreads,
-            Executors.newScheduledThreadPool(numThreads, new InklessThreadFactory("inkless-object-fetch-manager-", true))
+            Executors.newScheduledThreadPool(
+                numThreads,
+                ThreadUtils.createThreadFactory("inkless-object-fetch-manager-%d", true,
+                    (t, e) -> LOG.error("Uncaught exception in thread '{}':", t.getName(), e)))
         );
     }
 
@@ -56,26 +63,51 @@ public class ObjectFetchManager {
         final int numThreads,
         final ScheduledExecutorService pool
     ) {
-        this.time = Objects.requireNonNull(time, "time cannot be null");
-        this.fetcher = Objects.requireNonNull(fetcher, "fetcher cannot be null");
-        this.requests = new RangeFetchRequestQueue(time, requestDelayMs);
+        this.requestQueue = new RangeFetchRequestQueue(
+            Objects.requireNonNull(time, "time cannot be null"),
+            requestDelayMs
+        );
+        this.requestPerformer = new RangeFetchRequestPerformer(
+            Objects.requireNonNull(fetcher, "fetcher cannot be null")
+        );
         this.pool = Objects.requireNonNull(pool, "pool cannot be null");
+        if (numThreads <= 0) {
+            throw new IllegalArgumentException("numThreads must be at least 1");
+        }
+
         for (int i = 0; i < numThreads; i++) {
-            pool.scheduleWithFixedDelay(this::iteration, 0, 0, TimeUnit.MILLISECONDS);
+            // TODO anything better than this? Probably we should just run threads.
+            pool.scheduleWithFixedDelay(this::iteration, 0, 1, TimeUnit.MILLISECONDS);
         }
     }
 
     private void iteration() {
-//        final RangeFetchRequest request = requests.take();
+        final RangeFetchRequests polled;
+        try {
+            polled = requestQueue.poll(1, TimeUnit.SECONDS);
+        } catch (final InterruptedException e) {
+            LOG.error("Thread interrupted");
+            return;
+        }
+
+        if (polled != null) {
+            requestPerformer.perform(polled);
+        } else {
+            if (LOG.isTraceEnabled()) {
+                LOG.trace("No requests in queue");
+            }
+        }
+    }
+
+    public CompletableFuture<ByteBuffer> request(final ObjectKey objectKey, final ByteRange range) {
+        Objects.requireNonNull(objectKey, "objectKey cannot be null");
+        Objects.requireNonNull(range, "range cannot be null");
+        final CompletableFuture<ByteBuffer> future = new CompletableFuture<>();
+        requestQueue.addRequest(objectKey, new ByteRangeWithFuture(range, future));
+        return future;
     }
 
     void shutdown() {
         pool.shutdownNow();
-    }
-
-    public CompletableFuture<ByteBuffer> request(final ObjectKey objectKey, final ByteRange range) {
-        final CompletableFuture<ByteBuffer> future = new CompletableFuture<>();
-        requests.addRequest(objectKey, new ByteRangeWithFuture(range, future));
-        return future;
     }
 }

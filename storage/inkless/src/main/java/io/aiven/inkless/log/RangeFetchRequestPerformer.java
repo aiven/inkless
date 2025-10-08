@@ -33,12 +33,12 @@ import io.aiven.inkless.storage_backend.common.StorageBackendException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-class RangeFetchRequestsPerformer {
-    private static final Logger LOG = LoggerFactory.getLogger(RangeFetchRequestsPerformer.class);
+class RangeFetchRequestPerformer {
+    private static final Logger LOG = LoggerFactory.getLogger(RangeFetchRequestPerformer.class);
 
     private final ObjectFetcher fetcher;
 
-    RangeFetchRequestsPerformer(final ObjectFetcher fetcher) {
+    RangeFetchRequestPerformer(final ObjectFetcher fetcher) {
         this.fetcher = Objects.requireNonNull(fetcher, "fetcher cannot be null");
     }
 
@@ -52,6 +52,8 @@ class RangeFetchRequestsPerformer {
             .map(ByteRangeWithFuture::range)
             .reduce(ByteRange::union)
             .get();
+
+        LOG.debug("Requesting {} from {}", unitedRange, requests.objectKey());
 
         final ByteBuffer buffer = fetchWithRetries(unitedRange, requests);
         if (buffer == null) {
