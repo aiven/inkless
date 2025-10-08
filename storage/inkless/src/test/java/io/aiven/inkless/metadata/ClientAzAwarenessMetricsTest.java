@@ -18,6 +18,9 @@
 package io.aiven.inkless.metadata;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
+
+import java.util.concurrent.CountDownLatch;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -53,6 +56,48 @@ class ClientAzAwarenessMetricsTest {
         assertEquals(0, metrics.clientAzUnawareRate.count());
         assertTrue(metrics.clientAzHitRatesPerAz.containsKey("us-east-1a"));
         assertEquals(1, metrics.clientAzHitRatesPerAz.get("us-east-1a").count());
+        metrics.close();
+    }
+
+    @Test
+    @Timeout(30) // Without concurrent access handling, this test may hang indefinitely
+    void testConcurrentClientAzAccess() throws InterruptedException {
+        final ClientAzAwarenessMetrics metrics = new ClientAzAwarenessMetrics();
+        final int threadCount = 21; // Use a number divisible by 3 to ensure even distribution
+        final CountDownLatch startLatch = new CountDownLatch(1);
+        final CountDownLatch completionLatch = new CountDownLatch(threadCount);
+
+        // Create and start multiple threads
+        for (int i = 0; i < threadCount; i++) {
+            final String az = "az-" + (i % 3); // Use 3 different AZs
+            new Thread(() -> {
+                try {
+                    startLatch.await(); // Wait for all threads to be ready
+                    // Record client AZ hit multiple times
+                    for (int j = 0; j < 100; j++) {
+                        metrics.recordClientAz(az, true);
+                    }
+                    completionLatch.countDown();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            }).start();
+        }
+
+        startLatch.countDown(); // Start all threads simultaneously
+        completionLatch.await(); // Wait for all threads to complete
+
+        // Verify results
+        assertEquals(threadCount * 100, metrics.clientAzHitRate.count());
+        assertEquals(3, metrics.clientAzHitRatesPerAz.size());
+
+        // Check counts for each AZ
+        for (int i = 0; i < 3; i++) {
+            String az = "az-" + i;
+            assertTrue(metrics.clientAzHitRatesPerAz.containsKey(az));
+            assertEquals((threadCount / 3) * 100, metrics.clientAzHitRatesPerAz.get(az).count());
+        }
+
         metrics.close();
     }
 }
