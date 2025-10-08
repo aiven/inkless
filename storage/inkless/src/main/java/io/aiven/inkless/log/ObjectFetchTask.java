@@ -1,4 +1,4 @@
-package io.aiven.inkless.log;/*
+/*
  * Inkless
  * Copyright (C) 2024 - 2025 Aiven OY
  *
@@ -15,13 +15,13 @@ package io.aiven.inkless.log;/*
  * You should have received a copy of the GNU Affero General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
-
+package io.aiven.inkless.log;
 
 import java.nio.ByteBuffer;
 import java.util.concurrent.CompletableFuture;
 
-import io.aiven.inkless.common.ByteRange;
+import io.aiven.inkless.control_plane.BatchInfo;
 
-record ByteRangeWithFuture(ByteRange range,
-                           CompletableFuture<ByteBuffer> future) {
+record ObjectFetchTask(BatchInfo batchInfo,
+                       CompletableFuture<ByteBuffer> future) {
 }

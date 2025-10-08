@@ -49,7 +49,7 @@ class RangeFetchRequestPerformer {
         }
 
         final ByteRange unitedRange = requests.requests().stream()
-            .map(ByteRangeWithFuture::range)
+            .map(ByteRangeWithFetchTask::range)
             .reduce(ByteRange::union)
             .get();
 
@@ -62,17 +62,17 @@ class RangeFetchRequestPerformer {
         }
 
         final long globalOffset = unitedRange.offset();
-        for (final ByteRangeWithFuture r : requests.requests()) {
+        for (final ByteRangeWithFetchTask r : requests.requests()) {
             final ByteRange range = r.range();
             if (range.empty()) {
-                r.future().complete(ByteBuffer.allocate(0));
+                r.task().future().complete(ByteBuffer.allocate(0));
             } else {
                 final ByteBuffer rangeBuffer = buffer.duplicate();
                 final int start = Math.toIntExact(range.offset() - globalOffset);
                 final int end = Math.toIntExact(range.endOffset() - globalOffset + 1);
                 rangeBuffer.position(start);
                 rangeBuffer.limit(end);
-                r.future().complete(rangeBuffer.slice());
+                r.task().future().complete(rangeBuffer.slice());
             }
         }
     }
@@ -113,8 +113,8 @@ class RangeFetchRequestPerformer {
     }
 
     private void completeAllFuturesExceptionally(final RangeFetchRequests requests, final Exception exception) {
-        for (final ByteRangeWithFuture r : requests.requests()) {
-            r.future().completeExceptionally(exception);
+        for (final ByteRangeWithFetchTask r : requests.requests()) {
+            r.task().future().completeExceptionally(exception);
         }
     }
 }

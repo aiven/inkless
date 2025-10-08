@@ -68,8 +68,8 @@ class RangeFetchRequestQueueTest {
         final MockTime time = new MockTime();
         final RangeFetchRequestQueue queue = new RangeFetchRequestQueue(time, 100);
 
-        final ByteRangeWithFuture r1 = new ByteRangeWithFuture(BR1, F1);
-        final ByteRangeWithFuture r2 = new ByteRangeWithFuture(BR2, F2);
+        final ByteRangeWithFetchTask r1 = new ByteRangeWithFetchTask(BR1, F1);
+        final ByteRangeWithFetchTask r2 = new ByteRangeWithFetchTask(BR2, F2);
         queue.addRequest(KEY1, r1);
         queue.addRequest(KEY1, r2);
         time.sleep(100);
@@ -84,9 +84,9 @@ class RangeFetchRequestQueueTest {
         final MockTime time = new MockTime();
         final RangeFetchRequestQueue queue = new RangeFetchRequestQueue(time, 100);
 
-        final ByteRangeWithFuture r1 = new ByteRangeWithFuture(BR1, F1);
-        final ByteRangeWithFuture r2 = new ByteRangeWithFuture(BR2, F2);
-        final ByteRangeWithFuture r3 = new ByteRangeWithFuture(BR3, F3);
+        final ByteRangeWithFetchTask r1 = new ByteRangeWithFetchTask(BR1, F1);
+        final ByteRangeWithFetchTask r2 = new ByteRangeWithFetchTask(BR2, F2);
+        final ByteRangeWithFetchTask r3 = new ByteRangeWithFetchTask(BR3, F3);
         queue.addRequest(KEY1, r1);
         queue.addRequest(KEY2, r2);
         queue.addRequest(KEY1, r3);
@@ -106,8 +106,8 @@ class RangeFetchRequestQueueTest {
         final MockTime time = new MockTime();
         final RangeFetchRequestQueue queue = new RangeFetchRequestQueue(time, 100);
 
-        final ByteRangeWithFuture r1 = new ByteRangeWithFuture(BR1, F1);
-        final ByteRangeWithFuture r2 = new ByteRangeWithFuture(BR2, F2);
+        final ByteRangeWithFetchTask r1 = new ByteRangeWithFetchTask(BR1, F1);
+        final ByteRangeWithFetchTask r2 = new ByteRangeWithFetchTask(BR2, F2);
         queue.addRequest(KEY1, r1);
         time.sleep(20);
         queue.addRequest(KEY1, r2);
@@ -117,7 +117,7 @@ class RangeFetchRequestQueueTest {
         assertThat(result1.objectKey()).isEqualTo(KEY1);
         assertThat(result1.requests()).containsExactly(r1, r2);
 
-        final ByteRangeWithFuture r3 = new ByteRangeWithFuture(BR3, F3);
+        final ByteRangeWithFetchTask r3 = new ByteRangeWithFetchTask(BR3, F3);
         queue.addRequest(KEY1, r3);
         time.sleep(100);
 
@@ -131,17 +131,17 @@ class RangeFetchRequestQueueTest {
         final MockTime time = new MockTime();
         final RangeFetchRequestQueue queue = new RangeFetchRequestQueue(time, 100);
 
-        queue.addRequest(KEY1, new ByteRangeWithFuture(BR1, F1));
-        queue.addRequest(KEY1, new ByteRangeWithFuture(BR1, F2));
-        queue.addRequest(KEY1, new ByteRangeWithFuture(BR1, F3));
+        queue.addRequest(KEY1, new ByteRangeWithFetchTask(BR1, F1));
+        queue.addRequest(KEY1, new ByteRangeWithFetchTask(BR1, F2));
+        queue.addRequest(KEY1, new ByteRangeWithFetchTask(BR1, F3));
         time.sleep(100);
 
         final RangeFetchRequests result = queue.poll(100, TimeUnit.MILLISECONDS);
         assertThat(result.objectKey()).isEqualTo(KEY1);
         assertThat(result.requests()).containsExactly(
-            new ByteRangeWithFuture(BR1, F1),
-            new ByteRangeWithFuture(BR1, F2),
-            new ByteRangeWithFuture(BR1, F3)
+            new ByteRangeWithFetchTask(BR1, F1),
+            new ByteRangeWithFetchTask(BR1, F2),
+            new ByteRangeWithFetchTask(BR1, F3)
         );
     }
 
@@ -150,12 +150,12 @@ class RangeFetchRequestQueueTest {
         final MockTime time = new MockTime();
         final RangeFetchRequestQueue queue = new RangeFetchRequestQueue(time, 0);
 
-        queue.addRequest(KEY1, new ByteRangeWithFuture(BR1, F1));
+        queue.addRequest(KEY1, new ByteRangeWithFetchTask(BR1, F1));
 
         // Should be immediately available.
         final RangeFetchRequests result = queue.poll(0, TimeUnit.MILLISECONDS);
         assertThat(result.objectKey()).isEqualTo(KEY1);
-        assertThat(result.requests()).containsExactly(new ByteRangeWithFuture(BR1, F1));
+        assertThat(result.requests()).containsExactly(new ByteRangeWithFetchTask(BR1, F1));
     }
 
     @Test
@@ -178,7 +178,7 @@ class RangeFetchRequestQueueTest {
                     final long offset = 100_000_000 * finalThreadId + reqId;
                     final long size = random.nextLong(1000);
                     final CompletableFuture<ByteBuffer> f = new CompletableFuture<>();
-                    final ByteRangeWithFuture r = new ByteRangeWithFuture(new ByteRange(offset, size), f);
+                    final ByteRangeWithFetchTask r = new ByteRangeWithFetchTask(new ByteRange(offset, size), f);
                     queue.addRequest(objectKey, r);
                     sentRequests.add(new RangeFetchRequests(objectKey, List.of(r)));
 
@@ -230,13 +230,13 @@ class RangeFetchRequestQueueTest {
             t.join();
         }
 
-        final HashMap<ObjectKey, Set<ByteRangeWithFuture>> sentAggregated = new HashMap<>();
+        final HashMap<ObjectKey, Set<ByteRangeWithFetchTask>> sentAggregated = new HashMap<>();
         for (final var r : sentRequests) {
             sentAggregated.putIfAbsent(r.objectKey(), new HashSet<>());
             sentAggregated.get(r.objectKey()).addAll(r.requests());
         }
 
-        final HashMap<ObjectKey, Set<ByteRangeWithFuture>> receivedAggregated = new HashMap<>();
+        final HashMap<ObjectKey, Set<ByteRangeWithFetchTask>> receivedAggregated = new HashMap<>();
         for (final var r : receivedRequests) {
             receivedAggregated.putIfAbsent(r.objectKey(), new HashSet<>());
             receivedAggregated.get(r.objectKey()).addAll(r.requests());
@@ -259,7 +259,7 @@ class RangeFetchRequestQueueTest {
     @Test
     void addRequestValidation() {
         final RangeFetchRequestQueue queue = new RangeFetchRequestQueue(new MockTime(), 1000);
-        assertThatThrownBy(() -> queue.addRequest(null, new ByteRangeWithFuture(BR1, F1)))
+        assertThatThrownBy(() -> queue.addRequest(null, new ByteRangeWithFetchTask(BR1, F1)))
             .isInstanceOf(NullPointerException.class)
             .hasMessage("objectKey cannot be null");
         assertThatThrownBy(() -> queue.addRequest(KEY1, null))

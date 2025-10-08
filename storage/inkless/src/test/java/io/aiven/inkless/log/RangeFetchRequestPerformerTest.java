@@ -86,11 +86,11 @@ class RangeFetchRequestPerformerTest {
         final CompletableFuture<ByteBuffer> f5 = new CompletableFuture<>();
 
         final RangeFetchRequests requests = new RangeFetchRequests(KEY, List.of(
-            new ByteRangeWithFuture(range1, f1),
-            new ByteRangeWithFuture(range2, f2),
-            new ByteRangeWithFuture(range3, f3),
-            new ByteRangeWithFuture(range4, f4),
-            new ByteRangeWithFuture(range5, f5)
+            new ByteRangeWithFetchTask(range1, f1),
+            new ByteRangeWithFetchTask(range2, f2),
+            new ByteRangeWithFetchTask(range3, f3),
+            new ByteRangeWithFetchTask(range4, f4),
+            new ByteRangeWithFetchTask(range5, f5)
         ));
 
         final RangeFetchRequestPerformer performer = new RangeFetchRequestPerformer(fetcher);
@@ -135,7 +135,7 @@ class RangeFetchRequestPerformerTest {
 
         final CompletableFuture<ByteBuffer> future = new CompletableFuture<>();
         final RangeFetchRequests requests = new RangeFetchRequests(KEY, List.of(
-            new ByteRangeWithFuture(new ByteRange(0, 10), future)
+            new ByteRangeWithFetchTask(new ByteRange(0, 10), future)
         ));
 
         final RangeFetchRequestPerformer performer = new RangeFetchRequestPerformer(fetcher);
@@ -177,7 +177,7 @@ class RangeFetchRequestPerformerTest {
 
         final CompletableFuture<ByteBuffer> future = new CompletableFuture<>();
         final RangeFetchRequests requests = new RangeFetchRequests(KEY, List.of(
-            new ByteRangeWithFuture(new ByteRange(0, 9), future)
+            new ByteRangeWithFetchTask(new ByteRange(0, 9), future)
         ));
 
         final RangeFetchRequestPerformer performer = new RangeFetchRequestPerformer(fetcher);
@@ -193,7 +193,7 @@ class RangeFetchRequestPerformerTest {
 
         final CompletableFuture<ByteBuffer> future = new CompletableFuture<>();
         final RangeFetchRequests requests = new RangeFetchRequests(KEY, List.of(
-            new ByteRangeWithFuture(new ByteRange(0, 10), future)
+            new ByteRangeWithFetchTask(new ByteRange(0, 10), future)
         ));
 
         final RangeFetchRequestPerformer performer = new RangeFetchRequestPerformer(fetcher);
@@ -219,7 +219,7 @@ class RangeFetchRequestPerformerTest {
 
         final CompletableFuture<ByteBuffer> future = new CompletableFuture<>();
         final RangeFetchRequests requests = new RangeFetchRequests(KEY, List.of(
-            new ByteRangeWithFuture(new ByteRange(0, 2), future)
+            new ByteRangeWithFetchTask(new ByteRange(0, 2), future)
         ));
 
         final RangeFetchRequestPerformer performer = new RangeFetchRequestPerformer(fetcher);
@@ -249,7 +249,7 @@ class RangeFetchRequestPerformerTest {
 
         final CompletableFuture<ByteBuffer> future = new CompletableFuture<>();
         final RangeFetchRequests requests = new RangeFetchRequests(KEY, List.of(
-            new ByteRangeWithFuture(new ByteRange(0, 2), future)
+            new ByteRangeWithFetchTask(new ByteRange(0, 2), future)
         ));
 
         final RangeFetchRequestPerformer performer = new RangeFetchRequestPerformer(fetcher);

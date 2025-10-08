@@ -29,6 +29,7 @@ import java.util.concurrent.TimeUnit;
 
 import io.aiven.inkless.common.ByteRange;
 import io.aiven.inkless.common.ObjectKey;
+import io.aiven.inkless.control_plane.BatchInfo;
 import io.aiven.inkless.storage_backend.common.ObjectFetcher;
 
 import org.slf4j.Logger;
@@ -70,11 +71,11 @@ public class ObjectFetchManager {
         this.requestPerformer = new RangeFetchRequestPerformer(
             Objects.requireNonNull(fetcher, "fetcher cannot be null")
         );
+
         this.pool = Objects.requireNonNull(pool, "pool cannot be null");
         if (numThreads <= 0) {
             throw new IllegalArgumentException("numThreads must be at least 1");
         }
-
         for (int i = 0; i < numThreads; i++) {
             // TODO anything better than this? Probably we should just run threads.
             pool.scheduleWithFixedDelay(this::iteration, 0, 1, TimeUnit.MILLISECONDS);
@@ -99,12 +100,13 @@ public class ObjectFetchManager {
         }
     }
 
-    public CompletableFuture<ByteBuffer> request(final ObjectKey objectKey, final ByteRange range) {
+    ObjectFetchTask request(final ObjectKey objectKey, final BatchInfo batchInfo, final ByteRange range) {
         Objects.requireNonNull(objectKey, "objectKey cannot be null");
         Objects.requireNonNull(range, "range cannot be null");
         final CompletableFuture<ByteBuffer> future = new CompletableFuture<>();
-        requestQueue.addRequest(objectKey, new ByteRangeWithFuture(range, future));
-        return future;
+        final ObjectFetchTask task = new ObjectFetchTask(batchInfo, future);
+        requestQueue.addRequest(objectKey, new ByteRangeWithFetchTask(range, task));
+        return task;
     }
 
     void shutdown() {

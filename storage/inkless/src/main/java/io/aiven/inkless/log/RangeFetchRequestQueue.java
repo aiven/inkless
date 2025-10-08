@@ -67,7 +67,7 @@ class RangeFetchRequestQueue {
     }
 
     void addRequest(final ObjectKey objectKey,
-                    final ByteRangeWithFuture range) {
+                    final ByteRangeWithFetchTask range) {
         Objects.requireNonNull(objectKey, "objectKey cannot be null");
         Objects.requireNonNull(range, "range cannot be null");
 
@@ -109,7 +109,7 @@ class RangeFetchRequestQueue {
     private class FetchRequestsDelayed implements Delayed {
         private final long endTimeNanos;
         private final ObjectKey objectKey;
-        private final List<ByteRangeWithFuture> ranges;
+        private final List<ByteRangeWithFetchTask> ranges;
 
         private FetchRequestsDelayed(final ObjectKey objectKey) {
             this.objectKey = Objects.requireNonNull(objectKey, "objectKey cannot be null");
@@ -117,7 +117,7 @@ class RangeFetchRequestQueue {
             this.ranges = new ArrayList<>();
         }
 
-        private void addRange(final ByteRangeWithFuture range) {
+        private void addRange(final ByteRangeWithFetchTask range) {
             ranges.add(
                 Objects.requireNonNull(range, "range cannot be null")
             );

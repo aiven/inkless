@@ -21,6 +21,7 @@ import io.aiven.inkless.common.SharedState
 import io.aiven.inkless.consume.{FetchHandler, FetchOffsetHandler}
 import io.aiven.inkless.control_plane.{FindBatchRequest, FindBatchResponse, MetadataView}
 import io.aiven.inkless.delete.{DeleteRecordsInterceptor, FileCleaner, RetentionEnforcer}
+import io.aiven.inkless.log.MaterializedLogManager
 import io.aiven.inkless.merge.FileMerger
 import io.aiven.inkless.produce.AppendHandler
 import kafka.cluster.{Partition, PartitionListener}
@@ -280,6 +281,7 @@ class ReplicaManager(val config: KafkaConfig,
   private val inklessFileCleaner: Option[FileCleaner] = inklessSharedState.map(new FileCleaner(_))
   // FIXME: FileMerger is having issues with hanging queries. Disabling until fixed.
   private val inklessFileMerger: Option[FileMerger] = None // inklessSharedState.map(new FileMerger(_))
+  private val inklessMaterializedLogManager: Option[MaterializedLogManager] = inklessSharedState.map(new MaterializedLogManager(_))
 
   /* epoch of the controller that last changed the leader */
   @volatile private[server] var controllerEpoch: Int = 0
@@ -3073,6 +3075,13 @@ class ReplicaManager(val config: KafkaConfig,
         replicaAlterLogDirsManager.shutdownIdleFetcherThreads()
 
         remoteLogManager.foreach(rlm => rlm.onLeadershipChange((leaderChangedPartitions.toSet: Set[TopicPartitionLog]).asJava, (followerChangedPartitions.toSet: Set[TopicPartitionLog]).asJava, localChanges.topicIds()))
+
+        for ((tp, _) <- localChanges.leaders().asScala ++ localChanges.followers().asScala) {
+          if (_inklessMetadataView.isDisklessTopic(tp.topic())) {
+            val tidp = new TopicIdPartition(newImage.topics().getTopic(tp.topic()).id(), tp)
+            inklessMaterializedLogManager.foreach(_.startReplica(tidp))
+          }
+        }
       }
 
       if (metadataVersion.isDirectoryAssignmentSupported) {

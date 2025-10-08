@@ -186,7 +186,7 @@ public class FetchCompleter implements Supplier<Map<TopicIdPartition, FetchParti
         return foundRecords;
     }
 
-    private static MemoryRecords createMemoryRecords(ByteBuffer buffer, BatchInfo batch) {
+    public static MemoryRecords createMemoryRecords(ByteBuffer buffer, BatchInfo batch) {
         MemoryRecords records = MemoryRecords.readableRecords(buffer);
         Iterator<MutableRecordBatch> iterator = records.batches().iterator();
         if (!iterator.hasNext()) {

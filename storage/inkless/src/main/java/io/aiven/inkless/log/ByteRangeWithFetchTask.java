@@ -1,4 +1,4 @@
-/*
+package io.aiven.inkless.log;/*
  * Inkless
  * Copyright (C) 2024 - 2025 Aiven OY
  *
@@ -15,11 +15,8 @@
  * You should have received a copy of the GNU Affero General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
-package io.aiven.inkless.log;
+import io.aiven.inkless.common.ByteRange;
 
-import java.util.List;
-
-import io.aiven.inkless.common.ObjectKey;
-
-record RangeFetchRequests(ObjectKey objectKey, List<ByteRangeWithFetchTask> requests) {
+record ByteRangeWithFetchTask(ByteRange range,
+                              ObjectFetchTask task) {
 }
