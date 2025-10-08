@@ -22,8 +22,8 @@ import org.apache.kafka.server.metrics.KafkaMetricsGroup;
 import com.yammer.metrics.core.Meter;
 
 import java.io.Closeable;
-import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 
 public class ClientAzAwarenessMetrics implements Closeable {
@@ -41,7 +41,7 @@ public class ClientAzAwarenessMetrics implements Closeable {
         clientAzUnawareRate = metricsGroup.newMeter(CLIENT_AZ_UNAWARE_RATE, "requests", TimeUnit.SECONDS, Map.of());
         clientAzMissRate = metricsGroup.newMeter(CLIENT_AZ_MISS_RATE, "requests", TimeUnit.SECONDS, Map.of());
         clientAzHitRate = metricsGroup.newMeter(CLIENT_AZ_HIT_RATE, "requests", TimeUnit.SECONDS, Map.of());
-        clientAzHitRatesPerAz = new HashMap<>(3);
+        clientAzHitRatesPerAz = new ConcurrentHashMap<>(3);
     }
 
     public void recordClientAz(String clientAZ, boolean foundBrokersInClientAZ) {
