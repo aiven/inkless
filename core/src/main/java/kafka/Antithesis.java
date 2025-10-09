@@ -1,7 +1,9 @@
 package kafka;
 
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
@@ -12,6 +14,7 @@ import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.compress.Compression;
 import org.apache.kafka.common.network.ListenerName;
+import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.record.MemoryRecords;
 import org.apache.kafka.common.record.SimpleRecord;
 import org.apache.kafka.common.requests.ProduceResponse;
@@ -31,8 +34,10 @@ import io.aiven.inkless.control_plane.CreateTopicAndPartitionsRequest;
 import io.aiven.inkless.control_plane.MetadataView;
 import io.aiven.inkless.generated.CacheKey;
 import io.aiven.inkless.generated.FileExtent;
-import io.aiven.inkless.log.MaterializedLogManager;
 import io.aiven.inkless.produce.AppendHandler;
+
+import com.antithesis.sdk.Assert;
+import com.antithesis.sdk.Random;
 
 public class Antithesis {
     private static Uuid TOPIC_ID_0 = new Uuid(101, 201);
@@ -47,26 +52,11 @@ public class Antithesis {
         final String pgConnectionString = args[0];
         final String s3Endpoint = args[1];
         final String materializationDir = args[2];
-        System.out.println(pgConnectionString);
-        System.out.println(s3Endpoint);
 
         final BrokerTopicStats brokerTopicStats = new BrokerTopicStats();
 
         final Time time = Time.SYSTEM;
-        final Map<String, Object> inklessConfigProps = new HashMap<>();
-        inklessConfigProps.put("control.plane.class", "io.aiven.inkless.control_plane.postgres.PostgresControlPlane");
-        inklessConfigProps.put("control.plane.connection.string", pgConnectionString);
-        inklessConfigProps.put("control.plane.username", "admin");
-        inklessConfigProps.put("control.plane.password", "admin");
-        inklessConfigProps.put("storage.backend.class", "io.aiven.inkless.storage_backend.s3.S3Storage");
-        inklessConfigProps.put("storage.s3.bucket.name", "inkless");
-        inklessConfigProps.put("storage.s3.region", "us-east-1");
-        inklessConfigProps.put("storage.s3.endpoint.url", s3Endpoint);
-        inklessConfigProps.put("storage.aws.access.key.id", "minioadmin");
-        inklessConfigProps.put("storage.aws.secret.access.key", "minioadmin");
-        inklessConfigProps.put("storage.s3.path.style.access.enabled", "true");
-        inklessConfigProps.put("materialization.directory", materializationDir);
-        final InklessConfig config = new InklessConfig(inklessConfigProps);
+        final InklessConfig config = inklessConfig(pgConnectionString, s3Endpoint, materializationDir);
         final MetadataView metadataView = new TestMetadataView();
 
         final ControlPlane controlPlane = ControlPlane.create(config, time);
@@ -85,30 +75,140 @@ public class Antithesis {
             time, 0, config, metadataView, controlPlane, objectKeyCreator, keyAlignmentStrategy,
             objectCache, brokerTopicStats, () -> LogConfig.fromProps(Map.of(), new Properties())
         );
-
-        final MaterializedLogManager materializedLogManager = new MaterializedLogManager(sharedState);
-        materializedLogManager.startReplica(T0P0);
-        materializedLogManager.startReplica(T0P1);
-        materializedLogManager.startReplica(T1P0);
-
         final AppendHandler handler = new AppendHandler(sharedState);
-        for (int i = 0; i < 10; i++) {
-            final MemoryRecords records = MemoryRecords.withRecords(Compression.NONE, new SimpleRecord(
-                123, new byte[10], new byte[100]
-            ));
-            final var future = handler.handle(
-                Map.of(T0P0, records),
-                RequestLocal.noCaching()
-            );
-            future.get();
+        produceValues(handler, Random.getRandom() % 20);
+
+//        final MaterializedLogManager materializedLogManager = new MaterializedLogManager(sharedState);
+//        materializedLogManager.startReplica(T0P0);
+//        materializedLogManager.startReplica(T0P1);
+//        materializedLogManager.startReplica(T1P0);
+//
+//        for (int i = 0; i < 1; i++) {
+//            final MemoryRecords records = MemoryRecords.withRecords(Compression.NONE, new SimpleRecord(
+//                123, new byte[10], new byte[100]
+//            ));
+//            final var future = handler.handle(
+//                Map.of(T0P0, records),
+//                RequestLocal.noCaching()
+//            );
+//            future.get();
+//        }
+//
+//        Thread.sleep(5000);
+//
+//        materializedLogManager.shutdown();
+//        handler.close();
+//
+//
+//        final Path materializationPath = Path.of(materializationDir);
+//        final Path partitionDir = materializationPath.resolve(String.format("%s-%d", T0P0.topic(), T0P0.partition()));
+//
+//        final LogConfig logConfig = LogConfig.fromProps(Map.of(), new Properties());
+//        final KafkaScheduler scheduler = new KafkaScheduler(1, true);
+//        final LogDirFailureChannel logDirFailureChannel = new LogDirFailureChannel(1);
+//        final ProducerStateManagerConfig producerStateManagerConfig = new ProducerStateManagerConfig(60000, false);
+//
+//        final UnifiedLog log = UnifiedLog.create(
+//            partitionDir.toFile(),
+//            logConfig,
+//            0L,
+//            0L,
+//            scheduler,
+//            new BrokerTopicStats(),
+//            time,
+//            1,
+//            producerStateManagerConfig,
+//            1,
+//            logDirFailureChannel,
+//            true,
+//            Optional.of(TOPIC_ID_0)
+//        );
+//
+//        long offset = log.logStartOffset();
+//        final FetchDataInfo read = log.read(offset, 1024 * 1024, FetchIsolation.LOG_END, true);
+//        for (final Record record : read.records.records()) {
+//            System.out.println(record.key());
+//        }
+//
+//        log.close();
+//        scheduler.shutdown();
+    }
+
+    private static InklessConfig inklessConfig(final String pgConnectionString,
+                                               final String s3Endpoint,
+                                               final String materializationDir) {
+        final Map<String, Object> inklessConfigProps = new HashMap<>();
+        inklessConfigProps.put("control.plane.class", "io.aiven.inkless.control_plane.postgres.PostgresControlPlane");
+        inklessConfigProps.put("control.plane.connection.string", pgConnectionString);
+        inklessConfigProps.put("control.plane.username", "admin");
+        inklessConfigProps.put("control.plane.password", "admin");
+        inklessConfigProps.put("storage.backend.class", "io.aiven.inkless.storage_backend.s3.S3Storage");
+        inklessConfigProps.put("storage.s3.bucket.name", "inkless");
+        inklessConfigProps.put("storage.s3.region", "us-east-1");
+        inklessConfigProps.put("storage.s3.endpoint.url", s3Endpoint);
+        inklessConfigProps.put("storage.aws.access.key.id", "minioadmin");
+        inklessConfigProps.put("storage.aws.secret.access.key", "minioadmin");
+        inklessConfigProps.put("storage.s3.path.style.access.enabled", "true");
+        inklessConfigProps.put("materialization.directory", materializationDir);
+        return new InklessConfig(inklessConfigProps);
+    }
+
+    private static Map<TopicIdPartition, List<RecordWithOffset>> produceValues(
+        final AppendHandler handler, final long totalRounds
+    ) throws ExecutionException, InterruptedException {
+        final Map<TopicIdPartition, List<RecordWithOffset>> result = new HashMap<>(Map.of(
+            T0P0, new ArrayList<>(),
+            T0P1, new ArrayList<>(),
+            T1P0, new ArrayList<>()
+        ));
+        for (int round = 0; round < totalRounds; round++) {
+            final int countT0p0 = round % 3;
+            final int countT0p1 = (round + 1) % 3;
+            final int countT0p2 = (round + 2) % 3;
+            final SimpleRecord[] recordArrT0p0 = createRecords(10 * round + 1, countT0p0);
+            final SimpleRecord[] recordArrT0p1 = createRecords(10 * round + 2, countT0p1);
+            final SimpleRecord[] recordArrT1p0 = createRecords(10 * round + 3, countT0p2);
+            final MemoryRecords recordsT0p0 = MemoryRecords.withRecords(Compression.NONE, recordArrT0p0);
+            final MemoryRecords recordsT0p1 = MemoryRecords.withRecords(Compression.NONE, recordArrT0p1);
+            final MemoryRecords recordsT0p2 = MemoryRecords.withRecords(Compression.NONE, recordArrT1p0);
+            final var future = handler.handle(Map.of(
+                T0P0, recordsT0p0,
+                T0P1, recordsT0p1,
+                T1P0, recordsT0p2
+            ), RequestLocal.noCaching());
+            final var response = future.get();
+
+            checkPartitionResponse(response.get(T0P0));
+            checkPartitionResponse(response.get(T0P1));
+            checkPartitionResponse(response.get(T1P0));
+
+            for (int i = 0; i < recordArrT0p0.length; i++) {
+                result.get(T0P0).add(new RecordWithOffset(recordArrT0p0[i], response.get(T0P0).))
+
+            }
         }
+        return result;
+    }
 
-        Thread.sleep(5000);
+    private static void checkPartitionResponse(final ProduceResponse.PartitionResponse response) {
+        Assert.always(response.error == Errors.NONE, "No produce errors", null);
+    }
 
-        materializedLogManager.shutdown();
-        handler.close();
+    private static SimpleRecord[] createRecords(final int round, final int count) {
+        final SimpleRecord[] records = new SimpleRecord[count];
+        for (int i = 0; i < count; i++) {
+            final long idLong = (long) round * 100000000 + count;
+            final String id = Long.toBinaryString(idLong).repeat(1000);
+            final long timestamp = idLong;
+            final byte[] key = id.substring(1).getBytes();
+            final byte[] value = id.getBytes();
+            records[i] = new SimpleRecord(timestamp, key, value);
+        }
+        return records;
+    }
 
-
+    private record RecordWithOffset(SimpleRecord record,
+                                    long offset) {
     }
 
     private static class TestMetadataView implements MetadataView {
