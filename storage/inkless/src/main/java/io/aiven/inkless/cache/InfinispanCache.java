@@ -95,7 +95,8 @@ public class InfinispanCache implements ObjectCache {
         ConfigurationBuilder config = new ConfigurationBuilder();
         config.statistics().enable();
         config.clustering()
-            .cacheMode(CacheMode.DIST_SYNC);
+            .cacheMode(CacheMode.DIST_SYNC)
+            .hash().numOwners(1);
         config.memory()
             .storage(StorageType.HEAP)
             .maxCount(maxCacheSize)
