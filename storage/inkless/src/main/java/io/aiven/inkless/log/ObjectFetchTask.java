@@ -22,6 +22,7 @@ import java.util.concurrent.CompletableFuture;
 
 import io.aiven.inkless.control_plane.BatchInfo;
 
+// TODO probably remove this class if everything stays inside MaterializedPartition
 record ObjectFetchTask(BatchInfo batchInfo,
                        CompletableFuture<ByteBuffer> future) {
 }
