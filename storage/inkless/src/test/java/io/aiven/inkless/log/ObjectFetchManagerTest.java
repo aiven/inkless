@@ -32,6 +32,7 @@ import org.apache.kafka.common.utils.Time;
 
 import io.aiven.inkless.common.ByteRange;
 import io.aiven.inkless.common.PlainObjectKey;
+import io.aiven.inkless.control_plane.BatchInfo;
 import io.aiven.inkless.storage_backend.common.ObjectFetcher;
 import io.aiven.inkless.storage_backend.common.StorageBackendException;
 
@@ -61,6 +62,9 @@ class ObjectFetchManagerTest {
     @Mock
     ScheduledExecutorService pool;
 
+    @Mock
+    BatchInfo batch1;
+
     @Test
     void jobsScheduled() {
         new ObjectFetchManager(Time.SYSTEM, fetcher, 0, 3, pool);
@@ -80,14 +84,14 @@ class ObjectFetchManagerTest {
             .thenReturn(Channels.newChannel(new ByteArrayInputStream(new byte[]{101})));
 
         final ObjectFetchManager manager = new ObjectFetchManager(Time.SYSTEM, fetcher, 0, 1, pool);
-        final var future = manager.request(KEY, new ByteRange(0, 1));
+        final var task = manager.request(KEY, batch1, new ByteRange(0, 1));
 
         assertThat(runnableRef).isNotNull();
 
-        while (!future.isDone()) {
+        while (!task.future().isDone()) {
             runnableRef.get().run();
         }
-        final ByteBuffer byteBuffer = future.get();
+        final ByteBuffer byteBuffer = task.future().get();
         assertThat(byteBuffer.get()).isEqualTo((byte) 101);
         assertThat(byteBuffer.hasRemaining()).isFalse();
     }
@@ -108,10 +112,13 @@ class ObjectFetchManagerTest {
     @Test
     void requestValidArguments() {
         final ObjectFetchManager manager = new ObjectFetchManager(Time.SYSTEM, fetcher, 0, 1);
-        assertThatThrownBy(() -> manager.request(null, new ByteRange(0, 1)))
+        assertThatThrownBy(() -> manager.request(null, batch1, new ByteRange(0, 1)))
             .isInstanceOf(NullPointerException.class)
             .hasMessage("objectKey cannot be null");
-        assertThatThrownBy(() -> manager.request(KEY, null))
+        assertThatThrownBy(() -> manager.request(KEY, null, new ByteRange(0, 1)))
+            .isInstanceOf(NullPointerException.class)
+            .hasMessage("batchInfo cannot be null");
+        assertThatThrownBy(() -> manager.request(KEY, batch1, null))
             .isInstanceOf(NullPointerException.class)
             .hasMessage("range cannot be null");
     }

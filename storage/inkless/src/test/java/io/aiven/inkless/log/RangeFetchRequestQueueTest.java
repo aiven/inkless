@@ -21,6 +21,7 @@ import org.apache.kafka.common.utils.MockTime;
 import org.apache.kafka.common.utils.Time;
 
 import org.junit.jupiter.api.Test;
+import org.mockito.Mock;
 
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
@@ -36,6 +37,7 @@ import java.util.concurrent.TimeUnit;
 import io.aiven.inkless.common.ByteRange;
 import io.aiven.inkless.common.ObjectKey;
 import io.aiven.inkless.common.PlainObjectKey;
+import io.aiven.inkless.control_plane.BatchInfo;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -54,6 +56,13 @@ class RangeFetchRequestQueueTest {
     static final CompletableFuture<ByteBuffer> F2 = new CompletableFuture<>();
     static final CompletableFuture<ByteBuffer> F3 = new CompletableFuture<>();
 
+    @Mock
+    BatchInfo batch1;
+    @Mock
+    BatchInfo batch2;
+    @Mock
+    BatchInfo batch3;
+
     @Test
     void empty() throws InterruptedException {
         final MockTime time = new MockTime();
@@ -68,8 +77,8 @@ class RangeFetchRequestQueueTest {
         final MockTime time = new MockTime();
         final RangeFetchRequestQueue queue = new RangeFetchRequestQueue(time, 100);
 
-        final ByteRangeWithFetchTask r1 = new ByteRangeWithFetchTask(BR1, F1);
-        final ByteRangeWithFetchTask r2 = new ByteRangeWithFetchTask(BR2, F2);
+        final ByteRangeWithFetchTask r1 = new ByteRangeWithFetchTask(BR1, new ObjectFetchTask(batch1, F1));
+        final ByteRangeWithFetchTask r2 = new ByteRangeWithFetchTask(BR2, new ObjectFetchTask(batch2, F2));
         queue.addRequest(KEY1, r1);
         queue.addRequest(KEY1, r2);
         time.sleep(100);
@@ -84,9 +93,9 @@ class RangeFetchRequestQueueTest {
         final MockTime time = new MockTime();
         final RangeFetchRequestQueue queue = new RangeFetchRequestQueue(time, 100);
 
-        final ByteRangeWithFetchTask r1 = new ByteRangeWithFetchTask(BR1, F1);
-        final ByteRangeWithFetchTask r2 = new ByteRangeWithFetchTask(BR2, F2);
-        final ByteRangeWithFetchTask r3 = new ByteRangeWithFetchTask(BR3, F3);
+        final ByteRangeWithFetchTask r1 = new ByteRangeWithFetchTask(BR1, new ObjectFetchTask(batch1, F1));
+        final ByteRangeWithFetchTask r2 = new ByteRangeWithFetchTask(BR2, new ObjectFetchTask(batch2, F2));
+        final ByteRangeWithFetchTask r3 = new ByteRangeWithFetchTask(BR3, new ObjectFetchTask(batch3, F3));
         queue.addRequest(KEY1, r1);
         queue.addRequest(KEY2, r2);
         queue.addRequest(KEY1, r3);
@@ -106,8 +115,8 @@ class RangeFetchRequestQueueTest {
         final MockTime time = new MockTime();
         final RangeFetchRequestQueue queue = new RangeFetchRequestQueue(time, 100);
 
-        final ByteRangeWithFetchTask r1 = new ByteRangeWithFetchTask(BR1, F1);
-        final ByteRangeWithFetchTask r2 = new ByteRangeWithFetchTask(BR2, F2);
+        final ByteRangeWithFetchTask r1 = new ByteRangeWithFetchTask(BR1, new ObjectFetchTask(batch1, F1));
+        final ByteRangeWithFetchTask r2 = new ByteRangeWithFetchTask(BR2, new ObjectFetchTask(batch2, F2));
         queue.addRequest(KEY1, r1);
         time.sleep(20);
         queue.addRequest(KEY1, r2);
@@ -117,7 +126,7 @@ class RangeFetchRequestQueueTest {
         assertThat(result1.objectKey()).isEqualTo(KEY1);
         assertThat(result1.requests()).containsExactly(r1, r2);
 
-        final ByteRangeWithFetchTask r3 = new ByteRangeWithFetchTask(BR3, F3);
+        final ByteRangeWithFetchTask r3 = new ByteRangeWithFetchTask(BR3, new ObjectFetchTask(batch3, F3));
         queue.addRequest(KEY1, r3);
         time.sleep(100);
 
@@ -131,17 +140,20 @@ class RangeFetchRequestQueueTest {
         final MockTime time = new MockTime();
         final RangeFetchRequestQueue queue = new RangeFetchRequestQueue(time, 100);
 
-        queue.addRequest(KEY1, new ByteRangeWithFetchTask(BR1, F1));
-        queue.addRequest(KEY1, new ByteRangeWithFetchTask(BR1, F2));
-        queue.addRequest(KEY1, new ByteRangeWithFetchTask(BR1, F3));
+        final ObjectFetchTask task1 = new ObjectFetchTask(batch1, F1);
+        final ObjectFetchTask task2 = new ObjectFetchTask(batch2, F2);
+        final ObjectFetchTask task3 = new ObjectFetchTask(batch3, F3);
+        queue.addRequest(KEY1, new ByteRangeWithFetchTask(BR1, task1));
+        queue.addRequest(KEY1, new ByteRangeWithFetchTask(BR1, task2));
+        queue.addRequest(KEY1, new ByteRangeWithFetchTask(BR1, task3));
         time.sleep(100);
 
         final RangeFetchRequests result = queue.poll(100, TimeUnit.MILLISECONDS);
         assertThat(result.objectKey()).isEqualTo(KEY1);
         assertThat(result.requests()).containsExactly(
-            new ByteRangeWithFetchTask(BR1, F1),
-            new ByteRangeWithFetchTask(BR1, F2),
-            new ByteRangeWithFetchTask(BR1, F3)
+            new ByteRangeWithFetchTask(BR1, task1),
+            new ByteRangeWithFetchTask(BR1, task2),
+            new ByteRangeWithFetchTask(BR1, task3)
         );
     }
 
@@ -150,12 +162,13 @@ class RangeFetchRequestQueueTest {
         final MockTime time = new MockTime();
         final RangeFetchRequestQueue queue = new RangeFetchRequestQueue(time, 0);
 
-        queue.addRequest(KEY1, new ByteRangeWithFetchTask(BR1, F1));
+        final ObjectFetchTask task = new ObjectFetchTask(batch1, F1);
+        queue.addRequest(KEY1, new ByteRangeWithFetchTask(BR1, task));
 
         // Should be immediately available.
         final RangeFetchRequests result = queue.poll(0, TimeUnit.MILLISECONDS);
         assertThat(result.objectKey()).isEqualTo(KEY1);
-        assertThat(result.requests()).containsExactly(new ByteRangeWithFetchTask(BR1, F1));
+        assertThat(result.requests()).containsExactly(new ByteRangeWithFetchTask(BR1, task));
     }
 
     @Test
@@ -178,7 +191,7 @@ class RangeFetchRequestQueueTest {
                     final long offset = 100_000_000 * finalThreadId + reqId;
                     final long size = random.nextLong(1000);
                     final CompletableFuture<ByteBuffer> f = new CompletableFuture<>();
-                    final ByteRangeWithFetchTask r = new ByteRangeWithFetchTask(new ByteRange(offset, size), f);
+                    final ByteRangeWithFetchTask r = new ByteRangeWithFetchTask(new ByteRange(offset, size), new ObjectFetchTask(batch1, f));
                     queue.addRequest(objectKey, r);
                     sentRequests.add(new RangeFetchRequests(objectKey, List.of(r)));
 
@@ -259,7 +272,7 @@ class RangeFetchRequestQueueTest {
     @Test
     void addRequestValidation() {
         final RangeFetchRequestQueue queue = new RangeFetchRequestQueue(new MockTime(), 1000);
-        assertThatThrownBy(() -> queue.addRequest(null, new ByteRangeWithFetchTask(BR1, F1)))
+        assertThatThrownBy(() -> queue.addRequest(null, new ByteRangeWithFetchTask(BR1, new ObjectFetchTask(batch1, F1))))
             .isInstanceOf(NullPointerException.class)
             .hasMessage("objectKey cannot be null");
         assertThatThrownBy(() -> queue.addRequest(KEY1, null))

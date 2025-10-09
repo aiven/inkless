@@ -102,6 +102,7 @@ public class ObjectFetchManager {
 
     ObjectFetchTask request(final ObjectKey objectKey, final BatchInfo batchInfo, final ByteRange range) {
         Objects.requireNonNull(objectKey, "objectKey cannot be null");
+        Objects.requireNonNull(batchInfo, "batchInfo cannot be null");
         Objects.requireNonNull(range, "range cannot be null");
         final CompletableFuture<ByteBuffer> future = new CompletableFuture<>();
         final ObjectFetchTask task = new ObjectFetchTask(batchInfo, future);

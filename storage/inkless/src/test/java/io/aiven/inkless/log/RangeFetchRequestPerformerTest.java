@@ -41,6 +41,7 @@ import java.util.stream.Stream;
 
 import io.aiven.inkless.common.ByteRange;
 import io.aiven.inkless.common.PlainObjectKey;
+import io.aiven.inkless.control_plane.BatchInfo;
 import io.aiven.inkless.storage_backend.common.InvalidRangeException;
 import io.aiven.inkless.storage_backend.common.KeyNotFoundException;
 import io.aiven.inkless.storage_backend.common.ObjectFetcher;
@@ -62,6 +63,17 @@ class RangeFetchRequestPerformerTest {
 
     @Mock
     ObjectFetcher fetcher;
+
+    @Mock
+    BatchInfo batch1;
+    @Mock
+    BatchInfo batch2;
+    @Mock
+    BatchInfo batch3;
+    @Mock
+    BatchInfo batch4;
+    @Mock
+    BatchInfo batch5;
 
     @Test
     void successfulFetches() throws IOException, StorageBackendException, ExecutionException, InterruptedException {
@@ -86,11 +98,11 @@ class RangeFetchRequestPerformerTest {
         final CompletableFuture<ByteBuffer> f5 = new CompletableFuture<>();
 
         final RangeFetchRequests requests = new RangeFetchRequests(KEY, List.of(
-            new ByteRangeWithFetchTask(range1, f1),
-            new ByteRangeWithFetchTask(range2, f2),
-            new ByteRangeWithFetchTask(range3, f3),
-            new ByteRangeWithFetchTask(range4, f4),
-            new ByteRangeWithFetchTask(range5, f5)
+            new ByteRangeWithFetchTask(range1, new ObjectFetchTask(batch1, f1)),
+            new ByteRangeWithFetchTask(range2, new ObjectFetchTask(batch2, f2)),
+            new ByteRangeWithFetchTask(range3, new ObjectFetchTask(batch3, f3)),
+            new ByteRangeWithFetchTask(range4, new ObjectFetchTask(batch4, f4)),
+            new ByteRangeWithFetchTask(range5, new ObjectFetchTask(batch5, f5))
         ));
 
         final RangeFetchRequestPerformer performer = new RangeFetchRequestPerformer(fetcher);
@@ -135,7 +147,7 @@ class RangeFetchRequestPerformerTest {
 
         final CompletableFuture<ByteBuffer> future = new CompletableFuture<>();
         final RangeFetchRequests requests = new RangeFetchRequests(KEY, List.of(
-            new ByteRangeWithFetchTask(new ByteRange(0, 10), future)
+            new ByteRangeWithFetchTask(new ByteRange(0, 10), new ObjectFetchTask(batch1, future))
         ));
 
         final RangeFetchRequestPerformer performer = new RangeFetchRequestPerformer(fetcher);
@@ -177,7 +189,7 @@ class RangeFetchRequestPerformerTest {
 
         final CompletableFuture<ByteBuffer> future = new CompletableFuture<>();
         final RangeFetchRequests requests = new RangeFetchRequests(KEY, List.of(
-            new ByteRangeWithFetchTask(new ByteRange(0, 9), future)
+            new ByteRangeWithFetchTask(new ByteRange(0, 9), new ObjectFetchTask(batch1, future))
         ));
 
         final RangeFetchRequestPerformer performer = new RangeFetchRequestPerformer(fetcher);
@@ -193,7 +205,7 @@ class RangeFetchRequestPerformerTest {
 
         final CompletableFuture<ByteBuffer> future = new CompletableFuture<>();
         final RangeFetchRequests requests = new RangeFetchRequests(KEY, List.of(
-            new ByteRangeWithFetchTask(new ByteRange(0, 10), future)
+            new ByteRangeWithFetchTask(new ByteRange(0, 10), new ObjectFetchTask(batch1, future))
         ));
 
         final RangeFetchRequestPerformer performer = new RangeFetchRequestPerformer(fetcher);
@@ -219,7 +231,7 @@ class RangeFetchRequestPerformerTest {
 
         final CompletableFuture<ByteBuffer> future = new CompletableFuture<>();
         final RangeFetchRequests requests = new RangeFetchRequests(KEY, List.of(
-            new ByteRangeWithFetchTask(new ByteRange(0, 2), future)
+            new ByteRangeWithFetchTask(new ByteRange(0, 2), new ObjectFetchTask(batch1, future))
         ));
 
         final RangeFetchRequestPerformer performer = new RangeFetchRequestPerformer(fetcher);
@@ -249,7 +261,7 @@ class RangeFetchRequestPerformerTest {
 
         final CompletableFuture<ByteBuffer> future = new CompletableFuture<>();
         final RangeFetchRequests requests = new RangeFetchRequests(KEY, List.of(
-            new ByteRangeWithFetchTask(new ByteRange(0, 2), future)
+            new ByteRangeWithFetchTask(new ByteRange(0, 2), new ObjectFetchTask(batch1, future))
         ));
 
         final RangeFetchRequestPerformer performer = new RangeFetchRequestPerformer(fetcher);

@@ -267,7 +267,7 @@ class MaterializedPartition {
                 // Always start anew
                 // TODO optimize, check HWM
                 Utils.delete(dir);
-                dir.mkdir();
+                final boolean _ignored = dir.mkdir();
 
                 // TODO retention, segment size
                 final LogConfig logConfig = LogConfig.fromProps(Map.of(), new Properties());
