@@ -50,12 +50,12 @@ class HighWatermarkUpdater {
 
     private final Time time;
     private final ControlPlane controlPlane;
-    protected final long delayMs;
+    private final long delayMs;
 
-    protected final ScheduledExecutorService pool;
+    private final ScheduledExecutorService pool;
 
-    protected final DelayQueue<DelayedMaterializedPartition> queue = new DelayQueue<>();
-    protected final ConcurrentHashMap<TopicIdPartition, Boolean> knownPartitions = new ConcurrentHashMap<>();
+    private final DelayQueue<DelayedMaterializedPartition> queue = new DelayQueue<>();
+    private final ConcurrentHashMap<TopicIdPartition, Boolean> knownPartitions = new ConcurrentHashMap<>();
 
     HighWatermarkUpdater(final Time time,
                          final ControlPlane controlPlane,
