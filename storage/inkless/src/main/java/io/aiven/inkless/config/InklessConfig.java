@@ -140,6 +140,11 @@ public class InklessConfig extends AbstractConfig {
         + "This is primarily intended for environments where the batches fan-out on fetch requests can overload the control plane back-end.";
     private static final int FETCH_FIND_BATCHES_MAX_BATCHES_PER_PARTITION_DEFAULT = 0;
 
+    public static final String MATERIALIZATION_PREFIX = "materialization.";
+
+    public static final String MATERIALIZATION_DIRECTORY_CONFIG = MATERIALIZATION_PREFIX + "directory";
+    private static final String MATERIALIZATION_DIRECTORY_DOC = "The root directory for materialized logs.";
+
     public static ConfigDef configDef() {
         final ConfigDef configDef = new ConfigDef();
 
@@ -327,6 +332,15 @@ public class InklessConfig extends AbstractConfig {
             FETCH_FIND_BATCHES_MAX_BATCHES_PER_PARTITION_DOC
         );
 
+        configDef.define(
+            MATERIALIZATION_DIRECTORY_CONFIG,
+            ConfigDef.Type.STRING,
+            ConfigDef.NO_DEFAULT_VALUE,
+            new ConfigDef.NonNullValidator(),
+            ConfigDef.Importance.MEDIUM,
+            MATERIALIZATION_DIRECTORY_DOC
+        );
+
         return configDef;
     }
 
@@ -432,5 +446,10 @@ public class InklessConfig extends AbstractConfig {
 
     public int maxBatchesPerPartitionToFind() {
         return getInt(FETCH_FIND_BATCHES_MAX_BATCHES_PER_PARTITION_CONFIG);
+    }
+
+    public Path materializationDirectory() {
+        final String path = getString(MATERIALIZATION_DIRECTORY_CONFIG);
+        return Path.of(path);
     }
 }

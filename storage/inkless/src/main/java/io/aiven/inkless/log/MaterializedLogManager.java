@@ -17,6 +17,7 @@
  */
 package io.aiven.inkless.log;
 
+import java.nio.file.Path;
 import java.util.Enumeration;
 import java.util.Objects;
 import java.util.concurrent.ExecutorService;
@@ -46,6 +47,7 @@ public class MaterializedLogManager {
 
     private final Time time;
     private final ControlPlane controlPlane;
+    private final Path materializationDirectory;
     private final ObjectFetchManager objectFetchManager;
     private final ObjectKeyCreator objectKeyCreator;
     private final ExecutorService batchRequestExecutor;
@@ -60,6 +62,7 @@ public class MaterializedLogManager {
         this(
             sharedState.time(),
             sharedState.controlPlane(),
+            sharedState.config().materializationDirectory(),
             sharedState.config().storage(),
             sharedState.objectKeyCreator()
         );
@@ -68,10 +71,12 @@ public class MaterializedLogManager {
     // Visible for testing
     MaterializedLogManager(final Time time,
                            final ControlPlane controlPlane,
+                           final Path materializationDirectory,
                            final StorageBackend storage,
                            final ObjectKeyCreator objectKeyCreator) {
         this.time = Objects.requireNonNull(time, "time cannot be null");
         this.controlPlane = Objects.requireNonNull(controlPlane, "controlPlane cannot be null");
+        this.materializationDirectory = Objects.requireNonNull(materializationDirectory, "materializationDirectory cannot be null");
         this.objectFetchManager = new ObjectFetchManager(
             time,
             Objects.requireNonNull(storage, "storage cannot be null"),
@@ -98,6 +103,7 @@ public class MaterializedLogManager {
             topicIdPartition,
             time,
             controlPlane,
+            materializationDirectory,
             batchRequestExecutor,
             diskWriteExecutor,
             objectKeyCreator,
@@ -109,7 +115,7 @@ public class MaterializedLogManager {
         highWatermarkUpdater.addPartition(partition);
     }
 
-    void shutdown() {
+    public void shutdown() {
         // TODO better shutdown
         highWatermarkUpdater.shutdown();
         try {

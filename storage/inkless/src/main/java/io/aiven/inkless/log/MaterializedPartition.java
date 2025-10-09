@@ -20,6 +20,7 @@ package io.aiven.inkless.log;
 import java.io.File;
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -44,6 +45,7 @@ import org.apache.kafka.storage.internals.log.ProducerStateManagerConfig;
 import org.apache.kafka.storage.internals.log.UnifiedLog;
 import org.apache.kafka.storage.log.metrics.BrokerTopicStats;
 
+import io.aiven.inkless.common.ObjectKey;
 import io.aiven.inkless.common.ObjectKeyCreator;
 import io.aiven.inkless.consume.FetchCompleter;
 import io.aiven.inkless.control_plane.BatchInfo;
@@ -67,6 +69,7 @@ class MaterializedPartition {
 
     private final Time time;
     private final ControlPlane controlPlane;
+    private final Path materializationDirectory;
     private final ObjectKeyCreator objectKeyCreator;
     private final ObjectFetchManager objectFetchManager;
 
@@ -81,6 +84,7 @@ class MaterializedPartition {
     MaterializedPartition(final TopicIdPartition topicIdPartition,
                           final Time time,
                           final ControlPlane controlPlane,
+                          final Path materializationDirectory,
                           final ExecutorService batchRequestExecutor,
                           final ExecutorService diskWriteExecutor,
                           final ObjectKeyCreator objectKeyCreator,
@@ -90,6 +94,7 @@ class MaterializedPartition {
         this.topicIdPartition = Objects.requireNonNull(topicIdPartition, "topicIdPartition cannot be null");
         this.time = Objects.requireNonNull(time, "time cannot be null");
         this.controlPlane = Objects.requireNonNull(controlPlane, "controlPlane cannot be null");
+        this.materializationDirectory = Objects.requireNonNull(materializationDirectory, "materializationDirectory cannot be null");
         this.objectKeyCreator = Objects.requireNonNull(objectKeyCreator, "objectKeyCreator cannot be null");
         this.objectFetchManager = Objects.requireNonNull(objectFetchManager, "objectFetchManager cannot be null");
         this.unifiedLogScheduler = Objects.requireNonNull(unifiedLogScheduler, "unifiedLogScheduler cannot be null");
@@ -261,8 +266,9 @@ class MaterializedPartition {
             if (log != null) {
                 return;
             }
-            final File dir = new File(String.format("_unified_log/%s-%d",
-                topicIdPartition.topicPartition().topic(), topicIdPartition.partition()));
+            final File dir = materializationDirectory.resolve(
+                String.format("%s-%d", topicIdPartition.topicPartition().topic(), topicIdPartition.partition())
+            ).toFile();
             try {
                 // Always start anew
                 // TODO optimize, check HWM
