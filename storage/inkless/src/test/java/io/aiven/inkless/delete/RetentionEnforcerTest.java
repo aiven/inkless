@@ -81,10 +81,10 @@ class RetentionEnforcerTest {
             when(metadataView.getDefaultConfig()).thenReturn(Map.of());
             when(metadataView.getTopicConfig(any())).thenReturn(new Properties());
 
-            final var enforcer = new RetentionEnforcer(time, metadataView, controlPlane, retentionEnforcementScheduler);
+            final var enforcer = new RetentionEnforcer(time, metadataView, controlPlane, retentionEnforcementScheduler, 0);
             enforcer.run();
 
-            verify(controlPlane).enforceRetention(requestCaptor.capture());
+            verify(controlPlane).enforceRetention(requestCaptor.capture(), eq(0));
             assertThat(requestCaptor.getValue()).map(EnforceRetentionRequest::retentionBytes).containsExactly(-1L);
             assertThat(requestCaptor.getValue()).map(EnforceRetentionRequest::retentionMs).containsExactly(604800000L);
         }
@@ -98,10 +98,10 @@ class RetentionEnforcerTest {
             ));
             when(metadataView.getTopicConfig(any())).thenReturn(new Properties());
 
-            final var enforcer = new RetentionEnforcer(time, metadataView, controlPlane, retentionEnforcementScheduler);
+            final var enforcer = new RetentionEnforcer(time, metadataView, controlPlane, retentionEnforcementScheduler, 0);
             enforcer.run();
 
-            verify(controlPlane).enforceRetention(requestCaptor.capture());
+            verify(controlPlane).enforceRetention(requestCaptor.capture(), eq(0));
             assertThat(requestCaptor.getValue()).map(EnforceRetentionRequest::retentionBytes).containsExactly(123L);
             assertThat(requestCaptor.getValue()).map(EnforceRetentionRequest::retentionMs).containsExactly(567L);
         }
@@ -118,10 +118,10 @@ class RetentionEnforcerTest {
             topicConfig.put(RETENTION_MS_CONFIG, "567000");
             when(metadataView.getTopicConfig(any())).thenReturn(topicConfig);
 
-            final var enforcer = new RetentionEnforcer(time, metadataView, controlPlane, retentionEnforcementScheduler);
+            final var enforcer = new RetentionEnforcer(time, metadataView, controlPlane, retentionEnforcementScheduler, 0);
             enforcer.run();
 
-            verify(controlPlane).enforceRetention(requestCaptor.capture());
+            verify(controlPlane).enforceRetention(requestCaptor.capture(), eq(0));
             assertThat(requestCaptor.getValue()).map(EnforceRetentionRequest::retentionBytes).containsExactly(123000L);
             assertThat(requestCaptor.getValue()).map(EnforceRetentionRequest::retentionMs).containsExactly(567000L);
         }
@@ -145,10 +145,10 @@ class RetentionEnforcerTest {
         t2Config.put(CLEANUP_POLICY_CONFIG, "delete");
         when(metadataView.getTopicConfig(eq(TOPIC_2))).thenReturn(t2Config);
 
-        final var enforcer = new RetentionEnforcer(time, metadataView, controlPlane, retentionEnforcementScheduler);
+        final var enforcer = new RetentionEnforcer(time, metadataView, controlPlane, retentionEnforcementScheduler, 0);
         enforcer.run();
 
-        verify(controlPlane).enforceRetention(requestCaptor.capture());
+        verify(controlPlane).enforceRetention(requestCaptor.capture(), eq(0));
         assertThat(requestCaptor.getValue())
             .map(EnforceRetentionRequest::topicId)
             .containsExactly(TOPIC_ID_1, TOPIC_ID_2);

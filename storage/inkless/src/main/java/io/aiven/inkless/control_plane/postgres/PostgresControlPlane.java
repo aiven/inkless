@@ -161,9 +161,9 @@ public class PostgresControlPlane extends AbstractControlPlane {
     }
 
     @Override
-    public List<EnforceRetentionResponse> enforceRetention(final List<EnforceRetentionRequest> requests) {
+    public List<EnforceRetentionResponse> enforceRetention(final List<EnforceRetentionRequest> requests, final int maxBatchesPerRequest) {
         try {
-            final EnforceRetentionJob job = new EnforceRetentionJob(time, jooqCtx, requests, metrics::onEnforceRetentionCompleted);
+            final EnforceRetentionJob job = new EnforceRetentionJob(time, jooqCtx, requests, maxBatchesPerRequest, metrics::onEnforceRetentionCompleted);
             return job.call();
         } catch (final Exception e) {
             throw new ControlPlaneException("Failed to enforce retention", e);

@@ -50,7 +50,7 @@ public interface ControlPlane extends Closeable, Configurable {
 
     void deleteTopics(Set<Uuid> topicIds);
 
-    List<EnforceRetentionResponse> enforceRetention(List<EnforceRetentionRequest> requests);
+    List<EnforceRetentionResponse> enforceRetention(List<EnforceRetentionRequest> requests, int maxBatchesPerRequest);
 
     List<FileToDelete> getFilesToDelete();
 
