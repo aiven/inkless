@@ -47,6 +47,7 @@ import io.aiven.inkless.log.MaterializedLogManager;
 import io.aiven.inkless.produce.AppendHandler;
 
 import com.antithesis.sdk.Assert;
+import com.antithesis.sdk.Lifecycle;
 import com.antithesis.sdk.Random;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -98,18 +99,20 @@ public class Antithesis {
         );
         final AppendHandler handler = new AppendHandler(sharedState);
 
-        // Produce some non-tested values.
-        produceRecords(handler, randomPositiveInt(10) + 5, false);
+        Lifecycle.setupComplete(null);
 
-        // Start materialization.
+        LOG.info("Starting materialization");
         final MaterializedLogManager materializedLogManager = new MaterializedLogManager(sharedState);
         materializedLogManager.startReplica(T0P0);
         materializedLogManager.startReplica(T0P1);
         materializedLogManager.startReplica(T1P0);
 
-        // Produce tested values.
+        LOG.info("Letting everything settle down...");
+        Thread.sleep(3000);
+
+        LOG.info("Producing test values");
         final Map<TopicIdPartition, List<RecordWithOffset>> expectedRecords =
-            produceRecords(handler, randomPositiveInt(50) + 5, false);
+            produceRecords(handler, randomPositiveInt(50) + 5, true);
 
         LOG.info("Letting everything settle down...");
         Thread.sleep(10000);
@@ -147,6 +150,7 @@ public class Antithesis {
         inklessConfigProps.put("storage.s3.path.style.access.enabled", "true");
         inklessConfigProps.put("produce.commit.interval.ms", "100");  // speed up things
         inklessConfigProps.put("materialization.directory", materializationDir);
+        inklessConfigProps.put("materialization.segment.bytes", 2 * 1024 * 1024);
         return new InklessConfig(inklessConfigProps);
     }
 
@@ -182,6 +186,9 @@ public class Antithesis {
             checkPartitionResponse(responseT0p1);
             checkPartitionResponse(responseT1p0);
 
+            LOG.debug("In {} batch starts with {} and has {} records", T0P0, responseT0p0.baseOffset, recordArrT0p0.length);
+            LOG.debug("In {} batch starts with {} and has {} records", T0P1, responseT0p1.baseOffset, recordArrT0p1.length);
+            LOG.debug("In {} batch starts with {} and has {} records", T1P0, responseT1p0.baseOffset, recordArrT1p0.length);
             if (round > 0 || includeFirstBatchInResult) {
                 for (int i = 0; i < recordArrT0p0.length; i++) {
                     result.get(T0P0).add(new RecordWithOffset(recordArrT0p0[i], responseT0p0.baseOffset + i));

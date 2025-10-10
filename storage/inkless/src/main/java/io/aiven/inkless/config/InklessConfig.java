@@ -19,7 +19,9 @@ package io.aiven.inkless.config;
 
 import org.apache.kafka.common.config.AbstractConfig;
 import org.apache.kafka.common.config.ConfigDef;
+import org.apache.kafka.common.config.TopicConfig;
 import org.apache.kafka.common.utils.Utils;
+import org.apache.kafka.storage.internals.log.LogConfig;
 
 import java.nio.file.Path;
 import java.time.Duration;
@@ -30,6 +32,8 @@ import io.aiven.inkless.control_plane.ControlPlane;
 import io.aiven.inkless.control_plane.InMemoryControlPlane;
 import io.aiven.inkless.storage_backend.common.StorageBackend;
 import io.aiven.inkless.storage_backend.in_memory.InMemoryStorage;
+
+import static org.apache.kafka.common.config.ConfigDef.Range.atLeast;
 
 public class InklessConfig extends AbstractConfig {
     public static final String PREFIX = "inkless.";
@@ -144,6 +148,12 @@ public class InklessConfig extends AbstractConfig {
 
     public static final String MATERIALIZATION_DIRECTORY_CONFIG = MATERIALIZATION_PREFIX + "directory";
     private static final String MATERIALIZATION_DIRECTORY_DOC = "The root directory for materialized logs.";
+    public static final String MATERIALIZATION_SEGMENT_BYTES_CONFIG = MATERIALIZATION_PREFIX + TopicConfig.SEGMENT_BYTES_CONFIG;
+    private static final String MATERIALIZATION_SEGMENT_BYTES_DOC = "segment.bytes for materialized logs";
+    private static final int MATERIALIZATION_SEGMENT_BYTES_DEFAULT = 100 * 1024 * 1024;
+    public static final String MATERIALIZATION_SEGMENT_MS_CONFIG = MATERIALIZATION_PREFIX + TopicConfig.SEGMENT_MS_CONFIG;
+    private static final String MATERIALIZATION_SEGMENT_MS_DOC = "segment.ms for materialized logs";
+    private static final long MATERIALIZATION_SEGMENT_MS_DEFAULT = Long.MAX_VALUE;
 
     public static ConfigDef configDef() {
         final ConfigDef configDef = new ConfigDef();
@@ -340,6 +350,22 @@ public class InklessConfig extends AbstractConfig {
             ConfigDef.Importance.MEDIUM,
             MATERIALIZATION_DIRECTORY_DOC
         );
+        configDef.define(
+            MATERIALIZATION_SEGMENT_BYTES_CONFIG,
+            ConfigDef.Type.INT,
+            MATERIALIZATION_SEGMENT_BYTES_DEFAULT,
+            atLeast(1024 * 1024),
+            ConfigDef.Importance.MEDIUM,
+            MATERIALIZATION_SEGMENT_BYTES_DOC
+        );
+        configDef.define(
+            MATERIALIZATION_SEGMENT_MS_CONFIG,
+            ConfigDef.Type.LONG,
+            MATERIALIZATION_SEGMENT_MS_DEFAULT,
+            atLeast(1),
+            ConfigDef.Importance.MEDIUM,
+            MATERIALIZATION_SEGMENT_MS_DOC
+        );
 
         return configDef;
     }
@@ -451,5 +477,13 @@ public class InklessConfig extends AbstractConfig {
     public Path materializationDirectory() {
         final String path = getString(MATERIALIZATION_DIRECTORY_CONFIG);
         return Path.of(path);
+    }
+
+    public LogConfig materializationLogConfig() {
+        final Map<String, Object> props = Map.of(
+            TopicConfig.SEGMENT_BYTES_CONFIG, getInt(MATERIALIZATION_SEGMENT_BYTES_CONFIG),
+            TopicConfig.SEGMENT_MS_CONFIG, getLong(MATERIALIZATION_SEGMENT_MS_CONFIG)
+        );
+        return new LogConfig(props);
     }
 }

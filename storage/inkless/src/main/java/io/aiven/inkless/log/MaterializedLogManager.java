@@ -29,6 +29,7 @@ import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.utils.ThreadUtils;
 import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.server.util.KafkaScheduler;
+import org.apache.kafka.storage.internals.log.LogConfig;
 import org.apache.kafka.storage.log.metrics.BrokerTopicStats;
 
 import io.aiven.inkless.common.ObjectKeyCreator;
@@ -50,6 +51,7 @@ public class MaterializedLogManager {
     private final Path materializationDirectory;
     private final ObjectFetchManager objectFetchManager;
     private final ObjectKeyCreator objectKeyCreator;
+    private final LogConfig logConfig;
     private final ExecutorService batchRequestExecutor;
     private final ExecutorService diskWriteExecutor;
 
@@ -64,7 +66,8 @@ public class MaterializedLogManager {
             sharedState.controlPlane(),
             sharedState.config().materializationDirectory(),
             sharedState.config().storage(),
-            sharedState.objectKeyCreator()
+            sharedState.objectKeyCreator(),
+            sharedState.config().materializationLogConfig()
         );
     }
 
@@ -73,7 +76,8 @@ public class MaterializedLogManager {
                            final ControlPlane controlPlane,
                            final Path materializationDirectory,
                            final StorageBackend storage,
-                           final ObjectKeyCreator objectKeyCreator) {
+                           final ObjectKeyCreator objectKeyCreator,
+                           final LogConfig logConfig) {
         this.time = Objects.requireNonNull(time, "time cannot be null");
         this.controlPlane = Objects.requireNonNull(controlPlane, "controlPlane cannot be null");
         this.materializationDirectory = Objects.requireNonNull(materializationDirectory, "materializationDirectory cannot be null");
@@ -84,6 +88,7 @@ public class MaterializedLogManager {
             2
         );
         this.objectKeyCreator = Objects.requireNonNull(objectKeyCreator, "objectKeyCreator cannot be null");
+        this.logConfig = Objects.requireNonNull(logConfig, "logConfig cannot be null");
 
         final long hwmDelayMs = 100;  // TODO configurable
         this.highWatermarkUpdater = new HighWatermarkUpdater(time, controlPlane, hwmDelayMs, 1);
@@ -109,7 +114,8 @@ public class MaterializedLogManager {
             objectKeyCreator,
             objectFetchManager,
             unifiedLogScheduler,
-            brokerTopicStats
+            brokerTopicStats,
+            logConfig
         );
 
         highWatermarkUpdater.addPartition(partition);

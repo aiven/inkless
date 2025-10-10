@@ -75,6 +75,7 @@ class MaterializedPartition {
 
     private final KafkaScheduler unifiedLogScheduler;
     private final BrokerTopicStats brokerTopicStats;
+    private final LogConfig logConfig;
     private final ProducerStateManagerConfig producerStateManagerConfig = new ProducerStateManagerConfig(1, false);
     private final LogDirFailureChannel logDirFailureChannel = new LogDirFailureChannel(1);
 
@@ -90,7 +91,8 @@ class MaterializedPartition {
                           final ObjectKeyCreator objectKeyCreator,
                           final ObjectFetchManager objectFetchManager,
                           final KafkaScheduler unifiedLogScheduler,
-                          final BrokerTopicStats brokerTopicStats) {
+                          final BrokerTopicStats brokerTopicStats,
+                          final LogConfig logConfig) {
         this.topicIdPartition = Objects.requireNonNull(topicIdPartition, "topicIdPartition cannot be null");
         this.time = Objects.requireNonNull(time, "time cannot be null");
         this.controlPlane = Objects.requireNonNull(controlPlane, "controlPlane cannot be null");
@@ -99,6 +101,7 @@ class MaterializedPartition {
         this.objectFetchManager = Objects.requireNonNull(objectFetchManager, "objectFetchManager cannot be null");
         this.unifiedLogScheduler = Objects.requireNonNull(unifiedLogScheduler, "unifiedLogScheduler cannot be null");
         this.brokerTopicStats = Objects.requireNonNull(brokerTopicStats, "brokerTopicStats cannot be null");
+        this.logConfig = Objects.requireNonNull(logConfig, "logConfig cannot be null");
 
         this.batchRequester = new BatchRequester(
             batchRequestExecutor,
@@ -179,8 +182,9 @@ class MaterializedPartition {
                     return;
                 }
 
-                LOG.error("QQQQQQQQQQ Requesting {} bytes for {}", howMuchToRequest, topicIdPartition);
-                final var findBatchRequest = new FindBatchRequest(topicIdPartition, nextOffsetToRequest.get(), howMuchToRequest);
+                final long offset = nextOffsetToRequest.get();
+                LOG.error("QQQQQQQQQQ Requesting {} bytes for {} starting from offset {}", howMuchToRequest, topicIdPartition, offset);
+                final var findBatchRequest = new FindBatchRequest(topicIdPartition, offset, howMuchToRequest);
                 final FindBatchResponse response;
                 try {
                     response = controlPlane.findBatches(List.of(findBatchRequest), howMuchToRequest, 0).get(0);
@@ -202,7 +206,7 @@ class MaterializedPartition {
                             // TODO change to debug
                             LOG.error("QQQQQQQQQQ Updated nextOffsetToRequest of {} to {}", topicIdPartition, newNextOffsetToRequest);
                         }
-                        LOG.error("QQQQQQQQQQ Added batch for {}", topicIdPartition);
+                        LOG.error("QQQQQQQQQQ Added batch for {} with base offset {}", topicIdPartition, batch.metadata().baseOffset());
                     }
                 } else {
                     LOG.error("Error finding batches for {}: {}", topicIdPartition, response.errors());
@@ -276,7 +280,6 @@ class MaterializedPartition {
                 final boolean _ignored = dir.mkdir();
 
                 // TODO retention, segment size
-                final LogConfig logConfig = LogConfig.fromProps(Map.of(), new Properties());
                 final long recoveryPoint = logStartOffset;  // TODO change this is we start not from beginning
                 log = UnifiedLog.create(dir, logConfig, logStartOffset, recoveryPoint, unifiedLogScheduler,
                     brokerTopicStats, time, 1, producerStateManagerConfig,
