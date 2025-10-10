@@ -76,15 +76,20 @@ class EnforceRetentionJobTest {
 
     @Test
     void forMultiplePartitionsInArbitraryOrder() throws Exception {
-        final EnforceRetentionJob job = new EnforceRetentionJob(time, pgContainer.getJooqCtx(), List.of(
-            new EnforceRetentionRequest(TOPIC_ID_0, 99, 1, 1),
-            new EnforceRetentionRequest(TOPIC_ID_1, 1, 1, 1),
-            new EnforceRetentionRequest(TOPIC_ID_1, 0, 1, 1),
-            new EnforceRetentionRequest(TOPIC_ID_0, 3, 1, 1),
-            new EnforceRetentionRequest(TOPIC_ID_0, 1000, 1, 1),  // non-existent
-            new EnforceRetentionRequest(TOPIC_ID_1, 5, 1, 1),
-            new EnforceRetentionRequest(TOPIC_ID_1, 5, 1, 1)  // duplicate
-        ), durationCallback);
+        final EnforceRetentionJob job = new EnforceRetentionJob(
+            time,
+            pgContainer.getJooqCtx(),
+            List.of(
+                new EnforceRetentionRequest(TOPIC_ID_0, 99, 1, 1),
+                new EnforceRetentionRequest(TOPIC_ID_1, 1, 1, 1),
+                new EnforceRetentionRequest(TOPIC_ID_1, 0, 1, 1),
+                new EnforceRetentionRequest(TOPIC_ID_0, 3, 1, 1),
+                new EnforceRetentionRequest(TOPIC_ID_0, 1000, 1, 1),  // non-existent
+                new EnforceRetentionRequest(TOPIC_ID_1, 5, 1, 1),
+                new EnforceRetentionRequest(TOPIC_ID_1, 5, 1, 1)  // duplicate
+            ),
+            0,
+            durationCallback);
         assertThat(job.call()).containsExactly(
             EnforceRetentionResponse.success(0, 0, 0),
             EnforceRetentionResponse.success(0, 0, 0),

@@ -49,6 +49,7 @@ public class RetentionEnforcer implements Runnable, Closeable {
     private final MetadataView metadataView;
     private final ControlPlane controlPlane;
     private final RetentionEnforcementScheduler retentionEnforcementScheduler;
+    private final int maxBatchesPerRequest;
 
     private final RetentionEnforcerMetrics metrics = new RetentionEnforcerMetrics();
 
@@ -60,7 +61,9 @@ public class RetentionEnforcer implements Runnable, Closeable {
                 sharedState.time(),
                 sharedState.metadata(),
                 sharedState.config().retentionEnforcementInterval(),
-                new Random())
+                new Random()
+            ),
+            sharedState.config().maxBatchesPerEnforcementRequest()
         );
     }
 
@@ -68,11 +71,13 @@ public class RetentionEnforcer implements Runnable, Closeable {
     RetentionEnforcer(final Time time,
                       final MetadataView metadataView,
                       final ControlPlane controlPlane,
-                      final RetentionEnforcementScheduler retentionEnforcementScheduler) {
+                      final RetentionEnforcementScheduler retentionEnforcementScheduler,
+                      final int maxBatchesPerRequest) {
         this.time = time;
         this.metadataView = metadataView;
         this.controlPlane = controlPlane;
         this.retentionEnforcementScheduler = retentionEnforcementScheduler;
+        this.maxBatchesPerRequest = maxBatchesPerRequest;
     }
 
     @Override
@@ -112,7 +117,7 @@ public class RetentionEnforcer implements Runnable, Closeable {
         final Instant start = TimeUtils.durationMeasurementNow(time);
         final List<EnforceRetentionResponse> responses;
         try {
-            responses = controlPlane.enforceRetention(requests);
+            responses = controlPlane.enforceRetention(requests, maxBatchesPerRequest);
         } catch (final Exception e) {
             metrics.recordRetentionEnforcementFinishedWithError();
             LOGGER.error("Unexpected error when enforcing retention", e);
