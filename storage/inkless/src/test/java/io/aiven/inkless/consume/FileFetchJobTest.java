@@ -29,11 +29,7 @@ import org.mockito.quality.Strictness;
 
 import java.nio.ByteBuffer;
 import java.nio.channels.ReadableByteChannel;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.List;
 
-import io.aiven.inkless.cache.FixedBlockAlignment;
 import io.aiven.inkless.common.ByteRange;
 import io.aiven.inkless.common.ObjectKey;
 import io.aiven.inkless.common.PlainObjectKey;
@@ -78,76 +74,4 @@ public class FileFetchJobTest {
 
         assertThat(actualFile).isEqualTo(expectedFile);
     }
-
-    private List<FileExtent> createCacheAlignedFileExtents(int fileSize, int blockSize) {
-        byte[] array = new byte[fileSize];
-        for (int i = 0; i < fileSize; i++) {
-            array[i] = (byte) i;
-        }
-        var fixedAlignment = new FixedBlockAlignment(blockSize);
-        var ranges = fixedAlignment.align(List.of(new ByteRange(0, fileSize)));
-
-        var fileExtents = new ArrayList<FileExtent>();
-        for (ByteRange range : ranges) {
-            var startOffset = Math.toIntExact(range.offset());
-            var length = Math.min(blockSize, fileSize - startOffset);
-            var endOffset = startOffset + length;
-            ByteBuffer buffer = ByteBuffer.wrap(Arrays.copyOfRange(array, startOffset, endOffset));
-            fileExtents.add(FileFetchJob.createFileExtent(objectA, range, buffer));
-        }
-        return fileExtents;
-    }
-
-
-    @Test
-    public void testFileSizeNotMultipleOfBlockSize() {
-        List<FileExtent> fileExtents = createCacheAlignedFileExtents(250, 100);
-        List<FileExtent.ByteRange> fileRanges = fileExtents.stream().map(FileExtent::range).toList();
-
-        List<FileExtent.ByteRange> expectedRanges = List.of(
-            new FileExtent.ByteRange().setOffset(0).setLength(100),
-            new FileExtent.ByteRange().setOffset(100).setLength(100),
-            new FileExtent.ByteRange().setOffset(200).setLength(50)
-        );
-
-        assertThat(fileRanges).containsExactlyInAnyOrderElementsOf(expectedRanges);
-    }
-
-    @Test
-    public void testFileSizeEqualsBlockSize() {
-        List<FileExtent> fileExtents = createCacheAlignedFileExtents(100, 100);
-        List<FileExtent.ByteRange> fileRanges = fileExtents.stream().map(FileExtent::range).toList();
-
-        List<FileExtent.ByteRange> expectedRanges = List.of(
-            new FileExtent.ByteRange().setOffset(0).setLength(100)
-        );
-
-        assertThat(fileRanges).containsExactlyInAnyOrderElementsOf(expectedRanges);
-    }
-
-    @Test
-    public void testFileSizeMultipleOfBlockSize() {
-        List<FileExtent> fileExtents = createCacheAlignedFileExtents(200, 100);
-        List<FileExtent.ByteRange> fileRanges = fileExtents.stream().map(FileExtent::range).toList();
-
-        List<FileExtent.ByteRange> expectedRanges = List.of(
-            new FileExtent.ByteRange().setOffset(0).setLength(100),
-            new FileExtent.ByteRange().setOffset(100).setLength(100)
-        );
-
-        assertThat(fileRanges).containsExactlyInAnyOrderElementsOf(expectedRanges);
-    }
-
-    @Test
-    public void testSingleFileExtentLessThanBlockSize() {
-        List<FileExtent> fileExtents = createCacheAlignedFileExtents(87, 100);
-        List<FileExtent.ByteRange> fileRanges = fileExtents.stream().map(FileExtent::range).toList();
-
-        List<FileExtent.ByteRange> expectedRanges = List.of(
-            new FileExtent.ByteRange().setOffset(0).setLength(87)
-        );
-
-        assertThat(fileRanges).containsExactlyInAnyOrderElementsOf(expectedRanges);
-    }
-
 }

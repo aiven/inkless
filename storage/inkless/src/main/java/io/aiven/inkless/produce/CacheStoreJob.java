@@ -19,16 +19,17 @@ package io.aiven.inkless.produce;
 
 import org.apache.kafka.common.utils.Time;
 
-import java.util.Collections;
-import java.util.Set;
+import java.util.List;
 import java.util.concurrent.Future;
 import java.util.function.Consumer;
 
 import io.aiven.inkless.TimeUtils;
-import io.aiven.inkless.cache.KeyAlignmentStrategy;
 import io.aiven.inkless.cache.ObjectCache;
 import io.aiven.inkless.common.ByteRange;
 import io.aiven.inkless.common.ObjectKey;
+import io.aiven.inkless.common.cache.CacheKeyCreator;
+import io.aiven.inkless.control_plane.CommitBatchRequest;
+import io.aiven.inkless.control_plane.CommitBatchResponse;
 import io.aiven.inkless.generated.CacheKey;
 import io.aiven.inkless.generated.FileExtent;
 
@@ -36,50 +37,54 @@ public class CacheStoreJob implements Runnable {
 
     private final Time time;
     private final ObjectCache cache;
-    private final KeyAlignmentStrategy keyAlignmentStrategy;
     private final byte[] data;
     private final Future<ObjectKey> uploadFuture;
+    private final List<CommitBatchResponse> commitBatchResponses;
     private final Consumer<Long> cacheStoreDurationCallback;
 
-    public CacheStoreJob(Time time, ObjectCache cache, KeyAlignmentStrategy keyAlignmentStrategy, byte[] data, Future<ObjectKey> uploadFuture, Consumer<Long> cacheStoreDurationCallback) {
+    public CacheStoreJob(
+            final Time time,
+            final ObjectCache cache,
+            final byte[] data,
+            final Future<ObjectKey> uploadFuture,
+            final List<CommitBatchResponse> commitBatchResponses,
+            final Consumer<Long> cacheStoreDurationCallback) {
         this.time = time;
         this.cache = cache;
-        this.keyAlignmentStrategy = keyAlignmentStrategy;
         this.data = data;
         this.uploadFuture = uploadFuture;
+        this.commitBatchResponses = commitBatchResponses;
         this.cacheStoreDurationCallback = cacheStoreDurationCallback;
     }
 
     @Override
     public void run() {
         try {
-            ObjectKey objectKey = uploadFuture.get();
-            storeToCache(objectKey);
+            final ObjectKey objectKey = uploadFuture.get();
+            for (final CommitBatchResponse commitBatchResponse : commitBatchResponses) {
+                storeToCache(objectKey, commitBatchResponse);
+            }
         } catch (final Throwable e) {
             // If the upload failed there's nothing to cache and we succeed vacuously.
         }
     }
 
-    private void storeToCache(ObjectKey objectKey) {
-        ByteRange fileRange = new ByteRange(0, data.length);
-        Set<ByteRange> ranges = keyAlignmentStrategy.align(Collections.singletonList(fileRange));
-        String object = objectKey.value();
-        for (ByteRange range : ranges) {
-            CacheKey key = new CacheKey()
-                    .setObject(object)
-                    .setRange(new CacheKey.ByteRange()
-                            .setOffset(range.offset())
-                            .setLength(range.size()));
-            ByteRange intersect = ByteRange.intersect(range, fileRange);
-            byte[] extentBytes = new byte[intersect.bufferSize()];
-            System.arraycopy(data, intersect.bufferOffset(), extentBytes, 0, extentBytes.length);
-            FileExtent extent = new FileExtent()
-                    .setObject(object)
-                    .setRange(new FileExtent.ByteRange()
-                            .setOffset(intersect.offset())
-                            .setLength(intersect.size()))
-                    .setData(extentBytes);
-            TimeUtils.measureDurationMs(time, () -> cache.put(key, extent), cacheStoreDurationCallback);
+    private void storeToCache(final ObjectKey objectKey, final CommitBatchResponse commitBatchResponse) {
+        final CommitBatchRequest batchRequest = commitBatchResponse.request();
+        if (batchRequest == null) {
+            return;
         }
+        final int offset = batchRequest.byteOffset();
+        final int length = batchRequest.size();
+        final CacheKey cacheKey = CacheKeyCreator.create(objectKey, new ByteRange(offset, length));
+        final byte[] cacheData = new byte[length];
+        System.arraycopy(data, offset, cacheData, 0, length);
+        FileExtent extent = new FileExtent()
+                .setObject(objectKey.value())
+                .setRange(new FileExtent.ByteRange()
+                        .setOffset(offset)
+                        .setLength(length))
+                .setData(cacheData);
+        TimeUtils.measureDurationMs(time, () -> cache.put(cacheKey, extent), cacheStoreDurationCallback);
     }
 }

@@ -19,84 +19,79 @@ package io.aiven.inkless.consume;
 
 import org.apache.kafka.common.utils.Time;
 
+import java.util.HashSet;
+import java.util.List;
 import java.util.Objects;
+import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.function.Consumer;
 
-import io.aiven.inkless.TimeUtils;
 import io.aiven.inkless.cache.ObjectCache;
 import io.aiven.inkless.common.ByteRange;
 import io.aiven.inkless.common.ObjectKey;
+import io.aiven.inkless.common.cache.CacheKeyCreator;
+import io.aiven.inkless.control_plane.BatchInfo;
 import io.aiven.inkless.generated.CacheKey;
 import io.aiven.inkless.generated.FileExtent;
 import io.aiven.inkless.storage_backend.common.ObjectFetcher;
 
-public class CacheFetchJob implements Callable<FileExtent> {
+public class CacheFetchJob implements Callable<Set<FileExtent>> {
 
     private final ObjectCache cache;
     private final Time time;
-    private final Consumer<Long> cacheQueryDurationCallback;
-    private final Consumer<Boolean> cacheHitRateCallback;
-    private final Consumer<Long> cacheStoreDurationCallback;
     private final Consumer<Integer> cacheEntrySize;
-    private final CacheKey key;
-    private final FileFetchJob fallback;
+    final Consumer<Long> fileFetchDurationCallback;
+    private final ObjectKey objectKey;
+    private final List<BatchInfo> batchInfoList;
+    final ObjectFetcher objectFetcher;
 
     public CacheFetchJob(
-            ObjectCache cache,
-            ObjectKey objectKey,
-            ByteRange byteRange,
-            Time time,
-            ObjectFetcher objectFetcher,
-            Consumer<Long> cacheQueryDurationCallback,
-            Consumer<Long> cacheStoreDurationCallback,
-            Consumer<Boolean> cacheHitRateCallback,
-            Consumer<Long> fileFetchDurationCallback,
-            Consumer<Integer> cacheEntrySize
+        final ObjectCache cache,
+        final ObjectFetcher objectFetcher,
+        final ObjectKey objectKey,
+        final List<BatchInfo> batchInfoList,
+        final Time time,
+        final Consumer<Long> fileFetchDurationCallback,
+        final Consumer<Integer> cacheEntrySize
     ) {
         this.cache = cache;
         this.time = time;
-        this.cacheQueryDurationCallback = cacheQueryDurationCallback;
-        this.cacheStoreDurationCallback = cacheStoreDurationCallback;
-        this.cacheHitRateCallback = cacheHitRateCallback;
         this.cacheEntrySize = cacheEntrySize;
-        this.key = createCacheKey(objectKey, byteRange);
-        this.fallback = new FileFetchJob(time, objectFetcher, objectKey, byteRange, fileFetchDurationCallback);
-    }
-
-    // visible for testing
-    static CacheKey createCacheKey(ObjectKey object, ByteRange byteRange) {
-        return new CacheKey().
-                setObject(object.value())
-                .setRange(new CacheKey.ByteRange()
-                        .setOffset(byteRange.offset())
-                        .setLength(byteRange.size()));
+        this.fileFetchDurationCallback = fileFetchDurationCallback;
+        this.objectKey = objectKey;
+        this.objectFetcher = objectFetcher;
+        this.batchInfoList = batchInfoList;
     }
 
     @Override
-    public FileExtent call() throws Exception {
-        // Catch cache-related exceptions but let remote storage exceptions bubble up.
-        try {
-            FileExtent file = TimeUtils.measureDurationMs(time, () -> cache.get(key), cacheQueryDurationCallback);
-            cacheHitRateCallback.accept(file != null);
-            if (file != null) {
-                // cache hit
-                return file;
-            }
-        } catch (final Exception e) {
-            throw new CacheFetchException(e);
+    public Set<FileExtent> call() {
+        Set<FileExtent> set = new HashSet<>();
+        for (BatchInfo info : batchInfoList) {
+            final ByteRange batchRange = info.metadata().range();
+            final CacheKey lookupKey = CacheKeyCreator.create(objectKey, batchRange);
+
+            FileExtent apply = cache.computeIfAbsent(lookupKey, cacheKey -> {
+                // Let remote storage exceptions bubble up, do not catch the exceptions.
+                final FileExtent freshFile = loadFileExtent(objectKey, batchRange);
+                // TODO: add cache entry size also to produce/file commit
+                cacheEntrySize.accept(freshFile.data().length);
+                return freshFile;
+            });
+            set.add(apply);
         }
-        // cache miss
-        FileExtent freshFile = fallback.call();
+        return set;
+    }
+
+    private FileExtent loadFileExtent(final ObjectKey key, final ByteRange batchRange) {
+        final FileExtent freshFile;
+        final FileFetchJob fallback = new FileFetchJob(time, objectFetcher, key, batchRange, fileFetchDurationCallback);
         try {
-            TimeUtils.measureDurationMs(time, () -> cache.put(key, freshFile), cacheStoreDurationCallback);
-            cacheEntrySize.accept(freshFile.data().length);
-        } catch (final Exception e) {
-            throw new CacheFetchException(e);
+            freshFile = fallback.call();
+        } catch (Exception e) {
+            throw new FetchException(e);
         }
         return freshFile;
     }
-
 
     @Override
     public boolean equals(Object o) {
@@ -104,12 +99,21 @@ public class CacheFetchJob implements Callable<FileExtent> {
         if (o == null || getClass() != o.getClass()) return false;
         CacheFetchJob that = (CacheFetchJob) o;
         return Objects.equals(cache, that.cache)
-                && Objects.equals(key, that.key)
-                && Objects.equals(fallback, that.fallback);
+            && Objects.equals(objectKey, that.objectKey)
+            && Objects.equals(batchInfoList, that.batchInfoList);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(cache, key, fallback);
+        return Objects.hash(cache, objectKey, batchInfoList);
+    }
+
+    @Override
+    public String toString() {
+        return "CacheFetchJob{" +
+                "cache=" + cache +
+                "objectKey=" + objectKey +
+                ", batchInfoList=" + batchInfoList +
+                '}';
     }
 }

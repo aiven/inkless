@@ -47,7 +47,6 @@ public class FetchHandler implements Closeable {
             new Reader(
                 state.time(),
                 state.objectKeyCreator(),
-                state.keyAlignmentStrategy(),
                 state.cache(),
                 state.controlPlane(),
                 state.config().storage(),

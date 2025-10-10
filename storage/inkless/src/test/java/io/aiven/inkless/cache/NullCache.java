@@ -18,6 +18,7 @@
 package io.aiven.inkless.cache;
 
 import java.io.IOException;
+import java.util.function.Function;
 
 import io.aiven.inkless.generated.CacheKey;
 import io.aiven.inkless.generated.FileExtent;
@@ -33,6 +34,11 @@ public class NullCache implements ObjectCache {
 
     @Override
     public void put(CacheKey key, FileExtent value) {
+    }
+
+    @Override
+    public FileExtent computeIfAbsent(CacheKey key, Function<CacheKey, FileExtent> mappingFunction) {
+        return mappingFunction.apply(key);
     }
 
     @Override

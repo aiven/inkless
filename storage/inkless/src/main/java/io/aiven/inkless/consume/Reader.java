@@ -38,7 +38,6 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
 import io.aiven.inkless.TimeUtils;
-import io.aiven.inkless.cache.KeyAlignmentStrategy;
 import io.aiven.inkless.cache.ObjectCache;
 import io.aiven.inkless.common.InklessThreadFactory;
 import io.aiven.inkless.common.ObjectKeyCreator;
@@ -51,7 +50,6 @@ public class Reader implements AutoCloseable {
     private static final long EXECUTOR_SHUTDOWN_TIMEOUT_SECONDS = 5;
     private final Time time;
     private final ObjectKeyCreator objectKeyCreator;
-    private final KeyAlignmentStrategy keyAlignmentStrategy;
     private final ObjectCache cache;
     private final ControlPlane controlPlane;
     private final ObjectFetcher objectFetcher;
@@ -66,7 +64,6 @@ public class Reader implements AutoCloseable {
     public Reader(
         Time time,
         ObjectKeyCreator objectKeyCreator,
-        KeyAlignmentStrategy keyAlignmentStrategy,
         ObjectCache cache,
         ControlPlane controlPlane,
         ObjectFetcher objectFetcher,
@@ -78,7 +75,6 @@ public class Reader implements AutoCloseable {
         this(
             time,
             objectKeyCreator,
-            keyAlignmentStrategy,
             cache,
             controlPlane,
             objectFetcher,
@@ -92,7 +88,6 @@ public class Reader implements AutoCloseable {
     public Reader(
         Time time,
         ObjectKeyCreator objectKeyCreator,
-        KeyAlignmentStrategy keyAlignmentStrategy,
         ObjectCache cache,
         ControlPlane controlPlane,
         ObjectFetcher objectFetcher,
@@ -103,14 +98,13 @@ public class Reader implements AutoCloseable {
     ) {
         this.time = time;
         this.objectKeyCreator = objectKeyCreator;
-        this.keyAlignmentStrategy = keyAlignmentStrategy;
         this.cache = cache;
         this.controlPlane = controlPlane;
         this.objectFetcher = objectFetcher;
         this.maxBatchesPerPartitionToFind = maxBatchesPerPartitionToFind;
         this.metadataExecutor = metadataExecutor;
         this.dataExecutor = dataExecutor;
-        this.fetchMetrics = new InklessFetchMetrics(time);
+        this.fetchMetrics = new InklessFetchMetrics(time, cache);
         this.brokerTopicStats = brokerTopicStats;
         try {
             this.metadataThreadPoolMonitor = new ThreadPoolMonitor("inkless-fetch-metadata", metadataExecutor);
@@ -143,7 +137,6 @@ public class Reader implements AutoCloseable {
                     new FetchPlanner(
                         time,
                         objectKeyCreator,
-                        keyAlignmentStrategy,
                         cache,
                         objectFetcher,
                         dataExecutor,
