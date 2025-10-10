@@ -117,6 +117,7 @@ public class MaterializedLogManager {
 
     public void shutdown() {
         // TODO better shutdown
+        objectFetchManager.shutdown();
         highWatermarkUpdater.shutdown();
         try {
             unifiedLogScheduler.shutdown();

@@ -254,7 +254,7 @@ class MaterializedPartition {
                     // TODO move createMemoryRecords to more suitable place
                     final MemoryRecords records = FetchCompleter.createMemoryRecords(byteBuffer, task.batchInfo());
                     final LogAppendInfo logAppendInfo = log.appendAsFollower(records, 0);
-                    LOG.error("QQQQQQQQQQ Appended: {}", logAppendInfo);
+                    LOG.error("QQQQQQQQQQ Appended to {}: {}", topicIdPartition, logAppendInfo);
                 }
                 writeCompletedCallback.run();
             } finally {

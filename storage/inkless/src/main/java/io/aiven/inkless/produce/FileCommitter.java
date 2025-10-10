@@ -242,6 +242,7 @@ class FileCommitter implements Closeable {
         // Don't wait here, they should try to finish their work.
         executorServiceUpload.shutdown();
         executorServiceCommit.shutdown();
+        executorServiceCacheStore.shutdown();
         metrics.close();
         if (threadPoolMonitor != null) threadPoolMonitor.close();
     }

@@ -1,10 +1,12 @@
 package kafka;
 
 import java.io.IOException;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Properties;
 import java.util.Set;
 import java.util.concurrent.ExecutionException;
@@ -16,11 +18,18 @@ import org.apache.kafka.common.compress.Compression;
 import org.apache.kafka.common.network.ListenerName;
 import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.record.MemoryRecords;
+import org.apache.kafka.common.record.Record;
 import org.apache.kafka.common.record.SimpleRecord;
 import org.apache.kafka.common.requests.ProduceResponse;
 import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.server.common.RequestLocal;
+import org.apache.kafka.server.storage.log.FetchIsolation;
+import org.apache.kafka.server.util.KafkaScheduler;
+import org.apache.kafka.storage.internals.log.FetchDataInfo;
 import org.apache.kafka.storage.internals.log.LogConfig;
+import org.apache.kafka.storage.internals.log.LogDirFailureChannel;
+import org.apache.kafka.storage.internals.log.ProducerStateManagerConfig;
+import org.apache.kafka.storage.internals.log.UnifiedLog;
 import org.apache.kafka.storage.log.metrics.BrokerTopicStats;
 
 import io.aiven.inkless.cache.FixedBlockAlignment;
@@ -34,12 +43,19 @@ import io.aiven.inkless.control_plane.CreateTopicAndPartitionsRequest;
 import io.aiven.inkless.control_plane.MetadataView;
 import io.aiven.inkless.generated.CacheKey;
 import io.aiven.inkless.generated.FileExtent;
+import io.aiven.inkless.log.MaterializedLogManager;
 import io.aiven.inkless.produce.AppendHandler;
 
 import com.antithesis.sdk.Assert;
 import com.antithesis.sdk.Random;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public class Antithesis {
+    private static final Logger LOG = LoggerFactory.getLogger(Antithesis.class);
+
+    private static final Time TIME = Time.SYSTEM;
+
     private static Uuid TOPIC_ID_0 = new Uuid(101, 201);
     private static Uuid TOPIC_ID_1 = new Uuid(102, 202);
     private static String TOPIC_NAME_0 = "topic0";
@@ -48,6 +64,12 @@ public class Antithesis {
     private static TopicIdPartition T0P1 = new TopicIdPartition(TOPIC_ID_0, 1, TOPIC_NAME_0);
     private static TopicIdPartition T1P0 = new TopicIdPartition(TOPIC_ID_1, 0, TOPIC_NAME_1);
 
+    private static final LogConfig LOG_CONFIG = LogConfig.fromProps(Map.of(), new Properties());
+    private static final LogDirFailureChannel LOG_DIR_FAILURE_CHANNEL =
+        new LogDirFailureChannel(1);
+    private static final ProducerStateManagerConfig PRODUCER_STATE_MANAGER_CONFIG =
+        new ProducerStateManagerConfig(60000, false);
+
     public static void main(String[] args) throws ExecutionException, InterruptedException, IOException {
         final String pgConnectionString = args[0];
         final String s3Endpoint = args[1];
@@ -55,11 +77,10 @@ public class Antithesis {
 
         final BrokerTopicStats brokerTopicStats = new BrokerTopicStats();
 
-        final Time time = Time.SYSTEM;
         final InklessConfig config = inklessConfig(pgConnectionString, s3Endpoint, materializationDir);
         final MetadataView metadataView = new TestMetadataView();
 
-        final ControlPlane controlPlane = ControlPlane.create(config, time);
+        final ControlPlane controlPlane = ControlPlane.create(config, TIME);
         controlPlane.createTopicAndPartitions(Set.of(
             new CreateTopicAndPartitionsRequest(TOPIC_ID_0, TOPIC_NAME_0, 2),
             new CreateTopicAndPartitionsRequest(TOPIC_ID_1, TOPIC_NAME_1, 1)
@@ -72,66 +93,41 @@ public class Antithesis {
         final ObjectCache objectCache = new TestObjectCache();
 
         final SharedState sharedState = new SharedState(
-            time, 0, config, metadataView, controlPlane, objectKeyCreator, keyAlignmentStrategy,
+            TIME, 0, config, metadataView, controlPlane, objectKeyCreator, keyAlignmentStrategy,
             objectCache, brokerTopicStats, () -> LogConfig.fromProps(Map.of(), new Properties())
         );
         final AppendHandler handler = new AppendHandler(sharedState);
-        produceValues(handler, Random.getRandom() % 20);
 
-//        final MaterializedLogManager materializedLogManager = new MaterializedLogManager(sharedState);
-//        materializedLogManager.startReplica(T0P0);
-//        materializedLogManager.startReplica(T0P1);
-//        materializedLogManager.startReplica(T1P0);
-//
-//        for (int i = 0; i < 1; i++) {
-//            final MemoryRecords records = MemoryRecords.withRecords(Compression.NONE, new SimpleRecord(
-//                123, new byte[10], new byte[100]
-//            ));
-//            final var future = handler.handle(
-//                Map.of(T0P0, records),
-//                RequestLocal.noCaching()
-//            );
-//            future.get();
-//        }
-//
-//        Thread.sleep(5000);
-//
-//        materializedLogManager.shutdown();
-//        handler.close();
-//
-//
-//        final Path materializationPath = Path.of(materializationDir);
-//        final Path partitionDir = materializationPath.resolve(String.format("%s-%d", T0P0.topic(), T0P0.partition()));
-//
-//        final LogConfig logConfig = LogConfig.fromProps(Map.of(), new Properties());
-//        final KafkaScheduler scheduler = new KafkaScheduler(1, true);
-//        final LogDirFailureChannel logDirFailureChannel = new LogDirFailureChannel(1);
-//        final ProducerStateManagerConfig producerStateManagerConfig = new ProducerStateManagerConfig(60000, false);
-//
-//        final UnifiedLog log = UnifiedLog.create(
-//            partitionDir.toFile(),
-//            logConfig,
-//            0L,
-//            0L,
-//            scheduler,
-//            new BrokerTopicStats(),
-//            time,
-//            1,
-//            producerStateManagerConfig,
-//            1,
-//            logDirFailureChannel,
-//            true,
-//            Optional.of(TOPIC_ID_0)
-//        );
-//
-//        long offset = log.logStartOffset();
-//        final FetchDataInfo read = log.read(offset, 1024 * 1024, FetchIsolation.LOG_END, true);
-//        for (final Record record : read.records.records()) {
-//            System.out.println(record.key());
-//        }
-//
-//        log.close();
-//        scheduler.shutdown();
+        // Produce some non-tested values.
+        produceRecords(handler, randomPositiveInt(10) + 5, false);
+
+        // Start materialization.
+        final MaterializedLogManager materializedLogManager = new MaterializedLogManager(sharedState);
+        materializedLogManager.startReplica(T0P0);
+        materializedLogManager.startReplica(T0P1);
+        materializedLogManager.startReplica(T1P0);
+
+        // Produce tested values.
+        final Map<TopicIdPartition, List<RecordWithOffset>> expectedRecords =
+            produceRecords(handler, randomPositiveInt(50) + 5, false);
+
+        LOG.info("Letting everything settle down...");
+        Thread.sleep(10000);
+
+        brokerTopicStats.close();
+        materializedLogManager.shutdown();
+        handler.close();
+        controlPlane.close();
+
+        LOG.info("Checking materialized records");
+        final KafkaScheduler scheduler = new KafkaScheduler(1, true);
+        final Path materializationPath = Path.of(materializationDir);
+        checkRecords(T0P0, expectedRecords.get(T0P0), materializationPath, scheduler);
+        checkRecords(T0P1, expectedRecords.get(T0P1), materializationPath, scheduler);
+        checkRecords(T1P0, expectedRecords.get(T1P0), materializationPath, scheduler);
+        scheduler.shutdown();
+
+        LOG.info("Test finished");
     }
 
     private static InklessConfig inklessConfig(final String pgConnectionString,
@@ -149,12 +145,13 @@ public class Antithesis {
         inklessConfigProps.put("storage.aws.access.key.id", "minioadmin");
         inklessConfigProps.put("storage.aws.secret.access.key", "minioadmin");
         inklessConfigProps.put("storage.s3.path.style.access.enabled", "true");
+        inklessConfigProps.put("produce.commit.interval.ms", "100");  // speed up things
         inklessConfigProps.put("materialization.directory", materializationDir);
         return new InklessConfig(inklessConfigProps);
     }
 
-    private static Map<TopicIdPartition, List<RecordWithOffset>> produceValues(
-        final AppendHandler handler, final long totalRounds
+    private static Map<TopicIdPartition, List<RecordWithOffset>> produceRecords(
+        final AppendHandler handler, final long totalRounds, final boolean includeFirstBatchInResult
     ) throws ExecutionException, InterruptedException {
         final Map<TopicIdPartition, List<RecordWithOffset>> result = new HashMap<>(Map.of(
             T0P0, new ArrayList<>(),
@@ -162,9 +159,9 @@ public class Antithesis {
             T1P0, new ArrayList<>()
         ));
         for (int round = 0; round < totalRounds; round++) {
-            final int countT0p0 = round % 3;
-            final int countT0p1 = (round + 1) % 3;
-            final int countT0p2 = (round + 2) % 3;
+            final int countT0p0 = round % 3 + 1;
+            final int countT0p1 = (round + 1) % 3 + 1;
+            final int countT0p2 = (round + 2) % 3 + 1;
             final SimpleRecord[] recordArrT0p0 = createRecords(10 * round + 1, countT0p0);
             final SimpleRecord[] recordArrT0p1 = createRecords(10 * round + 2, countT0p1);
             final SimpleRecord[] recordArrT1p0 = createRecords(10 * round + 3, countT0p2);
@@ -178,20 +175,40 @@ public class Antithesis {
             ), RequestLocal.noCaching());
             final var response = future.get();
 
-            checkPartitionResponse(response.get(T0P0));
-            checkPartitionResponse(response.get(T0P1));
-            checkPartitionResponse(response.get(T1P0));
+            final var responseT0p0 = response.get(T0P0);
+            final var responseT0p1 = response.get(T0P1);
+            final var responseT1p0 = response.get(T1P0);
+            checkPartitionResponse(responseT0p0);
+            checkPartitionResponse(responseT0p1);
+            checkPartitionResponse(responseT1p0);
 
-            for (int i = 0; i < recordArrT0p0.length; i++) {
-                result.get(T0P0).add(new RecordWithOffset(recordArrT0p0[i], response.get(T0P0).))
-
+            if (round > 0 || includeFirstBatchInResult) {
+                for (int i = 0; i < recordArrT0p0.length; i++) {
+                    result.get(T0P0).add(new RecordWithOffset(recordArrT0p0[i], responseT0p0.baseOffset + i));
+                }
+                for (int i = 0; i < recordArrT0p1.length; i++) {
+                    result.get(T0P1).add(new RecordWithOffset(recordArrT0p1[i], responseT0p1.baseOffset + i));
+                }
+                for (int i = 0; i < recordArrT1p0.length; i++) {
+                    result.get(T1P0).add(new RecordWithOffset(recordArrT1p0[i], responseT1p0.baseOffset + i));
+                }
             }
+        }
+
+        if (result.get(T0P0).size() == 0
+            || result.get(T0P1).size() == 0
+            || result.get(T1P0).size() == 0) {
+            throw new RuntimeException();
         }
         return result;
     }
 
     private static void checkPartitionResponse(final ProduceResponse.PartitionResponse response) {
-        Assert.always(response.error == Errors.NONE, "No produce errors", null);
+        final boolean condition = response.error == Errors.NONE;
+        Assert.always(condition, "No produce errors", null);
+        if (!condition) {
+            throw new AssertionError();
+        }
     }
 
     private static SimpleRecord[] createRecords(final int round, final int count) {
@@ -205,6 +222,55 @@ public class Antithesis {
             records[i] = new SimpleRecord(timestamp, key, value);
         }
         return records;
+    }
+
+    private static void checkRecords(final TopicIdPartition tidp,
+                                     final List<RecordWithOffset> expectedRecords,
+                                     final Path materializationPath,
+                                     final KafkaScheduler scheduler) throws IOException {
+        LOG.info("Checking records for {}", tidp);
+
+        final Path partitionDir = materializationPath.resolve(String.format("%s-%d", tidp.topic(), tidp.partition()));
+        final UnifiedLog log = UnifiedLog.create(
+            partitionDir.toFile(),
+            LOG_CONFIG,
+            0L,
+            0L,
+            scheduler,
+            new BrokerTopicStats(),
+            TIME,
+            1,
+            PRODUCER_STATE_MANAGER_CONFIG,
+            1,
+            LOG_DIR_FAILURE_CHANNEL,
+            true,
+            Optional.of(tidp.topicId())
+        );
+
+        long readOffset = log.logStartOffset();
+        int recordCounter = 0;
+        do {
+            final FetchDataInfo fetchDataInfo = log.read(readOffset, 10 * 1024 * 1024, FetchIsolation.LOG_END, true);
+            final var batchIterator = fetchDataInfo.records.batchIterator();
+            if (!batchIterator.hasNext()) {
+                break;
+            }
+            while (batchIterator.hasNext()) {
+                final var batch = batchIterator.next();
+                for (final Record record : batch) {
+                    final RecordWithOffset expectedRecord = expectedRecords.get(recordCounter);
+
+                    assertRecordMatch(record.offset() == expectedRecord.offset);
+                    assertRecordMatch(record.key().equals(expectedRecord.record().key()));
+                    assertRecordMatch(record.value().equals(expectedRecord.record().value()));
+                    recordCounter++;
+                    readOffset = record.offset() + 1;
+                }
+            }
+        } while (true);
+
+        assertRecordMatch(expectedRecords.size() == recordCounter);
+        log.close();
     }
 
     private record RecordWithOffset(SimpleRecord record,
@@ -277,6 +343,17 @@ public class Antithesis {
         @Override
         public long size() {
             return 0;
+        }
+    }
+
+    private static int randomPositiveInt(final int max) {
+        return Math.toIntExact(Math.abs(Random.getRandom()) % (max + 1));
+    }
+
+    private static void assertRecordMatch(final boolean condition) {
+        Assert.always(condition, "Records match", null);
+        if (!condition) {
+            throw new AssertionError();
         }
     }
 }
