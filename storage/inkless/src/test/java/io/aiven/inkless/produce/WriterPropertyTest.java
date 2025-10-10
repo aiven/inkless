@@ -67,8 +67,6 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
-import io.aiven.inkless.cache.FixedBlockAlignment;
-import io.aiven.inkless.cache.KeyAlignmentStrategy;
 import io.aiven.inkless.cache.NullCache;
 import io.aiven.inkless.cache.ObjectCache;
 import io.aiven.inkless.common.ObjectKey;
@@ -102,7 +100,6 @@ class WriterPropertyTest {
     private static final TopicIdPartition T0P1 = new TopicIdPartition(TOPIC_ID_0, 1, TOPIC_0);
     private static final TopicIdPartition T1P0 = new TopicIdPartition(TOPIC_ID_1, 0, TOPIC_1);
     private static final TopicIdPartition T1P1 = new TopicIdPartition(TOPIC_ID_1, 1, TOPIC_1);
-    static final KeyAlignmentStrategy KEY_ALIGNMENT_STRATEGY = new FixedBlockAlignment(Integer.MAX_VALUE);
     static final ObjectCache OBJECT_CACHE = new NullCache();
 
     static final Map<String, LogConfig> TOPIC_CONFIGS = Map.of(
@@ -229,7 +226,6 @@ class WriterPropertyTest {
             controlPlane,
             ObjectKey.creator("", false),
             storage,
-            KEY_ALIGNMENT_STRATEGY,
             OBJECT_CACHE,
             time,
             1,

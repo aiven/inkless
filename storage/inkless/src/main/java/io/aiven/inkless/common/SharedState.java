@@ -26,9 +26,7 @@ import java.io.IOException;
 import java.nio.file.Path;
 import java.util.function.Supplier;
 
-import io.aiven.inkless.cache.FixedBlockAlignment;
 import io.aiven.inkless.cache.InfinispanCache;
-import io.aiven.inkless.cache.KeyAlignmentStrategy;
 import io.aiven.inkless.cache.ObjectCache;
 import io.aiven.inkless.config.InklessConfig;
 import io.aiven.inkless.control_plane.ControlPlane;
@@ -41,7 +39,6 @@ public record SharedState(
     MetadataView metadata,
     ControlPlane controlPlane,
     ObjectKeyCreator objectKeyCreator,
-    KeyAlignmentStrategy keyAlignmentStrategy,
     ObjectCache cache,
     BrokerTopicStats brokerTopicStats,
     Supplier<LogConfig> defaultTopicConfigs
@@ -66,7 +63,6 @@ public record SharedState(
             metadata,
             controlPlane,
             ObjectKey.creator(config.objectKeyPrefix(), config.objectKeyLogPrefixMasked()),
-            new FixedBlockAlignment(config.fetchCacheBlockBytes()),
             InfinispanCache.build(
                 time,
                 clusterId,
