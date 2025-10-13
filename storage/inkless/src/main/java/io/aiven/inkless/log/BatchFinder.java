@@ -46,7 +46,7 @@ class BatchFinder {
     private final Time time;
 
     private final int numThreads;
-    private final List<BatchFinderThread> threads = new ArrayList<>();
+    private final List<BatchFinderWorker> workers = new ArrayList<>();
     private final ExponentialBackoff backoff = new ExponentialBackoff(100, 2, 5 * 1000, 0.2);
     private final ControlPlane controlPlane;
 
@@ -62,17 +62,18 @@ class BatchFinder {
         this.numThreads = numThreads;
 
         for (int i = 0; i < numThreads; i++) {
-            threads.add(new BatchFinderThread(i));
+            final BatchFinderWorker worker = new BatchFinderWorker();
+            workers.add(worker);
+            KafkaThread.daemon(String.format("inkless-batch-finder-%d", i), worker).start();
         }
-        threads.forEach(Thread::start);
     }
 
     void addPartition(final MaterializedPartition partition) {
-        threads.get(threadForPartition(partition)).addPartition(partition);
+        workers.get(threadForPartition(partition)).addPartition(partition);
     }
 
     void removePartition(final MaterializedPartition partition) {
-        threads.get(threadForPartition(partition)).removePartition(partition);
+        workers.get(threadForPartition(partition)).removePartition(partition);
     }
 
     private int threadForPartition(final MaterializedPartition partition) {
@@ -81,21 +82,17 @@ class BatchFinder {
     }
 
     void shutdown() {
-        for (final BatchFinderThread thread : threads) {
-            thread.running = false;
+        for (final var worker : workers) {
+            worker.running = false;
         }
     }
 
-    private class BatchFinderThread extends KafkaThread {
+    private class BatchFinderWorker implements Runnable {
         private final ConcurrentHashMap<TopicIdPartition, MaterializedPartition> partitions = new ConcurrentHashMap<>();
         // TODO use delay queue
 
-        private long failedAttempts = 0;
+//        private long failedAttempts = 0;
         private volatile boolean running = true;
-
-        public BatchFinderThread(final int id) {
-            super(String.format("inkless-batch-finder-%d", id), true);
-        }
 
         private void addPartition(final MaterializedPartition partition) {
             partitions.putIfAbsent(partition.topicIdPartition, partition);

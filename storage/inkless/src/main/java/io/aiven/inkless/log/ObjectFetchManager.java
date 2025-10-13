@@ -35,6 +35,24 @@ import io.aiven.inkless.storage_backend.common.ObjectFetcher;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+/**
+ * Central point of fetching byte ranges from WAL files.
+ *
+ * <p>It groups outstanding requests to specific files (withing {@code requestDelayMs}
+ * to reduce the number of real GET requests. It works in the following mode:
+ * <ol>
+ *     <li>Receives fetch requests concurrently.</li>
+ *     <li>Groups them per file within the specified time window (e.g. 5-10 ms). I.e. turns <pre>
+ * file1 [0..10]
+ * file2 [0..100]
+ * file1 [11..20]
+ * file1 [21..30]
+ * file2 [101..200]</pre> into <pre>
+ * file1 [0..30]
+ * file2 [0..200]<pre/> (including non-adjacent, overlapping ranges).</li>
+ * <li>Fetches the larger combined ranges and completes the original requests with the requested subranges.</li>
+ * </ol>
+ */
 public class ObjectFetchManager {
     private static final Logger LOG = LoggerFactory.getLogger(ObjectFetchManager.class);
 
