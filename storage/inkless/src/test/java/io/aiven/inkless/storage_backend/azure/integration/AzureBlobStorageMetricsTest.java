@@ -21,6 +21,7 @@ package io.aiven.inkless.storage_backend.azure.integration;
 import com.azure.storage.blob.BlobServiceClient;
 import com.azure.storage.blob.BlobServiceClientBuilder;
 
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Named;
@@ -45,7 +46,6 @@ import javax.management.ObjectName;
 import io.aiven.inkless.common.ByteRange;
 import io.aiven.inkless.common.ObjectKey;
 import io.aiven.inkless.storage_backend.azure.AzureBlobStorage;
-import io.aiven.inkless.storage_backend.common.StorageBackend;
 import io.aiven.inkless.storage_backend.common.StorageBackendException;
 import io.aiven.inkless.storage_backend.common.fixtures.TestObjectKey;
 import io.aiven.inkless.storage_backend.common.fixtures.TestUtils;
@@ -63,6 +63,7 @@ public class AzureBlobStorageMetricsTest {
     static final GenericContainer<?> AZURITE_SERVER = azuriteContainer(BLOB_STORAGE_PORT);
 
     static BlobServiceClient blobServiceClient;
+    static AzureBlobStorage storage;
 
     protected String azureContainerName;
 
@@ -71,16 +72,15 @@ public class AzureBlobStorageMetricsTest {
         blobServiceClient = new BlobServiceClientBuilder()
             .connectionString(connectionString(AZURITE_SERVER, BLOB_STORAGE_PORT))
             .buildClient();
+
+        storage = new AzureBlobStorage();
     }
 
     @BeforeEach
     void setUp(final TestInfo testInfo) {
         azureContainerName = TestUtils.testNameToBucketName(testInfo);
         blobServiceClient.createBlobContainer(azureContainerName);
-    }
 
-    StorageBackend storage() {
-        final AzureBlobStorage azureBlobStorage = new AzureBlobStorage();
         // The well-known Azurite account name and key.
         final String accountName = "devstoreaccount1";
         final String accountKey =
@@ -92,18 +92,33 @@ public class AzureBlobStorageMetricsTest {
             "azure.endpoint.url", endpoint(AZURITE_SERVER, BLOB_STORAGE_PORT),
             "azure.upload.block.size", UPLOAD_BLOCK_SIZE
         );
-        azureBlobStorage.configure(configs);
-        return azureBlobStorage;
+        storage.configure(configs);
+    }
+
+    @AfterEach
+    void tearDown() throws Exception {
+        storage.close();
     }
 
     static Stream<Arguments> metricsShouldBeReported() {
+        // The metrics are cumulative, so the expected values are based on previous test cases.
         return Stream.of(
             Arguments.of(
                 Named.of("smaller-than-block-size-payload", UPLOAD_BLOCK_SIZE - 1),
-                1, 0, 0),
+                1,
+                0,
+                0,
+                2,
+                1
+            ),
             Arguments.of(
                 Named.of("larger-than-block-size-payload", UPLOAD_BLOCK_SIZE + 1),
-                0, 2, 1)
+                0, // from previous test case
+                2,
+                1,
+                2,
+                1
+            )
         );
     }
 
@@ -113,13 +128,13 @@ public class AzureBlobStorageMetricsTest {
         final int uploadBlockSize,
         final double expectedPutBlob,
         final double expectedPutBlock,
-        final double expectedPutBlockList
+        final double expectedPutBlockList,
+        final double expectedGetBlob,
+        final double expectedDeleteBlob
     ) throws StorageBackendException, IOException, JMException {
         final byte[] data = new byte[uploadBlockSize];
 
         final ObjectKey key = new TestObjectKey("test-object-key");
-
-        final var storage = storage();
 
         storage.upload(key, new ByteArrayInputStream(data), data.length);
         storage.fetch(key, null);
@@ -132,7 +147,8 @@ public class AzureBlobStorageMetricsTest {
             .asInstanceOf(DOUBLE)
             .isGreaterThan(0.0);
         assertThat(MBEAN_SERVER.getAttribute(objectName, "blob-get-total"))
-            .isEqualTo(2.0);
+            .asInstanceOf(DOUBLE)
+            .isEqualTo(expectedGetBlob);
 
         if (expectedPutBlob > 0) {
             assertThat(MBEAN_SERVER.getAttribute(objectName, "blob-upload-rate"))
@@ -162,6 +178,7 @@ public class AzureBlobStorageMetricsTest {
             .asInstanceOf(DOUBLE)
             .isGreaterThan(0.0);
         assertThat(MBEAN_SERVER.getAttribute(objectName, "blob-delete-total"))
-            .isEqualTo(1.0);
+            .asInstanceOf(DOUBLE)
+            .isEqualTo(expectedDeleteBlob);
     }
 }

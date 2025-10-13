@@ -138,7 +138,14 @@ public class MetricCollector implements Closeable {
 
     @Override
     public void close() throws IOException {
-        metrics.close();
+        // remove sensors to restart their counts when reconfigured
+        // instead of closing metrics which would affect other storage backends if used together
+        // TODO: consider making a single metrics to be passed to all storage backends
+        metrics.removeSensor(OBJECT_METADATA_GET);
+        metrics.removeSensor(OBJECT_GET);
+        metrics.removeSensor(OBJECT_DELETE);
+        metrics.removeSensor(RESUMABLE_UPLOAD_INITIATE);
+        metrics.removeSensor(RESUMABLE_CHUNK_UPLOAD);
     }
 
     private class MetricResponseInterceptor implements HttpResponseInterceptor {

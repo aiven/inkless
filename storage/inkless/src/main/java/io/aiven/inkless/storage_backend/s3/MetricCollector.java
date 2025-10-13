@@ -325,6 +325,29 @@ public class MetricCollector implements MetricPublisher {
 
     @Override
     public void close() {
-        metrics.close();
+        // remove sensors to restart their counts when reconfigured
+        // instead of closing metrics which would affect other storage backends if used together
+        // TODO: consider making a single metrics to be passed to all storage backends
+        metrics.removeSensor(GET_OBJECT_REQUESTS);
+        metrics.removeSensor(UPLOAD_PART_REQUESTS);
+        metrics.removeSensor(CREATE_MULTIPART_UPLOAD_REQUESTS);
+        metrics.removeSensor(COMPLETE_MULTIPART_UPLOAD_REQUESTS);
+        metrics.removeSensor(PUT_OBJECT_REQUESTS);
+        metrics.removeSensor(DELETE_OBJECT_REQUESTS);
+        metrics.removeSensor(DELETE_OBJECTS_REQUESTS);
+        metrics.removeSensor(ABORT_MULTIPART_UPLOAD_REQUESTS);
+        metrics.removeSensor(GET_OBJECT_TIME);
+        metrics.removeSensor(UPLOAD_PART_TIME);
+        metrics.removeSensor(CREATE_MULTIPART_UPLOAD_TIME);
+        metrics.removeSensor(COMPLETE_MULTIPART_UPLOAD_TIME);
+        metrics.removeSensor(PUT_OBJECT_TIME);
+        metrics.removeSensor(DELETE_OBJECT_TIME);
+        metrics.removeSensor(DELETE_OBJECTS_TIME);
+        metrics.removeSensor(ABORT_MULTIPART_UPLOAD_TIME);
+        metrics.removeSensor(THROTTLING_ERRORS);
+        metrics.removeSensor(SERVER_ERRORS);
+        metrics.removeSensor(CONFIGURED_TIMEOUT_ERRORS);
+        metrics.removeSensor(IO_ERRORS);
+        metrics.removeSensor(OTHER_ERRORS);
     }
 }
