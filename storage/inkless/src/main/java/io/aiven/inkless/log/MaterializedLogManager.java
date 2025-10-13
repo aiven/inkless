@@ -52,13 +52,10 @@ public class MaterializedLogManager {
     private final ObjectFetchManager objectFetchManager;
     private final ObjectKeyCreator objectKeyCreator;
     private final LogConfig logConfig;
-    private final ExecutorService batchRequestExecutor;
-    private final ExecutorService diskWriteExecutor;
+    private final int maxBytesInQueuePerPartition = 1 * 1024 * 1024;  // TODO configurable
 
     private final HighWatermarkUpdater highWatermarkUpdater;
-
-    private final ReentrantLock partitionEnumLock = new ReentrantLock();
-    private Enumeration<TopicIdPartition> partitionEnum = null;
+    private final BatchFinder batchFinder;
 
     public MaterializedLogManager(final SharedState sharedState) {
         this(
@@ -91,15 +88,11 @@ public class MaterializedLogManager {
         this.logConfig = Objects.requireNonNull(logConfig, "logConfig cannot be null");
 
         final long hwmDelayMs = 100;  // TODO configurable
-        this.highWatermarkUpdater = new HighWatermarkUpdater(time, controlPlane, hwmDelayMs, 1);
+        final int numThreadsHighWatermarkUpdater = 1;  // TODO configurable
+        this.highWatermarkUpdater = new HighWatermarkUpdater(time, controlPlane, hwmDelayMs, numThreadsHighWatermarkUpdater);
 
-        // TODO configurable threads
-        this.batchRequestExecutor =
-            Executors.newFixedThreadPool(1, ThreadUtils.createThreadFactory("inkless-materialized-partition-batch-request-%d", true,
-                (t, e) -> LOG.error("Uncaught exception in thread '{}':", t.getName(), e)));
-        this.diskWriteExecutor =
-            Executors.newFixedThreadPool(1, ThreadUtils.createThreadFactory("inkless-materialized-partition-disk-write-%d", true,
-                (t, e) -> LOG.error("Uncaught exception in thread '{}':", t.getName(), e)));
+        final int numThreadsBatchFinder = 1;  // TODO configurable
+        this.batchFinder = new BatchFinder(time, numThreadsBatchFinder, controlPlane);
     }
 
     public void startReplica(final TopicIdPartition topicIdPartition) {
@@ -107,10 +100,8 @@ public class MaterializedLogManager {
         final var partition = new MaterializedPartition(
             topicIdPartition,
             time,
-            controlPlane,
             materializationDirectory,
-            batchRequestExecutor,
-            diskWriteExecutor,
+            maxBytesInQueuePerPartition,
             objectKeyCreator,
             objectFetchManager,
             unifiedLogScheduler,
@@ -119,19 +110,19 @@ public class MaterializedLogManager {
         );
 
         highWatermarkUpdater.addPartition(partition);
+        batchFinder.addPartition(partition);
     }
 
     public void shutdown() {
         // TODO better shutdown
         objectFetchManager.shutdown();
         highWatermarkUpdater.shutdown();
+        batchFinder.shutdown();
         try {
             unifiedLogScheduler.shutdown();
         } catch (final InterruptedException e) {
             LOG.error("Interrupted", e);
         }
         brokerTopicStats.close();
-        ThreadUtils.shutdownExecutorServiceQuietly(batchRequestExecutor, 0, TimeUnit.SECONDS);
-        ThreadUtils.shutdownExecutorServiceQuietly(diskWriteExecutor, 0, TimeUnit.SECONDS);
     }
 }

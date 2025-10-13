@@ -56,19 +56,20 @@ class ObjectFetchTaskQueueTest {
         final ObjectFetchTaskQueue q = new ObjectFetchTaskQueue();
         assertThat(q.peek()).isNull();
 
-        final ObjectFetchTask expected1 = new ObjectFetchTask(B1, F1);
-        final ObjectFetchTask expected2 = new ObjectFetchTask(B2, F2);
+        final ObjectFetchTask task1 = new ObjectFetchTask(B1, F1);
+        final ObjectFetchTask task2
+            = new ObjectFetchTask(B2, F2);
 
-        q.add(expected1);
-        assertThat(q.peek()).isSameAs(expected1);
-        assertThat(q.peek()).isSameAs(expected1);
+        q.add(task1);
+        assertThat(q.peek()).isSameAs(task1);
+        assertThat(q.peek()).isSameAs(task1);
 
-        q.add(expected2);
-        assertThat(q.peek()).isSameAs(expected1);
-        assertThat(q.peek()).isSameAs(expected1);
+        q.add(task2);
+        assertThat(q.peek()).isSameAs(task1);
+        assertThat(q.peek()).isSameAs(task1);
 
         q.poll();
-        assertThat(q.peek()).isSameAs(expected2);
+        assertThat(q.peek()).isSameAs(task2);
 
         q.poll();
         assertThat(q.peek()).isNull();
@@ -79,34 +80,55 @@ class ObjectFetchTaskQueueTest {
         final ObjectFetchTaskQueue q = new ObjectFetchTaskQueue();
         assertThat(q.poll()).isNull();
 
-        final ObjectFetchTask expected1 = new ObjectFetchTask(B1, F1);
-        final ObjectFetchTask expected2 = new ObjectFetchTask(B2, F2);
+        final ObjectFetchTask task1 = new ObjectFetchTask(B1, F1);
+        final ObjectFetchTask task2 = new ObjectFetchTask(B2, F2);
 
-        q.add(expected1);
-        q.add(expected2);
-        assertThat(q.poll()).isSameAs(expected1);
-        assertThat(q.poll()).isSameAs(expected2);
+        q.add(task1);
+        q.add(task2);
+        assertThat(q.poll()).isSameAs(task1);
+        assertThat(q.poll()).isSameAs(task2);
         assertThat(q.poll()).isNull();
     }
 
     @Test
-    void testTotalByteSize() {
+    void size() {
         final ObjectFetchTaskQueue q = new ObjectFetchTaskQueue();
-        assertThat(q.totalByteSize()).isZero();
+        assertThat(q.size()).isZero();
 
-        final ObjectFetchTask expected1 = new ObjectFetchTask(B1, F1);
-        final ObjectFetchTask expected2 = new ObjectFetchTask(B2, F2);
+        final ObjectFetchTask task1 = new ObjectFetchTask(B1, F1);
+        final ObjectFetchTask task2 = new ObjectFetchTask(B2, F2);
 
-        q.add(expected1);
-        assertThat(q.totalByteSize()).isEqualTo(B1.metadata().byteSize());
+        q.add(task1);
+        assertThat(q.size()).isEqualTo(1);
 
-        q.add(expected2);
-        assertThat(q.totalByteSize()).isEqualTo(B1.metadata().byteSize() + B2.metadata().byteSize());
-
-        q.poll();
-        assertThat(q.totalByteSize()).isEqualTo(B2.metadata().byteSize());
+        q.add(task2);
+        assertThat(q.size()).isEqualTo(2);
 
         q.poll();
-        assertThat(q.totalByteSize()).isZero();
+        assertThat(q.size()).isEqualTo(1);
+
+        q.poll();
+        assertThat(q.size()).isZero();
+    }
+
+    @Test
+    void testByteSize() {
+        final ObjectFetchTaskQueue q = new ObjectFetchTaskQueue();
+        assertThat(q.byteSize()).isZero();
+
+        final ObjectFetchTask task1 = new ObjectFetchTask(B1, F1);
+        final ObjectFetchTask task2 = new ObjectFetchTask(B2, F2);
+
+        q.add(task1);
+        assertThat(q.byteSize()).isEqualTo(B1.metadata().byteSize());
+
+        q.add(task2);
+        assertThat(q.byteSize()).isEqualTo(B1.metadata().byteSize() + B2.metadata().byteSize());
+
+        q.poll();
+        assertThat(q.byteSize()).isEqualTo(B2.metadata().byteSize());
+
+        q.poll();
+        assertThat(q.byteSize()).isZero();
     }
 }

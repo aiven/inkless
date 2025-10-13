@@ -40,7 +40,11 @@ class ObjectFetchTaskQueue {
         return task;
     }
 
-    long totalByteSize() {
+    int size() {
+        return queue.size();
+    }
+
+    long byteSize() {
         return totalByteSize;
     }
 }

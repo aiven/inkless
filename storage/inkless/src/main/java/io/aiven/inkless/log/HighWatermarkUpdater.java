@@ -85,8 +85,9 @@ class HighWatermarkUpdater {
         if (numThreads <= 0) {
             throw new IllegalArgumentException("numThreads must be at least 1");
         }
+
+        // TODO just run N threads with full sweeping in an iteration
         for (int i = 0; i < numThreads; i++) {
-            // TODO anything better than this? Probably we should just run threads.
             // 50 ms to break endless loop when nothing happens.
             this.pool.scheduleWithFixedDelay(this::iteration, 0, 50, TimeUnit.MILLISECONDS);
         }

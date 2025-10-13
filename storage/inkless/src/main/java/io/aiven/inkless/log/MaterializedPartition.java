@@ -22,10 +22,8 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.file.Path;
 import java.util.List;
-import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.Properties;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
@@ -45,13 +43,10 @@ import org.apache.kafka.storage.internals.log.ProducerStateManagerConfig;
 import org.apache.kafka.storage.internals.log.UnifiedLog;
 import org.apache.kafka.storage.log.metrics.BrokerTopicStats;
 
-import io.aiven.inkless.common.ObjectKey;
 import io.aiven.inkless.common.ObjectKeyCreator;
 import io.aiven.inkless.consume.FetchCompleter;
 import io.aiven.inkless.control_plane.BatchInfo;
 import io.aiven.inkless.control_plane.ControlPlane;
-import io.aiven.inkless.control_plane.FindBatchRequest;
-import io.aiven.inkless.control_plane.FindBatchResponse;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -63,15 +58,15 @@ class MaterializedPartition {
 
     private UnifiedLog log;
 
-    private final AtomicLong highWatermark = new AtomicLong(-1);
-    private final AtomicLong nextOffsetToRequest = new AtomicLong(-1);
-    private final ConcurrentLinkedQueue<ObjectFetchTask> taskQueue = new ConcurrentLinkedQueue<>();
+    private long highWatermark = -1;
+    private long nextOffsetToRequest = -1;
+    private final ObjectFetchTaskQueue taskQueue = new ObjectFetchTaskQueue();
 
     private final Time time;
-    private final ControlPlane controlPlane;
     private final Path materializationDirectory;
     private final ObjectKeyCreator objectKeyCreator;
     private final ObjectFetchManager objectFetchManager;
+    private final int maxBytesInQueue;
 
     private final KafkaScheduler unifiedLogScheduler;
     private final BrokerTopicStats brokerTopicStats;
@@ -79,15 +74,10 @@ class MaterializedPartition {
     private final ProducerStateManagerConfig producerStateManagerConfig = new ProducerStateManagerConfig(1, false);
     private final LogDirFailureChannel logDirFailureChannel = new LogDirFailureChannel(1);
 
-    private final BatchRequester batchRequester;
-    private final DiskWriter diskWriter;
-
     MaterializedPartition(final TopicIdPartition topicIdPartition,
                           final Time time,
-                          final ControlPlane controlPlane,
                           final Path materializationDirectory,
-                          final ExecutorService batchRequestExecutor,
-                          final ExecutorService diskWriteExecutor,
+                          final int maxBytesInQueue,
                           final ObjectKeyCreator objectKeyCreator,
                           final ObjectFetchManager objectFetchManager,
                           final KafkaScheduler unifiedLogScheduler,
@@ -95,202 +85,139 @@ class MaterializedPartition {
                           final LogConfig logConfig) {
         this.topicIdPartition = Objects.requireNonNull(topicIdPartition, "topicIdPartition cannot be null");
         this.time = Objects.requireNonNull(time, "time cannot be null");
-        this.controlPlane = Objects.requireNonNull(controlPlane, "controlPlane cannot be null");
         this.materializationDirectory = Objects.requireNonNull(materializationDirectory, "materializationDirectory cannot be null");
+        if (maxBytesInQueue <=  0) {
+            throw new IllegalArgumentException("maxBytesInQueue must be at least 1");
+        }
+        this.maxBytesInQueue = maxBytesInQueue;
         this.objectKeyCreator = Objects.requireNonNull(objectKeyCreator, "objectKeyCreator cannot be null");
         this.objectFetchManager = Objects.requireNonNull(objectFetchManager, "objectFetchManager cannot be null");
         this.unifiedLogScheduler = Objects.requireNonNull(unifiedLogScheduler, "unifiedLogScheduler cannot be null");
         this.brokerTopicStats = Objects.requireNonNull(brokerTopicStats, "brokerTopicStats cannot be null");
         this.logConfig = Objects.requireNonNull(logConfig, "logConfig cannot be null");
-
-        this.batchRequester = new BatchRequester(
-            batchRequestExecutor,
-            new EmptyQueueBatchRequestPolicy(),
-            this::downloadCompletedCallback);
-        this.diskWriter = new DiskWriter(
-            diskWriteExecutor,
-            this::writeCompletedCallback
-        );
     }
 
-    void setHighWatermark(final long newHighWatermark) {
-        if (highWatermark.getAndSet(newHighWatermark) != newHighWatermark) {
-            // TODO change to debug
-            LOG.error("QQQQQQQQQQ Updated HWM of {} to {}", topicIdPartition, newHighWatermark);
+    synchronized void setHighWatermark(final long newHighWatermark) {
+        if (highWatermark != newHighWatermark) {
+            highWatermark = newHighWatermark;
+            LOG.error("[{}] QQQQQQQQQQ Updated HWM to {}", topicIdPartition.topicPartition(), newHighWatermark);
 
-            nextOffsetToRequest.compareAndExchange(-1, newHighWatermark);
-            batchRequester.requestMoreIfNeeded();
+            if (nextOffsetToRequest == -1) {
+                nextOffsetToRequest = highWatermark;
+            }
         }
     }
 
-    private void downloadCompletedCallback() {
-        diskWriter.writeIfNeeded();
+    synchronized BatchDemand getBatchDemand() {
+        if (nextOffsetToRequest >= highWatermark
+        || taskQueue.byteSize() >= maxBytesInQueue) {
+            return null;
+        } else {
+            return new BatchDemand(
+                nextOffsetToRequest,
+                maxBytesInQueue - Math.toIntExact(taskQueue.byteSize())
+            );
+        }
     }
 
-    private void writeCompletedCallback() {
-        batchRequester.requestMoreIfNeeded();
+    synchronized void informAboutBatches(final List<BatchInfo> batches) {
+        if (batches.isEmpty()) {
+            return;
+        }
+        if (batches.get(0).metadata().baseOffset() != nextOffsetToRequest) {
+            LOG.error("[{}] QQQQQQQQQQ Got base offset {}, but expected {}",
+                topicIdPartition.topicPartition(),
+                batches.get(0).metadata().baseOffset(), nextOffsetToRequest);
+            return;
+        }
+
+        LOG.error("[{}] QQQQQQQQQQ Added {} batches", topicIdPartition.topicPartition(), batches.size());
+        for (final BatchInfo batch : batches) {
+            nextOffsetToRequest = batch.metadata().lastOffset() + 1;
+
+            final ObjectFetchTask task =
+                objectFetchManager.request(objectKeyCreator.from(batch.objectKey()), batch, batch.metadata().range());
+
+            // If this is the first task in the queue, attach the fetch completed callback.
+            if (taskQueue.peek() == null) {
+                task.future().whenComplete(this::fetchCompletedCallback);
+            }
+            taskQueue.add(task);
+        }
     }
 
-    private interface BatchRequestPolicy {
-        int howMuchToRequest();
-    }
+    private synchronized void fetchCompletedCallback(final ByteBuffer _notUsed1, final Throwable _notUsed2) {
+        // TODO fine-grained synchronization
+        // TODO separate executor?
 
-    private class EmptyQueueBatchRequestPolicy implements BatchRequestPolicy {
-        private static final int MAX_REQUEST_BYTES = 1 * 1024 * 1024;
+        ObjectFetchTask task = taskQueue.poll();
+        if (task == null) {
+            LOG.error("[{}] fetchCompletedCallback called but queue is empty",
+                topicIdPartition.topicPartition());
+            return;
+        }
+        if (!task.future().isDone()) {
+            LOG.error("[{}] fetchCompletedCallback called but first future is not done",
+                topicIdPartition.topicPartition());
+            return;
+        }
 
-        @Override
-        public int howMuchToRequest() {
-            if (highWatermark.get() == -1
-                || nextOffsetToRequest.get() == -1
-                || nextOffsetToRequest.get() >= highWatermark.get()
-                || !taskQueue.isEmpty()) {
-                return -1;
+        initLogIfNeeded(task.batchInfo().metadata().baseOffset());
+        // Write this task result and continue while there are more completed futures.
+        writeBufferFromTask(task);
+        while ((task = taskQueue.poll()) != null) {
+            if (task.future().isDone()) {
+                writeBufferFromTask(task);
             } else {
-                return MAX_REQUEST_BYTES;
+                // When we see a not-done future, attach the callback and exit.
+                task.future().whenComplete(this::fetchCompletedCallback);
+                break;
             }
         }
     }
 
-    private class BatchRequester {
-        private final AtomicBoolean inProgress = new AtomicBoolean(false);
-        private final ExecutorService executor;
-        private final BatchRequestPolicy policy;
-
-        private final Runnable downloadCompletedCallback;
-
-        private BatchRequester(final ExecutorService executor,
-                               final BatchRequestPolicy policy,
-                               final Runnable downloadCompletedCallback) {
-            this.executor = Objects.requireNonNull(executor, "executor cannot be null");
-            this.policy = Objects.requireNonNull(policy, "policy cannot be null");
-            this.downloadCompletedCallback =
-                Objects.requireNonNull(downloadCompletedCallback, "downloadCompletedCallback cannot be null");
+    private void writeBufferFromTask(final ObjectFetchTask task) {
+        final ByteBuffer byteBuffer;
+        try {
+            byteBuffer = task.future().get();
+        } catch (final InterruptedException | ExecutionException e) {
+            // TODO handle gracefully
+            LOG.error("QQQQQQQQQQ Error processing future in {}", topicIdPartition, e);
+            throw new RuntimeException(e);
         }
 
-        private void requestMoreIfNeeded() {
-            // Skip even submitting a task if we shouldn't request right now or if one is in progress.
-            if (policy.howMuchToRequest() > 0
-                && inProgress.compareAndSet(false, true)) {
-                executor.submit(this::requestInternal);
-            }
-        }
-
-        private void requestInternal() {
-            try {
-                final int howMuchToRequest = policy.howMuchToRequest();
-                if (howMuchToRequest == -1) {
-                    return;
-                }
-
-                final long offset = nextOffsetToRequest.get();
-                LOG.error("QQQQQQQQQQ Requesting {} bytes for {} starting from offset {}", howMuchToRequest, topicIdPartition, offset);
-                final var findBatchRequest = new FindBatchRequest(topicIdPartition, offset, howMuchToRequest);
-                final FindBatchResponse response;
-                try {
-                    response = controlPlane.findBatches(List.of(findBatchRequest), howMuchToRequest, 0).get(0);
-                } catch (final Exception e) {
-                    LOG.error("Error finding batches for {}", topicIdPartition, e);
-                    return;
-                }
-
-                if (response.errors().code() == Errors.NONE.code()) {
-                    for (final BatchInfo batch : response.batches()) {
-                        final ObjectFetchTask task =
-                            objectFetchManager.request(objectKeyCreator.from(batch.objectKey()), batch, batch.metadata().range());
-
-                        task.future()
-                            .whenComplete((_ignored1, _ignored2) -> downloadCompletedCallback.run());
-                        taskQueue.add(task);
-                        final long newNextOffsetToRequest = batch.metadata().lastOffset() + 1;
-                        if (nextOffsetToRequest.getAndSet(newNextOffsetToRequest) != newNextOffsetToRequest) {
-                            // TODO change to debug
-                            LOG.error("QQQQQQQQQQ Updated nextOffsetToRequest of {} to {}", topicIdPartition, newNextOffsetToRequest);
-                        }
-                        LOG.error("QQQQQQQQQQ Added batch for {} with base offset {}", topicIdPartition, batch.metadata().baseOffset());
-                    }
-                } else {
-                    LOG.error("Error finding batches for {}: {}", topicIdPartition, response.errors());
-                }
-            } finally {
-                inProgress.set(false);
-            }
-        }
+        // TODO move createMemoryRecords to more suitable place
+        final MemoryRecords records = FetchCompleter.createMemoryRecords(byteBuffer, task.batchInfo());
+        final LogAppendInfo logAppendInfo = log.appendAsFollower(records, 0);
+        LOG.error("QQQQQQQQQQ Appended to {}: {}", topicIdPartition, logAppendInfo);
     }
 
-    private class DiskWriter {
-        private final AtomicBoolean inProgress = new AtomicBoolean(false);
-        private final ExecutorService executor;
+    record BatchDemand(long offset, int maxBytes) { }
 
-        private final Runnable writeCompletedCallback;
-
-        private DiskWriter(final ExecutorService executor,
-                           final Runnable writeCompletedCallback) {
-            this.executor = Objects.requireNonNull(executor, "executor cannot be null");
-            this.writeCompletedCallback = Objects.requireNonNull(writeCompletedCallback, "writeCompletedCallback cannot be null");
+    private void initLogIfNeeded(final long logStartOffset) {
+        if (log != null) {
+            return;
         }
+        final File dir = materializationDirectory.resolve(
+            String.format("%s-%d", topicIdPartition.topicPartition().topic(), topicIdPartition.partition())
+        ).toFile();
+        try {
+            // Always start anew
+            // TODO optimize, check HWM
+            Utils.delete(dir);
+            final boolean _ignored = dir.mkdir();
 
-        private void writeIfNeeded() {
-            if (taskQueue.peek().future().isDone()
-                && inProgress.compareAndSet(false, true)) {
-                executor.submit(this::writeInternal);
-            }
-        }
+            // TODO retention, segment size
+            final long recoveryPoint = logStartOffset;  // TODO change this is we start not from beginning
+            log = UnifiedLog.create(dir, logConfig, logStartOffset, recoveryPoint, unifiedLogScheduler,
+                brokerTopicStats, time, 1, producerStateManagerConfig,
+                1, logDirFailureChannel, true,
+                Optional.of(topicIdPartition.topicId()));
 
-        private void writeInternal() {
-            try {
-                while (taskQueue.peek() != null && taskQueue.peek().future().isDone()) {
-                    final ObjectFetchTask task = taskQueue.poll();
-                    if (task == null) {
-                        throw new RuntimeException("Not expected");
-                    }
-
-                    initLogIfNeeded(task.batchInfo().metadata().baseOffset());
-
-                    final ByteBuffer byteBuffer;
-                    try {
-                        byteBuffer = task.future().get();
-                    } catch (final InterruptedException | ExecutionException e) {
-                        // TODO handle gracefully
-                        LOG.error("QQQQQQQQQQ Error processing future in {}", topicIdPartition, e);
-                        throw new RuntimeException(e);
-                    }
-
-                    // TODO move createMemoryRecords to more suitable place
-                    final MemoryRecords records = FetchCompleter.createMemoryRecords(byteBuffer, task.batchInfo());
-                    final LogAppendInfo logAppendInfo = log.appendAsFollower(records, 0);
-                    LOG.error("QQQQQQQQQQ Appended to {}: {}", topicIdPartition, logAppendInfo);
-                }
-                writeCompletedCallback.run();
-            } finally {
-                inProgress.set(false);
-            }
-        }
-
-        private void initLogIfNeeded(final long logStartOffset) {
-            if (log != null) {
-                return;
-            }
-            final File dir = materializationDirectory.resolve(
-                String.format("%s-%d", topicIdPartition.topicPartition().topic(), topicIdPartition.partition())
-            ).toFile();
-            try {
-                // Always start anew
-                // TODO optimize, check HWM
-                Utils.delete(dir);
-                final boolean _ignored = dir.mkdir();
-
-                // TODO retention, segment size
-                final long recoveryPoint = logStartOffset;  // TODO change this is we start not from beginning
-                log = UnifiedLog.create(dir, logConfig, logStartOffset, recoveryPoint, unifiedLogScheduler,
-                    brokerTopicStats, time, 1, producerStateManagerConfig,
-                    1, logDirFailureChannel, true,
-                    Optional.of(topicIdPartition.topicId()));
-
-                LOG.error("QQQQQQQQQQ Initialized log {} with start offset {}", topicIdPartition, logStartOffset);
-            } catch (final IOException e) {
-                LOG.error("QQQQQQQQQQ Error in {}", topicIdPartition, e);
-                throw new RuntimeException(e);
-            }
+            LOG.error("QQQQQQQQQQ Initialized log {} with start offset {}", topicIdPartition, logStartOffset);
+        } catch (final IOException e) {
+            LOG.error("QQQQQQQQQQ Error in {}", topicIdPartition, e);
+            throw new RuntimeException(e);
         }
     }
 }
