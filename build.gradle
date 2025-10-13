@@ -2457,6 +2457,8 @@ project(':storage:inkless') {
     implementation libs.infinispan
     compileOnly libs.infinispanAnnotations // Workaround for ISPN-12461
 
+    implementation "com.antithesis:sdk:1.4.4"
+
     testImplementation project(':clients').sourceSets.test.output.classesDirs
     testImplementation project(':test-common')
     testImplementation libs.assertj

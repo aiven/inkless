@@ -48,6 +48,7 @@ import io.aiven.inkless.consume.FetchCompleter;
 import io.aiven.inkless.control_plane.BatchInfo;
 import io.aiven.inkless.control_plane.ControlPlane;
 
+import com.antithesis.sdk.Assert;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -133,6 +134,9 @@ class MaterializedPartition {
 
         LOG.error("[{}] QQQQQQQQQQ Added {} batches", topicIdPartition.topicPartition(), batches.size());
         for (final BatchInfo batch : batches) {
+            LOG.error("QQQQQQQQQQ Time between logAppendTimestamp and starting fetching batch: {} ms",
+                time.milliseconds() - batch.metadata().logAppendTimestamp());
+
             nextOffsetToRequest = batch.metadata().lastOffset() + 1;
 
             final ObjectFetchTask task =
@@ -151,12 +155,16 @@ class MaterializedPartition {
         // TODO separate executor?
 
         ObjectFetchTask task = taskQueue.poll();
+        Assert.always(task != null, "Task in fetchCompletedCallback cannot be null", null);
         if (task == null) {
+            // TODO This should never happen, track this somehow.
             LOG.error("[{}] fetchCompletedCallback called but queue is empty",
                 topicIdPartition.topicPartition());
             return;
         }
+        Assert.always(task.future().isDone(), "Task in fetchCompletedCallback must be done", null);
         if (!task.future().isDone()) {
+            // TODO This should never happen, track this somehow.
             LOG.error("[{}] fetchCompletedCallback called but first future is not done",
                 topicIdPartition.topicPartition());
             return;
@@ -190,9 +198,10 @@ class MaterializedPartition {
         final MemoryRecords records = FetchCompleter.createMemoryRecords(byteBuffer, task.batchInfo());
         final LogAppendInfo logAppendInfo = log.appendAsFollower(records, 0);
         LOG.error("QQQQQQQQQQ Appended to {}: {}", topicIdPartition, logAppendInfo);
-    }
 
-    record BatchDemand(long offset, int maxBytes) { }
+        LOG.error("QQQQQQQQQQ Time between logAppendTimestamp and appending to log: {} ms",
+            time.milliseconds() - task.batchInfo().metadata().logAppendTimestamp());
+    }
 
     private void initLogIfNeeded(final long logStartOffset) {
         if (log != null) {
@@ -220,4 +229,6 @@ class MaterializedPartition {
             throw new RuntimeException(e);
         }
     }
+
+    record BatchDemand(long offset, int maxBytes) { }
 }
