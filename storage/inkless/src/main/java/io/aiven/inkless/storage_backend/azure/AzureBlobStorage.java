@@ -52,7 +52,7 @@ import reactor.core.Exceptions;
 public class AzureBlobStorage implements StorageBackend {
     private AzureBlobStorageConfig config;
     private BlobContainerClient blobContainerClient;
-    private MetricCollector metricsPolicy;
+    private MetricCollector metricCollector;
 
     @Override
     public void configure(final Map<String, ?> configs) {
@@ -75,10 +75,10 @@ public class AzureBlobStorage implements StorageBackend {
             }
         }
 
-        metricsPolicy = new MetricCollector(config);
+        metricCollector = new MetricCollector(config);
 
         blobContainerClient = blobServiceClientBuilder
-            .addPolicy(metricsPolicy.policy())
+            .addPolicy(metricCollector.policy())
             .buildClient()
             .getBlobContainerClient(config.containerName());
     }
@@ -116,7 +116,7 @@ public class AzureBlobStorage implements StorageBackend {
         }
 
         final BlockBlobClient blockBlobClient = specializedBlobClientBuilder
-            .addPolicy(metricsPolicy.policy())
+            .addPolicy(metricCollector.policy())
             .containerName(config.containerName())
             .blobName(key.value())
             .buildBlockBlobClient();
@@ -211,5 +211,10 @@ public class AzureBlobStorage implements StorageBackend {
         return "AzureStorage{"
             + "containerName='" + config.containerName() + '\''
             + '}';
+    }
+
+    @Override
+    public void close() throws IOException {
+        metricCollector.close();
     }
 }

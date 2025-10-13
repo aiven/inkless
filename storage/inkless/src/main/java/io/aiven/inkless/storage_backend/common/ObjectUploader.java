@@ -17,11 +17,12 @@
  */
 package io.aiven.inkless.storage_backend.common;
 
+import java.io.Closeable;
 import java.io.InputStream;
 
 import io.aiven.inkless.common.ObjectKey;
 
-public interface ObjectUploader {
+public interface ObjectUploader extends Closeable {
 
     /**
      * Uploads an object to object storage.

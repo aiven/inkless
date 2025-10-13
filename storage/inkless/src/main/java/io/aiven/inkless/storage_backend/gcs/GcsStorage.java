@@ -55,6 +55,7 @@ public class GcsStorage implements StorageBackend {
 
     private Storage storage;
     private String bucketName;
+    private MetricCollector metricCollector;
 
     @Override
     public void configure(final Map<String, ?> configs) {
@@ -63,9 +64,10 @@ public class GcsStorage implements StorageBackend {
 
         final HttpTransportOptions.Builder httpTransportOptionsBuilder = HttpTransportOptions.newBuilder();
 
+        metricCollector = new MetricCollector();
         final StorageOptions.Builder builder = StorageOptions.newBuilder()
             .setCredentials(config.credentials())
-            .setTransportOptions(new MetricCollector().httpTransportOptions(httpTransportOptionsBuilder));
+            .setTransportOptions(metricCollector.httpTransportOptions(httpTransportOptionsBuilder));
         if (config.endpointUrl() != null) {
             builder.setHost(config.endpointUrl());
         }
@@ -162,5 +164,10 @@ public class GcsStorage implements StorageBackend {
         return "GCSStorage{"
             + "bucketName='" + bucketName + '\''
             + '}';
+    }
+
+    @Override
+    public void close() throws IOException {
+        metricCollector.close();
     }
 }

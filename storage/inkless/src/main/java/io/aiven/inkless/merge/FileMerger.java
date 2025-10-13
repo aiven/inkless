@@ -23,6 +23,7 @@ import org.apache.kafka.common.utils.Time;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.Closeable;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
@@ -46,7 +47,7 @@ import io.aiven.inkless.produce.FileUploadJob;
 import io.aiven.inkless.storage_backend.common.StorageBackend;
 import io.aiven.inkless.storage_backend.common.StorageBackendException;
 
-public class FileMerger implements Runnable {
+public class FileMerger implements Runnable, Closeable {
     private static final Logger LOGGER = LoggerFactory.getLogger(FileMerger.class);
 
     private final Path workDir;
@@ -236,4 +237,9 @@ public class FileMerger implements Runnable {
         }
     }
 
+    @Override
+    public void close() throws IOException {
+        storage.close();
+        metrics.close();
+    }
 }
