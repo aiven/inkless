@@ -56,11 +56,12 @@ import static io.aiven.inkless.storage_backend.azure.MetricRegistry.METRIC_CONTE
 
 @CoverageIgnore // tested on integration level
 public class MetricCollector {
+    private static volatile MetricCollector INSTANCE;
 
     final AzureBlobStorageConfig config;
     final MetricsPolicy policy;
 
-    public MetricCollector(final AzureBlobStorageConfig config) {
+    private MetricCollector(final AzureBlobStorageConfig config) {
         this.config = config;
 
         final JmxReporter reporter = new JmxReporter();
@@ -70,6 +71,18 @@ public class MetricCollector {
             new KafkaMetricsContext(METRIC_CONTEXT)
         );
         policy = new MetricsPolicy(metrics, pathPattern());
+    }
+
+    public static MetricCollector get(final AzureBlobStorageConfig config) {
+        if (INSTANCE == null) {
+            synchronized (MetricCollector.class) {
+                if (INSTANCE == null) {
+                    // assume the config is the same for the lifetime of the application
+                    INSTANCE = new MetricCollector(config);
+                }
+            }
+        }
+        return INSTANCE;
     }
 
     final Pattern pathPattern() {

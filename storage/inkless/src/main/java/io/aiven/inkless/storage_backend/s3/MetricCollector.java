@@ -123,7 +123,13 @@ public class MetricCollector implements MetricPublisher {
     private final Map<String, Sensor> latencyMetrics = new HashMap<>();
     private final Map<String, Sensor> errorMetrics = new HashMap<>();
 
-    public MetricCollector() {
+    static final MetricCollector INSTANCE = new MetricCollector();
+
+    public static MetricCollector get() {
+        return INSTANCE;
+    }
+
+    private MetricCollector() {
         final MetricsReporter reporter = new JmxReporter();
 
         metrics = new org.apache.kafka.common.metrics.Metrics(

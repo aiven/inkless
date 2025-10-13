@@ -65,7 +65,7 @@ public class GcsStorage implements StorageBackend {
 
         final StorageOptions.Builder builder = StorageOptions.newBuilder()
             .setCredentials(config.credentials())
-            .setTransportOptions(new MetricCollector().httpTransportOptions(httpTransportOptionsBuilder));
+            .setTransportOptions(MetricCollector.get().httpTransportOptions(httpTransportOptionsBuilder));
         if (config.endpointUrl() != null) {
             builder.setHost(config.endpointUrl());
         }

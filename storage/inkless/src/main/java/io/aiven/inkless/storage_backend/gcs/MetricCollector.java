@@ -86,7 +86,13 @@ public class MetricCollector {
     private final Sensor resumableChunkUploadRequests;
     private final Sensor getObjectRequests;
 
-    public MetricCollector() {
+    static final MetricCollector INSTANCE = new MetricCollector();
+
+    public static MetricCollector get() {
+        return INSTANCE;
+    }
+
+    private MetricCollector() {
         final JmxReporter reporter = new JmxReporter();
 
         metrics = new org.apache.kafka.common.metrics.Metrics(

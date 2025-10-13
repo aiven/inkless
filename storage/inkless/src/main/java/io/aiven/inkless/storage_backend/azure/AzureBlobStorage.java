@@ -50,9 +50,10 @@ import reactor.core.Exceptions;
 
 @CoverageIgnore // tested on integration level
 public class AzureBlobStorage implements StorageBackend {
+    private MetricCollector metricCollector;
+
     private AzureBlobStorageConfig config;
     private BlobContainerClient blobContainerClient;
-    private MetricCollector metricsPolicy;
 
     @Override
     public void configure(final Map<String, ?> configs) {
@@ -75,10 +76,11 @@ public class AzureBlobStorage implements StorageBackend {
             }
         }
 
-        metricsPolicy = new MetricCollector(config);
+
+        metricCollector = MetricCollector.get(config);
 
         blobContainerClient = blobServiceClientBuilder
-            .addPolicy(metricsPolicy.policy())
+            .addPolicy(metricCollector.policy())
             .buildClient()
             .getBlobContainerClient(config.containerName());
     }
@@ -116,7 +118,7 @@ public class AzureBlobStorage implements StorageBackend {
         }
 
         final BlockBlobClient blockBlobClient = specializedBlobClientBuilder
-            .addPolicy(metricsPolicy.policy())
+            .addPolicy(metricCollector.policy())
             .containerName(config.containerName())
             .blobName(key.value())
             .buildBlockBlobClient();

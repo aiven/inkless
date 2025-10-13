@@ -55,7 +55,7 @@ class S3ClientBuilder {
             s3ClientBuilder.credentialsProvider(credentialsProvider);
         }
         s3ClientBuilder.overrideConfiguration(c -> {
-            c.addMetricPublisher(new MetricCollector());
+            c.addMetricPublisher(MetricCollector.get());
             c.apiCallTimeout(config.apiCallTimeout());
             c.apiCallAttemptTimeout(config.apiCallAttemptTimeout());
         });
