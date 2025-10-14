@@ -140,6 +140,12 @@ public class InklessConfig extends AbstractConfig {
         + "This is primarily intended for environments where the batches fan-out on fetch requests can overload the control plane back-end.";
     private static final int FETCH_FIND_BATCHES_MAX_BATCHES_PER_PARTITION_DEFAULT = 0;
 
+    public static final String RETENTION_ENFORCEMENT_MAX_BATCHES_PER_REQUEST_CONFIG = "retention.enforcement.max.batches.per.request";
+    public static final String RETENTION_ENFORCEMENT_MAX_BATCHES_PER_REQUEST_DOC = "The maximum number of batches to delete per partition when enforcing retention. "
+        + "A value of 0 means all eligible batches are deleted in one request. "
+        + "Setting this to a lower value can help to reduce the load on the control plane back-end.";
+    private static final int RETENTION_ENFORCEMENT_MAX_BATCHES_PER_REQUEST_DEFAULT = 0;
+
     public static ConfigDef configDef() {
         final ConfigDef configDef = new ConfigDef();
 
@@ -326,6 +332,14 @@ public class InklessConfig extends AbstractConfig {
             ConfigDef.Importance.LOW,
             FETCH_FIND_BATCHES_MAX_BATCHES_PER_PARTITION_DOC
         );
+        configDef.define(
+            RETENTION_ENFORCEMENT_MAX_BATCHES_PER_REQUEST_CONFIG,
+            ConfigDef.Type.INT,
+            RETENTION_ENFORCEMENT_MAX_BATCHES_PER_REQUEST_DEFAULT,
+            ConfigDef.Range.atLeast(0),
+            ConfigDef.Importance.LOW,
+            RETENTION_ENFORCEMENT_MAX_BATCHES_PER_REQUEST_DOC
+        );
 
         return configDef;
     }
@@ -432,5 +446,9 @@ public class InklessConfig extends AbstractConfig {
 
     public int maxBatchesPerPartitionToFind() {
         return getInt(FETCH_FIND_BATCHES_MAX_BATCHES_PER_PARTITION_CONFIG);
+    }
+
+    public int maxBatchesPerEnforcementRequest() {
+        return getInt(RETENTION_ENFORCEMENT_MAX_BATCHES_PER_REQUEST_CONFIG);
     }
 }
