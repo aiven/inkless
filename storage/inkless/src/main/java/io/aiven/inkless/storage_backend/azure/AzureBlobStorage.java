@@ -50,9 +50,12 @@ import reactor.core.Exceptions;
 
 @CoverageIgnore // tested on integration level
 public class AzureBlobStorage implements StorageBackend {
+    // Use a single instance to avoid creating many metric registries
+    // meaning a single set of metrics is published and instantiated only once
+    static final MetricCollector metricCollector = new MetricCollector();
     private AzureBlobStorageConfig config;
     private BlobContainerClient blobContainerClient;
-    private MetricCollector metricCollector;
+    private MetricCollector.MetricsPolicy policy;
 
     @Override
     public void configure(final Map<String, ?> configs) {
@@ -74,11 +77,9 @@ public class AzureBlobStorage implements StorageBackend {
                     new DefaultAzureCredentialBuilder().build());
             }
         }
-
-        metricCollector = new MetricCollector(config);
-
+        policy = metricCollector.policy(config);
         blobContainerClient = blobServiceClientBuilder
-            .addPolicy(metricCollector.policy())
+            .addPolicy(policy)
             .buildClient()
             .getBlobContainerClient(config.containerName());
     }
@@ -116,7 +117,7 @@ public class AzureBlobStorage implements StorageBackend {
         }
 
         final BlockBlobClient blockBlobClient = specializedBlobClientBuilder
-            .addPolicy(metricCollector.policy())
+            .addPolicy(policy)
             .containerName(config.containerName())
             .blobName(key.value())
             .buildBlockBlobClient();
