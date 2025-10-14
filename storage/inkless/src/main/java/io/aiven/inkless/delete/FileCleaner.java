@@ -23,6 +23,8 @@ import org.apache.kafka.common.utils.Time;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.Closeable;
+import java.io.IOException;
 import java.time.Duration;
 import java.util.List;
 import java.util.Set;
@@ -40,7 +42,7 @@ import io.aiven.inkless.control_plane.FileToDelete;
 import io.aiven.inkless.storage_backend.common.StorageBackend;
 import io.aiven.inkless.storage_backend.common.StorageBackendException;
 
-public class FileCleaner implements Runnable {
+public class FileCleaner implements Runnable, Closeable {
     private static final Logger LOGGER = LoggerFactory.getLogger(FileCleaner.class);
 
     final Time time;
@@ -136,5 +138,11 @@ public class FileCleaner implements Runnable {
         controlPlane.deleteFiles(request);
 
         LOGGER.info("Deleted {} files", objectKeyPaths.size());
+    }
+
+    @Override
+    public void close() throws IOException {
+        storage.close();
+        metrics.close();
     }
 }

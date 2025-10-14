@@ -19,5 +19,7 @@ package io.aiven.inkless.storage_backend.common;
 
 import org.apache.kafka.common.Configurable;
 
-public interface StorageBackend extends Configurable, ObjectUploader, ObjectFetcher, ObjectDeleter {
+import java.io.Closeable;
+
+public interface StorageBackend extends Configurable, ObjectUploader, ObjectFetcher, ObjectDeleter, Closeable {
 }

@@ -107,4 +107,9 @@ public class InMemoryStorage implements StorageBackend {
         Objects.requireNonNull(keys, "keys cannot be null");
         keys.forEach(storage::remove);
     }
+
+    @Override
+    public void close() throws IOException {
+        storage.clear();
+    }
 }

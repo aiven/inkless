@@ -90,7 +90,7 @@ public class ReaderTest {
     }
 
     @Test
-    public void testClose() {
+    public void testClose() throws Exception {
         reader.close();
         verify(metadataExecutor, atLeastOnce()).shutdown();
         verify(dataExecutor, atLeastOnce()).shutdown();
