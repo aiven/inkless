@@ -29,21 +29,23 @@ import static org.assertj.core.api.Assertions.assertThat;
 class MetricCollectorTest {
 
     @Test
-    void pathInDevWithAccountName() {
+    void pathInDevWithAccountName() throws Exception {
         final var props = Map.of("azure.account.name", "test-account",
             "azure.container.name", "cont1");
-        final var metrics = new MetricCollector(new AzureBlobStorageConfig(props));
-        final var matcher = metrics.pathPattern().matcher("/test-account/cont1/test-object");
-        assertThat(matcher).matches();
+        try (var metrics = new MetricCollector()) {
+            var matcher = metrics.pathPattern(new AzureBlobStorageConfig(props)).matcher("/test-account/cont1/test-object");
+            assertThat(matcher).matches();
+        }
     }
 
     @Test
-    void pathInProdWithoutAccountName() {
+    void pathInProdWithoutAccountName() throws Exception {
         final var props = Map.of("azure.account.name", "test-account",
             "azure.container.name", "cont1");
-        final var metrics = new MetricCollector(new AzureBlobStorageConfig(props));
-        final var matcher = metrics.pathPattern().matcher("/cont1/test-object");
-        assertThat(matcher).matches();
+        try (var metrics = new MetricCollector()) {
+            var matcher = metrics.pathPattern(new AzureBlobStorageConfig(props)).matcher("/cont1/test-object");
+            assertThat(matcher).matches();
+        }
     }
 
     @ParameterizedTest

@@ -58,37 +58,38 @@ import static io.aiven.inkless.storage_backend.azure.MetricRegistry.METRIC_CONTE
 
 @CoverageIgnore // tested on integration level
 public class MetricCollector implements Closeable {
-
-    final AzureBlobStorageConfig config;
-    final MetricsPolicy policy;
     final Metrics metrics;
 
-    public MetricCollector(final AzureBlobStorageConfig config) {
-        this.config = config;
-
+    public MetricCollector() {
         final JmxReporter reporter = new JmxReporter();
 
         metrics = new Metrics(
             new MetricConfig(), List.of(reporter), Time.SYSTEM,
             new KafkaMetricsContext(METRIC_CONTEXT)
         );
-        policy = new MetricsPolicy(metrics, pathPattern());
     }
 
-    final Pattern pathPattern() {
+    final Pattern pathPattern(final AzureBlobStorageConfig config) {
         // account is in the hostname when on azure, but included on the path when testing on Azurite
         final var maybeAccountName = "(/" + config.accountName() + ")?";
         final var exp = "^" + maybeAccountName + "/" + config.containerName() + "/" + "([^/]+)";
         return Pattern.compile(exp);
     }
 
-    MetricsPolicy policy() {
-        return policy;
+    MetricsPolicy policy(final AzureBlobStorageConfig config) {
+        return new MetricsPolicy(metrics, pathPattern(config));
     }
 
     @Override
     public void close() throws IOException {
-        metrics.close();
+        // remove sensors to restart their counts when reconfigured
+        // instead of closing metrics which would affect other storage backends if used together
+        // TODO: consider making a single metrics to be passed to all storage backends
+        metrics.removeSensor(BLOB_GET);
+        metrics.removeSensor(BLOB_UPLOAD);
+        metrics.removeSensor(BLOCK_UPLOAD);
+        metrics.removeSensor(BLOCK_LIST_UPLOAD);
+        metrics.removeSensor(BLOB_DELETE);
     }
 
     static class MetricsPolicy implements HttpPipelinePolicy {

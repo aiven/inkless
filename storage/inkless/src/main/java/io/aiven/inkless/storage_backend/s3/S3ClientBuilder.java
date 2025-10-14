@@ -25,6 +25,10 @@ import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.utils.AttributeMap;
 
 class S3ClientBuilder {
+    // Use a single instance to avoid creating many metric registries
+    // meaning a single set of metrics is published and instantiated only once
+    static final MetricCollector metricPublisher = new MetricCollector();
+
     static S3Client build(final S3StorageConfig config) {
         final software.amazon.awssdk.services.s3.S3ClientBuilder s3ClientBuilder = S3Client.builder();
         final Region region = config.region();
@@ -55,7 +59,7 @@ class S3ClientBuilder {
             s3ClientBuilder.credentialsProvider(credentialsProvider);
         }
         s3ClientBuilder.overrideConfiguration(c -> {
-            c.addMetricPublisher(new MetricCollector());
+            c.addMetricPublisher(metricPublisher);
             c.apiCallTimeout(config.apiCallTimeout());
             c.apiCallAttemptTimeout(config.apiCallAttemptTimeout());
         });

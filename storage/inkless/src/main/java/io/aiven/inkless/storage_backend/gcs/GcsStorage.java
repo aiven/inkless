@@ -52,10 +52,12 @@ public class GcsStorage implements StorageBackend {
      * the file in two chunks.
      */
     private static final int READER_8MB_CHUNK_SIZE = 1024 * 1024 * 8;
+    // Use a single instance to avoid creating many metric registries
+    // meaning a single set of metrics is published and instantiated only once
+    private static final MetricCollector metricCollector = new MetricCollector();
 
     private Storage storage;
     private String bucketName;
-    private MetricCollector metricCollector;
 
     @Override
     public void configure(final Map<String, ?> configs) {
@@ -64,7 +66,6 @@ public class GcsStorage implements StorageBackend {
 
         final HttpTransportOptions.Builder httpTransportOptionsBuilder = HttpTransportOptions.newBuilder();
 
-        metricCollector = new MetricCollector();
         final StorageOptions.Builder builder = StorageOptions.newBuilder()
             .setCredentials(config.credentials())
             .setTransportOptions(metricCollector.httpTransportOptions(httpTransportOptionsBuilder));
