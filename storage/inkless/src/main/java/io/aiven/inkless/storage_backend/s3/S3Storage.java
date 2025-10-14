@@ -172,4 +172,9 @@ public class S3Storage implements StorageBackend {
             throw new StorageBackendException("Failed to delete keys " + keys, e);
         }
     }
+
+    @Override
+    public void close() throws IOException {
+        s3Client.close();
+    }
 }

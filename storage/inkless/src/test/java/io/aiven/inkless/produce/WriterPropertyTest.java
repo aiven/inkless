@@ -246,6 +246,7 @@ class WriterPropertyTest {
             Duration.ofMillis(commitIntervalMsAvg),  // it doesn't matter as the scheduling doesn't happen
             maxBufferSize,
             mock(ScheduledExecutorService.class),
+            storage,
             fileCommitter,
             mock(WriterMetrics.class),
             new BrokerTopicStats()

@@ -17,6 +17,7 @@
  */
 package io.aiven.inkless.storage_backend.common;
 
+import java.io.Closeable;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.channels.ReadableByteChannel;
@@ -26,7 +27,7 @@ import java.util.List;
 import io.aiven.inkless.common.ByteRange;
 import io.aiven.inkless.common.ObjectKey;
 
-public interface ObjectFetcher {
+public interface ObjectFetcher extends Closeable {
 
     /**
      * Use large enough buffer for reading the blob content to byte buffers to reduce required number

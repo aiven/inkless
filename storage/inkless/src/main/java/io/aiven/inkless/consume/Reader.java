@@ -29,6 +29,7 @@ import org.apache.kafka.storage.log.metrics.BrokerTopicStats;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.IOException;
 import java.time.Instant;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
@@ -203,10 +204,12 @@ public class Reader implements AutoCloseable {
     }
 
     @Override
-    public void close() {
+    public void close() throws IOException {
         ThreadUtils.shutdownExecutorServiceQuietly(metadataExecutor, EXECUTOR_SHUTDOWN_TIMEOUT_SECONDS, TimeUnit.SECONDS);
         ThreadUtils.shutdownExecutorServiceQuietly(dataExecutor, EXECUTOR_SHUTDOWN_TIMEOUT_SECONDS, TimeUnit.SECONDS);
         if (metadataThreadPoolMonitor != null) metadataThreadPoolMonitor.close();
         if (dataThreadPoolMonitor != null) dataThreadPoolMonitor.close();
+        objectFetcher.close();
+        fetchMetrics.close();
     }
 }

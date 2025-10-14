@@ -31,6 +31,8 @@ import com.azure.core.http.HttpResponse;
 import com.azure.core.http.policy.HttpPipelinePolicy;
 import com.groupcdg.pitest.annotations.CoverageIgnore;
 
+import java.io.Closeable;
+import java.io.IOException;
 import java.util.List;
 import java.util.regex.Pattern;
 
@@ -55,17 +57,18 @@ import static io.aiven.inkless.storage_backend.azure.MetricRegistry.BLOCK_UPLOAD
 import static io.aiven.inkless.storage_backend.azure.MetricRegistry.METRIC_CONTEXT;
 
 @CoverageIgnore // tested on integration level
-public class MetricCollector {
+public class MetricCollector implements Closeable {
 
     final AzureBlobStorageConfig config;
     final MetricsPolicy policy;
+    final Metrics metrics;
 
     public MetricCollector(final AzureBlobStorageConfig config) {
         this.config = config;
 
         final JmxReporter reporter = new JmxReporter();
 
-        final Metrics metrics = new Metrics(
+        metrics = new Metrics(
             new MetricConfig(), List.of(reporter), Time.SYSTEM,
             new KafkaMetricsContext(METRIC_CONTEXT)
         );
@@ -81,6 +84,11 @@ public class MetricCollector {
 
     MetricsPolicy policy() {
         return policy;
+    }
+
+    @Override
+    public void close() throws IOException {
+        metrics.close();
     }
 
     static class MetricsPolicy implements HttpPipelinePolicy {
