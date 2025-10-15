@@ -19,6 +19,6 @@ limitations under the License.
 var context={
     "version": "41inkless",
     "dotVersion": "4.1-inkless",
-    "fullDotVersion": "4.1.0-inkless",
+    "fullDotVersion": "4.1.1-inkless",
     "scalaVersion": "2.13"
 };

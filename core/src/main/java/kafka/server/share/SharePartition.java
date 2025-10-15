@@ -23,7 +23,6 @@ import org.apache.kafka.common.KafkaException;
 import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.errors.CoordinatorNotAvailableException;
-import org.apache.kafka.common.errors.FencedStateEpochException;
 import org.apache.kafka.common.errors.GroupIdNotFoundException;
 import org.apache.kafka.common.errors.InvalidRecordStateException;
 import org.apache.kafka.common.errors.InvalidRequestException;
@@ -959,14 +958,12 @@ public class SharePartition {
                     break;
                 }
             }
-
-            // If the acknowledgement is successful then persist state, complete the state transition
-            // and update the cached state for start offset. Else rollback the state transition.
-            rollbackOrProcessStateUpdates(future, throwable, updatedStates, stateBatches);
         } finally {
             lock.writeLock().unlock();
         }
-
+        // If the acknowledgement is successful then persist state, complete the state transition
+        // and update the cached state for start offset. Else rollback the state transition.
+        rollbackOrProcessStateUpdates(future, throwable, updatedStates, stateBatches);
         return future;
     }
 
@@ -1015,13 +1012,12 @@ public class SharePartition {
                     break;
                 }
             }
-
-            // If the release acquired records is successful then persist state, complete the state transition
-            // and update the cached state for start offset. Else rollback the state transition.
-            rollbackOrProcessStateUpdates(future, throwable, updatedStates, stateBatches);
         } finally {
             lock.writeLock().unlock();
         }
+        // If the release acquired records is successful then persist state, complete the state transition
+        // and update the cached state for start offset. Else rollback the state transition.
+        rollbackOrProcessStateUpdates(future, throwable, updatedStates, stateBatches);
         return future;
     }
 
@@ -1490,7 +1486,7 @@ public class SharePartition {
                 String.format("Share partition failed to load %s-%s", groupId, topicIdPartition));
             case INITIALIZING -> throw new LeaderNotAvailableException(
                 String.format("Share partition is already initializing %s-%s", groupId, topicIdPartition));
-            case FENCED -> throw new FencedStateEpochException(
+            case FENCED -> throw new LeaderNotAvailableException(
                 String.format("Share partition is fenced %s-%s", groupId, topicIdPartition));
             case EMPTY ->
                 // The share partition is not yet initialized.
@@ -2179,7 +2175,8 @@ public class SharePartition {
         }
     }
 
-    private boolean canMoveStartOffset() {
+    // Visible for testing.
+    boolean canMoveStartOffset() {
         // The Share Partition Start Offset may be moved after acknowledge request is complete.
         // The following conditions need to be met to move the startOffset:
         // 1. When the cachedState is not empty.
@@ -2204,7 +2201,15 @@ public class SharePartition {
                 "as there is an acquirable gap at the beginning. Cannot move the start offset.", startOffset, groupId, topicIdPartition);
             return false;
         }
-        RecordState startOffsetState = entry.getValue().offsetState == null ?
+        boolean isBatchState = entry.getValue().offsetState() == null;
+        boolean isOngoingTransition = isBatchState ?
+            entry.getValue().batchHasOngoingStateTransition() :
+            entry.getValue().offsetState().get(startOffset).hasOngoingStateTransition();
+        if (isOngoingTransition) {
+            return false;
+        }
+
+        RecordState startOffsetState = isBatchState ?
             entry.getValue().batchState() :
             entry.getValue().offsetState().get(startOffset).state();
         return isRecordStateAcknowledged(startOffsetState);
@@ -2239,13 +2244,13 @@ public class SharePartition {
                 }
 
                 if (inFlightBatch.offsetState() == null) {
-                    if (!isRecordStateAcknowledged(inFlightBatch.batchState())) {
+                    if (inFlightBatch.batchHasOngoingStateTransition() || !isRecordStateAcknowledged(inFlightBatch.batchState())) {
                         return lastOffsetAcknowledged;
                     }
                     lastOffsetAcknowledged = inFlightBatch.lastOffset();
                 } else {
                     for (Map.Entry<Long, InFlightState> offsetState : inFlightBatch.offsetState.entrySet()) {
-                        if (!isRecordStateAcknowledged(offsetState.getValue().state())) {
+                        if (offsetState.getValue().hasOngoingStateTransition() || !isRecordStateAcknowledged(offsetState.getValue().state())) {
                             return lastOffsetAcknowledged;
                         }
                         lastOffsetAcknowledged = offsetState.getKey();
@@ -2343,9 +2348,7 @@ public class SharePartition {
                 new GroupIdNotFoundException(errorMessage);
             case UNKNOWN_TOPIC_OR_PARTITION ->
                 new UnknownTopicOrPartitionException(errorMessage);
-            case FENCED_STATE_EPOCH ->
-                new FencedStateEpochException(errorMessage);
-            case FENCED_LEADER_EPOCH ->
+            case FENCED_LEADER_EPOCH, FENCED_STATE_EPOCH ->
                 new NotLeaderOrFollowerException(errorMessage);
             default ->
                 new UnknownServerException(errorMessage);
@@ -2916,7 +2919,8 @@ public class SharePartition {
             return batchState;
         }
 
-        private boolean batchHasOngoingStateTransition() {
+        // Visible for testing.
+        boolean batchHasOngoingStateTransition() {
             return inFlightState().hasOngoingStateTransition();
         }
 
@@ -3037,7 +3041,8 @@ public class SharePartition {
             acquisitionLockTimeoutTask = null;
         }
 
-        private boolean hasOngoingStateTransition() {
+        // Visible for testing.
+        boolean hasOngoingStateTransition() {
             if (rollbackState == null) {
                 // This case could occur when the batch/offset hasn't transitioned even once or the state transitions have
                 // been committed.
@@ -3070,6 +3075,7 @@ public class SharePartition {
                 return this;
             } catch (IllegalStateException e) {
                 log.error("Failed to update state of the records", e);
+                rollbackState = null;
                 return null;
             }
         }

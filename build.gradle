@@ -200,7 +200,8 @@ allprojects {
           libs.scalaReflect,
           // Workaround before `commons-validator` has new release. See KAFKA-19359.
           libs.commonsBeanutils,
-          libs.jacksonAnnotations
+          libs.jacksonAnnotations,
+          libs.commonsLang
         )
       }
     }
@@ -1081,6 +1082,7 @@ project(':core') {
     testImplementation libs.junitJupiter
     testImplementation libs.caffeine
     testImplementation testLog4j2Libs
+    testImplementation libs.mockOAuth2Server
 
     // testcontainers for inkless cluster tests
     testImplementation libs.assertj

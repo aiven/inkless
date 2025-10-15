@@ -34,6 +34,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
@@ -825,6 +826,48 @@ public class PartitionChangeBuilderTest {
         }
     }
 
+    @Test
+    public void testEligibleLeaderReplicas_lastKnownElrShouldBePopulatedWhenNoLeader() {
+        PartitionRegistration partition = new PartitionRegistration.Builder()
+            .setReplicas(new int[] {1, 2, 3})
+            .setDirectories(new Uuid[] {
+                DirectoryId.UNASSIGNED,
+                DirectoryId.UNASSIGNED,
+                DirectoryId.UNASSIGNED
+            })
+            .setIsr(new int[] {1})
+            .setElr(new int[] {2})
+            .setLeader(1)
+            .setLeaderRecoveryState(LeaderRecoveryState.RECOVERED)
+            .setLeaderEpoch(100)
+            .setPartitionEpoch(200)
+            .build();
+
+        short version = 2; // ELR supported
+        Uuid topicId = Uuid.fromString("FbrrdcfiR-KC2CPSTHaJrg");
+
+        // No replica is acceptable as leader, so election yields NO_LEADER.
+        // We intentionally do not change target ISR so record.isr remains null.
+        PartitionChangeBuilder builder = new PartitionChangeBuilder(partition, topicId, 0, r -> false,
+            metadataVersionForPartitionChangeRecordVersion(version), 3)
+            .setElection(Election.PREFERRED)
+            .setEligibleLeaderReplicasEnabled(isElrEnabled(version))
+            .setDefaultDirProvider(DEFAULT_DIR_PROVIDER)
+            .setUseLastKnownLeaderInBalancedRecovery(true);
+
+        ApiMessageAndVersion change = builder.build().get();
+        PartitionChangeRecord record = (PartitionChangeRecord) change.message();
+
+        assertEquals(NO_LEADER, record.leader());
+        // There is no ISR update if we do not perform the leader verification on the ISR members.
+        assertNull(record.isr(), record.toString());
+        assertEquals(1, record.lastKnownElr().size(), record.toString());
+        assertEquals(1, record.lastKnownElr().get(0), record.toString());
+        partition = partition.merge((PartitionChangeRecord) builder.build().get().message());
+        assertArrayEquals(new int[] {1}, partition.lastKnownElr);
+    }
+
+
     @ParameterizedTest
     @MethodSource("partitionChangeRecordVersions")
     public void testEligibleLeaderReplicas_IsrExpandAboveMinISR(short version) {
@@ -1224,6 +1267,41 @@ public class PartitionChangeBuilderTest {
         PartitionChangeBuilder builder = new PartitionChangeBuilder(partition, topicId, 0, r -> r != 3,
                 metadataVersionForPartitionChangeRecordVersion(version), 3)
             .setElection(Election.PREFERRED)
+            .setEligibleLeaderReplicasEnabled(true)
+            .setDefaultDirProvider(DEFAULT_DIR_PROVIDER)
+            .setUseLastKnownLeaderInBalancedRecovery(true);
+
+        builder.setTargetIsr(List.of());
+
+        // No change to the partition.
+        assertEquals(Optional.empty(), builder.build());
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = Election.class)
+    public void testEligibleLeaderReplicas_NotEligibleLastKnownLeader(Election type) {
+        short version = 2;
+        PartitionRegistration partition = new PartitionRegistration.Builder()
+                .setReplicas(new int[] {1, 2, 3, 4})
+                .setDirectories(new Uuid[]{
+                        Uuid.fromString("zANDdMukTEqefOvHpmniMg"),
+                        Uuid.fromString("Ui2Eq8rbRiuW7m7uiPTRyg"),
+                        Uuid.fromString("MhgJOZrrTsKNcGM0XKK4aA"),
+                        Uuid.fromString("Y25PaCAmRfyGIKxAThhBAw")
+                })
+                .setIsr(new int[] {})
+                .setElr(new int[] {})
+                .setLastKnownElr(new int[] {1})
+                .setLeader(-1)
+                .setLeaderRecoveryState(LeaderRecoveryState.RECOVERED)
+                .setLeaderEpoch(100)
+                .setPartitionEpoch(200)
+                .build();
+        Uuid topicId = Uuid.fromString("FbrrdcfiR-KC2CPSTHaJrg");
+
+        PartitionChangeBuilder builder = new PartitionChangeBuilder(partition, topicId, 0, r -> false,
+                metadataVersionForPartitionChangeRecordVersion(version), 3)
+            .setElection(type)
             .setEligibleLeaderReplicasEnabled(true)
             .setDefaultDirProvider(DEFAULT_DIR_PROVIDER)
             .setUseLastKnownLeaderInBalancedRecovery(true);
