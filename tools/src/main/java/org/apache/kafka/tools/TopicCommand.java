@@ -520,11 +520,13 @@ public abstract class TopicCommand {
                     System.out.println("Node info: " + node);
                     String bootstrapServer = node.host() + ":" + node.port();
                     System.out.println("Creating topic " + topic.name + " using bootstrap server " + bootstrapServer + ".");
-                    newTopic.configs(configsMap);
-                    CreateTopicsResult createResult = adminClient.createTopics(Set.of(newTopic),
-                            new CreateTopicsOptions().retryOnQuotaViolation(false));
-                    createResult.all().get();
-                    System.out.println("Created topic " + topic.name + ".");
+                    try (Admin admin = createAdminClient(commandConfig, Optional.of(bootstrapServer))) {
+                        newTopic.configs(configsMap);
+                        CreateTopicsResult createResult = admin.createTopics(Set.of(newTopic),
+                                new CreateTopicsOptions().retryOnQuotaViolation(false));
+                        createResult.all().get();
+                        System.out.println("Created topic " + topic.name + ".");
+                    }
                 } else {
                     newTopic.configs(configsMap);
                     CreateTopicsResult createResult = adminClient.createTopics(Set.of(newTopic),
