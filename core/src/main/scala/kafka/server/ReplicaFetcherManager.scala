@@ -25,6 +25,7 @@ import org.apache.kafka.common.TopicPartition
 import org.apache.kafka.server.common.MetadataVersion
 import org.apache.kafka.server.network.BrokerEndPoint
 import org.apache.kafka.server.LeaderEndPoint
+import org.apache.kafka.server.config.ClusterLinkConfigs
 
 import java.util.Properties
 import scala.collection.Map
@@ -52,9 +53,10 @@ class ReplicaFetcherManager(brokerConfig: KafkaConfig,
 
     val endpoint = if (readOnly) {
       // For connecting to remote clusters, we need to get authentication config from cluster link properties.
-      // For now, pass an empty properties. It will be updated when partitions are added.
-      new RemoteBrokerBlockingSender(sourceBroker, brokerConfig, metrics, time, fetcherId,
-        s"broker-${brokerConfig.brokerId}-remote-fetcher-$fetcherId", logContext, new Properties())
+      // Create a default ClusterLinkConfigs with empty properties for now.
+      // It will be updated when partitions are added in createClusterLinkFetcherThread.
+      new RemoteBrokerBlockingSender(sourceBroker, ClusterLinkConfigs.fromProperties(new Properties()), metrics, time, fetcherId,
+        s"broker-${brokerConfig.brokerId}-remote-fetcher-$fetcherId", logContext)
     } else {
       new BrokerBlockingSender(sourceBroker, brokerConfig, metrics, time, fetcherId,
       s"broker-${brokerConfig.brokerId}-fetcher-$fetcherId", logContext)
@@ -128,8 +130,9 @@ class ReplicaFetcherManager(brokerConfig: KafkaConfig,
     val endpoint = if (readOnly && clusterLinkName.nonEmpty) {
       val clusterLinkProperties = metadataCache.config(new ConfigResource(ConfigResource.Type.CLUSTER_LINK, clusterLinkName))
       info(s"!!! Using cluster link properties for $clusterLinkName: ${clusterLinkProperties.keySet()}")
-      new RemoteBrokerBlockingSender(sourceBroker, brokerConfig, metrics, time, fetcherId,
-        s"broker-${brokerConfig.brokerId}-remote-fetcher-$fetcherId", logContext, clusterLinkProperties)
+      val clusterLinkConfigs = ClusterLinkConfigs.fromProperties(clusterLinkProperties)
+      new RemoteBrokerBlockingSender(sourceBroker, clusterLinkConfigs, metrics, time, fetcherId,
+        s"broker-${brokerConfig.brokerId}-remote-fetcher-$fetcherId", logContext)
     } else {
       new BrokerBlockingSender(sourceBroker, brokerConfig, metrics, time, fetcherId,
       s"broker-${brokerConfig.brokerId}-fetcher-$fetcherId", logContext)

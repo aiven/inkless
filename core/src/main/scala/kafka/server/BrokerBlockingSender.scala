@@ -28,12 +28,8 @@ import org.apache.kafka.common.{Node, Reconfigurable}
 import org.apache.kafka.common.requests.AbstractRequest.Builder
 import org.apache.kafka.common.security.auth.SecurityProtocol
 import org.apache.kafka.server.network.BrokerEndPoint
-import org.apache.kafka.common.config.{AbstractConfig, ConfigDef}
-import org.apache.kafka.clients.CommonClientConfigs
-import org.apache.kafka.common.config.SaslConfigs
-import org.apache.kafka.common.config.types.Password
+import org.apache.kafka.server.config.ClusterLinkConfigs
 
-import java.util.Properties
 import scala.jdk.CollectionConverters._
 
 trait BlockingSend {
@@ -140,46 +136,32 @@ class BrokerBlockingSender(sourceBroker: BrokerEndPoint,
 }
 
 class RemoteBrokerBlockingSender(sourceBroker: BrokerEndPoint,
-                                 brokerConfig: KafkaConfig,
+                                 clusterLinkConfigs: ClusterLinkConfigs,
                                  metrics: Metrics,
                                  time: Time,
                                  fetcherId: Int,
                                  clientId: String,
-                                 logContext: LogContext,
-                                 clusterLinkProperties: Properties = new Properties()) extends BlockingSend {
-
+                                 logContext: LogContext) extends BlockingSend {
   private val sourceNode = new Node(sourceBroker.id, sourceBroker.host, sourceBroker.port)
-  private val socketTimeout: Int = brokerConfig.replicaSocketTimeoutMs
+  private val config = clusterLinkConfigs.getConfig()
+  private val socketTimeout: Int = config.getLong(ClusterLinkConfigs.SOCKET_CONNECTION_SETUP_TIMEOUT_MS_CONFIG).toInt
 
-  private val (networkClient, reconfigurableChannelBuilder) = {
-    // Configure network client with cluster link properties
-    val securityProtocol = Option(clusterLinkProperties.getProperty(CommonClientConfigs.SECURITY_PROTOCOL_CONFIG))
-      .map(SecurityProtocol.forName)
-      .getOrElse(SecurityProtocol.PLAINTEXT)
-    val saslMechanism = Option(clusterLinkProperties.getProperty(SaslConfigs.SASL_MECHANISM))
-      .getOrElse("PLAIN")
-    val saslJaasConfig = clusterLinkProperties.getProperty(SaslConfigs.SASL_JAAS_CONFIG)
-    if (saslJaasConfig != null) {
-      clusterLinkProperties.put(SaslConfigs.SASL_JAAS_CONFIG, new Password(saslJaasConfig))
-    }
+  private val networkClient = {
+    val securityProtocol = SecurityProtocol.forName(clusterLinkConfigs.securityProtocol())
+    val saslMechanism = clusterLinkConfigs.saslMechanism()
+
     val channelBuilder = ChannelBuilders.clientChannelBuilder(
       securityProtocol,
       JaasContext.Type.CLIENT,
-      new AbstractConfig(new ConfigDef(), clusterLinkProperties) {},
-      brokerConfig.interBrokerListenerName,
+      config,
+      null,
       saslMechanism,
       time,
       logContext
     )
-    val reconfigurableChannelBuilder = channelBuilder match {
-      case reconfigurable: Reconfigurable =>
-        brokerConfig.addReconfigurable(reconfigurable)
-        Some(reconfigurable)
-      case _ => None
-    }
     val selector = new Selector(
       NetworkReceive.UNLIMITED,
-      brokerConfig.connectionsMaxIdleMs,
+      config.getLong(ClusterLinkConfigs.METADATA_MAX_AGE_CONFIG),
       metrics,
       time,
       "remote-readonly-" + clientId,
@@ -187,26 +169,26 @@ class RemoteBrokerBlockingSender(sourceBroker: BrokerEndPoint,
       false,
       channelBuilder,
       logContext)
-    val networkClient = new NetworkClient(
+    new NetworkClient(
       selector,
       new ManualMetadataUpdater(),
       clientId,
       1,
       0,
       0,
-      Selectable.USE_DEFAULT_BUFFER_SIZE,
-      brokerConfig.replicaSocketReceiveBufferBytes,
-      brokerConfig.requestTimeoutMs,
-      brokerConfig.connectionSetupTimeoutMs,
-      brokerConfig.connectionSetupTimeoutMaxMs,
+      config.getInt(ClusterLinkConfigs.SEND_BUFFER_CONFIG),
+      config.getInt(ClusterLinkConfigs.RECEIVE_BUFFER_CONFIG),
+      config.getInt(ClusterLinkConfigs.REQUEST_TIMEOUT_MS_CONFIG),
+      config.getLong(ClusterLinkConfigs.SOCKET_CONNECTION_SETUP_TIMEOUT_MS_CONFIG).toInt,
+      config.getLong(ClusterLinkConfigs.SOCKET_CONNECTION_SETUP_TIMEOUT_MAX_MS_CONFIG).toInt,
       time,
       false,
       new ApiVersions,
       logContext,
       MetadataRecoveryStrategy.NONE
     )
-    (networkClient, reconfigurableChannelBuilder)
   }
+
 
   override def brokerEndPoint(): BrokerEndPoint = sourceBroker
 
@@ -228,7 +210,8 @@ class RemoteBrokerBlockingSender(sourceBroker: BrokerEndPoint,
   }
 
   override def initiateClose(): Unit = {
-    reconfigurableChannelBuilder.foreach(brokerConfig.removeReconfigurable)
+    // Note: For cluster link connections, we don't use dynamic reconfiguration
+    // so no need to remove reconfigurable components
     networkClient.initiateClose()
   }
 
