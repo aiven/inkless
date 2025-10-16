@@ -21,6 +21,7 @@ import org.apache.kafka.common.cache.Cache;
 import org.apache.kafka.common.cache.LRUCache;
 
 import java.io.IOException;
+import java.util.function.Function;
 
 import io.aiven.inkless.generated.CacheKey;
 import io.aiven.inkless.generated.FileExtent;
@@ -39,6 +40,17 @@ public class MemoryCache implements ObjectCache {
     }
 
     @Override
+    public FileExtent computeIfAbsent(CacheKey key, Function<CacheKey, FileExtent> mappingFunction) {
+        final FileExtent fileExtent = backingCache.get(key);
+        if (fileExtent == null) {
+            final FileExtent newFileExtent = mappingFunction.apply(key);
+            backingCache.put(key, newFileExtent);
+            return newFileExtent;
+        }
+        return fileExtent;
+    }
+
+    @Override
     public boolean remove(CacheKey key) {
         return backingCache.remove(key);
     }
@@ -52,4 +64,5 @@ public class MemoryCache implements ObjectCache {
     public void close() throws IOException {
         // no-op
     }
+
 }

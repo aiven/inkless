@@ -2453,8 +2453,7 @@ project(':storage:inkless') {
       exclude group: 'com.google.guava', module: 'listenablefuture'
     }
     implementation libs.metrics
-    implementation libs.infinispan
-    compileOnly libs.infinispanAnnotations // Workaround for ISPN-12461
+    implementation libs.caffeine
 
     testImplementation project(':clients').sourceSets.test.output.classesDirs
     testImplementation project(':test-common')

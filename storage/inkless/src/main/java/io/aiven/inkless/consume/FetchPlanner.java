@@ -96,17 +96,15 @@ public class FetchPlanner implements Supplier<List<Future<FileExtent>>> {
 
     private CacheFetchJob getCacheFetchJob(final String objectKey, final ByteRange byteRange) {
         return new CacheFetchJob(
-            cache,
-            objectKeyCreator.from(objectKey),
-            byteRange,
-            time,
-            objectFetcher,
-            metrics::cacheQueryFinished,
-            metrics::cacheStoreFinished,
-            metrics::cacheHit,
-            metrics::fetchFileFinished,
-            metrics::cacheEntrySize
+                cache,
+                objectFetcher,
+                objectKeyCreator.from(objectKey),
+                byteRange,
+                time,
+                metrics::fetchFileFinished,
+                metrics::cacheEntrySize
         );
+
     }
 
     private List<Future<FileExtent>> submitAll(List<Callable<FileExtent>> jobs) {
