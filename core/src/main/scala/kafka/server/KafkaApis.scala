@@ -125,7 +125,7 @@ class KafkaApis(val requestChannel: RequestChannel,
   val describeTopicPartitionsRequestHandler = new DescribeTopicPartitionsRequestHandler(
     metadataCache, authHelper, config)
 
-  val inklessTopicMetadataTransformer = inklessSharedState.map(s => new InklessTopicMetadataTransformer(brokerId, s.metadata()))
+  val inklessTopicMetadataTransformer = inklessSharedState.map(s => new InklessTopicMetadataTransformer(s.metadata()))
 
   def close(): Unit = {
     aclApis.close()
