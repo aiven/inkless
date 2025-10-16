@@ -1,6 +1,7 @@
 package kafka;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -224,8 +225,8 @@ public class Antithesis {
             final long idLong = (long) round * 100000000 + count;
             final String id = Long.toBinaryString(idLong).repeat(1000);
             final long timestamp = idLong;
-            final byte[] key = id.substring(1).getBytes();
-            final byte[] value = id.getBytes();
+            final byte[] key = id.substring(1).getBytes(StandardCharsets.UTF_8);
+            final byte[] value = id.getBytes(StandardCharsets.UTF_8);
             records[i] = new SimpleRecord(timestamp, key, value);
         }
         return records;

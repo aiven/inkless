@@ -25,6 +25,7 @@ import java.util.concurrent.TimeUnit
 import org.apache.kafka.common.TopicIdPartition
 import org.apache.kafka.common.errors._
 import org.apache.kafka.common.protocol.Errors
+import org.apache.kafka.common.record.MemoryRecords
 import org.apache.kafka.common.requests.FetchRequest.PartitionData
 import org.apache.kafka.common.requests.OffsetsForLeaderEpochResponse.{UNDEFINED_EPOCH, UNDEFINED_EPOCH_OFFSET}
 import org.apache.kafka.server.metrics.KafkaMetricsGroup
@@ -32,7 +33,8 @@ import org.apache.kafka.server.purgatory.DelayedOperation
 import org.apache.kafka.server.storage.log.{FetchIsolation, FetchParams, FetchPartitionData}
 import org.apache.kafka.storage.internals.log.LogOffsetMetadata
 
-import scala.collection._
+import java.util.{Optional, OptionalInt, OptionalLong}
+import scala.collection.{mutable, _}
 import scala.jdk.CollectionConverters._
 
 case class FetchPartitionStatus(startOffsetMetadata: LogOffsetMetadata, fetchInfo: PartitionData) {
@@ -176,7 +178,64 @@ class DelayedFetch(
    */
   private def tryCompleteDiskless(fetchPartitionStatus: Seq[(TopicIdPartition, FetchPartitionStatus)]): Option[Long] = {
     var accumulatedSize = 0L
-    val fetchPartitionStatusMap = fetchPartitionStatus.toMap
+
+    val directFetch: mutable.Map[TopicIdPartition, FetchPartitionStatus] = new mutable.HashMap()
+
+    fetchPartitionStatus.foreach { case (topicIdPartition, fetchStatus) =>
+      val fetchOffset = fetchStatus.startOffsetMetadata
+      val fetchLeaderEpoch = fetchStatus.fetchInfo.currentLeaderEpoch
+      if (fetchLeaderEpoch.isPresent && fetchLeaderEpoch.get() != 0) {
+        throw new RuntimeException(s"WWWWWWWWWW fetchLeaderEpoch must be 0 or None, but it's ${fetchLeaderEpoch}")
+      }
+
+      try {
+        // TODO taken from normal tryComplete, why this may happen?
+        if (fetchOffset != LogOffsetMetadata.UNKNOWN_OFFSET_METADATA) {
+          val mp = replicaManager.getDisklessMaterializedPartitionOrException(topicIdPartition)
+          val offsetSnapshot = mp.fetchOffsetSnapshot()
+          error(s"WWWWWWWWWW Found ${mp}")
+          error(s"WWWWWWWWWW offsetSnapshot ${offsetSnapshot}")
+
+          // In normal fetch we check isolation, which we skip for diskless for now
+          val startOffset = offsetSnapshot.logStartOffset
+          val endOffset = offsetSnapshot.logEndOffset
+          error(s"WWWWWWWWWW Start offset = ${startOffset}, end offset = ${endOffset}")
+
+          error(s"WWWWWWWWWW fetchOffset = ${fetchOffset.messageOffset}")
+
+          // TODO skipped: transactions, throttling
+
+          if (fetchOffset.messageOffset < startOffset) {
+            error(s"WWWWWWWWWW [${topicIdPartition.topicPartition()}] ${fetchOffset.messageOffset} is behind materialization beginning ${startOffset}," +
+              " will consume from remote")
+            directFetch.put(topicIdPartition, fetchStatus)
+          } else if (fetchOffset.messageOffset >= endOffset.messageOffset) {
+            error(s"WWWWWWWWWW ${mp} is behind requested offset, waiting")
+          } else {
+            if (fetchOffset.onOlderSegment(endOffset)) {
+              error(s"WWWWWWWWWW Satisfying fetch $this immediately since it is fetching older segments.")
+              return None
+            } else if (fetchOffset.onSameSegment(endOffset)) {
+              // we take the partition fetch size as upper bound when accumulating the bytes (skip if a throttled partition)
+              val bytesAvailable = math.min(endOffset.positionDiff(fetchOffset), fetchStatus.fetchInfo.maxBytes)
+              accumulatedSize += bytesAvailable
+            }
+          }
+        }
+      } catch {
+        case _: NotLeaderOrFollowerException =>
+          debug(s"Broker is no longer the leader or follower of $topicIdPartition")
+          return None
+
+        case e: Throwable =>
+          error("Error during checking materialized log", e)
+          return None
+      }
+    }
+
+    error(s"WWWWWWWWWW Found ${accumulatedSize} bytes in materialized partitions, remote: ${directFetch}")
+
+    val fetchPartitionStatusMap = directFetch.toMap
     val requests = fetchPartitionStatus.map { case (topicIdPartition, fetchStatus) =>
       new FindBatchRequest(topicIdPartition, fetchStatus.startOffsetMetadata.messageOffset, fetchStatus.fetchInfo.maxBytes)
     }
@@ -221,6 +280,7 @@ class DelayedFetch(
       }
     }
 
+    error(s"WWWWWWWWWW Found ${accumulatedSize} bytes total")
     Some(accumulatedSize)
   }
 
@@ -275,7 +335,72 @@ class DelayedFetch(
       // adjust the max bytes for diskless fetches based on the percentage of diskless partitions
       val disklessPercentage = disklessRequestsSize / totalRequestsSize
       val disklessParams = replicaManager.fetchParamsWithNewMaxBytes(params, disklessPercentage)
-      val disklessFetchInfos = disklessFetchPartitionStatus.map { case (tp, status) =>
+
+      val materializedFetchResult: mutable.Map[TopicIdPartition, FetchPartitionData] = new mutable.HashMap()
+      val directFetch: mutable.Map[TopicIdPartition, FetchPartitionStatus] = new mutable.HashMap()
+
+      disklessFetchPartitionStatus.foreach { case (topicIdPartition, fetchStatus) =>
+        val fetchOffset = fetchStatus.startOffsetMetadata
+        val fetchLeaderEpoch = fetchStatus.fetchInfo.currentLeaderEpoch
+        if (fetchLeaderEpoch.isPresent && fetchLeaderEpoch.get() != 0) {
+          throw new RuntimeException(s"WWWWWWWWWW fetchLeaderEpoch must be 0 or None, but it's ${fetchLeaderEpoch}")
+        }
+
+        try {
+          // TODO taken from normal tryComplete, why this may happen?
+          if (fetchOffset != LogOffsetMetadata.UNKNOWN_OFFSET_METADATA) {
+            val mp = replicaManager.getDisklessMaterializedPartitionOrException(topicIdPartition)
+            val offsetSnapshot = mp.fetchOffsetSnapshot()
+
+            // In normal fetch we check isolation, which we skip for diskless for now
+            val startOffset = offsetSnapshot.logStartOffset
+            val endOffset = offsetSnapshot.logEndOffset
+//            error(s"WWWWWWWWWW Start offset = ${startOffset}, end offset = ${endOffset}")
+//
+//            error(s"WWWWWWWWWW fetchOffset = ${fetchOffset.messageOffset}")
+
+            // TODO skipped: transactions, throttling
+
+            if (fetchOffset.messageOffset < startOffset) {
+//              error(s"WWWWWWWWWW [${topicIdPartition.topicPartition()}] ${fetchOffset.messageOffset} is behind materialization beginning ${startOffset}," +
+//                " will consume from remote")
+              directFetch.put(topicIdPartition, fetchStatus)
+            } else if (fetchOffset.messageOffset >= endOffset.messageOffset) {
+              materializedFetchResult.put(topicIdPartition, new FetchPartitionData(
+                Errors.NONE,
+                mp.highWatermark(),
+                mp.logStartOffset(),
+                MemoryRecords.EMPTY,
+                Optional.empty(),
+                OptionalLong.of(mp.logStartOffset()),
+                Optional.empty(),
+                OptionalInt.empty(),
+                false))
+            } else {
+              val minOneMessage = false  // TODO should work together with classic reads
+              val fetchDataInfo = mp.fetchRecords(fetchOffset.messageOffset, fetchStatus.fetchInfo.maxBytes, minOneMessage)
+              error("WWWWWWWWWW Reading from materialized log")
+              materializedFetchResult.put(topicIdPartition, new FetchPartitionData(
+                Errors.NONE,
+                mp.highWatermark(),
+                mp.logStartOffset(),
+                fetchDataInfo.records,
+                Optional.empty(),
+                OptionalLong.of(mp.logStartOffset()),
+                Optional.empty(),
+                OptionalInt.empty(),
+                false))
+            }
+          }
+        } catch {
+          // TODO handle correctly
+          case e: Throwable =>
+            error("Error during checking materialized log", e)
+            return
+        }
+      }
+
+      val disklessFetchInfos = directFetch.toSeq.map { case (tp, status) =>
         tp -> status.fetchInfo
       }
       val disklessFetchResponseFuture = replicaManager.fetchDisklessMessages(disklessParams, disklessFetchInfos)
@@ -283,7 +408,7 @@ class DelayedFetch(
       // Combine the classic fetch results with the diskless fetch results
       disklessFetchResponseFuture.whenComplete { case (disklessFetchPartitionData, _) =>
         // Do a single response callback with both classic and diskless fetch results
-        responseCallback(fetchPartitionData ++ disklessFetchPartitionData)
+        responseCallback(fetchPartitionData ++ disklessFetchPartitionData ++ materializedFetchResult)
       }
     } else {
       // No diskless fetches, just return the classic fetch results

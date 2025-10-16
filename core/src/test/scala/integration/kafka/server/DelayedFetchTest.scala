@@ -709,5 +709,10 @@ class DelayedFetchTest {
       verify(mockResponse, never()).estimatedByteSize(anyLong())
       verify(mockResponse, never()).highWatermark()
     }
+
+    @Test
+    def testX(): Unit = {
+
+    }
   }
 }

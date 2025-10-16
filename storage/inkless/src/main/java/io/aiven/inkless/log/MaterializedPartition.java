@@ -24,21 +24,19 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ExecutionException;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicLong;
 
 import org.apache.kafka.common.TopicIdPartition;
-import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.record.MemoryRecords;
 import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.common.utils.Utils;
+import org.apache.kafka.server.storage.log.FetchIsolation;
 import org.apache.kafka.server.util.KafkaScheduler;
+import org.apache.kafka.storage.internals.log.FetchDataInfo;
 import org.apache.kafka.storage.internals.log.LogAppendInfo;
 import org.apache.kafka.storage.internals.log.LogConfig;
 import org.apache.kafka.storage.internals.log.LogDirFailureChannel;
+import org.apache.kafka.storage.internals.log.LogOffsetSnapshot;
 import org.apache.kafka.storage.internals.log.ProducerStateManagerConfig;
 import org.apache.kafka.storage.internals.log.UnifiedLog;
 import org.apache.kafka.storage.log.metrics.BrokerTopicStats;
@@ -46,19 +44,19 @@ import org.apache.kafka.storage.log.metrics.BrokerTopicStats;
 import io.aiven.inkless.common.ObjectKeyCreator;
 import io.aiven.inkless.consume.FetchCompleter;
 import io.aiven.inkless.control_plane.BatchInfo;
-import io.aiven.inkless.control_plane.ControlPlane;
 
 import com.antithesis.sdk.Assert;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-class MaterializedPartition {
+public class MaterializedPartition {
     private static final Logger LOG = LoggerFactory.getLogger(MaterializedPartition.class);
 
     final TopicIdPartition topicIdPartition;
 
     private UnifiedLog log;
 
+    private long logStartOffset = -1;
     private long highWatermark = -1;
     private long nextOffsetToRequest = -1;
     private final ObjectFetchTaskQueue taskQueue = new ObjectFetchTaskQueue();
@@ -98,7 +96,7 @@ class MaterializedPartition {
         this.logConfig = Objects.requireNonNull(logConfig, "logConfig cannot be null");
     }
 
-    synchronized void setHighWatermark(final long newHighWatermark) {
+    synchronized void setHighWatermarkAndLogStartOffset(final long newHighWatermark, final long newLogStartOffset) {
         if (highWatermark != newHighWatermark) {
             highWatermark = newHighWatermark;
             LOG.error("[{}] QQQQQQQQQQ Updated HWM to {}", topicIdPartition.topicPartition(), newHighWatermark);
@@ -107,6 +105,7 @@ class MaterializedPartition {
                 nextOffsetToRequest = highWatermark;
             }
         }
+        this.logStartOffset = newLogStartOffset;
     }
 
     synchronized BatchDemand getBatchDemand() {
@@ -230,5 +229,36 @@ class MaterializedPartition {
         }
     }
 
+    public synchronized long highWatermark() {
+        return highWatermark;
+    }
+
+    public synchronized long logStartOffset() {
+        return logStartOffset;
+    }
+
+    public long localLogStartOffset() {
+        return log.logStartOffset();
+    }
+
+    public long localLogEndOffset() {
+        return log.logEndOffset();
+    }
+
+    public LogOffsetSnapshot fetchOffsetSnapshot() throws IOException {
+        return log.fetchOffsetSnapshot();
+    }
+
+    public FetchDataInfo fetchRecords(final long startOffset,
+                                      final int maxBytes,
+                                      final boolean minOneMessage) throws IOException {
+        return log.read(startOffset, maxBytes, FetchIsolation.LOG_END, minOneMessage);
+    }
+
     record BatchDemand(long offset, int maxBytes) { }
+
+    @Override
+    public String toString() {
+        return "MaterializedPartition(" + topicIdPartition + ")";
+    }
 }

@@ -19,7 +19,10 @@ package io.aiven.inkless.log;
 
 import java.nio.file.Path;
 import java.util.Enumeration;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -53,6 +56,8 @@ public class MaterializedLogManager {
     private final ObjectKeyCreator objectKeyCreator;
     private final LogConfig logConfig;
     private final int maxBytesInQueuePerPartition = 1 * 1024 * 1024;  // TODO configurable
+
+    private final ConcurrentHashMap<TopicIdPartition, MaterializedPartition> partitions = new ConcurrentHashMap<>();
 
     private final HighWatermarkUpdater highWatermarkUpdater;
     private final BatchFinder batchFinder;
@@ -109,8 +114,14 @@ public class MaterializedLogManager {
             logConfig
         );
 
-        highWatermarkUpdater.addPartition(partition);
-        batchFinder.addPartition(partition);
+        if (partitions.putIfAbsent(topicIdPartition, partition) == null) {
+            highWatermarkUpdater.addPartition(partition);
+            batchFinder.addPartition(partition);
+        }
+    }
+
+    public MaterializedPartition getPartition(final TopicIdPartition topicIdPartition) {
+        return partitions.get(topicIdPartition);
     }
 
     public void shutdown() {

@@ -21,7 +21,7 @@ import io.aiven.inkless.common.SharedState
 import io.aiven.inkless.consume.{FetchHandler, FetchOffsetHandler}
 import io.aiven.inkless.control_plane.{FindBatchRequest, FindBatchResponse, MetadataView}
 import io.aiven.inkless.delete.{DeleteRecordsInterceptor, FileCleaner, RetentionEnforcer}
-import io.aiven.inkless.log.MaterializedLogManager
+import io.aiven.inkless.log.{MaterializedLogManager, MaterializedPartition}
 import io.aiven.inkless.merge.FileMerger
 import io.aiven.inkless.produce.AppendHandler
 import kafka.cluster.{Partition, PartitionListener}
@@ -611,6 +611,20 @@ class ReplicaManager(val config: KafkaConfig,
 
       case HostedPartition.None =>
         Left(Errors.UNKNOWN_TOPIC_OR_PARTITION)
+    }
+  }
+
+  def getDisklessMaterializedPartitionOrException(topicIdPartition: TopicIdPartition): MaterializedPartition = {
+    inklessMaterializedLogManager match {
+      case Some(manager) =>
+        val mp = manager.getPartition(topicIdPartition)
+        if (mp != null) {
+          return mp
+        } else {
+          throw new UnknownTopicOrPartitionException()
+        }
+      case None =>
+        throw new RuntimeException("inklessMaterializedLogManager is not set")
     }
   }
 

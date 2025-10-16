@@ -180,7 +180,7 @@ class HighWatermarkUpdater {
                     final MaterializedPartition partition = partitions.get(i);
                     final GetLogInfoResponse logInfoResponse = responses.get(i);
                     if (logInfoResponse.errors().code() == Errors.NONE.code()) {
-                        partition.setHighWatermark(logInfoResponse.highWatermark());
+                        partition.setHighWatermarkAndLogStartOffset(logInfoResponse.highWatermark(), logInfoResponse.logStartOffset());
                     } else {
                         LOG.warn("[{}] Error updating high watermark: {}",
                             partition.topicIdPartition.topicPartition(), logInfoResponse.errors());
