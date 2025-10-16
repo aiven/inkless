@@ -17,8 +17,6 @@
 
 package kafka.log
 
-import io.aiven.inkless.cache.InfinispanCache
-
 import java.lang.{Long => JLong}
 import java.io.{File, IOException}
 import java.nio.file.{Files, NoSuchFileException}
@@ -465,8 +463,6 @@ class LogManager(logDirs: Seq[File],
             // Ignore remote-log-index-cache directory as that is index cache maintained by tiered storage subsystem
             // but not any topic-partition dir.
             !logDir.getName.equals(RemoteIndexCache.DIR_NAME) &&
-            // Ignore inkless-cache directory as that is a cache maintained by the inkless subsystem
-            !logDir.getName.equals(InfinispanCache.DIR_NAME) &&
             UnifiedLog.parseTopicPartitionName(logDir).topic != KafkaRaftServer.MetadataTopic)
         numTotalLogs += logsToLoad.length
         numRemainingLogs.put(logDirAbsolutePath, logsToLoad.length)

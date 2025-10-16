@@ -23,7 +23,6 @@ import java.util.Objects;
 import java.util.concurrent.Callable;
 import java.util.function.Consumer;
 
-import io.aiven.inkless.TimeUtils;
 import io.aiven.inkless.cache.ObjectCache;
 import io.aiven.inkless.common.ByteRange;
 import io.aiven.inkless.common.ObjectKey;
@@ -34,33 +33,33 @@ import io.aiven.inkless.storage_backend.common.ObjectFetcher;
 public class CacheFetchJob implements Callable<FileExtent> {
 
     private final ObjectCache cache;
+    private final ObjectKey objectKey;
+    private final ObjectFetcher objectFetcher;
     private final Time time;
-    private final Consumer<Long> cacheQueryDurationCallback;
-    private final Consumer<Boolean> cacheHitRateCallback;
-    private final Consumer<Long> cacheStoreDurationCallback;
     private final Consumer<Integer> cacheEntrySize;
     private final CacheKey key;
+    private final ByteRange byteRange;
     private final FileFetchJob fallback;
+    private final Consumer<Long> fileFetchDurationCallback;
 
     public CacheFetchJob(
-            ObjectCache cache,
-            ObjectKey objectKey,
-            ByteRange byteRange,
-            Time time,
-            ObjectFetcher objectFetcher,
-            Consumer<Long> cacheQueryDurationCallback,
-            Consumer<Long> cacheStoreDurationCallback,
-            Consumer<Boolean> cacheHitRateCallback,
-            Consumer<Long> fileFetchDurationCallback,
-            Consumer<Integer> cacheEntrySize
+        final ObjectCache cache,
+        final ObjectFetcher objectFetcher,
+        final ObjectKey objectKey,
+        final ByteRange byteRange,
+        final Time time,
+        final Consumer<Long> fileFetchDurationCallback,
+        final Consumer<Integer> cacheEntrySize
     ) {
         this.cache = cache;
+        this.objectKey = objectKey;
+        this.objectFetcher = objectFetcher;
         this.time = time;
-        this.cacheQueryDurationCallback = cacheQueryDurationCallback;
-        this.cacheStoreDurationCallback = cacheStoreDurationCallback;
-        this.cacheHitRateCallback = cacheHitRateCallback;
         this.cacheEntrySize = cacheEntrySize;
+        this.fileFetchDurationCallback = fileFetchDurationCallback;
+        this.byteRange = byteRange;
         this.key = createCacheKey(objectKey, byteRange);
+
         this.fallback = new FileFetchJob(time, objectFetcher, objectKey, byteRange, fileFetchDurationCallback);
     }
 
@@ -74,29 +73,26 @@ public class CacheFetchJob implements Callable<FileExtent> {
     }
 
     @Override
-    public FileExtent call() throws Exception {
-        // Catch cache-related exceptions but let remote storage exceptions bubble up.
-        try {
-            FileExtent file = TimeUtils.measureDurationMs(time, () -> cache.get(key), cacheQueryDurationCallback);
-            cacheHitRateCallback.accept(file != null);
-            if (file != null) {
-                // cache hit
-                return file;
-            }
-        } catch (final Exception e) {
-            throw new CacheFetchException(e);
-        }
-        // cache miss
-        FileExtent freshFile = fallback.call();
-        try {
-            TimeUtils.measureDurationMs(time, () -> cache.put(key, freshFile), cacheStoreDurationCallback);
+    public FileExtent call() {
+        return cache.computeIfAbsent(key, cacheKey -> {
+            // Let remote storage exceptions bubble up, do not catch the exceptions.
+            final FileExtent freshFile = loadFileExtent(objectKey, byteRange);
+            // TODO: add cache entry size also to produce/file commit
             cacheEntrySize.accept(freshFile.data().length);
-        } catch (final Exception e) {
-            throw new CacheFetchException(e);
+            return freshFile;
+        });
+    }
+
+    private FileExtent loadFileExtent(final ObjectKey key, final ByteRange batchRange) {
+        final FileExtent freshFile;
+        final FileFetchJob fallback = new FileFetchJob(time, objectFetcher, key, batchRange, fileFetchDurationCallback);
+        try {
+            freshFile = fallback.call();
+        } catch (Exception e) {
+            throw new FetchException(e);
         }
         return freshFile;
     }
-
 
     @Override
     public boolean equals(Object o) {

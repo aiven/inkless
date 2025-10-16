@@ -21,6 +21,7 @@ import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.server.metrics.KafkaMetricsGroup;
 
 import com.groupcdg.pitest.annotations.CoverageIgnore;
+import com.yammer.metrics.core.Gauge;
 import com.yammer.metrics.core.Histogram;
 import com.yammer.metrics.core.Meter;
 
@@ -31,6 +32,7 @@ import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 
 import io.aiven.inkless.TimeUtils;
+import io.aiven.inkless.cache.ObjectCache;
 
 @CoverageIgnore
 public class InklessFetchMetrics {
@@ -42,6 +44,7 @@ public class InklessFetchMetrics {
     private static final String CACHE_HIT_COUNT = "CacheHitCount";
     private static final String CACHE_MISS_COUNT = "CacheMissCount";
     private static final String CACHE_ENTRY_SIZE = "CacheEntrySize";
+    private static final String CACHE_SIZE = "CacheSize";
     private static final String FETCH_FILE_TIME = "FetchFileTime";
     private static final String FETCH_COMPLETION_TIME = "FetchCompletionTime";
     private static final String FETCH_RATE = "FetchRate";
@@ -62,6 +65,7 @@ public class InklessFetchMetrics {
     private final Histogram cacheQueryTimeHistogram;
     private final Histogram cacheStoreTimeHistogram;
     private final Histogram cacheEntrySize;
+    private final Gauge<Long> cacheSize;
     private final Meter cacheHits;
     private final Meter cacheMisses;
     private final Histogram fetchFileTimeHistogram;
@@ -75,7 +79,7 @@ public class InklessFetchMetrics {
     private final Histogram fetchBatchesSizeHistogram;
     private final Histogram fetchObjectsSizeHistogram;
 
-    public InklessFetchMetrics(Time time) {
+    public InklessFetchMetrics(final Time time, final ObjectCache cache) {
         this.time = Objects.requireNonNull(time, "time cannot be null");
         fetchTimeHistogram = metricsGroup.newHistogram(FETCH_TOTAL_TIME, true, Map.of());
         findBatchesTimeHistogram = metricsGroup.newHistogram(FIND_BATCHES_TIME, true, Map.of());
@@ -95,6 +99,8 @@ public class InklessFetchMetrics {
         fetchBatchesSizeHistogram = metricsGroup.newHistogram(FETCH_BATCHES_PER_FETCH_COUNT, true, Map.of());
         fetchObjectsSizeHistogram = metricsGroup.newHistogram(FETCH_OBJECTS_PER_FETCH_COUNT, true, Map.of());
         cacheEntrySize = metricsGroup.newHistogram(CACHE_ENTRY_SIZE, true, Map.of());
+        cacheSize = metricsGroup.newGauge(CACHE_SIZE, () -> cache.size());
+
     }
 
     public void fetchCompleted(Instant startAt) {
@@ -162,6 +168,7 @@ public class InklessFetchMetrics {
         metricsGroup.removeMetric(CACHE_STORE_TIME);
         metricsGroup.removeMetric(CACHE_HIT_COUNT);
         metricsGroup.removeMetric(CACHE_MISS_COUNT);
+        metricsGroup.removeMetric(CACHE_SIZE);
         metricsGroup.removeMetric(CACHE_ENTRY_SIZE);
         metricsGroup.removeMetric(FIND_BATCHES_TIME);
         metricsGroup.removeMetric(FETCH_COMPLETION_TIME);
