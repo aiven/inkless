@@ -174,8 +174,8 @@ class FileCleanerIntegrationTest {
         config.put("file.cleaner.retention.period.ms", Long.toString(Duration.ofSeconds(1).toMillis()));
         final InklessConfig inklessConfig = new InklessConfig(config);
 
-        sharedState = SharedState.initialize(time, "cluster-id", "az1", BROKER_ID, inklessConfig,
-            metadataView, controlPlane, new BrokerTopicStats(), logDir, defaultTopicConfigs);
+        sharedState = SharedState.initialize(time, BROKER_ID, inklessConfig,
+            metadataView, controlPlane, new BrokerTopicStats(), defaultTopicConfigs);
     }
 
     @AfterEach

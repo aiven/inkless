@@ -195,8 +195,8 @@ class FileMergerIntegrationTest {
         config.put("object.key.log.prefix.masked", Boolean.toString(masked));
         final InklessConfig inklessConfig = new InklessConfig(config);
 
-        sharedState = SharedState.initialize(time, "cluster-id", "az1", BROKER_ID, inklessConfig,
-            metadataView, controlPlane, new BrokerTopicStats(), logDir, defaultTopicConfigs);
+        sharedState = SharedState.initialize(time, BROKER_ID, inklessConfig,
+            metadataView, controlPlane, new BrokerTopicStats(), defaultTopicConfigs);
 
         createTopics(controlPlane);
 
