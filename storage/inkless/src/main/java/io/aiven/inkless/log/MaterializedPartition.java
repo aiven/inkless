@@ -164,17 +164,17 @@ class MaterializedPartition {
         }
         Assert.always(task.future().isDone(), "Task in fetchCompletedCallback must be done", null);
         if (!task.future().isDone()) {
-            // TODO This should never happen, track this somehow.
-            LOG.error("[{}] fetchCompletedCallback called but first future is not done",
-                topicIdPartition.topicPartition());
-            return;
+            // TODO This should never happen, consider shutting down the whole operation if it does.
+            throw new RuntimeException("fetchCompletedCallback called but first future is not done");
         }
 
         initLogIfNeeded(task.batchInfo().metadata().baseOffset());
         // Write this task result and continue while there are more completed futures.
         writeBufferFromTask(task);
-        while ((task = taskQueue.poll()) != null) {
+
+        while ((task = taskQueue.peek()) != null) {
             if (task.future().isDone()) {
+                task = taskQueue.poll();
                 writeBufferFromTask(task);
             } else {
                 // When we see a not-done future, attach the callback and exit.
