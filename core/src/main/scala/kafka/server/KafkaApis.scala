@@ -123,7 +123,7 @@ class KafkaApis(val requestChannel: RequestChannel,
     case _ => None
   }
 
-  val inklessTopicMetadataTransformer = inklessSharedState.map(s => new InklessTopicMetadataTransformer(brokerId, s.metadata()))
+  val inklessTopicMetadataTransformer = inklessSharedState.map(s => new InklessTopicMetadataTransformer(s.metadata()))
 
   def close(): Unit = {
     aclApis.close()

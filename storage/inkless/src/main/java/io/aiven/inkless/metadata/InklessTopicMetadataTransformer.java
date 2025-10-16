@@ -18,20 +18,22 @@
 package io.aiven.inkless.metadata;
 
 import org.apache.kafka.admin.BrokerMetadata;
+import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.message.DescribeTopicPartitionsResponseData;
 import org.apache.kafka.common.message.MetadataResponseData;
 import org.apache.kafka.common.protocol.Errors;
+import org.apache.kafka.common.utils.Utils;
 import org.apache.kafka.metadata.LeaderAndIsr;
 
 import org.slf4j.Logger;
 
 import java.io.Closeable;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.StreamSupport;
 
 import io.aiven.inkless.control_plane.MetadataView;
@@ -42,14 +44,10 @@ public class InklessTopicMetadataTransformer implements Closeable {
     private final MetadataView metadataView;
     private final ClientAzAwarenessMetrics metrics;
 
-    private final AtomicInteger roundRobinCounter;
-
     public InklessTopicMetadataTransformer(
-        final int brokerId,
         final MetadataView metadataView
     ) {
         this.metadataView = Objects.requireNonNull(metadataView, "metadataView cannot be null");
-        roundRobinCounter = new AtomicInteger(brokerId);
         metrics = new ClientAzAwarenessMetrics();
     }
 
@@ -62,12 +60,12 @@ public class InklessTopicMetadataTransformer implements Closeable {
     ) {
         Objects.requireNonNull(topicMetadata, "topicMetadata cannot be null");
 
-        final int leaderForInklessPartitions = selectLeaderForInklessPartitions(clientId);
         for (final var topic : topicMetadata) {
             if (!metadataView.isDisklessTopic(topic.name())) {
                 continue;
             }
             for (final var partition : topic.partitions()) {
+                final int leaderForInklessPartitions = selectLeaderForInklessPartitions(clientId, topic.topicId(), partition.partitionIndex());
                 partition.setLeaderId(leaderForInklessPartitions);
                 final List<Integer> list = List.of(leaderForInklessPartitions);
                 partition.setErrorCode(Errors.NONE.code());
@@ -88,13 +86,13 @@ public class InklessTopicMetadataTransformer implements Closeable {
     ) {
         Objects.requireNonNull(responseData, "responseData cannot be null");
 
-        final int leaderForInklessPartitions = selectLeaderForInklessPartitions(clientId);
         for (final var topic : responseData.topics()) {
             if (!metadataView.isDisklessTopic(topic.name())) {
                 continue;
             }
 
             for (final var partition : topic.partitions()) {
+                final int leaderForInklessPartitions = selectLeaderForInklessPartitions(clientId, topic.topicId(), partition.partitionIndex());
                 partition.setLeaderId(leaderForInklessPartitions);
                 final List<Integer> list = List.of(leaderForInklessPartitions);
                 partition.setErrorCode(Errors.NONE.code());
@@ -116,7 +114,9 @@ public class InklessTopicMetadataTransformer implements Closeable {
      *
      * @return the selected broker ID.
      */
-    private int selectLeaderForInklessPartitions(final String clientId) {
+    private int selectLeaderForInklessPartitions(final String clientId,
+                                                 final Uuid topicId,
+                                                 final int partitionIndex) {
         final String clientAZ = ClientAZExtractor.getClientAZ(clientId);
         // This gracefully handles the null client AZ, no need for a special check.
         final List<BrokerMetadata> brokersInClientAZ = brokersInAZ(clientAZ);
@@ -137,8 +137,10 @@ public class InklessTopicMetadataTransformer implements Closeable {
             throw new RuntimeException("No broker found, unexpected");
         }
 
-        final int c = roundRobinCounter.getAndUpdate(v -> Math.max(v + 1, 0));
-        final int idx = c % brokersToPickFrom.size();
+        final byte[] input = String.format("%s-%s", topicId, partitionIndex).getBytes(StandardCharsets.UTF_8);
+        final int hash = Utils.murmur2(input);
+        final int idx = Math.abs(hash % brokersToPickFrom.size());
+
         return brokersToPickFrom.get(idx).id;
     }
 
