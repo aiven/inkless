@@ -23,13 +23,13 @@ public class CaffeineCacheMetricsRegistry {
     public static final String METRIC_CONTEXT = "io.aiven.inkless.cache.caffeine";
     public static final String METRIC_GROUP = "wal-segment-cache";
 
-    public static final String CACHE_SIZE = "cache-size";
-    public static final String CACHE_HIT_RATE = "cache-hits-rate";
-    public static final String CACHE_HIT_COUNT = "cache-hit-count";
-    public static final String CACHE_MISS_RATE = "cache-miss-rate";
-    public static final String CACHE_MISS_COUNT = "cache-miss-count";
+    public static final String CACHE_SIZE = "size";
+    public static final String CACHE_HIT_RATE = "hits-rate";
+    public static final String CACHE_HIT_COUNT = "hit-count";
+    public static final String CACHE_MISS_RATE = "miss-rate";
+    public static final String CACHE_MISS_COUNT = "miss-count";
     public static final String CACHE_AVG_LOAD_PENALTY_NANOSECONDS = "avg-load-penalty-ns";
-    public static final String CACHE_EVICTION_COUNT = "cache-evictions-count";
+    public static final String CACHE_EVICTION_COUNT = "evictions-count";
 
     public final MetricNameTemplate cacheSizeMetricName;
     public final MetricNameTemplate cacheHitRateMetricName;
