@@ -17,6 +17,7 @@
  */
 package io.aiven.inkless.storage_backend.s3.integration;
 
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
@@ -72,6 +73,11 @@ class S3StorageMetricsTest {
             "s3.path.style.access.enabled", true
         );
         storage.configure(configs);
+    }
+
+    @AfterEach
+    void tearDown() throws Exception {
+        storage.close();
     }
 
     @Test
