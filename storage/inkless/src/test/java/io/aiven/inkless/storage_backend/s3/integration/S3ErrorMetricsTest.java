@@ -21,6 +21,7 @@ import com.github.tomakehurst.wiremock.http.Fault;
 import com.github.tomakehurst.wiremock.junit5.WireMockRuntimeInfo;
 import com.github.tomakehurst.wiremock.junit5.WireMockTest;
 
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
@@ -71,6 +72,11 @@ class S3ErrorMetricsTest {
     void setUp() throws MalformedObjectNameException {
         s3MetricsObjectName = ObjectName.getInstance("aiven.inkless.server.s3:type=s3-client-metrics");
         storage = new S3Storage();
+    }
+
+    @AfterEach
+    void tearDown() throws Exception {
+        storage.close();
     }
 
     @ParameterizedTest
