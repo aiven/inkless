@@ -127,37 +127,39 @@ public class AppendHandlerTest {
 
     @Test
     public void rejectTransactionalProduce() throws Exception {
-        final AppendHandler interceptor = new AppendHandler(
+        try (final AppendHandler interceptor = new AppendHandler(
             new SharedState(time, BROKER_ID, inklessConfig, metadataView, controlPlane,
-                OBJECT_KEY_CREATOR, KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, brokerTopicStats, DEFAULT_TOPIC_CONFIGS), writer);
+                OBJECT_KEY_CREATOR, KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, brokerTopicStats, DEFAULT_TOPIC_CONFIGS), writer)) {
 
-        final Map<TopicPartition, MemoryRecords> entriesPerPartition = Map.of(
-            new TopicPartition("diskless1", 0), RECORDS_WITHOUT_PRODUCER_ID,
-            new TopicPartition("diskless2", 0), TRANSACTIONAL_RECORDS
-        );
+            final Map<TopicPartition, MemoryRecords> entriesPerPartition = Map.of(
+                new TopicPartition("diskless1", 0), RECORDS_WITHOUT_PRODUCER_ID,
+                new TopicPartition("diskless2", 0), TRANSACTIONAL_RECORDS
+            );
 
-        final var result = interceptor.handle(entriesPerPartition, requestLocal).get();
-        assertThat(result).isEqualTo(
-            Map.of(
-                new TopicPartition("diskless1", 0), new PartitionResponse(Errors.INVALID_REQUEST),
-                new TopicPartition("diskless2", 0), new PartitionResponse(Errors.INVALID_REQUEST)
-            )
-        );
-        verify(writer, never()).write(any(), anyMap(), any());
+            final var result = interceptor.handle(entriesPerPartition, requestLocal).get();
+            assertThat(result).isEqualTo(
+                Map.of(
+                    new TopicPartition("diskless1", 0), new PartitionResponse(Errors.INVALID_REQUEST),
+                    new TopicPartition("diskless2", 0), new PartitionResponse(Errors.INVALID_REQUEST)
+                )
+            );
+            verify(writer, never()).write(any(), anyMap(), any());
+        }
     }
 
     @Test
     public void emptyRequests() throws Exception {
-        final AppendHandler interceptor = new AppendHandler(
+        try (final AppendHandler interceptor = new AppendHandler(
             new SharedState(time, BROKER_ID, inklessConfig, metadataView, controlPlane,
-                OBJECT_KEY_CREATOR, KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, brokerTopicStats, DEFAULT_TOPIC_CONFIGS), writer);
+                OBJECT_KEY_CREATOR, KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, brokerTopicStats, DEFAULT_TOPIC_CONFIGS), writer)) {
 
-        final Map<TopicPartition, MemoryRecords> entriesPerPartition = Map.of();
+            final Map<TopicPartition, MemoryRecords> entriesPerPartition = Map.of();
 
-        final var result = interceptor.handle(entriesPerPartition, requestLocal);
-        assert(result.get().isEmpty());
+            final var result = interceptor.handle(entriesPerPartition, requestLocal);
+            assert (result.get().isEmpty());
 
-        verify(writer, never()).write(any(), anyMap(), any());
+            verify(writer, never()).write(any(), anyMap(), any());
+        }
     }
 
     @Test
@@ -175,12 +177,13 @@ public class AppendHandlerTest {
 
         when(metadataView.getTopicId(eq("diskless"))).thenReturn(new Uuid(123, 456));
         when(metadataView.getTopicConfig(any())).thenReturn(new Properties());
-        final AppendHandler interceptor = new AppendHandler(
+        try (final AppendHandler interceptor = new AppendHandler(
             new SharedState(time, BROKER_ID, inklessConfig, metadataView, controlPlane,
-                OBJECT_KEY_CREATOR, KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, brokerTopicStats, DEFAULT_TOPIC_CONFIGS), writer);
+                OBJECT_KEY_CREATOR, KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, brokerTopicStats, DEFAULT_TOPIC_CONFIGS), writer)) {
 
-        final var result = interceptor.handle(entriesPerPartition, requestLocal).get();
-        assertThat(result).isEqualTo(writeResult);
+            final var result = interceptor.handle(entriesPerPartition, requestLocal).get();
+            assertThat(result).isEqualTo(writeResult);
+        }
     }
 
     @Test
@@ -207,7 +210,7 @@ public class AppendHandlerTest {
     }
 
     @Test
-    public void writeFutureFailed() {
+    public void writeFutureFailed() throws Exception {
         final Map<TopicPartition, MemoryRecords> entriesPerPartition = Map.of(
             new TopicPartition("diskless", 0),
             RECORDS_WITHOUT_PRODUCER_ID
@@ -220,11 +223,11 @@ public class AppendHandlerTest {
 
         when(metadataView.getTopicId(eq("diskless"))).thenReturn(new Uuid(123, 456));
         when(metadataView.getTopicConfig(any())).thenReturn(new Properties());
-        final AppendHandler interceptor = new AppendHandler(
+        try (final AppendHandler interceptor = new AppendHandler(
             new SharedState(time, BROKER_ID, inklessConfig, metadataView, controlPlane,
-                OBJECT_KEY_CREATOR, KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, brokerTopicStats, DEFAULT_TOPIC_CONFIGS), writer);
-
-        assertThatThrownBy(() -> interceptor.handle(entriesPerPartition, requestLocal).get()).hasCause(exception);
+                OBJECT_KEY_CREATOR, KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, brokerTopicStats, DEFAULT_TOPIC_CONFIGS), writer)) {
+            assertThatThrownBy(() -> interceptor.handle(entriesPerPartition, requestLocal).get()).hasCause(exception);
+        }
     }
 
     @Test

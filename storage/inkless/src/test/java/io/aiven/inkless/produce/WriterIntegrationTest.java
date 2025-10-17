@@ -29,6 +29,7 @@ import org.apache.kafka.server.common.RequestLocal;
 import org.apache.kafka.storage.internals.log.LogConfig;
 import org.apache.kafka.storage.log.metrics.BrokerTopicStats;
 
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
@@ -107,6 +108,11 @@ class WriterIntegrationTest {
         storage.configure(configs);
 
         recordCreator = new WriterTestUtils.RecordCreator();
+    }
+
+    @AfterEach
+    void teardown() throws Exception {
+        storage.close();
     }
 
     @Test
