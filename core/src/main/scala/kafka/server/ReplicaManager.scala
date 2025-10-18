@@ -1201,7 +1201,7 @@ class ReplicaManager(val config: KafkaConfig,
             logManager.abortAndPauseCleaning(topicPartition)
 
             val initialFetchState = InitialFetchState(topicId.toScala, new BrokerEndPoint(config.brokerId, "localhost", -1),
-              partition.getLeaderEpoch, futureLog.highWatermark, false, "")
+              partition.getLeaderEpoch, futureLog.highWatermark, "")
             replicaAlterLogDirsManager.addFetcherForPartitions(Map(topicPartition -> initialFetchState))
           }
 
@@ -2064,7 +2064,7 @@ class ReplicaManager(val config: KafkaConfig,
           }
 
           futureReplicasAndInitialOffset.put(topicPartition, InitialFetchState(topicIds(topicPartition.topic), leader,
-            partition.getLeaderEpoch, futureLog.highWatermark, false, ""))
+            partition.getLeaderEpoch, futureLog.highWatermark, ""))
         }
       }
     }
@@ -2554,7 +2554,6 @@ class ReplicaManager(val config: KafkaConfig,
               new BrokerEndPoint(node.id, node.host, node.port),
               partition.getLeaderEpoch,
               initialFetchOffset(log),
-              remoteLeader,
               if (remoteLeader) partition.clusterLinkName else ""
             ))
           case None =>

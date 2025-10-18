@@ -30,7 +30,7 @@ import org.apache.kafka.server.config.ClusterLinkConfigs
 import java.util.Properties
 import scala.collection.Map
 
-case class BrokerAndFetcherIdWithClusterLink(broker: BrokerEndPoint, fetcherId: Int, readOnly: Boolean = false, clusterLinkName: String = "")
+case class BrokerAndFetcherIdWithClusterLink(broker: BrokerEndPoint, fetcherId: Int, clusterLinkName: String = "")
 
 class ReplicaFetcherManager(brokerConfig: KafkaConfig,
                             protected val replicaManager: ReplicaManager,
@@ -86,7 +86,6 @@ class ReplicaFetcherManager(brokerConfig: KafkaConfig,
         BrokerAndFetcherIdWithClusterLink(
           brokerAndInitialFetchOffset.leader,
           getFetcherId(topicPartition),
-          brokerAndInitialFetchOffset.readOnly,
           brokerAndInitialFetchOffset.clusterLinkName
         )
       }
@@ -95,7 +94,7 @@ class ReplicaFetcherManager(brokerConfig: KafkaConfig,
         def addAndStartFetcherThread(brokerAndFetcherId: BrokerAndFetcherIdWithClusterLink,
                                      brokerIdAndFetcherId: BrokerIdAndFetcherId): ReplicaFetcherThread = {
           val fetcherThread = createClusterLinkFetcherThread(brokerAndFetcherId.fetcherId, brokerAndFetcherId.broker,
-            brokerAndFetcherId.readOnly, brokerAndFetcherId.clusterLinkName)
+            brokerAndFetcherId.clusterLinkName)
           fetcherThreadMap.put(brokerIdAndFetcherId, fetcherThread)
           fetcherThread.start()
           fetcherThread
@@ -121,13 +120,13 @@ class ReplicaFetcherManager(brokerConfig: KafkaConfig,
     }
   }
 
-  def createClusterLinkFetcherThread(fetcherId: Int, sourceBroker: BrokerEndPoint, readOnly: Boolean, clusterLinkName: String): ReplicaFetcherThread = {
-    info(s"!!! createClusterLinkFetcherThread: sourceBroker = $sourceBroker fetcherId = $fetcherId readOnly = $readOnly clusterLinkName = $clusterLinkName")
+  def createClusterLinkFetcherThread(fetcherId: Int, sourceBroker: BrokerEndPoint, clusterLinkName: String): ReplicaFetcherThread = {
+    info(s"!!! createClusterLinkFetcherThread: sourceBroker = $sourceBroker fetcherId = $fetcherId clusterLinkName = $clusterLinkName")
     val threadName = s"ReplicaFetcherThread-$fetcherId-${sourceBroker.id}-$clusterLinkName"
     val logContext = new LogContext(s"[ReplicaFetcher replicaId=${brokerConfig.brokerId}, leaderId=${sourceBroker.id}, " +
-      s"fetcherId=$fetcherId, readOnly=$readOnly, clusterLinkName=$clusterLinkName] ")
+      s"fetcherId=$fetcherId, clusterLinkName=$clusterLinkName] ")
 
-    val endpoint = if (readOnly && clusterLinkName.nonEmpty) {
+    val endpoint = if (clusterLinkName.nonEmpty) {
       val clusterLinkProperties = metadataCache.config(new ConfigResource(ConfigResource.Type.CLUSTER_LINK, clusterLinkName))
       info(s"!!! Using cluster link properties for $clusterLinkName: ${clusterLinkProperties.keySet()}")
       val clusterLinkConfigs = ClusterLinkConfigs.fromProperties(clusterLinkProperties)

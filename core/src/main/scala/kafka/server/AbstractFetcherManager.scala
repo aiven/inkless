@@ -73,7 +73,7 @@ abstract class AbstractFetcherManager[T <: AbstractFetcherThread](val name: Stri
         partitionStates.foreachEntry { (topicPartition, currentFetchState) =>
             val initialFetchState = InitialFetchState(currentFetchState.topicId.toScala, thread.leader.brokerEndPoint(),
               currentLeaderEpoch = currentFetchState.currentLeaderEpoch,
-              initOffset = currentFetchState.fetchOffset, readOnly = false, clusterLinkName = "")
+              initOffset = currentFetchState.fetchOffset, clusterLinkName = "")
             allRemovedPartitionsMap += topicPartition -> initialFetchState
         }
       }
@@ -128,7 +128,7 @@ abstract class AbstractFetcherManager[T <: AbstractFetcherThread](val name: Stri
   def addFetcherForPartitions(partitionAndOffsets: Map[TopicPartition, InitialFetchState]): Unit = {
     lock synchronized {
       val partitionsPerFetcher = partitionAndOffsets.groupBy { case (topicPartition, brokerAndInitialFetchOffset) =>
-        BrokerAndFetcherId(brokerAndInitialFetchOffset.leader, getFetcherId(topicPartition), brokerAndInitialFetchOffset.readOnly)
+        BrokerAndFetcherId(brokerAndInitialFetchOffset.leader, getFetcherId(topicPartition), brokerAndInitialFetchOffset.clusterLinkName.nonEmpty)
       }
 
       def addAndStartFetcherThread(brokerAndFetcherId: BrokerAndFetcherId,
@@ -265,6 +265,6 @@ class FailedPartitions {
 
 case class BrokerAndFetcherId(broker: BrokerEndPoint, fetcherId: Int, readOnly: Boolean = false)
 
-case class InitialFetchState(topicId: Option[Uuid], leader: BrokerEndPoint, currentLeaderEpoch: Int, initOffset: Long, readOnly: Boolean = false, clusterLinkName: String = "")
+case class InitialFetchState(topicId: Option[Uuid], leader: BrokerEndPoint, currentLeaderEpoch: Int, initOffset: Long, clusterLinkName: String = "")
 
 case class BrokerIdAndFetcherId(brokerId: Int, fetcherId: Int)
