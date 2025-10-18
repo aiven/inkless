@@ -217,7 +217,7 @@ class BrokerMetadataPublisher(
             s"coordinator with deleted partitions in $deltaName", t)
         }
         try {
-          // Notify the topic mirror link coordinator of local changes
+          // Notify the topic mirror link coordinator about changes to topics
           updateCoordinator(newImage,
             delta,
             Topic.CLUSTER_LINK_TOPIC_NAME,

@@ -123,17 +123,17 @@ abstract class AbstractFetcherManager[T <: AbstractFetcherThread](val name: Stri
   }
 
   // to be defined in subclass to create a specific fetcher
-  def createFetcherThread(fetcherId: Int, sourceBroker: BrokerEndPoint, readOnly: Boolean): T
+  def createFetcherThread(fetcherId: Int, sourceBroker: BrokerEndPoint): T
 
   def addFetcherForPartitions(partitionAndOffsets: Map[TopicPartition, InitialFetchState]): Unit = {
     lock synchronized {
       val partitionsPerFetcher = partitionAndOffsets.groupBy { case (topicPartition, brokerAndInitialFetchOffset) =>
-        BrokerAndFetcherId(brokerAndInitialFetchOffset.leader, getFetcherId(topicPartition), brokerAndInitialFetchOffset.clusterLinkName.nonEmpty)
+        BrokerAndFetcherId(brokerAndInitialFetchOffset.leader, getFetcherId(topicPartition))
       }
 
       def addAndStartFetcherThread(brokerAndFetcherId: BrokerAndFetcherId,
                                    brokerIdAndFetcherId: BrokerIdAndFetcherId): T = {
-        val fetcherThread = createFetcherThread(brokerAndFetcherId.fetcherId, brokerAndFetcherId.broker, brokerAndFetcherId.readOnly)
+        val fetcherThread = createFetcherThread(brokerAndFetcherId.fetcherId, brokerAndFetcherId.broker)
         fetcherThreadMap.put(brokerIdAndFetcherId, fetcherThread)
         fetcherThread.start()
         fetcherThread
@@ -263,7 +263,7 @@ class FailedPartitions {
   }
 }
 
-case class BrokerAndFetcherId(broker: BrokerEndPoint, fetcherId: Int, readOnly: Boolean = false)
+case class BrokerAndFetcherId(broker: BrokerEndPoint, fetcherId: Int)
 
 case class InitialFetchState(topicId: Option[Uuid], leader: BrokerEndPoint, currentLeaderEpoch: Int, initOffset: Long, clusterLinkName: String = "")
 
