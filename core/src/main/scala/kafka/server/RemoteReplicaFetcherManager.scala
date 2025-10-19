@@ -66,7 +66,7 @@ class RemoteReplicaFetcherManager(brokerConfig: KafkaConfig,
 
     this.synchronized {
       def addAndStartFetcherThread(remoteFetcherKey: BrokerAndFetcherIdWithClusterLink): ReplicaFetcherThread = {
-        val fetcherThread = createClusterLinkFetcherThread(remoteFetcherKey.fetcherId, remoteFetcherKey.broker,
+        val fetcherThread = createClusterLinkFetcherThread(remoteFetcherKey.fetcherId, remoteFetcherKey.sourceBroker,
           remoteFetcherKey.clusterLinkName)
         remoteFetcherThreadMap.put(remoteFetcherKey, fetcherThread)
         fetcherThread.start()
@@ -75,7 +75,7 @@ class RemoteReplicaFetcherManager(brokerConfig: KafkaConfig,
 
       for ((remoteFetcherKey, initialFetchOffsets) <- partitionsPerFetcher) {
         val fetcherThread = remoteFetcherThreadMap.get(remoteFetcherKey) match {
-          case Some(currentFetcherThread) if currentFetcherThread.leader.brokerEndPoint() == remoteFetcherKey.broker =>
+          case Some(currentFetcherThread) if currentFetcherThread.leader.brokerEndPoint() == remoteFetcherKey.sourceBroker =>
             // reuse the fetcher thread
             currentFetcherThread
           case Some(f) =>
@@ -157,4 +157,26 @@ class RemoteReplicaFetcherManager(brokerConfig: KafkaConfig,
   }
 }
 
-case class BrokerAndFetcherIdWithClusterLink(broker: BrokerEndPoint, fetcherId: Int, clusterLinkName: String)
+/**
+ * Three-dimensional key for grouping fetcher threads.
+ *
+ * Let's say you have:
+ * - 2 remote cluster links: cluster-A and cluster-B
+ * - 2 brokers per cluster: broker-1, broker-2
+ * - num.remote.replica.fetchers = 2
+ *
+ * The fetchers would be grouped like this:
+ *
+ * | Fetcher Thread                     | Cluster Link | Source Broker | Fetcher ID | Partitions           |
+ * |------------------------------------|--------------|---------------|------------|----------------------|
+ * | ReplicaFetcherThread-0-1-cluster-A | cluster-A    | broker-1      | 0          | topic1-p0, topic2-p2 |
+ * | ReplicaFetcherThread-1-1-cluster-A | cluster-A    | broker-1      | 1          | topic1-p1, topic2-p3 |
+ * | ReplicaFetcherThread-0-2-cluster-A | cluster-A    | broker-2      | 0          | topic3-p0, topic4-p2 |
+ * | ReplicaFetcherThread-0-1-cluster-B | cluster-B    | broker-1      | 0          | topic5-p0, topic6-p1 |
+ *
+ * The grouping ensures that:
+ * - Partitions from different cluster links never share fetcher threads
+ * - Load is balanced across the configured number of fetchers per broker
+ * - Each fetcher thread has its own authentication context and configuration
+ */
+case class BrokerAndFetcherIdWithClusterLink(sourceBroker: BrokerEndPoint, fetcherId: Int, clusterLinkName: String)
