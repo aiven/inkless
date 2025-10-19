@@ -91,6 +91,13 @@ public class ReplicationConfigs {
             "Increasing this value can increase the degree of I/O parallelism in the follower and leader broker at the cost " +
             "of higher CPU and memory utilization.";
 
+    public static final String NUM_REMOTE_REPLICA_FETCHERS_CONFIG = "num.remote.replica.fetchers";
+    public static final int NUM_REMOTE_REPLICA_FETCHERS_DEFAULT = 1;
+    public static final String NUM_REMOTE_REPLICA_FETCHERS_DOC = "Number of fetcher threads used to replicate records from remote clusters via cluster links. " +
+            "The total number of remote fetchers on each broker is bound by <code>num.remote.replica.fetchers</code> multiplied by the number of remote cluster links. " +
+            "Increasing this value can increase the degree of I/O parallelism for cluster link replication at the cost " +
+            "of higher CPU and memory utilization.";
+
     public static final String REPLICA_HIGH_WATERMARK_CHECKPOINT_INTERVAL_MS_CONFIG = "replica.high.watermark.checkpoint.interval.ms";
     public static final long REPLICA_HIGH_WATERMARK_CHECKPOINT_INTERVAL_MS_DEFAULT = 5000L;
     public static final String REPLICA_HIGH_WATERMARK_CHECKPOINT_INTERVAL_MS_DOC = "The frequency with which the high watermark is saved out to disk";
@@ -148,6 +155,7 @@ public class ReplicationConfigs {
             .define(REPLICA_FETCH_MIN_BYTES_CONFIG, INT, REPLICA_FETCH_MIN_BYTES_DEFAULT, HIGH, REPLICA_FETCH_MIN_BYTES_DOC)
             .define(REPLICA_FETCH_RESPONSE_MAX_BYTES_CONFIG, INT, REPLICA_FETCH_RESPONSE_MAX_BYTES_DEFAULT, atLeast(0), MEDIUM, REPLICA_FETCH_RESPONSE_MAX_BYTES_DOC)
             .define(NUM_REPLICA_FETCHERS_CONFIG, INT, NUM_REPLICA_FETCHERS_DEFAULT, HIGH, NUM_REPLICA_FETCHERS_DOC)
+            .define(NUM_REMOTE_REPLICA_FETCHERS_CONFIG, INT, NUM_REMOTE_REPLICA_FETCHERS_DEFAULT, HIGH, NUM_REMOTE_REPLICA_FETCHERS_DOC)
             .define(REPLICA_HIGH_WATERMARK_CHECKPOINT_INTERVAL_MS_CONFIG, LONG, REPLICA_HIGH_WATERMARK_CHECKPOINT_INTERVAL_MS_DEFAULT, HIGH, REPLICA_HIGH_WATERMARK_CHECKPOINT_INTERVAL_MS_DOC)
             .define(FETCH_PURGATORY_PURGE_INTERVAL_REQUESTS_CONFIG, INT, FETCH_PURGATORY_PURGE_INTERVAL_REQUESTS_DEFAULT, MEDIUM, FETCH_PURGATORY_PURGE_INTERVAL_REQUESTS_DOC)
             .define(PRODUCER_PURGATORY_PURGE_INTERVAL_REQUESTS_CONFIG, INT, PRODUCER_PURGATORY_PURGE_INTERVAL_REQUESTS_DEFAULT, MEDIUM, PRODUCER_PURGATORY_PURGE_INTERVAL_REQUESTS_DOC)

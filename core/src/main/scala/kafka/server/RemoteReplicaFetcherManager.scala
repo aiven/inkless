@@ -46,7 +46,7 @@ class RemoteReplicaFetcherManager(brokerConfig: KafkaConfig,
     extends AbstractFetcherManager[ReplicaFetcherThread](
       name = "RemoteReplicaFetcherManager on broker " + brokerConfig.brokerId,
       clientId = "RemoteReplica",
-      numFetchers = brokerConfig.numReplicaFetchers) { // TODO create a dedicated configuration
+      numFetchers = brokerConfig.numRemoteReplicaFetchers) {
   private val remoteFetcherThreadMap = new mutable.HashMap[BrokerAndFetcherIdWithClusterLink, ReplicaFetcherThread]
 
   override def createFetcherThread(fetcherId: Int, sourceBroker: BrokerEndPoint): ReplicaFetcherThread = {
