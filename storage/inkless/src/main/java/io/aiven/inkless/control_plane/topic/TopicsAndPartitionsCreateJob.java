@@ -20,7 +20,6 @@ package io.aiven.inkless.control_plane.topic;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
-import java.util.Arrays;
 import java.util.Objects;
 import java.util.Set;
 import java.util.function.Consumer;
@@ -32,8 +31,6 @@ import io.aiven.inkless.control_plane.postgres.JobUtils;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
-import static java.sql.Statement.EXECUTE_FAILED;
 
 class TopicsAndPartitionsCreateJob {
     private static final Logger LOGGER = LoggerFactory.getLogger(TopicsAndPartitionsCreateJob.class);
@@ -63,7 +60,6 @@ class TopicsAndPartitionsCreateJob {
     }
 
     private void runOnce(final Set<CreateTopicAndPartitionsRequest> requests) {
-        final int[] execResults;
         try {
             preparedStatement.clearParameters();
             for (final var request : requests) {
@@ -74,22 +70,11 @@ class TopicsAndPartitionsCreateJob {
                     preparedStatement.setInt(4, 0);
                     preparedStatement.setInt(5, 0);
                     preparedStatement.setInt(6, 0);
-                    preparedStatement.addBatch();
+                    preparedStatement.execute();
                 }
             }
-            execResults = preparedStatement.executeBatch();
         } catch (final SQLException e) {
             throw new RuntimeException(e);
-        }
-
-        // This is not expected to happen, but checking just in case.
-        final int maxInserts = requests.stream().mapToInt(CreateTopicAndPartitionsRequest::numPartitions).sum();
-        final int rowsInserted = Arrays.stream(execResults)
-            .filter(p -> p != EXECUTE_FAILED)
-            .sum();
-        if (rowsInserted < 0 || rowsInserted > maxInserts) {
-            throw new RuntimeException(
-                String.format("Unexpected number of inserted rows: expected max %d, got %d", maxInserts, rowsInserted));
         }
     }
 }
