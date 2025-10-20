@@ -94,13 +94,6 @@ Under ``inkless.``
   * Valid Values: [1,...]
   * Importance: low
 
-``consume.cache.persistence.enable``
-  Enable cache persistence to disk. If this is not set, the cache will not be persisted to disk. If this is set, the cache will be persisted to disk when it exceeds the maximum count limit.
-
-  * Type: boolean
-  * Default: false
-  * Importance: low
-
 ``fetch.data.thread.pool.size``
   Thread pool size to concurrently fetch data files from remote storage
 
