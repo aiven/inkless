@@ -97,6 +97,10 @@ public record CommitBatchRequest(
         return producerId > RecordBatch.NO_PRODUCER_ID;
     }
 
+    public boolean hasProducerEpoch() {
+        return producerEpoch > RecordBatch.NO_PRODUCER_EPOCH;
+    }
+
     public int offsetDelta() {
         return (int) (lastOffset - baseOffset);
     }

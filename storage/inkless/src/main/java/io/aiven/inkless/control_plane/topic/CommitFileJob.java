@@ -50,6 +50,11 @@ class CommitFileJob {
     private final Connection connection;
     private final GetLogInfoJob getLogInfoJob;
     private final PreparedStatement insertFilePreparedStatement;
+    private final PreparedStatement checkProducerEpochPreparedStatement;
+    private final PreparedStatement getLastSequenceInProducerEpochPreparedStatement;
+    private final PreparedStatement getProducerStatePreparedStatement;
+    private final PreparedStatement insertProducerStatePreparedStatement;
+    private final PreparedStatement keepOnly5ProducerStatesPreparedStatement;
     private final PreparedStatement insertBatchPreparedStatement;
     private final PreparedStatement updateHighWatermarkAndByteSizePreparedStatement;
 
@@ -64,6 +69,52 @@ class CommitFileJob {
             "INSERT OR ABORT INTO files (object_key, format, reason, state, uploader_broker_id, committed_at, size) " +
                 "VALUES (?, ?, ?, ?, ?, ?, ?) " +
                 "RETURNING file_id"
+        );
+        this.checkProducerEpochPreparedStatement = connection.prepareStatement(
+            "SELECT 1 " +
+                "FROM producer_state " +
+                "WHERE topic_id = ? " +
+                "  AND partition = ? " +
+                "  AND producer_id = ? " +
+                "  AND producer_epoch > ?"
+        );
+        this.getLastSequenceInProducerEpochPreparedStatement = connection.prepareStatement(
+            "SELECT MAX(last_sequence) AS last_sequence_in_producer_epoch " +
+                "FROM producer_state " +
+                "WHERE topic_id = ? " +
+                "  AND partition = ? " +
+                "  AND producer_id = ? " +
+                "  AND producer_epoch = ?"
+        );
+        this.getProducerStatePreparedStatement = connection.prepareStatement(
+            "SELECT assigned_offset, batch_max_timestamp " +
+                "FROM producer_state " +
+                "WHERE topic_id = ? " +
+                "  AND partition = ? " +
+                "  AND producer_id = ? " +
+                "  AND producer_epoch = ? " +
+                "  AND base_sequence = ? " +
+                "  AND last_sequence = ?"
+        );
+        this.insertProducerStatePreparedStatement = connection.prepareStatement(
+            "INSERT INTO producer_state (topic_id, partition, producer_id, producer_epoch, base_sequence, last_sequence, assigned_offset, batch_max_timestamp) " +
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+        );
+        this.keepOnly5ProducerStatesPreparedStatement = connection.prepareStatement(
+            "DELETE FROM producer_state " +
+                "WHERE topic_id = ? " +
+                "  AND partition = ? " +
+                "  AND producer_id = ? " +
+                "  AND row_id <= (" +
+                "    SELECT row_id " +
+                "    FROM producer_state " +
+                "    WHERE topic_id = ? " +
+                "      AND partition = ? " +
+                "      AND producer_id = ? " +
+                "    ORDER BY row_id DESC " +
+                "    LIMIT 1 " +
+                "    OFFSET 5" +
+                "  )"
         );
         this.insertBatchPreparedStatement = connection.prepareStatement(
             "INSERT INTO batches (magic, topic_id, partition, base_offset, last_offset, file_id, byte_offset, byte_size, timestamp_type, log_append_timestamp, batch_max_timestamp) " +
@@ -158,52 +209,80 @@ class CommitFileJob {
 
         final long firstOffset = logInfo.highWatermark();
 
-        // TODO support idempotence
         // Update the producer state
-        if (request.hasProducerId()) {
-//            final InMemoryControlPlane.LatestProducerState latestProducerState = producers
-//                .computeIfAbsent(topicIdPartition, k -> new TreeMap<>())
-//                .computeIfAbsent(request.producerId(), k -> InMemoryControlPlane.LatestProducerState.empty(request.producerEpoch()));
-//
-//            if (latestProducerState.epoch > request.producerEpoch()) {
-//                LOGGER.warn("Producer request with epoch {} is less than the latest epoch {}. Rejecting request",
-//                    request.producerEpoch(), latestProducerState.epoch);
-//                return CommitBatchResponse.invalidProducerEpoch();
-//            }
-//
-//            if (latestProducerState.lastEntries.isEmpty()) {
-//                if (request.baseSequence() != 0) {
-//                    LOGGER.warn("Producer request with base sequence {} is not 0. Rejecting request", request.baseSequence());
-//                    return CommitBatchResponse.sequenceOutOfOrder(request);
-//                }
-//            } else {
-//                final Optional<InMemoryControlPlane.ProducerStateItem> first = latestProducerState.lastEntries.stream()
-//                    .filter(e -> e.baseSequence() == request.baseSequence() && e.lastSequence() == request.lastSequence())
-//                    .findFirst();
-//                if (first.isPresent()) {
-//                    LOGGER.warn("Producer request with base sequence {} and last sequence {} is a duplicate. Rejecting request",
-//                        request.baseSequence(), request.lastSequence());
-//                    final InMemoryControlPlane.ProducerStateItem batchMetadata = first.get();
-//                    return CommitBatchResponse.ofDuplicate(batchMetadata.assignedOffset(), batchMetadata.batchMaxTimestamp(), logInfo.logStartOffset);
-//                }
-//
-//                final int lastSeq = latestProducerState.lastEntries.getLast().lastSequence();
-//                if (request.baseSequence() - 1 != lastSeq || (lastSeq == Integer.MAX_VALUE && request.baseSequence() != 0)) {
-//                    LOGGER.warn("Producer request with base sequence {} is not the next sequence after the last sequence {}. Rejecting request",
-//                        request.baseSequence(), lastSeq);
-//                    return CommitBatchResponse.sequenceOutOfOrder(request);
-//                }
-//            }
-//
-//            final InMemoryControlPlane.LatestProducerState current;
-//            if (latestProducerState.epoch < request.producerEpoch()) {
-//                current = InMemoryControlPlane.LatestProducerState.empty(request.producerEpoch());
-//            } else {
-//                current = latestProducerState;
-//            }
-//            current.addElement(request.baseSequence(), request.lastSequence(), firstOffset, request.batchMaxTimestamp());
-//
-//            producers.get(topicIdPartition).put(request.producerId(), current);
+        if (request.hasProducerId() && request.hasProducerEpoch()) {
+            // If there are previous batches for the producer, check that the producer epoch is not smaller than the last batch.
+            checkProducerEpochPreparedStatement.clearParameters();
+            checkProducerEpochPreparedStatement.setString(1, request.topicIdPartition().topicId().toString());
+            checkProducerEpochPreparedStatement.setInt(2, request.topicIdPartition().partition());
+            checkProducerEpochPreparedStatement.setLong(3, request.producerId());
+            checkProducerEpochPreparedStatement.setShort(4, request.producerEpoch());
+            try (final ResultSet resultSet = checkProducerEpochPreparedStatement.executeQuery()) {
+                if (resultSet.next()) {
+                    return CommitBatchResponse.invalidProducerEpoch();
+                }
+            }
+
+            getLastSequenceInProducerEpochPreparedStatement.clearParameters();
+            getLastSequenceInProducerEpochPreparedStatement.setString(1, request.topicIdPartition().topicId().toString());
+            getLastSequenceInProducerEpochPreparedStatement.setInt(2, request.topicIdPartition().partition());
+            getLastSequenceInProducerEpochPreparedStatement.setLong(3, request.producerId());
+            getLastSequenceInProducerEpochPreparedStatement.setShort(4, request.producerEpoch());
+            try (final ResultSet resultSet = getLastSequenceInProducerEpochPreparedStatement.executeQuery()) {
+                if (!resultSet.next()) {
+                    // If there are no previous batches for the producer, the base sequence must be 0.
+                    if (request.baseSequence() != 0) {
+                        LOGGER.warn("Producer request with base sequence {} is not 0. Rejecting request", request.baseSequence());
+                        return CommitBatchResponse.sequenceOutOfOrder(request);
+                    }
+                } else {
+                    final int lastSequenceInProducerEpoch = resultSet.getInt("last_sequence_in_producer_epoch");
+
+                    // Check for duplicates.
+                    getProducerStatePreparedStatement.clearParameters();
+                    getProducerStatePreparedStatement.setString(1, request.topicIdPartition().topicId().toString());
+                    getProducerStatePreparedStatement.setInt(2, request.topicIdPartition().partition());
+                    getProducerStatePreparedStatement.setLong(3, request.producerId());
+                    getProducerStatePreparedStatement.setShort(4, request.producerEpoch());
+                    getProducerStatePreparedStatement.setInt(5, request.baseSequence());
+                    getProducerStatePreparedStatement.setInt(6, request.lastSequence());
+                    try (final ResultSet resultSetProducerState = getProducerStatePreparedStatement.executeQuery()) {
+                        if (resultSetProducerState.next()) {
+                            final long assignedOffset = resultSetProducerState.getLong("assigned_offset");
+                            final long batchMaxTimestamp = resultSetProducerState.getLong("batch_max_timestamp");
+                            return CommitBatchResponse.ofDuplicate(assignedOffset, batchMaxTimestamp, logInfo.logStartOffset());
+                        }
+                    }
+
+                    // Check that the sequence is not out of order.
+                    // A sequence is out of order if the base sequence is not a continuation of the last sequence
+                    // or, in case of wraparound, the base sequence must be 0 and the last sequence must be 2147483647 (Integer.MAX_VALUE).
+                    if (request.baseSequence() - 1 != lastSequenceInProducerEpoch || (lastSequenceInProducerEpoch == Integer.MAX_VALUE && request.baseSequence() != 0)) {
+                        LOGGER.warn("Producer request with base sequence {} is not the next sequence after the last sequence {}. Rejecting request",
+                            request.baseSequence(), lastSequenceInProducerEpoch);
+                        return CommitBatchResponse.sequenceOutOfOrder(request);
+                    }
+                }
+
+                insertProducerStatePreparedStatement.clearParameters();
+                insertProducerStatePreparedStatement.setString(1, request.topicIdPartition().topicId().toString());
+                insertProducerStatePreparedStatement.setInt(2, request.topicIdPartition().partition());
+                insertProducerStatePreparedStatement.setLong(3, request.producerId());
+                insertProducerStatePreparedStatement.setShort(4, request.producerEpoch());
+                insertProducerStatePreparedStatement.setInt(5, request.baseSequence());
+                insertProducerStatePreparedStatement.setInt(6, request.lastSequence());
+                insertProducerStatePreparedStatement.setLong(7, firstOffset);
+                insertProducerStatePreparedStatement.setLong(8, request.batchMaxTimestamp());
+                insertProducerStatePreparedStatement.executeUpdate();
+
+                keepOnly5ProducerStatesPreparedStatement.clearParameters();
+                keepOnly5ProducerStatesPreparedStatement.setString(1, request.topicIdPartition().topicId().toString());
+                keepOnly5ProducerStatesPreparedStatement.setInt(2, request.topicIdPartition().partition());
+                keepOnly5ProducerStatesPreparedStatement.setLong(3, request.producerId());
+                keepOnly5ProducerStatesPreparedStatement.setString(4, request.topicIdPartition().topicId().toString());
+                keepOnly5ProducerStatesPreparedStatement.setInt(5, request.topicIdPartition().partition());
+                keepOnly5ProducerStatesPreparedStatement.setLong(6, request.producerId());
+            }
         }
 
         final long lastOffset = firstOffset + request.offsetDelta();

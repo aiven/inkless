@@ -10,7 +10,7 @@ CREATE TABLE IF NOT EXISTS logs (
     PRIMARY KEY(topic_id, partition)
 );
 
-CREATE TABLE files (
+CREATE TABLE IF NOT EXISTS files (
     file_id BIGSERIAL PRIMARY KEY,
     object_key TEXT UNIQUE NOT NULL,
     format TEXT NOT NULL,  -- TODO more compact
@@ -44,3 +44,15 @@ CREATE TABLE IF NOT EXISTS batches (
 CREATE INDEX batches_by_last_offset_idx ON batches (last_offset);
 CREATE INDEX batches_by_file ON batches (file_id);
 
+CREATE TABLE IF NOT EXISTS producer_state (
+    topic_id TEXT NOT NULL,  -- TODO more compact
+    partition INTEGER NOT NULL,
+    producer_id INTEGER NOT NULL,
+    row_id BIGSERIAL,
+    producer_epoch INTEGER NOT NULL,
+    base_sequence INTEGER NOT NULL,
+    last_sequence INTEGER NOT NULL,
+    assigned_offset INTEGER NOT NULL,
+    batch_max_timestamp INTEGER NOT NULL,
+    PRIMARY KEY (topic_id, partition, producer_id, row_id)
+);
