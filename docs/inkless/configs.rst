@@ -274,6 +274,110 @@ Under ``inkless.control.plane.``
 
 
 -----------------
+PostgresControlPlaneConfig - read overrides
+-----------------
+Under ``inkless.control.plane..read.``
+
+``connection.string``
+  PostgreSQL connection string
+
+  * Type: string
+  * Valid Values: non-empty string
+  * Importance: high
+
+``username``
+  Username
+
+  * Type: string
+  * Valid Values: non-empty string
+  * Importance: high
+
+``password``
+  Password
+
+  * Type: password
+  * Default: null
+  * Importance: high
+
+``file.merge.lock.period.ms``
+  The period of time when the file merge job is locked (assumed being performed).
+
+  * Type: long
+  * Default: 3600000 (1 hour)
+  * Valid Values: [1,...]
+  * Importance: medium
+
+``file.merge.size.threshold.bytes``
+  The total minimum volume of files to be merged together.
+
+  * Type: long
+  * Default: 104857600 (100 mebibytes)
+  * Valid Values: [1,...]
+  * Importance: medium
+
+``max.connections``
+  Maximum number of connections to the database
+
+  * Type: int
+  * Default: 10
+  * Valid Values: [1,...]
+  * Importance: medium
+
+
+
+-----------------
+PostgresControlPlaneConfig - write overrides
+-----------------
+Under ``inkless.control.plane..write.``
+
+``connection.string``
+  PostgreSQL connection string
+
+  * Type: string
+  * Valid Values: non-empty string
+  * Importance: high
+
+``username``
+  Username
+
+  * Type: string
+  * Valid Values: non-empty string
+  * Importance: high
+
+``password``
+  Password
+
+  * Type: password
+  * Default: null
+  * Importance: high
+
+``file.merge.lock.period.ms``
+  The period of time when the file merge job is locked (assumed being performed).
+
+  * Type: long
+  * Default: 3600000 (1 hour)
+  * Valid Values: [1,...]
+  * Importance: medium
+
+``file.merge.size.threshold.bytes``
+  The total minimum volume of files to be merged together.
+
+  * Type: long
+  * Default: 104857600 (100 mebibytes)
+  * Valid Values: [1,...]
+  * Importance: medium
+
+``max.connections``
+  Maximum number of connections to the database
+
+  * Type: int
+  * Default: 10
+  * Valid Values: [1,...]
+  * Importance: medium
+
+
+
+-----------------
 AzureBlobStorageConfig
 -----------------
 Under ``inkless.storage.``
