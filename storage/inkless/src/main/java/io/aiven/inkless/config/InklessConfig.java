@@ -83,11 +83,6 @@ public class InklessConfig extends AbstractConfig {
         "the least recently used objects will be persisted to disk and removed from memory.";
     private static final int CONSUME_CACHE_MAX_COUNT_DEFAULT = 1000;
 
-    public static final String CONSUME_CACHE_PERSISTENCE_ENABLE_CONFIG = CONSUME_PREFIX + "cache.persistence.enable";
-    private static final String CONSUME_CACHE_PERSISTENCE_ENABLE_DOC = "Enable cache persistence to disk. " +
-        "If this is not set, the cache will not be persisted to disk. " +
-        "If this is set, the cache will be persisted to disk when it exceeds the maximum count limit.";
-
     public static final String CONSUME_CACHE_EXPIRATION_LIFESPAN_SEC_CONFIG = CONSUME_PREFIX + "cache.expiration.lifespan.sec";
     private static final String CONSUME_CACHE_EXPIRATION_LIFESPAN_SEC_DOC = "The lifespan in seconds of a cache entry before it will be removed from all storages.";
     private static final int CONSUME_CACHE_EXPIRATION_LIFESPAN_SEC_DEFAULT = 60; // Defaults to 1 minute
@@ -278,13 +273,6 @@ public class InklessConfig extends AbstractConfig {
             CONSUME_CACHE_MAX_COUNT_DOC
         );
         configDef.define(
-            CONSUME_CACHE_PERSISTENCE_ENABLE_CONFIG,
-            ConfigDef.Type.BOOLEAN,
-            false,
-            ConfigDef.Importance.LOW,
-            CONSUME_CACHE_PERSISTENCE_ENABLE_DOC
-        );
-        configDef.define(
             CONSUME_CACHE_EXPIRATION_LIFESPAN_SEC_CONFIG,
             ConfigDef.Type.INT,
             CONSUME_CACHE_EXPIRATION_LIFESPAN_SEC_DEFAULT,
@@ -418,10 +406,6 @@ public class InklessConfig extends AbstractConfig {
 
     public Long cacheMaxCount() {
         return getLong(CONSUME_CACHE_MAX_COUNT_CONFIG);
-    }
-
-    public boolean isCachePersistenceEnabled() {
-        return getBoolean(CONSUME_CACHE_PERSISTENCE_ENABLE_CONFIG);
     }
 
     public int cacheExpirationLifespanSec() {
