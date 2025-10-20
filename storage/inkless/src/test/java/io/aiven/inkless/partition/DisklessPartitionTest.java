@@ -15,15 +15,24 @@
  * You should have received a copy of the GNU Affero General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
-package kafka.cluster;
+package io.aiven.inkless.partition;
 
 import java.nio.file.Path;
 import java.sql.SQLException;
+import java.util.List;
 
 import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.Uuid;
+import org.apache.kafka.common.message.DisklessCommitRequestData;
+import org.apache.kafka.common.record.RecordBatch;
+import org.apache.kafka.common.record.TimestampType;
+import org.apache.kafka.common.utils.MockTime;
+import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.storage.internals.log.UnifiedLog;
 
+import io.aiven.inkless.common.ObjectFormat;
+
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.api.io.TempDir;
@@ -38,14 +47,47 @@ import static org.mockito.Mockito.when;
 @MockitoSettings(strictness = Strictness.STRICT_STUBS)
 class DisklessPartitionTest {
     static final TopicIdPartition TIDP = new TopicIdPartition(new Uuid(100, 200), 0, "topic");
+    static final int BROKER_ID = 213;
 
     @Mock
     UnifiedLog log;
+
+    MockTime time;
+
+    @BeforeEach
+    void createMockTime() {
+        time = new MockTime();
+    }
 
     @Test
     void x(@TempDir final Path tmp) throws SQLException {
         when(log.dir()).thenReturn(tmp.toFile());
 
-        final DisklessPartition dp = new DisklessPartition(TIDP, log);
+        final DisklessPartition dp = new DisklessPartition(time, TIDP, BROKER_ID, log);
+
+        final var partitionData = new DisklessCommitRequestData.PartitionDisklessCommitData();
+        partitionData.setPartition(0);
+        partitionData.setBatches(List.of(
+            new DisklessCommitRequestData.BatchDisklessCommitData()
+                .setMagic(RecordBatch.CURRENT_MAGIC_VALUE)
+                .setByteOffset(0)
+                .setByteSize(123)
+                .setBaseOffset(0)
+                .setLastOffset(99)
+                .setTimestampType((short) TimestampType.CREATE_TIME.id)
+                .setBatchMaxTimestamp(999L)
+                .setProducerId(-1)
+                .setProducerEpoch((short) -1)
+                .setBaseSequence(-1)
+                .setLastSequence(-1)
+        ));
+
+        dp.commit(
+            "f1",
+            ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT,
+            19999,
+            partitionData
+        );
+        System.out.println(dp);
     }
 }

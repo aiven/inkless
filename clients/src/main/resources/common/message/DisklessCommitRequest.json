@@ -43,7 +43,7 @@
             "about": "" },
           { "name": "LastOffset", "type": "int64", "versions": "0+",
             "about": "" },
-          { "name": "TimestampType", "type": "int16", "versions": "0+",
+          { "name": "TimestampType", "type": "int32", "versions": "0+",
             "about": "The type of timestamp used in this batch." },
           { "name": "BatchMaxTimestamp", "type": "int64", "versions": "0+",
             "about": "The maximum timestamp in this batch." },

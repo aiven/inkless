@@ -132,6 +132,7 @@ versions += [
   slf4j: "1.7.36",
   snappy: "1.1.10.7",
   spotbugs: "4.8.6",
+  sqlite: "3.50.3.0",
   testcontainers: "1.20.3",
   zinc: "1.9.2",
   // When updating the zstd version, please do as well in docker/native/native-image-configs/resource-config.json
@@ -248,6 +249,7 @@ libs += [
   snappy: "org.xerial.snappy:snappy-java:$versions.snappy",
   spotbugs: "com.github.spotbugs:spotbugs-annotations:$versions.spotbugs",
   swaggerAnnotations: "io.swagger.core.v3:swagger-annotations:$swaggerVersion",
+  sqlite: "org.xerial:sqlite-jdbc:$versions.sqlite",
   testcontainers: "org.testcontainers:testcontainers:$versions.testcontainers",
   testcontainersJunitJupiter: "org.testcontainers:junit-jupiter:$versions.testcontainers",
   testcontainersLocalstack: "org.testcontainers:localstack:$versions.testcontainers",

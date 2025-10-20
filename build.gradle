@@ -2422,7 +2422,7 @@ project(':storage:inkless') {
     implementation project(':storage')
     implementation project(':metadata')
 
-    implementation 'org.xerial:sqlite-jdbc:3.50.3.0'
+    implementation libs.sqlite
 
     api libs.pitestAnnotations
 

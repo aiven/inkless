@@ -2050,38 +2050,4 @@ class Partition(val topicPartition: TopicPartition,
 //  }
 //
 //
-//  private def initDBIfNeeded(): Unit = {
-//    val dbUrl = "jdbc:sqlite:" + log.get.dir.toPath.resolve("state.db")
-//    this.dbConnection = Some(java.sql.DriverManager.getConnection(dbUrl))
-//
-//    Using(dbConnection.get.createStatement) { stmt =>
-//      stmt.execute(
-//        """
-//          |CREATE TABLE IF NOT EXISTS log (
-//          |  id INTEGER PRIMARY KEY,
-//          |  log_start_offset BIGINT NOT NULL,
-//          |  high_watermark BIGINT NOT NULL
-//          |)""".stripMargin
-//      )
-//
-//      stmt.execute(
-//        "INSERT OR IGNORE INTO log (id, log_start_offset, high_watermark) VALUES (0, 0, 0)"
-//      )
-//
-//      stmt.execute(
-//        "CREATE TABLE IF NOT EXISTS batches (" +
-//          "batch_id INTEGER PRIMARY KEY AUTOINCREMENT," +
-//          "magic INTEGER NOT NULL," +
-//          "base_offset BIGINT NOT NULL," +
-//          "last_offset BIGINT NOT NULL," +
-//          "object_name TEXT," +
-//          "byte_offset BIGINT NOT NULL," +
-//          "byte_size BIGINT NOT NULL," +
-//          "timestamp_type INTEGER NOT NULL," +
-//          "log_append_timestamp BIGINT," +
-//          "batch_max_timestamp BIGINT" +
-//          ")"
-//      )
-//    }
-//  }
 }

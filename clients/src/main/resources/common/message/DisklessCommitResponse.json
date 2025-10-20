@@ -31,7 +31,13 @@
         { "name": "ErrorCode", "type": "int16", "versions": "0+",
           "about": "The error code, or 0 if there was no error." },
         { "name": "ErrorMessage", "type": "string", "versions": "0+", "nullableVersions": "0+", "default": "null",
-          "about": "The error message, or null if there was no error." }
+          "about": "The error message, or null if there was no error." },
+        { "name": "BaseOffset", "type": "int64", "versions": "0+",
+          "about": "The base offset." },
+        { "name": "LogAppendTimeMs", "type": "int64", "versions": "2+", "default": "-1", "ignorable": true,
+          "about": "The timestamp returned by broker after appending the messages. If CreateTime is used for the topic, the timestamp will be -1.  If LogAppendTime is used for the topic, the timestamp will be the broker local time when the messages are appended." },
+        { "name": "LogStartOffset", "type": "int64", "versions": "5+", "default": "-1", "ignorable": true,
+          "about": "The log start offset." }
       ]}
     ]},
     { "name": "ThrottleTimeMs", "type": "int32", "versions": "0+", "default": "0",
