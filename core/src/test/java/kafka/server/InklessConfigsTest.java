@@ -35,8 +35,6 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInfo;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
@@ -69,8 +67,6 @@ public class InklessConfigsTest {
     protected static InklessPostgreSQLContainer pgContainer = PostgreSQLTestContainer.container();
     @Container
     protected static MinioContainer s3Container = S3TestContainer.minio();
-
-    private static final Logger log = LoggerFactory.getLogger(InklessConfigsTest.class);
 
     private KafkaClusterTestKit init(boolean defaultDisklessEnableConfig, boolean disklessStorageEnableConfig)  throws Exception  {
         final TestKitNodes nodes = new TestKitNodes.Builder()
