@@ -333,7 +333,8 @@ class AbstractFetcherManagerTest {
       failedPartitions,
       fetchTierStateMachine,
       fetchBackOffMs = 0,
-      brokerTopicStats = new BrokerTopicStats) {
+      brokerTopicStats = new BrokerTopicStats,
+      clusterLinkName = "") {
 
     override protected def processPartitionData(
       topicPartition: TopicPartition,

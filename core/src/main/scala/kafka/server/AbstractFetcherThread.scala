@@ -63,7 +63,8 @@ abstract class AbstractFetcherThread(name: String,
                                      val fetchTierStateMachine: TierStateMachine,
                                      fetchBackOffMs: Int = 0,
                                      isInterruptible: Boolean = true,
-                                     val brokerTopicStats: BrokerTopicStats) //BrokerTopicStats's lifecycle managed by ReplicaManager
+                                     val brokerTopicStats: BrokerTopicStats, // BrokerTopicStats's lifecycle managed by ReplicaManager
+                                     val clusterLinkName: String = "") // Cluster link name for remote replica fetching
   extends ShutdownableThread(name, isInterruptible) with Logging {
 
   this.logIdent = this.logPrefix
@@ -292,7 +293,7 @@ abstract class AbstractFetcherThread(name: String,
             if (leaderNode.isPresent && (!leaderNode.get().host.equals(leader.brokerEndPoint().host()) ||
               leaderNode.get().port != leader.brokerEndPoint().port)) {
                 val brokerEndpoint = new org.apache.kafka.server.network.BrokerEndPoint(leaderNode.get.id(), leaderNode.get.host, leaderNode.get.port)
-                newStates += topicPartition -> InitialFetchState(currentFetchState.topicId().toScala, brokerEndpoint, partitionData.currentLeader().leaderEpoch(), currentFetchState.fetchOffset())
+                newStates += topicPartition -> InitialFetchState(currentFetchState.topicId().toScala, brokerEndpoint, partitionData.currentLeader().leaderEpoch(), currentFetchState.fetchOffset(), clusterLinkName)
             }
           case _ =>
         }

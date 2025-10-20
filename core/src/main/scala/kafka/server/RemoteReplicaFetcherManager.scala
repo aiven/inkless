@@ -109,7 +109,7 @@ class RemoteReplicaFetcherManager(brokerConfig: KafkaConfig,
     val leader: LeaderEndPoint = new RemoteLeaderEndPoint(logContext.logPrefix, endpoint, fetchSessionHandler, brokerConfig,
       replicaManager, quotaManager, metadataVersionSupplier, brokerEpochSupplier)
     new ReplicaFetcherThread(threadName, leader, brokerConfig, failedPartitions, replicaManager,
-      quotaManager, logContext.logPrefix)
+      quotaManager, logContext.logPrefix, clusterLinkName)
   }
 
   override def removeFetcherForPartitions(partitions: scala.collection.Set[TopicPartition]): scala.collection.Map[TopicPartition, PartitionFetchState] = {

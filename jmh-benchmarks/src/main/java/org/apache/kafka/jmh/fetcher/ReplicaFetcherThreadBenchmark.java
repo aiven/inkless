@@ -296,7 +296,8 @@ public class ReplicaFetcherThreadBenchmark {
                     new FailedPartitions(),
                     replicaManager,
                     replicaQuota,
-                    String.format("[ReplicaFetcher replicaId=%d, leaderId=%d, fetcherId=%d", config.brokerId(), 3, 3)
+                    String.format("[ReplicaFetcher replicaId=%d, leaderId=%d, fetcherId=%d", config.brokerId(), 3, 3),
+                    ""
             );
 
             pool = partitions;
