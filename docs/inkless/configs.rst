@@ -1,5 +1,5 @@
 =================
-Inkless Configs
+Diskless Configs
 =================
 .. Generated from *Config.java classes by io.aiven.inkless.doc.ConfigsDocs
 
@@ -70,11 +70,58 @@ Under ``inkless.``
   * Default: 16777216 (16 mebibytes)
   * Importance: low
 
+``consume.cache.expiration.lifespan.sec``
+  The lifespan in seconds of a cache entry before it will be removed from all storages.
+
+  * Type: int
+  * Default: 60
+  * Valid Values: [10,...]
+  * Importance: low
+
+``consume.cache.expiration.max.idle.sec``
+  The maximum idle time in seconds before a cache entry will be removed from all storages. -1 means disabled, and entries will not be removed based on idle time.
+
+  * Type: int
+  * Default: -1
+  * Valid Values: [-1,...]
+  * Importance: low
+
 ``consume.cache.max.count``
-  The maximum number of objects to cache in memory.
+  The maximum number of objects to cache in memory. If the cache exceeds this limit, and the cache persistence is enabled, the least recently used objects will be persisted to disk and removed from memory.
 
   * Type: long
   * Default: 1000
+  * Valid Values: [1,...]
+  * Importance: low
+
+``consume.cache.persistence.enable``
+  Enable cache persistence to disk. If this is not set, the cache will not be persisted to disk. If this is set, the cache will be persisted to disk when it exceeds the maximum count limit.
+
+  * Type: boolean
+  * Default: false
+  * Importance: low
+
+``fetch.data.thread.pool.size``
+  Thread pool size to concurrently fetch data files from remote storage
+
+  * Type: int
+  * Default: 32
+  * Valid Values: [1,...]
+  * Importance: low
+
+``fetch.find.batches.max.per.partition``
+  The maximum number of batches to find per partition when processing a fetch request. A value of 0 means all available batches are fetched. This is primarily intended for environments where the batches fan-out on fetch requests can overload the control plane back-end.
+
+  * Type: int
+  * Default: 0
+  * Valid Values: [0,...]
+  * Importance: low
+
+``fetch.metadata.thread.pool.size``
+  Thread pool size to concurrently fetch metadata from batch coordinator
+
+  * Type: int
+  * Default: 8
   * Valid Values: [1,...]
   * Importance: low
 
@@ -131,6 +178,14 @@ Under ``inkless.``
   * Type: int
   * Default: 300000 (5 minutes)
   * Valid Values: [1,...]
+  * Importance: low
+
+``retention.enforcement.max.batches.per.request``
+  The maximum number of batches to delete per partition when enforcing retention. A value of 0 means all eligible batches are deleted in one request. Setting this to a lower value can help to reduce the load on the control plane back-end.
+
+  * Type: int
+  * Default: 0
+  * Valid Values: [0,...]
   * Importance: low
 
 
@@ -350,8 +405,23 @@ Under ``inkless.storage.``
   * Default: false
   * Importance: medium
 
+``aws.credentials.file``
+  This property is used to define a file where credentials are defined. The file must contain AWS credentials in the format as those would be in the properties file: inkless.storage.aws.access.key.id=, inkless.storage.aws.secret.access.key=, and inkless.storage.aws.session.token=.The file might be updated during process life cycle, and the credentials will be reloaded from the file.
+
+  * Type: string
+  * Default: null
+  * Importance: medium
+
 ``aws.secret.access.key``
   AWS secret access key. To be used when static credentials are provided.
+
+  * Type: password
+  * Default: null
+  * Valid Values: Non-empty password text
+  * Importance: medium
+
+``aws.session.token``
+  The AWS session token. Retrieved from an AWS token service, used for authenticating that this user has received temporary permission to access some resource.
 
   * Type: password
   * Default: null
