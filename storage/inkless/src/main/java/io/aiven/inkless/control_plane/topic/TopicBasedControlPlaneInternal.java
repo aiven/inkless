@@ -69,6 +69,7 @@ public class TopicBasedControlPlaneInternal extends AbstractControlPlane {
     private Connection dbConnection;
     private TopicsAndPartitionsCreateJob topicsAndPartitionsCreateJob;
     private CommitFileJob commitFileJob;
+    private FindBatchesJob findBatchesJob;
     private GetLogInfoJob getLogInfoJob;
 
     public TopicBasedControlPlaneInternal(final Time time,
@@ -99,6 +100,7 @@ public class TopicBasedControlPlaneInternal extends AbstractControlPlane {
             this.topicsAndPartitionsCreateJob = new TopicsAndPartitionsCreateJob(time, dbConnection);
             this.getLogInfoJob = new GetLogInfoJob(time, dbConnection);
             this.commitFileJob = new CommitFileJob(time, dbConnection, this.getLogInfoJob);
+            this.findBatchesJob = new FindBatchesJob(time, dbConnection, this.getLogInfoJob);
         } catch (final SQLException e) {
             throw new RuntimeException(e);
         } finally {
@@ -146,7 +148,9 @@ public class TopicBasedControlPlaneInternal extends AbstractControlPlane {
     ) {
         lock.readLock().lock();
         try {
-            return null;
+            return findBatchesJob.call(requests.toList(), fetchMaxBytes, maxBatchesPerPartition,
+                d -> {}  // TODO duration
+                ).iterator();
         } finally {
             lock.readLock().unlock();
         }

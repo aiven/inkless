@@ -21,6 +21,7 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.function.Consumer;
@@ -31,6 +32,7 @@ import org.apache.kafka.common.utils.Time;
 import io.aiven.inkless.common.ObjectFormat;
 import io.aiven.inkless.control_plane.CommitBatchRequest;
 import io.aiven.inkless.control_plane.CommitBatchResponse;
+import io.aiven.inkless.control_plane.ControlPlaneException;
 import io.aiven.inkless.control_plane.FileReason;
 import io.aiven.inkless.control_plane.FileState;
 import io.aiven.inkless.control_plane.GetLogInfoRequest;
@@ -39,6 +41,7 @@ import io.aiven.inkless.control_plane.postgres.JobUtils;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.sqlite.SQLiteErrorCode;
 
 class CommitFileJob {
     private static final Logger LOGGER = LoggerFactory.getLogger(CommitFileJob.class);
@@ -78,6 +81,11 @@ class CommitFileJob {
                                           final long fileSize,
                                           final List<CommitBatchRequest> requests,
                                           final Consumer<Long> durationCallback) {
+        Objects.requireNonNull(objectKey, "objectKey cannot be null");
+        Objects.requireNonNull(format, "format cannot be null");
+        Objects.requireNonNull(requests, "requests cannot be null");
+        Objects.requireNonNull(durationCallback, "durationCallback cannot be null");
+
         if (requests.isEmpty()) {
             return List.of();
         }
@@ -90,7 +98,7 @@ class CommitFileJob {
                                               final long fileSize,
                                               final List<CommitBatchRequest> requests) {
         final long now = time.milliseconds();
-        final List<CommitBatchResponse> responses;
+        final List<CommitBatchResponse> responses = new ArrayList<>();
 
         try {
             this.insertFilePreparedStatement.clearParameters();
@@ -108,11 +116,29 @@ class CommitFileJob {
                     throw new IllegalStateException();
                 }
                 fileId = resultSet.getInt(1);
+            } catch (final org.sqlite.SQLiteException sqlEx) {
+                if (sqlEx.getResultCode() == SQLiteErrorCode.SQLITE_CONSTRAINT_UNIQUE) {
+                    throw new ControlPlaneException("Error committing file");
+                } else {
+                    throw sqlEx;
+                }
             }
-            responses = requests.stream().map(request -> commitFileForValidRequest(now, fileId, request)).toList();
+
+            for (final CommitBatchRequest request : requests) {
+                responses.add(commitFileForValidRequest(now, fileId, request));
+            }
             connection.commit();
-        } catch (final SQLException e) {
-            throw new RuntimeException(e);
+        } catch (final Exception e) {
+            try {
+                connection.rollback();
+            } catch (final SQLException sqlEx) {
+                LOGGER.error("Error rolling back", sqlEx);
+            }
+            if (e instanceof ControlPlaneException) {
+                throw (ControlPlaneException) e;
+            } else {
+                throw new RuntimeException(e);
+            }
         }
 
         return responses;
@@ -123,7 +149,7 @@ class CommitFileJob {
         final long now,
         final int fileId,
         final CommitBatchRequest request
-    ) {
+    ) throws SQLException {
         final GetLogInfoResponse logInfo = getLogInfoJob.call(
             List.of(new GetLogInfoRequest(request.topicIdPartition().topicId(), request.topicIdPartition().partition())), d -> {}).get(0);
         if (logInfo.errors() == Errors.UNKNOWN_TOPIC_OR_PARTITION) {
@@ -132,80 +158,82 @@ class CommitFileJob {
 
         final long firstOffset = logInfo.highWatermark();
 
-        try {
-            // TODO support idempotence
-            // Update the producer state
-            if (request.hasProducerId()) {
-    //            final InMemoryControlPlane.LatestProducerState latestProducerState = producers
-    //                .computeIfAbsent(topicIdPartition, k -> new TreeMap<>())
-    //                .computeIfAbsent(request.producerId(), k -> InMemoryControlPlane.LatestProducerState.empty(request.producerEpoch()));
-    //
-    //            if (latestProducerState.epoch > request.producerEpoch()) {
-    //                LOGGER.warn("Producer request with epoch {} is less than the latest epoch {}. Rejecting request",
-    //                    request.producerEpoch(), latestProducerState.epoch);
-    //                return CommitBatchResponse.invalidProducerEpoch();
-    //            }
-    //
-    //            if (latestProducerState.lastEntries.isEmpty()) {
-    //                if (request.baseSequence() != 0) {
-    //                    LOGGER.warn("Producer request with base sequence {} is not 0. Rejecting request", request.baseSequence());
-    //                    return CommitBatchResponse.sequenceOutOfOrder(request);
-    //                }
-    //            } else {
-    //                final Optional<InMemoryControlPlane.ProducerStateItem> first = latestProducerState.lastEntries.stream()
-    //                    .filter(e -> e.baseSequence() == request.baseSequence() && e.lastSequence() == request.lastSequence())
-    //                    .findFirst();
-    //                if (first.isPresent()) {
-    //                    LOGGER.warn("Producer request with base sequence {} and last sequence {} is a duplicate. Rejecting request",
-    //                        request.baseSequence(), request.lastSequence());
-    //                    final InMemoryControlPlane.ProducerStateItem batchMetadata = first.get();
-    //                    return CommitBatchResponse.ofDuplicate(batchMetadata.assignedOffset(), batchMetadata.batchMaxTimestamp(), logInfo.logStartOffset);
-    //                }
-    //
-    //                final int lastSeq = latestProducerState.lastEntries.getLast().lastSequence();
-    //                if (request.baseSequence() - 1 != lastSeq || (lastSeq == Integer.MAX_VALUE && request.baseSequence() != 0)) {
-    //                    LOGGER.warn("Producer request with base sequence {} is not the next sequence after the last sequence {}. Rejecting request",
-    //                        request.baseSequence(), lastSeq);
-    //                    return CommitBatchResponse.sequenceOutOfOrder(request);
-    //                }
-    //            }
-    //
-    //            final InMemoryControlPlane.LatestProducerState current;
-    //            if (latestProducerState.epoch < request.producerEpoch()) {
-    //                current = InMemoryControlPlane.LatestProducerState.empty(request.producerEpoch());
-    //            } else {
-    //                current = latestProducerState;
-    //            }
-    //            current.addElement(request.baseSequence(), request.lastSequence(), firstOffset, request.batchMaxTimestamp());
-    //
-    //            producers.get(topicIdPartition).put(request.producerId(), current);
-            }
-
-            final long lastOffset = firstOffset + request.offsetDelta();
-            updateHighWatermarkAndByteSizePreparedStatement.clearParameters();
-            updateHighWatermarkAndByteSizePreparedStatement.setLong(1, lastOffset + 1);  // high watermark
-            updateHighWatermarkAndByteSizePreparedStatement.setInt(2, request.size());  // byte size
-            updateHighWatermarkAndByteSizePreparedStatement.setString(3, request.topicIdPartition().topicId().toString());
-            updateHighWatermarkAndByteSizePreparedStatement.setInt(4, request.topicIdPartition().partition());
-            updateHighWatermarkAndByteSizePreparedStatement.execute();
-
-            insertBatchPreparedStatement.clearParameters();
-            insertBatchPreparedStatement.setByte(1, request.magic());
-            insertBatchPreparedStatement.setString(2, request.topicIdPartition().topicId().toString());
-            insertBatchPreparedStatement.setInt(3, request.topicIdPartition().partition());
-            insertBatchPreparedStatement.setLong(4, firstOffset);
-            insertBatchPreparedStatement.setLong(5, lastOffset);
-            insertBatchPreparedStatement.setInt(6, fileId);
-            insertBatchPreparedStatement.setInt(7, request.byteOffset());
-            insertBatchPreparedStatement.setInt(8, request.size());
-            insertBatchPreparedStatement.setInt(9, request.messageTimestampType().id);
-            insertBatchPreparedStatement.setLong(10, now);
-            insertBatchPreparedStatement.setLong(11, request.batchMaxTimestamp());
-            insertBatchPreparedStatement.execute();
-
-            return CommitBatchResponse.success(firstOffset, now, logInfo.logStartOffset(), request);
-        } catch (final SQLException e) {
-            throw new RuntimeException();
+        // TODO support idempotence
+        // Update the producer state
+        if (request.hasProducerId()) {
+//            final InMemoryControlPlane.LatestProducerState latestProducerState = producers
+//                .computeIfAbsent(topicIdPartition, k -> new TreeMap<>())
+//                .computeIfAbsent(request.producerId(), k -> InMemoryControlPlane.LatestProducerState.empty(request.producerEpoch()));
+//
+//            if (latestProducerState.epoch > request.producerEpoch()) {
+//                LOGGER.warn("Producer request with epoch {} is less than the latest epoch {}. Rejecting request",
+//                    request.producerEpoch(), latestProducerState.epoch);
+//                return CommitBatchResponse.invalidProducerEpoch();
+//            }
+//
+//            if (latestProducerState.lastEntries.isEmpty()) {
+//                if (request.baseSequence() != 0) {
+//                    LOGGER.warn("Producer request with base sequence {} is not 0. Rejecting request", request.baseSequence());
+//                    return CommitBatchResponse.sequenceOutOfOrder(request);
+//                }
+//            } else {
+//                final Optional<InMemoryControlPlane.ProducerStateItem> first = latestProducerState.lastEntries.stream()
+//                    .filter(e -> e.baseSequence() == request.baseSequence() && e.lastSequence() == request.lastSequence())
+//                    .findFirst();
+//                if (first.isPresent()) {
+//                    LOGGER.warn("Producer request with base sequence {} and last sequence {} is a duplicate. Rejecting request",
+//                        request.baseSequence(), request.lastSequence());
+//                    final InMemoryControlPlane.ProducerStateItem batchMetadata = first.get();
+//                    return CommitBatchResponse.ofDuplicate(batchMetadata.assignedOffset(), batchMetadata.batchMaxTimestamp(), logInfo.logStartOffset);
+//                }
+//
+//                final int lastSeq = latestProducerState.lastEntries.getLast().lastSequence();
+//                if (request.baseSequence() - 1 != lastSeq || (lastSeq == Integer.MAX_VALUE && request.baseSequence() != 0)) {
+//                    LOGGER.warn("Producer request with base sequence {} is not the next sequence after the last sequence {}. Rejecting request",
+//                        request.baseSequence(), lastSeq);
+//                    return CommitBatchResponse.sequenceOutOfOrder(request);
+//                }
+//            }
+//
+//            final InMemoryControlPlane.LatestProducerState current;
+//            if (latestProducerState.epoch < request.producerEpoch()) {
+//                current = InMemoryControlPlane.LatestProducerState.empty(request.producerEpoch());
+//            } else {
+//                current = latestProducerState;
+//            }
+//            current.addElement(request.baseSequence(), request.lastSequence(), firstOffset, request.batchMaxTimestamp());
+//
+//            producers.get(topicIdPartition).put(request.producerId(), current);
         }
+
+        final long lastOffset = firstOffset + request.offsetDelta();
+        updateHighWatermarkAndByteSizePreparedStatement.clearParameters();
+        updateHighWatermarkAndByteSizePreparedStatement.setLong(1, lastOffset + 1);  // high watermark
+        updateHighWatermarkAndByteSizePreparedStatement.setInt(2, request.size());  // byte size
+        updateHighWatermarkAndByteSizePreparedStatement.setString(3, request.topicIdPartition().topicId().toString());
+        updateHighWatermarkAndByteSizePreparedStatement.setInt(4, request.topicIdPartition().partition());
+        updateHighWatermarkAndByteSizePreparedStatement.executeUpdate();
+
+        insertBatchPreparedStatement.clearParameters();
+        insertBatchPreparedStatement.setByte(1, request.magic());
+        insertBatchPreparedStatement.setString(2, request.topicIdPartition().topicId().toString());
+        insertBatchPreparedStatement.setInt(3, request.topicIdPartition().partition());
+        insertBatchPreparedStatement.setLong(4, firstOffset);
+        insertBatchPreparedStatement.setLong(5, lastOffset);
+        insertBatchPreparedStatement.setInt(6, fileId);
+        insertBatchPreparedStatement.setInt(7, request.byteOffset());
+        insertBatchPreparedStatement.setInt(8, request.size());
+        insertBatchPreparedStatement.setInt(9, request.messageTimestampType().id);
+        insertBatchPreparedStatement.setLong(10, now);
+        insertBatchPreparedStatement.setLong(11, request.batchMaxTimestamp());
+        try (final ResultSet resultSet = insertBatchPreparedStatement.executeQuery()) {
+            if (!resultSet.next()) {
+                throw new RuntimeException();
+            }
+            final long batchId = resultSet.getLong("batch_id");
+            System.out.println(batchId);  // use
+        }
+
+        return CommitBatchResponse.success(firstOffset, now, logInfo.logStartOffset(), request);
     }
 }

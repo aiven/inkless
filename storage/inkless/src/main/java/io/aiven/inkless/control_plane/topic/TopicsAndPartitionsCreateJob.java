@@ -45,7 +45,7 @@ class TopicsAndPartitionsCreateJob {
         this.connection = Objects.requireNonNull(connection, "connection cannot be null");
 
         this.preparedStatement = connection.prepareStatement(
-            "INSERT INTO logs (topic_id, partition, topic_name, log_start_offset, high_watermark, byte_size) " +
+            "INSERT OR IGNORE INTO logs (topic_id, partition, topic_name, log_start_offset, high_watermark, byte_size) " +
                 "VALUES (?, ?, ?, ?, ?, ?)"
         );
     }
@@ -73,7 +73,12 @@ class TopicsAndPartitionsCreateJob {
                     preparedStatement.execute();
                 }
             }
-        } catch (final SQLException e) {
+        } catch (final Exception e) {
+            try {
+                connection.rollback();
+            } catch (final SQLException sqlEx) {
+                LOGGER.error("Error rolling back", sqlEx);
+            }
             throw new RuntimeException(e);
         }
     }
