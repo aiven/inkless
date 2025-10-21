@@ -230,6 +230,10 @@ class CommitFileJob {
             getLastSequenceInProducerEpochPreparedStatement.setShort(4, request.producerEpoch());
             try (final ResultSet resultSet = getLastSequenceInProducerEpochPreparedStatement.executeQuery()) {
                 if (!resultSet.next()) {
+                    throw new RuntimeException();
+                }
+
+                if (resultSet.getObject("last_sequence_in_producer_epoch") == null) {
                     // If there are no previous batches for the producer, the base sequence must be 0.
                     if (request.baseSequence() != 0) {
                         LOGGER.warn("Producer request with base sequence {} is not 0. Rejecting request", request.baseSequence());

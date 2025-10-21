@@ -48,7 +48,7 @@ CREATE TABLE IF NOT EXISTS producer_state (
     topic_id TEXT NOT NULL,  -- TODO more compact
     partition INTEGER NOT NULL,
     producer_id INTEGER NOT NULL,
-    row_id INTEGER NOT NULL,
+    row_id INTEGER PRIMARY KEY AUTOINCREMENT,
     producer_epoch INTEGER NOT NULL,
     base_sequence INTEGER NOT NULL,
     last_sequence INTEGER NOT NULL,
