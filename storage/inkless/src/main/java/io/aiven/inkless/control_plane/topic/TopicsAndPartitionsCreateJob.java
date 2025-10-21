@@ -23,14 +23,12 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import java.util.Objects;
-import java.util.Set;
 import java.util.function.Consumer;
 
 import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.common.utils.Utils;
 
-import io.aiven.inkless.control_plane.CreateTopicAndPartitionsRequest;
-import io.aiven.inkless.control_plane.postgres.JobUtils;
+import io.aiven.inkless.generated.CoordinatorCreateTopicAndPartitionsEvent;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -53,20 +51,17 @@ class TopicsAndPartitionsCreateJob implements Closeable {
         );
     }
 
-    public void run(final Set<CreateTopicAndPartitionsRequest> requests, final Consumer<Long> durationCallback) {
-        Objects.requireNonNull(requests, "requests cannot be null");
+    CoordinatorCreateTopicAndPartitionsEventReplayResult replay(
+        final CoordinatorCreateTopicAndPartitionsEvent event,
+        final Consumer<Long> durationCallback
+    ) {
+        Objects.requireNonNull(event, "event cannot be null");
         Objects.requireNonNull(durationCallback, "durationCallback cannot be null");
-        if (requests.isEmpty()) {
-            return;
-        }
-        JobUtils.run(() -> this.runOnce(requests), time, durationCallback);
-    }
 
-    private void runOnce(final Set<CreateTopicAndPartitionsRequest> requests) {
         try {
-            preparedStatement.clearParameters();
-            for (final var request : requests) {
-                for (int partition = 0; partition < request.numPartitions(); partition++) {
+            for (final var request : event.requests()) {
+                preparedStatement.clearParameters();
+                for (int partition = 0; partition < request.partitionNumber(); partition++) {
                     preparedStatement.setString(1, request.topicId().toString());
                     preparedStatement.setInt(2, partition);
                     preparedStatement.setString(3, request.topicName());
@@ -76,6 +71,7 @@ class TopicsAndPartitionsCreateJob implements Closeable {
                     preparedStatement.execute();
                 }
             }
+            return new CoordinatorCreateTopicAndPartitionsEventReplayResult();
         } catch (final Exception e) {
             try {
                 connection.rollback();

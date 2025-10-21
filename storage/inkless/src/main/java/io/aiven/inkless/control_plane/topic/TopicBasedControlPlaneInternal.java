@@ -18,21 +18,23 @@
 package io.aiven.inkless.control_plane.topic;
 
 import java.io.IOException;
-import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.SQLException;
+import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.locks.ReentrantLock;
-import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.stream.Stream;
 
 import org.apache.kafka.common.Uuid;
+import org.apache.kafka.common.protocol.ApiMessage;
+import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.common.utils.Utils;
+import org.apache.kafka.server.common.ApiMessageAndVersion;
 
 import io.aiven.inkless.common.ObjectFormat;
 import io.aiven.inkless.control_plane.AbstractControlPlane;
@@ -53,6 +55,9 @@ import io.aiven.inkless.control_plane.GetLogInfoResponse;
 import io.aiven.inkless.control_plane.ListOffsetsRequest;
 import io.aiven.inkless.control_plane.ListOffsetsResponse;
 import io.aiven.inkless.control_plane.MergedFileBatch;
+import io.aiven.inkless.generated.CoordinatorCommitEvent;
+import io.aiven.inkless.generated.CoordinatorCreateTopicAndPartitionsEvent;
+import io.aiven.inkless.generated.MetadataRecordType;
 
 import org.flywaydb.core.Flyway;
 import org.slf4j.Logger;
@@ -128,12 +133,21 @@ public class TopicBasedControlPlaneInternal extends AbstractControlPlane {
 
     @Override
     public void createTopicAndPartitions(final Set<CreateTopicAndPartitionsRequest> requests) {
-        lock.lock();
-        try {
-            this.topicsAndPartitionsCreateJob.run(requests, d -> {});  // TODO duration
-        } finally {
-            lock.unlock();
+        final CoordinatorCreateTopicAndPartitionsEvent event = new CoordinatorCreateTopicAndPartitionsEvent()
+            .setRequests(requests.stream().map(r ->
+                new CoordinatorCreateTopicAndPartitionsEvent.Request()
+                    .setTopicId(r.topicId())
+                    .setPartitionNumber(r.numPartitions())
+                    .setTopicName(r.topicName())
+            ).toList());
+        recordWriter.writeAndReplicate(List.of(
+            new ApiMessageAndVersion(event, (short) 0)
+        ));
+        final ReplayResult replayResult = replay(event);
+        if (!(replayResult instanceof CoordinatorCreateTopicAndPartitionsEventReplayResult)) {
+            throw new RuntimeException();
         }
+        // do nothing
     }
 
     @Override
@@ -144,13 +158,90 @@ public class TopicBasedControlPlaneInternal extends AbstractControlPlane {
         final long fileSize,
         final Stream<CommitBatchRequest> requests
     ) {
-        lock.lock();
-        try {
-            return this.commitFileJob.call(objectKey, format, uploaderBrokerId, fileSize, requests.toList(),
-                d -> {}  // TODO duration
-                ).iterator();
-        } finally {
-            lock.unlock();
+        final List<CommitBatchRequest> requestList = requests.toList();
+
+        final CoordinatorCommitEvent event = new CoordinatorCommitEvent()
+            .setObjectKey(objectKey)
+            .setFormat(format.name())
+            .setUploaderBrokerId(uploaderBrokerId)
+            .setFileSize(fileSize)
+            .setRequests(
+                requestList.stream().map(r ->
+                    new CoordinatorCommitEvent.Request()
+                        .setMagic(r.magic())
+                        .setTopicId(r.topicIdPartition().topicId())
+                        .setPartition(r.topicIdPartition().partition())
+                        .setByteOffset(r.byteOffset())
+                        .setSize(r.size())
+                        .setBaseOffset(r.baseOffset())
+                        .setLastOffset(r.lastOffset())
+                        .setBatchMaxTimestamp(r.batchMaxTimestamp())
+                        .setTimestampType(r.messageTimestampType().id)
+                        .setProducerId(r.producerId())
+                        .setProducerEpoch(r.producerEpoch())
+                        .setBaseSequence(r.baseSequence())
+                        .setLastSequence(r.lastSequence())
+                ).toList()
+            );
+        recordWriter.writeAndReplicate(List.of(
+            new ApiMessageAndVersion(event, (short) 0)
+        ));
+
+        final ReplayResult replayResult = replay(event);
+        if (!(replayResult instanceof CoordinatorCommitRequestReplayResult)) {
+            throw new RuntimeException();
+        }
+
+        // This adding of requests into CommitBatchResponse is ugly and needs refactoring.
+        final List<CommitBatchResponse> result = new ArrayList<>();
+        final var typedReplayResult = ((CoordinatorCommitRequestReplayResult) replayResult);
+        for (int i = 0; i < typedReplayResult.responses().size(); i++) {
+            final CommitBatchResponse commitBatchResponse = typedReplayResult.responses().get(i);
+
+            final boolean shouldHaveRequest =
+                (commitBatchResponse.errors() == Errors.NONE && !commitBatchResponse.isDuplicate())
+                || (commitBatchResponse.errors() == Errors.OUT_OF_ORDER_SEQUENCE_NUMBER);
+            result.add(
+                new CommitBatchResponse(
+                    commitBatchResponse.errors(),
+                    commitBatchResponse.assignedBaseOffset(),
+                    commitBatchResponse.logAppendTime(),
+                    commitBatchResponse.logStartOffset(),
+                    commitBatchResponse.isDuplicate(),
+                    shouldHaveRequest ? requestList.get(i) : null
+                )
+            );
+        }
+        return result.iterator();
+    }
+
+    private ReplayResult replay(final ApiMessage message) {
+        final MetadataRecordType type = MetadataRecordType.fromId(message.apiKey());
+        switch (type) {
+            case COORDINATOR_CREATE_TOPIC_AND_PARTITIONS_EVENT:
+                lock.lock();
+                try {
+                    return this.topicsAndPartitionsCreateJob.replay(
+                        (CoordinatorCreateTopicAndPartitionsEvent) message,
+                        d -> {}  // TODO duration
+                    );
+                } finally {
+                    lock.unlock();
+                }
+
+            case COORDINATOR_COMMIT_EVENT:
+                lock.lock();
+                try {
+                    return this.commitFileJob.replay(
+                        (CoordinatorCommitEvent) message,
+                        d -> {}  // TODO duration
+                    );
+                } finally {
+                    lock.unlock();
+                }
+
+            default:
+                throw new RuntimeException("Unhandled record type " + type);
         }
     }
 

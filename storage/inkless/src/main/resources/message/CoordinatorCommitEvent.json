@@ -1,0 +1,45 @@
+/*
+ * Inkless
+ * Copyright (C) 2024 - 2025 Aiven OY
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
+{
+  "apiKey": 4,
+  "name": "CoordinatorCommitEvent",
+  "type": "metadata",
+  "validVersions": "0",
+  "flexibleVersions": "0+",
+  "fields": [
+    { "name": "ObjectKey", "type": "string", "versions": "0+" },
+    { "name": "Format", "type": "string", "versions": "0+" },
+    { "name": "UploaderBrokerId", "type": "int32", "versions": "0+" },
+    { "name": "FileSize", "type": "int64", "versions": "0+" },
+    { "name": "Requests", "type": "[]Request", "versions": "0+", "fields": [
+      { "name": "Magic", "type": "int8", "versions": "0+" },
+      { "name": "TopicId", "type": "uuid", "versions": "0+" },
+      { "name": "Partition", "type": "int32", "versions": "0+" },
+      { "name": "ByteOffset", "type": "int32", "versions": "0+" },
+      { "name": "Size", "type": "int32", "versions": "0+" },
+      { "name": "BaseOffset", "type": "int64", "versions": "0+" },
+      { "name": "LastOffset", "type": "int64", "versions": "0+" },
+      { "name": "BatchMaxTimestamp", "type": "int64", "versions": "0+" },
+      { "name": "TimestampType", "type": "int32", "versions": "0+" },
+      { "name": "ProducerId", "type": "int64", "versions": "0+" },
+      { "name": "ProducerEpoch", "type": "int16", "versions": "0+" },
+      { "name": "BaseSequence", "type": "int32", "versions": "0+" },
+      { "name": "LastSequence", "type": "int32", "versions": "0+" }
+    ]}
+  ]
+}

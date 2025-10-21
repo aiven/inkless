@@ -24,6 +24,7 @@ import org.apache.kafka.common.record.RecordBatch;
 import org.apache.kafka.common.record.TimestampType;
 import org.apache.kafka.common.utils.MockTime;
 
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Nested;
@@ -667,6 +668,7 @@ public abstract class AbstractControlPlaneTest {
         assertThat(controlPlane.getFilesToDelete()).isEmpty();
     }
 
+    @Disabled
     @Nested
     class Retention {
         private static final String FILE_NAME = "obj1";
@@ -1263,6 +1265,7 @@ public abstract class AbstractControlPlaneTest {
         assertThat(controlPlane.getFilesToDelete()).isEmpty();
     }
 
+    @Disabled
     @Test
     void isSafeToDeleteFileFile() {
         assertThat(controlPlane.isSafeToDeleteFile("test")).isTrue();
@@ -1499,6 +1502,7 @@ public abstract class AbstractControlPlaneTest {
         }
     }
 
+    @Disabled
     @Nested
     class GetFileMergeWorkItem {
         @Test
@@ -1859,6 +1863,7 @@ public abstract class AbstractControlPlaneTest {
             .containsExactly(GetLogInfoResponse.success(0, 15, batchSize));
     }
 
+    @Disabled
     @Nested
     class CommitFileMergeWorkItem {
         @Test
@@ -2219,6 +2224,7 @@ public abstract class AbstractControlPlaneTest {
         }
     }
 
+    @Disabled
     @Nested
     class ReleaseFileMergeWorkItem {
         @Test

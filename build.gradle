@@ -2485,7 +2485,8 @@ project(':storage:inkless') {
     args = [ "-p", "io.aiven.inkless.generated",
              "-o", "${projectDir}/build/generated/main/java/io/aiven/inkless/generated",
              "-i", "src/main/resources/message",
-             "-m", "MessageDataGenerator", "JsonConverterGenerator"
+             "-m", "MessageDataGenerator", "JsonConverterGenerator",
+             "-t", "MetadataRecordTypeGenerator", "MetadataJsonConvertersGenerator"
     ]
     inputs.dir("src/main/resources/message")
             .withPropertyName("messages")

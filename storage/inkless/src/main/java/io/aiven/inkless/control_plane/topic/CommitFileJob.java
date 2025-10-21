@@ -29,11 +29,11 @@ import java.util.Objects;
 import java.util.function.Consumer;
 
 import org.apache.kafka.common.protocol.Errors;
+import org.apache.kafka.common.record.RecordBatch;
 import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.common.utils.Utils;
 
 import io.aiven.inkless.common.ObjectFormat;
-import io.aiven.inkless.control_plane.CommitBatchRequest;
 import io.aiven.inkless.control_plane.CommitBatchResponse;
 import io.aiven.inkless.control_plane.ControlPlaneException;
 import io.aiven.inkless.control_plane.FileReason;
@@ -41,6 +41,7 @@ import io.aiven.inkless.control_plane.FileState;
 import io.aiven.inkless.control_plane.GetLogInfoRequest;
 import io.aiven.inkless.control_plane.GetLogInfoResponse;
 import io.aiven.inkless.control_plane.postgres.JobUtils;
+import io.aiven.inkless.generated.CoordinatorCommitEvent;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -132,28 +133,28 @@ class CommitFileJob implements Closeable {
             "WHERE topic_id = ? AND partition = ?");
     }
 
-    public List<CommitBatchResponse> call(final String objectKey,
-                                          final ObjectFormat format,
-                                          final int uploaderBrokerId,
-                                          final long fileSize,
-                                          final List<CommitBatchRequest> requests,
-                                          final Consumer<Long> durationCallback) {
-        Objects.requireNonNull(objectKey, "objectKey cannot be null");
-        Objects.requireNonNull(format, "format cannot be null");
-        Objects.requireNonNull(requests, "requests cannot be null");
-        Objects.requireNonNull(durationCallback, "durationCallback cannot be null");
+    public CoordinatorCommitRequestReplayResult replay(
+        final CoordinatorCommitEvent event,
+        final Consumer<Long> durationCallback
+    ) {
+        Objects.requireNonNull(event, "event cannot be null");
 
-        if (requests.isEmpty()) {
-            return List.of();
-        }
-        return JobUtils.run(() -> runOnce(objectKey, format, uploaderBrokerId, fileSize, requests), time, durationCallback);
+        return JobUtils.run(() ->
+            new CoordinatorCommitRequestReplayResult(
+                runOnce(
+                    event.objectKey(),
+                    ObjectFormat.valueOf(event.format()),
+                    event.uploaderBrokerId(),
+                    event.fileSize(),
+                    event.requests())
+            ), time, durationCallback);
     }
 
     private List<CommitBatchResponse> runOnce(final String objectKey,
                                               final ObjectFormat format,
                                               final int uploaderBrokerId,
                                               final long fileSize,
-                                              final List<CommitBatchRequest> requests) {
+                                              final List<CoordinatorCommitEvent.Request> requests) {
         final long now = time.milliseconds();
         final List<CommitBatchResponse> responses = new ArrayList<>();
 
@@ -181,7 +182,7 @@ class CommitFileJob implements Closeable {
                 }
             }
 
-            for (final CommitBatchRequest request : requests) {
+            for (final var request : requests) {
                 responses.add(commitFileForValidRequest(now, fileId, request));
             }
 
@@ -209,10 +210,10 @@ class CommitFileJob implements Closeable {
     private CommitBatchResponse commitFileForValidRequest(
         final long now,
         final int fileId,
-        final CommitBatchRequest request
+        final CoordinatorCommitEvent.Request request
     ) throws SQLException {
         final GetLogInfoResponse logInfo = getLogInfoJob.call(
-            List.of(new GetLogInfoRequest(request.topicIdPartition().topicId(), request.topicIdPartition().partition())), d -> {}).get(0);
+            List.of(new GetLogInfoRequest(request.topicId(), request.partition())), d -> {}).get(0);
         if (logInfo.errors() == Errors.UNKNOWN_TOPIC_OR_PARTITION) {
             return CommitBatchResponse.unknownTopicOrPartition();
         }
@@ -220,11 +221,13 @@ class CommitFileJob implements Closeable {
         final long firstOffset = logInfo.highWatermark();
 
         // Update the producer state
-        if (request.hasProducerId() && request.hasProducerEpoch()) {
+        final boolean hasProducerId = request.producerId() > RecordBatch.NO_PRODUCER_ID;
+        final boolean hasProducerEpoch = request.producerEpoch() > RecordBatch.NO_PRODUCER_EPOCH;
+        if (hasProducerId && hasProducerEpoch) {
             // If there are previous batches for the producer, check that the producer epoch is not smaller than the last batch.
             checkProducerEpochPreparedStatement.clearParameters();
-            checkProducerEpochPreparedStatement.setString(1, request.topicIdPartition().topicId().toString());
-            checkProducerEpochPreparedStatement.setInt(2, request.topicIdPartition().partition());
+            checkProducerEpochPreparedStatement.setString(1, request.topicId().toString());
+            checkProducerEpochPreparedStatement.setInt(2, request.partition());
             checkProducerEpochPreparedStatement.setLong(3, request.producerId());
             checkProducerEpochPreparedStatement.setShort(4, request.producerEpoch());
             try (final ResultSet resultSet = checkProducerEpochPreparedStatement.executeQuery()) {
@@ -234,8 +237,8 @@ class CommitFileJob implements Closeable {
             }
 
             getLastSequenceInProducerEpochPreparedStatement.clearParameters();
-            getLastSequenceInProducerEpochPreparedStatement.setString(1, request.topicIdPartition().topicId().toString());
-            getLastSequenceInProducerEpochPreparedStatement.setInt(2, request.topicIdPartition().partition());
+            getLastSequenceInProducerEpochPreparedStatement.setString(1, request.topicId().toString());
+            getLastSequenceInProducerEpochPreparedStatement.setInt(2, request.partition());
             getLastSequenceInProducerEpochPreparedStatement.setLong(3, request.producerId());
             getLastSequenceInProducerEpochPreparedStatement.setShort(4, request.producerEpoch());
             try (final ResultSet resultSet = getLastSequenceInProducerEpochPreparedStatement.executeQuery()) {
@@ -247,15 +250,15 @@ class CommitFileJob implements Closeable {
                     // If there are no previous batches for the producer, the base sequence must be 0.
                     if (request.baseSequence() != 0) {
                         LOGGER.warn("Producer request with base sequence {} is not 0. Rejecting request", request.baseSequence());
-                        return CommitBatchResponse.sequenceOutOfOrder(request);
+                        return CommitBatchResponse.sequenceOutOfOrder(null);
                     }
                 } else {
                     final int lastSequenceInProducerEpoch = resultSet.getInt("last_sequence_in_producer_epoch");
 
                     // Check for duplicates.
                     getProducerStatePreparedStatement.clearParameters();
-                    getProducerStatePreparedStatement.setString(1, request.topicIdPartition().topicId().toString());
-                    getProducerStatePreparedStatement.setInt(2, request.topicIdPartition().partition());
+                    getProducerStatePreparedStatement.setString(1, request.topicId().toString());
+                    getProducerStatePreparedStatement.setInt(2, request.partition());
                     getProducerStatePreparedStatement.setLong(3, request.producerId());
                     getProducerStatePreparedStatement.setShort(4, request.producerEpoch());
                     getProducerStatePreparedStatement.setInt(5, request.baseSequence());
@@ -274,13 +277,13 @@ class CommitFileJob implements Closeable {
                     if (request.baseSequence() - 1 != lastSequenceInProducerEpoch || (lastSequenceInProducerEpoch == Integer.MAX_VALUE && request.baseSequence() != 0)) {
                         LOGGER.warn("Producer request with base sequence {} is not the next sequence after the last sequence {}. Rejecting request",
                             request.baseSequence(), lastSequenceInProducerEpoch);
-                        return CommitBatchResponse.sequenceOutOfOrder(request);
+                        return CommitBatchResponse.sequenceOutOfOrder(null);
                     }
                 }
 
                 insertProducerStatePreparedStatement.clearParameters();
-                insertProducerStatePreparedStatement.setString(1, request.topicIdPartition().topicId().toString());
-                insertProducerStatePreparedStatement.setInt(2, request.topicIdPartition().partition());
+                insertProducerStatePreparedStatement.setString(1, request.topicId().toString());
+                insertProducerStatePreparedStatement.setInt(2, request.partition());
                 insertProducerStatePreparedStatement.setLong(3, request.producerId());
                 insertProducerStatePreparedStatement.setShort(4, request.producerEpoch());
                 insertProducerStatePreparedStatement.setInt(5, request.baseSequence());
@@ -290,34 +293,35 @@ class CommitFileJob implements Closeable {
                 insertProducerStatePreparedStatement.executeUpdate();
 
                 keepOnly5ProducerStatesPreparedStatement.clearParameters();
-                keepOnly5ProducerStatesPreparedStatement.setString(1, request.topicIdPartition().topicId().toString());
-                keepOnly5ProducerStatesPreparedStatement.setInt(2, request.topicIdPartition().partition());
+                keepOnly5ProducerStatesPreparedStatement.setString(1, request.topicId().toString());
+                keepOnly5ProducerStatesPreparedStatement.setInt(2, request.partition());
                 keepOnly5ProducerStatesPreparedStatement.setLong(3, request.producerId());
-                keepOnly5ProducerStatesPreparedStatement.setString(4, request.topicIdPartition().topicId().toString());
-                keepOnly5ProducerStatesPreparedStatement.setInt(5, request.topicIdPartition().partition());
+                keepOnly5ProducerStatesPreparedStatement.setString(4, request.topicId().toString());
+                keepOnly5ProducerStatesPreparedStatement.setInt(5, request.partition());
                 keepOnly5ProducerStatesPreparedStatement.setLong(6, request.producerId());
                 keepOnly5ProducerStatesPreparedStatement.executeUpdate();
             }
         }
 
-        final long lastOffset = firstOffset + request.offsetDelta();
+        final int offsetDelta = (int) (request.lastOffset() - request.baseOffset());
+        final long lastOffset = firstOffset + offsetDelta;
         updateHighWatermarkAndAddByteSizePreparedStatement.clearParameters();
         updateHighWatermarkAndAddByteSizePreparedStatement.setLong(1, lastOffset + 1);  // high watermark
         updateHighWatermarkAndAddByteSizePreparedStatement.setInt(2, request.size());  // byte size
-        updateHighWatermarkAndAddByteSizePreparedStatement.setString(3, request.topicIdPartition().topicId().toString());
-        updateHighWatermarkAndAddByteSizePreparedStatement.setInt(4, request.topicIdPartition().partition());
+        updateHighWatermarkAndAddByteSizePreparedStatement.setString(3, request.topicId().toString());
+        updateHighWatermarkAndAddByteSizePreparedStatement.setInt(4, request.partition());
         updateHighWatermarkAndAddByteSizePreparedStatement.executeUpdate();
 
         insertBatchPreparedStatement.clearParameters();
         insertBatchPreparedStatement.setByte(1, request.magic());
-        insertBatchPreparedStatement.setString(2, request.topicIdPartition().topicId().toString());
-        insertBatchPreparedStatement.setInt(3, request.topicIdPartition().partition());
+        insertBatchPreparedStatement.setString(2, request.topicId().toString());
+        insertBatchPreparedStatement.setInt(3, request.partition());
         insertBatchPreparedStatement.setLong(4, firstOffset);
         insertBatchPreparedStatement.setLong(5, lastOffset);
         insertBatchPreparedStatement.setInt(6, fileId);
         insertBatchPreparedStatement.setInt(7, request.byteOffset());
         insertBatchPreparedStatement.setInt(8, request.size());
-        insertBatchPreparedStatement.setInt(9, request.messageTimestampType().id);
+        insertBatchPreparedStatement.setInt(9, request.timestampType());
         insertBatchPreparedStatement.setLong(10, now);
         insertBatchPreparedStatement.setLong(11, request.batchMaxTimestamp());
         try (final ResultSet resultSet = insertBatchPreparedStatement.executeQuery()) {
@@ -328,7 +332,7 @@ class CommitFileJob implements Closeable {
             System.out.println(batchId);  // use
         }
 
-        return CommitBatchResponse.success(firstOffset, now, logInfo.logStartOffset(), request);
+        return CommitBatchResponse.success(firstOffset, now, logInfo.logStartOffset(), null);
     }
 
     @Override

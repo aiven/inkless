@@ -19,8 +19,7 @@ package io.aiven.inkless.control_plane.topic;
 
 import java.util.List;
 
-import org.apache.kafka.server.common.ApiMessageAndVersion;
+import io.aiven.inkless.control_plane.CommitBatchResponse;
 
-public interface RecordWriter {
-    void writeAndReplicate(List<ApiMessageAndVersion> records);
+record CoordinatorCommitRequestReplayResult(List<CommitBatchResponse> responses) implements ReplayResult {
 }

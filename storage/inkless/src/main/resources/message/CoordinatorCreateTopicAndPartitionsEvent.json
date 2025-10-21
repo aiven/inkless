@@ -15,12 +15,17 @@
  * You should have received a copy of the GNU Affero General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
-package io.aiven.inkless.control_plane.topic;
-
-import java.util.List;
-
-import org.apache.kafka.server.common.ApiMessageAndVersion;
-
-public interface RecordWriter {
-    void writeAndReplicate(List<ApiMessageAndVersion> records);
+{
+  "apiKey": 3,
+  "name": "CoordinatorCreateTopicAndPartitionsEvent",
+  "type": "metadata",
+  "validVersions": "0",
+  "flexibleVersions": "0+",
+  "fields": [
+    { "name": "Requests", "type": "[]Request", "versions": "0+", "fields": [
+      { "name": "TopicId", "type": "uuid", "versions": "0+" },
+      { "name": "TopicName", "type": "string", "versions": "0+" },
+      { "name": "PartitionNumber", "type": "int32", "versions": "0+" }
+    ] }
+  ]
 }
