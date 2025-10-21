@@ -17,5 +17,5 @@
  */
 package io.aiven.inkless.control_plane.topic;
 
-class CoordinatorCreateTopicAndPartitionsEventReplayResult implements ReplayResult {
+record CoordinatorCreateTopicAndPartitionsEventReplayResult() implements ReplayResult {
 }

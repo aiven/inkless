@@ -57,6 +57,7 @@ import io.aiven.inkless.control_plane.ListOffsetsResponse;
 import io.aiven.inkless.control_plane.MergedFileBatch;
 import io.aiven.inkless.generated.CoordinatorCommitEvent;
 import io.aiven.inkless.generated.CoordinatorCreateTopicAndPartitionsEvent;
+import io.aiven.inkless.generated.CoordinatorDeleteTopicEvent;
 import io.aiven.inkless.generated.MetadataRecordType;
 
 import org.flywaydb.core.Flyway;
@@ -215,6 +216,52 @@ public class TopicBasedControlPlaneInternal extends AbstractControlPlane {
         return result.iterator();
     }
 
+    @Override
+    protected Iterator<FindBatchResponse> findBatchesForExistingPartitions(
+        final Stream<FindBatchRequest> requests,
+        final int fetchMaxBytes,
+        final int maxBatchesPerPartition
+    ) {
+        // We don't need to wait for replication, just find.
+        lock.lock();
+        try {
+            return findBatchesJob.call(requests.toList(), fetchMaxBytes, maxBatchesPerPartition,
+                d -> {}  // TODO duration
+                ).iterator();
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    @Override
+    protected Iterator<ListOffsetsResponse> listOffsetsForExistingPartitions(final Stream<ListOffsetsRequest> requests) {
+        // This is a read-only request, but we need to ensure consistency.
+        recordWriter.waitForReplication();
+
+        lock.lock();
+        try {
+            return listOffsetsJob.call(requests.toList(),
+                d -> {}  // TODO duration
+                ).iterator();
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    @Override
+    public void deleteTopics(final Set<Uuid> topicIds) {
+        final CoordinatorDeleteTopicEvent event = new CoordinatorDeleteTopicEvent()
+            .setTopicIds(topicIds.stream().toList());
+        recordWriter.writeAndReplicate(List.of(
+            new ApiMessageAndVersion(event, (short) 0)
+        ));
+        final ReplayResult replayResult = replay(event);
+        if (!(replayResult instanceof CoordinatorDeleteTopicEventReplayResult)) {
+            throw new RuntimeException();
+        }
+        // do nothing
+    }
+
     private ReplayResult replay(final ApiMessage message) {
         final MetadataRecordType type = MetadataRecordType.fromId(message.apiKey());
         switch (type) {
@@ -240,48 +287,19 @@ public class TopicBasedControlPlaneInternal extends AbstractControlPlane {
                     lock.unlock();
                 }
 
+            case COORDINATOR_DELETE_TOPIC_EVENT:
+                lock.lock();
+                try {
+                    return deleteTopicsJob.replay(
+                        (CoordinatorDeleteTopicEvent) message,
+                        d -> {}  // TODO duration
+                    );
+                } finally {
+                    lock.unlock();
+                }
+
             default:
                 throw new RuntimeException("Unhandled record type " + type);
-        }
-    }
-
-    @Override
-    protected Iterator<FindBatchResponse> findBatchesForExistingPartitions(
-        final Stream<FindBatchRequest> requests,
-        final int fetchMaxBytes,
-        final int maxBatchesPerPartition
-    ) {
-        lock.lock();
-        try {
-            return findBatchesJob.call(requests.toList(), fetchMaxBytes, maxBatchesPerPartition,
-                d -> {}  // TODO duration
-                ).iterator();
-        } finally {
-            lock.unlock();
-        }
-    }
-
-    @Override
-    protected Iterator<ListOffsetsResponse> listOffsetsForExistingPartitions(final Stream<ListOffsetsRequest> requests) {
-        lock.lock();
-        try {
-            return listOffsetsJob.call(requests.toList(),
-                d -> {}  // TODO duration
-                ).iterator();
-        } finally {
-            lock.unlock();
-        }
-    }
-
-    @Override
-    public void deleteTopics(final Set<Uuid> topicIds) {
-        lock.lock();
-        try {
-            deleteTopicsJob.run(topicIds,
-                d -> {}  // TODO duration
-                );
-        } finally {
-            lock.unlock();
         }
     }
 

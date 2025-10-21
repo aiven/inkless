@@ -23,8 +23,8 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.util.Collection;
 import java.util.HashSet;
-import java.util.List;
 import java.util.Objects;
 import java.util.Set;
 import java.util.function.Consumer;
@@ -34,6 +34,7 @@ import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.common.utils.Utils;
 
 import io.aiven.inkless.control_plane.postgres.JobUtils;
+import io.aiven.inkless.generated.CoordinatorDeleteTopicEvent;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -65,17 +66,17 @@ class DeleteTopicsJob implements Closeable {
         );
     }
 
-    void run(final Set<Uuid> topicIds,
-             final Consumer<Long> durationCallback) {
-        Objects.requireNonNull(topicIds, "topicIds cannot be null");
+    CoordinatorDeleteTopicEventReplayResult replay(
+        final CoordinatorDeleteTopicEvent event,
+        final Consumer<Long> durationCallback
+    ) {
+        Objects.requireNonNull(event, "event cannot be null");
         Objects.requireNonNull(durationCallback, "durationCallback cannot be null");
-        if (topicIds.isEmpty()) {
-            return;
-        }
-        JobUtils.run(() -> runOnce(topicIds), time, durationCallback);
+        JobUtils.run(() -> runOnce(event.topicIds()), time, durationCallback);
+        return new CoordinatorDeleteTopicEventReplayResult();
     }
 
-    private void runOnce(final Set<Uuid> topicIds) {
+    private void runOnce(final Collection<Uuid> topicIds) {
         final long now = time.milliseconds();
 
         try {

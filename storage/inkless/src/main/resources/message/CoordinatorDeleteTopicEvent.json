@@ -15,15 +15,13 @@
  * You should have received a copy of the GNU Affero General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
-package io.aiven.inkless.control_plane.topic;
-
-import java.util.List;
-
-import org.apache.kafka.server.common.ApiMessageAndVersion;
-
-public interface RecordWriter {
-    default void waitForReplication() {
-        writeAndReplicate(List.of());
-    }
-    void writeAndReplicate(List<ApiMessageAndVersion> records);
+{
+  "apiKey": 5,
+  "name": "CoordinatorDeleteTopicEvent",
+  "type": "metadata",
+  "validVersions": "0",
+  "flexibleVersions": "0+",
+  "fields": [
+    { "name": "TopicIds", "type": "[]uuid", "versions": "0+" }
+  ]
 }

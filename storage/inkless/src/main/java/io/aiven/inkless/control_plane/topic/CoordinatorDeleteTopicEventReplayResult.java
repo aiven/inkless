@@ -17,13 +17,5 @@
  */
 package io.aiven.inkless.control_plane.topic;
 
-import java.util.List;
-
-import org.apache.kafka.server.common.ApiMessageAndVersion;
-
-public interface RecordWriter {
-    default void waitForReplication() {
-        writeAndReplicate(List.of());
-    }
-    void writeAndReplicate(List<ApiMessageAndVersion> records);
+record CoordinatorDeleteTopicEventReplayResult() implements ReplayResult {
 }
