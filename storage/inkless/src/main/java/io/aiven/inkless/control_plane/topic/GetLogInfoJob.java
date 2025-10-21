@@ -17,6 +17,8 @@
  */
 package io.aiven.inkless.control_plane.topic;
 
+import java.io.Closeable;
+import java.io.IOException;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -28,6 +30,7 @@ import java.util.function.Consumer;
 
 import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.utils.Time;
+import org.apache.kafka.common.utils.Utils;
 
 import io.aiven.inkless.control_plane.GetLogInfoRequest;
 import io.aiven.inkless.control_plane.GetLogInfoResponse;
@@ -36,7 +39,7 @@ import io.aiven.inkless.control_plane.postgres.JobUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-class GetLogInfoJob {
+class GetLogInfoJob implements Closeable {
     private static final Logger LOGGER = LoggerFactory.getLogger(TopicsAndPartitionsCreateJob.class);
 
     private final Time time;
@@ -94,5 +97,10 @@ class GetLogInfoJob {
         }
 
         return results;
+    }
+
+    @Override
+    public void close() throws IOException {
+        Utils.closeQuietly(preparedStatement, "preparedStatement");
     }
 }

@@ -32,6 +32,7 @@ import java.util.stream.Stream;
 
 import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.utils.Time;
+import org.apache.kafka.common.utils.Utils;
 
 import io.aiven.inkless.common.ObjectFormat;
 import io.aiven.inkless.control_plane.AbstractControlPlane;
@@ -72,7 +73,9 @@ public class TopicBasedControlPlaneInternal extends AbstractControlPlane {
     private CommitFileJob commitFileJob;
     private FindBatchesJob findBatchesJob;
     private GetFilesToDeleteJob getFilesToDeleteJob;
+    private DeleteRecordsJobs deleteRecordsJobs;
     private GetLogInfoJob getLogInfoJob;
+    private MarkFileForDeletionIfNeededRoutine markFileForDeletionIfNeededRoutine;
 
     public TopicBasedControlPlaneInternal(final Time time,
                                           final RecordWriter recordWriter) {
@@ -101,9 +104,11 @@ public class TopicBasedControlPlaneInternal extends AbstractControlPlane {
 
             this.topicsAndPartitionsCreateJob = new TopicsAndPartitionsCreateJob(time, dbConnection);
             this.getLogInfoJob = new GetLogInfoJob(time, dbConnection);
-            this.commitFileJob = new CommitFileJob(time, dbConnection, this.getLogInfoJob);
-            this.findBatchesJob = new FindBatchesJob(time, dbConnection, this.getLogInfoJob);
+            this.markFileForDeletionIfNeededRoutine = new MarkFileForDeletionIfNeededRoutine(time, dbConnection);
+            this.commitFileJob = new CommitFileJob(time, dbConnection, getLogInfoJob, markFileForDeletionIfNeededRoutine);
+            this.findBatchesJob = new FindBatchesJob(time, dbConnection, getLogInfoJob);
             this.getFilesToDeleteJob = new GetFilesToDeleteJob(time, dbConnection);
+            this.deleteRecordsJobs = new DeleteRecordsJobs(time, dbConnection, getLogInfoJob, markFileForDeletionIfNeededRoutine);
         } catch (final SQLException e) {
             throw new RuntimeException(e);
         } finally {
@@ -183,7 +188,9 @@ public class TopicBasedControlPlaneInternal extends AbstractControlPlane {
     public List<DeleteRecordsResponse> deleteRecords(final List<DeleteRecordsRequest> requests) {
         lock.lock();
         try {
-            return List.of();
+            return deleteRecordsJobs.call(requests,
+                d -> {}  // TODO duration
+            );
         } finally {
             lock.unlock();
         }
@@ -280,6 +287,13 @@ public class TopicBasedControlPlaneInternal extends AbstractControlPlane {
 
     @Override
     public void close() throws IOException {
-
+        Utils.closeQuietly(topicsAndPartitionsCreateJob, "topicsAndPartitionsCreateJob");
+        Utils.closeQuietly(commitFileJob, "commitFileJob");
+        Utils.closeQuietly(findBatchesJob, "findBatchesJob");
+        Utils.closeQuietly(getFilesToDeleteJob, "getFilesToDeleteJob");
+        Utils.closeQuietly(deleteRecordsJobs, "deleteRecordsJobs");
+        Utils.closeQuietly(getLogInfoJob, "getLogInfoJob");
+        Utils.closeQuietly(markFileForDeletionIfNeededRoutine, "markFileForDeletionIfNeededRoutine");
+        Utils.closeQuietly(dbConnection, "dbConnection");
     }
 }

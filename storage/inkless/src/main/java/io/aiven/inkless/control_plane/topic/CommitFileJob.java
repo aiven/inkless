@@ -17,6 +17,8 @@
  */
 package io.aiven.inkless.control_plane.topic;
 
+import java.io.Closeable;
+import java.io.IOException;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -28,6 +30,7 @@ import java.util.function.Consumer;
 
 import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.utils.Time;
+import org.apache.kafka.common.utils.Utils;
 
 import io.aiven.inkless.common.ObjectFormat;
 import io.aiven.inkless.control_plane.CommitBatchRequest;
@@ -43,12 +46,13 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.sqlite.SQLiteErrorCode;
 
-class CommitFileJob {
+class CommitFileJob implements Closeable {
     private static final Logger LOGGER = LoggerFactory.getLogger(CommitFileJob.class);
 
     private final Time time;
     private final Connection connection;
     private final GetLogInfoJob getLogInfoJob;
+    private final MarkFileForDeletionIfNeededRoutine markFileForDeletionIfNeededRoutine;
     private final PreparedStatement insertFilePreparedStatement;
     private final PreparedStatement checkProducerEpochPreparedStatement;
     private final PreparedStatement getLastSequenceInProducerEpochPreparedStatement;
@@ -56,16 +60,16 @@ class CommitFileJob {
     private final PreparedStatement insertProducerStatePreparedStatement;
     private final PreparedStatement keepOnly5ProducerStatesPreparedStatement;
     private final PreparedStatement insertBatchPreparedStatement;
-    private final PreparedStatement updateHighWatermarkAndByteSizePreparedStatement;
-    private final PreparedStatement getOneBatchFromFilePreparedStatement;
-    private final PreparedStatement markFileForDeletionPreparedStatement;
+    private final PreparedStatement updateHighWatermarkAndAddByteSizePreparedStatement;
 
     CommitFileJob(final Time time,
                   final Connection connection,
-                  final GetLogInfoJob getLogInfoJob) throws SQLException {
+                  final GetLogInfoJob getLogInfoJob,
+                  final MarkFileForDeletionIfNeededRoutine markFileForDeletionIfNeededRoutine) throws SQLException {
         this.time = Objects.requireNonNull(time, "time cannot be null");
         this.connection = Objects.requireNonNull(connection, "connection cannot be null");
         this.getLogInfoJob = Objects.requireNonNull(getLogInfoJob, "getLogInfoJob cannot be null");
+        this.markFileForDeletionIfNeededRoutine = Objects.requireNonNull(markFileForDeletionIfNeededRoutine, "markFileForDeletionIfNeededJob cannot be null");
 
         this.insertFilePreparedStatement = connection.prepareStatement(
             "INSERT OR ABORT INTO files (object_key, format, reason, state, uploader_broker_id, committed_at, size) " +
@@ -122,19 +126,10 @@ class CommitFileJob {
             "INSERT INTO batches (magic, topic_id, partition, base_offset, last_offset, file_id, byte_offset, byte_size, timestamp_type, log_append_timestamp, batch_max_timestamp) " +
                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) " +
                 "RETURNING batch_id");
-        this.updateHighWatermarkAndByteSizePreparedStatement = connection.prepareStatement(
+        this.updateHighWatermarkAndAddByteSizePreparedStatement = connection.prepareStatement(
             "UPDATE logs " +
-            "SET high_watermark = ?, byte_size = ? " +
+            "SET high_watermark = ?, byte_size = byte_size + ? " +
             "WHERE topic_id = ? AND partition = ?");
-        this.getOneBatchFromFilePreparedStatement = connection.prepareStatement(
-            "SELECT batch_id " +
-                "FROM batches " +
-                "WHERE file_id = ? " +
-                "LIMIT 1");
-        this.markFileForDeletionPreparedStatement = connection.prepareStatement(
-            "UPDATE files " +
-                "SET state = ?, marked_for_deletion_at = ? " +
-                "WHERE file_id = ? ");
     }
 
     public List<CommitBatchResponse> call(final String objectKey,
@@ -191,7 +186,7 @@ class CommitFileJob {
             }
 
             // Mark the file for deletion if after all operations there aren't any batches in it.
-            markFileForDeletionIfNoLiveBatches(now, fileId);
+            markFileForDeletionIfNeededRoutine.run(now, fileId);
 
             connection.commit();
         } catch (final Exception e) {
@@ -305,12 +300,12 @@ class CommitFileJob {
         }
 
         final long lastOffset = firstOffset + request.offsetDelta();
-        updateHighWatermarkAndByteSizePreparedStatement.clearParameters();
-        updateHighWatermarkAndByteSizePreparedStatement.setLong(1, lastOffset + 1);  // high watermark
-        updateHighWatermarkAndByteSizePreparedStatement.setInt(2, request.size());  // byte size
-        updateHighWatermarkAndByteSizePreparedStatement.setString(3, request.topicIdPartition().topicId().toString());
-        updateHighWatermarkAndByteSizePreparedStatement.setInt(4, request.topicIdPartition().partition());
-        updateHighWatermarkAndByteSizePreparedStatement.executeUpdate();
+        updateHighWatermarkAndAddByteSizePreparedStatement.clearParameters();
+        updateHighWatermarkAndAddByteSizePreparedStatement.setLong(1, lastOffset + 1);  // high watermark
+        updateHighWatermarkAndAddByteSizePreparedStatement.setInt(2, request.size());  // byte size
+        updateHighWatermarkAndAddByteSizePreparedStatement.setString(3, request.topicIdPartition().topicId().toString());
+        updateHighWatermarkAndAddByteSizePreparedStatement.setInt(4, request.topicIdPartition().partition());
+        updateHighWatermarkAndAddByteSizePreparedStatement.executeUpdate();
 
         insertBatchPreparedStatement.clearParameters();
         insertBatchPreparedStatement.setByte(1, request.magic());
@@ -335,17 +330,15 @@ class CommitFileJob {
         return CommitBatchResponse.success(firstOffset, now, logInfo.logStartOffset(), request);
     }
 
-    private void markFileForDeletionIfNoLiveBatches(final long now, final int fileId) throws SQLException {
-        getOneBatchFromFilePreparedStatement.clearParameters();
-        getOneBatchFromFilePreparedStatement.setInt(1, fileId);
-        try (final ResultSet resultSet = getOneBatchFromFilePreparedStatement.executeQuery()) {
-            if (!resultSet.next()) {
-                markFileForDeletionPreparedStatement.clearParameters();
-                markFileForDeletionPreparedStatement.setString(1, FileState.DELETING.toString());
-                markFileForDeletionPreparedStatement.setLong(2, now);
-                markFileForDeletionPreparedStatement.setInt(3, fileId);
-                markFileForDeletionPreparedStatement.executeUpdate();
-            }
-        }
+    @Override
+    public void close() throws IOException {
+        Utils.closeQuietly(insertFilePreparedStatement, "insertFilePreparedStatement");
+        Utils.closeQuietly(checkProducerEpochPreparedStatement, "checkProducerEpochPreparedStatement");
+        Utils.closeQuietly(getLastSequenceInProducerEpochPreparedStatement, "getLastSequenceInProducerEpochPreparedStatement");
+        Utils.closeQuietly(getProducerStatePreparedStatement, "getProducerStatePreparedStatement");
+        Utils.closeQuietly(insertProducerStatePreparedStatement, "insertProducerStatePreparedStatement");
+        Utils.closeQuietly(keepOnly5ProducerStatesPreparedStatement, "keepOnly5ProducerStatesPreparedStatement");
+        Utils.closeQuietly(insertBatchPreparedStatement, "insertBatchPreparedStatement");
+        Utils.closeQuietly(updateHighWatermarkAndAddByteSizePreparedStatement, "updateHighWatermarkAndByteSizePreparedStatement");
     }
 }
