@@ -372,6 +372,19 @@ public class TopicBasedControlPlaneInternal extends AbstractControlPlane {
         }
     }
 
+    @Override
+    public List<GetLogInfoResponse> getLogInfo(final List<GetLogInfoRequest> requests) {
+        // This is a read-only request, but we need to ensure consistency.
+        recordWriter.waitForReplication();
+
+        lock.lock();
+        try {
+            return this.getLogInfoJob.call(requests, d -> {});  // TODO duration
+        } finally {
+            lock.unlock();
+        }
+    }
+
     private ReplayResult replay(final ApiMessage message) {
         final MetadataRecordType type = MetadataRecordType.fromId(message.apiKey());
         switch (type) {
@@ -432,16 +445,6 @@ public class TopicBasedControlPlaneInternal extends AbstractControlPlane {
 
             default:
                 throw new RuntimeException("Unhandled record type " + type);
-        }
-    }
-
-    @Override
-    public List<GetLogInfoResponse> getLogInfo(final List<GetLogInfoRequest> requests) {
-        lock.lock();
-        try {
-            return this.getLogInfoJob.call(requests, d -> {});  // TODO duration
-        } finally {
-            lock.unlock();
         }
     }
 
