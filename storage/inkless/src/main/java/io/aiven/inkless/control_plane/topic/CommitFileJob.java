@@ -57,6 +57,8 @@ class CommitFileJob {
     private final PreparedStatement keepOnly5ProducerStatesPreparedStatement;
     private final PreparedStatement insertBatchPreparedStatement;
     private final PreparedStatement updateHighWatermarkAndByteSizePreparedStatement;
+    private final PreparedStatement getOneBatchFromFilePreparedStatement;
+    private final PreparedStatement markFileForDeletionPreparedStatement;
 
     CommitFileJob(final Time time,
                   final Connection connection,
@@ -124,6 +126,15 @@ class CommitFileJob {
             "UPDATE logs " +
             "SET high_watermark = ?, byte_size = ? " +
             "WHERE topic_id = ? AND partition = ?");
+        this.getOneBatchFromFilePreparedStatement = connection.prepareStatement(
+            "SELECT batch_id " +
+                "FROM batches " +
+                "WHERE file_id = ? " +
+                "LIMIT 1");
+        this.markFileForDeletionPreparedStatement = connection.prepareStatement(
+            "UPDATE files " +
+                "SET state = ?, marked_for_deletion_at = ? " +
+                "WHERE file_id = ? ");
     }
 
     public List<CommitBatchResponse> call(final String objectKey,
@@ -178,6 +189,10 @@ class CommitFileJob {
             for (final CommitBatchRequest request : requests) {
                 responses.add(commitFileForValidRequest(now, fileId, request));
             }
+
+            // Mark the file for deletion if after all operations there aren't any batches in it.
+            markFileForDeletionIfNoLiveBatches(now, fileId);
+
             connection.commit();
         } catch (final Exception e) {
             try {
@@ -318,5 +333,19 @@ class CommitFileJob {
         }
 
         return CommitBatchResponse.success(firstOffset, now, logInfo.logStartOffset(), request);
+    }
+
+    private void markFileForDeletionIfNoLiveBatches(final long now, final int fileId) throws SQLException {
+        getOneBatchFromFilePreparedStatement.clearParameters();
+        getOneBatchFromFilePreparedStatement.setInt(1, fileId);
+        try (final ResultSet resultSet = getOneBatchFromFilePreparedStatement.executeQuery()) {
+            if (!resultSet.next()) {
+                markFileForDeletionPreparedStatement.clearParameters();
+                markFileForDeletionPreparedStatement.setString(1, FileState.DELETING.toString());
+                markFileForDeletionPreparedStatement.setLong(2, now);
+                markFileForDeletionPreparedStatement.setInt(3, fileId);
+                markFileForDeletionPreparedStatement.executeUpdate();
+            }
+        }
     }
 }

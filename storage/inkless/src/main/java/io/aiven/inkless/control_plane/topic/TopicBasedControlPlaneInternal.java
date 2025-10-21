@@ -71,6 +71,7 @@ public class TopicBasedControlPlaneInternal extends AbstractControlPlane {
     private TopicsAndPartitionsCreateJob topicsAndPartitionsCreateJob;
     private CommitFileJob commitFileJob;
     private FindBatchesJob findBatchesJob;
+    private GetFilesToDeleteJob getFilesToDeleteJob;
     private GetLogInfoJob getLogInfoJob;
 
     public TopicBasedControlPlaneInternal(final Time time,
@@ -102,6 +103,7 @@ public class TopicBasedControlPlaneInternal extends AbstractControlPlane {
             this.getLogInfoJob = new GetLogInfoJob(time, dbConnection);
             this.commitFileJob = new CommitFileJob(time, dbConnection, this.getLogInfoJob);
             this.findBatchesJob = new FindBatchesJob(time, dbConnection, this.getLogInfoJob);
+            this.getFilesToDeleteJob = new GetFilesToDeleteJob(time, dbConnection);
         } catch (final SQLException e) {
             throw new RuntimeException(e);
         } finally {
@@ -204,7 +206,9 @@ public class TopicBasedControlPlaneInternal extends AbstractControlPlane {
     public List<FileToDelete> getFilesToDelete() {
         lock.lock();
         try {
-            return List.of();
+            return this.getFilesToDeleteJob.call(
+                d -> {}  // TODO duration
+            );
         } finally {
             lock.unlock();
         }

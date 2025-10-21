@@ -23,27 +23,19 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 import java.util.Objects;
-import java.util.TreeMap;
 import java.util.function.Consumer;
 
-import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.protocol.Errors;
-import org.apache.kafka.common.record.TimestampType;
-import org.apache.kafka.common.requests.FetchRequest;
 import org.apache.kafka.common.utils.Time;
-import org.apache.kafka.server.storage.log.FetchParams;
 
 import io.aiven.inkless.TimeUtils;
 import io.aiven.inkless.control_plane.BatchInfo;
 import io.aiven.inkless.control_plane.BatchMetadata;
-import io.aiven.inkless.control_plane.CommitBatchResponse;
 import io.aiven.inkless.control_plane.FindBatchRequest;
 import io.aiven.inkless.control_plane.FindBatchResponse;
 import io.aiven.inkless.control_plane.GetLogInfoRequest;
 import io.aiven.inkless.control_plane.GetLogInfoResponse;
-import io.aiven.inkless.control_plane.InMemoryControlPlane;
 import io.aiven.inkless.control_plane.postgres.converters.ShortToTimestampTypeConverter;
 
 import org.slf4j.Logger;
