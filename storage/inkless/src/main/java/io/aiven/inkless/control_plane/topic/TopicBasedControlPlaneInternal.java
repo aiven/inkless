@@ -75,6 +75,7 @@ public class TopicBasedControlPlaneInternal extends AbstractControlPlane {
     private GetFilesToDeleteJob getFilesToDeleteJob;
     private DeleteRecordsJobs deleteRecordsJobs;
     private DeleteTopicsJob deleteTopicsJob;
+    private ListOffsetsJob listOffsetsJob;
     private GetLogInfoJob getLogInfoJob;
     private MarkFileForDeletionIfNeededRoutine markFileForDeletionIfNeededRoutine;
 
@@ -111,6 +112,7 @@ public class TopicBasedControlPlaneInternal extends AbstractControlPlane {
             this.getFilesToDeleteJob = new GetFilesToDeleteJob(time, dbConnection);
             this.deleteRecordsJobs = new DeleteRecordsJobs(time, dbConnection, getLogInfoJob, markFileForDeletionIfNeededRoutine);
             this.deleteTopicsJob = new DeleteTopicsJob(time, dbConnection, markFileForDeletionIfNeededRoutine);
+            this.listOffsetsJob = new ListOffsetsJob(time, dbConnection, getLogInfoJob);
         } catch (final SQLException e) {
             throw new RuntimeException(e);
         } finally {
@@ -167,10 +169,12 @@ public class TopicBasedControlPlaneInternal extends AbstractControlPlane {
     }
 
     @Override
-    protected Iterator<ListOffsetsResponse> listOffsetsForExistingPartitions(final Stream<ListOffsetsRequest> truerequestsIn) {
+    protected Iterator<ListOffsetsResponse> listOffsetsForExistingPartitions(final Stream<ListOffsetsRequest> requests) {
         lock.lock();
         try {
-            return null;
+            return listOffsetsJob.call(requests.toList(),
+                d -> {}  // TODO duration
+                ).iterator();
         } finally {
             lock.unlock();
         }
@@ -298,6 +302,7 @@ public class TopicBasedControlPlaneInternal extends AbstractControlPlane {
         Utils.closeQuietly(deleteRecordsJobs, "deleteRecordsJobs");
         Utils.closeQuietly(deleteTopicsJob, "deleteTopicsJob");
         Utils.closeQuietly(getLogInfoJob, "getLogInfoJob");
+        Utils.closeQuietly(listOffsetsJob, "listOffsetsJob");
         Utils.closeQuietly(markFileForDeletionIfNeededRoutine, "markFileForDeletionIfNeededRoutine");
         Utils.closeQuietly(dbConnection, "dbConnection");
     }
