@@ -296,6 +296,7 @@ class CommitFileJob implements Closeable {
                 keepOnly5ProducerStatesPreparedStatement.setString(4, request.topicIdPartition().topicId().toString());
                 keepOnly5ProducerStatesPreparedStatement.setInt(5, request.topicIdPartition().partition());
                 keepOnly5ProducerStatesPreparedStatement.setLong(6, request.producerId());
+                keepOnly5ProducerStatesPreparedStatement.executeUpdate();
             }
         }
 
