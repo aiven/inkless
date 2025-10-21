@@ -5054,35 +5054,6 @@ public class KafkaAdminClient extends AdminClient {
     }
 
     @Override
-    public DisklessCommitResult disklessCommit(org.apache.kafka.common.message.DisklessCommitRequestData requestData, 
-                                              DisklessCommitOptions options) {
-        final KafkaFutureImpl<org.apache.kafka.common.message.DisklessCommitResponseData> future = new KafkaFutureImpl<>();
-        final long now = time.milliseconds();
-        final Call call = new Call("disklessCommit", calcDeadlineMs(now, options.timeoutMs()),
-            new LeastLoadedNodeProvider()) {
-
-            @Override
-            org.apache.kafka.common.requests.DisklessCommitRequest.Builder createRequest(int timeoutMs) {
-                return new org.apache.kafka.common.requests.DisklessCommitRequest.Builder(requestData);
-            }
-
-            @Override
-            void handleResponse(AbstractResponse abstractResponse) {
-                org.apache.kafka.common.requests.DisklessCommitResponse response = 
-                    (org.apache.kafka.common.requests.DisklessCommitResponse) abstractResponse;
-                future.complete(response.data());
-            }
-
-            @Override
-            void handleFailure(Throwable throwable) {
-                future.completeExceptionally(throwable);
-            }
-        };
-        runnable.call(call, now);
-        return new DisklessCommitResult(future);
-    }
-
-    @Override
     public Uuid clientInstanceId(Duration timeout) {
         if (timeout.isNegative()) {
             throw new IllegalArgumentException("The timeout cannot be negative.");

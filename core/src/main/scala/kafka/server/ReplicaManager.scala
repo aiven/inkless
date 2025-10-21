@@ -3233,29 +3233,4 @@ class ReplicaManager(val config: KafkaConfig,
       () => ()
     )
   }
-
-  def disklessCommit(
-    objectName: String,
-    validRequestInfo: Map[TopicIdPartition, org.apache.kafka.common.message.DisklessCommitRequestData.PartitionDisklessCommitData],
-    responseCallback: Map[TopicIdPartition, org.apache.kafka.common.message.DisklessCommitResponseData.PartitionDisklessCommitResponse] => Unit
-  ): Unit = {
-//    val results = validRequestInfo.map { case (topicIdPartition, partitionData) =>
-//      try {
-//        val partition = getPartitionOrException(topicIdPartition)
-//        (topicIdPartition, partition.disklessCommit(objectName, partitionData))
-//      } catch {
-//        case e: Exception =>
-//          error(s"Error processing diskless commit append operation on partition $topicIdPartition", e)
-//
-//          (topicIdPartition, new DisklessCommitResponseData.PartitionDisklessCommitResponse()
-//            .setPartition(partitionData.partition())
-//            .setErrorCode(Errors.forException(e).code)
-//            .setErrorMessage(e.getMessage))
-//      }
-//    }
-//
-//    // TODO return LogProduceResult and setup up replication purgatory like in appendRecords
-//
-//    responseCallback(results)
-  }
 }

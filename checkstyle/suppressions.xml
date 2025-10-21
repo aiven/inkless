@@ -372,6 +372,4 @@
 
      <!-- Add the new suppression rule for JaasTestUtils.java -->
     <suppress checks="ImportControl" files="(JaasTestUtils).java" />
-
-    <suppress checks=".*" files="(DMRun|DisklessAPITester|DisklessPartition|DisklessManager).java" />
 </suppressions>

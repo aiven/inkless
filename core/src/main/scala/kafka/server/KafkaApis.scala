@@ -251,7 +251,6 @@ class KafkaApis(val requestChannel: RequestChannel,
         case ApiKeys.DELETE_SHARE_GROUP_OFFSETS => handleDeleteShareGroupOffsetsRequest(request).exceptionally(handleError)
         case ApiKeys.STREAMS_GROUP_DESCRIBE => handleStreamsGroupDescribe(request).exceptionally(handleError)
         case ApiKeys.STREAMS_GROUP_HEARTBEAT => handleStreamsGroupHeartbeat(request).exceptionally(handleError)
-        case ApiKeys.DISKLESS_COMMIT => handleDisklessCommitRequest(request)
         case _ => throw new IllegalStateException(s"No handler for request api key ${request.header.apiKey}")
       }
     } catch {
@@ -2935,75 +2934,6 @@ class KafkaApis(val requestChannel: RequestChannel,
       }
     }
 
-  }
-
-  def handleDisklessCommitRequest(request: RequestChannel.Request): Unit = {
-    val disklessCommitRequest = request.body[DisklessCommitRequest]
-
-    val nonExistingTopicResponses = mutable.Map[TopicIdPartition, DisklessCommitResponseData.PartitionDisklessCommitResponse]()
-    val notLeaderResponses = mutable.Map[TopicIdPartition, DisklessCommitResponseData.PartitionDisklessCommitResponse]()
-    val validRequestInfo = mutable.Map[TopicIdPartition, DisklessCommitRequestData.PartitionDisklessCommitData]()
-
-    disklessCommitRequest.data.topics().forEach { topic =>
-      topic.partitions().forEach { partition =>
-        val topicName = metadataCache.getTopicName(topic.topicId()).orElse(null)
-        val topicPartition = new TopicPartition(topicName, partition.partition())
-        val topicIdPartition = new TopicIdPartition(topic.topicId(), partition.partition(), topicName)
-        error(s"Processing diskless commit for topicId=${topic.topicId()}, topicName=$topicName, partition=${partition.partition()}")
-        if (topicName == null) {
-          nonExistingTopicResponses += topicIdPartition -> new DisklessCommitResponseData.PartitionDisklessCommitResponse()
-            .setPartition(partition.partition())
-            .setErrorCode(Errors.UNKNOWN_TOPIC_OR_PARTITION.code)
-            .setErrorMessage("Topic not found")
-        } else if (!metadataCache.contains(topicPartition)) {
-          nonExistingTopicResponses += topicIdPartition -> new DisklessCommitResponseData.PartitionDisklessCommitResponse()
-            .setPartition(partition.partition())
-            .setErrorCode(Errors.UNKNOWN_TOPIC_OR_PARTITION.code)
-            .setErrorMessage("Partition not found")
-        } else {
-          val leaderNode = getCurrentLeader(topicIdPartition.topicPartition, request.context.listenerName)
-          if (leaderNode.leaderId != brokerId) {
-            notLeaderResponses += topicIdPartition -> new DisklessCommitResponseData.PartitionDisklessCommitResponse()
-              .setPartition(partition.partition())
-              .setErrorCode(Errors.NOT_LEADER_OR_FOLLOWER.code)
-              .setErrorMessage("This broker is not the leader for this partition")
-          } else {
-            validRequestInfo += topicIdPartition -> partition
-          }
-        }
-      }
-    }
-
-    replicaManager.disklessCommit(
-      disklessCommitRequest.data().objectName(),
-      validRequestInfo,
-      processedResponses => {
-        val allResponses = processedResponses ++ nonExistingTopicResponses ++ notLeaderResponses
-        val topicResponses = new DisklessCommitResponseData.TopicDisklessCommitResponseCollection()
-
-        // Group responses by topic
-        val responsesByTopic = allResponses.groupBy(_._1)
-        responsesByTopic.foreach { case (topicIdPartition, partitionResponses) =>
-          val topicResponse = new DisklessCommitResponseData.TopicDisklessCommitResponse()
-            .setTopicId(topicIdPartition.topicId())
-
-          val partitionResponseList = new java.util.ArrayList[DisklessCommitResponseData.PartitionDisklessCommitResponse]()
-          partitionResponses.foreach { case (_, response) =>
-            partitionResponseList.add(response)
-          }
-
-          topicResponse.setPartitionResponses(partitionResponseList)
-          topicResponses.add(topicResponse)
-        }
-
-        val response = new DisklessCommitResponse(new DisklessCommitResponseData()
-          .setResponses(topicResponses)
-          .setThrottleTimeMs(0))
-
-        error(s"Will send response: ${response}")
-        requestHelper.sendMaybeThrottle(request, response)
-      }
-    )
   }
 
   def handleGetTelemetrySubscriptionsRequest(request: RequestChannel.Request): Unit = {

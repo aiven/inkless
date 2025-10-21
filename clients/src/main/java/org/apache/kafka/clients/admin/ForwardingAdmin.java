@@ -28,7 +28,6 @@ import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.acl.AclBinding;
 import org.apache.kafka.common.acl.AclBindingFilter;
 import org.apache.kafka.common.config.ConfigResource;
-import org.apache.kafka.common.message.DisklessCommitRequestData;
 import org.apache.kafka.common.metrics.KafkaMetric;
 import org.apache.kafka.common.quota.ClientQuotaAlteration;
 import org.apache.kafka.common.quota.ClientQuotaFilter;
@@ -380,10 +379,5 @@ public class ForwardingAdmin implements Admin {
     @Override
     public Map<MetricName, ? extends Metric> metrics() {
         return delegate.metrics();
-    }
-
-    @Override
-    public DisklessCommitResult disklessCommit(final DisklessCommitRequestData requestData, final DisklessCommitOptions options) {
-        return null;
     }
 }
