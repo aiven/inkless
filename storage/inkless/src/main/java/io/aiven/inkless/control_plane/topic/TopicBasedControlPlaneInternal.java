@@ -57,6 +57,7 @@ import io.aiven.inkless.control_plane.ListOffsetsResponse;
 import io.aiven.inkless.control_plane.MergedFileBatch;
 import io.aiven.inkless.generated.CoordinatorCommitEvent;
 import io.aiven.inkless.generated.CoordinatorCreateTopicAndPartitionsEvent;
+import io.aiven.inkless.generated.CoordinatorDeleteFileEvent;
 import io.aiven.inkless.generated.CoordinatorDeleteRecordsEvent;
 import io.aiven.inkless.generated.CoordinatorDeleteTopicEvent;
 import io.aiven.inkless.generated.MetadataRecordType;
@@ -284,6 +285,93 @@ public class TopicBasedControlPlaneInternal extends AbstractControlPlane {
         return typedReplayResult.responses();
     }
 
+    @Override
+    public List<EnforceRetentionResponse> enforceRetention(
+        final List<EnforceRetentionRequest> requests,
+        final int maxBatchesPerRequest
+    ) {
+        lock.lock();
+        try {
+            return List.of();
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    @Override
+    public List<FileToDelete> getFilesToDelete() {
+        // This is a read-only request, but we need to ensure consistency.
+        recordWriter.waitForReplication();
+
+        lock.lock();
+        try {
+            return this.getFilesToDeleteJob.call(
+                d -> {}  // TODO duration
+            );
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    @Override
+    public void deleteFiles(final DeleteFilesRequest request) {
+        final CoordinatorDeleteFileEvent event = new CoordinatorDeleteFileEvent()
+            .setObjectKeys(request.objectKeyPaths().stream().toList());
+        recordWriter.writeAndReplicate(List.of(
+            new ApiMessageAndVersion(event, (short) 0)
+        ));
+
+        final ReplayResult replayResult = replay(event);
+        if (!(replayResult instanceof CoordinatorDeleteFileEventReplayResult)) {
+            throw new RuntimeException();
+        }
+        // do nothing
+    }
+
+    @Override
+    public FileMergeWorkItem getFileMergeWorkItem() {
+        lock.lock();
+        try {
+            return null;
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    @Override
+    public void commitFileMergeWorkItem(final long workItemId,
+                                        final String objectKey,
+                                        final ObjectFormat format,
+                                        final int uploaderBrokerId,
+                                        final long fileSize,
+                                        final List<MergedFileBatch> batches) {
+        lock.lock();
+        try {
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    @Override
+    public void releaseFileMergeWorkItem(final long workItemId) {
+        lock.lock();
+        try {
+
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    @Override
+    public boolean isSafeToDeleteFile(final String objectKeyPath) {
+        lock.lock();
+        try {
+            return false;
+        } finally {
+            lock.unlock();
+        }
+    }
+
     private ReplayResult replay(final ApiMessage message) {
         final MetadataRecordType type = MetadataRecordType.fromId(message.apiKey());
         switch (type) {
@@ -331,89 +419,19 @@ public class TopicBasedControlPlaneInternal extends AbstractControlPlane {
                     lock.unlock();
                 }
 
+            case COORDINATOR_DELETE_FILE_EVENT:
+                lock.lock();
+                try {
+                    return deleteFilesJob.replay(
+                        (CoordinatorDeleteFileEvent) message,
+                        d -> {}  // TODO duration
+                    );
+                } finally {
+                    lock.unlock();
+                }
+
             default:
                 throw new RuntimeException("Unhandled record type " + type);
-        }
-    }
-
-    @Override
-    public List<EnforceRetentionResponse> enforceRetention(
-        final List<EnforceRetentionRequest> requests,
-        final int maxBatchesPerRequest
-    ) {
-        lock.lock();
-        try {
-            return List.of();
-        } finally {
-            lock.unlock();
-        }
-    }
-
-    @Override
-    public List<FileToDelete> getFilesToDelete() {
-        lock.lock();
-        try {
-            return this.getFilesToDeleteJob.call(
-                d -> {}  // TODO duration
-            );
-        } finally {
-            lock.unlock();
-        }
-    }
-
-    @Override
-    public void deleteFiles(final DeleteFilesRequest request) {
-        lock.lock();
-        try {
-            deleteFilesJob.run(request,
-                d -> {}  // TODO duration
-            );
-        } finally {
-            lock.unlock();
-        }
-    }
-
-    @Override
-    public FileMergeWorkItem getFileMergeWorkItem() {
-        lock.lock();
-        try {
-            return null;
-        } finally {
-            lock.unlock();
-        }
-    }
-
-    @Override
-    public void commitFileMergeWorkItem(final long workItemId,
-                                        final String objectKey,
-                                        final ObjectFormat format,
-                                        final int uploaderBrokerId,
-                                        final long fileSize,
-                                        final List<MergedFileBatch> batches) {
-        lock.lock();
-        try {
-        } finally {
-            lock.unlock();
-        }
-    }
-
-    @Override
-    public void releaseFileMergeWorkItem(final long workItemId) {
-        lock.lock();
-        try {
-
-        } finally {
-            lock.unlock();
-        }
-    }
-
-    @Override
-    public boolean isSafeToDeleteFile(final String objectKeyPath) {
-        lock.lock();
-        try {
-            return false;
-        } finally {
-            lock.unlock();
         }
     }
 

@@ -22,8 +22,9 @@ import java.io.IOException;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
-import java.util.List;
+import java.util.Collection;
 import java.util.Objects;
+import java.util.Set;
 import java.util.function.Consumer;
 
 import org.apache.kafka.common.utils.Time;
@@ -32,6 +33,7 @@ import org.apache.kafka.common.utils.Utils;
 import io.aiven.inkless.control_plane.DeleteFilesRequest;
 import io.aiven.inkless.control_plane.FileState;
 import io.aiven.inkless.control_plane.postgres.JobUtils;
+import io.aiven.inkless.generated.CoordinatorDeleteFileEvent;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -55,19 +57,19 @@ class DeleteFilesJob implements Closeable {
         );
     }
 
-    void run(final DeleteFilesRequest request,
-             final Consumer<Long> durationCallback) {
-        Objects.requireNonNull(request, "request cannot be null");
+    CoordinatorDeleteFileEventReplayResult replay(
+        final CoordinatorDeleteFileEvent event,
+        final Consumer<Long> durationCallback
+    ) {
+        Objects.requireNonNull(event, "event cannot be null");
         Objects.requireNonNull(durationCallback, "durationCallback cannot be null");
-        if (request.objectKeyPaths().isEmpty()) {
-            return;
-        }
-        JobUtils.run(() -> runOnce(request), time, durationCallback);
+        JobUtils.run(() -> runOnce(event.objectKeys()), time, durationCallback);
+        return new CoordinatorDeleteFileEventReplayResult();
     }
 
-    void runOnce(final DeleteFilesRequest request) {
+    void runOnce(final Collection<String> objectKeys) {
         try {
-            for (final String objectKey : request.objectKeyPaths()) {
+            for (final String objectKey : objectKeys) {
                 preparedStatement.clearParameters();
                 preparedStatement.setString(1, objectKey);
                 preparedStatement.setString(2, FileState.DELETING.toString());
