@@ -138,12 +138,12 @@ class DeleteRecordsJobs implements Closeable {
             logStartOffset = convertedOffset;
         }
 
+        final Set<Integer> affectedFiles = new HashSet<>();
+        long deletedBytes = 0;
         deleteBatchesPreparedStatement.clearParameters();
         deleteBatchesPreparedStatement.setString(1, request.topicIdPartition().topicId().toString());
         deleteBatchesPreparedStatement.setInt(2, request.topicIdPartition().partition());
         deleteBatchesPreparedStatement.setLong(3, logStartOffset);
-        final Set<Integer> affectedFiles = new HashSet<>();
-        long deletedBytes = 0;
         try (final ResultSet resultSet = deleteBatchesPreparedStatement.executeQuery()) {
             while (resultSet.next()) {
                 affectedFiles.add(resultSet.getInt("file_id"));

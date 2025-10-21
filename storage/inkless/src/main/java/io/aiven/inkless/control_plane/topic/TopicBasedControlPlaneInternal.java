@@ -74,6 +74,7 @@ public class TopicBasedControlPlaneInternal extends AbstractControlPlane {
     private FindBatchesJob findBatchesJob;
     private GetFilesToDeleteJob getFilesToDeleteJob;
     private DeleteRecordsJobs deleteRecordsJobs;
+    private DeleteTopicsJob deleteTopicsJob;
     private GetLogInfoJob getLogInfoJob;
     private MarkFileForDeletionIfNeededRoutine markFileForDeletionIfNeededRoutine;
 
@@ -109,6 +110,7 @@ public class TopicBasedControlPlaneInternal extends AbstractControlPlane {
             this.findBatchesJob = new FindBatchesJob(time, dbConnection, getLogInfoJob);
             this.getFilesToDeleteJob = new GetFilesToDeleteJob(time, dbConnection);
             this.deleteRecordsJobs = new DeleteRecordsJobs(time, dbConnection, getLogInfoJob, markFileForDeletionIfNeededRoutine);
+            this.deleteTopicsJob = new DeleteTopicsJob(time, dbConnection, markFileForDeletionIfNeededRoutine);
         } catch (final SQLException e) {
             throw new RuntimeException(e);
         } finally {
@@ -178,7 +180,9 @@ public class TopicBasedControlPlaneInternal extends AbstractControlPlane {
     public void deleteTopics(final Set<Uuid> topicIds) {
         lock.lock();
         try {
-
+            deleteTopicsJob.run(topicIds,
+                d -> {}  // TODO duration
+                );
         } finally {
             lock.unlock();
         }
@@ -292,6 +296,7 @@ public class TopicBasedControlPlaneInternal extends AbstractControlPlane {
         Utils.closeQuietly(findBatchesJob, "findBatchesJob");
         Utils.closeQuietly(getFilesToDeleteJob, "getFilesToDeleteJob");
         Utils.closeQuietly(deleteRecordsJobs, "deleteRecordsJobs");
+        Utils.closeQuietly(deleteTopicsJob, "deleteTopicsJob");
         Utils.closeQuietly(getLogInfoJob, "getLogInfoJob");
         Utils.closeQuietly(markFileForDeletionIfNeededRoutine, "markFileForDeletionIfNeededRoutine");
         Utils.closeQuietly(dbConnection, "dbConnection");
