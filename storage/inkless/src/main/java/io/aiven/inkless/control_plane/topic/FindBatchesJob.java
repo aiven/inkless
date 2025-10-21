@@ -69,7 +69,7 @@ class FindBatchesJob {
             "SELECT batch_id, f.object_key AS object_key, magic, byte_offset, byte_size, base_offset, last_offset, log_append_timestamp, batch_max_timestamp, timestamp_type " +
                 "FROM batches AS b " +
                 "  INNER JOIN files AS f ON b.file_id = f.file_id " +
-                "WHERE topic_id = ? AND partition = ? AND base_offset >= ? " +
+                "WHERE topic_id = ? AND partition = ? AND last_offset >= ? " +
                 "ORDER BY base_offset"
         );
     }

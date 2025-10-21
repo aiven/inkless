@@ -26,6 +26,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.stream.Stream;
 
@@ -62,7 +63,7 @@ import org.slf4j.LoggerFactory;
 public class TopicBasedControlPlaneInternal extends AbstractControlPlane {
     private final Logger LOGGER = LoggerFactory.getLogger(TopicBasedControlPlaneInternal.class);
 
-    private final ReentrantReadWriteLock lock = new ReentrantReadWriteLock();
+    private final ReentrantLock lock = new ReentrantLock();
 
     private final RecordWriter recordWriter;
     private TopicBasedControlPlaneInternalConfig controlPlaneConfig;
@@ -80,7 +81,7 @@ public class TopicBasedControlPlaneInternal extends AbstractControlPlane {
 
     @Override
     public void configure(final Map<String, ?> configs) {
-        lock.writeLock().lock();
+        lock.lock();
         try {
             this.controlPlaneConfig = new TopicBasedControlPlaneInternalConfig(configs);
             final String dbUrl = dbUrl();
@@ -104,7 +105,7 @@ public class TopicBasedControlPlaneInternal extends AbstractControlPlane {
         } catch (final SQLException e) {
             throw new RuntimeException(e);
         } finally {
-            lock.writeLock().unlock();
+            lock.unlock();
         }
     }
 
@@ -114,11 +115,11 @@ public class TopicBasedControlPlaneInternal extends AbstractControlPlane {
 
     @Override
     public void createTopicAndPartitions(final Set<CreateTopicAndPartitionsRequest> requests) {
-        lock.writeLock().lock();
+        lock.lock();
         try {
             this.topicsAndPartitionsCreateJob.run(requests, d -> {});  // TODO duration
         } finally {
-            lock.writeLock().unlock();
+            lock.unlock();
         }
     }
 
@@ -130,13 +131,13 @@ public class TopicBasedControlPlaneInternal extends AbstractControlPlane {
         final long fileSize,
         final Stream<CommitBatchRequest> requests
     ) {
-        lock.writeLock().lock();
+        lock.lock();
         try {
             return this.commitFileJob.call(objectKey, format, uploaderBrokerId, fileSize, requests.toList(),
                 d -> {}  // TODO duration
                 ).iterator();
         } finally {
-            lock.writeLock().unlock();
+            lock.unlock();
         }
     }
 
@@ -146,43 +147,43 @@ public class TopicBasedControlPlaneInternal extends AbstractControlPlane {
         final int fetchMaxBytes,
         final int maxBatchesPerPartition
     ) {
-        lock.readLock().lock();
+        lock.lock();
         try {
             return findBatchesJob.call(requests.toList(), fetchMaxBytes, maxBatchesPerPartition,
                 d -> {}  // TODO duration
                 ).iterator();
         } finally {
-            lock.readLock().unlock();
+            lock.unlock();
         }
     }
 
     @Override
     protected Iterator<ListOffsetsResponse> listOffsetsForExistingPartitions(final Stream<ListOffsetsRequest> truerequestsIn) {
-        lock.readLock().lock();
+        lock.lock();
         try {
             return null;
         } finally {
-            lock.readLock().unlock();
+            lock.unlock();
         }
     }
 
     @Override
     public void deleteTopics(final Set<Uuid> topicIds) {
-        lock.writeLock().lock();
+        lock.lock();
         try {
 
         } finally {
-            lock.writeLock().unlock();
+            lock.unlock();
         }
     }
 
     @Override
     public List<DeleteRecordsResponse> deleteRecords(final List<DeleteRecordsRequest> requests) {
-        lock.writeLock().lock();
+        lock.lock();
         try {
             return List.of();
         } finally {
-            lock.writeLock().unlock();
+            lock.unlock();
         }
     }
 
@@ -191,41 +192,41 @@ public class TopicBasedControlPlaneInternal extends AbstractControlPlane {
         final List<EnforceRetentionRequest> requests,
         final int maxBatchesPerRequest
     ) {
-        lock.writeLock().lock();
+        lock.lock();
         try {
             return List.of();
         } finally {
-            lock.writeLock().unlock();
+            lock.unlock();
         }
     }
 
     @Override
     public List<FileToDelete> getFilesToDelete() {
-        lock.writeLock().lock();
+        lock.lock();
         try {
             return List.of();
         } finally {
-            lock.writeLock().unlock();
+            lock.unlock();
         }
     }
 
     @Override
     public void deleteFiles(final DeleteFilesRequest request) {
-        lock.writeLock().lock();
+        lock.lock();
         try {
 
         } finally {
-            lock.writeLock().unlock();
+            lock.unlock();
         }
     }
 
     @Override
     public FileMergeWorkItem getFileMergeWorkItem() {
-        lock.writeLock().lock();
+        lock.lock();
         try {
             return null;
         } finally {
-            lock.writeLock().unlock();
+            lock.unlock();
         }
     }
 
@@ -236,40 +237,40 @@ public class TopicBasedControlPlaneInternal extends AbstractControlPlane {
                                         final int uploaderBrokerId,
                                         final long fileSize,
                                         final List<MergedFileBatch> batches) {
-        lock.writeLock().lock();
+        lock.lock();
         try {
         } finally {
-            lock.writeLock().unlock();
+            lock.unlock();
         }
     }
 
     @Override
     public void releaseFileMergeWorkItem(final long workItemId) {
-        lock.writeLock().lock();
+        lock.lock();
         try {
 
         } finally {
-            lock.writeLock().unlock();
+            lock.unlock();
         }
     }
 
     @Override
     public boolean isSafeToDeleteFile(final String objectKeyPath) {
-        lock.readLock().lock();
+        lock.lock();
         try {
             return false;
         } finally {
-            lock.readLock().unlock();
+            lock.unlock();
         }
     }
 
     @Override
     public List<GetLogInfoResponse> getLogInfo(final List<GetLogInfoRequest> requests) {
-        lock.readLock().lock();
+        lock.lock();
         try {
             return this.getLogInfoJob.call(requests, d -> {});  // TODO duration
         } finally {
-            lock.readLock().unlock();
+            lock.unlock();
         }
     }
 
