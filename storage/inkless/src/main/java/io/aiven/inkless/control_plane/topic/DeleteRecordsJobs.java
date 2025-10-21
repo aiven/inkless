@@ -34,11 +34,11 @@ import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.common.utils.Utils;
 
-import io.aiven.inkless.control_plane.DeleteRecordsRequest;
 import io.aiven.inkless.control_plane.DeleteRecordsResponse;
 import io.aiven.inkless.control_plane.GetLogInfoRequest;
 import io.aiven.inkless.control_plane.GetLogInfoResponse;
 import io.aiven.inkless.control_plane.postgres.JobUtils;
+import io.aiven.inkless.generated.CoordinatorDeleteRecordsEvent;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -84,18 +84,19 @@ class DeleteRecordsJobs implements Closeable {
         );
     }
 
-    List<DeleteRecordsResponse> call(final List<DeleteRecordsRequest> requests,
-                                     final Consumer<Long> durationCallback) {
-        Objects.requireNonNull(requests, "requests cannot be null");
+    CoordinatorDeleteRecordsEventReplayResult replay(
+        final CoordinatorDeleteRecordsEvent event,
+        final Consumer<Long> durationCallback
+    ) {
+        Objects.requireNonNull(event, "event cannot be null");
         Objects.requireNonNull(durationCallback, "durationCallback cannot be null");
 
-        if (requests.isEmpty()) {
-            return List.of();
-        }
-        return JobUtils.run(() -> runOnce(requests), time, durationCallback);
+        return new CoordinatorDeleteRecordsEventReplayResult(
+            JobUtils.run(() -> runOnce(event.requests()), time, durationCallback)
+        );
     }
 
-    private List<DeleteRecordsResponse> runOnce(final List<DeleteRecordsRequest> requests) {
+    private List<DeleteRecordsResponse> runOnce(final List<CoordinatorDeleteRecordsEvent.Request> requests) {
         final long now = time.milliseconds();
         try {
             final List<DeleteRecordsResponse> result = new ArrayList<>();
@@ -114,9 +115,12 @@ class DeleteRecordsJobs implements Closeable {
         }
     }
 
-    private DeleteRecordsResponse deleteRecordsForPartition(final long now, final DeleteRecordsRequest request) throws SQLException {
+    private DeleteRecordsResponse deleteRecordsForPartition(
+        final long now,
+        final CoordinatorDeleteRecordsEvent.Request request
+    ) throws SQLException {
         final GetLogInfoResponse logInfo = getLogInfoJob.call(
-            List.of(new GetLogInfoRequest(request.topicIdPartition().topicId(), request.topicIdPartition().partition())), d -> {}).get(0);
+            List.of(new GetLogInfoRequest(request.topicId(), request.partition())), d -> {}).get(0);
         if (logInfo.errors() == Errors.UNKNOWN_TOPIC_OR_PARTITION) {
             return DeleteRecordsResponse.unknownTopicOrPartition();
         }
@@ -132,8 +136,8 @@ class DeleteRecordsJobs implements Closeable {
         if (convertedOffset > logInfo.logStartOffset()) {
             setLogStartOffsetPreparedStatement.clearParameters();
             setLogStartOffsetPreparedStatement.setLong(1, convertedOffset);
-            setLogStartOffsetPreparedStatement.setString(2, request.topicIdPartition().topicId().toString());
-            setLogStartOffsetPreparedStatement.setInt(3, request.topicIdPartition().partition());
+            setLogStartOffsetPreparedStatement.setString(2, request.topicId().toString());
+            setLogStartOffsetPreparedStatement.setInt(3, request.partition());
             setLogStartOffsetPreparedStatement.executeUpdate();
             logStartOffset = convertedOffset;
         }
@@ -141,8 +145,8 @@ class DeleteRecordsJobs implements Closeable {
         final Set<Integer> affectedFiles = new HashSet<>();
         long deletedBytes = 0;
         deleteBatchesPreparedStatement.clearParameters();
-        deleteBatchesPreparedStatement.setString(1, request.topicIdPartition().topicId().toString());
-        deleteBatchesPreparedStatement.setInt(2, request.topicIdPartition().partition());
+        deleteBatchesPreparedStatement.setString(1, request.topicId().toString());
+        deleteBatchesPreparedStatement.setInt(2, request.partition());
         deleteBatchesPreparedStatement.setLong(3, logStartOffset);
         try (final ResultSet resultSet = deleteBatchesPreparedStatement.executeQuery()) {
             while (resultSet.next()) {
@@ -156,8 +160,8 @@ class DeleteRecordsJobs implements Closeable {
 
         subtractByteSizePreparedStatement.clearParameters();
         subtractByteSizePreparedStatement.setLong(1, deletedBytes);
-        subtractByteSizePreparedStatement.setString(2, request.topicIdPartition().topicId().toString());
-        subtractByteSizePreparedStatement.setInt(3, request.topicIdPartition().partition());
+        subtractByteSizePreparedStatement.setString(2, request.topicId().toString());
+        subtractByteSizePreparedStatement.setInt(3, request.partition());
         subtractByteSizePreparedStatement.executeUpdate();
 
         return DeleteRecordsResponse.success(logStartOffset);

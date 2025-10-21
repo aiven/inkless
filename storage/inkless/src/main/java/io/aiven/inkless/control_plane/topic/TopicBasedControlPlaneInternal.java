@@ -57,6 +57,7 @@ import io.aiven.inkless.control_plane.ListOffsetsResponse;
 import io.aiven.inkless.control_plane.MergedFileBatch;
 import io.aiven.inkless.generated.CoordinatorCommitEvent;
 import io.aiven.inkless.generated.CoordinatorCreateTopicAndPartitionsEvent;
+import io.aiven.inkless.generated.CoordinatorDeleteRecordsEvent;
 import io.aiven.inkless.generated.CoordinatorDeleteTopicEvent;
 import io.aiven.inkless.generated.MetadataRecordType;
 
@@ -262,6 +263,27 @@ public class TopicBasedControlPlaneInternal extends AbstractControlPlane {
         // do nothing
     }
 
+    @Override
+    public List<DeleteRecordsResponse> deleteRecords(final List<DeleteRecordsRequest> requests) {
+        final CoordinatorDeleteRecordsEvent event = new CoordinatorDeleteRecordsEvent()
+            .setRequests(requests.stream().map(r ->
+                new CoordinatorDeleteRecordsEvent.Request()
+                    .setTopicId(r.topicIdPartition().topicId())
+                    .setPartition(r.topicIdPartition().partition())
+                    .setOffset(r.offset())
+            ).toList());
+        recordWriter.writeAndReplicate(List.of(
+            new ApiMessageAndVersion(event, (short) 0)
+        ));
+
+        final ReplayResult replayResult = replay(event);
+        if (!(replayResult instanceof CoordinatorDeleteRecordsEventReplayResult)) {
+            throw new RuntimeException();
+        }
+        final var typedReplayResult = (CoordinatorDeleteRecordsEventReplayResult) replayResult;
+        return typedReplayResult.responses();
+    }
+
     private ReplayResult replay(final ApiMessage message) {
         final MetadataRecordType type = MetadataRecordType.fromId(message.apiKey());
         switch (type) {
@@ -298,20 +320,19 @@ public class TopicBasedControlPlaneInternal extends AbstractControlPlane {
                     lock.unlock();
                 }
 
+            case COORDINATOR_DELETE_RECORDS_EVENT:
+                lock.lock();
+                try {
+                    return deleteRecordsJobs.replay(
+                        (CoordinatorDeleteRecordsEvent) message,
+                        d -> {}  // TODO duration
+                    );
+                } finally {
+                    lock.unlock();
+                }
+
             default:
                 throw new RuntimeException("Unhandled record type " + type);
-        }
-    }
-
-    @Override
-    public List<DeleteRecordsResponse> deleteRecords(final List<DeleteRecordsRequest> requests) {
-        lock.lock();
-        try {
-            return deleteRecordsJobs.call(requests,
-                d -> {}  // TODO duration
-            );
-        } finally {
-            lock.unlock();
         }
     }
 
