@@ -37,6 +37,7 @@ import io.aiven.inkless.storage_backend.common.KeyNotFoundException;
 import io.aiven.inkless.storage_backend.common.StorageBackend;
 import io.aiven.inkless.storage_backend.common.StorageBackendException;
 import io.aiven.inkless.storage_backend.common.StorageBackendTimeoutException;
+import org.apache.kafka.common.utils.ByteBufferInputStream;
 import software.amazon.awssdk.awscore.exception.AwsServiceException;
 import software.amazon.awssdk.core.exception.ApiCallAttemptTimeoutException;
 import software.amazon.awssdk.core.exception.ApiCallTimeoutException;
@@ -104,9 +105,9 @@ public class S3Storage implements StorageBackend {
             if (range != null) {
                 builder = builder.range(formatRange(range));
             }
-            final GetObjectRequest getRequest = builder
-                .build();
-            return Channels.newChannel(s3Client.getObject(getRequest));
+            final GetObjectRequest getRequest = builder.build();
+            final var buffer = s3Client.getObjectAsBytes(getRequest).asByteBuffer();
+            return Channels.newChannel(new ByteBufferInputStream(buffer));
         } catch (final AwsServiceException e) {
             if (e.statusCode() == 404) {
                 throw new KeyNotFoundException(this, key, e);
