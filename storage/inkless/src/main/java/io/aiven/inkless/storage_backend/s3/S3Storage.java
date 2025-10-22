@@ -17,6 +17,8 @@
  */
 package io.aiven.inkless.storage_backend.s3;
 
+import org.apache.kafka.common.utils.ByteBufferInputStream;
+
 import com.groupcdg.pitest.annotations.CoverageIgnore;
 
 import java.io.IOException;
@@ -104,9 +106,12 @@ public class S3Storage implements StorageBackend {
             if (range != null) {
                 builder = builder.range(formatRange(range));
             }
-            final GetObjectRequest getRequest = builder
-                .build();
-            return Channels.newChannel(s3Client.getObject(getRequest));
+            final GetObjectRequest getRequest = builder.build();
+            // for the small 4-8MiB blobs expected here, reading the whole object into memory is more efficient
+            // than streaming it via S3ObjectInputStream which has significant overhead per read call
+            // and does not play well with the buffering done in ObjectFetcher.readToByteBuffer()
+            final var buffer = s3Client.getObjectAsBytes(getRequest).asByteBuffer();
+            return Channels.newChannel(new ByteBufferInputStream(buffer));
         } catch (final AwsServiceException e) {
             if (e.statusCode() == 404) {
                 throw new KeyNotFoundException(this, key, e);
