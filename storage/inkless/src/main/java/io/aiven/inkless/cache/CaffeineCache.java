@@ -1,11 +1,12 @@
 package io.aiven.inkless.cache;
 
-import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.AsyncCache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import com.github.benmanes.caffeine.cache.stats.CacheStats;
 
 import java.io.IOException;
 import java.time.Duration;
+import java.util.concurrent.CompletableFuture;
 import java.util.function.Function;
 
 import io.aiven.inkless.generated.CacheKey;
@@ -13,7 +14,12 @@ import io.aiven.inkless.generated.FileExtent;
 
 public final class CaffeineCache implements ObjectCache {
 
-    private final Cache<CacheKey, FileExtent> cache;
+    /**
+     * Asynchronous Caffeine cache.
+     * The cache mutations use CompletableFuture<FileExtent> to guard for competing
+     * loads from object storage.
+     */
+    private final AsyncCache<CacheKey, FileExtent> cache;
 
     private final CaffeineCacheMetrics metrics;
 
@@ -26,8 +32,8 @@ public final class CaffeineCache implements ObjectCache {
                 .expireAfterWrite(Duration.ofSeconds(lifespanSeconds))
                 .expireAfterAccess(Duration.ofSeconds(maxIdleSeconds != -1 ? maxIdleSeconds: 180))
                 .recordStats()
-                .build();
-        metrics = new CaffeineCacheMetrics(cache);
+                .buildAsync();
+        metrics = new CaffeineCacheMetrics(cache.synchronous());
     }
 
     @Override
@@ -37,23 +43,38 @@ public final class CaffeineCache implements ObjectCache {
 
     @Override
     public FileExtent computeIfAbsent(final CacheKey key, final Function<CacheKey, FileExtent> mappingFunction) {
-        return cache.asMap().computeIfAbsent(key, mappingFunction);
+        final CompletableFuture<FileExtent> future = new CompletableFuture<>();
+        final CompletableFuture<FileExtent> existingFuture = cache.asMap().computeIfAbsent(key, (cacheKey) -> {
+            return future;
+        });
+        // Use Object.equals, if existing future is not the same object as created in this function
+        // there was a pending cache load and this call is required to join the existing.
+        if (!future.equals(existingFuture)) {
+            return existingFuture.join();
+        }
+        final FileExtent fileExtent = mappingFunction.apply(key);
+        future.complete(fileExtent);
+        return fileExtent;
     }
 
     @Override
     public FileExtent get(final CacheKey key) {
-        return cache.getIfPresent(key);
+        final CompletableFuture<FileExtent> future = cache.getIfPresent(key);
+        if (future != null) {
+            return future.join();
+        }
+        return null;
     }
 
     @Override
     public void put(final CacheKey key, final FileExtent value) {
-        cache.asMap().putIfAbsent(key, value);
+        cache.synchronous().put(key, value);
     }
 
     @Override
     public boolean remove(final CacheKey key) {
         if (cache.getIfPresent(key) != null) {
-            cache.invalidate(key);
+            cache.synchronous().invalidate(key);
             return true;
         }
         return false;
@@ -61,10 +82,10 @@ public final class CaffeineCache implements ObjectCache {
 
     @Override
     public long size() {
-        return cache.estimatedSize();
+        return cache.synchronous().estimatedSize();
     }
 
     public CacheStats stats() {
-        return cache.stats();
+        return cache.synchronous().stats();
     }
 }
