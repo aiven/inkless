@@ -23,8 +23,6 @@ import org.apache.kafka.common.config.ConfigDef;
 import org.apache.kafka.common.config.ConfigException;
 import org.apache.kafka.common.config.types.Password;
 
-import com.google.auth.Credentials;
-
 import java.io.IOException;
 import java.util.Map;
 
@@ -120,13 +118,23 @@ public class GcsStorageConfig extends AbstractConfig {
         return getString(GCS_ENDPOINT_URL_CONFIG);
     }
 
-    Credentials credentials() {
+    /**
+     * Creates a reloadable credentials provider that automatically reloads credentials
+     * when the credentials file is modified during runtime (if using file-based credentials).
+     *
+     * @return a ReloadableCredentialsProvider instance
+     * @throws ConfigException if credentials cannot be created
+     */
+    ReloadableCredentialsProvider reloadableCredentials() {
         final Boolean defaultCredentials = getBoolean(GCP_CREDENTIALS_DEFAULT_CONFIG);
         final Password credentialsJsonPwd = getPassword(GCP_CREDENTIALS_JSON_CONFIG);
         final String credentialsJson = credentialsJsonPwd == null ? null : credentialsJsonPwd.value();
         final String credentialsPath = getString(GCP_CREDENTIALS_PATH_CONFIG);
+
         try {
-            return CredentialsBuilder.build(defaultCredentials, credentialsJson, credentialsPath);
+            final var credentialsProvider = new ReloadableCredentialsProvider(defaultCredentials, credentialsJson, credentialsPath);
+            credentialsProvider.enableWatching();
+            return credentialsProvider;
         } catch (final IOException e) {
             throw new ConfigException("Failed to create GCS credentials: " + e.getMessage());
         }
