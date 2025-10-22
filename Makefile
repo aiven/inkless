@@ -39,6 +39,10 @@ docker_push: docker_build
 	# use existing docker tooling to push image
 	$(DOCKER) push aivenoy/kafka:$(VERSION)
 
+.PHONY: docs
+docs:
+	./gradlew genInklessConfigDoc genInklessTopicConfigDoc genInklessMetricsDoc
+
 .PHONY: fmt
 fmt:
 	./gradlew :core:spotlessJavaApply
