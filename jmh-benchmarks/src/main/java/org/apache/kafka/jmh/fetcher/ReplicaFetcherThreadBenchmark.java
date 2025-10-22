@@ -177,7 +177,7 @@ public class ReplicaFetcherThreadBenchmark {
 
             partition.makeFollower(partitionState, checkpoints, topicId, Option.empty());
             pool.put(tp, partition);
-            initialFetchStates.put(tp, new InitialFetchState(topicId, new BrokerEndPoint(3, "host", 3000), 0, 0, false));
+            initialFetchStates.put(tp, new InitialFetchState(topicId, new BrokerEndPoint(3, "host", 3000), 0, 0, ""));
             BaseRecords fetched = new BaseRecords() {
                 @Override
                 public int sizeInBytes() {
@@ -296,7 +296,8 @@ public class ReplicaFetcherThreadBenchmark {
                     new FailedPartitions(),
                     replicaManager,
                     replicaQuota,
-                    String.format("[ReplicaFetcher replicaId=%d, leaderId=%d, fetcherId=%d", config.brokerId(), 3, 3)
+                    String.format("[ReplicaFetcher replicaId=%d, leaderId=%d, fetcherId=%d", config.brokerId(), 3, 3),
+                    ""
             );
 
             pool = partitions;

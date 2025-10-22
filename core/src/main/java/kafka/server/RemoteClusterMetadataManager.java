@@ -76,6 +76,7 @@ import org.apache.kafka.metadata.authorizer.StandardAcl;
 import org.apache.kafka.server.common.ControllerRequestCompletionHandler;
 import org.apache.kafka.server.common.NodeToControllerChannelManager;
 import org.apache.kafka.server.common.RequestLocal;
+import org.apache.kafka.server.config.ClusterLinkConfigs;
 import org.apache.kafka.server.network.BrokerEndPoint;
 
 import org.slf4j.Logger;
@@ -203,7 +204,7 @@ public class RemoteClusterMetadataManager implements MetadataPublisher, AutoClos
                         "readOnly=true] ");
                 remoteBrokers.put(clusterLinkName, List.of(new RemoteBrokerBlockingSender(
                         brokerEndpoint,
-                        brokerConfig,
+                        ClusterLinkConfigs.fromProperties(props),
                         metrics,
                         time,
                         brokerEndpoint.id(),

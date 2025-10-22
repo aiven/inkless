@@ -32,7 +32,8 @@ class ReplicaFetcherThread(name: String,
                            failedPartitions: FailedPartitions,
                            replicaMgr: ReplicaManager,
                            quota: ReplicaQuota,
-                           logPrefix: String)
+                           logPrefix: String,
+                           clusterLinkName: String = "")
   extends AbstractFetcherThread(name = name,
                                 clientId = name,
                                 leader = leader,
@@ -40,7 +41,8 @@ class ReplicaFetcherThread(name: String,
                                 fetchTierStateMachine = new TierStateMachine(leader, replicaMgr, false),
                                 fetchBackOffMs = brokerConfig.replicaFetchBackoffMs,
                                 isInterruptible = false,
-                                replicaMgr.brokerTopicStats) {
+                                replicaMgr.brokerTopicStats,
+                                clusterLinkName) {
 
   this.logIdent = logPrefix
 

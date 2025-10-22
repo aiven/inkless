@@ -64,7 +64,6 @@ public abstract class AbstractKafkaConfig extends AbstractConfig {
         LogConfig.SERVER_CONFIG_DEF,
         ShareGroupConfig.CONFIG_DEF,
         ShareCoordinatorConfig.CONFIG_DEF,
-        ClusterLinkConfig.CONFIG_DEF,
         TransactionLogConfig.CONFIG_DEF,
         TransactionStateManagerConfig.CONFIG_DEF,
         QuorumConfig.CONFIG_DEF,
@@ -72,7 +71,8 @@ public abstract class AbstractKafkaConfig extends AbstractConfig {
         QuotaConfig.CONFIG_DEF,
         BrokerSecurityConfigs.CONFIG_DEF,
         DelegationTokenManagerConfigs.CONFIG_DEF,
-        AddPartitionsToTxnConfig.CONFIG_DEF
+        AddPartitionsToTxnConfig.CONFIG_DEF,
+        ClusterLinkConfigs.topicConfigDef()
     ));
 
     public AbstractKafkaConfig(ConfigDef definition, Map<?, ?> originals, Map<String, ?> configProviderProps, boolean doLog) {
@@ -89,6 +89,10 @@ public abstract class AbstractKafkaConfig extends AbstractConfig {
 
     public int numReplicaFetchers() {
         return getInt(ReplicationConfigs.NUM_REPLICA_FETCHERS_CONFIG);
+    }
+
+    public int numRemoteReplicaFetchers() {
+        return getInt(ReplicationConfigs.NUM_REMOTE_REPLICA_FETCHERS_CONFIG);
     }
 
     public int numRecoveryThreadsPerDataDir() {

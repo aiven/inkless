@@ -47,7 +47,8 @@ class ReplicaAlterLogDirsThread(name: String,
                                 fetchTierStateMachine = new TierStateMachine(leader, replicaMgr, true),
                                 fetchBackOffMs = fetchBackOffMs,
                                 isInterruptible = false,
-                                brokerTopicStats) {
+                                brokerTopicStats,
+                                clusterLinkName = "") {
 
   // Visible for testing
   private[server] val promotionStates: ConcurrentHashMap[TopicPartition, PromotionState] = new ConcurrentHashMap()

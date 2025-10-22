@@ -265,6 +265,7 @@ class ReplicaManager(val config: KafkaConfig,
   protected val allPartitions = new ConcurrentHashMap[TopicPartition, HostedPartition]
   private val replicaStateChangeLock = new Object
   val replicaFetcherManager = createReplicaFetcherManager(metrics, time, quotaManagers.follower)
+  private val remoteReplicaFetcherManager = createRemoteReplicaFetcherManager(metrics, time, quotaManagers.follower)
   private[server] val replicaAlterLogDirsManager = createReplicaAlterLogDirsManager(quotaManagers.alterLogDirs, brokerTopicStats)
   private val highWatermarkCheckPointThreadStarted = new AtomicBoolean(false)
   @volatile private[server] var highWatermarkCheckpoints: Map[String, OffsetCheckpointFile] = logManager.liveLogDirs.map(dir =>
@@ -437,6 +438,7 @@ class ReplicaManager(val config: KafkaConfig,
     // First stop fetchers for all partitions.
     val partitions = partitionsToStop.map(_.topicPartition)
     replicaFetcherManager.removeFetcherForPartitions(partitions)
+    remoteReplicaFetcherManager.removeFetcherForPartitions(partitions)
     replicaAlterLogDirsManager.removeFetcherForPartitions(partitions)
 
     // Second remove deleted partitions from the partition map. Fetchers rely on the
@@ -1201,7 +1203,7 @@ class ReplicaManager(val config: KafkaConfig,
             logManager.abortAndPauseCleaning(topicPartition)
 
             val initialFetchState = InitialFetchState(topicId.toScala, new BrokerEndPoint(config.brokerId, "localhost", -1),
-              partition.getLeaderEpoch, futureLog.highWatermark)
+              partition.getLeaderEpoch, futureLog.highWatermark, "")
             replicaAlterLogDirsManager.addFetcherForPartitions(Map(topicPartition -> initialFetchState))
           }
 
@@ -2064,7 +2066,7 @@ class ReplicaManager(val config: KafkaConfig,
           }
 
           futureReplicasAndInitialOffset.put(topicPartition, InitialFetchState(topicIds(topicPartition.topic), leader,
-            partition.getLeaderEpoch, futureLog.highWatermark))
+            partition.getLeaderEpoch, futureLog.highWatermark, ""))
         }
       }
     }
@@ -2206,6 +2208,7 @@ class ReplicaManager(val config: KafkaConfig,
     if (logDirFailureHandler != null)
       logDirFailureHandler.shutdown()
     replicaFetcherManager.shutdown()
+    remoteReplicaFetcherManager.shutdown()
     replicaAlterLogDirsManager.shutdown()
     delayedFetchPurgatory.shutdown()
     delayedRemoteFetchPurgatory.shutdown()
@@ -2231,6 +2234,10 @@ class ReplicaManager(val config: KafkaConfig,
 
   protected def createReplicaFetcherManager(metrics: Metrics, time: Time, quotaManager: ReplicationQuotaManager) = {
     new ReplicaFetcherManager(config, this, metrics, time, quotaManager, () => metadataCache.metadataVersion(), brokerEpochSupplier)
+  }
+
+  protected def createRemoteReplicaFetcherManager(metrics: Metrics, time: Time, quotaManager: ReplicationQuotaManager) = {
+    new RemoteReplicaFetcherManager(config, this, metrics, time, quotaManager, () => metadataCache.metadataVersion(), brokerEpochSupplier, metadataCache)
   }
 
   protected def createReplicaAlterLogDirsManager(quotaManager: ReplicationQuotaManager, brokerTopicStats: BrokerTopicStats) = {
@@ -2406,6 +2413,7 @@ class ReplicaManager(val config: KafkaConfig,
           name => Option(newImage.topics().getTopic(name)).map(_.id()))
 
         replicaFetcherManager.shutdownIdleFetcherThreads()
+        remoteReplicaFetcherManager.shutdownIdleFetcherThreads()
         replicaAlterLogDirsManager.shutdownIdleFetcherThreads()
 
         remoteLogManager.foreach(rlm => rlm.onLeadershipChange((leaderChangedPartitions.toSet: Set[TopicPartitionLog]).asJava, (followerChangedPartitions.toSet: Set[TopicPartitionLog]).asJava, localChanges.topicIds()))
@@ -2474,9 +2482,6 @@ class ReplicaManager(val config: KafkaConfig,
               // skip remote leader with read.only=false topic
               return
             }
-            // When a broker restarts, it brings up partition as follower first.
-            // We don't set remote bootstrap server when a partition is follower.
-            // If it becomes remote leader later, we need to set remote bootstrap server here.
             partition.setClusterLinkName(info.partition.clusterLinkName)
           }
           followerTopicSet.add(tp.topic)
@@ -2510,6 +2515,7 @@ class ReplicaManager(val config: KafkaConfig,
             stateChangeLogger.error(s"Unable to start fetching $tp " +
               s"with topic ID ${info.topicId} due to a storage error ${e.getMessage}", e)
             replicaFetcherManager.addFailedPartition(tp)
+            if (remoteLeader) remoteReplicaFetcherManager.addFailedPartition(tp)
             // If there is an offline log directory, a Partition object may have been created by
             // `getOrCreatePartition()` before `createLogIfNotExists()` failed to create local replica due
             // to KafkaStorageException. In this case `ReplicaManager.allPartitions` will map this topic-partition
@@ -2520,6 +2526,7 @@ class ReplicaManager(val config: KafkaConfig,
             stateChangeLogger.error(s"Unable to start fetching $tp " +
               s"with topic ID ${info.topicId} due to ${e.getClass.getSimpleName}", e)
             replicaFetcherManager.addFailedPartition(tp)
+            if (remoteLeader) remoteReplicaFetcherManager.addFailedPartition(tp)
         }
       }
     }
@@ -2528,16 +2535,13 @@ class ReplicaManager(val config: KafkaConfig,
       // Stopping the fetchers must be done first in order to initialize the fetch
       // position correctly.
       replicaFetcherManager.removeFetcherForPartitions(partitionsToStartFetching.keySet)
+      remoteReplicaFetcherManager.removeFetcherForPartitions(partitionsToStartFetching.keySet)
       stateChangeLogger.info(s"Stopped fetchers as part of become-follower for ${partitionsToStartFetching.size} partitions")
 
       val listenerName = config.interBrokerListenerName.value
       val partitionAndOffsets = new mutable.HashMap[TopicPartition, InitialFetchState]
 
-      // luke
-
-      // TODO: the remote leader host should get from metadata request, currently, using localhost:9092
       partitionsToStartFetching.foreachEntry { (topicPartition, partition) =>
-
         val nodeOpt = if (!remoteLeader)
           partition.leaderReplicaIdOpt
             .flatMap(leaderId => Option(newImage.cluster.broker(leaderId)))
@@ -2554,7 +2558,7 @@ class ReplicaManager(val config: KafkaConfig,
               new BrokerEndPoint(node.id, node.host, node.port),
               partition.getLeaderEpoch,
               initialFetchOffset(log),
-              remoteLeader
+              if (remoteLeader) partition.clusterLinkName else ""
             ))
           case None =>
             stateChangeLogger.trace(s"Unable to start fetching $topicPartition with topic ID ${partition.topicId} " +
@@ -2562,11 +2566,21 @@ class ReplicaManager(val config: KafkaConfig,
         }
       }
 
-      // TODO: All topic partitions in a fetcher go to same broker. If a fetcher is to source cluster, all partitions has
-      // remoteLeader=true. We can improve RemoteLeaderEndPoint to include remoteLeader flag. It will be easier to know
-      // when to build replica or consumer fetch request.
-      replicaFetcherManager.addFetcherForPartitions(partitionAndOffsets)
-      stateChangeLogger.info(s"Started fetchers as part of become-follower for ${partitionsToStartFetching.size} partitions")
+      // Split partitions by cluster link and route to appropriate fetcher managers
+      val partitionsWithClusterLink = partitionAndOffsets.filter(_._2.clusterLinkName.nonEmpty)
+      val partitionsWithoutClusterLink = partitionAndOffsets.filter(_._2.clusterLinkName.isEmpty)
+
+      // Handle regular partitions
+      if (partitionsWithoutClusterLink.nonEmpty) {
+        replicaFetcherManager.addFetcherForPartitions(partitionsWithoutClusterLink)
+        stateChangeLogger.info(s"Started fetchers as part of become-follower for ${partitionsWithoutClusterLink.size} partitions")
+      }
+
+      // Handle remote partitions with cluster link
+      if (partitionsWithClusterLink.nonEmpty) {
+        remoteReplicaFetcherManager.addFetcherForPartitions(partitionsWithClusterLink)
+        stateChangeLogger.info(s"Started cluster link fetchers as part of become-follower for ${partitionsWithClusterLink.size} partitions")
+      }
 
       partitionsToStartFetching.foreach { case (topicPartition, partition) =>
         completeDelayedOperationsWhenNotPartitionLeader(topicPartition, partition.topicId)

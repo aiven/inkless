@@ -45,7 +45,8 @@ class MockFetcherThread(val mockLeader: MockLeaderEndPoint,
     failedPartitions = failedPartitions,
     fetchTierStateMachine = mockTierStateMachine,
     fetchBackOffMs = fetchBackOffMs,
-    brokerTopicStats = new BrokerTopicStats) {
+    brokerTopicStats = new BrokerTopicStats,
+    clusterLinkName = "") {
 
   private val replicaPartitionStates = mutable.Map[TopicPartition, PartitionState]()
   private var latestEpochDefault: Optional[Integer] = Optional.of(0)

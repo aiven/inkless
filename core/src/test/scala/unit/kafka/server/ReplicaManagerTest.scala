@@ -2623,7 +2623,7 @@ class ReplicaManagerTest {
         val rm = this
         new ReplicaFetcherManager(this.config, rm, metrics, time, replicationQuotaManager, () => this.metadataCache.metadataVersion(), () => 1) {
 
-          override def createFetcherThread(fetcherId: Int, sourceBroker: BrokerEndPoint, readOnly: Boolean): ReplicaFetcherThread = {
+          override def createFetcherThread(fetcherId: Int, sourceBroker: BrokerEndPoint): ReplicaFetcherThread = {
             val logContext = new LogContext(s"[ReplicaFetcher replicaId=${rm.config.brokerId}, leaderId=${sourceBroker.id}, " +
               s"fetcherId=$fetcherId] ")
             val fetchSessionHandler = new FetchSessionHandler(logContext, sourceBroker.id)
@@ -3069,7 +3069,7 @@ class ReplicaManagerTest {
             val config = this.config
             val metadataCache = this.metadataCache
             new ReplicaFetcherManager(config, this, metrics, time, quotaManager, () => metadataCache.metadataVersion(), () => 1) {
-              override def createFetcherThread(fetcherId: Int, sourceBroker: BrokerEndPoint, readOnly: Boolean): ReplicaFetcherThread = {
+              override def createFetcherThread(fetcherId: Int, sourceBroker: BrokerEndPoint): ReplicaFetcherThread = {
                 val threadName = s"ReplicaFetcherThread-$fetcherId-${sourceBroker.id}"
 
                 val tp = new TopicPartition(topic, 0)
