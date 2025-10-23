@@ -109,9 +109,9 @@ class S3ErrorMetricsTest {
 
         assertThat(s3Exception.statusCode()).isEqualTo(statusCode);
 
-        // Comparing to 4 since the SDK makes 3 retries by default.
+        // Comparing to 3 since the SDK makes 2 retries by adaptive mode.
         assertThat(MBEAN_SERVER.getAttribute(s3MetricsObjectName, metricName + "-total"))
-            .isEqualTo(4.0);
+            .isEqualTo(3.0);
         assertThat(MBEAN_SERVER.getAttribute(s3MetricsObjectName, metricName + "-rate"))
             .asInstanceOf(DOUBLE)
             .isGreaterThan(0.0);
@@ -139,9 +139,9 @@ class S3ErrorMetricsTest {
             .hasRootCauseMessage(
                 "HTTP request execution did not complete before the specified timeout configuration: 1 millis");
 
-        // Comparing to 4 since the SDK makes 3 retries by default.
+        // Comparing to 3 since the SDK makes 2 retries by adaptive mode.
         assertThat(MBEAN_SERVER.getAttribute(s3MetricsObjectName, metricName + "-total"))
-            .isEqualTo(4.0);
+            .isEqualTo(3.0);
         assertThat(MBEAN_SERVER.getAttribute(s3MetricsObjectName, metricName + "-rate"))
             .asInstanceOf(DOUBLE)
             .isGreaterThan(0.0);
@@ -171,9 +171,9 @@ class S3ErrorMetricsTest {
             .hasCauseExactlyInstanceOf(SdkClientException.class)
             .cause().hasMessage("Unable to execute HTTP request: null");
 
-        // Comparing to 4 since the SDK makes 3 retries by default.
+        // Comparing to 3 since the SDK makes 2 retries by adaptive mode.
         assertThat(MBEAN_SERVER.getAttribute(s3MetricsObjectName, metricName + "-total"))
-            .isEqualTo(4.0);
+            .isEqualTo(3.0);
         assertThat(MBEAN_SERVER.getAttribute(s3MetricsObjectName, metricName + "-rate"))
             .asInstanceOf(DOUBLE)
             .isGreaterThan(0.0);
