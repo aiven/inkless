@@ -19,6 +19,7 @@ package io.aiven.inkless.storage_backend.s3;
 
 import software.amazon.awssdk.auth.credentials.AwsCredentialsProvider;
 import software.amazon.awssdk.core.internal.http.loader.DefaultSdkHttpClientBuilder;
+import software.amazon.awssdk.core.retry.RetryMode;
 import software.amazon.awssdk.http.SdkHttpConfigurationOption;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.s3.S3Client;
@@ -62,6 +63,8 @@ class S3ClientBuilder {
             c.addMetricPublisher(metricPublisher);
             c.apiCallTimeout(config.apiCallTimeout());
             c.apiCallAttemptTimeout(config.apiCallAttemptTimeout());
+            // Optimizes for concurrency and high throughput use-cases by adjusting request rate dynamically
+            c.retryStrategy(RetryMode.ADAPTIVE_V2);
         });
         return s3ClientBuilder.build();
     }
