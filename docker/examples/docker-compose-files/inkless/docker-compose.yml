@@ -28,6 +28,7 @@ services:
       KAFKA_DISKLESS_STORAGE_SYSTEM_ENABLE: "true"
       KAFKA_LOG_DISKLESS_ENABLE: "true"
       KAFKA_INKLESS_CONSUME_CACHE_MAX_COUNT: "100"
+      KAFKA_INKLESS_CONSUME_CACHE_EXPIRATION_MAX_IDLE_SEC: "30"
 
       ## Control Plane
       ### Postgresql
@@ -44,7 +45,7 @@ services:
 
       # JMX
       KAFKA_JMX_PORT: 9999
-      KAFKA_HEAP_OPTS: "-Xmx2G -Xms2G"
+      KAFKA_HEAP_OPTS: "-Xmx8G -Xms8G"
       EXTRA_ARGS: -javaagent:/opt/prometheus-jmx-exporter/jmx_prometheus_javaagent.jar=7070:/opt/prometheus-jmx-exporter/kafka.yml
     volumes:
       - ./../../../extra/prometheus-jmx-exporter:/opt/prometheus-jmx-exporter:Z

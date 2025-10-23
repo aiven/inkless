@@ -92,6 +92,11 @@ public class InklessConfig extends AbstractConfig {
         "-1 means disabled, and entries will not be removed based on idle time.";
     private static final int CONSUME_CACHE_EXPIRATION_MAX_IDLE_SEC_DEFAULT = -1; // Disabled by default
 
+    public static final String CONSUME_BATCH_COORDINATES_CACHE_TTL_MS_CONFIG = CONSUME_PREFIX + "batch.coordinates.cache.ttl.ms";
+    public static final String CONSUME_BATCH_COORDINATES_CACHE_TTL_MS_DOC = "Time to live in milliseconds for an entry in the Batch Coordinates cache. " +
+        "The time to live must be <= than half of the value of of file.cleaner.interval.ms.";
+    private static final int CONSUME_BATCH_COORDINATES_CACHE_TTL_MS_DEFAULT = 5000;
+
     public static final String RETENTION_ENFORCEMENT_INTERVAL_MS_CONFIG = "retention.enforcement.interval.ms";
     private static final String RETENTION_ENFORCEMENT_INTERVAL_MS_DOC = "The interval with which to enforce retention policies on a partition. " +
         "This interval is approximate, because each scheduling event is randomized. " +
@@ -328,6 +333,14 @@ public class InklessConfig extends AbstractConfig {
             ConfigDef.Importance.LOW,
             RETENTION_ENFORCEMENT_MAX_BATCHES_PER_REQUEST_DOC
         );
+        configDef.define(
+            CONSUME_BATCH_COORDINATES_CACHE_TTL_MS_CONFIG,
+            ConfigDef.Type.INT,
+            CONSUME_BATCH_COORDINATES_CACHE_TTL_MS_DEFAULT,
+            ConfigDef.Range.atLeast(1),
+            ConfigDef.Importance.LOW,
+            CONSUME_BATCH_COORDINATES_CACHE_TTL_MS_DOC
+        );
 
         return configDef;
     }
@@ -434,5 +447,9 @@ public class InklessConfig extends AbstractConfig {
 
     public int maxBatchesPerEnforcementRequest() {
         return getInt(RETENTION_ENFORCEMENT_MAX_BATCHES_PER_REQUEST_CONFIG);
+    }
+
+    public Duration batchCoordinateCacheTtl() {
+        return Duration.ofMillis(getInt(CONSUME_BATCH_COORDINATES_CACHE_TTL_MS_CONFIG));
     }
 }

@@ -22,14 +22,19 @@ import org.apache.kafka.common.requests.FetchRequest;
 import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.server.storage.log.FetchParams;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.util.ArrayList;
-import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 
 import io.aiven.inkless.TimeUtils;
+import io.aiven.inkless.cache.BatchCoordinateCache;
+import io.aiven.inkless.cache.LogFragment;
 import io.aiven.inkless.control_plane.ControlPlane;
 import io.aiven.inkless.control_plane.FindBatchRequest;
 import io.aiven.inkless.control_plane.FindBatchResponse;
@@ -38,19 +43,24 @@ public class FindBatchesJob implements Supplier<Map<TopicIdPartition, FindBatchR
 
     private final Time time;
     private final ControlPlane controlPlane;
+    private final BatchCoordinateCache batchCoordinateCache;
     private final FetchParams params;
     private final Map<TopicIdPartition, FetchRequest.PartitionData> fetchInfos;
     private final int maxBatchesPerPartition;
     private final Consumer<Long> durationCallback;
 
+    private static final Logger LOGGER = LoggerFactory.getLogger(FindBatchesJob.class);
+
     public FindBatchesJob(Time time,
                           ControlPlane controlPlane,
+                          BatchCoordinateCache batchCoordinateCache,
                           FetchParams params,
                           Map<TopicIdPartition, FetchRequest.PartitionData> fetchInfos,
                           int maxBatchesPerPartition,
                           Consumer<Long> durationCallback) {
         this.time = time;
         this.controlPlane = controlPlane;
+        this.batchCoordinateCache = batchCoordinateCache;
         this.params = params;
         this.fetchInfos = fetchInfos;
         this.maxBatchesPerPartition = maxBatchesPerPartition;
@@ -70,15 +80,46 @@ public class FindBatchesJob implements Supplier<Map<TopicIdPartition, FindBatchR
                 requests.add(new FindBatchRequest(topicIdPartition, fetchInfo.getValue().fetchOffset, fetchInfo.getValue().maxBytes));
             }
 
-            List<FindBatchResponse> responses = controlPlane.findBatches(requests, params.maxBytes, maxBatchesPerPartition);
+            FindBatchResponse[] orderedResponses = new FindBatchResponse[requests.size()];
 
-            Map<TopicIdPartition, FindBatchResponse> out = new HashMap<>();
+            var controlPlaneRequests = new ArrayList<FindBatchRequest>();
+            var controlPlaneIndices = new ArrayList<Integer>(); // To map responses back to their original slots
+
             for (int i = 0; i < requests.size(); i++) {
                 FindBatchRequest request = requests.get(i);
+                LogFragment logFragment = batchCoordinateCache.get(request.topicIdPartition(), request.offset());
+                if (logFragment != null) {
+                    // Cache hit: Place the response directly in its correct ordered slot.
+                    orderedResponses[i] = FindBatchResponse.success(
+                        logFragment.batches().stream().map(batchCoordinate -> batchCoordinate.batchInfo(1)).toList(),
+                        logFragment.logStartOffset(),
+                        logFragment.highWaterMark()
+                    );
+                } else {
+                    // Cache miss: Add to the batch for the control plane and record its original index.
+                    controlPlaneRequests.add(request);
+                    controlPlaneIndices.add(i);
+                }
+            }
+
+            List<FindBatchResponse> responses = controlPlane.findBatches(controlPlaneRequests, params.maxBytes, maxBatchesPerPartition);
+
+            // Use the saved indices to place the control plane responses into their correct slots.
+            for (int i = 0; i < controlPlaneRequests.size(); i++) {
+                int originalIndex = controlPlaneIndices.get(i);
                 FindBatchResponse response = responses.get(i);
+                orderedResponses[originalIndex] = response;
+            }
+
+            Map<TopicIdPartition, FindBatchResponse> out = new LinkedHashMap<>();
+            for (int i = 0; i < requests.size(); i++) {
+                FindBatchRequest request = requests.get(i);
+                FindBatchResponse response = orderedResponses[i];
                 out.put(request.topicIdPartition(), response);
             }
+
             return out;
+
         } catch (Exception e) {
             throw new FindBatchesException(e);
         }

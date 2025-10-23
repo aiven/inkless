@@ -18,7 +18,7 @@ import java.util.function.Supplier;
 import io.aiven.inkless.common.metrics.MeasurableValue;
 import io.aiven.inkless.common.metrics.SensorProvider;
 
-public final class CaffeineCacheMetrics implements Closeable {
+public final class CaffeineBatchCoordinateCacheMetrics implements Closeable {
 
     private final Metrics metrics;
 
@@ -30,47 +30,51 @@ public final class CaffeineCacheMetrics implements Closeable {
     private final Sensor cacheAvgLoadPenaltySensor;
     private final Sensor cacheEvictionsSensor;
 
-    public CaffeineCacheMetrics(final Cache<?, ?> cache) {
+    public CaffeineBatchCoordinateCacheMetrics(
+        final Supplier<Long> sizeSupplier,
+        final Supplier<Long> partitionInvalidationsSupplier,
+        final Cache<?, ?> cache
+    ) {
         final JmxReporter reporter = new JmxReporter();
         this.metrics = new Metrics(
-                new MetricConfig(), List.of(reporter), Time.SYSTEM,
-                new KafkaMetricsContext(CaffeineCacheMetricsRegistry.METRIC_CONTEXT)
+            new MetricConfig(), List.of(reporter), Time.SYSTEM,
+            new KafkaMetricsContext(CaffeineCacheMetricsRegistry.METRIC_CONTEXT)
         );
 
-        final CaffeineCacheMetricsRegistry metricsRegistry = new CaffeineCacheMetricsRegistry("wal-segment-cache");
-        cacheSizeSensor = registerLongSensor(metrics, metricsRegistry.cacheSizeMetricName, CaffeineCacheMetricsRegistry.CACHE_SIZE, cache::estimatedSize);
+        final CaffeineCacheMetricsRegistry metricsRegistry = new CaffeineCacheMetricsRegistry("batch-coordinate-cache");
+        cacheSizeSensor = registerLongSensor(metrics, metricsRegistry.cacheSizeMetricName, CaffeineCacheMetricsRegistry.CACHE_SIZE, sizeSupplier);
         cacheHitCountSensor = registerLongSensor(metrics, metricsRegistry.cacheHitCountMetricName, CaffeineCacheMetricsRegistry.CACHE_HIT_COUNT, () -> cache.stats().hitCount());
         cacheHitRateSensor = registerDoubleSensor(metrics, metricsRegistry.cacheHitRateMetricName, CaffeineCacheMetricsRegistry.CACHE_HIT_RATE, () -> cache.stats().hitRate());
         cacheMissCountSensor = registerLongSensor(metrics, metricsRegistry.cacheMissCountMetricName, CaffeineCacheMetricsRegistry.CACHE_MISS_COUNT, () -> cache.stats().missCount());
         cacheMissRateSensor = registerDoubleSensor(metrics, metricsRegistry.cacheMissRateMetricName, CaffeineCacheMetricsRegistry.CACHE_MISS_RATE, () -> cache.stats().missRate());
         cacheAvgLoadPenaltySensor = registerDoubleSensor(metrics, metricsRegistry.avgReadTimeMetricName, CaffeineCacheMetricsRegistry.CACHE_AVG_LOAD_PENALTY_NANOSECONDS, () -> cache.stats().averageLoadPenalty());
-        cacheEvictionsSensor = registerLongSensor(metrics, metricsRegistry.cacheEvictionsMetricName, CaffeineCacheMetricsRegistry.CACHE_EVICTION_COUNT, () -> cache.stats().evictionCount());
+        cacheEvictionsSensor = registerLongSensor(metrics, metricsRegistry.cacheEvictionsMetricName, CaffeineCacheMetricsRegistry.CACHE_EVICTION_COUNT, partitionInvalidationsSupplier);
     }
 
     static Sensor registerDoubleSensor(final Metrics metrics, final MetricNameTemplate metricName, final String sensorName, final Supplier<Double> supplier) {
         return new SensorProvider(metrics, sensorName)
-                .with(metricName, new MeasurableValue<>(supplier))
-                .get();
+            .with(metricName, new MeasurableValue<>(supplier))
+            .get();
     }
 
     static Sensor registerLongSensor(final Metrics metrics, final MetricNameTemplate metricName, final String sensorName, final Supplier<Long> supplier) {
         return new SensorProvider(metrics, sensorName)
-                .with(metricName, new MeasurableValue<>(supplier))
-                .get();
+            .with(metricName, new MeasurableValue<>(supplier))
+            .get();
     }
 
     @Override
     public String toString() {
-        return "CaffeineCacheMetrics{" +
-                "metrics=" + metrics +
-                ", cacheSizeSensor=" + cacheSizeSensor +
-                ", cacheHitCountSensor=" + cacheHitCountSensor +
-                ", cacheHitRateSensor=" + cacheHitRateSensor +
-                ", cacheMissCountSensor=" + cacheMissCountSensor +
-                ", cacheMissRateSensor=" + cacheMissRateSensor +
-                ", cacheAvgLoadPenaltySensor=" + cacheAvgLoadPenaltySensor +
-                ", cacheEvictionsSensor=" + cacheEvictionsSensor +
-                '}';
+        return "CaffeineBatchCoordinateCacheMetrics{" +
+            "metrics=" + metrics +
+            ", cacheSizeSensor=" + cacheSizeSensor +
+            ", cacheHitCountSensor=" + cacheHitCountSensor +
+            ", cacheHitRateSensor=" + cacheHitRateSensor +
+            ", cacheMissCountSensor=" + cacheMissCountSensor +
+            ", cacheMissRateSensor=" + cacheMissRateSensor +
+            ", cacheAvgLoadPenaltySensor=" + cacheAvgLoadPenaltySensor +
+            ", cacheEvictionsSensor=" + cacheEvictionsSensor +
+            '}';
     }
 
     @Override

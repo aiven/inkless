@@ -183,8 +183,9 @@ public class InMemoryControlPlane extends AbstractControlPlane {
         final long lastOffset = firstOffset + request.offsetDelta();
         logInfo.highWatermark = lastOffset + 1;
         logInfo.byteSize += request.size();
+        final long batchId = batchIdCounter.incrementAndGet();
         final BatchInfo batchInfo = new BatchInfo(
-            batchIdCounter.incrementAndGet(),
+            batchId,
             fileInfo.objectKey,
                 new BatchMetadata(
                 request.magic(),
@@ -202,7 +203,7 @@ public class InMemoryControlPlane extends AbstractControlPlane {
 
         fileInfo.addBatch(batchInfo);
 
-        return CommitBatchResponse.success(firstOffset, now, logInfo.logStartOffset, request);
+        return CommitBatchResponse.success(firstOffset, now, logInfo.logStartOffset, fileInfo.objectKey, request);
     }
 
     @Override

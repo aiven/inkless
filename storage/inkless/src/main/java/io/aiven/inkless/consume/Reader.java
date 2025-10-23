@@ -39,6 +39,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
 import io.aiven.inkless.TimeUtils;
+import io.aiven.inkless.cache.BatchCoordinateCache;
 import io.aiven.inkless.cache.KeyAlignmentStrategy;
 import io.aiven.inkless.cache.ObjectCache;
 import io.aiven.inkless.common.InklessThreadFactory;
@@ -54,6 +55,7 @@ public class Reader implements AutoCloseable {
     private final ObjectKeyCreator objectKeyCreator;
     private final KeyAlignmentStrategy keyAlignmentStrategy;
     private final ObjectCache cache;
+    private final BatchCoordinateCache batchCoordinateCache;
     private final ControlPlane controlPlane;
     private final ObjectFetcher objectFetcher;
     private final int maxBatchesPerPartitionToFind;
@@ -69,6 +71,7 @@ public class Reader implements AutoCloseable {
         ObjectKeyCreator objectKeyCreator,
         KeyAlignmentStrategy keyAlignmentStrategy,
         ObjectCache cache,
+        BatchCoordinateCache batchCoordinateCache,
         ControlPlane controlPlane,
         ObjectFetcher objectFetcher,
         BrokerTopicStats brokerTopicStats,
@@ -81,6 +84,7 @@ public class Reader implements AutoCloseable {
             objectKeyCreator,
             keyAlignmentStrategy,
             cache,
+            batchCoordinateCache,
             controlPlane,
             objectFetcher,
             maxBatchesPerPartitionToFind,
@@ -95,6 +99,7 @@ public class Reader implements AutoCloseable {
         ObjectKeyCreator objectKeyCreator,
         KeyAlignmentStrategy keyAlignmentStrategy,
         ObjectCache cache,
+        BatchCoordinateCache batchCoordinateCache,
         ControlPlane controlPlane,
         ObjectFetcher objectFetcher,
         int maxBatchesPerPartitionToFind,
@@ -106,6 +111,7 @@ public class Reader implements AutoCloseable {
         this.objectKeyCreator = objectKeyCreator;
         this.keyAlignmentStrategy = keyAlignmentStrategy;
         this.cache = cache;
+        this.batchCoordinateCache = batchCoordinateCache;
         this.controlPlane = controlPlane;
         this.objectFetcher = objectFetcher;
         this.maxBatchesPerPartitionToFind = maxBatchesPerPartitionToFind;
@@ -132,6 +138,7 @@ public class Reader implements AutoCloseable {
             new FindBatchesJob(
                 time,
                 controlPlane,
+                batchCoordinateCache,
                 params,
                 fetchInfos,
                 maxBatchesPerPartitionToFind,
