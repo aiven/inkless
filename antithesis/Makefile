@@ -14,6 +14,11 @@ push_inkless_docker:
 build_workload_docker:
 	docker build workload -t us-central1-docker.pkg.dev/molten-verve-216720/aiven-repository/inkless-workload
 
+.PHONY: build_workload_java_docker
+build_workload_java_docker:
+	docker build --build-arg VERSION=$(VERSION) workload_java \
+		-t us-central1-docker.pkg.dev/molten-verve-216720/aiven-repository/inkless-workload-java
+
 .PHONY: push_workload_docker
 push_workload_docker:
 	docker push us-central1-docker.pkg.dev/molten-verve-216720/aiven-repository/inkless-workload

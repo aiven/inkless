@@ -1,0 +1,2 @@
+---
+bootstrap_servers: "broker1:19092,broker2:19093,broker3:19094"
