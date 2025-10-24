@@ -17,18 +17,28 @@
  */
 package io.aiven.inkless;
 
+import com.antithesis.sdk.Assert;
 import com.antithesis.sdk.Lifecycle;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.JsonNodeFactory;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 
 import org.apache.kafka.clients.admin.AdminClient;
 import org.apache.kafka.clients.admin.AdminClientConfig;
 import org.apache.kafka.clients.admin.NewTopic;
+import org.apache.kafka.clients.admin.OffsetSpec;
+import org.apache.kafka.clients.consumer.ConsumerConfig;
+import org.apache.kafka.clients.consumer.ConsumerRecord;
+import org.apache.kafka.clients.consumer.ConsumerRecords;
+import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.clients.producer.KafkaProducer;
 import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.clients.producer.ProducerRecord;
+import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.Uuid;
+import org.apache.kafka.common.serialization.ByteArrayDeserializer;
 import org.apache.kafka.common.serialization.ByteArraySerializer;
 
 import org.slf4j.Logger;
@@ -36,10 +46,17 @@ import org.slf4j.LoggerFactory;
 
 import java.io.File;
 import java.io.IOException;
+import java.time.Duration;
+import java.util.Arrays;
 import java.util.Collections;
+import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Properties;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public class ProducerConsumerTest {
     private static final Logger LOGGER = LoggerFactory.getLogger(ProducerConsumerTest.class);
@@ -64,23 +81,148 @@ public class ProducerConsumerTest {
             LOGGER.info("Created '{}' topic", topicName);
         }
 
-        final Map<String, Object> producerProps = Map.of(
-            ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers,
-            ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, ByteArraySerializer.class.getName(),
-            ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, ByteArraySerializer.class.getName(),
-            ProducerConfig.ACKS_CONFIG, "-1"
-        );
-        try (final KafkaProducer<byte[], byte[]> producer = new KafkaProducer<>(producerProps)) {
-            for (int i = 0; i < 10; i++) {
-                final byte[] key = ("key-" + i).getBytes();
-                final byte[] value = ("Hello Kafka from byte array " + i).getBytes();
-                
-                final ProducerRecord<byte[], byte[]> record = new ProducerRecord<>(topicName, key, value);
+        Lifecycle.setupComplete(null);
 
-                System.out.println(producer.send(record).get());
+        final ConcurrentHashMap<Long, ProducerRecord<byte[], byte[]>> sentRecords = new ConcurrentHashMap<>();
+        final AtomicBoolean errors = new AtomicBoolean(false);
+
+        final ProducerThread producerThread1 = new ProducerThread(1, bootstrapServers, topicName, sentRecords, errors);
+        producerThread1.start();
+        producerThread1.join();
+
+        Assert.always(!errors.get(), "Produce without errors", null);
+        if (errors.get()) {
+            LOGGER.error("Produce errors detected, aborting");
+            return;
+        }
+
+        // Consume records and verify them
+        consumeAndVerifyRecords(bootstrapServers, topicName, sentRecords);
+    }
+
+    private static void consumeAndVerifyRecords(final String bootstrapServers,
+                                                final String topicName,
+                                                final ConcurrentHashMap<Long, ProducerRecord<byte[], byte[]>> sentRecords
+    ) throws ExecutionException, InterruptedException {
+        LOGGER.info("Verifying records");
+
+        final TopicPartition tp = new TopicPartition(topicName, 0);
+
+        final Map<String, Object> consumerProps = Map.of(
+            ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers,
+            ConsumerConfig.CLIENT_ID_CONFIG, "verification-consumer",
+            ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, ByteArrayDeserializer.class.getName(),
+            ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, ByteArrayDeserializer.class.getName(),
+            ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest",
+            ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, "false"
+        );
+        final var consumer = new KafkaConsumer<byte[], byte[]>(consumerProps);
+        final Long beginningOffset = consumer.beginningOffsets(List.of(tp)).get(tp);
+        Assert.always(beginningOffset == 0, "Beginning offset as expected",
+            new ObjectNode(JsonNodeFactory.instance).put("beginningOffset", beginningOffset));
+        if (beginningOffset != 0) {
+            LOGGER.error("Beginning offset: {}, expected 0", beginningOffset);
+            return;
+        }
+
+        final Long expectedEndOffset = sentRecords.keySet().stream().max(Long::compare).get() + 1;
+        final Long endOffset = consumer.endOffsets(List.of(tp)).get(tp);
+        Assert.always(Objects.equals(endOffset, expectedEndOffset), "End offset as expected",
+            new ObjectNode(JsonNodeFactory.instance)
+                .put("endOffset", endOffset)
+                .put("expectedEndOffset", expectedEndOffset)
+        );
+        if (!Objects.equals(endOffset, expectedEndOffset)) {
+            LOGGER.error("End offset: {}, expected {}", endOffset, expectedEndOffset);
+            return;
+        }
+
+        consumer.assign(List.of(tp));
+        consumer.seekToBeginning(List.of(tp));
+        long currentOffset = 0;
+        while (currentOffset < expectedEndOffset - 1) {
+            for (final var record : consumer.poll(Duration.ofMillis(100)).records(topicName)) {
+                Assert.always(record.offset() == currentOffset, "Offsets go in order",
+                    new ObjectNode(JsonNodeFactory.instance)
+                        .put("currentOffset", currentOffset)
+                        .put("record.offset()", record.offset())
+                );
+                if (record.offset() != currentOffset) {
+                    LOGGER.error("Current offset: {}, record offset: {}", currentOffset, record.offset());
+                    return;
+                }
+
+                final ProducerRecord<byte[], byte[]> sentRecord = sentRecords.get(currentOffset);
+                Assert.always(sentRecord != null, "Records for all offsets exist",
+                    new ObjectNode(JsonNodeFactory.instance)
+                        .put("currentOffset", currentOffset)
+                );
+                if (sentRecord == null) {
+                    LOGGER.error("No set record for offset {}", sentRecord);
+                    return;
+                }
+
+                final boolean keysMatch = Arrays.equals(sentRecord.key(), record.key());
+                Assert.always(keysMatch, "Record keys match",
+                    new ObjectNode(JsonNodeFactory.instance)
+                        .put("currentOffset", currentOffset)
+                );
+                if (!keysMatch) {
+                    LOGGER.error("Keys don't match at offset {}", currentOffset);
+                    return;
+                }
+
+                currentOffset += 1;
             }
         }
 
-        Lifecycle.setupComplete(null);
+        LOGGER.info("All records verified");
+    }
+
+    private static class ProducerThread extends Thread {
+        private final String topicName;
+        private final ConcurrentHashMap<Long, ProducerRecord<byte[], byte[]>> sentRecords;
+        private final AtomicBoolean errors;
+        private final KafkaProducer<byte[], byte[]> producer;
+
+        private ProducerThread(final int id,
+                               final String bootstrapServers,
+                               final String topicName,
+                               final ConcurrentHashMap<Long, ProducerRecord<byte[], byte[]>> sentRecords,
+                               final AtomicBoolean errors) {
+            super("producer-" + id);
+            this.topicName = topicName;
+            this.sentRecords = sentRecords;
+            this.errors = errors;
+
+            final Map<String, Object> producerProps = Map.of(
+                ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers,
+                ProducerConfig.CLIENT_ID_CONFIG, String.format("producer-%d", id),
+                ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, ByteArraySerializer.class.getName(),
+                ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, ByteArraySerializer.class.getName(),
+                ProducerConfig.ACKS_CONFIG, "-1"
+            );
+            this.producer = new KafkaProducer<>(producerProps);
+        }
+
+        @Override
+        public void run() {
+            for (int i = 0; i < 10; i++) {
+                final byte[] key = ("key-" + i).getBytes();
+                final byte[] value = ("Hello Kafka from byte array " + i).getBytes();
+
+                final ProducerRecord<byte[], byte[]> record = new ProducerRecord<>(topicName, key, value);
+
+                producer.send(record, (rm, e) -> {
+                    if (e == null) {
+                        sentRecords.putIfAbsent(rm.offset(), record);
+                    } else {
+                        LOGGER.error("Error sending", e);
+                        errors.set(true);
+                    }
+                });
+            }
+            producer.flush();
+        }
     }
 }
