@@ -2644,6 +2644,25 @@ project(':storage:inkless') {
   }
 }
 
+project(':storage:inkless:antithesis') {
+  dependencies {
+    implementation "com.antithesis:sdk:1.4.4"
+    implementation log4jReleaseLibs
+    implementation project(':clients')
+    implementation libs.jacksonDatabindYaml
+    implementation libs.jacksonDatabind
+    implementation libs.jacksonAnnotations
+  }
+
+  checkstyle {
+    // TODO enable
+    checkstyleMain.enabled = false
+    checkstyleTest.enabled = false
+
+    configProperties = checkstyleConfigProperties("import-control-storage-inkless.xml")
+  }
+}
+
 project(':tools:tools-api') {
   base {
     archivesName = "kafka-tools-api"
