@@ -18,6 +18,8 @@
 
 package io.aiven.inkless.storage_backend.azure;
 
+import org.apache.kafka.common.metrics.Metrics;
+
 import com.azure.identity.DefaultAzureCredentialBuilder;
 import com.azure.storage.blob.BlobContainerClient;
 import com.azure.storage.blob.BlobServiceClientBuilder;
@@ -49,13 +51,19 @@ import io.aiven.inkless.storage_backend.common.StorageBackendException;
 import reactor.core.Exceptions;
 
 @CoverageIgnore // tested on integration level
-public class AzureBlobStorage implements StorageBackend {
-    // Use a single instance to avoid creating many metric registries
-    // meaning a single set of metrics is published and instantiated only once
-    static final MetricCollector metricCollector = new MetricCollector();
+public class AzureBlobStorage extends StorageBackend {
     private AzureBlobStorageConfig config;
     private BlobContainerClient blobContainerClient;
     private MetricCollector.MetricsPolicy policy;
+
+    // needed for reflection based instantiation
+    public AzureBlobStorage() {
+        this(new Metrics());
+    }
+
+    public AzureBlobStorage(Metrics metrics) {
+        super(metrics);
+    }
 
     @Override
     public void configure(final Map<String, ?> configs) {
@@ -77,6 +85,7 @@ public class AzureBlobStorage implements StorageBackend {
                     new DefaultAzureCredentialBuilder().build());
             }
         }
+        final var metricCollector = new MetricCollector(metrics);
         policy = metricCollector.policy(config);
         blobContainerClient = blobServiceClientBuilder
             .addPolicy(policy)
@@ -216,6 +225,6 @@ public class AzureBlobStorage implements StorageBackend {
 
     @Override
     public void close() throws IOException {
-        metricCollector.close();
+        // nothing to close. blobContainerClient is not closeable
     }
 }

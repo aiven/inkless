@@ -18,6 +18,8 @@
 
 package io.aiven.inkless.storage_backend.gcs;
 
+import org.apache.kafka.common.metrics.Metrics;
+
 import com.google.cloud.BaseServiceException;
 import com.google.cloud.ReadChannel;
 import com.google.cloud.http.HttpTransportOptions;
@@ -45,24 +47,31 @@ import io.aiven.inkless.storage_backend.common.StorageBackend;
 import io.aiven.inkless.storage_backend.common.StorageBackendException;
 
 @CoverageIgnore  // tested on integration level
-public class GcsStorage implements StorageBackend {
+public class GcsStorage extends StorageBackend {
     /**
      * The file extent max size is 16 MiB. Most files are few megabytes but usually over 2 MiB.
      * Good value here is to allow most files to be fetched in single chunk. Worst case is to load
      * the file in two chunks.
      */
     private static final int READER_8MB_CHUNK_SIZE = 1024 * 1024 * 8;
-    // Use a single instance to avoid creating many metric registries
-    // meaning a single set of metrics is published and instantiated only once
-    private static final MetricCollector metricCollector = new MetricCollector();
 
     private volatile Storage storage;
     private String bucketName;
     private ReloadableCredentialsProvider credentialsProvider;
     private StorageOptions.Builder storageOptionsBuilder;
 
+    // needed for reflection based instantiation
+    public GcsStorage() {
+        this(new Metrics());
+    }
+
+    public GcsStorage(Metrics metrics) {
+        super(metrics);
+    }
+
     @Override
     public void configure(final Map<String, ?> configs) {
+        final MetricCollector metricCollector = new MetricCollector(metrics);
         final GcsStorageConfig config = new GcsStorageConfig(configs);
         this.bucketName = config.bucketName();
 
@@ -194,9 +203,15 @@ public class GcsStorage implements StorageBackend {
 
     @Override
     public void close() throws IOException {
-        if (credentialsProvider != null) {
-            credentialsProvider.close();
+        try {
+            if (storage != null) {
+                storage.close();
+            }
+            if (credentialsProvider != null) {
+                credentialsProvider.close();
+            }
+        } catch (Exception e) {
+            throw new IOException(e);
         }
-        metricCollector.close();
     }
 }

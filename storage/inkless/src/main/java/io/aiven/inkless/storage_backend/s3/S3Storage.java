@@ -17,6 +17,7 @@
  */
 package io.aiven.inkless.storage_backend.s3;
 
+import org.apache.kafka.common.metrics.Metrics;
 import org.apache.kafka.common.utils.ByteBufferInputStream;
 
 import com.groupcdg.pitest.annotations.CoverageIgnore;
@@ -55,16 +56,25 @@ import software.amazon.awssdk.services.s3.model.ObjectIdentifier;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 
 @CoverageIgnore  // tested on integration level
-public class S3Storage implements StorageBackend {
+public class S3Storage extends StorageBackend {
 
     public static final int MAX_DELETE_KEYS_LIMIT = 1000;
     private S3Client s3Client;
     private String bucketName;
 
+    // needed for reflection based instantiation
+    public S3Storage() {
+        this(new Metrics());
+    }
+
+    public S3Storage(final Metrics metrics) {
+        super(metrics);
+    }
+
     @Override
     public void configure(final Map<String, ?> configs) {
         final S3StorageConfig config = new S3StorageConfig(configs);
-        this.s3Client = S3ClientBuilder.build(config);
+        this.s3Client = S3ClientBuilder.build(metrics, config);
         this.bucketName = config.bucketName();
     }
 

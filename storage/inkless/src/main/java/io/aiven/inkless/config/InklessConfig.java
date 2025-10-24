@@ -19,8 +19,9 @@ package io.aiven.inkless.config;
 
 import org.apache.kafka.common.config.AbstractConfig;
 import org.apache.kafka.common.config.ConfigDef;
-import org.apache.kafka.common.utils.Utils;
+import org.apache.kafka.common.metrics.Metrics;
 
+import java.lang.reflect.InvocationTargetException;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.Map;
@@ -357,11 +358,17 @@ public class InklessConfig extends AbstractConfig {
         return getBoolean(OBJECT_KEY_LOG_PREFIX_MASKED_CONFIG);
     }
 
-    public StorageBackend storage() {
-        final Class<?> storageClass = getClass(STORAGE_BACKEND_CLASS_CONFIG);
-        final StorageBackend storage = Utils.newInstance(storageClass, StorageBackend.class);
-        storage.configure(this.originalsWithPrefix(STORAGE_PREFIX));
-        return storage;
+    public StorageBackend storage(final Metrics metrics) {
+        try {
+            @SuppressWarnings("unchecked")
+            final Class<? extends StorageBackend> storageClass = (Class<? extends StorageBackend>) getClass(STORAGE_BACKEND_CLASS_CONFIG);
+            final StorageBackend storage = storageClass.getDeclaredConstructor(Metrics.class).newInstance(metrics);
+            storage.configure(this.originalsWithPrefix(STORAGE_PREFIX));
+            return storage;
+        } catch (NoSuchMethodException | InvocationTargetException | InstantiationException |
+                 IllegalAccessException e) {
+            throw new RuntimeException(e);
+        }
     }
 
     public Duration commitInterval() {
