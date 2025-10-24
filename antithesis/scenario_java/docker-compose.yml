@@ -30,25 +30,18 @@ services:
 
   storage:
     image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
-    ports:
-      - "9000:9000"
-      - "9001:9001"
     command: server /data --console-address ":9001"
+    post_start:
+      - command: >
+          /bin/sh -c "
+          until /usr/bin/mc alias set local http://storage:9000 minioadmin minioadmin; do
+          echo 'Waiting for Minio...';
+          sleep 5;
+          done;
+          /usr/bin/mc mb local/inkless;
+          exit 0;
+          "
 
-  create_bucket:
-    image: quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z
-    restart: "no"
-    depends_on:
-      - storage
-    entrypoint: >
-      /bin/sh -c "
-      until /usr/bin/mc alias set local http://storage:9000 minioadmin minioadmin; do
-        echo 'Waiting for Minio...';
-        sleep 5;
-      done;
-      /usr/bin/mc mb local/inkless;
-      exit 0;
-      "
   broker1: &base-broker
     image: aivenoy/kafka:4.1.0-inkless-SNAPSHOT
     restart: unless-stopped

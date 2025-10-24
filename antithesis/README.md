@@ -41,7 +41,7 @@ make build_and_push_config_docker_image SCENARIO=single-broker-in-memory
 Execute the test as describe [here](https://antithesis.com/docs/getting_started/setup/#test-run), for example:
 ```shell
 curl --fail -u '<login>:<password>' \
--X POST https://aiven.antithesis.com/api/v1/launch/basic_test \
+-X POST https://aiven.antithesis.com/api/v1/launch/aiven \
 -d '{"params": { "antithesis.description":"Single broker, everything in memory",
     "antithesis.duration":"30",
     "antithesis.config_image":"us-central1-docker.pkg.dev/molten-verve-216720/aiven-repository/single-broker-in-memory:latest",

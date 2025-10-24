@@ -23,6 +23,10 @@ build_workload_java_docker:
 push_workload_docker:
 	docker push us-central1-docker.pkg.dev/molten-verve-216720/aiven-repository/inkless-workload
 
+.PHONY: push_workload_java_docker
+push_workload_java_docker:
+	docker push us-central1-docker.pkg.dev/molten-verve-216720/aiven-repository/inkless-workload-java
+
 CONFIG_IMAGE := 'us-central1-docker.pkg.dev/molten-verve-216720/aiven-repository/$(SCENARIO)'
 .PHONY: build_and_push_config_docker_image
 build_and_push_config_docker_image:
@@ -32,3 +36,9 @@ build_and_push_config_docker_image:
 	fi
 	docker build -f scenarios/Dockerfile scenarios/$(SCENARIO) -t $(CONFIG_IMAGE)
 	docker push $(CONFIG_IMAGE)
+
+CONFIG_IMAGE_JAVA := 'us-central1-docker.pkg.dev/molten-verve-216720/aiven-repository/java-scenario'
+.PHONY: build_and_push_java_config_docker_image
+build_and_push_java_config_docker_image:
+	docker build -f scenario_java/Dockerfile scenario_java -t $(CONFIG_IMAGE_JAVA)
+	docker push $(CONFIG_IMAGE_JAVA)
