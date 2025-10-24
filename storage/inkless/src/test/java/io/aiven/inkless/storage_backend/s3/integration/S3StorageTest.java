@@ -17,6 +17,8 @@
  */
 package io.aiven.inkless.storage_backend.s3.integration;
 
+import org.apache.kafka.common.metrics.Metrics;
+
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -71,7 +73,7 @@ public class S3StorageTest extends BaseStorageTest {
 
     @Override
     protected StorageBackend storage() {
-        final S3Storage s3Storage = new S3Storage();
+        final S3Storage s3Storage = new S3Storage(new Metrics());
         final Map<String, Object> configs = Map.of(
             "s3.bucket.name", bucketName,
             "s3.region", S3_CONTAINER.getRegion(),

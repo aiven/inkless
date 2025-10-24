@@ -96,9 +96,19 @@ class DeleteRecordsInterceptorTest {
     public void mixingDisklessAndClassicTopicsIsNotAllowed() {
         when(metadataView.isDisklessTopic(eq("diskless"))).thenReturn(true);
         when(metadataView.isDisklessTopic(eq("non_diskless"))).thenReturn(false);
-        final DeleteRecordsInterceptor interceptor = new DeleteRecordsInterceptor(
-            new SharedState(time, BROKER_ID, disklessConfig, metadataView, controlPlane,
-                OBJECT_KEY_CREATOR, KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, brokerTopicStats, DEFAULT_TOPIC_CONFIGS));
+        final SharedState state = new SharedState(
+            time,
+            BROKER_ID,
+            disklessConfig,
+            metadataView,
+            controlPlane,
+            OBJECT_KEY_CREATOR,
+            KEY_ALIGNMENT_STRATEGY,
+            OBJECT_CACHE,
+            brokerTopicStats,
+            DEFAULT_TOPIC_CONFIGS
+        );
+        final DeleteRecordsInterceptor interceptor = new DeleteRecordsInterceptor(state);
 
         final Map<TopicPartition, Long> entriesPerPartition = Map.of(
             new TopicPartition("diskless", 0),

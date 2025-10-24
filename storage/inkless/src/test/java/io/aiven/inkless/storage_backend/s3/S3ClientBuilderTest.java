@@ -17,6 +17,8 @@
  */
 package io.aiven.inkless.storage_backend.s3;
 
+import org.apache.kafka.common.metrics.Metrics;
+
 import org.junit.jupiter.api.Test;
 
 import java.lang.reflect.Field;
@@ -47,7 +49,7 @@ class S3ClientBuilderTest {
             "s3.region", TEST_REGION.id()
         );
         final var config = new S3StorageConfig(configs);
-        final var s3Client = S3ClientBuilder.build(config);
+        final var s3Client = S3ClientBuilder.build(new Metrics(), config);
         final var clientConfiguration = s3Client.serviceClientConfiguration();
         assertThat(clientConfiguration.region()).isEqualTo(TEST_REGION);
         assertThat(clientConfiguration.endpointOverride()).isNotPresent();
@@ -70,7 +72,7 @@ class S3ClientBuilderTest {
             "s3.path.style.access.enabled", true
         );
         final var config = new S3StorageConfig(configs);
-        final var s3Client = S3ClientBuilder.build(config);
+        final var s3Client = S3ClientBuilder.build(new Metrics(), config);
         final var clientConfiguration = s3Client.serviceClientConfiguration();
         assertThat(clientConfiguration.region()).isEqualTo(TEST_REGION);
         assertThat(clientConfiguration.endpointOverride()).hasValue(URI.create("http://minio"));
@@ -101,7 +103,7 @@ class S3ClientBuilderTest {
             "aws.credentials.provider.class", customCredentialsProvider.getName());
 
         final var config = new S3StorageConfig(configs);
-        final var s3Client = S3ClientBuilder.build(config);
+        final var s3Client = S3ClientBuilder.build(new Metrics(), config);
         final var clientConfiguration = s3Client.serviceClientConfiguration();
         assertThat(clientConfiguration.region()).isEqualTo(TEST_REGION);
         assertThat(clientConfiguration.endpointOverride()).hasValue(URI.create("http://minio"));
@@ -133,7 +135,7 @@ class S3ClientBuilderTest {
             "aws.checksum.check.enabled", "true");
 
         final var config = new S3StorageConfig(configs);
-        final var s3Client = S3ClientBuilder.build(config);
+        final var s3Client = S3ClientBuilder.build(new Metrics(), config);
         final var clientConfiguration = s3Client.serviceClientConfiguration();
         assertThat(clientConfiguration.region()).isEqualTo(TEST_REGION);
         assertThat(clientConfiguration.endpointOverride()).hasValue(URI.create("http://minio"));
@@ -156,7 +158,7 @@ class S3ClientBuilderTest {
             "s3.api.call.attempt.timeout", 1000
         );
         final var config = new S3StorageConfig(configs);
-        final var s3Client = S3ClientBuilder.build(config);
+        final var s3Client = S3ClientBuilder.build(new Metrics(), config);
         final var clientConfiguration = s3Client.serviceClientConfiguration();
         assertThat(clientConfiguration.region()).isEqualTo(TEST_REGION);
         assertThat(clientConfiguration.endpointOverride()).isNotPresent();

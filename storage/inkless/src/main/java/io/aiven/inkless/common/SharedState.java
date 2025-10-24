@@ -17,12 +17,19 @@
  */
 package io.aiven.inkless.common;
 
+import org.apache.kafka.common.metrics.JmxReporter;
+import org.apache.kafka.common.metrics.KafkaMetricsContext;
+import org.apache.kafka.common.metrics.MetricConfig;
+import org.apache.kafka.common.metrics.Metrics;
+import org.apache.kafka.common.metrics.MetricsReporter;
 import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.storage.internals.log.LogConfig;
 import org.apache.kafka.storage.log.metrics.BrokerTopicStats;
 
 import java.io.Closeable;
 import java.io.IOException;
+import java.util.List;
+import java.util.Objects;
 import java.util.function.Supplier;
 
 import io.aiven.inkless.cache.CaffeineCache;
@@ -32,19 +39,52 @@ import io.aiven.inkless.cache.ObjectCache;
 import io.aiven.inkless.config.InklessConfig;
 import io.aiven.inkless.control_plane.ControlPlane;
 import io.aiven.inkless.control_plane.MetadataView;
+import io.aiven.inkless.storage_backend.common.StorageBackend;
 
-public record SharedState(
-    Time time,
-    int brokerId,
-    InklessConfig config,
-    MetadataView metadata,
-    ControlPlane controlPlane,
-    ObjectKeyCreator objectKeyCreator,
-    KeyAlignmentStrategy keyAlignmentStrategy,
-    ObjectCache cache,
-    BrokerTopicStats brokerTopicStats,
-    Supplier<LogConfig> defaultTopicConfigs
-) implements Closeable {
+public final class SharedState implements Closeable {
+    public static final String STORAGE_METRIC_CONTEXT = "io.aiven.inkless.storage";
+
+    private final Time time;
+    private final int brokerId;
+    private final InklessConfig config;
+    private final MetadataView metadata;
+    private final ControlPlane controlPlane;
+    private final ObjectKeyCreator objectKeyCreator;
+    private final KeyAlignmentStrategy keyAlignmentStrategy;
+    private final ObjectCache cache;
+    private final BrokerTopicStats brokerTopicStats;
+    private final Supplier<LogConfig> defaultTopicConfigs;
+    private final Metrics storageMetrics;
+
+    public SharedState(
+        Time time,
+        int brokerId,
+        InklessConfig config,
+        MetadataView metadata,
+        ControlPlane controlPlane,
+        ObjectKeyCreator objectKeyCreator,
+        KeyAlignmentStrategy keyAlignmentStrategy,
+        ObjectCache cache,
+        BrokerTopicStats brokerTopicStats,
+        Supplier<LogConfig> defaultTopicConfigs
+    ) {
+        this.time = time;
+        this.brokerId = brokerId;
+        this.config = config;
+        this.metadata = metadata;
+        this.controlPlane = controlPlane;
+        this.objectKeyCreator = objectKeyCreator;
+        this.keyAlignmentStrategy = keyAlignmentStrategy;
+        this.cache = cache;
+        this.brokerTopicStats = brokerTopicStats;
+        this.defaultTopicConfigs = defaultTopicConfigs;
+
+        final MetricsReporter reporter = new JmxReporter();
+        this.storageMetrics = new Metrics(
+            new MetricConfig(), List.of(reporter), Time.SYSTEM,
+            new KafkaMetricsContext(STORAGE_METRIC_CONTEXT)
+        );
+    }
 
     public static SharedState initialize(
         Time time,
@@ -55,6 +95,7 @@ public record SharedState(
         BrokerTopicStats brokerTopicStats,
         Supplier<LogConfig> defaultTopicConfigs
     ) {
+
         return new SharedState(
             time,
             brokerId,
@@ -63,7 +104,6 @@ public record SharedState(
             controlPlane,
             ObjectKey.creator(config.objectKeyPrefix(), config.objectKeyLogPrefixMasked()),
             new FixedBlockAlignment(config.fetchCacheBlockBytes()),
-            // TODO: add metrics adaptation.
             new CaffeineCache(
                 config.cacheMaxCount(),
                 config.cacheExpirationLifespanSec(),
@@ -74,13 +114,96 @@ public record SharedState(
         );
     }
 
+    public StorageBackend storage() {
+        return config.storage(storageMetrics);
+    }
+
     @Override
     public void close() throws IOException {
         try {
             cache.close();
             controlPlane.close();
+            storageMetrics.close();
         } catch (Exception e) {
             throw new RuntimeException(e);
         }
     }
+
+    public Time time() {
+        return time;
+    }
+
+    public int brokerId() {
+        return brokerId;
+    }
+
+    public InklessConfig config() {
+        return config;
+    }
+
+    public MetadataView metadata() {
+        return metadata;
+    }
+
+    public ControlPlane controlPlane() {
+        return controlPlane;
+    }
+
+    public ObjectKeyCreator objectKeyCreator() {
+        return objectKeyCreator;
+    }
+
+    public KeyAlignmentStrategy keyAlignmentStrategy() {
+        return keyAlignmentStrategy;
+    }
+
+    public ObjectCache cache() {
+        return cache;
+    }
+
+    public BrokerTopicStats brokerTopicStats() {
+        return brokerTopicStats;
+    }
+
+    public Supplier<LogConfig> defaultTopicConfigs() {
+        return defaultTopicConfigs;
+    }
+
+    @Override
+    public boolean equals(Object obj) {
+        if (obj == this) return true;
+        if (obj == null || obj.getClass() != this.getClass()) return false;
+        var that = (SharedState) obj;
+        return Objects.equals(this.time, that.time) &&
+            this.brokerId == that.brokerId &&
+            Objects.equals(this.config, that.config) &&
+            Objects.equals(this.metadata, that.metadata) &&
+            Objects.equals(this.controlPlane, that.controlPlane) &&
+            Objects.equals(this.objectKeyCreator, that.objectKeyCreator) &&
+            Objects.equals(this.keyAlignmentStrategy, that.keyAlignmentStrategy) &&
+            Objects.equals(this.cache, that.cache) &&
+            Objects.equals(this.brokerTopicStats, that.brokerTopicStats) &&
+            Objects.equals(this.defaultTopicConfigs, that.defaultTopicConfigs);
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(time, brokerId, config, metadata, controlPlane, objectKeyCreator, keyAlignmentStrategy, cache, brokerTopicStats, defaultTopicConfigs);
+    }
+
+    @Override
+    public String toString() {
+        return "SharedState[" +
+            "time=" + time + ", " +
+            "brokerId=" + brokerId + ", " +
+            "config=" + config + ", " +
+            "metadata=" + metadata + ", " +
+            "controlPlane=" + controlPlane + ", " +
+            "objectKeyCreator=" + objectKeyCreator + ", " +
+            "keyAlignmentStrategy=" + keyAlignmentStrategy + ", " +
+            "cache=" + cache + ", " +
+            "brokerTopicStats=" + brokerTopicStats + ", " +
+            "defaultTopicConfigs=" + defaultTopicConfigs + ']';
+    }
+
 }

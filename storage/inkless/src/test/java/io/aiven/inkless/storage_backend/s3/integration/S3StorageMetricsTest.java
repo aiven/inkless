@@ -17,6 +17,9 @@
  */
 package io.aiven.inkless.storage_backend.s3.integration;
 
+import org.apache.kafka.common.metrics.KafkaMetric;
+import org.apache.kafka.common.metrics.Metrics;
+
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -26,12 +29,8 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.io.ByteArrayInputStream;
-import java.lang.management.ManagementFactory;
 import java.util.Map;
 import java.util.Set;
-
-import javax.management.MBeanServer;
-import javax.management.ObjectName;
 
 import io.aiven.inkless.common.ByteRange;
 import io.aiven.inkless.common.ObjectKey;
@@ -50,11 +49,11 @@ class S3StorageMetricsTest {
     @Container
     private static final MinioContainer S3_CONTAINER = S3TestContainer.minio();
 
-    private static final MBeanServer MBEAN_SERVER = ManagementFactory.getPlatformMBeanServer();
-
     private static final String BUCKET_NAME = "test-bucket";
+    public static final String S3_CLIENT_METRICS = "s3-client-metrics";
 
-    private S3Storage storage;
+    private final Metrics metrics = new Metrics();
+    private final S3Storage storage = new S3Storage(metrics);
 
     @BeforeAll
     static void setupS3() {
@@ -63,7 +62,6 @@ class S3StorageMetricsTest {
 
     @BeforeEach
     void setupStorage() {
-        storage = new S3Storage();
         final Map<String, Object> configs = Map.of(
             "s3.bucket.name", BUCKET_NAME,
             "s3.region", S3_CONTAINER.getRegion(),
@@ -92,54 +90,56 @@ class S3StorageMetricsTest {
         storage.delete(key);
         storage.delete(Set.of(key));
 
-        final ObjectName segmentCopyPerSecName = ObjectName.getInstance(
-            "aiven.inkless.server.s3:type=s3-client-metrics");
-        assertThat(MBEAN_SERVER.getAttribute(segmentCopyPerSecName, "get-object-requests-rate"))
+        assertThat(getMetric("get-object-requests-rate").metricValue())
             .asInstanceOf(DOUBLE)
             .isGreaterThan(0.0);
-        assertThat(MBEAN_SERVER.getAttribute(segmentCopyPerSecName, "get-object-requests-total"))
+        assertThat(getMetric("get-object-requests-total").metricValue())
             .isEqualTo(2.0);
-        assertThat(MBEAN_SERVER.getAttribute(segmentCopyPerSecName, "get-object-time-avg"))
+        assertThat(getMetric("get-object-time-avg").metricValue())
             .asInstanceOf(DOUBLE)
             .isGreaterThan(0.0);
-        assertThat(MBEAN_SERVER.getAttribute(segmentCopyPerSecName, "get-object-time-max"))
-            .asInstanceOf(DOUBLE)
-            .isGreaterThan(0.0);
-
-        assertThat(MBEAN_SERVER.getAttribute(segmentCopyPerSecName, "put-object-requests-rate"))
-            .asInstanceOf(DOUBLE)
-            .isGreaterThan(0.0);
-        assertThat(MBEAN_SERVER.getAttribute(segmentCopyPerSecName, "put-object-requests-total"))
-            .isEqualTo(1.0);
-        assertThat(MBEAN_SERVER.getAttribute(segmentCopyPerSecName, "put-object-time-avg"))
-            .asInstanceOf(DOUBLE)
-            .isGreaterThan(0.0);
-        assertThat(MBEAN_SERVER.getAttribute(segmentCopyPerSecName, "put-object-time-max"))
+        assertThat(getMetric("get-object-time-max").metricValue())
             .asInstanceOf(DOUBLE)
             .isGreaterThan(0.0);
 
-        assertThat(MBEAN_SERVER.getAttribute(segmentCopyPerSecName, "delete-object-requests-rate"))
+        assertThat(getMetric("put-object-requests-rate").metricValue())
             .asInstanceOf(DOUBLE)
             .isGreaterThan(0.0);
-        assertThat(MBEAN_SERVER.getAttribute(segmentCopyPerSecName, "delete-object-requests-total"))
+        assertThat(getMetric("put-object-requests-total").metricValue())
             .isEqualTo(1.0);
-        assertThat(MBEAN_SERVER.getAttribute(segmentCopyPerSecName, "delete-object-time-avg"))
+        assertThat(getMetric("put-object-time-avg").metricValue())
             .asInstanceOf(DOUBLE)
             .isGreaterThan(0.0);
-        assertThat(MBEAN_SERVER.getAttribute(segmentCopyPerSecName, "delete-object-time-max"))
+        assertThat(getMetric("put-object-time-max").metricValue())
             .asInstanceOf(DOUBLE)
             .isGreaterThan(0.0);
 
-        assertThat(MBEAN_SERVER.getAttribute(segmentCopyPerSecName, "delete-objects-requests-rate"))
+        assertThat(getMetric("delete-object-requests-rate").metricValue())
             .asInstanceOf(DOUBLE)
             .isGreaterThan(0.0);
-        assertThat(MBEAN_SERVER.getAttribute(segmentCopyPerSecName, "delete-objects-requests-total"))
+        assertThat(getMetric("delete-object-requests-total").metricValue())
             .isEqualTo(1.0);
-        assertThat(MBEAN_SERVER.getAttribute(segmentCopyPerSecName, "delete-objects-time-avg"))
+        assertThat(getMetric("delete-object-time-avg").metricValue())
             .asInstanceOf(DOUBLE)
             .isGreaterThan(0.0);
-        assertThat(MBEAN_SERVER.getAttribute(segmentCopyPerSecName, "delete-objects-time-max"))
+        assertThat(getMetric("delete-object-time-max").metricValue())
             .asInstanceOf(DOUBLE)
             .isGreaterThan(0.0);
+
+        assertThat(getMetric("delete-objects-requests-rate").metricValue())
+            .asInstanceOf(DOUBLE)
+            .isGreaterThan(0.0);
+        assertThat(getMetric("delete-objects-requests-total").metricValue())
+            .isEqualTo(1.0);
+        assertThat(getMetric("delete-objects-time-avg").metricValue())
+            .asInstanceOf(DOUBLE)
+            .isGreaterThan(0.0);
+        assertThat(getMetric("delete-objects-time-max").metricValue())
+            .asInstanceOf(DOUBLE)
+            .isGreaterThan(0.0);
+    }
+
+    private KafkaMetric getMetric(String metricName) {
+        return metrics.metric(metrics.metricName(metricName, S3_CLIENT_METRICS));
     }
 }

@@ -27,7 +27,6 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
@@ -47,7 +46,6 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
-import java.util.Map;
 import java.util.function.Supplier;
 
 import io.aiven.inkless.common.ObjectFormat;
@@ -111,8 +109,6 @@ class FileMergerMockedTest {
     ArgumentCaptor<ObjectKey> objectKeyCaptor;
     @Captor
     ArgumentCaptor<Long> sleepCaptor;
-    @TempDir
-    Path logDir;
 
     SharedState sharedState;
 
@@ -135,7 +131,7 @@ class FileMergerMockedTest {
     void singleFileSingleBatch() throws StorageBackendException, IOException {
         when(inklessConfig.produceMaxUploadAttempts()).thenReturn(1);
         when(inklessConfig.produceUploadBackoff()).thenReturn(Duration.ZERO);
-        when(inklessConfig.storage()).thenReturn(storage);
+        when(inklessConfig.storage(any())).thenReturn(storage);
 
         final String obj1 = "obj1";
 
@@ -191,7 +187,7 @@ class FileMergerMockedTest {
     void twoFilesWithGaps(final boolean directFileOrder, final boolean directBatchOrder) throws StorageBackendException, IOException {
         when(inklessConfig.produceMaxUploadAttempts()).thenReturn(1);
         when(inklessConfig.produceUploadBackoff()).thenReturn(Duration.ZERO);
-        when(inklessConfig.storage()).thenReturn(storage);
+        when(inklessConfig.storage(any())).thenReturn(storage);
 
         final String obj1 = "obj1";
         final String obj2 = "obj2";
@@ -321,7 +317,7 @@ class FileMergerMockedTest {
 
     @Test
     void errorInReading() throws Exception {
-        when(inklessConfig.storage()).thenReturn(storage);
+        when(inklessConfig.storage(any())).thenReturn(storage);
 
         final String obj1 = "obj1";
         final long batch1Id = 1;
@@ -349,7 +345,7 @@ class FileMergerMockedTest {
 
     @Test
     void errorInWriting() throws Exception {
-        when(inklessConfig.storage()).thenReturn(storage);
+        when(inklessConfig.storage(any())).thenReturn(storage);
         when(inklessConfig.produceMaxUploadAttempts()).thenReturn(1);
         when(inklessConfig.produceUploadBackoff()).thenReturn(Duration.ZERO);
 
@@ -391,7 +387,7 @@ class FileMergerMockedTest {
     @ParameterizedTest
     @ValueSource(booleans = {true, false})
     void errorInCommittingFromControlPlane(boolean isSafeToDelete) throws Exception {
-        when(inklessConfig.storage()).thenReturn(storage);
+        when(inklessConfig.storage(any())).thenReturn(storage);
         when(inklessConfig.produceMaxUploadAttempts()).thenReturn(1);
         when(inklessConfig.produceUploadBackoff()).thenReturn(Duration.ZERO);
 
@@ -435,7 +431,7 @@ class FileMergerMockedTest {
 
     @Test
     void errorInCommittingNotFromControlPlane() throws Exception {
-        when(inklessConfig.storage()).thenReturn(storage);
+        when(inklessConfig.storage(any())).thenReturn(storage);
         when(inklessConfig.produceMaxUploadAttempts()).thenReturn(1);
         when(inklessConfig.produceUploadBackoff()).thenReturn(Duration.ZERO);
 
@@ -473,22 +469,6 @@ class FileMergerMockedTest {
 
         verify(storage).upload(objectKeyCaptor.capture(), any(InputStream.class), anyLong());
         verify(storage, never()).delete(objectKeyCaptor.getValue());
-    }
-
-    private void bindFilesToObjectNames(final Map<String, InputStream> files) {
-        try {
-            when(storage.fetch(any(), any())).thenAnswer(invocation -> {
-                final ObjectKey objectKey = invocation.getArgument(0, ObjectKey.class);
-                final InputStream inputStream = files.get(objectKey.value());
-                if (inputStream == null) {
-                    throw new RuntimeException("Unknown object " + objectKey);
-                } else {
-                    return ByteBuffer.wrap(inputStream.readAllBytes());
-                }
-            });
-        } catch (final StorageBackendException | IOException e) {
-            throw new RuntimeException(e);
-        }
     }
 
     private byte[] concat(final byte[] ... arrays) {

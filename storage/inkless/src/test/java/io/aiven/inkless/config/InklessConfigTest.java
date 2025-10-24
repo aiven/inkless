@@ -20,6 +20,8 @@ package io.aiven.inkless.config;
 import org.apache.kafka.common.config.AbstractConfig;
 import org.apache.kafka.common.config.ConfigDef;
 import org.apache.kafka.common.config.ConfigException;
+import org.apache.kafka.common.metrics.Metrics;
+import org.apache.kafka.common.utils.MockTime;
 
 import org.junit.jupiter.api.Test;
 
@@ -33,6 +35,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class InklessConfigTest {
+
+    private Metrics storageMetrics;
+
     @Test
     void publicConstructor() {
         final String controlPlaneClass = InMemoryControlPlane.class.getCanonicalName();
@@ -62,7 +67,8 @@ class InklessConfigTest {
         assertThat(config.produceBufferMaxBytes()).isEqualTo(1024);
         assertThat(config.produceMaxUploadAttempts()).isEqualTo(5);
         assertThat(config.produceUploadBackoff()).isEqualTo(Duration.ofMillis(30));
-        assertThat(config.storage()).isInstanceOf(ConfigTestStorageBackend.class);
+        storageMetrics = new Metrics(new MockTime());
+        assertThat(config.storage(storageMetrics)).isInstanceOf(ConfigTestStorageBackend.class);
         assertThat(config.fileCleanerInterval()).isEqualTo(Duration.ofMillis(100));
         assertThat(config.fileCleanerRetentionPeriod()).isEqualTo(Duration.ofMillis(200));
         assertThat(config.fileMergerInterval()).isEqualTo(Duration.ofMillis(100));
@@ -91,7 +97,7 @@ class InklessConfigTest {
         assertThat(config.produceBufferMaxBytes()).isEqualTo(8 * 1024 * 1024);
         assertThat(config.produceMaxUploadAttempts()).isEqualTo(3);
         assertThat(config.produceUploadBackoff()).isEqualTo(Duration.ofMillis(10));
-        assertThat(config.storage()).isInstanceOf(ConfigTestStorageBackend.class);
+        assertThat(config.storage(storageMetrics)).isInstanceOf(ConfigTestStorageBackend.class);
         assertThat(config.fileCleanerInterval()).isEqualTo(Duration.ofMinutes(5));
         assertThat(config.fileCleanerRetentionPeriod()).isEqualTo(Duration.ofMinutes(1));
         assertThat(config.fileMergerInterval()).isEqualTo(Duration.ofMinutes(1));
@@ -135,7 +141,7 @@ class InklessConfigTest {
         assertThat(config.produceBufferMaxBytes()).isEqualTo(1024);
         assertThat(config.produceMaxUploadAttempts()).isEqualTo(5);
         assertThat(config.produceUploadBackoff()).isEqualTo(Duration.ofMillis(30));
-        assertThat(config.storage()).isInstanceOf(ConfigTestStorageBackend.class);
+        assertThat(config.storage(storageMetrics)).isInstanceOf(ConfigTestStorageBackend.class);
         assertThat(config.fileCleanerInterval()).isEqualTo(Duration.ofMillis(100));
         assertThat(config.fileCleanerRetentionPeriod()).isEqualTo(Duration.ofMillis(200));
         assertThat(config.fileMergerInterval()).isEqualTo(Duration.ofMillis(100));
@@ -239,8 +245,8 @@ class InklessConfigTest {
                 "unrelated", "x"
             )
         );
-        assertThat(config.storage()).isInstanceOf(ConfigTestStorageBackend.class);
-        final var storage = (ConfigTestStorageBackend) config.storage();
+        assertThat(config.storage(storageMetrics)).isInstanceOf(ConfigTestStorageBackend.class);
+        final var storage = (ConfigTestStorageBackend) config.storage(storageMetrics);
         assertThat(storage.passedConfig).isEqualTo(Map.of(
             "backend.class", backendClass,
             "a", "1",
