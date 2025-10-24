@@ -56,8 +56,10 @@ public class GcsStorage implements StorageBackend {
     // meaning a single set of metrics is published and instantiated only once
     private static final MetricCollector metricCollector = new MetricCollector();
 
-    private Storage storage;
+    private volatile Storage storage;
     private String bucketName;
+    private ReloadableCredentialsProvider credentialsProvider;
+    private StorageOptions.Builder storageOptionsBuilder;
 
     @Override
     public void configure(final Map<String, ?> configs) {
@@ -66,13 +68,21 @@ public class GcsStorage implements StorageBackend {
 
         final HttpTransportOptions.Builder httpTransportOptionsBuilder = HttpTransportOptions.newBuilder();
 
-        final StorageOptions.Builder builder = StorageOptions.newBuilder()
-            .setCredentials(config.credentials())
+        // Create reloadable credentials provider
+        this.credentialsProvider = config.reloadableCredentials();
+
+        // Store the builder template for recreating storage clients
+        this.storageOptionsBuilder = StorageOptions.newBuilder()
             .setTransportOptions(metricCollector.httpTransportOptions(httpTransportOptionsBuilder));
         if (config.endpointUrl() != null) {
-            builder.setHost(config.endpointUrl());
+            this.storageOptionsBuilder.setHost(config.endpointUrl());
         }
-        storage = builder.build().getService();
+
+        // Set up credentials reload callback to recreate storage client
+        this.credentialsProvider.setCredentialsUpdateCallback(this::updateStorageClient);
+
+        // Create initial storage client
+        updateStorageClient(credentialsProvider.getCredentials());
     }
 
     @Override
@@ -160,6 +170,21 @@ public class GcsStorage implements StorageBackend {
         return blob;
     }
 
+    /**
+     * Updates the storage client with new credentials.
+     * This method is called when credentials are reloaded.
+     *
+     * @param credentials the new credentials to use
+     */
+    protected void updateStorageClient(final com.google.auth.Credentials credentials) {
+        synchronized (this) {
+            this.storage = storageOptionsBuilder
+                .setCredentials(credentials)
+                .build()
+                .getService();
+        }
+    }
+
     @Override
     public String toString() {
         return "GCSStorage{"
@@ -169,6 +194,9 @@ public class GcsStorage implements StorageBackend {
 
     @Override
     public void close() throws IOException {
+        if (credentialsProvider != null) {
+            credentialsProvider.close();
+        }
         metricCollector.close();
     }
 }
