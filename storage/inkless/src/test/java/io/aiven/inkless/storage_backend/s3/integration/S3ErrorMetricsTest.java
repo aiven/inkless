@@ -17,24 +17,21 @@
  */
 package io.aiven.inkless.storage_backend.s3.integration;
 
+import org.apache.kafka.common.metrics.KafkaMetric;
+import org.apache.kafka.common.metrics.Metrics;
+
 import com.github.tomakehurst.wiremock.http.Fault;
 import com.github.tomakehurst.wiremock.junit5.WireMockRuntimeInfo;
 import com.github.tomakehurst.wiremock.junit5.WireMockTest;
 
 import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 
 import java.io.ByteArrayInputStream;
-import java.lang.management.ManagementFactory;
 import java.util.Map;
-
-import javax.management.MBeanServer;
-import javax.management.MalformedObjectNameException;
-import javax.management.ObjectName;
 
 import io.aiven.inkless.common.ByteRange;
 import io.aiven.inkless.storage_backend.common.StorageBackendException;
@@ -63,16 +60,10 @@ import static org.assertj.core.api.InstanceOfAssertFactories.DOUBLE;
 @WireMockTest
 class S3ErrorMetricsTest {
     private static final String ERROR_RESPONSE_TEMPLATE = "<Error><Code>%s</Code></Error>";
-    private static final MBeanServer MBEAN_SERVER = ManagementFactory.getPlatformMBeanServer();
     private static final String BUCKET_NAME = "test-bucket";
-    private S3Storage storage;
-    private ObjectName s3MetricsObjectName;
-
-    @BeforeEach
-    void setUp() throws MalformedObjectNameException {
-        s3MetricsObjectName = ObjectName.getInstance("aiven.inkless.server.s3:type=s3-client-metrics");
-        storage = new S3Storage();
-    }
+    public static final String S3_CLIENT_METRICS = "s3-client-metrics";
+    private final Metrics metrics = new Metrics();
+    private final S3Storage storage = new S3Storage(metrics);
 
     @AfterEach
     void tearDown() throws Exception {
@@ -86,7 +77,7 @@ class S3ErrorMetricsTest {
     })
     void testS3ServerExceptions(final int statusCode,
                                 final String metricName,
-                                final WireMockRuntimeInfo wmRuntimeInfo) throws Exception {
+                                final WireMockRuntimeInfo wmRuntimeInfo) {
         final Map<String, Object> configs = Map.of(
             "s3.bucket.name", BUCKET_NAME,
             "s3.region", Region.US_EAST_1.id(),
@@ -109,16 +100,17 @@ class S3ErrorMetricsTest {
 
         assertThat(s3Exception.statusCode()).isEqualTo(statusCode);
 
-        // Comparing to 4 since the SDK makes 3 retries by default.
-        assertThat(MBEAN_SERVER.getAttribute(s3MetricsObjectName, metricName + "-total"))
-            .isEqualTo(4.0);
-        assertThat(MBEAN_SERVER.getAttribute(s3MetricsObjectName, metricName + "-rate"))
+        // SDK makes more than 1 retries by adaptive mode.
+        assertThat(getMetric(metricName + "-total").metricValue())
+            .asInstanceOf(DOUBLE)
+            .isGreaterThan(1.0);
+        assertThat(getMetric(metricName + "-rate").metricValue())
             .asInstanceOf(DOUBLE)
             .isGreaterThan(0.0);
     }
 
     @Test
-    void apiCallAttemptTimeout(final WireMockRuntimeInfo wmRuntimeInfo) throws Exception {
+    void apiCallAttemptTimeout(final WireMockRuntimeInfo wmRuntimeInfo) {
         final Map<String, Object> configs = Map.of(
             "s3.bucket.name", BUCKET_NAME,
             "s3.region", Region.US_EAST_1.id(),
@@ -139,16 +131,17 @@ class S3ErrorMetricsTest {
             .hasRootCauseMessage(
                 "HTTP request execution did not complete before the specified timeout configuration: 1 millis");
 
-        // Comparing to 4 since the SDK makes 3 retries by default.
-        assertThat(MBEAN_SERVER.getAttribute(s3MetricsObjectName, metricName + "-total"))
-            .isEqualTo(4.0);
-        assertThat(MBEAN_SERVER.getAttribute(s3MetricsObjectName, metricName + "-rate"))
+        // SDK makes more than 1 retries by adaptive mode.
+        assertThat(getMetric(metricName + "-total").metricValue())
+            .asInstanceOf(DOUBLE)
+            .isGreaterThan(1.0);
+        assertThat(getMetric(metricName + "-rate").metricValue())
             .asInstanceOf(DOUBLE)
             .isGreaterThan(0.0);
     }
 
     @Test
-    void ioErrors(final WireMockRuntimeInfo wmRuntimeInfo) throws Exception {
+    void ioErrors(final WireMockRuntimeInfo wmRuntimeInfo) {
         final Map<String, Object> configs = Map.of(
             "s3.bucket.name", BUCKET_NAME,
             "s3.region", Region.US_EAST_1.id(),
@@ -171,11 +164,16 @@ class S3ErrorMetricsTest {
             .hasCauseExactlyInstanceOf(SdkClientException.class)
             .cause().hasMessage("Unable to execute HTTP request: null");
 
-        // Comparing to 4 since the SDK makes 3 retries by default.
-        assertThat(MBEAN_SERVER.getAttribute(s3MetricsObjectName, metricName + "-total"))
-            .isEqualTo(4.0);
-        assertThat(MBEAN_SERVER.getAttribute(s3MetricsObjectName, metricName + "-rate"))
+        // SDK makes more than 1 retries by adaptive mode.
+        assertThat(getMetric(metricName + "-total").metricValue())
+            .asInstanceOf(DOUBLE)
+            .isGreaterThan(1.0);
+        assertThat(getMetric(metricName + "-rate").metricValue())
             .asInstanceOf(DOUBLE)
             .isGreaterThan(0.0);
+    }
+
+    private KafkaMetric getMetric(String metricName) {
+        return metrics.metric(metrics.metricName(metricName, S3_CLIENT_METRICS));
     }
 }

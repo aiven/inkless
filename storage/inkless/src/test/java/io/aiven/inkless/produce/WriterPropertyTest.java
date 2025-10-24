@@ -77,7 +77,6 @@ import io.aiven.inkless.control_plane.CreateTopicAndPartitionsRequest;
 import io.aiven.inkless.control_plane.InMemoryControlPlane;
 import io.aiven.inkless.control_plane.postgres.PostgresControlPlane;
 import io.aiven.inkless.storage_backend.common.StorageBackend;
-import io.aiven.inkless.storage_backend.common.StorageBackendException;
 import io.aiven.inkless.test_utils.InklessPostgreSQLContainer;
 import io.aiven.inkless.test_utils.PostgreSQLTestContainer;
 
@@ -182,7 +181,9 @@ class WriterPropertyTest {
               final int completeDurationAvg,
               final int cacheStoreDurationAvg,
               final int maxBufferSize,
-              final ControlPlane controlPlane) throws InterruptedException, ExecutionException, StorageBackendException {
+              final ControlPlane controlPlane)
+        throws Exception
+    {
         final Set<CreateTopicAndPartitionsRequest> createTopicAndPartitionsRequests = Set.of(
             new CreateTopicAndPartitionsRequest(TOPIC_ID_0, T0P0.topic(), 2),
             new CreateTopicAndPartitionsRequest(TOPIC_ID_1, T1P0.topic(), 2)
@@ -224,7 +225,7 @@ class WriterPropertyTest {
                         Instant.ofEpochMilli(time.milliseconds()),
                         Arbitraries.longs().between(cacheStoreDurationAvg - 2, cacheStoreDurationAvg + 2))
         );
-        final FileCommitter fileCommitter = new FileCommitter(
+        try(final FileCommitter fileCommitter = new FileCommitter(
             11,
             controlPlane,
             ObjectKey.creator("", false),
@@ -238,62 +239,63 @@ class WriterPropertyTest {
             committerHandler.executorService,
             cacheStoreHandler.executorService,
             mock(FileCommitterMetrics.class)
-        );
+        )) {
 
-        final Writer writer = new Writer(
-            time,
-            Duration.ofMillis(commitIntervalMsAvg),  // it doesn't matter as the scheduling doesn't happen
-            maxBufferSize,
-            mock(ScheduledExecutorService.class),
-            storage,
-            fileCommitter,
-            mock(WriterMetrics.class),
-            new BrokerTopicStats()
-        );
-
-        final Arbitrary<Map<TopicIdPartition, MemoryRecords>> requestArbitrary = requests();
-        final Requester requester = new Requester(
-            writer, requestArbitrary, requestCount,
-            new Timer("request",
-                time, Instant.MIN, Arbitraries.longs().between(requestIntervalMsAvg - 5, requestIntervalMsAvg + 5)
-            )
-        );
-        final CommitTicker commitTicker = new CommitTicker(
-            writer,
-            new Timer("commit-tick",
+            final Writer writer = new Writer(
                 time,
-                Instant.ofEpochMilli(time.milliseconds()),
-                Arbitraries.longs().between(commitIntervalMsAvg - 5, commitIntervalMsAvg + 5))
-        );
+                Duration.ofMillis(commitIntervalMsAvg),  // it doesn't matter as the scheduling doesn't happen
+                maxBufferSize,
+                mock(ScheduledExecutorService.class),
+                storage,
+                fileCommitter,
+                mock(WriterMetrics.class),
+                new BrokerTopicStats()
+            );
 
-        boolean finished = false;
-        final int maxTime = 10_000;
-        while (time.milliseconds() < maxTime) {
-            if (requester.allRequestsSent() && requester.allRequestsFinished()) {
-                finished = true;
-                break;
+            final Arbitrary<Map<TopicIdPartition, MemoryRecords>> requestArbitrary = requests();
+            final Requester requester = new Requester(
+                writer, requestArbitrary, requestCount,
+                new Timer("request",
+                    time, Instant.MIN, Arbitraries.longs().between(requestIntervalMsAvg - 5, requestIntervalMsAvg + 5)
+                )
+            );
+            final CommitTicker commitTicker = new CommitTicker(
+                writer,
+                new Timer("commit-tick",
+                    time,
+                    Instant.ofEpochMilli(time.milliseconds()),
+                    Arbitraries.longs().between(commitIntervalMsAvg - 5, commitIntervalMsAvg + 5))
+            );
+
+            boolean finished = false;
+            final int maxTime = 10_000;
+            while (time.milliseconds() < maxTime) {
+                if (requester.allRequestsSent() && requester.allRequestsFinished()) {
+                    finished = true;
+                    break;
+                }
+
+                requester.maybeSendRequest();
+                requester.handleFinishedRequests();
+                commitTicker.maybeTick();
+                uploaderHandler.maybeRunNext();
+                committerHandler.maybeRunNext();
+                completerHandler.maybeRunNext();
+                cacheStoreHandler.maybeRunNext();
+                time.sleep(1);
             }
+            assertThat(finished).withFailMessage(String.format("Not finished in %d virtual ms", maxTime)).isTrue();
+            requester.checkResponses();
 
-            requester.maybeSendRequest();
-            requester.handleFinishedRequests();
-            commitTicker.maybeTick();
-            uploaderHandler.maybeRunNext();
-            committerHandler.maybeRunNext();
-            completerHandler.maybeRunNext();
-            cacheStoreHandler.maybeRunNext();
-            time.sleep(1);
-        }
-        assertThat(finished).withFailMessage(String.format("Not finished in %d virtual ms", maxTime)).isTrue();
-        requester.checkResponses();
-
-        if (requestCount > 0) {
-            verify(storage, atLeast(1)).upload(any(ObjectKey.class), any(InputStream.class), anyLong());
-        }
-        final Collection<Invocation> uploadInvocations = mockingDetails(storage).getInvocations();
-        Statistics.label("files").collect(uploadInvocations.size());
-        for (final Invocation invocation : uploadInvocations) {
-            final long uploadedBytesLength = invocation.getArgument(2);
-            Statistics.label("file-size").collect(uploadedBytesLength);
+            if (requestCount > 0) {
+                verify(storage, atLeast(1)).upload(any(ObjectKey.class), any(InputStream.class), anyLong());
+            }
+            final Collection<Invocation> uploadInvocations = mockingDetails(storage).getInvocations();
+            Statistics.label("files").collect(uploadInvocations.size());
+            for (final Invocation invocation : uploadInvocations) {
+                final long uploadedBytesLength = invocation.getArgument(2);
+                Statistics.label("file-size").collect(uploadedBytesLength);
+            }
         }
     }
 

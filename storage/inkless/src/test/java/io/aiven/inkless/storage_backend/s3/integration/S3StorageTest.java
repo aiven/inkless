@@ -17,6 +17,8 @@
  */
 package io.aiven.inkless.storage_backend.s3.integration;
 
+import org.apache.kafka.common.metrics.Metrics;
+
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -27,6 +29,7 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.io.ByteArrayInputStream;
+import java.io.IOException;
 import java.util.Map;
 
 import io.aiven.inkless.storage_backend.common.StorageBackend;
@@ -70,7 +73,7 @@ public class S3StorageTest extends BaseStorageTest {
 
     @Override
     protected StorageBackend storage() {
-        final S3Storage s3Storage = new S3Storage();
+        final S3Storage s3Storage = new S3Storage(new Metrics());
         final Map<String, Object> configs = Map.of(
             "s3.bucket.name", bucketName,
             "s3.region", S3_CONTAINER.getRegion(),
@@ -84,28 +87,30 @@ public class S3StorageTest extends BaseStorageTest {
     }
 
     @Override
-    protected void testUploadUndersizedStream() {
-        final StorageBackend storage = storage();
-        final byte[] content = "content".getBytes();
-        final long expectedLength = content.length + 1;
+    protected void testUploadUndersizedStream() throws IOException {
+        try (StorageBackend storage = storage()) {
+            final byte[] content = "content".getBytes();
+            final long expectedLength = content.length + 1;
 
-        assertThatThrownBy(() -> storage.upload(TOPIC_PARTITION_SEGMENT_KEY, new ByteArrayInputStream(content), expectedLength))
-                .isInstanceOf(StorageBackendException.class)
-                // This implementation has a different message
-                .hasMessage("Failed to upload key")
-                .cause()
-                .hasMessageContaining("You did not provide the number of bytes specified by the Content-Length HTTP header");
+            assertThatThrownBy(() -> storage.upload(TOPIC_PARTITION_SEGMENT_KEY, new ByteArrayInputStream(content), expectedLength))
+                    .isInstanceOf(StorageBackendException.class)
+                    // This implementation has a different message
+                    .hasMessage("Failed to upload key")
+                    .cause()
+                    .hasMessageContaining("You did not provide the number of bytes specified by the Content-Length HTTP header");
+        }
     }
 
     @Test
-    protected void testUploadOversizeStream() {
-        final StorageBackend storage = storage();
-        final byte[] content = "content".getBytes();
-        final long expectedLength = content.length - 1;
+    protected void testUploadOversizeStream() throws IOException {
+        try (StorageBackend storage = storage()) {
+            final byte[] content = "content".getBytes();
+            final long expectedLength = content.length - 1;
 
-        assertThatThrownBy(() -> storage.upload(TOPIC_PARTITION_SEGMENT_KEY, new ByteArrayInputStream(content), expectedLength))
-                .isInstanceOf(StorageBackendException.class)
-                // This implementation has a different message
-                .hasMessage("Object key created with incorrect length, input stream has remaining content");
+            assertThatThrownBy(() -> storage.upload(TOPIC_PARTITION_SEGMENT_KEY, new ByteArrayInputStream(content), expectedLength))
+                    .isInstanceOf(StorageBackendException.class)
+                    // This implementation has a different message
+                    .hasMessage("Object key created with incorrect length, input stream has remaining content");
+        }
     }
 }

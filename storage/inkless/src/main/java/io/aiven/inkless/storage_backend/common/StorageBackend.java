@@ -18,8 +18,14 @@
 package io.aiven.inkless.storage_backend.common;
 
 import org.apache.kafka.common.Configurable;
+import org.apache.kafka.common.metrics.Metrics;
 
 import java.io.Closeable;
 
-public interface StorageBackend extends Configurable, ObjectUploader, ObjectFetcher, ObjectDeleter, Closeable {
+public abstract class StorageBackend implements Configurable, ObjectUploader, ObjectFetcher, ObjectDeleter, Closeable {
+    protected final Metrics metrics;
+
+    protected StorageBackend(Metrics metrics) {
+        this.metrics = metrics;
+    }
 }

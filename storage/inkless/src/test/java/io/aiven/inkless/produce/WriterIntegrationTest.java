@@ -20,6 +20,7 @@ package io.aiven.inkless.produce;
 import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.config.TopicConfig;
+import org.apache.kafka.common.metrics.Metrics;
 import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.record.TimestampType;
 import org.apache.kafka.common.requests.ProduceResponse.PartitionResponse;
@@ -96,7 +97,7 @@ class WriterIntegrationTest {
 
     @BeforeEach
     void setup() {
-        storage = new S3Storage();
+        storage = new S3Storage(new Metrics());
         final Map<String, Object> configs = Map.of(
             "s3.bucket.name", BUCKET_NAME,
             "s3.region", S3_CONTAINER.getRegion(),

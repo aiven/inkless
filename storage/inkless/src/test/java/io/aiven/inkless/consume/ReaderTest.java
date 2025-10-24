@@ -24,7 +24,6 @@ import org.apache.kafka.server.storage.log.FetchParams;
 import org.apache.kafka.server.storage.log.FetchPartitionData;
 import org.apache.kafka.storage.log.metrics.BrokerTopicStats;
 
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
@@ -33,6 +32,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 
+import java.io.IOException;
 import java.util.Collections;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
@@ -74,23 +74,20 @@ public class ReaderTest {
     private FetchParams fetchParams;
 
     private final Time time = new MockTime();
-    private Reader reader;
-
-    @BeforeEach
-    public void setup() {
-        reader = new Reader(time, OBJECT_KEY_CREATOR, KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, controlPlane, objectFetcher, 0, metadataExecutor, dataExecutor, new BrokerTopicStats());
-    }
 
     @Test
-    public void testReaderEmptyRequests() {
-        final CompletableFuture<Map<TopicIdPartition, FetchPartitionData>> fetch = reader.fetch(fetchParams, Collections.emptyMap());
-        verify(metadataExecutor, atLeastOnce()).execute(any());
-        verifyNoInteractions(dataExecutor);
-        assertThat(fetch.join()).isEqualTo(Collections.emptyMap());
+    public void testReaderEmptyRequests() throws IOException {
+        try(final var reader = new Reader(time, OBJECT_KEY_CREATOR, KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, controlPlane, objectFetcher, 0, metadataExecutor, dataExecutor, new BrokerTopicStats())) {
+            final CompletableFuture<Map<TopicIdPartition, FetchPartitionData>> fetch = reader.fetch(fetchParams, Collections.emptyMap());
+            verify(metadataExecutor, atLeastOnce()).execute(any());
+            verifyNoInteractions(dataExecutor);
+            assertThat(fetch.join()).isEqualTo(Collections.emptyMap());
+        }
     }
 
     @Test
     public void testClose() throws Exception {
+        final var reader = new Reader(time, OBJECT_KEY_CREATOR, KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, controlPlane, objectFetcher, 0, metadataExecutor, dataExecutor, new BrokerTopicStats());
         reader.close();
         verify(metadataExecutor, atLeastOnce()).shutdown();
         verify(dataExecutor, atLeastOnce()).shutdown();
