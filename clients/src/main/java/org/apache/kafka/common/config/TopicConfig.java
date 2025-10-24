@@ -220,8 +220,8 @@ public class TopicConfig {
         "timestamps exceeds this specified threshold. This configuration is ignored if message.timestamp.type=LogAppendTime.";
 
     public static final String READ_ONLY_CONFIG = "read.only";
-    public static final String READ_ONLY_DOC = "This configuration is set to true if the it is a disaster recovery " +
-        "topic and should only be get data from a remote leader. Producers cannot append data to this topic.";
+    public static final String READ_ONLY_DOC = "This configuration is set to true for a mirror topic that only receive " +
+            "data from a source cluster through a mirror connection. Local producers cannot append data to this topic.";
 
     /**
      * @deprecated down-conversion is not possible in Apache Kafka 4.0 and newer, hence this configuration is a no-op,

@@ -26,174 +26,173 @@ import org.apache.kafka.common.security.auth.SecurityProtocol;
 import java.util.Properties;
 
 import static org.apache.kafka.common.config.ConfigDef.Importance.HIGH;
-import static org.apache.kafka.common.config.ConfigDef.Importance.MEDIUM;
 import static org.apache.kafka.common.config.ConfigDef.Importance.LOW;
+import static org.apache.kafka.common.config.ConfigDef.Importance.MEDIUM;
 import static org.apache.kafka.common.config.ConfigDef.Range.atLeast;
 import static org.apache.kafka.common.config.ConfigDef.Type.INT;
+import static org.apache.kafka.common.config.ConfigDef.Type.LIST;
+import static org.apache.kafka.common.config.ConfigDef.Type.LONG;
+import static org.apache.kafka.common.config.ConfigDef.Type.PASSWORD;
 import static org.apache.kafka.common.config.ConfigDef.Type.SHORT;
 import static org.apache.kafka.common.config.ConfigDef.Type.STRING;
-import static org.apache.kafka.common.config.ConfigDef.Type.PASSWORD;
-import static org.apache.kafka.common.config.ConfigDef.Type.LONG;
-import static org.apache.kafka.common.config.ConfigDef.Type.LIST;
 
 /**
- * Configuration definitions for cluster link feature.
  * This class provides proper validation, defaults, and documentation for all
- * configurations supported by the cluster link functionality.
+ * configurations supported by the Cluster Mirror functionality.
  */
-public class ClusterLinkConfigs {
+public class MirrorConfig {
     // Internal topic configuration
-    public static final String CLUSTER_LINK_TOPIC_NUM_PARTITIONS_CONFIG = "cluster.link.topic.num.partitions";
-    public static final int CLUSTER_LINK_TOPIC_NUM_PARTITIONS_DEFAULT = 3; // default to 3 for PoC testing
-    public static final String CLUSTER_LINK_TOPIC_NUM_PARTITIONS_DOC = "The number of partitions for the cluster link topic (should not change after deployment).";
+    public static final String MIRROR_TOPIC_NUM_PARTITIONS_CONFIG = "mirror.topic.num.partitions";
+    public static final int MIRROR_TOPIC_NUM_PARTITIONS_DEFAULT = 3; // TODO restore 50 after POC testing
+    public static final String MIRROR_TOPIC_NUM_PARTITIONS_DOC = "The number of partitions for the Cluster Mirror internal topic (should not change after deployment).";
 
-    public static final String CLUSTER_LINK_TOPIC_REPLICATION_FACTOR_CONFIG = "cluster.link.topic.replication.factor";
-    public static final short CLUSTER_LINK_TOPIC_REPLICATION_FACTOR_DEFAULT = 1; // default to 1 for PoC testing
-    public static final String CLUSTER_LINK_TOPIC_REPLICATION_FACTOR_DOC = "Replication factor for the cluster link topic. " +
+    public static final String MIRROR_TOPIC_REPLICATION_FACTOR_CONFIG = "mirror.topic.replication.factor";
+    public static final short MIRROR_TOPIC_REPLICATION_FACTOR_DEFAULT = 1; // TODO restore 3 after POC testing
+    public static final String MIRROR_TOPIC_REPLICATION_FACTOR_DOC = "The replication factor for the Cluster Mirror internal topic. " +
             "Topic creation will fail until the cluster size meets this replication factor requirement.";
 
     // Connection configuration
     public static final String BOOTSTRAP_SERVERS_CONFIG = CommonClientConfigs.BOOTSTRAP_SERVERS_CONFIG;
-    public static final String BOOTSTRAP_SERVERS_DOC = "A list of host/port pairs to use for establishing the initial connection to the Kafka cluster for cluster links.";
+    public static final String BOOTSTRAP_SERVERS_DOC = "A list of host/port pairs to use for establishing the initial connection to the Kafka cluster for Cluster Mirror.";
 
     public static final String METADATA_MAX_AGE_CONFIG = CommonClientConfigs.METADATA_MAX_AGE_CONFIG;
     public static final long METADATA_MAX_AGE_DEFAULT = 300000L; // 5 minutes
-    public static final String METADATA_MAX_AGE_DOC = "The period of time in milliseconds after which we force a refresh of metadata for cluster link connections.";
+    public static final String METADATA_MAX_AGE_DOC = "The period of time in milliseconds after which we force a refresh of metadata for Cluster Mirror connections.";
 
     public static final String SEND_BUFFER_CONFIG = CommonClientConfigs.SEND_BUFFER_CONFIG;
     public static final int SEND_BUFFER_DEFAULT = 131072; // 128KB
-    public static final String SEND_BUFFER_DOC = "The size of the TCP send buffer (SO_SNDBUF) to use when sending data for cluster link connections.";
+    public static final String SEND_BUFFER_DOC = "The size of the TCP send buffer (SO_SNDBUF) to use when sending data for Cluster Mirror connections.";
 
     public static final String RECEIVE_BUFFER_CONFIG = CommonClientConfigs.RECEIVE_BUFFER_CONFIG;
     public static final int RECEIVE_BUFFER_DEFAULT = 65536; // 64KB
-    public static final String RECEIVE_BUFFER_DOC = "The size of the TCP receive buffer (SO_RCVBUF) to use when reading data for cluster link connections.";
+    public static final String RECEIVE_BUFFER_DOC = "The size of the TCP receive buffer (SO_RCVBUF) to use when reading data for Cluster Mirror connections.";
 
     public static final String REQUEST_TIMEOUT_MS_CONFIG = CommonClientConfigs.REQUEST_TIMEOUT_MS_CONFIG;
     public static final int REQUEST_TIMEOUT_MS_DEFAULT = 30000; // 30 seconds
-    public static final String REQUEST_TIMEOUT_MS_DOC = "The configuration controls the maximum amount of time the client will wait for the response of a request for cluster link connections.";
+    public static final String REQUEST_TIMEOUT_MS_DOC = "The configuration controls the maximum amount of time the client will wait for the response of a request for Cluster Mirror connections.";
 
     public static final String SOCKET_CONNECTION_SETUP_TIMEOUT_MS_CONFIG = CommonClientConfigs.SOCKET_CONNECTION_SETUP_TIMEOUT_MS_CONFIG;
     public static final long SOCKET_CONNECTION_SETUP_TIMEOUT_MS_DEFAULT = CommonClientConfigs.DEFAULT_SOCKET_CONNECTION_SETUP_TIMEOUT_MS; // 10 seconds
-    public static final String SOCKET_CONNECTION_SETUP_TIMEOUT_MS_DOC = "The amount of time the client will wait for the socket connection to be established for cluster link connections.";
+    public static final String SOCKET_CONNECTION_SETUP_TIMEOUT_MS_DOC = "The amount of time the client will wait for the socket connection to be established for Cluster Mirror connections.";
 
     public static final String SOCKET_CONNECTION_SETUP_TIMEOUT_MAX_MS_CONFIG = CommonClientConfigs.SOCKET_CONNECTION_SETUP_TIMEOUT_MAX_MS_CONFIG;
     public static final long SOCKET_CONNECTION_SETUP_TIMEOUT_MAX_MS_DEFAULT = CommonClientConfigs.DEFAULT_SOCKET_CONNECTION_SETUP_TIMEOUT_MAX_MS; // 30 seconds
-    public static final String SOCKET_CONNECTION_SETUP_TIMEOUT_MAX_MS_DOC = "The maximum amount of time the client will wait for the socket connection to be established for cluster link connections.";
+    public static final String SOCKET_CONNECTION_SETUP_TIMEOUT_MAX_MS_DOC = "The maximum amount of time the client will wait for the socket connection to be established for Cluster Mirror connections.";
 
     public static final String RECONNECT_BACKOFF_MS_CONFIG = CommonClientConfigs.RECONNECT_BACKOFF_MS_CONFIG;
     public static final long RECONNECT_BACKOFF_MS_DEFAULT = 50L;
-    public static final String RECONNECT_BACKOFF_MS_DOC = "The base amount of time to wait before attempting to reconnect to a given host for cluster link connections.";
+    public static final String RECONNECT_BACKOFF_MS_DOC = "The base amount of time to wait before attempting to reconnect to a given host for Cluster Mirror connections.";
 
     public static final String RECONNECT_BACKOFF_MAX_MS_CONFIG = CommonClientConfigs.RECONNECT_BACKOFF_MAX_MS_CONFIG;
     public static final long RECONNECT_BACKOFF_MAX_MS_DEFAULT = 1000L; // 1 second
-    public static final String RECONNECT_BACKOFF_MAX_MS_DOC = "The maximum amount of time in milliseconds to wait when reconnecting to a broker that has repeatedly failed to connect for cluster link connections.";
+    public static final String RECONNECT_BACKOFF_MAX_MS_DOC = "The maximum amount of time in milliseconds to wait when reconnecting to a broker that has repeatedly failed to connect for Cluster Mirror connections.";
 
     public static final String RETRIES_CONFIG = CommonClientConfigs.RETRIES_CONFIG;
     public static final int RETRIES_DEFAULT = Integer.MAX_VALUE;
-    public static final String RETRIES_DOC = "Setting a value greater than zero will cause the client to resend any request that fails with a potentially transient error for cluster link connections.";
+    public static final String RETRIES_DOC = "Setting a value greater than zero will cause the client to resend any request that fails with a potentially transient error for Cluster Mirror connections.";
 
     public static final String RETRY_BACKOFF_MS_CONFIG = CommonClientConfigs.RETRY_BACKOFF_MS_CONFIG;
     public static final long RETRY_BACKOFF_MS_DEFAULT = 100L;
-    public static final String RETRY_BACKOFF_MS_DOC = "The amount of time to wait before attempting to retry a failed request to a given topic partition for cluster link connections.";
+    public static final String RETRY_BACKOFF_MS_DOC = "The amount of time to wait before attempting to retry a failed request to a given topic partition for Cluster Mirror connections.";
 
     // Security configuration
     public static final String SECURITY_PROTOCOL_CONFIG = CommonClientConfigs.SECURITY_PROTOCOL_CONFIG;
     public static final String SECURITY_PROTOCOL_DEFAULT = SecurityProtocol.PLAINTEXT.name;
-    public static final String SECURITY_PROTOCOL_DOC = "Protocol used to communicate with remote brokers for cluster link. " +
+    public static final String SECURITY_PROTOCOL_DOC = "Protocol used to communicate with remote brokers for Cluster Mirror. " +
             "Valid values are: PLAINTEXT, SSL, SASL_PLAINTEXT, SASL_SSL.";
 
     // SSL configuration
     public static final String SSL_PROTOCOL_CONFIG = SslConfigs.SSL_PROTOCOL_CONFIG;
     public static final String SSL_PROTOCOL_DEFAULT = SslConfigs.DEFAULT_SSL_PROTOCOL;
-    public static final String SSL_PROTOCOL_DOC = "The SSL protocol used for cluster link connections.";
+    public static final String SSL_PROTOCOL_DOC = "The SSL protocol used for Cluster Mirror connections.";
 
     public static final String SSL_PROVIDER_CONFIG = SslConfigs.SSL_PROVIDER_CONFIG;
-    public static final String SSL_PROVIDER_DOC = "The name of the security provider used for SSL connections for cluster links.";
+    public static final String SSL_PROVIDER_DOC = "The name of the security provider used for SSL connections for Cluster Mirror.";
 
     public static final String SSL_CIPHER_SUITES_CONFIG = SslConfigs.SSL_CIPHER_SUITES_CONFIG;
-    public static final String SSL_CIPHER_SUITES_DOC = "A list of cipher suites for cluster link SSL connections.";
+    public static final String SSL_CIPHER_SUITES_DOC = "A list of cipher suites for Cluster Mirror SSL connections.";
 
     public static final String SSL_ENABLED_PROTOCOLS_CONFIG = SslConfigs.SSL_ENABLED_PROTOCOLS_CONFIG;
-    public static final String SSL_ENABLED_PROTOCOLS_DOC = "The list of protocols enabled for SSL connections for cluster links.";
+    public static final String SSL_ENABLED_PROTOCOLS_DOC = "The list of protocols enabled for SSL connections for Cluster Mirror.";
 
     public static final String SSL_KEYSTORE_TYPE_CONFIG = SslConfigs.SSL_KEYSTORE_TYPE_CONFIG;
     public static final String SSL_KEYSTORE_TYPE_DEFAULT = SslConfigs.DEFAULT_SSL_KEYSTORE_TYPE;
-    public static final String SSL_KEYSTORE_TYPE_DOC = "The file format of the key store file for cluster link SSL connections.";
+    public static final String SSL_KEYSTORE_TYPE_DOC = "The file format of the key store file for Cluster Mirror SSL connections.";
 
     public static final String SSL_KEYSTORE_LOCATION_CONFIG = SslConfigs.SSL_KEYSTORE_LOCATION_CONFIG;
-    public static final String SSL_KEYSTORE_LOCATION_DOC = "The location of the key store file for cluster link SSL connections.";
+    public static final String SSL_KEYSTORE_LOCATION_DOC = "The location of the key store file for Cluster Mirror SSL connections.";
 
     public static final String SSL_KEYSTORE_PASSWORD_CONFIG = SslConfigs.SSL_KEYSTORE_PASSWORD_CONFIG;
-    public static final String SSL_KEYSTORE_PASSWORD_DOC = "The store password for the key store file for cluster link SSL connections.";
+    public static final String SSL_KEYSTORE_PASSWORD_DOC = "The store password for the key store file for Cluster Mirror SSL connections.";
 
     public static final String SSL_KEY_PASSWORD_CONFIG = SslConfigs.SSL_KEY_PASSWORD_CONFIG;
-    public static final String SSL_KEY_PASSWORD_DOC = "The password of the private key in the key store file for cluster link SSL connections.";
+    public static final String SSL_KEY_PASSWORD_DOC = "The password of the private key in the key store file for Cluster Mirror SSL connections.";
 
     public static final String SSL_KEYSTORE_KEY_CONFIG = SslConfigs.SSL_KEYSTORE_KEY_CONFIG;
-    public static final String SSL_KEYSTORE_KEY_DOC = "Private key in the format specified by 'ssl.keystore.type' for cluster link SSL connections.";
+    public static final String SSL_KEYSTORE_KEY_DOC = "Private key in the format specified by 'ssl.keystore.type' for Cluster Mirror SSL connections.";
 
     public static final String SSL_KEYSTORE_CERTIFICATE_CHAIN_CONFIG = SslConfigs.SSL_KEYSTORE_CERTIFICATE_CHAIN_CONFIG;
-    public static final String SSL_KEYSTORE_CERTIFICATE_CHAIN_DOC = "Certificate chain in the format specified by 'ssl.keystore.type' for cluster link SSL connections.";
+    public static final String SSL_KEYSTORE_CERTIFICATE_CHAIN_DOC = "Certificate chain in the format specified by 'ssl.keystore.type' for Cluster Mirror SSL connections.";
 
     public static final String SSL_TRUSTSTORE_TYPE_CONFIG = SslConfigs.SSL_TRUSTSTORE_TYPE_CONFIG;
     public static final String SSL_TRUSTSTORE_TYPE_DEFAULT = SslConfigs.DEFAULT_SSL_TRUSTSTORE_TYPE;
-    public static final String SSL_TRUSTSTORE_TYPE_DOC = "The file format of the trust store file for cluster link SSL connections.";
+    public static final String SSL_TRUSTSTORE_TYPE_DOC = "The file format of the trust store file for Cluster Mirror SSL connections.";
 
     public static final String SSL_TRUSTSTORE_LOCATION_CONFIG = SslConfigs.SSL_TRUSTSTORE_LOCATION_CONFIG;
-    public static final String SSL_TRUSTSTORE_LOCATION_DOC = "The location of the trust store file for cluster link SSL connections.";
+    public static final String SSL_TRUSTSTORE_LOCATION_DOC = "The location of the trust store file for Cluster Mirror SSL connections.";
 
     public static final String SSL_TRUSTSTORE_PASSWORD_CONFIG = SslConfigs.SSL_TRUSTSTORE_PASSWORD_CONFIG;
-    public static final String SSL_TRUSTSTORE_PASSWORD_DOC = "The password for the trust store file for cluster link SSL connections.";
+    public static final String SSL_TRUSTSTORE_PASSWORD_DOC = "The password for the trust store file for Cluster Mirror SSL connections.";
 
     public static final String SSL_TRUSTSTORE_CERTIFICATES_CONFIG = SslConfigs.SSL_TRUSTSTORE_CERTIFICATES_CONFIG;
-    public static final String SSL_TRUSTSTORE_CERTIFICATES_DOC = "Trusted certificates in the format specified by 'ssl.truststore.type' for cluster link SSL connections.";
+    public static final String SSL_TRUSTSTORE_CERTIFICATES_DOC = "Trusted certificates in the format specified by 'ssl.truststore.type' for Cluster Mirror SSL connections.";
 
     public static final String SSL_KEYMANAGER_ALGORITHM_CONFIG = SslConfigs.SSL_KEYMANAGER_ALGORITHM_CONFIG;
     public static final String SSL_KEYMANAGER_ALGORITHM_DEFAULT = SslConfigs.DEFAULT_SSL_KEYMANGER_ALGORITHM;
-    public static final String SSL_KEYMANAGER_ALGORITHM_DOC = "The algorithm used by key manager factory for SSL connections for cluster links.";
+    public static final String SSL_KEYMANAGER_ALGORITHM_DOC = "The algorithm used by key manager factory for SSL connections for Cluster Mirror.";
 
     public static final String SSL_TRUSTMANAGER_ALGORITHM_CONFIG = SslConfigs.SSL_TRUSTMANAGER_ALGORITHM_CONFIG;
     public static final String SSL_TRUSTMANAGER_ALGORITHM_DEFAULT = SslConfigs.DEFAULT_SSL_TRUSTMANAGER_ALGORITHM;
-    public static final String SSL_TRUSTMANAGER_ALGORITHM_DOC = "The algorithm used by trust manager factory for SSL connections for cluster links.";
+    public static final String SSL_TRUSTMANAGER_ALGORITHM_DOC = "The algorithm used by trust manager factory for SSL connections for Cluster Mirrors";
 
     public static final String SSL_ENDPOINT_IDENTIFICATION_ALGORITHM_CONFIG = SslConfigs.SSL_ENDPOINT_IDENTIFICATION_ALGORITHM_CONFIG;
     public static final String SSL_ENDPOINT_IDENTIFICATION_ALGORITHM_DEFAULT = SslConfigs.DEFAULT_SSL_ENDPOINT_IDENTIFICATION_ALGORITHM;
-    public static final String SSL_ENDPOINT_IDENTIFICATION_ALGORITHM_DOC = "The endpoint identification algorithm to validate server hostname using server certificate for cluster link SSL connections.";
+    public static final String SSL_ENDPOINT_IDENTIFICATION_ALGORITHM_DOC = "The endpoint identification algorithm to validate server hostname using server certificate for Cluster Mirror SSL connections.";
 
     public static final String SSL_SECURE_RANDOM_IMPLEMENTATION_CONFIG = SslConfigs.SSL_SECURE_RANDOM_IMPLEMENTATION_CONFIG;
-    public static final String SSL_SECURE_RANDOM_IMPLEMENTATION_DOC = "The SecureRandom PRNG implementation to use for SSL cryptography operations for cluster links.";
+    public static final String SSL_SECURE_RANDOM_IMPLEMENTATION_DOC = "The SecureRandom PRNG implementation to use for SSL cryptography operations for Cluster Mirror.";
 
     public static final String SSL_ENGINE_FACTORY_CLASS_CONFIG = SslConfigs.SSL_ENGINE_FACTORY_CLASS_CONFIG;
-    public static final String SSL_ENGINE_FACTORY_CLASS_DOC = "The class of type org.apache.kafka.common.security.auth.SslEngineFactory to provide SSLEngine objects for cluster link SSL connections.";
+    public static final String SSL_ENGINE_FACTORY_CLASS_DOC = "The class of type org.apache.kafka.common.security.auth.SslEngineFactory to provide SSLEngine objects for Cluster Mirror SSL connections.";
 
     // SASL configuration
     public static final String SASL_MECHANISM_CONFIG = SaslConfigs.SASL_MECHANISM;
     public static final String SASL_MECHANISM_DEFAULT = "PLAIN";
-    public static final String SASL_MECHANISM_DOC = "SASL mechanism used for cluster link authentication.";
+    public static final String SASL_MECHANISM_DOC = "SASL mechanism used for Cluster Mirror authentication.";
 
     public static final String SASL_JAAS_CONFIG = SaslConfigs.SASL_JAAS_CONFIG;
     public static final String SASL_JAAS_CONFIG_DOC = "JAAS login context parameters for SASL connections in the format used by JAAS configuration files.";
 
     public static final String SASL_CLIENT_CALLBACK_HANDLER_CLASS = SaslConfigs.SASL_CLIENT_CALLBACK_HANDLER_CLASS;
-    public static final String SASL_CLIENT_CALLBACK_HANDLER_CLASS_DOC = "The fully qualified name of a SASL client callback handler class that implements the AuthenticateCallbackHandler interface for cluster link connections.";
+    public static final String SASL_CLIENT_CALLBACK_HANDLER_CLASS_DOC = "The fully qualified name of a SASL client callback handler class that implements the AuthenticateCallbackHandler interface for Cluster Mirror connections.";
 
     public static final String SASL_LOGIN_CALLBACK_HANDLER_CLASS = SaslConfigs.SASL_LOGIN_CALLBACK_HANDLER_CLASS;
-    public static final String SASL_LOGIN_CALLBACK_HANDLER_CLASS_DOC = "The fully qualified name of a SASL login callback handler class that implements the AuthenticateCallbackHandler interface for cluster link connections.";
+    public static final String SASL_LOGIN_CALLBACK_HANDLER_CLASS_DOC = "The fully qualified name of a SASL login callback handler class that implements the AuthenticateCallbackHandler interface for Cluster Mirror connections.";
 
     public static final String SASL_LOGIN_CLASS = SaslConfigs.SASL_LOGIN_CLASS;
-    public static final String SASL_LOGIN_CLASS_DOC = "The fully qualified name of a class that implements the Login interface for cluster link connections.";
+    public static final String SASL_LOGIN_CLASS_DOC = "The fully qualified name of a class that implements the Login interface for Cluster Mirror connections.";
 
     public static final String SASL_KERBEROS_SERVICE_NAME = SaslConfigs.SASL_KERBEROS_SERVICE_NAME;
-    public static final String SASL_KERBEROS_SERVICE_NAME_DOC = "The Kerberos principal name that Kafka runs as for cluster link connections.";
+    public static final String SASL_KERBEROS_SERVICE_NAME_DOC = "The Kerberos principal name that Kafka runs as for Cluster Mirror connections.";
 
     /**
-     * Configuration definition for cluster link feature.
+     * Configuration definition for Cluster Mirror feature.
      * This includes all supported configurations with proper validation, defaults, and documentation.
      */
     public static final ConfigDef CONFIG_DEF = new ConfigDef()
             // Internal topic configuration
-            .define(CLUSTER_LINK_TOPIC_NUM_PARTITIONS_CONFIG, INT, CLUSTER_LINK_TOPIC_NUM_PARTITIONS_DEFAULT, atLeast(1), HIGH, CLUSTER_LINK_TOPIC_NUM_PARTITIONS_DOC)
-            .define(CLUSTER_LINK_TOPIC_REPLICATION_FACTOR_CONFIG, SHORT, CLUSTER_LINK_TOPIC_REPLICATION_FACTOR_DEFAULT, atLeast(1), HIGH, CLUSTER_LINK_TOPIC_REPLICATION_FACTOR_DOC)
+            .define(MIRROR_TOPIC_NUM_PARTITIONS_CONFIG, INT, MIRROR_TOPIC_NUM_PARTITIONS_DEFAULT, atLeast(1), HIGH, MIRROR_TOPIC_NUM_PARTITIONS_DOC)
+            .define(MIRROR_TOPIC_REPLICATION_FACTOR_CONFIG, SHORT, MIRROR_TOPIC_REPLICATION_FACTOR_DEFAULT, atLeast(1), HIGH, MIRROR_TOPIC_REPLICATION_FACTOR_DOC)
 
             // Connection configuration
             .define(BOOTSTRAP_SERVERS_CONFIG, LIST, null, HIGH, BOOTSTRAP_SERVERS_DOC)
@@ -245,40 +244,40 @@ public class ClusterLinkConfigs {
             .define(SSL_ENGINE_FACTORY_CLASS_CONFIG, STRING, null, LOW, SSL_ENGINE_FACTORY_CLASS_DOC);
 
     private final AbstractConfig config;
-    private final int clusterLinkTopicNumPartitions;
-    private final short clusterLinkTopicReplicationFactor;
+    private final int mirrorTopicNumPartitions;
+    private final short mirrorTopicReplicationFactor;
     private final String securityProtocol;
     private final String saslMechanism;
     private final String sslProtocol;
 
-    public ClusterLinkConfigs(AbstractConfig config) {
+    public MirrorConfig(AbstractConfig config) {
         this.config = config;
-        clusterLinkTopicNumPartitions = config.getInt(CLUSTER_LINK_TOPIC_NUM_PARTITIONS_CONFIG);
-        clusterLinkTopicReplicationFactor = config.getShort(CLUSTER_LINK_TOPIC_REPLICATION_FACTOR_CONFIG);
+        mirrorTopicNumPartitions = config.getInt(MIRROR_TOPIC_NUM_PARTITIONS_CONFIG);
+        mirrorTopicReplicationFactor = config.getShort(MIRROR_TOPIC_REPLICATION_FACTOR_CONFIG);
         securityProtocol = config.getString(SECURITY_PROTOCOL_CONFIG);
         saslMechanism = config.getString(SASL_MECHANISM_CONFIG);
         sslProtocol = config.getString(SSL_PROTOCOL_CONFIG);
     }
 
     /**
-     * Creates a ClusterLinkConfigs instance from Properties, using AbstractConfig's
+     * Creates a MirrorConfig instance from Properties, using AbstractConfig's
      * built-in config provider resolution and password handling.
      *
      * @param properties the raw properties
-     * @return a new ClusterLinkConfigs instance with processed properties
+     * @return a new MirrorConfig instance with processed properties
      */
-    public static ClusterLinkConfigs fromProperties(Properties properties) {
+    public static MirrorConfig fromProperties(Properties properties) {
         // AbstractConfig handles config provider resolution and password conversion
-        AbstractConfig config = new AbstractConfig(CONFIG_DEF, properties) {};
-        return new ClusterLinkConfigs(config);
+        AbstractConfig config = new AbstractConfig(CONFIG_DEF, properties) { };
+        return new MirrorConfig(config);
     }
 
-    public int clusterLinkTopicNumPartitions() {
-        return clusterLinkTopicNumPartitions;
+    public int mirrorTopicNumPartitions() {
+        return mirrorTopicNumPartitions;
     }
 
-    public short clusterLinkTopicReplicationFactor() {
-        return clusterLinkTopicReplicationFactor;
+    public short mirrorTopicReplicationFactor() {
+        return mirrorTopicReplicationFactor;
     }
 
     public String securityProtocol() {
@@ -304,25 +303,25 @@ public class ClusterLinkConfigs {
     }
 
     /**
-     * Creates a ConfigDef that can be used to validate cluster link properties.
-     * This is useful for components that need to validate cluster link configurations
-     * without creating a full ClusterLinkConfigs instance.
+     * Creates a ConfigDef that can be used to validate Cluster Mirror properties.
+     * This is useful for components that need to validate Cluster Mirror configurations
+     * without creating a full MirrorConfig instance.
      *
-     * @return ConfigDef for cluster link configurations
+     * @return ConfigDef for Cluster Mirror configurations
      */
     public static ConfigDef configDef() {
         return CONFIG_DEF;
     }
 
     /**
-     * Creates a ConfigDef that only includes __cluster_link properties.
+     * Creates a ConfigDef that only includes internal topic properties.
      * This is used in AbstractKafkaConfig to only merge the internal topic configurations.
      *
-     * @return ConfigDef containing only __cluster_link configurations
+     * @return ConfigDef containing only internal topic configurations
      */
     public static ConfigDef topicConfigDef() {
         return new ConfigDef()
-            .define(CLUSTER_LINK_TOPIC_NUM_PARTITIONS_CONFIG, INT, CLUSTER_LINK_TOPIC_NUM_PARTITIONS_DEFAULT, atLeast(1), HIGH, CLUSTER_LINK_TOPIC_NUM_PARTITIONS_DOC)
-            .define(CLUSTER_LINK_TOPIC_REPLICATION_FACTOR_CONFIG, SHORT, CLUSTER_LINK_TOPIC_REPLICATION_FACTOR_DEFAULT, atLeast(1), HIGH, CLUSTER_LINK_TOPIC_REPLICATION_FACTOR_DOC);
+            .define(MIRROR_TOPIC_NUM_PARTITIONS_CONFIG, INT, MIRROR_TOPIC_NUM_PARTITIONS_DEFAULT, atLeast(1), HIGH, MIRROR_TOPIC_NUM_PARTITIONS_DOC)
+            .define(MIRROR_TOPIC_REPLICATION_FACTOR_CONFIG, SHORT, MIRROR_TOPIC_REPLICATION_FACTOR_DEFAULT, atLeast(1), HIGH, MIRROR_TOPIC_REPLICATION_FACTOR_DOC);
     }
 }

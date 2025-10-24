@@ -14,36 +14,35 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package kafka.server.coordinator;
+package org.apache.kafka.coordinator.mirror;
 
 import java.util.Objects;
 
-public record ClusterLinkKey(String clusterLinkId) {
-
-    public ClusterLinkKey(String clusterLinkId) {
-        this.clusterLinkId = Objects.requireNonNull(clusterLinkId, "clusterLinkId cannot be null");
+/**
+ * This key is used to uniquely identify a cluster mirror by its name.
+ */
+public record MirrorRecordKey(String mirrorName) {
+    public MirrorRecordKey(String mirrorName) {
+        this.mirrorName = Objects.requireNonNull(mirrorName, "Mirror name cannot be null");
     }
 
-    /**
-     * Returns a ClusterLinkPartitionKey from input string of format - clusterLinkId:topicId
-     */
-    public static ClusterLinkKey getInstance(String key) {
+    public static MirrorRecordKey getInstance(String key) {
         validate(key);
-        return new ClusterLinkKey(key);
+        return new MirrorRecordKey(key);
     }
 
     public String asCoordinatorKey() {
-        return asCoordinatorKey(clusterLinkId);
+        return asCoordinatorKey(mirrorName);
     }
 
-    public static String asCoordinatorKey(String clusterLinkId) {
-        return clusterLinkId;
+    public static String asCoordinatorKey(String mirrorName) {
+        return mirrorName;
     }
 
     public static void validate(String key) {
-        Objects.requireNonNull(key, "Cluster link key cannot be null");
+        Objects.requireNonNull(key, "Mirror name cannot be null");
         if (key.isEmpty()) {
-            throw new IllegalArgumentException("Cluster link key cannot be empty");
+            throw new IllegalArgumentException("Mirror name cannot be empty");
         }
     }
 }

@@ -115,7 +115,7 @@ public class FindCoordinatorRequest extends AbstractRequest {
     }
 
     public enum CoordinatorType {
-        GROUP((byte) 0), TRANSACTION((byte) 1), SHARE((byte) 2), CLUSTER_LINK((byte) 3);
+        GROUP((byte) 0), TRANSACTION((byte) 1), SHARE((byte) 2), MIRROR((byte) 3);
 
         final byte id;
 
@@ -136,7 +136,7 @@ public class FindCoordinatorRequest extends AbstractRequest {
                 case 2:
                     return SHARE;
                 case 3:
-                    return CLUSTER_LINK;
+                    return MIRROR;
                 default:
                     throw new InvalidRequestException("Unknown coordinator type received: " + id);
             }

@@ -86,6 +86,8 @@ import org.apache.kafka.common.message.CreateAclsResponseData;
 import org.apache.kafka.common.message.CreateDelegationTokenRequestData;
 import org.apache.kafka.common.message.CreateDelegationTokenRequestData.CreatableRenewers;
 import org.apache.kafka.common.message.CreateDelegationTokenResponseData;
+import org.apache.kafka.common.message.CreateMirrorRequestData;
+import org.apache.kafka.common.message.CreateMirrorResponseData;
 import org.apache.kafka.common.message.CreatePartitionsRequestData;
 import org.apache.kafka.common.message.CreatePartitionsRequestData.CreatePartitionsAssignment;
 import org.apache.kafka.common.message.CreatePartitionsRequestData.CreatePartitionsTopic;
@@ -1023,6 +1025,7 @@ public class RequestResponseTest {
             case SASL_AUTHENTICATE: return createSaslAuthenticateRequest(version);
             case CREATE_PARTITIONS: return createCreatePartitionsRequest(version);
             case CREATE_DELEGATION_TOKEN: return createCreateTokenRequest(version);
+            case CREATE_MIRROR: return createCreateMirrorRequest(version);
             case RENEW_DELEGATION_TOKEN: return createRenewTokenRequest(version);
             case EXPIRE_DELEGATION_TOKEN: return createExpireTokenRequest(version);
             case DESCRIBE_DELEGATION_TOKEN: return createDescribeTokenRequest(version);
@@ -1119,6 +1122,7 @@ public class RequestResponseTest {
             case SASL_AUTHENTICATE: return createSaslAuthenticateResponse();
             case CREATE_PARTITIONS: return createCreatePartitionsResponse();
             case CREATE_DELEGATION_TOKEN: return createCreateTokenResponse();
+            case CREATE_MIRROR: return createCreateMirrorResponse();
             case RENEW_DELEGATION_TOKEN: return createRenewTokenResponse();
             case EXPIRE_DELEGATION_TOKEN: return createExpireTokenResponse();
             case DESCRIBE_DELEGATION_TOKEN: return createDescribeTokenResponse(version);
@@ -3203,6 +3207,22 @@ public class RequestResponseTest {
                 .setTokenId("token1")
                 .setHmac("test".getBytes());
         return new CreateDelegationTokenResponse(data);
+    }
+
+    private CreateMirrorRequest createCreateMirrorRequest(short version) {
+        CreateMirrorRequestData data = new CreateMirrorRequestData()
+                .setMirrorName("test-mirror");
+        CreateMirrorRequestData.MirrorConfigCollection configsCollection = new CreateMirrorRequestData.MirrorConfigCollection();
+        configsCollection.add(new CreateMirrorRequestData.MirrorConfig().setName("config1").setValue("value1"));
+        data.setConfig(configsCollection);
+        return new CreateMirrorRequest.Builder(data).build(version);
+    }
+
+    private CreateMirrorResponse createCreateMirrorResponse() {
+        CreateMirrorResponseData data = new CreateMirrorResponseData()
+                .setThrottleTimeMs(20)
+                .setErrorCode(Errors.NONE.code());
+        return new CreateMirrorResponse(data);
     }
 
     private RenewDelegationTokenRequest createRenewTokenRequest(short version) {

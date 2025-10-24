@@ -64,7 +64,7 @@ abstract class AbstractFetcherThread(name: String,
                                      fetchBackOffMs: Int = 0,
                                      isInterruptible: Boolean = true,
                                      val brokerTopicStats: BrokerTopicStats, // BrokerTopicStats's lifecycle managed by ReplicaManager
-                                     val clusterLinkName: String = "") // Cluster link name for remote replica fetching
+                                     val mirrorName: String = "") // Cluster mirror name for remote replica fetching
   extends ShutdownableThread(name, isInterruptible) with Logging {
 
   this.logIdent = this.logPrefix
@@ -293,7 +293,7 @@ abstract class AbstractFetcherThread(name: String,
             if (leaderNode.isPresent && (!leaderNode.get().host.equals(leader.brokerEndPoint().host()) ||
               leaderNode.get().port != leader.brokerEndPoint().port)) {
                 val brokerEndpoint = new org.apache.kafka.server.network.BrokerEndPoint(leaderNode.get.id(), leaderNode.get.host, leaderNode.get.port)
-                newStates += topicPartition -> InitialFetchState(currentFetchState.topicId().toScala, brokerEndpoint, partitionData.currentLeader().leaderEpoch(), currentFetchState.fetchOffset(), clusterLinkName)
+                newStates += topicPartition -> InitialFetchState(currentFetchState.topicId().toScala, brokerEndpoint, partitionData.currentLeader().leaderEpoch(), currentFetchState.fetchOffset(), mirrorName)
             }
           case _ =>
         }
@@ -592,12 +592,12 @@ abstract class AbstractFetcherThread(name: String,
     if (currentState != null && currentState.currentLeaderEpoch == initialFetchState.currentLeaderEpoch) {
       currentState
     } else if (initialFetchState.initOffset < 0) {
-      fetchOffsetAndTruncate(tp, initialFetchState.topicId, initialFetchState.currentLeaderEpoch, initialFetchState.clusterLinkName.nonEmpty)
+      fetchOffsetAndTruncate(tp, initialFetchState.topicId, initialFetchState.currentLeaderEpoch, initialFetchState.mirrorName.nonEmpty)
     } else if (leader.isTruncationOnFetchSupported) {
       // With old message format, `latestEpoch` will be empty and we use Truncating state
       // to truncate to high watermark.
       val latestEpochInLog = latestEpochFromLog(tp)
-      val lastFetchedEpoch: Optional[Integer] = if (initialFetchState.clusterLinkName.nonEmpty) {
+      val lastFetchedEpoch: Optional[Integer] = if (initialFetchState.mirrorName.nonEmpty) {
         if (latestEpochInLog.isPresent)
           latestEpochInLog
         else Optional.of(0) // this should only happen when no data in local log
@@ -605,12 +605,12 @@ abstract class AbstractFetcherThread(name: String,
       val state = if (lastFetchedEpoch.isPresent) ReplicaState.FETCHING else ReplicaState.TRUNCATING
 
       // if it's readonly, always assume it's 0 so that we can get the current leader epoch from fetch response
-      val leaderEpoch = if (initialFetchState.clusterLinkName.nonEmpty) 0 else initialFetchState.currentLeaderEpoch
+      val leaderEpoch = if (initialFetchState.mirrorName.nonEmpty) 0 else initialFetchState.currentLeaderEpoch
       new PartitionFetchState(initialFetchState.topicId.toJava, initialFetchState.initOffset, Optional.empty(), leaderEpoch,
-        state, lastFetchedEpoch, initialFetchState.clusterLinkName.nonEmpty, 0)
+        state, lastFetchedEpoch, initialFetchState.mirrorName.nonEmpty, 0)
     } else {
       new PartitionFetchState(initialFetchState.topicId.toJava, initialFetchState.initOffset, Optional.empty(), initialFetchState.currentLeaderEpoch,
-        ReplicaState.TRUNCATING, Optional.empty(), initialFetchState.clusterLinkName.nonEmpty, 0)
+        ReplicaState.TRUNCATING, Optional.empty(), initialFetchState.mirrorName.nonEmpty, 0)
     }
   }
 

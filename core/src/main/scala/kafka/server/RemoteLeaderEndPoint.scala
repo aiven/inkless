@@ -85,7 +85,7 @@ class RemoteLeaderEndPoint(logPrefix: String,
         throw t
     }
     val fetchResponse = clientResponse.responseBody.asInstanceOf[FetchResponse]
-    info("!!! fetchResponse:" + fetchResponse)
+    info("!!! Got fetchResponse: " + fetchResponse)
     lastSeenEndpointList.clear()
     fetchResponse.data().nodeEndpoints().forEach(
       node => lastSeenEndpointList.put(node.nodeId(), new Node(node.nodeId(), node.host(), node.port(), node.rack())))
@@ -225,7 +225,7 @@ class RemoteLeaderEndPoint(logPrefix: String,
         // regular replication: use replica fetch request
         FetchRequest.Builder.forReplica(version, brokerConfig.brokerId, brokerEpochSupplier(), maxWait, minBytes, fetchData.toSend)
       } else {
-        // cluster linking: use consumer fetch request
+        // cluster mirror: use consumer fetch request
         FetchRequest.Builder.forConsumer(version, maxWait, minBytes, fetchData.toSend).isolationLevel(IsolationLevel.READ_COMMITTED)
       }
       requestBuilder

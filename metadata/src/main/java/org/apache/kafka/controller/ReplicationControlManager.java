@@ -741,7 +741,7 @@ public class ReplicationControlManager {
                 }
                 newParts.put(
                     assignment.partitionIndex(),
-                    buildPartitionRegistration(partitionAssignment, isr, topic.clusterLink())
+                    buildPartitionRegistration(partitionAssignment, isr, topic.mirrorName())
                 );
             }
             for (int i = 0; i < newParts.size(); i++) {
@@ -788,7 +788,7 @@ public class ReplicationControlManager {
                     }
                     newParts.put(
                         partitionId,
-                        buildPartitionRegistration(partitionAssignment, isr, topic.clusterLink())
+                        buildPartitionRegistration(partitionAssignment, isr, topic.mirrorName())
                     );
                 }
             } catch (InvalidReplicationFactorException e) {
@@ -808,12 +808,13 @@ public class ReplicationControlManager {
                 numPartitions, e.throttleTimeMs());
             return ApiError.fromThrowable(e);
         }
-        // luke
 
         Uuid topicId = Uuid.randomUuid();
+        // keep source topicId for mirror topics
         if (!topic.topicId().equals(Uuid.ZERO_UUID)) {
             topicId = topic.topicId();
         }
+
         CreatableTopicResult result = new CreatableTopicResult().
             setName(topic.name()).
             setTopicId(topicId).
@@ -858,7 +859,7 @@ public class ReplicationControlManager {
     private static PartitionRegistration buildPartitionRegistration(
         PartitionAssignment partitionAssignment,
         List<Integer> isr,
-        String clusterLinkName
+        String mirrorName
     ) {
         return new PartitionRegistration.Builder().
             setReplicas(Replicas.toArray(partitionAssignment.replicas())).
@@ -868,7 +869,7 @@ public class ReplicationControlManager {
             setLeaderRecoveryState(LeaderRecoveryState.RECOVERED).
             setLeaderEpoch(0).
             setPartitionEpoch(0).
-            setClusterLink(clusterLinkName).
+            setMirrorName(mirrorName).
             build();
     }
 

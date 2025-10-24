@@ -276,8 +276,8 @@ public class ForwardingAdmin implements Admin {
     }
 
     @Override
-    public CreateClusterLinkResult createClusterLink(String clusterLinkName, Map<String, String> configs, CreateClusterLinkOptions options) {
-        return delegate.createClusterLink(clusterLinkName, configs, options);
+    public CreateMirrorResult createMirror(String mirrorName, Map<String, String> configs, CreateMirrorOptions options) {
+        return delegate.createMirror(mirrorName, configs, options);
     }
 
     @Override

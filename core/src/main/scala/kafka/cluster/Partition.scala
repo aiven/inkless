@@ -168,7 +168,7 @@ object Partition {
       metadataCache = replicaManager.metadataCache,
       logManager = replicaManager.logManager,
       alterIsrManager = replicaManager.alterPartitionManager,
-      clusterLinkName = clusterLinkName)
+      mirrorName = clusterLinkName)
   }
 
   def removeMetrics(topicPartition: TopicPartition): Unit = {
@@ -322,7 +322,7 @@ class Partition(val topicPartition: TopicPartition,
                 logManager: LogManager,
                 alterIsrManager: AlterPartitionManager,
                 @volatile private var _topicId: Option[Uuid] = None, // TODO: merge topicPartition and _topicId into TopicIdPartition once TopicId persist in most of the code by KAFKA-16212
-                @volatile var clusterLinkName: String = ""
+                @volatile var mirrorName: String = ""
                ) extends Logging with TopicPartitionLog {
 
   import Partition.metricsGroup
@@ -377,8 +377,8 @@ class Partition(val topicPartition: TopicPartition,
   metricsGroup.newGauge("ReplicasCount", () => if (isLeader) assignmentState.replicationFactor else 0, tags)
   metricsGroup.newGauge("LastStableOffsetLag", () => log.map(_.lastStableOffsetLag).getOrElse(0), tags)
 
-  def setClusterLinkName(name: String): Unit = {
-    this.clusterLinkName = name
+  def setMirrorName(name: String): Unit = {
+    this.mirrorName = name
   }
 
   def unifiedLog(): Optional[UnifiedLog] = log.toJava

@@ -17,7 +17,7 @@
 
 package org.apache.kafka.common.requests;
 
-import org.apache.kafka.common.message.CreateClusterLinkResponseData;
+import org.apache.kafka.common.message.CreateMirrorResponseData;
 import org.apache.kafka.common.protocol.ApiKeys;
 import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.protocol.Readable;
@@ -25,16 +25,16 @@ import org.apache.kafka.common.protocol.Readable;
 import java.util.HashMap;
 import java.util.Map;
 
-public class CreateClusterLinkResponse extends AbstractResponse {
-    private final CreateClusterLinkResponseData data;
+public class CreateMirrorResponse extends AbstractResponse {
+    private final CreateMirrorResponseData data;
 
-    public CreateClusterLinkResponse(CreateClusterLinkResponseData data) {
-        super(ApiKeys.CREATE_CLUSTER_LINK);
+    public CreateMirrorResponse(CreateMirrorResponseData data) {
+        super(ApiKeys.CREATE_MIRROR);
         this.data = data;
     }
 
     @Override
-    public CreateClusterLinkResponseData data() {
+    public CreateMirrorResponseData data() {
         return data;
     }
 
@@ -56,15 +56,15 @@ public class CreateClusterLinkResponse extends AbstractResponse {
     }
 
 
-//    public static CreateClusterLinkResponse prepareResponse(List<GetReplicaLogInfoResponseData.TopicPartitionLogInfo> topicPartitionLogInfoList) {
+//    public static CreateLinkResponse prepareResponse(List<GetReplicaLogInfoResponseData.TopicPartitionLogInfo> topicPartitionLogInfoList) {
 //        GetReplicaLogInfoResponseData responseData = new GetReplicaLogInfoResponseData();
 //        topicPartitionLogInfoList.forEach(topicPartitionLogInfo -> {
 //            responseData.topicPartitionLogInfoList().add(topicPartitionLogInfo);
 //        });
-//        return new CreateClusterLinkResponse(responseData);
+//        return new CreateLinkResponse(responseData);
 //    }
 
-    public static CreateClusterLinkResponse parse(Readable readable, short version) {
-        return new CreateClusterLinkResponse(new CreateClusterLinkResponseData(readable, version));
+    public static CreateMirrorResponse parse(Readable readable, short version) {
+        return new CreateMirrorResponse(new CreateMirrorResponseData(readable, version));
     }
 }

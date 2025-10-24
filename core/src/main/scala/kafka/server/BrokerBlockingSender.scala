@@ -27,8 +27,8 @@ import org.apache.kafka.clients.{ApiVersions, ClientResponse, ManualMetadataUpda
 import org.apache.kafka.common.{Node, Reconfigurable}
 import org.apache.kafka.common.requests.AbstractRequest.Builder
 import org.apache.kafka.common.security.auth.SecurityProtocol
+import org.apache.kafka.server.config.MirrorConfig
 import org.apache.kafka.server.network.BrokerEndPoint
-import org.apache.kafka.server.config.ClusterLinkConfigs
 
 import scala.jdk.CollectionConverters._
 
@@ -135,20 +135,20 @@ class BrokerBlockingSender(sourceBroker: BrokerEndPoint,
   }
 }
 
-class RemoteBrokerBlockingSender(sourceBroker: BrokerEndPoint,
-                                 clusterLinkConfigs: ClusterLinkConfigs,
+class MirrorBrokerBlockingSender(sourceBroker: BrokerEndPoint,
+                                 mirrorConfig: MirrorConfig,
                                  metrics: Metrics,
                                  time: Time,
                                  fetcherId: Int,
                                  clientId: String,
                                  logContext: LogContext) extends BlockingSend {
   private val sourceNode = new Node(sourceBroker.id, sourceBroker.host, sourceBroker.port)
-  private val config = clusterLinkConfigs.getConfig()
-  private val socketTimeout: Int = config.getLong(ClusterLinkConfigs.SOCKET_CONNECTION_SETUP_TIMEOUT_MS_CONFIG).toInt
+  private val config = mirrorConfig.getConfig()
+  private val socketTimeout: Int = config.getLong(MirrorConfig.SOCKET_CONNECTION_SETUP_TIMEOUT_MS_CONFIG).toInt
 
   private val networkClient = {
-    val securityProtocol = SecurityProtocol.forName(clusterLinkConfigs.securityProtocol())
-    val saslMechanism = clusterLinkConfigs.saslMechanism()
+    val securityProtocol = SecurityProtocol.forName(mirrorConfig.securityProtocol())
+    val saslMechanism = mirrorConfig.saslMechanism()
 
     val channelBuilder = ChannelBuilders.clientChannelBuilder(
       securityProtocol,
@@ -161,7 +161,7 @@ class RemoteBrokerBlockingSender(sourceBroker: BrokerEndPoint,
     )
     val selector = new Selector(
       NetworkReceive.UNLIMITED,
-      config.getLong(ClusterLinkConfigs.METADATA_MAX_AGE_CONFIG),
+      config.getLong(MirrorConfig.METADATA_MAX_AGE_CONFIG),
       metrics,
       time,
       "remote-readonly-" + clientId,
@@ -176,11 +176,11 @@ class RemoteBrokerBlockingSender(sourceBroker: BrokerEndPoint,
       1,
       0,
       0,
-      config.getInt(ClusterLinkConfigs.SEND_BUFFER_CONFIG),
-      config.getInt(ClusterLinkConfigs.RECEIVE_BUFFER_CONFIG),
-      config.getInt(ClusterLinkConfigs.REQUEST_TIMEOUT_MS_CONFIG),
-      config.getLong(ClusterLinkConfigs.SOCKET_CONNECTION_SETUP_TIMEOUT_MS_CONFIG).toInt,
-      config.getLong(ClusterLinkConfigs.SOCKET_CONNECTION_SETUP_TIMEOUT_MAX_MS_CONFIG).toInt,
+      config.getInt(MirrorConfig.SEND_BUFFER_CONFIG),
+      config.getInt(MirrorConfig.RECEIVE_BUFFER_CONFIG),
+      config.getInt(MirrorConfig.REQUEST_TIMEOUT_MS_CONFIG),
+      config.getLong(MirrorConfig.SOCKET_CONNECTION_SETUP_TIMEOUT_MS_CONFIG).toInt,
+      config.getLong(MirrorConfig.SOCKET_CONNECTION_SETUP_TIMEOUT_MAX_MS_CONFIG).toInt,
       time,
       false,
       new ApiVersions,
@@ -188,7 +188,6 @@ class RemoteBrokerBlockingSender(sourceBroker: BrokerEndPoint,
       MetadataRecoveryStrategy.NONE
     )
   }
-
 
   override def brokerEndPoint(): BrokerEndPoint = sourceBroker
 
@@ -210,7 +209,7 @@ class RemoteBrokerBlockingSender(sourceBroker: BrokerEndPoint,
   }
 
   override def initiateClose(): Unit = {
-    // Note: For cluster link connections, we don't use dynamic reconfiguration
+    // Note: For Cluster Mirror connections, we don't use dynamic reconfiguration
     // so no need to remove reconfigurable components
     networkClient.initiateClose()
   }

@@ -354,7 +354,9 @@ class AbstractFetcherThreadTest {
 
     // After returning to the right epoch, we can continue fetching
     fetcher.mockLeader.leaderPartitionState(partition).leaderEpoch = 1
+    println(s"Before final doWork: fetchState=${fetcher.fetchState(partition)}, leaderEpoch=${fetcher.mockLeader.leaderPartitionState(partition).leaderEpoch}")
     fetcher.doWork()
+    println(s"After final doWork: fetchState=${fetcher.fetchState(partition)}, logEndOffset=${replicaState.logEndOffset}")
     assertEquals(2, replicaState.logEndOffset)
     assertEquals(Some(ReplicaState.FETCHING), fetcher.fetchState(partition).map(_.state))
   }

@@ -200,6 +200,7 @@ public interface Admin extends AutoCloseable {
     CreateTopicsResult createTopics(Collection<NewTopic> newTopics, CreateTopicsOptions options);
 
     FindCoordinatorResult findCoordinator(String key);
+
     /**
      * This is a convenience method for {@link #deleteTopics(TopicCollection, DeleteTopicsOptions)}
      * with default options. See the overload for more details.
@@ -1665,8 +1666,7 @@ public interface Admin extends AutoCloseable {
     @InterfaceStability.Unstable
     UnregisterBrokerResult unregisterBroker(int brokerId, UnregisterBrokerOptions options);
 
-
-    CreateClusterLinkResult createClusterLink(String clusterLinkName, Map<String, String> configs, CreateClusterLinkOptions options);
+    CreateMirrorResult createMirror(String mirrorName, Map<String, String> configs, CreateMirrorOptions options);
 
     /**
      * Describe producer state on a set of topic partitions. See

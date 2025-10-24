@@ -21,8 +21,8 @@ import kafka.cluster.Partition
 import kafka.coordinator.transaction.{InitProducerIdResult, TransactionCoordinator}
 import kafka.network.RequestChannel
 import kafka.server.QuotaFactory.QuotaManagers
-import kafka.server.coordinator.TopicMirrorLinkCoordinator
 import kafka.server.metadata.KRaftMetadataCache
+import kafka.server.mirror.MirrorCoordinator
 import kafka.server.share.SharePartitionManager
 import kafka.utils.{CoreUtils, Logging, TestUtils}
 import org.apache.kafka.clients.admin.AlterConfigOp.OpType
@@ -129,7 +129,7 @@ class KafkaApisTest extends Logging {
   private val replicaManager: ReplicaManager = mock(classOf[ReplicaManager])
   private val groupCoordinator: GroupCoordinator = mock(classOf[GroupCoordinator])
   private val shareCoordinator: ShareCoordinator = mock(classOf[ShareCoordinator])
-  private val topicMirrorLinkCoordinator: TopicMirrorLinkCoordinator = mock(classOf[TopicMirrorLinkCoordinator])
+  private val topicMirrorLinkCoordinator: MirrorCoordinator = mock(classOf[MirrorCoordinator])
   private val txnCoordinator: TransactionCoordinator = mock(classOf[TransactionCoordinator])
   private val forwardingManager: ForwardingManager = mock(classOf[ForwardingManager])
   private val autoTopicCreationManager: AutoTopicCreationManager = mock(classOf[AutoTopicCreationManager])
@@ -197,7 +197,7 @@ class KafkaApisTest extends Logging {
       groupCoordinator = groupCoordinator,
       txnCoordinator = txnCoordinator,
       shareCoordinator = shareCoordinator,
-      topicMirrorLinkCoordinator = topicMirrorLinkCoordinator,
+      mirrorCoordinator = topicMirrorLinkCoordinator,
       autoTopicCreationManager = autoTopicCreationManager,
       brokerId = brokerId,
       config = config,

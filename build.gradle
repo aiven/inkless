@@ -908,7 +908,7 @@ project(':server') {
     implementation project(':storage')
     implementation project(':group-coordinator')
     implementation project(':transaction-coordinator')
-    implementation project(':cluster-link-coordinator')
+    implementation project(':mirror-coordinator')
     implementation project(':raft')
     implementation project(':share-coordinator')
     implementation project(':storage:storage-api')
@@ -1021,7 +1021,7 @@ project(':core') {
     implementation project(':server')
     implementation project(':coordinator-common')
     implementation project(':share-coordinator')
-    implementation project(':cluster-link-coordinator')
+    implementation project(':mirror-coordinator')
 
     implementation libs.argparse4j
     implementation libs.commonsValidator
@@ -1587,9 +1587,9 @@ project(':test-common:test-common-runtime') {
   }
 }
 
-project(':cluster-link-coordinator') {
+project(':mirror-coordinator') {
     base {
-        archivesName = "kafka-cluster-link-coordinator"
+        archivesName = "kafka-mirror-coordinator"
     }
 
     configurations {
@@ -1628,16 +1628,15 @@ project(':cluster-link-coordinator') {
         }
     }
 
-    // TODO:
-//    checkstyle {
-//        configProperties = checkstyleConfigProperties("import-control-cluster-link-coordinator.xml")
-//    }
+    checkstyle {
+        configProperties = checkstyleConfigProperties("import-control-mirror-coordinator.xml")
+    }
 
     task processMessages(type:JavaExec) {
         mainClass = "org.apache.kafka.message.MessageGenerator"
         classpath = configurations.generator
-        args = [ "-p", "org.apache.kafka.coordinator.clusterlink.generated",
-                 "-o", "${projectDir}/build/generated/main/java/org/apache/kafka/coordinator/clusterlink/generated",
+        args = [ "-p", "org.apache.kafka.coordinator.mirror.generated",
+                 "-o", "${projectDir}/build/generated/main/java/org/apache/kafka/coordinator/mirror/generated",
                  "-i", "src/main/resources/common/message",
                  "-m", "MessageDataGenerator", "JsonConverterGenerator",
                  "-t", "CoordinatorRecordTypeGenerator", "CoordinatorRecordJsonConvertersGenerator"
@@ -1646,7 +1645,7 @@ project(':cluster-link-coordinator') {
                 .withPropertyName("messages")
                 .withPathSensitivity(PathSensitivity.RELATIVE)
         outputs.cacheIf { true }
-        outputs.dir("${projectDir}/build/generated/main/java/org/apache/kafka/coordinator/clusterlink/generated")
+        outputs.dir("${projectDir}/build/generated/main/java/org/apache/kafka/coordinator/mirror/generated")
     }
 
     compileJava.dependsOn 'processMessages'

@@ -26,7 +26,7 @@ import kafka.server.KafkaApis;
 import kafka.server.KafkaConfig;
 import kafka.server.QuotaFactory.QuotaManagers;
 import kafka.server.ReplicaManager;
-import kafka.server.coordinator.TopicMirrorLinkCoordinator;
+import kafka.server.mirror.MirrorCoordinator;
 import kafka.server.share.SharePartitionManager;
 
 import org.apache.kafka.common.internals.Plugin;
@@ -72,7 +72,7 @@ public class KafkaApisBuilder {
     private ApiVersionManager apiVersionManager = null;
     private ClientMetricsManager clientMetricsManager = null;
     private ShareCoordinator shareCoordinator = null;
-    private TopicMirrorLinkCoordinator topicMirrorLinkCoordinator = null;
+    private MirrorCoordinator mirrorCoordinator = null;
     private GroupConfigManager groupConfigManager = null;
     private Supplier<Long> brokerEpochSupplier = () -> -1L;
 
@@ -196,8 +196,8 @@ public class KafkaApisBuilder {
         return this;
     }
 
-    public KafkaApisBuilder setTopicMirrorCoordinator(TopicMirrorLinkCoordinator topicMirrorLinkCoordinator) {
-        this.topicMirrorLinkCoordinator = topicMirrorLinkCoordinator;
+    public KafkaApisBuilder setTopicMirrorCoordinator(MirrorCoordinator mirrorCoordinator) {
+        this.mirrorCoordinator = mirrorCoordinator;
         return this;
     }
 
@@ -221,7 +221,7 @@ public class KafkaApisBuilder {
         if (brokerTopicStats == null) brokerTopicStats = new BrokerTopicStats(config.remoteLogManagerConfig().isRemoteStorageSystemEnabled());
         if (apiVersionManager == null) throw new RuntimeException("You must set apiVersionManager");
         if (groupConfigManager == null) throw new RuntimeException("You must set groupConfigManager");
-        if (topicMirrorLinkCoordinator == null) throw new RuntimeException("You must set topicMirrorLinkCoordinator");
+        if (mirrorCoordinator == null) throw new RuntimeException("You must set topicMirrorLinkCoordinator");
 
         return new KafkaApis(requestChannel,
                              forwardingManager,
@@ -229,7 +229,7 @@ public class KafkaApisBuilder {
                              groupCoordinator,
                              txnCoordinator,
                              shareCoordinator,
-                             topicMirrorLinkCoordinator,
+                mirrorCoordinator,
                              autoTopicCreationManager,
                              brokerId,
                              config,

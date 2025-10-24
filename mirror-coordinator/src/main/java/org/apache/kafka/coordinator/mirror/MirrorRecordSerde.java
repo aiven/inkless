@@ -14,14 +14,14 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package kafka.server.coordinator;
+package org.apache.kafka.coordinator.mirror;
 
 import org.apache.kafka.common.errors.UnsupportedVersionException;
 import org.apache.kafka.common.protocol.ApiMessage;
-import org.apache.kafka.coordinator.clusterlink.generated.CoordinatorRecordType;
 import org.apache.kafka.coordinator.common.runtime.CoordinatorRecordSerde;
+import org.apache.kafka.coordinator.mirror.generated.CoordinatorRecordType;
 
-public class TopicMirrorLinkRecordSerde extends CoordinatorRecordSerde {
+public class MirrorRecordSerde extends CoordinatorRecordSerde {
     @Override
     protected ApiMessage apiMessageKeyFor(short recordType) {
         try {

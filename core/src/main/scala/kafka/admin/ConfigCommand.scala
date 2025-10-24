@@ -75,7 +75,7 @@ object ConfigCommand extends Logging {
   private val UserType = ConfigType.USER.value
   private val ClientType = ConfigType.CLIENT.value
   private val IpType = ConfigType.IP.value
-  private val ClusterLinkType = ConfigType.CLUSTER_LINK.value
+  private val MirrorType = ConfigType.MIRROR.value
 
   def main(args: Array[String]): Unit = {
     try {
@@ -187,7 +187,7 @@ object ConfigCommand extends Logging {
           case ClientMetricsType => ConfigResource.Type.CLIENT_METRICS
           case BrokerType => ConfigResource.Type.BROKER
           case GroupType => ConfigResource.Type.GROUP
-          case ClusterLinkType => ConfigResource.Type.CLUSTER_LINK
+          case MirrorType => ConfigResource.Type.MIRROR
           case _ => throw new IllegalArgumentException(s"$entityNameHead is not a valid entity-type.")
         }
         try {
@@ -333,7 +333,7 @@ object ConfigCommand extends Logging {
     val describeAll = opts.options.has(opts.allOpt)
 
     entityTypes.head match {
-      case TopicType | BrokerType | BrokerLoggerConfigType | ClientMetricsType | GroupType | ClusterLinkType =>
+      case TopicType | BrokerType | BrokerLoggerConfigType | ClientMetricsType | GroupType | MirrorType =>
         describeResourceConfig(adminClient, entityTypes.head, entityNames.headOption, describeAll)
       case UserType | ClientType =>
         describeClientQuotaAndUserScramCredentialConfigs(adminClient, entityTypes, entityNames)
@@ -375,7 +375,7 @@ object ConfigCommand extends Logging {
               System.out.println(s"The ${entityType.dropRight(1)} '$name' doesn't exist and doesn't have dynamic config.")
               return
             }
-          case ClusterLinkType =>
+          case MirrorType =>
 
           case entityType => throw new IllegalArgumentException(s"Invalid entity type: $entityType")
         }
@@ -395,8 +395,8 @@ object ConfigCommand extends Logging {
           adminClient.listGroups().all.get.asScala.map(_.groupId).toSet ++
             adminClient.listConfigResources(java.util.Set.of(ConfigResource.Type.GROUP), new ListConfigResourcesOptions).all().get().asScala.map(_.name).toSet
 
-        case ClusterLinkType =>
-            adminClient.listConfigResources(java.util.Set.of(ConfigResource.Type.CLUSTER_LINK), new ListConfigResourcesOptions).all().get().asScala.map(_.name).toSet
+        case MirrorType =>
+            adminClient.listConfigResources(java.util.Set.of(ConfigResource.Type.MIRROR), new ListConfigResourcesOptions).all().get().asScala.map(_.name).toSet
         case entityType => throw new IllegalArgumentException(s"Invalid entity type: $entityType")
       })
 
@@ -458,8 +458,8 @@ object ConfigCommand extends Logging {
         (ConfigResource.Type.CLIENT_METRICS, Some(ConfigEntry.ConfigSource.DYNAMIC_CLIENT_METRICS_CONFIG))
       case GroupType =>
         (ConfigResource.Type.GROUP, Some(ConfigEntry.ConfigSource.DYNAMIC_GROUP_CONFIG))
-      case ClusterLinkType =>
-        (ConfigResource.Type.CLUSTER_LINK, Some(ConfigEntry.ConfigSource.DYNAMIC_BROKER_CONFIG))
+      case MirrorType =>
+        (ConfigResource.Type.MIRROR, Some(ConfigEntry.ConfigSource.DYNAMIC_BROKER_CONFIG))
       case entityType => throw new IllegalArgumentException(s"Invalid entity type: $entityType")
     }
 

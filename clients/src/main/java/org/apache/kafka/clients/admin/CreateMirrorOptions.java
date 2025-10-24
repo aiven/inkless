@@ -17,24 +17,10 @@
 
 package org.apache.kafka.clients.admin;
 
-import org.apache.kafka.common.KafkaFuture;
+import java.util.Map;
 
 /**
- * The result of the {@link Admin#unregisterBroker(int, UnregisterBrokerOptions)} call.
- *
- * The API of this class is evolving, see {@link Admin} for details.
+ * Options for {@link Admin#createMirror(String, Map, CreateMirrorOptions)}.
  */
-public class CreateClusterLinkResult {
-    private final KafkaFuture<Void> future;
-
-    CreateClusterLinkResult(final KafkaFuture<Void> future) {
-        this.future = future;
-    }
-
-    /**
-     * Return a future which succeeds if the operation is successful.
-     */
-    public KafkaFuture<Void> all() {
-        return future;
-    }
+public class CreateMirrorOptions extends AbstractOptions<CreateMirrorOptions> {
 }

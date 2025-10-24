@@ -13,22 +13,21 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// Cluster Mirror is in development. This schema is subject to non-backwards-compatible changes.
 {
-  "apiKey":94,
-  "type": "request",
-  "listeners": ["broker", "controller"],
-  "name": "CreateClusterLinkRequest",
+  "apiKey": 0,
+  "type": "coordinator-value",
+  "name": "MirrorTopicsValue",
   "validVersions": "0",
   "flexibleVersions": "0+",
   "fields": [
-    { "name": "ClusterLinkName", "type": "string", "versions": "0+", "nullableVersions": "0+",
-      "about": "The cluster link name."},
-    { "name": "Configs", "type": "[]ClusterLinkConfigs", "versions": "0+",
-      "about": "The configurations.",  "fields": [
-      { "name": "Name", "type": "string", "versions": "0+", "mapKey": true,
-        "about": "The configuration key name." },
-      { "name": "Value", "type": "string", "versions": "0+", "nullableVersions": "0+",
-        "about": "The value to set for the configuration key."}
+    { "name": "topics", "type": "[]Topic", "versions": "0+",
+      "about": "The topics to mirror." }
+  ],
+  "commonStructs": [
+    { "name": "Topic", "versions": "0+", "fields": [
+      { "name": "name", "type": "string", "versions": "0+",
+        "about": "The topic name." }
     ]}
   ]
 }

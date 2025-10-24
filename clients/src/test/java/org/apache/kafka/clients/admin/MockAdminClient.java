@@ -1371,7 +1371,7 @@ public class MockAdminClient extends AdminClient {
     }
 
     @Override
-    public CreateClusterLinkResult createClusterLink(String clusterLinkName, Map<String, String> configs, CreateClusterLinkOptions options) {
+    public CreateMirrorResult createMirror(String mirrorName, Map<String, String> configs, CreateMirrorOptions options) {
         throw new UnsupportedOperationException("Not implemented yet");
     }
 

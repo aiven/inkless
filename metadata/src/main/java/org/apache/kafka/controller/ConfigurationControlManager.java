@@ -25,7 +25,7 @@ import org.apache.kafka.common.config.ConfigResource;
 import org.apache.kafka.common.config.ConfigResource.Type;
 import org.apache.kafka.common.config.TopicConfig;
 import org.apache.kafka.common.config.types.Password;
-import org.apache.kafka.common.message.CreateClusterLinkResponseData;
+import org.apache.kafka.common.message.CreateMirrorResponseData;
 import org.apache.kafka.common.metadata.ClearElrRecord;
 import org.apache.kafka.common.metadata.ConfigRecord;
 import org.apache.kafka.common.protocol.Errors;
@@ -214,14 +214,12 @@ public class ConfigurationControlManager {
         return ControllerResult.atomicOf(outputRecords, outputResults);
     }
 
-    // luke
-    ControllerResult<CreateClusterLinkResponseData> addClusterLinkConfigs(
+    ControllerResult<CreateMirrorResponseData> addMirrorConfig(
             Map<ConfigResource, Map<String, Entry<OpType, String>>> configChanges,
             boolean newlyCreatedResource
     ) {
-        List<ApiMessageAndVersion> outputRecords =
-                BoundedList.newArrayBacked(MAX_RECORDS_PER_USER_OP);
-        CreateClusterLinkResponseData data = new CreateClusterLinkResponseData();
+        List<ApiMessageAndVersion> outputRecords = BoundedList.newArrayBacked(MAX_RECORDS_PER_USER_OP);
+        CreateMirrorResponseData data = new CreateMirrorResponseData();
 
         for (Entry<ConfigResource, Map<String, Entry<OpType, String>>> resourceEntry :
                 configChanges.entrySet()) {
@@ -230,9 +228,9 @@ public class ConfigurationControlManager {
                     newlyCreatedResource,
                     outputRecords);
             // TODO: Should handle the error here
-            log.info("!!! addClusterLinkConfigs apiError: {} for {}", apiError, resourceEntry);
+            log.info("!!! addMirrorConfig apiError: {} for {}", apiError, resourceEntry);
         }
-        outputRecords.addAll(outputRecords);
+        outputRecords.addAll(createClearElrRecordsAsNeeded(outputRecords));
 
         data.setErrorCode((short) 0);
 
