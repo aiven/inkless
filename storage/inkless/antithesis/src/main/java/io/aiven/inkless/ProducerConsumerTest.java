@@ -235,7 +235,7 @@ public class ProducerConsumerTest {
 
         @Override
         public void run() {
-            final int numRecords = numRecords();
+            final int numRecords = 1000;
             LOGGER.info("Producing {} records", numRecords);
             for (int i = 0; i < numRecords; i++) {
                 final byte[] key = (String.format("key-%d-%d", threadId, i)).getBytes();
@@ -260,10 +260,6 @@ public class ProducerConsumerTest {
                 }
             }
             producer.flush();
-        }
-
-        private static int numRecords() {
-            return Math.abs((int) (Random.getRandom() % 1000));
         }
 
         private static int interRecordDelay() {
