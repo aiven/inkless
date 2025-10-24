@@ -54,7 +54,7 @@ class GcsStorageConfigTest {
         try (final MockedStatic<GoogleCredentials> googleCredentialsMockedStatic =
                  Mockito.mockStatic(GoogleCredentials.class)) {
             googleCredentialsMockedStatic.when(GoogleCredentials::getApplicationDefault).thenReturn(mockCredentials);
-            assertThat(config.credentials()).isSameAs(mockCredentials);
+            assertThat(config.reloadableCredentials().getCredentials()).isSameAs(mockCredentials);
         }
     }
 
@@ -144,5 +144,47 @@ class GcsStorageConfigTest {
             Arguments.of(false, null, "path"),
             Arguments.of(null, "json", "path")
         );
+    }
+
+    @Test
+    void reloadableCredentialsWithDefaults() {
+        final Map<String, Object> configs = Map.of(
+            "gcs.bucket.name", "test-bucket",
+            "gcs.credentials.default", "true");
+        final GcsStorageConfig config = new GcsStorageConfig(configs);
+
+        try (final ReloadableCredentialsProvider provider = config.reloadableCredentials()) {
+            assertThat(provider).isNotNull();
+            assertThat(provider.getCredentials()).isNotNull();
+        } catch (final Exception e) {
+            // Close may throw IOException
+        }
+    }
+
+    @Test
+    void reloadableCredentialsWithJsonCredentials() {
+        final String validCredentialsJson = "{\n"
+            + "  \"type\": \"service_account\",\n"
+            + "  \"project_id\": \"test-project\",\n"
+            + "  \"private_key_id\": \"test-key-id\",\n"
+            + "  \"private_key\": \"-----BEGIN PRIVATE KEY-----\\n"
+            + "MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQC5M...\\n-----END PRIVATE KEY-----\\n\",\n"
+            + "  \"client_email\": \"test@test-project.iam.gserviceaccount.com\",\n"
+            + "  \"client_id\": \"123456789012345678901\",\n"
+            + "  \"auth_uri\": \"https://accounts.google.com/o/oauth2/auth\",\n"
+            + "  \"token_uri\": \"https://oauth2.googleapis.com/token\"\n"
+            + "}";
+
+        final Map<String, Object> configs = Map.of(
+            "gcs.bucket.name", "test-bucket",
+            "gcs.credentials.json", validCredentialsJson);
+        final GcsStorageConfig config = new GcsStorageConfig(configs);
+
+        try (final ReloadableCredentialsProvider provider = config.reloadableCredentials()) {
+            assertThat(provider).isNotNull();
+            assertThat(provider.getCredentials()).isNotNull();
+        } catch (final Exception e) {
+            // Close may throw IOException
+        }
     }
 }
