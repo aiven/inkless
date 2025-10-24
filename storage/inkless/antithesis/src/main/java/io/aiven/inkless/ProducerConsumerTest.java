@@ -134,7 +134,8 @@ public class ProducerConsumerTest {
             ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, ByteArrayDeserializer.class.getName(),
             ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest",
             ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, "false",
-            ConsumerConfig.MAX_PARTITION_FETCH_BYTES_CONFIG, maxPartitionFetchBytes()
+            ConsumerConfig.MAX_PARTITION_FETCH_BYTES_CONFIG, maxPartitionFetchBytes(),
+            ConsumerConfig.FETCH_MAX_BYTES_CONFIG, fetchMaxBytes()
         );
         final var consumer = new KafkaConsumer<byte[], byte[]>(consumerProps);
         final Long beginningOffset = consumer.beginningOffsets(List.of(tp)).get(tp);
@@ -161,7 +162,7 @@ public class ProducerConsumerTest {
         consumer.seekToBeginning(List.of(tp));
         long currentOffset = 0;
         while (currentOffset < expectedEndOffset - 1) {
-            for (final var record : consumer.poll(Duration.ofMillis(100)).records(topicName)) {
+            for (final var record : consumer.poll(Duration.ofMillis(pollDuration())).records(topicName)) {
                 Assert.always(record.offset() == currentOffset, "Offsets go in order",
                     new ObjectNode(JsonNodeFactory.instance)
                         .put("currentOffset", currentOffset)
@@ -202,6 +203,14 @@ public class ProducerConsumerTest {
 
     private static int maxPartitionFetchBytes() {
         return Math.abs((int) (Random.getRandom() % 1024 * 1024));
+    }
+
+    private static int fetchMaxBytes() {
+        return Math.abs((int) (Random.getRandom() % 50 * 1024 * 1024));
+    }
+
+    private static int pollDuration() {
+        return Math.abs((int) (Random.getRandom() % 200));
     }
 
     private static class ProducerThread extends Thread {

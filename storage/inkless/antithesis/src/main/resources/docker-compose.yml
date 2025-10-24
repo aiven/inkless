@@ -21,25 +21,18 @@ services:
 
   storage:
     image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
-    ports:
-      - "9000:9000"
-      - "9001:9001"
     command: server /data --console-address ":9001"
+    post_start:
+      - command: >
+          /bin/sh -c "
+          until /usr/bin/mc alias set local http://storage:9000 minioadmin minioadmin; do
+          echo 'Waiting for Minio...';
+          sleep 5;
+          done;
+          /usr/bin/mc mb local/inkless;
+          exit 0;
+          "
 
-  create_bucket:
-    image: quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z
-    restart: "no"
-    depends_on:
-      - storage
-    entrypoint: >
-      /bin/sh -c "
-      until /usr/bin/mc alias set local http://storage:9000 minioadmin minioadmin; do
-        echo 'Waiting for Minio...';
-        sleep 5;
-      done;
-      /usr/bin/mc mb local/inkless;
-      exit 0;
-      "
   broker1: &base-broker
     image: aivenoy/kafka:4.1.0-inkless-SNAPSHOT
     restart: unless-stopped
@@ -50,10 +43,10 @@ services:
       KAFKA_PROCESS_ROLES: "broker,controller"
       KAFKA_NODE_ID: 1
       KAFKA_BROKER_RACK: "az1"
-      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@broker:29090,2@broker2:29090,3@broker3:29090"
+      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@broker1:29090,2@broker2:29090,3@broker3:29090"
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT"
       KAFKA_LISTENERS: "CONTROLLER://:29090,PLAINTEXT_HOST://:9092,PLAINTEXT://:19092"
-      KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT_HOST://localhost:9092,PLAINTEXT://broker:19092"
+      KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT_HOST://localhost:9092,PLAINTEXT://broker1:19092"
       KAFKA_INTER_BROKER_LISTENER_NAME: "PLAINTEXT"
       KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 2
@@ -78,7 +71,7 @@ services:
       KAFKA_INKLESS_STORAGE_AWS_ACCESS_KEY_ID: "minioadmin"
       KAFKA_INKLESS_STORAGE_AWS_SECRET_ACCESS_KEY: "minioadmin"
     healthcheck:
-      test: [ "CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server broker:19092 --list" ]
+      test: [ "CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server broker1:19092 --list" ]
       interval: 5s
       timeout: 20s
       retries: 20
