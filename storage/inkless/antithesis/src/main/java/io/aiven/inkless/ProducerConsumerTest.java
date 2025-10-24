@@ -30,6 +30,7 @@ import org.apache.kafka.clients.admin.AdminClient;
 import org.apache.kafka.clients.admin.AdminClientConfig;
 import org.apache.kafka.clients.admin.NewTopic;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
+import org.apache.kafka.clients.consumer.ConsumerRecords;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.clients.producer.KafkaProducer;
 import org.apache.kafka.clients.producer.ProducerConfig;
@@ -47,7 +48,7 @@ import java.io.IOException;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -55,6 +56,7 @@ import java.util.Properties;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.stream.Collectors;
 
 public class ProducerConsumerTest {
     private static final Logger LOGGER = LoggerFactory.getLogger(ProducerConsumerTest.class);
@@ -68,25 +70,40 @@ public class ProducerConsumerTest {
         final String bootstrapServers = config.get("bootstrap_servers").asText();
         LOGGER.info("Bootstrap servers: {}", bootstrapServers);
 
-        final String topicName = Uuid.randomUuid().toString();
+        final List<String> topics = new ArrayList<>();
+        for (int i = 0; i < 3; i++) {
+            topics.add(Uuid.randomUuid().toString());
+        }
+
+        final List<TopicPartition> topicPartitions = new ArrayList<>();
 
         final Properties adminProps = new Properties();
         adminProps.put(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
         try (final AdminClient adminClient = AdminClient.create(adminProps)) {
-            final NewTopic newTopic = new NewTopic(topicName, 1, (short) 1)
-                .configs(Map.of("diskless.enable", "true"));
-            adminClient.createTopics(Collections.singletonList(newTopic)).all().get();
-            LOGGER.info("Created '{}' topic", topicName);
+            final List<NewTopic> newTopics = new ArrayList<>();
+            for (int i = 0; i < topics.size(); i++) {
+                final String topic = topics.get(i);
+                final int numPartitions = i + 1;
+                newTopics.add(new NewTopic(topic, numPartitions, (short) 1)
+                    .configs(Map.of("diskless.enable", "true")));
+
+                for (int j = 0; j < numPartitions; j++) {
+                    topicPartitions.add(new TopicPartition(topic, j));
+                }
+            }
+            adminClient.createTopics(newTopics).all().get();
+            LOGGER.info("Created topics: {}", newTopics);
         }
 
         Lifecycle.setupComplete(null);
 
-        final ConcurrentHashMap<Long, ProducerRecord<byte[], byte[]>> sentRecords = new ConcurrentHashMap<>();
+        final ConcurrentHashMap<TopicPartition, ConcurrentHashMap<Long, ProducerRecord<byte[], byte[]>>> sentRecords =
+            new ConcurrentHashMap<>();
         final AtomicBoolean errors = new AtomicBoolean(false);
 
         final List<ProducerThread> producerThreads = new ArrayList<>();
         for (int i = 0; i < 3; i++) {
-            producerThreads.add(new ProducerThread(1, bootstrapServers, topicName, sentRecords, errors));
+            producerThreads.add(new ProducerThread(1, bootstrapServers, topicPartitions, sentRecords, errors));
         }
         producerThreads.forEach(Thread::start);
 
@@ -112,16 +129,14 @@ public class ProducerConsumerTest {
         }
 
         // Consume records and verify them
-        consumeAndVerifyRecords(bootstrapServers, topicName, sentRecords);
+        consumeAndVerifyRecords(bootstrapServers, topicPartitions, sentRecords);
     }
 
     private static void consumeAndVerifyRecords(final String bootstrapServers,
-                                                final String topicName,
-                                                final ConcurrentHashMap<Long, ProducerRecord<byte[], byte[]>> sentRecords
+                                                final List<TopicPartition> topicPartitions,
+                                                final ConcurrentHashMap<TopicPartition, ConcurrentHashMap<Long, ProducerRecord<byte[], byte[]>>> sentRecords
     ) throws ExecutionException, InterruptedException {
         LOGGER.info("Verifying records");
-
-        final TopicPartition tp = new TopicPartition(topicName, 0);
 
         final Map<String, Object> consumerProps = Map.of(
             ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers,
@@ -134,67 +149,99 @@ public class ProducerConsumerTest {
             ConsumerConfig.FETCH_MAX_BYTES_CONFIG, fetchMaxBytes()
         );
         final var consumer = new KafkaConsumer<byte[], byte[]>(consumerProps);
-        final Long beginningOffset = consumer.beginningOffsets(List.of(tp)).get(tp);
-        Assert.always(beginningOffset == 0, "Beginning offset as expected",
-            new ObjectNode(JsonNodeFactory.instance).put("beginningOffset", beginningOffset));
-        if (beginningOffset != 0) {
-            LOGGER.error("Beginning offset: {}, expected 0", beginningOffset);
-            return;
+
+        final Map<TopicPartition, Long> beginningOffsets = consumer.beginningOffsets(topicPartitions);
+        for (final var entry : beginningOffsets.entrySet()) {
+            final Long beginningOffset = entry.getValue();
+            Assert.always(beginningOffset == 0, "Beginning offset as expected",
+                new ObjectNode(JsonNodeFactory.instance)
+                    .put("topicPartition", entry.getKey().topic())
+                    .put("beginningOffset", beginningOffset)
+            );
+            if (beginningOffset != 0) {
+                LOGGER.error("Beginning offset: {}, expected 0 in {}", beginningOffset, topicPartitions);
+                return;
+            }
         }
 
-        final Long expectedEndOffset = sentRecords.keySet().stream().max(Long::compare).get() + 1;
-        final Long endOffset = consumer.endOffsets(List.of(tp)).get(tp);
-        Assert.always(Objects.equals(endOffset, expectedEndOffset), "End offset as expected",
-            new ObjectNode(JsonNodeFactory.instance)
-                .put("endOffset", endOffset)
-                .put("expectedEndOffset", expectedEndOffset)
-        );
-        if (!Objects.equals(endOffset, expectedEndOffset)) {
-            LOGGER.error("End offset: {}, expected {}", endOffset, expectedEndOffset);
-            return;
+        final Map<TopicPartition, Long> endOffsets = consumer.endOffsets(topicPartitions);
+        final Map<TopicPartition, Long> expectedEndOffsets = new HashMap<>();
+        for (final var entry : endOffsets.entrySet()) {
+            final Long endOffset = entry.getValue();
+            final TopicPartition tp = entry.getKey();
+            final Long expectedEndOffset = sentRecords.get(tp).keySet().stream().max(Long::compare).get() + 1;
+            expectedEndOffsets.put(tp, expectedEndOffset);
+            Assert.always(Objects.equals(endOffset, expectedEndOffset), "End offset as expected",
+                new ObjectNode(JsonNodeFactory.instance)
+                    .put("topicPartition", tp.topic())
+                    .put("endOffset", endOffset)
+                    .put("expectedEndOffset", expectedEndOffset)
+            );
+            if (!Objects.equals(endOffset, expectedEndOffset)) {
+                LOGGER.error("End offset: {}, expected {} in {}", endOffset, expectedEndOffset, topicPartitions);
+                return;
+            }
         }
 
-        consumer.assign(List.of(tp));
-        consumer.seekToBeginning(List.of(tp));
-        long currentOffset = 0;
-        while (currentOffset < expectedEndOffset - 1) {
-            for (final var record : consumer.poll(Duration.ofMillis(pollDuration())).records(topicName)) {
-                Assert.always(record.offset() == currentOffset, "Offsets go in order",
-                    new ObjectNode(JsonNodeFactory.instance)
-                        .put("currentOffset", currentOffset)
-                        .put("record.offset()", record.offset())
-                );
-                if (record.offset() != currentOffset) {
-                    LOGGER.error("Current offset: {}, record offset: {}", currentOffset, record.offset());
-                    return;
-                }
+        consumer.assign(topicPartitions);
+        consumer.seekToBeginning(topicPartitions);
+        final Map<TopicPartition, Long> currentOffsets = new HashMap<>(topicPartitions.stream()
+            .collect(Collectors.toMap(tp -> tp, tp -> 0L)));
+        while (shouldConsumeMore(currentOffsets, expectedEndOffsets)) {
+            final ConsumerRecords<byte[], byte[]> pollResult = consumer.poll(Duration.ofMillis(pollDuration()));
+            for (final TopicPartition tp : pollResult.partitions()) {
+                for (final var record : pollResult.records(tp)) {
+                    final long currentOffset = currentOffsets.get(tp);
+                    Assert.always(record.offset() == currentOffset, "Offsets go in order",
+                        new ObjectNode(JsonNodeFactory.instance)
+                            .put("currentOffset", currentOffset)
+                            .put("record.offset()", record.offset())
+                    );
+                    if (record.offset() != currentOffset) {
+                        LOGGER.error("Current offset: {}, record offset: {}", currentOffset, record.offset());
+                        return;
+                    }
 
-                final ProducerRecord<byte[], byte[]> sentRecord = sentRecords.get(currentOffset);
-                Assert.always(sentRecord != null, "Records for all offsets exist",
-                    new ObjectNode(JsonNodeFactory.instance)
-                        .put("currentOffset", currentOffset)
-                );
-                if (sentRecord == null) {
-                    LOGGER.error("No set record for offset {}", sentRecord);
-                    return;
-                }
+                    final ProducerRecord<byte[], byte[]> sentRecord = sentRecords.get(tp).get(currentOffset);
+                    Assert.always(sentRecord != null, "Records for all offsets exist",
+                        new ObjectNode(JsonNodeFactory.instance)
+                            .put("currentOffset", currentOffset)
+                    );
+                    if (sentRecord == null) {
+                        LOGGER.error("No set record for offset {}", sentRecord);
+                        return;
+                    }
 
-                final boolean keysMatch = Arrays.equals(sentRecord.key(), record.key());
-                Assert.always(keysMatch, "Record keys match",
-                    new ObjectNode(JsonNodeFactory.instance)
-                        .put("currentOffset", currentOffset)
-                );
-                if (!keysMatch) {
-                    LOGGER.error("Keys don't match at offset {}", currentOffset);
-                    return;
-                }
+                    final boolean keysMatch = Arrays.equals(sentRecord.key(), record.key());
+                    Assert.always(keysMatch, "Record keys match",
+                        new ObjectNode(JsonNodeFactory.instance)
+                            .put("currentOffset", currentOffset)
+                    );
+                    if (!keysMatch) {
+                        LOGGER.error("Keys don't match at offset {}", currentOffset);
+                        return;
+                    }
 
-                currentOffset += 1;
+                    currentOffsets.put(tp, currentOffset + 1);
+                }
             }
         }
 
         LOGGER.info("All records verified");
         Assert.reachable("All records verified", null);
+    }
+
+    private static boolean shouldConsumeMore(final Map<TopicPartition, Long> currentOffsets,
+                                             final Map<TopicPartition, Long> expectedEndOffsets) {
+        if (!currentOffsets.keySet().equals(expectedEndOffsets.keySet())) {
+            throw new RuntimeException();
+        }
+        for (final TopicPartition tp : currentOffsets.keySet()) {
+            if (currentOffsets.get(tp) < expectedEndOffsets.get(tp) - 1) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static int maxPartitionFetchBytes() {
@@ -211,19 +258,19 @@ public class ProducerConsumerTest {
 
     private static class ProducerThread extends Thread {
         private final int threadId;
-        private final String topicName;
-        private final ConcurrentHashMap<Long, ProducerRecord<byte[], byte[]>> sentRecords;
+        private final List<TopicPartition> topicPartitions;
+        private final ConcurrentHashMap<TopicPartition, ConcurrentHashMap<Long, ProducerRecord<byte[], byte[]>>> sentRecords;
         private final AtomicBoolean errors;
         private final KafkaProducer<byte[], byte[]> producer;
 
         private ProducerThread(final int threadId,
                                final String bootstrapServers,
-                               final String topicName,
-                               final ConcurrentHashMap<Long, ProducerRecord<byte[], byte[]>> sentRecords,
+                               final List<TopicPartition> topicPartitions,
+                               final ConcurrentHashMap<TopicPartition, ConcurrentHashMap<Long, ProducerRecord<byte[], byte[]>>> sentRecords,
                                final AtomicBoolean errors) {
             super("producer-" + threadId);
             this.threadId = threadId;
-            this.topicName = topicName;
+            this.topicPartitions = topicPartitions;
             this.sentRecords = sentRecords;
             this.errors = errors;
 
@@ -241,21 +288,24 @@ public class ProducerConsumerTest {
         @Override
         public void run() {
             final int numRecords = 1000;
-            LOGGER.info("Producing {} records", numRecords);
+            LOGGER.info("Producing {} records to each partition", numRecords);
             for (int i = 0; i < numRecords; i++) {
-                final byte[] key = (String.format("key-%d-%d", threadId, i)).getBytes();
-                final byte[] value = (String.format("value-%d-%d", threadId, i).repeat(100)).getBytes();
+                for (final TopicPartition tp : topicPartitions) {
+                    final byte[] key = (String.format("key-%s-%d-%d", tp, threadId, i)).getBytes();
+                    final byte[] value = (String.format("value-%s-%d-%d", tp, threadId, i).repeat(100)).getBytes();
+                    final ProducerRecord<byte[], byte[]> record =
+                        new ProducerRecord<>(tp.topic(), tp.partition(), key, value);
 
-                final ProducerRecord<byte[], byte[]> record = new ProducerRecord<>(topicName, key, value);
-
-                producer.send(record, (rm, e) -> {
-                    if (e == null) {
-                        sentRecords.putIfAbsent(rm.offset(), record);
-                    } else {
-                        LOGGER.error("Error sending", e);
-                        errors.set(true);
-                    }
-                });
+                    producer.send(record, (rm, e) -> {
+                        if (e == null) {
+                            sentRecords.computeIfAbsent(tp, _unused -> new ConcurrentHashMap<>());
+                            sentRecords.get(tp).putIfAbsent(rm.offset(), record);
+                        } else {
+                            LOGGER.error("Error sending", e);
+                            errors.set(true);
+                        }
+                    });
+                }
 
                 try {
                     Thread.sleep(interRecordDelay());
@@ -268,7 +318,7 @@ public class ProducerConsumerTest {
         }
 
         private static int interRecordDelay() {
-            return Math.abs((int) (Random.getRandom() % 100));
+            return Math.abs((int) (Random.getRandom() % 50));
         }
 
         private static long lingerMs() {
