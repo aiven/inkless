@@ -1,0 +1,10 @@
+ARG VERSION="set_it_outside"
+
+FROM aivenoy/kafka:${VERSION}
+
+# Autoinstrumentation of JARs.
+# https://antithesis.com/docs/using_antithesis/sdk/java/instrumentation/
+USER root
+RUN mkdir -p /opt/antithesis/catalog
+RUN ln -s /opt/kafka/libs/ /opt/antithesis/catalog
+USER appuser

@@ -4,7 +4,8 @@ VERSION := 4.1.0-inkless-SNAPSHOT
 build_inkless_docker:
 	rm ../core/build/distributions/kafka_2.13-$(VERSION).tgz
 	$(MAKE) -C ../ docker_build
-	docker tag aivenoy/kafka:$(VERSION) us-central1-docker.pkg.dev/molten-verve-216720/aiven-repository/kafka:$(VERSION)
+	docker build  --build-arg VERSION=$(VERSION) -f Dockerfile-inkless . \
+		-t us-central1-docker.pkg.dev/molten-verve-216720/aiven-repository/kafka:$(VERSION)
 
 .PHONY: push_inkless_docker
 push_inkless_docker:
