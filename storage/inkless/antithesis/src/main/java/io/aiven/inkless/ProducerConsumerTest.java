@@ -19,6 +19,7 @@ package io.aiven.inkless;
 
 import com.antithesis.sdk.Assert;
 import com.antithesis.sdk.Lifecycle;
+import com.antithesis.sdk.Random;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
@@ -47,6 +48,7 @@ import org.slf4j.LoggerFactory;
 import java.io.File;
 import java.io.IOException;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
@@ -86,9 +88,26 @@ public class ProducerConsumerTest {
         final ConcurrentHashMap<Long, ProducerRecord<byte[], byte[]>> sentRecords = new ConcurrentHashMap<>();
         final AtomicBoolean errors = new AtomicBoolean(false);
 
-        final ProducerThread producerThread1 = new ProducerThread(1, bootstrapServers, topicName, sentRecords, errors);
-        producerThread1.start();
-        producerThread1.join();
+        final List<ProducerThread> producerThreads = new ArrayList<>();
+        for (int i = 0; i < 3; i++) {
+            producerThreads.add(new ProducerThread(1, bootstrapServers, topicName, sentRecords, errors));
+        }
+        producerThreads.forEach(Thread::start);
+
+        final long waitMs = 60_000;
+        final long started = System.currentTimeMillis();
+        for (final ProducerThread t : producerThreads) {
+            final long toWait = waitMs - (System.currentTimeMillis() - started);
+            if (toWait > 0) {
+                t.join(toWait);
+            }
+            Assert.always(!t.isAlive(), "Producer threads finish in time", null);
+            if (t.isAlive()) {
+                LOGGER.error("Producer thread {} is still running, aborting", t);
+                return;
+            }
+        }
+        Assert.reachable("All threads finished", null);
 
         Assert.always(!errors.get(), "Produce without errors", null);
         if (errors.get()) {
@@ -114,7 +133,8 @@ public class ProducerConsumerTest {
             ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, ByteArrayDeserializer.class.getName(),
             ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, ByteArrayDeserializer.class.getName(),
             ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest",
-            ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, "false"
+            ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, "false",
+            ConsumerConfig.MAX_PARTITION_FETCH_BYTES_CONFIG, maxPartitionFetchBytes()
         );
         final var consumer = new KafkaConsumer<byte[], byte[]>(consumerProps);
         final Long beginningOffset = consumer.beginningOffsets(List.of(tp)).get(tp);
@@ -177,39 +197,49 @@ public class ProducerConsumerTest {
         }
 
         LOGGER.info("All records verified");
+        Assert.reachable("All records verified", null);
+    }
+
+    private static int maxPartitionFetchBytes() {
+        return Math.abs((int) (Random.getRandom() % 1024 * 1024));
     }
 
     private static class ProducerThread extends Thread {
+        private final int threadId;
         private final String topicName;
         private final ConcurrentHashMap<Long, ProducerRecord<byte[], byte[]>> sentRecords;
         private final AtomicBoolean errors;
         private final KafkaProducer<byte[], byte[]> producer;
 
-        private ProducerThread(final int id,
+        private ProducerThread(final int threadId,
                                final String bootstrapServers,
                                final String topicName,
                                final ConcurrentHashMap<Long, ProducerRecord<byte[], byte[]>> sentRecords,
                                final AtomicBoolean errors) {
-            super("producer-" + id);
+            super("producer-" + threadId);
+            this.threadId = threadId;
             this.topicName = topicName;
             this.sentRecords = sentRecords;
             this.errors = errors;
 
             final Map<String, Object> producerProps = Map.of(
                 ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers,
-                ProducerConfig.CLIENT_ID_CONFIG, String.format("producer-%d", id),
+                ProducerConfig.CLIENT_ID_CONFIG, String.format("producer-%d", threadId),
                 ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, ByteArraySerializer.class.getName(),
                 ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, ByteArraySerializer.class.getName(),
-                ProducerConfig.ACKS_CONFIG, "-1"
+                ProducerConfig.ACKS_CONFIG, "-1",
+                ProducerConfig.LINGER_MS_CONFIG, lingerMs()
             );
             this.producer = new KafkaProducer<>(producerProps);
         }
 
         @Override
         public void run() {
-            for (int i = 0; i < 10; i++) {
-                final byte[] key = ("key-" + i).getBytes();
-                final byte[] value = ("Hello Kafka from byte array " + i).getBytes();
+            final int numRecords = numRecords();
+            LOGGER.info("Producing {} records", numRecords);
+            for (int i = 0; i < numRecords; i++) {
+                final byte[] key = (String.format("key-%d-%d", threadId, i)).getBytes();
+                final byte[] value = (String.format("value-%d-%d", threadId, i).repeat(100)).getBytes();
 
                 final ProducerRecord<byte[], byte[]> record = new ProducerRecord<>(topicName, key, value);
 
@@ -221,8 +251,27 @@ public class ProducerConsumerTest {
                         errors.set(true);
                     }
                 });
+
+                try {
+                    Thread.sleep(interRecordDelay());
+                } catch (final InterruptedException e) {
+                    LOGGER.warn("Thread {} interrupted", this);
+                    throw new RuntimeException(e);
+                }
             }
             producer.flush();
+        }
+
+        private static int numRecords() {
+            return Math.abs((int) (Random.getRandom() % 1000));
+        }
+
+        private static int interRecordDelay() {
+            return Math.abs((int) (Random.getRandom() % 100));
+        }
+
+        private static long lingerMs() {
+            return Math.abs(Random.getRandom() % 1000L);
         }
     }
 }
