@@ -28,6 +28,10 @@ import java.util.Objects;
 
 import io.aiven.inkless.control_plane.CommitBatchRequest;
 
+import com.antithesis.sdk.Assert;
+import com.fasterxml.jackson.databind.node.JsonNodeFactory;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+
 class BatchBuffer {
     private final List<BatchHolder> batches = new ArrayList<>();
 
@@ -50,6 +54,8 @@ class BatchBuffer {
 
     CloseResult close() {
         int totalSize = totalSize();
+        Assert.alwaysGreaterThan(totalSize, 0, "BatchBuffer - Closed buffer must never be empty",
+            new ObjectNode(JsonNodeFactory.instance));
 
         // Group together by topic-partition.
         // The sort is stable so the relative order of batches of the same partition won't change.

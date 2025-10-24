@@ -2455,6 +2455,8 @@ project(':storage:inkless') {
     implementation libs.metrics
     implementation libs.caffeine
 
+    implementation libs.antithesis
+
     testImplementation project(':clients').sourceSets.test.output.classesDirs
     testImplementation project(':test-common')
     testImplementation libs.assertj
@@ -2648,7 +2650,7 @@ project(':storage:inkless') {
 
 project(':storage:inkless:antithesis') {
   dependencies {
-    implementation "com.antithesis:sdk:1.4.4"
+    implementation libs.antithesis
     implementation log4jReleaseLibs
     implementation project(':clients')
     implementation libs.jacksonDatabindYaml

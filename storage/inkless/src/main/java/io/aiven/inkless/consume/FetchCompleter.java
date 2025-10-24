@@ -48,6 +48,8 @@ import io.aiven.inkless.control_plane.BatchInfo;
 import io.aiven.inkless.control_plane.FindBatchResponse;
 import io.aiven.inkless.generated.FileExtent;
 
+import com.antithesis.sdk.Assert;
+
 public class FetchCompleter implements Supplier<Map<TopicIdPartition, FetchPartitionData>> {
 
     private final Time time;
@@ -190,6 +192,7 @@ public class FetchCompleter implements Supplier<Map<TopicIdPartition, FetchParti
         MemoryRecords records = MemoryRecords.readableRecords(buffer);
         Iterator<MutableRecordBatch> iterator = records.batches().iterator();
         if (!iterator.hasNext()) {
+            Assert.unreachable("FetchCompleter - Backing file must always one batch", null);
             throw new IllegalStateException("Backing file should have at least one batch");
         }
         MutableRecordBatch mutableRecordBatch = iterator.next();
@@ -204,6 +207,7 @@ public class FetchCompleter implements Supplier<Map<TopicIdPartition, FetchParti
 
         if (iterator.hasNext()) {
             // TODO: support concatenating multiple batches into a single BatchInfo
+            Assert.unreachable("FetchCompleter - Backing file must always one batch", null);
             throw new IllegalStateException("Backing file should have at only one batch");
         }
 

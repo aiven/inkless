@@ -26,6 +26,7 @@ import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.metadata.LeaderAndIsr;
 import org.apache.kafka.storage.internals.log.OffsetResultHolder;
 
+import com.antithesis.sdk.Assert;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -130,6 +131,7 @@ public class FetchOffsetHandler implements Closeable {
                 requestsEnriched = TopicIdEnricher.enrich(metadata, requests);
             } catch (final TopicIdEnricher.TopicIdNotFoundException e) {
                 // This should not happen during normal execution, non-Diskless topics won't get here.
+                Assert.unreachable("FetchOffsetHandler - topicId should always be found", null);
                 LOGGER.error("Cannot find UUID for topic {}", e.topicName);
                 metrics.fetchOffsetFailed();
                 throw new RuntimeException();

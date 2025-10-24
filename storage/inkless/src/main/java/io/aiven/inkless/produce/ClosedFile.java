@@ -30,6 +30,8 @@ import java.util.stream.Collectors;
 
 import io.aiven.inkless.control_plane.CommitBatchRequest;
 
+import com.antithesis.sdk.Assert;
+
 /**
  * A closed file that contains all the information needed to commit the file to the control plane.
  *
@@ -57,13 +59,16 @@ record ClosedFile(Instant start,
         Objects.requireNonNull(data, "data cannot be null");
 
         if (!originalRequests.isEmpty() && start == null) {
-            throw new IllegalArgumentException("start time cannot be null if there are requests processed");
+            final String msg = "start time cannot be null if there are requests processed";
+            Assert.unreachable(String.format("ClosedFile - %s", msg), null);
+            throw new IllegalArgumentException(msg);
         }
 
         // Validate request maps have matching sizes
         if (originalRequests.size() != awaitingFuturesByRequest.size()) {
-            throw new IllegalArgumentException(
-                "originalRequests and awaitingFuturesByRequest must be of same size");
+            final String msg = "originalRequests and awaitingFuturesByRequest must be of same size";
+            Assert.unreachable(String.format("ClosedFile - %s", msg), null);
+            throw new IllegalArgumentException(msg);
         }
 
         // Map commit requests by requestId for faster lookup
@@ -90,6 +95,7 @@ record ClosedFile(Instant start,
                 boolean foundInInvalid = invalidResponses.contains(originalPartition);
 
                 if (!foundInValid && !foundInInvalid) {
+                    Assert.unreachable("ClosedFile - Corresponding request must always be present", null);
                     throw new IllegalArgumentException(
                         "No corresponding valid or invalid response found for partition " +
                             originalPartition.topicPartition() + " in request " + requestId);
@@ -104,6 +110,9 @@ record ClosedFile(Instant start,
 
             // Verify no extra entries in valid or invalid collections
             if (originalTopicPartitions.size() != validCommitRequests.size() + invalidResponses.size()) {
+                Assert.unreachable(
+                    "ClosedFile - Total number of valid and invalid responses must match original requests",
+                    null);
                 throw new IllegalArgumentException(
                     "Total number of valid and invalid responses doesn't match original requests " +
                         "for request id " + requestId);
@@ -112,7 +121,9 @@ record ClosedFile(Instant start,
 
         // Validate data consistency
         if (commitBatchRequests.isEmpty() != (data.length == 0)) {
-            throw new IllegalArgumentException("data must be empty if commitBatchRequests is empty");
+            final String msg = "data must be empty if commitBatchRequests is empty";
+            Assert.unreachable(String.format("ClosedFile - %s", msg), null);
+            throw new IllegalArgumentException(msg);
         }
     }
 

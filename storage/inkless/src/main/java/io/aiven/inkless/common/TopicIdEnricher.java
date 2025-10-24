@@ -26,6 +26,8 @@ import java.util.Map;
 
 import io.aiven.inkless.control_plane.MetadataView;
 
+import com.antithesis.sdk.Assert;
+
 public class TopicIdEnricher {
     /**
      * Add topic IDs to {@link TopicPartition} map keys.
@@ -41,6 +43,7 @@ public class TopicIdEnricher {
             final Uuid topicId = metadata.getTopicId(topicName);
             // This should not happen as the upstream code should check the topic exists.
             if (topicId.equals(Uuid.ZERO_UUID)) {
+                Assert.unreachable("TopicIdEnricher - topicId should never be missing", null);
                 throw new TopicIdNotFoundException(topicName);
             }
             result.put(new TopicIdPartition(topicId, entry.getKey()), entry.getValue());
