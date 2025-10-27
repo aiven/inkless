@@ -198,7 +198,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         Properties props = metadataCache.config(new ConfigResource(ConfigResource.Type.MIRROR, mirrorName));
         String bootstrapServers = Optional.ofNullable(props.get(BOOTSTRAP_SERVERS_CONFIG))
                 .map(Object::toString)
-                .orElseThrow(() -> new IllegalArgumentException("Remote bootstrap server not found in Cluster Mirror config: " + mirrorName));
+                .orElseThrow(() -> new IllegalArgumentException("Remote bootstrap server not found for mirror " + mirrorName));
         // get the 1st one bootstrap server
         var addresses = ClientUtils.parseAndValidateAddresses(Arrays.stream(bootstrapServers.split(",")).toList(), "use_all_dns_ips");
         int rand = random.nextInt(addresses.size());
@@ -212,7 +212,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
 
     public void refreshMetadata() {
         if (!topics.isEmpty()) {
-            LOG.info("!!! Refreshing remote cluster metadata for topics:" + topics);
+            LOG.info("!!! Refreshing mirror metadata for topics:" + topics);
         }
 
         checkMirrorConnections();

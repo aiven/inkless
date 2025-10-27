@@ -68,7 +68,7 @@ class MirrorReplicaFetcherManager(brokerConfig: KafkaConfig,
   private val remoteFetcherThreadMap = new mutable.HashMap[BrokerAndFetcherIdWithMirror, ReplicaFetcherThread]
 
   override def createFetcherThread(fetcherId: Int, sourceBroker: BrokerEndPoint): ReplicaFetcherThread = {
-    throw new UnsupportedOperationException("Use createMirrorFetcherThread for remote fetchers")
+    throw new UnsupportedOperationException("Use createMirrorFetcherThread for mirror fetchers")
   }
 
   override def addFetcherForPartitions(partitionAndOffsets: Map[TopicPartition, InitialFetchState]): Unit = {
@@ -138,7 +138,7 @@ class MirrorReplicaFetcherManager(brokerConfig: KafkaConfig,
       failedPartitions.removeAll(partitions)
     }
     if (partitions.nonEmpty)
-      info(s"Removed remote fetcher for partitions $partitions")
+      info(s"Removed mirror fetcher for partitions $partitions")
     fetchStates
   }
 

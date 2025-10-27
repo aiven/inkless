@@ -495,7 +495,6 @@ class BrokerServer(
         groupCoordinator,
         transactionCoordinator,
         shareCoordinator,
-        mirrorCoordinator,
         sharePartitionManager,
         new DynamicConfigPublisher(
           config,
@@ -533,6 +532,7 @@ class BrokerServer(
         ),
         sharedServer.initialBrokerMetadataLoadFaultHandler,
         sharedServer.metadataPublishingFaultHandler,
+        mirrorCoordinator,
         mirrorMetadataManager
       )
       // If the BrokerLifecycleManager's initial catch-up future fails, it means we timed out

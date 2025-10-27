@@ -164,7 +164,7 @@ class MirrorBrokerBlockingSender(sourceBroker: BrokerEndPoint,
       config.getLong(MirrorConfig.METADATA_MAX_AGE_CONFIG),
       metrics,
       time,
-      "remote-readonly-" + clientId,
+      "mirror-" + clientId,
       Map("broker-id" -> sourceBroker.id.toString, "fetcher-id" -> fetcherId.toString).asJava,
       false,
       channelBuilder,
@@ -219,6 +219,6 @@ class MirrorBrokerBlockingSender(sourceBroker: BrokerEndPoint,
   }
 
   override def toString: String = {
-    s"RemoteBrokerBlockingSender(sourceBroker=$sourceBroker, fetcherId=$fetcherId)"
+    s"MirrorBrokerBlockingSender(sourceBroker=$sourceBroker, fetcherId=$fetcherId)"
   }
 }

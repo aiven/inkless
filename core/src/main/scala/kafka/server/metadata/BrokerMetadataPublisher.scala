@@ -77,7 +77,6 @@ class BrokerMetadataPublisher(
   groupCoordinator: GroupCoordinator,
   txnCoordinator: TransactionCoordinator,
   shareCoordinator: ShareCoordinator,
-  topicMirrorLinkCoordinator: MirrorCoordinator,
   sharePartitionManager: SharePartitionManager,
   var dynamicConfigPublisher: DynamicConfigPublisher,
   dynamicClientQuotaPublisher: DynamicClientQuotaPublisher,
@@ -87,7 +86,8 @@ class BrokerMetadataPublisher(
   aclPublisher: AclPublisher,
   fatalFaultHandler: FaultHandler,
   metadataPublishingFaultHandler: FaultHandler,
-  remoteClusterMetadataManager: MirrorMetadataManager
+  mirrorCoordinator: MirrorCoordinator,
+  mirrorMetadataManager: MirrorMetadataManager
 ) extends MetadataPublisher with Logging {
   logIdent = s"[BrokerMetadataPublisher id=${config.nodeId}] "
 
@@ -221,8 +221,8 @@ class BrokerMetadataPublisher(
           updateCoordinator(newImage,
             delta,
             Topic.MIRROR_STATE_TOPIC_NAME,
-            topicMirrorLinkCoordinator.onElection,
-            (partitionIndex, leaderEpochOpt) => topicMirrorLinkCoordinator.onResignation(partitionIndex, toOptionalInt(leaderEpochOpt)))
+            mirrorCoordinator.onElection,
+            (partitionIndex, leaderEpochOpt) => mirrorCoordinator.onResignation(partitionIndex, toOptionalInt(leaderEpochOpt)))
         } catch {
           case t: Throwable => metadataPublishingFaultHandler.handleFault("Error updating mirror " +
             s"coordinator with local changes in $deltaName", t)
@@ -247,7 +247,7 @@ class BrokerMetadataPublisher(
       // Apply ACL delta.
       aclPublisher.onMetadataUpdate(delta, newImage, manifest)
 
-      remoteClusterMetadataManager.onMetadataUpdate(delta, newImage, manifest)
+      mirrorMetadataManager.onMetadataUpdate(delta, newImage, manifest)
 
       try {
         // Propagate the new image to the group coordinator.
@@ -408,8 +408,8 @@ class BrokerMetadataPublisher(
       case t: Throwable => fatalFaultHandler.handleFault("Error starting Share coordinator", t)
     }
     try {
-      // Start the topic mirror coordinator.
-      topicMirrorLinkCoordinator.startup()
+      // Start the mirror coordinator.
+      mirrorCoordinator.startup()
     } catch {
       case t: Throwable => fatalFaultHandler.handleFault("Error starting topic link coordinator", t)
     }

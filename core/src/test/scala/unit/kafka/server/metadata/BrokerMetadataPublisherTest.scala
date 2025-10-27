@@ -204,7 +204,6 @@ class BrokerMetadataPublisherTest {
       groupCoordinator,
       mock(classOf[TransactionCoordinator]),
       mock(classOf[ShareCoordinator]),
-      mock(classOf[MirrorCoordinator]),
       mock(classOf[SharePartitionManager]),
       mock(classOf[DynamicConfigPublisher]),
       mock(classOf[DynamicClientQuotaPublisher]),
@@ -214,6 +213,7 @@ class BrokerMetadataPublisherTest {
       mock(classOf[AclPublisher]),
       faultHandler,
       faultHandler,
+      mock(classOf[MirrorCoordinator]),
       mock(classOf[MirrorMetadataManager])
     )
 
@@ -270,7 +270,6 @@ class BrokerMetadataPublisherTest {
       groupCoordinator,
       mock(classOf[TransactionCoordinator]),
       mock(classOf[ShareCoordinator]),
-      mock(classOf[MirrorCoordinator]),
       mock(classOf[SharePartitionManager]),
       mock(classOf[DynamicConfigPublisher]),
       mock(classOf[DynamicClientQuotaPublisher]),
@@ -280,6 +279,7 @@ class BrokerMetadataPublisherTest {
       mock(classOf[AclPublisher]),
       faultHandler,
       faultHandler,
+      mock(classOf[MirrorCoordinator]),
       mock(classOf[MirrorMetadataManager])
     )
 
@@ -313,7 +313,6 @@ class BrokerMetadataPublisherTest {
       mock(classOf[GroupCoordinator]),
       mock(classOf[TransactionCoordinator]),
       mock(classOf[ShareCoordinator]),
-      mock(classOf[MirrorCoordinator]),
       sharePartitionManager,
       mock(classOf[DynamicConfigPublisher]),
       mock(classOf[DynamicClientQuotaPublisher]),
@@ -323,6 +322,7 @@ class BrokerMetadataPublisherTest {
       mock(classOf[AclPublisher]),
       faultHandler,
       faultHandler,
+      mock(classOf[MirrorCoordinator]),
       mock(classOf[MirrorMetadataManager])
     )
 

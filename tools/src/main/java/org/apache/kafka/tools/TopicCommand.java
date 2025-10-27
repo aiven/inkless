@@ -21,11 +21,14 @@ import org.apache.kafka.clients.admin.Admin;
 import org.apache.kafka.clients.admin.AdminClientConfig;
 import org.apache.kafka.clients.admin.Config;
 import org.apache.kafka.clients.admin.ConfigEntry;
+import org.apache.kafka.clients.admin.CreateMirrorOptions;
+import org.apache.kafka.clients.admin.CreateMirrorResult;
 import org.apache.kafka.clients.admin.CreatePartitionsOptions;
 import org.apache.kafka.clients.admin.CreateTopicsOptions;
 import org.apache.kafka.clients.admin.CreateTopicsResult;
 import org.apache.kafka.clients.admin.DeleteTopicsOptions;
 import org.apache.kafka.clients.admin.DescribeTopicsOptions;
+import org.apache.kafka.clients.admin.FindCoordinatorResult;
 import org.apache.kafka.clients.admin.ListTopicsOptions;
 import org.apache.kafka.clients.admin.ListTopicsResult;
 import org.apache.kafka.clients.admin.NewPartitions;
@@ -60,6 +63,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -97,7 +101,7 @@ public abstract class TopicCommand {
 
     static void execute(String... args) throws Exception {
         TopicCommandOptions opts = new TopicCommandOptions(args);
-        TopicService topicService = new TopicService(opts.commandConfig(), opts.bootstrapServer());
+        TopicService topicService = new TopicService(opts.commandConfig(), opts.bootstrapServer(), opts.clusterLinkConfig());
         int exitCode = 0;
         try {
             if (opts.hasCreateOption()) {
@@ -110,6 +114,10 @@ public abstract class TopicCommand {
                 topicService.describeTopic(opts);
             } else if (opts.hasDeleteOption()) {
                 topicService.deleteTopic(opts);
+            } else if (opts.hasCreateMirrorOption()) {
+                topicService.createMirrorTopic(opts);
+            } else if (opts.hasCreateLinkOption()) {
+                topicService.createLink(opts);
             }
         } catch (ExecutionException e) {
             Throwable cause = e.getCause();
@@ -245,6 +253,8 @@ public abstract class TopicCommand {
         private final Optional<Integer> replicationFactor;
         private final Map<Integer, List<Integer>> replicaAssignment;
         private final Properties configsToAdd;
+        private final Optional<String> remoteBootstrapServers;
+        private final Optional<String> topicId;
 
         private final TopicCommandOptions opts;
 
@@ -255,6 +265,8 @@ public abstract class TopicCommand {
             replicationFactor = options.replicationFactor();
             replicaAssignment = options.replicaAssignment().orElse(Map.of());
             configsToAdd = parseTopicConfigsToBeAdded(options);
+            remoteBootstrapServers = options.remoteBootstrapServer();
+            topicId = options.topicId();
         }
 
         public boolean hasReplicaAssignment() {
@@ -430,13 +442,26 @@ public abstract class TopicCommand {
 
     public static class TopicService implements AutoCloseable {
         private final Admin adminClient;
+        private final Map<String, String> linkConfigs;
+        // TODO: remove this once we remove find coordinator of mirror topic creation logic out of this class
+        private final Properties commandConfig;
 
         public TopicService(Properties commandConfig, Optional<String> bootstrapServer) {
             this.adminClient = createAdminClient(commandConfig, bootstrapServer);
+            this.commandConfig = commandConfig;
+            linkConfigs = new HashMap<>();
+        }
+
+        public TopicService(Properties commandConfig, Optional<String> bootstrapServer, Map<String, String> linkConfigs) {
+            this.adminClient = createAdminClient(commandConfig, bootstrapServer);
+            this.commandConfig = commandConfig;
+            this.linkConfigs = linkConfigs;
         }
 
         public TopicService(Admin admin) {
             this.adminClient = admin;
+            this.commandConfig = new Properties();
+            this.linkConfigs = new HashMap<>();
         }
 
         private static Admin createAdminClient(Properties commandConfig, Optional<String> bootstrapServer) {
@@ -453,6 +478,15 @@ public abstract class TopicCommand {
             createTopic(topic);
         }
 
+        public void createMirrorTopic(TopicCommandOptions opts) throws Exception {
+            CommandTopicPartition topic = new CommandTopicPartition(opts);
+            if (Topic.hasCollisionChars(topic.name)) {
+                System.out.println("WARNING: Due to limitations in metric names, topics with a period ('.') or underscore ('_') could " +
+                        "collide. To avoid issues it is best to use either, but not both.");
+            }
+            createTopic(topic);
+        }
+
         public void createTopic(CommandTopicPartition topic) throws Exception {
             if (topic.replicationFactor.filter(rf -> rf > Short.MAX_VALUE || rf < 1).isPresent()) {
                 throw new IllegalArgumentException("The replication factor must be between 1 and " + Short.MAX_VALUE + " inclusive");
@@ -463,7 +497,13 @@ public abstract class TopicCommand {
 
             try {
                 NewTopic newTopic;
-                if (topic.hasReplicaAssignment()) {
+                Optional<Node> coordinator = Optional.empty();
+                if (topic.opts.hasCreateMirrorOption()) {
+                    FindCoordinatorResult findCoordinatorResult = adminClient.findCoordinator(topic.opts.linkName().get());
+                    coordinator = Optional.ofNullable(findCoordinatorResult.node().get());
+                    System.out.println("Found coordinator " + coordinator.map(Node::idString).orElse("none") + " for link " + topic.opts.linkName().get() + ".");
+                    newTopic = new NewTopic(topic.name, topic.partitions, topic.replicationFactor.map(Integer::shortValue), topic.remoteBootstrapServers, topic.topicId, topic.opts.linkName());
+                } else if (topic.hasReplicaAssignment()) {
                     newTopic = new NewTopic(topic.name, topic.replicaAssignment);
                 } else {
                     newTopic = new NewTopic(topic.name, topic.partitions, topic.replicationFactor.map(Integer::shortValue));
@@ -471,12 +511,29 @@ public abstract class TopicCommand {
 
                 Map<String, String> configsMap = topic.configsToAdd.stringPropertyNames().stream()
                     .collect(Collectors.toMap(name -> name, topic.configsToAdd::getProperty));
+                if (topic.opts.hasCreateMirrorOption()) {
+                    configsMap.put(TopicConfig.READ_ONLY_CONFIG, "true");
+                }
 
-                newTopic.configs(configsMap);
-                CreateTopicsResult createResult = adminClient.createTopics(Set.of(newTopic),
-                    new CreateTopicsOptions().retryOnQuotaViolation(false));
-                createResult.all().get();
-                System.out.println("Created topic " + topic.name + ".");
+                if (coordinator.isPresent()) {
+                    Node node = coordinator.get();
+                    System.out.println("Node info: " + node);
+                    String bootstrapServer = node.host() + ":" + node.port();
+                    System.out.println("Creating topic " + topic.name + " using bootstrap server " + bootstrapServer + ".");
+                    try (Admin admin = createAdminClient(commandConfig, Optional.of(bootstrapServer))) {
+                        newTopic.configs(configsMap);
+                        CreateTopicsResult createResult = admin.createTopics(Set.of(newTopic),
+                                new CreateTopicsOptions().retryOnQuotaViolation(false));
+                        createResult.all().get();
+                        System.out.println("Created topic " + topic.name + ".");
+                    }
+                } else {
+                    newTopic.configs(configsMap);
+                    CreateTopicsResult createResult = adminClient.createTopics(Set.of(newTopic),
+                            new CreateTopicsOptions().retryOnQuotaViolation(false));
+                    createResult.all().get();
+                    System.out.println("Created topic " + topic.name + ".");
+                }
             } catch (ExecutionException e) {
                 if (e.getCause() == null) {
                     throw e;
@@ -485,6 +542,11 @@ public abstract class TopicCommand {
                     throw (Exception) e.getCause();
                 }
             }
+        }
+
+        public void createLink(TopicCommandOptions opts) throws ExecutionException, InterruptedException {
+            CreateMirrorResult result = adminClient.createMirror(opts.linkName().orElse(""), linkConfigs, new CreateMirrorOptions());
+            result.all().get();
         }
 
         public void listTopics(TopicCommandOptions opts) throws ExecutionException, InterruptedException {
@@ -675,8 +737,11 @@ public abstract class TopicCommand {
 
     public static final class TopicCommandOptions extends CommandDefaultOptions {
         private final ArgumentAcceptingOptionSpec<String> bootstrapServerOpt;
+        private final ArgumentAcceptingOptionSpec<String> remoteBootstrapServerOpt;
 
         private final ArgumentAcceptingOptionSpec<String> commandConfigOpt;
+
+        private final ArgumentAcceptingOptionSpec<String> clusterLinkConfigOpt;
 
         private final OptionSpecBuilder listOpt;
 
@@ -688,7 +753,13 @@ public abstract class TopicCommand {
 
         private final OptionSpecBuilder describeOpt;
 
+        private final OptionSpecBuilder createMirrorOpt;
+
+        private final OptionSpecBuilder createLinkOpt;
+
         private final ArgumentAcceptingOptionSpec<String> topicOpt;
+
+        private final ArgumentAcceptingOptionSpec<String> linkNameOpt;
 
         private final ArgumentAcceptingOptionSpec<String> topicIdOpt;
 
@@ -739,10 +810,19 @@ public abstract class TopicCommand {
                 .withRequiredArg()
                 .describedAs("server to connect to")
                 .ofType(String.class);
+            remoteBootstrapServerOpt = parser.accepts("remote-bootstrap-server", "REQUIRED: The remote Kafka server to connect to.")
+                    .withRequiredArg()
+                    .describedAs("remote server to connect to")
+                    .ofType(String.class);
             commandConfigOpt = parser.accepts("command-config", "Property file containing configs to be passed to Admin Client.")
                 .withRequiredArg()
                 .describedAs("command config property file")
                 .ofType(String.class);
+
+            clusterLinkConfigOpt = parser.accepts("cluster-link-config", "Property file source cluster cluster configs")
+                    .withRequiredArg()
+                    .describedAs("cluster link config property file")
+                    .ofType(String.class);
 
             listOpt = parser.accepts("list", "List all available topics.");
             createOpt = parser.accepts("create", "Create a new topic.");
@@ -750,12 +830,19 @@ public abstract class TopicCommand {
             alterOpt = parser.accepts("alter", "Alter the number of partitions and replica assignment." +
                     KAFKA_CONFIGS_CLI_SUPPORTS_ALTERING_TOPIC_CONFIGS);
             describeOpt = parser.accepts("describe", "List details for the given topics.");
+            createMirrorOpt = parser.accepts("createMirror", "Create a new mirror topic.");
+            createLinkOpt = parser.accepts("createLink", "Create a new link for mirroring remote topics.");
             topicOpt = parser.accepts("topic", "The topic to create, alter, describe or delete. It also accepts a regular " +
                             "expression, except for --create option. Put topic name in double quotes and use the '\\' prefix " +
                             "to escape regular expression symbols; e.g. \"test\\.topic\".")
                 .withRequiredArg()
                 .describedAs("topic")
                 .ofType(String.class);
+
+            linkNameOpt = parser.accepts("link", "Name of the link for creating new mirror topics.")
+                    .withRequiredArg()
+                    .describedAs("link")
+                    .ofType(String.class);
             topicIdOpt = parser.accepts("topic-id", "The topic-id to describe.")
                 .withRequiredArg()
                 .describedAs("topic-id")
@@ -847,6 +934,14 @@ public abstract class TopicCommand {
             return has(createOpt);
         }
 
+        public boolean hasCreateMirrorOption() {
+            return has(createMirrorOpt);
+        }
+
+        public boolean hasCreateLinkOption() {
+            return has(createLinkOpt);
+        }
+
         public boolean hasAlterOption() {
             return has(alterOpt);
         }
@@ -875,12 +970,17 @@ public abstract class TopicCommand {
             }
         }
 
-        public Optional<String> topic() {
-            return valueAsOption(topicOpt);
+        public Map<String, String> clusterLinkConfig() throws IOException {
+            Map<String, String> config = new HashMap<>();
+            if (has(clusterLinkConfigOpt)) {
+                Properties properties = Utils.loadProps(options.valueOf(clusterLinkConfigOpt));
+                properties.forEach((k, v) -> config.put(k.toString(), v.toString()));
+            }
+            return config;
         }
 
-        public Optional<String> topicId() {
-            return valueAsOption(topicIdOpt);
+        public Optional<String> topic() {
+            return valueAsOption(topicOpt);
         }
 
         public Optional<Integer> partitions() {
@@ -889,6 +989,18 @@ public abstract class TopicCommand {
 
         public Optional<Integer> replicationFactor() {
             return valueAsOption(replicationFactorOpt);
+        }
+
+        public Optional<String> remoteBootstrapServer() {
+            return valueAsOption(remoteBootstrapServerOpt);
+        }
+
+        public Optional<String> linkName() {
+            return valueAsOption(linkNameOpt);
+        }
+
+        public Optional<String> topicId() {
+            return valueAsOption(topicIdOpt);
         }
 
         public Optional<Map<Integer, List<Integer>>> replicaAssignment() {
@@ -946,7 +1058,7 @@ public abstract class TopicCommand {
 
             // should have exactly one action
             long actions =
-                Stream.of(createOpt, listOpt, alterOpt, describeOpt, deleteOpt).filter(options::has)
+                Stream.of(createOpt, listOpt, alterOpt, describeOpt, deleteOpt, createMirrorOpt, createLinkOpt).filter(options::has)
                     .count();
             if (actions != 1)
                 CommandLineUtils.printUsageAndExit(parser, "Command must include exactly one action: --list, --describe, --create, --alter or --delete");
@@ -976,6 +1088,9 @@ public abstract class TopicCommand {
                 Set<OptionSpec<?>> invalidOptions = Set.of(alterOpt);
                 CommandLineUtils.checkInvalidArgsSet(parser, options, usedOptions, invalidOptions, Optional.of(KAFKA_CONFIGS_CLI_SUPPORTS_ALTERING_TOPIC_CONFIGS));
                 CommandLineUtils.checkRequiredArgs(parser, options, partitionsOpt);
+            }
+            if (has(createLinkOpt)) {
+                CommandLineUtils.checkRequiredArgs(parser, options, linkNameOpt, clusterLinkConfigOpt);
             }
         }
 
