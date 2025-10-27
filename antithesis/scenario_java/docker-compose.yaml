@@ -43,7 +43,7 @@ services:
           "
 
   broker1: &base-broker
-    image: aivenoy/kafka:4.1.0-inkless-SNAPSHOT
+    image: us-central1-docker.pkg.dev/molten-verve-216720/aiven-repository/kafka:4.1.0-inkless-SNAPSHOT
     restart: unless-stopped
     ports:
       - "9092:9092"
