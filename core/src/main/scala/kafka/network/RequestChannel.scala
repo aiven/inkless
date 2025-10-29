@@ -305,16 +305,21 @@ object RequestChannel extends Logging {
     def responseLog: Option[JsonNode] = None
 
     def onComplete: Option[Send => Unit] = None
+
+    def onError: Option[Throwable => Unit] = None
   }
 
   /** responseLogValue should only be defined if request logging is enabled */
   class SendResponse(request: Request,
                      val responseSend: Send,
                      val responseLogValue: Option[JsonNode],
-                     val onCompleteCallback: Option[Send => Unit]) extends Response(request) {
+                     val onCompleteCallback: Option[Send => Unit],
+                     val onErrorCallback: Option[Throwable => Unit] = None) extends Response(request) {
     override def responseLog: Option[JsonNode] = responseLogValue
 
     override def onComplete: Option[Send => Unit] = onCompleteCallback
+
+    override def onError: Option[Throwable => Unit] = onErrorCallback
 
     override def toString: String =
       s"Response(type=Send, request=$request, send=$responseSend, asString=$responseLogValue)"
@@ -391,14 +396,16 @@ class RequestChannel(val queueSize: Int,
   def sendResponse(
     request: RequestChannel.Request,
     response: AbstractResponse,
-    onComplete: Option[Send => Unit]
+    onComplete: Option[Send => Unit],
+    onError: Option[Throwable => Unit] = None
   ): Unit = {
     updateErrorMetrics(request.header.apiKey, response.errorCounts.asScala)
     sendResponse(new RequestChannel.SendResponse(
       request,
       request.buildResponseSend(response),
       request.responseNode(response),
-      onComplete
+      onComplete,
+      onError
     ))
   }
 

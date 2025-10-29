@@ -278,6 +278,7 @@ class DelayedFetch(
       val disklessFetchInfos = disklessFetchPartitionStatus.map { case (tp, status) =>
         tp -> status.fetchInfo
       }
+      logger.info(s"Fetching diskless messages with fetch params: $disklessParams")
       val disklessFetchResponseFuture = replicaManager.fetchDisklessMessages(disklessParams, disklessFetchInfos)
 
       // Combine the classic fetch results with the diskless fetch results

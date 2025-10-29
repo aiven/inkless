@@ -1107,7 +1107,9 @@ private[kafka] class Processor(
         val remoteHost = ServerConnectionId.fromString(connectionId).orElseThrow { () =>
           throw new IllegalStateException(s"connectionId has unexpected format: $connectionId")
         }.remoteHost
-        inflightResponses.remove(connectionId).foreach(updateRequestMetrics)
+        val responses = inflightResponses.remove(connectionId)
+        responses.foreach(updateRequestMetrics)
+        responses.foreach(response => response.onError.foreach(onError => onError(new IOException(s"Connection $connectionId disconnected"))))
         // the channel has been closed by the selector but the quotas still need to be updated
         connectionQuotas.dec(listenerName, InetAddress.getByName(remoteHost))
         // Call listeners to notify for closed connection.

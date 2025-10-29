@@ -76,7 +76,7 @@ import org.apache.kafka.storage.log.metrics.BrokerTopicStats
 
 import java.time.Duration
 import java.util
-import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.{AtomicInteger, AtomicLong}
 import java.util.concurrent.{CompletableFuture, ConcurrentHashMap}
 import java.util.stream.Collectors
 import java.util.{Collections, Optional}
@@ -126,6 +126,11 @@ class KafkaApis(val requestChannel: RequestChannel,
     metadataCache, authHelper, config)
 
   val inklessTopicMetadataTransformer = inklessSharedState.map(s => new InklessTopicMetadataTransformer(s.metadata()))
+  
+  object InflightResponses {
+    val inflightResponses = new AtomicInteger(0)
+    val inflightResponsesBytes = new AtomicLong(0L)
+  }
 
   def close(): Unit = {
     aclApis.close()
@@ -636,6 +641,7 @@ class KafkaApis(val requestChannel: RequestChannel,
 
     // the callback for process a fetch response, invoked before throttling
     def processResponseCallback(responsePartitionData: Seq[(TopicIdPartition, FetchPartitionData)]): Unit = {
+      // logger.info(s"[thread: ${Thread.currentThread().getId} ${Thread.currentThread().getName}] Processing fetch response with responsePartitionData: $responsePartitionData")
       val partitions = new util.LinkedHashMap[TopicIdPartition, FetchResponseData.PartitionData]
       val reassigningPartitions = mutable.Set[TopicIdPartition]()
       val nodeEndpoints = new mutable.HashMap[Int, Node]
@@ -699,12 +705,28 @@ class KafkaApis(val requestChannel: RequestChannel,
         // Record both bandwidth and request quota-specific values and throttle by muting the channel if any of the
         // quotas have been violated. If both quotas have been violated, use the max throttle time between the two
         // quotas. When throttled, we unrecord the recorded bandwidth quota value.
-        val responseSize = fetchContext.getResponseSize(partitions, versionId)
+        var responseSize = fetchContext.getResponseSize(partitions, versionId)
         val timeMs = time.milliseconds()
         val requestThrottleTimeMs = quotas.request.maybeRecordAndGetThrottleTimeMs(request, timeMs)
         val bandwidthThrottleTimeMs = quotas.fetch.maybeRecordAndGetThrottleTimeMs(request, responseSize, timeMs)
 
-        val maxThrottleTimeMs = math.max(bandwidthThrottleTimeMs, requestThrottleTimeMs)
+        var maxThrottleTimeMs = math.max(bandwidthThrottleTimeMs, requestThrottleTimeMs)
+        
+        var inflightResponsesCount = 0
+        var inflightResponsesBytes = 0L
+
+        if (responseSize > 1000) {
+          inflightResponsesCount = InflightResponses.inflightResponses.incrementAndGet()
+          inflightResponsesBytes = InflightResponses.inflightResponsesBytes.addAndGet(responseSize)
+          
+          if (inflightResponsesBytes > 6L * 1024L * 1024L * 1024L) {
+            logger.error(s"[thread: ${Thread.currentThread().getId} ${Thread.currentThread().getName}] [Inflight responses: ${inflightResponsesCount - 1}] [Inflight responses bytes: ${inflightResponsesBytes - responseSize}] Inflight responses bytes would be greater than 6GB")
+            maxThrottleTimeMs = math.max(maxThrottleTimeMs, 5000)
+            inflightResponsesCount = InflightResponses.inflightResponses.decrementAndGet()
+            inflightResponsesBytes = InflightResponses.inflightResponsesBytes.addAndGet(-responseSize)
+          }
+        }
+
         val fetchResponse = if (maxThrottleTimeMs > 0) {
           request.apiThrottleTimeMs = maxThrottleTimeMs
           // Even if we need to throttle for request quota violation, we should "unrecord" the already recorded value
@@ -715,6 +737,8 @@ class KafkaApis(val requestChannel: RequestChannel,
           } else {
             requestHelper.throttle(quotas.request, request, requestThrottleTimeMs)
           }
+          // Don't include the response size in the inflight responses bytes
+          responseSize = 0
           // If throttling is required, return an empty response.
           fetchContext.getThrottledResponse(maxThrottleTimeMs, nodeEndpoints.values.toSeq.asJava)
         } else {
@@ -728,7 +752,32 @@ class KafkaApis(val requestChannel: RequestChannel,
 
         recordBytesOutMetric(fetchResponse)
         // Send the response immediately.
-        requestChannel.sendResponse(request, fetchResponse, None)
+        if (responseSize > 1000) {
+          logger.info(s"[thread: ${Thread.currentThread().getId} ${Thread.currentThread().getName}] [Inflight responses: $inflightResponsesCount] [Inflight responses bytes: $inflightResponsesBytes] Sending fetch response with size $responseSize bytes for request: $request")
+        }
+        try {
+          requestChannel.sendResponse(request, fetchResponse, onComplete = Some(send => {
+            if (responseSize > 1000) {
+              inflightResponsesCount = InflightResponses.inflightResponses.decrementAndGet()
+              inflightResponsesBytes = InflightResponses.inflightResponsesBytes.addAndGet(-responseSize)
+              logger.info(s"[thread: ${Thread.currentThread().getId} ${Thread.currentThread().getName}] [Inflight responses: $inflightResponsesCount] [Inflight responses bytes: $inflightResponsesBytes] Sent fetch response for request: $request")
+            }
+          }), onError = Some(e => {
+            if (responseSize > 1000) {
+              inflightResponsesCount = InflightResponses.inflightResponses.decrementAndGet()
+              inflightResponsesBytes = InflightResponses.inflightResponsesBytes.addAndGet(-responseSize)
+              logger.error(s"[thread: ${Thread.currentThread().getId} ${Thread.currentThread().getName}] [Inflight responses: $inflightResponsesCount] [Inflight responses bytes: $inflightResponsesBytes] Error sending fetch response for request: $request", e)
+            }
+          }))
+        } catch {
+          case e: Throwable =>
+            if (responseSize > 1000) {
+              inflightResponsesCount = InflightResponses.inflightResponses.decrementAndGet()
+              inflightResponsesBytes = InflightResponses.inflightResponsesBytes.addAndGet(-responseSize)
+              logger.error(s"[thread: ${Thread.currentThread().getId} ${Thread.currentThread().getName}] [Inflight responses: $inflightResponsesCount] [Inflight responses bytes: $inflightResponsesBytes] Error sending fetch response for request: $request", e)
+            }
+            throw e
+        }
       }
     }
 

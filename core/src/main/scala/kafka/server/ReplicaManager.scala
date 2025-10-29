@@ -1896,6 +1896,7 @@ class ReplicaManager(val config: KafkaConfig,
         // diskless fetches.
         val disklessFetchResults = try {
           val disklessParams = fetchParamsWithNewMaxBytes(params, disklessFetchInfos.size.toFloat / fetchInfos.size.toFloat)
+          logger.info(s"Fetching diskless messages with fetch params: $disklessParams")
           val disklessResponsesFuture = fetchDisklessMessages(disklessParams, disklessFetchInfos)
 
           val response = disklessResponsesFuture.get(maxWaitMs, TimeUnit.MILLISECONDS)
