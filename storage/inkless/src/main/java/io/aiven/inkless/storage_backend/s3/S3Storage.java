@@ -56,7 +56,7 @@ import software.amazon.awssdk.services.s3.model.ObjectIdentifier;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 
 @CoverageIgnore  // tested on integration level
-public class S3Storage extends StorageBackend {
+public final class S3Storage extends StorageBackend {
 
     public static final int MAX_DELETE_KEYS_LIMIT = 1000;
     private S3Client s3Client;

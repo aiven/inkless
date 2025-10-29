@@ -43,7 +43,7 @@ import io.aiven.inkless.storage_backend.common.StorageBackendException;
  *
  * <p>Useful for testing.
  */
-public class InMemoryStorage extends StorageBackend {
+public final class InMemoryStorage extends StorageBackend {
     private final ConcurrentHashMap<ObjectKey, byte[]> storage = new ConcurrentHashMap<>();
 
     // needed for reflection based instantiation

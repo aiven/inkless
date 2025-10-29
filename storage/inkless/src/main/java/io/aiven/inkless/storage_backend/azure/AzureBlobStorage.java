@@ -51,7 +51,7 @@ import io.aiven.inkless.storage_backend.common.StorageBackendException;
 import reactor.core.Exceptions;
 
 @CoverageIgnore // tested on integration level
-public class AzureBlobStorage extends StorageBackend {
+public final class AzureBlobStorage extends StorageBackend {
     private AzureBlobStorageConfig config;
     private BlobContainerClient blobContainerClient;
     private MetricCollector.MetricsPolicy policy;
@@ -61,7 +61,7 @@ public class AzureBlobStorage extends StorageBackend {
         this(new Metrics());
     }
 
-    public AzureBlobStorage(Metrics metrics) {
+    public AzureBlobStorage(final Metrics metrics) {
         super(metrics);
     }
 

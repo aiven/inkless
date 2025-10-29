@@ -65,7 +65,7 @@ public class GcsStorage extends StorageBackend {
         this(new Metrics());
     }
 
-    public GcsStorage(Metrics metrics) {
+    public GcsStorage(final Metrics metrics) {
         super(metrics);
     }
 

@@ -30,9 +30,10 @@ import io.aiven.inkless.common.ObjectKey;
 import io.aiven.inkless.storage_backend.common.StorageBackend;
 import io.aiven.inkless.storage_backend.common.StorageBackendException;
 
-public class ConfigTestStorageBackend extends StorageBackend {
+public final class ConfigTestStorageBackend extends StorageBackend {
     public Map<String, ?> passedConfig = null;
 
+    // needed for reflection based instantiation
     public ConfigTestStorageBackend() {
         this(new Metrics());
     }

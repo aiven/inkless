@@ -26,7 +26,7 @@ public abstract class StorageBackend implements Configurable, ObjectUploader, Ob
     protected final Metrics metrics;
 
     // Metrics is created and passed from outside to allow sharing a single Metrics instance
-    protected StorageBackend(Metrics metrics) {
+    protected StorageBackend(final Metrics metrics) {
         this.metrics = metrics;
     }
 }
