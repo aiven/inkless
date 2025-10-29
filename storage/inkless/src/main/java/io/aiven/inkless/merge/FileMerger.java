@@ -71,7 +71,7 @@ public class FileMerger implements Runnable, Closeable {
         this.time = sharedState.time();
         this.config = sharedState.config();
         this.controlPlane = sharedState.controlPlane();
-        this.storage = sharedState.storage();
+        this.storage = sharedState.buildStorage();
         this.objectKeyCreator = sharedState.objectKeyCreator();
         this.metrics = new FileMergerMetrics();
 

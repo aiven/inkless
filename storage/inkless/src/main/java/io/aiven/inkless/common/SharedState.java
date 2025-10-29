@@ -56,16 +56,16 @@ public final class SharedState implements Closeable {
     private final Metrics storageMetrics;
 
     public SharedState(
-        Time time,
-        int brokerId,
-        InklessConfig config,
-        MetadataView metadata,
-        ControlPlane controlPlane,
-        ObjectKeyCreator objectKeyCreator,
-        KeyAlignmentStrategy keyAlignmentStrategy,
-        ObjectCache cache,
-        BrokerTopicStats brokerTopicStats,
-        Supplier<LogConfig> defaultTopicConfigs
+        final Time time,
+        final int brokerId,
+        final InklessConfig config,
+        final MetadataView metadata,
+        final ControlPlane controlPlane,
+        final ObjectKeyCreator objectKeyCreator,
+        final KeyAlignmentStrategy keyAlignmentStrategy,
+        final ObjectCache cache,
+        final BrokerTopicStats brokerTopicStats,
+        final Supplier<LogConfig> defaultTopicConfigs
     ) {
         this.time = time;
         this.brokerId = brokerId;
@@ -110,10 +110,6 @@ public final class SharedState implements Closeable {
             brokerTopicStats,
             defaultTopicConfigs
         );
-    }
-
-    public StorageBackend storage() {
-        return config.storage(storageMetrics);
     }
 
     @Override
@@ -165,5 +161,9 @@ public final class SharedState implements Closeable {
 
     public Supplier<LogConfig> defaultTopicConfigs() {
         return defaultTopicConfigs;
+    }
+
+    public StorageBackend buildStorage() {
+        return config.storage(storageMetrics);
     }
 }

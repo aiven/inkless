@@ -56,7 +56,7 @@ public class AppendHandler implements Closeable {
                 state.time(),
                 state.brokerId(),
                 state.objectKeyCreator(),
-                state.storage(),
+                state.buildStorage(),
                 state.keyAlignmentStrategy(),
                 state.cache(),
                 state.controlPlane(),
