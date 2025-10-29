@@ -17,10 +17,26 @@
 
 package org.apache.kafka.clients.admin;
 
+import org.apache.kafka.common.KafkaFuture;
+
 import java.util.Map;
 
 /**
- * Options for {@link Admin#createClusterLink(String, Map)}.
+ * The result of the {@link Admin#createMirror(String, Map, CreateMirrorOptions)} call.
+ *
+ * The API of this class is evolving, see {@link Admin} for details.
  */
-public class CreateClusterLinkOptions extends AbstractOptions<CreateClusterLinkOptions> {
+public class CreateMirrorResult {
+    private final KafkaFuture<Void> future;
+
+    CreateMirrorResult(final KafkaFuture<Void> future) {
+        this.future = future;
+    }
+
+    /**
+     * Return a future which succeeds if the operation is successful.
+     */
+    public KafkaFuture<Void> all() {
+        return future;
+    }
 }

@@ -431,7 +431,7 @@ public class PartitionChangeBuilder {
         PartitionChangeRecord record = new PartitionChangeRecord().
             setTopicId(topicId).
             setPartitionId(partitionId).
-            setClusterLinkName(partition.clusterLinkName);
+            setMirrorName(partition.mirrorName == null ? "" : partition.mirrorName);
 
         completeReassignmentIfNeeded();
 

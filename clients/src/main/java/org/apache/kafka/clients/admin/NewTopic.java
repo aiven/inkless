@@ -35,7 +35,6 @@ import java.util.Optional;
  * A new topic to be created via {@link Admin#createTopics(Collection)}.
  */
 public class NewTopic {
-
     private final String name;
     private final Optional<Integer> numPartitions;
     private final Optional<Short> replicationFactor;
@@ -153,7 +152,7 @@ public class NewTopic {
         }
 
         if (linkName.isPresent()) {
-            creatableTopic.setClusterLink(linkName.get());
+            creatableTopic.setMirrorName(linkName.get());
         }
         if (replicasAssignments != null) {
             for (Entry<Integer, List<Integer>> entry : replicasAssignments.entrySet()) {

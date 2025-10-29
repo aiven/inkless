@@ -72,7 +72,7 @@ public abstract class AbstractKafkaConfig extends AbstractConfig {
         BrokerSecurityConfigs.CONFIG_DEF,
         DelegationTokenManagerConfigs.CONFIG_DEF,
         AddPartitionsToTxnConfig.CONFIG_DEF,
-        ClusterLinkConfigs.topicConfigDef()
+        MirrorConfig.topicConfigDef()
     ));
 
     public AbstractKafkaConfig(ConfigDef definition, Map<?, ?> originals, Map<String, ?> configProviderProps, boolean doLog) {
@@ -91,8 +91,8 @@ public abstract class AbstractKafkaConfig extends AbstractConfig {
         return getInt(ReplicationConfigs.NUM_REPLICA_FETCHERS_CONFIG);
     }
 
-    public int numRemoteReplicaFetchers() {
-        return getInt(ReplicationConfigs.NUM_REMOTE_REPLICA_FETCHERS_CONFIG);
+    public int numMirrorReplicaFetchers() {
+        return getInt(ReplicationConfigs.MIRROR_NUM_REPLICA_FETCHERS);
     }
 
     public int numRecoveryThreadsPerDataDir() {

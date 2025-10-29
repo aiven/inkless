@@ -49,7 +49,7 @@ import org.apache.kafka.common.resource.Resource.CLUSTER_NAME
 import org.apache.kafka.common.resource.ResourceType.{CLUSTER, GROUP, TOPIC, USER}
 import org.apache.kafka.common.utils.Time
 import org.apache.kafka.common.Uuid
-import org.apache.kafka.common.internals.Topic.CLUSTER_LINK_TOPIC_NAME
+import org.apache.kafka.common.internals.Topic.MIRROR_STATE_TOPIC_NAME
 import org.apache.kafka.common.message.CreateTopicsRequestData.{CreatableTopic, CreatableTopicConfig, CreatableTopicConfigCollection}
 import org.apache.kafka.controller.ControllerRequestContext.requestTimeoutMsToDeadlineNs
 import org.apache.kafka.controller.{Controller, ControllerRequestContext}
@@ -136,7 +136,7 @@ class ControllerApis(
         case ApiKeys.ADD_RAFT_VOTER => handleAddRaftVoter(request)
         case ApiKeys.REMOVE_RAFT_VOTER => handleRemoveRaftVoter(request)
         case ApiKeys.UPDATE_RAFT_VOTER => handleUpdateRaftVoter(request)
-        case ApiKeys.CREATE_CLUSTER_LINK => handleCreateClusterLink(request)
+        case ApiKeys.CREATE_MIRROR => handleCreateMirror(request)
         case _ => throw new ApiException(s"Unsupported ApiKey ${request.context.header.apiKey}")
       }
 
@@ -165,49 +165,45 @@ class ControllerApis(
     }
   }
 
-  def handleCreateClusterLink(request: RequestChannel.Request): CompletableFuture[Unit] = {
+  def handleCreateMirror(request: RequestChannel.Request): CompletableFuture[Unit] = {
     // test
     authHelper.authorizeClusterOperation(request, CLUSTER_ACTION)
-    val createClusterLinkRequest = request.body[CreateClusterLinkRequest]
-    info("!!! create cluster link request: " + createClusterLinkRequest)
-    val context = new ControllerRequestContext(request.context.header.data, request.context.principal,
-      OptionalLong.empty())
+    val createMirrorRequest = request.body[CreateMirrorRequest]
+    info("!!! Create mirror request: " + createMirrorRequest)
+    val context = new ControllerRequestContext(request.context.header.data, request.context.principal, OptionalLong.empty())
     val altersByName = new util.HashMap[String, Entry[AlterConfigOp.OpType, String]]()
-    val configChanges = new util.HashMap[ConfigResource,
-      util.Map[String, Entry[AlterConfigOp.OpType, String]]]()
-    // set resource to cluster_link, and name as cluster_link name
-    val resource = new ConfigResource(ConfigResource.Type.forId(64), createClusterLinkRequest.data().clusterLinkName())
-    createClusterLinkRequest.data().configs.forEach { config =>
+    val configChanges = new util.HashMap[ConfigResource, util.Map[String, Entry[AlterConfigOp.OpType, String]]]()
+    val resource = new ConfigResource(ConfigResource.Type.forId(64), createMirrorRequest.data().mirrorName())
+    createMirrorRequest.data().config.forEach { config =>
       // TODO: currently assume always SET value
       altersByName.put(config.name, new util.AbstractMap.SimpleEntry[AlterConfigOp.OpType, String](
         AlterConfigOp.OpType.forId(0), config.value))
     }
     configChanges.put(resource, altersByName)
 
-    controller.createClusterLink(context, configChanges)
+    controller.createMirror(context, configChanges)
       .handle[Unit] { (response, exception) =>
-        logger.info("!!! create cluster link response: " + response + " exception: " + exception)
+        logger.info("!!! Create mirror response: " + response + " exception: " + exception)
         if (exception != null) {
           requestHelper.handleError(request, exception)
         } else {
-
           requestHelper.sendResponseMaybeThrottle(request, throttleMs =>
-            new CreateClusterLinkResponse(response.setThrottleTimeMs(throttleMs)))
+            new CreateMirrorResponse(response.setThrottleTimeMs(throttleMs)))
         }
       }
-    val topicMetadata = metadataCache.getTopicMetadata(Set(CLUSTER_LINK_TOPIC_NAME).asJava, request.context.listenerName).asScala
+    val topicMetadata = metadataCache.getTopicMetadata(Set(MIRROR_STATE_TOPIC_NAME).asJava, request.context.listenerName).asScala
     if (topicMetadata.headOption.isEmpty) {
       val properties = new Properties
       properties.put(TopicConfig.CLEANUP_POLICY_CONFIG, TopicConfig.CLEANUP_POLICY_COMPACT)
       properties.put(TopicConfig.COMPRESSION_TYPE_CONFIG, BrokerCompressionType.PRODUCER.name)
       properties.put(TopicConfig.RETENTION_MS_CONFIG, -1)
-      val clusterLinkTopic = new CreatableTopic()
-        .setName(CLUSTER_LINK_TOPIC_NAME)
-        .setNumPartitions(config.clusterLinksConfig.clusterLinkTopicNumPartitions())
-        .setReplicationFactor(config.clusterLinksConfig.clusterLinkTopicReplicationFactor())
+      val mirrorStateTopic = new CreatableTopic()
+        .setName(MIRROR_STATE_TOPIC_NAME)
+        .setNumPartitions(config.mirrorConfig.mirrorTopicNumPartitions())
+        .setReplicationFactor(config.mirrorConfig.mirrorTopicReplicationFactor())
         .setConfigs(convertToTopicConfigCollections(properties))
       val topicsToCreate = new CreateTopicsRequestData.CreatableTopicCollection(1)
-      topicsToCreate.add(clusterLinkTopic)
+      topicsToCreate.add(mirrorStateTopic)
 
       val createTopicsRequest = new CreateTopicsRequest.Builder(
         new CreateTopicsRequestData()
@@ -226,9 +222,7 @@ class ControllerApis(
     }
 
     CompletableFuture.completedFuture[Unit](())
-
   }
-
 
   def handleEnvelopeRequest(request: RequestChannel.Request, requestLocal: RequestLocal): CompletableFuture[Unit] = {
     if (!authHelper.authorize(request.context, CLUSTER_ACTION, CLUSTER, CLUSTER_NAME)) {

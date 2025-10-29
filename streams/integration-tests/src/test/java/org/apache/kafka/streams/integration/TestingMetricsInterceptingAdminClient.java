@@ -43,10 +43,10 @@ import org.apache.kafka.clients.admin.AlterUserScramCredentialsOptions;
 import org.apache.kafka.clients.admin.AlterUserScramCredentialsResult;
 import org.apache.kafka.clients.admin.CreateAclsOptions;
 import org.apache.kafka.clients.admin.CreateAclsResult;
-import org.apache.kafka.clients.admin.CreateClusterLinkOptions;
-import org.apache.kafka.clients.admin.CreateClusterLinkResult;
 import org.apache.kafka.clients.admin.CreateDelegationTokenOptions;
 import org.apache.kafka.clients.admin.CreateDelegationTokenResult;
+import org.apache.kafka.clients.admin.CreateMirrorOptions;
+import org.apache.kafka.clients.admin.CreateMirrorResult;
 import org.apache.kafka.clients.admin.CreatePartitionsOptions;
 import org.apache.kafka.clients.admin.CreatePartitionsResult;
 import org.apache.kafka.clients.admin.CreateTopicsOptions;
@@ -182,7 +182,6 @@ import java.util.Set;
  * Wrapper for Admin client for use in Kafka Streams integration test
  */
 public class TestingMetricsInterceptingAdminClient extends AdminClient {
-
     public final List<KafkaMetric> passedMetrics = new ArrayList<>();
     private final Admin adminDelegate;
 
@@ -201,7 +200,7 @@ public class TestingMetricsInterceptingAdminClient extends AdminClient {
     }
 
     @Override
-    public FindCoordinatorResult findCoordinator(String key) {
+    public FindCoordinatorResult findCoordinator(final String key) {
         return null;
     }
 
@@ -417,8 +416,8 @@ public class TestingMetricsInterceptingAdminClient extends AdminClient {
     }
 
     @Override
-    public CreateClusterLinkResult createClusterLink(final String clusterLinkName, final Map<String, String> configs, final CreateClusterLinkOptions options) {
-        return adminDelegate.createClusterLink(clusterLinkName, configs, options);
+    public CreateMirrorResult createMirror(final String mirrorName, final Map<String, String> configs, final CreateMirrorOptions options) {
+        return adminDelegate.createMirror(mirrorName, configs, options);
     }
 
     @Override

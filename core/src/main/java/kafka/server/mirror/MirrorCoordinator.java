@@ -14,11 +14,10 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package kafka.server.coordinator;
+package kafka.server.mirror;
 
 import kafka.server.KafkaConfig;
-import kafka.server.RemoteBrokerBlockingSender;
-import kafka.server.RemoteClusterMetadataManager;
+import kafka.server.MirrorBrokerBlockingSender;
 import kafka.server.ReplicaManager;
 
 import org.apache.kafka.common.TopicPartition;
@@ -33,10 +32,12 @@ import org.apache.kafka.common.record.MutableRecordBatch;
 import org.apache.kafka.common.record.SimpleRecord;
 import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.common.utils.Utils;
-import org.apache.kafka.coordinator.clusterlink.generated.ClusterLinkMirrorTopicsKey;
-import org.apache.kafka.coordinator.clusterlink.generated.ClusterLinkMirrorTopicsValue;
-import org.apache.kafka.coordinator.clusterlink.generated.CoordinatorRecordType;
 import org.apache.kafka.coordinator.common.runtime.CoordinatorRecord;
+import org.apache.kafka.coordinator.mirror.MirrorRecordKey;
+import org.apache.kafka.coordinator.mirror.MirrorRecordSerde;
+import org.apache.kafka.coordinator.mirror.generated.CoordinatorRecordType;
+import org.apache.kafka.coordinator.mirror.generated.MirrorTopicsKey;
+import org.apache.kafka.coordinator.mirror.generated.MirrorTopicsValue;
 import org.apache.kafka.metadata.MetadataCache;
 import org.apache.kafka.server.common.ApiMessageAndVersion;
 import org.apache.kafka.server.common.RequestLocal;
@@ -64,9 +65,25 @@ import scala.jdk.javaapi.CollectionConverters;
 
 import static org.apache.kafka.common.utils.Utils.require;
 
-public class TopicMirrorLinkCoordinator {
-
-    private static final Logger logger = LoggerFactory.getLogger(TopicMirrorLinkCoordinator.class);
+/**
+ * Cluster Mirror component that coordinates topic mirroring between Kafka clusters.
+ *
+ * <p>This coordinator is responsible for:
+ * <ul>
+ *   <li>Managing topic configurations and metadata for all cluster mirrors</li>
+ *   <li>Coordinating with remote brokers for cross-cluster replication</li>
+ *   <li>Handling leader election and resignation for mirror partitions</li>
+ *   <li>Loading and persisting cluster mirror metadata in the internal topic</li>
+ *   <li>Scheduling periodic metadata refresh from source clusters</li>
+ * </ul>
+ *
+ * <p>The coordinator maintains state about which topics are being mirrored for each cluster mirror
+ * and ensures proper coordination between source and destination clusters. It integrates with
+ * the ReplicaManager to handle log operations and with the MirrorMetadataManager to
+ * maintain metadata about mirrored topics.
+ */
+public class MirrorCoordinator {
+    private static final Logger LOG = LoggerFactory.getLogger(MirrorCoordinator.class);
     private final AtomicBoolean isActive = new AtomicBoolean(false);
     private final KafkaConfig config;
     private final ReplicaManager replicaManager;
@@ -75,18 +92,18 @@ public class TopicMirrorLinkCoordinator {
     private final MetadataCache metadataCache;
     private final Time time;
     private volatile int numPartitions = -1;
-    private final Map<String, RemoteBrokerBlockingSender> remoteBrokers = new HashMap<>();
-    private final TopicMirrorLinkRecordSerde serde = new TopicMirrorLinkRecordSerde();
-    private final RemoteClusterMetadataManager remoteClusterMetadataManager;
+    private final Map<String, MirrorBrokerBlockingSender> remoteBrokers = new HashMap<>();
+    private final MirrorRecordSerde serde = new MirrorRecordSerde();
+    private final MirrorMetadataManager mirrorMetadataManager;
 
-    public TopicMirrorLinkCoordinator(
+    public MirrorCoordinator(
             KafkaConfig config,
             ReplicaManager replicaManager,
             Scheduler scheduler,
             Metrics metrics,
             MetadataCache metadataCache,
             Time time,
-            RemoteClusterMetadataManager remoteClusterMetadataManager
+            MirrorMetadataManager mirrorMetadataManager
     ) {
         this.config = config;
         this.replicaManager = replicaManager;
@@ -94,84 +111,83 @@ public class TopicMirrorLinkCoordinator {
         this.metrics = metrics;
         this.metadataCache = metadataCache;
         this.time = time;
-        this.remoteClusterMetadataManager = remoteClusterMetadataManager;
+        this.mirrorMetadataManager = mirrorMetadataManager;
     }
 
     public void startup() {
         if (!isActive.compareAndSet(false, true)) {
-            logger.warn("Topic mirror link coordinator is already running.");
+            LOG.warn("MirrorCoordinator is already running.");
             return;
         }
 
-        logger.info("Starting up.");
+        LOG.info("Starting up.");
         scheduler.startup();
         // periodically query source cluster to get the metadata
-        scheduler.schedule("topic-mirror-link-query",
-                remoteClusterMetadataManager::refreshRemoteMetadata,
+        scheduler.schedule("mirror-metadata-refresh",
+                mirrorMetadataManager::refreshMetadata,
                 10000,
                 10000
         );
-        numPartitions = config.clusterLinksConfig().clusterLinkTopicNumPartitions();
+        numPartitions = config.mirrorConfig().mirrorTopicNumPartitions();
     }
 
     // TODO: handle response
-    public void addTopicsInCoordinator(String clusterLinkName, Set<String> topics) {
-        var clusterLinkTopicPartition = new TopicPartition(Topic.CLUSTER_LINK_TOPIC_NAME, partitionFor(new ClusterLinkKey(clusterLinkName)));
-        var clusterLinkTopicIdPartition = replicaManager.topicIdPartition(clusterLinkTopicPartition);
+    public void addTopicsToCoordinator(String mirrorName, Set<String> topics) {
+        var mirrorTopicPartition = new TopicPartition(Topic.MIRROR_STATE_TOPIC_NAME, partitionFor(new MirrorRecordKey(mirrorName)));
+        var mirrorTopicIdPartition = replicaManager.topicIdPartition(mirrorTopicPartition);
 
-        var record = generateClusterLinkMirrorTopics(clusterLinkName, new ArrayList<>(topics) {
-        });
+        var record = generateMirrorTopics(mirrorName, new ArrayList<>(topics) { });
         var keyBytes = serde.serializeKey(record);
         var valueBytes = serde.serializeValue(record);
         var timestamp = time.milliseconds();
         var memRecord = MemoryRecords.withRecords(Compression.NONE, new SimpleRecord(timestamp, keyBytes, valueBytes));
 
-        logger.info("!!! Appending record to {}: {}", clusterLinkTopicPartition, record);
+        LOG.info("!!! Appending record to {}: {}", mirrorTopicPartition, record);
         replicaManager.appendRecords(
-                // TODO: replace this with topic mirror link specific timeout
+                // TODO: replace this with Cluster Mirror specific timeout
                 Duration.ofSeconds(5).toMillis(),
                 (short) -1,
                 true,
                 AppendOrigin.COORDINATOR,
-                CollectionConverters.asScala(Map.of(clusterLinkTopicIdPartition, memRecord)),
+                CollectionConverters.asScala(Map.of(mirrorTopicIdPartition, memRecord)),
                 ignored -> null,
                 ignored -> null,
                 RequestLocal.noCaching(),
                 CollectionConverters.asScala(Map.of())
         );
-        remoteClusterMetadataManager.updateMirroredTopics(clusterLinkName, topics);
+        mirrorMetadataManager.updateMirroredTopics(mirrorName, topics);
     }
 
-    private static CoordinatorRecord generateClusterLinkMirrorTopics(String clusterLinkId, List<String> topics) {
-        var key = new ClusterLinkMirrorTopicsKey().setClusterLinkId(clusterLinkId);
-        var val = new ClusterLinkMirrorTopicsValue().setTopics(
-                topics.stream().map(topic -> new ClusterLinkMirrorTopicsValue.Topic().setName(topic)).toList());
+    private static CoordinatorRecord generateMirrorTopics(String mirrorName, List<String> topics) {
+        var key = new MirrorTopicsKey().setMirrorName(mirrorName);
+        var val = new MirrorTopicsValue().setTopics(
+                topics.stream().map(topic -> new MirrorTopicsValue.Topic().setName(topic)).toList());
         var apiVersion = new ApiMessageAndVersion(val, (short) 0);
         return CoordinatorRecord.record(key, apiVersion);
     }
 
-    private String readClusterLinkRecordKey(ByteBuffer buffer) {
+    private String readMirrorNameFromKey(ByteBuffer buffer) {
         short version = buffer.getShort();
-        if (version != CoordinatorRecordType.CLUSTER_LINK_MIRROR_TOPICS.id()) {
-            throw new IllegalArgumentException("Unknown cluster link log key version " + version);
+        if (version != CoordinatorRecordType.MIRROR_TOPICS.id()) {
+            throw new IllegalArgumentException("Unknown cluster mirror log key version " + version);
         }
-        return new ClusterLinkMirrorTopicsKey(new ByteBufferAccessor(buffer), version).clusterLinkId();
+        return new MirrorTopicsKey(new ByteBufferAccessor(buffer), version).mirrorName();
     }
 
-    private Set<String> readClusterLinkRecordValue(ByteBuffer buffer) {
+    private Set<String> readMirrorTopicsFromValue(ByteBuffer buffer) {
         Set<String> topics = new HashSet<>();
         short version = buffer.getShort();
-        if (version >= ClusterLinkMirrorTopicsValue.LOWEST_SUPPORTED_VERSION && version <= ClusterLinkMirrorTopicsValue.HIGHEST_SUPPORTED_VERSION) {
-            ClusterLinkMirrorTopicsValue value = new ClusterLinkMirrorTopicsValue(new ByteBufferAccessor(buffer), version);
+        if (version >= MirrorTopicsValue.LOWEST_SUPPORTED_VERSION && version <= MirrorTopicsValue.HIGHEST_SUPPORTED_VERSION) {
+            MirrorTopicsValue value = new MirrorTopicsValue(new ByteBufferAccessor(buffer), version);
             value.topics().forEach(t -> topics.add(t.name()));
         } else {
-            throw new IllegalStateException("Unknown version {} from the cluster link message value");
+            throw new IllegalStateException("Unknown version {} from the mirror message value");
         }
         return topics;
     }
 
-    private void loadClusterLinkData(TopicPartition topicPartition) {
-        logger.info("!!! Loading cluster link data from {}.", topicPartition);
+    private void loadMirrorMetadata(TopicPartition topicPartition) {
+        LOG.info("!!! Loading mirror metadata from {}.", topicPartition);
         long logEndOffset = replicaManager.getLogEndOffset(topicPartition).getOrElse(() -> -1L);
 
         replicaManager.getLog(topicPartition).foreach(log -> {
@@ -187,7 +203,7 @@ public class TopicMirrorLinkCoordinator {
             try {
                 // might need a lock
                 while (currOffset < logEndOffset && readAtLeastOneRecord && isActive.get()) {
-                    logger.info("Reading cluster link data from {} at offset {}.", topicPartition, currOffset);
+                    LOG.info("Reading mirror data from {} at offset {}.", topicPartition, currOffset);
                     FetchDataInfo fetchDataInfo = log.read(currOffset, maxLength, FetchIsolation.LOG_END, true);
 
                     readAtLeastOneRecord = fetchDataInfo.records.sizeInBytes() > 0;
@@ -204,7 +220,7 @@ public class TopicMirrorLinkCoordinator {
                         // minOneMessage = true in the above log.read means that the buffer may need to be grown to ensure progress can be made
                         if (buffer.capacity() < bytesNeeded) {
                             if (maxLength < bytesNeeded)
-                                logger.warn("Loaded cluster link data from {} with buffer larger ({} bytes) than " +
+                                LOG.warn("Loaded mirror data from {} with buffer larger ({} bytes) than " +
                                         "{} bytes)", topicPartition, bytesNeeded, maxLength);
 
                             buffer = ByteBuffer.allocate(bytesNeeded);
@@ -219,16 +235,16 @@ public class TopicMirrorLinkCoordinator {
                     while (itr.hasNext()) {
                         MutableRecordBatch batch = itr.next();
                         batch.iterator().forEachRemaining(record -> {
-                            require(record.hasKey(), "cluster link log's key should not be null");
-                            String clusterName = readClusterLinkRecordKey(record.key());
-                            Set<String> topics = readClusterLinkRecordValue(record.value());
-                            remoteClusterMetadataManager.updateMirroredTopics(clusterName, topics);
+                            require(record.hasKey(), "Mirror log's key should not be null");
+                            String clusterName = readMirrorNameFromKey(record.key());
+                            Set<String> topics = readMirrorTopicsFromValue(record.value());
+                            mirrorMetadataManager.updateMirroredTopics(clusterName, topics);
                         });
                         currOffset = batch.nextOffset();
                     }
                 }
             } catch (Throwable t) {
-                logger.error("Error loading transactions from transaction log P{}", topicPartition, t);
+                LOG.error("Error loading mirrors from mirror state log {}", topicPartition, t);
             }
             return null;
         });
@@ -239,8 +255,8 @@ public class TopicMirrorLinkCoordinator {
             int partitionIndex,
             int partitionLeaderEpoch
     ) {
-        // load the data in __cluster-link logs
-        loadClusterLinkData(new TopicPartition(Topic.CLUSTER_LINK_TOPIC_NAME, partitionIndex));
+        // load the data from the internal topic
+        loadMirrorMetadata(new TopicPartition(Topic.MIRROR_STATE_TOPIC_NAME, partitionIndex));
     }
 
     // called when onMetadataUpdate, needs to handle old leader resigned
@@ -254,25 +270,24 @@ public class TopicMirrorLinkCoordinator {
 
     private void clear() {
         remoteBrokers.clear();
-        remoteClusterMetadataManager.clear();
+        mirrorMetadataManager.clear();
     }
 
     public void shutdown() {
         if (!isActive.compareAndSet(true, false)) {
-            logger.warn("Topic mirror link coordinator is already shutting down.");
+            LOG.warn("MirrorCoordinator is already shutting down.");
             return;
         }
 
-        logger.info("Shutting down.");
-        Utils.closeQuietly(metrics, "topic mirror link coordinator metrics");
-        logger.info("Shutdown complete.");
+        LOG.info("Shutting down.");
+        Utils.closeQuietly(metrics, "MirrorCoordinator metrics");
+        LOG.info("Shutdown complete.");
     }
 
     /**
      * Return the partition index for the given key.
-     *
      */
-    public int partitionFor(ClusterLinkKey key) {
+    public int partitionFor(MirrorRecordKey key) {
         throwIfNotActive();
         return Utils.abs(key.asCoordinatorKey().hashCode()) % numPartitions;
     }

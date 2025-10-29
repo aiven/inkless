@@ -33,7 +33,7 @@ class ReplicaFetcherThread(name: String,
                            replicaMgr: ReplicaManager,
                            quota: ReplicaQuota,
                            logPrefix: String,
-                           clusterLinkName: String = "")
+                           mirrorName: String = "")
   extends AbstractFetcherThread(name = name,
                                 clientId = name,
                                 leader = leader,
@@ -42,8 +42,7 @@ class ReplicaFetcherThread(name: String,
                                 fetchBackOffMs = brokerConfig.replicaFetchBackoffMs,
                                 isInterruptible = false,
                                 replicaMgr.brokerTopicStats,
-                                clusterLinkName) {
-
+                                mirrorName) {
   this.logIdent = logPrefix
 
   // Visible for testing

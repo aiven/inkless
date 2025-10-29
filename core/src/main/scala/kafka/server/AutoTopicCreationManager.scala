@@ -25,7 +25,7 @@ import org.apache.kafka.clients.ClientResponse
 import org.apache.kafka.common.config.TopicConfig
 import org.apache.kafka.common.errors.InvalidTopicException
 import org.apache.kafka.common.internals.Topic
-import org.apache.kafka.common.internals.Topic.{CLUSTER_LINK_TOPIC_NAME, GROUP_METADATA_TOPIC_NAME, SHARE_GROUP_STATE_TOPIC_NAME, TRANSACTION_STATE_TOPIC_NAME}
+import org.apache.kafka.common.internals.Topic.{MIRROR_STATE_TOPIC_NAME, GROUP_METADATA_TOPIC_NAME, SHARE_GROUP_STATE_TOPIC_NAME, TRANSACTION_STATE_TOPIC_NAME}
 import org.apache.kafka.common.message.CreateTopicsRequestData
 import org.apache.kafka.common.message.CreateTopicsRequestData.{CreatableTopic, CreatableTopicConfig, CreatableTopicConfigCollection}
 import org.apache.kafka.common.message.MetadataResponseData.MetadataResponseTopic
@@ -206,7 +206,7 @@ class DefaultAutoTopicCreationManager(
           .setNumPartitions(config.shareCoordinatorConfig.shareCoordinatorStateTopicNumPartitions())
           .setReplicationFactor(config.shareCoordinatorConfig.shareCoordinatorStateTopicReplicationFactor())
           .setConfigs(convertToTopicConfigCollections(shareCoordinator.shareGroupStateTopicConfigs()))
-      case CLUSTER_LINK_TOPIC_NAME =>
+      case MIRROR_STATE_TOPIC_NAME =>
         // TODO
         // these properties I think we should define in the CLusterLinkCoordinator but now, I will hardcode
         // them here
@@ -216,8 +216,8 @@ class DefaultAutoTopicCreationManager(
         properties.put(TopicConfig.RETENTION_MS_CONFIG, -1)
         new CreatableTopic()
           .setName(topic)
-          .setNumPartitions(config.clusterLinksConfig.clusterLinkTopicNumPartitions())
-          .setReplicationFactor(config.clusterLinksConfig.clusterLinkTopicReplicationFactor())
+          .setNumPartitions(config.mirrorConfig.mirrorTopicNumPartitions())
+          .setReplicationFactor(config.mirrorConfig.mirrorTopicReplicationFactor())
           .setConfigs(convertToTopicConfigCollections(properties))
       case topicName =>
         new CreatableTopic()

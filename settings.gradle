@@ -65,7 +65,7 @@ buildCache {
 
 include 'clients',
     'clients:clients-integration-tests',
-    'cluster-link-coordinator',
+    'mirror-coordinator',
     'connect:api',
     'connect:basic-auth-extension',
     'connect:file',

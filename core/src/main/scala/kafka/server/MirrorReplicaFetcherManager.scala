@@ -27,15 +27,33 @@ import org.apache.kafka.server.common.MetadataVersion
 import org.apache.kafka.server.network.BrokerEndPoint
 import org.apache.kafka.server.LeaderEndPoint
 import org.apache.kafka.server.PartitionFetchState
-import org.apache.kafka.server.config.ClusterLinkConfigs
+import org.apache.kafka.server.config.MirrorConfig
 
 import scala.collection.{Map, mutable}
 
 /**
- * Dedicated fetcher manager for remote cluster link replication.
- * Handles fetcher threads that connect to remote clusters using cluster link authentication.
+ * Cluster Mirror component that manages replica fetcher threads for cluster mirroring scenarios
+ * where the local Kafka cluster needs to replicate data from multiple remote Kafka clusters.
+ *
+ * This manager extends the standard AbstractFetcherManager with specialized logic for handling
+ * multiple cluster mirrors simultaneously. The key architectural decision is to ensure that
+ * partitions from different cluster mirrors are assigned to separate fetcher threads, providing:
+ *
+ * 1. Authentication Isolation: Each cluster mirror can have its own authentication
+ *    credentials and security configuration, preventing credential conflicts.
+ *
+ * 2. Configuration Isolation: Different cluster mirrors can have distinct connection
+ *    properties, timeouts, and other networking configurations.
+ *
+ * 3. Load Balancing: Within each cluster mirror, partitions are distributed across
+ *    multiple fetcher threads based on the num.cluster.mirror.replica.fetchers configuration.
+ *
+ * The manager uses a three-dimensional key (source broker endpoint + fetcher ID + mirror name)
+ * to organize fetcher threads, ensuring proper isolation while maintaining efficient resource
+ * utilization. This design allows a single Kafka cluster to simultaneously mirror data from
+ * multiple remote clusters without interference between their respective configurations.
  */
-class RemoteReplicaFetcherManager(brokerConfig: KafkaConfig,
+class MirrorReplicaFetcherManager(brokerConfig: KafkaConfig,
                                   protected val replicaManager: ReplicaManager,
                                   metrics: Metrics,
                                   time: Time,
@@ -44,30 +62,30 @@ class RemoteReplicaFetcherManager(brokerConfig: KafkaConfig,
                                   brokerEpochSupplier: () => Long,
                                   metadataCache: MetadataCache)
     extends AbstractFetcherManager[ReplicaFetcherThread](
-      name = "RemoteReplicaFetcherManager on broker " + brokerConfig.brokerId,
-      clientId = "RemoteReplica",
-      numFetchers = brokerConfig.numRemoteReplicaFetchers) {
-  private val remoteFetcherThreadMap = new mutable.HashMap[BrokerAndFetcherIdWithClusterLink, ReplicaFetcherThread]
+      name = "MirrorReplicaFetcherManager on broker " + brokerConfig.brokerId,
+      clientId = "MirrorReplica",
+      numFetchers = brokerConfig.numMirrorReplicaFetchers) {
+  private val remoteFetcherThreadMap = new mutable.HashMap[BrokerAndFetcherIdWithMirror, ReplicaFetcherThread]
 
   override def createFetcherThread(fetcherId: Int, sourceBroker: BrokerEndPoint): ReplicaFetcherThread = {
-    throw new UnsupportedOperationException("Use createClusterLinkFetcherThread for remote fetchers")
+    throw new UnsupportedOperationException("Use createMirrorFetcherThread for mirror fetchers")
   }
 
   override def addFetcherForPartitions(partitionAndOffsets: Map[TopicPartition, InitialFetchState]): Unit = {
-    // Ensures partitions with different cluster links get separate fetcher threads.
-    // This is crucial because different cluster links may require different authentication credentials.
+    // Ensures partitions with different cluster mirrors get separate fetcher threads.
+    // This is crucial because different cluster mirrors may require different authentication credentials.
     val partitionsPerFetcher = partitionAndOffsets.groupBy { case (topicPartition, brokerAndInitialFetchOffset) =>
-      BrokerAndFetcherIdWithClusterLink(
+      BrokerAndFetcherIdWithMirror(
         brokerAndInitialFetchOffset.leader,
         getFetcherId(topicPartition),
-        brokerAndInitialFetchOffset.clusterLinkName
+        brokerAndInitialFetchOffset.mirrorName
       )
     }
 
     this.synchronized {
-      def addAndStartFetcherThread(remoteFetcherKey: BrokerAndFetcherIdWithClusterLink): ReplicaFetcherThread = {
-        val fetcherThread = createClusterLinkFetcherThread(remoteFetcherKey.fetcherId, remoteFetcherKey.sourceBroker,
-          remoteFetcherKey.clusterLinkName)
+      def addAndStartFetcherThread(remoteFetcherKey: BrokerAndFetcherIdWithMirror): ReplicaFetcherThread = {
+        val fetcherThread = createMirrorFetcherThread(remoteFetcherKey.fetcherId, remoteFetcherKey.sourceBroker,
+          remoteFetcherKey.mirrorName)
         remoteFetcherThreadMap.put(remoteFetcherKey, fetcherThread)
         fetcherThread.start()
         fetcherThread
@@ -90,26 +108,26 @@ class RemoteReplicaFetcherManager(brokerConfig: KafkaConfig,
     }
   }
 
-  def createClusterLinkFetcherThread(fetcherId: Int, sourceBroker: BrokerEndPoint, clusterLinkName: String): ReplicaFetcherThread = {
-    info(s"!!! createClusterLinkFetcherThread: sourceBroker = $sourceBroker fetcherId = $fetcherId clusterLinkName = $clusterLinkName")
-    val threadName = s"ReplicaFetcherThread-$fetcherId-${sourceBroker.id}-$clusterLinkName"
+  def createMirrorFetcherThread(fetcherId: Int, sourceBroker: BrokerEndPoint, mirrorName: String): ReplicaFetcherThread = {
+    info(s"!!! createMirrorFetcherThread: sourceBroker = $sourceBroker fetcherId = $fetcherId mirrorName = $mirrorName")
+    val threadName = s"ReplicaFetcherThread-$fetcherId-${sourceBroker.id}-$mirrorName"
     val logContext = new LogContext(s"[ReplicaFetcher replicaId=${brokerConfig.brokerId}, leaderId=${sourceBroker.id}, " +
-      s"fetcherId=$fetcherId, clusterLinkName=$clusterLinkName]")
+      s"fetcherId=$fetcherId, mirrorName=$mirrorName]")
 
-    val endpoint = if (clusterLinkName.nonEmpty) {
-      val clusterLinkProperties = metadataCache.config(new ConfigResource(ConfigResource.Type.CLUSTER_LINK, clusterLinkName))
-      info(s"Using cluster link properties for $clusterLinkName: ${clusterLinkProperties.keySet()}")
-      val clusterLinkConfigs = ClusterLinkConfigs.fromProperties(clusterLinkProperties)
-      new RemoteBrokerBlockingSender(sourceBroker, clusterLinkConfigs, metrics, time, fetcherId,
-        s"broker-${brokerConfig.brokerId}-fetcher-$fetcherId-link-$clusterLinkName", logContext)
+    val endpoint = if (mirrorName.nonEmpty) {
+      val mirrorProperties = metadataCache.config(new ConfigResource(ConfigResource.Type.MIRROR, mirrorName))
+      info(s"Using mirror properties for $mirrorName: ${mirrorProperties.keySet()}")
+      val mirrorConfig = MirrorConfig.fromProperties(mirrorProperties)
+      new MirrorBrokerBlockingSender(sourceBroker, mirrorConfig, metrics, time, fetcherId,
+        s"broker-${brokerConfig.brokerId}-fetcher-$fetcherId-mirror-$mirrorName", logContext)
     } else {
-      throw new IllegalArgumentException("Cluster link name must be provided for remote fetchers")
+      throw new IllegalArgumentException("Mirror name must be provided for remote fetchers")
     }
     val fetchSessionHandler = new FetchSessionHandler(logContext, sourceBroker.id)
     val leader: LeaderEndPoint = new RemoteLeaderEndPoint(logContext.logPrefix, endpoint, fetchSessionHandler, brokerConfig,
       replicaManager, quotaManager, metadataVersionSupplier, brokerEpochSupplier)
     new ReplicaFetcherThread(threadName, leader, brokerConfig, failedPartitions, replicaManager,
-      quotaManager, logContext.logPrefix, clusterLinkName)
+      quotaManager, logContext.logPrefix, mirrorName)
   }
 
   override def removeFetcherForPartitions(partitions: scala.collection.Set[TopicPartition]): scala.collection.Map[TopicPartition, PartitionFetchState] = {
@@ -120,13 +138,13 @@ class RemoteReplicaFetcherManager(brokerConfig: KafkaConfig,
       failedPartitions.removeAll(partitions)
     }
     if (partitions.nonEmpty)
-      info(s"Removed remote fetcher for partitions $partitions")
+      info(s"Removed mirror fetcher for partitions $partitions")
     fetchStates
   }
 
   override def shutdownIdleFetcherThreads(): Unit = {
     this.synchronized {
-      val keysToBeRemoved = new mutable.HashSet[BrokerAndFetcherIdWithClusterLink]
+      val keysToBeRemoved = new mutable.HashSet[BrokerAndFetcherIdWithMirror]
       for ((key, fetcher) <- remoteFetcherThreadMap) {
         if (fetcher.partitionCount <= 0) {
           fetcher.shutdown()
@@ -151,9 +169,9 @@ class RemoteReplicaFetcherManager(brokerConfig: KafkaConfig,
   }
 
   def shutdown(): Unit = {
-    info("Shutting down RemoteReplicaFetcherManager")
+    info("Shutting down MirrorReplicaFetcherManager")
     closeAllFetchers()
-    info("RemoteReplicaFetcherManager shutdown completed")
+    info("MirrorReplicaFetcherManager shutdown completed")
   }
 }
 
@@ -161,22 +179,22 @@ class RemoteReplicaFetcherManager(brokerConfig: KafkaConfig,
  * Three-dimensional key for grouping fetcher threads.
  *
  * Let's say you have:
- * - 2 remote cluster links: cluster-A and cluster-B
+ * - 2 remote cluster mirrors: cluster-A and cluster-B
  * - 2 brokers per cluster: broker-1, broker-2
  * - num.remote.replica.fetchers = 2
  *
  * The fetchers would be grouped like this:
  *
- * | Fetcher Thread                     | Cluster Link | Source Broker | Fetcher ID | Partitions           |
- * |------------------------------------|--------------|---------------|------------|----------------------|
- * | ReplicaFetcherThread-0-1-cluster-A | cluster-A    | broker-1      | 0          | topic1-p0, topic2-p2 |
- * | ReplicaFetcherThread-1-1-cluster-A | cluster-A    | broker-1      | 1          | topic1-p1, topic2-p3 |
- * | ReplicaFetcherThread-0-2-cluster-A | cluster-A    | broker-2      | 0          | topic3-p0, topic4-p2 |
- * | ReplicaFetcherThread-0-1-cluster-B | cluster-B    | broker-1      | 0          | topic5-p0, topic6-p1 |
+ * | Fetcher Thread                     | Cluster Mirror | Source Broker | Fetcher ID | Partitions           |
+ * |------------------------------------|----------------|---------------|------------|----------------------|
+ * | ReplicaFetcherThread-0-1-cluster-A | cluster-A      | broker-1      | 0          | topic1-p0, topic2-p2 |
+ * | ReplicaFetcherThread-1-1-cluster-A | cluster-A      | broker-1      | 1          | topic1-p1, topic2-p3 |
+ * | ReplicaFetcherThread-0-2-cluster-A | cluster-A      | broker-2      | 0          | topic3-p0, topic4-p2 |
+ * | ReplicaFetcherThread-0-1-cluster-B | cluster-B      | broker-1      | 0          | topic5-p0, topic6-p1 |
  *
  * The grouping ensures that:
- * - Partitions from different cluster links never share fetcher threads
+ * - Partitions from different cluster mirrors never share fetcher threads
  * - Load is balanced across the configured number of fetchers per broker
  * - Each fetcher thread has its own authentication context and configuration
  */
-case class BrokerAndFetcherIdWithClusterLink(sourceBroker: BrokerEndPoint, fetcherId: Int, clusterLinkName: String)
+case class BrokerAndFetcherIdWithMirror(sourceBroker: BrokerEndPoint, fetcherId: Int, mirrorName: String)

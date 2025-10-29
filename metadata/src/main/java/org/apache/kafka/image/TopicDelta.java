@@ -130,8 +130,8 @@ public final class TopicDelta {
                     setPartitionId(partitionId).
                     setTopicId(image.id()).
                     setEligibleLeaderReplicas(List.of()).
-                    setLastKnownElr(List.of())
-                    .setClusterLinkName(partition.clusterLinkName)
+                    setLastKnownElr(List.of()).
+                    setMirrorName(partition.mirrorName)
             ));
         }
     }
@@ -194,7 +194,7 @@ public final class TopicDelta {
                 if (prevPartition == null || prevPartition.partitionEpoch != entry.getValue().partitionEpoch) {
                     TopicPartition tp = new TopicPartition(name(), entry.getKey());
                     LocalReplicaChanges.PartitionInfo partitionInfo = new LocalReplicaChanges.PartitionInfo(id(), entry.getValue());
-                    if (!entry.getValue().clusterLinkName.isBlank()) {
+                    if (!entry.getValue().mirrorName.isBlank()) {
                         readOnlyLeaders.put(tp, partitionInfo);
                     }
                     leaders.put(tp, partitionInfo);

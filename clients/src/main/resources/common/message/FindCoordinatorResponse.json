@@ -29,7 +29,7 @@
   //
   // Version 6 adds support for share groups (KIP-932).
   //
-  // Version 7 adds support for cluster link
+  // Version 7 adds support for cluster mirror (KIP-next)
   "validVersions": "0-7",
   "flexibleVersions": "3+",
   "fields": [

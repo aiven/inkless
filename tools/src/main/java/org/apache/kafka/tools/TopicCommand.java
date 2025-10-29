@@ -21,8 +21,8 @@ import org.apache.kafka.clients.admin.Admin;
 import org.apache.kafka.clients.admin.AdminClientConfig;
 import org.apache.kafka.clients.admin.Config;
 import org.apache.kafka.clients.admin.ConfigEntry;
-import org.apache.kafka.clients.admin.CreateClusterLinkOptions;
-import org.apache.kafka.clients.admin.CreateClusterLinkResult;
+import org.apache.kafka.clients.admin.CreateMirrorOptions;
+import org.apache.kafka.clients.admin.CreateMirrorResult;
 import org.apache.kafka.clients.admin.CreatePartitionsOptions;
 import org.apache.kafka.clients.admin.CreateTopicsOptions;
 import org.apache.kafka.clients.admin.CreateTopicsResult;
@@ -544,9 +544,8 @@ public abstract class TopicCommand {
             }
         }
 
-        // luke
         public void createLink(TopicCommandOptions opts) throws ExecutionException, InterruptedException {
-            CreateClusterLinkResult result = adminClient.createClusterLink(opts.linkName().orElse(""), linkConfigs, new CreateClusterLinkOptions());
+            CreateMirrorResult result = adminClient.createMirror(opts.linkName().orElse(""), linkConfigs, new CreateMirrorOptions());
             result.all().get();
         }
 

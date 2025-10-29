@@ -141,7 +141,7 @@ class ControllerConfigurationValidator(kafkaConfig: KafkaConfig) extends Configu
             nullGroupConfigs.mkString(","))
         }
         GroupConfigManager.validate(properties, kafkaConfig.groupCoordinatorConfig, kafkaConfig.shareGroupConfig)
-      case Type.CLUSTER_LINK =>
+      case Type.MIRROR =>
       case _ => throwExceptionForUnknownResourceType(resource)
     }
   }

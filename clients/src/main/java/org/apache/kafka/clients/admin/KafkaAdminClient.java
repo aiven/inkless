@@ -199,10 +199,10 @@ import org.apache.kafka.common.requests.ApiVersionsRequest;
 import org.apache.kafka.common.requests.ApiVersionsResponse;
 import org.apache.kafka.common.requests.CreateAclsRequest;
 import org.apache.kafka.common.requests.CreateAclsResponse;
-import org.apache.kafka.common.requests.CreateClusterLinkRequest;
-import org.apache.kafka.common.requests.CreateClusterLinkResponse;
 import org.apache.kafka.common.requests.CreateDelegationTokenRequest;
 import org.apache.kafka.common.requests.CreateDelegationTokenResponse;
+import org.apache.kafka.common.requests.CreateMirrorRequest;
+import org.apache.kafka.common.requests.CreateMirrorResponse;
 import org.apache.kafka.common.requests.CreatePartitionsRequest;
 import org.apache.kafka.common.requests.CreatePartitionsResponse;
 import org.apache.kafka.common.requests.CreateTopicsRequest;
@@ -1819,7 +1819,7 @@ public class KafkaAdminClient extends AdminClient {
             AbstractRequest.Builder<?> createRequest(int timeoutMs) {
                 return new FindCoordinatorRequest.Builder(
                     new FindCoordinatorRequestData()
-                        .setKeyType(FindCoordinatorRequest.CoordinatorType.CLUSTER_LINK.id())
+                        .setKeyType(FindCoordinatorRequest.CoordinatorType.MIRROR.id())
                         .setKey(key)
                         .setCoordinatorKeys(List.of())
                 );
@@ -4821,24 +4821,22 @@ public class KafkaAdminClient extends AdminClient {
         return new DescribeMetadataQuorumResult(future);
     }
 
-
-    // luke
     @Override
-    public CreateClusterLinkResult createClusterLink(String clusterLinkName, Map<String, String> configs, CreateClusterLinkOptions options) {
+    public CreateMirrorResult createMirror(String mirrorName, Map<String, String> configs, CreateMirrorOptions options) {
         final KafkaFutureImpl<Void> future = new KafkaFutureImpl<>();
         final long now = time.milliseconds();
-        final Call call = new Call("createClusterLink", calcDeadlineMs(now, options.timeoutMs()),
+        final Call call = new Call("createMirror", calcDeadlineMs(now, options.timeoutMs()),
                 new LeastLoadedBrokerOrActiveKController()) {
 
             @Override
-            CreateClusterLinkRequest.Builder createRequest(int timeoutMs) {
-                return new CreateClusterLinkRequest.Builder(clusterLinkName, configs);
+            CreateMirrorRequest.Builder createRequest(int timeoutMs) {
+                return new CreateMirrorRequest.Builder(mirrorName, configs);
             }
 
             @Override
             void handleResponse(AbstractResponse abstractResponse) {
-                final CreateClusterLinkResponse response =
-                        (CreateClusterLinkResponse) abstractResponse;
+                final CreateMirrorResponse response =
+                        (CreateMirrorResponse) abstractResponse;
                 Errors error = Errors.forCode(response.data().errorCode());
                 switch (error) {
                     case NONE:
@@ -4847,8 +4845,7 @@ public class KafkaAdminClient extends AdminClient {
                     case REQUEST_TIMED_OUT:
                         throw error.exception(response.data().errorMessage());
                     default:
-                        log.error("create cluster link {} failed: {}",
-                                clusterLinkName, response.data().errorMessage());
+                        log.error("Create mirror {} failed: {}", mirrorName, response.data().errorMessage());
                         future.completeExceptionally(error.exception(response.data().errorMessage()));
                         break;
                 }
@@ -4860,7 +4857,7 @@ public class KafkaAdminClient extends AdminClient {
             }
         };
         runnable.call(call, now);
-        return new CreateClusterLinkResult(future);
+        return new CreateMirrorResult(future);
     }
 
     @Override

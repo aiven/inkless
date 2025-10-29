@@ -356,8 +356,8 @@ public abstract class AbstractRequest implements AbstractRequestResponse {
                 return DeleteShareGroupOffsetsRequest.parse(readable, apiVersion);
             case GET_REPLICA_LOG_INFO:
                 return GetReplicaLogInfoRequest.parse(readable, apiVersion);
-            case CREATE_CLUSTER_LINK:
-                return CreateClusterLinkRequest.parse(readable, apiVersion);
+            case CREATE_MIRROR:
+                return CreateMirrorRequest.parse(readable, apiVersion);
             default:
                 throw new AssertionError(String.format("ApiKey %s is not currently handled in `parseRequest`, the " +
                         "code should be updated to do so.", apiKey));

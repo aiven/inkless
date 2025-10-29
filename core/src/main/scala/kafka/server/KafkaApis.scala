@@ -20,8 +20,8 @@ package kafka.server
 import kafka.coordinator.transaction.{InitProducerIdResult, TransactionCoordinator}
 import kafka.network.RequestChannel
 import kafka.server.QuotaFactory.{QuotaManagers, UNBOUNDED_QUOTA}
-import kafka.server.coordinator.{ClusterLinkKey, TopicMirrorLinkCoordinator}
 import kafka.server.handlers.DescribeTopicPartitionsRequestHandler
+import kafka.server.mirror.MirrorCoordinator
 import kafka.server.share.{ShareFetchUtils, SharePartitionManager}
 import kafka.utils.Logging
 import org.apache.kafka.clients.CommonClientConfigs
@@ -30,7 +30,7 @@ import org.apache.kafka.common.acl.AclOperation
 import org.apache.kafka.common.acl.AclOperation._
 import org.apache.kafka.common.config.ConfigResource
 import org.apache.kafka.common.errors._
-import org.apache.kafka.common.internals.Topic.{CLUSTER_LINK_TOPIC_NAME, GROUP_METADATA_TOPIC_NAME, SHARE_GROUP_STATE_TOPIC_NAME, TRANSACTION_STATE_TOPIC_NAME, isInternal}
+import org.apache.kafka.common.internals.Topic.{MIRROR_STATE_TOPIC_NAME, GROUP_METADATA_TOPIC_NAME, SHARE_GROUP_STATE_TOPIC_NAME, TRANSACTION_STATE_TOPIC_NAME, isInternal}
 import org.apache.kafka.common.internals.{FatalExitError, Plugin, Topic}
 import org.apache.kafka.common.message.AddPartitionsToTxnResponseData.{AddPartitionsToTxnResult, AddPartitionsToTxnResultCollection}
 import org.apache.kafka.common.message.DeleteRecordsResponseData.{DeleteRecordsPartitionResult, DeleteRecordsTopicResult}
@@ -60,6 +60,7 @@ import org.apache.kafka.common.security.token.delegation.{DelegationToken, Token
 import org.apache.kafka.common.utils.{ProducerIdAndEpoch, Time}
 import org.apache.kafka.common.{Node, TopicIdPartition, TopicPartition, Uuid}
 import org.apache.kafka.coordinator.group.{Group, GroupConfig, GroupConfigManager, GroupCoordinator}
+import org.apache.kafka.coordinator.mirror.MirrorRecordKey
 import org.apache.kafka.coordinator.share.ShareCoordinator
 import org.apache.kafka.metadata.{ConfigRepository, MetadataCache}
 import org.apache.kafka.server.{ApiVersionManager, ClientMetricsManager, DelegationTokenManager, ProcessRole}
@@ -96,7 +97,7 @@ class KafkaApis(val requestChannel: RequestChannel,
                 val groupCoordinator: GroupCoordinator,
                 val txnCoordinator: TransactionCoordinator,
                 val shareCoordinator: ShareCoordinator,
-                val topicMirrorLinkCoordinator: TopicMirrorLinkCoordinator,
+                val mirrorCoordinator: MirrorCoordinator,
                 val autoTopicCreationManager: AutoTopicCreationManager,
                 val brokerId: Int,
                 val config: KafkaConfig,
@@ -250,7 +251,7 @@ class KafkaApis(val requestChannel: RequestChannel,
         case ApiKeys.STREAMS_GROUP_DESCRIBE => handleStreamsGroupDescribe(request).exceptionally(handleError)
         case ApiKeys.STREAMS_GROUP_HEARTBEAT => handleStreamsGroupHeartbeat(request).exceptionally(handleError)
         case ApiKeys.GET_REPLICA_LOG_INFO => handleGetReplicaLogInfo(request)
-        case ApiKeys.CREATE_CLUSTER_LINK => forwardToController(request)
+        case ApiKeys.CREATE_MIRROR => forwardToController(request)
         case _ => throw new IllegalStateException(s"No handler for request api key ${request.header.apiKey}")
       }
     } catch {
@@ -270,12 +271,12 @@ class KafkaApis(val requestChannel: RequestChannel,
 
   def handleCreateTopics(request: RequestChannel.Request): Unit = {
     val createTopicsRequest = request.body[CreateTopicsRequest]
-    // TODO: might need to have a better way to pass the cluster link and bootstrap server info
+    // TODO: might need to have a better way to pass the cluster mirror and bootstrap server info
     logger.info(s"!!! Handling create topics request")
-    val clusterLinkTopic = createTopicsRequest.data.topics.stream().filter(t => t.clusterLink() != null && !t.clusterLink().isEmpty).findFirst()
-    if (clusterLinkTopic.isPresent) {
-      logger.info(s"!!! Handling create mirror topics request: ${clusterLinkTopic.get().clusterLink()}")
-      topicMirrorLinkCoordinator.addTopicsInCoordinator(clusterLinkTopic.get().clusterLink(), util.Set.of(clusterLinkTopic.get().name()));
+    val mirrorTopic = createTopicsRequest.data.topics.stream().filter(t => t.mirrorName() != null && !t.mirrorName().isEmpty).findFirst()
+    if (mirrorTopic.isPresent) {
+      logger.info(s"!!! Handling create mirror topics request: ${mirrorTopic.get().mirrorName()}")
+      mirrorCoordinator.addTopicsToCoordinator(mirrorTopic.get().mirrorName(), util.Set.of(mirrorTopic.get().name()))
     }
     forwardToController(request)
   }
@@ -1273,9 +1274,9 @@ class KafkaApis(val requestChannel: RequestChannel,
   }
 
   def handleFindCoordinatorRequest(request: RequestChannel.Request): Unit = {
-    logger.info("================================handleFindCoordinatorRequest========================")
+    logger.info("!!! handleFindCoordinatorRequest")
     val version = request.header.apiVersion
-    logger.info("the version of FindCoordinatorRequest is " + version)
+    logger.info("!!! the version of FindCoordinatorRequest is " + version)
     if (version < 4) {
       handleFindCoordinatorRequestLessThanV4(request)
     } else {
@@ -1288,7 +1289,7 @@ class KafkaApis(val requestChannel: RequestChannel,
 
     val coordinators = findCoordinatorRequest.data.coordinatorKeys.asScala.map { key =>
       val (error, node) = getCoordinator(request, findCoordinatorRequest.data.keyType, key)
-      logger.info("the node is " + node + ", the error is " + error)
+      logger.info("!!! the node is " + node + ", the error is " + error)
       new FindCoordinatorResponseData.Coordinator()
         .setKey(key)
         .setErrorCode(error.code)
@@ -1342,8 +1343,8 @@ class KafkaApis(val requestChannel: RequestChannel,
       (Errors.TRANSACTIONAL_ID_AUTHORIZATION_FAILED, Node.noNode)
     else if (keyType == CoordinatorType.SHARE.id && request.context.apiVersion < 6)
       (Errors.INVALID_REQUEST, Node.noNode)
-    else if (keyType == CoordinatorType.CLUSTER_LINK.id && request.context.apiVersion < 7) {
-      logger.warn("Cluster link coordinator type is not supported for " +
+    else if (keyType == CoordinatorType.MIRROR.id && request.context.apiVersion < 7) {
+      logger.warn("Mirror coordinator type is not supported for " +
         s"FindCoordinatorRequest version ${request.context.apiVersion}")
       (Errors.INVALID_REQUEST, Node.noNode)
     } else {
@@ -1356,12 +1357,12 @@ class KafkaApis(val requestChannel: RequestChannel,
             error(s"Share coordinator key is invalid", e)
             return (Errors.INVALID_REQUEST, Node.noNode)
         }
-      } else if (keyType == CoordinatorType.CLUSTER_LINK.id) {
+      } else if (keyType == CoordinatorType.MIRROR.id) {
         try {
-          ClusterLinkKey.validate(key)
+          MirrorRecordKey.validate(key)
         } catch {
           case e: IllegalArgumentException =>
-            error(s"Cluster link coordinator key is invalid", e)
+            error(s"Mirror coordinator key is invalid", e)
             return (Errors.INVALID_REQUEST, Node.noNode)
         }
       }
@@ -1375,16 +1376,17 @@ class KafkaApis(val requestChannel: RequestChannel,
         case CoordinatorType.SHARE =>
           // We know that shareCoordinator is defined at this stage.
           (shareCoordinator.partitionFor(SharePartitionKey.getInstance(key)), SHARE_GROUP_STATE_TOPIC_NAME)
-        case CoordinatorType.CLUSTER_LINK =>
-          (topicMirrorLinkCoordinator.partitionFor(ClusterLinkKey.getInstance(key)), CLUSTER_LINK_TOPIC_NAME)
+
+        case CoordinatorType.MIRROR =>
+          (mirrorCoordinator.partitionFor(MirrorRecordKey.getInstance(key)), MIRROR_STATE_TOPIC_NAME)
       }
 
-      logger.info("The partition of coordinator key " + key + " is " + partition + ", the internal topic name is " + internalTopicName)
+      logger.info("!!! The partition of coordinator key " + key + " is " + partition + ", the internal topic name is " + internalTopicName)
 
       val topicMetadata = metadataCache.getTopicMetadata(Set(internalTopicName).asJava, request.context.listenerName, false, false).asScala
 
       if (topicMetadata.headOption.isEmpty) {
-        logger.info("The internal topic " + internalTopicName + " does not exist when finding coordinator for key " + key +
+        logger.info("!!! The internal topic " + internalTopicName + " does not exist when finding coordinator for key " + key +
           ". Attempting to create the topic.")
         val controllerMutationQuota = quotas.controllerMutation.newPermissiveQuotaFor(request.session, request.header.clientId)
         autoTopicCreationManager.createTopics(Seq(internalTopicName).toSet, controllerMutationQuota, None)
@@ -1400,7 +1402,7 @@ class KafkaApis(val requestChannel: RequestChannel,
             .findFirst()
 
           if (coordinatorEndpoint.isPresent) {
-            logger.info("The coordinator for key " + key + " is " + coordinatorEndpoint.get())
+            logger.info("!!! The coordinator for key " + key + " is " + coordinatorEndpoint.get())
             (Errors.NONE, coordinatorEndpoint.get)
           } else {
             (Errors.COORDINATOR_NOT_AVAILABLE, Node.noNode)

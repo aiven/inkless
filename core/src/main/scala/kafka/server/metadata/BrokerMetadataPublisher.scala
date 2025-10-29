@@ -20,9 +20,9 @@ package kafka.server.metadata
 import java.util.OptionalInt
 import kafka.coordinator.transaction.TransactionCoordinator
 import kafka.log.LogManager
-import kafka.server.coordinator.TopicMirrorLinkCoordinator
 import kafka.server.share.SharePartitionManager
-import kafka.server.{KafkaConfig, RemoteClusterMetadataManager, ReplicaManager}
+import kafka.server.{KafkaConfig, ReplicaManager}
+import kafka.server.mirror.{MirrorMetadataManager, MirrorCoordinator}
 import kafka.utils.Logging
 import org.apache.kafka.common.TopicPartition
 import org.apache.kafka.common.errors.TimeoutException
@@ -77,7 +77,6 @@ class BrokerMetadataPublisher(
   groupCoordinator: GroupCoordinator,
   txnCoordinator: TransactionCoordinator,
   shareCoordinator: ShareCoordinator,
-  topicMirrorLinkCoordinator: TopicMirrorLinkCoordinator,
   sharePartitionManager: SharePartitionManager,
   var dynamicConfigPublisher: DynamicConfigPublisher,
   dynamicClientQuotaPublisher: DynamicClientQuotaPublisher,
@@ -87,7 +86,8 @@ class BrokerMetadataPublisher(
   aclPublisher: AclPublisher,
   fatalFaultHandler: FaultHandler,
   metadataPublishingFaultHandler: FaultHandler,
-  remoteClusterMetadataManager: RemoteClusterMetadataManager
+  mirrorCoordinator: MirrorCoordinator,
+  mirrorMetadataManager: MirrorMetadataManager
 ) extends MetadataPublisher with Logging {
   logIdent = s"[BrokerMetadataPublisher id=${config.nodeId}] "
 
@@ -217,14 +217,14 @@ class BrokerMetadataPublisher(
             s"coordinator with deleted partitions in $deltaName", t)
         }
         try {
-          // Notify the topic mirror link coordinator about changes to topics
+          // Update the mirror coordinator of topic changes
           updateCoordinator(newImage,
             delta,
-            Topic.CLUSTER_LINK_TOPIC_NAME,
-            topicMirrorLinkCoordinator.onElection,
-            (partitionIndex, leaderEpochOpt) => topicMirrorLinkCoordinator.onResignation(partitionIndex, toOptionalInt(leaderEpochOpt)))
+            Topic.MIRROR_STATE_TOPIC_NAME,
+            mirrorCoordinator.onElection,
+            (partitionIndex, leaderEpochOpt) => mirrorCoordinator.onResignation(partitionIndex, toOptionalInt(leaderEpochOpt)))
         } catch {
-          case t: Throwable => metadataPublishingFaultHandler.handleFault("Error updating topic mirror link " +
+          case t: Throwable => metadataPublishingFaultHandler.handleFault("Error updating mirror " +
             s"coordinator with local changes in $deltaName", t)
         }
       }
@@ -247,7 +247,7 @@ class BrokerMetadataPublisher(
       // Apply ACL delta.
       aclPublisher.onMetadataUpdate(delta, newImage, manifest)
 
-      remoteClusterMetadataManager.onMetadataUpdate(delta, newImage, manifest)
+      mirrorMetadataManager.onMetadataUpdate(delta, newImage, manifest)
 
       try {
         // Propagate the new image to the group coordinator.
@@ -408,8 +408,8 @@ class BrokerMetadataPublisher(
       case t: Throwable => fatalFaultHandler.handleFault("Error starting Share coordinator", t)
     }
     try {
-      // Start the topic mirror coordinator.
-      topicMirrorLinkCoordinator.startup()
+      // Start the mirror coordinator.
+      mirrorCoordinator.startup()
     } catch {
       case t: Throwable => fatalFaultHandler.handleFault("Error starting topic link coordinator", t)
     }
