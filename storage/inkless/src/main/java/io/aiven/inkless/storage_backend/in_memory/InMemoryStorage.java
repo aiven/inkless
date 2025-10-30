@@ -17,6 +17,9 @@
  */
 package io.aiven.inkless.storage_backend.in_memory;
 
+import org.apache.kafka.common.metrics.Metrics;
+import org.apache.kafka.common.utils.Time;
+
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -40,8 +43,13 @@ import io.aiven.inkless.storage_backend.common.StorageBackendException;
  *
  * <p>Useful for testing.
  */
-public class InMemoryStorage implements StorageBackend {
+public final class InMemoryStorage extends StorageBackend {
     private final ConcurrentHashMap<ObjectKey, byte[]> storage = new ConcurrentHashMap<>();
+
+    // needed for reflection based instantiation
+    public InMemoryStorage() {
+        super(new Metrics(Time.SYSTEM));
+    }
 
     @Override
     public void configure(final Map<String, ?> configs) {

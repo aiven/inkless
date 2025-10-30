@@ -200,49 +200,52 @@ class FileMergerIntegrationTest {
 
         createTopics(controlPlane);
 
-        final AppendHandler appendHandler = new AppendHandler(sharedState);
-        final FetchHandler fetchHandler = new FetchHandler(sharedState);
-        final FileMerger fileMerger = new FileMerger(sharedState);
+        try (
+            final AppendHandler appendHandler = new AppendHandler(sharedState);
+            final FetchHandler fetchHandler = new FetchHandler(sharedState);
+            final FileMerger fileMerger = new FileMerger(sharedState)
+        ) {
 
-        // Write a bunch of records.
-        writeRecords(appendHandler);
+            // Write a bunch of records.
+            writeRecords(appendHandler);
 
-        // Consume the high watermarks and the records themselves for future comparison.
-        final Map<TopicIdPartition, Long> highWatermarks1 = getHighWatermarks(controlPlane);
-        final Map<TopicIdPartition, List<RecordBatch>> batches1 = read(fetchHandler, highWatermarks1);
-        // Ensure _something_ was written.
-        for (final long hwm : highWatermarks1.values()) {
-            assertThat(hwm).isPositive();
-        }
-        for (final List<RecordBatch> bs : batches1.values()) {
-            assertThat(bs).isNotEmpty();
-            for (final RecordBatch b : bs) {
-                assertThat(b.countOrNull()).isPositive();
+            // Consume the high watermarks and the records themselves for future comparison.
+            final Map<TopicIdPartition, Long> highWatermarks1 = getHighWatermarks(controlPlane);
+            final Map<TopicIdPartition, List<RecordBatch>> batches1 = read(fetchHandler, highWatermarks1);
+            // Ensure _something_ was written.
+            for (final long hwm : highWatermarks1.values()) {
+                assertThat(hwm).isPositive();
             }
+            for (final List<RecordBatch> bs : batches1.values()) {
+                assertThat(bs).isNotEmpty();
+                for (final RecordBatch b : bs) {
+                    assertThat(b.countOrNull()).isPositive();
+                }
+            }
+            final List<S3Object> files1 = getFiles();
+
+            // Merge and delete old files while possible.
+            int deletedPreviousIteration = Integer.MAX_VALUE;
+            while (deletedPreviousIteration > 0) {
+                fileMerger.run();
+                deletedPreviousIteration = deleteFilesToBeDeleted(controlPlane);
+            }
+
+            final List<S3Object> files2 = getFiles();
+
+            // After merging, there should be fewer files.
+            assertThat(files2.size()).isLessThan(files1.size());
+
+            // However, the watermarks and records should be exactly as before.
+            final Map<TopicIdPartition, Long> highWatermarks2 = getHighWatermarks(controlPlane);
+            assertThat(highWatermarks2).isEqualTo(highWatermarks1);
+            final Map<TopicIdPartition, List<RecordBatch>> batches2 = read(fetchHandler, highWatermarks2);
+            assertThat(batches2).isEqualTo(batches1);
+
+            // Ensure work dir is empty.
+            Path workDir = inklessConfig.fileMergeWorkDir();
+            assertThat(workDir).isEmptyDirectory();
         }
-        final List<S3Object> files1 = getFiles();
-
-        // Merge and delete old files while possible.
-        int deletedPreviousIteration = Integer.MAX_VALUE;
-        while (deletedPreviousIteration > 0) {
-            fileMerger.run();
-            deletedPreviousIteration = deleteFilesToBeDeleted(controlPlane);
-        }
-
-        final List<S3Object> files2 = getFiles();
-
-        // After merging, there should be fewer files.
-        assertThat(files2.size()).isLessThan(files1.size());
-
-        // However, the watermarks and records should be exactly as before.
-        final Map<TopicIdPartition, Long> highWatermarks2 = getHighWatermarks(controlPlane);
-        assertThat(highWatermarks2).isEqualTo(highWatermarks1);
-        final Map<TopicIdPartition, List<RecordBatch>> batches2 = read(fetchHandler, highWatermarks2);
-        assertThat(batches2).isEqualTo(batches1);
-
-        // Ensure work dir is empty.
-        Path workDir = inklessConfig.fileMergeWorkDir();
-        assertThat(workDir).isEmptyDirectory();
     }
 
     private void createTopics(final ControlPlane controlPlane) {

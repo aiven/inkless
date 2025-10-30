@@ -17,6 +17,8 @@
  */
 package io.aiven.inkless.storage_backend.s3;
 
+import org.apache.kafka.common.metrics.Metrics;
+
 import software.amazon.awssdk.auth.credentials.AwsCredentialsProvider;
 import software.amazon.awssdk.core.internal.http.loader.DefaultSdkHttpClientBuilder;
 import software.amazon.awssdk.http.SdkHttpConfigurationOption;
@@ -25,11 +27,8 @@ import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.utils.AttributeMap;
 
 class S3ClientBuilder {
-    // Use a single instance to avoid creating many metric registries
-    // meaning a single set of metrics is published and instantiated only once
-    static final MetricCollector metricPublisher = new MetricCollector();
-
-    static S3Client build(final S3StorageConfig config) {
+    static S3Client build(final Metrics metrics, final S3StorageConfig config) {
+        final MetricCollector metricCollector = new MetricCollector(metrics);
         final software.amazon.awssdk.services.s3.S3ClientBuilder s3ClientBuilder = S3Client.builder();
         final Region region = config.region();
         if (config.s3ServiceEndpoint() == null) {
@@ -59,7 +58,7 @@ class S3ClientBuilder {
             s3ClientBuilder.credentialsProvider(credentialsProvider);
         }
         s3ClientBuilder.overrideConfiguration(c -> {
-            c.addMetricPublisher(metricPublisher);
+            c.addMetricPublisher(metricCollector);
             c.apiCallTimeout(config.apiCallTimeout());
             c.apiCallAttemptTimeout(config.apiCallAttemptTimeout());
         });

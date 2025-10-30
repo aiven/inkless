@@ -26,8 +26,6 @@ import java.util.List;
 
 @CoverageIgnore  // tested on integration level
 public class MetricRegistry {
-    public static final String METRIC_CONTEXT = "io.aiven.inkless.storage.gcs";
-
     static final String METRIC_GROUP = "gcs-client-metrics";
     static final String OBJECT_METADATA_GET = "object-metadata-get";
     static final String OBJECT_METADATA_GET_RATE = OBJECT_METADATA_GET + "-rate";

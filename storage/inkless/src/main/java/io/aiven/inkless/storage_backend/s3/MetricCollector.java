@@ -18,16 +18,12 @@
 package io.aiven.inkless.storage_backend.s3;
 
 import org.apache.kafka.common.MetricNameTemplate;
-import org.apache.kafka.common.metrics.JmxReporter;
-import org.apache.kafka.common.metrics.KafkaMetricsContext;
-import org.apache.kafka.common.metrics.MetricConfig;
-import org.apache.kafka.common.metrics.MetricsReporter;
+import org.apache.kafka.common.metrics.Metrics;
 import org.apache.kafka.common.metrics.Sensor;
 import org.apache.kafka.common.metrics.stats.Avg;
 import org.apache.kafka.common.metrics.stats.CumulativeCount;
 import org.apache.kafka.common.metrics.stats.Max;
 import org.apache.kafka.common.metrics.stats.Rate;
-import org.apache.kafka.common.utils.Time;
 
 import com.groupcdg.pitest.annotations.CoverageIgnore;
 
@@ -85,7 +81,6 @@ import static io.aiven.inkless.storage_backend.s3.MetricRegistry.GET_OBJECT_TIME
 import static io.aiven.inkless.storage_backend.s3.MetricRegistry.IO_ERRORS;
 import static io.aiven.inkless.storage_backend.s3.MetricRegistry.IO_ERRORS_RATE_METRIC_NAME;
 import static io.aiven.inkless.storage_backend.s3.MetricRegistry.IO_ERRORS_TOTAL_METRIC_NAME;
-import static io.aiven.inkless.storage_backend.s3.MetricRegistry.METRIC_CONTEXT;
 import static io.aiven.inkless.storage_backend.s3.MetricRegistry.OTHER_ERRORS;
 import static io.aiven.inkless.storage_backend.s3.MetricRegistry.OTHER_ERRORS_RATE_METRIC_NAME;
 import static io.aiven.inkless.storage_backend.s3.MetricRegistry.OTHER_ERRORS_TOTAL_METRIC_NAME;
@@ -123,13 +118,8 @@ public class MetricCollector implements MetricPublisher {
     private final Map<String, Sensor> latencyMetrics = new HashMap<>();
     private final Map<String, Sensor> errorMetrics = new HashMap<>();
 
-    public MetricCollector() {
-        final MetricsReporter reporter = new JmxReporter();
-
-        metrics = new org.apache.kafka.common.metrics.Metrics(
-            new MetricConfig(), List.of(reporter), Time.SYSTEM,
-            new KafkaMetricsContext(METRIC_CONTEXT)
-        );
+    public MetricCollector(Metrics metrics) {
+        this.metrics = metrics;
         final Sensor getObjectRequestsSensor = createRequestsSensor(
             GET_OBJECT_REQUESTS,
             GET_OBJECT_REQUESTS_RATE_METRIC_NAME,
@@ -325,29 +315,6 @@ public class MetricCollector implements MetricPublisher {
 
     @Override
     public void close() {
-        // remove sensors to restart their counts when reconfigured
-        // instead of closing metrics which would affect other storage backends if used together
-        // TODO: consider making a single metrics to be passed to all storage backends
-        metrics.removeSensor(GET_OBJECT_REQUESTS);
-        metrics.removeSensor(UPLOAD_PART_REQUESTS);
-        metrics.removeSensor(CREATE_MULTIPART_UPLOAD_REQUESTS);
-        metrics.removeSensor(COMPLETE_MULTIPART_UPLOAD_REQUESTS);
-        metrics.removeSensor(PUT_OBJECT_REQUESTS);
-        metrics.removeSensor(DELETE_OBJECT_REQUESTS);
-        metrics.removeSensor(DELETE_OBJECTS_REQUESTS);
-        metrics.removeSensor(ABORT_MULTIPART_UPLOAD_REQUESTS);
-        metrics.removeSensor(GET_OBJECT_TIME);
-        metrics.removeSensor(UPLOAD_PART_TIME);
-        metrics.removeSensor(CREATE_MULTIPART_UPLOAD_TIME);
-        metrics.removeSensor(COMPLETE_MULTIPART_UPLOAD_TIME);
-        metrics.removeSensor(PUT_OBJECT_TIME);
-        metrics.removeSensor(DELETE_OBJECT_TIME);
-        metrics.removeSensor(DELETE_OBJECTS_TIME);
-        metrics.removeSensor(ABORT_MULTIPART_UPLOAD_TIME);
-        metrics.removeSensor(THROTTLING_ERRORS);
-        metrics.removeSensor(SERVER_ERRORS);
-        metrics.removeSensor(CONFIGURED_TIMEOUT_ERRORS);
-        metrics.removeSensor(IO_ERRORS);
-        metrics.removeSensor(OTHER_ERRORS);
+        // do nothing as metrics are shared
     }
 }
