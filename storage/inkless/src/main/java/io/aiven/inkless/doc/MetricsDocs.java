@@ -27,6 +27,8 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.TreeMap;
 
+import io.aiven.inkless.common.SharedState;
+
 import static java.lang.System.out;
 
 public class MetricsDocs {
@@ -39,17 +41,17 @@ public class MetricsDocs {
         // AWS S3 storage backend metrics
         printHeading(io.aiven.inkless.storage_backend.s3.S3Storage.class.getSimpleName() + " metrics");
         out.println();
-        out.println(toRstTable(io.aiven.inkless.storage_backend.s3.MetricRegistry.METRIC_CONTEXT, io.aiven.inkless.storage_backend.s3.MetricRegistry.all()));
+        out.println(toRstTable(SharedState.STORAGE_METRIC_CONTEXT, io.aiven.inkless.storage_backend.s3.MetricRegistry.all()));
 
         // Azure storage backend metrics
         printHeading(io.aiven.inkless.storage_backend.azure.AzureBlobStorage.class.getSimpleName() + " metrics");
         out.println();
-        out.println(toRstTable(io.aiven.inkless.storage_backend.azure.MetricRegistry.METRIC_CONTEXT, io.aiven.inkless.storage_backend.azure.MetricRegistry.all()));
+        out.println(toRstTable(SharedState.STORAGE_METRIC_CONTEXT, io.aiven.inkless.storage_backend.azure.MetricRegistry.all()));
 
         // Google Cloud Storage backend metrics
         printHeading(io.aiven.inkless.storage_backend.gcs.GcsStorage.class.getSimpleName() + " metrics");
         out.println();
-        out.println(toRstTable(io.aiven.inkless.storage_backend.gcs.MetricRegistry.METRIC_CONTEXT, io.aiven.inkless.storage_backend.gcs.MetricRegistry.all()));
+        out.println(toRstTable(SharedState.STORAGE_METRIC_CONTEXT, io.aiven.inkless.storage_backend.gcs.MetricRegistry.all()));
     }
 
     // o.a.k.common.metrics.Metrics does only have generation of Html documentation.

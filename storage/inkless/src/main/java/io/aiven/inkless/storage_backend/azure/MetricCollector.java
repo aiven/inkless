@@ -22,7 +22,6 @@ import org.apache.kafka.common.MetricNameTemplate;
 import org.apache.kafka.common.metrics.*;
 import org.apache.kafka.common.metrics.stats.CumulativeCount;
 import org.apache.kafka.common.metrics.stats.Rate;
-import org.apache.kafka.common.utils.Time;
 
 import com.azure.core.http.HttpPipelineCallContext;
 import com.azure.core.http.HttpPipelineNextPolicy;
@@ -31,9 +30,6 @@ import com.azure.core.http.HttpResponse;
 import com.azure.core.http.policy.HttpPipelinePolicy;
 import com.groupcdg.pitest.annotations.CoverageIgnore;
 
-import java.io.Closeable;
-import java.io.IOException;
-import java.util.List;
 import java.util.regex.Pattern;
 
 import io.aiven.inkless.common.metrics.SensorProvider;
@@ -54,19 +50,13 @@ import static io.aiven.inkless.storage_backend.azure.MetricRegistry.BLOCK_LIST_U
 import static io.aiven.inkless.storage_backend.azure.MetricRegistry.BLOCK_UPLOAD;
 import static io.aiven.inkless.storage_backend.azure.MetricRegistry.BLOCK_UPLOAD_RATE_METRIC_NAME;
 import static io.aiven.inkless.storage_backend.azure.MetricRegistry.BLOCK_UPLOAD_TOTAL_METRIC_NAME;
-import static io.aiven.inkless.storage_backend.azure.MetricRegistry.METRIC_CONTEXT;
 
 @CoverageIgnore // tested on integration level
-public class MetricCollector implements Closeable {
+public class MetricCollector {
     final Metrics metrics;
 
-    public MetricCollector() {
-        final JmxReporter reporter = new JmxReporter();
-
-        metrics = new Metrics(
-            new MetricConfig(), List.of(reporter), Time.SYSTEM,
-            new KafkaMetricsContext(METRIC_CONTEXT)
-        );
+    public MetricCollector(final Metrics metrics) {
+        this.metrics = metrics;
     }
 
     final Pattern pathPattern(final AzureBlobStorageConfig config) {
@@ -78,18 +68,6 @@ public class MetricCollector implements Closeable {
 
     MetricsPolicy policy(final AzureBlobStorageConfig config) {
         return new MetricsPolicy(metrics, pathPattern(config));
-    }
-
-    @Override
-    public void close() throws IOException {
-        // remove sensors to restart their counts when reconfigured
-        // instead of closing metrics which would affect other storage backends if used together
-        // TODO: consider making a single metrics to be passed to all storage backends
-        metrics.removeSensor(BLOB_GET);
-        metrics.removeSensor(BLOB_UPLOAD);
-        metrics.removeSensor(BLOCK_UPLOAD);
-        metrics.removeSensor(BLOCK_LIST_UPLOAD);
-        metrics.removeSensor(BLOB_DELETE);
     }
 
     static class MetricsPolicy implements HttpPipelinePolicy {

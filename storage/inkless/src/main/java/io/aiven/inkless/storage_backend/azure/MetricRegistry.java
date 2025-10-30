@@ -26,8 +26,6 @@ import java.util.List;
 
 @CoverageIgnore // tested on integration level
 public class MetricRegistry {
-    public static final String METRIC_CONTEXT = "io.aiven.inkless.storage.azure";
-
     static final String METRIC_GROUP = "azure-blob-storage-client-metrics";
     static final String BLOB_DELETE = "blob-delete";
     static final String BLOB_DELETE_DOC = "object delete operations";

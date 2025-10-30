@@ -18,6 +18,8 @@
 
 package io.aiven.inkless.storage_backend.azure;
 
+import org.apache.kafka.common.metrics.Metrics;
+
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
@@ -29,23 +31,21 @@ import static org.assertj.core.api.Assertions.assertThat;
 class MetricCollectorTest {
 
     @Test
-    void pathInDevWithAccountName() throws Exception {
+    void pathInDevWithAccountName() {
         final var props = Map.of("azure.account.name", "test-account",
             "azure.container.name", "cont1");
-        try (var metrics = new MetricCollector()) {
-            var matcher = metrics.pathPattern(new AzureBlobStorageConfig(props)).matcher("/test-account/cont1/test-object");
-            assertThat(matcher).matches();
-        }
+        var metrics = new MetricCollector(new Metrics());
+        var matcher = metrics.pathPattern(new AzureBlobStorageConfig(props)).matcher("/test-account/cont1/test-object");
+        assertThat(matcher).matches();
     }
 
     @Test
-    void pathInProdWithoutAccountName() throws Exception {
+    void pathInProdWithoutAccountName() {
         final var props = Map.of("azure.account.name", "test-account",
             "azure.container.name", "cont1");
-        try (var metrics = new MetricCollector()) {
-            var matcher = metrics.pathPattern(new AzureBlobStorageConfig(props)).matcher("/cont1/test-object");
-            assertThat(matcher).matches();
-        }
+        var metrics = new MetricCollector(new Metrics());
+        var matcher = metrics.pathPattern(new AzureBlobStorageConfig(props)).matcher("/cont1/test-object");
+        assertThat(matcher).matches();
     }
 
     @ParameterizedTest

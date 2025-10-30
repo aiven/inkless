@@ -6,8 +6,8 @@ Diskless metrics
 S3Storage metrics
 ==================================
 
-aiven.inkless.server.s3:type=s3-client-metrics
-----------------------------------------------
+io.aiven.inkless.storage:type=s3-client-metrics
+-----------------------------------------------
 
 =========================================  =============================================================================
 Attribute name                             Description                                                                  
@@ -60,8 +60,8 @@ upload-part-time-max                       Maximum time spent uploading a single
 AzureBlobStorage metrics
 ==================================
 
-io.aiven.inkless.storage.azure:type=azure-blob-storage-client-metrics
----------------------------------------------------------------------
+io.aiven.inkless.storage:type=azure-blob-storage-client-metrics
+---------------------------------------------------------------
 
 ========================  ============================================================
 Attribute name            Description                                                 
@@ -82,8 +82,8 @@ block-upload-total        Total number of block (blob part) upload operations
 GcsStorage metrics
 ==================================
 
-io.aiven.inkless.storage.gcs:type=gcs-client-metrics
-----------------------------------------------------
+io.aiven.inkless.storage:type=gcs-client-metrics
+------------------------------------------------
 
 ================================  ===================================================================
 Attribute name                    Description                                                        

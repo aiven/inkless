@@ -196,38 +196,41 @@ class FileCleanerIntegrationTest {
 
         createTopics(controlPlane);
 
-        final AppendHandler appendHandler = new AppendHandler(sharedState);
-        final FetchHandler fetchHandler = new FetchHandler(sharedState);
-        final FileCleaner fileCleaner = new FileCleaner(sharedState);
+        try (
+            final AppendHandler appendHandler = new AppendHandler(sharedState);
+            final FetchHandler fetchHandler = new FetchHandler(sharedState);
+            final FileCleaner fileCleaner = new FileCleaner(sharedState)
+        ) {
 
-        // Write a bunch of records.
-        writeRecords(appendHandler);
+            // Write a bunch of records.
+            writeRecords(appendHandler);
 
-        // Consume the high watermarks and the records themselves for future comparison.
-        final Map<TopicIdPartition, Long> highWatermarks1 = getHighWatermarks(controlPlane);
-        final Map<TopicIdPartition, List<RecordBatch>> batches1 = read(fetchHandler, highWatermarks1);
-        // Ensure _something_ was written.
-        for (final long hwm : highWatermarks1.values()) {
-            assertThat(hwm).isPositive();
-        }
-        for (final List<RecordBatch> bs : batches1.values()) {
-            assertThat(bs).isNotEmpty();
-            for (final RecordBatch b : bs) {
-                assertThat(b.countOrNull()).isPositive();
+            // Consume the high watermarks and the records themselves for future comparison.
+            final Map<TopicIdPartition, Long> highWatermarks1 = getHighWatermarks(controlPlane);
+            final Map<TopicIdPartition, List<RecordBatch>> batches1 = read(fetchHandler, highWatermarks1);
+            // Ensure _something_ was written.
+            for (final long hwm : highWatermarks1.values()) {
+                assertThat(hwm).isPositive();
             }
+            for (final List<RecordBatch> bs : batches1.values()) {
+                assertThat(bs).isNotEmpty();
+                for (final RecordBatch b : bs) {
+                    assertThat(b.countOrNull()).isPositive();
+                }
+            }
+            final List<S3Object> files1 = getFiles();
+            assertThat(files1).size().isGreaterThan(1000);
+
+            controlPlane.deleteTopics(Set.of(TOPIC_ID_0, TOPIC_ID_1));
+
+            time.sleep(Duration.ofSeconds(2).toMillis());
+
+            assertThat(controlPlane.getFilesToDelete().size()).isEqualTo(files1.size());
+
+            fileCleaner.run();
+
+            assertThat(controlPlane.getFilesToDelete().size()).isZero();
         }
-        final List<S3Object> files1 = getFiles();
-        assertThat(files1).size().isGreaterThan(1000);
-
-        controlPlane.deleteTopics(Set.of(TOPIC_ID_0, TOPIC_ID_1));
-
-        time.sleep(Duration.ofSeconds(2).toMillis());
-
-        assertThat(controlPlane.getFilesToDelete().size()).isEqualTo(files1.size());
-
-        fileCleaner.run();
-
-        assertThat(controlPlane.getFilesToDelete().size()).isZero();
     }
 
     private void createTopics(final ControlPlane controlPlane) {
