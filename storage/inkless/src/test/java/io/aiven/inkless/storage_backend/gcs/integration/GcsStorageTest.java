@@ -18,6 +18,8 @@
 
 package io.aiven.inkless.storage_backend.gcs.integration;
 
+import org.apache.kafka.common.metrics.Metrics;
+
 import com.google.cloud.NoCredentials;
 import com.google.cloud.storage.BucketInfo;
 import com.google.cloud.storage.Storage;
@@ -63,7 +65,8 @@ class GcsStorageTest extends BaseStorageTest {
 
     @Override
     protected StorageBackend storage() {
-        final GcsStorage gcsStorage = new GcsStorage();
+        final Metrics metrics = new Metrics();
+        final GcsStorage gcsStorage = new GcsStorage(metrics);
         final Map<String, Object> configs = Map.of(
             "gcs.bucket.name", bucketName,
             "gcs.endpoint.url", GCS_SERVER.url(),

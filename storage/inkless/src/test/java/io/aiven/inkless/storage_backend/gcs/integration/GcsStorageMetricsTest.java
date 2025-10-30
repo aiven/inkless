@@ -18,6 +18,9 @@
 
 package io.aiven.inkless.storage_backend.gcs.integration;
 
+import org.apache.kafka.common.metrics.KafkaMetric;
+import org.apache.kafka.common.metrics.Metrics;
+
 import com.google.cloud.NoCredentials;
 import com.google.cloud.storage.BucketInfo;
 import com.google.cloud.storage.Storage;
@@ -33,18 +36,11 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.io.ByteArrayInputStream;
-import java.io.IOException;
-import java.lang.management.ManagementFactory;
 import java.nio.channels.ReadableByteChannel;
 import java.util.Map;
 
-import javax.management.JMException;
-import javax.management.MBeanServer;
-import javax.management.ObjectName;
-
 import io.aiven.inkless.common.ByteRange;
 import io.aiven.inkless.common.ObjectKey;
-import io.aiven.inkless.storage_backend.common.StorageBackendException;
 import io.aiven.inkless.storage_backend.common.fixtures.TestObjectKey;
 import io.aiven.inkless.storage_backend.common.fixtures.TestUtils;
 import io.aiven.inkless.storage_backend.gcs.GcsStorage;
@@ -56,15 +52,16 @@ import static org.assertj.core.api.InstanceOfAssertFactories.DOUBLE;
 @ExtendWith(MockitoExtension.class)
 @Testcontainers
 public class GcsStorageMetricsTest {
+    private static final String GCS_CLIENT_METRICS = "gcs-client-metrics";
     private static final int RESUMABLE_UPLOAD_CHUNK_SIZE = 256 * 1024;
 
     @Container
     static final FakeGcsServerContainer GCS_SERVER = new FakeGcsServerContainer();
 
-    static final MBeanServer MBEAN_SERVER = ManagementFactory.getPlatformMBeanServer();
     static Storage storageClient;
 
-    GcsStorage storage;
+    final Metrics metrics = new Metrics();
+    final GcsStorage storage = new GcsStorage(metrics);
 
     @BeforeAll
     static void setUpClass() {
@@ -81,7 +78,6 @@ public class GcsStorageMetricsTest {
         final String bucketName = TestUtils.testNameToBucketName(testInfo);
         storageClient.create(BucketInfo.newBuilder(bucketName).build());
 
-        storage = new GcsStorage();
         final Map<String, Object> configs = Map.of(
             "gcs.bucket.name", bucketName,
             "gcs.endpoint.url", GCS_SERVER.url(),
@@ -92,7 +88,7 @@ public class GcsStorageMetricsTest {
     }
 
     @Test
-    void metricsShouldBeReported() throws StorageBackendException, IOException, JMException {
+    void metricsShouldBeReported() throws Exception {
         final byte[] data = new byte[RESUMABLE_UPLOAD_CHUNK_SIZE + 1];
 
         final ObjectKey key = new TestObjectKey("x");
@@ -106,24 +102,28 @@ public class GcsStorageMetricsTest {
         }
         storage.delete(key);
 
-        final ObjectName gcsMetricsObjectName =
-            ObjectName.getInstance("io.aiven.inkless.storage.gcs:type=gcs-client-metrics");
-        assertThat(MBEAN_SERVER.getAttribute(gcsMetricsObjectName, "object-metadata-get-rate"))
+        assertThat(getMetric("object-metadata-get-rate").metricValue())
             .asInstanceOf(DOUBLE)
             .isGreaterThan(0.0);
-        assertThat(MBEAN_SERVER.getAttribute(gcsMetricsObjectName, "object-metadata-get-total"))
+        assertThat(getMetric("object-metadata-get-total").metricValue())
             .isEqualTo(2.0);
 
-        assertThat(MBEAN_SERVER.getAttribute(gcsMetricsObjectName, "object-get-rate"))
+        assertThat(getMetric("object-get-rate").metricValue())
             .asInstanceOf(DOUBLE)
             .isGreaterThan(0.0);
-        assertThat(MBEAN_SERVER.getAttribute(gcsMetricsObjectName, "object-get-total"))
+        assertThat(getMetric("object-get-total").metricValue())
             .isEqualTo(2.0);
 
-        assertThat(MBEAN_SERVER.getAttribute(gcsMetricsObjectName, "object-delete-rate"))
+        assertThat(getMetric("object-delete-rate").metricValue())
             .asInstanceOf(DOUBLE)
             .isGreaterThan(0.0);
-        assertThat(MBEAN_SERVER.getAttribute(gcsMetricsObjectName, "object-delete-total"))
+        assertThat(getMetric("object-delete-total").metricValue())
             .isEqualTo(1.0);
+    }
+
+    private KafkaMetric getMetric(String metricName) {
+        final KafkaMetric metric = metrics.metric(metrics.metricName(metricName, GCS_CLIENT_METRICS));
+        assertThat(metric).isNotNull();
+        return metric;
     }
 }

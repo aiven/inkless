@@ -19,25 +19,18 @@
 package io.aiven.inkless.storage_backend.gcs;
 
 import org.apache.kafka.common.MetricNameTemplate;
-import org.apache.kafka.common.metrics.JmxReporter;
-import org.apache.kafka.common.metrics.KafkaMetricsContext;
-import org.apache.kafka.common.metrics.MetricConfig;
+import org.apache.kafka.common.metrics.Metrics;
 import org.apache.kafka.common.metrics.Sensor;
 import org.apache.kafka.common.metrics.stats.CumulativeCount;
 import org.apache.kafka.common.metrics.stats.Rate;
-import org.apache.kafka.common.utils.Time;
 
 import com.google.api.client.http.*;
 import com.google.cloud.ServiceOptions;
 import com.google.cloud.http.HttpTransportOptions;
 import com.groupcdg.pitest.annotations.CoverageIgnore;
 
-import java.io.Closeable;
-import java.io.IOException;
-import java.util.List;
 import java.util.regex.Pattern;
 
-import static io.aiven.inkless.storage_backend.gcs.MetricRegistry.METRIC_CONTEXT;
 import static io.aiven.inkless.storage_backend.gcs.MetricRegistry.OBJECT_DELETE;
 import static io.aiven.inkless.storage_backend.gcs.MetricRegistry.OBJECT_DELETE_RATE_METRIC_NAME;
 import static io.aiven.inkless.storage_backend.gcs.MetricRegistry.OBJECT_DELETE_TOTAL_METRIC_NAME;
@@ -55,9 +48,7 @@ import static io.aiven.inkless.storage_backend.gcs.MetricRegistry.RESUMABLE_UPLO
 import static io.aiven.inkless.storage_backend.gcs.MetricRegistry.RESUMABLE_UPLOAD_INITIATE_TOTAL_METRIC_NAME;
 
 @CoverageIgnore  // tested on integration level
-public class MetricCollector implements Closeable {
-    private final org.apache.kafka.common.metrics.Metrics metrics;
-
+public class MetricCollector {
     /**
      * The pattern for object metadata paths.
      *
@@ -82,20 +73,15 @@ public class MetricCollector implements Closeable {
     static final Pattern OBJECT_UPLOAD_PATH_PATTERN =
         Pattern.compile("^/upload/storage/v1/b/([^/]+)/o/?$");
 
+    private final Metrics metrics;
     private final Sensor getObjectMetadataRequests;
     private final Sensor deleteObjectRequests;
     private final Sensor resumableUploadInitiateRequests;
     private final Sensor resumableChunkUploadRequests;
     private final Sensor getObjectRequests;
 
-    public MetricCollector() {
-        final JmxReporter reporter = new JmxReporter();
-
-        metrics = new org.apache.kafka.common.metrics.Metrics(
-            new MetricConfig(), List.of(reporter), Time.SYSTEM,
-            new KafkaMetricsContext(METRIC_CONTEXT)
-        );
-
+    public MetricCollector(final Metrics metrics) {
+        this.metrics = metrics;
         getObjectMetadataRequests = createSensor(
             OBJECT_METADATA_GET,
             OBJECT_METADATA_GET_RATE_METRIC_NAME,
@@ -135,18 +121,6 @@ public class MetricCollector implements Closeable {
     }
 
     private final MetricResponseInterceptor metricResponseInterceptor = new MetricResponseInterceptor();
-
-    @Override
-    public void close() throws IOException {
-        // remove sensors to restart their counts when reconfigured
-        // instead of closing metrics which would affect other storage backends if used together
-        // TODO: consider making a single metrics to be passed to all storage backends
-        metrics.removeSensor(OBJECT_METADATA_GET);
-        metrics.removeSensor(OBJECT_GET);
-        metrics.removeSensor(OBJECT_DELETE);
-        metrics.removeSensor(RESUMABLE_UPLOAD_INITIATE);
-        metrics.removeSensor(RESUMABLE_CHUNK_UPLOAD);
-    }
 
     private class MetricResponseInterceptor implements HttpResponseInterceptor {
 
