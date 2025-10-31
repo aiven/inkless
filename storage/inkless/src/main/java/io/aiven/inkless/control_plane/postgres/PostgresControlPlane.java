@@ -19,6 +19,10 @@ package io.aiven.inkless.control_plane.postgres;
 
 import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.Uuid;
+import org.apache.kafka.common.metrics.JmxReporter;
+import org.apache.kafka.common.metrics.KafkaMetricsContext;
+import org.apache.kafka.common.metrics.MetricConfig;
+import org.apache.kafka.common.metrics.Metrics;
 import org.apache.kafka.common.utils.Time;
 
 import com.zaxxer.hikari.HikariConfig;
@@ -62,46 +66,43 @@ import io.aiven.inkless.control_plane.ListOffsetsRequest;
 import io.aiven.inkless.control_plane.ListOffsetsResponse;
 import io.aiven.inkless.control_plane.MergedFileBatch;
 
+import static io.aiven.inkless.control_plane.postgres.HikariMetricsRegistry.METRIC_CONTEXT;
+
 public class PostgresControlPlane extends AbstractControlPlane {
     private static final String POOL_NAME = "inkless-control-plane";
 
-    private final PostgresControlPlaneMetrics metrics;
+    private final Metrics metrics;
+    private final PostgresControlPlaneMetrics pgMetrics;
 
-    private HikariDataSource hikariDataSource;
-    private DSLContext jooqCtx;
+    private HikariDataSource jobsDataSource;
+    private HikariDataSource readDataSource;
+    private HikariDataSource writeDataSource;
     private PostgresControlPlaneConfig controlPlaneConfig;
+
+    private DSLContext readJooqCtx;
+    private DSLContext writeJooqCtx;
+    private DSLContext jobsJooqCtx;
 
     public PostgresControlPlane(final Time time) {
         super(time);
-        this.metrics = new PostgresControlPlaneMetrics(time);
-    }
 
-    @Override
-    public void createTopicAndPartitions(final Set<CreateTopicAndPartitionsRequest> requests) {
-        // Expected to be performed synchronously
-        new TopicsAndPartitionsCreateJob(time, jooqCtx, requests, metrics::onTopicCreateCompleted).run();
+        final JmxReporter reporter = new JmxReporter();
+        this.metrics = new Metrics(
+            new MetricConfig(), List.of(reporter), Time.SYSTEM,
+            new KafkaMetricsContext(METRIC_CONTEXT)
+        );
+
+        this.pgMetrics = new PostgresControlPlaneMetrics(time);
     }
 
     @Override
     public void configure(final Map<String, ?> configs) {
         controlPlaneConfig = new PostgresControlPlaneConfig(configs);
+        controlPlaneConfig.initializeReadWriteConfigs();
 
         Migrations.migrate(controlPlaneConfig);
 
-        final HikariConfig config = new HikariConfig();
-        config.setPoolName(POOL_NAME);
-        config.setJdbcUrl(controlPlaneConfig.connectionString());
-        config.setUsername(controlPlaneConfig.username());
-        config.setPassword(controlPlaneConfig.password());
-        config.setMetricsTrackerFactory(HikariMetricsTracker::new);
-        config.setTransactionIsolation(IsolationLevel.TRANSACTION_READ_COMMITTED.name());
-
-        config.setMaximumPoolSize(controlPlaneConfig.maxConnections());
-
-        // We're doing interactive transactions.
-        config.setAutoCommit(false);
-
-        hikariDataSource = new HikariDataSource(config);
+        jobsDataSource = new HikariDataSource(dataSourceConfig(metrics, POOL_NAME, controlPlaneConfig));
 
         // Avoid merger/cleaner waiting on class loading deadlocks between threads
         try {
@@ -110,7 +111,43 @@ public class PostgresControlPlane extends AbstractControlPlane {
             throw new RuntimeException(e);
         }
 
-        jooqCtx = DSL.using(hikariDataSource, SQLDialect.POSTGRES);
+        jobsJooqCtx = DSL.using(jobsDataSource, SQLDialect.POSTGRES);
+
+        // Set up read and write contexts if configured
+        if (controlPlaneConfig.writeConfig() != null) {
+            writeDataSource = new HikariDataSource(dataSourceConfig(metrics, POOL_NAME + "-write", controlPlaneConfig.writeConfig()));
+            writeJooqCtx = DSL.using(writeDataSource, SQLDialect.POSTGRES);
+        } else {
+            writeJooqCtx = jobsJooqCtx;
+        }
+        if (controlPlaneConfig.readConfig() != null) {
+            readDataSource = new HikariDataSource(dataSourceConfig(metrics, POOL_NAME + "-read", controlPlaneConfig.readConfig()));
+            readJooqCtx = DSL.using(readDataSource, SQLDialect.POSTGRES);
+        } else {
+            readJooqCtx = jobsJooqCtx;
+        }
+    }
+
+    private static HikariConfig dataSourceConfig(final Metrics metrics, final String name, final PostgresConnectionConfig connectionConfig) {
+        final HikariConfig config = new HikariConfig();
+        config.setPoolName(name);
+        config.setJdbcUrl(connectionConfig.connectionString());
+        config.setUsername(connectionConfig.username());
+        config.setPassword(connectionConfig.password());
+        config.setMetricsTrackerFactory((poolName, poolStats) -> new HikariMetricsTracker(metrics, poolName, poolStats));
+        config.setTransactionIsolation(IsolationLevel.TRANSACTION_READ_COMMITTED.name());
+
+        config.setMaximumPoolSize(connectionConfig.maxConnections());
+
+        // We're doing interactive transactions.
+        config.setAutoCommit(false);
+        return config;
+    }
+
+    @Override
+    public void createTopicAndPartitions(final Set<CreateTopicAndPartitionsRequest> requests) {
+        // Expected to be performed synchronously
+        new TopicsAndPartitionsCreateJob(time, jobsJooqCtx, requests, pgMetrics::onTopicCreateCompleted).run();
     }
 
     @Override
@@ -121,9 +158,9 @@ public class PostgresControlPlane extends AbstractControlPlane {
         final long fileSize,
         final Stream<CommitBatchRequest> requests) {
         final CommitFileJob job = new CommitFileJob(
-            time, jooqCtx,
+            time, writeJooqCtx, // use specific write context when committing files
             objectKey, format, uploaderBrokerId, fileSize, requests.toList(),
-            metrics::onCommitFileCompleted);
+            pgMetrics::onCommitFileCompleted);
         return job.call().iterator();
     }
 
@@ -134,36 +171,37 @@ public class PostgresControlPlane extends AbstractControlPlane {
         final int maxBatchesPerPartition
     ) {
         final FindBatchesJob job = new FindBatchesJob(
-            time, jooqCtx,
+            time, readJooqCtx, // use specific read context when finding batches
             requests.toList(), fetchMaxBytes, maxBatchesPerPartition,
-            metrics::onFindBatchesCompleted);
+            pgMetrics::onFindBatchesCompleted);
         return job.call().iterator();
     }
 
     @Override
     protected Iterator<ListOffsetsResponse> listOffsetsForExistingPartitions(Stream<ListOffsetsRequest> requests) {
-            final ListOffsetsJob job = new ListOffsetsJob(
-                    time, jooqCtx,
-                    requests.toList(), metrics::onListOffsetsCompleted);
-            return job.call().iterator();
+        final ListOffsetsJob job = new ListOffsetsJob(
+            time, readJooqCtx,
+            requests.toList(),
+            pgMetrics::onListOffsetsCompleted);
+        return job.call().iterator();
     }
 
     @Override
     public void deleteTopics(final Set<Uuid> topicIds) {
-        final DeleteTopicJob job = new DeleteTopicJob(time, jooqCtx, topicIds, metrics::onTopicDeleteCompleted);
+        final DeleteTopicJob job = new DeleteTopicJob(time, jobsJooqCtx, topicIds, pgMetrics::onTopicDeleteCompleted);
         job.run();
     }
 
     @Override
     public List<DeleteRecordsResponse> deleteRecords(final List<DeleteRecordsRequest> requests) {
-        final DeleteRecordsJob job = new DeleteRecordsJob(time, jooqCtx, requests, metrics::onDeleteRecordsCompleted);
+        final DeleteRecordsJob job = new DeleteRecordsJob(time, jobsJooqCtx, requests, pgMetrics::onDeleteRecordsCompleted);
         return job.call();
     }
 
     @Override
     public List<EnforceRetentionResponse> enforceRetention(final List<EnforceRetentionRequest> requests, final int maxBatchesPerRequest) {
         try {
-            final EnforceRetentionJob job = new EnforceRetentionJob(time, jooqCtx, requests, maxBatchesPerRequest, metrics::onEnforceRetentionCompleted);
+            final EnforceRetentionJob job = new EnforceRetentionJob(time, jobsJooqCtx, requests, maxBatchesPerRequest, pgMetrics::onEnforceRetentionCompleted);
             return job.call();
         } catch (final Exception e) {
             throw new ControlPlaneException("Failed to enforce retention", e);
@@ -173,7 +211,7 @@ public class PostgresControlPlane extends AbstractControlPlane {
     @Override
     public List<FileToDelete> getFilesToDelete() {
         try {
-            final FindFilesToDeleteJob job = new FindFilesToDeleteJob(time, jooqCtx, metrics::onGetFilesToDeleteCompleted);
+            final FindFilesToDeleteJob job = new FindFilesToDeleteJob(time, jobsJooqCtx, pgMetrics::onGetFilesToDeleteCompleted);
             return job.call();
         } catch (final Exception e) {
             throw new ControlPlaneException("Failed to get files to delete", e);
@@ -183,7 +221,7 @@ public class PostgresControlPlane extends AbstractControlPlane {
     @Override
     public void deleteFiles(DeleteFilesRequest request) {
         try {
-            final DeleteFilesJob job = new DeleteFilesJob(time, jooqCtx, request, metrics::onFilesDeleteCompleted);
+            final DeleteFilesJob job = new DeleteFilesJob(time, jobsJooqCtx, request, pgMetrics::onFilesDeleteCompleted);
             job.run();
         } catch (final Exception e) {
             throw new ControlPlaneException("Failed to delete files", e);
@@ -196,20 +234,21 @@ public class PostgresControlPlane extends AbstractControlPlane {
             time,
             controlPlaneConfig.fileMergeLockPeriod(),
             controlPlaneConfig.fileMergeSizeThresholdBytes(),
-            jooqCtx,
-            metrics::onGetFileMergeWorkItemCompleted
+            jobsJooqCtx,
+            pgMetrics::onGetFileMergeWorkItemCompleted
         );
         return job.call();
     }
 
     @Override
     public void commitFileMergeWorkItem(
-            final long workItemId,
-            final String objectKey,
-            final ObjectFormat format,
-            final int uploaderBrokerId,
-            final long fileSize,
-            final List<MergedFileBatch> batches) {
+        final long workItemId,
+        final String objectKey,
+        final ObjectFormat format,
+        final int uploaderBrokerId,
+        final long fileSize,
+        final List<MergedFileBatch> batches
+    ) {
         final CommitFileMergeWorkItemJob job = new CommitFileMergeWorkItemJob(
             time,
             workItemId,
@@ -218,8 +257,8 @@ public class PostgresControlPlane extends AbstractControlPlane {
             uploaderBrokerId,
             fileSize,
             batches,
-            jooqCtx,
-            metrics::onCommitFileMergeWorkItemCompleted
+            jobsJooqCtx,
+            pgMetrics::onCommitFileMergeWorkItemCompleted
         );
         final var result = job.call();
         switch (result.getError()) {
@@ -241,9 +280,9 @@ public class PostgresControlPlane extends AbstractControlPlane {
                 throw new ControlPlaneException(
                     String.format(
                         "Batch %d is not part of work item in %s",
-                            mergedFileBatch.parentBatches().get(0),
-                            mergedFileBatch
-                        )
+                        mergedFileBatch.parentBatches().get(0),
+                        mergedFileBatch
+                    )
                 );
             }
         }
@@ -274,7 +313,7 @@ public class PostgresControlPlane extends AbstractControlPlane {
     @Override
     public void releaseFileMergeWorkItem(final long workItemId) {
         final ReleaseFileMergeWorkItemJob job =
-            new ReleaseFileMergeWorkItemJob( time, workItemId, jooqCtx, metrics::onReleaseFileMergeWorkItemCompleted);
+            new ReleaseFileMergeWorkItemJob( time, workItemId, jobsJooqCtx, pgMetrics::onReleaseFileMergeWorkItemCompleted);
         final var result = job.call();
         switch (result.getError()) {
             case none:
@@ -288,7 +327,7 @@ public class PostgresControlPlane extends AbstractControlPlane {
     public boolean isSafeToDeleteFile(String objectKeyPath) {
         try {
             final SafeDeleteFileCheckJob job =
-                new SafeDeleteFileCheckJob(time, jooqCtx, objectKeyPath, metrics::onSafeDeleteFileCheckCompleted);
+                new SafeDeleteFileCheckJob(time, jobsJooqCtx, objectKeyPath, pgMetrics::onSafeDeleteFileCheckCompleted);
             return job.call();
         } catch (Exception e) {
             throw new ControlPlaneException("Error when checking if safe to delete file " + objectKeyPath, e);
@@ -298,7 +337,8 @@ public class PostgresControlPlane extends AbstractControlPlane {
     @Override
     public List<GetLogInfoResponse> getLogInfo(final List<GetLogInfoRequest> requests) {
         try {
-            final GetLogInfoJob job = new GetLogInfoJob(time, jooqCtx, requests, metrics::onGetLogInfoCompleted);
+            // used for testing purposes only, so using jobs connection pool is fine
+            final GetLogInfoJob job = new GetLogInfoJob(time, jobsJooqCtx, requests, pgMetrics::onGetLogInfoCompleted);
             return job.call();
         } catch (final Exception e) {
             if (e instanceof ControlPlaneException) {
@@ -311,6 +351,14 @@ public class PostgresControlPlane extends AbstractControlPlane {
 
     @Override
     public void close() throws IOException {
-        hikariDataSource.close();
+        jobsDataSource.close();
+        if (writeDataSource != null) {
+            writeDataSource.close();
+        }
+        if (readDataSource != null) {
+            readDataSource.close();
+        }
+        pgMetrics.close();
+        metrics.close();
     }
 }

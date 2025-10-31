@@ -18,19 +18,14 @@
 package io.aiven.inkless.control_plane.postgres;
 
 import org.apache.kafka.common.MetricNameTemplate;
-import org.apache.kafka.common.metrics.JmxReporter;
-import org.apache.kafka.common.metrics.KafkaMetricsContext;
-import org.apache.kafka.common.metrics.MetricConfig;
 import org.apache.kafka.common.metrics.Metrics;
 import org.apache.kafka.common.metrics.Sensor;
 import org.apache.kafka.common.metrics.stats.Avg;
 import org.apache.kafka.common.metrics.stats.Max;
-import org.apache.kafka.common.utils.Time;
 
 import com.zaxxer.hikari.metrics.IMetricsTracker;
 import com.zaxxer.hikari.metrics.PoolStats;
 
-import java.util.List;
 import java.util.concurrent.atomic.LongAdder;
 import java.util.function.Supplier;
 
@@ -43,7 +38,6 @@ import static io.aiven.inkless.control_plane.postgres.HikariMetricsRegistry.CONN
 import static io.aiven.inkless.control_plane.postgres.HikariMetricsRegistry.CONNECTION_USAGE_MILLIS;
 import static io.aiven.inkless.control_plane.postgres.HikariMetricsRegistry.IDLE_CONNECTIONS_COUNT;
 import static io.aiven.inkless.control_plane.postgres.HikariMetricsRegistry.MAX_CONNECTIONS_COUNT;
-import static io.aiven.inkless.control_plane.postgres.HikariMetricsRegistry.METRIC_CONTEXT;
 import static io.aiven.inkless.control_plane.postgres.HikariMetricsRegistry.MIN_CONNECTIONS_COUNT;
 import static io.aiven.inkless.control_plane.postgres.HikariMetricsRegistry.PENDING_THREADS_COUNT;
 import static io.aiven.inkless.control_plane.postgres.HikariMetricsRegistry.TOTAL_CONNECTIONS_COUNT;
@@ -62,12 +56,8 @@ public class HikariMetricsTracker implements IMetricsTracker {
     private final Sensor pendingThreadsCountSensor;
     private final Sensor connectionTimeoutCountSensor;
 
-    public HikariMetricsTracker(final String poolName, final PoolStats poolStats) {
-        final JmxReporter reporter = new JmxReporter();
-        this.metrics = new Metrics(
-            new MetricConfig(), List.of(reporter), Time.SYSTEM,
-            new KafkaMetricsContext(METRIC_CONTEXT)
-        );
+    public HikariMetricsTracker(final Metrics metrics, final String poolName, final PoolStats poolStats) {
+        this.metrics = metrics;
         this.metricsRegistry = new HikariMetricsRegistry(poolName);
 
         activeConnectionsCountSensor = registerSensor(metrics, metricsRegistry.activeConnectionsCountMetricName, ACTIVE_CONNECTIONS_COUNT, () -> (long) poolStats.getActiveConnections());
