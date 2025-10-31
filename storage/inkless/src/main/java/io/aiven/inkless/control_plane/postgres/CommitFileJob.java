@@ -153,7 +153,7 @@ class CommitFileJob implements Callable<List<CommitBatchResponse>> {
                 case none:
                     final long assignedOffset = record.getAssignedBaseOffset();
                     final long logStartOffset = record.getLogStartOffset();
-                    yield CommitBatchResponse.success(assignedOffset, now.toEpochMilli(), logStartOffset, request);
+                    yield CommitBatchResponse.success(assignedOffset, now.toEpochMilli(), logStartOffset, objectKey, request);
                 case nonexistent_log:
                     yield CommitBatchResponse.unknownTopicOrPartition();
                 case invalid_producer_epoch:

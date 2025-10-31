@@ -202,7 +202,7 @@ public class InMemoryControlPlane extends AbstractControlPlane {
 
         fileInfo.addBatch(batchInfo);
 
-        return CommitBatchResponse.success(firstOffset, now, logInfo.logStartOffset, request);
+        return CommitBatchResponse.success(firstOffset, now, logInfo.logStartOffset, fileInfo.objectKey, request);
     }
 
     @Override

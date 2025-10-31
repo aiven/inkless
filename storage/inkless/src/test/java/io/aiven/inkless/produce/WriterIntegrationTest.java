@@ -46,6 +46,8 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
+import io.aiven.inkless.cache.BatchCoordinateCache;
+import io.aiven.inkless.cache.CaffeineBatchCoordinateCache;
 import io.aiven.inkless.cache.FixedBlockAlignment;
 import io.aiven.inkless.cache.KeyAlignmentStrategy;
 import io.aiven.inkless.cache.NullCache;
@@ -74,6 +76,7 @@ class WriterIntegrationTest {
     static final TopicIdPartition T1P0 = new TopicIdPartition(TOPIC_ID_1, 0, TOPIC_1);
     static final KeyAlignmentStrategy KEY_ALIGNMENT_STRATEGY = new FixedBlockAlignment(Integer.MAX_VALUE);
     static final ObjectCache OBJECT_CACHE = new NullCache();
+    static final BatchCoordinateCache BATCH_COORDINATE_CACHE = new CaffeineBatchCoordinateCache(Duration.ofSeconds(30));
 
     static final Map<String, LogConfig> TOPIC_CONFIGS = Map.of(
         TOPIC_0, logConfig(Map.of(TopicConfig.MESSAGE_TIMESTAMP_TYPE_CONFIG, TimestampType.CREATE_TIME.name)),
@@ -131,7 +134,7 @@ class WriterIntegrationTest {
         try (
             final Writer writer = new Writer(
                 time, 11, ObjectKey.creator("", false), storage,
-                KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE,
+                KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, BATCH_COORDINATE_CACHE,
                 controlPlane, Duration.ofMillis(10),
                 10 * 1024,
                 1,
