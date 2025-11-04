@@ -66,9 +66,8 @@ class CaffeineBatchCoordinateCacheTest {
     }
 
 
-    private CacheBatchCoordinate createBatch(TopicIdPartition topicIdPartition, long baseOffset, int recordCount, long logStartOffset) {
+    private CacheBatchCoordinate createBatch(long baseOffset, int recordCount, long logStartOffset) {
         return new CacheBatchCoordinate(
-            topicIdPartition,
             "test-object-key",
             100L,
             1024L,
@@ -91,8 +90,8 @@ class CaffeineBatchCoordinateCacheTest {
 
     @Test
     void putAndGet() {
-        CacheBatchCoordinate batch = createBatch(PARTITION_0, 0, 10, 0);
-        cache.put(batch);
+        CacheBatchCoordinate batch = createBatch( 0, 10, 0);
+        cache.put(PARTITION_0, batch);
 
         LogFragment result = cache.get(PARTITION_0, 5);
         assertNotNull(result);
@@ -108,9 +107,9 @@ class CaffeineBatchCoordinateCacheTest {
 
     @Test
     void getFromDifferentOffsets() {
-        cache.put(createBatch(PARTITION_0, 0, 10, 0));  // [0-9]
-        cache.put(createBatch(PARTITION_0, 10, 10, 0)); // [10-19]
-        cache.put(createBatch(PARTITION_0, 20, 10, 0)); // [20-29]
+        cache.put(PARTITION_0, createBatch(0, 10, 0));  // [0-9]
+        cache.put(PARTITION_0, createBatch(10, 10, 0)); // [10-19]
+        cache.put(PARTITION_0, createBatch(20, 10, 0)); // [20-29]
 
         LogFragment fromStart = cache.get(PARTITION_0, 0);
         assertNotNull(fromStart);
@@ -136,8 +135,8 @@ class CaffeineBatchCoordinateCacheTest {
 
     @Test
     void putStartingAfterOffsetZeroAndGetFromDifferentOffsets() {
-        cache.put(createBatch(PARTITION_0, 10, 10, 0)); // [10-19]
-        cache.put(createBatch(PARTITION_0, 20, 10, 0)); // [20-29]
+        cache.put(PARTITION_0, createBatch(10, 10, 0)); // [10-19]
+        cache.put(PARTITION_0, createBatch(20, 10, 0)); // [20-29]
 
         assertNull(cache.get(PARTITION_0, 0));
 
@@ -158,13 +157,13 @@ class CaffeineBatchCoordinateCacheTest {
 
     @Test
     void getFromOffsetBeforeThanFirstOffsetReturnsNull() {
-        cache.put(createBatch(PARTITION_0, 10, 19, 0));
+        cache.put(PARTITION_0, createBatch(10, 19, 0));
         assertNull(cache.get(PARTITION_0, 5));
     }
 
     @Test
     void getForOffsetGreaterThanHighWaterMarkReturnsEmptyLogFragment() {
-        cache.put(createBatch(PARTITION_0, 0, 9, 0));
+        cache.put(PARTITION_0, createBatch(0, 9, 0));
         LogFragment result = cache.get(PARTITION_0, 100);
         assertNotNull(result);
         assertTrue(result.isEmpty());
@@ -172,11 +171,11 @@ class CaffeineBatchCoordinateCacheTest {
 
     @Test
     void testPutNonContiguousBatchInvalidatesOlderBatches() {
-        cache.put(createBatch(PARTITION_0, 0, 10, 0));
+        cache.put(PARTITION_0, createBatch(0, 10, 0));
         assertNotNull(cache.get(PARTITION_0, 0));
 
         // Expected baseOffset is 10: key is invalidated and a new entry is created
-        cache.put(createBatch(PARTITION_0, 20, 10, 0));
+        cache.put(PARTITION_0, createBatch(20, 10, 0));
 
         assertNull(cache.get(PARTITION_0, 0), "First batch should be removed after non-contiguous put");
         assertNotNull(cache.get(PARTITION_0, 20));
@@ -184,10 +183,10 @@ class CaffeineBatchCoordinateCacheTest {
 
     @Test
     void testPutWithLogStartOffsetIncreasedInvalidatesEntry() {
-        cache.put(createBatch(PARTITION_0, 0, 10, 0));
+        cache.put(PARTITION_0, createBatch(0, 10, 0));
         assertNotNull(cache.get(PARTITION_0, 0));
 
-        cache.put(createBatch(PARTITION_0, 20, 10, 5));
+        cache.put(PARTITION_0, createBatch(20, 10, 5));
         var logFragment = cache.get(PARTITION_0, 20);
         assertEquals(5, logFragment.logStartOffset());
         assertEquals(30, logFragment.highWaterMark());
@@ -200,12 +199,12 @@ class CaffeineBatchCoordinateCacheTest {
         cache = new CaffeineBatchCoordinateCache(Duration.ofSeconds(30), clock, metricsMock);
 
         // t=0: put first batch
-        cache.put(createBatch(PARTITION_0, 0, 10, 0));
+        cache.put(PARTITION_0, createBatch(0, 10, 0));
         assertNotNull(cache.get(PARTITION_0, 0));
 
         // t=20: put second batch, the first one is not expired yet
         clock.advanceBy(Duration.ofSeconds(20));
-        cache.put(createBatch(PARTITION_0, 10, 10, 0));
+        cache.put(PARTITION_0, createBatch(10, 10, 0));
         assertEquals(2, cache.get(PARTITION_0, 0).size());
 
         // t=40: first batch is now expired
@@ -216,29 +215,29 @@ class CaffeineBatchCoordinateCacheTest {
         verify(metricsMock, never()).recordCacheEviction();
 
         // putting a new batch will remove the expired one
-        cache.put(createBatch(PARTITION_0, 20, 10, 0));
+        cache.put(PARTITION_0, createBatch(20, 10, 0));
         verify(metricsMock).recordCacheEviction();
     }
 
     @Test
     void notPossibleToInsertBatchesWithLowerLogStartOffset() {
-        cache.put(createBatch(PARTITION_0, 50, 100, 50)); // [50-99]
-        assertThrows(IllegalStateException.class, () -> cache.put(createBatch(PARTITION_0, 100, 110, 10)));
+        cache.put(PARTITION_0, createBatch(50, 100, 50)); // [50-99]
+        assertThrows(IllegalStateException.class, () -> cache.put(PARTITION_0, createBatch(100, 110, 10)));
         assertNull(cache.get(PARTITION_0, 50));
     }
 
     @Test
     void notPossibleToInsertOffsetsLowerThanHighWater() {
-        cache.put(createBatch(PARTITION_0, 0, 100, 0)); // [0-99]
-        assertThrows(IllegalStateException.class, () -> cache.put(createBatch(PARTITION_0, 50, 60, 0))); // [50-59]
+        cache.put(PARTITION_0, createBatch(0, 100, 0)); // [0-99]
+        assertThrows(IllegalStateException.class, () -> cache.put(PARTITION_0, createBatch(50, 60, 0))); // [50-59]
         assertNull(cache.get(PARTITION_0, 0));
     }
 
     @Test
     void removeRemovesAllBatches() {
-        cache.put(createBatch(PARTITION_0, 0, 10, 0));
-        cache.put(createBatch(PARTITION_0, 10, 10, 0));
-        cache.put(createBatch(PARTITION_1, 0, 10, 0));
+        cache.put(PARTITION_0, createBatch(0, 10, 0));
+        cache.put(PARTITION_0, createBatch(10, 10, 0));
+        cache.put(PARTITION_1, createBatch(0, 10, 0));
         assertNotNull(cache.get(PARTITION_0, 0));
         assertNotNull(cache.get(PARTITION_1, 0));
 
@@ -254,8 +253,8 @@ class CaffeineBatchCoordinateCacheTest {
 
     @Test
     void testClose() throws IOException {
-        cache.put(createBatch(PARTITION_0, 0, 9, 0));
-        cache.put(createBatch(PARTITION_1, 0, 9, 0));
+        cache.put(PARTITION_0, createBatch(0, 9, 0));
+        cache.put(PARTITION_1, createBatch(0, 9, 0));
 
         cache.close();
 
@@ -273,24 +272,24 @@ class CaffeineBatchCoordinateCacheTest {
         var cache2 = new CaffeineBatchCoordinateCache(Duration.ofSeconds(30), Clock.systemUTC());
 
         // Producer creates 5 batches
-        var batch1 = createBatch(PARTITION_0, 0, 10, 0);
-        var batch2 = createBatch(PARTITION_0, 10, 10, 0);
-        var batch3 = createBatch(PARTITION_0, 20, 10, 0);
-        var batch4 = createBatch(PARTITION_0, 40, 10, 0);
-        var batch5 = createBatch(PARTITION_0, 50, 10, 0);
+        var batch1 = createBatch(0, 10, 0);
+        var batch2 = createBatch(10, 10, 0);
+        var batch3 = createBatch(20, 10, 0);
+        var batch4 = createBatch(40, 10, 0);
+        var batch5 = createBatch(50, 10, 0);
 
         // Produce first batch to broker 1
-        cache1.put(batch1);
+        cache1.put(PARTITION_0, batch1);
         // Produce second batch to broker 2
-        cache2.put(batch2);
+        cache2.put(PARTITION_0, batch2);
         // Produce third batch to broker 1.
         // Cache notices that a batch is missing and invalidates the entry for this partition
-        cache1.put(batch3);
+        cache1.put(PARTITION_0, batch3);
         // Produce fourth batch to broker 2
         // Cache notices that a batch is missing and invalidates the entry for this partition
-        cache2.put(batch4);
+        cache2.put(PARTITION_0, batch4);
         // Produce fifth batch to broker 2, appending to the fourth batch because they're contiguous
-        cache2.put(batch5);
+        cache2.put(PARTITION_0, batch5);
 
         assertNull(cache1.get(PARTITION_0, 0));
         var logFragmentFromCache1 = cache1.get(PARTITION_0, 20);

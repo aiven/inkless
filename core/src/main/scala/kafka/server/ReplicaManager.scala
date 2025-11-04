@@ -1736,7 +1736,7 @@ class ReplicaManager(val config: KafkaConfig,
             FindBatchResponse.success(util.List.of(), -1, -1)
           } else {
             FindBatchResponse.success(
-              logFragment.batches().stream().map[BatchInfo](batchCoordinate => batchCoordinate.batchInfo()).toList,
+              logFragment.batches().stream().map[BatchInfo](batchCoordinate => batchCoordinate.batchInfo(request.topicIdPartition())).toList,
               logFragment.logStartOffset(),
               logFragment.highWaterMark()
             )

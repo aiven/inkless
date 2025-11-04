@@ -27,7 +27,6 @@ import io.aiven.inkless.control_plane.BatchMetadata;
  * Represents the coordinates of a batch that is handled by the Batch Coordinate cache
  */
 public record CacheBatchCoordinate(
-    TopicIdPartition topicIdPartition,
     String objectKey,
     long byteOffset,
     long byteSize,
@@ -61,7 +60,7 @@ public record CacheBatchCoordinate(
         }
     }
 
-    public BatchInfo batchInfo(long batchId) {
+    public BatchInfo batchInfo(TopicIdPartition topicIdPartition, long batchId) {
         return new BatchInfo(
             batchId,
             objectKey,
@@ -80,12 +79,12 @@ public record CacheBatchCoordinate(
     }
 
     // To be used when batchId is not used by the caller
-    public BatchInfo batchInfo() {
-        return batchInfo(-1L);
+    public BatchInfo batchInfo(TopicIdPartition topicIdPartition) {
+        return batchInfo(topicIdPartition, -1L);
     }
 
     @Override
     public String toString() {
-        return "BatchCoordinate[" + topicIdPartition.toString() + "-> " + objectKey + ", (" + baseOffset + ", " + lastOffset + ")]";
+        return "BatchCoordinate[" + objectKey + " -> (" + baseOffset + ", " + lastOffset + ")]";
     }
 }

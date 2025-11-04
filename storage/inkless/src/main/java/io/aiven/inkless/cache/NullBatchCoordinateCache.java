@@ -15,12 +15,7 @@ public class NullBatchCoordinateCache implements BatchCoordinateCache {
     }
 
     @Override
-    public void put(CacheBatchCoordinate cacheBatchCoordinate) throws IllegalStateException {}
-
-    @Override
-    public int invalidatePartition(TopicIdPartition topicIdPartition) {
-        return 0;
-    }
+    public void put(TopicIdPartition topicIdPartition, CacheBatchCoordinate cacheBatchCoordinate) throws IllegalStateException {}
 
     @Override
     public void close() throws IOException {}

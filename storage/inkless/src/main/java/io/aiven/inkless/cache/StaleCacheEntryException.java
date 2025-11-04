@@ -6,4 +6,10 @@ public class StaleCacheEntryException extends Exception {
     public StaleCacheEntryException(String message) {
         super(message);
     }
+
+    /* avoid the expensive and useless stack trace */
+    @Override
+    public Throwable fillInStackTrace() {
+        return this;
+    }
 }

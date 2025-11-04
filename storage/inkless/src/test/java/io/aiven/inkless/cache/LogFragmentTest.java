@@ -17,8 +17,6 @@
  */
 package io.aiven.inkless.cache;
 
-import org.apache.kafka.common.TopicIdPartition;
-import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.record.TimestampType;
 
 import org.junit.jupiter.api.Test;
@@ -35,7 +33,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class LogFragmentTest {
 
-    private static final TopicIdPartition TOPIC_ID_PARTITION = new TopicIdPartition(Uuid.randomUuid(), 0, "test-topic");
     private static final Clock clock = Clock.systemUTC();
 
     private CacheBatchCoordinate createBatch(long baseOffset, int recordCount) {
@@ -44,7 +41,6 @@ public class LogFragmentTest {
 
     private CacheBatchCoordinate createBatch(long baseOffset, int recordCount, long logStartOffset) {
         return new CacheBatchCoordinate(
-            TOPIC_ID_PARTITION,
             "test-object-key",
             100L,
             1024L,
@@ -58,23 +54,12 @@ public class LogFragmentTest {
     }
 
     @Test
-    void addBatchWithMismatchedTopicIdPartitionThrowsException() {
-        LogFragment logFragment = new LogFragment(TOPIC_ID_PARTITION, 0, Duration.ofSeconds(1), clock);
-        TopicIdPartition otherPartition = new TopicIdPartition(Uuid.randomUuid(), 1, "other-topic");
-        CacheBatchCoordinate
-            mismatchedBatch = new CacheBatchCoordinate(otherPartition, "key", 0, 100, 0, 1, TimestampType.NO_TIMESTAMP_TYPE, 0, (byte) 2, 0);
-
-        assertThrows(IllegalArgumentException.class, () -> logFragment.addBatch(mismatchedBatch));
-    }
-
-    @Test
     void logFragmentWithLSOEqualsZero() throws StaleCacheEntryException {
-        LogFragment logFragment = new LogFragment(TOPIC_ID_PARTITION, 0, Duration.ofSeconds(1), clock);
+        LogFragment logFragment = new LogFragment(0, Duration.ofSeconds(1), clock);
         assertTrue(logFragment.isEmpty());
         assertEquals(0, logFragment.size());
         assertEquals(0, logFragment.logStartOffset());
         assertEquals(0, logFragment.highWaterMark());
-        assertEquals(TOPIC_ID_PARTITION, logFragment.topicIdPartition());
 
         // Add new batch: increase HW
         CacheBatchCoordinate batch1 = createBatch(0, 10); // [0-9]
@@ -106,12 +91,11 @@ public class LogFragmentTest {
 
     @Test
     void logFragmentWithLSOGreaterThanZero() throws StaleCacheEntryException {
-        LogFragment logFragment = new LogFragment(TOPIC_ID_PARTITION, 50, Duration.ofSeconds(1), clock);
+        LogFragment logFragment = new LogFragment(50, Duration.ofSeconds(1), clock);
         assertTrue(logFragment.isEmpty());
         assertEquals(0, logFragment.size());
         assertEquals(50, logFragment.logStartOffset());
         assertEquals(50, logFragment.highWaterMark());
-        assertEquals(TOPIC_ID_PARTITION, logFragment.topicIdPartition());
 
         // Adding a new batch that has LSO < current LSO is invalid
         assertThrows(IllegalStateException.class, () -> logFragment.addBatch(createBatch(50, 5, 40)));
@@ -148,12 +132,11 @@ public class LogFragmentTest {
 
     @Test
     void logFragmentWithLSOEqualsZeroJumpToMiddle() throws StaleCacheEntryException {
-        LogFragment logFragment = new LogFragment(TOPIC_ID_PARTITION, 0, Duration.ofSeconds(1), clock);
+        LogFragment logFragment = new LogFragment(0, Duration.ofSeconds(1), clock);
         assertTrue(logFragment.isEmpty());
         assertEquals(0, logFragment.size());
         assertEquals(0, logFragment.logStartOffset());
         assertEquals(0, logFragment.highWaterMark());
-        assertEquals(TOPIC_ID_PARTITION, logFragment.topicIdPartition());
 
         // If LogFragment is empty it's possible to add a new batch with base offset > HW
         CacheBatchCoordinate batch = createBatch(100, 10); // [100-109]
@@ -168,12 +151,11 @@ public class LogFragmentTest {
 
     @Test
     void logFragmentWithLSOGreaterThanZeroJumpToMiddle() throws StaleCacheEntryException {
-        LogFragment logFragment = new LogFragment(TOPIC_ID_PARTITION, 50, Duration.ofSeconds(1), clock);
+        LogFragment logFragment = new LogFragment(50, Duration.ofSeconds(1), clock);
         assertTrue(logFragment.isEmpty());
         assertEquals(0, logFragment.size());
         assertEquals(50, logFragment.logStartOffset());
         assertEquals(50, logFragment.highWaterMark());
-        assertEquals(TOPIC_ID_PARTITION, logFragment.topicIdPartition());
 
         // Cannot add new batch with base offset < HW
         assertThrows(IllegalStateException.class, () -> logFragment.addBatch(createBatch(30, 5, 50)));
@@ -192,13 +174,13 @@ public class LogFragmentTest {
 
     @Test
     void subFragmentOnEmptyLogReturnsNull() {
-        LogFragment logFragment = new LogFragment(TOPIC_ID_PARTITION, 0, Duration.ofSeconds(1), clock);
+        LogFragment logFragment = new LogFragment(0, Duration.ofSeconds(1), clock);
         assertNull(logFragment.subFragment(0));
     }
 
     @Test
     void subFragmentWhenStartOffsetIsInMiddleOfBatchReturnsCorrectSublist() throws StaleCacheEntryException {
-        LogFragment logFragment = new LogFragment(TOPIC_ID_PARTITION, 0, Duration.ofSeconds(1), clock);
+        LogFragment logFragment = new LogFragment(0, Duration.ofSeconds(1), clock);
         CacheBatchCoordinate batch1 = createBatch(0, 10);
         CacheBatchCoordinate batch2 = createBatch(10, 10);
         CacheBatchCoordinate batch3 = createBatch(20, 10);
@@ -218,12 +200,11 @@ public class LogFragmentTest {
         assertEquals(batch3, subFragment.batches().get(1));
         assertEquals(0, subFragment.logStartOffset());
         assertEquals(30, subFragment.highWaterMark());
-        assertEquals(TOPIC_ID_PARTITION, subFragment.topicIdPartition());
     }
 
     @Test
     void subFragmentWhenStartOffsetIsTooHighReturnsEmptyFragment() throws StaleCacheEntryException {
-        LogFragment logFragment = new LogFragment(TOPIC_ID_PARTITION, 0, Duration.ofSeconds(1), clock);
+        LogFragment logFragment = new LogFragment(0, Duration.ofSeconds(1), clock);
         logFragment.addBatch(createBatch(0, 10)); // HWM = 10
 
         LogFragment subFragment = logFragment.subFragment(11);
@@ -232,12 +213,11 @@ public class LogFragmentTest {
         assertTrue(subFragment.isEmpty());
         assertEquals(0, subFragment.logStartOffset());
         assertEquals(10, subFragment.highWaterMark());
-        assertEquals(TOPIC_ID_PARTITION, subFragment.topicIdPartition());
     }
 
     @Test
     void subFragmentWhenStartOffsetIsNotFoundBeforeFirstBatchReturnsNull() throws StaleCacheEntryException {
-        LogFragment logFragment = new LogFragment(TOPIC_ID_PARTITION, 5, Duration.ofSeconds(1), clock);
+        LogFragment logFragment = new LogFragment(5, Duration.ofSeconds(1), clock);
         logFragment.addBatch(createBatch(5, 10, 5)); // [5-14]
 
         LogFragment subFragment = logFragment.subFragment(3);
@@ -247,7 +227,7 @@ public class LogFragmentTest {
     @Test
     void evictOnNonEmptyFragmentRemovesExpiredBatch() throws StaleCacheEntryException {
         var clock = new ManualClock();
-        LogFragment logFragment = new LogFragment(TOPIC_ID_PARTITION, 0, Duration.ofSeconds(30), clock);
+        LogFragment logFragment = new LogFragment(0, Duration.ofSeconds(30), clock);
 
         CacheBatchCoordinate batch1 = createBatch(0, 10); // [0-9], expires at T=30
         logFragment.addBatch(batch1);
@@ -272,7 +252,7 @@ public class LogFragmentTest {
 
     @Test
     void evictOnEmptyFragmentReturnsFalse() {
-        LogFragment logFragment = new LogFragment(TOPIC_ID_PARTITION, 0, Duration.ofSeconds(30), clock);
+        LogFragment logFragment = new LogFragment(0, Duration.ofSeconds(30), clock);
         int evicted = logFragment.evictExpired();
 
         assertEquals(0, evicted);
@@ -285,7 +265,7 @@ public class LogFragmentTest {
     @Test
     void subFragmentWhenStartOffsetIsLessThanFirstBatchOffsetReturnsNull() throws StaleCacheEntryException {
         var clock = new ManualClock();
-        LogFragment logFragment = new LogFragment(TOPIC_ID_PARTITION, 0, Duration.ofSeconds(1), clock);
+        LogFragment logFragment = new LogFragment(0, Duration.ofSeconds(1), clock);
         logFragment.addBatch(createBatch(0, 5)); // [0-4], expires at T=1
 
         // T=5, first batch is expired
@@ -303,14 +283,14 @@ public class LogFragmentTest {
 
     @Test
     void subFragmentOnEmptyFragmentReturnsNull() {
-        LogFragment logFragment = new LogFragment(TOPIC_ID_PARTITION, 0, Duration.ofSeconds(30), clock);
+        LogFragment logFragment = new LogFragment(0, Duration.ofSeconds(30), clock);
         assertNull(logFragment.subFragment(0));
     }
 
     @Test
     void subFragmentReturnsNullIfFirstMatchingBatchIsExpired() throws StaleCacheEntryException {
         var clock = new ManualClock();
-        LogFragment logFragment = new LogFragment(TOPIC_ID_PARTITION, 0, Duration.ofSeconds(30), clock);
+        LogFragment logFragment = new LogFragment(0, Duration.ofSeconds(30), clock);
 
         CacheBatchCoordinate batch1 = createBatch(0, 10); // [0-9], expires at T=30
         logFragment.addBatch(batch1);

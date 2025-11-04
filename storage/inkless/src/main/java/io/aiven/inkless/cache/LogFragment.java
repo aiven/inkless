@@ -17,7 +17,6 @@
  */
 package io.aiven.inkless.cache;
 
-import org.apache.kafka.common.TopicIdPartition;
 
 import java.time.Clock;
 import java.time.Duration;
@@ -55,7 +54,6 @@ import java.util.stream.Collectors;
  * due to retention).
  */
 public class LogFragment {
-    private final TopicIdPartition topicIdPartition;
     private final LinkedList<TimedBatchCoordinate> batches;
     private final long logStartOffset;
     private long highWaterMark;
@@ -73,11 +71,7 @@ public class LogFragment {
         }
     }
 
-    private LogFragment(TopicIdPartition topicIdPartition, LinkedList<TimedBatchCoordinate> batches, long logStartOffset, long highWaterMark, Duration ttl, Clock clock) {
-        if (topicIdPartition == null) {
-            throw new IllegalArgumentException("topicIdPartition cannot be null");
-        }
-        this.topicIdPartition = topicIdPartition;
+    private LogFragment(LinkedList<TimedBatchCoordinate> batches, long logStartOffset, long highWaterMark, Duration ttl, Clock clock) {
         if (batches == null) {
             throw new IllegalArgumentException("batches cannot be null");
         }
@@ -102,12 +96,12 @@ public class LogFragment {
         this.clock = clock;
     }
 
-    public LogFragment(TopicIdPartition topicIdPartition, long logStartOffset, Duration ttl, Clock clock) {
-        this(topicIdPartition, new LinkedList<>(), logStartOffset, logStartOffset, ttl, clock);
+    public LogFragment(long logStartOffset, Duration ttl, Clock clock) {
+        this(new LinkedList<>(), logStartOffset, logStartOffset, ttl, clock);
     }
 
     private LogFragment subFragment(LinkedList<TimedBatchCoordinate> batches) {
-        return new LogFragment(topicIdPartition, batches, logStartOffset, highWaterMark, ttl, clock);
+        return new LogFragment(batches, logStartOffset, highWaterMark, ttl, clock);
     }
 
     /**
@@ -134,10 +128,6 @@ public class LogFragment {
      * this fragment stale.
      */
     protected long addBatch(CacheBatchCoordinate batch) throws StaleCacheEntryException, IllegalStateException {
-        if (!batch.topicIdPartition().equals(topicIdPartition)) {
-            throw new IllegalArgumentException("Batch coordinate topic id partition does not match LogFragment topic id partition");
-        }
-
         lock.writeLock().lock();
         try {
             if (batch.logStartOffset() < logStartOffset) {
@@ -267,10 +257,6 @@ public class LogFragment {
         }
     }
 
-    public TopicIdPartition topicIdPartition() {
-        return topicIdPartition;
-    }
-
     public long highWaterMark() {
         lock.readLock().lock();
         try {
@@ -309,6 +295,6 @@ public class LogFragment {
 
     @Override
     public String toString() {
-        return "LogFragment[" + topicIdPartition + ": [" + logStartOffset() + ", " + highWaterMark() + ")]";
+        return "LogFragment[" + logStartOffset() + ", " + highWaterMark() + ")]";
     }
 }

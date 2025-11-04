@@ -100,12 +100,12 @@ public class CaffeineBatchCoordinateCache implements BatchCoordinateCache {
         return subFragment;
     }
 
-    private void putInternal(CacheBatchCoordinate value) throws StaleCacheEntryException {
+    private void putInternal(TopicIdPartition topicIdPartition, CacheBatchCoordinate value) throws StaleCacheEntryException {
         try {
-            cache.asMap().compute(value.topicIdPartition(), (key, existingLogFragment) -> {
+            cache.asMap().compute(topicIdPartition, (key, existingLogFragment) -> {
 
                 if (existingLogFragment == null) {
-                    existingLogFragment = new LogFragment(key, value.logStartOffset(), this.ttl, this.clock);
+                    existingLogFragment = new LogFragment(value.logStartOffset(), this.ttl, this.clock);
                 }
 
                 try {
@@ -154,15 +154,14 @@ public class CaffeineBatchCoordinateCache implements BatchCoordinateCache {
      * than the one present in the cache, or lower base offset than the high watermark present in the cache)
      */
     @Override
-    public void put(CacheBatchCoordinate cacheBatchCoordinate) throws IllegalStateException {
-        TopicIdPartition topicIdPartition = cacheBatchCoordinate.topicIdPartition();
+    public void put(TopicIdPartition topicIdPartition, CacheBatchCoordinate cacheBatchCoordinate) throws IllegalStateException {
         try {
-            putInternal(cacheBatchCoordinate);
+            putInternal(topicIdPartition, cacheBatchCoordinate);
         } catch (StaleCacheEntryException e) {
             LOGGER.debug("[{}] Stale cache entry found, invalidating cache", topicIdPartition, e);
             invalidatePartition(topicIdPartition);
             try {
-                putInternal(cacheBatchCoordinate);
+                putInternal(topicIdPartition, cacheBatchCoordinate);
             } catch (StaleCacheEntryException secondException) {
                 LOGGER.error("[{}] Failed to add batch coordinate after invalidation", topicIdPartition, secondException);
                 invalidatePartition(topicIdPartition);
@@ -180,7 +179,6 @@ public class CaffeineBatchCoordinateCache implements BatchCoordinateCache {
      * @param topicIdPartition The specific topic partition to remove from the cache.
      * @return the number of batches removed from the cache.
      */
-    @Override
     public int invalidatePartition(TopicIdPartition topicIdPartition) {
         final AtomicInteger sizeOfRemoved = new AtomicInteger(0);
 

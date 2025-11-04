@@ -67,7 +67,7 @@ class AppendCompleter {
             final CacheBatchCoordinate cacheBatchCoordinate = commitBatchResponse.cacheBatchCoordinate();
             if (cacheBatchCoordinate != null) {
                 try {
-                    batchCoordinateCache.put(cacheBatchCoordinate);
+                    batchCoordinateCache.put(commitBatchRequest.topicIdPartition(), cacheBatchCoordinate);
                 } catch (final Exception e) {
                     LOGGER.error("Failed to put batch coordinate into cache", e);
                 }

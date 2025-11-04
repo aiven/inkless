@@ -109,9 +109,9 @@ class AppendCompleterTest {
             T1P0, new PartitionResponse(Errors.NONE, 30, 10, 0)
         ));
 
-        verify(cache).put(commitBatchResponses.get(0).cacheBatchCoordinate());
-        verify(cache).put(commitBatchResponses.get(2).cacheBatchCoordinate());
-        verify(cache).put(commitBatchResponses.get(3).cacheBatchCoordinate());
+        verify(cache).put(T0P0, commitBatchResponses.get(0).cacheBatchCoordinate());
+        verify(cache).put(T0P1, commitBatchResponses.get(2).cacheBatchCoordinate());
+        verify(cache).put(T1P0, commitBatchResponses.get(3).cacheBatchCoordinate());
         verifyNoMoreInteractions(cache);
     }
 
@@ -134,7 +134,7 @@ class AppendCompleterTest {
 
         assertThat(awaitingFuturesByRequest.get(0)).isCompletedWithValue(Map.of());
         assertThat(awaitingFuturesByRequest.get(1)).isCompletedWithValue(Map.of());
-        verify(cache, never()).put(any());
+        verify(cache, never()).put(any(), any());
     }
 
 
@@ -174,7 +174,7 @@ class AppendCompleterTest {
                 T0P1, new PartitionResponse(Errors.CORRUPT_MESSAGE, -1, -1, -1),
                 T1P0, new PartitionResponse(Errors.INVALID_RECORD, -1, -1, -1)
         ));
-        verify(cache, never()).put(any());
+        verify(cache, never()).put(any(), any());
     }
 
     @Test
@@ -198,6 +198,6 @@ class AppendCompleterTest {
             T0P1, new PartitionResponse(Errors.KAFKA_STORAGE_ERROR, "Error commiting data"),
             T1P0, new PartitionResponse(Errors.KAFKA_STORAGE_ERROR, "Error commiting data")
         ));
-        verify(cache, never()).put(any());
+        verify(cache, never()).put(any(), any());
     }
 }

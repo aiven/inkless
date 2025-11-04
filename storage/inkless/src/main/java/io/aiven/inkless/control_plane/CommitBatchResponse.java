@@ -63,7 +63,6 @@ public record CommitBatchResponse(
             return null;
         }
         return new CacheBatchCoordinate(
-            request.topicIdPartition(),
             objectKey,
             request.byteOffset(),
             request.size(),
