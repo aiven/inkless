@@ -120,22 +120,19 @@ public class LogFragment {
      * @param batch The batch coordinate to append.
      * @return The new high-water mark, representing the next expected offset
      * in the log.
-     * @throws IllegalArgumentException If the batch does not belong to this fragment's topic partition.
-     * @throws IllegalStateException If the batch is out-of-order or its internal offsets are inconsistent with
-     * the fragment's state.
-     * @throws NonContiguousLogFragmentException If the batch's starting offset does not exactly match the fragment's
-     * current end, creating a gap.
-     * @throws IncreasedLogStartOffsetException If the batch indicates the log start offset has been increased, making
-     * this fragment stale.
+     * @throws IllegalArgumentException If the batch is out-of-order or its internal offsets are inconsistent with
+     * the fragment's state. This means the new batch is stale and cannot be added to the fragment.
+     * @throws StaleLogFragmentException If the new batch is newer than the log fragment state (higher high-watermark,
+     * or higher log start offset), it means that the log fragment is stale.
      */
-    protected long addBatch(CacheBatchCoordinate batch) throws StaleCacheEntryException, IllegalStateException {
+    protected long addBatch(CacheBatchCoordinate batch) throws StaleLogFragmentException, IllegalArgumentException {
         lock.writeLock().lock();
         try {
             if (batch.logStartOffset() < logStartOffset) {
-                throw new IllegalStateException("Log start offset of new batch ("+ batch.logStartOffset() +") < current log start offset (" + logStartOffset + ")");
+                throw new IllegalArgumentException("Log start offset of new batch ("+ batch.logStartOffset() +") < current log start offset (" + logStartOffset + ")");
             } else if (batch.baseOffset() < highWaterMark) {
-                throw new IllegalStateException("Base offset of the new batch ("+ batch.baseOffset() +") < high watermark (" + highWaterMark + ")");
-            } else if (!this.isEmpty() && batch.baseOffset() != highWaterMark) {
+                throw new IllegalArgumentException("Base offset of the new batch ("+ batch.baseOffset() +") < high watermark (" + highWaterMark + ")");
+            } else if (!this.isEmpty() && batch.baseOffset() > highWaterMark) { // Inserting a batch with base offset > HWM is valid if the fragment is empty
                 throw new NonContiguousLogFragmentException(this, batch);
             } else if (batch.logStartOffset() > logStartOffset) {
                 throw new IncreasedLogStartOffsetException(this, batch);

@@ -22,13 +22,13 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class CaffeineBatchCoordinateCache implements BatchCoordinateCache {
 
     static class UncheckedStaleCacheEntryException extends RuntimeException {
-        public UncheckedStaleCacheEntryException(StaleCacheEntryException cause) {
+        public UncheckedStaleCacheEntryException(StaleLogFragmentException cause) {
             super(cause);
         }
 
         @Override
-        public synchronized StaleCacheEntryException getCause() {
-            return (StaleCacheEntryException) super.getCause();
+        public synchronized StaleLogFragmentException getCause() {
+            return (StaleLogFragmentException) super.getCause();
         }
     }
 
@@ -99,7 +99,8 @@ public class CaffeineBatchCoordinateCache implements BatchCoordinateCache {
         return subFragment;
     }
 
-    private void putInternal(TopicIdPartition topicIdPartition, CacheBatchCoordinate value) throws StaleCacheEntryException {
+    private void putInternal(TopicIdPartition topicIdPartition, CacheBatchCoordinate value) throws
+        StaleLogFragmentException {
         try {
             cache.asMap().compute(topicIdPartition, (key, existingLogFragment) -> {
 
@@ -114,7 +115,7 @@ public class CaffeineBatchCoordinateCache implements BatchCoordinateCache {
                     evictExpiredEntries(existingLogFragment);
 
                     return existingLogFragment;
-                } catch (StaleCacheEntryException e) {
+                } catch (StaleLogFragmentException e) {
                     throw new UncheckedStaleCacheEntryException(e);
                 }
             });
@@ -153,24 +154,51 @@ public class CaffeineBatchCoordinateCache implements BatchCoordinateCache {
      * than the one present in the cache, or lower base offset than the high watermark present in the cache)
      */
     @Override
-    public void put(TopicIdPartition topicIdPartition, CacheBatchCoordinate cacheBatchCoordinate) throws IllegalStateException {
-        try {
-            putInternal(topicIdPartition, cacheBatchCoordinate);
-        } catch (StaleCacheEntryException e) {
-            LOGGER.debug("[{}] Stale cache entry found, invalidating cache", topicIdPartition, e);
-            invalidatePartition(topicIdPartition);
-            try {
-                putInternal(topicIdPartition, cacheBatchCoordinate);
-            } catch (StaleCacheEntryException secondException) {
-                LOGGER.error("[{}] Failed to add batch coordinate after invalidation", topicIdPartition, secondException);
-                invalidatePartition(topicIdPartition);
-                throw new RuntimeException("Failed to put item in cache after retry", secondException);
+    public void put(TopicIdPartition topicIdPartition, CacheBatchCoordinate cacheBatchCoordinate) {
+        cache.asMap().compute(topicIdPartition, (key, existingLogFragment) -> {
+            LogFragment currentFragment = existingLogFragment;
+
+            if (currentFragment == null) {
+                currentFragment = new LogFragment(cacheBatchCoordinate.logStartOffset(), this.ttl, this.time);
             }
-        } catch (IllegalStateException e) {
-            LOGGER.debug("[{}] Failed to add batch coordinate, invalidating cache", topicIdPartition, e);
-            invalidatePartition(topicIdPartition);
-            throw e;
-        }
+
+            try {
+                currentFragment.addBatch(cacheBatchCoordinate);
+                metrics.incrementCacheSize();
+                evictExpiredEntries(currentFragment);
+                return currentFragment;
+            } catch (StaleLogFragmentException staleException) {
+                LOGGER.debug("[{}] Stale log fragment detected, invalidating and retrying.", key, staleException);
+                // Record invalidation metrics for the fragment we are about to discard
+                if (existingLogFragment != null && !existingLogFragment.isEmpty()) {
+                    metrics.decreaseCacheSize(existingLogFragment.size());
+                    metrics.recordCacheInvalidation();
+                }
+                // Create a new fragment for the retry
+                LogFragment newFragment = new LogFragment(cacheBatchCoordinate.logStartOffset(), this.ttl, this.time);
+                try {
+                    newFragment.addBatch(cacheBatchCoordinate);
+                    metrics.incrementCacheSize();
+                    return newFragment;
+                } catch (StaleLogFragmentException | IllegalArgumentException secondAttemptException) {
+                    LOGGER.error(
+                        "[{}] Failed to add batch coordinate after invalidation. " +
+                            "This batch will be dropped. First exception: {}, Second exception: {}",
+                        key, staleException.getMessage(), secondAttemptException
+                    );
+                    return null;
+                }
+
+            } catch (IllegalArgumentException illegalArgumentException) {
+                LOGGER.warn("[{}] Failed to add batch coordinate due to invalid state, invalidating cache", key, illegalArgumentException);
+                // Record invalidation metrics for the fragment we are about to discard
+                if (existingLogFragment != null && !existingLogFragment.isEmpty()) {
+                    metrics.decreaseCacheSize(existingLogFragment.size());
+                    metrics.recordCacheInvalidation();
+                }
+                return null;
+            }
+        });
     }
 
     /**

@@ -221,17 +221,19 @@ class CaffeineBatchCoordinateCacheTest {
     }
 
     @Test
-    void notPossibleToInsertBatchesWithLowerLogStartOffset() {
-        cache.put(PARTITION_0, createBatch(50, 100, 50)); // [50-99]
-        assertThrows(IllegalStateException.class, () -> cache.put(PARTITION_0, createBatch(100, 110, 10)));
+    void addingBatchesWithLowerLogStartOffsetInvalidatesEntry() {
+        cache.put(PARTITION_0, createBatch(50, 100, 50)); // [50-99], with LSO=50
+        cache.put(PARTITION_0, createBatch(100, 100, 10)); // [100-199], with LSO=10
         assertNull(cache.get(PARTITION_0, 50));
+        assertNull(cache.get(PARTITION_0, 100));
     }
 
     @Test
-    void notPossibleToInsertOffsetsLowerThanHighWater() {
+    void addingBatchWIthOffsetsLowerThanHighWaterInvalidatesEntry() {
         cache.put(PARTITION_0, createBatch(0, 100, 0)); // [0-99]
-        assertThrows(IllegalStateException.class, () -> cache.put(PARTITION_0, createBatch(50, 60, 0))); // [50-59]
+        cache.put(PARTITION_0, createBatch(50, 60, 0)); // [50-59]
         assertNull(cache.get(PARTITION_0, 0));
+        assertNull(cache.get(PARTITION_0, 50));
     }
 
     @Test

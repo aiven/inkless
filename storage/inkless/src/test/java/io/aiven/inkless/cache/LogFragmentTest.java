@@ -55,7 +55,7 @@ public class LogFragmentTest {
     }
 
     @Test
-    void logFragmentWithLSOEqualsZero() throws StaleCacheEntryException {
+    void logFragmentWithLSOEqualsZero() throws StaleLogFragmentException {
         LogFragment logFragment = new LogFragment(0, Duration.ofSeconds(1), time);
         assertTrue(logFragment.isEmpty());
         assertEquals(0, logFragment.size());
@@ -73,7 +73,7 @@ public class LogFragmentTest {
         assertEquals(10L, logFragment.highWaterMark());
 
         // Adding a new batch that has base offset < current HW is invalid
-        assertThrows(IllegalStateException.class, () -> logFragment.addBatch(createBatch(8, 5)));
+        assertThrows(IllegalArgumentException.class, () -> logFragment.addBatch(createBatch(8, 5)));
         // New batch must be contiguous
         assertThrows(NonContiguousLogFragmentException.class, () -> logFragment.addBatch(createBatch(11, 5)));
         // Cannot add a new batch that has LSO != current LSO
@@ -91,7 +91,7 @@ public class LogFragmentTest {
     }
 
     @Test
-    void logFragmentWithLSOGreaterThanZero() throws StaleCacheEntryException {
+    void logFragmentWithLSOGreaterThanZero() throws StaleLogFragmentException {
         LogFragment logFragment = new LogFragment(50, Duration.ofSeconds(1), time);
         assertTrue(logFragment.isEmpty());
         assertEquals(0, logFragment.size());
@@ -99,9 +99,9 @@ public class LogFragmentTest {
         assertEquals(50, logFragment.highWaterMark());
 
         // Adding a new batch that has LSO < current LSO is invalid
-        assertThrows(IllegalStateException.class, () -> logFragment.addBatch(createBatch(50, 5, 40)));
+        assertThrows(IllegalArgumentException.class, () -> logFragment.addBatch(createBatch(50, 5, 40)));
         // Cannot add new batch that has a base offset < HW
-        assertThrows(IllegalStateException.class, () -> logFragment.addBatch(createBatch(10, 5, 50)));
+        assertThrows(IllegalArgumentException.class, () -> logFragment.addBatch(createBatch(10, 5, 50)));
         // Cannot add a new batch that has LSO > current LSO
         assertThrows(IncreasedLogStartOffsetException.class, () -> logFragment.addBatch(createBatch(50, 5, 60)));
 
@@ -116,7 +116,7 @@ public class LogFragmentTest {
         assertEquals(60L, logFragment.highWaterMark());
 
         // Adding a new batch that has base offset < current HW is invalid
-        assertThrows(IllegalStateException.class, () -> logFragment.addBatch(createBatch(30, 5, 50)));
+        assertThrows(IllegalArgumentException.class, () -> logFragment.addBatch(createBatch(30, 5, 50)));
         // New batch must be contiguous
         assertThrows(NonContiguousLogFragmentException.class, () -> logFragment.addBatch(createBatch(70, 5, 50)));
 
@@ -132,7 +132,7 @@ public class LogFragmentTest {
     }
 
     @Test
-    void logFragmentWithLSOEqualsZeroJumpToMiddle() throws StaleCacheEntryException {
+    void logFragmentWithLSOEqualsZeroJumpToMiddle() throws StaleLogFragmentException {
         LogFragment logFragment = new LogFragment(0, Duration.ofSeconds(1), time);
         assertTrue(logFragment.isEmpty());
         assertEquals(0, logFragment.size());
@@ -151,7 +151,7 @@ public class LogFragmentTest {
     }
 
     @Test
-    void logFragmentWithLSOGreaterThanZeroJumpToMiddle() throws StaleCacheEntryException {
+    void logFragmentWithLSOGreaterThanZeroJumpToMiddle() throws StaleLogFragmentException {
         LogFragment logFragment = new LogFragment(50, Duration.ofSeconds(1), time);
         assertTrue(logFragment.isEmpty());
         assertEquals(0, logFragment.size());
@@ -159,7 +159,7 @@ public class LogFragmentTest {
         assertEquals(50, logFragment.highWaterMark());
 
         // Cannot add new batch with base offset < HW
-        assertThrows(IllegalStateException.class, () -> logFragment.addBatch(createBatch(30, 5, 50)));
+        assertThrows(IllegalArgumentException.class, () -> logFragment.addBatch(createBatch(30, 5, 50)));
 
         // If LogFragment is empty it's possible to add a new batch with starting offset > HW
         CacheBatchCoordinate batch = createBatch(100, 10, 50); // [100-109]
@@ -180,7 +180,7 @@ public class LogFragmentTest {
     }
 
     @Test
-    void subFragmentWhenStartOffsetIsInMiddleOfBatchReturnsCorrectSublist() throws StaleCacheEntryException {
+    void subFragmentWhenStartOffsetIsInMiddleOfBatchReturnsCorrectSublist() throws StaleLogFragmentException {
         LogFragment logFragment = new LogFragment(0, Duration.ofSeconds(1), time);
         CacheBatchCoordinate batch1 = createBatch(0, 10);
         CacheBatchCoordinate batch2 = createBatch(10, 10);
@@ -204,7 +204,7 @@ public class LogFragmentTest {
     }
 
     @Test
-    void subFragmentWhenStartOffsetIsTooHighReturnsEmptyFragment() throws StaleCacheEntryException {
+    void subFragmentWhenStartOffsetIsTooHighReturnsEmptyFragment() throws StaleLogFragmentException {
         LogFragment logFragment = new LogFragment(0, Duration.ofSeconds(1), time);
         logFragment.addBatch(createBatch(0, 10)); // HWM = 10
 
@@ -217,7 +217,7 @@ public class LogFragmentTest {
     }
 
     @Test
-    void subFragmentWhenStartOffsetIsNotFoundBeforeFirstBatchReturnsNull() throws StaleCacheEntryException {
+    void subFragmentWhenStartOffsetIsNotFoundBeforeFirstBatchReturnsNull() throws StaleLogFragmentException {
         LogFragment logFragment = new LogFragment(5, Duration.ofSeconds(1), time);
         logFragment.addBatch(createBatch(5, 10, 5)); // [5-14]
 
@@ -226,7 +226,7 @@ public class LogFragmentTest {
     }
 
     @Test
-    void evictOnNonEmptyFragmentRemovesExpiredBatch() throws StaleCacheEntryException {
+    void evictOnNonEmptyFragmentRemovesExpiredBatch() throws StaleLogFragmentException {
         var time = new MockTime();
         LogFragment logFragment = new LogFragment(0, Duration.ofSeconds(30), time);
 
@@ -264,7 +264,7 @@ public class LogFragmentTest {
     }
 
     @Test
-    void subFragmentWhenStartOffsetIsLessThanFirstBatchOffsetReturnsNull() throws StaleCacheEntryException {
+    void subFragmentWhenStartOffsetIsLessThanFirstBatchOffsetReturnsNull() throws StaleLogFragmentException {
         var time = new MockTime();
         LogFragment logFragment = new LogFragment(0, Duration.ofSeconds(1), time);
         logFragment.addBatch(createBatch(0, 5)); // [0-4], expires at T=1
@@ -289,7 +289,7 @@ public class LogFragmentTest {
     }
 
     @Test
-    void subFragmentReturnsNullIfFirstMatchingBatchIsExpired() throws StaleCacheEntryException {
+    void subFragmentReturnsNullIfFirstMatchingBatchIsExpired() throws StaleLogFragmentException {
         var time = new MockTime();
         LogFragment logFragment = new LogFragment(0, Duration.ofSeconds(30), time);
 

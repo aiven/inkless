@@ -25,6 +25,6 @@ public interface BatchCoordinateCache extends Closeable {
 
     LogFragment get(TopicIdPartition topicIdPartition, long offset);
 
-    void put(TopicIdPartition topicIdPartition, CacheBatchCoordinate cacheBatchCoordinate) throws IllegalStateException;
+    void put(TopicIdPartition topicIdPartition, CacheBatchCoordinate cacheBatchCoordinate);
 
 }

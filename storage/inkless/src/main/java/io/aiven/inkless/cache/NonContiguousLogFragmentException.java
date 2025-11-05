@@ -17,7 +17,7 @@
  */
 package io.aiven.inkless.cache;
 
-public class NonContiguousLogFragmentException extends StaleCacheEntryException {
+public class NonContiguousLogFragmentException extends StaleLogFragmentException {
     public NonContiguousLogFragmentException(LogFragment logFragment, CacheBatchCoordinate batchCoordinate) {
         super("Trying to append " + batchCoordinate + " to " + logFragment);
     }
