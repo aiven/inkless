@@ -199,7 +199,7 @@ public class LogFragment {
             if (firstOffset == null || firstOffset > startOffset) {
                 return null;
             }
-            if (startOffset > highWaterMark) {
+            if (startOffset >= highWaterMark) {
                 return subFragment(new LinkedList<>());
             }
 

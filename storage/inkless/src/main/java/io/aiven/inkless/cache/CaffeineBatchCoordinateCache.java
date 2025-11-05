@@ -78,8 +78,10 @@ public class CaffeineBatchCoordinateCache implements BatchCoordinateCache {
             return null;
         }
         final LogFragment subFragment = logFragment.subFragment(offset);
-        if (subFragment == null || subFragment.isEmpty()) {
+        if (subFragment == null) {
             metrics.recordCacheMiss();
+        } else if (subFragment.isEmpty()) {
+            metrics.recordCacheHitWithoutData();
         } else {
             metrics.recordCacheHit();
         }

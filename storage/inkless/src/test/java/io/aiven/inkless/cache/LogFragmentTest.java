@@ -208,12 +208,18 @@ public class LogFragmentTest {
         LogFragment logFragment = new LogFragment(0, Duration.ofSeconds(1), time);
         logFragment.addBatch(createBatch(0, 10)); // HWM = 10
 
-        LogFragment subFragment = logFragment.subFragment(11);
+        LogFragment subFragment1 = logFragment.subFragment(10);
+        assertNotNull(subFragment1);
+        assertTrue(subFragment1.isEmpty());
+        assertEquals(0, subFragment1.logStartOffset());
+        assertEquals(10, subFragment1.highWaterMark());
 
-        assertNotNull(subFragment);
-        assertTrue(subFragment.isEmpty());
-        assertEquals(0, subFragment.logStartOffset());
-        assertEquals(10, subFragment.highWaterMark());
+
+        LogFragment subFragment2 = logFragment.subFragment(99);
+        assertNotNull(subFragment2);
+        assertTrue(subFragment2.isEmpty());
+        assertEquals(0, subFragment2.logStartOffset());
+        assertEquals(10, subFragment2.highWaterMark());
     }
 
     @Test
