@@ -237,24 +237,6 @@ class CaffeineBatchCoordinateCacheTest {
     }
 
     @Test
-    void removeRemovesAllBatches() {
-        cache.put(PARTITION_0, createBatch(0, 10, 0));
-        cache.put(PARTITION_0, createBatch(10, 10, 0));
-        cache.put(PARTITION_1, createBatch(0, 10, 0));
-        assertNotNull(cache.get(PARTITION_0, 0));
-        assertNotNull(cache.get(PARTITION_1, 0));
-
-        assertEquals(2, cache.invalidatePartition(PARTITION_0));
-        assertNull(cache.get(PARTITION_0, 0));
-        assertNotNull(cache.get(PARTITION_1, 0));
-    }
-
-    @Test
-    void removeNonExistentPartition() {
-        assertEquals(0, cache.invalidatePartition(PARTITION_0));
-    }
-
-    @Test
     void testClose() throws IOException {
         cache.put(PARTITION_0, createBatch(0, 9, 0));
         cache.put(PARTITION_1, createBatch(0, 9, 0));

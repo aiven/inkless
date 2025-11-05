@@ -11,7 +11,6 @@ import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.time.Duration;
-import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * A thread-safe cache that manages {@link LogFragment} instances for
@@ -20,17 +19,6 @@ import java.util.concurrent.atomic.AtomicInteger;
  * This cache automatically handles stale and expired entries.
  */
 public class CaffeineBatchCoordinateCache implements BatchCoordinateCache {
-
-    static class UncheckedStaleCacheEntryException extends RuntimeException {
-        public UncheckedStaleCacheEntryException(StaleLogFragmentException cause) {
-            super(cause);
-        }
-
-        @Override
-        public synchronized StaleLogFragmentException getCause() {
-            return (StaleLogFragmentException) super.getCause();
-        }
-    }
 
     private static final Logger LOGGER = LoggerFactory.getLogger(CaffeineBatchCoordinateCache.class);
 
@@ -97,32 +85,6 @@ public class CaffeineBatchCoordinateCache implements BatchCoordinateCache {
         }
 
         return subFragment;
-    }
-
-    private void putInternal(TopicIdPartition topicIdPartition, CacheBatchCoordinate value) throws
-        StaleLogFragmentException {
-        try {
-            cache.asMap().compute(topicIdPartition, (key, existingLogFragment) -> {
-
-                if (existingLogFragment == null) {
-                    existingLogFragment = new LogFragment(value.logStartOffset(), this.ttl, this.time);
-                }
-
-                try {
-                    existingLogFragment.addBatch(value);
-                    metrics.incrementCacheSize();
-
-                    evictExpiredEntries(existingLogFragment);
-
-                    return existingLogFragment;
-                } catch (StaleLogFragmentException e) {
-                    throw new UncheckedStaleCacheEntryException(e);
-                }
-            });
-
-        } catch (UncheckedStaleCacheEntryException e) {
-            throw e.getCause();
-        }
     }
 
     private void evictExpiredEntries(LogFragment logFragment) {
@@ -199,28 +161,6 @@ public class CaffeineBatchCoordinateCache implements BatchCoordinateCache {
                 return null;
             }
         });
-    }
-
-    /**
-     * Removes the entry from the cache for a topic partition.
-     * @param topicIdPartition The specific topic partition to remove from the cache.
-     * @return the number of batches removed from the cache.
-     */
-    public int invalidatePartition(TopicIdPartition topicIdPartition) {
-        final AtomicInteger sizeOfRemoved = new AtomicInteger(0);
-
-        cache.asMap().computeIfPresent(topicIdPartition, (key, fragment) -> {
-            int size = fragment.size();
-            if (size > 0) {
-                metrics.decreaseCacheSize(size);
-                metrics.recordCacheInvalidation();
-                sizeOfRemoved.set(size);
-            }
-
-            return null;
-        });
-
-        return sizeOfRemoved.get();
     }
 
     @Override
