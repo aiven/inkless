@@ -96,6 +96,7 @@ import java.util.Optional;
 import java.util.Properties;
 import java.util.Random;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Supplier;
 
 import static java.util.Collections.singletonList;
@@ -191,22 +192,49 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     public Node getRemotePartitionLeader(String mirrorName, TopicPartition tp) {
         var partitionLeaders = remotePartitionLeaders.get(mirrorName);
         if (partitionLeaders != null) {
-            return partitionLeaders.get(tp);
+            Node leader = partitionLeaders.get(tp);
+            if (leader != null) {
+                return leader;
+            }
         }
-        // return a random node if no leader info
+
+        // No cached metadata.
+        // Refresh synchronously to get correct broker IDs before creating fetcher threads.
+        LOG.info("No cached metadata for mirror {} partition {}. Refreshing metadata from remote cluster.", mirrorName, tp);
+        topics.computeIfAbsent(mirrorName, k -> java.util.concurrent.ConcurrentHashMap.newKeySet()).add(tp.topic());
+        refreshMetadata();
+
+        // Try again after refreshing metadata.
+        partitionLeaders = remotePartitionLeaders.get(mirrorName);
+        if (partitionLeaders != null) {
+            Node leader = partitionLeaders.get(tp);
+            if (leader != null) {
+                LOG.info("Successfully fetched leader for {} from mirror {}: broker {}", tp, mirrorName, leader.id());
+                return leader;
+            }
+        }
+
+        // Metadata refresh failed or partition not found.
+        // Fall back to random bootstrap server.
+        // This should rarely happen and indicates a configuration or connectivity issue.
+        LOG.warn("Unable to fetch metadata for mirror {} partition {} after refresh. Falling back to random bootstrap server.", mirrorName, tp);
         Properties props = metadataCache.config(new ConfigResource(ConfigResource.Type.MIRROR, mirrorName));
         String bootstrapServers = Optional.ofNullable(props.get(BOOTSTRAP_SERVERS_CONFIG))
                 .map(Object::toString)
                 .orElseThrow(() -> new IllegalArgumentException("Remote bootstrap server not found for mirror " + mirrorName));
-        // get the 1st one bootstrap server
+
         var addresses = ClientUtils.parseAndValidateAddresses(Arrays.stream(bootstrapServers.split(",")).toList(), "use_all_dns_ips");
         int rand = random.nextInt(addresses.size());
+
         // Use random node id here because we don't know node id of remote brokers.
         return new Node(random.nextInt(), addresses.get(rand).getHostString(), addresses.get(rand).getPort());
     }
 
     public void updateMirroredTopics(String clusterName, Set<String> topics) {
         this.topics.put(clusterName, topics);
+        Set<String> mutableTopics = ConcurrentHashMap.newKeySet();
+        mutableTopics.addAll(topics);
+        this.topics.put(clusterName, mutableTopics);
     }
 
     public void refreshMetadata() {
