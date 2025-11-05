@@ -18,10 +18,11 @@
 package io.aiven.inkless.cache;
 
 import org.apache.kafka.common.record.TimestampType;
+import org.apache.kafka.common.utils.MockTime;
+import org.apache.kafka.common.utils.Time;
 
 import org.junit.jupiter.api.Test;
 
-import java.time.Clock;
 import java.time.Duration;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -33,7 +34,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class LogFragmentTest {
 
-    private static final Clock clock = Clock.systemUTC();
+    private static final Time time = Time.SYSTEM;
 
     private CacheBatchCoordinate createBatch(long baseOffset, int recordCount) {
         return createBatch(baseOffset, recordCount, 0L);
@@ -55,7 +56,7 @@ public class LogFragmentTest {
 
     @Test
     void logFragmentWithLSOEqualsZero() throws StaleCacheEntryException {
-        LogFragment logFragment = new LogFragment(0, Duration.ofSeconds(1), clock);
+        LogFragment logFragment = new LogFragment(0, Duration.ofSeconds(1), time);
         assertTrue(logFragment.isEmpty());
         assertEquals(0, logFragment.size());
         assertEquals(0, logFragment.logStartOffset());
@@ -91,7 +92,7 @@ public class LogFragmentTest {
 
     @Test
     void logFragmentWithLSOGreaterThanZero() throws StaleCacheEntryException {
-        LogFragment logFragment = new LogFragment(50, Duration.ofSeconds(1), clock);
+        LogFragment logFragment = new LogFragment(50, Duration.ofSeconds(1), time);
         assertTrue(logFragment.isEmpty());
         assertEquals(0, logFragment.size());
         assertEquals(50, logFragment.logStartOffset());
@@ -132,7 +133,7 @@ public class LogFragmentTest {
 
     @Test
     void logFragmentWithLSOEqualsZeroJumpToMiddle() throws StaleCacheEntryException {
-        LogFragment logFragment = new LogFragment(0, Duration.ofSeconds(1), clock);
+        LogFragment logFragment = new LogFragment(0, Duration.ofSeconds(1), time);
         assertTrue(logFragment.isEmpty());
         assertEquals(0, logFragment.size());
         assertEquals(0, logFragment.logStartOffset());
@@ -151,7 +152,7 @@ public class LogFragmentTest {
 
     @Test
     void logFragmentWithLSOGreaterThanZeroJumpToMiddle() throws StaleCacheEntryException {
-        LogFragment logFragment = new LogFragment(50, Duration.ofSeconds(1), clock);
+        LogFragment logFragment = new LogFragment(50, Duration.ofSeconds(1), time);
         assertTrue(logFragment.isEmpty());
         assertEquals(0, logFragment.size());
         assertEquals(50, logFragment.logStartOffset());
@@ -174,13 +175,13 @@ public class LogFragmentTest {
 
     @Test
     void subFragmentOnEmptyLogReturnsNull() {
-        LogFragment logFragment = new LogFragment(0, Duration.ofSeconds(1), clock);
+        LogFragment logFragment = new LogFragment(0, Duration.ofSeconds(1), time);
         assertNull(logFragment.subFragment(0));
     }
 
     @Test
     void subFragmentWhenStartOffsetIsInMiddleOfBatchReturnsCorrectSublist() throws StaleCacheEntryException {
-        LogFragment logFragment = new LogFragment(0, Duration.ofSeconds(1), clock);
+        LogFragment logFragment = new LogFragment(0, Duration.ofSeconds(1), time);
         CacheBatchCoordinate batch1 = createBatch(0, 10);
         CacheBatchCoordinate batch2 = createBatch(10, 10);
         CacheBatchCoordinate batch3 = createBatch(20, 10);
@@ -204,7 +205,7 @@ public class LogFragmentTest {
 
     @Test
     void subFragmentWhenStartOffsetIsTooHighReturnsEmptyFragment() throws StaleCacheEntryException {
-        LogFragment logFragment = new LogFragment(0, Duration.ofSeconds(1), clock);
+        LogFragment logFragment = new LogFragment(0, Duration.ofSeconds(1), time);
         logFragment.addBatch(createBatch(0, 10)); // HWM = 10
 
         LogFragment subFragment = logFragment.subFragment(11);
@@ -217,7 +218,7 @@ public class LogFragmentTest {
 
     @Test
     void subFragmentWhenStartOffsetIsNotFoundBeforeFirstBatchReturnsNull() throws StaleCacheEntryException {
-        LogFragment logFragment = new LogFragment(5, Duration.ofSeconds(1), clock);
+        LogFragment logFragment = new LogFragment(5, Duration.ofSeconds(1), time);
         logFragment.addBatch(createBatch(5, 10, 5)); // [5-14]
 
         LogFragment subFragment = logFragment.subFragment(3);
@@ -226,15 +227,15 @@ public class LogFragmentTest {
 
     @Test
     void evictOnNonEmptyFragmentRemovesExpiredBatch() throws StaleCacheEntryException {
-        var clock = new ManualClock();
-        LogFragment logFragment = new LogFragment(0, Duration.ofSeconds(30), clock);
+        var time = new MockTime();
+        LogFragment logFragment = new LogFragment(0, Duration.ofSeconds(30), time);
 
         CacheBatchCoordinate batch1 = createBatch(0, 10); // [0-9], expires at T=30
         logFragment.addBatch(batch1);
         assertEquals(0, logFragment.evictExpired()); // No batch is expired yet
 
         // T=40, batch1 is expired
-        clock.advanceBy(Duration.ofSeconds(40));
+        time.sleep(40 * 1000);
         CacheBatchCoordinate batch2 = createBatch(10, 10); // [10-19], expires at T=70
         logFragment.addBatch(batch2);
 
@@ -252,7 +253,7 @@ public class LogFragmentTest {
 
     @Test
     void evictOnEmptyFragmentReturnsFalse() {
-        LogFragment logFragment = new LogFragment(0, Duration.ofSeconds(30), clock);
+        LogFragment logFragment = new LogFragment(0, Duration.ofSeconds(30), time);
         int evicted = logFragment.evictExpired();
 
         assertEquals(0, evicted);
@@ -264,12 +265,12 @@ public class LogFragmentTest {
 
     @Test
     void subFragmentWhenStartOffsetIsLessThanFirstBatchOffsetReturnsNull() throws StaleCacheEntryException {
-        var clock = new ManualClock();
-        LogFragment logFragment = new LogFragment(0, Duration.ofSeconds(1), clock);
+        var time = new MockTime();
+        LogFragment logFragment = new LogFragment(0, Duration.ofSeconds(1), time);
         logFragment.addBatch(createBatch(0, 5)); // [0-4], expires at T=1
 
         // T=5, first batch is expired
-        clock.advanceBy(Duration.ofSeconds(5));
+        time.sleep(5 * 1000);
         logFragment.addBatch(createBatch(5, 5)); // [5-9], expires at T=6
 
         logFragment.evictExpired(); // Evicts [0-4], leaving [5-9]
@@ -283,32 +284,32 @@ public class LogFragmentTest {
 
     @Test
     void subFragmentOnEmptyFragmentReturnsNull() {
-        LogFragment logFragment = new LogFragment(0, Duration.ofSeconds(30), clock);
+        LogFragment logFragment = new LogFragment(0, Duration.ofSeconds(30), time);
         assertNull(logFragment.subFragment(0));
     }
 
     @Test
     void subFragmentReturnsNullIfFirstMatchingBatchIsExpired() throws StaleCacheEntryException {
-        var clock = new ManualClock();
-        LogFragment logFragment = new LogFragment(0, Duration.ofSeconds(30), clock);
+        var time = new MockTime();
+        LogFragment logFragment = new LogFragment(0, Duration.ofSeconds(30), time);
 
         CacheBatchCoordinate batch1 = createBatch(0, 10); // [0-9], expires at T=30
         logFragment.addBatch(batch1);
 
         // T=5
-        clock.advanceBy(Duration.ofSeconds(5));
+        time.sleep(5 * 1000);
 
         CacheBatchCoordinate batch2 = createBatch(10, 10); // [10-19], expires at T=35
         logFragment.addBatch(batch2);
 
         // T=10
-        clock.advanceBy(Duration.ofSeconds(5));
+        time.sleep(5 * 1000);
 
         CacheBatchCoordinate batch3 = createBatch(20, 10); // [20-19], expires at T=40
         logFragment.addBatch(batch3);
 
         // T=31, first batch is expired
-        clock.advanceBy(Duration.ofSeconds(21));
+        time.sleep(21 * 1000);
 
         LogFragment expiredResult1 = logFragment.subFragment(5);
         assertNull(expiredResult1, "Should return null because the first matching batch [0-9] is expired.");
@@ -324,7 +325,7 @@ public class LogFragmentTest {
         assertEquals(batch3, validResult2.batches().getFirst());
 
         // T=36, second batch is expired
-        clock.advanceBy(Duration.ofSeconds(5));
+        time.sleep(5 * 1000);
 
         LogFragment expiredResult2 = logFragment.subFragment(5);
         assertNull(expiredResult2, "Should return null because the first matching batch [0-9] is expired.");

@@ -1,6 +1,7 @@
 package io.aiven.inkless.cache;
 
 import org.apache.kafka.common.TopicIdPartition;
+import org.apache.kafka.common.utils.Time;
 
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
@@ -9,7 +10,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
-import java.time.Clock;
 import java.time.Duration;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -36,30 +36,30 @@ public class CaffeineBatchCoordinateCache implements BatchCoordinateCache {
 
     private final Cache<TopicIdPartition, LogFragment> cache;
     private final Duration ttl;
-    private final Clock clock;
+    private final Time time;
 
     private final BatchCoordinateCacheMetrics metrics;
 
-    public CaffeineBatchCoordinateCache(Duration ttl, Clock clock, BatchCoordinateCacheMetrics metrics) {
+    public CaffeineBatchCoordinateCache(Duration ttl, Time time, BatchCoordinateCacheMetrics metrics) {
         if (ttl == null || ttl.isNegative() || ttl.isZero()) {
             throw new IllegalArgumentException("TTL must be a positive duration.");
         }
         this.ttl = ttl;
-        if (clock == null) {
-            throw new IllegalArgumentException("Clock must not be null.");
+        if (time == null) {
+            throw new IllegalArgumentException("Time must not be null.");
         }
-        this.clock = clock;
+        this.time = time;
 
         this.cache = Caffeine.newBuilder().build();
         this.metrics = metrics;
     }
 
-    public CaffeineBatchCoordinateCache(Duration ttl, Clock clock) {
-        this(ttl, clock, new BatchCoordinateCacheMetrics());
+    public CaffeineBatchCoordinateCache(Duration ttl, Time time) {
+        this(ttl, time, new BatchCoordinateCacheMetrics());
     }
 
     public CaffeineBatchCoordinateCache(Duration ttl) {
-        this(ttl, Clock.systemUTC());
+        this(ttl, Time.SYSTEM);
     }
 
 
@@ -89,7 +89,6 @@ public class CaffeineBatchCoordinateCache implements BatchCoordinateCache {
             metrics.recordCacheMiss();
             return null;
         }
-        metrics.recordCacheHit();
         final LogFragment subFragment = logFragment.subFragment(offset);
         if (subFragment == null || subFragment.isEmpty()) {
             metrics.recordCacheMiss();
@@ -105,7 +104,7 @@ public class CaffeineBatchCoordinateCache implements BatchCoordinateCache {
             cache.asMap().compute(topicIdPartition, (key, existingLogFragment) -> {
 
                 if (existingLogFragment == null) {
-                    existingLogFragment = new LogFragment(value.logStartOffset(), this.ttl, this.clock);
+                    existingLogFragment = new LogFragment(value.logStartOffset(), this.ttl, this.time);
                 }
 
                 try {

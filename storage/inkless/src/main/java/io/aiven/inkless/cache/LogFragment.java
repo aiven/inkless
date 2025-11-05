@@ -18,7 +18,8 @@
 package io.aiven.inkless.cache;
 
 
-import java.time.Clock;
+import org.apache.kafka.common.utils.Time;
+
 import java.time.Duration;
 import java.util.LinkedList;
 import java.util.ListIterator;
@@ -49,7 +50,7 @@ import java.util.stream.Collectors;
  * Each batch is tagged with an expiration timestamp when it's added. A separate
  * eviction process ({@link #evictExpired()}) can then be called to efficiently
  * remove any stale batches from the oldest end (the head) of the list.
- * This mechanism maintains prevents the cache from growing indefinitely and guarantees
+ * This mechanism prevents the cache from growing indefinitely and guarantees
  * that it will not contain stale entries (for example batches that are not anymore present
  * due to retention).
  */
@@ -58,7 +59,7 @@ public class LogFragment {
     private final long logStartOffset;
     private long highWaterMark;
     private final Duration ttl;
-    private final Clock clock;
+    private final Time time;
 
     private final ReentrantReadWriteLock lock = new ReentrantReadWriteLock();
 
@@ -71,7 +72,7 @@ public class LogFragment {
         }
     }
 
-    private LogFragment(LinkedList<TimedBatchCoordinate> batches, long logStartOffset, long highWaterMark, Duration ttl, Clock clock) {
+    private LogFragment(LinkedList<TimedBatchCoordinate> batches, long logStartOffset, long highWaterMark, Duration ttl, Time time) {
         if (batches == null) {
             throw new IllegalArgumentException("batches cannot be null");
         }
@@ -90,18 +91,18 @@ public class LogFragment {
             throw new IllegalArgumentException("TTL must be a positive duration.");
         }
         this.ttl = ttl;
-        if (clock == null) {
-            throw new IllegalArgumentException("Clock must not be null.");
+        if (time == null) {
+            throw new IllegalArgumentException("Time must not be null.");
         }
-        this.clock = clock;
+        this.time = time;
     }
 
-    public LogFragment(long logStartOffset, Duration ttl, Clock clock) {
-        this(new LinkedList<>(), logStartOffset, logStartOffset, ttl, clock);
+    public LogFragment(long logStartOffset, Duration ttl, Time time) {
+        this(new LinkedList<>(), logStartOffset, logStartOffset, ttl, time);
     }
 
     private LogFragment subFragment(LinkedList<TimedBatchCoordinate> batches) {
-        return new LogFragment(batches, logStartOffset, highWaterMark, ttl, clock);
+        return new LogFragment(batches, logStartOffset, highWaterMark, ttl, time);
     }
 
     /**
@@ -140,7 +141,7 @@ public class LogFragment {
                 throw new IncreasedLogStartOffsetException(this, batch);
             }
 
-            final long expirationTime = clock.millis() + ttl.toMillis();
+            final long expirationTime = time.milliseconds() + ttl.toMillis();
             batches.add(new TimedBatchCoordinate(batch, expirationTime));
 
             highWaterMark = batch.lastOffset() + 1;
@@ -157,7 +158,7 @@ public class LogFragment {
      * @return The total number of batches that were evicted from the fragment.
      */
     protected int evictExpired() {
-        long now = clock.millis();
+        long now = time.milliseconds();
         lock.writeLock().lock();
         try {
             int removedCount = 0;
@@ -205,7 +206,7 @@ public class LogFragment {
                 return subFragment(new LinkedList<>());
             }
 
-            final long now = clock.millis();
+            final long now = time.milliseconds();
 
             ListIterator<TimedBatchCoordinate> iterator = batches.listIterator();
 

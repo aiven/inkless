@@ -20,6 +20,8 @@ package io.aiven.inkless.cache;
 import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.record.TimestampType;
+import org.apache.kafka.common.utils.MockTime;
+import org.apache.kafka.common.utils.Time;
 
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -31,7 +33,6 @@ import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 
 import java.io.IOException;
-import java.time.Clock;
 import java.time.Duration;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -57,7 +58,7 @@ class CaffeineBatchCoordinateCacheTest {
 
     @BeforeEach
     void setUp() {
-        cache = new CaffeineBatchCoordinateCache(Duration.ofSeconds(10), Clock.systemUTC(), metricsMock);
+        cache = new CaffeineBatchCoordinateCache(Duration.ofSeconds(10), Time.SYSTEM, metricsMock);
     }
 
     @AfterAll
@@ -195,20 +196,20 @@ class CaffeineBatchCoordinateCacheTest {
 
     @Test
     void getDoesNotReturnExpiredBatches() {
-        ManualClock clock = new ManualClock();
-        cache = new CaffeineBatchCoordinateCache(Duration.ofSeconds(30), clock, metricsMock);
+        Time time = new MockTime();
+        cache = new CaffeineBatchCoordinateCache(Duration.ofSeconds(30), time, metricsMock);
 
         // t=0: put first batch
         cache.put(PARTITION_0, createBatch(0, 10, 0));
         assertNotNull(cache.get(PARTITION_0, 0));
 
         // t=20: put second batch, the first one is not expired yet
-        clock.advanceBy(Duration.ofSeconds(20));
+        time.sleep(20 * 1000);
         cache.put(PARTITION_0, createBatch(10, 10, 0));
         assertEquals(2, cache.get(PARTITION_0, 0).size());
 
         // t=40: first batch is now expired
-        clock.advanceBy(Duration.ofSeconds(20));
+        time.sleep(20 * 1000);
         assertNull(cache.get(PARTITION_0, 0));
         assertEquals(1, cache.get(PARTITION_0, 10).size());
         // eviction is not triggered by the get
@@ -267,9 +268,9 @@ class CaffeineBatchCoordinateCacheTest {
         // Simulate a scenario where a single producer produces to the same partition by calling 2 different brokers.
 
         // Cache of the first broker
-        var cache1 = new CaffeineBatchCoordinateCache(Duration.ofSeconds(30), Clock.systemUTC());
+        var cache1 = new CaffeineBatchCoordinateCache(Duration.ofSeconds(30));
         // Cache of the second broker
-        var cache2 = new CaffeineBatchCoordinateCache(Duration.ofSeconds(30), Clock.systemUTC());
+        var cache2 = new CaffeineBatchCoordinateCache(Duration.ofSeconds(30));
 
         // Producer creates 5 batches
         var batch1 = createBatch(0, 10, 0);
