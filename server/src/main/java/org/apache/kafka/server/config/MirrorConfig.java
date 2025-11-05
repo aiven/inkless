@@ -268,7 +268,7 @@ public class MirrorConfig {
      */
     public static MirrorConfig fromProperties(Properties properties) {
         // AbstractConfig handles config provider resolution and password conversion
-        AbstractConfig config = new AbstractConfig(CONFIG_DEF, properties) { };
+        AbstractConfig config = new AbstractConfig(CONFIG_DEF, properties, false) { };
         return new MirrorConfig(config);
     }
 
