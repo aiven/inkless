@@ -26,7 +26,6 @@ import kafka.server.ReplicaManager.{AtMinIsrPartitionCountMetricName, FailedIsrU
 import kafka.server.mirror.{MirrorMetadataManager, MirrorFetcherManager}
 import kafka.server.share.DelayedShareFetch
 import kafka.utils._
-import org.apache.kafka.common.config.{ConfigResource, TopicConfig}
 import org.apache.kafka.common.{IsolationLevel, Node, TopicIdPartition, TopicPartition, Uuid}
 import org.apache.kafka.common.errors._
 import org.apache.kafka.common.internals.{Plugin, Topic}
@@ -1204,7 +1203,7 @@ class ReplicaManager(val config: KafkaConfig,
             logManager.abortAndPauseCleaning(topicPartition)
 
             val initialFetchState = InitialFetchState(topicId.toScala, new BrokerEndPoint(config.brokerId, "localhost", -1),
-              partition.getLeaderEpoch, futureLog.highWatermark, "")
+              partition.getLeaderEpoch, futureLog.highWatermark)
             replicaAlterLogDirsManager.addFetcherForPartitions(Map(topicPartition -> initialFetchState))
           }
 
@@ -1669,6 +1668,7 @@ class ReplicaManager(val config: KafkaConfig,
                     fetchInfos: Seq[(TopicIdPartition, PartitionData)],
                     quota: ReplicaQuota,
                     responseCallback: Seq[(TopicIdPartition, FetchPartitionData)] => Unit): Unit = {
+
     // check if this fetch request can be satisfied right away
     val logReadResults = readFromLog(params, fetchInfos, quota, readFromPurgatory = false)
     var bytesReadable: Long = 0
@@ -1793,9 +1793,10 @@ class ReplicaManager(val config: KafkaConfig,
         // If we are the leader, determine the preferred read-replica
         val preferredReadReplica = params.clientMetadata.toScala.flatMap(
           metadata => findPreferredReadReplica(partition, metadata, params.replicaId, fetchInfo.fetchOffset, fetchTimeMs))
+
         if (preferredReadReplica.isDefined) {
           replicaSelectorPlugin.foreach { selector =>
-            info(s"Replica selector ${selector.get.getClass.getSimpleName} returned preferred replica " +
+            debug(s"Replica selector ${selector.get.getClass.getSimpleName} returned preferred replica " +
               s"${preferredReadReplica.get} for ${params.clientMetadata}")
           }
           // If a preferred read-replica is set, skip the read
@@ -2067,7 +2068,7 @@ class ReplicaManager(val config: KafkaConfig,
           }
 
           futureReplicasAndInitialOffset.put(topicPartition, InitialFetchState(topicIds(topicPartition.topic), leader,
-            partition.getLeaderEpoch, futureLog.highWatermark, ""))
+            partition.getLeaderEpoch, futureLog.highWatermark))
         }
       }
     }
@@ -2237,7 +2238,7 @@ class ReplicaManager(val config: KafkaConfig,
     new ReplicaFetcherManager(config, this, metrics, time, quotaManager, () => metadataCache.metadataVersion(), brokerEpochSupplier)
   }
 
-  protected def createMirrorFetcherManager(metrics: Metrics, time: Time, quotaManager: ReplicationQuotaManager) = {
+  private def createMirrorFetcherManager(metrics: Metrics, time: Time, quotaManager: ReplicationQuotaManager) = {
     new MirrorFetcherManager(config, this, metrics, time, quotaManager, () => metadataCache.metadataVersion(), brokerEpochSupplier, metadataCache)
   }
 
@@ -2319,13 +2320,13 @@ class ReplicaManager(val config: KafkaConfig,
           stateChangeLogger.info(s"Creating new partition $tp with topic id " + s"$topicId." +
             s"A topic with the same name but different id exists but it resides in an offline log " +
             s"directory.")
-          val clusterLinkName = if (localChanges.readOnlyLeaders().containsKey(tp)) {
+          val mirrorName = if (localChanges.readOnlyLeaders().containsKey(tp)) {
             delta.changedTopics().get(topicId).partitionChanges().get(tp.partition()).mirrorName
           } else {
             ""
           }
-          logger.info("!!! Create new partition: " + tp + " " + topicId + " " + clusterLinkName)
-          val partition = Partition(new TopicIdPartition(topicId, tp), time, this, clusterLinkName)
+          logger.info("!!! Create new partition: " + tp + " " + topicId + " " + mirrorName)
+          val partition = Partition(new TopicIdPartition(topicId, tp), time, this, mirrorName)
           allPartitions.put(tp, HostedPartition.Online(partition))
           Some(partition, true)
         }
@@ -2348,13 +2349,13 @@ class ReplicaManager(val config: KafkaConfig,
             s"$topicId.")
         }
         // it's a partition that we don't know about yet, so create it and mark it online
-        val clusterLinkName = if (localChanges.readOnlyLeaders().containsKey(tp)) {
+        val mirrorName = if (localChanges.readOnlyLeaders().containsKey(tp)) {
           delta.changedTopics().get(topicId).partitionChanges().get(tp.partition()).mirrorName
         } else {
           ""
         }
-        logger.info("!!! Create new partition: " + tp + " " + topicId + " " + clusterLinkName)
-        val partition = Partition(new TopicIdPartition(topicId, tp), time, this, clusterLinkName)
+        logger.info("!!! Create new partition: " + tp + " " + topicId + " " + mirrorName)
+        val partition = Partition(new TopicIdPartition(topicId, tp), time, this, mirrorName)
         allPartitions.put(tp, HostedPartition.Online(partition))
         Some(partition, true)
     }
@@ -2406,8 +2407,11 @@ class ReplicaManager(val config: KafkaConfig,
         }
         if (!localChanges.followers.isEmpty) {
           applyLocalFollowersDelta(followerChangedPartitions, newImage, delta, lazyOffsetCheckpoints, localChanges.followers.asScala, localChanges.directoryIds.asScala)
-        } else if (!localChanges.readOnlyLeaders().isEmpty) {
-          applyLocalFollowersDelta(followerChangedPartitions, newImage, delta, lazyOffsetCheckpoints, localChanges.readOnlyLeaders.asScala, localChanges.directoryIds.asScala, true)
+        }
+        // Handle read-only leaders: these are leaders (already processed above) that also need
+        // to start MirrorFetcherThreads to fetch from the source cluster
+        if (!localChanges.readOnlyLeaders().isEmpty) {
+          maybeCreateMirrorFetchers(localChanges.readOnlyLeaders.asScala)
         }
 
         maybeAddLogDirFetchers(leaderChangedPartitions ++ followerChangedPartitions, lazyOffsetCheckpoints,
@@ -2434,7 +2438,8 @@ class ReplicaManager(val config: KafkaConfig,
     localLeaders: mutable.Map[TopicPartition, LocalReplicaChanges.PartitionInfo],
     directoryIds: mutable.Map[TopicIdPartition, Uuid]
   ): Unit = {
-    stateChangeLogger.info(s"Transitioning ${localLeaders.size} partition(s) to local leaders.")
+    stateChangeLogger.info(s"Transitioning ${localLeaders.size} partition(s) to " +
+      "local leaders.")
     replicaFetcherManager.removeFetcherForPartitions(localLeaders.keySet)
     localLeaders.foreachEntry { (tp, info) =>
       getOrCreatePartition(tp, delta, info.topicId).foreach { case (partition, isNew) =>
@@ -2464,26 +2469,16 @@ class ReplicaManager(val config: KafkaConfig,
     delta: TopicsDelta,
     offsetCheckpoints: OffsetCheckpoints,
     localFollowers: mutable.Map[TopicPartition, LocalReplicaChanges.PartitionInfo],
-    directoryIds: mutable.Map[TopicIdPartition, Uuid],
-    hasRemoteLeader: Boolean = false
+    directoryIds: mutable.Map[TopicIdPartition, Uuid]
   ): Unit = {
-    stateChangeLogger.info(s"Transitioning ${localFollowers.size} partition(s) to local followers.")
+    stateChangeLogger.info(s"Transitioning ${localFollowers.size} partition(s) to " +
+      "local followers.")
     val partitionsToStartFetching = new mutable.HashMap[TopicPartition, Partition]
     val partitionsToStopFetching = new mutable.HashMap[TopicPartition, Boolean]
     val followerTopicSet = new mutable.HashSet[String]
     localFollowers.foreachEntry { (tp, info) =>
       getOrCreatePartition(tp, delta, info.topicId).foreach { case (partition, isNew) =>
         try {
-          val isReadOnly: Boolean = newImage.configs().configProperties(new ConfigResource(ConfigResource.Type.TOPIC, tp.topic))
-            .getOrDefault(TopicConfig.READ_ONLY_CONFIG, "false").asInstanceOf[String].toBoolean
-          logger.info("#### tp = " + tp + ", hasRemoteLeader = " + hasRemoteLeader + ", isReadOnly = " + isReadOnly)
-          if (hasRemoteLeader) {
-            if (!isReadOnly) {
-              // don't create mirror fetcher for partitions with read.only=false
-              return
-            }
-            partition.setMirrorName(info.partition.mirrorName)
-          }
           followerTopicSet.add(tp.topic)
 
           // We always update the follower state.
@@ -2493,8 +2488,7 @@ class ReplicaManager(val config: KafkaConfig,
           //   high watermark in the checkpoint file (see KAFKA-1647).
           val state = info.partition.toLeaderAndIsrPartitionState(tp, isNew)
           val partitionAssignedDirectoryId = directoryIds.find(_._1.topicPartition() == tp).map(_._2)
-          val isNewLeaderEpoch = !hasRemoteLeader && partition.makeFollower(state, offsetCheckpoints, Some(info.topicId), partitionAssignedDirectoryId)
-          logger.info("#### isNewLeaderEpoch = " + isNewLeaderEpoch)
+          val isNewLeaderEpoch = partition.makeFollower(state, offsetCheckpoints, Some(info.topicId), partitionAssignedDirectoryId)
 
           if (isInControlledShutdown && (info.partition.leader == NO_LEADER ||
               !info.partition.isr.contains(config.brokerId))) {
@@ -2505,14 +2499,7 @@ class ReplicaManager(val config: KafkaConfig,
             // The leader epoch has changed, indicating a new leader was elected (or first-time assignment).
             // Notify listeners so they can react to the leadership change (e.g., cleanup state, reset metrics).
             partition.invokeOnBecomingFollowerListeners()
-            // Restart fetcher thread to handle the new leader:
-            // - Local leader: truncate to divergence point, then fetch from new leader in this cluster.
-            // - Remote leader: connect to source cluster and begin cross-cluster mirroring.
-            partitionsToStartFetching.put(tp, partition)
-          } else if (hasRemoteLeader) {
-            // For remote leaders, always ensure fetcher is started even if leader epoch didn't change.
-            // This handles cases like dynamic read.only=true config changes where the partition
-            // transitions to mirror replication without a leader epoch change.
+            // Restart fetcher thread to fetch from the new leader in this cluster
             partitionsToStartFetching.put(tp, partition)
           }
 
@@ -2522,7 +2509,6 @@ class ReplicaManager(val config: KafkaConfig,
             stateChangeLogger.error(s"Unable to start fetching $tp " +
               s"with topic ID ${info.topicId} due to a storage error ${e.getMessage}", e)
             replicaFetcherManager.addFailedPartition(tp)
-            if (hasRemoteLeader) mirrorFetcherManager.addFailedPartition(tp)
             // If there is an offline log directory, a Partition object may have been created by
             // `getOrCreatePartition()` before `createLogIfNotExists()` failed to create local replica due
             // to KafkaStorageException. In this case `ReplicaManager.allPartitions` will map this topic-partition
@@ -2533,7 +2519,6 @@ class ReplicaManager(val config: KafkaConfig,
             stateChangeLogger.error(s"Unable to start fetching $tp " +
               s"with topic ID ${info.topicId} due to ${e.getClass.getSimpleName}", e)
             replicaFetcherManager.addFailedPartition(tp)
-            if (hasRemoteLeader) mirrorFetcherManager.addFailedPartition(tp)
         }
       }
     }
@@ -2542,20 +2527,15 @@ class ReplicaManager(val config: KafkaConfig,
       // Stopping the fetchers must be done first in order to initialize the fetch
       // position correctly.
       replicaFetcherManager.removeFetcherForPartitions(partitionsToStartFetching.keySet)
-      mirrorFetcherManager.removeFetcherForPartitions(partitionsToStartFetching.keySet)
       stateChangeLogger.info(s"Stopped fetchers as part of become-follower for ${partitionsToStartFetching.size} partitions")
 
       val listenerName = config.interBrokerListenerName.value
       val partitionAndOffsets = new mutable.HashMap[TopicPartition, InitialFetchState]
 
       partitionsToStartFetching.foreachEntry { (topicPartition, partition) =>
-        val nodeOpt = if (!hasRemoteLeader)
-          partition.leaderReplicaIdOpt
-            .flatMap(leaderId => Option(newImage.cluster.broker(leaderId)))
-            .flatMap(_.node(listenerName).toScala)
-        else {
-          Some(mirrorMetadataManager.get.getRemotePartitionLeader(partition.mirrorName, partition.topicPartition))
-        }
+        val nodeOpt = partition.leaderReplicaIdOpt
+          .flatMap(leaderId => Option(newImage.cluster.broker(leaderId)))
+          .flatMap(_.node(listenerName).toScala)
 
         nodeOpt match {
           case Some(node) =>
@@ -2564,30 +2544,15 @@ class ReplicaManager(val config: KafkaConfig,
               log.topicId.toScala,
               new BrokerEndPoint(node.id, node.host, node.port),
               partition.getLeaderEpoch,
-              initialFetchOffset(log),
-              if (hasRemoteLeader) partition.mirrorName else ""
-            ))
+              initialFetchOffset(log)))
           case None =>
             stateChangeLogger.trace(s"Unable to start fetching $topicPartition with topic ID ${partition.topicId} " +
               s"from leader ${partition.leaderReplicaIdOpt} because it is not alive.")
         }
       }
 
-      // Split partitions by cluster mirror and route to appropriate fetcher managers
-      val partitionsWithoutMirror = partitionAndOffsets.filter(_._2.mirrorName.isEmpty)
-      val partitionsWithMirror = partitionAndOffsets.filter(_._2.mirrorName.nonEmpty)
-
-      // Handle regular partitions
-      if (partitionsWithoutMirror.nonEmpty) {
-        replicaFetcherManager.addFetcherForPartitions(partitionsWithoutMirror)
-        stateChangeLogger.info(s"Started fetchers as part of become-follower for ${partitionsWithoutMirror.size} partitions")
-      }
-
-      // Handle remote partitions with cluster mirror
-      if (partitionsWithMirror.nonEmpty) {
-        mirrorFetcherManager.addFetcherForPartitions(partitionsWithMirror)
-        stateChangeLogger.info(s"Started mirror fetchers as part of become-follower for ${partitionsWithMirror.size} partitions")
-      }
+      replicaFetcherManager.addFetcherForPartitions(partitionAndOffsets)
+      stateChangeLogger.info(s"Started fetchers as part of become-follower for ${partitionAndOffsets.size} partitions")
 
       partitionsToStartFetching.foreach { case (topicPartition, partition) =>
         completeDelayedOperationsWhenNotPartitionLeader(topicPartition, partition.topicId)
@@ -2600,6 +2565,74 @@ class ReplicaManager(val config: KafkaConfig,
       val partitionsToStop = partitionsToStopFetching.map { case (tp, deleteLocalLog) => new StopPartition(tp, deleteLocalLog, false, false) }.toSet
       stopPartitions(partitionsToStop)
       stateChangeLogger.info(s"Stopped fetchers as part of controlled shutdown for ${partitionsToStop.size} partitions")
+    }
+  }
+
+  /**
+   * Creates and starts MirrorFetcherThreads for partitions that became read-only leaders.
+   *
+   * This method is called during partition leadership changes when the local broker becomes
+   * a read-only leader for mirrored partitions. Read-only leaders replicate data from a
+   * source cluster partition rather than accepting local writes.
+   *
+   * The method performs the following steps:
+   * 1. Stops any existing fetchers for these partitions to ensure clean state
+   * 2. Sets the mirrorName on each partition for epoch metadata tracking
+   * 3. Queries the mirror metadata manager for the current source cluster leader endpoint
+   * 4. Creates InitialFetchState with source leader info and current log end offset
+   * 5. Starts new MirrorFetcherThreads that will fetch from the source cluster
+   *
+   * The fetch position is initialized to the local log end offset, allowing the mirror
+   * fetcher to continue from where it left off (or start from beginning if log is empty).
+   *
+   * @param readOnlyLeaders Map of partitions to their metadata for partitions that became
+   *                        read-only leaders on this broker
+   */
+  private def maybeCreateMirrorFetchers(readOnlyLeaders: mutable.Map[TopicPartition, LocalReplicaChanges.PartitionInfo]): Unit = {
+    if (readOnlyLeaders.isEmpty) return
+
+    // Stopping the fetchers must be done first in order to initialize the fetch position correctly
+    mirrorFetcherManager.removeFetcherForPartitions(readOnlyLeaders.keySet)
+
+    stateChangeLogger.info(s"Starting mirror fetchers for ${readOnlyLeaders.size} read-only leader partition(s).")
+    val partitionAndOffsets = new mutable.HashMap[TopicPartition, InitialFetchState]
+
+    readOnlyLeaders.foreachEntry { (tp, info) =>
+      getPartition(tp) match {
+        case HostedPartition.Online(partition) =>
+          try {
+            val mirrorName = info.partition.mirrorName
+            if (mirrorName != null && !mirrorName.isEmpty) {
+              // Set mirrorName on partition for management and configuration purposes.
+              // Used when transitioning partition from read-only to writable state.
+              partition.setMirrorName(mirrorName)
+
+              // Get the remote partition leader from mirror metadata manager
+              // This will return the actual leader if known, or a random bootstrap server as fallback
+              val remoteLeader = mirrorMetadataManager.get.getRemotePartitionLeader(mirrorName, tp)
+              val leaderEndpoint = new BrokerEndPoint(remoteLeader.id(), remoteLeader.host(), remoteLeader.port())
+
+              val fetchState = InitialFetchState(
+                topicId = Some(info.topicId),
+                leader = leaderEndpoint,
+                currentLeaderEpoch = partition.getLeaderEpoch,
+                initOffset = partition.localLogOrException.logEndOffset,
+                mirrorName = mirrorName
+              )
+              partitionAndOffsets.put(tp, fetchState)
+            }
+          } catch {
+            case e: Exception =>
+              stateChangeLogger.error(s"Error setting up mirror fetcher for partition $tp", e)
+          }
+        case _ =>
+          stateChangeLogger.warn(s"Skipping mirror fetcher setup for offline partition $tp")
+      }
+    }
+
+    if (partitionAndOffsets.nonEmpty) {
+      mirrorFetcherManager.addFetcherForPartitions(partitionAndOffsets)
+      stateChangeLogger.info(s"Started mirror fetchers for ${partitionAndOffsets.size} read-only leader partitions")
     }
   }
 

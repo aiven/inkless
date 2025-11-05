@@ -648,7 +648,7 @@ class KafkaApis(val requestChannel: RequestChannel,
     val versionId = request.header.apiVersion
     val clientId = request.header.clientId
     val fetchRequest = request.body[FetchRequest]
-    info("!!! handleFetchRequest:" + fetchRequest)
+    info("#### Handling fetch request: " + fetchRequest)
 
     val topicNames =
       if (fetchRequest.version() >= 13)
@@ -680,7 +680,6 @@ class KafkaApis(val requestChannel: RequestChannel,
           else
             interesting += topicIdPartition -> new PartitionData(data.topicId, data.fetchOffset, data.logStartOffset, data.maxBytes, data.currentLeaderEpoch, data.lastFetchedEpoch)
         }
-        info("!!! interesting:" + interesting.mkString(","))
       } else {
         fetchContext.foreachPartition { (topicIdPartition, _) =>
           erroneous += topicIdPartition -> FetchResponse.partitionResponse(topicIdPartition, Errors.TOPIC_AUTHORIZATION_FAILED)

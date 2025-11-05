@@ -130,8 +130,29 @@ class ReplicaFetcherThread(name: String,
       trace("Follower has replica log end offset %d for partition %s. Received %d bytes of messages and leader hw %d"
         .format(log.logEndOffset, topicPartition, records.sizeInBytes, partitionData.highWatermark))
 
+    // Determine the leader epoch to use when appending batches to the follower's log.
+    //
+    // For mirrored partitions:
+    //   Followers replicate from leaders whose logs contain source cluster epochs. When the leader
+    //   receives new batches from MirrorFetcherThread with source epoch N, this follower's fetch
+    //   state may still have epoch M where M < N. If we use the fetch state epoch, the append will
+    //   be rejected because the batch epoch is higher. Solution: use the batch epoch when it's higher.
+    //
+    // For regular partitions:
+    //   Batch epochs should always match the fetch state epoch. If batch epoch > fetch state epoch,
+    //   this indicates an unexpected condition. However, using the batch epoch is safe since it comes
+    //   from the leader's log, which is authoritative.
+    val effectiveLeaderEpoch = {
+      val batches = records.batches().iterator()
+      var lastBatchEpoch = partitionLeaderEpoch
+      while (batches.hasNext) {
+        lastBatchEpoch = batches.next().partitionLeaderEpoch()
+      }
+      Math.max(lastBatchEpoch, partitionLeaderEpoch)
+    }
+
     // Append the leader's messages to the log
-    val logAppendInfo = partition.appendRecordsToFollowerOrFutureReplica(records, isFuture = false, partitionLeaderEpoch)
+    val logAppendInfo = partition.appendRecordsToFollowerOrFutureReplica(records, isFuture = false, effectiveLeaderEpoch)
 
     if (logTrace)
       trace("Follower has replica log end offset %d after appending %d bytes of messages for partition %s"

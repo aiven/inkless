@@ -152,7 +152,7 @@ abstract class AbstractFetcherThread(name: String,
   // deal with partitions with errors, potentially due to leadership changes
   private def handlePartitionsWithErrors(partitions: Iterable[TopicPartition], methodName: String): Unit = {
     if (partitions.nonEmpty) {
-      info(s"Handling errors in $methodName for partitions $partitions")
+      debug(s"Handling errors in $methodName for partitions $partitions")
       delayPartitions(partitions, fetchBackOffMs)
     }
   }
@@ -252,34 +252,59 @@ abstract class AbstractFetcherThread(name: String,
   }
 
   /**
-   * Updates the leader epoch for read-only partitions.
-   * This method updates the partition fetch states with the latest leader epoch information
-   * while preserving other fetch state properties.
+   * Updates the leader epoch in fetch state for read-only (mirrored) partitions.
    *
-   * @param partitionToData Partitions with their updated leader epoch data
+   * This method updates the currentLeaderEpoch in the fetch state to match the source cluster's
+   * current leader epoch, enabling proper epoch validation when fetching from the source.
+   *
+   * For mirrored partitions, the currentLeaderEpoch in fetch state tracks the SOURCE cluster's
+   * leader epoch (not the destination cluster's epoch). This is critical because:
+   * 1. Fetch requests to source cluster include currentLeaderEpoch for validation
+   * 2. Source cluster validates this epoch matches its current leader
+   * 3. Mismatched epochs result in UNKNOWN_LEADER_EPOCH errors
+   *
+   * The method also updates lastFetchedEpoch from the local log to maintain proper epoch
+   * tracking for divergence detection.
+   *
+   * @param partitionToData Map of partitions to their current leader information from source cluster
    */
-  private def updateLeaderEpochForReadOnly(partitionToData: Map[TopicPartition, PartitionData]): Unit = {
+  private def updateMirrorCachedLeaderEpoch(partitionToData: Map[TopicPartition, PartitionData]): Unit = {
     val newStates: Map[TopicPartition, PartitionFetchState] = partitionStates.partitionStateMap.asScala
       .map { case (topicPartition, currentFetchState) =>
         val updatedInitFetchState = partitionToData.get(topicPartition) match {
           case Some(partitionData) =>
-            // if we can't get the log from the log, assume it's starting from the beginning
+            // if we can't get the epoch from the log, assume it's starting from the beginning
             val latestEpochInLog = latestEpochFromLog(topicPartition).orElse(0)
+            val leaderEpochForState = partitionData.currentLeader().leaderEpoch()
             new PartitionFetchState(currentFetchState.topicId, currentFetchState.fetchOffset(), currentFetchState.lag,
-              partitionData.currentLeader().leaderEpoch(), currentFetchState.delay, currentFetchState.state(), Optional.of(latestEpochInLog), currentFetchState.delay(), currentFetchState.remoteFetch())
+              leaderEpochForState, currentFetchState.delay, currentFetchState.state(), Optional.of(latestEpochInLog), currentFetchState.delay(), currentFetchState.remoteFetch())
           case None => currentFetchState
         }
         (topicPartition, updatedInitFetchState)
       }
-    info("!!! updateLeaderEpochForReadOnly:" + newStates)
+    info("!!! updateMirrorCachedLeaderEpoch:" + newStates)
     partitionStates.set(newStates.asJava)
   }
 
   /**
-   * Creates or reuses mirror fetcher threads for read-only partitions.
-   * Fetchers are shutdown when idle (no partition assigned) or during system shutdown.
+   * Detects source cluster leader changes for mirrored partitions and reassigns them to new fetcher threads.
    *
-   * @param partitionToData Partitions with their current leader information to be processed
+   * When a partition's leader changes in the source cluster (e.g., during failover), this method
+   * detects the change and reassigns the partition to a fetcher thread that connects to the new
+   * source leader broker endpoint.
+   *
+   * The detection mechanism compares the current source leader endpoint (from partitionToData)
+   * with the endpoint of the fetcher thread currently handling each partition. When they differ,
+   * the partition is reassigned by removing it from the current fetcher and adding it to a
+   * fetcher for the new leader.
+   *
+   * Leader identity is determined by comparing (host, port) rather than broker ID because:
+   * - Consumer-based fetchers may use ID -1 instead of the actual broker ID
+   * - Network addresses (host, port) uniquely identify broker endpoints
+   * - This comparison works correctly across different cluster configurations
+   *
+   * @param partitionToData Map of partitions to their current source cluster leader information
+   *                        obtained from fetch responses
    */
   private def maybeCreateMirrorFetchers(partitionToData: Map[TopicPartition, PartitionData]): Unit = {
     var newStates: Map[TopicPartition, InitialFetchState] = scala.collection.mutable.Map.empty[TopicPartition, InitialFetchState]
@@ -387,7 +412,7 @@ abstract class AbstractFetcherThread(name: String,
     var responseData: Map[TopicPartition, FetchData] = Map.empty
 
     try {
-      info(s"!!! Sending fetch request $fetchRequest")
+      info(s"#### Sending fetch request $fetchRequest")
       responseData = leader.fetch(fetchRequest).asScala
     } catch {
       case t: Throwable =>
@@ -550,7 +575,7 @@ abstract class AbstractFetcherThread(name: String,
     if (divergingEndOffsets.nonEmpty)
       truncateOnFetchResponse(divergingEndOffsets)
     if (readOnlyEndOffsets.nonEmpty)
-      updateLeaderEpochForReadOnly(readOnlyEndOffsets)
+      updateMirrorCachedLeaderEpoch(readOnlyEndOffsets)
     if (recreateFetchers.nonEmpty)
       maybeCreateMirrorFetchers(recreateFetchers)
     if (partitionsWithError.nonEmpty) {

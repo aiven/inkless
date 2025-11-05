@@ -98,7 +98,7 @@ class RemoteLeaderEndPoint(logPrefix: String,
         throw t
     }
     val fetchResponse = clientResponse.responseBody.asInstanceOf[FetchResponse]
-    info("!!! Got fetchResponse: " + fetchResponse)
+    info("#### Got fetch response: " + fetchResponse)
     lastSeenEndpointList.clear()
     fetchResponse.data().nodeEndpoints().forEach(
       node => lastSeenEndpointList.put(node.nodeId(), new Node(node.nodeId(), node.host(), node.port(), node.rack())))
@@ -166,12 +166,12 @@ class RemoteLeaderEndPoint(logPrefix: String,
     }
 
     val epochRequest = OffsetsForLeaderEpochRequest.Builder.forFollower(topics, brokerConfig.brokerId)
-    info(s"Sending offset for leader epoch request $epochRequest")
+    debug(s"Sending offset for leader epoch request $epochRequest")
 
     try {
       val response = blockingSender.sendRequest(epochRequest)
       val responseBody = response.responseBody.asInstanceOf[OffsetsForLeaderEpochResponse]
-      info(s"Received leaderEpoch response $response")
+      debug(s"Received leaderEpoch response $response")
       responseBody.data.topics.asScala.flatMap { offsetForLeaderTopicResult =>
         offsetForLeaderTopicResult.partitions.asScala.map { offsetForLeaderPartitionResult =>
           val tp = new TopicPartition(offsetForLeaderTopicResult.topic, offsetForLeaderPartitionResult.partition)
