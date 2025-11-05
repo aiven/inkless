@@ -1719,16 +1719,40 @@ class ReplicaManager(val config: KafkaConfig,
     }
   }
 
-  def findDisklessBatches(requests: Seq[FindBatchRequest], maxBytes: Int): Option[util.List[FindBatchResponse]] = {
-    inklessSharedState.map { sharedState =>
-      sharedState.controlPlane().findBatches(requests.asJava, maxBytes, sharedState.config().maxBatchesPerPartitionToFind())
+  def findDisklessBatches(fetchPartitionStatus: Seq[(TopicIdPartition, FetchPartitionStatus)], maxBytes: Int): Map[TopicIdPartition, FindBatchResponse] = {
+    val requests = fetchPartitionStatus.map { case (topicIdPartition, fetchStatus) =>
+        new FindBatchRequest(topicIdPartition, fetchStatus.startOffsetMetadata.messageOffset, fetchStatus.fetchInfo.maxBytes)
     }
+    if (requests.isEmpty) return Map.empty
+
+    val findBatchResponses = try {
+      inklessSharedState.map { sharedState =>
+        sharedState.controlPlane().findBatches(requests.asJava, maxBytes, sharedState.config().maxBatchesPerPartitionToFind())
+      }
+    } match {
+      case Some(responses) => responses
+      case None =>
+        return Map.empty
+    } catch {
+      case e: Throwable =>
+        // kala
+        trace("Error while trying to find diskless batches.", e)
+        return Map.empty
+    }
+
+    val topicPartitionToFindBatchResponse = collection.mutable.Map[TopicIdPartition, FindBatchResponse]()
+    for (i <- requests.indices) {
+      val request = requests(i)
+      val response = findBatchResponses.get(i)
+      topicPartitionToFindBatchResponse.update(request.topicIdPartition, response)
+    }
+    topicPartitionToFindBatchResponse;
   }
 
-  def fetchDisklessMessages(params: FetchParams,
+  def fetchDisklessMessages(batchCoordinates: Map[TopicIdPartition, FindBatchResponse],
                             fetchInfos: Seq[(TopicIdPartition, PartitionData)]): CompletableFuture[Seq[(TopicIdPartition, FetchPartitionData)]] = {
     inklessFetchHandler match {
-      case Some(handler) => handler.handle(params, fetchInfos.toMap.asJava).thenApply(_.asScala.toSeq)
+      case Some(handler) => handler.handle(batchCoordinates.asJava, fetchInfos.toMap.asJava).thenApply(_.asScala.toSeq)
       case None =>
         if (fetchInfos.nonEmpty)
           error(s"Received diskless fetch request for topics ${fetchInfos.map(_._1.topic()).distinct.mkString(", ")} but diskless fetch handler is not available. " +
@@ -1830,6 +1854,8 @@ class ReplicaManager(val config: KafkaConfig,
       delayedFetchPurgatory.tryCompleteElseWatch(delayedFetch, (classicDelayedFetchKeys ++ disklessDelayedFetchKeys).asJava)
     }
 
+    // If there is nothing to fetch for classic topics,
+    // create delayed response and fetch possible diskless data there.
     if (classicFetchInfos.isEmpty) {
       delayedResponse(Seq.empty)
       return
@@ -1894,9 +1920,18 @@ class ReplicaManager(val config: KafkaConfig,
         // In case of remote fetches, synchronously wait for diskless records and then perform the remote fetch.
         // This is currently a workaround to avoid modifying the DelayedRemoteFetch in order to correctly process
         // diskless fetches.
+        // Get diskless batch coordinates and hand over to fetching
+        val batchCoordinates = try {
+          findDisklessBatches(fetchPartitionStatus, Int.MaxValue)
+        } catch {
+          case e: Throwable =>
+            error("Error while trying to find diskless batches on remote fetch.", e)
+            responseCallback(Seq.empty)
+            return
+        }
+
         val disklessFetchResults = try {
-          val disklessParams = fetchParamsWithNewMaxBytes(params, disklessFetchInfos.size.toFloat / fetchInfos.size.toFloat)
-          val disklessResponsesFuture = fetchDisklessMessages(disklessParams, disklessFetchInfos)
+          val disklessResponsesFuture = fetchDisklessMessages(batchCoordinates, disklessFetchInfos)
 
           val response = disklessResponsesFuture.get(maxWaitMs, TimeUnit.MILLISECONDS)
           response.map { case (tp, data) =>
@@ -1933,8 +1968,11 @@ class ReplicaManager(val config: KafkaConfig,
         }
       } else {
         if (disklessFetchInfos.isEmpty && (bytesReadable >= params.minBytes || params.maxWaitMs <= 0)) {
+          // No remote fetch needed and not any diskless topics to be fetched.
+          // Response immediately.
           responseCallback(fetchPartitionData)
         } else {
+          // No remote fetch, requires fetching data from the diskless topics.
           delayedResponse(fetchPartitionStatus)
         }
       }

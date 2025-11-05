@@ -18,7 +18,7 @@
 package kafka.server
 
 import com.yammer.metrics.core.Meter
-import io.aiven.inkless.control_plane.FindBatchRequest
+import io.aiven.inkless.control_plane.FindBatchResponse
 import kafka.utils.Logging
 
 import java.util.concurrent.TimeUnit
@@ -60,6 +60,7 @@ class DelayedFetch(
   minBytes: Option[Int] = None,
   responseCallback: Seq[(TopicIdPartition, FetchPartitionData)] => Unit,
 ) extends DelayedOperation(maxWaitMs.getOrElse(params.maxWaitMs)) with Logging {
+  var maybeBatchCoordinates: Option[Map[TopicIdPartition, FindBatchResponse]] = None
 
   override def toString: String = {
     s"DelayedFetch(params=$params" +
@@ -153,7 +154,15 @@ class DelayedFetch(
         }
     }
 
-    tryCompleteDiskless(disklessFetchPartitionStatus) match {
+    // adjust the max bytes for diskless fetches based on the percentage of diskless partitions
+    // Complete the classic fetches first
+    val classicRequestsSize = classicFetchPartitionStatus.size.toFloat
+    val disklessRequestsSize = disklessFetchPartitionStatus.size.toFloat
+    val totalRequestsSize = classicRequestsSize + disklessRequestsSize
+    val disklessPercentage = disklessRequestsSize / totalRequestsSize
+    val disklessParams = replicaManager.fetchParamsWithNewMaxBytes(params, disklessPercentage)
+
+    tryCompleteDiskless(disklessFetchPartitionStatus, disklessParams.maxBytes) match {
       case Some(disklessAccumulatedSize) => accumulatedSize += disklessAccumulatedSize
       case None => forceComplete()
     }
@@ -174,53 +183,55 @@ class DelayedFetch(
    * Case D: The fetch offset is equal to the end offset, meaning that we have reached the end of the log
    * Upon completion, should return whatever data is available for each valid partition
    */
-  private def tryCompleteDiskless(fetchPartitionStatus: Seq[(TopicIdPartition, FetchPartitionStatus)]): Option[Long] = {
+  private def tryCompleteDiskless(
+    fetchPartitionStatus: Seq[(TopicIdPartition, FetchPartitionStatus)],
+    disklessMaxBytes: Int
+  ): Option[Long] = {
     var accumulatedSize = 0L
     val fetchPartitionStatusMap = fetchPartitionStatus.toMap
-    val requests = fetchPartitionStatus.map { case (topicIdPartition, fetchStatus) =>
-      new FindBatchRequest(topicIdPartition, fetchStatus.startOffsetMetadata.messageOffset, fetchStatus.fetchInfo.maxBytes)
-    }
-    if (requests.isEmpty) return Some(0)
 
-    val response = try {
-      replicaManager.findDisklessBatches(requests, Int.MaxValue)
+    maybeBatchCoordinates = try {
+      Some(replicaManager.findDisklessBatches(fetchPartitionStatus, disklessMaxBytes))
     } catch {
       case e: Throwable =>
         error("Error while trying to find diskless batches on delayed fetch.", e)
         return None  // Case C
     }
 
-    response.get.asScala.foreach { r =>
-      r.errors() match {
-        case Errors.NONE =>
-          if (r.batches().size() > 0) {
-            // Gather topic id partition from first batch. Same for all batches in the response.
-            val topicIdPartition = r.batches().get(0).metadata().topicIdPartition()
-            val endOffset = r.highWatermark()
+    maybeBatchCoordinates match {
+      case Some(exists) =>
+        exists.values.foreach { r =>
+          r.errors() match {
+            case Errors.NONE =>
+              if (r.batches().size() > 0) {
+                // Gather topic id partition from first batch. Same for all batches in the response.
+                val topicIdPartition = r.batches().get(0).metadata().topicIdPartition()
+                val endOffset = r.highWatermark()
 
-            val fetchPartitionStatus = fetchPartitionStatusMap.get(topicIdPartition)
-            if (fetchPartitionStatus.isEmpty) {
-              warn(s"Fetch partition status for $topicIdPartition not found in delayed fetch $this.")
-              return None  // Case C
-            }
+                val fetchPartitionStatus = fetchPartitionStatusMap.get(topicIdPartition)
+                if (fetchPartitionStatus.isEmpty) {
+                  warn(s"Fetch partition status for $topicIdPartition not found in delayed fetch $this.")
+                  return None // Case C
+                }
 
-            val fetchOffset = fetchPartitionStatus.get.startOffsetMetadata
-            // If the fetch offset is greater than the end offset, it means that the log has been truncated
-            // If it is equal to the end offset, it means that we have reached the end of the log
-            // If the fetch offset is less than the end offset, we can accumulate the size of the batches
-            if (fetchOffset.messageOffset > endOffset) {
-              // Truncation happened
-              debug(s"Satisfying fetch $this since it is fetching later segments of partition $topicIdPartition.")
-              return None  // Case A
-            } else if (fetchOffset.messageOffset < endOffset) {
-              val bytesAvailable = r.estimatedByteSize(fetchOffset.messageOffset)
-              accumulatedSize += bytesAvailable // Case B: accumulate the size of the batches
-            } // Case D: same as fetchOffset == endOffset, no new data available
+                val fetchOffset = fetchPartitionStatus.get.startOffsetMetadata
+                // If the fetch offset is greater than the end offset, it means that the log has been truncated
+                // If it is equal to the end offset, it means that we have reached the end of the log
+                // If the fetch offset is less than the end offset, we can accumulate the size of the batches
+                if (fetchOffset.messageOffset > endOffset) {
+                  // Truncation happened
+                  debug(s"Satisfying fetch $this since it is fetching later segments of partition $topicIdPartition.")
+                  return None // Case A
+                } else if (fetchOffset.messageOffset < endOffset) {
+                  val bytesAvailable = r.estimatedByteSize(fetchOffset.messageOffset)
+                  accumulatedSize += bytesAvailable // Case B: accumulate the size of the batches
+                } // Case D: same as fetchOffset == endOffset, no new data available
+              }
+            case _ => return None  // Case C
           }
-        case _ => return None  // Case C
-      }
+        }
+      case None => // Case D
     }
-
     Some(accumulatedSize)
   }
 
@@ -272,13 +283,16 @@ class DelayedFetch(
 
     if (disklessRequestsSize > 0) {
       // Classic fetches are complete, now handle diskless fetches
-      // adjust the max bytes for diskless fetches based on the percentage of diskless partitions
-      val disklessPercentage = disklessRequestsSize / totalRequestsSize
-      val disklessParams = replicaManager.fetchParamsWithNewMaxBytes(params, disklessPercentage)
       val disklessFetchInfos = disklessFetchPartitionStatus.map { case (tp, status) =>
         tp -> status.fetchInfo
       }
-      val disklessFetchResponseFuture = replicaManager.fetchDisklessMessages(disklessParams, disklessFetchInfos)
+      val batchCoordinates = maybeBatchCoordinates match {
+        case Some(batchCoordinates) => batchCoordinates
+        case None =>
+          responseCallback(Seq.empty)
+          return
+      }
+      val disklessFetchResponseFuture = replicaManager.fetchDisklessMessages(batchCoordinates, disklessFetchInfos)
 
       // Combine the classic fetch results with the diskless fetch results
       disklessFetchResponseFuture.whenComplete { case (disklessFetchPartitionData, _) =>

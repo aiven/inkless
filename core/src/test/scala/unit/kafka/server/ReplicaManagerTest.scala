@@ -7098,9 +7098,10 @@ class ReplicaManagerTest {
       // and the response does not satisfy minBytes, it should be delayed in the purgatory
       // until the delayed fetch expires.
       replicaManager.fetchMessages(fetchParams, fetchInfos, QuotaFactory.UNBOUNDED_QUOTA, responseCallback)
-      assertEquals(0, replicaManager.delayedFetchPurgatory.numDelayed())
+      assertEquals(1, replicaManager.delayedFetchPurgatory.numDelayed())
 
       latch.await(10, TimeUnit.SECONDS) // Wait for the delayed fetch to expire
+      assertEquals(0, replicaManager.delayedFetchPurgatory.numDelayed())
       assertNotNull(responseData)
       assertEquals(2, responseData.size)
       assertEquals(disklessResponse(disklessTopicPartition), responseData(disklessTopicPartition))

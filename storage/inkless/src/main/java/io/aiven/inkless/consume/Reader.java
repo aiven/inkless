@@ -22,7 +22,6 @@ import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.requests.FetchRequest;
 import org.apache.kafka.common.utils.ThreadUtils;
 import org.apache.kafka.common.utils.Time;
-import org.apache.kafka.server.storage.log.FetchParams;
 import org.apache.kafka.server.storage.log.FetchPartitionData;
 import org.apache.kafka.storage.log.metrics.BrokerTopicStats;
 
@@ -44,7 +43,7 @@ import io.aiven.inkless.cache.ObjectCache;
 import io.aiven.inkless.common.InklessThreadFactory;
 import io.aiven.inkless.common.ObjectKeyCreator;
 import io.aiven.inkless.common.metrics.ThreadPoolMonitor;
-import io.aiven.inkless.control_plane.ControlPlane;
+import io.aiven.inkless.control_plane.FindBatchResponse;
 import io.aiven.inkless.storage_backend.common.ObjectFetcher;
 
 public class Reader implements AutoCloseable {
@@ -54,9 +53,7 @@ public class Reader implements AutoCloseable {
     private final ObjectKeyCreator objectKeyCreator;
     private final KeyAlignmentStrategy keyAlignmentStrategy;
     private final ObjectCache cache;
-    private final ControlPlane controlPlane;
     private final ObjectFetcher objectFetcher;
-    private final int maxBatchesPerPartitionToFind;
     private final ExecutorService metadataExecutor;
     private final ExecutorService dataExecutor;
     private final InklessFetchMetrics fetchMetrics;
@@ -65,25 +62,21 @@ public class Reader implements AutoCloseable {
     private ThreadPoolMonitor dataThreadPoolMonitor;
 
     public Reader(
-        Time time,
-        ObjectKeyCreator objectKeyCreator,
-        KeyAlignmentStrategy keyAlignmentStrategy,
-        ObjectCache cache,
-        ControlPlane controlPlane,
-        ObjectFetcher objectFetcher,
-        BrokerTopicStats brokerTopicStats,
-        int fetchMetadataThreadPoolSize,
-        int fetchDataThreadPoolSize,
-        int maxBatchesPerPartitionToFind
+        final Time time,
+        final ObjectKeyCreator objectKeyCreator,
+        final KeyAlignmentStrategy keyAlignmentStrategy,
+        final ObjectCache cache,
+        final ObjectFetcher objectFetcher,
+        final BrokerTopicStats brokerTopicStats,
+        final int fetchMetadataThreadPoolSize,
+        final int fetchDataThreadPoolSize
     ) {
         this(
             time,
             objectKeyCreator,
             keyAlignmentStrategy,
             cache,
-            controlPlane,
             objectFetcher,
-            maxBatchesPerPartitionToFind,
             Executors.newFixedThreadPool(fetchMetadataThreadPoolSize, new InklessThreadFactory("inkless-fetch-metadata-", false)),
             Executors.newFixedThreadPool(fetchDataThreadPoolSize, new InklessThreadFactory("inkless-fetch-data-", false)),
             brokerTopicStats
@@ -91,24 +84,20 @@ public class Reader implements AutoCloseable {
     }
 
     public Reader(
-        Time time,
-        ObjectKeyCreator objectKeyCreator,
-        KeyAlignmentStrategy keyAlignmentStrategy,
-        ObjectCache cache,
-        ControlPlane controlPlane,
-        ObjectFetcher objectFetcher,
-        int maxBatchesPerPartitionToFind,
-        ExecutorService metadataExecutor,
-        ExecutorService dataExecutor,
-        BrokerTopicStats brokerTopicStats
+        final Time time,
+        final ObjectKeyCreator objectKeyCreator,
+        final KeyAlignmentStrategy keyAlignmentStrategy,
+        final ObjectCache cache,
+        final ObjectFetcher objectFetcher,
+        final ExecutorService metadataExecutor,
+        final ExecutorService dataExecutor,
+        final BrokerTopicStats brokerTopicStats
     ) {
         this.time = time;
         this.objectKeyCreator = objectKeyCreator;
         this.keyAlignmentStrategy = keyAlignmentStrategy;
         this.cache = cache;
-        this.controlPlane = controlPlane;
         this.objectFetcher = objectFetcher;
-        this.maxBatchesPerPartitionToFind = maxBatchesPerPartitionToFind;
         this.metadataExecutor = metadataExecutor;
         this.dataExecutor = dataExecutor;
         this.fetchMetrics = new InklessFetchMetrics(time, cache);
@@ -123,84 +112,71 @@ public class Reader implements AutoCloseable {
     }
 
     public CompletableFuture<Map<TopicIdPartition, FetchPartitionData>> fetch(
-        final FetchParams params,
-        final Map<TopicIdPartition, FetchRequest.PartitionData> fetchInfos
+            final Map<TopicIdPartition, FindBatchResponse> batchCoordinates,
+            final Map<TopicIdPartition, FetchRequest.PartitionData> fetchInfos
     ) {
         final Instant startAt = TimeUtils.durationMeasurementNow(time);
         fetchMetrics.fetchStarted(fetchInfos.size());
-        final var batchCoordinates = CompletableFuture.supplyAsync(
-            new FindBatchesJob(
+        return CompletableFuture.supplyAsync(
+                new FetchPlanner(
                 time,
-                controlPlane,
-                params,
-                fetchInfos,
-                maxBatchesPerPartitionToFind,
-                fetchMetrics::findBatchesFinished
+                objectKeyCreator,
+                keyAlignmentStrategy,
+                cache,
+                objectFetcher,
+                dataExecutor,
+                batchCoordinates,
+                fetchMetrics
             ),
             metadataExecutor
-        );
-        return batchCoordinates.thenApply(
-                coordinates ->
-                    new FetchPlanner(
-                        time,
-                        objectKeyCreator,
-                        keyAlignmentStrategy,
-                        cache,
-                        objectFetcher,
-                        dataExecutor,
-                        coordinates,
-                        fetchMetrics
-                    ).get()
-            )
-            .thenCombineAsync(batchCoordinates, (fileExtents, coordinates) ->
-                new FetchCompleter(
+        ).thenApply(fileExtents -> {
+            return new FetchCompleter(
                     time,
                     objectKeyCreator,
                     fetchInfos,
-                    coordinates,
+                    batchCoordinates,
                     fileExtents,
                     fetchMetrics::fetchCompletionFinished
-                ).get()
-            )
-            .whenComplete((topicIdPartitionFetchPartitionDataMap, throwable) -> {
-                // Mark broker side fetch metrics
-                if (throwable != null) {
-                    LOGGER.warn("Fetch failed", throwable);
-                    for (final var entry : fetchInfos.entrySet()) {
-                        final String topic = entry.getKey().topic();
+            ).get();
+        }).whenComplete((topicIdPartitionFetchPartitionDataMap, throwable) -> {
+            // Mark broker side fetch metrics
+            if (throwable != null) {
+                LOGGER.warn("Fetch failed", throwable);
+                for (final var entry : fetchInfos.entrySet()) {
+                    final String topic = entry.getKey().topic();
+                    brokerTopicStats.allTopicsStats().failedFetchRequestRate().mark();
+                    brokerTopicStats.topicStats(topic).failedFetchRequestRate().mark();
+                }
+                // Check if the exception was caused by a fetch related exception and increment the relevant metric
+                if (throwable instanceof CompletionException) {
+                    // Finding batches fails on the initial stage
+                    if (throwable.getCause() instanceof FindBatchesException) {
+                        fetchMetrics.findBatchesFailed();
+                    } else if (throwable.getCause() instanceof FetchException) {
+                        // but storage-related exceptions are wrapped twice as they happen within the fetch completer
+                        final Throwable fetchException = throwable.getCause();
+                        if (fetchException.getCause() instanceof FileFetchException) {
+                            fetchMetrics.fileFetchFailed();
+                        } else if (fetchException.getCause() instanceof CacheFetchException) {
+                            fetchMetrics.cacheFetchFailed();
+                        }
+                    }
+                }
+                fetchMetrics.fetchFailed();
+            } else {
+                for (final var entry : topicIdPartitionFetchPartitionDataMap.entrySet()) {
+                    final String topic = entry.getKey().topic();
+                    if (entry.getValue().error == Errors.NONE) {
+                        brokerTopicStats.allTopicsStats().totalFetchRequestRate().mark();
+                        brokerTopicStats.topicStats(topic).totalFetchRequestRate().mark();
+                    } else {
                         brokerTopicStats.allTopicsStats().failedFetchRequestRate().mark();
                         brokerTopicStats.topicStats(topic).failedFetchRequestRate().mark();
                     }
-                    // Check if the exception was caused by a fetch related exception and increment the relevant metric
-                    if (throwable instanceof CompletionException) {
-                        // Finding batches fails on the initial stage
-                        if (throwable.getCause() instanceof FindBatchesException) {
-                            fetchMetrics.findBatchesFailed();
-                        } else if (throwable.getCause() instanceof FetchException) {
-                            // but storage-related exceptions are wrapped twice as they happen within the fetch completer
-                            final Throwable fetchException = throwable.getCause();
-                            if (fetchException.getCause() instanceof FileFetchException) {
-                                fetchMetrics.fileFetchFailed();
-                            } else if (fetchException.getCause() instanceof CacheFetchException) {
-                                fetchMetrics.cacheFetchFailed();
-                            }
-                        }
-                    }
-                    fetchMetrics.fetchFailed();
-                } else {
-                    for (final var entry : topicIdPartitionFetchPartitionDataMap.entrySet()) {
-                        final String topic = entry.getKey().topic();
-                        if (entry.getValue().error == Errors.NONE) {
-                            brokerTopicStats.allTopicsStats().totalFetchRequestRate().mark();
-                            brokerTopicStats.topicStats(topic).totalFetchRequestRate().mark();
-                        } else {
-                            brokerTopicStats.allTopicsStats().failedFetchRequestRate().mark();
-                            brokerTopicStats.topicStats(topic).failedFetchRequestRate().mark();
-                        }
-                    }
-                    fetchMetrics.fetchCompleted(startAt);
                 }
-            });
+                fetchMetrics.fetchCompleted(startAt);
+            }
+        });
     }
 
     @Override

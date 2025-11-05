@@ -16,7 +16,7 @@
  */
 package kafka.server
 
-import io.aiven.inkless.control_plane.{BatchInfo, BatchMetadata, FindBatchRequest, FindBatchResponse}
+import io.aiven.inkless.control_plane.{BatchInfo, BatchMetadata, FindBatchResponse}
 
 import java.util.{Collections, Optional, OptionalLong}
 import scala.collection.Seq
@@ -213,6 +213,9 @@ class DelayedFetchTest {
       responseCallback = callback
     )
 
+    val batchCoordinates = Map.empty[TopicIdPartition, FindBatchResponse]
+    when(replicaManager.findDisklessBatches(any(), anyInt())).thenReturn(batchCoordinates)
+
     val partition: Partition = mock(classOf[Partition])
     when(replicaManager.getPartitionOrException(topicIdPartition.topicPartition)).thenReturn(partition)
     // Note that the high-watermark does not contain the complete metadata
@@ -345,12 +348,13 @@ class DelayedFetchTest {
       )))
       when(mockResponse.highWatermark()).thenReturn(endOffset) // endOffset < fetchOffset (truncation)
 
-      val future = Some(Collections.singletonList(mockResponse))
-      when(replicaManager.findDisklessBatches(any[Seq[FindBatchRequest]], anyInt())).thenReturn(future)
+      val batchCoordinates = Map((topicIdPartition, mockResponse))
+
+      when(replicaManager.findDisklessBatches(any(), anyInt())).thenReturn(batchCoordinates)
 
       // Mock fetchDisklessMessages for onComplete
       when(replicaManager.fetchParamsWithNewMaxBytes(any[FetchParams], any[Float])).thenAnswer(_.getArgument(0))
-      when(replicaManager.fetchDisklessMessages(any[FetchParams], any[Seq[(TopicIdPartition, FetchRequest.PartitionData)]]))
+      when(replicaManager.fetchDisklessMessages(any[Map[TopicIdPartition, FindBatchResponse]], any[Seq[(TopicIdPartition, FetchRequest.PartitionData)]]))
         .thenReturn(CompletableFuture.completedFuture(Seq((topicIdPartition, mock(classOf[FetchPartitionData])))))
 
       when(replicaManager.readFromLog(
@@ -402,6 +406,7 @@ class DelayedFetchTest {
         fetchResultOpt = Some(responses)
       }
 
+      when(replicaManager.fetchParamsWithNewMaxBytes(any(), any())).thenReturn(fetchParams)
       val delayedFetch = new DelayedFetch(
         params = fetchParams,
         classicFetchPartitionStatus = Seq.empty,
@@ -434,8 +439,8 @@ class DelayedFetchTest {
       when(mockResponse.highWatermark()).thenReturn(fetchOffset) // fetchOffset == endOffset (no new data)
       when(mockResponse.estimatedByteSize(fetchOffset)).thenReturn(estimatedBatchSize)
 
-      val future = Some(Collections.singletonList(mockResponse))
-      when(replicaManager.findDisklessBatches(any[Seq[FindBatchRequest]], anyInt())).thenReturn(future)
+      val future = Map((topicIdPartition, mockResponse))
+      when(replicaManager.findDisklessBatches(any[Seq[(TopicIdPartition, FetchPartitionStatus)]], anyInt())).thenReturn(future)
 
       when(replicaManager.readFromLog(
         fetchParams,
@@ -451,7 +456,7 @@ class DelayedFetchTest {
       assertFalse(fetchResultOpt.isDefined)
 
       // Verify that estimatedByteSize is never called since fetchOffset == endOffset
-      verify(replicaManager, never()).fetchDisklessMessages(any[FetchParams], any[Seq[(TopicIdPartition, FetchRequest.PartitionData)]])
+      verify(replicaManager, never()).fetchDisklessMessages(any[Map[TopicIdPartition, FindBatchResponse]], any[Seq[(TopicIdPartition, FetchRequest.PartitionData)]])
       verify(mockResponse, never()).estimatedByteSize(anyLong())
     }
 
@@ -487,6 +492,7 @@ class DelayedFetchTest {
         fetchResultOpt = Some(responses)
       }
 
+      when(replicaManager.fetchParamsWithNewMaxBytes(any(), any())).thenReturn(fetchParams)
       val delayedFetch = new DelayedFetch(
         params = fetchParams,
         classicFetchPartitionStatus = Seq.empty,
@@ -519,8 +525,8 @@ class DelayedFetchTest {
       when(mockResponse.highWatermark()).thenReturn(endOffset) // endOffset > fetchOffset (data available)
       when(mockResponse.estimatedByteSize(fetchOffset)).thenReturn(estimatedBatchSize)
 
-      val future = Some(Collections.singletonList(mockResponse))
-      when(replicaManager.findDisklessBatches(any[Seq[FindBatchRequest]], anyInt())).thenReturn(future)
+      val batchCoordinates = Map((topicIdPartition, mockResponse))
+      when(replicaManager.findDisklessBatches(any(), anyInt())).thenReturn(batchCoordinates)
 
       when(replicaManager.readFromLog(
         fetchParams,
@@ -601,12 +607,12 @@ class DelayedFetchTest {
       when(mockResponse.highWatermark()).thenReturn(endOffset) // endOffset > fetchOffset (data available)
       when(mockResponse.estimatedByteSize(fetchOffset)).thenReturn(estimatedBatchSize)
 
-      val future = Some(Collections.singletonList(mockResponse))
-      when(replicaManager.findDisklessBatches(any[Seq[FindBatchRequest]], anyInt())).thenReturn(future)
+      val batchCoordinates = Map((topicIdPartition, mockResponse))
+      when(replicaManager.findDisklessBatches(any(), anyInt())).thenReturn(batchCoordinates)
 
       // Mock fetchDisklessMessages for onComplete
       when(replicaManager.fetchParamsWithNewMaxBytes(any[FetchParams], anyFloat())).thenAnswer(_.getArgument(0))
-      when(replicaManager.fetchDisklessMessages(any[FetchParams], any[Seq[(TopicIdPartition, FetchRequest.PartitionData)]]))
+      when(replicaManager.fetchDisklessMessages(any[Map[TopicIdPartition, FindBatchResponse]], any[Seq[(TopicIdPartition, FetchRequest.PartitionData)]]))
         .thenReturn(CompletableFuture.completedFuture(Seq((topicIdPartition, mock(classOf[FetchPartitionData])))))
 
       when(replicaManager.readFromLog(
@@ -685,12 +691,12 @@ class DelayedFetchTest {
       )))
       when(mockResponse.highWatermark()).thenReturn(600L)
 
-      val future = Some(Collections.singletonList(mockResponse))
-      when(replicaManager.findDisklessBatches(any[Seq[FindBatchRequest]], anyInt())).thenReturn(future)
+      val batchCoordinates = Map((topicIdPartition, mockResponse))
+      when(replicaManager.findDisklessBatches(any(), anyInt())).thenReturn(batchCoordinates)
 
       // Mock fetchDisklessMessages for onComplete
       when(replicaManager.fetchParamsWithNewMaxBytes(any[FetchParams], anyFloat())).thenAnswer(_.getArgument(0))
-      when(replicaManager.fetchDisklessMessages(any[FetchParams], any[Seq[(TopicIdPartition, FetchRequest.PartitionData)]]))
+      when(replicaManager.fetchDisklessMessages(any[Map[TopicIdPartition, FindBatchResponse]], any[Seq[(TopicIdPartition, FetchRequest.PartitionData)]]))
         .thenReturn(CompletableFuture.completedFuture(Seq((topicIdPartition, mock(classOf[FetchPartitionData])))))
 
       when(replicaManager.readFromLog(

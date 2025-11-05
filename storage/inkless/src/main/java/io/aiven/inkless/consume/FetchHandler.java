@@ -21,7 +21,6 @@ import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.record.MemoryRecords;
 import org.apache.kafka.common.requests.FetchRequest;
-import org.apache.kafka.server.storage.log.FetchParams;
 import org.apache.kafka.server.storage.log.FetchPartitionData;
 
 import org.slf4j.Logger;
@@ -37,6 +36,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.stream.Collectors;
 
 import io.aiven.inkless.common.SharedState;
+import io.aiven.inkless.control_plane.FindBatchResponse;
 
 public class FetchHandler implements Closeable {
     private static final Logger LOGGER = LoggerFactory.getLogger(FetchHandler.class);
@@ -50,12 +50,10 @@ public class FetchHandler implements Closeable {
                 state.objectKeyCreator(),
                 state.keyAlignmentStrategy(),
                 state.cache(),
-                state.controlPlane(),
                 state.buildStorage(),
                 state.brokerTopicStats(),
                 state.config().fetchMetadataThreadPoolSize(),
-                state.config().fetchDataThreadPoolSize(),
-                state.config().maxBatchesPerPartitionToFind()
+                state.config().fetchDataThreadPoolSize()
             )
         );
     }
@@ -65,14 +63,14 @@ public class FetchHandler implements Closeable {
     }
 
     public CompletableFuture<Map<TopicIdPartition, FetchPartitionData>> handle(
-        final FetchParams params,
+        final Map<TopicIdPartition, FindBatchResponse> batchCoordinates,
         final Map<TopicIdPartition, FetchRequest.PartitionData> fetchInfos
     ) {
         if (fetchInfos.isEmpty()) {
             return CompletableFuture.completedFuture(Map.of());
         }
 
-        final CompletableFuture<Map<TopicIdPartition, FetchPartitionData>> resultFuture = reader.fetch(params, fetchInfos);
+        final CompletableFuture<Map<TopicIdPartition, FetchPartitionData>> resultFuture = reader.fetch(batchCoordinates, fetchInfos);
         return resultFuture.handle((result, e) -> {
             if (result == null) {
                 // We don't really expect this future to fail, but in case it does...

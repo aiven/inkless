@@ -77,8 +77,8 @@ public class ReaderTest {
 
     @Test
     public void testReaderEmptyRequests() throws IOException {
-        try(final var reader = new Reader(time, OBJECT_KEY_CREATOR, KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, controlPlane, objectFetcher, 0, metadataExecutor, dataExecutor, new BrokerTopicStats())) {
-            final CompletableFuture<Map<TopicIdPartition, FetchPartitionData>> fetch = reader.fetch(fetchParams, Collections.emptyMap());
+        try(final var reader = new Reader(time, OBJECT_KEY_CREATOR, KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, objectFetcher, metadataExecutor, dataExecutor, new BrokerTopicStats())) {
+            final CompletableFuture<Map<TopicIdPartition, FetchPartitionData>> fetch = reader.fetch(Collections.emptyMap(), Collections.emptyMap());
             verify(metadataExecutor, atLeastOnce()).execute(any());
             verifyNoInteractions(dataExecutor);
             assertThat(fetch.join()).isEqualTo(Collections.emptyMap());
@@ -87,7 +87,7 @@ public class ReaderTest {
 
     @Test
     public void testClose() throws Exception {
-        final var reader = new Reader(time, OBJECT_KEY_CREATOR, KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, controlPlane, objectFetcher, 0, metadataExecutor, dataExecutor, new BrokerTopicStats());
+        final var reader = new Reader(time, OBJECT_KEY_CREATOR, KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, objectFetcher, metadataExecutor, dataExecutor, new BrokerTopicStats());
         reader.close();
         verify(metadataExecutor, atLeastOnce()).shutdown();
         verify(dataExecutor, atLeastOnce()).shutdown();
