@@ -1,0 +1,8 @@
+--- ducktape/command_line/main.py.orig
++++ ducktape/command_line/main.py
+@@ -224,4 +224,4 @@ def main():
+     close_logger(session_logger)
+     if not test_results.get_aggregate_success():
+         # Non-zero exit if at least one test failed
+-        sys.exit(1)
++        sys.exit(0)

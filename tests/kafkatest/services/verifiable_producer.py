@@ -92,6 +92,7 @@ class VerifiableProducer(KafkaPathResolverMixin, VerifiableClientMixin, Backgrou
             node.version = version
         self.acked_values = []
         self.acked_values_by_partition = {}
+        self.acked_values_full = []
         self._last_acked_offsets = {}
         self.not_acked_values = []
         self.produced_count = {}
@@ -188,6 +189,8 @@ class VerifiableProducer(KafkaPathResolverMixin, VerifiableClientMixin, Backgrou
                         partition = TopicPartition(data["topic"], data["partition"])
                         value = self.message_validator(data["value"])
                         self.acked_values.append(value)
+
+                        self.acked_values_full.append(data)
 
                         if partition not in self.acked_values_by_partition:
                             self.acked_values_by_partition[partition] = []
