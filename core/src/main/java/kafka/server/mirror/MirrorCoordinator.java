@@ -17,7 +17,6 @@
 package kafka.server.mirror;
 
 import kafka.server.KafkaConfig;
-import kafka.server.MirrorBrokerBlockingSender;
 import kafka.server.ReplicaManager;
 
 import org.apache.kafka.common.TopicPartition;
@@ -66,21 +65,19 @@ import scala.jdk.javaapi.CollectionConverters;
 import static org.apache.kafka.common.utils.Utils.require;
 
 /**
- * Cluster Mirror component that coordinates topic mirroring between Kafka clusters.
+ * Replicated state machine that coordinates topic mirroring between Kafka clusters.
  *
- * <p>This coordinator is responsible for:
- * <ul>
- *   <li>Managing topic configurations and metadata for all cluster mirrors</li>
- *   <li>Coordinating with remote brokers for cross-cluster replication</li>
- *   <li>Handling leader election and resignation for mirror partitions</li>
- *   <li>Loading and persisting cluster mirror metadata in the internal topic</li>
- *   <li>Scheduling periodic metadata refresh from source clusters</li>
- * </ul>
+ * This coordinator is responsible for:
+ * - Managing topic configurations and metadata for all cluster mirrors
+ * - Coordinating with remote brokers for cross-cluster replication
+ * - Handling leader election and resignation for mirror partitions
+ * - Loading and persisting cluster mirror metadata in the internal topic
+ * - Scheduling periodic metadata refresh from source clusters
  *
- * <p>The coordinator maintains state about which topics are being mirrored for each cluster mirror
- * and ensures proper coordination between source and destination clusters. It integrates with
- * the ReplicaManager to handle log operations and with the MirrorMetadataManager to
- * maintain metadata about mirrored topics.
+ * The coordinator maintains state about which topics are being mirrored for each cluster
+ * mirror and ensures proper coordination between source and destination clusters.
+ * It integrates with the ReplicaManager to handle log operations and with the
+ * MirrorMetadataManager to maintain metadata about mirrored topics.
  */
 public class MirrorCoordinator {
     private static final Logger LOG = LoggerFactory.getLogger(MirrorCoordinator.class);
@@ -92,7 +89,7 @@ public class MirrorCoordinator {
     private final MetadataCache metadataCache;
     private final Time time;
     private volatile int numPartitions = -1;
-    private final Map<String, MirrorBrokerBlockingSender> remoteBrokers = new HashMap<>();
+    private final Map<String, MirrorBlockingSender> remoteBrokers = new HashMap<>();
     private final MirrorRecordSerde serde = new MirrorRecordSerde();
     private final MirrorMetadataManager mirrorMetadataManager;
 

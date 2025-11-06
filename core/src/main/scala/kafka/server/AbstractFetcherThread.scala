@@ -276,12 +276,12 @@ abstract class AbstractFetcherThread(name: String,
   }
 
   /**
-   * Creates or reuses remote fetcher threads for read-only partitions.
+   * Creates or reuses mirror fetcher threads for read-only partitions.
    * Fetchers are shutdown when idle (no partition assigned) or during system shutdown.
    *
    * @param partitionToData Partitions with their current leader information to be processed
    */
-  private def maybeCreateFetcherForReadOnly(partitionToData: Map[TopicPartition, PartitionData]): Unit = {
+  private def maybeCreateMirrorFetchers(partitionToData: Map[TopicPartition, PartitionData]): Unit = {
     var newStates: Map[TopicPartition, InitialFetchState] = scala.collection.mutable.Map.empty[TopicPartition, InitialFetchState]
       partitionStates.partitionStateMap.asScala
       .foreach { case (topicPartition, currentFetchState) =>
@@ -515,6 +515,7 @@ abstract class AbstractFetcherThread(name: String,
                       "that the partition is being moved")
                     partitionsWithError += topicPartition
                   } else {
+                    // cluster mirror: there was a leader election in the source cluster
                     recreateFetchers += topicPartition -> partitionData
                   }
 
@@ -551,7 +552,7 @@ abstract class AbstractFetcherThread(name: String,
     if (readOnlyEndOffsets.nonEmpty)
       updateLeaderEpochForReadOnly(readOnlyEndOffsets)
     if (recreateFetchers.nonEmpty)
-      maybeCreateFetcherForReadOnly(recreateFetchers)
+      maybeCreateMirrorFetchers(recreateFetchers)
     if (partitionsWithError.nonEmpty) {
       handlePartitionsWithErrors(partitionsWithError, "processFetchRequest")
     }

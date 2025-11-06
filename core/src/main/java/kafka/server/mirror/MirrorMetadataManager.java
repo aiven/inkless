@@ -17,7 +17,6 @@
 package kafka.server.mirror;
 
 import kafka.server.KafkaConfig;
-import kafka.server.MirrorBrokerBlockingSender;
 
 import org.apache.kafka.clients.ClientResponse;
 import org.apache.kafka.clients.ClientUtils;
@@ -117,7 +116,7 @@ import static org.apache.kafka.clients.CommonClientConfigs.BOOTSTRAP_SERVERS_CON
  * local cluster state synchronized with remote cluster state.
  *
  * Key responsibilities:
- * - Establishes and manages connections to remote brokers using MirrorBrokerBlockingSender
+ * - Establishes and manages connections to remote brokers using MirrorBlockingSender
  * - Monitors remote cluster topology and partition leadership changes
  * - Synchronizes topic configurations between clusters
  * - Mirrors consumer group offsets to maintain consistency across clusters
@@ -139,7 +138,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     private final int nodeId;
     // Mapping from remote bootstrap servers to its corresponding broker sender and topics.
     // TODO: A better key might be a cluster id or cluster-mirror. For now, we use remote bootstrap servers for demo.
-    private final Map<String, List<MirrorBrokerBlockingSender>> remoteBrokers;
+    private final Map<String, List<MirrorBlockingSender>> remoteBrokers;
     private final Map<String, Set<String>> topics;
     private final Map<String, Map<Integer, Node>> remoteClusterNodes;
     private final Map<String, Map<TopicPartition, Node>> remotePartitionLeaders;
@@ -259,7 +258,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         var logContext = new LogContext("[" + MirrorMetadataManager.class.getName() + " replicaId=" + nodeId
                 + ", remoteBootstrapServers=" + mirrorName + ", " + "readOnly=true] ");
 
-        remoteBrokers.put(mirrorName, List.of(new MirrorBrokerBlockingSender(
+        remoteBrokers.put(mirrorName, List.of(new MirrorBlockingSender(
                 brokerEndpoint,
                 MirrorConfig.fromProperties(props),
                 metrics,
@@ -274,7 +273,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
      * Synchronizes topic metadata for a specific remote cluster.
      * This includes updating broker nodes, partition leaders, and handling partition scaling.
      */
-    private void syncTopicMetadata(String mirrorName, List<MirrorBrokerBlockingSender> senders) {
+    private void syncTopicMetadata(String mirrorName, List<MirrorBlockingSender> senders) {
         // get a random node in source cluster
         var response = getRandomSender(senders).sendRequest(
             MetadataRequest.Builder.forTopicNames(topics.get(mirrorName).stream().toList(), false)
@@ -292,7 +291,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     /**
      * Synchronizes topic configurations for a specific remote cluster.
      */
-    private void syncTopicConfigurations(String mirrorName, List<MirrorBrokerBlockingSender> senders) {
+    private void syncTopicConfigurations(String mirrorName, List<MirrorBlockingSender> senders) {
         LOG.info("!!! Describing topic configs for topics: {}", topics);
 
         List<DescribeConfigsRequestData.DescribeConfigsResource> describeConfigsResources =
@@ -442,7 +441,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     /**
      * Returns a random sender from the list of available senders.
      */
-    private MirrorBrokerBlockingSender getRandomSender(List<MirrorBrokerBlockingSender> senders) {
+    private MirrorBlockingSender getRandomSender(List<MirrorBlockingSender> senders) {
         return senders.get(random.nextInt(senders.size()));
     }
 
@@ -471,7 +470,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     /**
      * Synchronizes consumer group offsets for a specific remote cluster.
      */
-    private void syncConsumerGroupOffsets(List<MirrorBrokerBlockingSender> senders) {
+    private void syncConsumerGroupOffsets(List<MirrorBlockingSender> senders) {
         // 1. list group
         ListGroupsRequest.Builder builder = new ListGroupsRequest.Builder(new ListGroupsRequestData()
                 .setTypesFilter(List.of(GroupType.CLASSIC.name(), GroupType.CONSUMER.name()))
@@ -560,7 +559,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     /**
      * Synchronizes ACLs for a specific remote cluster.
      */
-    private void syncACLs(String mirrorName, List<MirrorBrokerBlockingSender> senders) {
+    private void syncACLs(String mirrorName, List<MirrorBlockingSender> senders) {
         // TODO: We currently mirror all ACLs from the source to the target.
         //       Any ACLs added/removed directly on the target will be overwritten
         //       on the next sync to match the source.

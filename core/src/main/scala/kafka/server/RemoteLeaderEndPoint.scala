@@ -38,16 +38,29 @@ import scala.jdk.CollectionConverters._
 import scala.collection.mutable
 
 /**
- * Facilitates fetches from a remote replica leader.
+ * A LeaderEndPoint implementation for fetching data from remote brokers.
  *
- * @param logPrefix The log prefix
- * @param blockingSender The raw leader endpoint used to communicate with the leader
- * @param fetchSessionHandler A FetchSessionHandler to track the partitions in the session
- * @param brokerConfig Broker configuration
- * @param replicaManager A ReplicaManager
- * @param quota The quota, used when building a fetch request
- * @param metadataVersionSupplier A supplier that returns the current MetadataVersion. This can change during
- *                                runtime in KRaft mode.
+ * This class supports two use cases:
+ * 1. Intra-cluster replication: When readOnlyTopics is empty, uses replica fetch requests for
+ *    regular broker-to-broker replication within the same Kafka cluster.
+ * 2. Cross-cluster mirroring: When readOnlyTopics contains entries, uses consumer fetch requests
+ *    for cluster mirroring scenarios where a local broker replicates from a remote Kafka cluster.
+ *
+ * Key Differences from LocalLeaderEndPoint:
+ * - Takes a BlockingSend parameter for network communication (enables testing with mocks)
+ * - Supports both replica fetch (intra-cluster) and consumer fetch (cross-cluster) modes
+ * - Can use cluster-specific credentials via MirrorBlockingSender for cross-cluster scenarios
+ *
+ * This is not thread-safe. Each instance is used by a single ReplicaFetcherThread or MirrorFetcherThread.
+ *
+ * @param logPrefix The log prefix for debugging
+ * @param blockingSender Network layer for communicating with the remote broker
+ * @param fetchSessionHandler Manages incremental fetch sessions to reduce bandwidth
+ * @param brokerConfig The local broker's configuration
+ * @param replicaManager The local ReplicaManager, used to query local log state
+ * @param quota Replication quota for throttling fetches
+ * @param metadataVersionSupplier Provides the current metadata version, determines fetch request version
+ * @param brokerEpochSupplier Provides the current broker epoch for fencing
  */
 class RemoteLeaderEndPoint(logPrefix: String,
                            blockingSender: BlockingSend,
@@ -221,11 +234,12 @@ class RemoteLeaderEndPoint(logPrefix: String,
       } else {
         metadataVersion.fetchRequestVersion
       }
+      // Use different fetch request types based on whether we're doing cross-cluster mirroring
       val requestBuilder = if (readOnlyTopics.isEmpty) {
-        // regular replication: use replica fetch request
+        // For intra-cluster replication (readOnlyTopics empty): Use replica fetch so followers can join ISR
         FetchRequest.Builder.forReplica(version, brokerConfig.brokerId, brokerEpochSupplier(), maxWait, minBytes, fetchData.toSend)
       } else {
-        // cluster mirror: use consumer fetch request
+        // For cross-cluster mirroring (readOnlyTopics not empty): Use consumer fetch to avoid ACL issues
         FetchRequest.Builder.forConsumer(version, maxWait, minBytes, fetchData.toSend).isolationLevel(IsolationLevel.READ_COMMITTED)
       }
       requestBuilder

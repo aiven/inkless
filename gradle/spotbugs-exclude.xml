@@ -713,7 +713,7 @@ For a detailed description of spotbugs bug categories, see https://spotbugs.read
             <Class name="kafka.server.metadata.DefaultIpEntity"/>
             <Class name="kafka.server.metadata.DefaultUserDefaultClientIdEntity"/>
             <Class name="kafka.server.metadata.DefaultUserEntity"/>
-            <Class name="kafka.server.MirrorReplicaFetcherManager"/>
+            <Class name="kafka.server.mirror.MirrorFetcherManager"/>
             <Class name="org.apache.kafka.connect.runtime.SinkConnectorConfig"/>
             <Class name="org.apache.kafka.connect.runtime.SourceConnectorConfig"/>
         </Or>

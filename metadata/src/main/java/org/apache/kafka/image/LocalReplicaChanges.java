@@ -38,7 +38,7 @@ public final class LocalReplicaChanges {
     private final Map<String, Uuid> topicIds;
     // partitions for which directory id changes or newly added to the broker
     private final Map<TopicIdPartition, Uuid> directoryIds;
-
+    // partitions that are read only and mirroring from a remote leader
     private final Map<TopicPartition, PartitionInfo> readOnlyLeaders;
 
     LocalReplicaChanges(
