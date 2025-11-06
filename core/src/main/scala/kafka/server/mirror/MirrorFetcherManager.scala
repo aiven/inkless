@@ -53,14 +53,14 @@ import scala.collection.{Map, mutable}
  * utilization. This design allows a single Kafka cluster to simultaneously mirror data from
  * multiple remote clusters without interference between their respective configurations.
  */
-class MirrorReplicaFetcherManager(brokerConfig: KafkaConfig,
-                                  protected val replicaManager: ReplicaManager,
-                                  metrics: Metrics,
-                                  time: Time,
-                                  quotaManager: ReplicationQuotaManager,
-                                  metadataVersionSupplier: () => MetadataVersion,
-                                  brokerEpochSupplier: () => Long,
-                                  metadataCache: MetadataCache)
+class MirrorFetcherManager(brokerConfig: KafkaConfig,
+                           protected val replicaManager: ReplicaManager,
+                           metrics: Metrics,
+                           time: Time,
+                           quotaManager: ReplicationQuotaManager,
+                           metadataVersionSupplier: () => MetadataVersion,
+                           brokerEpochSupplier: () => Long,
+                           metadataCache: MetadataCache)
     extends AbstractFetcherManager[ReplicaFetcherThread](
       name = "MirrorFetcherManager on broker " + brokerConfig.brokerId,
       clientId = "MirrorReplica",
