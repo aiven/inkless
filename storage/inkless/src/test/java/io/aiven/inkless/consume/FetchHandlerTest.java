@@ -25,8 +25,6 @@ import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.record.MemoryRecords;
 import org.apache.kafka.common.record.SimpleRecord;
 import org.apache.kafka.common.requests.FetchRequest;
-import org.apache.kafka.server.storage.log.FetchIsolation;
-import org.apache.kafka.server.storage.log.FetchParams;
 import org.apache.kafka.server.storage.log.FetchPartitionData;
 
 import org.junit.jupiter.api.Test;
@@ -36,6 +34,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 
+import java.util.Collections;
 import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalInt;
@@ -63,16 +62,12 @@ public class FetchHandlerTest {
     public void readerFutureFailed() throws Exception {
         when(reader.fetch(any(), any())).thenReturn(CompletableFuture.failedFuture(new RuntimeException()));
         try (FetchHandler handler = new FetchHandler(reader)) {
-            final FetchParams params = new FetchParams(fetchVersion,
-                    -1, -1, -1, -1,
-                    FetchIsolation.LOG_END, Optional.empty());
-
             final Map<TopicIdPartition, FetchRequest.PartitionData> fetchInfos = Map.of(
                     topicIdPartition,
                     new FetchRequest.PartitionData(inklessUuid, 0, 0, 1024, Optional.empty())
             );
 
-            final var result = handler.handle(params, fetchInfos).get();
+            final var result = handler.handle(Collections.emptyMap(), fetchInfos).get();
 
             assertThat(result).hasSize(1);
             assertThat(result.get(topicIdPartition)).satisfies(data -> {
@@ -102,17 +97,12 @@ public class FetchHandlerTest {
         );
         when(reader.fetch(any(), any())).thenReturn(CompletableFuture.completedFuture(value));
         try (FetchHandler handler = new FetchHandler(reader)) {
-
-            final FetchParams params = new FetchParams(fetchVersion,
-                    -1, -1, -1, -1,
-                    FetchIsolation.LOG_END, Optional.empty());
-
             final Map<TopicIdPartition, FetchRequest.PartitionData> fetchInfos = Map.of(
                     topicIdPartition,
                     new FetchRequest.PartitionData(inklessUuid, 0, 0, 1024, Optional.empty())
             );
 
-              final var result = handler.handle(params, fetchInfos).get();
+              final var result = handler.handle(Collections.emptyMap(), fetchInfos).get();
 
               assertThat(result).hasSize(1);
               assertThat(result.get(topicIdPartition)).satisfies(data -> {
@@ -141,16 +131,12 @@ public class FetchHandlerTest {
         when(reader.fetch(any(), any())).thenReturn(CompletableFuture.completedFuture(value));
         try (FetchHandler handler = new FetchHandler(reader)) {
 
-            final FetchParams params = new FetchParams(fetchVersion,
-                -1, -1, -1, -1,
-                FetchIsolation.LOG_END, Optional.empty());
-
             final Map<TopicIdPartition, FetchRequest.PartitionData> fetchInfos = Map.of(
                 topicIdPartition,
                 new FetchRequest.PartitionData(inklessUuid, 0, 0, 1024, Optional.empty())
             );
 
-            final var result = handler.handle(params, fetchInfos).get();
+            final var result = handler.handle(Collections.emptyMap(), fetchInfos).get();
 
             assertThat(result).hasSize(1);
             assertThat(result.get(topicIdPartition)).satisfies(data -> {
@@ -164,13 +150,9 @@ public class FetchHandlerTest {
     @Test
     public void emptyRequest() throws Exception {
         try (FetchHandler handler = new FetchHandler(reader)) {
-            final FetchParams params = new FetchParams(fetchVersion,
-                -1, -1, -1, -1,
-                FetchIsolation.LOG_END, Optional.empty());
-
             final Map<TopicIdPartition, FetchRequest.PartitionData> fetchInfos = Map.of();
 
-            final var result = handler.handle(params, fetchInfos).get();
+            final var result = handler.handle(Collections.emptyMap(), fetchInfos).get();
 
             assertThat(result).hasSize(0);
         }

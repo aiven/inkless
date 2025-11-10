@@ -27,8 +27,6 @@ import org.apache.kafka.common.requests.FetchRequest;
 import org.apache.kafka.common.requests.ProduceResponse;
 import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.server.common.RequestLocal;
-import org.apache.kafka.server.storage.log.FetchIsolation;
-import org.apache.kafka.server.storage.log.FetchParams;
 import org.apache.kafka.server.storage.log.FetchPartitionData;
 import org.apache.kafka.storage.internals.log.LogConfig;
 import org.apache.kafka.storage.log.metrics.BrokerTopicStats;
@@ -316,16 +314,25 @@ class FileMergerIntegrationTest {
     private void readIteration(final FetchHandler fetchHandler,
                                final ConcurrentHashMap<TopicIdPartition, Long> fetchPositions,
                                final ConcurrentMap<TopicIdPartition, List<RecordBatch>> records) throws InterruptedException, ExecutionException, TimeoutException {
-        final FetchParams params = new FetchParams(FETCH_VERSION,
-            -1, -1, -1, -1,
-            FetchIsolation.LOG_END, Optional.empty());
-
         final Map<TopicIdPartition, FetchRequest.PartitionData> fetchInfos = ALL_TOPIC_ID_PARTITIONS.stream().collect(Collectors.toMap(
             tidp -> tidp,
             tidp -> new FetchRequest.PartitionData(TOPIC_ID_0, fetchPositions.get(tidp), 0, 1024 * 1024, Optional.empty())
         ));
 
-        final Map<TopicIdPartition, FetchPartitionData> fetchResult = fetchHandler.handle(params, fetchInfos).get(2L, TimeUnit.SECONDS);
+        final List<FindBatchRequest> requests = ALL_TOPIC_ID_PARTITIONS.stream().map(tidp -> {
+            return new FindBatchRequest(tidp, fetchPositions.get(tidp), 1024 * 1024);
+        }).toList();
+
+        final List<FindBatchResponse> findBatchResponses = sharedState.controlPlane().findBatches(requests, 1024 * 1024, sharedState.config().maxBatchesPerPartitionToFind());
+
+        final Map<TopicIdPartition, FindBatchResponse> batchCoordinates = new HashMap<>();
+        for (int i = 0; i < requests.size(); i++) {
+            final FindBatchRequest request = requests.get(i);
+            final FindBatchResponse response = findBatchResponses.get(i);
+            batchCoordinates.put(request.topicIdPartition(), response);
+        }
+
+        final Map<TopicIdPartition, FetchPartitionData> fetchResult = fetchHandler.handle(batchCoordinates, fetchInfos).get(2L, TimeUnit.SECONDS);
         for (final var entry : fetchResult.entrySet()) {
             final var tidp = entry.getKey();
             boolean isEmpty = true;
