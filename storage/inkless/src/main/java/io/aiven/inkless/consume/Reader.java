@@ -149,10 +149,7 @@ public class Reader implements AutoCloseable {
                 }
                 // Check if the exception was caused by a fetch related exception and increment the relevant metric
                 if (throwable instanceof CompletionException) {
-                    // Finding batches fails on the initial stage
-                    if (throwable.getCause() instanceof FindBatchesException) {
-                        fetchMetrics.findBatchesFailed();
-                    } else if (throwable.getCause() instanceof FetchException) {
+                    if (throwable.getCause() instanceof FetchException) {
                         // but storage-related exceptions are wrapped twice as they happen within the fetch completer
                         final Throwable fetchException = throwable.getCause();
                         if (fetchException.getCause() instanceof FileFetchException) {
