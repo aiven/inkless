@@ -19,7 +19,7 @@ package kafka.server
 import com.yammer.metrics.core.Meter
 import io.aiven.inkless.common.SharedState
 import io.aiven.inkless.consume.{FetchHandler, FetchOffsetHandler}
-import io.aiven.inkless.control_plane.{FindBatchRequest, FindBatchResponse, MetadataView}
+import io.aiven.inkless.control_plane.{BatchInfo, FindBatchRequest, FindBatchResponse, MetadataView}
 import io.aiven.inkless.delete.{DeleteRecordsInterceptor, FileCleaner, RetentionEnforcer}
 import io.aiven.inkless.merge.FileMerger
 import io.aiven.inkless.produce.AppendHandler
@@ -1719,9 +1719,30 @@ class ReplicaManager(val config: KafkaConfig,
     }
   }
 
-  def findDisklessBatches(requests: Seq[FindBatchRequest], maxBytes: Int): Option[util.List[FindBatchResponse]] = {
+  private def findDisklessBatchesThroughControlPlane(requests: Seq[FindBatchRequest], maxBytes: Int = Int.MaxValue): Option[util.List[FindBatchResponse]] = {
     inklessSharedState.map { sharedState =>
       sharedState.controlPlane().findBatches(requests.asJava, maxBytes, sharedState.config().maxBatchesPerPartitionToFind())
+    }
+  }
+
+  def findDisklessBatches(requests: Seq[FindBatchRequest]): Option[util.List[FindBatchResponse]] = {
+    inklessSharedState.flatMap { sharedState =>
+      if (!sharedState.isBatchCoordinateCacheEnabled) {
+        findDisklessBatchesThroughControlPlane(requests)
+      } else {
+        Some(requests.map { request =>
+          val logFragment = sharedState.batchCoordinateCache().get(request.topicIdPartition(), request.offset())
+          if (logFragment == null) {
+            FindBatchResponse.success(util.List.of(), -1, -1)
+          } else {
+            FindBatchResponse.success(
+              logFragment.batches().stream().map[BatchInfo](batchCoordinate => batchCoordinate.batchInfo(request.topicIdPartition())).toList,
+              logFragment.logStartOffset(),
+              logFragment.highWaterMark()
+            )
+          }
+        }.asJava)
+      }
     }
   }
 

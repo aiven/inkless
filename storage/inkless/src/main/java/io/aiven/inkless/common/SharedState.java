@@ -28,12 +28,16 @@ import org.apache.kafka.storage.log.metrics.BrokerTopicStats;
 
 import java.io.Closeable;
 import java.io.IOException;
+import java.time.Duration;
 import java.util.List;
 import java.util.function.Supplier;
 
+import io.aiven.inkless.cache.BatchCoordinateCache;
+import io.aiven.inkless.cache.CaffeineBatchCoordinateCache;
 import io.aiven.inkless.cache.CaffeineCache;
 import io.aiven.inkless.cache.FixedBlockAlignment;
 import io.aiven.inkless.cache.KeyAlignmentStrategy;
+import io.aiven.inkless.cache.NullBatchCoordinateCache;
 import io.aiven.inkless.cache.ObjectCache;
 import io.aiven.inkless.config.InklessConfig;
 import io.aiven.inkless.control_plane.ControlPlane;
@@ -51,6 +55,7 @@ public final class SharedState implements Closeable {
     private final ObjectKeyCreator objectKeyCreator;
     private final KeyAlignmentStrategy keyAlignmentStrategy;
     private final ObjectCache cache;
+    private final BatchCoordinateCache batchCoordinateCache;
     private final BrokerTopicStats brokerTopicStats;
     private final Supplier<LogConfig> defaultTopicConfigs;
     private final Metrics storageMetrics;
@@ -64,6 +69,7 @@ public final class SharedState implements Closeable {
         final ObjectKeyCreator objectKeyCreator,
         final KeyAlignmentStrategy keyAlignmentStrategy,
         final ObjectCache cache,
+        final BatchCoordinateCache batchCoordinateCache,
         final BrokerTopicStats brokerTopicStats,
         final Supplier<LogConfig> defaultTopicConfigs
     ) {
@@ -75,6 +81,7 @@ public final class SharedState implements Closeable {
         this.objectKeyCreator = objectKeyCreator;
         this.keyAlignmentStrategy = keyAlignmentStrategy;
         this.cache = cache;
+        this.batchCoordinateCache = batchCoordinateCache;
         this.brokerTopicStats = brokerTopicStats;
         this.defaultTopicConfigs = defaultTopicConfigs;
 
@@ -94,6 +101,12 @@ public final class SharedState implements Closeable {
         BrokerTopicStats brokerTopicStats,
         Supplier<LogConfig> defaultTopicConfigs
     ) {
+        Duration maxTtl = config.fileCleanerRetentionPeriod().dividedBy(2);
+        if (config.isBatchCoordinateCacheEnabled() && config.batchCoordinateCacheTtl().toMillis() > maxTtl.toMillis()) {
+            throw new IllegalArgumentException(
+                "Value of consume.batch.coordinate.cache.ttl.ms exceeds file.cleaner.retention.period.ms / 2"
+            );
+        }
         return new SharedState(
             time,
             brokerId,
@@ -107,6 +120,7 @@ public final class SharedState implements Closeable {
                 config.cacheExpirationLifespanSec(),
                 config.cacheExpirationMaxIdleSec()
             ),
+            config.isBatchCoordinateCacheEnabled() ? new CaffeineBatchCoordinateCache(config.batchCoordinateCacheTtl()) : new NullBatchCoordinateCache(),
             brokerTopicStats,
             defaultTopicConfigs
         );
@@ -153,6 +167,14 @@ public final class SharedState implements Closeable {
 
     public ObjectCache cache() {
         return cache;
+    }
+
+    public boolean isBatchCoordinateCacheEnabled() {
+        return config.isBatchCoordinateCacheEnabled();
+    }
+    
+    public BatchCoordinateCache batchCoordinateCache() {
+        return batchCoordinateCache;
     }
 
     public BrokerTopicStats brokerTopicStats() {

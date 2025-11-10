@@ -106,8 +106,8 @@ class CommitFileJobTest {
         final List<CommitBatchResponse> result = job.call();
 
         assertThat(result).containsExactlyInAnyOrder(
-            CommitBatchResponse.success(0, time.milliseconds(), 0, request1),
-            CommitBatchResponse.success(0, time.milliseconds(), 0, request2)
+            CommitBatchResponse.success(0, time.milliseconds(), 0, objectKey, request1),
+            CommitBatchResponse.success(0, time.milliseconds(), 0, objectKey, request2)
         );
 
         assertThat(DBUtils.getAllLogs(pgContainer.getDataSource()))
@@ -145,8 +145,8 @@ class CommitFileJobTest {
         final List<CommitBatchResponse> result1 = job1.call();
 
         assertThat(result1).containsExactlyInAnyOrder(
-            CommitBatchResponse.success(0, firstFileCommittedAt, 0, request1),
-            CommitBatchResponse.success(0, firstFileCommittedAt, 0, request2)
+            CommitBatchResponse.success(0, firstFileCommittedAt, 0, objectKey1, request1),
+            CommitBatchResponse.success(0, firstFileCommittedAt, 0, objectKey1, request2)
         );
 
         time.sleep(1000);  // advance time
@@ -162,8 +162,8 @@ class CommitFileJobTest {
         final List<CommitBatchResponse> result2 = job2.call();
 
         assertThat(result2).containsExactlyInAnyOrder(
-            CommitBatchResponse.success(0, secondFileCommittedAt, 0, request3),
-            CommitBatchResponse.success(15, secondFileCommittedAt, 0, request4)
+            CommitBatchResponse.success(0, secondFileCommittedAt, 0, objectKey2, request3),
+            CommitBatchResponse.success(15, secondFileCommittedAt, 0, objectKey2, request4)
         );
 
         assertThat(DBUtils.getAllLogs(pgContainer.getDataSource()))
@@ -208,8 +208,8 @@ class CommitFileJobTest {
         final List<CommitBatchResponse> result = job.call();
 
         assertThat(result).containsExactlyInAnyOrder(
-            CommitBatchResponse.success(0, time.milliseconds(), 0, request1),
-            CommitBatchResponse.success(0, time.milliseconds(), 0, request2),
+            CommitBatchResponse.success(0, time.milliseconds(), 0, objectKey, request1),
+            CommitBatchResponse.success(0, time.milliseconds(), 0, objectKey, request2),
             CommitBatchResponse.unknownTopicOrPartition()
         );
 
@@ -243,8 +243,8 @@ class CommitFileJobTest {
         final List<CommitBatchResponse> result = job.call();
 
         assertThat(result).containsExactlyInAnyOrder(
-            CommitBatchResponse.success(0, time.milliseconds(), 0, request1),
-            CommitBatchResponse.success(0, time.milliseconds(), 0, request2)
+            CommitBatchResponse.success(0, time.milliseconds(), 0, objectKey, request1),
+            CommitBatchResponse.success(0, time.milliseconds(), 0, objectKey, request2)
         );
 
         assertThat(DBUtils.getAllLogs(pgContainer.getDataSource()))
@@ -277,8 +277,8 @@ class CommitFileJobTest {
         final List<CommitBatchResponse> result = job.call();
 
         assertThat(result).containsExactlyInAnyOrder(
-            CommitBatchResponse.success(0, time.milliseconds(), 0, request1),
-            CommitBatchResponse.success(15, time.milliseconds(), 0, request2)
+            CommitBatchResponse.success(0, time.milliseconds(), 0, objectKey, request1),
+            CommitBatchResponse.success(15, time.milliseconds(), 0, objectKey, request2)
         );
 
         assertThat(DBUtils.getAllLogs(pgContainer.getDataSource()))
@@ -319,7 +319,7 @@ class CommitFileJobTest {
         final List<CommitBatchResponse> result = job.call();
 
         assertThat(result).containsExactlyInAnyOrder(
-            CommitBatchResponse.success(0, time.milliseconds(), 0, request1),
+            CommitBatchResponse.success(0, time.milliseconds(), 0, objectKey, request1),
             CommitBatchResponse.sequenceOutOfOrder(request2)
         );
 
@@ -383,7 +383,7 @@ class CommitFileJobTest {
         final List<CommitBatchResponse> result = job.call();
 
         assertThat(result).containsExactlyInAnyOrder(
-            CommitBatchResponse.success(0, time.milliseconds(), 0, request1),
+            CommitBatchResponse.success(0, time.milliseconds(), 0, objectKey, request1),
             CommitBatchResponse.invalidProducerEpoch()
         );
 

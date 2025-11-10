@@ -346,7 +346,7 @@ class DelayedFetchTest {
       when(mockResponse.highWatermark()).thenReturn(endOffset) // endOffset < fetchOffset (truncation)
 
       val future = Some(Collections.singletonList(mockResponse))
-      when(replicaManager.findDisklessBatches(any[Seq[FindBatchRequest]], anyInt())).thenReturn(future)
+      when(replicaManager.findDisklessBatches(any[Seq[FindBatchRequest]])).thenReturn(future)
 
       // Mock fetchDisklessMessages for onComplete
       when(replicaManager.fetchParamsWithNewMaxBytes(any[FetchParams], any[Float])).thenAnswer(_.getArgument(0))
@@ -435,7 +435,7 @@ class DelayedFetchTest {
       when(mockResponse.estimatedByteSize(fetchOffset)).thenReturn(estimatedBatchSize)
 
       val future = Some(Collections.singletonList(mockResponse))
-      when(replicaManager.findDisklessBatches(any[Seq[FindBatchRequest]], anyInt())).thenReturn(future)
+      when(replicaManager.findDisklessBatches(any[Seq[FindBatchRequest]])).thenReturn(future)
 
       when(replicaManager.readFromLog(
         fetchParams,
@@ -520,7 +520,7 @@ class DelayedFetchTest {
       when(mockResponse.estimatedByteSize(fetchOffset)).thenReturn(estimatedBatchSize)
 
       val future = Some(Collections.singletonList(mockResponse))
-      when(replicaManager.findDisklessBatches(any[Seq[FindBatchRequest]], anyInt())).thenReturn(future)
+      when(replicaManager.findDisklessBatches(any[Seq[FindBatchRequest]])).thenReturn(future)
 
       when(replicaManager.readFromLog(
         fetchParams,
@@ -602,7 +602,7 @@ class DelayedFetchTest {
       when(mockResponse.estimatedByteSize(fetchOffset)).thenReturn(estimatedBatchSize)
 
       val future = Some(Collections.singletonList(mockResponse))
-      when(replicaManager.findDisklessBatches(any[Seq[FindBatchRequest]], anyInt())).thenReturn(future)
+      when(replicaManager.findDisklessBatches(any[Seq[FindBatchRequest]])).thenReturn(future)
 
       // Mock fetchDisklessMessages for onComplete
       when(replicaManager.fetchParamsWithNewMaxBytes(any[FetchParams], anyFloat())).thenAnswer(_.getArgument(0))
@@ -686,7 +686,7 @@ class DelayedFetchTest {
       when(mockResponse.highWatermark()).thenReturn(600L)
 
       val future = Some(Collections.singletonList(mockResponse))
-      when(replicaManager.findDisklessBatches(any[Seq[FindBatchRequest]], anyInt())).thenReturn(future)
+      when(replicaManager.findDisklessBatches(any[Seq[FindBatchRequest]])).thenReturn(future)
 
       // Mock fetchDisklessMessages for onComplete
       when(replicaManager.fetchParamsWithNewMaxBytes(any[FetchParams], anyFloat())).thenAnswer(_.getArgument(0))
