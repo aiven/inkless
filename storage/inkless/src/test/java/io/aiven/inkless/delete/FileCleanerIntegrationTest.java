@@ -172,6 +172,7 @@ class FileCleanerIntegrationTest {
         config.put("storage.aws.secret.access.key", MINIO.getSecretKey());
         config.put("storage.s3.path.style.access.enabled", "true");
         config.put("file.cleaner.retention.period.ms", Long.toString(Duration.ofSeconds(1).toMillis()));
+        config.put("consume.batch.coordinate.cache.ttl.ms", Long.toString(Duration.ofMillis(500).toMillis()));
         final InklessConfig inklessConfig = new InklessConfig(config);
 
         sharedState = SharedState.initialize(time, BROKER_ID, inklessConfig,
@@ -314,8 +315,7 @@ class FileCleanerIntegrationTest {
                 isEmpty = false;
                 final long pos = fetchPositions.get(tidp);
                 if (record.offset() != pos) {
-                    LOGGER.error("Inconsistent offset in {}: expected {}, got {}", tidp, pos, record.offset());
-                    throw new RuntimeException("Inconsistent offset");
+                    throw new RuntimeException("Inconsistent offset in " + tidp + ": expected " + pos + ", got " + record.offset());
                 }
                 fetchPositions.put(tidp, pos + 1);
             }

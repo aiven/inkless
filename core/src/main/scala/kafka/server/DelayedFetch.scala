@@ -183,7 +183,7 @@ class DelayedFetch(
     if (requests.isEmpty) return Some(0)
 
     val response = try {
-      replicaManager.findDisklessBatches(requests, Int.MaxValue)
+      replicaManager.findDisklessBatches(requests)
     } catch {
       case e: Throwable =>
         error("Error while trying to find diskless batches on delayed fetch.", e)

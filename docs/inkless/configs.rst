@@ -63,6 +63,21 @@ Under ``inkless.``
   * Valid Values: [0,...]
   * Importance: medium
 
+``consume.batch.coordinate.cache.enabled``
+  If true, the Batch Coordinate cache is enabled.
+
+  * Type: boolean
+  * Default: true
+  * Importance: low
+
+``consume.batch.coordinate.cache.ttl.ms``
+  Time to live in milliseconds for an entry in the Batch Coordinate cache. The time to live must be <= than half of the value of of file.cleaner.interval.ms.
+
+  * Type: int
+  * Default: 5000 (5 seconds)
+  * Valid Values: [1,...]
+  * Importance: low
+
 ``consume.cache.block.bytes``
   The number of bytes to fetch as a single block from object storage when serving fetch requests.
 
