@@ -47,6 +47,7 @@ import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 
 import io.aiven.inkless.TimeUtils;
+import io.aiven.inkless.cache.BatchCoordinateCache;
 import io.aiven.inkless.cache.KeyAlignmentStrategy;
 import io.aiven.inkless.cache.ObjectCache;
 import io.aiven.inkless.common.InklessThreadFactory;
@@ -89,6 +90,7 @@ class Writer implements Closeable {
            final StorageBackend storage,
            final KeyAlignmentStrategy keyAlignmentStrategy,
            final ObjectCache objectCache,
+           final BatchCoordinateCache batchCoordinateCache,
            final ControlPlane controlPlane,
            final Duration commitInterval,
            final int maxBufferSize,
@@ -105,7 +107,7 @@ class Writer implements Closeable {
             storage,
             new FileCommitter(
                 brokerId, controlPlane, objectKeyCreator, storage,
-                keyAlignmentStrategy, objectCache, time,
+                keyAlignmentStrategy, objectCache, batchCoordinateCache, time,
                 maxFileUploadAttempts, fileUploadRetryBackoff,
                 fileUploaderThreadPoolSize),
             new WriterMetrics(time),

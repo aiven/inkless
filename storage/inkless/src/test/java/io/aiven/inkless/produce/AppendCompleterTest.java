@@ -38,10 +38,16 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 
+import io.aiven.inkless.cache.BatchCoordinateCache;
 import io.aiven.inkless.control_plane.CommitBatchRequest;
 import io.aiven.inkless.control_plane.CommitBatchResponse;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
 
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.STRICT_STUBS)
@@ -83,14 +89,15 @@ class AppendCompleterTest {
         );
 
         final List<CommitBatchResponse> commitBatchResponses = List.of(
-            CommitBatchResponse.success(0, 10, 0, COMMIT_BATCH_REQUESTS.get(0)),
+            CommitBatchResponse.success(0, 10, 0, "objectKey", COMMIT_BATCH_REQUESTS.get(0)),
             CommitBatchResponse.of(Errors.INVALID_TOPIC_EXCEPTION, -1, -1, -1),  // some arbitrary uploadError
-            CommitBatchResponse.success(20, 10, 0, COMMIT_BATCH_REQUESTS.get(2)),
-            CommitBatchResponse.success(30, 10, 0, COMMIT_BATCH_REQUESTS.get(3))
+            CommitBatchResponse.success(20, 10, 0, "objectKey", COMMIT_BATCH_REQUESTS.get(2)),
+            CommitBatchResponse.success(30, 10, 0, "objectKey", COMMIT_BATCH_REQUESTS.get(3))
         );
 
         final ClosedFile file = new ClosedFile(Instant.EPOCH, REQUESTS, awaitingFuturesByRequest, COMMIT_BATCH_REQUESTS, Map.of(), DATA);
-        final AppendCompleter job = new AppendCompleter(file);
+        final BatchCoordinateCache cache = mock(BatchCoordinateCache.class);
+        final AppendCompleter job = new AppendCompleter(file, cache);
 
         job.finishCommitSuccessfully(commitBatchResponses);
 
@@ -102,6 +109,11 @@ class AppendCompleterTest {
             T0P1.topicPartition(), new PartitionResponse(Errors.NONE, 20, -1, 0),
             T1P0.topicPartition(), new PartitionResponse(Errors.NONE, 30, 10, 0)
         ));
+
+        verify(cache).put(T0P0, commitBatchResponses.get(0).cacheBatchCoordinate());
+        verify(cache).put(T0P1, commitBatchResponses.get(2).cacheBatchCoordinate());
+        verify(cache).put(T1P0, commitBatchResponses.get(3).cacheBatchCoordinate());
+        verifyNoMoreInteractions(cache);
     }
 
     @Test
@@ -116,12 +128,14 @@ class AppendCompleterTest {
         final List<CommitBatchResponse> commitBatchResponses = List.of();
 
         final ClosedFile file = new ClosedFile(Instant.EPOCH, REQUESTS, awaitingFuturesByRequest, COMMIT_BATCH_REQUESTS, Map.of(), DATA);
-        final AppendCompleter job = new AppendCompleter(file);
+        final BatchCoordinateCache cache = mock(BatchCoordinateCache.class);
+        final AppendCompleter job = new AppendCompleter(file, cache);
 
         job.finishCommitSuccessfully(commitBatchResponses);
 
         assertThat(awaitingFuturesByRequest.get(0)).isCompletedWithValue(Map.of());
         assertThat(awaitingFuturesByRequest.get(1)).isCompletedWithValue(Map.of());
+        verify(cache, never()).put(any(), any());
     }
 
 
@@ -148,7 +162,8 @@ class AppendCompleterTest {
         final List<CommitBatchResponse> commitBatchResponses = List.of();
 
         final ClosedFile file = new ClosedFile(Instant.EPOCH, REQUESTS, awaitingFuturesByRequest, List.of(), invalidResponses, new byte[0]);
-        final AppendCompleter job = new AppendCompleter(file);
+        final BatchCoordinateCache cache = mock(BatchCoordinateCache.class);
+        final AppendCompleter job = new AppendCompleter(file, cache);
 
         job.finishCommitSuccessfully(commitBatchResponses);
 
@@ -160,6 +175,7 @@ class AppendCompleterTest {
                 T0P1.topicPartition(), new PartitionResponse(Errors.CORRUPT_MESSAGE, -1, -1, -1),
                 T1P0.topicPartition(), new PartitionResponse(Errors.INVALID_RECORD, -1, -1, -1)
         ));
+        verify(cache, never()).put(any(), any());
     }
 
     @Test
@@ -170,7 +186,8 @@ class AppendCompleterTest {
         );
 
         final ClosedFile file = new ClosedFile(Instant.EPOCH, REQUESTS, awaitingFuturesByRequest, COMMIT_BATCH_REQUESTS, Map.of(), DATA);
-        final AppendCompleter job = new AppendCompleter(file);
+        final BatchCoordinateCache cache = mock(BatchCoordinateCache.class);
+        final AppendCompleter job = new AppendCompleter(file, cache);
 
         job.finishCommitWithError();
 
@@ -182,5 +199,6 @@ class AppendCompleterTest {
             T0P1.topicPartition(), new PartitionResponse(Errors.KAFKA_STORAGE_ERROR, "Error commiting data"),
             T1P0.topicPartition(), new PartitionResponse(Errors.KAFKA_STORAGE_ERROR, "Error commiting data")
         ));
+        verify(cache, never()).put(any(), any());
     }
 }

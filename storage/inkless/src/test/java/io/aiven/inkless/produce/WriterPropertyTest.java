@@ -68,6 +68,7 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
+import io.aiven.inkless.cache.CaffeineBatchCoordinateCache;
 import io.aiven.inkless.cache.FixedBlockAlignment;
 import io.aiven.inkless.cache.KeyAlignmentStrategy;
 import io.aiven.inkless.cache.NullCache;
@@ -233,6 +234,7 @@ class WriterPropertyTest {
             storage,
             KEY_ALIGNMENT_STRATEGY,
             OBJECT_CACHE,
+            new CaffeineBatchCoordinateCache(Duration.ofSeconds(5)),
             time,
             1,
             Duration.ZERO,

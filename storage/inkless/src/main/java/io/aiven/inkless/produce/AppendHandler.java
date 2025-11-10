@@ -60,6 +60,7 @@ public class AppendHandler implements Closeable {
                 state.buildStorage(),
                 state.keyAlignmentStrategy(),
                 state.cache(),
+                state.batchCoordinateCache(),
                 state.controlPlane(),
                 state.config().commitInterval(),
                 state.config().produceBufferMaxBytes(),
