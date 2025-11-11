@@ -2308,7 +2308,6 @@ class ReplicaManager(val config: KafkaConfig,
   private[kafka] def getOrCreatePartition(tp: TopicPartition,
                                           delta: TopicsDelta,
                                           topicId: Uuid): Option[(Partition, Boolean)] = {
-    val localChanges = delta.localChanges(config.nodeId)
     getPartition(tp) match {
       case HostedPartition.Offline(offlinePartition) =>
         if (offlinePartition.flatMap(p => p.topicId).contains(topicId)) {
@@ -2320,11 +2319,11 @@ class ReplicaManager(val config: KafkaConfig,
           stateChangeLogger.info(s"Creating new partition $tp with topic id " + s"$topicId." +
             s"A topic with the same name but different id exists but it resides in an offline log " +
             s"directory.")
-          val mirrorName = if (localChanges.readOnlyLeaders().containsKey(tp)) {
-            delta.changedTopics().get(topicId).partitionChanges().get(tp.partition()).mirrorName
-          } else {
-            ""
-          }
+          // get mirrorName from metadata (applies to both read-only leaders and their followers)
+          val mirrorName = Option(delta.changedTopics().get(topicId))
+            .flatMap(topicDelta => Option(topicDelta.partitionChanges().get(tp.partition())))
+            .map(_.mirrorName)
+            .getOrElse("")
           logger.info("!!! Create new partition: " + tp + " " + topicId + " " + mirrorName)
           val partition = Partition(new TopicIdPartition(topicId, tp), time, this, mirrorName)
           allPartitions.put(tp, HostedPartition.Online(partition))
@@ -2349,11 +2348,11 @@ class ReplicaManager(val config: KafkaConfig,
             s"$topicId.")
         }
         // it's a partition that we don't know about yet, so create it and mark it online
-        val mirrorName = if (localChanges.readOnlyLeaders().containsKey(tp)) {
-          delta.changedTopics().get(topicId).partitionChanges().get(tp.partition()).mirrorName
-        } else {
-          ""
-        }
+        // get mirrorName from metadata (applies to both read-only leaders and their followers)
+        val mirrorName = Option(delta.changedTopics().get(topicId))
+          .flatMap(topicDelta => Option(topicDelta.partitionChanges().get(tp.partition())))
+          .map(_.mirrorName)
+          .getOrElse("")
         logger.info("!!! Create new partition: " + tp + " " + topicId + " " + mirrorName)
         val partition = Partition(new TopicIdPartition(topicId, tp), time, this, mirrorName)
         allPartitions.put(tp, HostedPartition.Online(partition))

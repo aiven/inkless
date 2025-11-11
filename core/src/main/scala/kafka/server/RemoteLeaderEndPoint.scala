@@ -236,10 +236,11 @@ class RemoteLeaderEndPoint(logPrefix: String,
       }
       // Use different fetch request types based on whether we're doing cross-cluster mirroring
       val requestBuilder = if (readOnlyTopics.isEmpty) {
-        // For intra-cluster replication (readOnlyTopics empty): Use replica fetch so followers can join ISR
+        // Use replica fetch for intra-cluster replication (readOnlyTopics empty).
         FetchRequest.Builder.forReplica(version, brokerConfig.brokerId, brokerEpochSupplier(), maxWait, minBytes, fetchData.toSend)
       } else {
-        // For cross-cluster mirroring (readOnlyTopics not empty): Use consumer fetch to avoid ACL issues
+        // Use consumer fetch for cross-cluster mirroring (readOnlyTopics not empty).
+        // Consumer fetch requests don't include the replica ID and broker epoch.
         FetchRequest.Builder.forConsumer(version, maxWait, minBytes, fetchData.toSend).isolationLevel(IsolationLevel.READ_COMMITTED)
       }
       requestBuilder

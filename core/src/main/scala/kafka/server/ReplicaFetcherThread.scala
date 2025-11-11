@@ -132,23 +132,28 @@ class ReplicaFetcherThread(name: String,
 
     // Determine the leader epoch to use when appending batches to the follower's log.
     //
-    // For mirrored partitions:
-    //   Followers replicate from leaders whose logs contain source cluster epochs. When the leader
-    //   receives new batches from MirrorFetcherThread with source epoch N, this follower's fetch
-    //   state may still have epoch M where M < N. If we use the fetch state epoch, the append will
-    //   be rejected because the batch epoch is higher. Solution: use the batch epoch when it's higher.
+    // For mirrored partitions (followers replicating from read-only leaders):
+    //   The leader's log contains source cluster epochs that can be higher than the follower's
+    //   fetch state epoch. When the leader receives new batches from MirrorFetcherThread with
+    //   source epoch N, this follower's fetch state may still have epoch M where M < N.
+    //   If we use the fetch state epoch, the append will be rejected because batch epochs are higher.
+    //   Solution: use the maximum batch epoch to allow all source epochs to be accepted.
     //
     // For regular partitions:
-    //   Batch epochs should always match the fetch state epoch. If batch epoch > fetch state epoch,
-    //   this indicates an unexpected condition. However, using the batch epoch is safe since it comes
-    //   from the leader's log, which is authoritative.
-    val effectiveLeaderEpoch = {
+    //   Always use the fetch state epoch (partitionLeaderEpoch). This preserves the KAFKA-18723
+    //   protection where batches with epochs higher than the fetch epoch are skipped by
+    //   hasHigherPartitionLeaderEpoch in analyzeAndValidateRecords.
+    val effectiveLeaderEpoch = if (partition.mirrorName != null && partition.mirrorName.nonEmpty) {
+      // Mirrored partition: use max to accept source epochs
       val batches = records.batches().iterator()
       var lastBatchEpoch = partitionLeaderEpoch
       while (batches.hasNext) {
         lastBatchEpoch = batches.next().partitionLeaderEpoch()
       }
       Math.max(lastBatchEpoch, partitionLeaderEpoch)
+    } else {
+      // Regular partition: use fetch state epoch
+      partitionLeaderEpoch
     }
 
     // Append the leader's messages to the log
