@@ -45,6 +45,8 @@ public class GcsStorageConfig extends AbstractConfig {
         + "Cannot be set together with \"" + GCP_CREDENTIALS_PATH_CONFIG + "\" "
         + "or \"" + GCP_CREDENTIALS_DEFAULT_CONFIG + "\"";
     private static final String GCP_CREDENTIALS_PATH_DOC = "The path to a GCP credentials file. "
+        + "This can be standard GCP credentials format, or JSON with a single `access_token` field "
+        + "containing the access token with limited lifetime obtained from Google Authorization Server. "
         + "Cannot be set together with \"" + GCP_CREDENTIALS_JSON_CONFIG + "\" "
         + "or \"" + GCP_CREDENTIALS_DEFAULT_CONFIG + "\"";
     private static final String GCP_CREDENTIALS_DEFAULT_DOC = "Use the default GCP credentials. "

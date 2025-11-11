@@ -43,11 +43,11 @@ class GcsCredentialsAutoReloadIntegrationTest {
         + "  \"project_id\": \"test-project\",\n"
         + "  \"private_key_id\": \"test-key-id\",\n"
         + "  \"private_key\": \"-----BEGIN PRIVATE KEY-----\\n"
-        + "MIIBUwIBADANBgkqhkiG9w0BAQEFAASCAT0wggE5AgEAAkEAwyPCXjWv30y+ZGJH\njKGsIem4OlXEwsgsl6bJr0vKga/GYEVZXsKz/1Uv"
-        + "KArCQNLOfJh/CpUE+cSLn+H7\ngZ1uSwIDAQABAkAF1H2sHuKAQ2S0zxLgKrxfzwHIDGPyhdR/O2ZvLE6CjVZ0J4PD\n+Gt3nJQUcELCEj"
-        + "c3y3RnlOsGd7TTPsZHP7CRAiEA8f75YoDbDcPpd6SK4/PoWmTD\nBBprsvsQbWL5Vpx0AH8CIQDObqMNKTCtz64tDULI0JSECu7RniRFyQ"
-        + "CQ6H/ZMLys\nNQIgM68eOjCFGGqIOXpWA5t7O5sbn4u5Bs/iUUp7MElX6ScCIHJBOAvDvYamCOA0\nk78z+s9ugaoRXkAltSN/G6vpVrP1"
-        + "AiBhNDs+MZSYh92/A8j/GC/I8yvlkOSFo/ME\n/Va0X/P2Ng==\\n-----END PRIVATE KEY-----\\n\",\n"
+        + "MIIBUwIBADANBgkqhkiG9w0BAQEFAASCAT0wggE5AgEAAkEAwyPCXjWv30y+ZGJH\\njKGsIem4OlXEwsgsl6bJr0vKga/GYEVZXsKz/1Uv"
+        + "KArCQNLOfJh/CpUE+cSLn+H7\\ngZ1uSwIDAQABAkAF1H2sHuKAQ2S0zxLgKrxfzwHIDGPyhdR/O2ZvLE6CjVZ0J4PD\\n+Gt3nJQUcELCEj"
+        + "c3y3RnlOsGd7TTPsZHP7CRAiEA8f75YoDbDcPpd6SK4/PoWmTD\\nBBprsvsQbWL5Vpx0AH8CIQDObqMNKTCtz64tDULI0JSECu7RniRFyQ"
+        + "CQ6H/ZMLys\\nNQIgM68eOjCFGGqIOXpWA5t7O5sbn4u5Bs/iUUp7MElX6ScCIHJBOAvDvYamCOA0\\nk78z+s9ugaoRXkAltSN/G6vpVrP1"
+        + "AiBhNDs+MZSYh92/A8j/GC/I8yvlkOSFo/ME\\n/Va0X/P2Ng==\\n-----END PRIVATE KEY-----\\n\",\n"
         + "  \"client_email\": \"test@test-project.iam.gserviceaccount.com\",\n"
         + "  \"client_id\": \"123456789012345678901\",\n"
         + "  \"auth_uri\": \"https://accounts.google.com/o/oauth2/auth\",\n"
@@ -59,11 +59,11 @@ class GcsCredentialsAutoReloadIntegrationTest {
         + "  \"project_id\": \"updated-project\",\n"
         + "  \"private_key_id\": \"updated-key-id\",\n"
         + "  \"private_key\": \"-----BEGIN PRIVATE KEY-----\\n"
-        + "MIIBUwIBADANBgkqhkiG9w0BAQEFAASCAT0wggE5AgEAAkEAwyPCXjWv30y+ZGJH\njKGsIem4OlXEwsgsl6bJr0vKga/GYEVZXsKz/1Uv"
-        + "KArCQNLOfJh/CpUE+cSLn+H7\ngZ1uSwIDAQABAkAF1H2sHuKAQ2S0zxLgKrxfzwHIDGPyhdR/O2ZvLE6CjVZ0J4PD\n+Gt3nJQUcELCEj"
-        + "c3y3RnlOsGd7TTPsZHP7CRAiEA8f75YoDbDcPpd6SK4/PoWmTD\nBBprsvsQbWL5Vpx0AH8CIQDObqMNKTCtz64tDULI0JSECu7RniRFyQ"
-        + "CQ6H/ZMLys\nNQIgM68eOjCFGGqIOXpWA5t7O5sbn4u5Bs/iUUp7MElX6ScCIHJBOAvDvYamCOA0\nk78z+s9ugaoRXkAltSN/G6vpVrP1"
-        + "AiBhNDs+MZSYh92/A8j/GC/I8yvlkOSFo/ME\n/Va0X/P2Ng==\\n-----END PRIVATE KEY-----\\n\",\n"
+        + "MIIBUwIBADANBgkqhkiG9w0BAQEFAASCAT0wggE5AgEAAkEAwyPCXjWv30y+ZGJH\\njKGsIem4OlXEwsgsl6bJr0vKga/GYEVZXsKz/1Uv"
+        + "KArCQNLOfJh/CpUE+cSLn+H7\\ngZ1uSwIDAQABAkAF1H2sHuKAQ2S0zxLgKrxfzwHIDGPyhdR/O2ZvLE6CjVZ0J4PD\\n+Gt3nJQUcELCEj"
+        + "c3y3RnlOsGd7TTPsZHP7CRAiEA8f75YoDbDcPpd6SK4/PoWmTD\\nBBprsvsQbWL5Vpx0AH8CIQDObqMNKTCtz64tDULI0JSECu7RniRFyQ"
+        + "CQ6H/ZMLys\\nNQIgM68eOjCFGGqIOXpWA5t7O5sbn4u5Bs/iUUp7MElX6ScCIHJBOAvDvYamCOA0\\nk78z+s9ugaoRXkAltSN/G6vpVrP1"
+        + "AiBhNDs+MZSYh92/A8j/GC/I8yvlkOSFo/ME\\n/Va0X/P2Ng==\\n-----END PRIVATE KEY-----\\n\",\n"
         + "  \"client_email\": \"updated@updated-project.iam.gserviceaccount.com\",\n"
         + "  \"client_id\": \"123456789012345678902\",\n"
         + "  \"auth_uri\": \"https://accounts.google.com/o/oauth2/auth\",\n"
@@ -102,7 +102,7 @@ class GcsCredentialsAutoReloadIntegrationTest {
 
             // Wait for the auto-reload to trigger
             assertTrue(updateLatch.await(11, TimeUnit.SECONDS),
-                "Credentials should be reloaded within 15 seconds");
+                "Credentials should be reloaded within 11 seconds");
 
             // Verify that credentials were updated
             assertEquals(1, credentialsUpdateCount.get());
@@ -111,8 +111,8 @@ class GcsCredentialsAutoReloadIntegrationTest {
             Files.write(credentialsFile, (UPDATED_CREDENTIALS_JSON + " ").getBytes(),
                         StandardOpenOption.TRUNCATE_EXISTING);
 
-            Thread.sleep(11000); // Wait to ensure no further callbacks happen
-            assertEquals(1, credentialsUpdateCount.get(), "Credentials should not have been reloaded");
+            Thread.sleep(11000);
+            assertEquals(2, credentialsUpdateCount.get(), "Credentials are always reloaded if file is changed");
 
         } finally {
             testableStorage.close();
