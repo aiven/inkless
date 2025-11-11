@@ -110,6 +110,16 @@ class ReplicaFetcherThread(name: String,
     completeDelayedFetchRequests()
   }
 
+  override def shouldUpdateEpochFromBatches(topicPartition: TopicPartition): Boolean = {
+    // For followers of mirrored partitions, update epoch from batches to track source epochs.
+    // For regular partitions, epoch comes from metadata and should not be updated from batches.
+    replicaMgr.getPartition(topicPartition) match {
+      case HostedPartition.Online(partition) =>
+        partition.mirrorName != null && partition.mirrorName.nonEmpty
+      case _ => false
+    }
+  }
+
   // process fetched data
   override def processPartitionData(
     topicPartition: TopicPartition,
@@ -130,34 +140,12 @@ class ReplicaFetcherThread(name: String,
       trace("Follower has replica log end offset %d for partition %s. Received %d bytes of messages and leader hw %d"
         .format(log.logEndOffset, topicPartition, records.sizeInBytes, partitionData.highWatermark))
 
-    // Determine the leader epoch to use when appending batches to the follower's log.
+    // Append the leader's messages to the log.
     //
-    // For mirrored partitions (followers replicating from read-only leaders):
-    //   The leader's log contains source cluster epochs that can be higher than the follower's
-    //   fetch state epoch. When the leader receives new batches from MirrorFetcherThread with
-    //   source epoch N, this follower's fetch state may still have epoch M where M < N.
-    //   If we use the fetch state epoch, the append will be rejected because batch epochs are higher.
-    //   Solution: use the maximum batch epoch to allow all source epochs to be accepted.
-    //
-    // For regular partitions:
-    //   Always use the fetch state epoch (partitionLeaderEpoch). This preserves the KAFKA-18723
-    //   protection where batches with epochs higher than the fetch epoch are skipped by
-    //   hasHigherPartitionLeaderEpoch in analyzeAndValidateRecords.
-    val effectiveLeaderEpoch = if (partition.mirrorName != null && partition.mirrorName.nonEmpty) {
-      // Mirrored partition: use max to accept source epochs
-      val batches = records.batches().iterator()
-      var lastBatchEpoch = partitionLeaderEpoch
-      while (batches.hasNext) {
-        lastBatchEpoch = batches.next().partitionLeaderEpoch()
-      }
-      Math.max(lastBatchEpoch, partitionLeaderEpoch)
-    } else {
-      // Regular partition: use fetch state epoch
-      partitionLeaderEpoch
-    }
-
-    // Append the leader's messages to the log
-    val logAppendInfo = partition.appendRecordsToFollowerOrFutureReplica(records, isFuture = false, effectiveLeaderEpoch)
+    // The fetch leader epoch from metadata is used for append validation.
+    // For mirrored partitions, this epoch is updated after each append to match the highest batch
+    // epoch seen, allowing source cluster epochs to be accepted while maintaining epoch validations.
+    val logAppendInfo = partition.appendRecordsToFollowerOrFutureReplica(records, isFuture = false, partitionLeaderEpoch)
 
     if (logTrace)
       trace("Follower has replica log end offset %d after appending %d bytes of messages for partition %s"

@@ -239,8 +239,7 @@ class RemoteLeaderEndPoint(logPrefix: String,
         // Use replica fetch for intra-cluster replication (readOnlyTopics empty).
         FetchRequest.Builder.forReplica(version, brokerConfig.brokerId, brokerEpochSupplier(), maxWait, minBytes, fetchData.toSend)
       } else {
-        // Use consumer fetch for cross-cluster mirroring (readOnlyTopics not empty).
-        // Consumer fetch requests don't include the replica ID and broker epoch.
+        // Use consumer fetch for cross-cluster mirroring (readOnlyTopics not empty) to avoid ISR logic.
         FetchRequest.Builder.forConsumer(version, maxWait, minBytes, fetchData.toSend).isolationLevel(IsolationLevel.READ_COMMITTED)
       }
       requestBuilder

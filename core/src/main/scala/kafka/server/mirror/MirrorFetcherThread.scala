@@ -89,6 +89,11 @@ class MirrorFetcherThread(name: String,
   }
 
   // process fetched data
+  override def shouldUpdateEpochFromBatches(topicPartition: TopicPartition): Boolean = {
+    // MirrorFetcherThread always processes mirrored partitions, so always update from batches
+    true
+  }
+
   override def processPartitionData(
     topicPartition: TopicPartition,
     fetchOffset: Long,
