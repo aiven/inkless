@@ -33,7 +33,9 @@ import java.util.concurrent.locks.ReentrantLock;
 public final class BrokerTopicMetrics {
     public static final String MESSAGE_IN_PER_SEC = "MessagesInPerSec";
     public static final String BYTES_IN_PER_SEC = "BytesInPerSec";
+    public static final String BYTES_IN_PER_SEC_PER_TOPIC_TYPE = "BytesInPerSecPerTopicType";
     public static final String BYTES_OUT_PER_SEC = "BytesOutPerSec";
+    public static final String BYTES_OUT_PER_SEC_PER_TOPIC_TYPE = "BytesOutPerSecPerTopicType";
     public static final String BYTES_REJECTED_PER_SEC = "BytesRejectedPerSec";
     public static final String REPLICATION_BYTES_IN_PER_SEC = "ReplicationBytesInPerSec";
     public static final String REPLICATION_BYTES_OUT_PER_SEC = "ReplicationBytesOutPerSec";
@@ -50,6 +52,15 @@ public final class BrokerTopicMetrics {
     public static final String INVALID_MAGIC_NUMBER_RECORDS_PER_SEC = "InvalidMagicNumberRecordsPerSec";
     public static final String INVALID_MESSAGE_CRC_RECORDS_PER_SEC = "InvalidMessageCrcRecordsPerSec";
     public static final String INVALID_OFFSET_OR_SEQUENCE_RECORDS_PER_SEC = "InvalidOffsetOrSequenceRecordsPerSec";
+    private static final String TOPIC_TYPE_TAG = "topicType";
+
+    // These are keys in the metricTypeMap.
+    // Keys need to be unique in the metricTypeMap but we can have the same metric name for different keys.
+    public static final String BYTES_IN_PER_SEC_CLASSIC_TOPIC = "BytesInPerSecClassicTopic"; // The metric is BYTES_IN_PER_SEC_PER_TOPIC_TYPE
+    public static final String BYTES_IN_PER_SEC_DISKLESS_TOPIC = "BytesInPerSecDisklessTopic"; // The metric is BYTES_IN_PER_SEC_PER_TOPIC_TYPE
+    public static final String BYTES_OUT_PER_SEC_CLASSIC_TOPIC = "BytesOutPerSecClassicTopic"; // The metric is BYTES_OUT_PER_SEC_PER_TOPIC_TYPE
+    public static final String BYTES_OUT_PER_SEC_DISKLESS_TOPIC = "BytesOutPerSecDisklessTopic"; // The metric is BYTES_OUT_PER_SEC_PER_TOPIC_TYPE
+
 
     // KAFKA-16972: BrokerTopicMetrics is migrated from "kafka.server" package.
     // For backward compatibility, we keep the old package name as metric group name.
@@ -111,6 +122,16 @@ public final class BrokerTopicMetrics {
             metricGaugeTypeMap.put(RemoteStorageMetrics.REMOTE_LOG_SIZE_COMPUTATION_TIME_METRIC.getName(), new GaugeWrapper(RemoteStorageMetrics.REMOTE_LOG_SIZE_COMPUTATION_TIME_METRIC.getName()));
             metricGaugeTypeMap.put(RemoteStorageMetrics.REMOTE_LOG_SIZE_BYTES_METRIC.getName(), new GaugeWrapper(RemoteStorageMetrics.REMOTE_LOG_SIZE_BYTES_METRIC.getName()));
         }
+
+        for (TopicType topicType : TopicType.values()) {
+            Map<String, String> mutableTopicTypeTags = new java.util.HashMap<>(tags);
+            mutableTopicTypeTags.put(TOPIC_TYPE_TAG, topicType.tagValue());
+            Map<String, String> topicTypeTags = java.util.Collections.unmodifiableMap(mutableTopicTypeTags);
+            metricTypeMap.put(topicType.bytesInMetricMapKey(),
+                new MeterWrapper(BYTES_IN_PER_SEC_PER_TOPIC_TYPE, "bytes", topicTypeTags, true));
+            metricTypeMap.put(topicType.bytesOutMetricMapKey(),
+                new MeterWrapper(BYTES_OUT_PER_SEC_PER_TOPIC_TYPE, "bytes", topicTypeTags, true));
+        }
     }
 
     public void closeMetric(String metricName) {
@@ -118,6 +139,19 @@ public final class BrokerTopicMetrics {
         if (mw != null) mw.close();
         GaugeWrapper mg = metricGaugeTypeMap.get(metricName);
         if (mg != null) mg.close();
+
+        if (BYTES_IN_PER_SEC_PER_TOPIC_TYPE.equals(metricName)) {
+            mw = metricTypeMap.get(BYTES_IN_PER_SEC_CLASSIC_TOPIC);
+            if (mw != null) mw.close();
+            mw = metricTypeMap.get(BYTES_IN_PER_SEC_DISKLESS_TOPIC);
+            if (mw != null) mw.close();
+        }
+        if (BYTES_OUT_PER_SEC_PER_TOPIC_TYPE.equals(metricName)) {
+            mw = metricTypeMap.get(BYTES_OUT_PER_SEC_CLASSIC_TOPIC);
+            if (mw != null) mw.close();
+            mw = metricTypeMap.get(BYTES_OUT_PER_SEC_DISKLESS_TOPIC);
+            if (mw != null) mw.close();
+        }
     }
 
     public void close() {
@@ -127,7 +161,8 @@ public final class BrokerTopicMetrics {
 
     // used for testing only
     public Set<String> metricMapKeySet() {
-        return metricTypeMap.keySet();
+        Set<String> keys = new java.util.HashSet<>(metricTypeMap.keySet());
+        return keys;
     }
 
     public Map<String, GaugeWrapper> metricGaugeMap() {
@@ -140,6 +175,22 @@ public final class BrokerTopicMetrics {
 
     public Meter bytesInRate() {
         return metricTypeMap.get(BYTES_IN_PER_SEC).meter();
+    }
+
+    public Meter bytesInPerClassicTopicTypeRate() {
+        return metricTypeMap.get(BYTES_IN_PER_SEC_CLASSIC_TOPIC).meter();
+    }
+
+    public Meter bytesInPerDisklessTopicTypeRate() {
+        return metricTypeMap.get(BYTES_IN_PER_SEC_DISKLESS_TOPIC).meter();
+    }
+
+    public Meter bytesOutPerClassicTopicTypeRate() {
+        return metricTypeMap.get(BYTES_OUT_PER_SEC_CLASSIC_TOPIC).meter();
+    }
+
+    public Meter bytesOutPerDisklessTopicTypeRate() {
+        return metricTypeMap.get(BYTES_OUT_PER_SEC_DISKLESS_TOPIC).meter();
     }
 
     public Meter bytesOutRate() {
@@ -322,17 +373,54 @@ public final class BrokerTopicMetrics {
         return metricTypeMap.get(RemoteStorageMetrics.FAILED_BUILD_REMOTE_LOG_AUX_STATE_PER_SEC_METRIC.getName()).meter();
     }
 
+    private enum TopicType {
+        CLASSIC("classic", BYTES_IN_PER_SEC_CLASSIC_TOPIC, BYTES_OUT_PER_SEC_CLASSIC_TOPIC),
+        DISKLESS("diskless", BYTES_IN_PER_SEC_DISKLESS_TOPIC, BYTES_OUT_PER_SEC_DISKLESS_TOPIC);
+
+        private final String tagValue;
+        private final String bytesInMetricMapKey;
+        private final String bytesOutMetricMapKey;
+
+        TopicType(String tagValue, String bytesInMetricMapKey, String bytesOutMetricMapKey) {
+            this.tagValue = tagValue;
+            this.bytesInMetricMapKey = bytesInMetricMapKey;
+            this.bytesOutMetricMapKey = bytesOutMetricMapKey;
+        }
+
+        private String tagValue() {
+            return tagValue;
+        }
+
+        private String bytesInMetricMapKey() {
+            return bytesInMetricMapKey;
+        }
+
+        private String bytesOutMetricMapKey() {
+            return bytesOutMetricMapKey;
+        }
+    }
+
     private class MeterWrapper {
         private final String metricType;
         private final String eventType;
+        private final Map<String, String> metricTags;
         private volatile Meter lazyMeter;
         private final Lock meterLock = new ReentrantLock();
 
-        public MeterWrapper(String metricType, String eventType) {
+        public MeterWrapper(String metricType,
+                            String eventType) {
+            this(metricType, eventType, BrokerTopicMetrics.this.tags, false);
+        }
+
+        public MeterWrapper(String metricType,
+                            String eventType,
+                            Map<String, String> metricTags,
+                            boolean greedilyInitialize) {
             this.metricType = metricType;
             this.eventType = eventType;
-            if (tags.isEmpty()) {
-                meter(); // greedily initialize the general topic metrics
+            this.metricTags = new java.util.HashMap<>(metricTags);
+            if (this.metricTags.isEmpty() || greedilyInitialize) {
+                meter();
             }
         }
 
@@ -343,7 +431,7 @@ public final class BrokerTopicMetrics {
                 try {
                     meter = lazyMeter;
                     if (meter == null) {
-                        meter = metricsGroup.newMeter(metricType, eventType, TimeUnit.SECONDS, tags);
+                        meter = metricsGroup.newMeter(metricType, eventType, TimeUnit.SECONDS, metricTags);
                         lazyMeter = meter;
                     }
                 } finally {
@@ -357,7 +445,7 @@ public final class BrokerTopicMetrics {
             meterLock.lock();
             try {
                 if (lazyMeter != null) {
-                    metricsGroup.removeMetric(metricType, tags);
+                    metricsGroup.removeMetric(metricType, metricTags);
                     lazyMeter = null;
                 }
             } finally {
