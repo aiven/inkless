@@ -124,6 +124,8 @@ public class BrokerTopicStats implements AutoCloseable {
         } else {
             topicStats(topic).bytesOutRate().mark(value);
             allTopicsStats.bytesOutRate().mark(value);
+            topicStats(topic).bytesOutPerClassicTopicTypeRate().mark(value);
+            allTopicsStats.bytesOutPerClassicTopicTypeRate().mark(value);
         }
     }
 
