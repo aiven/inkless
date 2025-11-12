@@ -33,7 +33,9 @@ import java.util.concurrent.locks.ReentrantLock;
 public final class BrokerTopicMetrics {
     public static final String MESSAGE_IN_PER_SEC = "MessagesInPerSec";
     public static final String BYTES_IN_PER_SEC = "BytesInPerSec";
+    public static final String BYTES_IN_PER_SEC_DISKLESS_TOPIC = "BytesInPerSecDisklessTopic"; // The metric is BYTES_IN_PER_SEC
     public static final String BYTES_OUT_PER_SEC = "BytesOutPerSec";
+    public static final String BYTES_OUT_PER_SEC_DISKLESS_TOPIC = "BytesOutPerSecDisklessTopic"; // The metric is BYTES_OUT_PER_SEC
     public static final String BYTES_REJECTED_PER_SEC = "BytesRejectedPerSec";
     public static final String REPLICATION_BYTES_IN_PER_SEC = "ReplicationBytesInPerSec";
     public static final String REPLICATION_BYTES_OUT_PER_SEC = "ReplicationBytesOutPerSec";
@@ -55,6 +57,8 @@ public final class BrokerTopicMetrics {
     // For backward compatibility, we keep the old package name as metric group name.
     private final KafkaMetricsGroup metricsGroup = new KafkaMetricsGroup("kafka.server", "BrokerTopicMetrics");
     private final Map<String, String> tags;
+    private final Map<String, String> tagsForClassicTopic;
+    private final Map<String, String> tagsForDisklessTopic;
     private final Map<String, MeterWrapper> metricTypeMap = new java.util.HashMap<>();
     private final Map<String, GaugeWrapper> metricGaugeTypeMap = new java.util.HashMap<>();
 
@@ -68,10 +72,14 @@ public final class BrokerTopicMetrics {
 
     private BrokerTopicMetrics(Optional<String> name, boolean remoteStorageEnabled) {
         this.tags = name.map(s -> Collections.singletonMap("topic", s)).orElse(Collections.emptyMap());
+        this.tagsForClassicTopic = name.map(s -> Map.of("topic", s, "topicType", "classic")).orElse(Map.of("topicType", "classic"));
+        this.tagsForDisklessTopic = name.map(s -> Map.of("topic", s, "topicType", "diskless")).orElse(Map.of("topicType", "diskless"));
 
         metricTypeMap.put(MESSAGE_IN_PER_SEC, new MeterWrapper(MESSAGE_IN_PER_SEC, "messages"));
-        metricTypeMap.put(BYTES_IN_PER_SEC, new MeterWrapper(BYTES_IN_PER_SEC, "bytes"));
-        metricTypeMap.put(BYTES_OUT_PER_SEC, new MeterWrapper(BYTES_OUT_PER_SEC, "bytes"));
+        metricTypeMap.put(BYTES_IN_PER_SEC, new MeterWrapper(BYTES_IN_PER_SEC, "bytes", tagsForClassicTopic));
+        metricTypeMap.put(BYTES_IN_PER_SEC_DISKLESS_TOPIC, new MeterWrapper(BYTES_IN_PER_SEC, "bytes", tagsForDisklessTopic));
+        metricTypeMap.put(BYTES_OUT_PER_SEC, new MeterWrapper(BYTES_OUT_PER_SEC, "bytes", tagsForClassicTopic));
+        metricTypeMap.put(BYTES_OUT_PER_SEC_DISKLESS_TOPIC, new MeterWrapper(BYTES_OUT_PER_SEC, "bytes", tagsForDisklessTopic));
         metricTypeMap.put(BYTES_REJECTED_PER_SEC, new MeterWrapper(BYTES_REJECTED_PER_SEC, "bytes"));
         metricTypeMap.put(FAILED_PRODUCE_REQUESTS_PER_SEC, new MeterWrapper(FAILED_PRODUCE_REQUESTS_PER_SEC, "requests"));
         metricTypeMap.put(FAILED_FETCH_REQUESTS_PER_SEC, new MeterWrapper(FAILED_FETCH_REQUESTS_PER_SEC, "requests"));
@@ -118,6 +126,15 @@ public final class BrokerTopicMetrics {
         if (mw != null) mw.close();
         GaugeWrapper mg = metricGaugeTypeMap.get(metricName);
         if (mg != null) mg.close();
+
+        if (BYTES_IN_PER_SEC.equals(metricName)) {
+            mw = metricTypeMap.get(BYTES_IN_PER_SEC_DISKLESS_TOPIC);
+            if (mw != null) mw.close();
+        }
+        if (BYTES_OUT_PER_SEC.equals(metricName)) {
+            mw = metricTypeMap.get(BYTES_OUT_PER_SEC_DISKLESS_TOPIC);
+            if (mw != null) mw.close();
+        }
     }
 
     public void close() {
@@ -142,8 +159,16 @@ public final class BrokerTopicMetrics {
         return metricTypeMap.get(BYTES_IN_PER_SEC).meter();
     }
 
+    public Meter bytesInRateDisklessTopicType() {
+        return metricTypeMap.get(BYTES_IN_PER_SEC_DISKLESS_TOPIC).meter();
+    }
+
     public Meter bytesOutRate() {
         return metricTypeMap.get(BYTES_OUT_PER_SEC).meter();
+    }
+
+    public Meter bytesOutRateDisklessTopicType() {
+        return metricTypeMap.get(BYTES_OUT_PER_SEC_DISKLESS_TOPIC).meter();
     }
 
     public Meter bytesRejectedRate() {
@@ -325,14 +350,24 @@ public final class BrokerTopicMetrics {
     private class MeterWrapper {
         private final String metricType;
         private final String eventType;
+        private final Map<String, String> metricTags;
         private volatile Meter lazyMeter;
         private final Lock meterLock = new ReentrantLock();
 
         public MeterWrapper(String metricType, String eventType) {
+            this(metricType, eventType, BrokerTopicMetrics.this.tags);
+        }
+
+        public MeterWrapper(String metricType,
+                            String eventType,
+                            Map<String, String> metricTags) {
             this.metricType = metricType;
             this.eventType = eventType;
-            if (tags.isEmpty()) {
+            this.metricTags = new java.util.HashMap<>(metricTags);
+            if (this.metricTags.isEmpty()) {
                 meter(); // greedily initialize the general topic metrics
+            } else if (this.metricTags.size() == 1 && this.metricTags.containsKey("topicType")) {
+                meter(); // the metrics that only has topicType tag are also global
             }
         }
 
@@ -343,7 +378,7 @@ public final class BrokerTopicMetrics {
                 try {
                     meter = lazyMeter;
                     if (meter == null) {
-                        meter = metricsGroup.newMeter(metricType, eventType, TimeUnit.SECONDS, tags);
+                        meter = metricsGroup.newMeter(metricType, eventType, TimeUnit.SECONDS, metricTags);
                         lazyMeter = meter;
                     }
                 } finally {
@@ -357,7 +392,7 @@ public final class BrokerTopicMetrics {
             meterLock.lock();
             try {
                 if (lazyMeter != null) {
-                    metricsGroup.removeMetric(metricType, tags);
+                    metricsGroup.removeMetric(metricType, metricTags);
                     lazyMeter = null;
                 }
             } finally {
