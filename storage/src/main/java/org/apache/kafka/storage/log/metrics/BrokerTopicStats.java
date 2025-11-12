@@ -127,6 +127,21 @@ public class BrokerTopicStats implements AutoCloseable {
         }
     }
 
+    /**
+     * Like {@link #updateBytesOut(String, boolean, boolean, long)}, but for diskless topics.
+     */
+    public void updateBytesOutForDisklessTopic(String topic, boolean isFollower, boolean isReassignment, long value) {
+        if (isFollower) {
+            if (isReassignment) {
+                updateReassignmentBytesOut(value);
+            }
+            updateReplicationBytesOut(value);
+        } else {
+            topicStats(topic).bytesOutRateDisklessTopicType().mark(value);
+            allTopicsStats.bytesOutRateDisklessTopicType().mark(value);
+        }
+    }
+
     // Update the broker-level all topic metric values so that we have a sample right for all topics metric after update of partition.
     public void recordRemoteCopyLagBytes(String topic, int partition, long value) {
         BrokerTopicMetrics topicMetric = topicStats(topic);
