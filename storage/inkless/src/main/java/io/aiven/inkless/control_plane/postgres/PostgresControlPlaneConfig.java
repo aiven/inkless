@@ -17,80 +17,37 @@
  */
 package io.aiven.inkless.control_plane.postgres;
 
-import org.apache.kafka.common.config.ConfigDef;
-import org.apache.kafka.common.config.types.Password;
-
 import java.util.Map;
 
-import io.aiven.inkless.control_plane.AbstractControlPlaneConfig;
+public class PostgresControlPlaneConfig extends PostgresConnectionConfig {
 
-public class PostgresControlPlaneConfig extends AbstractControlPlaneConfig {
-    public static final String CONNECTION_STRING_CONFIG = "connection.string";
-    private static final String CONNECTION_STRING_DOC = "PostgreSQL connection string";
+    public static final String READ_CONFIG_PREFIX = "read.";
+    public static final String WRITE_CONFIG_PREFIX = "write.";
 
-    public static final String USERNAME_CONFIG = "username";
-    private static final String USERNAME_DOC = "Username";
-
-    public static final String PASSWORD_CONFIG = "password";
-    private static final String PASSWORD_DOC = "Password";
-
-    public static final String MAX_CONNECTIONS_CONFIG = "max.connections";
-    private static final String MAX_CONNECTIONS_DOC = "Maximum number of connections to the database";
-
-    public static ConfigDef configDef() {
-        return baseConfigDef()
-            .define(
-                CONNECTION_STRING_CONFIG,
-                ConfigDef.Type.STRING,
-                ConfigDef.NO_DEFAULT_VALUE,
-                new ConfigDef.NonEmptyString(),
-                ConfigDef.Importance.HIGH,
-                CONNECTION_STRING_DOC
-            )
-            .define(
-                USERNAME_CONFIG,
-                ConfigDef.Type.STRING,
-                ConfigDef.NO_DEFAULT_VALUE,
-                new ConfigDef.NonEmptyString(),
-                ConfigDef.Importance.HIGH,
-                USERNAME_DOC
-            )
-            .define(
-                PASSWORD_CONFIG,
-                ConfigDef.Type.PASSWORD,
-                null,
-                null,  // can be empty
-                ConfigDef.Importance.HIGH,
-                PASSWORD_DOC
-            )
-            .define(
-                MAX_CONNECTIONS_CONFIG,
-                ConfigDef.Type.INT,
-                10,
-                ConfigDef.Range.atLeast(1),
-                ConfigDef.Importance.MEDIUM,
-                MAX_CONNECTIONS_DOC
-            );
-    }
+    private PostgresConnectionConfig readConfig;
+    private PostgresConnectionConfig writeConfig;
 
     public PostgresControlPlaneConfig(final Map<?, ?> originals) {
         super(configDef(), originals);
     }
 
-    public String connectionString() {
-        return getString(CONNECTION_STRING_CONFIG);
+    public void initializeReadWriteConfigs() {
+        final Map<String, Object> readConfigs = originalsWithPrefix(READ_CONFIG_PREFIX);
+        if (!readConfigs.isEmpty()) {
+            this.readConfig = new PostgresConnectionConfig(configDef(), readConfigs);
+        }
+
+        final Map<String, Object> writeConfigs = originalsWithPrefix(WRITE_CONFIG_PREFIX);
+        if (!writeConfigs.isEmpty()) {
+            this.writeConfig = new PostgresConnectionConfig(configDef(), writeConfigs);
+        }
     }
 
-    public String username() {
-        return getString(USERNAME_CONFIG);
+    public PostgresConnectionConfig readConfig() {
+        return readConfig;
     }
 
-    public String password() {
-        final Password configValue = getPassword(PASSWORD_CONFIG);
-        return configValue == null ? null : configValue.value();
-    }
-
-    public int maxConnections() {
-        return getInt(MAX_CONNECTIONS_CONFIG);
+    public PostgresConnectionConfig writeConfig() {
+        return writeConfig;
     }
 }
