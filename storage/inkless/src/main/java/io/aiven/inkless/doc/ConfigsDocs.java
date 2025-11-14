@@ -20,6 +20,7 @@ package io.aiven.inkless.doc;
 
 import io.aiven.inkless.config.InklessConfig;
 import io.aiven.inkless.control_plane.InMemoryControlPlaneConfig;
+import io.aiven.inkless.control_plane.postgres.PostgresConnectionConfig;
 import io.aiven.inkless.control_plane.postgres.PostgresControlPlaneConfig;
 import io.aiven.inkless.storage_backend.azure.AzureBlobStorageConfig;
 import io.aiven.inkless.storage_backend.gcs.GcsStorageConfig;
@@ -52,6 +53,14 @@ public class ConfigsDocs {
         out.println("Under ``" + InklessConfig.PREFIX + InklessConfig.CONTROL_PLANE_PREFIX + "``\n");
         final var postgresControlPlaneConfig = PostgresControlPlaneConfig.configDef();
         out.println(postgresControlPlaneConfig.toEnrichedRst());
+        out.println();
+        printSubsectionTitle("PostgresControlPlaneConfig - read overrides");
+        out.println("Under ``" + InklessConfig.PREFIX + InklessConfig.CONTROL_PLANE_PREFIX + PostgresControlPlaneConfig.READ_CONFIG_PREFIX + "``\n");
+        out.println(PostgresConnectionConfig.configDef().toEnrichedRst());
+        out.println();
+        printSubsectionTitle("PostgresControlPlaneConfig - write overrides");
+        out.println("Under ``" + InklessConfig.PREFIX + InklessConfig.CONTROL_PLANE_PREFIX + PostgresControlPlaneConfig.WRITE_CONFIG_PREFIX + "``\n");
+        out.println(PostgresConnectionConfig.configDef().toEnrichedRst());
         out.println();
 
         printSubsectionTitle("AzureBlobStorageConfig");
