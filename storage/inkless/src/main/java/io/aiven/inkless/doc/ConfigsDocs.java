@@ -55,11 +55,11 @@ public class ConfigsDocs {
         out.println(postgresControlPlaneConfig.toEnrichedRst());
         out.println();
         printSubsectionTitle("PostgresControlPlaneConfig - read overrides");
-        out.println("Under ``" + InklessConfig.PREFIX + InklessConfig.CONTROL_PLANE_PREFIX + "." + PostgresControlPlaneConfig.READ_CONFIG_PREFIX + "``\n");
+        out.println("Under ``" + InklessConfig.PREFIX + InklessConfig.CONTROL_PLANE_PREFIX + PostgresControlPlaneConfig.READ_CONFIG_PREFIX + "``\n");
         out.println(PostgresConnectionConfig.configDef().toEnrichedRst());
         out.println();
         printSubsectionTitle("PostgresControlPlaneConfig - write overrides");
-        out.println("Under ``" + InklessConfig.PREFIX + InklessConfig.CONTROL_PLANE_PREFIX + "." + PostgresControlPlaneConfig.WRITE_CONFIG_PREFIX + "``\n");
+        out.println("Under ``" + InklessConfig.PREFIX + InklessConfig.CONTROL_PLANE_PREFIX + PostgresControlPlaneConfig.WRITE_CONFIG_PREFIX + "``\n");
         out.println(PostgresConnectionConfig.configDef().toEnrichedRst());
         out.println();
 

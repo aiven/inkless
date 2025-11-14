@@ -276,7 +276,7 @@ Under ``inkless.control.plane.``
 -----------------
 PostgresControlPlaneConfig - read overrides
 -----------------
-Under ``inkless.control.plane..read.``
+Under ``inkless.control.plane.read.``
 
 ``connection.string``
   PostgreSQL connection string
@@ -328,7 +328,7 @@ Under ``inkless.control.plane..read.``
 -----------------
 PostgresControlPlaneConfig - write overrides
 -----------------
-Under ``inkless.control.plane..write.``
+Under ``inkless.control.plane.write.``
 
 ``connection.string``
   PostgreSQL connection string
