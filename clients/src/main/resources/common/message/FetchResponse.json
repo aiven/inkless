@@ -50,7 +50,9 @@
   // Version 17 no changes to the response (KIP-853).
   //
   // Version 18 no changes to the response (KIP-1166)
-  "validVersions": "4-18",
+  //
+  // Version 19 adds MirrorLeaderEpoch to CurrentLeader for cluster mirroring support
+  "validVersions": "4-19",
   "flexibleVersions": "12+",
   "fields": [
     { "name": "ThrottleTimeMs", "type": "int32", "versions": "1+", "ignorable": true,
@@ -89,7 +91,10 @@
           { "name": "LeaderId", "type": "int32", "versions": "12+", "default": "-1", "entityType": "brokerId",
             "about": "The ID of the current leader or -1 if the leader is unknown."},
           { "name": "LeaderEpoch", "type": "int32", "versions": "12+", "default": "-1",
-            "about": "The latest known leader epoch." }
+            "about": "The latest known leader epoch." },
+          { "name": "MirrorLeaderEpoch", "type": "int32", "versions": "19+", "default": "-1", "taggedVersions": "19+",
+            "tag": 0, "ignorable": true,
+            "about": "The leader epoch from the source cluster for mirrored partitions. Set to -1 for non-mirrored partitions." }
         ]},
         { "name": "SnapshotId", "type": "SnapshotId",
           "versions": "12+", "taggedVersions": "12+", "tag": 2,

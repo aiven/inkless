@@ -193,4 +193,6 @@ class MockFetcherThread(val mockLeader: MockLeaderEndPoint,
       assertEquals(expectedEpoch, fetchState(partition).map(_.lastFetchedEpoch.get()))
     }
   }
+
+  override protected def shouldUpdateEpochFromBatches(topicPartition: TopicPartition): Boolean = false
 }

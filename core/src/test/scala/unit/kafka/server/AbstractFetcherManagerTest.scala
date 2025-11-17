@@ -356,6 +356,7 @@ class AbstractFetcherManagerTest {
     override protected def logEndOffset(topicPartition: TopicPartition): Long = 1
 
     override protected def endOffsetForEpoch(topicPartition: TopicPartition, epoch: Int): Optional[OffsetAndEpoch] = Optional.of(new OffsetAndEpoch(1, 0))
-  }
 
+    override protected def shouldUpdateEpochFromBatches(topicPartition: TopicPartition): Boolean = false
+  }
 }

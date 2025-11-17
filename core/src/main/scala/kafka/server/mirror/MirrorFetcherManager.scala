@@ -129,7 +129,7 @@ class MirrorFetcherManager(brokerConfig: KafkaConfig,
     }
     val fetchSessionHandler = new FetchSessionHandler(logContext, sourceBroker.id)
     val leader: LeaderEndPoint = new RemoteLeaderEndPoint(logContext.logPrefix, endpoint, fetchSessionHandler, brokerConfig,
-      replicaManager, quotaManager, metadataVersionSupplier, brokerEpochSupplier)
+      replicaManager, quotaManager, metadataVersionSupplier, brokerEpochSupplier, isCrossClusterMirror = true)
     new MirrorFetcherThread(threadName, leader, brokerConfig, failedPartitions, replicaManager,
       quotaManager, logContext.logPrefix, mirrorName)
   }

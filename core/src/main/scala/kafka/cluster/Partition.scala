@@ -1449,6 +1449,20 @@ class Partition(val topicPartition: TopicPartition,
     if (fetchParams.isFromFollower) {
       // Check that the request is from a valid replica before doing the read
       val (replica, logReadInfo) = inReadLock(leaderIsrUpdateLock) {
+        // For mirrored partitions, validate the follower's mirrorLeaderEpoch against the log's highest epoch
+        if (mirrorName.nonEmpty && fetchPartitionData.mirrorLeaderEpoch.isPresent) {
+          val followerMirrorEpoch = fetchPartitionData.mirrorLeaderEpoch.get()
+          val logHighestEpoch = localLogOrException.latestEpoch.orElse(0)
+
+          if (followerMirrorEpoch < logHighestEpoch) {
+            info(s"==== Fencing follower: partition=$topicPartition, followerMirrorEpoch=$followerMirrorEpoch, logHighestEpoch=$logHighestEpoch")
+            // Follower's mirrorLeaderEpoch is outdated
+            throw new FencedLeaderEpochException(
+              s"Follower's mirrorLeaderEpoch $followerMirrorEpoch is lower than leader's highest epoch $logHighestEpoch for mirrored partition $topicPartition"
+            )
+          }
+        }
+
         val localLog = localLogWithEpochOrThrow(
           fetchPartitionData.currentLeaderEpoch,
           fetchParams.fetchOnlyLeader

@@ -28,6 +28,23 @@ import java.util.Optional;
  * (1) Truncating its log, for example, having recently become a follower
  * (2) Delayed, for example, due to an error, where we subsequently back off a bit
  * (3) ReadyForFetch, the active state where the thread is actively fetching data.
+ *
+ * @param topicId The topic ID
+ * @param fetchOffset The offset to fetch from
+ * @param lag The lag behind the leader
+ * @param currentLeaderEpoch The current leader epoch for this partition in the local cluster.
+ *                           Used for leader/follower epoch validation and synchronization.
+ * @param delay Optional delay before next fetch
+ * @param state The current replica state (TRUNCATING, FETCHING, etc.)
+ * @param lastFetchedEpoch The last fetched epoch from the log
+ * @param dueMs The time when this partition is due for fetch (if delayed)
+ * @param remoteFetch True if this is a remote fetch (e.g., MirrorFetcherThread), false for local fetch
+ * @param mirrorLeaderEpoch The leader epoch from the source cluster for mirrored partitions.
+ *                          This tracks the source cluster's epoch progression and is used for
+ *                          batch validation to allow batches with source cluster epochs that may
+ *                          be higher than the destination cluster's currentLeaderEpoch.
+ *                          Set to -1 for non-mirrored partitions. Initialized to 0 for mirrored
+ *                          partitions and updated from batch epochs during replication.
  */
 public record PartitionFetchState(
         Optional<Uuid> topicId,
@@ -38,7 +55,8 @@ public record PartitionFetchState(
         ReplicaState state,
         Optional<Integer> lastFetchedEpoch,
         Optional<Long> dueMs,
-        boolean remoteFetch
+        boolean remoteFetch,
+        int mirrorLeaderEpoch
 ) {
     public PartitionFetchState(
             Optional<Uuid> topicId,
@@ -61,7 +79,21 @@ public record PartitionFetchState(
             boolean remoteFetch,
             long dueMs) {
         this(topicId, fetchOffset, lag, currentLeaderEpoch,
-                Optional.empty(), state, lastFetchedEpoch, Optional.empty(), remoteFetch);
+                Optional.empty(), state, lastFetchedEpoch, Optional.empty(), remoteFetch, -1);
+    }
+
+    public PartitionFetchState(
+            Optional<Uuid> topicId,
+            long fetchOffset,
+            Optional<Long> lag,
+            int currentLeaderEpoch,
+            ReplicaState state,
+            Optional<Integer> lastFetchedEpoch,
+            boolean remoteFetch,
+            long dueMs,
+            int mirrorLeaderEpoch) {
+        this(topicId, fetchOffset, lag, currentLeaderEpoch,
+                Optional.empty(), state, lastFetchedEpoch, Optional.empty(), remoteFetch, mirrorLeaderEpoch);
     }
 
     public PartitionFetchState(
@@ -74,7 +106,7 @@ public record PartitionFetchState(
             Optional<Integer> lastFetchedEpoch) {
         this(topicId, fetchOffset, lag, currentLeaderEpoch,
                 delay, state, lastFetchedEpoch,
-                delay.map(aLong -> aLong + Time.SYSTEM.milliseconds()), false);
+                delay.map(aLong -> aLong + Time.SYSTEM.milliseconds()), false, -1);
     }
 
     public boolean isReadyForFetch() {
@@ -98,6 +130,7 @@ public record PartitionFetchState(
         return "FetchState(topicId=" + topicId +
                 ", fetchOffset=" + fetchOffset +
                 ", currentLeaderEpoch=" + currentLeaderEpoch +
+                ", mirrorLeaderEpoch=" + mirrorLeaderEpoch +
                 ", lastFetchedEpoch=" + lastFetchedEpoch +
                 ", state=" + state +
                 ", lag=" + lag +
@@ -108,6 +141,6 @@ public record PartitionFetchState(
     public PartitionFetchState updateTopicId(Optional<Uuid> newTopicId) {
         return new PartitionFetchState(newTopicId, this.fetchOffset, this.lag,
                 this.currentLeaderEpoch, this.delay,
-                this.state, this.lastFetchedEpoch, this.dueMs, this.remoteFetch);
+                this.state, this.lastFetchedEpoch, this.dueMs, this.remoteFetch, this.mirrorLeaderEpoch);
     }
 }

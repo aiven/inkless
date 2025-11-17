@@ -677,8 +677,10 @@ class KafkaApis(val requestChannel: RequestChannel,
             erroneous += topicIdPartition -> FetchResponse.partitionResponse(topicIdPartition, Errors.UNKNOWN_TOPIC_ID)
           else if (!metadataCache.contains(topicIdPartition.topicPartition))
             erroneous += topicIdPartition -> FetchResponse.partitionResponse(topicIdPartition, Errors.UNKNOWN_TOPIC_OR_PARTITION)
-          else
-            interesting += topicIdPartition -> new PartitionData(data.topicId, data.fetchOffset, data.logStartOffset, data.maxBytes, data.currentLeaderEpoch, data.lastFetchedEpoch)
+          else {
+            interesting += topicIdPartition -> new PartitionData(data.topicId, data.fetchOffset, data.logStartOffset,
+              data.maxBytes, data.currentLeaderEpoch, data.lastFetchedEpoch, data.mirrorLeaderEpoch)
+          }
         }
       } else {
         fetchContext.foreachPartition { (topicIdPartition, _) =>
@@ -746,6 +748,17 @@ class KafkaApis(val requestChannel: RequestChannel,
               partitionData.currentLeader()
                 .setLeaderId(leaderNode.leaderId)
                 .setLeaderEpoch(leaderNode.leaderEpoch)
+
+              // For mirrored partitions, also set mirrorLeaderEpoch from the log's highest epoch
+              if (versionId >= 19) {
+                replicaManager.getPartition(topicIdPartition.topicPartition()) match {
+                  case HostedPartition.Online(partition) if partition.mirrorName.nonEmpty =>
+                    val mirrorLeaderEpoch = partition.localLogOrException.latestEpoch.orElse(0)
+                    partitionData.currentLeader().setMirrorLeaderEpoch(mirrorLeaderEpoch)
+                  case _ =>
+                    // Not a mirrored partition, leave mirrorLeaderEpoch at default -1
+                }
+              }
             case _ =>
           }
         }

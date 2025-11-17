@@ -2487,6 +2487,13 @@ class ReplicaManager(val config: KafkaConfig,
           //   high watermark in the checkpoint file (see KAFKA-1647).
           val state = info.partition.toLeaderAndIsrPartitionState(tp, isNew)
           val partitionAssignedDirectoryId = directoryIds.find(_._1.topicPartition() == tp).map(_._2)
+
+          // For mirrored partitions, set mirrorName so the fetcher can use source epoch logic
+          val mirrorName = info.partition.mirrorName
+          if (mirrorName != null && !mirrorName.isEmpty) {
+            partition.setMirrorName(mirrorName)
+          }
+
           val isNewLeaderEpoch = partition.makeFollower(state, offsetCheckpoints, Some(info.topicId), partitionAssignedDirectoryId)
 
           if (isInControlledShutdown && (info.partition.leader == NO_LEADER ||
@@ -2539,11 +2546,14 @@ class ReplicaManager(val config: KafkaConfig,
         nodeOpt match {
           case Some(node) =>
             val log = partition.localLogOrException
+            // Pass mirrorName to InitialFetchState so the fetcher knows to use source epoch logic
+            val mirrorName = if (partition.mirrorName != null && partition.mirrorName.nonEmpty) partition.mirrorName else ""
             partitionAndOffsets.put(topicPartition, InitialFetchState(
               log.topicId.toScala,
               new BrokerEndPoint(node.id, node.host, node.port),
               partition.getLeaderEpoch,
-              initialFetchOffset(log)))
+              initialFetchOffset(log),
+              mirrorName))
           case None =>
             stateChangeLogger.trace(s"Unable to start fetching $topicPartition with topic ID ${partition.topicId} " +
               s"from leader ${partition.leaderReplicaIdOpt} because it is not alive.")
