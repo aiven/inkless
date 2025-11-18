@@ -28,14 +28,14 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
+import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.awaitility.Awaitility.await;
 
 class ReloadableCredentialsProviderTest {
 
@@ -90,7 +90,7 @@ class ReloadableCredentialsProviderTest {
             null, VALID_CREDENTIALS_JSON, null)) {
 
             final Credentials credentials = provider.getCredentials();
-            assertNotNull(credentials);
+            assertThat(credentials).isNotNull();
         }
     }
 
@@ -100,7 +100,7 @@ class ReloadableCredentialsProviderTest {
             false, null, null)) {
 
             final Credentials credentials = provider.getCredentials();
-            assertTrue(credentials instanceof NoCredentials);
+            assertThat(credentials).isInstanceOf(NoCredentials.class);
         }
     }
 
@@ -110,9 +110,9 @@ class ReloadableCredentialsProviderTest {
             null, ACCESS_TOKEN_CREDENTIALS_JSON, null)) {
 
             final Credentials credentials = provider.getCredentials();
-            assertNotNull(credentials);
-            assertEquals("OAuth2", credentials.getAuthenticationType());
-            assertEquals("Bearer ya29...token1", credentials.getRequestMetadata().get("Authorization").get(0));
+            assertThat(credentials).isNotNull();
+            assertThat(credentials.getAuthenticationType()).isEqualTo("OAuth2");
+            assertThat(credentials.getRequestMetadata()).containsEntry("Authorization", List.of("Bearer ya29...token1"));
         }
     }
 
@@ -127,7 +127,7 @@ class ReloadableCredentialsProviderTest {
             provider.enableWatching(1);
 
             final Credentials credentials = provider.getCredentials();
-            assertNotNull(credentials);
+            assertThat(credentials).isNotNull();
         }
     }
 
@@ -153,24 +153,24 @@ class ReloadableCredentialsProviderTest {
             });
 
             final Credentials initialCredentials = provider.getCredentials();
-            assertNotNull(initialCredentials);
+            assertThat(initialCredentials).isNotNull();
 
             // Update the credentials file
             Files.write(credentialsFile, UPDATED_CREDENTIALS_JSON.getBytes(), StandardOpenOption.TRUNCATE_EXISTING);
 
             // Wait for the callback to be called
-            assertTrue(callbackLatch.await(5, TimeUnit.SECONDS), "Callback should be called within 5 seconds");
+            assertThat(callbackLatch.await(5, TimeUnit.SECONDS)).isTrue();
 
-            assertEquals(1, callbackCount.get());
-            assertNotNull(latestCredentials.get());
+            assertThat(callbackCount.get()).isEqualTo(1);
+            assertThat(latestCredentials.get()).isNotNull();
 
             // Update the credentials file again with same semantical contents
             Files.write(credentialsFile, (UPDATED_CREDENTIALS_JSON + " ").getBytes(),
                         StandardOpenOption.TRUNCATE_EXISTING);
 
-            Thread.sleep(2000);
-            assertEquals(2, callbackCount.get());
-            assertNotNull(latestCredentials.get());
+            await().atMost(5, TimeUnit.SECONDS).until(() -> callbackCount.get() > 1);
+            assertThat(callbackCount.get()).isEqualTo(2);
+            assertThat(latestCredentials.get()).isNotNull();
         }
     }
 
@@ -196,34 +196,33 @@ class ReloadableCredentialsProviderTest {
             });
 
             final Credentials initialCredentials = provider.getCredentials();
-            assertNotNull(initialCredentials);
+            assertThat(initialCredentials).isNotNull();
 
             // Update the credentials file
             Files.write(credentialsFile, ACCESS_TOKEN_CREDENTIALS2_JSON.getBytes(),
                 StandardOpenOption.TRUNCATE_EXISTING);
 
             // Wait for the callback to be called
-            assertTrue(callbackLatch.await(5, TimeUnit.SECONDS), "Callback should be called within 5 seconds");
+            assertThat(callbackLatch.await(5, TimeUnit.SECONDS)).isTrue();
 
-            assertEquals(1, callbackCount.get());
-            assertNotNull(latestCredentials.get());
+            assertThat(callbackCount.get()).isOne();
+            assertThat(latestCredentials.get()).isNotNull();
             Credentials credentials = provider.getCredentials();
-            assertNotNull(credentials);
-            assertEquals("OAuth2", credentials.getAuthenticationType());
-            assertEquals("Bearer ya29...token2", credentials.getRequestMetadata().get("Authorization").get(0));
+            assertThat(credentials).isNotNull();
+            assertThat(credentials.getAuthenticationType()).isEqualTo("OAuth2");
+            assertThat(credentials.getRequestMetadata()).containsEntry("Authorization", List.of("Bearer ya29...token2"));
 
             // Update the credentials file again
             Files.write(credentialsFile, ACCESS_TOKEN_CREDENTIALS3_JSON.getBytes(),
                         StandardOpenOption.TRUNCATE_EXISTING);
 
-            Thread.sleep(2000);
-            assertEquals(2, callbackCount.get());
-            assertNotNull(latestCredentials.get());
+            await().atMost(5, TimeUnit.SECONDS).until(() -> callbackCount.get() == 2);
+            assertThat(latestCredentials.get()).isNotNull();
 
             credentials = provider.getCredentials();
-            assertNotNull(credentials);
-            assertEquals("OAuth2", credentials.getAuthenticationType());
-            assertEquals("Bearer ya29...token3", credentials.getRequestMetadata().get("Authorization").get(0));
+            assertThat(credentials).isNotNull();
+            assertThat(credentials.getAuthenticationType()).isEqualTo("OAuth2");
+            assertThat(credentials.getRequestMetadata()).containsEntry("Authorization", List.of("Bearer ya29...token3"));
         }
     }
 
@@ -242,25 +241,23 @@ class ReloadableCredentialsProviderTest {
             provider.setCredentialsUpdateCallback(credentials -> successCallbackCount.incrementAndGet());
 
             final Credentials initialCredentials = provider.getCredentials();
-            assertNotNull(initialCredentials);
+            assertThat(initialCredentials).isNotNull();
 
             // Write invalid JSON to trigger an error
             Files.write(credentialsFile, "invalid json".getBytes(), StandardOpenOption.TRUNCATE_EXISTING);
 
             // Give some time for the file watcher to process the change
-            Thread.sleep(2000);
+            await().atLeast(2, TimeUnit.SECONDS);
 
             // The callback should not have been called due to the error
-            assertEquals(0, successCallbackCount.get());
+            assertThat(successCallbackCount.get()).isZero();
 
             // Write valid JSON again
             Files.write(credentialsFile, UPDATED_CREDENTIALS_JSON.getBytes(), StandardOpenOption.TRUNCATE_EXISTING);
 
             // Give some time for the file watcher to process the change
-            Thread.sleep(2000);
-
             // Now the callback should be called
-            assertEquals(1, successCallbackCount.get());
+            await().atMost(5, TimeUnit.SECONDS).until(() -> successCallbackCount.get() == 1);
         }
     }
 
