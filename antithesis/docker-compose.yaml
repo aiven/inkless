@@ -1,0 +1,134 @@
+services:
+  ducker01:
+    image: us-central1-docker.pkg.dev/molten-verve-216720/aiven-repository/inkless-systest-driver:latest
+    entrypoint: ["/opt/kafka-dev/entrypoint-driver.sh", "sleep", "infinity"]
+    depends_on:
+      - ducker02
+      - ducker03
+      - ducker04
+      - ducker05
+      - ducker06
+      - ducker07
+      - ducker08
+      - ducker09
+      - ducker10
+      - ducker11
+      - ducker12
+      - ducker13
+      - ducker14
+      - storage
+      - postgres
+    networks:
+      - cluster-net
+
+  ducker02:
+    image: us-central1-docker.pkg.dev/molten-verve-216720/aiven-repository/inkless-systest-vm:latest
+    entrypoint: ["/opt/kafka-dev/entrypoint-vm.sh", "tail", "-f", "/dev/null"]
+    networks:
+      - cluster-net
+
+  ducker03:
+    image: us-central1-docker.pkg.dev/molten-verve-216720/aiven-repository/inkless-systest-vm:latest
+    entrypoint: ["/opt/kafka-dev/entrypoint-vm.sh", "tail", "-f", "/dev/null"]
+    networks:
+      - cluster-net
+
+  ducker04:
+    image: us-central1-docker.pkg.dev/molten-verve-216720/aiven-repository/inkless-systest-vm:latest
+    entrypoint: ["/opt/kafka-dev/entrypoint-vm.sh", "tail", "-f", "/dev/null"]
+    networks:
+      - cluster-net
+
+  ducker05:
+    image: us-central1-docker.pkg.dev/molten-verve-216720/aiven-repository/inkless-systest-vm:latest
+    entrypoint: ["/opt/kafka-dev/entrypoint-vm.sh", "tail", "-f", "/dev/null"]
+    networks:
+      - cluster-net
+
+  ducker06:
+    image: us-central1-docker.pkg.dev/molten-verve-216720/aiven-repository/inkless-systest-vm:latest
+    entrypoint: ["/opt/kafka-dev/entrypoint-vm.sh", "tail", "-f", "/dev/null"]
+    networks:
+      - cluster-net
+
+  ducker07:
+    image: us-central1-docker.pkg.dev/molten-verve-216720/aiven-repository/inkless-systest-vm:latest
+    entrypoint: ["/opt/kafka-dev/entrypoint-vm.sh", "tail", "-f", "/dev/null"]
+    networks:
+      - cluster-net
+
+  ducker08:
+    image: us-central1-docker.pkg.dev/molten-verve-216720/aiven-repository/inkless-systest-vm:latest
+    entrypoint: ["/opt/kafka-dev/entrypoint-vm.sh", "tail", "-f", "/dev/null"]
+    networks:
+      - cluster-net
+
+  ducker09:
+    image: us-central1-docker.pkg.dev/molten-verve-216720/aiven-repository/inkless-systest-vm:latest
+    entrypoint: ["/opt/kafka-dev/entrypoint-vm.sh", "tail", "-f", "/dev/null"]
+    networks:
+      - cluster-net
+
+  ducker10:
+    image: us-central1-docker.pkg.dev/molten-verve-216720/aiven-repository/inkless-systest-vm:latest
+    entrypoint: ["/opt/kafka-dev/entrypoint-vm.sh", "tail", "-f", "/dev/null"]
+    networks:
+      - cluster-net
+
+  ducker11:
+    image: us-central1-docker.pkg.dev/molten-verve-216720/aiven-repository/inkless-systest-vm:latest
+    entrypoint: ["/opt/kafka-dev/entrypoint-vm.sh", "tail", "-f", "/dev/null"]
+    networks:
+      - cluster-net
+
+  ducker12:
+    image: us-central1-docker.pkg.dev/molten-verve-216720/aiven-repository/inkless-systest-vm:latest
+    entrypoint: ["/opt/kafka-dev/entrypoint-vm.sh", "tail", "-f", "/dev/null"]
+    networks:
+      - cluster-net
+
+  ducker13:
+    image: us-central1-docker.pkg.dev/molten-verve-216720/aiven-repository/inkless-systest-vm:latest
+    entrypoint: ["/opt/kafka-dev/entrypoint-vm.sh", "tail", "-f", "/dev/null"]
+    networks:
+      - cluster-net
+
+  ducker14:
+    image: us-central1-docker.pkg.dev/molten-verve-216720/aiven-repository/inkless-systest-vm:latest
+    entrypoint: ["/opt/kafka-dev/entrypoint-vm.sh", "tail", "-f", "/dev/null"]
+    networks:
+      - cluster-net
+
+  storage:
+    image: quay.io/minio/minio:RELEASE.2025-07-23T15-54-02Z
+    command: server /data --console-address ":9001"
+    post_start:
+      - command: >
+          /bin/sh -c "
+          until /usr/bin/mc alias set local http://storage:9000 minioadmin minioadmin; do
+          echo 'Waiting for Minio...';
+          sleep 5;
+          done;
+          /usr/bin/mc mb local/inkless;
+          exit 0;
+          "
+    networks:
+      - cluster-net
+
+  postgres:
+    image: docker.io/library/postgres:17.2
+    environment:
+      POSTGRES_DB: "inkless"
+      POSTGRES_USER: "admin"
+      POSTGRES_PASSWORD: "admin"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready --dbname=inkless -U admin"]
+      interval: 5s
+      timeout: 20s
+      retries: 20
+    networks:
+      - cluster-net
+
+
+networks:
+  cluster-net:
