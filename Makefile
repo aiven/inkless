@@ -121,3 +121,40 @@ dump_postgres_schema:
 	docker compose -f dump-schema-compose.yml up
 	docker compose -f dump-schema-compose.yml down --remove-orphans
 	@echo "Dumped: ./storage/inkless/build/postgres_schema.sql"
+
+.PHONY: antithesis_test_generator
+antithesis_test_generator:
+	docker build antithesis/test_generator/ -t inkless-antithesis-testgen:latest
+
+.PHONY: antithesis_generate_tests
+antithesis_generate_tests: antithesis_test_generator
+	docker run --rm -ti -u "$(shell id -u):$(shell id -g)" -v "$(PWD):/workdir" \
+		inkless-antithesis-testgen:latest \
+		/workdir/antithesis/test_generator/docker_script.sh
+
+.PHONY: antithesis_build_for_tests
+antithesis_build_for_tests:
+	./gradlew systemTestLibs
+
+.PHONY: antithesis_base_ducker_image
+antithesis_base_ducker_image:
+	tests/docker/ducker-ak up
+	tests/docker/ducker-ak down
+
+.PHONY: antithesis_docker_images
+antithesis_docker_images:
+	docker build . -f antithesis/Dockerfile-driver \
+		-t us-central1-docker.pkg.dev/molten-verve-216720/aiven-repository/inkless-systest-driver:latest
+	docker build . -f antithesis/Dockerfile-vm \
+		-t us-central1-docker.pkg.dev/molten-verve-216720/aiven-repository/inkless-systest-vm:latest
+
+.PHONY: antithesis_push_docker_images
+antithesis_push_docker_images:
+	docker push us-central1-docker.pkg.dev/molten-verve-216720/aiven-repository/inkless-systest-driver:latest
+	docker push us-central1-docker.pkg.dev/molten-verve-216720/aiven-repository/inkless-systest-vm:latest
+
+CONFIG_IMAGE := 'us-central1-docker.pkg.dev/molten-verve-216720/aiven-repository/inkless-systest-config:latest'
+.PHONY: antithesis_build_and_push_config_docker_image
+antithesis_build_and_push_config_docker_image:
+	docker build . -f antithesis/Dockerfile-config -t $(CONFIG_IMAGE)
+	docker push $(CONFIG_IMAGE)
