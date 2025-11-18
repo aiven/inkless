@@ -2461,6 +2461,7 @@ project(':storage:inkless') {
     testImplementation project(':clients').sourceSets.test.output.classesDirs
     testImplementation project(':test-common')
     testImplementation libs.assertj
+    testImplementation libs.awaitility
     testImplementation libs.junitJupiter
     testImplementation libs.mockitoCore
     testImplementation libs.mockitoJunitJupiter // supports MockitoExtension
