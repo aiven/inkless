@@ -738,6 +738,17 @@ class KafkaApis(val requestChannel: RequestChannel,
           .setRecords(data.records)
           .setPreferredReadReplica(data.preferredReadReplica.orElse(FetchResponse.INVALID_PREFERRED_REPLICA_ID))
 
+        // For mirrored partitions, also set mirrorLeaderEpoch from the log's highest epoch
+        if (versionId >= 19) {
+          replicaManager.getPartition(topicIdPartition.topicPartition()) match {
+            case HostedPartition.Online(partition) if partition.mirrorName.nonEmpty =>
+              val latestLeaderEpochInLog = partition.localLogOrException.latestEpoch.orElse(0)
+              partitionData.setMirrorLeaderEpoch(latestLeaderEpochInLog)
+            case _ =>
+            // Not a mirrored partition, leave mirrorLeaderEpoch at default -1
+          }
+        }
+
         if (versionId >= 16) {
           data.error match {
             case Errors.NOT_LEADER_OR_FOLLOWER | Errors.FENCED_LEADER_EPOCH =>
@@ -748,17 +759,6 @@ class KafkaApis(val requestChannel: RequestChannel,
               partitionData.currentLeader()
                 .setLeaderId(leaderNode.leaderId)
                 .setLeaderEpoch(leaderNode.leaderEpoch)
-
-              // For mirrored partitions, also set mirrorLeaderEpoch from the log's highest epoch
-              if (versionId >= 19) {
-                replicaManager.getPartition(topicIdPartition.topicPartition()) match {
-                  case HostedPartition.Online(partition) if partition.mirrorName.nonEmpty =>
-                    val mirrorLeaderEpoch = partition.localLogOrException.latestEpoch.orElse(0)
-                    partitionData.currentLeader().setMirrorLeaderEpoch(mirrorLeaderEpoch)
-                  case _ =>
-                    // Not a mirrored partition, leave mirrorLeaderEpoch at default -1
-                }
-              }
             case _ =>
           }
         }

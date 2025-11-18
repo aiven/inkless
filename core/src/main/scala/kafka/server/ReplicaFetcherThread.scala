@@ -120,6 +120,19 @@ class ReplicaFetcherThread(name: String,
     }
   }
 
+  override protected def partitionFetchState(tp: TopicPartition, initialFetchState: InitialFetchState, currentState: PartitionFetchState): PartitionFetchState = {
+    val baseState = super.partitionFetchState(tp, initialFetchState, currentState)
+    // For followers of mirrored partitions, initialize mirrorLeaderEpoch to 0 for batch validation
+    // MirrorFetcherThread leaders don't override this, so they keep mirrorLeaderEpoch = -1
+    if (initialFetchState.mirrorName.nonEmpty) {
+      new PartitionFetchState(baseState.topicId, baseState.fetchOffset, baseState.lag,
+        baseState.currentLeaderEpoch, baseState.delay, baseState.state,
+        baseState.lastFetchedEpoch, baseState.dueMs, baseState.remoteFetch, 0)
+    } else {
+      baseState
+    }
+  }
+
   // process fetched data
   override def processPartitionData(
     topicPartition: TopicPartition,
