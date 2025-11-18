@@ -43,7 +43,8 @@ public class FakeKafkaConfigSchema {
             define("min.insync.replicas", INT, "1", HIGH, ""));
         CONFIGS.put(TOPIC, new ConfigDef().
             define("unclean.leader.election.enable", BOOLEAN, "false", HIGH, "").
-            define("min.insync.replicas", INT, "1", HIGH, ""));
+            define("min.insync.replicas", INT, "1", HIGH, "").
+            define("inkless.enable", BOOLEAN, "false", HIGH, ""));
     }
 
     public static final Map<String, List<ConfigSynonym>> SYNONYMS = new HashMap<>();
@@ -53,6 +54,8 @@ public class FakeKafkaConfigSchema {
             List.of(new ConfigSynonym("unclean.leader.election.enable")));
         SYNONYMS.put("min.insync.replicas",
             List.of(new ConfigSynonym("min.insync.replicas")));
+        SYNONYMS.put("inkless.enable",
+            List.of(new ConfigSynonym("inkless.enable")));
     }
 
     public static final KafkaConfigSchema INSTANCE = new KafkaConfigSchema(CONFIGS, SYNONYMS);
