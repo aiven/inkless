@@ -130,17 +130,17 @@ class RetentionEnforcementScheduler {
 
     private Instant nextCheck(final Instant now) {
         // TODO consider adaptive checking:
-        // If a partition is infrequently written to, we can proportionally decrease the enforcing frequency for it.
-
-        // brokerCount may be 0, for example when the first broker is just starting.
-        // Defaulting to 1 in this case.
+        final long targetIntervalMs = enforcementInterval.toMillis();
         final int effectiveBrokerCount = Math.max(1, metadataView.getBrokerCount());
-        final long bound =
-            // Multiply by 2 because on average we'll get enforcementInterval
-            2 * enforcementInterval.toMillis()
-            // The more brokers we have, the less frequently we should actually check.
-            * effectiveBrokerCount;
-        return now.plusMillis(random.nextLong(bound));
+
+        // Add jitter to prevent all brokers checking at once.
+        final double jitterPercentage = 0.1 * effectiveBrokerCount;
+        final long jitterRange = (long) (targetIntervalMs * jitterPercentage);
+
+        // Next check: (interval - jitter) + random(0 to 2 x jitter)
+        final long baseDelay = targetIntervalMs - jitterRange;
+        final long randomJitter = random.nextLong(jitterRange * 2);
+        return now.plusMillis(baseDelay + randomJitter);
     }
 
     // Visible for testing.

@@ -60,15 +60,22 @@ class RetentionEnforcementSchedulerTest {
 
     @BeforeEach
     void setUp() {
-        // Make it deterministic. As `bound` is equals to the expected interval * 2, we divide by 2.
+        // Make it deterministic.
+        // The scheduler calls random.nextLong(jitterRange * 2).
+        // Since base delay is (Interval - jitterRange), by mocking the random next long to half of the jitter,
+        // the result is exactly Interval.
         when(random.nextLong(anyLong())).thenAnswer(inv -> (long) inv.getArguments()[0] / 2);
     }
 
     /**
-     * Test that each individual broker must wait longer when the cluster is bigger.
+     * Test that the average enforcement interval remains constant but the jitter increases with broker count.
      */
     @Test
-    void intervalsDependOnBrokerCount() {
+    void intervalJitterDependsOnBrokerCount() {
+        // Mock random.nextLong such that every next check is interval + brokerCount * jitterPercentage
+        final long JITTER_PERCENTAGE = (long) (0.1 * ENFORCEMENT_INTERVAL_MS);
+        when(random.nextLong(anyLong())).thenAnswer(inv -> (long) inv.getArguments()[0]);
+
         final var scheduler = new RetentionEnforcementScheduler(time, metadataView, ENFORCEMENT_INTERVAL, random);
 
         when(metadataView.getDisklessTopicPartitions()).thenReturn(Set.of(T0P0, T0P1));
@@ -77,7 +84,7 @@ class RetentionEnforcementSchedulerTest {
         // The first run is the initial scheduling.
         scheduler.getReadyPartitions();
 
-        final Instant expectedNextTime1 = Instant.ofEpochMilli(time.milliseconds() + ENFORCEMENT_INTERVAL_MS);
+        final Instant expectedNextTime1 = Instant.ofEpochMilli(time.milliseconds() + ENFORCEMENT_INTERVAL_MS + JITTER_PERCENTAGE);
         assertThat(scheduler.dumpQueue())
             .containsExactlyInAnyOrder(
                 new RetentionEnforcementScheduler.TopicIdPartitionWithNextEnforcementTime(T0P0, expectedNextTime1),
@@ -91,7 +98,8 @@ class RetentionEnforcementSchedulerTest {
 
         assertThat(scheduler.getReadyPartitions()).containsExactlyInAnyOrder(T0P0, T0P1);
 
-        final Instant expectedNextTime2 = Instant.ofEpochMilli(time.milliseconds() + ENFORCEMENT_INTERVAL_MS * 2);
+        // Interval remains the same even if there are more brokers
+        final Instant expectedNextTime2 = Instant.ofEpochMilli(time.milliseconds() + ENFORCEMENT_INTERVAL_MS + (2 * JITTER_PERCENTAGE));
         assertThat(scheduler.dumpQueue())
             .containsExactlyInAnyOrder(
                 new RetentionEnforcementScheduler.TopicIdPartitionWithNextEnforcementTime(T0P0, expectedNextTime2),
@@ -105,7 +113,7 @@ class RetentionEnforcementSchedulerTest {
 
         assertThat(scheduler.getReadyPartitions()).containsExactlyInAnyOrder(T0P0, T0P1);
 
-        final Instant expectedNextTime3 = Instant.ofEpochMilli(time.milliseconds() + ENFORCEMENT_INTERVAL_MS * 3);
+        final Instant expectedNextTime3 = Instant.ofEpochMilli(time.milliseconds() + ENFORCEMENT_INTERVAL_MS + (3 * JITTER_PERCENTAGE));
         assertThat(scheduler.dumpQueue())
             .containsExactlyInAnyOrder(
                 new RetentionEnforcementScheduler.TopicIdPartitionWithNextEnforcementTime(T0P0, expectedNextTime3),
@@ -119,7 +127,7 @@ class RetentionEnforcementSchedulerTest {
 
         assertThat(scheduler.getReadyPartitions()).containsExactlyInAnyOrder(T0P0, T0P1);
 
-        final Instant expectedNextTime4 = Instant.ofEpochMilli(time.milliseconds() + ENFORCEMENT_INTERVAL_MS);
+        final Instant expectedNextTime4 = Instant.ofEpochMilli(time.milliseconds() + ENFORCEMENT_INTERVAL_MS + JITTER_PERCENTAGE);
         assertThat(scheduler.dumpQueue())
             .containsExactlyInAnyOrder(
                 new RetentionEnforcementScheduler.TopicIdPartitionWithNextEnforcementTime(T0P0, expectedNextTime4),
