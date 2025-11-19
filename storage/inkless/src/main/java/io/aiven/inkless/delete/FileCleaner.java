@@ -112,6 +112,7 @@ public class FileCleaner implements Runnable, Closeable {
                     try {
                         cleanFiles(objectKeyPaths);
                     } catch (StorageBackendException e) {
+                        LOGGER.error("Error while cleaning files", e);
                         throw new RuntimeException(e);
                     }
                 }, metrics::recordFileCleanerTotalTime);
