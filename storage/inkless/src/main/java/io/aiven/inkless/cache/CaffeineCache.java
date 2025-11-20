@@ -4,10 +4,12 @@ import org.apache.kafka.common.metrics.Metrics;
 
 import com.github.benmanes.caffeine.cache.AsyncCache;
 import com.github.benmanes.caffeine.cache.Caffeine;
+import com.github.benmanes.caffeine.cache.Weigher;
 import com.github.benmanes.caffeine.cache.stats.CacheStats;
 
 import java.io.IOException;
 import java.time.Duration;
+import java.util.OptionalLong;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.Function;
 
@@ -25,6 +27,7 @@ public final class CaffeineCache implements ObjectCache {
 
     public CaffeineCache(
         final long maxCacheSize,
+        final OptionalLong maxCacheBytes,
         final long lifespanSeconds,
         final int maxIdleSeconds,
         final Metrics storageMetrics
@@ -32,6 +35,7 @@ public final class CaffeineCache implements ObjectCache {
         final Caffeine<Object, Object> builder = Caffeine.newBuilder();
         // size and weight limits
         builder.maximumSize(maxCacheSize);
+        maxCacheBytes.ifPresent(max -> builder.maximumWeight(max).weigher(weigher()));
         // expiration policies
         builder.expireAfterWrite(Duration.ofSeconds(lifespanSeconds));
         builder.expireAfterAccess(Duration.ofSeconds(maxIdleSeconds != -1 ? maxIdleSeconds : 180));
@@ -39,6 +43,10 @@ public final class CaffeineCache implements ObjectCache {
         builder.recordStats();
         cache = builder.buildAsync();
         new CaffeineCacheMetrics(storageMetrics, cache.synchronous());
+    }
+
+    public Weigher<CacheKey, FileExtent> weigher() {
+        return (key, value) -> value.data().length;
     }
 
     @Override
