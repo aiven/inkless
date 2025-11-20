@@ -357,6 +357,6 @@ class AbstractFetcherManagerTest {
 
     override protected def endOffsetForEpoch(topicPartition: TopicPartition, epoch: Int): Optional[OffsetAndEpoch] = Optional.of(new OffsetAndEpoch(1, 0))
 
-    override protected def shouldUpdateEpochFromBatches(topicPartition: TopicPartition): Boolean = false
+    override protected def shouldUpdateMirrorLeaderEpoch(topicPartition: TopicPartition): Boolean = false
   }
 }

@@ -89,7 +89,7 @@ class MirrorFetcherThread(name: String,
   }
 
   // process fetched data
-  override def shouldUpdateEpochFromBatches(topicPartition: TopicPartition): Boolean = {
+  override def shouldUpdateMirrorLeaderEpoch(topicPartition: TopicPartition): Boolean = {
     // MirrorFetcherThread always processes mirrored partitions, so always update from batches
     true
   }
@@ -115,33 +115,6 @@ class MirrorFetcherThread(name: String,
 
     // Append batches from the source cluster to the destination partition's log, preserving
     // the original leader epochs from the source cluster.
-    //
-    // Why we preserve source epochs:
-    //   Consumers cache leader epochs from the batches they read. When a consumer reads from
-    //   the source cluster and caches epoch=5 at offset=100, then fails over to the destination
-    //   cluster, it will validate its cached epoch against the destination's log. If we rewrote
-    //   epoch=5 to a different value (e.g., destination epoch=0), the consumer would receive
-    //   FENCED_LEADER_EPOCH and reset its position, causing data loss or duplication.
-    //
-    // Epoch cache synchronization:
-    //   The appendAsFollower operation automatically updates the destination partition's epoch
-    //   cache to match the source cluster's epoch metadata. For each batch appended:
-    //     - Extract the batch's leader epoch (e.g., epoch=5)
-    //     - Record the mapping: epoch -> startOffset (e.g., 5 -> 40)
-    //     - Add entry to epoch cache if this epoch is new
-    //
-    //   This ensures the destination's epoch cache becomes identical to the source's epoch cache,
-    //   enabling correct truncation and divergence detection for all replicas.
-    //
-    // Two-level replication:
-    //   After this append, the destination partition has batches with source epochs in its log.
-    //   When destination followers (ReplicaFetcherThread) replicate from this partition, they
-    //   receive these same batches with source epochs. The effectiveLeaderEpoch logic in
-    //   ReplicaFetcherThread allows them to accept batches whose epochs are higher than the
-    //   destination partition's local leader epoch, ensuring intra-cluster replication succeeds.
-    //
-    //   Result: All replicas (source leader, destination leader, destination followers) have
-    //   identical log contents and epoch cache entries, maintaining consistency across clusters.
     val logAppendInfo = partition.appendRecordsToFollowerOrFutureReplica(records, isFuture = false, partitionLeaderEpoch)
 
     if (logTrace)

@@ -97,7 +97,7 @@ abstract class AbstractFetcherThread(name: String,
    * @param topicPartition the partition to check
    * @return true if fetch epoch should be updated from batch epochs
    */
-  protected def shouldUpdateEpochFromBatches(topicPartition: TopicPartition): Boolean
+  protected def shouldUpdateMirrorLeaderEpoch(topicPartition: TopicPartition): Boolean
 
   protected def truncate(topicPartition: TopicPartition, truncationState: OffsetTruncationState): Unit
 
@@ -502,15 +502,11 @@ abstract class AbstractFetcherThread(name: String,
                         if ((validBytes > 0 || currentFetchState.lag.isEmpty) && partitionStates.contains(topicPartition)) {
                           val lastFetchedEpoch =
                             if (logAppendInfo.lastLeaderEpoch.isPresent) logAppendInfo.lastLeaderEpoch else currentFetchState.lastFetchedEpoch
-                          // For mirrored partitions, update fetch epoch to the highest batch epoch seen.
-                          // This allows source cluster epochs to be progressively accepted while maintaining
-                          // epoch validations (batches with epochs higher than fetch epoch are skipped).
-                          // For regular partitions, fetch epoch comes from metadata and should not be
-                          // updated from batch epochs.
-                          val updatedMirrorLeaderEpoch = if (shouldUpdateEpochFromBatches(topicPartition) && logAppendInfo.lastLeaderEpoch.isPresent) {
-                            Math.max(currentFetchState.mirrorLeaderEpoch, logAppendInfo.lastLeaderEpoch.get)
+                          // For mirrored partitions, update fetch epoch to the source epoch from the fetch response
+                          val updatedMirrorLeaderEpoch = if (shouldUpdateMirrorLeaderEpoch(topicPartition)) {
+                            fetchPartitionData.mirrorLeaderEpoch.get().intValue()
                           } else {
-                            currentFetchState.mirrorLeaderEpoch
+                            currentFetchState.currentLeaderEpoch
                           }
                           // Update partitionStates only if there is no exception during processPartitionData
                           val newFetchState = new PartitionFetchState(currentFetchState.topicId, nextOffset, Optional.of(lag),

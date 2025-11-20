@@ -78,7 +78,7 @@ class ReplicaAlterLogDirsThread(name: String,
   }
 
   // process fetched data
-  override def shouldUpdateEpochFromBatches(topicPartition: TopicPartition): Boolean = {
+  override def shouldUpdateMirrorLeaderEpoch(topicPartition: TopicPartition): Boolean = {
     // ReplicaAlterLogDirsThread moves logs between directories on the same broker.
     // It replicates from the current log to the future log, both managed by the same partition.
     // Epoch management is handled by the partition itself, not by batch epochs.

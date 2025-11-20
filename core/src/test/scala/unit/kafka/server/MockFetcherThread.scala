@@ -194,5 +194,5 @@ class MockFetcherThread(val mockLeader: MockLeaderEndPoint,
     }
   }
 
-  override protected def shouldUpdateEpochFromBatches(topicPartition: TopicPartition): Boolean = false
+  override protected def shouldUpdateMirrorLeaderEpoch(topicPartition: TopicPartition): Boolean = false
 }
