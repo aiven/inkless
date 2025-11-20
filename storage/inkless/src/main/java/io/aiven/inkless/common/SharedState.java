@@ -71,7 +71,8 @@ public final class SharedState implements Closeable {
         final ObjectCache cache,
         final BatchCoordinateCache batchCoordinateCache,
         final BrokerTopicStats brokerTopicStats,
-        final Supplier<LogConfig> defaultTopicConfigs
+        final Supplier<LogConfig> defaultTopicConfigs,
+        final Metrics storageMetrics
     ) {
         this.time = time;
         this.brokerId = brokerId;
@@ -84,12 +85,7 @@ public final class SharedState implements Closeable {
         this.batchCoordinateCache = batchCoordinateCache;
         this.brokerTopicStats = brokerTopicStats;
         this.defaultTopicConfigs = defaultTopicConfigs;
-
-        final MetricsReporter reporter = new JmxReporter();
-        this.storageMetrics = new Metrics(
-            new MetricConfig(), List.of(reporter), Time.SYSTEM,
-            new KafkaMetricsContext(STORAGE_METRIC_CONTEXT)
-        );
+        this.storageMetrics = storageMetrics;
     }
 
     public static SharedState initialize(
@@ -107,6 +103,11 @@ public final class SharedState implements Closeable {
                 "Value of consume.batch.coordinate.cache.ttl.ms exceeds file.cleaner.retention.period.ms / 2"
             );
         }
+        final MetricsReporter reporter = new JmxReporter();
+        final Metrics storageMetrics = new Metrics(
+            new MetricConfig(), List.of(reporter), Time.SYSTEM,
+            new KafkaMetricsContext(STORAGE_METRIC_CONTEXT)
+        );
         return new SharedState(
             time,
             brokerId,
@@ -118,11 +119,13 @@ public final class SharedState implements Closeable {
             new CaffeineCache(
                 config.cacheMaxCount(),
                 config.cacheExpirationLifespanSec(),
-                config.cacheExpirationMaxIdleSec()
+                config.cacheExpirationMaxIdleSec(),
+                storageMetrics
             ),
             config.isBatchCoordinateCacheEnabled() ? new CaffeineBatchCoordinateCache(config.batchCoordinateCacheTtl()) : new NullBatchCoordinateCache(),
             brokerTopicStats,
-            defaultTopicConfigs
+            defaultTopicConfigs,
+            storageMetrics
         );
     }
 
