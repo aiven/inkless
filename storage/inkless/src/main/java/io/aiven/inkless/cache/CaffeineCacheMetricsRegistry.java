@@ -20,7 +20,6 @@ package io.aiven.inkless.cache;
 import org.apache.kafka.common.MetricNameTemplate;
 
 public class CaffeineCacheMetricsRegistry {
-    public static final String METRIC_CONTEXT = "io.aiven.inkless.cache.caffeine";
     public static final String METRIC_GROUP = "wal-segment-cache";
 
     public static final String CACHE_SIZE = "size";
