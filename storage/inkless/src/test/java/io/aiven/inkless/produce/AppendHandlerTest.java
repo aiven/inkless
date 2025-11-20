@@ -21,6 +21,7 @@ import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.compress.Compression;
+import org.apache.kafka.common.metrics.Metrics;
 import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.record.MemoryRecords;
 import org.apache.kafka.common.record.SimpleRecord;
@@ -80,6 +81,7 @@ public class AppendHandlerTest {
 
     Time time = new MockTime();
     RequestLocal requestLocal = RequestLocal.noCaching();
+    Metrics storageMetrics = new Metrics();
     @Mock
     InklessConfig inklessConfig;
     @Mock
@@ -113,9 +115,7 @@ public class AppendHandlerTest {
 
     @Test
     public void rejectTransactionalProduce() throws Exception {
-        try (final AppendHandler interceptor = new AppendHandler(
-            new SharedState(time, BROKER_ID, inklessConfig, metadataView, controlPlane,
-                OBJECT_KEY_CREATOR, KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, BATCH_COORDINATE_CACHE, brokerTopicStats, DEFAULT_TOPIC_CONFIGS), writer)) {
+        try (final AppendHandler interceptor = new AppendHandler(buildSharedState(), writer)) {
 
             final TopicIdPartition topicIdPartition1 = new TopicIdPartition(Uuid.randomUuid(), 0, "inkless1");
             final TopicIdPartition topicIdPartition2 = new TopicIdPartition(Uuid.randomUuid(), 0, "inkless2");
@@ -137,9 +137,7 @@ public class AppendHandlerTest {
 
     @Test
     public void emptyRequests() throws Exception {
-        try (final AppendHandler interceptor = new AppendHandler(
-            new SharedState(time, BROKER_ID, inklessConfig, metadataView, controlPlane,
-                OBJECT_KEY_CREATOR, KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, BATCH_COORDINATE_CACHE, brokerTopicStats, DEFAULT_TOPIC_CONFIGS), writer)) {
+        try (final AppendHandler interceptor = new AppendHandler(buildSharedState(), writer)) {
 
             final Map<TopicIdPartition, MemoryRecords> entriesPerPartition = Map.of();
 
@@ -165,9 +163,7 @@ public class AppendHandlerTest {
         );
 
         when(metadataView.getTopicConfig(any())).thenReturn(new Properties());
-        try (final AppendHandler interceptor = new AppendHandler(
-            new SharedState(time, BROKER_ID, inklessConfig, metadataView, controlPlane,
-                OBJECT_KEY_CREATOR, KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, BATCH_COORDINATE_CACHE, brokerTopicStats, DEFAULT_TOPIC_CONFIGS), writer)) {
+        try (final AppendHandler interceptor = new AppendHandler(buildSharedState(), writer)) {
 
             final var result = interceptor.handle(entriesPerPartition, requestLocal).get();
             assertThat(result).isEqualTo(writeResult);
@@ -188,21 +184,34 @@ public class AppendHandlerTest {
         );
 
         when(metadataView.getTopicConfig(any())).thenReturn(new Properties());
-        try (final AppendHandler interceptor = new AppendHandler(
-            new SharedState(time, BROKER_ID, inklessConfig, metadataView, controlPlane,
-                OBJECT_KEY_CREATOR, KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, BATCH_COORDINATE_CACHE, brokerTopicStats, DEFAULT_TOPIC_CONFIGS), writer)) {
+        try (final AppendHandler interceptor = new AppendHandler(buildSharedState(), writer)) {
             assertThatThrownBy(() -> interceptor.handle(entriesPerPartition, requestLocal).get()).hasCause(exception);
         }
     }
 
     @Test
     public void close() throws IOException {
-        final AppendHandler interceptor = new AppendHandler(
-            new SharedState(time, BROKER_ID, inklessConfig, metadataView, controlPlane,
-                OBJECT_KEY_CREATOR, KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, BATCH_COORDINATE_CACHE, brokerTopicStats, DEFAULT_TOPIC_CONFIGS), writer);
+        final AppendHandler interceptor = new AppendHandler(buildSharedState(), writer);
 
         interceptor.close();
 
         verify(writer).close();
+    }
+
+    private SharedState buildSharedState() {
+        return new SharedState(
+            time,
+            BROKER_ID,
+            inklessConfig,
+            metadataView,
+            controlPlane,
+            OBJECT_KEY_CREATOR,
+            KEY_ALIGNMENT_STRATEGY,
+            OBJECT_CACHE,
+            BATCH_COORDINATE_CACHE,
+            brokerTopicStats,
+            DEFAULT_TOPIC_CONFIGS,
+            storageMetrics
+        );
     }
 }
