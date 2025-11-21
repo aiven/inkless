@@ -19,6 +19,7 @@
 package io.aiven.inkless.storage_backend.gcs;
 
 import com.google.auth.Credentials;
+import com.google.auth.oauth2.ServiceAccountCredentials;
 import com.google.cloud.NoCredentials;
 
 import org.junit.jupiter.api.Test;
@@ -34,6 +35,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
+import static java.time.Duration.ofSeconds;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.awaitility.Awaitility.await;
 
@@ -246,18 +248,28 @@ class ReloadableCredentialsProviderTest {
             // Write invalid JSON to trigger an error
             Files.write(credentialsFile, "invalid json".getBytes(), StandardOpenOption.TRUNCATE_EXISTING);
 
-            // Give some time for the file watcher to process the change
-            await().atLeast(2, TimeUnit.SECONDS);
+            // Give some time for the file watcher to process the change and check that successCallbackCount have not
+            // been incremented during the wait
+            await().during(2, TimeUnit.SECONDS)
+                .untilAsserted(() -> assertThat(successCallbackCount.get()).isZero());
 
-            // The callback should not have been called due to the error
-            assertThat(successCallbackCount.get()).isZero();
+            // Verifying that initial credentials are still there
+            assertThat(provider.getCredentials()).isEqualTo(initialCredentials);
 
             // Write valid JSON again
             Files.write(credentialsFile, UPDATED_CREDENTIALS_JSON.getBytes(), StandardOpenOption.TRUNCATE_EXISTING);
 
             // Give some time for the file watcher to process the change
             // Now the callback should be called
-            await().atMost(5, TimeUnit.SECONDS).until(() -> successCallbackCount.get() == 1);
+            await().atMost(5, TimeUnit.SECONDS).pollDelay(ofSeconds(1)).pollInterval(ofSeconds(1))
+                .untilAsserted(() -> assertThat(successCallbackCount.get()).isOne());
+
+            // Verifying that updated credentials are loaded
+            final Credentials updatedCredentials = provider.getCredentials();
+            assertThat(updatedCredentials)
+                .isInstanceOfSatisfying(ServiceAccountCredentials.class, creds ->
+                    assertThat(creds.getProjectId()).isEqualTo("updated-project")
+                );
         }
     }
 
