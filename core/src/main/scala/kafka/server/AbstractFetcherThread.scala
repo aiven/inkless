@@ -492,6 +492,9 @@ abstract class AbstractFetcherThread(name: String,
                         val lag = Math.max(0L, partitionData.highWatermark - nextOffset)
                         fetcherLagStats.getAndMaybePut(topicPartition).lag = lag
 
+                        // Update fetch state when:
+                        // 1. No data fetched but mirror leader epoch advanced (mirrored partitions only)
+                        // 2. Data was fetched OR this is the first fetch (lag was unknown)
                         val shouldUpdateState = (validBytes == 0 && partitionData.mirrorLeaderEpoch > currentFetchState.mirrorLeaderEpoch) ||
                           (validBytes > 0 || currentFetchState.lag.isEmpty)
 
@@ -648,6 +651,8 @@ abstract class AbstractFetcherThread(name: String,
       // With old message format, `latestEpoch` will be empty and we use Truncating state
       // to truncate to high watermark.
       val latestEpochInLog = latestEpochFromLog(tp)
+      // For mirrored partitions, use epochs from the local log (which contain source cluster epochs).
+      // For regular followers, use epochs from partition metadata (destination cluster epochs).
       val lastFetchedEpoch: Optional[Integer] = if (initialFetchState.mirrorName.nonEmpty) {
         if (latestEpochInLog.isPresent)
           latestEpochInLog

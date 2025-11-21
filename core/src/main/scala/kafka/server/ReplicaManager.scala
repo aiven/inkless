@@ -2547,8 +2547,11 @@ class ReplicaManager(val config: KafkaConfig,
         nodeOpt match {
           case Some(node) =>
             val log = partition.localLogOrException
-            // Pass mirrorName to InitialFetchState so the fetcher knows to use source epoch logic
+
+            // This flag is used is used in AbstractFetcherThread.partitionFetchState to distinguish mirror from regular followers
+            // and it triggers different epoch handling logic throughout the fetch lifecycle.
             val mirrorName = if (partition.mirrorName != null && partition.mirrorName.nonEmpty) partition.mirrorName else ""
+
             partitionAndOffsets.put(topicPartition, InitialFetchState(
               log.topicId.toScala,
               new BrokerEndPoint(node.id, node.host, node.port),
@@ -2595,6 +2598,8 @@ class ReplicaManager(val config: KafkaConfig,
    * The fetch position is initialized to the local log end offset, allowing the mirror
    * fetcher to continue from where it left off (or start from beginning if log is empty).
    *
+   * TODO: we should handle the error cases like in applyLocalFollowersDelta
+   *
    * @param readOnlyLeaders Map of partitions to their metadata for partitions that became
    *                        read-only leaders on this broker
    */
@@ -2613,8 +2618,7 @@ class ReplicaManager(val config: KafkaConfig,
           try {
             val mirrorName = info.partition.mirrorName
             if (mirrorName != null && !mirrorName.isEmpty) {
-              // Set mirrorName on partition for management and configuration purposes.
-              // Used when transitioning partition from read-only to writable state.
+              // Set mirrorName on partition for management and configuration purposes
               partition.setMirrorName(mirrorName)
 
               // Get the remote partition leader from mirror metadata manager
