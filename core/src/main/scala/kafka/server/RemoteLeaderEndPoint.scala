@@ -61,6 +61,7 @@ import scala.collection.mutable
  * @param quota Replication quota for throttling fetches
  * @param metadataVersionSupplier Provides the current metadata version, determines fetch request version
  * @param brokerEpochSupplier Provides the current broker epoch for fencing
+ * @param isCrossClusterMirror Whether we are doing cross-cluster mirroring
  */
 class RemoteLeaderEndPoint(logPrefix: String,
                            blockingSender: BlockingSend,
@@ -69,7 +70,8 @@ class RemoteLeaderEndPoint(logPrefix: String,
                            replicaManager: ReplicaManager,
                            quota: ReplicaQuota,
                            metadataVersionSupplier: () => MetadataVersion,
-                           brokerEpochSupplier: () => Long) extends LeaderEndPoint with Logging {
+                           brokerEpochSupplier: () => Long,
+                           isCrossClusterMirror: Boolean = false) extends LeaderEndPoint with Logging {
 
   this.logIdent = logPrefix
 
@@ -98,7 +100,7 @@ class RemoteLeaderEndPoint(logPrefix: String,
         throw t
     }
     val fetchResponse = clientResponse.responseBody.asInstanceOf[FetchResponse]
-    info("!!! Got fetchResponse: " + fetchResponse)
+    info("#### Got fetch response: " + fetchResponse)
     lastSeenEndpointList.clear()
     fetchResponse.data().nodeEndpoints().forEach(
       node => lastSeenEndpointList.put(node.nodeId(), new Node(node.nodeId(), node.host(), node.port(), node.rack())))
@@ -166,12 +168,12 @@ class RemoteLeaderEndPoint(logPrefix: String,
     }
 
     val epochRequest = OffsetsForLeaderEpochRequest.Builder.forFollower(topics, brokerConfig.brokerId)
-    info(s"Sending offset for leader epoch request $epochRequest")
+    debug(s"Sending offset for leader epoch request $epochRequest")
 
     try {
       val response = blockingSender.sendRequest(epochRequest)
       val responseBody = response.responseBody.asInstanceOf[OffsetsForLeaderEpochResponse]
-      info(s"Received leaderEpoch response $response")
+      debug(s"Received leaderEpoch response $response")
       responseBody.data.topics.asScala.flatMap { offsetForLeaderTopicResult =>
         offsetForLeaderTopicResult.partitions.asScala.map { offsetForLeaderPartitionResult =>
           val tp = new TopicPartition(offsetForLeaderTopicResult.topic, offsetForLeaderPartitionResult.partition)
@@ -205,13 +207,19 @@ class RemoteLeaderEndPoint(logPrefix: String,
             fetchState.lastFetchedEpoch()
           else
             Optional.empty[Integer]
+          // For mirrored partitions, the initial fetch has currentLeaderEpoch=0 and mirrorLeaderEpoch=0
+          val mirrorLeaderEpoch: Optional[Integer] = if (fetchState.mirrorLeaderEpoch() >= 0)
+            Optional.of(Int.box(fetchState.mirrorLeaderEpoch()))
+          else
+            Optional.empty[Integer]
           builder.add(topicPartition, new FetchRequest.PartitionData(
             fetchState.topicId().orElse(Uuid.ZERO_UUID),
             fetchState.fetchOffset(),
             logStartOffset,
             fetchSize,
             Optional.of(fetchState.currentLeaderEpoch()),
-            lastFetchedEpoch))
+            lastFetchedEpoch,
+            mirrorLeaderEpoch))
           if (fetchState.remoteFetch() && fetchState.topicId().isPresent) {
             readOnlyTopics += fetchState.topicId().get()
           }
@@ -234,13 +242,13 @@ class RemoteLeaderEndPoint(logPrefix: String,
       } else {
         metadataVersion.fetchRequestVersion
       }
-      // Use different fetch request types based on whether we're doing cross-cluster mirroring
-      val requestBuilder = if (readOnlyTopics.isEmpty) {
-        // For intra-cluster replication (readOnlyTopics empty): Use replica fetch so followers can join ISR
-        FetchRequest.Builder.forReplica(version, brokerConfig.brokerId, brokerEpochSupplier(), maxWait, minBytes, fetchData.toSend)
-      } else {
-        // For cross-cluster mirroring (readOnlyTopics not empty): Use consumer fetch to avoid ACL issues
+      // Use different fetch request types based on whether we're doing cross-cluster mirroring.
+      val requestBuilder = if (isCrossClusterMirror) {
+        // Cross-cluster mirroring (MirrorFetcherThread): Use consumer fetch to skip ISR logic on source cluster.
         FetchRequest.Builder.forConsumer(version, maxWait, minBytes, fetchData.toSend).isolationLevel(IsolationLevel.READ_COMMITTED)
+      } else {
+        // Intra-cluster replication (ReplicaFetcherThread): Use replica fetch even when fetching to enable proper epoch validation.
+        FetchRequest.Builder.forReplica(version, brokerConfig.brokerId, brokerEpochSupplier(), maxWait, minBytes, fetchData.toSend)
       }
       requestBuilder
         .setMaxBytes(maxBytes)

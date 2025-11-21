@@ -110,6 +110,16 @@ class ReplicaFetcherThread(name: String,
     completeDelayedFetchRequests()
   }
 
+  override def shouldUpdateMirrorLeaderEpoch(topicPartition: TopicPartition): Boolean = {
+    // For followers of mirrored partitions, update epoch from batches to track source epochs.
+    // For regular partitions, epoch comes from metadata and should not be updated from batches.
+    replicaMgr.getPartition(topicPartition) match {
+      case HostedPartition.Online(partition) =>
+        partition.mirrorName != null && partition.mirrorName.nonEmpty
+      case _ => false
+    }
+  }
+
   // process fetched data
   override def processPartitionData(
     topicPartition: TopicPartition,
@@ -130,7 +140,11 @@ class ReplicaFetcherThread(name: String,
       trace("Follower has replica log end offset %d for partition %s. Received %d bytes of messages and leader hw %d"
         .format(log.logEndOffset, topicPartition, records.sizeInBytes, partitionData.highWatermark))
 
-    // Append the leader's messages to the log
+    // Append the leader's messages to the log.
+    //
+    // The fetch leader epoch from metadata is used for append validation.
+    // For mirrored partitions, this epoch is updated after each append to match the highest batch
+    // epoch seen, allowing source cluster epochs to be accepted while maintaining epoch validations.
     val logAppendInfo = partition.appendRecordsToFollowerOrFutureReplica(records, isFuture = false, partitionLeaderEpoch)
 
     if (logTrace)

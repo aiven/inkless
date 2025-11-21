@@ -61,13 +61,13 @@ class MirrorFetcherManager(brokerConfig: KafkaConfig,
                            metadataVersionSupplier: () => MetadataVersion,
                            brokerEpochSupplier: () => Long,
                            metadataCache: MetadataCache)
-    extends AbstractFetcherManager[ReplicaFetcherThread](
+    extends AbstractFetcherManager[MirrorFetcherThread](
       name = "MirrorFetcherManager on broker " + brokerConfig.brokerId,
       clientId = "MirrorReplica",
       numFetchers = brokerConfig.numMirrorReplicaFetchers) {
-  private val mirrorFetcherThreadMap = new mutable.HashMap[BrokerAndFetcherIdWithMirror, ReplicaFetcherThread]
+  private val mirrorFetcherThreadMap = new mutable.HashMap[BrokerAndFetcherIdWithMirror, MirrorFetcherThread]
 
-  override def createFetcherThread(fetcherId: Int, sourceBroker: BrokerEndPoint): ReplicaFetcherThread = {
+  override def createFetcherThread(fetcherId: Int, sourceBroker: BrokerEndPoint): MirrorFetcherThread = {
     throw new UnsupportedOperationException("Use createMirrorFetcherThread for mirror fetchers")
   }
 
@@ -84,7 +84,7 @@ class MirrorFetcherManager(brokerConfig: KafkaConfig,
     }
 
     this.synchronized {
-      def addAndStartFetcherThread(remoteFetcherKey: BrokerAndFetcherIdWithMirror): ReplicaFetcherThread = {
+      def addAndStartFetcherThread(remoteFetcherKey: BrokerAndFetcherIdWithMirror): MirrorFetcherThread = {
         val fetcherThread = createMirrorFetcherThread(remoteFetcherKey.fetcherId, remoteFetcherKey.sourceBroker,
           remoteFetcherKey.mirrorName)
         mirrorFetcherThreadMap.put(remoteFetcherKey, fetcherThread)
@@ -116,7 +116,7 @@ class MirrorFetcherManager(brokerConfig: KafkaConfig,
     info(s"Creating mirror fetcher thread: fetcherId = $fetcherId, sourceBroker = $sourceBroker, mirrorName = $mirrorName")
     val threadName = s"MirrorFetcherThread-${sourceBroker.id}-$fetcherId-$mirrorName"
     val logContext = new LogContext(s"[MirrorFetcher fetcherId=$fetcherId, mirrorName=$mirrorName, " +
-      s"sourceBroker=${sourceBroker.id}, destBroker=${brokerConfig.brokerId}] ")
+      s"srcBroker=${sourceBroker.id}, dstBroker=${brokerConfig.brokerId}] ")
 
     val endpoint = if (mirrorName.nonEmpty) {
       val mirrorProperties = metadataCache.config(new ConfigResource(ConfigResource.Type.MIRROR, mirrorName))
@@ -129,7 +129,7 @@ class MirrorFetcherManager(brokerConfig: KafkaConfig,
     }
     val fetchSessionHandler = new FetchSessionHandler(logContext, sourceBroker.id)
     val leader: LeaderEndPoint = new RemoteLeaderEndPoint(logContext.logPrefix, endpoint, fetchSessionHandler, brokerConfig,
-      replicaManager, quotaManager, metadataVersionSupplier, brokerEpochSupplier)
+      replicaManager, quotaManager, metadataVersionSupplier, brokerEpochSupplier, isCrossClusterMirror = true)
     new MirrorFetcherThread(threadName, leader, brokerConfig, failedPartitions, replicaManager,
       quotaManager, logContext.logPrefix, mirrorName)
   }

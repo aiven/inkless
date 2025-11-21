@@ -123,19 +123,19 @@ object Partition {
   def apply(topicIdPartition: TopicIdPartition,
             time: Time,
             replicaManager: ReplicaManager,
-            clusterLinkName: String): Partition = {
+            mirrorName: String): Partition = {
     Partition(
       topicPartition = topicIdPartition.topicPartition,
       topicId = Some(topicIdPartition.topicId),
       time = time,
       replicaManager = replicaManager,
-      clusterLinkName = clusterLinkName)
+      mirrorName = mirrorName)
   }
   def apply(topicPartition: TopicPartition,
             time: Time,
             replicaManager: ReplicaManager,
             topicId: Option[Uuid] = None,
-            clusterLinkName: String = ""): Partition = {
+            mirrorName: String = ""): Partition = {
 
     val isrChangeListener = new AlterPartitionListener {
       override def markIsrExpand(): Unit = {
@@ -168,7 +168,7 @@ object Partition {
       metadataCache = replicaManager.metadataCache,
       logManager = replicaManager.logManager,
       alterIsrManager = replicaManager.alterPartitionManager,
-      mirrorName = clusterLinkName)
+      mirrorName = mirrorName)
   }
 
   def removeMetrics(topicPartition: TopicPartition): Unit = {
@@ -1457,7 +1457,6 @@ class Partition(val topicPartition: TopicPartition,
           fetchParams.replicaId,
           fetchPartitionData
         )
-
         val logReadInfo = readFromLocalLog(localLog)
         (replica, logReadInfo)
       }
@@ -1490,13 +1489,12 @@ class Partition(val topicPartition: TopicPartition,
     fetchPartitionData: FetchRequest.PartitionData
   ): Replica = {
     getReplica(replicaId).getOrElse {
-      info(s"Leader $localBrokerId failed to record follower $replicaId's position " +
+      debug(s"Leader $localBrokerId failed to record follower $replicaId's position " +
         s"${fetchPartitionData.fetchOffset}, and last sent high watermark since the replica is " +
         s"not recognized to be one of the assigned replicas ${assignmentState.replicas.mkString(",")} " +
-        s"for leader epoch $leaderEpoch with partition epoch $partitionEpoch and ${fetchPartitionData.currentLeaderEpoch.isPresent}")
+        s"for leader epoch $leaderEpoch with partition epoch $partitionEpoch")
 
       val error = if (fetchPartitionData.currentLeaderEpoch.isPresent) {
-
         // The leader epoch is present in the request and matches the local epoch, but
         // the replica is not in the replica set. This case is possible in KRaft,
         // for example, when new replicas are added as part of a reassignment.
@@ -1534,9 +1532,7 @@ class Partition(val topicPartition: TopicPartition,
     val initialLastStableOffset = localLog.lastStableOffset
 
     lastFetchedEpoch.ifPresent { fetchEpoch =>
-      // get leader node's epoch and offset
       val epochEndOffset = lastOffsetForLeaderEpoch(currentLeaderEpoch, fetchEpoch, fetchOnlyFromLeader = false)
-      info(s"!!! Fetching  $epochEndOffset, $currentLeaderEpoch, $fetchEpoch")
       val error = Errors.forCode(epochEndOffset.errorCode)
       if (error != Errors.NONE) {
         throw error.exception()

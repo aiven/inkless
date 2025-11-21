@@ -648,7 +648,7 @@ class KafkaApis(val requestChannel: RequestChannel,
     val versionId = request.header.apiVersion
     val clientId = request.header.clientId
     val fetchRequest = request.body[FetchRequest]
-    info("!!! handleFetchRequest:" + fetchRequest)
+    info("#### Handling fetch request: " + fetchRequest)
 
     val topicNames =
       if (fetchRequest.version() >= 13)
@@ -677,10 +677,11 @@ class KafkaApis(val requestChannel: RequestChannel,
             erroneous += topicIdPartition -> FetchResponse.partitionResponse(topicIdPartition, Errors.UNKNOWN_TOPIC_ID)
           else if (!metadataCache.contains(topicIdPartition.topicPartition))
             erroneous += topicIdPartition -> FetchResponse.partitionResponse(topicIdPartition, Errors.UNKNOWN_TOPIC_OR_PARTITION)
-          else
-            interesting += topicIdPartition -> new PartitionData(data.topicId, data.fetchOffset, data.logStartOffset, data.maxBytes, data.currentLeaderEpoch, data.lastFetchedEpoch)
+          else {
+            interesting += topicIdPartition -> new PartitionData(data.topicId, data.fetchOffset, data.logStartOffset,
+              data.maxBytes, data.currentLeaderEpoch, data.lastFetchedEpoch, data.mirrorLeaderEpoch)
+          }
         }
-        info("!!! interesting:" + interesting.mkString(","))
       } else {
         fetchContext.foreachPartition { (topicIdPartition, _) =>
           erroneous += topicIdPartition -> FetchResponse.partitionResponse(topicIdPartition, Errors.TOPIC_AUTHORIZATION_FAILED)
@@ -736,6 +737,17 @@ class KafkaApis(val requestChannel: RequestChannel,
           .setAbortedTransactions(abortedTransactions)
           .setRecords(data.records)
           .setPreferredReadReplica(data.preferredReadReplica.orElse(FetchResponse.INVALID_PREFERRED_REPLICA_ID))
+
+        // For mirrored partitions, set mirrorLeaderEpoch from the log's highest epoch
+        if (versionId >= 19) {
+          replicaManager.getPartition(topicIdPartition.topicPartition()) match {
+            case HostedPartition.Online(partition) if partition.mirrorName.nonEmpty =>
+              val latestLeaderEpochInLog = partition.localLogOrException.latestEpoch.orElse(0)
+              partitionData.setMirrorLeaderEpoch(latestLeaderEpochInLog)
+            case _ =>
+            // Not a mirrored partition, leave mirrorLeaderEpoch at default -1
+          }
+        }
 
         if (versionId >= 16) {
           data.error match {
