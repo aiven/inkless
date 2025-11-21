@@ -738,7 +738,7 @@ class KafkaApis(val requestChannel: RequestChannel,
           .setRecords(data.records)
           .setPreferredReadReplica(data.preferredReadReplica.orElse(FetchResponse.INVALID_PREFERRED_REPLICA_ID))
 
-        // For mirrored partitions, also set mirrorLeaderEpoch from the log's highest epoch
+        // For mirrored partitions, set mirrorLeaderEpoch from the log's highest epoch
         if (versionId >= 19) {
           replicaManager.getPartition(topicIdPartition.topicPartition()) match {
             case HostedPartition.Online(partition) if partition.mirrorName.nonEmpty =>

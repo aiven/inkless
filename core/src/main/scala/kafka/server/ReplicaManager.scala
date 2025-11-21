@@ -2533,6 +2533,7 @@ class ReplicaManager(val config: KafkaConfig,
       // Stopping the fetchers must be done first in order to initialize the fetch
       // position correctly.
       replicaFetcherManager.removeFetcherForPartitions(partitionsToStartFetching.keySet)
+      mirrorFetcherManager.removeFetcherForPartitions(partitionsToStartFetching.keySet)
       stateChangeLogger.info(s"Stopped fetchers as part of become-follower for ${partitionsToStartFetching.size} partitions")
 
       val listenerName = config.interBrokerListenerName.value
@@ -2624,7 +2625,7 @@ class ReplicaManager(val config: KafkaConfig,
               val fetchState = InitialFetchState(
                 topicId = Some(info.topicId),
                 leader = leaderEndpoint,
-                currentLeaderEpoch = partition.getLeaderEpoch,
+                currentLeaderEpoch = 0, // this will trigger source epoch discovery through fencing
                 initOffset = partition.localLogOrException.logEndOffset,
                 mirrorName = mirrorName
               )
