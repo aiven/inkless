@@ -2624,8 +2624,8 @@ project(':storage:inkless') {
 
   pitest {
     //adds dependency to org.pitest:pitest-junit5-plugin and sets "testPlugin" to "junit5"
-    junit5PluginVersion = '1.2.1'
-    pitestVersion = '1.17.1'
+    junit5PluginVersion = '1.2.3'
+    pitestVersion = '1.21.1'
     addJUnitPlatformLauncher = false
     targetClasses.add("io.aiven.inkless.*")
     excludedTestClasses.add("*io.aiven.inkless.storage_backend.s3.integration.*")
