@@ -30,7 +30,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.util.List;
-import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -135,13 +134,12 @@ class ReloadableCredentialsProviderTest {
 
     @Test
     void testPathCredentialsWithAutoReloadDetection(@TempDir final Path tempDir)
-        throws IOException, InterruptedException {
+        throws IOException {
         final Path credentialsFile = tempDir.resolve("credentials.json");
         Files.write(credentialsFile, VALID_CREDENTIALS_JSON.getBytes());
 
         final AtomicInteger callbackCount = new AtomicInteger(0);
         final AtomicReference<Credentials> latestCredentials = new AtomicReference<>();
-        final CountDownLatch callbackLatch = new CountDownLatch(1);
 
         try (final ReloadableCredentialsProvider provider = new ReloadableCredentialsProvider(
             null, null, credentialsFile.toString())) {
@@ -151,7 +149,6 @@ class ReloadableCredentialsProviderTest {
             provider.setCredentialsUpdateCallback(credentials -> {
                 callbackCount.incrementAndGet();
                 latestCredentials.set(credentials);
-                callbackLatch.countDown();
             });
 
             final Credentials initialCredentials = provider.getCredentials();
@@ -161,9 +158,10 @@ class ReloadableCredentialsProviderTest {
             Files.write(credentialsFile, UPDATED_CREDENTIALS_JSON.getBytes(), StandardOpenOption.TRUNCATE_EXISTING);
 
             // Wait for the callback to be called
-            assertThat(callbackLatch.await(5, TimeUnit.SECONDS)).isTrue();
+            await().atMost(5, TimeUnit.SECONDS)
+                .untilAsserted(() -> assertThat(callbackCount.get()).isOne());
 
-            assertThat(callbackCount.get()).isEqualTo(1);
+            assertThat(callbackCount.get()).isOne();
             assertThat(latestCredentials.get()).isNotNull();
 
             // Update the credentials file again with same semantical contents
@@ -178,13 +176,12 @@ class ReloadableCredentialsProviderTest {
 
     @Test
     void testPathCredentialsWithAutoReloadDetectionToken(@TempDir final Path tempDir)
-        throws IOException, InterruptedException {
+        throws IOException {
         final Path credentialsFile = tempDir.resolve("credentials.json");
         Files.write(credentialsFile, ACCESS_TOKEN_CREDENTIALS_JSON.getBytes());
 
         final AtomicInteger callbackCount = new AtomicInteger(0);
         final AtomicReference<Credentials> latestCredentials = new AtomicReference<>();
-        final CountDownLatch callbackLatch = new CountDownLatch(1);
 
         try (final ReloadableCredentialsProvider provider = new ReloadableCredentialsProvider(
             null, null, credentialsFile.toString())) {
@@ -194,7 +191,6 @@ class ReloadableCredentialsProviderTest {
             provider.setCredentialsUpdateCallback(credentials -> {
                 callbackCount.incrementAndGet();
                 latestCredentials.set(credentials);
-                callbackLatch.countDown();
             });
 
             final Credentials initialCredentials = provider.getCredentials();
@@ -205,7 +201,8 @@ class ReloadableCredentialsProviderTest {
                 StandardOpenOption.TRUNCATE_EXISTING);
 
             // Wait for the callback to be called
-            assertThat(callbackLatch.await(5, TimeUnit.SECONDS)).isTrue();
+            await().atMost(5, TimeUnit.SECONDS)
+                .untilAsserted(() -> assertThat(callbackCount.get()).isOne());
 
             assertThat(callbackCount.get()).isOne();
             assertThat(latestCredentials.get()).isNotNull();
@@ -229,7 +226,7 @@ class ReloadableCredentialsProviderTest {
     }
 
     @Test
-    void testFileWatchingWithInvalidUpdate(@TempDir final Path tempDir) throws IOException, InterruptedException {
+    void testFileWatchingWithInvalidUpdate(@TempDir final Path tempDir) throws IOException {
         final Path credentialsFile = tempDir.resolve("credentials.json");
         Files.write(credentialsFile, VALID_CREDENTIALS_JSON.getBytes());
 
