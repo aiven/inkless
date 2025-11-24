@@ -135,12 +135,16 @@ class RetentionEnforcementScheduler {
         // brokerCount may be 0, for example when the first broker is just starting.
         // Defaulting to 1 in this case.
         final int effectiveBrokerCount = Math.max(1, metadataView.getBrokerCount());
-        final long bound =
-            // Multiply by 2 because on average we'll get enforcementInterval
-            2 * enforcementInterval.toMillis()
-            // The more brokers we have, the less frequently we should actually check.
-            * effectiveBrokerCount;
-        return now.plusMillis(random.nextLong(bound));
+
+        // Use a centered distribution around the Mean with a controlled jitter.
+        // Range: [(1 - jitterPercentage) * Mean, (1 + jitterPercentage) * Mean]
+        final long targetMeanDelay = enforcementInterval.toMillis() * effectiveBrokerCount;
+        final double jitterPercentage = 0.25;
+
+        final long jitterMs = (long) (targetMeanDelay * jitterPercentage);
+
+        final long baseDelay = targetMeanDelay - jitterMs;
+        return now.plusMillis(baseDelay + random.nextLong(jitterMs * 2));
     }
 
     // Visible for testing.
