@@ -60,7 +60,7 @@ public final class CaffeineCache implements ObjectCache {
 
     @Override
     public void close() throws IOException {
-        cache.synchronous().cleanUp();
+        // no resources to close
     }
 
     @Override
