@@ -58,7 +58,8 @@ public final class SharedState implements Closeable {
     private final BatchCoordinateCache batchCoordinateCache;
     private final BrokerTopicStats brokerTopicStats;
     private final Supplier<LogConfig> defaultTopicConfigs;
-    private final Metrics storageMetrics;
+    // Accessible for testing
+    final Metrics storageMetrics;
 
     public SharedState(
         final Time time,
