@@ -70,7 +70,7 @@ import static org.apache.kafka.common.utils.Utils.require;
  * This coordinator is responsible for:
  * - Managing topic configurations and metadata for all cluster mirrors
  * - Coordinating with remote brokers for cross-cluster replication
- * - Handling leader election and resignation for mirror partitions
+ * - Handling leader election and resignation for mirrored partitions
  * - Loading and persisting cluster mirror metadata in the internal topic
  * - Scheduling periodic metadata refresh from source clusters
  *
