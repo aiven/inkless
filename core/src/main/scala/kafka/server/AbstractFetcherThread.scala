@@ -534,14 +534,9 @@ abstract class AbstractFetcherThread(name: String,
                     partitionsWithError += topicPartition
 
                 case Errors.UNKNOWN_LEADER_EPOCH =>
-                  if (!currentFetchState.isMirrorFetch() && partitionData.currentLeader().leaderEpoch() > -1) {
-                    debug(s"Remote broker has a smaller leader epoch for partition $topicPartition than " +
-                      s"this replica's current leader epoch of ${currentFetchState.currentLeaderEpoch}.")
-                    partitionsWithError += topicPartition
-                  } else {
-                    // cluster mirroring: outaded epoch due to stale metadata
-                    mirrorPartitionsWithNewEpoch += topicPartition -> partitionData
-                  }
+                  debug(s"Remote broker has a smaller leader epoch for partition $topicPartition than " +
+                    s"this replica's current leader epoch of ${currentFetchState.currentLeaderEpoch}.")
+                  partitionsWithError += topicPartition
 
                 case Errors.FENCED_LEADER_EPOCH =>
                   if (!currentFetchState.isMirrorFetch()) {
