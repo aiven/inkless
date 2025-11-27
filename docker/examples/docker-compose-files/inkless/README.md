@@ -60,6 +60,6 @@ AWS_S3_BUCKET_NAME=
 Then run
 
 ```bash
-make aws-s3
+make s3-aws
 ```
 
