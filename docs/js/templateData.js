@@ -16,9 +16,9 @@ limitations under the License.
 */
 
 // Define variables for doc templates
-var context={
-    "version": "41inkless",
-    "dotVersion": "4.1-inkless",
-    "fullDotVersion": "4.1.1-inkless",
-    "scalaVersion": "2.13"
+var context = {
+  version: "41inkless",
+  dotVersion: "4.1-inkless",
+  fullDotVersion: "4.1.1-inkless",
+  scalaVersion: "2.13",
 };
