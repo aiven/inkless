@@ -1666,6 +1666,14 @@ public interface Admin extends AutoCloseable {
     @InterfaceStability.Unstable
     UnregisterBrokerResult unregisterBroker(int brokerId, UnregisterBrokerOptions options);
 
+    /**
+     * Create a new cluster mirror.
+     *
+     * @param mirrorName The name of the cluster mirror
+     * @param configs Configuration for the cluster mirror, including bootstrap servers and security settings
+     * @param options Options for the create mirror operation
+     * @return The CreateMirrorResult
+     */
     CreateMirrorResult createMirror(String mirrorName, Map<String, String> configs, CreateMirrorOptions options);
 
     /**
