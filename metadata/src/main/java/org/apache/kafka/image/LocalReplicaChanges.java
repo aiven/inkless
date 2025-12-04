@@ -97,7 +97,7 @@ public final class LocalReplicaChanges {
             followers,
             topicIds,
             directoryIds,
-                readOnlyLeaders
+            readOnlyLeaders
         );
     }
 
