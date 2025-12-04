@@ -26,7 +26,7 @@ import org.apache.kafka.server.common.OffsetAndEpoch
 import org.apache.kafka.storage.internals.log.{LogAppendInfo, LogStartOffsetIncrementReason}
 
 import java.util.Optional
-import scala.collection.{Map, Set, mutable}
+import scala.collection.{Map, Set}
 
 /**
  * Specialized fetcher thread for cross-cluster mirroring.
@@ -67,18 +67,6 @@ class MirrorFetcherThread(name: String,
                                 replicaMgr.brokerTopicStats,
                                 mirrorName) {
   this.logIdent = logPrefix
-
-  // Visible for testing
-  private[mirror] val partitionsWithNewHighWatermark = mutable.Buffer[TopicPartition]()
-
-  override def doWork(): Unit = {
-    super.doWork()
-    // Complete delayed fetch requests for consumers waiting on mirrored partitions
-    if (partitionsWithNewHighWatermark.nonEmpty) {
-      replicaMgr.completeDelayedFetchRequests(partitionsWithNewHighWatermark.toSeq)
-      partitionsWithNewHighWatermark.clear()
-    }
-  }
 
   override protected def removeFetcherForPartitions(partitions: Set[TopicPartition]): Map[TopicPartition, PartitionFetchState] = {
     replicaMgr.mirrorFetcherManager.removeFetcherForPartitions(partitions)
@@ -122,16 +110,16 @@ class MirrorFetcherThread(name: String,
         .format(log.logEndOffset, records.sizeInBytes, topicPartition))
 
     val leaderLogStartOffset = partitionData.logStartOffset
-    var maybeUpdateHighWatermarkMessage = s"but did not update replica high watermark"
-    log.maybeUpdateHighWatermark(partitionData.highWatermark).ifPresent { newHighWatermark =>
-      maybeUpdateHighWatermarkMessage = s"and updated replica high watermark to $newHighWatermark"
-      partitionsWithNewHighWatermark += topicPartition
+    val notUpdateHighWatermarkMessage = s"but did not update replica high watermark"
+
+    // This works as producer write with acks=1. The leader node will append data into log without HW incremented.
+    // The leader's HW will be incremented only when all ISR (at least minISR) are caught up.
+    if (!partition.maybeIncrementLeaderHW(log)) {
+      trace(s"Mirror follower received high watermark ${partitionData.highWatermark} from the leader " +
+        s"$notUpdateHighWatermarkMessage for partition $topicPartition")
     }
 
     log.maybeIncrementLogStartOffset(leaderLogStartOffset, LogStartOffsetIncrementReason.LeaderOffsetIncremented)
-    if (logTrace)
-      trace(s"Mirror follower received high watermark ${partitionData.highWatermark} from the leader " +
-        s"$maybeUpdateHighWatermarkMessage for partition $topicPartition")
 
     // Account for replication quota
     if (quota.isThrottled(topicPartition))

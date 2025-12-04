@@ -132,8 +132,6 @@ public class ProducerAppendInfo {
             }
         } else {
             int currentLastSeq;
-            log.info("!!! updateEntry.isEmpty(): {}, producerEpoch: {}, currentEntry.producerEpoch(): {}",
-                    updatedEntry.isEmpty(), producerEpoch, currentEntry.producerEpoch());
             if (!updatedEntry.isEmpty())
                 currentLastSeq = updatedEntry.lastSeq();
             else if (producerEpoch == currentEntry.producerEpoch())

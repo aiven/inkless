@@ -1160,7 +1160,7 @@ class Partition(val topicPartition: TopicPartition,
    *
    * @return true if the HW was incremented, and false otherwise.
    */
-  private def maybeIncrementLeaderHW(leaderLog: UnifiedLog, currentTimeMs: Long = time.milliseconds): Boolean = {
+  def maybeIncrementLeaderHW(leaderLog: UnifiedLog, currentTimeMs: Long = time.milliseconds): Boolean = {
     if (isUnderMinIsr) {
       trace(s"Not increasing HWM because partition is under min ISR(ISR=${partitionState.isr}")
       return false

@@ -60,7 +60,6 @@ object BrokerMetadataPublisher extends Logging {
   def getTopicDelta(topicName: String,
                     newImage: MetadataImage,
                     delta: MetadataDelta): Option[TopicDelta] = {
-    logger.info(s"!!! Looking for topic delta for topic ${newImage.topics().getTopic(topicName)} ;; ${delta.topicsDelta()}")
     Option(newImage.topics().getTopic(topicName)).flatMap {
       topicImage => Option(delta.topicsDelta()).flatMap {
         topicDelta => Option(topicDelta.changedTopic(topicImage.id()))
