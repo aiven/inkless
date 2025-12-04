@@ -135,8 +135,8 @@ class ActiveFile {
                 );
 
                 // update stats for successfully appended bytes and messages as bytesInRate and messageInRate
-                brokerTopicStats.topicStats(topicIdPartition.topic()).bytesInRate().mark(records.sizeInBytes());
-                brokerTopicStats.allTopicsStats().bytesInRate().mark(records.sizeInBytes());
+                brokerTopicStats.topicStats(topicIdPartition.topic()).bytesInRateDisklessTopicType().mark(records.sizeInBytes());
+                brokerTopicStats.allTopicsStats().bytesInRateDisklessTopicType().mark(records.sizeInBytes());
                 brokerTopicStats.topicStats(topicIdPartition.topic()).messagesInRate().mark(appendInfo.numMessages());
                 brokerTopicStats.allTopicsStats().messagesInRate().mark(appendInfo.numMessages());
             // case e@ (_: UnknownTopicOrPartitionException |  // Handled earlier
