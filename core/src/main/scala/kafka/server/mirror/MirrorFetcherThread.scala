@@ -110,13 +110,12 @@ class MirrorFetcherThread(name: String,
         .format(log.logEndOffset, records.sizeInBytes, topicPartition))
 
     val leaderLogStartOffset = partitionData.logStartOffset
-    val notUpdateHighWatermarkMessage = s"but did not update replica high watermark"
 
     // This works as producer write with acks=1. The leader node will append data into log without HW incremented.
     // The leader's HW will be incremented only when all ISR (at least minISR) are caught up.
-    if (!partition.maybeIncrementLeaderHW(log)) {
+    if (!partition.maybeIncrementLeaderHWWithLock(log)) {
       trace(s"Mirror follower received high watermark ${partitionData.highWatermark} from the leader " +
-        s"$notUpdateHighWatermarkMessage for partition $topicPartition")
+        s"but did not update replica high watermark for partition $topicPartition")
     }
 
     log.maybeIncrementLogStartOffset(leaderLogStartOffset, LogStartOffsetIncrementReason.LeaderOffsetIncremented)
