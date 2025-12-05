@@ -59,7 +59,7 @@ import org.apache.kafka.common.security.auth.KafkaPrincipal
 import org.apache.kafka.common.security.auth.SecurityProtocol
 import org.apache.kafka.server.{ApiVersionManager, DelegationTokenManager, ProcessRole}
 import org.apache.kafka.server.authorizer.Authorizer
-import org.apache.kafka.server.common.{ApiMessageAndVersion, RequestLocal}
+import org.apache.kafka.server.common.{ApiMessageAndVersion, MirrorVersion, RequestLocal}
 import org.apache.kafka.server.quota.ControllerMutationQuota
 import org.apache.kafka.server.record.BrokerCompressionType
 
@@ -166,8 +166,15 @@ class ControllerApis(
   }
 
   def handleCreateMirror(request: RequestChannel.Request): CompletableFuture[Unit] = {
-    // test
     authHelper.authorizeClusterOperation(request, CLUSTER_ACTION)
+
+    // Check if cluster mirroring is supported by the mirror.version feature
+    val mirrorVersionLevel = apiVersionManager.features.finalizedFeatures.getOrDefault(MirrorVersion.FEATURE_NAME, 0.toShort)
+    if (mirrorVersionLevel == 0) {
+      throw new UnsupportedVersionException(
+        "Cluster mirroring requires mirror.version >= 1. Current version: " + mirrorVersionLevel)
+    }
+
     val createMirrorRequest = request.body[CreateMirrorRequest]
     info("!!! Create mirror request: " + createMirrorRequest)
     val context = new ControllerRequestContext(request.context.header.data, request.context.principal, OptionalLong.empty())

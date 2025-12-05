@@ -18,6 +18,9 @@
   "type": "request",
   "listeners": ["broker", "controller"],
   "name": "CreateMirrorRequest",
+  // The CreateMirrorRequest API is added as part of cluster mirroring.
+  // The API is not exposed by default unless explicitly enabled.
+  "latestVersionUnstable": true,
   "validVersions": "0",
   "flexibleVersions": "0+",
   "fields": [

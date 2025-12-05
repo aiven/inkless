@@ -85,8 +85,7 @@
           { "name": "EndOffset", "type": "int64", "versions": "12+", "default": "-1",
             "about": "The end offset of the epoch." }
         ]},
-        { "name": "MirrorLeaderEpoch", "type": "int32", "versions": "19+", "default": "-1", "taggedVersions": "19+",
-          "tag": 3, "ignorable": true,
+        { "name": "MirrorLeaderEpoch", "type": "int32", "versions": "19+", "default": "-1", "ignorable": true,
           "about": "The latest known mirrored leader epoch." },
         { "name": "CurrentLeader", "type": "LeaderIdAndEpoch",
           "versions": "12+", "taggedVersions": "12+", "tag": 1,
