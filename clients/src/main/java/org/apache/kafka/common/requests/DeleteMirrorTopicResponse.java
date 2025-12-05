@@ -17,7 +17,9 @@
 
 package org.apache.kafka.common.requests;
 
-import org.apache.kafka.common.message.CreateMirrorResponseData;
+import org.apache.kafka.common.message.CreateMirrorTopicResponseData;
+import org.apache.kafka.common.message.DeleteMirrorTopicRequestData;
+import org.apache.kafka.common.message.DeleteMirrorTopicResponseData;
 import org.apache.kafka.common.protocol.ApiKeys;
 import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.protocol.Readable;
@@ -25,16 +27,16 @@ import org.apache.kafka.common.protocol.Readable;
 import java.util.HashMap;
 import java.util.Map;
 
-public class CreateMirrorResponse extends AbstractResponse {
-    private final CreateMirrorResponseData data;
+public class DeleteMirrorTopicResponse extends AbstractResponse {
+    private final DeleteMirrorTopicResponseData data;
 
-    public CreateMirrorResponse(CreateMirrorResponseData data) {
-        super(ApiKeys.CREATE_MIRROR);
+    public DeleteMirrorTopicResponse(DeleteMirrorTopicResponseData data) {
+        super(ApiKeys.DELETE_MIRROR_TOPIC);
         this.data = data;
     }
 
     @Override
-    public CreateMirrorResponseData data() {
+    public DeleteMirrorTopicResponseData data() {
         return data;
     }
 
@@ -55,7 +57,7 @@ public class CreateMirrorResponse extends AbstractResponse {
         return errorCounts;
     }
 
-    public static CreateMirrorResponse parse(Readable readable, short version) {
-        return new CreateMirrorResponse(new CreateMirrorResponseData(readable, version));
+    public static DeleteMirrorTopicResponse parse(Readable readable, short version) {
+        return new DeleteMirrorTopicResponse(new DeleteMirrorTopicResponseData(readable, version));
     }
 }

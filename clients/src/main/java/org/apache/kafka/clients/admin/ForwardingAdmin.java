@@ -281,6 +281,11 @@ public class ForwardingAdmin implements Admin {
     }
 
     @Override
+    public DeleteMirrorTopicResult deleteMirrorTopic(String clusterLinkName, Set<String> topics, DeleteMirrorTopicOptions options) {
+        return delegate.deleteMirrorTopic(clusterLinkName, topics, options);
+    }
+
+    @Override
     public DescribeProducersResult describeProducers(Collection<TopicPartition> partitions, DescribeProducersOptions options) {
         return delegate.describeProducers(partitions, options);
     }

@@ -209,6 +209,8 @@ import org.apache.kafka.common.requests.CreateTopicsRequest;
 import org.apache.kafka.common.requests.CreateTopicsResponse;
 import org.apache.kafka.common.requests.DeleteAclsRequest;
 import org.apache.kafka.common.requests.DeleteAclsResponse;
+import org.apache.kafka.common.requests.DeleteMirrorTopicRequest;
+import org.apache.kafka.common.requests.DeleteMirrorTopicResponse;
 import org.apache.kafka.common.requests.DeleteTopicsRequest;
 import org.apache.kafka.common.requests.DeleteTopicsResponse;
 import org.apache.kafka.common.requests.DescribeAclsRequest;
@@ -4858,6 +4860,46 @@ public class KafkaAdminClient extends AdminClient {
         };
         runnable.call(call, now);
         return new CreateMirrorResult(future);
+    }
+
+    @Override
+    public DeleteMirrorTopicResult deleteMirrorTopic(String clusterLinkName, Set<String> topics, DeleteMirrorTopicOptions options) {
+        final KafkaFutureImpl<Void> future = new KafkaFutureImpl<>();
+        final long now = time.milliseconds();
+        final Call call = new Call("deleteMirrorTopic", calcDeadlineMs(now, options.timeoutMs()),
+                new LeastLoadedBrokerOrActiveKController()) {
+
+            @Override
+            DeleteMirrorTopicRequest.Builder createRequest(int timeoutMs) {
+                return new DeleteMirrorTopicRequest.Builder(clusterLinkName, topics);
+            }
+
+            @Override
+            void handleResponse(AbstractResponse abstractResponse) {
+                final DeleteMirrorTopicResponse response =
+                        (DeleteMirrorTopicResponse) abstractResponse;
+                Errors error = Errors.forCode(response.data().errorCode());
+                switch (error) {
+                    case NONE:
+                        future.complete(null);
+                        break;
+                    case REQUEST_TIMED_OUT:
+                        throw error.exception(response.data().errorMessage());
+                    default:
+                        log.error("delete mirror topic {} failed: {}",
+                                clusterLinkName, response.data().errorMessage());
+                        future.completeExceptionally(error.exception(response.data().errorMessage()));
+                        break;
+                }
+            }
+
+            @Override
+            void handleFailure(Throwable throwable) {
+                future.completeExceptionally(throwable);
+            }
+        };
+        runnable.call(call, now);
+        return new DeleteMirrorTopicResult(future);
     }
 
     @Override

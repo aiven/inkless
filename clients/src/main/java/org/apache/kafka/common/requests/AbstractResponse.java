@@ -295,6 +295,12 @@ public abstract class AbstractResponse implements AbstractRequestResponse {
                 return GetReplicaLogInfoResponse.parse(readable, version);
             case CREATE_MIRROR:
                 return CreateMirrorResponse.parse(readable, version);
+            case CREATE_MIRROR_TOPIC:
+                return CreateMirrorTopicResponse.parse(readable, version);
+            case DELETE_MIRROR_TOPIC:
+                return DeleteMirrorTopicResponse.parse(readable, version);
+            case BUMP_LEADER_EPOCH:
+                return BumpLeaderEpochResponse.parse(readable, version);
             default:
                 throw new AssertionError(String.format("ApiKey %s is not currently handled in `parseResponse`, the " +
                         "code should be updated to do so.", apiKey));

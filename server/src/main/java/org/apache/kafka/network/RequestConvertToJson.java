@@ -48,6 +48,8 @@ import org.apache.kafka.common.message.BrokerHeartbeatRequestDataJsonConverter;
 import org.apache.kafka.common.message.BrokerHeartbeatResponseDataJsonConverter;
 import org.apache.kafka.common.message.BrokerRegistrationRequestDataJsonConverter;
 import org.apache.kafka.common.message.BrokerRegistrationResponseDataJsonConverter;
+import org.apache.kafka.common.message.BumpLeaderEpochRequestDataJsonConverter;
+import org.apache.kafka.common.message.BumpLeaderEpochResponseDataJsonConverter;
 import org.apache.kafka.common.message.ConsumerGroupDescribeRequestDataJsonConverter;
 import org.apache.kafka.common.message.ConsumerGroupDescribeResponseDataJsonConverter;
 import org.apache.kafka.common.message.ConsumerGroupHeartbeatRequestDataJsonConverter;
@@ -60,6 +62,8 @@ import org.apache.kafka.common.message.CreateDelegationTokenRequestDataJsonConve
 import org.apache.kafka.common.message.CreateDelegationTokenResponseDataJsonConverter;
 import org.apache.kafka.common.message.CreateMirrorRequestDataJsonConverter;
 import org.apache.kafka.common.message.CreateMirrorResponseDataJsonConverter;
+import org.apache.kafka.common.message.CreateMirrorTopicRequestDataJsonConverter;
+import org.apache.kafka.common.message.CreateMirrorTopicResponseDataJsonConverter;
 import org.apache.kafka.common.message.CreatePartitionsRequestDataJsonConverter;
 import org.apache.kafka.common.message.CreatePartitionsResponseDataJsonConverter;
 import org.apache.kafka.common.message.CreateTopicsRequestDataJsonConverter;
@@ -68,6 +72,8 @@ import org.apache.kafka.common.message.DeleteAclsRequestDataJsonConverter;
 import org.apache.kafka.common.message.DeleteAclsResponseDataJsonConverter;
 import org.apache.kafka.common.message.DeleteGroupsRequestDataJsonConverter;
 import org.apache.kafka.common.message.DeleteGroupsResponseDataJsonConverter;
+import org.apache.kafka.common.message.DeleteMirrorTopicRequestDataJsonConverter;
+import org.apache.kafka.common.message.DeleteMirrorTopicResponseDataJsonConverter;
 import org.apache.kafka.common.message.DeleteRecordsRequestDataJsonConverter;
 import org.apache.kafka.common.message.DeleteRecordsResponseDataJsonConverter;
 import org.apache.kafka.common.message.DeleteShareGroupOffsetsRequestDataJsonConverter;
@@ -234,6 +240,8 @@ import org.apache.kafka.common.requests.BrokerHeartbeatRequest;
 import org.apache.kafka.common.requests.BrokerHeartbeatResponse;
 import org.apache.kafka.common.requests.BrokerRegistrationRequest;
 import org.apache.kafka.common.requests.BrokerRegistrationResponse;
+import org.apache.kafka.common.requests.BumpLeaderEpochRequest;
+import org.apache.kafka.common.requests.BumpLeaderEpochResponse;
 import org.apache.kafka.common.requests.ConsumerGroupDescribeRequest;
 import org.apache.kafka.common.requests.ConsumerGroupDescribeResponse;
 import org.apache.kafka.common.requests.ConsumerGroupHeartbeatRequest;
@@ -246,6 +254,8 @@ import org.apache.kafka.common.requests.CreateDelegationTokenRequest;
 import org.apache.kafka.common.requests.CreateDelegationTokenResponse;
 import org.apache.kafka.common.requests.CreateMirrorRequest;
 import org.apache.kafka.common.requests.CreateMirrorResponse;
+import org.apache.kafka.common.requests.CreateMirrorTopicRequest;
+import org.apache.kafka.common.requests.CreateMirrorTopicResponse;
 import org.apache.kafka.common.requests.CreatePartitionsRequest;
 import org.apache.kafka.common.requests.CreatePartitionsResponse;
 import org.apache.kafka.common.requests.CreateTopicsRequest;
@@ -254,6 +264,8 @@ import org.apache.kafka.common.requests.DeleteAclsRequest;
 import org.apache.kafka.common.requests.DeleteAclsResponse;
 import org.apache.kafka.common.requests.DeleteGroupsRequest;
 import org.apache.kafka.common.requests.DeleteGroupsResponse;
+import org.apache.kafka.common.requests.DeleteMirrorTopicRequest;
+import org.apache.kafka.common.requests.DeleteMirrorTopicResponse;
 import org.apache.kafka.common.requests.DeleteRecordsRequest;
 import org.apache.kafka.common.requests.DeleteRecordsResponse;
 import org.apache.kafka.common.requests.DeleteShareGroupOffsetsRequest;
@@ -582,6 +594,12 @@ public class RequestConvertToJson {
                 return GetReplicaLogInfoRequestDataJsonConverter.write(((GetReplicaLogInfoRequest) request).data(), request.version());
             case CREATE_MIRROR:
                 return CreateMirrorRequestDataJsonConverter.write(((CreateMirrorRequest) request).data(), request.version());
+            case CREATE_MIRROR_TOPIC:
+                return CreateMirrorTopicRequestDataJsonConverter.write(((CreateMirrorTopicRequest) request).data(), request.version());
+            case DELETE_MIRROR_TOPIC:
+                return DeleteMirrorTopicRequestDataJsonConverter.write(((DeleteMirrorTopicRequest) request).data(), request.version());
+            case BUMP_LEADER_EPOCH:
+                return BumpLeaderEpochRequestDataJsonConverter.write(((BumpLeaderEpochRequest) request).data(), request.version());
             default:
                 throw new IllegalStateException("ApiKey " + request.apiKey() + " is not currently handled in `request`, the " +
                     "code should be updated to do so.");
@@ -772,6 +790,12 @@ public class RequestConvertToJson {
                 return GetReplicaLogInfoResponseDataJsonConverter.write(((GetReplicaLogInfoResponse) response).data(), version);
             case CREATE_MIRROR:
                 return CreateMirrorResponseDataJsonConverter.write(((CreateMirrorResponse) response).data(), version);
+            case CREATE_MIRROR_TOPIC:
+                return CreateMirrorTopicResponseDataJsonConverter.write(((CreateMirrorTopicResponse) response).data(), version);
+            case DELETE_MIRROR_TOPIC:
+                return DeleteMirrorTopicResponseDataJsonConverter.write(((DeleteMirrorTopicResponse) response).data(), version);
+            case BUMP_LEADER_EPOCH:
+                return BumpLeaderEpochResponseDataJsonConverter.write(((BumpLeaderEpochResponse) response).data(), version);
             default:
                 throw new IllegalStateException("ApiKey " + response.apiKey() + " is not currently handled in `response`, the " +
                     "code should be updated to do so.");

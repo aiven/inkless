@@ -1376,6 +1376,11 @@ public class MockAdminClient extends AdminClient {
     }
 
     @Override
+    public DeleteMirrorTopicResult deleteMirrorTopic(String clusterLinkName, Set<String> topics, DeleteMirrorTopicOptions options) {
+        throw new UnsupportedOperationException("Not implemented yet");
+    }
+
+    @Override
     public DescribeProducersResult describeProducers(Collection<TopicPartition> partitions, DescribeProducersOptions options) {
         throw new UnsupportedOperationException("Not implemented yet");
     }
