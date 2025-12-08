@@ -186,7 +186,7 @@ class KafkaApis(val requestChannel: RequestChannel,
         case ApiKeys.LIST_GROUPS => handleListGroupsRequest(request).exceptionally(handleError)
         case ApiKeys.SASL_HANDSHAKE => handleSaslHandshakeRequest(request)
         case ApiKeys.API_VERSIONS => handleApiVersionsRequest(request)
-        case ApiKeys.CREATE_TOPICS => forwardToController(request)
+        case ApiKeys.CREATE_TOPICS => handleCreateTopics(request)
         case ApiKeys.DELETE_TOPICS => forwardToController(request)
         case ApiKeys.DELETE_RECORDS => handleDeleteRecordsRequest(request)
         case ApiKeys.INIT_PRODUCER_ID => handleInitProducerIdRequest(request, requestLocal)
@@ -269,6 +269,17 @@ class KafkaApis(val requestChannel: RequestChannel,
       if (request.apiLocalCompleteTimeNanos < 0)
         request.apiLocalCompleteTimeNanos = time.nanoseconds
     }
+  }
+
+  def handleCreateTopics(request: RequestChannel.Request): Unit = {
+    val createTopicsRequest = request.body[CreateTopicsRequest]
+    // TODO: might need to have a better way to pass the cluster mirror
+    val mirrorTopic = createTopicsRequest.data.topics.stream().filter(t => t.mirrorName() != null && !t.mirrorName().isEmpty).findFirst()
+    if (mirrorTopic.isPresent) {
+      logger.info(s"!!! Handling create mirror topics request: ${mirrorTopic.get().mirrorName()}")
+      mirrorCoordinator.addTopicsToCoordinator(mirrorTopic.get().mirrorName(), util.Set.of(mirrorTopic.get().name()))
+    }
+    forwardToController(request)
   }
 
   def handleCreateMirrorTopics(request: RequestChannel.Request): Unit = {
