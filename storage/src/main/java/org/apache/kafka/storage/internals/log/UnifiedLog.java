@@ -1042,6 +1042,10 @@ public class UnifiedLog implements AutoCloseable {
                 VerificationGuard.SENTINEL, false, recordVersion.value);
     }
 
+    public LogAppendInfo appendAsFollower(MemoryRecords records, int leaderEpoch) {
+        return appendAsFollower(records, leaderEpoch, false);
+    }
+
     /**
      * Append this message set to the active segment of the local log without assigning offsets or Partition Leader Epochs
      *
@@ -1050,7 +1054,7 @@ public class UnifiedLog implements AutoCloseable {
      * @throws KafkaStorageException If the append fails due to an I/O error.
      * @return Information about the appended messages including the first and last offset.
      */
-    public LogAppendInfo appendAsFollower(MemoryRecords records, int leaderEpoch) {
+    public LogAppendInfo appendAsFollower(MemoryRecords records, int leaderEpoch, boolean isMirroredTopic) {
         return append(records,
                       AppendOrigin.REPLICATION,
                       false,
@@ -1058,7 +1062,19 @@ public class UnifiedLog implements AutoCloseable {
                       Optional.empty(),
                       VerificationGuard.SENTINEL,
                       true,
-                      RecordBatch.CURRENT_MAGIC_VALUE);
+                      RecordBatch.CURRENT_MAGIC_VALUE,
+                      isMirroredTopic);
+    }
+
+    private LogAppendInfo append(MemoryRecords records,
+                                 AppendOrigin origin,
+                                 boolean validateAndAssignOffsets,
+                                 int leaderEpoch,
+                                 Optional<RequestLocal> requestLocal,
+                                 VerificationGuard verificationGuard,
+                                 boolean ignoreRecordSize,
+                                 byte toMagic) {
+        return append(records, origin, validateAndAssignOffsets, leaderEpoch, requestLocal, verificationGuard, ignoreRecordSize, toMagic, false);
     }
 
     /**
@@ -1085,7 +1101,8 @@ public class UnifiedLog implements AutoCloseable {
                                  Optional<RequestLocal> requestLocal,
                                  VerificationGuard verificationGuard,
                                  boolean ignoreRecordSize,
-                                 byte toMagic) {
+                                 byte toMagic,
+                                 boolean isMirroredTopic) {
         // We want to ensure the partition metadata file is written to the log dir before any log data is written to disk.
         // This will ensure that any log data can be recovered with the correct topic ID in the case of failure.
         maybeFlushMetadataFile();
@@ -1151,6 +1168,13 @@ public class UnifiedLog implements AutoCloseable {
                                     });
                                 }
                             } else {
+                                if (isMirroredTopic) {
+                                    for (MutableRecordBatch batch : records.batches()) {
+                                        // reset producer id for mirrored topic
+                                        logger.info("!!! resetting batch producer id to {} for batch {}", -(batch.producerId() + 2), batch.baseOffset());
+                                        batch.setProducerId(-(batch.producerId() + 2));
+                                    }
+                                }
                                 // we are taking the offsets we are given
                                 if (appendInfo.firstOrLastOffsetOfFirstBatch() < localLog.logEndOffset()) {
                                     // we may still be able to recover if the log is empty

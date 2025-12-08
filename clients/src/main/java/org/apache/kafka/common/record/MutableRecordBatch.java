@@ -52,6 +52,12 @@ public interface MutableRecordBatch extends RecordBatch {
     void setPartitionLeaderEpoch(int epoch);
 
     /**
+     * Set the producer id for this batch of records.
+     * @param producerId The producer id to use
+     */
+    default void setProducerId(long producerId) { }
+
+    /**
      * Write this record batch into an output stream.
      * @param outputStream The buffer to write the batch to
      */
