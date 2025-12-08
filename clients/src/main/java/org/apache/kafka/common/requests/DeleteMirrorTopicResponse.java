@@ -17,8 +17,6 @@
 
 package org.apache.kafka.common.requests;
 
-import org.apache.kafka.common.message.CreateMirrorTopicResponseData;
-import org.apache.kafka.common.message.DeleteMirrorTopicRequestData;
 import org.apache.kafka.common.message.DeleteMirrorTopicResponseData;
 import org.apache.kafka.common.protocol.ApiKeys;
 import org.apache.kafka.common.protocol.Errors;

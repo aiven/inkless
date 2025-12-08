@@ -295,8 +295,8 @@ public abstract class AbstractResponse implements AbstractRequestResponse {
                 return GetReplicaLogInfoResponse.parse(readable, version);
             case CREATE_MIRROR:
                 return CreateMirrorResponse.parse(readable, version);
-            case CREATE_MIRROR_TOPIC:
-                return CreateMirrorTopicResponse.parse(readable, version);
+            case ATTACH_MIRROR_TOPIC:
+                return AttachMirrorTopicResponse.parse(readable, version);
             case DELETE_MIRROR_TOPIC:
                 return DeleteMirrorTopicResponse.parse(readable, version);
             case BUMP_LEADER_EPOCH:

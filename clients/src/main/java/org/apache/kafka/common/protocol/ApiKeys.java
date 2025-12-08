@@ -137,7 +137,7 @@ public enum ApiKeys {
     DELETE_SHARE_GROUP_OFFSETS(ApiMessageType.DELETE_SHARE_GROUP_OFFSETS),
     GET_REPLICA_LOG_INFO(ApiMessageType.GET_REPLICA_LOG_INFO),
     CREATE_MIRROR(ApiMessageType.CREATE_MIRROR, false, true),
-    CREATE_MIRROR_TOPIC(ApiMessageType.CREATE_MIRROR_TOPIC, false, true),
+    ATTACH_MIRROR_TOPIC(ApiMessageType.ATTACH_MIRROR_TOPIC, false, true),
     DELETE_MIRROR_TOPIC(ApiMessageType.DELETE_MIRROR_TOPIC, false, true),
     BUMP_LEADER_EPOCH(ApiMessageType.BUMP_LEADER_EPOCH, false, true);
 

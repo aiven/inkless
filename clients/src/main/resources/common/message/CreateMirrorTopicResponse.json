@@ -16,7 +16,7 @@
 {
   "apiKey":95,
   "type": "response",
-  "name": "CreateMirrorTopicResponse",
+  "name": "AttachMirrorTopicResponse",
   "validVersions": "0",
   "flexibleVersions": "0+",
   "fields": [

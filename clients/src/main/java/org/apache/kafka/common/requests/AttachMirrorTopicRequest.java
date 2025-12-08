@@ -17,34 +17,34 @@
 
 package org.apache.kafka.common.requests;
 
-import org.apache.kafka.common.message.CreateMirrorTopicRequestData;
-import org.apache.kafka.common.message.CreateMirrorTopicResponseData;
+import org.apache.kafka.common.message.AttachMirrorTopicRequestData;
+import org.apache.kafka.common.message.AttachMirrorTopicResponseData;
 import org.apache.kafka.common.protocol.ApiKeys;
 import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.protocol.Readable;
 
 import java.util.Map;
 
-public class CreateMirrorTopicRequest extends AbstractRequest {
-    public static class Builder extends AbstractRequest.Builder<CreateMirrorTopicRequest> {
+public class AttachMirrorTopicRequest extends AbstractRequest {
+    public static class Builder extends AbstractRequest.Builder<AttachMirrorTopicRequest> {
 
-        private final CreateMirrorTopicRequestData data;
+        private final AttachMirrorTopicRequestData data;
 
-        public Builder(CreateMirrorTopicRequestData data) {
-            super(ApiKeys.CREATE_MIRROR_TOPIC);
+        public Builder(AttachMirrorTopicRequestData data) {
+            super(ApiKeys.ATTACH_MIRROR_TOPIC);
             this.data = data;
         }
 
         public Builder(String name, Map<String, String> configs) {
-            super(ApiKeys.CREATE_MIRROR_TOPIC, ApiKeys.CREATE_MIRROR_TOPIC.oldestVersion(),
-                    ApiKeys.CREATE_MIRROR_TOPIC.latestVersion());
-            CreateMirrorTopicRequestData data = new CreateMirrorTopicRequestData();
+            super(ApiKeys.ATTACH_MIRROR_TOPIC, ApiKeys.ATTACH_MIRROR_TOPIC.oldestVersion(),
+                    ApiKeys.ATTACH_MIRROR_TOPIC.latestVersion());
+            AttachMirrorTopicRequestData data = new AttachMirrorTopicRequestData();
             this.data = data;
         }
 
         @Override
-        public CreateMirrorTopicRequest build(short version) {
-            return new CreateMirrorTopicRequest(data, version);
+        public AttachMirrorTopicRequest build(short version) {
+            return new AttachMirrorTopicRequest(data, version);
         }
 
         @Override
@@ -53,30 +53,30 @@ public class CreateMirrorTopicRequest extends AbstractRequest {
         }
     }
 
-    private final CreateMirrorTopicRequestData data;
+    private final AttachMirrorTopicRequestData data;
 
-    public CreateMirrorTopicRequest(CreateMirrorTopicRequestData data, short version) {
-        super(ApiKeys.CREATE_MIRROR_TOPIC, version);
+    public AttachMirrorTopicRequest(AttachMirrorTopicRequestData data, short version) {
+        super(ApiKeys.ATTACH_MIRROR_TOPIC, version);
         this.data = data;
     }
 
     @Override
-    public CreateMirrorTopicRequestData data() {
+    public AttachMirrorTopicRequestData data() {
         return data;
     }
 
     @Override
     public AbstractResponse getErrorResponse(int throttleTimeMs, Throwable e) {
         Errors error = Errors.forException(e);
-        CreateMirrorTopicResponseData responseData = new CreateMirrorTopicResponseData();
+        AttachMirrorTopicResponseData responseData = new AttachMirrorTopicResponseData();
         responseData.setErrorCode(error.code());
 
-        return new CreateMirrorTopicResponse(responseData);
+        return new AttachMirrorTopicResponse(responseData);
     }
 
-    public static CreateMirrorTopicRequest parse(Readable readable, short version) {
-        return new CreateMirrorTopicRequest(
-                new CreateMirrorTopicRequestData(readable, version),
+    public static AttachMirrorTopicRequest parse(Readable readable, short version) {
+        return new AttachMirrorTopicRequest(
+                new AttachMirrorTopicRequestData(readable, version),
                 version
         );
     }
