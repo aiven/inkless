@@ -39,6 +39,7 @@ import org.apache.kafka.common.message.AlterUserScramCredentialsRequestData;
 import org.apache.kafka.common.message.AlterUserScramCredentialsResponseData;
 import org.apache.kafka.common.message.AssignReplicasToDirsRequestData;
 import org.apache.kafka.common.message.AssignReplicasToDirsResponseData;
+import org.apache.kafka.common.message.AttachMirrorTopicResponseData;
 import org.apache.kafka.common.message.BrokerHeartbeatRequestData;
 import org.apache.kafka.common.message.BrokerRegistrationRequestData;
 import org.apache.kafka.common.message.BumpLeaderEpochResponseData;
@@ -46,7 +47,6 @@ import org.apache.kafka.common.message.ControllerRegistrationRequestData;
 import org.apache.kafka.common.message.CreateDelegationTokenRequestData;
 import org.apache.kafka.common.message.CreateDelegationTokenResponseData;
 import org.apache.kafka.common.message.CreateMirrorResponseData;
-import org.apache.kafka.common.message.CreateMirrorTopicResponseData;
 import org.apache.kafka.common.message.CreatePartitionsRequestData.CreatePartitionsTopic;
 import org.apache.kafka.common.message.CreatePartitionsResponseData.CreatePartitionsTopicResult;
 import org.apache.kafka.common.message.CreateTopicsRequestData;
@@ -1781,21 +1781,21 @@ public final class QuorumController implements Controller {
     }
 
     @Override
-    public CompletableFuture<CreateMirrorTopicResponseData> createMirrorTopic(
-            ControllerRequestContext context,
-            Set<Uuid> topicIds
-    ) {
-        return appendWriteEvent("createMirrorTopic", context.deadlineNs(),
-                () -> replicationControl.createMirrorTopic(topicIds));
-    }
-
-    @Override
     public CompletableFuture<DeleteMirrorTopicResponseData> deleteMirrorTopic(
             ControllerRequestContext context,
             Set<Uuid> topicIds
     ) {
         return appendWriteEvent("deleteMirrorTopic", context.deadlineNs(),
                 () -> replicationControl.deleteMirrorTopic(topicIds));
+    }
+
+    @Override
+    public CompletableFuture<AttachMirrorTopicResponseData> attachMirrorTopic(
+            ControllerRequestContext context,
+            Map<Uuid, String> topicIdsToMirrorName
+    ) {
+        return appendWriteEvent("attachMirrorTopic", context.deadlineNs(),
+                () -> replicationControl.attachMirrorTopic(topicIdsToMirrorName));
     }
 
     @Override

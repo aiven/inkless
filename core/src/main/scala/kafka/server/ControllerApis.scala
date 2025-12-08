@@ -171,27 +171,27 @@ class ControllerApis(
   def handleAttachMirrorTopic(request: RequestChannel.Request): CompletableFuture[Unit] = {
     // luke
     authHelper.authorizeClusterOperation(request, CLUSTER_ACTION)
-    val deleteMirrorTopicRequest = request.body[DeleteMirrorTopicRequest]
-    info("!!! delete mirror topic request: " + deleteMirrorTopicRequest)
+    val attachMirrorTopicRequest = request.body[AttachMirrorTopicRequest]
+    info("!!! attach mirror topic request: " + attachMirrorTopicRequest)
     val context = new ControllerRequestContext(request.context.header.data, request.context.principal,
       OptionalLong.empty())
-    val topicIds: util.Set[Uuid] = new util.HashSet[Uuid]()
-    deleteMirrorTopicRequest.data().topics().forEach( topic => {
+    val topicIdToMirrorName: util.Map[Uuid, String] = new util.HashMap[Uuid, String]()
+    attachMirrorTopicRequest.data().topics().forEach( topic => {
       if (!topic.topicId().equals(Uuid.ZERO_UUID)) {
-        topicIds.add(topic.topicId())
+        topicIdToMirrorName.put(topic.topicId(), topic.mirrorName())
       } else {
-        topicIds.add(metadataCache.getTopicId(topic.name()))
+        topicIdToMirrorName.put(metadataCache.getTopicId(topic.name()), topic.mirrorName())
       }
     })
-    controller.deleteMirrorTopic(context, topicIds)
+    controller.attachMirrorTopic(context, topicIdToMirrorName)
       .handle[Unit] { (response, exception) =>
-        logger.info("!!! delete mirror topic response: " + response + " exception: " + exception)
+        logger.info("!!! attach mirror topic response: " + response + " exception: " + exception)
         if (exception != null) {
           requestHelper.handleError(request, exception)
         } else {
 
           requestHelper.sendResponseMaybeThrottle(request, throttleMs =>
-            new DeleteMirrorTopicResponse(response.setThrottleTimeMs(throttleMs)))
+            new AttachMirrorTopicResponse(response.setThrottleTimeMs(throttleMs)))
         }
       }
 

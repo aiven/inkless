@@ -49,9 +49,9 @@ import org.apache.kafka.common.message.AlterPartitionRequestData.BrokerState;
 import org.apache.kafka.common.message.AlterPartitionResponseData;
 import org.apache.kafka.common.message.AssignReplicasToDirsRequestData;
 import org.apache.kafka.common.message.AssignReplicasToDirsResponseData;
+import org.apache.kafka.common.message.AttachMirrorTopicResponseData;
 import org.apache.kafka.common.message.BrokerHeartbeatRequestData;
 import org.apache.kafka.common.message.BumpLeaderEpochResponseData;
-import org.apache.kafka.common.message.CreateMirrorTopicResponseData;
 import org.apache.kafka.common.message.CreatePartitionsRequestData.CreatePartitionsTopic;
 import org.apache.kafka.common.message.CreatePartitionsResponseData.CreatePartitionsTopicResult;
 import org.apache.kafka.common.message.CreateTopicsRequestData;
@@ -626,11 +626,14 @@ public class ReplicationControlManager {
         return !topics.get(topicsByName.get(topicName)).parts.get(0).mirrorName.equals(mirrorName);
     }
 
-    public ControllerResult<CreateMirrorTopicResponseData> createMirrorTopic(Set<Uuid> topicIds) {
+    public ControllerResult<AttachMirrorTopicResponseData> attachMirrorTopic(Map<Uuid, String> topicIdsToMirrorName) {
         // luke
         List<ApiMessageAndVersion> records = BoundedList.newArrayBacked(MAX_RECORDS_PER_USER_OP);
-        for (Uuid topicId : topicIds) {
+        for (Entry<Uuid, String> topicIdToMirrorName : topicIdsToMirrorName.entrySet()) {
+            Uuid topicId = topicIdToMirrorName.getKey();
+            String mirrorName = topicIdToMirrorName.getValue();
             TopicControlInfo info = topics.get(topicId);
+            // TODO: handle info not exists
             String topicName = info.name;
             for (int partitionId : info.parts.keySet()) {
                 PartitionRegistration partition = info.parts.get(partitionId);
@@ -642,17 +645,17 @@ public class ReplicationControlManager {
                         featureControl.metadataVersionOrThrow(),
                         getTopicEffectiveMinIsr(topicName)
                 )
-                        // clear the cluster link name
-                        .setMirrorName("")
+                        // set the cluster link name
+                        .setMirrorName(mirrorName)
                         .setEligibleLeaderReplicasEnabled(featureControl.isElrFeatureEnabled())
                         .setDefaultDirProvider(clusterDescriber);
 
                 builder.build().ifPresent(records::add);
-                log.info("!!! update partition {} for topic {} with empty cluster link: {}", partitionId, topicName, records);
+                log.info("!!! update partition {} for topic {} with mirror name {}: {}", partitionId, topicName, mirrorName, records);
             }
         }
 
-        return ControllerResult.of(records, new CreateMirrorTopicResponseData().setErrorCode((short) 0));
+        return ControllerResult.of(records, new AttachMirrorTopicResponseData().setErrorCode((short) 0));
     }
 
     public ControllerResult<DeleteMirrorTopicResponseData> deleteMirrorTopic(Set<Uuid> topicIds) {
