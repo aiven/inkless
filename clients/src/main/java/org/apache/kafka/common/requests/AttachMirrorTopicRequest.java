@@ -19,6 +19,7 @@ package org.apache.kafka.common.requests;
 
 import org.apache.kafka.common.message.AttachMirrorTopicRequestData;
 import org.apache.kafka.common.message.AttachMirrorTopicResponseData;
+import org.apache.kafka.common.message.DeleteMirrorTopicRequestData;
 import org.apache.kafka.common.protocol.ApiKeys;
 import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.protocol.Readable;
@@ -35,10 +36,11 @@ public class AttachMirrorTopicRequest extends AbstractRequest {
             this.data = data;
         }
 
-        public Builder(String name, Map<String, String> configs) {
+        public Builder(Map<String, String> topicToMirrorName) {
             super(ApiKeys.ATTACH_MIRROR_TOPIC, ApiKeys.ATTACH_MIRROR_TOPIC.oldestVersion(),
                     ApiKeys.ATTACH_MIRROR_TOPIC.latestVersion());
             AttachMirrorTopicRequestData data = new AttachMirrorTopicRequestData();
+            topicToMirrorName.forEach((topic, mirrorName) -> data.topics().add(new AttachMirrorTopicRequestData.TopicState().setName(topic).setMirrorName(mirrorName)));
             this.data = data;
         }
 

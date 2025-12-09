@@ -21,14 +21,13 @@
   "validVersions": "0",
   "flexibleVersions": "0+",
   "fields": [
-    { "name": "ClusterLinkName", "type": "string", "versions": "0+", "nullableVersions": "0+",
-      "about": "The cluster link name."},
-    { "name": "Configs", "type": "[]ClusterLinkConfigs", "versions": "0+",
-      "about": "The configurations.",  "fields": [
-      { "name": "Name", "type": "string", "versions": "0+", "mapKey": true,
-        "about": "The configuration key name." },
-      { "name": "Value", "type": "string", "versions": "0+", "nullableVersions": "0+",
-        "about": "The value to set for the configuration key."}
-    ]}
+    { "name": "Topics", "type": "[]TopicState", "versions": "0+", "about": "The name or topic ID of the topic.",
+      "fields": [
+        { "name": "TopicId", "type": "uuid", "versions": "0+", "about": "The unique topic ID."},
+        { "name": "Name", "type": "string", "versions": "0+", "mapKey": true, "entityType": "topicName",
+          "about": "The topic name." },
+        { "name": "MirrorName", "type": "string", "versions": "0+", "nullableVersions": "0+",
+          "about": "The cluster link name."}
+      ]}
   ]
 }
