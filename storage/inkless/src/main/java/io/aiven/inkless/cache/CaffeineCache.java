@@ -1,4 +1,23 @@
+/*
+ * Inkless
+ * Copyright (C) 2024 - 2025 Aiven OY
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
 package io.aiven.inkless.cache;
+
+import org.apache.kafka.common.metrics.Metrics;
 
 import com.github.benmanes.caffeine.cache.AsyncCache;
 import com.github.benmanes.caffeine.cache.Caffeine;
@@ -21,32 +40,33 @@ public final class CaffeineCache implements ObjectCache {
      */
     private final AsyncCache<CacheKey, FileExtent> cache;
 
-    private final CaffeineCacheMetrics metrics;
-
     public CaffeineCache(
         final long maxCacheSize,
         final long lifespanSeconds,
-        final int maxIdleSeconds) {
-        cache = Caffeine.newBuilder()
-                .maximumSize(maxCacheSize)
-                .expireAfterWrite(Duration.ofSeconds(lifespanSeconds))
-                .expireAfterAccess(Duration.ofSeconds(maxIdleSeconds != -1 ? maxIdleSeconds: 180))
-                .recordStats()
-                .buildAsync();
-        metrics = new CaffeineCacheMetrics(cache.synchronous());
+        final int maxIdleSeconds,
+        final Metrics storageMetrics
+    ) {
+        final Caffeine<Object, Object> builder = Caffeine.newBuilder();
+        // size and weight limits
+        builder.maximumSize(maxCacheSize);
+        // expiration policies
+        builder.expireAfterWrite(Duration.ofSeconds(lifespanSeconds));
+        builder.expireAfterAccess(Duration.ofSeconds(maxIdleSeconds != -1 ? maxIdleSeconds : 180));
+        // enable metrics
+        builder.recordStats();
+        cache = builder.buildAsync();
+        new CaffeineCacheMetrics(storageMetrics, cache.synchronous());
     }
 
     @Override
     public void close() throws IOException {
-        metrics.close();
+        // no resources to close
     }
 
     @Override
     public FileExtent computeIfAbsent(final CacheKey key, final Function<CacheKey, FileExtent> mappingFunction) {
         final CompletableFuture<FileExtent> future = new CompletableFuture<>();
-        final CompletableFuture<FileExtent> existingFuture = cache.asMap().computeIfAbsent(key, (cacheKey) -> {
-            return future;
-        });
+        final CompletableFuture<FileExtent> existingFuture = cache.asMap().computeIfAbsent(key, (cacheKey) -> future);
         // If existing future is not the same object as created in this function
         // there was a pending cache load and this call is required to join the existing future
         // and discard the created one.
