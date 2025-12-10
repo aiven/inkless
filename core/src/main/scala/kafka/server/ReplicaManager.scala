@@ -2327,12 +2327,7 @@ class ReplicaManager(val config: KafkaConfig,
             s"A topic with the same name but different id exists but it resides in an offline log " +
             s"directory.")
           // get mirrorName from metadata (applies to both read-only leaders and their followers)
-          val mirrorName = Option(delta.changedTopics().get(topicId))
-            .flatMap(topicDelta => Option(topicDelta.partitionChanges().get(tp.partition())))
-            .map(_.mirrorName)
-            .getOrElse("")
-          logger.info("!!! Create new partition: " + tp + " " + topicId + " " + mirrorName)
-          val partition = Partition(new TopicIdPartition(topicId, tp), time, this, mirrorName)
+          val partition = Partition(new TopicIdPartition(topicId, tp), time, this)
           allPartitions.put(tp, HostedPartition.Online(partition))
           Some(partition, true)
         }
@@ -2355,13 +2350,7 @@ class ReplicaManager(val config: KafkaConfig,
             s"$topicId.")
         }
         // it's a partition that we don't know about yet, so create it and mark it online
-        // get mirrorName from metadata (applies to both read-only leaders and their followers)
-        val mirrorName = Option(delta.changedTopics().get(topicId))
-          .flatMap(topicDelta => Option(topicDelta.partitionChanges().get(tp.partition())))
-          .map(_.mirrorName)
-          .getOrElse("")
-        logger.info("!!! Create new partition: " + tp + " " + topicId + " " + mirrorName)
-        val partition = Partition(new TopicIdPartition(topicId, tp), time, this, mirrorName)
+        val partition = Partition(new TopicIdPartition(topicId, tp), time, this)
         allPartitions.put(tp, HostedPartition.Online(partition))
         Some(partition, true)
     }
@@ -2410,7 +2399,7 @@ class ReplicaManager(val config: KafkaConfig,
         val followerChangedPartitions = new mutable.HashSet[Partition]
         val deleteMirrorTopics = new mutable.HashSet[String]
         if (!localChanges.leaders.isEmpty) {
-          applyLocalLeadersDelta(leaderChangedPartitions, delta, lazyOffsetCheckpoints, localChanges.leaders.asScala, localChanges.directoryIds.asScala)
+          applyLocalLeadersDelta(leaderChangedPartitions, delta, lazyOffsetCheckpoints, localChanges.leaders.asScala, localChanges.directoryIds.asScala, deleteMirrorTopics)
           if (deleteMirrorTopics.nonEmpty) {
             info("!!! sent bumpLeaderEpoch:" + deleteMirrorTopics)
             mirrorMetadataManager.get.maybeUpdateLeaderEpoch(deleteMirrorTopics.toList.asJava)
@@ -2447,15 +2436,25 @@ class ReplicaManager(val config: KafkaConfig,
     delta: TopicsDelta,
     offsetCheckpoints: OffsetCheckpoints,
     localLeaders: mutable.Map[TopicPartition, LocalReplicaChanges.PartitionInfo],
-    directoryIds: mutable.Map[TopicIdPartition, Uuid]
+    directoryIds: mutable.Map[TopicIdPartition, Uuid],
+    deleteMirrorTopics: mutable.Set[String]
   ): Unit = {
     stateChangeLogger.info(s"Transitioning ${localLeaders.size} partition(s) to " +
       "local leaders.")
     replicaFetcherManager.removeFetcherForPartitions(localLeaders.keySet)
+    // Stopping the fetchers must be done first in order to initialize the fetch position correctly
+    mirrorFetcherManager.removeFetcherForPartitions(localLeaders.keySet)
     localLeaders.foreachEntry { (tp, info) =>
       getOrCreatePartition(tp, delta, info.topicId).foreach { case (partition, isNew) =>
         try {
           val state = info.partition.toLeaderAndIsrPartitionState(tp, isNew)
+
+          // add the topic into deleteMirrorTopics set if the mirror name becomes empty
+          val newMirrorName = delta.changedTopics().get(info.topicId()).partitionChanges().get(tp.partition()).mirrorName
+          if (partition.mirrorName.nonEmpty && newMirrorName.isEmpty) {
+            deleteMirrorTopics.add(tp.topic())
+          }
+
           val partitionAssignedDirectoryId = directoryIds.find(_._1.topicPartition() == tp).map(_._2)
           partition.makeLeader(state, offsetCheckpoints, Some(info.topicId), partitionAssignedDirectoryId)
 
@@ -2501,10 +2500,10 @@ class ReplicaManager(val config: KafkaConfig,
           val partitionAssignedDirectoryId = directoryIds.find(_._1.topicPartition() == tp).map(_._2)
 
           // For mirrored partitions, set mirrorName so the fetcher can use source epoch logic
-          val mirrorName = info.partition.mirrorName
-          if (mirrorName != null && !mirrorName.isEmpty) {
-            partition.setMirrorName(mirrorName)
-          }
+//          val mirrorName = info.partition.mirrorName
+//          if (mirrorName != null && !mirrorName.isEmpty) {
+//            partition.setMirrorName(mirrorName)
+//          }
 
           val isNewLeaderEpoch = partition.makeFollower(state, offsetCheckpoints, Some(info.topicId), partitionAssignedDirectoryId)
 
@@ -2618,9 +2617,6 @@ class ReplicaManager(val config: KafkaConfig,
   private def maybeCreateMirrorFetchers(readOnlyLeaders: mutable.Map[TopicPartition, LocalReplicaChanges.PartitionInfo]): Unit = {
     if (readOnlyLeaders.isEmpty) return
 
-    // Stopping the fetchers must be done first in order to initialize the fetch position correctly
-    mirrorFetcherManager.removeFetcherForPartitions(readOnlyLeaders.keySet)
-
     stateChangeLogger.info(s"Starting mirror fetchers for ${readOnlyLeaders.size} read-only leader partition(s).")
     val partitionAndOffsets = new mutable.HashMap[TopicPartition, InitialFetchState]
 
@@ -2630,9 +2626,6 @@ class ReplicaManager(val config: KafkaConfig,
           try {
             val mirrorName = info.partition.mirrorName
             if (mirrorName != null && !mirrorName.isEmpty) {
-              // Set mirrorName on partition for management and configuration purposes
-              partition.setMirrorName(mirrorName)
-
               // Get the remote partition leader from mirror metadata manager
               // This will return the actual leader if known, or a random bootstrap server as fallback
               val remoteLeader = mirrorMetadataManager.get.getRemotePartitionLeader(mirrorName, tp)

@@ -277,7 +277,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
             BumpLeaderEpochRequestData.TopicState topicState = new BumpLeaderEpochRequestData.TopicState();
             List<BumpLeaderEpochRequestData.LeaderEpochState> topicLeaderEpoch = new ArrayList<>();
             ((KRaftMetadataCache) metadataCache).getImage().topics().getTopic(topic).partitions().keySet().forEach(partitionId -> {
-                int epoch = logManager.getLog(new TopicPartition(topic, partitionId), false).get().latestEpochFromLog().orElse(-1);
+                int epoch = logManager.getLog(new TopicPartition(topic, partitionId), false).get().latestEpochFromLog().orElse(0);
                 topicLeaderEpoch.add(new BumpLeaderEpochRequestData.LeaderEpochState().setLeaderEpoch(epoch).setPartitionIndex(partitionId));
             });
             topicState.setTopicId(metadataCache.getTopicId(topic)).setPartitions(topicLeaderEpoch);

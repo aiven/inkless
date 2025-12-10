@@ -444,7 +444,8 @@ public class PartitionRegistration {
             setAddingReplicas(Replicas.toList(addingReplicas)).
             setRemovingReplicas(Replicas.toList(removingReplicas)).
             setLeaderRecoveryState(leaderRecoveryState.value()).
-            setIsNew(isNew);
+            setIsNew(isNew).
+            setMirrorName(mirrorName);
     }
 
     @Override

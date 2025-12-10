@@ -5388,7 +5388,7 @@ class ReplicaManagerTest {
       addPartitionsToTxnManager = Some(addPartitionsToTxnManager))
 
     try {
-      val spiedPartition = spy(Partition(tpId, time, replicaManager, ""))
+      val spiedPartition = spy(Partition(tpId, time, replicaManager))
       replicaManager.addOnlinePartition(tp, spiedPartition)
 
       val leaderDelta = topicsCreateDelta(localId, isStartIdLeader = true, partitions = List(0, 1), List.empty, topic, topicIds(topic))

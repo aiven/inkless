@@ -121,20 +121,17 @@ object Partition {
 
   def apply(topicIdPartition: TopicIdPartition,
             time: Time,
-            replicaManager: ReplicaManager,
-            mirrorName: String): Partition = {
+            replicaManager: ReplicaManager): Partition = {
     Partition(
       topicPartition = topicIdPartition.topicPartition,
       topicId = Some(topicIdPartition.topicId),
       time = time,
-      replicaManager = replicaManager,
-      mirrorName = mirrorName)
+      replicaManager = replicaManager)
   }
   def apply(topicPartition: TopicPartition,
             time: Time,
             replicaManager: ReplicaManager,
-            topicId: Option[Uuid] = None,
-            mirrorName: String = ""): Partition = {
+            topicId: Option[Uuid] = None): Partition = {
 
     val isrChangeListener = new AlterPartitionListener {
       override def markIsrExpand(): Unit = {
@@ -166,8 +163,7 @@ object Partition {
       delayedOperations = delayedOperations,
       metadataCache = replicaManager.metadataCache,
       logManager = replicaManager.logManager,
-      alterIsrManager = replicaManager.alterPartitionManager,
-      mirrorName = mirrorName)
+      alterIsrManager = replicaManager.alterPartitionManager)
   }
 
   def removeMetrics(topicPartition: TopicPartition): Unit = {
@@ -320,8 +316,7 @@ class Partition(val topicPartition: TopicPartition,
                 metadataCache: MetadataCache,
                 logManager: LogManager,
                 alterIsrManager: AlterPartitionManager,
-                @volatile private var _topicId: Option[Uuid] = None, // TODO: merge topicPartition and _topicId into TopicIdPartition once TopicId persist in most of the code by KAFKA-16212
-                @volatile var mirrorName: String = ""
+                @volatile private var _topicId: Option[Uuid] = None // TODO: merge topicPartition and _topicId into TopicIdPartition once TopicId persist in most of the code by KAFKA-16212
                ) extends Logging with TopicPartitionLog {
 
   import Partition.metricsGroup
@@ -353,6 +348,7 @@ class Partition(val topicPartition: TopicPartition,
   @volatile var log: Option[UnifiedLog] = None
   // If ReplicaAlterLogDir command is in progress, this is future location of the log
   @volatile var futureLog: Option[UnifiedLog] = None
+  @volatile var mirrorName: String = ""
 
   // Partition listeners
   private val listeners = new CopyOnWriteArrayList[PartitionListener]()
@@ -827,6 +823,7 @@ class Partition(val topicPartition: TopicPartition,
 
       partitionEpoch = partitionState.partitionEpoch
       leaderReplicaIdOpt = Some(localBrokerId)
+      mirrorName = partitionState.mirrorName()
 
       // We may need to increment high watermark since ISR could be down to 1.
       (maybeIncrementLeaderHW(leaderLog, currentTimeMs = currentTimeMs), isNewLeader)
@@ -864,6 +861,7 @@ class Partition(val topicPartition: TopicPartition,
       leaderEpoch = partitionState.leaderEpoch
       leaderEpochStartOffsetOpt = None
       partitionEpoch = partitionState.partitionEpoch
+      mirrorName = partitionState.mirrorName()
 
       updateAssignmentAndIsr(
         replicas = partitionState.replicas.asScala.iterator.map(_.toInt).toSeq,

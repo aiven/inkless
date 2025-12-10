@@ -36,6 +36,7 @@ public class PartitionState {
     List<Integer> removingReplicas = new ArrayList<>(0);
     boolean isNew = false;
     byte leaderRecoveryState = (byte) 0;
+    String mirrorName = "";
 
     @Override
     public boolean equals(Object o) {
@@ -81,6 +82,10 @@ public class PartitionState {
         return this.topicName;
     }
 
+    public String mirrorName() {
+        return this.mirrorName;
+    }
+
     public int partitionIndex() {
         return this.partitionIndex;
     }
@@ -123,6 +128,11 @@ public class PartitionState {
 
     public PartitionState setTopicName(String v) {
         this.topicName = v;
+        return this;
+    }
+
+    public PartitionState setMirrorName(String v) {
+        this.mirrorName = v;
         return this;
     }
 

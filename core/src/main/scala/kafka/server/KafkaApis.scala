@@ -301,7 +301,8 @@ class KafkaApis(val requestChannel: RequestChannel,
     val deleteMirrorTopicRequest = request.body[RemoveTopicsFromMirrorRequest]
     // TODO: might need to have a better way to pass the cluster mirror
     val mirrorTopics = deleteMirrorTopicRequest.data.topics.stream().map(t => t.topicName()).toList
-    logger.info(s"!!! Handling delete mirror topics request: ${mirrorTopics}")
+    logger.info(s"!!! Handling remove mirror topics request: ${deleteMirrorTopicRequest} ${mirrorTopics}")
+
     mirrorCoordinator.updateTopicsToCoordinator(deleteMirrorTopicRequest.data().mirrorName(), util.Set.of(), new util.HashSet[String](mirrorTopics))
     forwardToController(request)
   }
