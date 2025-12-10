@@ -1168,13 +1168,7 @@ public class UnifiedLog implements AutoCloseable {
                                     });
                                 }
                             } else {
-                                if (isMirroredTopic) {
-                                    for (MutableRecordBatch batch : records.batches()) {
-                                        // reset producer id for mirrored topic
-                                        logger.info("!!! resetting batch producer id to {} for batch {}", -(batch.producerId() + 2), batch.baseOffset());
-                                        batch.setProducerId(-(batch.producerId() + 2));
-                                    }
-                                }
+                                maybeResetProducerIdForMirroredTopic(records, isMirroredTopic);
                                 // we are taking the offsets we are given
                                 if (appendInfo.firstOrLastOffsetOfFirstBatch() < localLog.logEndOffset()) {
                                     // we may still be able to recover if the log is empty
@@ -1273,6 +1267,16 @@ public class UnifiedLog implements AutoCloseable {
                             }
                             return appendInfo;
                         });
+            }
+        }
+    }
+
+    private void maybeResetProducerIdForMirroredTopic(MemoryRecords records, boolean isMirroredTopic) {
+        if (isMirroredTopic) {
+            for (MutableRecordBatch batch : records.batches()) {
+                // reset producer id for mirrored topic
+                logger.info("!!! resetting batch producer id to {} for batch {}", -(batch.producerId() + 2), batch.baseOffset());
+                batch.setProducerId(-(batch.producerId() + 2));
             }
         }
     }
