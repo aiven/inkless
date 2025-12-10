@@ -15,17 +15,19 @@
 
 {
   "apiKey":95,
-  "type": "response",
-  "name": "AttachMirrorTopicResponse",
+  "type": "request",
+  "listeners": ["broker", "controller"],
+  "name": "AddTopicsToMirrorRequest",
   "validVersions": "0",
   "flexibleVersions": "0+",
   "fields": [
-    { "name": "ThrottleTimeMs", "type": "int32", "versions": "0+",
-      "about": "The duration in milliseconds for which the request was throttled due to a quota violation, or zero if the request did not violate any quota." },
-    { "name": "TopicId", "type": "uuid", "versions": "0+", "about": "The unique topic ID."},
-    { "name": "ErrorCode", "type": "int16", "versions": "0+",
-      "about": "The error code, or 0 if there was no error." },
-    { "name": "ErrorMessage", "type": "string", "versions": "0+", "nullableVersions": "0+", "ignorable": true,
-      "about": "The error message, or null if there was no error." }
+    { "name": "Topics", "type": "[]TopicState", "versions": "0+", "about": "The topic state.",
+      "fields": [
+        { "name": "TopicId", "type": "uuid", "versions": "0+", "about": "The unique topic ID."},
+        { "name": "TopicName", "type": "string", "versions": "0+", "mapKey": true, "entityType": "topicName",
+          "about": "The topic name." },
+        { "name": "MirrorName", "type": "string", "versions": "0+", "nullableVersions": "0+",
+          "about": "The mirror link name."}
+      ]}
   ]
 }

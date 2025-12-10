@@ -22,6 +22,8 @@ import org.apache.kafka.common.message.AddPartitionsToTxnRequestDataJsonConverte
 import org.apache.kafka.common.message.AddPartitionsToTxnResponseDataJsonConverter;
 import org.apache.kafka.common.message.AddRaftVoterRequestDataJsonConverter;
 import org.apache.kafka.common.message.AddRaftVoterResponseDataJsonConverter;
+import org.apache.kafka.common.message.AddTopicsToMirrorRequestDataJsonConverter;
+import org.apache.kafka.common.message.AddTopicsToMirrorResponseDataJsonConverter;
 import org.apache.kafka.common.message.AllocateProducerIdsRequestDataJsonConverter;
 import org.apache.kafka.common.message.AllocateProducerIdsResponseDataJsonConverter;
 import org.apache.kafka.common.message.AlterClientQuotasRequestDataJsonConverter;
@@ -42,8 +44,6 @@ import org.apache.kafka.common.message.ApiVersionsRequestDataJsonConverter;
 import org.apache.kafka.common.message.ApiVersionsResponseDataJsonConverter;
 import org.apache.kafka.common.message.AssignReplicasToDirsRequestDataJsonConverter;
 import org.apache.kafka.common.message.AssignReplicasToDirsResponseDataJsonConverter;
-import org.apache.kafka.common.message.AttachMirrorTopicRequestDataJsonConverter;
-import org.apache.kafka.common.message.AttachMirrorTopicResponseDataJsonConverter;
 import org.apache.kafka.common.message.BeginQuorumEpochRequestDataJsonConverter;
 import org.apache.kafka.common.message.BeginQuorumEpochResponseDataJsonConverter;
 import org.apache.kafka.common.message.BrokerHeartbeatRequestDataJsonConverter;
@@ -72,8 +72,6 @@ import org.apache.kafka.common.message.DeleteAclsRequestDataJsonConverter;
 import org.apache.kafka.common.message.DeleteAclsResponseDataJsonConverter;
 import org.apache.kafka.common.message.DeleteGroupsRequestDataJsonConverter;
 import org.apache.kafka.common.message.DeleteGroupsResponseDataJsonConverter;
-import org.apache.kafka.common.message.DeleteMirrorTopicRequestDataJsonConverter;
-import org.apache.kafka.common.message.DeleteMirrorTopicResponseDataJsonConverter;
 import org.apache.kafka.common.message.DeleteRecordsRequestDataJsonConverter;
 import org.apache.kafka.common.message.DeleteRecordsResponseDataJsonConverter;
 import org.apache.kafka.common.message.DeleteShareGroupOffsetsRequestDataJsonConverter;
@@ -170,6 +168,8 @@ import org.apache.kafka.common.message.ReadShareGroupStateSummaryRequestDataJson
 import org.apache.kafka.common.message.ReadShareGroupStateSummaryResponseDataJsonConverter;
 import org.apache.kafka.common.message.RemoveRaftVoterRequestDataJsonConverter;
 import org.apache.kafka.common.message.RemoveRaftVoterResponseDataJsonConverter;
+import org.apache.kafka.common.message.RemoveTopicsFromMirrorRequestDataJsonConverter;
+import org.apache.kafka.common.message.RemoveTopicsFromMirrorResponseDataJsonConverter;
 import org.apache.kafka.common.message.RenewDelegationTokenRequestDataJsonConverter;
 import org.apache.kafka.common.message.RenewDelegationTokenResponseDataJsonConverter;
 import org.apache.kafka.common.message.RequestHeaderDataJsonConverter;
@@ -254,8 +254,8 @@ import org.apache.kafka.common.requests.CreateDelegationTokenRequest;
 import org.apache.kafka.common.requests.CreateDelegationTokenResponse;
 import org.apache.kafka.common.requests.CreateMirrorRequest;
 import org.apache.kafka.common.requests.CreateMirrorResponse;
-import org.apache.kafka.common.requests.AttachMirrorTopicRequest;
-import org.apache.kafka.common.requests.AttachMirrorTopicResponse;
+import org.apache.kafka.common.requests.AddTopicsToMirrorRequest;
+import org.apache.kafka.common.requests.AddTopicsToMirrorResponse;
 import org.apache.kafka.common.requests.CreatePartitionsRequest;
 import org.apache.kafka.common.requests.CreatePartitionsResponse;
 import org.apache.kafka.common.requests.CreateTopicsRequest;
@@ -264,8 +264,8 @@ import org.apache.kafka.common.requests.DeleteAclsRequest;
 import org.apache.kafka.common.requests.DeleteAclsResponse;
 import org.apache.kafka.common.requests.DeleteGroupsRequest;
 import org.apache.kafka.common.requests.DeleteGroupsResponse;
-import org.apache.kafka.common.requests.DeleteMirrorTopicRequest;
-import org.apache.kafka.common.requests.DeleteMirrorTopicResponse;
+import org.apache.kafka.common.requests.RemoveTopicsFromMirrorRequest;
+import org.apache.kafka.common.requests.RemoveTopicsFromMirrorResponse;
 import org.apache.kafka.common.requests.DeleteRecordsRequest;
 import org.apache.kafka.common.requests.DeleteRecordsResponse;
 import org.apache.kafka.common.requests.DeleteShareGroupOffsetsRequest;
@@ -594,10 +594,10 @@ public class RequestConvertToJson {
                 return GetReplicaLogInfoRequestDataJsonConverter.write(((GetReplicaLogInfoRequest) request).data(), request.version());
             case CREATE_MIRROR:
                 return CreateMirrorRequestDataJsonConverter.write(((CreateMirrorRequest) request).data(), request.version());
-            case ATTACH_MIRROR_TOPIC:
-                return AttachMirrorTopicRequestDataJsonConverter.write(((AttachMirrorTopicRequest) request).data(), request.version());
-            case DELETE_MIRROR_TOPIC:
-                return DeleteMirrorTopicRequestDataJsonConverter.write(((DeleteMirrorTopicRequest) request).data(), request.version());
+            case ADD_TOPICS_TO_MIRROR:
+                return AddTopicsToMirrorRequestDataJsonConverter.write(((AddTopicsToMirrorRequest) request).data(), request.version());
+            case REMOVE_TOPICS_FROM_MIRROR:
+                return RemoveTopicsFromMirrorRequestDataJsonConverter.write(((RemoveTopicsFromMirrorRequest) request).data(), request.version());
             case BUMP_LEADER_EPOCH:
                 return BumpLeaderEpochRequestDataJsonConverter.write(((BumpLeaderEpochRequest) request).data(), request.version());
             default:
@@ -790,10 +790,10 @@ public class RequestConvertToJson {
                 return GetReplicaLogInfoResponseDataJsonConverter.write(((GetReplicaLogInfoResponse) response).data(), version);
             case CREATE_MIRROR:
                 return CreateMirrorResponseDataJsonConverter.write(((CreateMirrorResponse) response).data(), version);
-            case ATTACH_MIRROR_TOPIC:
-                return AttachMirrorTopicResponseDataJsonConverter.write(((AttachMirrorTopicResponse) response).data(), version);
-            case DELETE_MIRROR_TOPIC:
-                return DeleteMirrorTopicResponseDataJsonConverter.write(((DeleteMirrorTopicResponse) response).data(), version);
+            case ADD_TOPICS_TO_MIRROR:
+                return AddTopicsToMirrorResponseDataJsonConverter.write(((AddTopicsToMirrorResponse) response).data(), version);
+            case REMOVE_TOPICS_FROM_MIRROR:
+                return RemoveTopicsFromMirrorResponseDataJsonConverter.write(((RemoveTopicsFromMirrorResponse) response).data(), version);
             case BUMP_LEADER_EPOCH:
                 return BumpLeaderEpochResponseDataJsonConverter.write(((BumpLeaderEpochResponse) response).data(), version);
             default:

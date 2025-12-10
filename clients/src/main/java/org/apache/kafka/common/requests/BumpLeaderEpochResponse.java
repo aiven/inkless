@@ -18,7 +18,6 @@
 package org.apache.kafka.common.requests;
 
 import org.apache.kafka.common.message.BumpLeaderEpochResponseData;
-import org.apache.kafka.common.message.DeleteMirrorTopicResponseData;
 import org.apache.kafka.common.protocol.ApiKeys;
 import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.protocol.Readable;
@@ -30,7 +29,7 @@ public class BumpLeaderEpochResponse extends AbstractResponse {
     private final BumpLeaderEpochResponseData data;
 
     public BumpLeaderEpochResponse(BumpLeaderEpochResponseData data) {
-        super(ApiKeys.DELETE_MIRROR_TOPIC);
+        super(ApiKeys.BUMP_LEADER_EPOCH);
         this.data = data;
     }
 

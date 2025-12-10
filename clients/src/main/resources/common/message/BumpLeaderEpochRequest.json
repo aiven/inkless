@@ -21,7 +21,7 @@
   "validVersions": "0",
   "flexibleVersions": "0+",
   "fields": [
-    { "name": "Topics", "type": "[]TopicState", "versions": "0+", "about": "The name or topic ID of the topic.",
+    { "name": "Topics", "type": "[]TopicState", "versions": "0+", "about": "The topic and partitions state.",
       "fields": [
         {"name": "TopicId", "type": "uuid", "versions": "0+", "about": "The unique topic ID."},
         { "name": "Partitions", "type": "[]LeaderEpochState", "versions": "0+", "about": "The name or topic ID of the topic.",

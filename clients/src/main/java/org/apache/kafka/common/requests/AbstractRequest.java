@@ -358,10 +358,10 @@ public abstract class AbstractRequest implements AbstractRequestResponse {
                 return GetReplicaLogInfoRequest.parse(readable, apiVersion);
             case CREATE_MIRROR:
                 return CreateMirrorRequest.parse(readable, apiVersion);
-            case ATTACH_MIRROR_TOPIC:
-                return AttachMirrorTopicRequest.parse(readable, apiVersion);
-            case DELETE_MIRROR_TOPIC:
-                return DeleteMirrorTopicRequest.parse(readable, apiVersion);
+            case ADD_TOPICS_TO_MIRROR:
+                return AddTopicsToMirrorRequest.parse(readable, apiVersion);
+            case REMOVE_TOPICS_FROM_MIRROR:
+                return RemoveTopicsFromMirrorRequest.parse(readable, apiVersion);
             case BUMP_LEADER_EPOCH:
                 return BumpLeaderEpochRequest.parse(readable, apiVersion);
             default:
