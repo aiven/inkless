@@ -17,7 +17,7 @@
 
 package org.apache.kafka.common.requests;
 
-import org.apache.kafka.common.message.CreateMirrorResponseData;
+import org.apache.kafka.common.message.BumpLeaderEpochResponseData;
 import org.apache.kafka.common.protocol.ApiKeys;
 import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.protocol.Readable;
@@ -25,16 +25,16 @@ import org.apache.kafka.common.protocol.Readable;
 import java.util.HashMap;
 import java.util.Map;
 
-public class CreateMirrorResponse extends AbstractResponse {
-    private final CreateMirrorResponseData data;
+public class BumpLeaderEpochResponse extends AbstractResponse {
+    private final BumpLeaderEpochResponseData data;
 
-    public CreateMirrorResponse(CreateMirrorResponseData data) {
-        super(ApiKeys.CREATE_MIRROR);
+    public BumpLeaderEpochResponse(BumpLeaderEpochResponseData data) {
+        super(ApiKeys.BUMP_LEADER_EPOCH);
         this.data = data;
     }
 
     @Override
-    public CreateMirrorResponseData data() {
+    public BumpLeaderEpochResponseData data() {
         return data;
     }
 
@@ -55,7 +55,7 @@ public class CreateMirrorResponse extends AbstractResponse {
         return errorCounts;
     }
 
-    public static CreateMirrorResponse parse(Readable readable, short version) {
-        return new CreateMirrorResponse(new CreateMirrorResponseData(readable, version));
+    public static BumpLeaderEpochResponse parse(Readable readable, short version) {
+        return new BumpLeaderEpochResponse(new BumpLeaderEpochResponseData(readable, version));
     }
 }

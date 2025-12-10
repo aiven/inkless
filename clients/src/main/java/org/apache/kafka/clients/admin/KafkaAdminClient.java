@@ -197,6 +197,8 @@ import org.apache.kafka.common.requests.AlterUserScramCredentialsResponse;
 import org.apache.kafka.common.requests.ApiError;
 import org.apache.kafka.common.requests.ApiVersionsRequest;
 import org.apache.kafka.common.requests.ApiVersionsResponse;
+import org.apache.kafka.common.requests.AddTopicsToMirrorRequest;
+import org.apache.kafka.common.requests.AddTopicsToMirrorResponse;
 import org.apache.kafka.common.requests.CreateAclsRequest;
 import org.apache.kafka.common.requests.CreateAclsResponse;
 import org.apache.kafka.common.requests.CreateDelegationTokenRequest;
@@ -209,6 +211,8 @@ import org.apache.kafka.common.requests.CreateTopicsRequest;
 import org.apache.kafka.common.requests.CreateTopicsResponse;
 import org.apache.kafka.common.requests.DeleteAclsRequest;
 import org.apache.kafka.common.requests.DeleteAclsResponse;
+import org.apache.kafka.common.requests.RemoveTopicsFromMirrorRequest;
+import org.apache.kafka.common.requests.RemoveTopicsFromMirrorResponse;
 import org.apache.kafka.common.requests.DeleteTopicsRequest;
 import org.apache.kafka.common.requests.DeleteTopicsResponse;
 import org.apache.kafka.common.requests.DescribeAclsRequest;
@@ -4858,6 +4862,86 @@ public class KafkaAdminClient extends AdminClient {
         };
         runnable.call(call, now);
         return new CreateMirrorResult(future);
+    }
+
+    @Override
+    public DeleteMirrorTopicResult deleteMirrorTopic(String clusterLinkName, Set<String> topics, DeleteMirrorTopicOptions options) {
+        final KafkaFutureImpl<Void> future = new KafkaFutureImpl<>();
+        final long now = time.milliseconds();
+        final Call call = new Call("deleteMirrorTopic", calcDeadlineMs(now, options.timeoutMs()),
+                new LeastLoadedBrokerOrActiveKController()) {
+
+            @Override
+            RemoveTopicsFromMirrorRequest.Builder createRequest(int timeoutMs) {
+                return new RemoveTopicsFromMirrorRequest.Builder(clusterLinkName, topics);
+            }
+
+            @Override
+            void handleResponse(AbstractResponse abstractResponse) {
+                final RemoveTopicsFromMirrorResponse response =
+                        (RemoveTopicsFromMirrorResponse) abstractResponse;
+                Errors error = Errors.forCode(response.data().errorCode());
+                switch (error) {
+                    case NONE:
+                        future.complete(null);
+                        break;
+                    case REQUEST_TIMED_OUT:
+                        throw error.exception(response.data().errorMessage());
+                    default:
+                        log.error("delete mirror topic {} failed: {}",
+                                clusterLinkName, response.data().errorMessage());
+                        future.completeExceptionally(error.exception(response.data().errorMessage()));
+                        break;
+                }
+            }
+
+            @Override
+            void handleFailure(Throwable throwable) {
+                future.completeExceptionally(throwable);
+            }
+        };
+        runnable.call(call, now);
+        return new DeleteMirrorTopicResult(future);
+    }
+
+    @Override
+    public AttachMirrorTopicResult attachMirrorTopic(Map<String, String> topicToMirrorName, AttachMirrorTopicOptions options) {
+        final KafkaFutureImpl<Void> future = new KafkaFutureImpl<>();
+        final long now = time.milliseconds();
+        final Call call = new Call("attachMirrorTopic", calcDeadlineMs(now, options.timeoutMs()),
+                new LeastLoadedBrokerOrActiveKController()) {
+
+            @Override
+            AddTopicsToMirrorRequest.Builder createRequest(int timeoutMs) {
+                return new AddTopicsToMirrorRequest.Builder(topicToMirrorName);
+            }
+
+            @Override
+            void handleResponse(AbstractResponse abstractResponse) {
+                final AddTopicsToMirrorResponse response =
+                        (AddTopicsToMirrorResponse) abstractResponse;
+                Errors error = Errors.forCode(response.data().errorCode());
+                switch (error) {
+                    case NONE:
+                        future.complete(null);
+                        break;
+                    case REQUEST_TIMED_OUT:
+                        throw error.exception(response.data().errorMessage());
+                    default:
+                        log.error("attach mirror topic {} failed: {}",
+                                topicToMirrorName, response.data().errorMessage());
+                        future.completeExceptionally(error.exception(response.data().errorMessage()));
+                        break;
+                }
+            }
+
+            @Override
+            void handleFailure(Throwable throwable) {
+                future.completeExceptionally(throwable);
+            }
+        };
+        runnable.call(call, now);
+        return new AttachMirrorTopicResult(future);
     }
 
     @Override

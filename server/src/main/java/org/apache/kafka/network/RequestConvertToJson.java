@@ -22,6 +22,8 @@ import org.apache.kafka.common.message.AddPartitionsToTxnRequestDataJsonConverte
 import org.apache.kafka.common.message.AddPartitionsToTxnResponseDataJsonConverter;
 import org.apache.kafka.common.message.AddRaftVoterRequestDataJsonConverter;
 import org.apache.kafka.common.message.AddRaftVoterResponseDataJsonConverter;
+import org.apache.kafka.common.message.AddTopicsToMirrorRequestDataJsonConverter;
+import org.apache.kafka.common.message.AddTopicsToMirrorResponseDataJsonConverter;
 import org.apache.kafka.common.message.AllocateProducerIdsRequestDataJsonConverter;
 import org.apache.kafka.common.message.AllocateProducerIdsResponseDataJsonConverter;
 import org.apache.kafka.common.message.AlterClientQuotasRequestDataJsonConverter;
@@ -48,6 +50,8 @@ import org.apache.kafka.common.message.BrokerHeartbeatRequestDataJsonConverter;
 import org.apache.kafka.common.message.BrokerHeartbeatResponseDataJsonConverter;
 import org.apache.kafka.common.message.BrokerRegistrationRequestDataJsonConverter;
 import org.apache.kafka.common.message.BrokerRegistrationResponseDataJsonConverter;
+import org.apache.kafka.common.message.BumpLeaderEpochRequestDataJsonConverter;
+import org.apache.kafka.common.message.BumpLeaderEpochResponseDataJsonConverter;
 import org.apache.kafka.common.message.ConsumerGroupDescribeRequestDataJsonConverter;
 import org.apache.kafka.common.message.ConsumerGroupDescribeResponseDataJsonConverter;
 import org.apache.kafka.common.message.ConsumerGroupHeartbeatRequestDataJsonConverter;
@@ -164,6 +168,8 @@ import org.apache.kafka.common.message.ReadShareGroupStateSummaryRequestDataJson
 import org.apache.kafka.common.message.ReadShareGroupStateSummaryResponseDataJsonConverter;
 import org.apache.kafka.common.message.RemoveRaftVoterRequestDataJsonConverter;
 import org.apache.kafka.common.message.RemoveRaftVoterResponseDataJsonConverter;
+import org.apache.kafka.common.message.RemoveTopicsFromMirrorRequestDataJsonConverter;
+import org.apache.kafka.common.message.RemoveTopicsFromMirrorResponseDataJsonConverter;
 import org.apache.kafka.common.message.RenewDelegationTokenRequestDataJsonConverter;
 import org.apache.kafka.common.message.RenewDelegationTokenResponseDataJsonConverter;
 import org.apache.kafka.common.message.RequestHeaderDataJsonConverter;
@@ -234,6 +240,8 @@ import org.apache.kafka.common.requests.BrokerHeartbeatRequest;
 import org.apache.kafka.common.requests.BrokerHeartbeatResponse;
 import org.apache.kafka.common.requests.BrokerRegistrationRequest;
 import org.apache.kafka.common.requests.BrokerRegistrationResponse;
+import org.apache.kafka.common.requests.BumpLeaderEpochRequest;
+import org.apache.kafka.common.requests.BumpLeaderEpochResponse;
 import org.apache.kafka.common.requests.ConsumerGroupDescribeRequest;
 import org.apache.kafka.common.requests.ConsumerGroupDescribeResponse;
 import org.apache.kafka.common.requests.ConsumerGroupHeartbeatRequest;
@@ -246,6 +254,8 @@ import org.apache.kafka.common.requests.CreateDelegationTokenRequest;
 import org.apache.kafka.common.requests.CreateDelegationTokenResponse;
 import org.apache.kafka.common.requests.CreateMirrorRequest;
 import org.apache.kafka.common.requests.CreateMirrorResponse;
+import org.apache.kafka.common.requests.AddTopicsToMirrorRequest;
+import org.apache.kafka.common.requests.AddTopicsToMirrorResponse;
 import org.apache.kafka.common.requests.CreatePartitionsRequest;
 import org.apache.kafka.common.requests.CreatePartitionsResponse;
 import org.apache.kafka.common.requests.CreateTopicsRequest;
@@ -254,6 +264,8 @@ import org.apache.kafka.common.requests.DeleteAclsRequest;
 import org.apache.kafka.common.requests.DeleteAclsResponse;
 import org.apache.kafka.common.requests.DeleteGroupsRequest;
 import org.apache.kafka.common.requests.DeleteGroupsResponse;
+import org.apache.kafka.common.requests.RemoveTopicsFromMirrorRequest;
+import org.apache.kafka.common.requests.RemoveTopicsFromMirrorResponse;
 import org.apache.kafka.common.requests.DeleteRecordsRequest;
 import org.apache.kafka.common.requests.DeleteRecordsResponse;
 import org.apache.kafka.common.requests.DeleteShareGroupOffsetsRequest;
@@ -582,6 +594,12 @@ public class RequestConvertToJson {
                 return GetReplicaLogInfoRequestDataJsonConverter.write(((GetReplicaLogInfoRequest) request).data(), request.version());
             case CREATE_MIRROR:
                 return CreateMirrorRequestDataJsonConverter.write(((CreateMirrorRequest) request).data(), request.version());
+            case ADD_TOPICS_TO_MIRROR:
+                return AddTopicsToMirrorRequestDataJsonConverter.write(((AddTopicsToMirrorRequest) request).data(), request.version());
+            case REMOVE_TOPICS_FROM_MIRROR:
+                return RemoveTopicsFromMirrorRequestDataJsonConverter.write(((RemoveTopicsFromMirrorRequest) request).data(), request.version());
+            case BUMP_LEADER_EPOCH:
+                return BumpLeaderEpochRequestDataJsonConverter.write(((BumpLeaderEpochRequest) request).data(), request.version());
             default:
                 throw new IllegalStateException("ApiKey " + request.apiKey() + " is not currently handled in `request`, the " +
                     "code should be updated to do so.");
@@ -772,6 +790,12 @@ public class RequestConvertToJson {
                 return GetReplicaLogInfoResponseDataJsonConverter.write(((GetReplicaLogInfoResponse) response).data(), version);
             case CREATE_MIRROR:
                 return CreateMirrorResponseDataJsonConverter.write(((CreateMirrorResponse) response).data(), version);
+            case ADD_TOPICS_TO_MIRROR:
+                return AddTopicsToMirrorResponseDataJsonConverter.write(((AddTopicsToMirrorResponse) response).data(), version);
+            case REMOVE_TOPICS_FROM_MIRROR:
+                return RemoveTopicsFromMirrorResponseDataJsonConverter.write(((RemoveTopicsFromMirrorResponse) response).data(), version);
+            case BUMP_LEADER_EPOCH:
+                return BumpLeaderEpochResponseDataJsonConverter.write(((BumpLeaderEpochResponse) response).data(), version);
             default:
                 throw new IllegalStateException("ApiKey " + response.apiKey() + " is not currently handled in `response`, the " +
                     "code should be updated to do so.");
