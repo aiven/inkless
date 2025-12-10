@@ -137,7 +137,17 @@ public enum MetadataVersion {
     // *** STREAMS GROUPS BECOME PRODUCTION-READY IN THE FUTURE. ITS DEFINITION ALLOWS A STREAMS ***
     // *** GROUPS FEATURE TO BE DEFINED IN 4.1 BUT TURNED OFF BY DEFAULT, ABLE TO BE TURNED ON   ***
     // *** DYNAMICALLY TO TRY OUT THE EARLY ACCESS CAPABILITY.                                   ***
-    IBP_4_2_IV1(29, "4.2", "IV1", false);
+    IBP_4_2_IV1(29, "4.2", "IV1", false),
+
+    // Enables cluster mirroring (early access in 4.2).
+    // Adds FetchRequest/Response v19 with MirrorLeaderEpoch field.
+    // Adds mirrorName field to PartitionRecord for read-only leader identification.
+    //
+    // *** THIS IS A PLACEHOLDER UNSTABLE VERSION WHICH IS USED TO DEFINE THE POINT AT WHICH   ***
+    // *** CLUSTER MIRRORING BECOMES PRODUCTION-READY IN THE FUTURE. ITS DEFINITION ALLOWS THE ***
+    // *** MIRROR FEATURE TO BE DEFINED IN 4.2 BUT TURNED OFF BY DEFAULT, ABLE TO BE TURNED ON ***
+    // *** DYNAMICALLY TO TRY OUT THE EARLY ACCESS CAPABILITY.                                 ***
+    IBP_4_2_IV2(30, "4.2", "IV2", true);
 
     // NOTES when adding a new version:
     //   Update the default version in @ClusterTest annotation to point to the latest version
@@ -157,7 +167,7 @@ public enum MetadataVersion {
      * <strong>Think carefully before you update this value. ONCE A METADATA VERSION IS PRODUCTION,
      * IT CANNOT BE CHANGED.</strong>
      */
-    public static final MetadataVersion LATEST_PRODUCTION = IBP_4_2_IV0;
+    public static final MetadataVersion LATEST_PRODUCTION = IBP_4_1_IV1;
     // If you change the value above please also update
     // LATEST_STABLE_METADATA_VERSION version in tests/kafkatest/version.py
 
@@ -267,7 +277,7 @@ public enum MetadataVersion {
     }
 
     public short fetchRequestVersion() {
-        if (isAtLeast(IBP_4_2_IV0)) {
+        if (isAtLeast(IBP_4_2_IV2)) {
             return 19;
         } else if (isAtLeast(IBP_4_1_IV1)) {
             return 18;

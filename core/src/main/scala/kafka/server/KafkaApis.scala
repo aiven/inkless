@@ -65,7 +65,7 @@ import org.apache.kafka.coordinator.share.ShareCoordinator
 import org.apache.kafka.metadata.{ConfigRepository, MetadataCache}
 import org.apache.kafka.server.{ApiVersionManager, ClientMetricsManager, DelegationTokenManager, ProcessRole}
 import org.apache.kafka.server.authorizer._
-import org.apache.kafka.server.common.{GroupVersion, RequestLocal, ShareVersion, StreamsVersion, TransactionVersion}
+import org.apache.kafka.server.common.{GroupVersion, MirrorVersion, RequestLocal, ShareVersion, StreamsVersion, TransactionVersion}
 import org.apache.kafka.server.config.DelegationTokenManagerConfigs
 import org.apache.kafka.server.share.context.ShareFetchContext
 import org.apache.kafka.server.share.{ErroneousAndValidPartitionData, SharePartitionKey}
@@ -275,8 +275,12 @@ class KafkaApis(val requestChannel: RequestChannel,
     logger.info(s"!!! Handling create topics request")
     val mirrorTopic = createTopicsRequest.data.topics.stream().filter(t => t.mirrorName() != null && !t.mirrorName().isEmpty).findFirst()
     if (mirrorTopic.isPresent) {
-      logger.info(s"!!! Handling create mirror topics request: ${mirrorTopic.get().mirrorName()}")
-      mirrorCoordinator.addTopicsToCoordinator(mirrorTopic.get().mirrorName(), util.Set.of(mirrorTopic.get().name()))
+      if (isClusterMirroringEnabled) {
+        logger.info(s"!!! Handling create mirror topics request: ${mirrorTopic.get().mirrorName()}")
+        mirrorCoordinator.addTopicsToCoordinator(mirrorTopic.get().mirrorName(), util.Set.of(mirrorTopic.get().name()))
+      } else {
+        logger.warn("Cluster mirroring is disabled (mirror.version=0), ignoring mirror topic creation request")
+      }
     }
     forwardToController(request)
   }
@@ -4243,6 +4247,14 @@ class KafkaApis(val requestChannel: RequestChannel,
 
   private def isShareGroupProtocolEnabled: Boolean = {
     config.shareGroupConfig.isShareGroupEnabled || shareVersion().supportsShareGroups
+  }
+
+  private def mirrorVersion(): MirrorVersion = {
+    MirrorVersion.fromFeatureLevel(metadataCache.features.finalizedFeatures.getOrDefault(MirrorVersion.FEATURE_NAME, 0.toShort))
+  }
+
+  private def isClusterMirroringEnabled: Boolean = {
+    mirrorVersion().isClusterMirroringSupported
   }
 
   private def updateRecordConversionStats(request: RequestChannel.Request,

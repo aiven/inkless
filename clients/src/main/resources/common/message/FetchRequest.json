@@ -111,8 +111,7 @@
         { "name": "HighWatermark", "type": "int64", "versions": "18+", "default": "9223372036854775807", "taggedVersions": "18+",
           "tag": 1, "ignorable": true,
           "about": "The high-watermark known by the replica. -1 if the high-watermark is not known and 9223372036854775807 if the feature is not supported." },
-        { "name": "MirrorLeaderEpoch", "type": "int32", "versions": "19+", "default": "-1", "taggedVersions": "19+",
-          "tag": 2, "ignorable": true,
+        { "name": "MirrorLeaderEpoch", "type": "int32", "versions": "19+", "default": "-1", "ignorable": true,
           "about": "The mirrored leader epoch of the partition." }
       ]}
     ]},
