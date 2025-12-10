@@ -186,7 +186,7 @@ class KafkaApis(val requestChannel: RequestChannel,
         case ApiKeys.LIST_GROUPS => handleListGroupsRequest(request).exceptionally(handleError)
         case ApiKeys.SASL_HANDSHAKE => handleSaslHandshakeRequest(request)
         case ApiKeys.API_VERSIONS => handleApiVersionsRequest(request)
-        case ApiKeys.CREATE_TOPICS => handleCreateTopics(request)
+        case ApiKeys.CREATE_TOPICS => forwardToController(request)
         case ApiKeys.DELETE_TOPICS => forwardToController(request)
         case ApiKeys.DELETE_RECORDS => handleDeleteRecordsRequest(request)
         case ApiKeys.INIT_PRODUCER_ID => handleInitProducerIdRequest(request, requestLocal)
@@ -252,8 +252,8 @@ class KafkaApis(val requestChannel: RequestChannel,
         case ApiKeys.STREAMS_GROUP_HEARTBEAT => handleStreamsGroupHeartbeat(request).exceptionally(handleError)
         case ApiKeys.GET_REPLICA_LOG_INFO => handleGetReplicaLogInfo(request)
         case ApiKeys.CREATE_MIRROR => forwardToController(request)
-        case ApiKeys.CREATE_MIRROR_TOPIC => forwardToController(request)
-        case ApiKeys.DELETE_MIRROR_TOPIC => forwardToController(request)
+        case ApiKeys.CREATE_MIRROR_TOPIC => handleCreateMirrorTopics(request)
+        case ApiKeys.DELETE_MIRROR_TOPIC => handleDeleteMirrorTopics(request)
         case _ => throw new IllegalStateException(s"No handler for request api key ${request.header.apiKey}")
       }
     } catch {
@@ -271,11 +271,10 @@ class KafkaApis(val requestChannel: RequestChannel,
     }
   }
 
-  def handleCreateTopics(request: RequestChannel.Request): Unit = {
-    val createTopicsRequest = request.body[CreateTopicsRequest]
-    // TODO: might need to have a better way to pass the cluster mirror and bootstrap server info
-    logger.info(s"!!! Handling create topics request")
-    val mirrorTopic = createTopicsRequest.data.topics.stream().filter(t => t.mirrorName() != null && !t.mirrorName().isEmpty).findFirst()
+  def handleCreateMirrorTopics(request: RequestChannel.Request): Unit = {
+    val createMirrorTopicRequest = request.body[CreateMirrorTopicRequest]
+    // TODO: might need to have a better way to pass the cluster mirror
+    val mirrorTopic = createMirrorTopicRequest.data.topics.stream().filter(t => t.mirrorName() != null && !t.mirrorName().isEmpty).findFirst()
     if (mirrorTopic.isPresent) {
       if (isClusterMirroringEnabled) {
         logger.info(s"!!! Handling create mirror topics request: ${mirrorTopic.get().mirrorName()}")
@@ -284,6 +283,15 @@ class KafkaApis(val requestChannel: RequestChannel,
         logger.warn("Cluster mirroring is disabled (mirror.version=0), ignoring mirror topic creation request")
       }
     }
+    forwardToController(request)
+  }
+
+  def handleDeleteMirrorTopics(request: RequestChannel.Request): Unit = {
+    val deleteMirrorTopicRequest = request.body[DeleteMirrorTopicRequest]
+    // TODO: might need to have a better way to pass the cluster mirror
+    val mirrorTopics = deleteMirrorTopicRequest.data.topics.stream().map(t => t.name()).toList
+    logger.info(s"!!! Handling delete mirror topics request: ${mirrorTopics}")
+    mirrorCoordinator.removeTopicsFromCoordinator(deleteMirrorTopicRequest.data().mirrorName(), new util.HashSet[String](mirrorTopics))
     forwardToController(request)
   }
 

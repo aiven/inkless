@@ -95,6 +95,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -241,11 +242,20 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         return new Node(random.nextInt(), addresses.get(rand).getHostString(), addresses.get(rand).getPort());
     }
 
-    public void updateMirroredTopics(String clusterName, Set<String> topics) {
-        this.topics.put(clusterName, topics);
-        Set<String> mutableTopics = ConcurrentHashMap.newKeySet();
+    public Set<String> addMirroredTopics(String clusterName, Set<String> topics) {
+        Set<String> mutableTopics = new HashSet<>(this.topics.getOrDefault(clusterName, Set.of()));
         mutableTopics.addAll(topics);
         this.topics.put(clusterName, mutableTopics);
+
+        return mutableTopics;
+    }
+
+    public Set<String> removeMirroredTopics(String clusterName, Set<String> topics) {
+        Set<String> mutableTopics = new HashSet<>(this.topics.getOrDefault(clusterName, Set.of()));
+        mutableTopics.removeAll(topics);
+        this.topics.put(clusterName, mutableTopics);
+
+        return mutableTopics;
     }
 
     public void refreshMetadata() {
