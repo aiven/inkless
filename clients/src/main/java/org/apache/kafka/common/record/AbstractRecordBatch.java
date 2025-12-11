@@ -18,12 +18,9 @@ package org.apache.kafka.common.record;
 
 
 abstract class AbstractRecordBatch implements RecordBatch {
-    /*
-     * As long as the producer id is not NO_PRODUCER_ID, it is seen as a valid producer id
-     */
     @Override
     public boolean hasProducerId() {
-        return RecordBatch.NO_PRODUCER_ID != producerId();
+        return RecordBatch.NO_PRODUCER_ID < producerId();
     }
 
     @Override

@@ -1333,13 +1333,13 @@ class Partition(val topicPartition: TopicPartition,
       inReadLock(leaderIsrUpdateLock) {
         // Note the replica may be undefined if it is removed by a non-ReplicaAlterLogDirsThread before
         // this method is called
-        futureLog.map { _.appendAsFollower(records, partitionLeaderEpoch, !mirrorName.isEmpty) }
+        futureLog.map { _.appendAsFollower(records, partitionLeaderEpoch) }
       }
     } else {
       // The lock is needed to prevent the follower replica from being updated while ReplicaAlterDirThread
       // is executing maybeReplaceCurrentWithFutureReplica() to replace follower replica with the future replica.
       futureLogLock.synchronized {
-        Some(localLogOrException.appendAsFollower(records, partitionLeaderEpoch, !mirrorName.isEmpty))
+        Some(localLogOrException.appendAsFollower(records, partitionLeaderEpoch))
       }
     }
   }
