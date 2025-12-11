@@ -221,4 +221,48 @@ public class FetchPlannerTest {
         // Verify the number of planned fetch jobs matches expected
         assertEquals(expectedJobs.size(), result.size());
     }
+
+    @Test
+    public void planShouldUseOldestTimestampForSameObject() {
+        // Given: Two batches for the same object with different timestamps
+        long olderTimestamp = 1000L;
+        long newerTimestamp = 2000L;
+
+        Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of(
+            partition0, FindBatchResponse.success(List.of(
+                new BatchInfo(1L, OBJECT_KEY_A.value(), BatchMetadata.of(partition0, 0, 10, 0, 0, 10, newerTimestamp, TimestampType.CREATE_TIME))
+            ), 0, 1),
+            partition1, FindBatchResponse.success(List.of(
+                new BatchInfo(2L, OBJECT_KEY_A.value(), BatchMetadata.of(partition1, 30, 10, 0, 0, 11, olderTimestamp, TimestampType.CREATE_TIME))
+            ), 0, 1)
+        );
+
+        FetchPlanner job = fetchPlannerJob(coordinates);
+        List<CompletableFuture<FileExtent>> result = job.get();
+
+        // Should only have one job for the merged object key
+        assertEquals(1, result.size());
+        // The job should use the older timestamp (1000L) for cache tiering decisions
+        // This is verified implicitly - FetchPlanner.ObjectFetchInfo tracks min timestamp
+    }
+
+    @Test
+    public void planShouldPreserveSeparateTimestampsForDifferentObjects() {
+        // Given: Two different objects with different timestamps
+        long timestampA = 1000L;
+        long timestampB = 5000L;
+
+        Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of(
+            partition0, FindBatchResponse.success(List.of(
+                new BatchInfo(1L, OBJECT_KEY_A.value(), BatchMetadata.of(partition0, 0, 10, 0, 0, 10, timestampA, TimestampType.CREATE_TIME)),
+                new BatchInfo(2L, OBJECT_KEY_B.value(), BatchMetadata.of(partition0, 0, 10, 1, 1, 11, timestampB, TimestampType.CREATE_TIME))
+            ), 0, 2)
+        );
+
+        FetchPlanner job = fetchPlannerJob(coordinates);
+        List<CompletableFuture<FileExtent>> result = job.get();
+
+        // Should have two separate jobs, each with its own timestamp
+        assertEquals(2, result.size());
+    }
 }

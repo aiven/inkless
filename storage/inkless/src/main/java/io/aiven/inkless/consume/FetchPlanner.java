@@ -21,9 +21,10 @@ import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.utils.Time;
 
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.function.Supplier;
@@ -75,25 +76,52 @@ public class FetchPlanner implements Supplier<List<CompletableFuture<FileExtent>
         return submitAll(jobs);
     }
 
+    /**
+     * Helper class to track byte ranges and the oldest batch timestamp for an object key.
+     */
+    private static class ObjectFetchInfo {
+        final List<ByteRange> ranges = new ArrayList<>();
+        long oldestTimestamp = Long.MAX_VALUE;
+
+        void addBatch(BatchInfo batch) {
+            ranges.add(batch.metadata().range());
+            oldestTimestamp = Math.min(oldestTimestamp, batch.metadata().timestamp());
+        }
+    }
+
     private List<CacheFetchJob> planJobs(final Map<TopicIdPartition, FindBatchResponse> batchCoordinates) {
-        final Set<Map.Entry<String, List<ByteRange>>> objectKeysToRanges = batchCoordinates.values().stream()
+        // Group batches by object key, tracking ranges and oldest timestamp
+        final Map<String, ObjectFetchInfo> objectKeysToFetchInfo = new HashMap<>();
+
+        batchCoordinates.values().stream()
             .filter(findBatch -> findBatch.errors() == Errors.NONE)
             .map(FindBatchResponse::batches)
             .peek(batches -> metrics.recordFetchBatchSize(batches.size()))
             .flatMap(List::stream)
-            // Merge batch requests
-            .collect(Collectors.groupingBy(BatchInfo::objectKey, Collectors.mapping(b -> b.metadata().range(), Collectors.toList())))
-            .entrySet();
-        metrics.recordFetchObjectsSize(objectKeysToRanges.size());
-        return objectKeysToRanges.stream()
-            .flatMap(e ->
-                keyAlignment.align(e.getValue())
+            .forEach(batch ->
+                objectKeysToFetchInfo
+                    .computeIfAbsent(batch.objectKey(), k -> new ObjectFetchInfo())
+                    .addBatch(batch)
+            );
+
+        metrics.recordFetchObjectsSize(objectKeysToFetchInfo.size());
+
+        return objectKeysToFetchInfo.entrySet().stream()
+            .flatMap(e -> {
+                final String objectKey = e.getKey();
+                final ObjectFetchInfo fetchInfo = e.getValue();
+                // Note: keyAlignment.align() returns fixed-size aligned blocks (e.g., 16 MiB).
+                // This aligned byteRange is used for both caching and rate limiting (if enabled).
+                // Rate limiting uses the aligned block size (not actual batch size) as a conservative
+                // estimate, since the actual fetch size is only known after the fetch completes.
+                return keyAlignment.align(fetchInfo.ranges)
                     .stream()
-                    .map(byteRange -> getCacheFetchJob(e.getKey(), byteRange)))
+                    .map(byteRange -> getCacheFetchJob(objectKey, byteRange, fetchInfo.oldestTimestamp));
+            })
             .collect(Collectors.toList());
     }
 
-    private CacheFetchJob getCacheFetchJob(final String objectKey, final ByteRange byteRange) {
+    private CacheFetchJob getCacheFetchJob(final String objectKey, final ByteRange byteRange, final long batchTimestamp) {
         return new CacheFetchJob(
                 cache,
                 objectFetcher,
@@ -101,7 +129,8 @@ public class FetchPlanner implements Supplier<List<CompletableFuture<FileExtent>
                 byteRange,
                 time,
                 metrics::fetchFileFinished,
-                metrics::cacheEntrySize
+                metrics::cacheEntrySize,
+                batchTimestamp
         );
 
     }

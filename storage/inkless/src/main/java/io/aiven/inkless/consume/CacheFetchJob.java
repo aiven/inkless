@@ -22,6 +22,7 @@ import org.apache.kafka.common.utils.Time;
 import java.util.Objects;
 import java.util.concurrent.Callable;
 import java.util.function.Consumer;
+import java.util.function.Function;
 
 import io.aiven.inkless.cache.ObjectCache;
 import io.aiven.inkless.common.ByteRange;
@@ -32,6 +33,12 @@ import io.aiven.inkless.storage_backend.common.ObjectFetcher;
 
 public class CacheFetchJob implements Callable<FileExtent> {
 
+    /**
+     * Constant indicating no batch timestamp is available.
+     * When used, the cache will default to hot cache behavior.
+     */
+    public static final long NO_BATCH_TIMESTAMP = Long.MIN_VALUE;
+
     private final ObjectCache cache;
     private final ObjectKey objectKey;
     private final ObjectFetcher objectFetcher;
@@ -41,6 +48,7 @@ public class CacheFetchJob implements Callable<FileExtent> {
     private final ByteRange byteRange;
     private final FileFetchJob fallback;
     private final Consumer<Long> fileFetchDurationCallback;
+    private final long batchTimestamp;
 
     public CacheFetchJob(
         final ObjectCache cache,
@@ -51,6 +59,19 @@ public class CacheFetchJob implements Callable<FileExtent> {
         final Consumer<Long> fileFetchDurationCallback,
         final Consumer<Integer> cacheEntrySize
     ) {
+        this(cache, objectFetcher, objectKey, byteRange, time, fileFetchDurationCallback, cacheEntrySize, NO_BATCH_TIMESTAMP);
+    }
+
+    public CacheFetchJob(
+        final ObjectCache cache,
+        final ObjectFetcher objectFetcher,
+        final ObjectKey objectKey,
+        final ByteRange byteRange,
+        final Time time,
+        final Consumer<Long> fileFetchDurationCallback,
+        final Consumer<Integer> cacheEntrySize,
+        final long batchTimestamp
+    ) {
         this.cache = cache;
         this.objectKey = objectKey;
         this.objectFetcher = objectFetcher;
@@ -59,6 +80,7 @@ public class CacheFetchJob implements Callable<FileExtent> {
         this.fileFetchDurationCallback = fileFetchDurationCallback;
         this.byteRange = byteRange;
         this.key = createCacheKey(objectKey, byteRange);
+        this.batchTimestamp = batchTimestamp;
 
         this.fallback = new FileFetchJob(time, objectFetcher, objectKey, byteRange, fileFetchDurationCallback);
     }
@@ -74,24 +96,26 @@ public class CacheFetchJob implements Callable<FileExtent> {
 
     @Override
     public FileExtent call() {
-        return cache.computeIfAbsent(key, cacheKey -> {
+        final Function<CacheKey, FileExtent> mappingFunction = cacheKey -> {
             // Let remote storage exceptions bubble up, do not catch the exceptions.
             final FileExtent freshFile = loadFileExtent(objectKey, byteRange);
             // TODO: add cache entry size also to produce/file commit
             cacheEntrySize.accept(freshFile.data().length);
             return freshFile;
-        });
+        };
+
+        // Use timestamp-aware method - default implementation ignores timestamp,
+        // TieredObjectCache uses it for routing to hot/cold cache
+        return cache.computeIfAbsent(key, mappingFunction, batchTimestamp);
     }
 
     private FileExtent loadFileExtent(final ObjectKey key, final ByteRange batchRange) {
-        final FileExtent freshFile;
-        final FileFetchJob fallback = new FileFetchJob(time, objectFetcher, key, batchRange, fileFetchDurationCallback);
+        final FileFetchJob fetchJob = new FileFetchJob(time, objectFetcher, key, batchRange, fileFetchDurationCallback);
         try {
-            freshFile = fallback.call();
+            return fetchJob.call();
         } catch (Exception e) {
             throw new FetchException(e);
         }
-        return freshFile;
     }
 
     @Override
@@ -99,13 +123,14 @@ public class CacheFetchJob implements Callable<FileExtent> {
         if (this == o) return true;
         if (o == null || getClass() != o.getClass()) return false;
         CacheFetchJob that = (CacheFetchJob) o;
-        return Objects.equals(cache, that.cache)
+        return batchTimestamp == that.batchTimestamp
+                && Objects.equals(cache, that.cache)
                 && Objects.equals(key, that.key)
                 && Objects.equals(fallback, that.fallback);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(cache, key, fallback);
+        return Objects.hash(cache, key, fallback, batchTimestamp);
     }
 }
