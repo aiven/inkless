@@ -2499,12 +2499,6 @@ class ReplicaManager(val config: KafkaConfig,
           val state = info.partition.toLeaderAndIsrPartitionState(tp, isNew)
           val partitionAssignedDirectoryId = directoryIds.find(_._1.topicPartition() == tp).map(_._2)
 
-          // For mirrored partitions, set mirrorName so the fetcher can use source epoch logic
-//          val mirrorName = info.partition.mirrorName
-//          if (mirrorName != null && !mirrorName.isEmpty) {
-//            partition.setMirrorName(mirrorName)
-//          }
-
           val isNewLeaderEpoch = partition.makeFollower(state, offsetCheckpoints, Some(info.topicId), partitionAssignedDirectoryId)
 
           if (isInControlledShutdown && (info.partition.leader == NO_LEADER ||
