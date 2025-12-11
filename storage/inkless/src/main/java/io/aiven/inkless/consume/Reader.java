@@ -31,6 +31,7 @@ import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.time.Instant;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
@@ -45,6 +46,7 @@ import io.aiven.inkless.common.InklessThreadFactory;
 import io.aiven.inkless.common.ObjectKeyCreator;
 import io.aiven.inkless.common.metrics.ThreadPoolMonitor;
 import io.aiven.inkless.control_plane.ControlPlane;
+import io.aiven.inkless.generated.FileExtent;
 import io.aiven.inkless.storage_backend.common.ObjectFetcher;
 
 public class Reader implements AutoCloseable {
@@ -122,12 +124,28 @@ public class Reader implements AutoCloseable {
         }
     }
 
+    /**
+     * Asynchronously fetches data for multiple partitions using a staged pipeline:
+     *
+     * <p>1. Finds batches (metadataExecutor);
+     * <p>2. Plans and submits fetches (calling thread);
+     * <p>3. Fetches data (dataExecutor);
+     * <p>4. Assembles final response (calling thread)
+     *
+     * <p>Each stage uses a thread pool or the calling thread for efficiency.
+     *
+     * @param params fetch parameters
+     * @param fetchInfos partitions and offsets to fetch
+     * @return CompletableFuture with fetch results per partition
+     */
     public CompletableFuture<Map<TopicIdPartition, FetchPartitionData>> fetch(
         final FetchParams params,
         final Map<TopicIdPartition, FetchRequest.PartitionData> fetchInfos
     ) {
         final Instant startAt = TimeUtils.durationMeasurementNow(time);
         fetchMetrics.fetchStarted(fetchInfos.size());
+
+        // Find Batches (metadataExecutor): Query control plane to find which storage objects contain the requested data
         final var batchCoordinates = CompletableFuture.supplyAsync(
             new FindBatchesJob(
                 time,
@@ -139,20 +157,26 @@ public class Reader implements AutoCloseable {
             ),
             metadataExecutor
         );
-        return batchCoordinates.thenApply(
-                coordinates ->
-                    new FetchPlanner(
-                        time,
-                        objectKeyCreator,
-                        keyAlignmentStrategy,
-                        cache,
-                        objectFetcher,
-                        dataExecutor,
-                        coordinates,
-                        fetchMetrics
-                    ).get()
-            )
-            .thenCombineAsync(batchCoordinates, (fileExtents, coordinates) ->
+
+        // Plan & Submit (calling thread): Create fetch plan and submit to cache (non-blocking)
+        return batchCoordinates.thenApply(coordinates -> {
+                // FetchPlanner creates a plan and submits requests to cache
+                // Returns List<CompletableFuture<FileExtent>> immediately
+                return new FetchPlanner(
+                    time,
+                    objectKeyCreator,
+                    keyAlignmentStrategy,
+                    cache,
+                    objectFetcher,
+                    dataExecutor,
+                    coordinates,
+                    fetchMetrics
+                ).get();
+            })
+            // Fetch Data (dataExecutor): Flatten list of futures into single future with all results
+            .thenCompose(Reader::allOfFileExtents)
+            // Complete Fetch (calling thread): Combine fetched data with batch coordinates to build final response
+            .thenCombine(batchCoordinates, (fileExtents, coordinates) ->
                 new FetchCompleter(
                     time,
                     objectKeyCreator,
@@ -201,6 +225,26 @@ public class Reader implements AutoCloseable {
                     fetchMetrics.fetchCompleted(startAt);
                 }
             });
+    }
+
+    /**
+     * Waits for all file extent futures to complete and collects results without blocking threads.
+     * <p>
+     * This method preserves the original order of the input list, regardless of the order
+     * in which the futures complete.
+     *
+     * @param fileExtentFutures the list of futures to wait for
+     * @return a future that completes with a list of file extents in the same order as the input
+     */
+    static CompletableFuture<List<FileExtent>> allOfFileExtents(
+        List<CompletableFuture<FileExtent>> fileExtentFutures
+    ) {
+        final CompletableFuture<?>[] futuresArray = fileExtentFutures.toArray(CompletableFuture[]::new);
+        return CompletableFuture.allOf(futuresArray)
+            .thenApply(v ->
+                fileExtentFutures.stream()
+                    .map(CompletableFuture::join)
+                    .toList());
     }
 
     @Override
