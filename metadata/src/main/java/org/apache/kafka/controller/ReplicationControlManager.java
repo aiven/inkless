@@ -622,10 +622,6 @@ public class ReplicationControlManager {
         return numRemoved;
     }
 
-    private boolean hasDifferentMirrorName(String topicName, String mirrorName) {
-        return !topics.get(topicsByName.get(topicName)).parts.get(0).mirrorName.equals(mirrorName);
-    }
-
     public ControllerResult<AddTopicsToMirrorResponseData> addTopicsToMirror(Map<Uuid, String> topicIdsToMirrorName) {
         // luke
         List<ApiMessageAndVersion> records = BoundedList.newArrayBacked(MAX_RECORDS_PER_USER_OP);
