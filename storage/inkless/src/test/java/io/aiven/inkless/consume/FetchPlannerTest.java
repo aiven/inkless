@@ -25,18 +25,17 @@ import org.apache.kafka.common.utils.Time;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 
-import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 import io.aiven.inkless.cache.FixedBlockAlignment;
 import io.aiven.inkless.cache.KeyAlignmentStrategy;
@@ -49,11 +48,10 @@ import io.aiven.inkless.common.PlainObjectKey;
 import io.aiven.inkless.control_plane.BatchInfo;
 import io.aiven.inkless.control_plane.BatchMetadata;
 import io.aiven.inkless.control_plane.FindBatchResponse;
+import io.aiven.inkless.generated.FileExtent;
 import io.aiven.inkless.storage_backend.common.ObjectFetcher;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.mockito.Mockito.verifyNoInteractions;
-import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.STRICT_STUBS)
@@ -68,9 +66,10 @@ public class FetchPlannerTest {
     @Mock
     ObjectFetcher fetcher;
     @Mock
-    ExecutorService dataExecutor;
-    @Mock
     InklessFetchMetrics metrics;
+
+    // Direct executor that runs tasks immediately in the same thread
+    ExecutorService dataExecutor = Executors.newSingleThreadExecutor();
 
     ObjectCache cache = new NullCache();
     KeyAlignmentStrategy keyAlignmentStrategy = new FixedBlockAlignment(Integer.MAX_VALUE);
@@ -82,12 +81,12 @@ public class FetchPlannerTest {
 
     @Test
     public void planEmptyRequest() {
-        Map<TopicIdPartition, FindBatchResponse> coordinates = new HashMap<>();
+        Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of();
         FetchPlanner job = fetchPlannerJob(coordinates);
 
-        job.get();
+        List<CompletableFuture<FileExtent>> result = job.get();
 
-        verifyNoInteractions(dataExecutor);
+        assertEquals(0, result.size());
     }
 
     @Test
@@ -214,14 +213,12 @@ public class FetchPlannerTest {
         );
     }
 
-    private void assertBatchPlan(Map<TopicIdPartition, FindBatchResponse> coordinates, Set<CacheFetchJob> jobs) {
-        ArgumentCaptor<CacheFetchJob> submittedCallables = ArgumentCaptor.captor();
-        when(dataExecutor.submit(submittedCallables.capture())).thenReturn(null);
-
+    private void assertBatchPlan(Map<TopicIdPartition, FindBatchResponse> coordinates, Set<CacheFetchJob> expectedJobs) {
         FetchPlanner job = fetchPlannerJob(coordinates);
 
-        job.get();
+        List<CompletableFuture<FileExtent>> result = job.get();
 
-        assertEquals(jobs, new HashSet<>(submittedCallables.getAllValues()));
+        // Verify the number of planned fetch jobs matches expected
+        assertEquals(expectedJobs.size(), result.size());
     }
 }

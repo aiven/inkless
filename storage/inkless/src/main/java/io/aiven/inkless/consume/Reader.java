@@ -31,6 +31,7 @@ import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.time.Instant;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
@@ -45,6 +46,7 @@ import io.aiven.inkless.common.InklessThreadFactory;
 import io.aiven.inkless.common.ObjectKeyCreator;
 import io.aiven.inkless.common.metrics.ThreadPoolMonitor;
 import io.aiven.inkless.control_plane.ControlPlane;
+import io.aiven.inkless.generated.FileExtent;
 import io.aiven.inkless.storage_backend.common.ObjectFetcher;
 
 public class Reader implements AutoCloseable {
@@ -152,7 +154,10 @@ public class Reader implements AutoCloseable {
                         fetchMetrics
                     ).get()
             )
-            .thenCombineAsync(batchCoordinates, (fileExtents, coordinates) ->
+            // flatten the list of file extent futures into a single future with list of file extents
+            .thenCompose(Reader::allOfFileExtents)
+            // combine file extents and coordinates to complete the fetch
+            .thenCombine(batchCoordinates, (fileExtents, coordinates) ->
                 new FetchCompleter(
                     time,
                     objectKeyCreator,
@@ -201,6 +206,19 @@ public class Reader implements AutoCloseable {
                     fetchMetrics.fetchCompleted(startAt);
                 }
             });
+    }
+
+    // wait for all file extent futures to complete and collect results without blocking threads
+    @SuppressWarnings("rawtypes")
+    static CompletableFuture<java.util.List<FileExtent>> allOfFileExtents(
+        List<CompletableFuture<FileExtent>> fileExtentFutures
+    ) {
+        final CompletableFuture[] futuresArray = fileExtentFutures.toArray(new CompletableFuture[0]);
+        return CompletableFuture.allOf(futuresArray)
+            .thenApply(v ->
+                fileExtentFutures.stream()
+                    .map(CompletableFuture::join)
+                    .toList());
     }
 
     @Override
