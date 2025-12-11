@@ -17,26 +17,11 @@
 
 package org.apache.kafka.clients.admin;
 
-import org.apache.kafka.common.KafkaFuture;
-
+import java.util.Map;
 import java.util.Set;
 
 /**
- * The result of the {@link Admin#attachMirrorTopic(String, Set, AttachMirrorTopicOptions)}  call.
- *
- * The API of this class is evolving, see {@link Admin} for details.
+ * Options for {@link Admin#addTopicsToMirror(Map, AddTopicsToMirrorOptions)}.
  */
-public class AttachMirrorTopicResult {
-    private final KafkaFuture<Void> future;
-
-    AttachMirrorTopicResult(final KafkaFuture<Void> future) {
-        this.future = future;
-    }
-
-    /**
-     * Return a future which succeeds if the operation is successful.
-     */
-    public KafkaFuture<Void> all() {
-        return future;
-    }
+public class AddTopicsToMirrorOptions extends AbstractOptions<AddTopicsToMirrorOptions> {
 }

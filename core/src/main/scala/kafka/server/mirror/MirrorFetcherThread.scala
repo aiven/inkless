@@ -172,7 +172,7 @@ class MirrorFetcherThread(name: String,
 
   override def latestEpochFromLog(topicPartition: TopicPartition): Optional[Integer] = {
     val partition = replicaMgr.getPartitionOrException(topicPartition)
-    partition.localLogOrException.latestEpoch
+    partition.localLogOrException.latestEpochFromLog()
   }
 
   override def logStartOffset(topicPartition: TopicPartition): Long = {

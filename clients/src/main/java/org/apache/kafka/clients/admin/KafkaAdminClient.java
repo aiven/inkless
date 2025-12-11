@@ -4865,7 +4865,7 @@ public class KafkaAdminClient extends AdminClient {
     }
 
     @Override
-    public DeleteMirrorTopicResult deleteMirrorTopic(String clusterLinkName, Set<String> topics, DeleteMirrorTopicOptions options) {
+    public RemoveTopicsFromMirrorResult removeTopicsFromMirror(String mirrorName, Set<String> topics, RemoveTopicsFromMirrorOptions options) {
         final KafkaFutureImpl<Void> future = new KafkaFutureImpl<>();
         final long now = time.milliseconds();
         final Call call = new Call("deleteMirrorTopic", calcDeadlineMs(now, options.timeoutMs()),
@@ -4873,7 +4873,7 @@ public class KafkaAdminClient extends AdminClient {
 
             @Override
             RemoveTopicsFromMirrorRequest.Builder createRequest(int timeoutMs) {
-                return new RemoveTopicsFromMirrorRequest.Builder(clusterLinkName, topics);
+                return new RemoveTopicsFromMirrorRequest.Builder(mirrorName, topics);
             }
 
             @Override
@@ -4889,7 +4889,7 @@ public class KafkaAdminClient extends AdminClient {
                         throw error.exception(response.data().errorMessage());
                     default:
                         log.error("delete mirror topic {} failed: {}",
-                                clusterLinkName, response.data().errorMessage());
+                                mirrorName, response.data().errorMessage());
                         future.completeExceptionally(error.exception(response.data().errorMessage()));
                         break;
                 }
@@ -4901,11 +4901,11 @@ public class KafkaAdminClient extends AdminClient {
             }
         };
         runnable.call(call, now);
-        return new DeleteMirrorTopicResult(future);
+        return new RemoveTopicsFromMirrorResult(future);
     }
 
     @Override
-    public AttachMirrorTopicResult attachMirrorTopic(Map<String, String> topicToMirrorName, AttachMirrorTopicOptions options) {
+    public AddTopicsToMirrorResult addTopicsToMirror(Map<String, String> topicToMirrorName, AddTopicsToMirrorOptions options) {
         final KafkaFutureImpl<Void> future = new KafkaFutureImpl<>();
         final long now = time.milliseconds();
         final Call call = new Call("attachMirrorTopic", calcDeadlineMs(now, options.timeoutMs()),
@@ -4941,7 +4941,7 @@ public class KafkaAdminClient extends AdminClient {
             }
         };
         runnable.call(call, now);
-        return new AttachMirrorTopicResult(future);
+        return new AddTopicsToMirrorResult(future);
     }
 
     @Override
