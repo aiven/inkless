@@ -137,7 +137,7 @@ class ControllerApis(
         case ApiKeys.REMOVE_RAFT_VOTER => handleRemoveRaftVoter(request)
         case ApiKeys.UPDATE_RAFT_VOTER => handleUpdateRaftVoter(request)
         case ApiKeys.CREATE_MIRROR => handleCreateMirror(request)
-        case ApiKeys.CREATE_MIRROR_TOPIC => handleCreateMirror(request)
+        case ApiKeys.ATTACH_MIRROR_TOPIC => handleAttachMirrorTopic(request)
         case ApiKeys.DELETE_MIRROR_TOPIC => handleDeleteMirrorTopic(request)
         case ApiKeys.BUMP_LEADER_EPOCH => handleBumpLeaderEpoch(request)
         case _ => throw new ApiException(s"Unsupported ApiKey ${request.context.header.apiKey}")
@@ -166,6 +166,37 @@ class ControllerApis(
         request.apiLocalCompleteTimeNanos = time.nanoseconds
       }
     }
+  }
+
+  def handleAttachMirrorTopic(request: RequestChannel.Request): CompletableFuture[Unit] = {
+    // luke
+    authHelper.authorizeClusterOperation(request, CLUSTER_ACTION)
+    val deleteMirrorTopicRequest = request.body[DeleteMirrorTopicRequest]
+    info("!!! delete mirror topic request: " + deleteMirrorTopicRequest)
+    val context = new ControllerRequestContext(request.context.header.data, request.context.principal,
+      OptionalLong.empty())
+    val topicIds: util.Set[Uuid] = new util.HashSet[Uuid]()
+    deleteMirrorTopicRequest.data().topics().forEach( topic => {
+      if (!topic.topicId().equals(Uuid.ZERO_UUID)) {
+        topicIds.add(topic.topicId())
+      } else {
+        topicIds.add(metadataCache.getTopicId(topic.name()))
+      }
+    })
+    controller.deleteMirrorTopic(context, topicIds)
+      .handle[Unit] { (response, exception) =>
+        logger.info("!!! delete mirror topic response: " + response + " exception: " + exception)
+        if (exception != null) {
+          requestHelper.handleError(request, exception)
+        } else {
+
+          requestHelper.sendResponseMaybeThrottle(request, throttleMs =>
+            new DeleteMirrorTopicResponse(response.setThrottleTimeMs(throttleMs)))
+        }
+      }
+
+    CompletableFuture.completedFuture[Unit](())
+
   }
 
   def handleDeleteMirrorTopic(request: RequestChannel.Request): CompletableFuture[Unit] = {

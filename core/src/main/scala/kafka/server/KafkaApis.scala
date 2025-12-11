@@ -252,7 +252,7 @@ class KafkaApis(val requestChannel: RequestChannel,
         case ApiKeys.STREAMS_GROUP_HEARTBEAT => handleStreamsGroupHeartbeat(request).exceptionally(handleError)
         case ApiKeys.GET_REPLICA_LOG_INFO => handleGetReplicaLogInfo(request)
         case ApiKeys.CREATE_MIRROR => forwardToController(request)
-        case ApiKeys.CREATE_MIRROR_TOPIC => handleCreateMirrorTopics(request)
+        case ApiKeys.ATTACH_MIRROR_TOPIC => handleAttachMirrorTopics(request)
         case ApiKeys.DELETE_MIRROR_TOPIC => handleDeleteMirrorTopics(request)
         case _ => throw new IllegalStateException(s"No handler for request api key ${request.header.apiKey}")
       }
@@ -282,10 +282,10 @@ class KafkaApis(val requestChannel: RequestChannel,
     forwardToController(request)
   }
 
-  def handleCreateMirrorTopics(request: RequestChannel.Request): Unit = {
-    val createMirrorTopicRequest = request.body[CreateMirrorTopicRequest]
+  def handleAttachMirrorTopics(request: RequestChannel.Request): Unit = {
+    val attachMirrorTopicRequest = request.body[AttachMirrorTopicRequest]
     // TODO: might need to have a better way to pass the cluster mirror
-    val mirrorTopic = createMirrorTopicRequest.data.topics.stream().filter(t => t.mirrorName() != null && !t.mirrorName().isEmpty).findFirst()
+    val mirrorTopic = attachMirrorTopicRequest.data.topics().stream().filter(t => t.mirrorName() != null && !t.mirrorName().isEmpty).findFirst()
     if (mirrorTopic.isPresent) {
       if (isClusterMirroringEnabled) {
         logger.info(s"!!! Handling create mirror topics request: ${mirrorTopic.get().mirrorName()}")
