@@ -38,6 +38,7 @@ import org.apache.kafka.common.errors.UnknownTopicIdException;
 import org.apache.kafka.common.errors.UnknownTopicOrPartitionException;
 import org.apache.kafka.common.errors.UnsupportedVersionException;
 import org.apache.kafka.common.internals.Topic;
+import org.apache.kafka.common.message.AddTopicsToMirrorResponseData;
 import org.apache.kafka.common.message.AlterPartitionReassignmentsRequestData;
 import org.apache.kafka.common.message.AlterPartitionReassignmentsRequestData.ReassignablePartition;
 import org.apache.kafka.common.message.AlterPartitionReassignmentsRequestData.ReassignableTopic;
@@ -49,7 +50,6 @@ import org.apache.kafka.common.message.AlterPartitionRequestData.BrokerState;
 import org.apache.kafka.common.message.AlterPartitionResponseData;
 import org.apache.kafka.common.message.AssignReplicasToDirsRequestData;
 import org.apache.kafka.common.message.AssignReplicasToDirsResponseData;
-import org.apache.kafka.common.message.AttachMirrorTopicResponseData;
 import org.apache.kafka.common.message.BrokerHeartbeatRequestData;
 import org.apache.kafka.common.message.BumpLeaderEpochResponseData;
 import org.apache.kafka.common.message.CreatePartitionsRequestData.CreatePartitionsTopic;
@@ -61,7 +61,6 @@ import org.apache.kafka.common.message.CreateTopicsRequestData.CreatableTopicCol
 import org.apache.kafka.common.message.CreateTopicsRequestData.CreatableTopicConfigCollection;
 import org.apache.kafka.common.message.CreateTopicsResponseData;
 import org.apache.kafka.common.message.CreateTopicsResponseData.CreatableTopicResult;
-import org.apache.kafka.common.message.DeleteMirrorTopicResponseData;
 import org.apache.kafka.common.message.ElectLeadersRequestData;
 import org.apache.kafka.common.message.ElectLeadersRequestData.TopicPartitions;
 import org.apache.kafka.common.message.ElectLeadersResponseData;
@@ -71,6 +70,7 @@ import org.apache.kafka.common.message.ListPartitionReassignmentsRequestData.Lis
 import org.apache.kafka.common.message.ListPartitionReassignmentsResponseData;
 import org.apache.kafka.common.message.ListPartitionReassignmentsResponseData.OngoingPartitionReassignment;
 import org.apache.kafka.common.message.ListPartitionReassignmentsResponseData.OngoingTopicReassignment;
+import org.apache.kafka.common.message.RemoveTopicsFromMirrorResponseData;
 import org.apache.kafka.common.metadata.BrokerRegistrationChangeRecord;
 import org.apache.kafka.common.metadata.ClearElrRecord;
 import org.apache.kafka.common.metadata.PartitionChangeRecord;
@@ -626,7 +626,7 @@ public class ReplicationControlManager {
         return !topics.get(topicsByName.get(topicName)).parts.get(0).mirrorName.equals(mirrorName);
     }
 
-    public ControllerResult<AttachMirrorTopicResponseData> attachMirrorTopic(Map<Uuid, String> topicIdsToMirrorName) {
+    public ControllerResult<AddTopicsToMirrorResponseData> addTopicsToMirror(Map<Uuid, String> topicIdsToMirrorName) {
         // luke
         List<ApiMessageAndVersion> records = BoundedList.newArrayBacked(MAX_RECORDS_PER_USER_OP);
         for (Entry<Uuid, String> topicIdToMirrorName : topicIdsToMirrorName.entrySet()) {
@@ -655,10 +655,10 @@ public class ReplicationControlManager {
             }
         }
 
-        return ControllerResult.of(records, new AttachMirrorTopicResponseData().setErrorCode((short) 0));
+        return ControllerResult.of(records, new AddTopicsToMirrorResponseData().setErrorCode((short) 0));
     }
 
-    public ControllerResult<DeleteMirrorTopicResponseData> deleteMirrorTopic(Set<Uuid> topicIds) {
+    public ControllerResult<RemoveTopicsFromMirrorResponseData> removeTopicsFromMirror(Set<Uuid> topicIds) {
         List<ApiMessageAndVersion> records = BoundedList.newArrayBacked(MAX_RECORDS_PER_USER_OP);
         for (Uuid topicId : topicIds) {
             TopicControlInfo info = topics.get(topicId);
@@ -683,7 +683,7 @@ public class ReplicationControlManager {
             }
         }
 
-        return ControllerResult.of(records, new DeleteMirrorTopicResponseData().setErrorCode((short) 0));
+        return ControllerResult.of(records, new RemoveTopicsFromMirrorResponseData().setErrorCode((short) 0));
     }
 
     public ControllerResult<BumpLeaderEpochResponseData> bumpLeaderEpochs(Map<Uuid, Map<Integer, Integer>> partitionLeaderEpochs) {

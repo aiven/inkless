@@ -29,6 +29,7 @@ import org.apache.kafka.common.errors.BrokerIdNotRegisteredException;
 import org.apache.kafka.common.errors.InvalidRequestException;
 import org.apache.kafka.common.errors.StaleBrokerEpochException;
 import org.apache.kafka.common.errors.UnknownTopicOrPartitionException;
+import org.apache.kafka.common.message.AddTopicsToMirrorResponseData;
 import org.apache.kafka.common.message.AllocateProducerIdsRequestData;
 import org.apache.kafka.common.message.AllocateProducerIdsResponseData;
 import org.apache.kafka.common.message.AlterPartitionReassignmentsRequestData;
@@ -39,7 +40,6 @@ import org.apache.kafka.common.message.AlterUserScramCredentialsRequestData;
 import org.apache.kafka.common.message.AlterUserScramCredentialsResponseData;
 import org.apache.kafka.common.message.AssignReplicasToDirsRequestData;
 import org.apache.kafka.common.message.AssignReplicasToDirsResponseData;
-import org.apache.kafka.common.message.AttachMirrorTopicResponseData;
 import org.apache.kafka.common.message.BrokerHeartbeatRequestData;
 import org.apache.kafka.common.message.BrokerRegistrationRequestData;
 import org.apache.kafka.common.message.BumpLeaderEpochResponseData;
@@ -51,13 +51,13 @@ import org.apache.kafka.common.message.CreatePartitionsRequestData.CreatePartiti
 import org.apache.kafka.common.message.CreatePartitionsResponseData.CreatePartitionsTopicResult;
 import org.apache.kafka.common.message.CreateTopicsRequestData;
 import org.apache.kafka.common.message.CreateTopicsResponseData;
-import org.apache.kafka.common.message.DeleteMirrorTopicResponseData;
 import org.apache.kafka.common.message.ElectLeadersRequestData;
 import org.apache.kafka.common.message.ElectLeadersResponseData;
 import org.apache.kafka.common.message.ExpireDelegationTokenRequestData;
 import org.apache.kafka.common.message.ExpireDelegationTokenResponseData;
 import org.apache.kafka.common.message.ListPartitionReassignmentsRequestData;
 import org.apache.kafka.common.message.ListPartitionReassignmentsResponseData;
+import org.apache.kafka.common.message.RemoveTopicsFromMirrorResponseData;
 import org.apache.kafka.common.message.RenewDelegationTokenRequestData;
 import org.apache.kafka.common.message.RenewDelegationTokenResponseData;
 import org.apache.kafka.common.message.UpdateFeaturesRequestData;
@@ -1781,21 +1781,21 @@ public final class QuorumController implements Controller {
     }
 
     @Override
-    public CompletableFuture<DeleteMirrorTopicResponseData> deleteMirrorTopic(
+    public CompletableFuture<RemoveTopicsFromMirrorResponseData> removeTopicsFromMirror(
             ControllerRequestContext context,
             Set<Uuid> topicIds
     ) {
         return appendWriteEvent("deleteMirrorTopic", context.deadlineNs(),
-                () -> replicationControl.deleteMirrorTopic(topicIds));
+                () -> replicationControl.removeTopicsFromMirror(topicIds));
     }
 
     @Override
-    public CompletableFuture<AttachMirrorTopicResponseData> attachMirrorTopic(
+    public CompletableFuture<AddTopicsToMirrorResponseData> addTopicsToMirror(
             ControllerRequestContext context,
             Map<Uuid, String> topicIdsToMirrorName
     ) {
         return appendWriteEvent("attachMirrorTopic", context.deadlineNs(),
-                () -> replicationControl.attachMirrorTopic(topicIdsToMirrorName));
+                () -> replicationControl.addTopicsToMirror(topicIdsToMirrorName));
     }
 
     @Override
