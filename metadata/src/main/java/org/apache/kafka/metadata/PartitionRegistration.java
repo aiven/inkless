@@ -263,22 +263,19 @@ public class PartitionRegistration {
 
         int newLeader;
         int newLeaderEpoch;
-        // we should bump the leader epoch when leaderEpoch is assigned (bump_leader_epoch request), even if no_leader_change
+
         if (record.leader() == NO_LEADER_CHANGE) {
             newLeader = leader;
-            if (record.leaderEpoch() == NO_PARTITION_LEADER_EPOCH) {
-                newLeaderEpoch = leaderEpoch;
-            } else {
-                newLeaderEpoch = leaderEpoch + 1;
-            }
+            newLeaderEpoch = leaderEpoch;
         } else {
             newLeader = record.leader();
             newLeaderEpoch = leaderEpoch + 1;
         }
 
         System.out.println("!!! newLeaderEpoch:" + newLeaderEpoch + ";;" + leaderEpoch + ";;" + record.leaderEpoch() + ";;" + record.leader());
-        if (record.leaderEpoch() != NO_PARTITION_LEADER_EPOCH && record.leaderEpoch() >= newLeaderEpoch) {
-            newLeaderEpoch = record.leaderEpoch() + 1;
+        // We should bump the leader epoch when leaderEpoch is assigned (from bump_leader_epoch request), even if no_leader_change
+        if (record.leaderEpoch() != NO_PARTITION_LEADER_EPOCH) {
+            newLeaderEpoch = Math.max(record.leaderEpoch(), leaderEpoch) + 1;
         }
         LeaderRecoveryState newLeaderRecoveryState = leaderRecoveryState.changeTo(record.leaderRecoveryState());
 
