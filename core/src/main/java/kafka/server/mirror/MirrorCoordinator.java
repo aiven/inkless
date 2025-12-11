@@ -122,8 +122,8 @@ public class MirrorCoordinator {
         // periodically query source cluster to get the metadata
         scheduler.schedule("mirror-metadata-refresh",
                 mirrorMetadataManager::refreshMetadata,
-                10000,
-                10000
+                30000,
+                30000
         );
         numPartitions = config.mirrorConfig().mirrorTopicNumPartitions();
     }

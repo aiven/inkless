@@ -137,6 +137,9 @@ class ControllerApis(
         case ApiKeys.REMOVE_RAFT_VOTER => handleRemoveRaftVoter(request)
         case ApiKeys.UPDATE_RAFT_VOTER => handleUpdateRaftVoter(request)
         case ApiKeys.CREATE_MIRROR => handleCreateMirror(request)
+        case ApiKeys.CREATE_MIRROR_TOPIC => handleCreateMirror(request)
+        case ApiKeys.DELETE_MIRROR_TOPIC => handleDeleteMirrorTopic(request)
+        case ApiKeys.BUMP_LEADER_EPOCH => handleBumpLeaderEpoch(request)
         case _ => throw new ApiException(s"Unsupported ApiKey ${request.context.header.apiKey}")
       }
 
@@ -163,6 +166,68 @@ class ControllerApis(
         request.apiLocalCompleteTimeNanos = time.nanoseconds
       }
     }
+  }
+
+  def handleDeleteMirrorTopic(request: RequestChannel.Request): CompletableFuture[Unit] = {
+    // luke
+    authHelper.authorizeClusterOperation(request, CLUSTER_ACTION)
+    val deleteMirrorTopicRequest = request.body[DeleteMirrorTopicRequest]
+    info("!!! delete mirror topic request: " + deleteMirrorTopicRequest)
+    val context = new ControllerRequestContext(request.context.header.data, request.context.principal,
+      OptionalLong.empty())
+    val topicIds: util.Set[Uuid] = new util.HashSet[Uuid]()
+    deleteMirrorTopicRequest.data().topics().forEach( topic => {
+      if (!topic.topicId().equals(Uuid.ZERO_UUID)) {
+        topicIds.add(topic.topicId())
+      } else {
+        topicIds.add(metadataCache.getTopicId(topic.name()))
+      }
+    })
+    controller.deleteMirrorTopic(context, topicIds)
+      .handle[Unit] { (response, exception) =>
+        logger.info("!!! delete mirror topic response: " + response + " exception: " + exception)
+        if (exception != null) {
+          requestHelper.handleError(request, exception)
+        } else {
+
+          requestHelper.sendResponseMaybeThrottle(request, throttleMs =>
+            new DeleteMirrorTopicResponse(response.setThrottleTimeMs(throttleMs)))
+        }
+      }
+
+    CompletableFuture.completedFuture[Unit](())
+
+  }
+
+  def handleBumpLeaderEpoch(request: RequestChannel.Request): CompletableFuture[Unit] = {
+    // luke
+    authHelper.authorizeClusterOperation(request, CLUSTER_ACTION)
+    val bumpLeaderEpochRequest = request.body[BumpLeaderEpochRequest]
+    info("!!! bump leader epoch request: " + bumpLeaderEpochRequest)
+    val context = new ControllerRequestContext(request.context.header.data, request.context.principal,
+      OptionalLong.empty())
+    val partitionLeaderEpochs: util.Map[Uuid, util.Map[Integer, Integer]] = new util.HashMap[Uuid, util.Map[Integer, Integer]]()
+    bumpLeaderEpochRequest.data().topics().forEach( topic => {
+      val map = new util.HashMap[Integer, Integer]()
+      topic.partitions().forEach(par => {
+        map.put(par.partitionIndex(), par.leaderEpoch())
+      })
+      partitionLeaderEpochs.put(topic.topicId(), map)
+    })
+    controller.bumpLeaderEpoch(context, partitionLeaderEpochs)
+      .handle[Unit] { (response, exception) =>
+        logger.info("!!! bump leader epoch response: " + response + " exception: " + exception)
+        if (exception != null) {
+          requestHelper.handleError(request, exception)
+        } else {
+
+          requestHelper.sendResponseMaybeThrottle(request, throttleMs =>
+            new BumpLeaderEpochResponse(response.setThrottleTimeMs(throttleMs)))
+        }
+      }
+
+    CompletableFuture.completedFuture[Unit](())
+
   }
 
   def handleCreateMirror(request: RequestChannel.Request): CompletableFuture[Unit] = {

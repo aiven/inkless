@@ -2408,8 +2408,13 @@ class ReplicaManager(val config: KafkaConfig,
         val lazyOffsetCheckpoints = new LazyOffsetCheckpoints(this.highWatermarkCheckpoints.asJava)
         val leaderChangedPartitions = new mutable.HashSet[Partition]
         val followerChangedPartitions = new mutable.HashSet[Partition]
+        val deleteMirrorTopics = new mutable.HashSet[String]
         if (!localChanges.leaders.isEmpty) {
           applyLocalLeadersDelta(leaderChangedPartitions, delta, lazyOffsetCheckpoints, localChanges.leaders.asScala, localChanges.directoryIds.asScala)
+          if (deleteMirrorTopics.nonEmpty) {
+            info("!!! sent bumpLeaderEpoch:" + deleteMirrorTopics)
+            mirrorMetadataManager.get.maybeUpdateLeaderEpoch(deleteMirrorTopics.toList.asJava)
+          }
         }
         if (!localChanges.followers.isEmpty) {
           applyLocalFollowersDelta(followerChangedPartitions, newImage, delta, lazyOffsetCheckpoints, localChanges.followers.asScala, localChanges.directoryIds.asScala)

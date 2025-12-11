@@ -398,6 +398,13 @@ public class DefaultRecordBatch extends AbstractRecordBatch implements MutableRe
         return ByteUtils.readUnsignedInt(buffer, CRC_OFFSET);
     }
 
+    public void setProducerId(long producerId) {
+        buffer.putLong(PRODUCER_ID_OFFSET, producerId);
+        // update crc
+        long crc = computeChecksum();
+        ByteUtils.writeUnsignedInt(buffer, CRC_OFFSET, crc);
+    }
+
     public boolean isValid() {
         return sizeInBytes() >= RECORD_BATCH_OVERHEAD && checksum() == computeChecksum();
     }

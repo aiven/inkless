@@ -252,6 +252,8 @@ class KafkaApis(val requestChannel: RequestChannel,
         case ApiKeys.STREAMS_GROUP_HEARTBEAT => handleStreamsGroupHeartbeat(request).exceptionally(handleError)
         case ApiKeys.GET_REPLICA_LOG_INFO => handleGetReplicaLogInfo(request)
         case ApiKeys.CREATE_MIRROR => forwardToController(request)
+        case ApiKeys.CREATE_MIRROR_TOPIC => forwardToController(request)
+        case ApiKeys.DELETE_MIRROR_TOPIC => forwardToController(request)
         case _ => throw new IllegalStateException(s"No handler for request api key ${request.header.apiKey}")
       }
     } catch {

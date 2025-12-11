@@ -50,6 +50,7 @@ import org.apache.kafka.common.message.AlterPartitionResponseData;
 import org.apache.kafka.common.message.AssignReplicasToDirsRequestData;
 import org.apache.kafka.common.message.AssignReplicasToDirsResponseData;
 import org.apache.kafka.common.message.BrokerHeartbeatRequestData;
+import org.apache.kafka.common.message.BumpLeaderEpochResponseData;
 import org.apache.kafka.common.message.CreatePartitionsRequestData.CreatePartitionsTopic;
 import org.apache.kafka.common.message.CreatePartitionsResponseData.CreatePartitionsTopicResult;
 import org.apache.kafka.common.message.CreateTopicsRequestData;
@@ -59,6 +60,7 @@ import org.apache.kafka.common.message.CreateTopicsRequestData.CreatableTopicCol
 import org.apache.kafka.common.message.CreateTopicsRequestData.CreatableTopicConfigCollection;
 import org.apache.kafka.common.message.CreateTopicsResponseData;
 import org.apache.kafka.common.message.CreateTopicsResponseData.CreatableTopicResult;
+import org.apache.kafka.common.message.DeleteMirrorTopicResponseData;
 import org.apache.kafka.common.message.ElectLeadersRequestData;
 import org.apache.kafka.common.message.ElectLeadersRequestData.TopicPartitions;
 import org.apache.kafka.common.message.ElectLeadersResponseData;
@@ -136,6 +138,7 @@ import static org.apache.kafka.common.protocol.Errors.NO_REASSIGNMENT_IN_PROGRES
 import static org.apache.kafka.common.protocol.Errors.TOPIC_AUTHORIZATION_FAILED;
 import static org.apache.kafka.common.protocol.Errors.UNKNOWN_TOPIC_ID;
 import static org.apache.kafka.common.protocol.Errors.UNKNOWN_TOPIC_OR_PARTITION;
+import static org.apache.kafka.common.record.RecordBatch.NO_PARTITION_LEADER_EPOCH;
 import static org.apache.kafka.controller.PartitionReassignmentReplicas.isReassignmentInProgress;
 import static org.apache.kafka.controller.QuorumController.MAX_RECORDS_PER_USER_OP;
 import static org.apache.kafka.metadata.LeaderConstants.NO_LEADER;
@@ -616,6 +619,69 @@ public class ReplicationControlManager {
             }
         }
         return numRemoved;
+    }
+
+//    private boolean hasDifferentMirrorName(String topicName, String mirrorName) {
+//        return !topics.get(topicsByName.get(topicName)).parts.get(0).mirrorName.equals(mirrorName);
+//    }
+
+    public ControllerResult<DeleteMirrorTopicResponseData> deleteMirrorTopic(Set<Uuid> topicIds) {
+        List<ApiMessageAndVersion> records = BoundedList.newArrayBacked(MAX_RECORDS_PER_USER_OP);
+        for (Uuid topicId : topicIds) {
+            TopicControlInfo info = topics.get(topicId);
+            String topicName = info.name;
+            for (int partitionId : info.parts.keySet()) {
+                PartitionRegistration partition = info.parts.get(partitionId);
+                PartitionChangeBuilder builder = new PartitionChangeBuilder(
+                        partition,
+                        info.topicId(),
+                        partitionId,
+                        new LeaderAcceptor(clusterControl, partition),
+                        featureControl.metadataVersionOrThrow(),
+                        getTopicEffectiveMinIsr(topicName)
+                )
+                        // clear the cluster link name
+                        .setMirrorName("")
+                        .setEligibleLeaderReplicasEnabled(featureControl.isElrFeatureEnabled())
+                        .setDefaultDirProvider(clusterDescriber);
+
+                builder.build().ifPresent(records::add);
+                log.info("!!! update partition {} for topic {} with empty cluster link: {}", partitionId, topicName, records);
+            }
+        }
+
+        return ControllerResult.of(records, new DeleteMirrorTopicResponseData().setErrorCode((short) 0));
+    }
+
+    public ControllerResult<BumpLeaderEpochResponseData> bumpLeaderEpochs(Map<Uuid, Map<Integer, Integer>> partitionLeaderEpochs) {
+        List<ApiMessageAndVersion> records = BoundedList.newArrayBacked(MAX_RECORDS_PER_USER_OP);
+        for (Entry<Uuid, Map<Integer, Integer>> partitionLeaderEpoch : partitionLeaderEpochs.entrySet()) {
+            Uuid topicId = partitionLeaderEpoch.getKey();
+            Map<Integer, Integer> leaderEpochs = partitionLeaderEpoch.getValue();
+            TopicControlInfo info = topics.get(topicId);
+            String topicName = info.name;
+            for (int partitionId : info.parts.keySet()) {
+                PartitionRegistration partition = info.parts.get(partitionId);
+                PartitionChangeBuilder builder = new PartitionChangeBuilder(
+                        partition,
+                        info.topicId(),
+                        partitionId,
+                        new LeaderAcceptor(clusterControl, partition),
+                        featureControl.metadataVersionOrThrow(),
+                        getTopicEffectiveMinIsr(topicName)
+                )
+                        // set the min leader epoch for each partition
+                        .setMinLeaderEpoch(leaderEpochs.getOrDefault(partitionId, NO_PARTITION_LEADER_EPOCH))
+                        .setMirrorName(partition.mirrorName)
+                        .setEligibleLeaderReplicasEnabled(featureControl.isElrFeatureEnabled())
+                        .setDefaultDirProvider(clusterDescriber);
+
+                builder.build().ifPresent(records::add);
+                log.info("!!! update partition {} for topic {} with cluster link: {}", partitionId, topicName, records);
+            }
+        }
+
+        return ControllerResult.of(records, new BumpLeaderEpochResponseData().setErrorCode((short) 0));
     }
 
     ControllerResult<CreateTopicsResponseData> createTopics(
@@ -1137,7 +1203,8 @@ public class ReplicationControlManager {
                     featureControl.metadataVersionOrThrow(),
                     getTopicEffectiveMinIsr(topic.name)
                 )
-                    .setEligibleLeaderReplicasEnabled(featureControl.isElrFeatureEnabled());
+                    .setEligibleLeaderReplicasEnabled(featureControl.isElrFeatureEnabled())
+                    .setMirrorName(partition.mirrorName);
                 if (configurationControl.uncleanLeaderElectionEnabledForTopic(topic.name())) {
                     builder.setElection(PartitionChangeBuilder.Election.UNCLEAN);
                 }
@@ -1601,6 +1668,7 @@ public class ReplicationControlManager {
             .setElection(election)
             .setEligibleLeaderReplicasEnabled(featureControl.isElrFeatureEnabled())
             .setDefaultDirProvider(clusterDescriber)
+            .setMirrorName(partition.mirrorName)
             .build();
         if (record.isEmpty()) {
             if (electionType == ElectionType.PREFERRED) {
@@ -1765,6 +1833,7 @@ public class ReplicationControlManager {
                 .setElection(PartitionChangeBuilder.Election.PREFERRED)
                 .setEligibleLeaderReplicasEnabled(featureControl.isElrFeatureEnabled())
                 .setDefaultDirProvider(clusterDescriber)
+                .setMirrorName(partition.mirrorName)
                 .build().ifPresent(records::add);
         }
     }
@@ -2033,6 +2102,7 @@ public class ReplicationControlManager {
                 getTopicEffectiveMinIsr(topic.name)
             );
             builder.setEligibleLeaderReplicasEnabled(featureControl.isElrFeatureEnabled());
+            builder.setMirrorName(partition.mirrorName);
             if (configurationControl.uncleanLeaderElectionEnabledForTopic(topic.name)) {
                 builder.setElection(PartitionChangeBuilder.Election.UNCLEAN);
             }
@@ -2162,6 +2232,7 @@ public class ReplicationControlManager {
             setTargetRemoving(List.of()).
             setTargetAdding(List.of()).
             setDefaultDirProvider(clusterDescriber).
+            setMirrorName(part.mirrorName).
             build();
     }
 
@@ -2219,6 +2290,7 @@ public class ReplicationControlManager {
             getTopicEffectiveMinIsr(topics.get(tp.topicId()).name)
         );
         builder.setEligibleLeaderReplicasEnabled(featureControl.isElrFeatureEnabled());
+        builder.setMirrorName(part.mirrorName);
         if (!reassignment.replicas().equals(currentReplicas)) {
             builder.setTargetReplicas(reassignment.replicas());
         }
@@ -2303,6 +2375,7 @@ public class ReplicationControlManager {
                             )
                                     .setDirectory(brokerId, dirId)
                                     .setDefaultDirProvider(clusterDescriber)
+                                    .setMirrorName(partitionRegistration.mirrorName)
                                     .build();
                             partitionChangeRecord.ifPresent(records::add);
                             if (directoryIsOffline) {

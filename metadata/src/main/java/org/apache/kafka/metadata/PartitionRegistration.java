@@ -33,6 +33,7 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
 
+import static org.apache.kafka.common.record.RecordBatch.NO_PARTITION_LEADER_EPOCH;
 import static org.apache.kafka.metadata.LeaderConstants.NO_LEADER_CHANGE;
 
 public class PartitionRegistration {
@@ -52,6 +53,7 @@ public class PartitionRegistration {
         private Integer leaderEpoch;
         private Integer partitionEpoch;
         private String mirrorName;
+
 
         public Builder setReplicas(int[] replicas) {
             this.replicas = replicas;
@@ -261,14 +263,23 @@ public class PartitionRegistration {
 
         int newLeader;
         int newLeaderEpoch;
+        // we should bump the leader epoch when leaderEpoch is assigned (bump_leader_epoch request), even if no_leader_change
         if (record.leader() == NO_LEADER_CHANGE) {
             newLeader = leader;
-            newLeaderEpoch = leaderEpoch;
+            if (record.leaderEpoch() == NO_PARTITION_LEADER_EPOCH) {
+                newLeaderEpoch = leaderEpoch;
+            } else {
+                newLeaderEpoch = leaderEpoch + 1;
+            }
         } else {
             newLeader = record.leader();
             newLeaderEpoch = leaderEpoch + 1;
         }
 
+        System.out.println("!!! newLeaderEpoch:" + newLeaderEpoch + ";;" + leaderEpoch + ";;" + record.leaderEpoch() + ";;" + record.leader());
+        if (record.leaderEpoch() != NO_PARTITION_LEADER_EPOCH && record.leaderEpoch() >= newLeaderEpoch) {
+            newLeaderEpoch = record.leaderEpoch() + 1;
+        }
         LeaderRecoveryState newLeaderRecoveryState = leaderRecoveryState.changeTo(record.leaderRecoveryState());
 
         int[] newElr = (record.eligibleLeaderReplicas() == null) ? elr : Replicas.toArray(record.eligibleLeaderReplicas());
@@ -284,7 +295,7 @@ public class PartitionRegistration {
             partitionEpoch + 1,
             newElr,
             newLastKnownElr,
-            record.mirrorName() == null || record.mirrorName().isBlank() ? mirrorName : record.mirrorName());
+            record.mirrorName());
     }
 
     public String diff(PartitionRegistration prev) {
