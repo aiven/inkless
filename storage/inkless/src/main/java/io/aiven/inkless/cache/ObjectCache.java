@@ -27,4 +27,22 @@ import io.aiven.inkless.generated.FileExtent;
 
 public interface ObjectCache extends Cache<CacheKey, FileExtent>, Closeable {
     FileExtent computeIfAbsent(CacheKey key, Function<CacheKey, FileExtent> mappingFunction);
+
+    /**
+     * Computes if absent with batch timestamp hint for cache tiering.
+     *
+     * <p>The batch timestamp can be used by tiered cache implementations to route
+     * requests to the appropriate cache tier (hot vs cold) based on data age.</p>
+     *
+     * <p>Default implementation ignores the timestamp and delegates to the regular
+     * computeIfAbsent method.</p>
+     *
+     * @param key the cache key
+     * @param mappingFunction the function to compute the value if absent
+     * @param batchTimestamp the timestamp of the batch (from BatchMetadata.timestamp())
+     * @return the cached or computed file extent
+     */
+    default FileExtent computeIfAbsent(CacheKey key, Function<CacheKey, FileExtent> mappingFunction, long batchTimestamp) {
+        return computeIfAbsent(key, mappingFunction);
+    }
 }
