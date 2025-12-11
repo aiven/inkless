@@ -277,7 +277,7 @@ class KafkaApis(val requestChannel: RequestChannel,
     val mirrorTopic = createTopicsRequest.data.topics.stream().filter(t => t.mirrorName() != null && !t.mirrorName().isEmpty).findFirst()
     if (mirrorTopic.isPresent) {
       logger.info(s"!!! Handling create mirror topics request: ${mirrorTopic.get().mirrorName()}")
-      mirrorCoordinator.addTopicsToCoordinator(mirrorTopic.get().mirrorName(), util.Set.of(mirrorTopic.get().name()))
+      mirrorCoordinator.updateTopicsToCoordinator(mirrorTopic.get().mirrorName(), util.Set.of(mirrorTopic.get().name()), util.Set.of())
     }
     forwardToController(request)
   }
@@ -289,7 +289,7 @@ class KafkaApis(val requestChannel: RequestChannel,
     if (mirrorTopic.isPresent) {
       if (isClusterMirroringEnabled) {
         logger.info(s"!!! Handling create mirror topics request: ${mirrorTopic.get().mirrorName()}")
-        mirrorCoordinator.addTopicsToCoordinator(mirrorTopic.get().mirrorName(), util.Set.of(mirrorTopic.get().name()))
+        mirrorCoordinator.updateTopicsToCoordinator(mirrorTopic.get().mirrorName(), util.Set.of(mirrorTopic.get().name()), util.Set.of())
       } else {
         logger.warn("Cluster mirroring is disabled (mirror.version=0), ignoring mirror topic creation request")
       }
@@ -302,7 +302,7 @@ class KafkaApis(val requestChannel: RequestChannel,
     // TODO: might need to have a better way to pass the cluster mirror
     val mirrorTopics = deleteMirrorTopicRequest.data.topics.stream().map(t => t.name()).toList
     logger.info(s"!!! Handling delete mirror topics request: ${mirrorTopics}")
-    mirrorCoordinator.removeTopicsFromCoordinator(deleteMirrorTopicRequest.data().mirrorName(), new util.HashSet[String](mirrorTopics))
+    mirrorCoordinator.updateTopicsToCoordinator(deleteMirrorTopicRequest.data().mirrorName(), util.Set.of(), new util.HashSet[String](mirrorTopics))
     forwardToController(request)
   }
 

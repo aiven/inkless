@@ -242,17 +242,10 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         return new Node(random.nextInt(), addresses.get(rand).getHostString(), addresses.get(rand).getPort());
     }
 
-    public Set<String> addMirroredTopics(String clusterName, Set<String> topics) {
+    public Set<String> updateMirroredTopics(String clusterName, Set<String> addedTopics, Set<String> removedTopics) {
         Set<String> mutableTopics = new HashSet<>(this.topics.getOrDefault(clusterName, Set.of()));
-        mutableTopics.addAll(topics);
-        this.topics.put(clusterName, mutableTopics);
-
-        return mutableTopics;
-    }
-
-    public Set<String> removeMirroredTopics(String clusterName, Set<String> topics) {
-        Set<String> mutableTopics = new HashSet<>(this.topics.getOrDefault(clusterName, Set.of()));
-        mutableTopics.removeAll(topics);
+        mutableTopics.removeAll(removedTopics);
+        mutableTopics.addAll(addedTopics);
         this.topics.put(clusterName, mutableTopics);
 
         return mutableTopics;
