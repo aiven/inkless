@@ -26,7 +26,6 @@ import kafka.server._
 import kafka.server.share.DelayedShareFetch
 import kafka.utils.CoreUtils.{inReadLock, inWriteLock}
 import kafka.utils._
-import org.apache.kafka.common.config.TopicConfig
 import org.apache.kafka.common.{DirectoryId, IsolationLevel, TopicIdPartition, TopicPartition, Uuid}
 import org.apache.kafka.common.errors._
 import org.apache.kafka.common.message.AlterPartitionRequestData.BrokerState
@@ -1380,10 +1379,6 @@ class Partition(val topicPartition: TopicPartition,
     val (info, leaderHWIncremented) = inReadLock(leaderIsrUpdateLock) {
       leaderLogIfLocal match {
         case Some(leaderLog) =>
-          if (leaderLog.config().getBoolean(TopicConfig.READ_ONLY_CONFIG)) {
-            throw new InvalidTopicException("Cannot append to read-only partition %s on broker %d"
-              .format(topicPartition, localBrokerId))
-          }
           val minIsr = effectiveMinIsr(leaderLog)
           val inSyncSize = partitionState.isr.size
 

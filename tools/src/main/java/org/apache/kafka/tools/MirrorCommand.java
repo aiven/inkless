@@ -157,10 +157,6 @@ public abstract class MirrorCommand {
                 Optional.of(opts.topicId().get()),
                 Optional.of(mirrorName));
 
-            Map<String, String> configsMap = new HashMap<>();
-            configsMap.put(TopicConfig.READ_ONLY_CONFIG, "true");
-            newTopic.configs(configsMap);
-
             // Create topic using coordinator's bootstrap server
             Node node = coordinator.get();
             String bootstrapServer = node.host() + ":" + node.port();
