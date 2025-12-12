@@ -39,6 +39,7 @@ import io.aiven.inkless.cache.FixedBlockAlignment;
 import io.aiven.inkless.cache.KeyAlignmentStrategy;
 import io.aiven.inkless.cache.NullBatchCoordinateCache;
 import io.aiven.inkless.cache.ObjectCache;
+import io.aiven.inkless.cache.TieredObjectCache;
 import io.aiven.inkless.config.InklessConfig;
 import io.aiven.inkless.control_plane.ControlPlane;
 import io.aiven.inkless.control_plane.MetadataView;
@@ -107,6 +108,9 @@ public final class SharedState implements Closeable {
                 "Value of consume.batch.coordinate.cache.ttl.ms exceeds file.cleaner.retention.period.ms / 2"
             );
         }
+
+        final ObjectCache objectCache = createObjectCache(config, time);
+
         return new SharedState(
             time,
             brokerId,
@@ -115,14 +119,40 @@ public final class SharedState implements Closeable {
             controlPlane,
             ObjectKey.creator(config.objectKeyPrefix(), config.objectKeyLogPrefixMasked()),
             new FixedBlockAlignment(config.fetchCacheBlockBytes()),
-            new CaffeineCache(
-                config.cacheMaxCount(),
-                config.cacheExpirationLifespanSec(),
-                config.cacheExpirationMaxIdleSec()
-            ),
+            objectCache,
             config.isBatchCoordinateCacheEnabled() ? new CaffeineBatchCoordinateCache(config.batchCoordinateCacheTtl()) : new NullBatchCoordinateCache(),
             brokerTopicStats,
             defaultTopicConfigs
+        );
+    }
+
+    private static ObjectCache createObjectCache(final InklessConfig config, final Time time) {
+        final CaffeineCache hotCache = new CaffeineCache(
+            config.cacheMaxCount(),
+            config.cacheExpirationLifespanSec(),
+            config.cacheExpirationMaxIdleSec()
+        );
+
+        if (!config.isLaggingCacheEnabled()) {
+            return hotCache;
+        }
+
+        final CaffeineCache laggingCache = new CaffeineCache(
+            config.laggingCacheMaxCount(),
+            config.laggingCacheTtlSec(),
+            -1  // No idle expiration for lagging cache
+        );
+
+        final long hotCacheTtlMs = config.cacheExpirationLifespanSec() * 1000L;
+        final long rateLimitBytesPerSec = config.laggingCacheRateLimitBytesPerSec();
+
+        return new TieredObjectCache(
+            hotCache,
+            laggingCache,
+            hotCacheTtlMs,
+            time,
+            rateLimitBytesPerSec,
+            TieredObjectCache.TieredCacheMetrics.NOOP
         );
     }
 

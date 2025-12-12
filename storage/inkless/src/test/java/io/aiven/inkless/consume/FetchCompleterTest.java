@@ -42,10 +42,6 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.Future;
-import java.util.stream.Collectors;
-import java.util.stream.Stream;
 
 import io.aiven.inkless.cache.FixedBlockAlignment;
 import io.aiven.inkless.common.ByteRange;
@@ -175,9 +171,9 @@ public class FetchCompleterTest {
             ), logStartOffset, highWatermark)
         );
 
-        List<Future<FileExtent>> files = Stream.of(
+        List<FileExtent> files = List.of(
             FileFetchJob.createFileExtent(OBJECT_KEY_A, new ByteRange(0, records.sizeInBytes()), records.buffer())
-        ).map(CompletableFuture::completedFuture).collect(Collectors.toList());
+        );
         FetchCompleter job = new FetchCompleter(
             new MockTime(),
             OBJECT_KEY_CREATOR,
@@ -211,10 +207,10 @@ public class FetchCompleterTest {
             ), logStartOffset, highWatermark)
         );
 
-        List<Future<FileExtent>> files = Stream.of(
+        List<FileExtent> files = List.of(
             FileFetchJob.createFileExtent(OBJECT_KEY_A, new ByteRange(0, records.sizeInBytes()), records.buffer()),
             FileFetchJob.createFileExtent(OBJECT_KEY_B, new ByteRange(0, records.sizeInBytes()), records.buffer())
-        ).map(CompletableFuture::completedFuture).collect(Collectors.toList());
+        );
         FetchCompleter job = new FetchCompleter(
             new MockTime(),
             OBJECT_KEY_CREATOR,
@@ -262,14 +258,13 @@ public class FetchCompleterTest {
             copy.put(records.buffer().duplicate().position(startOffset).limit(endOffset).slice());
             fileExtents.add(FileFetchJob.createFileExtent(OBJECT_KEY_A, range, copy));
         }
-        List<Future<FileExtent>> files = fileExtents.stream().map(CompletableFuture::completedFuture).collect(Collectors.toList());
 
         FetchCompleter job = new FetchCompleter(
             new MockTime(),
             OBJECT_KEY_CREATOR,
             fetchInfos,
             coordinates,
-            files,
+            fileExtents,
             durationMs -> {}
         );
         Map<TopicIdPartition, FetchPartitionData> result = job.get();
@@ -310,9 +305,9 @@ public class FetchCompleterTest {
             ), logStartOffset, highWatermark)
         );
 
-        List<Future<FileExtent>> files = Stream.of(
+        List<FileExtent> files = List.of(
             FileFetchJob.createFileExtent(OBJECT_KEY_A, new ByteRange(0, totalSize), concatenatedBuffer)
-        ).map(CompletableFuture::completedFuture).collect(Collectors.toList());
+        );
         FetchCompleter job = new FetchCompleter(
             new MockTime(),
             OBJECT_KEY_CREATOR,
@@ -373,14 +368,13 @@ public class FetchCompleterTest {
             copy.put(concatenatedBuffer.duplicate().position(startOffset).limit(endOffset).slice());
             fileExtents.add(FileFetchJob.createFileExtent(OBJECT_KEY_A, range, copy));
         }
-        List<Future<FileExtent>> files = fileExtents.stream().map(CompletableFuture::completedFuture).collect(Collectors.toList());
 
         FetchCompleter job = new FetchCompleter(
             new MockTime(),
             OBJECT_KEY_CREATOR,
             fetchInfos,
             coordinates,
-            files,
+            fileExtents,
             durationMs -> {}
         );
         Map<TopicIdPartition, FetchPartitionData> result = job.get();

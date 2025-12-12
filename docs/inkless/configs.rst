@@ -109,6 +109,37 @@ Under ``inkless.``
   * Valid Values: [1,...]
   * Importance: low
 
+``consume.lagging.cache.enabled``
+  If true, a secondary cache is enabled for lagging consumers. This prevents lagging consumers from evicting hot data from the primary cache.
+
+  * Type: boolean
+  * Default: false
+  * Importance: low
+
+``consume.lagging.cache.max.count``
+  The maximum number of entries in the lagging consumer cache. Should be sized based on the number of concurrent lagging consumers.
+
+  * Type: int
+  * Default: 150
+  * Valid Values: [1,...]
+  * Importance: low
+
+``consume.lagging.cache.rate.limit.bytes.per.sec``
+  Maximum bytes per second to fetch from remote storage for lagging consumer cache misses. Set to -1 to disable rate limiting. This protects remote storage from being overwhelmed by lagging consumers.
+
+  * Type: long
+  * Default: 52428800
+  * Valid Values: [-1,...]
+  * Importance: low
+
+``consume.lagging.cache.ttl.sec``
+  Time to live in seconds for entries in the lagging consumer cache. A short TTL (e.g., 5 seconds) is recommended as cached data is only needed briefly for sequential reads.
+
+  * Type: int
+  * Default: 5
+  * Valid Values: [1,...]
+  * Importance: low
+
 ``fetch.data.thread.pool.size``
   Thread pool size to concurrently fetch data files from remote storage
 

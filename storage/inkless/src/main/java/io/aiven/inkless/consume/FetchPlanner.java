@@ -21,12 +21,12 @@ import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.utils.Time;
 
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
-import java.util.concurrent.Callable;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Future;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
@@ -40,7 +40,7 @@ import io.aiven.inkless.control_plane.FindBatchResponse;
 import io.aiven.inkless.generated.FileExtent;
 import io.aiven.inkless.storage_backend.common.ObjectFetcher;
 
-public class FetchPlanner implements Supplier<List<Future<FileExtent>>> {
+public class FetchPlanner implements Supplier<List<CompletableFuture<FileExtent>>> {
 
     private final Time time;
     private final ObjectKeyCreator objectKeyCreator;
@@ -71,30 +71,57 @@ public class FetchPlanner implements Supplier<List<Future<FileExtent>>> {
         this.metrics = metrics;
     }
 
-    private List<Future<FileExtent>> doWork(final Map<TopicIdPartition, FindBatchResponse> batchCoordinates) {
-        final List<Callable<FileExtent>> jobs = planJobs(batchCoordinates);
+    private List<CompletableFuture<FileExtent>> doWork(final Map<TopicIdPartition, FindBatchResponse> batchCoordinates) {
+        final List<CacheFetchJob> jobs = planJobs(batchCoordinates);
         return submitAll(jobs);
     }
 
-    private List<Callable<FileExtent>> planJobs(final Map<TopicIdPartition, FindBatchResponse> batchCoordinates) {
-        final Set<Map.Entry<String, List<ByteRange>>> objectKeysToRanges = batchCoordinates.values().stream()
+    /**
+     * Helper class to track byte ranges and the oldest batch timestamp for an object key.
+     */
+    private static class ObjectFetchInfo {
+        final List<ByteRange> ranges = new ArrayList<>();
+        long oldestTimestamp = Long.MAX_VALUE;
+
+        void addBatch(BatchInfo batch) {
+            ranges.add(batch.metadata().range());
+            oldestTimestamp = Math.min(oldestTimestamp, batch.metadata().timestamp());
+        }
+    }
+
+    private List<CacheFetchJob> planJobs(final Map<TopicIdPartition, FindBatchResponse> batchCoordinates) {
+        // Group batches by object key, tracking ranges and oldest timestamp
+        final Map<String, ObjectFetchInfo> objectKeysToFetchInfo = new HashMap<>();
+
+        batchCoordinates.values().stream()
             .filter(findBatch -> findBatch.errors() == Errors.NONE)
             .map(FindBatchResponse::batches)
             .peek(batches -> metrics.recordFetchBatchSize(batches.size()))
             .flatMap(List::stream)
-            // Merge batch requests
-            .collect(Collectors.groupingBy(BatchInfo::objectKey, Collectors.mapping(b -> b.metadata().range(), Collectors.toList())))
-            .entrySet();
-        metrics.recordFetchObjectsSize(objectKeysToRanges.size());
-        return objectKeysToRanges.stream()
-            .flatMap(e ->
-                keyAlignment.align(e.getValue())
+            .forEach(batch ->
+                objectKeysToFetchInfo
+                    .computeIfAbsent(batch.objectKey(), k -> new ObjectFetchInfo())
+                    .addBatch(batch)
+            );
+
+        metrics.recordFetchObjectsSize(objectKeysToFetchInfo.size());
+
+        return objectKeysToFetchInfo.entrySet().stream()
+            .flatMap(e -> {
+                final String objectKey = e.getKey();
+                final ObjectFetchInfo fetchInfo = e.getValue();
+                // Note: keyAlignment.align() returns fixed-size aligned blocks (e.g., 16 MiB).
+                // This aligned byteRange is used for both caching and rate limiting (if enabled).
+                // Rate limiting uses the aligned block size (not actual batch size) as a conservative
+                // estimate, since the actual fetch size is only known after the fetch completes.
+                return keyAlignment.align(fetchInfo.ranges)
                     .stream()
-                    .map(byteRange -> getCacheFetchJob(e.getKey(), byteRange)))
+                    .map(byteRange -> getCacheFetchJob(objectKey, byteRange, fetchInfo.oldestTimestamp));
+            })
             .collect(Collectors.toList());
     }
 
-    private CacheFetchJob getCacheFetchJob(final String objectKey, final ByteRange byteRange) {
+    private CacheFetchJob getCacheFetchJob(final String objectKey, final ByteRange byteRange, final long batchTimestamp) {
         return new CacheFetchJob(
                 cache,
                 objectFetcher,
@@ -102,19 +129,20 @@ public class FetchPlanner implements Supplier<List<Future<FileExtent>>> {
                 byteRange,
                 time,
                 metrics::fetchFileFinished,
-                metrics::cacheEntrySize
+                metrics::cacheEntrySize,
+                batchTimestamp
         );
 
     }
 
-    private List<Future<FileExtent>> submitAll(List<Callable<FileExtent>> jobs) {
+    private List<CompletableFuture<FileExtent>> submitAll(List<CacheFetchJob> jobs) {
         return jobs.stream()
-            .map(dataExecutor::submit)
+            .map(job -> CompletableFuture.supplyAsync(job::call, dataExecutor))
             .collect(Collectors.toList());
     }
 
     @Override
-    public List<Future<FileExtent>> get() {
+    public List<CompletableFuture<FileExtent>> get() {
         return TimeUtils.measureDurationMsSupplier(time, () -> doWork(batchCoordinates), metrics::fetchPlanFinished);
     }
 }

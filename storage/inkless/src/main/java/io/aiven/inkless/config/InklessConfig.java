@@ -102,6 +102,27 @@ public class InklessConfig extends AbstractConfig {
         "The time to live must be <= than half of the value of of file.cleaner.interval.ms.";
     private static final int CONSUME_BATCH_COORDINATE_CACHE_TTL_MS_DEFAULT = 5000;
 
+    // Lagging cache configuration for lagging/backfill consumers
+    public static final String CONSUME_LAGGING_CACHE_ENABLED_CONFIG = CONSUME_PREFIX + "lagging.cache.enabled";
+    private static final String CONSUME_LAGGING_CACHE_ENABLED_DOC = "If true, a secondary cache is enabled for lagging consumers. " +
+        "This prevents lagging consumers from evicting hot data from the primary cache.";
+    private static final boolean CONSUME_LAGGING_CACHE_ENABLED_DEFAULT = false;
+
+    public static final String CONSUME_LAGGING_CACHE_MAX_COUNT_CONFIG = CONSUME_PREFIX + "lagging.cache.max.count";
+    private static final String CONSUME_LAGGING_CACHE_MAX_COUNT_DOC = "The maximum number of entries in the lagging consumer cache. " +
+        "Should be sized based on the number of concurrent lagging consumers.";
+    private static final int CONSUME_LAGGING_CACHE_MAX_COUNT_DEFAULT = 150;
+
+    public static final String CONSUME_LAGGING_CACHE_TTL_SEC_CONFIG = CONSUME_PREFIX + "lagging.cache.ttl.sec";
+    private static final String CONSUME_LAGGING_CACHE_TTL_SEC_DOC = "Time to live in seconds for entries in the lagging consumer cache. " +
+        "A short TTL (e.g., 5 seconds) is recommended as cached data is only needed briefly for sequential reads.";
+    private static final int CONSUME_LAGGING_CACHE_TTL_SEC_DEFAULT = 5;
+
+    public static final String CONSUME_LAGGING_CACHE_RATE_LIMIT_BYTES_PER_SEC_CONFIG = CONSUME_PREFIX + "lagging.cache.rate.limit.bytes.per.sec";
+    private static final String CONSUME_LAGGING_CACHE_RATE_LIMIT_BYTES_PER_SEC_DOC = "Maximum bytes per second to fetch from remote storage for lagging consumer cache misses. " +
+        "Set to -1 to disable rate limiting. This protects remote storage from being overwhelmed by lagging consumers.";
+    private static final long CONSUME_LAGGING_CACHE_RATE_LIMIT_BYTES_PER_SEC_DEFAULT = 50 * 1024 * 1024;  // 50 MiB/s
+
     public static final String RETENTION_ENFORCEMENT_INTERVAL_MS_CONFIG = "retention.enforcement.interval.ms";
     private static final String RETENTION_ENFORCEMENT_INTERVAL_MS_DOC = "The interval with which to enforce retention policies on a partition. " +
         "This interval is approximate, because each scheduling event is randomized. " +
@@ -354,6 +375,39 @@ public class InklessConfig extends AbstractConfig {
             CONSUME_BATCH_COORDINATE_CACHE_TTL_MS_DOC
         );
 
+        // Lagging cache configuration
+        configDef.define(
+            CONSUME_LAGGING_CACHE_ENABLED_CONFIG,
+            ConfigDef.Type.BOOLEAN,
+            CONSUME_LAGGING_CACHE_ENABLED_DEFAULT,
+            ConfigDef.Importance.LOW,
+            CONSUME_LAGGING_CACHE_ENABLED_DOC
+        );
+        configDef.define(
+            CONSUME_LAGGING_CACHE_MAX_COUNT_CONFIG,
+            ConfigDef.Type.INT,
+            CONSUME_LAGGING_CACHE_MAX_COUNT_DEFAULT,
+            ConfigDef.Range.atLeast(1),
+            ConfigDef.Importance.LOW,
+            CONSUME_LAGGING_CACHE_MAX_COUNT_DOC
+        );
+        configDef.define(
+            CONSUME_LAGGING_CACHE_TTL_SEC_CONFIG,
+            ConfigDef.Type.INT,
+            CONSUME_LAGGING_CACHE_TTL_SEC_DEFAULT,
+            ConfigDef.Range.atLeast(1),
+            ConfigDef.Importance.LOW,
+            CONSUME_LAGGING_CACHE_TTL_SEC_DOC
+        );
+        configDef.define(
+            CONSUME_LAGGING_CACHE_RATE_LIMIT_BYTES_PER_SEC_CONFIG,
+            ConfigDef.Type.LONG,
+            CONSUME_LAGGING_CACHE_RATE_LIMIT_BYTES_PER_SEC_DEFAULT,
+            ConfigDef.Range.atLeast(-1),
+            ConfigDef.Importance.LOW,
+            CONSUME_LAGGING_CACHE_RATE_LIMIT_BYTES_PER_SEC_DOC
+        );
+
         return configDef;
     }
 
@@ -473,5 +527,21 @@ public class InklessConfig extends AbstractConfig {
 
     public Duration batchCoordinateCacheTtl() {
         return Duration.ofMillis(getInt(CONSUME_BATCH_COORDINATE_CACHE_TTL_MS_CONFIG));
+    }
+
+    public boolean isLaggingCacheEnabled() {
+        return getBoolean(CONSUME_LAGGING_CACHE_ENABLED_CONFIG);
+    }
+
+    public int laggingCacheMaxCount() {
+        return getInt(CONSUME_LAGGING_CACHE_MAX_COUNT_CONFIG);
+    }
+
+    public int laggingCacheTtlSec() {
+        return getInt(CONSUME_LAGGING_CACHE_TTL_SEC_CONFIG);
+    }
+
+    public long laggingCacheRateLimitBytesPerSec() {
+        return getLong(CONSUME_LAGGING_CACHE_RATE_LIMIT_BYTES_PER_SEC_CONFIG);
     }
 }

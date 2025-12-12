@@ -99,6 +99,11 @@ class InklessConfigTest {
         assertThat(config.produceUploadBackoff()).isEqualTo(Duration.ofMillis(10));
         assertThat(config.storage(storageMetrics)).isInstanceOf(ConfigTestStorageBackend.class);
         assertThat(config.fileCleanerInterval()).isEqualTo(Duration.ofMinutes(5));
+        // Lagging cache defaults
+        assertThat(config.isLaggingCacheEnabled()).isFalse();
+        assertThat(config.laggingCacheMaxCount()).isEqualTo(150);
+        assertThat(config.laggingCacheTtlSec()).isEqualTo(5);
+        assertThat(config.laggingCacheRateLimitBytesPerSec()).isEqualTo(50 * 1024 * 1024);
         assertThat(config.fileCleanerRetentionPeriod()).isEqualTo(Duration.ofMinutes(1));
         assertThat(config.fileMergerInterval()).isEqualTo(Duration.ofMinutes(1));
         assertThat(config.cacheMaxCount()).isEqualTo(1000);
@@ -131,6 +136,10 @@ class InklessConfigTest {
         configs.put("fetch.data.thread.pool.size", "12");
         configs.put("fetch.metadata.thread.pool.size", "14");
         configs.put("retention.enforcement.max.batches.per.request", "10");
+        configs.put("consume.lagging.cache.enabled", "true");
+        configs.put("consume.lagging.cache.max.count", "200");
+        configs.put("consume.lagging.cache.ttl.sec", "10");
+        configs.put("consume.lagging.cache.rate.limit.bytes.per.sec", "104857600");
         final var config = new InklessConfig(
             configs
         );
@@ -152,6 +161,10 @@ class InklessConfigTest {
         assertThat(config.fetchDataThreadPoolSize()).isEqualTo(12);
         assertThat(config.fetchMetadataThreadPoolSize()).isEqualTo(14);
         assertThat(config.maxBatchesPerEnforcementRequest()).isEqualTo(10);
+        assertThat(config.isLaggingCacheEnabled()).isTrue();
+        assertThat(config.laggingCacheMaxCount()).isEqualTo(200);
+        assertThat(config.laggingCacheTtlSec()).isEqualTo(10);
+        assertThat(config.laggingCacheRateLimitBytesPerSec()).isEqualTo(104857600);
     }
 
     @Test
