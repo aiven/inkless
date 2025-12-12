@@ -24,9 +24,8 @@ import org.apache.kafka.common.utils.Time;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.Callable;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Future;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
@@ -40,7 +39,7 @@ import io.aiven.inkless.control_plane.FindBatchResponse;
 import io.aiven.inkless.generated.FileExtent;
 import io.aiven.inkless.storage_backend.common.ObjectFetcher;
 
-public class FetchPlanner implements Supplier<List<Future<FileExtent>>> {
+public class FetchPlanner implements Supplier<List<CompletableFuture<FileExtent>>> {
 
     private final Time time;
     private final ObjectKeyCreator objectKeyCreator;
@@ -71,12 +70,13 @@ public class FetchPlanner implements Supplier<List<Future<FileExtent>>> {
         this.metrics = metrics;
     }
 
-    private List<Future<FileExtent>> doWork(final Map<TopicIdPartition, FindBatchResponse> batchCoordinates) {
-        final List<Callable<FileExtent>> jobs = planJobs(batchCoordinates);
+    private List<CompletableFuture<FileExtent>> doWork(final Map<TopicIdPartition, FindBatchResponse> batchCoordinates) {
+        final List<CacheFetchJob> jobs = planJobs(batchCoordinates);
         return submitAll(jobs);
     }
 
-    private List<Callable<FileExtent>> planJobs(final Map<TopicIdPartition, FindBatchResponse> batchCoordinates) {
+    // package-private for testing
+    List<CacheFetchJob> planJobs(final Map<TopicIdPartition, FindBatchResponse> batchCoordinates) {
         final Set<Map.Entry<String, List<ByteRange>>> objectKeysToRanges = batchCoordinates.values().stream()
             .filter(findBatch -> findBatch.errors() == Errors.NONE)
             .map(FindBatchResponse::batches)
@@ -107,14 +107,14 @@ public class FetchPlanner implements Supplier<List<Future<FileExtent>>> {
 
     }
 
-    private List<Future<FileExtent>> submitAll(List<Callable<FileExtent>> jobs) {
+    private List<CompletableFuture<FileExtent>> submitAll(List<CacheFetchJob> jobs) {
         return jobs.stream()
-            .map(dataExecutor::submit)
+            .map(job -> CompletableFuture.supplyAsync(job::call, dataExecutor))
             .collect(Collectors.toList());
     }
 
     @Override
-    public List<Future<FileExtent>> get() {
+    public List<CompletableFuture<FileExtent>> get() {
         return TimeUtils.measureDurationMsSupplier(time, () -> doWork(batchCoordinates), metrics::fetchPlanFinished);
     }
 }

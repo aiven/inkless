@@ -31,6 +31,7 @@ import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.time.Instant;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
@@ -45,6 +46,7 @@ import io.aiven.inkless.common.InklessThreadFactory;
 import io.aiven.inkless.common.ObjectKeyCreator;
 import io.aiven.inkless.common.metrics.ThreadPoolMonitor;
 import io.aiven.inkless.control_plane.ControlPlane;
+import io.aiven.inkless.generated.FileExtent;
 import io.aiven.inkless.storage_backend.common.ObjectFetcher;
 
 public class Reader implements AutoCloseable {
@@ -152,7 +154,10 @@ public class Reader implements AutoCloseable {
                         fetchMetrics
                     ).get()
             )
-            .thenCombineAsync(batchCoordinates, (fileExtents, coordinates) ->
+            // flatten the list of file extent futures into a single future with list of file extents
+            .thenCompose(Reader::allOfFileExtents)
+            // combine file extents and coordinates to complete the fetch
+            .thenCombine(batchCoordinates, (fileExtents, coordinates) ->
                 new FetchCompleter(
                     time,
                     objectKeyCreator,
@@ -201,6 +206,26 @@ public class Reader implements AutoCloseable {
                     fetchMetrics.fetchCompleted(startAt);
                 }
             });
+    }
+
+    /**
+     * Waits for all file extent futures to complete and collects results without blocking threads.
+     * <p>
+     * This method preserves the original order of the input list, regardless of the order
+     * in which the futures complete.
+     *
+     * @param fileExtentFutures the list of futures to wait for
+     * @return a future that completes with a list of file extents in the same order as the input
+     */
+    static CompletableFuture<List<FileExtent>> allOfFileExtents(
+        List<CompletableFuture<FileExtent>> fileExtentFutures
+    ) {
+        final CompletableFuture<?>[] futuresArray = fileExtentFutures.toArray(CompletableFuture[]::new);
+        return CompletableFuture.allOf(futuresArray)
+            .thenApply(v ->
+                fileExtentFutures.stream()
+                    .map(CompletableFuture::join)
+                    .toList());
     }
 
     @Override
