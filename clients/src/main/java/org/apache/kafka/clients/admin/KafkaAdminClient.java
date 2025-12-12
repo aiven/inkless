@@ -4868,7 +4868,7 @@ public class KafkaAdminClient extends AdminClient {
     public RemoveTopicsFromMirrorResult removeTopicsFromMirror(String mirrorName, Set<String> topics, RemoveTopicsFromMirrorOptions options) {
         final KafkaFutureImpl<Void> future = new KafkaFutureImpl<>();
         final long now = time.milliseconds();
-        final Call call = new Call("deleteMirrorTopic", calcDeadlineMs(now, options.timeoutMs()),
+        final Call call = new Call("removeTopicsFromMirror", calcDeadlineMs(now, options.timeoutMs()),
                 new LeastLoadedBrokerOrActiveKController()) {
 
             @Override
@@ -4908,7 +4908,7 @@ public class KafkaAdminClient extends AdminClient {
     public AddTopicsToMirrorResult addTopicsToMirror(Map<String, String> topicToMirrorName, AddTopicsToMirrorOptions options) {
         final KafkaFutureImpl<Void> future = new KafkaFutureImpl<>();
         final long now = time.milliseconds();
-        final Call call = new Call("attachMirrorTopic", calcDeadlineMs(now, options.timeoutMs()),
+        final Call call = new Call("addTopicsToMirror", calcDeadlineMs(now, options.timeoutMs()),
                 new LeastLoadedBrokerOrActiveKController()) {
 
             @Override

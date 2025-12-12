@@ -83,7 +83,7 @@ public abstract class MirrorCommand {
             if (opts.hasCreateOption()) {
                 mirrorService.createMirror(opts);
             } else if (opts.hasAddOption()) {
-                mirrorService.addTopicToMirror(opts);
+                mirrorService.addTopicsToMirror(opts);
             } else if (opts.hasRemoveOption()) {
                 mirrorService.removeTopicsFromMirror(opts);
             }
@@ -151,25 +151,25 @@ public abstract class MirrorCommand {
             Optional<Node> coordinator = Optional.empty();
             FindCoordinatorResult findCoordinatorResult = adminClient.findCoordinator(mirrorName);
             coordinator = Optional.ofNullable(findCoordinatorResult.node().get());
-            System.out.println("Found coordinator " + coordinator.map(Node::idString).orElse("none") + " for link " + mirrorName + ".");
+            System.out.println("Found coordinator " + coordinator.map(Node::idString).orElse("none") + " for mirror " + mirrorName + ".");
 
             if (coordinator.isPresent()) {
                 Node node = coordinator.get();
                 System.out.println("Node info: " + node);
                 String bootstrapServer = node.host() + ":" + node.port();
-                System.out.println("Deleting mirror topic " + topicName + " using bootstrap server " + bootstrapServer + ";;" + mirrorName + ".");
+                System.out.println("Removing topic " + topicName + " from mirror using bootstrap server " + bootstrapServer + ";;" + mirrorName + ".");
                 try (Admin admin = createAdminClient(Optional.of(bootstrapServer), commandConfig)) {
-                    RemoveTopicsFromMirrorResult deleteMirrorTopicResult = admin.removeTopicsFromMirror(mirrorName, Set.of(topicName), new RemoveTopicsFromMirrorOptions());
-                    deleteMirrorTopicResult.all().get();
-                    System.out.println("Delete mirror topic topic " + topicName + ".");
+                    RemoveTopicsFromMirrorResult removeTopicsFromMirrorResult = admin.removeTopicsFromMirror(mirrorName, Set.of(topicName), new RemoveTopicsFromMirrorOptions());
+                    removeTopicsFromMirrorResult.all().get();
+                    System.out.println("Removing topic " + topicName + " from mirror.");
                 }
             } else {
-                System.out.println("error when delete mirror topic " + topicName + ".");
+                System.out.println("error when remove topic  " + topicName + " from mirror.");
             }
 
         }
 
-        public void addTopicToMirror(MirrorCommandOptions opts) throws Exception {
+        public void addTopicsToMirror(MirrorCommandOptions opts) throws Exception {
             String topicName = opts.topic().get();
             String mirrorName = opts.mirror().get();
 
@@ -209,9 +209,9 @@ public abstract class MirrorCommand {
                        if (ex instanceof TopicExistsException) {
                            System.out.println("Mirror topic " + topicName + " already exists, attaching mirror to it.");
                            try (Admin admin1 = createAdminClient(Optional.of(bootstrapServer), commandConfig)) {
-                               AddTopicsToMirrorResult attachMirrorTopicResult = admin1.addTopicsToMirror(Collections.singletonMap(topicName, mirrorName), new AddTopicsToMirrorOptions());
+                               AddTopicsToMirrorResult addTopicsToMirrorResult = admin1.addTopicsToMirror(Collections.singletonMap(topicName, mirrorName), new AddTopicsToMirrorOptions());
                                try {
-                                   attachMirrorTopicResult.all().get();
+                                   addTopicsToMirrorResult.all().get();
                                    System.out.println("Successfully attached topic " + topicName + " to mirror " + mirrorName);
                                } catch (Exception e) {
                                    throw new RuntimeException(e);
@@ -273,7 +273,7 @@ public abstract class MirrorCommand {
 
             createOpt = parser.accepts("create", "Create a new cluster mirror from a source cluster.");
             addOpt = parser.accepts("add", "Add a topic to an existing cluster mirror.");
-            removeOpt = parser.accepts("remove", "remove a topic from an existing cluster mirror.");
+            removeOpt = parser.accepts("remove", "Remove a topic from an existing cluster mirror.");
 
             mirrorOpt = parser.accepts("mirror", "The name of the cluster mirror.")
                 .withRequiredArg()

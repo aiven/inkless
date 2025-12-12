@@ -641,7 +641,7 @@ public class ReplicationControlManager {
                         featureControl.metadataVersionOrThrow(),
                         getTopicEffectiveMinIsr(topicName)
                 )
-                        // set the cluster link name
+                        // set the mirror name
                         .setMirrorName(mirrorName)
                         .setEligibleLeaderReplicasEnabled(featureControl.isElrFeatureEnabled())
                         .setDefaultDirProvider(clusterDescriber);
@@ -669,13 +669,13 @@ public class ReplicationControlManager {
                         featureControl.metadataVersionOrThrow(),
                         getTopicEffectiveMinIsr(topicName)
                 )
-                        // clear the cluster link name
+                        // clear the mirror name, so the topics become writable
                         .setMirrorName("")
                         .setEligibleLeaderReplicasEnabled(featureControl.isElrFeatureEnabled())
                         .setDefaultDirProvider(clusterDescriber);
 
                 builder.build().ifPresent(records::add);
-                log.info("!!! update partition {} for topic {} with empty cluster link: {}", partitionId, topicName, records);
+                log.info("!!! update partition {} for topic {} with empty cluster mirror to make it writable: {}", partitionId, topicName, records);
             }
         }
 
@@ -707,7 +707,7 @@ public class ReplicationControlManager {
                         .setDefaultDirProvider(clusterDescriber);
 
                 builder.build().ifPresent(records::add);
-                log.info("!!! update partition {} for topic {} with cluster link: {}", partitionId, topicName, records);
+                log.info("!!! update partition {} for topic {} with cluster mirror: {}", partitionId, topicName, records);
             }
         }
 

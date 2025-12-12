@@ -1785,7 +1785,7 @@ public final class QuorumController implements Controller {
             ControllerRequestContext context,
             Set<Uuid> topicIds
     ) {
-        return appendWriteEvent("deleteMirrorTopic", context.deadlineNs(),
+        return appendWriteEvent("removeTopicsFromMirror", context.deadlineNs(),
                 () -> replicationControl.removeTopicsFromMirror(topicIds));
     }
 
@@ -1794,7 +1794,7 @@ public final class QuorumController implements Controller {
             ControllerRequestContext context,
             Map<Uuid, String> topicIdsToMirrorName
     ) {
-        return appendWriteEvent("attachMirrorTopic", context.deadlineNs(),
+        return appendWriteEvent("addTopicsToMirror", context.deadlineNs(),
                 () -> replicationControl.addTopicsToMirror(topicIdsToMirrorName));
     }
 

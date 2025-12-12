@@ -137,8 +137,8 @@ class ControllerApis(
         case ApiKeys.REMOVE_RAFT_VOTER => handleRemoveRaftVoter(request)
         case ApiKeys.UPDATE_RAFT_VOTER => handleUpdateRaftVoter(request)
         case ApiKeys.CREATE_MIRROR => handleCreateMirror(request)
-        case ApiKeys.ADD_TOPICS_TO_MIRROR => handleAttachMirrorTopic(request)
-        case ApiKeys.REMOVE_TOPICS_FROM_MIRROR => handleDeleteMirrorTopic(request)
+        case ApiKeys.ADD_TOPICS_TO_MIRROR => handleAddTopicsToMirror(request)
+        case ApiKeys.REMOVE_TOPICS_FROM_MIRROR => handleRemoveTopicsFromMirror(request)
         case ApiKeys.BUMP_LEADER_EPOCH => handleBumpLeaderEpoch(request)
         case _ => throw new ApiException(s"Unsupported ApiKey ${request.context.header.apiKey}")
       }
@@ -168,15 +168,15 @@ class ControllerApis(
     }
   }
 
-  def handleAttachMirrorTopic(request: RequestChannel.Request): CompletableFuture[Unit] = {
+  def handleAddTopicsToMirror(request: RequestChannel.Request): CompletableFuture[Unit] = {
     // luke
     authHelper.authorizeClusterOperation(request, CLUSTER_ACTION)
-    val attachMirrorTopicRequest = request.body[AddTopicsToMirrorRequest]
-    info("!!! attach mirror topic request: " + attachMirrorTopicRequest)
+    val addTopicsToMirrorRequest = request.body[AddTopicsToMirrorRequest]
+    info("!!! attach mirror topic request: " + addTopicsToMirrorRequest)
     val context = new ControllerRequestContext(request.context.header.data, request.context.principal,
       OptionalLong.empty())
     val topicIdToMirrorName: util.Map[Uuid, String] = new util.HashMap[Uuid, String]()
-    attachMirrorTopicRequest.data().topics().forEach( topic => {
+    addTopicsToMirrorRequest.data().topics().forEach( topic => {
       if (!topic.topicId().equals(Uuid.ZERO_UUID)) {
         topicIdToMirrorName.put(topic.topicId(), topic.mirrorName())
       } else {
@@ -199,15 +199,15 @@ class ControllerApis(
 
   }
 
-  def handleDeleteMirrorTopic(request: RequestChannel.Request): CompletableFuture[Unit] = {
+  def handleRemoveTopicsFromMirror(request: RequestChannel.Request): CompletableFuture[Unit] = {
     // luke
     authHelper.authorizeClusterOperation(request, CLUSTER_ACTION)
-    val deleteMirrorTopicRequest = request.body[RemoveTopicsFromMirrorRequest]
-    info("!!! delete mirror topic request: " + deleteMirrorTopicRequest)
+    val removeTopicsFromMirrorRequest = request.body[RemoveTopicsFromMirrorRequest]
+    info("!!! delete mirror topic request: " + removeTopicsFromMirrorRequest)
     val context = new ControllerRequestContext(request.context.header.data, request.context.principal,
       OptionalLong.empty())
     val topicIds: util.Set[Uuid] = new util.HashSet[Uuid]()
-    deleteMirrorTopicRequest.data().topics().forEach( topic => {
+    removeTopicsFromMirrorRequest.data().topics().forEach( topic => {
       if (!topic.topicId().equals(Uuid.ZERO_UUID)) {
         topicIds.add(topic.topicId())
       } else {

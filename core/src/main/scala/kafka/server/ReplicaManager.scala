@@ -2397,12 +2397,12 @@ class ReplicaManager(val config: KafkaConfig,
         val lazyOffsetCheckpoints = new LazyOffsetCheckpoints(this.highWatermarkCheckpoints.asJava)
         val leaderChangedPartitions = new mutable.HashSet[Partition]
         val followerChangedPartitions = new mutable.HashSet[Partition]
-        val deleteMirrorTopics = new mutable.HashSet[String]
+        val removeMirrorTopics = new mutable.HashSet[String]
         if (!localChanges.leaders.isEmpty) {
-          applyLocalLeadersDelta(leaderChangedPartitions, delta, lazyOffsetCheckpoints, localChanges.leaders.asScala, localChanges.directoryIds.asScala, deleteMirrorTopics)
-          if (deleteMirrorTopics.nonEmpty) {
-            info("!!! sent bumpLeaderEpoch:" + deleteMirrorTopics)
-            mirrorMetadataManager.get.maybeUpdateLeaderEpoch(deleteMirrorTopics.toList.asJava)
+          applyLocalLeadersDelta(leaderChangedPartitions, delta, lazyOffsetCheckpoints, localChanges.leaders.asScala, localChanges.directoryIds.asScala, removeMirrorTopics)
+          if (removeMirrorTopics.nonEmpty) {
+            info("!!! sent bumpLeaderEpoch:" + removeMirrorTopics)
+            mirrorMetadataManager.get.maybeUpdateLeaderEpoch(removeMirrorTopics.toList.asJava)
           }
         }
         if (!localChanges.followers.isEmpty) {
@@ -2437,22 +2437,24 @@ class ReplicaManager(val config: KafkaConfig,
     offsetCheckpoints: OffsetCheckpoints,
     localLeaders: mutable.Map[TopicPartition, LocalReplicaChanges.PartitionInfo],
     directoryIds: mutable.Map[TopicIdPartition, Uuid],
-    deleteMirrorTopics: mutable.Set[String]
+    removeMirrorTopics: mutable.Set[String]
   ): Unit = {
     stateChangeLogger.info(s"Transitioning ${localLeaders.size} partition(s) to " +
       "local leaders.")
     replicaFetcherManager.removeFetcherForPartitions(localLeaders.keySet)
     // Stopping the fetchers must be done first in order to initialize the fetch position correctly
+    // We should remove mirrorFetcher thread here because the replica might be the mirrored leader before,
+    // but now it becomes writable (classic topic).
     mirrorFetcherManager.removeFetcherForPartitions(localLeaders.keySet)
     localLeaders.foreachEntry { (tp, info) =>
       getOrCreatePartition(tp, delta, info.topicId).foreach { case (partition, isNew) =>
         try {
           val state = info.partition.toLeaderAndIsrPartitionState(tp, isNew)
 
-          // add the topic into deleteMirrorTopics set if the mirror name becomes empty
+          // add the topic into removeMirrorTopics set if the mirror name becomes empty
           val newMirrorName = delta.changedTopics().get(info.topicId()).partitionChanges().get(tp.partition()).mirrorName
           if (partition.mirrorName.nonEmpty && newMirrorName.isEmpty) {
-            deleteMirrorTopics.add(tp.topic())
+            removeMirrorTopics.add(tp.topic())
           }
 
           val partitionAssignedDirectoryId = directoryIds.find(_._1.topicPartition() == tp).map(_._2)
