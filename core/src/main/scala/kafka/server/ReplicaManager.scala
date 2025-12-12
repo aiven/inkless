@@ -1410,6 +1410,11 @@ class ReplicaManager(val config: KafkaConfig,
       logStartOffset
     }
 
+    def validateReadOnlyTopic(partition: Partition): Unit = {
+      if (partition.mirrorName.nonEmpty)
+        throw new ReadOnlyTopicException()
+    }
+
     if (traceEnabled)
       trace(s"Append [$entriesPerPartition] to local log")
 
@@ -1426,6 +1431,7 @@ class ReplicaManager(val config: KafkaConfig,
       } else {
         try {
           val partition = getPartitionOrException(topicIdPartition)
+          validateReadOnlyTopic(partition)
           val info = partition.appendRecordsToLeader(records, origin, requiredAcks, requestLocal,
             verificationGuards.getOrElse(topicIdPartition.topicPartition(), VerificationGuard.SENTINEL))
           val numAppendedMessages = info.numMessages
@@ -1451,7 +1457,8 @@ class ReplicaManager(val config: KafkaConfig,
                    _: RecordBatchTooLargeException |
                    _: CorruptRecordException |
                    _: KafkaStorageException |
-                   _: UnknownTopicIdException) =>
+                   _: UnknownTopicIdException |
+                   _: ReadOnlyTopicException) =>
             (topicIdPartition, LogAppendResult(LogAppendInfo.UNKNOWN_LOG_APPEND_INFO, Some(e), hasCustomErrorMessage = false))
           case rve: RecordValidationException =>
             val logStartOffset = processFailedRecord(topicIdPartition, rve.invalidException)
