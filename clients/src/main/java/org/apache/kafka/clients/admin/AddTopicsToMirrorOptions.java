@@ -18,10 +18,9 @@
 package org.apache.kafka.clients.admin;
 
 import java.util.Map;
-import java.util.Set;
 
 /**
- * Options for {@link Admin#deleteMirrorTopic(String, Set, DeleteMirrorTopicOptions)}.
+ * Options for {@link Admin#addTopicsToMirror(Map, AddTopicsToMirrorOptions)}.
  */
-public class DeleteMirrorTopicOptions extends AbstractOptions<DeleteMirrorTopicOptions> {
+public class AddTopicsToMirrorOptions extends AbstractOptions<AddTopicsToMirrorOptions> {
 }

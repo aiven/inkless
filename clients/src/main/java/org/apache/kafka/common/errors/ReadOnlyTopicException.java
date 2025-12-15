@@ -16,10 +16,6 @@
  */
 package org.apache.kafka.common.errors;
 
-import org.apache.kafka.common.TopicPartition;
-
-import java.util.Map;
-
 /**
  * This topic is a read-only topic
  */

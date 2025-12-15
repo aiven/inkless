@@ -1088,7 +1088,9 @@ public class UnifiedLog implements AutoCloseable {
      * @param validateAndAssignOffsets Should the log assign offsets to this message set or blindly apply what it is given
      * @param leaderEpoch The partition's leader epoch which will be applied to messages when offsets are assigned on the leader
      * @param requestLocal The request local instance if validateAndAssignOffsets is true
-     * @param ignoreRecordSize true to skip validation of record size.
+     * @param ignoreRecordSize True to skip validation of record size
+     * @param toMagic Current Magic value
+     * @param isMirrorLeader True if this is a read-only leader fetching from source cluster
      * @throws KafkaStorageException If the append fails due to an I/O error.
      * @throws OffsetsOutOfOrderException If out of order offsets found in 'records'
      * @throws UnexpectedAppendOffsetException If the first or last offset in append is less than next offset
@@ -1102,7 +1104,7 @@ public class UnifiedLog implements AutoCloseable {
                                  VerificationGuard verificationGuard,
                                  boolean ignoreRecordSize,
                                  byte toMagic,
-                                 boolean isMirroredTopic) {
+                                 boolean isMirrorLeader) {
         // We want to ensure the partition metadata file is written to the log dir before any log data is written to disk.
         // This will ensure that any log data can be recovered with the correct topic ID in the case of failure.
         maybeFlushMetadataFile();
@@ -1168,7 +1170,7 @@ public class UnifiedLog implements AutoCloseable {
                                     });
                                 }
                             } else {
-                                maybeResetProducerIdForMirroredTopic(records, isMirroredTopic);
+                                maybeResetProducerIdForMirroredTopic(records, isMirrorLeader);
                                 // we are taking the offsets we are given
                                 if (appendInfo.firstOrLastOffsetOfFirstBatch() < localLog.logEndOffset()) {
                                     // we may still be able to recover if the log is empty
@@ -1271,11 +1273,19 @@ public class UnifiedLog implements AutoCloseable {
         }
     }
 
-    private void maybeResetProducerIdForMirroredTopic(MemoryRecords records, boolean isMirroredTopic) {
-        if (isMirroredTopic) {
+    /**
+     * Reset producer IDs for records being mirrored from a source cluster.
+     * This is only called for read-only leaders (partitions with mirrorName set and acting as leader)
+     * to ensure producer IDs from the source cluster don't conflict with local producer IDs.
+     *
+     * @param records The records being appended
+     * @param isMirrorLeader True if this is a read-only leader fetching from source cluster
+     */
+    private void maybeResetProducerIdForMirroredTopic(MemoryRecords records, boolean isMirrorLeader) {
+        if (isMirrorLeader) {
             for (MutableRecordBatch batch : records.batches()) {
-                // reset producer id for mirrored topic
-                logger.info("!!! resetting batch producer id to {} for batch {}", -(batch.producerId() + 2), batch.baseOffset());
+                // Reset producer ID to avoid conflicts with local producers
+                // New producer ID = -(originalProducerId + 2)
                 batch.setProducerId(-(batch.producerId() + 2));
             }
         }

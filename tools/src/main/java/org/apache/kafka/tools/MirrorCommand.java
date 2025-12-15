@@ -17,6 +17,8 @@
 
 package org.apache.kafka.tools;
 
+import org.apache.kafka.clients.admin.AddTopicsToMirrorOptions;
+import org.apache.kafka.clients.admin.AddTopicsToMirrorResult;
 import org.apache.kafka.clients.admin.Admin;
 import org.apache.kafka.clients.admin.AdminClientConfig;
 import org.apache.kafka.clients.admin.CreateMirrorOptions;
@@ -25,8 +27,10 @@ import org.apache.kafka.clients.admin.CreateTopicsOptions;
 import org.apache.kafka.clients.admin.CreateTopicsResult;
 import org.apache.kafka.clients.admin.FindCoordinatorResult;
 import org.apache.kafka.clients.admin.NewTopic;
+import org.apache.kafka.clients.admin.RemoveTopicsFromMirrorOptions;
+import org.apache.kafka.clients.admin.RemoveTopicsFromMirrorResult;
 import org.apache.kafka.common.Node;
-import org.apache.kafka.common.config.TopicConfig;
+import org.apache.kafka.common.errors.TopicExistsException;
 import org.apache.kafka.common.utils.Exit;
 import org.apache.kafka.common.utils.Utils;
 import org.apache.kafka.server.config.MirrorConfig;
@@ -37,6 +41,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
@@ -77,7 +82,9 @@ public abstract class MirrorCommand {
             if (opts.hasCreateOption()) {
                 mirrorService.createMirror(opts);
             } else if (opts.hasAddOption()) {
-                mirrorService.addTopicToMirror(opts);
+                mirrorService.addTopicsToMirror(opts);
+            } else if (opts.hasRemoveOption()) {
+                mirrorService.removeTopicsFromMirror(opts);
             }
         } catch (ExecutionException e) {
             Throwable cause = e.getCause();
@@ -133,7 +140,32 @@ public abstract class MirrorCommand {
             System.out.println("Successfully created mirror " + opts.mirror().get());
         }
 
-        public void addTopicToMirror(MirrorCommandOptions opts) throws Exception {
+        public void removeTopicsFromMirror(MirrorCommandOptions opts) throws Exception {
+            String topicName = opts.topic().get();
+            String mirrorName = opts.mirror().get();
+
+            Optional<Node> coordinator = Optional.empty();
+            FindCoordinatorResult findCoordinatorResult = adminClient.findCoordinator(mirrorName);
+            coordinator = Optional.ofNullable(findCoordinatorResult.node().get());
+            System.out.println("Found coordinator " + coordinator.map(Node::idString).orElse("none") + " for mirror " + mirrorName);
+
+            if (coordinator.isPresent()) {
+                Node node = coordinator.get();
+                System.out.println("Node info: " + node);
+                String bootstrapServer = node.host() + ":" + node.port();
+                System.out.printf("Removing topic %s from mirror %s using bootstrap server %s%n", topicName, mirrorName, bootstrapServer);
+                try (Admin admin = createAdminClient(Optional.of(bootstrapServer), commandConfig)) {
+                    RemoveTopicsFromMirrorResult removeTopicsFromMirrorResult = admin.removeTopicsFromMirror(mirrorName, Set.of(topicName), new RemoveTopicsFromMirrorOptions());
+                    removeTopicsFromMirrorResult.all().get();
+                    System.out.println("Successfully removed topic " + topicName + " from mirror " + mirrorName);
+                }
+            } else {
+                throw new RuntimeException(String.format("Error when removing topic %s from mirror %s%n", topicName, mirrorName));
+            }
+
+        }
+
+        public void addTopicsToMirror(MirrorCommandOptions opts) throws Exception {
             String topicName = opts.topic().get();
             String mirrorName = opts.mirror().get();
 
@@ -163,10 +195,31 @@ public abstract class MirrorCommand {
             System.out.println("Creating mirror topic " + topicName + " using bootstrap server " + bootstrapServer);
 
             try (Admin admin = createAdminClient(Optional.of(bootstrapServer), commandConfig)) {
+                // try to create the topic, if failed, we attach the mirror to an existing topic
                 CreateTopicsResult createResult = admin.createTopics(Set.of(newTopic),
                     new CreateTopicsOptions().retryOnQuotaViolation(false));
-                createResult.all().get();
-                System.out.println("Successfully added topic " + topicName + " to mirror " + mirrorName);
+                createResult.all().whenComplete((future, ex) -> {
+                    System.out.println("Create mirrored topic result: " + ex);
+
+                    if (ex != null) {
+                        if (ex instanceof TopicExistsException) {
+                            System.out.printf("Topic %s already exists, adding to mirror %s%n", topicName, mirrorName);
+                            try (Admin admin1 = createAdminClient(Optional.of(bootstrapServer), commandConfig)) {
+                                AddTopicsToMirrorResult addTopicsToMirrorResult = admin1.addTopicsToMirror(Collections.singletonMap(topicName, mirrorName), new AddTopicsToMirrorOptions());
+                                try {
+                                    addTopicsToMirrorResult.all().get();
+                                    System.out.printf("Successfully added topic %s to mirror %s%n", topicName, mirrorName);
+                                } catch (Exception e) {
+                                    throw new RuntimeException(e);
+                                }
+                            }
+                        } else {
+                            throw new RuntimeException("Failed to create topic " + topicName, ex);
+                        }
+                    } else {
+                        System.out.printf("Successfully added topic %s to mirror %s%n", topicName, mirrorName);
+                    }
+                });
             }
         }
 
@@ -183,6 +236,7 @@ public abstract class MirrorCommand {
         private final ArgumentAcceptingOptionSpec<String> mirrorConfigOpt;
         private final OptionSpecBuilder createOpt;
         private final OptionSpecBuilder addOpt;
+        private final OptionSpecBuilder removeOpt;
         private final ArgumentAcceptingOptionSpec<String> mirrorOpt;
         private final ArgumentAcceptingOptionSpec<String> topicOpt;
         private final ArgumentAcceptingOptionSpec<String> topicIdOpt;
@@ -213,6 +267,7 @@ public abstract class MirrorCommand {
 
             createOpt = parser.accepts("create", "Create a new cluster mirror from a source cluster.");
             addOpt = parser.accepts("add", "Add a topic to an existing cluster mirror.");
+            removeOpt = parser.accepts("remove", "Remove a topic from an existing cluster mirror.");
 
             mirrorOpt = parser.accepts("mirror", "The name of the cluster mirror.")
                 .withRequiredArg()
@@ -252,6 +307,10 @@ public abstract class MirrorCommand {
 
         public boolean hasAddOption() {
             return has(addOpt);
+        }
+
+        public boolean hasRemoveOption() {
+            return has(removeOpt);
         }
 
         public Optional<String> bootstrapServer() {
@@ -295,7 +354,7 @@ public abstract class MirrorCommand {
             return valueAsOption(replicationFactorOpt);
         }
 
-        @SuppressWarnings("NPathComplexity")
+        @SuppressWarnings({"NPathComplexity", "CyclomaticComplexity"})
         private void checkArgs() {
             if (args.length == 0)
                 CommandLineUtils.printUsageAndExit(parser, "Create cluster mirrors and add topics to them.");
@@ -303,7 +362,7 @@ public abstract class MirrorCommand {
             CommandLineUtils.maybePrintHelpOrVersion(this, "This tool helps to create cluster mirrors and add topics to them.");
 
             // should have exactly one action
-            long actions = (has(createOpt) ? 1 : 0) + (has(addOpt) ? 1 : 0);
+            long actions = (has(createOpt) ? 1 : 0) + (has(addOpt) ? 1 : 0) + (has(removeOpt) ? 1 : 0);
             if (actions != 1)
                 CommandLineUtils.printUsageAndExit(parser, "Command must include exactly one action: --create or --add");
 

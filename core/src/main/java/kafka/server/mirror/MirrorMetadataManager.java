@@ -16,7 +16,9 @@
  */
 package kafka.server.mirror;
 
+import kafka.log.LogManager;
 import kafka.server.KafkaConfig;
+import kafka.server.metadata.KRaftMetadataCache;
 
 import org.apache.kafka.clients.ClientResponse;
 import org.apache.kafka.clients.ClientUtils;
@@ -30,6 +32,7 @@ import org.apache.kafka.common.acl.AccessControlEntryFilter;
 import org.apache.kafka.common.acl.AclBinding;
 import org.apache.kafka.common.acl.AclBindingFilter;
 import org.apache.kafka.common.config.ConfigResource;
+import org.apache.kafka.common.message.BumpLeaderEpochRequestData;
 import org.apache.kafka.common.message.CreateAclsRequestData;
 import org.apache.kafka.common.message.CreatePartitionsRequestData;
 import org.apache.kafka.common.message.DeleteAclsRequestData;
@@ -45,6 +48,7 @@ import org.apache.kafka.common.network.ClientInformation;
 import org.apache.kafka.common.network.ListenerName;
 import org.apache.kafka.common.protocol.ApiKeys;
 import org.apache.kafka.common.protocol.Errors;
+import org.apache.kafka.common.requests.BumpLeaderEpochRequest;
 import org.apache.kafka.common.requests.CreateAclsRequest;
 import org.apache.kafka.common.requests.CreatePartitionsRequest;
 import org.apache.kafka.common.requests.DeleteAclsRequest;
@@ -81,6 +85,7 @@ import org.apache.kafka.server.common.NodeToControllerChannelManager;
 import org.apache.kafka.server.common.RequestLocal;
 import org.apache.kafka.server.config.MirrorConfig;
 import org.apache.kafka.server.network.BrokerEndPoint;
+import org.apache.kafka.server.util.Scheduler;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -90,13 +95,13 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Properties;
 import java.util.Random;
 import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Supplier;
 
 import static java.util.Collections.singletonList;
@@ -150,6 +155,8 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     private MetadataCache metadataCache;
     private NodeToControllerChannelManager channelManager;
     private final Supplier<GroupCoordinator> groupCoordinatorSupplier;
+    private final LogManager logManager;
+    private final Scheduler scheduler;
 
     public MirrorMetadataManager(
         KafkaConfig config,
@@ -157,7 +164,9 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         Time time,
         MetadataCache metadataCache,
         NodeToControllerChannelManager channelManager,
-        Supplier<GroupCoordinator> groupCoordinatorSupplier
+        Supplier<GroupCoordinator> groupCoordinatorSupplier,
+        LogManager logManager,
+        Scheduler scheduler
     ) {
         this.brokerConfig = config;
         this.nodeId = config.nodeId();
@@ -172,6 +181,8 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         this.metadataCache = metadataCache;
         this.channelManager = channelManager;
         this.groupCoordinatorSupplier = groupCoordinatorSupplier;
+        this.logManager = logManager;
+        this.scheduler = scheduler;
     }
 
     @Override
@@ -230,11 +241,13 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         return new Node(random.nextInt(), addresses.get(rand).getHostString(), addresses.get(rand).getPort());
     }
 
-    public void updateMirroredTopics(String clusterName, Set<String> topics) {
-        this.topics.put(clusterName, topics);
-        Set<String> mutableTopics = ConcurrentHashMap.newKeySet();
-        mutableTopics.addAll(topics);
+    public Set<String> updateMirroredTopics(String clusterName, Set<String> addedTopics, Set<String> removedTopics) {
+        Set<String> mutableTopics = new HashSet<>(this.topics.getOrDefault(clusterName, Set.of()));
+        mutableTopics.removeAll(removedTopics);
+        mutableTopics.addAll(addedTopics);
         this.topics.put(clusterName, mutableTopics);
+
+        return mutableTopics;
     }
 
     public void refreshMetadata() {
@@ -250,6 +263,29 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
             syncConsumerGroupOffsets(senders);
             syncACLs(mirrorName, senders);
         });
+    }
+
+    public void maybeUpdateLeaderEpoch(List<String> topics) {
+        // sent in another thread to avoid to block the api handling thread
+        scheduler.scheduleOnce("bump-leader-epoch", () -> sendBumpLeaderEpoch(topics));
+    }
+
+    private void sendBumpLeaderEpoch(List<String> topics) {
+        List<BumpLeaderEpochRequestData.TopicState> topicStates = new ArrayList<>();
+        topics.forEach(topic -> {
+            BumpLeaderEpochRequestData.TopicState topicState = new BumpLeaderEpochRequestData.TopicState();
+            List<BumpLeaderEpochRequestData.LeaderEpochState> topicLeaderEpoch = new ArrayList<>();
+            ((KRaftMetadataCache) metadataCache).getImage().topics().getTopic(topic).partitions().keySet().forEach(partitionId -> {
+                int epoch = logManager.getLog(new TopicPartition(topic, partitionId), false).get().latestEpochFromLog().orElse(0);
+                topicLeaderEpoch.add(new BumpLeaderEpochRequestData.LeaderEpochState().setLeaderEpoch(epoch).setPartitionIndex(partitionId));
+            });
+            topicState.setTopicId(metadataCache.getTopicId(topic)).setPartitions(topicLeaderEpoch);
+            topicStates.add(topicState);
+        });
+
+        channelManager.sendRequest(new BumpLeaderEpochRequest.Builder(
+                new BumpLeaderEpochRequestData().setTopics(topicStates)
+        ), new TimeoutHandler());
     }
 
     /**

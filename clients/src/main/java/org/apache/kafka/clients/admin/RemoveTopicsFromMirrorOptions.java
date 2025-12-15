@@ -17,27 +17,10 @@
 
 package org.apache.kafka.clients.admin;
 
-import org.apache.kafka.common.KafkaFuture;
-
-import java.util.Map;
 import java.util.Set;
 
 /**
- * The result of the {@link Admin#deleteMirrorTopic(String, Set, DeleteMirrorTopicOptions)} call.
- *
- * The API of this class is evolving, see {@link Admin} for details.
+ * Options for {@link Admin#removeTopicsFromMirror(String, Set, RemoveTopicsFromMirrorOptions)}.
  */
-public class DeleteMirrorTopicResult {
-    private final KafkaFuture<Void> future;
-
-    DeleteMirrorTopicResult(final KafkaFuture<Void> future) {
-        this.future = future;
-    }
-
-    /**
-     * Return a future which succeeds if the operation is successful.
-     */
-    public KafkaFuture<Void> all() {
-        return future;
-    }
+public class RemoveTopicsFromMirrorOptions extends AbstractOptions<RemoveTopicsFromMirrorOptions> {
 }

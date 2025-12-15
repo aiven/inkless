@@ -29,6 +29,7 @@ import org.apache.kafka.common.errors.BrokerIdNotRegisteredException;
 import org.apache.kafka.common.errors.InvalidRequestException;
 import org.apache.kafka.common.errors.StaleBrokerEpochException;
 import org.apache.kafka.common.errors.UnknownTopicOrPartitionException;
+import org.apache.kafka.common.message.AddTopicsToMirrorResponseData;
 import org.apache.kafka.common.message.AllocateProducerIdsRequestData;
 import org.apache.kafka.common.message.AllocateProducerIdsResponseData;
 import org.apache.kafka.common.message.AlterPartitionReassignmentsRequestData;
@@ -41,6 +42,7 @@ import org.apache.kafka.common.message.AssignReplicasToDirsRequestData;
 import org.apache.kafka.common.message.AssignReplicasToDirsResponseData;
 import org.apache.kafka.common.message.BrokerHeartbeatRequestData;
 import org.apache.kafka.common.message.BrokerRegistrationRequestData;
+import org.apache.kafka.common.message.BumpLeaderEpochResponseData;
 import org.apache.kafka.common.message.ControllerRegistrationRequestData;
 import org.apache.kafka.common.message.CreateDelegationTokenRequestData;
 import org.apache.kafka.common.message.CreateDelegationTokenResponseData;
@@ -55,6 +57,7 @@ import org.apache.kafka.common.message.ExpireDelegationTokenRequestData;
 import org.apache.kafka.common.message.ExpireDelegationTokenResponseData;
 import org.apache.kafka.common.message.ListPartitionReassignmentsRequestData;
 import org.apache.kafka.common.message.ListPartitionReassignmentsResponseData;
+import org.apache.kafka.common.message.RemoveTopicsFromMirrorResponseData;
 import org.apache.kafka.common.message.RenewDelegationTokenRequestData;
 import org.apache.kafka.common.message.RenewDelegationTokenResponseData;
 import org.apache.kafka.common.message.UpdateFeaturesRequestData;
@@ -1776,6 +1779,35 @@ public final class QuorumController implements Controller {
             return result;
         });
     }
+
+    @Override
+    public CompletableFuture<RemoveTopicsFromMirrorResponseData> removeTopicsFromMirror(
+            ControllerRequestContext context,
+            Set<Uuid> topicIds
+    ) {
+        return appendWriteEvent("removeTopicsFromMirror", context.deadlineNs(),
+                () -> replicationControl.removeTopicsFromMirror(topicIds));
+    }
+
+    @Override
+    public CompletableFuture<AddTopicsToMirrorResponseData> addTopicsToMirror(
+            ControllerRequestContext context,
+            Map<Uuid, String> topicIdsToMirrorName
+    ) {
+        return appendWriteEvent("addTopicsToMirror", context.deadlineNs(),
+                () -> replicationControl.addTopicsToMirror(topicIdsToMirrorName));
+    }
+
+    @Override
+    public CompletableFuture<BumpLeaderEpochResponseData> bumpLeaderEpoch(
+            ControllerRequestContext context,
+            Map<Uuid, Map<Integer, Integer>> partitionLeaderEpochs
+    ) {
+        return appendWriteEvent("bumpLeaderEpochs", context.deadlineNs(),
+                () -> replicationControl.bumpLeaderEpochs(partitionLeaderEpochs));
+    }
+
+
 
     @Override
     public CompletableFuture<Void> unregisterBroker(

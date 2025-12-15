@@ -33,6 +33,7 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
 
+import static org.apache.kafka.common.record.RecordBatch.NO_PARTITION_LEADER_EPOCH;
 import static org.apache.kafka.metadata.LeaderConstants.NO_LEADER_CHANGE;
 
 public class PartitionRegistration {
@@ -52,6 +53,7 @@ public class PartitionRegistration {
         private Integer leaderEpoch;
         private Integer partitionEpoch;
         private String mirrorName;
+
 
         public Builder setReplicas(int[] replicas) {
             this.replicas = replicas;
@@ -261,6 +263,7 @@ public class PartitionRegistration {
 
         int newLeader;
         int newLeaderEpoch;
+
         if (record.leader() == NO_LEADER_CHANGE) {
             newLeader = leader;
             newLeaderEpoch = leaderEpoch;
@@ -269,6 +272,13 @@ public class PartitionRegistration {
             newLeaderEpoch = leaderEpoch + 1;
         }
 
+        // We should bump the leader epoch when leaderEpoch is assigned (from bump_leader_epoch request), even if no_leader_change
+        if (record.leaderEpoch() != NO_PARTITION_LEADER_EPOCH) {
+            // If it's coming from bump leader epoch request, we should bump to a leader epoch > record.leaderEpoch(), ex:
+            // current leader epoch is 0, record.leaderEpoch is 2, we should bump to 3
+            // current leader epoch is 2, record.leaderEpoch is 0, we should bump to 3
+            newLeaderEpoch = Math.max(record.leaderEpoch(), leaderEpoch) + 1;
+        }
         LeaderRecoveryState newLeaderRecoveryState = leaderRecoveryState.changeTo(record.leaderRecoveryState());
 
         int[] newElr = (record.eligibleLeaderReplicas() == null) ? elr : Replicas.toArray(record.eligibleLeaderReplicas());
@@ -284,7 +294,7 @@ public class PartitionRegistration {
             partitionEpoch + 1,
             newElr,
             newLastKnownElr,
-            record.mirrorName() == null || record.mirrorName().isBlank() ? mirrorName : record.mirrorName());
+            record.mirrorName());
     }
 
     public String diff(PartitionRegistration prev) {
@@ -433,7 +443,8 @@ public class PartitionRegistration {
             setAddingReplicas(Replicas.toList(addingReplicas)).
             setRemovingReplicas(Replicas.toList(removingReplicas)).
             setLeaderRecoveryState(leaderRecoveryState.value()).
-            setIsNew(isNew);
+            setIsNew(isNew).
+            setMirrorName(mirrorName);
     }
 
     @Override

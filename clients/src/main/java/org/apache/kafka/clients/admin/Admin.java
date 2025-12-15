@@ -1677,9 +1677,9 @@ public interface Admin extends AutoCloseable {
     CreateMirrorResult createMirror(String mirrorName, Map<String, String> configs, CreateMirrorOptions options);
 
 
-    DeleteMirrorTopicResult deleteMirrorTopic(String clusterLinkName, Set<String> topics, DeleteMirrorTopicOptions options);
+    RemoveTopicsFromMirrorResult removeTopicsFromMirror(String mirrorName, Set<String> topics, RemoveTopicsFromMirrorOptions options);
 
-    AttachMirrorTopicResult attachMirrorTopic(Map<String, String> topicToMirrorName, AttachMirrorTopicOptions options);
+    AddTopicsToMirrorResult addTopicsToMirror(Map<String, String> topicToMirrorName, AddTopicsToMirrorOptions options);
 
     /**
      * Describe producer state on a set of topic partitions. See

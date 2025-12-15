@@ -186,6 +186,8 @@ import org.apache.kafka.common.requests.AbstractRequest;
 import org.apache.kafka.common.requests.AbstractResponse;
 import org.apache.kafka.common.requests.AddRaftVoterRequest;
 import org.apache.kafka.common.requests.AddRaftVoterResponse;
+import org.apache.kafka.common.requests.AddTopicsToMirrorRequest;
+import org.apache.kafka.common.requests.AddTopicsToMirrorResponse;
 import org.apache.kafka.common.requests.AlterClientQuotasRequest;
 import org.apache.kafka.common.requests.AlterClientQuotasResponse;
 import org.apache.kafka.common.requests.AlterPartitionReassignmentsRequest;
@@ -197,8 +199,6 @@ import org.apache.kafka.common.requests.AlterUserScramCredentialsResponse;
 import org.apache.kafka.common.requests.ApiError;
 import org.apache.kafka.common.requests.ApiVersionsRequest;
 import org.apache.kafka.common.requests.ApiVersionsResponse;
-import org.apache.kafka.common.requests.AddTopicsToMirrorRequest;
-import org.apache.kafka.common.requests.AddTopicsToMirrorResponse;
 import org.apache.kafka.common.requests.CreateAclsRequest;
 import org.apache.kafka.common.requests.CreateAclsResponse;
 import org.apache.kafka.common.requests.CreateDelegationTokenRequest;
@@ -211,8 +211,6 @@ import org.apache.kafka.common.requests.CreateTopicsRequest;
 import org.apache.kafka.common.requests.CreateTopicsResponse;
 import org.apache.kafka.common.requests.DeleteAclsRequest;
 import org.apache.kafka.common.requests.DeleteAclsResponse;
-import org.apache.kafka.common.requests.RemoveTopicsFromMirrorRequest;
-import org.apache.kafka.common.requests.RemoveTopicsFromMirrorResponse;
 import org.apache.kafka.common.requests.DeleteTopicsRequest;
 import org.apache.kafka.common.requests.DeleteTopicsResponse;
 import org.apache.kafka.common.requests.DescribeAclsRequest;
@@ -254,6 +252,8 @@ import org.apache.kafka.common.requests.MetadataRequest;
 import org.apache.kafka.common.requests.MetadataResponse;
 import org.apache.kafka.common.requests.RemoveRaftVoterRequest;
 import org.apache.kafka.common.requests.RemoveRaftVoterResponse;
+import org.apache.kafka.common.requests.RemoveTopicsFromMirrorRequest;
+import org.apache.kafka.common.requests.RemoveTopicsFromMirrorResponse;
 import org.apache.kafka.common.requests.RenewDelegationTokenRequest;
 import org.apache.kafka.common.requests.RenewDelegationTokenResponse;
 import org.apache.kafka.common.requests.UnregisterBrokerRequest;
@@ -4865,15 +4865,15 @@ public class KafkaAdminClient extends AdminClient {
     }
 
     @Override
-    public DeleteMirrorTopicResult deleteMirrorTopic(String clusterLinkName, Set<String> topics, DeleteMirrorTopicOptions options) {
+    public RemoveTopicsFromMirrorResult removeTopicsFromMirror(String mirrorName, Set<String> topics, RemoveTopicsFromMirrorOptions options) {
         final KafkaFutureImpl<Void> future = new KafkaFutureImpl<>();
         final long now = time.milliseconds();
-        final Call call = new Call("deleteMirrorTopic", calcDeadlineMs(now, options.timeoutMs()),
+        final Call call = new Call("removeTopicsFromMirror", calcDeadlineMs(now, options.timeoutMs()),
                 new LeastLoadedBrokerOrActiveKController()) {
 
             @Override
             RemoveTopicsFromMirrorRequest.Builder createRequest(int timeoutMs) {
-                return new RemoveTopicsFromMirrorRequest.Builder(clusterLinkName, topics);
+                return new RemoveTopicsFromMirrorRequest.Builder(mirrorName, topics);
             }
 
             @Override
@@ -4889,7 +4889,7 @@ public class KafkaAdminClient extends AdminClient {
                         throw error.exception(response.data().errorMessage());
                     default:
                         log.error("delete mirror topic {} failed: {}",
-                                clusterLinkName, response.data().errorMessage());
+                                mirrorName, response.data().errorMessage());
                         future.completeExceptionally(error.exception(response.data().errorMessage()));
                         break;
                 }
@@ -4901,14 +4901,14 @@ public class KafkaAdminClient extends AdminClient {
             }
         };
         runnable.call(call, now);
-        return new DeleteMirrorTopicResult(future);
+        return new RemoveTopicsFromMirrorResult(future);
     }
 
     @Override
-    public AttachMirrorTopicResult attachMirrorTopic(Map<String, String> topicToMirrorName, AttachMirrorTopicOptions options) {
+    public AddTopicsToMirrorResult addTopicsToMirror(Map<String, String> topicToMirrorName, AddTopicsToMirrorOptions options) {
         final KafkaFutureImpl<Void> future = new KafkaFutureImpl<>();
         final long now = time.milliseconds();
-        final Call call = new Call("attachMirrorTopic", calcDeadlineMs(now, options.timeoutMs()),
+        final Call call = new Call("addTopicsToMirror", calcDeadlineMs(now, options.timeoutMs()),
                 new LeastLoadedBrokerOrActiveKController()) {
 
             @Override
@@ -4941,7 +4941,7 @@ public class KafkaAdminClient extends AdminClient {
             }
         };
         runnable.call(call, now);
-        return new AttachMirrorTopicResult(future);
+        return new AddTopicsToMirrorResult(future);
     }
 
     @Override

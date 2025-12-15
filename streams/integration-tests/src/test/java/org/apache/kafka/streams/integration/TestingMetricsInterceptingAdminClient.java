@@ -22,6 +22,8 @@ import org.apache.kafka.clients.admin.AbortTransactionResult;
 import org.apache.kafka.clients.admin.AbortTransactionSpec;
 import org.apache.kafka.clients.admin.AddRaftVoterOptions;
 import org.apache.kafka.clients.admin.AddRaftVoterResult;
+import org.apache.kafka.clients.admin.AddTopicsToMirrorOptions;
+import org.apache.kafka.clients.admin.AddTopicsToMirrorResult;
 import org.apache.kafka.clients.admin.Admin;
 import org.apache.kafka.clients.admin.AdminClient;
 import org.apache.kafka.clients.admin.AlterClientQuotasOptions;
@@ -146,6 +148,8 @@ import org.apache.kafka.clients.admin.RemoveMembersFromConsumerGroupOptions;
 import org.apache.kafka.clients.admin.RemoveMembersFromConsumerGroupResult;
 import org.apache.kafka.clients.admin.RemoveRaftVoterOptions;
 import org.apache.kafka.clients.admin.RemoveRaftVoterResult;
+import org.apache.kafka.clients.admin.RemoveTopicsFromMirrorOptions;
+import org.apache.kafka.clients.admin.RemoveTopicsFromMirrorResult;
 import org.apache.kafka.clients.admin.RenewDelegationTokenOptions;
 import org.apache.kafka.clients.admin.RenewDelegationTokenResult;
 import org.apache.kafka.clients.admin.TerminateTransactionOptions;
@@ -418,6 +422,16 @@ public class TestingMetricsInterceptingAdminClient extends AdminClient {
     @Override
     public CreateMirrorResult createMirror(final String mirrorName, final Map<String, String> configs, final CreateMirrorOptions options) {
         return adminDelegate.createMirror(mirrorName, configs, options);
+    }
+
+    @Override
+    public RemoveTopicsFromMirrorResult removeTopicsFromMirror(final String mirrorName, final Set<String> topics, final RemoveTopicsFromMirrorOptions options) {
+        return adminDelegate.removeTopicsFromMirror(mirrorName, topics, options);
+    }
+
+    @Override
+    public AddTopicsToMirrorResult addTopicsToMirror(final Map<String, String> topicToMirrorName, final AddTopicsToMirrorOptions options) {
+        return adminDelegate.addTopicsToMirror(topicToMirrorName, options);
     }
 
     @Override

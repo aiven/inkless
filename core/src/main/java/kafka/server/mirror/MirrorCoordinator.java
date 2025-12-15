@@ -50,11 +50,9 @@ import org.slf4j.LoggerFactory;
 
 import java.nio.ByteBuffer;
 import java.time.Duration;
-import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
-import java.util.List;
 import java.util.Map;
 import java.util.OptionalInt;
 import java.util.Set;
@@ -122,18 +120,19 @@ public class MirrorCoordinator {
         // periodically query source cluster to get the metadata
         scheduler.schedule("mirror-metadata-refresh",
                 mirrorMetadataManager::refreshMetadata,
-                10000,
-                10000
+                30000,
+                30000
         );
         numPartitions = config.mirrorConfig().mirrorTopicNumPartitions();
     }
 
     // TODO: handle response
-    public void addTopicsToCoordinator(String mirrorName, Set<String> topics) {
+    public void updateTopicsToCoordinator(String mirrorName, Set<String> addedTopics, Set<String> removedTopics) {
         var mirrorTopicPartition = new TopicPartition(Topic.MIRROR_STATE_TOPIC_NAME, partitionFor(new MirrorRecordKey(mirrorName)));
         var mirrorTopicIdPartition = replicaManager.topicIdPartition(mirrorTopicPartition);
 
-        var record = generateMirrorTopics(mirrorName, new ArrayList<>(topics) { });
+        var topics = mirrorMetadataManager.updateMirroredTopics(mirrorName, addedTopics, removedTopics);
+        var record = generateMirrorTopics(mirrorName, topics);
         var keyBytes = serde.serializeKey(record);
         var valueBytes = serde.serializeValue(record);
         var timestamp = time.milliseconds();
@@ -152,10 +151,10 @@ public class MirrorCoordinator {
                 RequestLocal.noCaching(),
                 CollectionConverters.asScala(Map.of())
         );
-        mirrorMetadataManager.updateMirroredTopics(mirrorName, topics);
+
     }
 
-    private static CoordinatorRecord generateMirrorTopics(String mirrorName, List<String> topics) {
+    private static CoordinatorRecord generateMirrorTopics(String mirrorName, Set<String> topics) {
         var key = new MirrorTopicsKey().setMirrorName(mirrorName);
         var val = new MirrorTopicsValue().setTopics(
                 topics.stream().map(topic -> new MirrorTopicsValue.Topic().setName(topic)).toList());
@@ -235,7 +234,7 @@ public class MirrorCoordinator {
                             require(record.hasKey(), "Mirror log's key should not be null");
                             String clusterName = readMirrorNameFromKey(record.key());
                             Set<String> topics = readMirrorTopicsFromValue(record.value());
-                            mirrorMetadataManager.updateMirroredTopics(clusterName, topics);
+                            mirrorMetadataManager.updateMirroredTopics(clusterName, topics, Set.of());
                         });
                         currOffset = batch.nextOffset();
                     }
