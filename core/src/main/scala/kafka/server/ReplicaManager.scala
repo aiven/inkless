@@ -2451,7 +2451,7 @@ class ReplicaManager(val config: KafkaConfig,
         try {
           val state = info.partition.toLeaderAndIsrPartitionState(tp, isNew)
 
-          // add the topic into removeMirrorTopics set if the mirror name becomes empty
+          // mirrorName transition from non-empty to empty marks the partition for epoch bump (failover)
           val newMirrorName = delta.changedTopics().get(info.topicId()).partitionChanges().get(tp.partition()).mirrorName
           if (partition.mirrorName.nonEmpty && newMirrorName.isEmpty) {
             removeMirrorTopics.add(tp.topic())

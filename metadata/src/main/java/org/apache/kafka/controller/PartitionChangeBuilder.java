@@ -46,6 +46,9 @@ import static org.apache.kafka.metadata.LeaderConstants.NO_LEADER_CHANGE;
 
 /**
  * PartitionChangeBuilder handles changing partition registrations.
+ *
+ * For Cluster Mirroring, this class tracks mirrorName throughout all partition state changes to ensure it's preserved
+ * or updated correctly during leader elections, reassignments, or other partition operations.
  */
 public class PartitionChangeBuilder {
     private static final Logger log = LoggerFactory.getLogger(PartitionChangeBuilder.class);

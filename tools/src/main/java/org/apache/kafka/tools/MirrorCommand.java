@@ -145,9 +145,6 @@ public abstract class MirrorCommand {
             String topicName = opts.topic().get();
             String mirrorName = opts.mirror().get();
 
-            System.out.println("remove topic " + topicName + " from mirror " + mirrorName);
-
-
             Optional<Node> coordinator = Optional.empty();
             FindCoordinatorResult findCoordinatorResult = adminClient.findCoordinator(mirrorName);
             coordinator = Optional.ofNullable(findCoordinatorResult.node().get());
@@ -157,14 +154,14 @@ public abstract class MirrorCommand {
                 Node node = coordinator.get();
                 System.out.println("Node info: " + node);
                 String bootstrapServer = node.host() + ":" + node.port();
-                System.out.println("Removing topic " + topicName + " from mirror using bootstrap server " + bootstrapServer + ";;" + mirrorName + ".");
+                System.out.printf("Removing topic %s from mirror %s using bootstrap server %s%n.", topicName, mirrorName, bootstrapServer);
                 try (Admin admin = createAdminClient(Optional.of(bootstrapServer), commandConfig)) {
                     RemoveTopicsFromMirrorResult removeTopicsFromMirrorResult = admin.removeTopicsFromMirror(mirrorName, Set.of(topicName), new RemoveTopicsFromMirrorOptions());
                     removeTopicsFromMirrorResult.all().get();
-                    System.out.println("Removing topic " + topicName + " from mirror.");
+                    System.out.println("Successfully removed topic " + topicName + " from mirror " + mirrorName);
                 }
             } else {
-                System.out.println("error when remove topic  " + topicName + " from mirror.");
+                throw new RuntimeException(String.format("Error when removing topic %s from mirror %s%n.", topicName, mirrorName));
             }
 
         }
@@ -203,16 +200,16 @@ public abstract class MirrorCommand {
                 CreateTopicsResult createResult = admin.createTopics(Set.of(newTopic),
                     new CreateTopicsOptions().retryOnQuotaViolation(false));
                 createResult.all().whenComplete((future, ex) -> {
-                    System.out.println("Create mirror topic result: " + ex);
+                    System.out.println("Create mirrored topic result: " + ex);
 
                     if (ex != null) {
                        if (ex instanceof TopicExistsException) {
-                           System.out.println("Mirror topic " + topicName + " already exists, attaching mirror to it.");
+                           System.out.printf("Topic %s already exists, adding to mirror %s%n.", topicName, mirrorName);
                            try (Admin admin1 = createAdminClient(Optional.of(bootstrapServer), commandConfig)) {
                                AddTopicsToMirrorResult addTopicsToMirrorResult = admin1.addTopicsToMirror(Collections.singletonMap(topicName, mirrorName), new AddTopicsToMirrorOptions());
                                try {
                                    addTopicsToMirrorResult.all().get();
-                                   System.out.println("Successfully attached topic " + topicName + " to mirror " + mirrorName);
+                                   System.out.printf("Successfully added topic %s to mirror %s%n.", topicName, mirrorName);
                                } catch (Exception e) {
                                    throw new RuntimeException(e);
                                }
@@ -221,7 +218,7 @@ public abstract class MirrorCommand {
                            throw new RuntimeException("Failed to create topic " + topicName, ex);
                        }
                     } else {
-                        System.out.println("Successfully added topic " + topicName + " to mirror " + mirrorName);
+                        System.out.printf("Successfully added topic %s to mirror %s%n.", topicName, mirrorName);
                     }
                 });
             }

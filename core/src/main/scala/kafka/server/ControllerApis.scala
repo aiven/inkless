@@ -256,9 +256,7 @@ class ControllerApis(
             new BumpLeaderEpochResponse(response.setThrottleTimeMs(throttleMs)))
         }
       }
-
     CompletableFuture.completedFuture[Unit](())
-
   }
 
   def handleCreateMirror(request: RequestChannel.Request): CompletableFuture[Unit] = {
