@@ -1412,7 +1412,8 @@ class ReplicaManager(val config: KafkaConfig,
 
     def validateReadOnlyTopic(partition: Partition): Unit = {
       if (partition.mirrorName.nonEmpty)
-        throw new ReadOnlyTopicException()
+        throw new ReadOnlyTopicException("Cannot append to read-only partition %s on broker %d (mirrorName=%s)"
+          .format(partition.topicPartition, localBrokerId, partition.mirrorName))
     }
 
     if (traceEnabled)

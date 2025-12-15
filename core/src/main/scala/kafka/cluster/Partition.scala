@@ -1330,13 +1330,13 @@ class Partition(val topicPartition: TopicPartition,
       inReadLock(leaderIsrUpdateLock) {
         // Note the replica may be undefined if it is removed by a non-ReplicaAlterLogDirsThread before
         // this method is called
-        futureLog.map { _.appendAsFollower(records, partitionLeaderEpoch, !mirrorName.isEmpty) }
+        futureLog.map { _.appendAsFollower(records, partitionLeaderEpoch, mirrorName.nonEmpty && isLeader) }
       }
     } else {
       // The lock is needed to prevent the follower replica from being updated while ReplicaAlterDirThread
       // is executing maybeReplaceCurrentWithFutureReplica() to replace follower replica with the future replica.
       futureLogLock.synchronized {
-        Some(localLogOrException.appendAsFollower(records, partitionLeaderEpoch, !mirrorName.isEmpty))
+        Some(localLogOrException.appendAsFollower(records, partitionLeaderEpoch, mirrorName.nonEmpty && isLeader))
       }
     }
   }
@@ -1376,10 +1376,6 @@ class Partition(val topicPartition: TopicPartition,
     val (info, leaderHWIncremented) = inReadLock(leaderIsrUpdateLock) {
       leaderLogIfLocal match {
         case Some(leaderLog) =>
-          if (mirrorName.nonEmpty) {
-            throw new ReadOnlyTopicException("Cannot append to read-only partition %s on broker %d (mirrorName=%s)"
-              .format(topicPartition, localBrokerId, mirrorName))
-          }
           val minIsr = effectiveMinIsr(leaderLog)
           val inSyncSize = partitionState.isr.size
 
