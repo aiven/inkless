@@ -2401,6 +2401,8 @@ class ReplicaManager(val config: KafkaConfig,
         if (!localChanges.leaders.isEmpty) {
           applyLocalLeadersDelta(leaderChangedPartitions, delta, lazyOffsetCheckpoints, localChanges.leaders.asScala, localChanges.directoryIds.asScala, removeMirrorTopics)
           if (removeMirrorTopics.nonEmpty) {
+            // TODO: We have a race here. This is called asynchronously after makeLeader. If the broker crashes between these calls, epoch might not bump.
+            // TODO: The plann is to fix it using a mirror state machine.
             info("!!! sent bumpLeaderEpoch:" + removeMirrorTopics)
             mirrorMetadataManager.get.maybeUpdateLeaderEpoch(removeMirrorTopics.toList.asJava)
           }

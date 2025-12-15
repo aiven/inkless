@@ -20,7 +20,6 @@ package org.apache.kafka.clients.admin;
 import org.apache.kafka.common.KafkaFuture;
 
 import java.util.Map;
-import java.util.Set;
 
 /**
  * The result of the {@link Admin#addTopicsToMirror(Map, AddTopicsToMirrorOptions)} call.

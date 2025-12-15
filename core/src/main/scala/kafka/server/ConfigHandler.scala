@@ -17,19 +17,19 @@
 
 package kafka.server
 
-import java.util.{Collections, Properties}
 import kafka.server.QuotaFactory.QuotaManagers
 import kafka.utils.Logging
-import org.apache.kafka.server.config.QuotaConfig
 import org.apache.kafka.common.metrics.Quota._
 import org.apache.kafka.coordinator.group.GroupCoordinator
 import org.apache.kafka.server.ClientMetricsManager
 import org.apache.kafka.server.common.StopPartition
+import org.apache.kafka.server.config.QuotaConfig
 import org.apache.kafka.server.log.remote.TopicPartitionLog
 import org.apache.kafka.storage.internals.log.{LogStartOffsetIncrementReason, ThrottledReplicaListValidator, UnifiedLog}
 
-import scala.jdk.CollectionConverters._
+import java.util.{Collections, Properties}
 import scala.collection.Seq
+import scala.jdk.CollectionConverters._
 
 /**
   * The ConfigHandler is used to process broker configuration change notifications.

@@ -18,7 +18,6 @@
 package org.apache.kafka.clients.admin;
 
 import java.util.Map;
-import java.util.Set;
 
 /**
  * Options for {@link Admin#addTopicsToMirror(Map, AddTopicsToMirrorOptions)}.
