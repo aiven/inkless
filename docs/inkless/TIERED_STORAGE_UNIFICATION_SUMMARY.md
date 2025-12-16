@@ -69,13 +69,20 @@ The read path follows a fallback strategy:
 
 This is guided by metadata that tracks the offset boundary between tiers.
 
-### 2. RF=3 for Diskless Topics
+### 2. RF=1 vs RF=3 (To Be Researched)
 
-The team confirmed RF=3 is required because:
+The team will evaluate both replication factor approaches:
 
-- Tiered read path is **replica-based**, not any-broker
-- RLM job scheduling requires leader semantics
-- Current diskless "fakes" metadata to clients; this alignment fixes that
+**RF=1 (Current Diskless Model):**
+- Simpler, no changes to existing diskless replication
+- Question: Can tiered reads work with metadata transformer "faking" leader?
+
+**RF=3 (Standard Kafka Semantics):**
+- Tiered read path is replica-based, requires leader
+- RLM job scheduling expects leader semantics
+- More aligned with classic Kafka, but more changes required
+
+**Research Output:** Determine which approach enables the read path with least friction, then proceed to migration implementation.
 
 ### 3. HYBRID as Stable End State
 
@@ -91,9 +98,11 @@ HYBRID (tiered tail + diskless head) is the permanent operating mode:
 
 | Feature | Description | Dependencies |
 |---------|-------------|--------------|
-| **RF=3 for diskless topics** | Standard Kafka replication semantics; enables leader-based RLM integration | Foundation |
-| **Three-tier read path** | Diskless → Local → Tiered fallback based on offset boundaries | RF=3 |
-| **Tiered → Hybrid migration** | Switch writes to diskless, preserve tiered read access | Read path, RF=3 |
+| **RF research (RF=1 vs RF=3)** | Evaluate both replication factors for tiered read path compatibility; determine which enables RLM integration | Foundation |
+| **Three-tier read path** | Diskless → Local → Tiered fallback based on offset boundaries | RF research |
+| **Tiered → Hybrid migration** | Switch writes to diskless, preserve tiered read access | Read path |
+
+**Research Phase (Weeks 1-2):** Validate whether RF=1 (current diskless model) can support tiered reads, or if RF=3 (standard Kafka semantics) is required. The decision will inform the migration implementation.
 
 **Team Decision:** The 8-week scope focuses on **migration safety and effectiveness**. The tiering pipeline is deferred.
 
@@ -120,25 +129,25 @@ HYBRID (tiered tail + diskless head) is the permanent operating mode:
 ```
 Week  1  2  3  4  5  6  7  8
       ├──┴──┼──┴──┼──┴──┼──┴──┤
-Eng A │ P1  │ P4  │ P2  │ P3  │  Foundation, RF=3, Read Path
-Eng B │ P1  │ P4  │ P2  │ P3  │  RF=3, Read Path, Migration
+Eng A │ P1  │ RF  │ P2  │ P3  │  Foundation, RF Research, Read Path
+Eng B │ P1  │ RF  │ P2  │ P3  │  RF Research, Read Path, Migration
 Eng C │ P1  │ P2  │ P3  │ E2E │  Read Path, Migration, Testing
       └─────┴─────┴─────┴─────┘
 
 P1 = Foundation      P3 = Migration Switch
-P2 = Read Path       P4 = RF=3
-                     E2E = Integration Testing
+RF = RF Research     E2E = Integration Testing
+P2 = Read Path       
 ```
 
-**Critical Path:** P1 → P4 (RF=3) → P2 (Read Path) → P3 (Migration) → E2E
+**Critical Path:** P1 → RF Research (decide RF=1 or RF=3) → P2 (Read Path) → P3 (Migration) → E2E
 
 ### Milestones
 
 | Week | Milestone | Demo |
 |------|-----------|------|
-| 2 | **Foundation complete** | RF=3 validation, MetaStore prototype |
+| 2 | **RF decision made** | RF=1 or RF=3 validated for tiered reads |
 | 4 | **Read path working** | Read from diskless + local + tiered |
-| 6 | **Migration working** | Seal topic, switch writes to diskless |
+| 6 | **Migration working** | Switch writes to diskless |
 | 8 | **E2E validated** | Full migration flow, no data loss |
 
 ---
@@ -148,14 +157,14 @@ P2 = Read Path       P4 = RF=3
 | Risk | Mitigation |
 |------|------------|
 | RLM complexity | Deep-dive in Week 1, spike if needed |
-| RF=3 validation unknowns | Explore two paths: full RF=3 vs. single replica post-migration |
+| RF=1 may not work for tiered reads | Research phase will validate; fallback to RF=3 if needed |
 | Backlog fetch CPU consumption | If tiering pipeline deferred, need interim workaround for S3 fetches |
 
 ---
 
 ## Open Questions for Discussion
 
-1. **RF=3 vs single replica post-migration** — Can we use single replica after migration, or is full RF=3 required for tiered reads?
+1. **RF=1 vs RF=3 for tiered reads** — Can RF=1 with metadata transformer work, or is RF=3 required for RLM integration?
 2. **Backlog fetch workaround** — If tiering pipeline is delayed, what interim solution for S3 CPU consumption?
 3. **Tiered storage metadata topic** — Potential to use for diskless metadata (interesting but deeper investigation needed)
 
@@ -186,13 +195,12 @@ P2 = Read Path       P4 = RF=3
 
 - [x] **Focus on migration first** — 8 weeks dedicated to safe, effective migration
 - [x] **Tiering pipeline deferred** — Complex, can follow later; need workaround for backlog fetches
-- [x] **RF=3 is foundational** — Required for replica-based tiered reads
 - [x] **HYBRID is end state** — Tiered (read-only tail) + Diskless (active head)
 - [x] **Sealing + MetaStore deferred** — Needed for bidirectional migration (see Delos eval)
 
 ### Still to Explore
 
-- [ ] Can single replica work post-migration, or is RF=3 strictly required?
+- [ ] **RF=1 vs RF=3** — Research which replication factor works for tiered reads (Week 1-2)
 - [ ] Tiered storage metadata topic for diskless metadata replication
 - [ ] Backlog fetch performance workaround if tiering delayed
 
