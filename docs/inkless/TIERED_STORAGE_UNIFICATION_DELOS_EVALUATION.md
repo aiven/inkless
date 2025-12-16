@@ -399,14 +399,27 @@ Delos uses a separate consensus system for MetaStore. Our Control Plane uses Pos
 
 ## Summary: Delos Influence on Our Design
 
-### What We Should Adopt
+### What We Should Adopt (8-Week Scope)
 
 | Delos Concept | Recommendation | Priority |
 |---------------|----------------|----------|
-| **Sealing semantics** | Ensure atomic seal with no-write guarantee | High (in scope) |
-| **Offset chain model** | Keep implicit for now, document the model | Medium |
+| **Offset chain model** | Track offset boundaries between tiers | High (in scope) |
 | **Trim as first-class** | Already have via retention, make more explicit | Low |
-| **StorageTier interface** | Consider for Phase 2 refactoring | Future |
+
+### Future Work: Bidirectional Migration (Delos-Inspired)
+
+When bidirectional migration (Diskless → Tiered) is needed, we should implement:
+
+| Delos Concept | Implementation | Why Needed |
+|---------------|----------------|------------|
+| **Sealing mechanism** | KRaft-based seal record to mark topic state transitions | Ensures atomic switch, prevents writes to sealed log |
+| **MetaStore** | S3-based log chain metadata with conditional writes | Tracks which tier owns which offset range; enables rollback |
+| **StorageTier interface** | Formal abstraction for tiered/local/diskless | Cleaner code, easier testing, enables future backends |
+
+These components enable:
+- **Zero-downtime reverse migration** — Same scaled read path works in both directions
+- **Rollback capability** — If diskless has issues, can migrate back to tiered
+- **Consistent state tracking** — MetaStore is source of truth for log chain
 
 ### What We Can Defer
 
@@ -414,9 +427,9 @@ Delos uses a separate consensus system for MetaStore. Our Control Plane uses Pos
 |---------------|-----------|
 | Formal VirtualLog abstraction | Over-engineering for current scope |
 | Pluggable consensus backends | We don't need to swap Kafka replication |
-| MetaStore with consensus | PG is sufficient for now |
+| MetaStore with consensus | PG/S3 is sufficient for now |
 
-**Note:** Bidirectional reconfiguration (Diskless → Tiered) can reuse the same scaled read path, enabling zero-downtime reverse migration in a future phase.
+**Note:** Bidirectional reconfiguration (Diskless → Tiered) can reuse the same scaled read path, enabling zero-downtime reverse migration in a future phase. See the [Design Document Section 11](./TIERED_STORAGE_UNIFICATION_DESIGN.md) for details.
 
 ### Conclusion
 
@@ -424,10 +437,10 @@ Delos uses a separate consensus system for MetaStore. Our Control Plane uses Pos
 
 1. **Unified log abstraction** — Our hybrid topic model is conceptually similar to VirtualLog
 2. **Chained storage tiers** — Our tiered + diskless model mirrors loglet chaining
-3. **Seal-based migration** — Our migration protocol uses similar sealing semantics
+3. **Seal-based migration** — Future sealing mechanism will use similar semantics
 4. **Metadata-driven routing** — Both use a control plane for offset-to-tier mapping
 
-**Our implementation can evolve toward Delos patterns** if needed, but the current design is appropriate for the 8-week scope and solves the immediate problem without over-engineering.
+**Our implementation can evolve toward Delos patterns** when bidirectional migration is needed. The current 8-week scope focuses on one-way migration (tiered → diskless) which doesn't require the full sealing/MetaStore infrastructure.
 
 ---
 

@@ -4,7 +4,8 @@
 
 **Authors:** Engineering Team  
 **Date:** December 2025  
-**Status:** Draft
+**Status:** Draft  
+**Last Updated:** December 16, 2025 (post team discussion)
 
 ---
 
@@ -12,17 +13,23 @@
 
 This document outlines the design for enabling seamless migration from Apache Kafka's Tiered Storage to Inkless (Diskless) topics. The goal is to allow topics with existing tiered data to transition to the Diskless storage model while preserving read access to historical tiered data and enabling new writes to flow through the Diskless pipeline.
 
-### Goals
+### Goals (8-Week Scope)
 
-1. Allow migration of Tiered Kafka topics into Diskless topics
-2. Enable Diskless topics to read data from both Tiered Storage and Diskless storage
-3. Track offsets across local/diskless and remote/tiered boundaries
-4. Implement retention policy enforcement for migrated topics
+1. **Migration from Tiered to Diskless** — Enable tiered topics to switch to diskless writes
+2. **Hybrid read path** — Read new data from diskless, old data from tiered storage
+3. **RF=3 alignment** — Standard Kafka replication semantics for RLM integration
+4. **Sealing mechanism** — KRaft-based topic sealing for safe migration
+5. **MetaStore** — S3-based log chain metadata for offset boundaries
 
-### Non-Goals
+### Deferred (Future Phases)
 
-1. Migration from Diskless to Tiered Kafka (reverse direction) for the initial phase
-2. Support for running both storage modes simultaneously for **new** data (writes always go to one mode)
+1. **Tiering pipeline (diskless → tiered)** — Converting aged diskless batches to tiered format for PG scalability
+2. **Reverse migration (diskless → tiered)** — Rollback capability
+3. **Full observability** — Admin APIs, comprehensive metrics
+
+### Team Decision (Dec 16, 2025)
+
+The team agreed to focus the 8-week scope on **migration safety and effectiveness**. The tiering pipeline is acknowledged as necessary for PG scalability but is deferred. A workaround for backlog fetch performance may be needed if tiering is delayed significantly.
 
 ---
 
