@@ -1676,10 +1676,34 @@ public interface Admin extends AutoCloseable {
      */
     CreateMirrorResult createMirror(String mirrorName, Map<String, String> configs, CreateMirrorOptions options);
 
-
-    RemoveTopicsFromMirrorResult removeTopicsFromMirror(String mirrorName, Set<String> topics, RemoveTopicsFromMirrorOptions options);
-
+    /**
+     * Add topics to an existing cluster mirror for cross-cluster replication.
+     *
+     * When topics are added to a mirror, they become read-only on the destination cluster and start
+     * replicating data from the source cluster. This operation marks the specified topics with the
+     * mirror name, preventing local writes and enabling the MirrorFetcherThread to begin replication.
+     *
+     * @param topicToMirrorName Map of topic names to mirror names, allowing multiple topics to be
+     *                          added to potentially different mirrors in a single operation
+     * @param options Options for the add topics to mirror operation
+     * @return The AddTopicsToMirrorResult containing futures for each topic addition
+     */
     AddTopicsToMirrorResult addTopicsToMirror(Map<String, String> topicToMirrorName, AddTopicsToMirrorOptions options);
+
+    /**
+     * Remove topics from cluster mirror, making them writable on the destination cluster.
+     *
+     * This operation is typically used during failover scenarios when the destination cluster needs to
+     * be promoted from passive (read-only mirror) to active (accepting writes). Removing topics from
+     * the mirror clears the mirrorName field from partition metadata, which allows producers to write
+     * to these partitions.
+     *
+     * @param mirrorName The name of the mirror from which to remove topics
+     * @param topics Set of topic names to remove from mirroring
+     * @param options Options for the remove topics from mirror operation
+     * @return The RemoveTopicsFromMirrorResult containing futures for each topic removal
+     */
+    RemoveTopicsFromMirrorResult removeTopicsFromMirror(String mirrorName, Set<String> topics, RemoveTopicsFromMirrorOptions options);
 
     /**
      * Describe producer state on a set of topic partitions. See

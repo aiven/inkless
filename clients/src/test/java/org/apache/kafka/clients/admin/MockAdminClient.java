@@ -1376,12 +1376,12 @@ public class MockAdminClient extends AdminClient {
     }
 
     @Override
-    public RemoveTopicsFromMirrorResult removeTopicsFromMirror(String mirrorName, Set<String> topics, RemoveTopicsFromMirrorOptions options) {
+    public AddTopicsToMirrorResult addTopicsToMirror(Map<String, String> topicToMirrorName, AddTopicsToMirrorOptions options) {
         throw new UnsupportedOperationException("Not implemented yet");
     }
 
     @Override
-    public AddTopicsToMirrorResult addTopicsToMirror(Map<String, String> topicToMirrorName, AddTopicsToMirrorOptions options) {
+    public RemoveTopicsFromMirrorResult removeTopicsFromMirror(String mirrorName, Set<String> topics, RemoveTopicsFromMirrorOptions options) {
         throw new UnsupportedOperationException("Not implemented yet");
     }
 
