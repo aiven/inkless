@@ -140,31 +140,6 @@ public abstract class MirrorCommand {
             System.out.println("Successfully created mirror " + opts.mirror().get());
         }
 
-        public void removeTopicsFromMirror(MirrorCommandOptions opts) throws Exception {
-            String topicName = opts.topic().get();
-            String mirrorName = opts.mirror().get();
-
-            Optional<Node> coordinator = Optional.empty();
-            FindCoordinatorResult findCoordinatorResult = adminClient.findCoordinator(mirrorName);
-            coordinator = Optional.ofNullable(findCoordinatorResult.node().get());
-            System.out.println("Found coordinator " + coordinator.map(Node::idString).orElse("none") + " for mirror " + mirrorName);
-
-            if (coordinator.isPresent()) {
-                Node node = coordinator.get();
-                System.out.println("Node info: " + node);
-                String bootstrapServer = node.host() + ":" + node.port();
-                System.out.printf("Removing topic %s from mirror %s using bootstrap server %s%n", topicName, mirrorName, bootstrapServer);
-                try (Admin admin = createAdminClient(Optional.of(bootstrapServer), commandConfig)) {
-                    RemoveTopicsFromMirrorResult removeTopicsFromMirrorResult = admin.removeTopicsFromMirror(mirrorName, Set.of(topicName), new RemoveTopicsFromMirrorOptions());
-                    removeTopicsFromMirrorResult.all().get();
-                    System.out.println("Successfully removed topic " + topicName + " from mirror " + mirrorName);
-                }
-            } else {
-                throw new RuntimeException(String.format("Error when removing topic %s from mirror %s%n", topicName, mirrorName));
-            }
-
-        }
-
         public void addTopicsToMirror(MirrorCommandOptions opts) throws Exception {
             String topicName = opts.topic().get();
             String mirrorName = opts.mirror().get();
@@ -220,6 +195,30 @@ public abstract class MirrorCommand {
                         System.out.printf("Successfully added topic %s to mirror %s%n", topicName, mirrorName);
                     }
                 });
+            }
+        }
+
+        public void removeTopicsFromMirror(MirrorCommandOptions opts) throws Exception {
+            String topicName = opts.topic().get();
+            String mirrorName = opts.mirror().get();
+
+            Optional<Node> coordinator = Optional.empty();
+            FindCoordinatorResult findCoordinatorResult = adminClient.findCoordinator(mirrorName);
+            coordinator = Optional.ofNullable(findCoordinatorResult.node().get());
+            System.out.println("Found coordinator " + coordinator.map(Node::idString).orElse("none") + " for mirror " + mirrorName);
+
+            if (coordinator.isPresent()) {
+                Node node = coordinator.get();
+                System.out.println("Node info: " + node);
+                String bootstrapServer = node.host() + ":" + node.port();
+                System.out.printf("Removing topic %s from mirror %s using bootstrap server %s%n", topicName, mirrorName, bootstrapServer);
+                try (Admin admin = createAdminClient(Optional.of(bootstrapServer), commandConfig)) {
+                    RemoveTopicsFromMirrorResult removeTopicsFromMirrorResult = admin.removeTopicsFromMirror(mirrorName, Set.of(topicName), new RemoveTopicsFromMirrorOptions());
+                    removeTopicsFromMirrorResult.all().get();
+                    System.out.println("Successfully removed topic " + topicName + " from mirror " + mirrorName);
+                }
+            } else {
+                throw new RuntimeException(String.format("Error when removing topic %s from mirror %s%n", topicName, mirrorName));
             }
         }
 

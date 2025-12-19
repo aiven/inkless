@@ -4865,46 +4865,6 @@ public class KafkaAdminClient extends AdminClient {
     }
 
     @Override
-    public RemoveTopicsFromMirrorResult removeTopicsFromMirror(String mirrorName, Set<String> topics, RemoveTopicsFromMirrorOptions options) {
-        final KafkaFutureImpl<Void> future = new KafkaFutureImpl<>();
-        final long now = time.milliseconds();
-        final Call call = new Call("removeTopicsFromMirror", calcDeadlineMs(now, options.timeoutMs()),
-                new LeastLoadedBrokerOrActiveKController()) {
-
-            @Override
-            RemoveTopicsFromMirrorRequest.Builder createRequest(int timeoutMs) {
-                return new RemoveTopicsFromMirrorRequest.Builder(mirrorName, topics);
-            }
-
-            @Override
-            void handleResponse(AbstractResponse abstractResponse) {
-                final RemoveTopicsFromMirrorResponse response =
-                        (RemoveTopicsFromMirrorResponse) abstractResponse;
-                Errors error = Errors.forCode(response.data().errorCode());
-                switch (error) {
-                    case NONE:
-                        future.complete(null);
-                        break;
-                    case REQUEST_TIMED_OUT:
-                        throw error.exception(response.data().errorMessage());
-                    default:
-                        log.error("delete mirror topic {} failed: {}",
-                                mirrorName, response.data().errorMessage());
-                        future.completeExceptionally(error.exception(response.data().errorMessage()));
-                        break;
-                }
-            }
-
-            @Override
-            void handleFailure(Throwable throwable) {
-                future.completeExceptionally(throwable);
-            }
-        };
-        runnable.call(call, now);
-        return new RemoveTopicsFromMirrorResult(future);
-    }
-
-    @Override
     public AddTopicsToMirrorResult addTopicsToMirror(Map<String, String> topicToMirrorName, AddTopicsToMirrorOptions options) {
         final KafkaFutureImpl<Void> future = new KafkaFutureImpl<>();
         final long now = time.milliseconds();
@@ -4942,6 +4902,46 @@ public class KafkaAdminClient extends AdminClient {
         };
         runnable.call(call, now);
         return new AddTopicsToMirrorResult(future);
+    }
+
+    @Override
+    public RemoveTopicsFromMirrorResult removeTopicsFromMirror(String mirrorName, Set<String> topics, RemoveTopicsFromMirrorOptions options) {
+        final KafkaFutureImpl<Void> future = new KafkaFutureImpl<>();
+        final long now = time.milliseconds();
+        final Call call = new Call("removeTopicsFromMirror", calcDeadlineMs(now, options.timeoutMs()),
+                new LeastLoadedBrokerOrActiveKController()) {
+
+            @Override
+            RemoveTopicsFromMirrorRequest.Builder createRequest(int timeoutMs) {
+                return new RemoveTopicsFromMirrorRequest.Builder(mirrorName, topics);
+            }
+
+            @Override
+            void handleResponse(AbstractResponse abstractResponse) {
+                final RemoveTopicsFromMirrorResponse response =
+                        (RemoveTopicsFromMirrorResponse) abstractResponse;
+                Errors error = Errors.forCode(response.data().errorCode());
+                switch (error) {
+                    case NONE:
+                        future.complete(null);
+                        break;
+                    case REQUEST_TIMED_OUT:
+                        throw error.exception(response.data().errorMessage());
+                    default:
+                        log.error("delete mirror topic {} failed: {}",
+                                mirrorName, response.data().errorMessage());
+                        future.completeExceptionally(error.exception(response.data().errorMessage()));
+                        break;
+                }
+            }
+
+            @Override
+            void handleFailure(Throwable throwable) {
+                future.completeExceptionally(throwable);
+            }
+        };
+        runnable.call(call, now);
+        return new RemoveTopicsFromMirrorResult(future);
     }
 
     @Override
