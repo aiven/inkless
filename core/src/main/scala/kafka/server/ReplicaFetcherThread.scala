@@ -110,16 +110,6 @@ class ReplicaFetcherThread(name: String,
     completeDelayedFetchRequests()
   }
 
-  override def shouldUpdateMirrorLeaderEpoch(topicPartition: TopicPartition): Boolean = {
-    // For followers of mirrored partitions, update epoch from batches to track source epochs.
-    // For regular partitions, epoch comes from metadata and should not be updated from batches.
-    replicaMgr.getPartition(topicPartition) match {
-      case HostedPartition.Online(partition) =>
-        partition.mirrorName != null && partition.mirrorName.nonEmpty
-      case _ => false
-    }
-  }
-
   // process fetched data
   override def processPartitionData(
     topicPartition: TopicPartition,
