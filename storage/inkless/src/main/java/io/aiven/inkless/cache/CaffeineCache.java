@@ -7,6 +7,7 @@ import com.github.benmanes.caffeine.cache.stats.CacheStats;
 import java.io.IOException;
 import java.time.Duration;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executor;
 import java.util.function.Function;
 
 import io.aiven.inkless.generated.CacheKey;
@@ -26,7 +27,8 @@ public final class CaffeineCache implements ObjectCache {
     public CaffeineCache(
         final long maxCacheSize,
         final long lifespanSeconds,
-        final int maxIdleSeconds) {
+        final int maxIdleSeconds
+    ) {
         cache = Caffeine.newBuilder()
                 .maximumSize(maxCacheSize)
                 .expireAfterWrite(Duration.ofSeconds(lifespanSeconds))
@@ -42,20 +44,22 @@ public final class CaffeineCache implements ObjectCache {
     }
 
     @Override
-    public FileExtent computeIfAbsent(final CacheKey key, final Function<CacheKey, FileExtent> mappingFunction) {
-        final CompletableFuture<FileExtent> future = new CompletableFuture<>();
-        final CompletableFuture<FileExtent> existingFuture = cache.asMap().computeIfAbsent(key, (cacheKey) -> {
-            return future;
+    public CompletableFuture<FileExtent> computeIfAbsent(
+        final CacheKey key,
+        final Function<CacheKey, FileExtent> load,
+        final Executor loadExecutor
+    ) {
+        // Caffeine's AsyncCache.get() provides atomic cache population per key.
+        // When multiple threads concurrently request the same uncached key, the mapping function
+        // is invoked only once, and all waiting threads receive the same CompletableFuture.
+        // This guarantees that the load function is called exactly once per key, preventing duplicate
+        // fetch operations from object storage.
+        return cache.get(key, (k, defaultExecutor) -> {
+            // Use the provided executor instead of Caffeine's default executor.
+            // This allows us to control which thread pool handles the fetch and blocks there,
+            // while Caffeine's internal threads remain unblocked, so cache operations can continue to be served.
+            return CompletableFuture.supplyAsync(() -> load.apply(k), loadExecutor);
         });
-        // If existing future is not the same object as created in this function
-        // there was a pending cache load and this call is required to join the existing future
-        // and discard the created one.
-        if (future != existingFuture) {
-            return existingFuture.join();
-        }
-        final FileExtent fileExtent = mappingFunction.apply(key);
-        future.complete(fileExtent);
-        return fileExtent;
     }
 
     @Override

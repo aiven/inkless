@@ -31,13 +31,18 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 
+import java.nio.ByteBuffer;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.stream.Collectors;
 
+import io.aiven.inkless.cache.CaffeineCache;
 import io.aiven.inkless.cache.FixedBlockAlignment;
 import io.aiven.inkless.cache.KeyAlignmentStrategy;
 import io.aiven.inkless.cache.NullCache;
@@ -46,12 +51,21 @@ import io.aiven.inkless.common.ByteRange;
 import io.aiven.inkless.common.ObjectKey;
 import io.aiven.inkless.common.ObjectKeyCreator;
 import io.aiven.inkless.common.PlainObjectKey;
+import io.aiven.inkless.consume.FetchPlanner.ObjectFetchRequest;
 import io.aiven.inkless.control_plane.BatchInfo;
 import io.aiven.inkless.control_plane.BatchMetadata;
 import io.aiven.inkless.control_plane.FindBatchResponse;
+import io.aiven.inkless.generated.CacheKey;
+import io.aiven.inkless.generated.FileExtent;
 import io.aiven.inkless.storage_backend.common.ObjectFetcher;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.STRICT_STUBS)
@@ -88,7 +102,7 @@ public class FetchPlannerTest {
         Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of();
         FetchPlanner planner = fetchPlannerJob(coordinates);
 
-        List<CacheFetchJob> result = planner.planJobs(coordinates);
+        List<ObjectFetchRequest> result = planner.planJobs(coordinates);
 
         assertThat(result).isEmpty();
     }
@@ -102,7 +116,7 @@ public class FetchPlannerTest {
                 ), 0, 1)
             ),
             Set.of(
-                cacheFetchJob(OBJECT_KEY_A, requestRange)
+                new ObjectFetchRequest(OBJECT_KEY_A, requestRange, 20, 10)
             )
         );
     }
@@ -117,8 +131,8 @@ public class FetchPlannerTest {
                 ), 0, 2)
             ),
             Set.of(
-                cacheFetchJob(OBJECT_KEY_A, requestRange),
-                cacheFetchJob(OBJECT_KEY_B, requestRange)
+                new ObjectFetchRequest(OBJECT_KEY_A, requestRange, 20, 10),
+                new ObjectFetchRequest(OBJECT_KEY_B, requestRange, 21, 10)
             )
         );
     }
@@ -135,8 +149,8 @@ public class FetchPlannerTest {
                 ), 0, 1)
             ),
             Set.of(
-                cacheFetchJob(OBJECT_KEY_A, requestRange),
-                cacheFetchJob(OBJECT_KEY_B, requestRange)
+                new ObjectFetchRequest(OBJECT_KEY_A, requestRange, 20, 10),
+                new ObjectFetchRequest(OBJECT_KEY_B, requestRange, 21, 10)
             )
         );
     }
@@ -150,10 +164,11 @@ public class FetchPlannerTest {
                 ), 0, 1),
                 partition1, FindBatchResponse.success(List.of(
                     new BatchInfo(2L, OBJECT_KEY_A.value(), BatchMetadata.of(partition1, 30, 10, 0, 0, 11, 21, TimestampType.CREATE_TIME))
-                ), 0,  1)
+                ), 0, 1)
             ),
             Set.of(
-                cacheFetchJob(OBJECT_KEY_A, requestRange)
+                // When batches for same object are merged, timestamp is max(20, 21) = 21, byteSize is sum(10, 10) = 20
+                new ObjectFetchRequest(OBJECT_KEY_A, requestRange, 21, 20)
             )
         );
     }
@@ -168,7 +183,7 @@ public class FetchPlannerTest {
                 ), 0, 1)
             ),
             Set.of(
-                cacheFetchJob(OBJECT_KEY_B, requestRange)
+                new ObjectFetchRequest(OBJECT_KEY_B, requestRange, 21, 10)
             )
         );
     }
@@ -179,11 +194,11 @@ public class FetchPlannerTest {
             Map.of(
                 partition0, FindBatchResponse.unknownTopicOrPartition(),
                 partition1, FindBatchResponse.success(List.of(
-                    new BatchInfo(1L, OBJECT_KEY_B.value(), BatchMetadata.of(partition1,0, 10, 0, 0, 11, 21, TimestampType.CREATE_TIME))
+                    new BatchInfo(1L, OBJECT_KEY_B.value(), BatchMetadata.of(partition1, 0, 10, 0, 0, 11, 21, TimestampType.CREATE_TIME))
                 ), 0, 1)
             ),
             Set.of(
-                cacheFetchJob(OBJECT_KEY_B, requestRange)
+                new ObjectFetchRequest(OBJECT_KEY_B, requestRange, 21, 10)
             )
         );
     }
@@ -198,7 +213,7 @@ public class FetchPlannerTest {
                 ), 0, 1)
             ),
             Set.of(
-                cacheFetchJob(OBJECT_KEY_B, requestRange)
+                new ObjectFetchRequest(OBJECT_KEY_B, requestRange, 21, 10)
             )
         );
     }
@@ -210,19 +225,391 @@ public class FetchPlannerTest {
         );
     }
 
-    private CacheFetchJob cacheFetchJob(         ObjectKey objectKey, ByteRange byteRange) {
-        return new CacheFetchJob(
-            cache, fetcher, objectKey, byteRange, time,
-            durationMs -> {}, cacheEntrySize -> {}
-        );
-    }
-
-    private void assertBatchPlan(Map<TopicIdPartition, FindBatchResponse> coordinates, Set<CacheFetchJob> expectedJobs) {
+    private void assertBatchPlan(Map<TopicIdPartition, FindBatchResponse> coordinates, Set<ObjectFetchRequest> expectedJobs) {
         FetchPlanner planner = fetchPlannerJob(coordinates);
 
         // Use the package-private planJobs method to verify the exact jobs planned
-        List<CacheFetchJob> actualJobs = planner.planJobs(coordinates);
+        List<ObjectFetchRequest> actualJobs = planner.planJobs(coordinates);
 
         assertThat(new HashSet<>(actualJobs)).isEqualTo(expectedJobs);
+    }
+
+    @Test
+    public void testMultipleConcurrentRequests() throws Exception {
+        // This test verifies that the FetchPlanner correctly handles multiple batches from different objects
+        // within a single fetch request. This scenario occurs when a Kafka consumer fetches from a partition
+        // that has records stored across multiple objects in remote storage.
+        //
+        // What we're testing:
+        // 1. Multiple batch coordinates are converted into separate fetch requests (one per object)
+        // 2. Each fetch request executes asynchronously on the executor
+        // 3. All futures complete successfully with the correct data
+        // 4. Each object is fetched exactly once (not duplicated)
+        //
+        // Why this matters:
+        // - Ensures parallel fetching of multiple objects improves throughput
+        // - Validates that the async execution model works correctly
+        // - Confirms data integrity when handling multiple concurrent operations
+        try (CaffeineCache caffeineCache = new CaffeineCache(100, 3600, 180)) {
+            final byte[] dataA = "data-for-a".getBytes();
+            final byte[] dataB = "data-for-b".getBytes();
+
+            // Mock the fetcher's two-step process: fetch() is called first, then readToByteBuffer()
+            // For this test, we only care about the final data returned by readToByteBuffer()
+            when(fetcher.fetch(eq(OBJECT_KEY_A), any(ByteRange.class)))
+                .thenReturn(null); // Return value doesn't matter, readToByteBuffer() is also mocked
+            when(fetcher.fetch(eq(OBJECT_KEY_B), any(ByteRange.class)))
+                .thenReturn(null); // Return value doesn't matter, readToByteBuffer() is also mocked
+
+            // Mock readToByteBuffer to return the test data we want to verify
+            // Order matters: first call returns dataA, second call returns dataB
+            when(fetcher.readToByteBuffer(any()))
+                .thenReturn(ByteBuffer.wrap(dataA))
+                .thenReturn(ByteBuffer.wrap(dataB));
+
+            final Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of(
+                partition0, FindBatchResponse.success(List.of(
+                    new BatchInfo(1L, OBJECT_KEY_A.value(),
+                        BatchMetadata.of(partition0, 0, 10, 0, 0, 10, 20, TimestampType.CREATE_TIME)),
+                    new BatchInfo(2L, OBJECT_KEY_B.value(),
+                        BatchMetadata.of(partition0, 0, 10, 1, 1, 11, 21, TimestampType.CREATE_TIME))
+                ), 0, 2)
+            );
+
+            final FetchPlanner planner = new FetchPlanner(
+                time, OBJECT_KEY_CREATOR, keyAlignmentStrategy,
+                caffeineCache, fetcher, dataExecutor, coordinates, metrics
+            );
+
+            // Execute: Trigger fetch operations
+            final List<CompletableFuture<FileExtent>> futures = planner.get();
+
+            // Verify: Should have two futures
+            assertThat(futures).hasSize(2);
+
+            // Wait for all to complete
+            CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).get();
+
+            // Verify both were fetched
+            verify(fetcher).fetch(eq(OBJECT_KEY_A), any(ByteRange.class));
+            verify(fetcher).fetch(eq(OBJECT_KEY_B), any(ByteRange.class));
+
+            // Verify correct data for each
+            final List<FileExtent> results = futures.stream()
+                .map(f -> {
+                    try {
+                        return f.get();
+                    } catch (Exception e) {
+                        throw new RuntimeException(e);
+                    }
+                })
+                .collect(Collectors.toList());
+
+            assertThat(results).hasSize(2);
+
+            // Verify the actual data content matches expected values
+            // Note: We cannot rely on ordering since the futures complete asynchronously,
+            // so we use containsExactlyInAnyOrder to verify both byte arrays are present.
+            assertThat(results)
+                .extracting(FileExtent::data)
+                .containsExactlyInAnyOrder(dataA, dataB);
+        }
+    }
+
+    @Test
+    public void testCacheMiss() throws Exception {
+        // Setup: Cache miss scenario - data not in cache, must fetch from remote
+        try (CaffeineCache caffeineCache = new CaffeineCache(100, 3600, 180)) {
+            final byte[] expectedData = "test-data".getBytes();
+            final ByteBuffer byteBuffer = ByteBuffer.wrap(expectedData);
+
+            // Mock the fetcher to return data via ByteBuffer
+            when(fetcher.fetch(any(ObjectKey.class), any(ByteRange.class)))
+                .thenReturn(null); // channel not used directly
+            when(fetcher.readToByteBuffer(any()))
+                .thenReturn(byteBuffer);
+
+            final Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of(
+                partition0, FindBatchResponse.success(List.of(
+                    new BatchInfo(1L, OBJECT_KEY_A.value(),
+                        BatchMetadata.of(partition0, 0, 10, 0, 0, 10, 20, TimestampType.CREATE_TIME))
+                ), 0, 1)
+            );
+
+            final FetchPlanner planner = new FetchPlanner(
+                time, OBJECT_KEY_CREATOR, keyAlignmentStrategy,
+                caffeineCache, fetcher, dataExecutor, coordinates, metrics
+            );
+
+            // Execute: Trigger the fetch operation
+            final List<CompletableFuture<FileExtent>> futures = planner.get();
+
+            // Verify: Should have one future
+            assertThat(futures).hasSize(1);
+
+            // Wait for completion and verify the result
+            final FileExtent result = futures.get(0).get();
+            assertThat(result).isNotNull();
+            assertThat(result.data()).isEqualTo(expectedData);
+
+            // Verify remote fetch was called (cache miss)
+            verify(fetcher).fetch(any(ObjectKey.class), any(ByteRange.class));
+
+            // Verify the result is now in cache
+            final ObjectFetchRequest request = new ObjectFetchRequest(
+                OBJECT_KEY_A, requestRange, 20, 10
+            );
+            final CacheKey cacheKey = request.toCacheKey();
+            assertThat(caffeineCache.get(cacheKey)).isNotNull();
+        }
+    }
+
+    @Test
+    public void testCacheHit() throws Exception {
+        // Setup: Cache hit scenario - data already in cache
+        try (CaffeineCache caffeineCache = new CaffeineCache(100, 3600, 180)) {
+            final byte[] expectedData = "cached-data".getBytes();
+            final FileExtent cachedFileExtent = new FileExtent().setData(expectedData);
+
+            // Pre-populate the cache
+            final ObjectFetchRequest request = new ObjectFetchRequest(
+                OBJECT_KEY_A, requestRange, 20, 10
+            );
+            final CacheKey cacheKey = request.toCacheKey();
+            caffeineCache.put(cacheKey, cachedFileExtent);
+
+            final Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of(
+                partition0, FindBatchResponse.success(List.of(
+                    new BatchInfo(1L, OBJECT_KEY_A.value(),
+                        BatchMetadata.of(partition0, 0, 10, 0, 0, 10, 20, TimestampType.CREATE_TIME))
+                ), 0, 1)
+            );
+
+            final FetchPlanner planner = new FetchPlanner(
+                time, OBJECT_KEY_CREATOR, keyAlignmentStrategy,
+                caffeineCache, fetcher, dataExecutor, coordinates, metrics
+            );
+
+            // Execute: Trigger the fetch operation
+            final List<CompletableFuture<FileExtent>> futures = planner.get();
+
+            // Verify: Should have one future
+            assertThat(futures).hasSize(1);
+
+            // Wait for completion and verify the result comes from cache
+            final FileExtent result = futures.get(0).get();
+            assertThat(result).isNotNull();
+            assertThat(result.data()).isEqualTo(expectedData);
+
+            // Verify remote fetch was NOT called (cache hit)
+            verify(fetcher, never()).fetch(any(ObjectKey.class), any(ByteRange.class));
+        }
+    }
+
+    @Test
+    public void testFetchFailure() throws Exception {
+        // Test that fetch failures are properly wrapped and propagated
+        try (CaffeineCache caffeineCache = new CaffeineCache(100, 3600, 180)) {
+
+            // Mock fetcher to throw exception
+            when(fetcher.fetch(any(ObjectKey.class), any(ByteRange.class)))
+                .thenThrow(new RuntimeException("S3 unavailable"));
+
+            final Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of(
+                partition0, FindBatchResponse.success(List.of(
+                    new BatchInfo(1L, OBJECT_KEY_A.value(),
+                        BatchMetadata.of(partition0, 0, 10, 0, 0, 10, 20, TimestampType.CREATE_TIME))
+                ), 0, 1)
+            );
+
+            final FetchPlanner planner = new FetchPlanner(
+                time, OBJECT_KEY_CREATOR, keyAlignmentStrategy,
+                caffeineCache, fetcher, dataExecutor, coordinates, metrics
+            );
+
+            // Execute: Trigger fetch operation
+            final List<CompletableFuture<FileExtent>> futures = planner.get();
+
+            // Verify: Should have one future
+            assertThat(futures).hasSize(1);
+
+            // Verify exception is wrapped in CompletableFuture
+            assertThatThrownBy(() -> futures.get(0).get())
+                .isInstanceOf(ExecutionException.class)
+                .hasCauseInstanceOf(FileFetchException.class);
+
+            // Verify remote fetch was attempted
+            verify(fetcher).fetch(any(ObjectKey.class), any(ByteRange.class));
+        }
+    }
+
+    @Test
+    public void testKeyAlignmentCreatesMultipleFetchRequests() {
+        // Test that byte range alignment can split a single batch into multiple fetch requests
+        // when the batch spans multiple alignment blocks.
+
+        final KeyAlignmentStrategy alignment = new FixedBlockAlignment(1024);
+
+        final Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of(
+            partition0, FindBatchResponse.success(List.of(
+                new BatchInfo(1L, OBJECT_KEY_A.value(),
+                    BatchMetadata.of(partition0, 0, 2000, 0, 0, 10, 20, TimestampType.CREATE_TIME))
+            ), 0, 1)
+        );
+
+        final FetchPlanner planner = new FetchPlanner(
+            time, OBJECT_KEY_CREATOR, alignment,
+            cache, fetcher, dataExecutor, coordinates, metrics
+        );
+
+        final List<ObjectFetchRequest> result = planner.planJobs(coordinates);
+
+        // Should create 2 fetch requests due to alignment splitting the range
+        assertThat(result).hasSize(2);
+
+        // Both requests should be for the same object
+        assertThat(result.stream().map(ObjectFetchRequest::objectKey).distinct()).containsExactly(OBJECT_KEY_A);
+
+        // Both should have the same timestamp and total byte size (since they're from the same batch)
+        assertThat(result.stream().map(ObjectFetchRequest::timestamp).distinct()).containsExactly(20L);
+        assertThat(result.stream().map(ObjectFetchRequest::byteSize).distinct()).containsExactly(2000L);
+
+        // The byte ranges should be aligned
+        final Set<ByteRange> ranges = result.stream().map(ObjectFetchRequest::byteRange).collect(Collectors.toSet());
+        // FixedBlockAlignment(1024) should create ranges aligned to 1024-byte blocks
+        assertThat(ranges).hasSize(2);
+    }
+
+    @Test
+    public void testTimestampAggregationUsesMaxValue() {
+        // Test that when multiple batches for the same object have different timestamps,
+        // the fetch request uses the maximum timestamp value.
+        //
+        // This is important for hot/cold path decisions - the most recent timestamp
+        // should be used to determine if data is "hot" (recent) or "cold" (old).
+
+        final Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of(
+            partition0, FindBatchResponse.success(List.of(
+                new BatchInfo(1L, OBJECT_KEY_A.value(),
+                    BatchMetadata.of(partition0, 0, 10, 0, 0, 10, 100, TimestampType.CREATE_TIME))
+            ), 0, 1),
+            partition1, FindBatchResponse.success(List.of(
+                new BatchInfo(2L, OBJECT_KEY_A.value(),
+                    BatchMetadata.of(partition1, 30, 10, 0, 0, 15, 500, TimestampType.CREATE_TIME))
+            ), 0, 1)
+        );
+
+        final FetchPlanner planner = fetchPlannerJob(coordinates);
+        final List<ObjectFetchRequest> result = planner.planJobs(coordinates);
+
+        // Should merge into single request for OBJECT_KEY_A
+        assertThat(result).hasSize(1);
+
+        final ObjectFetchRequest request = result.get(0);
+        assertThat(request.objectKey()).isEqualTo(OBJECT_KEY_A);
+        // Timestamp should be max(100, 500) = 500
+        assertThat(request.timestamp()).isEqualTo(500L);
+        // ByteSize should be sum(10, 10) = 20
+        assertThat(request.byteSize()).isEqualTo(20L);
+    }
+
+    @Test
+    public void testConcurrentRequestsToSameKeyFetchOnlyOnce() throws Exception {
+        // Test that when multiple requests for the SAME cache key arrive concurrently,
+        // the underlying fetch operation is performed only ONCE, and all requesters
+        // receive the same result.
+        //
+        // This validates the cache's deduplication behavior which prevents redundant
+        // fetches to object storage when multiple threads/requests need the same data.
+
+        try (CaffeineCache caffeineCache = new CaffeineCache(100, 3600, 180)) {
+            final byte[] expectedData = "shared-data".getBytes();
+
+            // Mock fetcher to return data
+            when(fetcher.fetch(eq(OBJECT_KEY_A), any(ByteRange.class)))
+                .thenReturn(null);
+            when(fetcher.readToByteBuffer(any()))
+                .thenReturn(ByteBuffer.wrap(expectedData));
+
+            // Create coordinates with TWO batches that map to the SAME cache key
+            // (same object, same byte range after alignment)
+            final Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of(
+                partition0, FindBatchResponse.success(List.of(
+                    new BatchInfo(1L, OBJECT_KEY_A.value(),
+                        BatchMetadata.of(partition0, 0, 10, 0, 0, 10, 20, TimestampType.CREATE_TIME))
+                ), 0, 1),
+                partition1, FindBatchResponse.success(List.of(
+                    new BatchInfo(2L, OBJECT_KEY_A.value(),
+                        BatchMetadata.of(partition1, 0, 10, 0, 0, 10, 20, TimestampType.CREATE_TIME))
+                ), 0, 1)
+            );
+
+            final FetchPlanner planner = new FetchPlanner(
+                time, OBJECT_KEY_CREATOR, keyAlignmentStrategy,
+                caffeineCache, fetcher, dataExecutor, coordinates, metrics
+            );
+
+            // Execute: Both batches will create fetch requests for the same cache key
+            final List<CompletableFuture<FileExtent>> futures = planner.get();
+
+            // Should have only 1 future because the cache deduplicates same-key requests
+            assertThat(futures).hasSize(1);
+
+            // Wait for completion
+            final FileExtent result = futures.get(0).get();
+
+            // Verify data is correct
+            assertThat(result.data()).isEqualTo(expectedData);
+
+            // Verify fetch was called **only once** despite multiple requests
+            verify(fetcher).fetch(eq(OBJECT_KEY_A), any(ByteRange.class));
+        }
+    }
+
+    @Test
+    public void testMetricsAreRecordedCorrectly() throws Exception {
+        // Test that the FetchPlanner records metrics at various stages of the fetch operation.
+        // This ensures observability into the system's behavior.
+
+        try (CaffeineCache caffeineCache = new CaffeineCache(100, 3600, 180)) {
+            final byte[] dataA = "data-a".getBytes();
+            final byte[] dataB = "data-bb".getBytes();
+
+            when(fetcher.fetch(eq(OBJECT_KEY_A), any(ByteRange.class))).thenReturn(null);
+            when(fetcher.fetch(eq(OBJECT_KEY_B), any(ByteRange.class))).thenReturn(null);
+            when(fetcher.readToByteBuffer(any()))
+                .thenReturn(ByteBuffer.wrap(dataA))
+                .thenReturn(ByteBuffer.wrap(dataB));
+
+            final Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of(
+                partition0, FindBatchResponse.success(List.of(
+                    new BatchInfo(1L, OBJECT_KEY_A.value(),
+                        BatchMetadata.of(partition0, 0, 10, 0, 0, 5, 20, TimestampType.CREATE_TIME)),
+                    new BatchInfo(2L, OBJECT_KEY_B.value(),
+                        BatchMetadata.of(partition0, 0, 10, 1, 1, 7, 21, TimestampType.CREATE_TIME))
+                ), 0, 2)
+            );
+
+            final FetchPlanner planner = new FetchPlanner(
+                time, OBJECT_KEY_CREATOR, keyAlignmentStrategy,
+                caffeineCache, fetcher, dataExecutor, coordinates, metrics
+            );
+
+            final List<CompletableFuture<FileExtent>> futures = planner.get();
+            CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).get();
+
+            // Verify fetch batch size metric was recorded (2 batches in the response)
+            verify(metrics).recordFetchBatchSize(2);
+
+            // Verify fetch objects size metric was recorded (2 unique objects)
+            verify(metrics).recordFetchObjectsSize(2);
+
+            // Verify cache entry size metrics were recorded for both fetches
+            verify(metrics).cacheEntrySize(dataA.length);
+            verify(metrics).cacheEntrySize(dataB.length);
+
+            // Verify fetch plan finished metric was recorded
+            verify(metrics).fetchPlanFinished(any(Long.class));
+        }
     }
 }

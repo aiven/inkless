@@ -28,17 +28,35 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 import io.aiven.inkless.TimeUtils;
 import io.aiven.inkless.cache.KeyAlignmentStrategy;
 import io.aiven.inkless.cache.ObjectCache;
 import io.aiven.inkless.common.ByteRange;
+import io.aiven.inkless.common.ObjectKey;
 import io.aiven.inkless.common.ObjectKeyCreator;
 import io.aiven.inkless.control_plane.BatchInfo;
 import io.aiven.inkless.control_plane.FindBatchResponse;
+import io.aiven.inkless.generated.CacheKey;
 import io.aiven.inkless.generated.FileExtent;
 import io.aiven.inkless.storage_backend.common.ObjectFetcher;
 
+/**
+ * Plans and executes fetch operations for diskless topics.
+ *
+ * <p>Execution flow:
+ * <ol>
+ *   <li><b>Planning:</b> Converts batch coordinates into fetch requests (merges, aligns ranges)</li>
+ *   <li><b>Submission:</b> Submits requests to cache with async execution</li>
+ *   <li><b>Execution:</b> Cache misses trigger remote storage fetch on executor</li>
+ * </ol>
+ *
+ * If a fetch request hits in the cache, the corresponding future is already completed with the cached value.
+ *
+ * <p>This class uses async cache operations to avoid blocking threads. The cache returns
+ * CompletableFuture immediately, and actual fetches run on the provided executor.
+ */
 public class FetchPlanner implements Supplier<List<CompletableFuture<FileExtent>>> {
 
     private final Time time;
@@ -70,51 +88,167 @@ public class FetchPlanner implements Supplier<List<CompletableFuture<FileExtent>
         this.metrics = metrics;
     }
 
-    private List<CompletableFuture<FileExtent>> doWork(final Map<TopicIdPartition, FindBatchResponse> batchCoordinates) {
-        final List<CacheFetchJob> jobs = planJobs(batchCoordinates);
-        return submitAll(jobs);
-    }
-
-    // package-private for testing
-    List<CacheFetchJob> planJobs(final Map<TopicIdPartition, FindBatchResponse> batchCoordinates) {
-        final Set<Map.Entry<String, List<ByteRange>>> objectKeysToRanges = batchCoordinates.values().stream()
-            .filter(findBatch -> findBatch.errors() == Errors.NONE)
-            .map(FindBatchResponse::batches)
-            .peek(batches -> metrics.recordFetchBatchSize(batches.size()))
-            .flatMap(List::stream)
-            // Merge batch requests
-            .collect(Collectors.groupingBy(BatchInfo::objectKey, Collectors.mapping(b -> b.metadata().range(), Collectors.toList())))
-            .entrySet();
-        metrics.recordFetchObjectsSize(objectKeysToRanges.size());
-        return objectKeysToRanges.stream()
-            .flatMap(e ->
-                keyAlignment.align(e.getValue())
-                    .stream()
-                    .map(byteRange -> getCacheFetchJob(e.getKey(), byteRange)))
-            .collect(Collectors.toList());
-    }
-
-    private CacheFetchJob getCacheFetchJob(final String objectKey, final ByteRange byteRange) {
-        return new CacheFetchJob(
-                cache,
-                objectFetcher,
-                objectKeyCreator.from(objectKey),
-                byteRange,
-                time,
-                metrics::fetchFileFinished,
-                metrics::cacheEntrySize
-        );
-
-    }
-
-    private List<CompletableFuture<FileExtent>> submitAll(List<CacheFetchJob> jobs) {
-        return jobs.stream()
-            .map(job -> CompletableFuture.supplyAsync(job::call, dataExecutor))
-            .collect(Collectors.toList());
-    }
-
+    /**
+     * Executes the fetch plan: plans requests, submits to cache, returns futures.
+     *
+     * @return list of futures that will complete with fetched file extents
+     */
     @Override
     public List<CompletableFuture<FileExtent>> get() {
-        return TimeUtils.measureDurationMsSupplier(time, () -> doWork(batchCoordinates), metrics::fetchPlanFinished);
+        return TimeUtils.measureDurationMsSupplier(
+            time,
+            () -> {
+                final List<ObjectFetchRequest> requests = planJobs(batchCoordinates);
+                return submitAllRequests(requests);
+            },
+            metrics::fetchPlanFinished
+        );
+    }
+
+    /**
+     * Plans fetch jobs from batch coordinates.
+     *
+     * @param batchCoordinates map of partition to batch information
+     * @return list of planned fetch requests
+     */
+    List<ObjectFetchRequest> planJobs(final Map<TopicIdPartition, FindBatchResponse> batchCoordinates) {
+        // Group batches by object key and merge metadata
+        final Set<Map.Entry<String, List<MergedBatchRequest>>> objectKeysToRanges =
+            batchCoordinates.values().stream()
+                // Filter out responses with errors
+                .filter(findBatch -> findBatch.errors() == Errors.NONE)
+                .map(FindBatchResponse::batches)
+                .peek(batches -> metrics.recordFetchBatchSize(batches.size()))
+                .flatMap(List::stream)
+                .collect(Collectors.groupingBy(
+                    BatchInfo::objectKey,
+                    Collectors.mapping(MergedBatchRequest::create, Collectors.toList())
+                ))
+                .entrySet();
+
+        metrics.recordFetchObjectsSize(objectKeysToRanges.size());
+
+        // Create fetch requests with aligned byte ranges
+        return objectKeysToRanges.stream()
+            .flatMap(e -> createFetchRequests(e.getKey(), e.getValue()))
+            .collect(Collectors.toList());
+    }
+
+    /**
+     * Creates fetch requests for a single object with multiple batches.
+     * Aligns byte ranges and aggregates metadata.
+     */
+    private Stream<ObjectFetchRequest> createFetchRequests(
+        final String objectKey,
+        final List<MergedBatchRequest> batches
+    ) {
+        // Get the most recent timestamp (for hot/cold decision)
+        final long timestamp = batches.stream()
+            .mapToLong(MergedBatchRequest::timestamp)
+            .max()
+            .orElse(0L);
+
+        // Sum up all byte sizes (for rate limiting)
+        final long totalBytes = batches.stream()
+            .mapToLong(MergedBatchRequest::byteSize)
+            .sum();
+
+        // Align byte ranges for efficient fetching
+        final Set<ByteRange> alignedRanges = keyAlignment.align(
+            batches.stream()
+                .map(MergedBatchRequest::byteRange)
+                .collect(Collectors.toList())
+        );
+
+        // Create a fetch request for each aligned range
+        return alignedRanges.stream()
+            .map(byteRange -> new ObjectFetchRequest(
+                objectKeyCreator.from(objectKey),
+                byteRange,
+                timestamp,
+                totalBytes
+            ));
+    }
+
+    private List<CompletableFuture<FileExtent>> submitAllRequests(final List<ObjectFetchRequest> requests) {
+        return requests.stream()
+            .map(this::submitSingleRequest)
+            .collect(Collectors.toList());
+    }
+
+    private CompletableFuture<FileExtent> submitSingleRequest(final ObjectFetchRequest request) {
+        // Cache API performs lookup on the calling thread and returns a CompletableFuture immediately (non-blocking).
+        // On cache miss, fetchFileExtent executes on dataExecutor; on cache hit, a completed future is returned immediately.
+        return cache.computeIfAbsent(
+            request.toCacheKey(),
+            k -> fetchFileExtent(request),
+            dataExecutor
+        );
+    }
+
+    /**
+     * Fetches a file extent from remote storage.
+     * This method is called by the cache (on dataExecutor) when a cache miss occurs.
+     *
+     * @param request the fetch request with object key and byte range
+     * @return the fetched file extent
+     * @throws FileFetchException if remote fetch fails
+     */
+    private FileExtent fetchFileExtent(final ObjectFetchRequest request) {
+        try {
+            final FileFetchJob job = new FileFetchJob(
+                time,
+                objectFetcher,
+                request.objectKey(),
+                request.byteRange(),
+                metrics::fetchFileFinished
+            );
+            final FileExtent fileExtent = job.call();
+
+            // Record cache entry size for monitoring
+            metrics.cacheEntrySize(fileExtent.data().length);
+
+            return fileExtent;
+        } catch (final Exception e) {
+            throw new FileFetchException(e);
+        }
+    }
+
+    /**
+     * Represents a request to fetch objects from diskless storage.
+     * Contains all information needed to fetch and cache a file extent.
+     *
+     * @param objectKey the storage object key
+     * @param byteRange the range of bytes to fetch
+     * @param timestamp the most recent timestamp (for hot/cold path decision)
+     * @param byteSize the total size in bytes (for rate limiting)
+     */
+    record ObjectFetchRequest(
+        ObjectKey objectKey,
+        ByteRange byteRange,
+        long timestamp,
+        long byteSize
+    ) {
+        CacheKey toCacheKey() {
+            return new CacheKey()
+                .setObject(objectKey.value())
+                .setRange(new CacheKey.ByteRange()
+                    .setOffset(byteRange.offset())
+                    .setLength(byteRange.size()));
+        }
+    }
+
+    /**
+     * Intermediate representation of a batch request with metadata.
+     * Used during the planning phase to merge batches for the same object and carry necessary info for further planning.
+     */
+    private record MergedBatchRequest(ByteRange byteRange, long timestamp, long byteSize) {
+        static MergedBatchRequest create(BatchInfo batchInfo) {
+            return new MergedBatchRequest(
+                batchInfo.metadata().range(),
+                batchInfo.metadata().timestamp(),
+                batchInfo.metadata().byteSize()
+            );
+        }
     }
 }
