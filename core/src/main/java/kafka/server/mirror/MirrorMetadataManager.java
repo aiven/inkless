@@ -99,6 +99,10 @@ import java.util.Optional;
 import java.util.Properties;
 import java.util.Random;
 import java.util.Set;
+import java.util.concurrent.CancellationException;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Supplier;
 
 import static java.util.Collections.singletonList;
@@ -154,6 +158,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     private final Supplier<GroupCoordinator> groupCoordinatorSupplier;
     private final LogManager logManager;
     private final Scheduler scheduler;
+    private Map<String, Set<CheckpointOffset>> checkpointOffsets = new ConcurrentHashMap<>();
 
     public MirrorMetadataManager(
         KafkaConfig config,
@@ -245,6 +250,15 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         this.topics.put(clusterName, mutableTopics);
 
         return mutableTopics;
+    }
+
+    public Set<CheckpointOffset> checkpointOffsets(String clusterName, Set<CheckpointOffset> addedCheckpointOffsets, Set<CheckpointOffset> removedCheckpointOffsets) {
+        Set<CheckpointOffset> offsets = new HashSet<>(this.checkpointOffsets.getOrDefault(clusterName, Set.of()));
+        offsets.removeAll(removedCheckpointOffsets);
+        offsets.addAll(addedCheckpointOffsets);
+        this.checkpointOffsets.put(clusterName, offsets);
+
+        return offsets;
     }
 
     public void refreshMetadata() {
@@ -705,4 +719,6 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
             LOG.info("!!! Update topics: {}", response);
         }
     }
+
+    public record CheckpointOffset(String topic, int partition, long offset) {}
 }

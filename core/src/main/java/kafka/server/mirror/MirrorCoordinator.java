@@ -35,6 +35,8 @@ import org.apache.kafka.coordinator.common.runtime.CoordinatorRecord;
 import org.apache.kafka.coordinator.mirror.MirrorRecordKey;
 import org.apache.kafka.coordinator.mirror.MirrorRecordSerde;
 import org.apache.kafka.coordinator.mirror.generated.CoordinatorRecordType;
+import org.apache.kafka.coordinator.mirror.generated.MirrorOffsetCheckpointsKey;
+import org.apache.kafka.coordinator.mirror.generated.MirrorOffsetCheckpointsValue;
 import org.apache.kafka.coordinator.mirror.generated.MirrorTopicsKey;
 import org.apache.kafka.coordinator.mirror.generated.MirrorTopicsValue;
 import org.apache.kafka.metadata.MetadataCache;
@@ -50,6 +52,7 @@ import org.slf4j.LoggerFactory;
 
 import java.nio.ByteBuffer;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
@@ -154,10 +157,51 @@ public class MirrorCoordinator {
 
     }
 
+    public void checkpointOffsetsToCoordinator(String mirrorName, Set<MirrorMetadataManager.CheckpointOffset> offsets) {
+        var mirrorTopicPartition = new TopicPartition(Topic.MIRROR_STATE_TOPIC_NAME, partitionFor(new MirrorRecordKey(mirrorName)));
+        var mirrorTopicIdPartition = replicaManager.topicIdPartition(mirrorTopicPartition);
+
+        var updatedOffsets = mirrorMetadataManager.checkpointOffsets(mirrorName, offsets, Set.of());
+        var record = generateMirrorTopics(mirrorName, topics);
+        var keyBytes = serde.serializeKey(record);
+        var valueBytes = serde.serializeValue(record);
+        var timestamp = time.milliseconds();
+        var memRecord = MemoryRecords.withRecords(Compression.NONE, new SimpleRecord(timestamp, keyBytes, valueBytes));
+
+        LOG.info("!!! Appending record to {}: {}", mirrorTopicPartition, record);
+        replicaManager.appendRecords(
+                // TODO: replace this with Cluster Mirror specific timeout
+                Duration.ofSeconds(5).toMillis(),
+                (short) -1,
+                true,
+                AppendOrigin.COORDINATOR,
+                CollectionConverters.asScala(Map.of(mirrorTopicIdPartition, memRecord)),
+                ignored -> null,
+                ignored -> null,
+                RequestLocal.noCaching(),
+                CollectionConverters.asScala(Map.of())
+        );
+
+    }
+
     private static CoordinatorRecord generateMirrorTopics(String mirrorName, Set<String> topics) {
         var key = new MirrorTopicsKey().setMirrorName(mirrorName);
         var val = new MirrorTopicsValue().setTopics(
                 topics.stream().map(topic -> new MirrorTopicsValue.Topic().setName(topic)).toList());
+        var apiVersion = new ApiMessageAndVersion(val, (short) 0);
+        return CoordinatorRecord.record(key, apiVersion);
+    }
+
+    private static CoordinatorRecord generateCheckpointOffsetRecords(String mirrorName, Set<MirrorMetadataManager.CheckpointOffset> offsets) {
+        var key = new MirrorOffsetCheckpointsKey().setMirrorName(mirrorName);
+        var val = new MirrorOffsetCheckpointsValue();
+        var topics = new ArrayList<MirrorOffsetCheckpointsValue.Topic>();
+        offsets.forEach(offset -> {
+
+        });
+        var checkpointTopics = new MirrorOffsetCheckpointsValue().setTopics()
+//        .setTopics(
+//                topics.stream().map(topic -> new MirrorTopicsValue.Topic().setName(topic)).toList());
         var apiVersion = new ApiMessageAndVersion(val, (short) 0);
         return CoordinatorRecord.record(key, apiVersion);
     }
