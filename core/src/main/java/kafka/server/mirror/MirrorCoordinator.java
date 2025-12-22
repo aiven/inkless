@@ -199,7 +199,7 @@ public class MirrorCoordinator {
         var key = new MirrorTopicsKey().setMirrorName(mirrorName);
         var val = new MirrorTopicsValue().setTopics(
                 topics.stream().map(topic -> new MirrorTopicsValue.Topic().setName(topic)).toList());
-        var apiVersion = new ApiMessageAndVersion(val, (short) 0);
+        var apiVersion = new ApiMessageAndVersion(val, MirrorTopicsValue.HIGHEST_SUPPORTED_VERSION);
         return CoordinatorRecord.record(key, apiVersion);
     }
 
@@ -235,9 +235,11 @@ public class MirrorCoordinator {
     private Set<String> readMirrorTopicsFromValue(ByteBuffer buffer) {
         Set<String> topics = new HashSet<>();
         short version = buffer.getShort();
-        if (version <= MirrorTopicsValue.HIGHEST_SUPPORTED_VERSION & version >= MirrorTopicsValue.LOWEST_SUPPORTED_VERSION) {
+        if (version >= MirrorTopicsValue.LOWEST_SUPPORTED_VERSION && version <= MirrorTopicsValue.HIGHEST_SUPPORTED_VERSION) {
             MirrorTopicsValue value = new MirrorTopicsValue(new ByteBufferAccessor(buffer), version);
             value.topics().forEach(t -> topics.add(t.name()));
+        } else {
+            throw new IllegalStateException("Unknown version {} from the mirror topic value");
         }
         return topics;
     }
@@ -253,7 +255,7 @@ public class MirrorCoordinator {
                 checkpoints.put(t.name(), partitions);
             });
         } else {
-            throw new IllegalArgumentException("Unknown cluster mirror log key version " + version);
+            throw new IllegalStateException("Unknown version {} from the mirror checkpoint value");
         }
         return checkpoints;
     }

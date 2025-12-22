@@ -252,6 +252,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         return mutableTopics;
     }
 
+    // update the cache for the checkpoint offests
     public Set<CheckpointOffset> checkpointOffsets(String clusterName,
                                                    Map<String, Map<Integer, Long>> addedCheckpointOffsets,
                                                    Map<String, Map<Integer, Long>> removedCheckpointOffsets) {
