@@ -207,19 +207,13 @@ class RemoteLeaderEndPoint(logPrefix: String,
             fetchState.lastFetchedEpoch()
           else
             Optional.empty[Integer]
-          // For mirrored partitions, the initial fetch has currentLeaderEpoch=0 and mirrorLeaderEpoch=0
-          val mirrorLeaderEpoch: Optional[Integer] = if (fetchState.mirrorLeaderEpoch() >= 0)
-            Optional.of(Int.box(fetchState.mirrorLeaderEpoch()))
-          else
-            Optional.empty[Integer]
           builder.add(topicPartition, new FetchRequest.PartitionData(
             fetchState.topicId().orElse(Uuid.ZERO_UUID),
             fetchState.fetchOffset(),
             logStartOffset,
             fetchSize,
             Optional.of(fetchState.currentLeaderEpoch()),
-            lastFetchedEpoch,
-            mirrorLeaderEpoch))
+            lastFetchedEpoch))
           if (fetchState.isMirrorFetch() && fetchState.topicId().isPresent) {
             readOnlyTopics += fetchState.topicId().get()
           }

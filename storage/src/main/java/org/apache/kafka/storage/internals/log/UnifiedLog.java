@@ -1170,7 +1170,7 @@ public class UnifiedLog implements AutoCloseable {
                                     });
                                 }
                             } else {
-                                maybeResetProducerIdForMirroredTopic(records, isMirrorLeader);
+                                maybeOverrideProducerIdAndLeaderEpoch(records, isMirrorLeader);
                                 // we are taking the offsets we are given
                                 if (appendInfo.firstOrLastOffsetOfFirstBatch() < localLog.logEndOffset()) {
                                     // we may still be able to recover if the log is empty
@@ -1274,18 +1274,20 @@ public class UnifiedLog implements AutoCloseable {
     }
 
     /**
-     * Reset producer IDs for records being mirrored from a source cluster.
-     * This is only called for read-only leaders (partitions with mirrorName set and acting as leader)
-     * to ensure producer IDs from the source cluster don't conflict with local producer IDs.
+     * Override producer IDs and leader epochs for records being mirrored from a source cluster.
+     * This is only applied to read-only leaders (partition leader with mirrorName set)
+     * to ensure producer IDs from source cluster don't conflict with local producer IDs,
+     * and local epoch-based partition replication can work without changes.
      *
      * @param records The records being appended
      * @param isMirrorLeader True if this is a read-only leader fetching from source cluster
      */
-    private void maybeResetProducerIdForMirroredTopic(MemoryRecords records, boolean isMirrorLeader) {
+    private void maybeOverrideProducerIdAndLeaderEpoch(MemoryRecords records, boolean isMirrorLeader) {
         if (isMirrorLeader) {
             for (MutableRecordBatch batch : records.batches()) {
-                // Reset producer ID to avoid conflicts with local producers
-                // New producer ID = -(originalProducerId + 2)
+                // Keep using local leader epochs
+                batch.setPartitionLeaderEpoch(latestEpoch().orElse(0));
+                // Mirrored producer IDs occupy the negative space to avoid any conflict
                 batch.setProducerId(-(batch.producerId() + 2));
             }
         }

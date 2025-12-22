@@ -705,7 +705,7 @@ class KafkaApis(val requestChannel: RequestChannel,
             erroneous += topicIdPartition -> FetchResponse.partitionResponse(topicIdPartition, Errors.UNKNOWN_TOPIC_OR_PARTITION)
           else {
             interesting += topicIdPartition -> new PartitionData(data.topicId, data.fetchOffset, data.logStartOffset,
-              data.maxBytes, data.currentLeaderEpoch, data.lastFetchedEpoch, data.mirrorLeaderEpoch)
+              data.maxBytes, data.currentLeaderEpoch, data.lastFetchedEpoch)
           }
         }
       } else {
@@ -763,17 +763,6 @@ class KafkaApis(val requestChannel: RequestChannel,
           .setAbortedTransactions(abortedTransactions)
           .setRecords(data.records)
           .setPreferredReadReplica(data.preferredReadReplica.orElse(FetchResponse.INVALID_PREFERRED_REPLICA_ID))
-
-        // For mirrored partitions, set mirrorLeaderEpoch from the log's highest epoch
-        if (versionId >= 19) {
-          replicaManager.getPartition(topicIdPartition.topicPartition()) match {
-            case HostedPartition.Online(partition) if partition.mirrorName.nonEmpty =>
-              val latestLeaderEpochInLog = partition.localLogOrException.latestEpoch.orElse(0)
-              partitionData.setMirrorLeaderEpoch(latestLeaderEpochInLog)
-            case _ =>
-            // Not a mirrored partition, leave mirrorLeaderEpoch at default -1
-          }
-        }
 
         if (versionId >= 16) {
           data.error match {

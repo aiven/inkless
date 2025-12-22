@@ -139,8 +139,7 @@ public enum MetadataVersion {
     // *** DYNAMICALLY TO TRY OUT THE EARLY ACCESS CAPABILITY.                                   ***
     IBP_4_2_IV1(29, "4.2", "IV1", false),
 
-    // Enables cluster mirroring (early access in 4.2).
-    // Adds FetchRequest/Response v19 with MirrorLeaderEpoch field.
+    // Enables Cluster Mirroring (early access).
     // Adds mirrorName field to PartitionRecord for read-only leader identification.
     //
     // *** THIS IS A PLACEHOLDER UNSTABLE VERSION WHICH IS USED TO DEFINE THE POINT AT WHICH   ***
@@ -277,9 +276,7 @@ public enum MetadataVersion {
     }
 
     public short fetchRequestVersion() {
-        if (isAtLeast(IBP_4_2_IV2)) {
-            return 19;
-        } else if (isAtLeast(IBP_4_1_IV1)) {
+        if (isAtLeast(IBP_4_1_IV1)) {
             return 18;
         } else if (isAtLeast(IBP_3_9_IV0)) {
             return 17;

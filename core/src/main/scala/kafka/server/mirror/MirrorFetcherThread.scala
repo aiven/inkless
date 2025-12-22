@@ -76,11 +76,6 @@ class MirrorFetcherThread(name: String,
     replicaMgr.mirrorFetcherManager.addFetcherForPartitions(partitionAndOffsets)
   }
 
-  override def shouldUpdateMirrorLeaderEpoch(topicPartition: TopicPartition): Boolean = {
-    // MirrorFetcherThread always processes mirrored partitions, so always update from batches
-    true
-  }
-
   // process fetched data
   override def processPartitionData(
     topicPartition: TopicPartition,
