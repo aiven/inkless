@@ -51,7 +51,6 @@ import io.aiven.inkless.common.PlainObjectKey;
 import io.aiven.inkless.control_plane.BatchInfo;
 import io.aiven.inkless.control_plane.BatchMetadata;
 import io.aiven.inkless.control_plane.FindBatchResponse;
-import io.aiven.inkless.generated.FileExtent;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -171,8 +170,8 @@ public class FetchCompleterTest {
             ), logStartOffset, highWatermark)
         );
 
-        List<FileExtent> files = List.of(
-            FileFetchJob.createFileExtent(OBJECT_KEY_A, new ByteRange(0, records.sizeInBytes()), records.buffer())
+        List<FileExtentResult> files = List.of(
+            new FileExtentResult.Success(FileFetchJob.createFileExtent(OBJECT_KEY_A, new ByteRange(0, records.sizeInBytes()), records.buffer()))
         );
         FetchCompleter job = new FetchCompleter(
             new MockTime(),
@@ -207,9 +206,9 @@ public class FetchCompleterTest {
             ), logStartOffset, highWatermark)
         );
 
-        List<FileExtent> files = List.of(
-            FileFetchJob.createFileExtent(OBJECT_KEY_A, new ByteRange(0, records.sizeInBytes()), records.buffer()),
-            FileFetchJob.createFileExtent(OBJECT_KEY_B, new ByteRange(0, records.sizeInBytes()), records.buffer())
+        List<FileExtentResult> files = List.of(
+            new FileExtentResult.Success(FileFetchJob.createFileExtent(OBJECT_KEY_A, new ByteRange(0, records.sizeInBytes()), records.buffer())),
+            new FileExtentResult.Success(FileFetchJob.createFileExtent(OBJECT_KEY_B, new ByteRange(0, records.sizeInBytes()), records.buffer()))
         );
         FetchCompleter job = new FetchCompleter(
             new MockTime(),
@@ -249,14 +248,14 @@ public class FetchCompleterTest {
         var fixedAlignment = new FixedBlockAlignment(blockSize);
         var ranges = fixedAlignment.align(List.of(new ByteRange(0, records.sizeInBytes())));
 
-        var fileExtents = new ArrayList<FileExtent>();
+        var fileExtents = new ArrayList<FileExtentResult>();
         for (ByteRange range : ranges) {
             var startOffset = Math.toIntExact(range.offset());
             var length = Math.min(blockSize, records.sizeInBytes() - startOffset);
             var endOffset = startOffset + length;
             ByteBuffer copy = ByteBuffer.allocate(length);
             copy.put(records.buffer().duplicate().position(startOffset).limit(endOffset).slice());
-            fileExtents.add(FileFetchJob.createFileExtent(OBJECT_KEY_A, range, copy));
+            fileExtents.add(new FileExtentResult.Success(FileFetchJob.createFileExtent(OBJECT_KEY_A, range, copy)));
         }
 
         FetchCompleter job = new FetchCompleter(
@@ -305,8 +304,8 @@ public class FetchCompleterTest {
             ), logStartOffset, highWatermark)
         );
 
-        List<FileExtent> files = List.of(
-            FileFetchJob.createFileExtent(OBJECT_KEY_A, new ByteRange(0, totalSize), concatenatedBuffer)
+        List<FileExtentResult> files = List.of(
+            new FileExtentResult.Success(FileFetchJob.createFileExtent(OBJECT_KEY_A, new ByteRange(0, totalSize), concatenatedBuffer))
         );
         FetchCompleter job = new FetchCompleter(
             new MockTime(),
@@ -359,14 +358,14 @@ public class FetchCompleterTest {
         var fixedAlignment = new FixedBlockAlignment(blockSize);
         var ranges = fixedAlignment.align(List.of(new ByteRange(0, totalSize)));
 
-        var fileExtents = new ArrayList<FileExtent>();
+        var fileExtents = new ArrayList<FileExtentResult>();
         for (ByteRange range : ranges) {
             var startOffset = Math.toIntExact(range.offset());
             var length = Math.min(blockSize, totalSize - startOffset);
             var endOffset = startOffset + length;
             ByteBuffer copy = ByteBuffer.allocate(blockSize);
             copy.put(concatenatedBuffer.duplicate().position(startOffset).limit(endOffset).slice());
-            fileExtents.add(FileFetchJob.createFileExtent(OBJECT_KEY_A, range, copy));
+            fileExtents.add(new FileExtentResult.Success(FileFetchJob.createFileExtent(OBJECT_KEY_A, range, copy)));
         }
 
         FetchCompleter job = new FetchCompleter(

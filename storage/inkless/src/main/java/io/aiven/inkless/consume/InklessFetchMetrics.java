@@ -55,6 +55,14 @@ public class InklessFetchMetrics {
     private static final String FETCH_PARTITIONS_PER_FETCH_COUNT = "FetchPartitionsPerFetchCount";
     private static final String FETCH_BATCHES_PER_FETCH_COUNT = "FetchBatchesPerPartitionCount";
     private static final String FETCH_OBJECTS_PER_FETCH_COUNT = "FetchObjectsPerFetchCount";
+    private static final String RECENT_DATA_REQUEST_RATE = "RecentDataRequestRate";
+    private static final String LAGGING_CONSUMER_REQUEST_RATE = "LaggingConsumerRequestRate";
+    private static final String LAGGING_CONSUMER_REJECTED_RATE = "LaggingConsumerRejectedRate";
+    // Tracks wait time (including zero-wait) for ALL lagging consumer requests when rate limiting is enabled.
+    // When rate limiter is disabled (config = 0), LaggingConsumerRequestRate > 0 but this metric rate = 0.
+    // Always records wait time to avoid histogram bias - zero-wait cases show when rate limiting is NOT a bottleneck.
+    // Use to monitor: rate limiting latency distribution, actual throttling pressure, and limiter effectiveness.
+    private static final String LAGGING_RATE_LIMIT_WAIT_TIME = "LaggingRateLimitWaitTime";
 
     private final Time time;
 
@@ -78,6 +86,10 @@ public class InklessFetchMetrics {
     private final Histogram fetchPartitionSizeHistogram;
     private final Histogram fetchBatchesSizeHistogram;
     private final Histogram fetchObjectsSizeHistogram;
+    private final Meter recentDataRequestRate;
+    private final Meter laggingConsumerRequestRate;
+    private final Meter laggingConsumerRejectedRate;
+    private final Histogram laggingRateLimitWaitTime;
 
     public InklessFetchMetrics(final Time time, final ObjectCache cache) {
         this.time = Objects.requireNonNull(time, "time cannot be null");
@@ -100,7 +112,10 @@ public class InklessFetchMetrics {
         fetchObjectsSizeHistogram = metricsGroup.newHistogram(FETCH_OBJECTS_PER_FETCH_COUNT, true, Map.of());
         cacheEntrySize = metricsGroup.newHistogram(CACHE_ENTRY_SIZE, true, Map.of());
         cacheSize = metricsGroup.newGauge(CACHE_SIZE, () -> cache.size());
-
+        recentDataRequestRate = metricsGroup.newMeter(RECENT_DATA_REQUEST_RATE, "requests", TimeUnit.SECONDS, Map.of());
+        laggingConsumerRequestRate = metricsGroup.newMeter(LAGGING_CONSUMER_REQUEST_RATE, "requests", TimeUnit.SECONDS, Map.of());
+        laggingConsumerRejectedRate = metricsGroup.newMeter(LAGGING_CONSUMER_REJECTED_RATE, "rejections", TimeUnit.SECONDS, Map.of());
+        laggingRateLimitWaitTime = metricsGroup.newHistogram(LAGGING_RATE_LIMIT_WAIT_TIME, true, Map.of());
     }
 
     public void fetchCompleted(Instant startAt) {
@@ -180,6 +195,10 @@ public class InklessFetchMetrics {
         metricsGroup.removeMetric(FETCH_PARTITIONS_PER_FETCH_COUNT);
         metricsGroup.removeMetric(FETCH_BATCHES_PER_FETCH_COUNT);
         metricsGroup.removeMetric(FETCH_OBJECTS_PER_FETCH_COUNT);
+        metricsGroup.removeMetric(RECENT_DATA_REQUEST_RATE);
+        metricsGroup.removeMetric(LAGGING_CONSUMER_REQUEST_RATE);
+        metricsGroup.removeMetric(LAGGING_CONSUMER_REJECTED_RATE);
+        metricsGroup.removeMetric(LAGGING_RATE_LIMIT_WAIT_TIME);
     }
 
     public void fetchStarted(int partitionSize) {
@@ -193,5 +212,70 @@ public class InklessFetchMetrics {
 
     public void recordFetchObjectsSize(int size) {
         fetchObjectsSizeHistogram.update(size);
+    }
+
+    /**
+     * Records a request that used the hot path (recent data with cache).
+     * Metric: RecentDataRequestRate
+     */
+    public void recordRecentDataRequest() {
+        recentDataRequestRate.mark();
+    }
+
+    /**
+     * Records a request that used the cold path (lagging consumer, bypasses cache).
+     * This is recorded for ALL cold path requests, regardless of rate limiting.
+     * Metric: LaggingConsumerRequestRate
+     *
+     * @see #recordRateLimitWaitTime(long) for requests that were actually rate limited
+     */
+    public void recordLaggingConsumerRequest() {
+        laggingConsumerRequestRate.mark();
+    }
+
+    /**
+     * Records a lagging consumer request that was rejected due to executor unavailability.
+     * This typically corresponds to:
+     * - RejectedExecutionException: Queue full (AbortPolicy triggered)
+     *
+     * In this case, backpressure is applied: the consumer receives an error response
+     * and backs off via fetch purgatory.
+     * Metric: LaggingConsumerRejectedRate
+     *
+     * High rejection rate indicates:
+     * - Sustained lagging consumer load exceeding capacity
+     * - May need to increase fetch.lagging.consumer.thread.pool.size
+     * - Or increase fetch.lagging.consumer.request.rate.limit
+     * - Or consumers are genuinely too far behind (acceptable backpressure)
+     * - Or executor is shutting down (transient)
+     */
+    public void recordLaggingConsumerRejection() {
+        laggingConsumerRejectedRate.mark();
+    }
+
+    /**
+     * Records wait time for lagging consumer requests when rate limiting is enabled.
+     * This is recorded for ALL lagging consumer requests processed through the rate limiter,
+     * including zero-wait cases (when tokens are immediately available).
+     *
+     * <p>Recording zero-wait cases is intentional to avoid histogram bias. Zero-wait entries
+     * show when rate limiting is NOT a bottleneck, which is valuable monitoring data.
+     *
+     * <p>Metric: LaggingRateLimitWaitTime (Histogram)
+     *
+     * <p>Relationship:
+     * - When rate limiting is ENABLED: LaggingRateLimitWaitTime.Rate ≈ LaggingConsumerRequestRate
+     * - When rate limiting is DISABLED: LaggingRateLimitWaitTime.Rate = 0, LaggingConsumerRequestRate > 0
+     *
+     * <p>Use this metric to:
+     * - Monitor rate limiting latency distribution (including p50, p99, p999)
+     * - Identify when rate limiting becomes a bottleneck (high percentiles)
+     * - Verify rate limiting is working (rate should match LaggingConsumerRequestRate when enabled)
+     * - Detect configuration issues (if rate is 0 but LaggingConsumerRequestRate > 0, rate limiting is disabled)
+     *
+     * @param waitMs Wait time in milliseconds (can be 0 if token was immediately available)
+     */
+    public void recordRateLimitWaitTime(long waitMs) {
+        laggingRateLimitWaitTime.update(waitMs);
     }
 }

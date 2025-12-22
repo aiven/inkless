@@ -52,14 +52,14 @@ public class FetchCompleter implements Supplier<Map<TopicIdPartition, FetchParti
     private final ObjectKeyCreator objectKeyCreator;
     private final Map<TopicIdPartition, FetchRequest.PartitionData> fetchInfos;
     private final Map<TopicIdPartition, FindBatchResponse> coordinates;
-    private final List<FileExtent> backingData;
+    private final List<FileExtentResult> backingData;
     private final Consumer<Long> durationCallback;
 
     public FetchCompleter(Time time,
                           ObjectKeyCreator objectKeyCreator,
                           Map<TopicIdPartition, FetchRequest.PartitionData> fetchInfos,
                           Map<TopicIdPartition, FindBatchResponse> coordinates,
-                          List<FileExtent> backingData,
+                          List<FileExtentResult> backingData,
                           Consumer<Long> durationCallback) {
         this.time = time;
         this.objectKeyCreator = objectKeyCreator;
@@ -75,23 +75,29 @@ public class FetchCompleter implements Supplier<Map<TopicIdPartition, FetchParti
             final Map<String, List<FileExtent>> files = groupFileData();
             return TimeUtils.measureDurationMs(time, () -> serveFetch(coordinates, files), durationCallback);
         } catch (Exception e) {
-            throw new FetchException(e);
+            throw new FetchException("Failed to complete fetch for partitions " + fetchInfos.keySet(), e);
         }
     }
 
     private Map<String, List<FileExtent>> groupFileData() {
         Map<String, List<FileExtent>> files = new HashMap<>();
-        for (FileExtent fileExtent : backingData) {
-            files.compute(fileExtent.object(), (k, v) -> {
-                if (v == null) {
-                    List<FileExtent> out = new ArrayList<>(1);
-                    out.add(fileExtent);
-                    return out;
-                } else {
-                    v.add(fileExtent);
-                    return v;
-                }
-            });
+        for (FileExtentResult result : backingData) {
+            // Only process successful fetches - failures are handled as missing data
+            // which results in KAFKA_STORAGE_ERROR in extractRecords/servePartition
+            if (result instanceof FileExtentResult.Success success) {
+                final FileExtent fileExtent = success.extent();
+                files.compute(fileExtent.object(), (k, v) -> {
+                    if (v == null) {
+                        List<FileExtent> out = new ArrayList<>(1);
+                        out.add(fileExtent);
+                        return out;
+                    } else {
+                        v.add(fileExtent);
+                        return v;
+                    }
+                });
+            }
+            // Failure results are intentionally skipped - they don't contribute to files map
         }
         return files;
     }
@@ -162,16 +168,30 @@ public class FetchCompleter implements Supplier<Map<TopicIdPartition, FetchParti
         );
     }
 
+    /**
+     * Extracts memory records from file extents for a partition's batches.
+     *
+     * <p><b>Partial Failure Handling:</b>
+     * This method returns partial results if some batches fail to extract (missing files or null records).
+     * This is intentional to support partial failure scenarios where some batches succeed while others fail.
+     * The calling code (servePartition) will check if foundRecords is empty and return KAFKA_STORAGE_ERROR
+     * if no records were found, allowing successful batches to be returned when possible.
+     *
+     * @param metadata the batch metadata for the partition
+     * @param allFiles the map of object keys to fetched file extents
+     * @return list of memory records (may be partial if some batches failed)
+     */
     private List<MemoryRecords> extractRecords(FindBatchResponse metadata, Map<String, List<FileExtent>> allFiles) {
         List<MemoryRecords> foundRecords = new ArrayList<>();
         for (BatchInfo batch : metadata.batches()) {
             List<FileExtent> files = allFiles.get(objectKeyCreator.from(batch.objectKey()).value());
             if (files == null || files.isEmpty()) {
-                // as soon as we encounter an error
+                // Missing file extent for this batch - return partial results (successful batches so far)
                 return foundRecords;
             }
             MemoryRecords fileRecords = constructRecordsFromFile(batch, files);
             if (fileRecords == null) {
+                // Failed to construct records from file - return partial results (successful batches so far)
                 return foundRecords;
             }
             foundRecords.add(fileRecords);
