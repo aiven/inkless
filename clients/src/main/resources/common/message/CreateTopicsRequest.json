@@ -60,9 +60,9 @@
       ]},
       { "name": "MirrorInfo", "type": "MirrorInfo", "versions": "8+", "nullableVersions": "8+", "ignorable": true,
         "about": "Mirror information for creating a mirrored topic from a source cluster.", "fields": [
-        { "name": "mirrorName", "type": "string", "versions": "8+",
+        { "name": "MirrorName", "type": "string", "versions": "8+",
           "about": "The cluster mirror name." },
-        { "name": "topicId", "type": "uuid", "versions": "8+",
+        { "name": "TopicId", "type": "uuid", "versions": "8+",
           "about": "The topic ID from the source cluster." }
       ]}
     ]},
