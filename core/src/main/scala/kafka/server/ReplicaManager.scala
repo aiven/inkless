@@ -2398,15 +2398,8 @@ class ReplicaManager(val config: KafkaConfig,
         val lazyOffsetCheckpoints = new LazyOffsetCheckpoints(this.highWatermarkCheckpoints.asJava)
         val leaderChangedPartitions = new mutable.HashSet[Partition]
         val followerChangedPartitions = new mutable.HashSet[Partition]
-        val removeMirrorTopics = new mutable.HashSet[String]
         if (!localChanges.leaders.isEmpty) {
-          applyLocalLeadersDelta(leaderChangedPartitions, delta, lazyOffsetCheckpoints, localChanges.leaders.asScala, localChanges.directoryIds.asScala, removeMirrorTopics)
-          if (removeMirrorTopics.nonEmpty) {
-            // TODO: We have a race here. This is called asynchronously after makeLeader. If the broker crashes between these calls, epoch might not bump.
-            // TODO: The plann is to fix it using a mirror state machine.
-            info("!!! sent bumpLeaderEpoch:" + removeMirrorTopics)
-            mirrorMetadataManager.get.maybeUpdateLeaderEpoch(removeMirrorTopics.toList.asJava)
-          }
+          applyLocalLeadersDelta(leaderChangedPartitions, delta, lazyOffsetCheckpoints, localChanges.leaders.asScala, localChanges.directoryIds.asScala)
         }
         if (!localChanges.followers.isEmpty) {
           applyLocalFollowersDelta(followerChangedPartitions, newImage, delta, lazyOffsetCheckpoints, localChanges.followers.asScala, localChanges.directoryIds.asScala)
@@ -2439,8 +2432,7 @@ class ReplicaManager(val config: KafkaConfig,
     delta: TopicsDelta,
     offsetCheckpoints: OffsetCheckpoints,
     localLeaders: mutable.Map[TopicPartition, LocalReplicaChanges.PartitionInfo],
-    directoryIds: mutable.Map[TopicIdPartition, Uuid],
-    removeMirrorTopics: mutable.Set[String]
+    directoryIds: mutable.Map[TopicIdPartition, Uuid]
   ): Unit = {
     stateChangeLogger.info(s"Transitioning ${localLeaders.size} partition(s) to " +
       "local leaders.")
@@ -2453,12 +2445,6 @@ class ReplicaManager(val config: KafkaConfig,
       getOrCreatePartition(tp, delta, info.topicId).foreach { case (partition, isNew) =>
         try {
           val state = info.partition.toLeaderAndIsrPartitionState(tp, isNew)
-
-          // mirrorName transition from non-empty to empty marks the partition for epoch bump (failover)
-          val newMirrorName = delta.changedTopics().get(info.topicId()).partitionChanges().get(tp.partition()).mirrorName
-          if (partition.mirrorName.nonEmpty && newMirrorName.isEmpty) {
-            removeMirrorTopics.add(tp.topic())
-          }
 
           val partitionAssignedDirectoryId = directoryIds.find(_._1.topicPartition() == tp).map(_._2)
           partition.makeLeader(state, offsetCheckpoints, Some(info.topicId), partitionAssignedDirectoryId)

@@ -139,7 +139,6 @@ class ControllerApis(
         case ApiKeys.CREATE_MIRROR => handleCreateMirror(request)
         case ApiKeys.ADD_TOPICS_TO_MIRROR => handleAddTopicsToMirror(request)
         case ApiKeys.REMOVE_TOPICS_FROM_MIRROR => handleRemoveTopicsFromMirror(request)
-        case ApiKeys.BUMP_LEADER_EPOCH => handleBumpLeaderEpoch(request)
         case _ => throw new ApiException(s"Unsupported ApiKey ${request.context.header.apiKey}")
       }
 
@@ -228,35 +227,6 @@ class ControllerApis(
 
     CompletableFuture.completedFuture[Unit](())
 
-  }
-
-  def handleBumpLeaderEpoch(request: RequestChannel.Request): CompletableFuture[Unit] = {
-    // luke
-    authHelper.authorizeClusterOperation(request, CLUSTER_ACTION)
-    val bumpLeaderEpochRequest = request.body[BumpLeaderEpochRequest]
-    info("!!! bump leader epoch request: " + bumpLeaderEpochRequest)
-    val context = new ControllerRequestContext(request.context.header.data, request.context.principal,
-      OptionalLong.empty())
-    val partitionLeaderEpochs: util.Map[Uuid, util.Map[Integer, Integer]] = new util.HashMap[Uuid, util.Map[Integer, Integer]]()
-    bumpLeaderEpochRequest.data().topics().forEach( topic => {
-      val map = new util.HashMap[Integer, Integer]()
-      topic.partitions().forEach(par => {
-        map.put(par.partitionIndex(), par.leaderEpoch())
-      })
-      partitionLeaderEpochs.put(topic.topicId(), map)
-    })
-    controller.bumpLeaderEpoch(context, partitionLeaderEpochs)
-      .handle[Unit] { (response, exception) =>
-        logger.info("!!! bump leader epoch response: " + response + " exception: " + exception)
-        if (exception != null) {
-          requestHelper.handleError(request, exception)
-        } else {
-
-          requestHelper.sendResponseMaybeThrottle(request, throttleMs =>
-            new BumpLeaderEpochResponse(response.setThrottleTimeMs(throttleMs)))
-        }
-      }
-    CompletableFuture.completedFuture[Unit](())
   }
 
   def handleCreateMirror(request: RequestChannel.Request): CompletableFuture[Unit] = {
