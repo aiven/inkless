@@ -52,14 +52,14 @@ public class FetchCompleter implements Supplier<Map<TopicIdPartition, FetchParti
     private final ObjectKeyCreator objectKeyCreator;
     private final Map<TopicIdPartition, FetchRequest.PartitionData> fetchInfos;
     private final Map<TopicIdPartition, FindBatchResponse> coordinates;
-    private final List<FileExtent> backingData;
+    private final List<FileExtentResult> backingData;
     private final Consumer<Long> durationCallback;
 
     public FetchCompleter(Time time,
                           ObjectKeyCreator objectKeyCreator,
                           Map<TopicIdPartition, FetchRequest.PartitionData> fetchInfos,
                           Map<TopicIdPartition, FindBatchResponse> coordinates,
-                          List<FileExtent> backingData,
+                          List<FileExtentResult> backingData,
                           Consumer<Long> durationCallback) {
         this.time = time;
         this.objectKeyCreator = objectKeyCreator;
@@ -75,23 +75,29 @@ public class FetchCompleter implements Supplier<Map<TopicIdPartition, FetchParti
             final Map<String, List<FileExtent>> files = groupFileData();
             return TimeUtils.measureDurationMs(time, () -> serveFetch(coordinates, files), durationCallback);
         } catch (Exception e) {
-            throw new FetchException(e);
+            throw new FetchException("Failed to complete fetch", e);
         }
     }
 
     private Map<String, List<FileExtent>> groupFileData() {
         Map<String, List<FileExtent>> files = new HashMap<>();
-        for (FileExtent fileExtent : backingData) {
-            files.compute(fileExtent.object(), (k, v) -> {
-                if (v == null) {
-                    List<FileExtent> out = new ArrayList<>(1);
-                    out.add(fileExtent);
-                    return out;
-                } else {
-                    v.add(fileExtent);
-                    return v;
-                }
-            });
+        for (FileExtentResult result : backingData) {
+            // Only process successful fetches - failures are handled as missing data
+            // which results in KAFKA_STORAGE_ERROR in extractRecords/servePartition
+            if (result instanceof FileExtentResult.Success success) {
+                final FileExtent fileExtent = success.extent();
+                files.compute(fileExtent.object(), (k, v) -> {
+                    if (v == null) {
+                        List<FileExtent> out = new ArrayList<>(1);
+                        out.add(fileExtent);
+                        return out;
+                    } else {
+                        v.add(fileExtent);
+                        return v;
+                    }
+                });
+            }
+            // Failure results are intentionally skipped - they don't contribute to files map
         }
         return files;
     }

@@ -26,6 +26,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -41,6 +42,7 @@ import io.aiven.inkless.control_plane.FindBatchResponse;
 import io.aiven.inkless.generated.CacheKey;
 import io.aiven.inkless.generated.FileExtent;
 import io.aiven.inkless.storage_backend.common.ObjectFetcher;
+import io.github.bucket4j.Bucket;
 
 /**
  * Plans and executes fetch operations for diskless topics.
@@ -64,7 +66,13 @@ public class FetchPlanner implements Supplier<List<CompletableFuture<FileExtent>
     private final KeyAlignmentStrategy keyAlignment;
     private final ObjectCache cache;
     private final ObjectFetcher objectFetcher;
-    private final ExecutorService dataExecutor;
+    // Executor for fetching data from remote storage.
+    // Will only be used for recent data (hot path) if lagging consumer support feature is enabled.
+    private final ExecutorService fetchDataExecutor;
+    private final ExecutorService laggingFetchDataExecutor;
+    private final ObjectFetcher laggingObjectFetcher;
+    private final long laggingConsumerThresholdMs;
+    private final Bucket laggingRateLimiter;
     private final Map<TopicIdPartition, FindBatchResponse> batchCoordinates;
     private final InklessFetchMetrics metrics;
 
@@ -74,7 +82,11 @@ public class FetchPlanner implements Supplier<List<CompletableFuture<FileExtent>
         KeyAlignmentStrategy keyAlignment,
         ObjectCache cache,
         ObjectFetcher objectFetcher,
-        ExecutorService dataExecutor,
+        ExecutorService fetchDataExecutor,
+        ObjectFetcher laggingObjectFetcher,
+        long laggingConsumerThresholdMs,
+        Bucket laggingRateLimiter,
+        ExecutorService laggingFetchDataExecutor,
         Map<TopicIdPartition, FindBatchResponse> batchCoordinates,
         InklessFetchMetrics metrics
     ) {
@@ -83,7 +95,11 @@ public class FetchPlanner implements Supplier<List<CompletableFuture<FileExtent>
         this.keyAlignment = keyAlignment;
         this.cache = cache;
         this.objectFetcher = objectFetcher;
-        this.dataExecutor = dataExecutor;
+        this.fetchDataExecutor = fetchDataExecutor;
+        this.laggingObjectFetcher = laggingObjectFetcher;
+        this.laggingFetchDataExecutor = laggingFetchDataExecutor;
+        this.laggingConsumerThresholdMs = laggingConsumerThresholdMs;
+        this.laggingRateLimiter = laggingRateLimiter;
         this.batchCoordinates = batchCoordinates;
         this.metrics = metrics;
     }
@@ -112,8 +128,8 @@ public class FetchPlanner implements Supplier<List<CompletableFuture<FileExtent>
      * @return list of planned fetch requests
      */
     List<ObjectFetchRequest> planJobs(final Map<TopicIdPartition, FindBatchResponse> batchCoordinates) {
-        // Group batches by object key
-        final Set<Map.Entry<String, List<ByteRange>>> objectKeysToRanges =
+        // Group batches by object key and collect full BatchInfo for metadata aggregation
+        final Set<Map.Entry<String, List<BatchInfo>>> objectKeysToBatches =
             batchCoordinates.values().stream()
                 // Filter out responses with errors
                 .filter(findBatch -> findBatch.errors() == Errors.NONE)
@@ -122,34 +138,51 @@ public class FetchPlanner implements Supplier<List<CompletableFuture<FileExtent>
                 .flatMap(List::stream)
                 .collect(Collectors.groupingBy(
                     BatchInfo::objectKey,
-                    Collectors.mapping(batch -> batch.metadata().range(), Collectors.toList())
+                    Collectors.toList()
                 ))
                 .entrySet();
 
-        metrics.recordFetchObjectsSize(objectKeysToRanges.size());
+        metrics.recordFetchObjectsSize(objectKeysToBatches.size());
 
-        // Create fetch requests with aligned byte ranges
-        return objectKeysToRanges.stream()
+        // Create fetch requests with aligned byte ranges and aggregated metadata
+        return objectKeysToBatches.stream()
             .flatMap(e -> createFetchRequests(e.getKey(), e.getValue()))
             .collect(Collectors.toList());
     }
 
     /**
      * Creates fetch requests for a single object with multiple batches.
-     * Aligns byte ranges for efficient fetching.
+     * Aligns byte ranges and aggregates metadata (timestamp for hot/cold path decision).
      */
     private Stream<ObjectFetchRequest> createFetchRequests(
         final String objectKey,
-        final List<ByteRange> byteRanges
+        final List<BatchInfo> batches
     ) {
+        if (batches.isEmpty()) {
+            return Stream.empty(); // Defensive: shouldn't happen, but handle gracefully
+        }
+
+        // Use max timestamp for hot/cold path decision.
+        // Objects contain multi-partition data, so if ANY batch is recent, use hot path (cache + priority).
+        final long timestamp = batches.stream()
+            .mapToLong(b -> b.metadata().batchMaxTimestamp())
+            .max()
+            .orElse(0L);
+
+        // Extract byte ranges
+        final List<ByteRange> byteRanges = batches.stream()
+            .map(b -> b.metadata().range())
+            .collect(Collectors.toList());
+
         // Align byte ranges for efficient fetching
         final Set<ByteRange> alignedRanges = keyAlignment.align(byteRanges);
 
-        // Create a fetch request for each aligned range
+        // Create a fetch request for each aligned range with aggregated metadata
         return alignedRanges.stream()
             .map(byteRange -> new ObjectFetchRequest(
                 objectKeyCreator.from(objectKey),
-                byteRange
+                byteRange,
+                timestamp
             ));
     }
 
@@ -160,28 +193,99 @@ public class FetchPlanner implements Supplier<List<CompletableFuture<FileExtent>
     }
 
     private CompletableFuture<FileExtent> submitSingleRequest(final ObjectFetchRequest request) {
-        // Cache API performs lookup on the calling thread and returns a CompletableFuture immediately (non-blocking).
-        // On cache miss, fetchFileExtent executes on dataExecutor; on cache hit, a completed future is returned immediately.
-        return cache.computeIfAbsent(
-            request.toCacheKey(),
-            k -> fetchFileExtent(request),
-            dataExecutor
-        );
+        final long currentTime = time.milliseconds();
+        final long dataAge = currentTime - request.timestamp();
+
+        // If laggingConsumerExecutor is null, treat all requests as recent (feature disabled)
+        final boolean laggingFeatureEnabled = laggingFetchDataExecutor != null;
+        final boolean isLagging = laggingFeatureEnabled && (dataAge > laggingConsumerThresholdMs);
+
+        if (!isLagging) {
+            // Hot path: up-to-date consumers use cache + recentDataExecutor
+            metrics.recordRecentDataRequest();
+            return cache.computeIfAbsent(
+                request.toCacheKey(),
+                k -> fetchFileExtent(objectFetcher, request),
+                fetchDataExecutor
+            );
+        } else {
+            // Cold path: lagging consumers bypass cache, use dedicated executor with rate limiting.
+            // Cache bypass rationale: Objects are multi-partition blobs, caching them would evict hot data
+            // and provide little benefit to the lagging consumer. Backpressure via AbortPolicy: queue full
+            // → RejectedExecutionException → Kafka error handler → consumer backs off (fetch purgatory).
+            metrics.recordLaggingConsumerRequest();
+            try {
+                return CompletableFuture.supplyAsync(() -> {
+                        // Apply rate limiting if configured (rate limit > 0)
+                        if (laggingRateLimiter != null) {
+                            applyRateLimit(); // InterruptedException here is wrapped in FetchException
+                        }
+                        return fetchFileExtent(laggingObjectFetcher, request);
+                    },
+                    laggingFetchDataExecutor
+                ).whenComplete((result, throwable) -> {
+                    // Track async rejections that occur during task execution:
+                    // - RejectedExecutionException: rare async rejection (race condition when executor
+                    //   shuts down between submission and execution)
+                    // - InterruptedException: interruption during fetchFileExtent execution (e.g., executor
+                    //   shutdown). Note: rate limit interruptions are wrapped in FetchException and are
+                    //   NOT tracked as rejections (they're fetch operation failures, not capacity issues).
+                    if (throwable != null) {
+                        final Throwable cause = throwable.getCause();
+                        if (cause instanceof RejectedExecutionException
+                            || cause instanceof InterruptedException) {
+                            metrics.recordLaggingConsumerRejection();
+                        }
+                        // Note: FetchException (from rate limit interruption) is NOT tracked here as
+                        // rejection - it's a fetch operation failure, not a backpressure/capacity issue.
+                    }
+                });
+            } catch (final RejectedExecutionException e) {
+                // Sync rejection (queue full at submission) - return failed future instead of propagating exception.
+                // This allows allOfFileExtents to handle the failure gracefully, returning empty FileExtent
+                // for this partition while other partitions (hot path) can still succeed.
+                // Metrics recorded here since the task never executes (vs async rejection tracked in whenComplete).
+                metrics.recordLaggingConsumerRejection();
+                return CompletableFuture.failedFuture(e);
+            }
+        }
+    }
+
+    // Applies request-based rate limiting by blocking executor thread until token available.
+    // Always records wait time (including zero-wait) for accurate latency histogram.
+    // Note: If interrupted, the duration is still recorded before the exception is thrown.
+    private void applyRateLimit() {
+            TimeUtils.measureDurationMs(time, () -> {
+                try {
+                    laggingRateLimiter.asBlocking().consume(1);
+                } catch (final InterruptedException e) {
+                    // Rate limit wait was interrupted (typically during shutdown).
+                    // Preserve interrupt status for executor framework, but wrap in FetchException
+                    // to indicate this is a fetch failure, not a rejection (executor capacity issue).
+                    //
+                    // Note: This is distinct from executor shutdown interruption caught in whenComplete,
+                    // which occurs during fetchFileExtent and IS tracked as rejection. Rate limit
+                    // interruption is a fetch operation failure, not a capacity/backpressure issue.
+                    //
+                    // The duration is still recorded by measureDurationMs even when an exception is thrown.
+                    Thread.currentThread().interrupt();
+                    throw new FetchException("Rate limit wait interrupted for lagging consumer", e);
+                }
+            }, metrics::recordRateLimitWaitTime);
     }
 
     /**
      * Fetches a file extent from remote storage.
-     * This method is called by the cache (on dataExecutor) when a cache miss occurs.
      *
      * @param request the fetch request with object key and byte range
      * @return the fetched file extent
      * @throws FileFetchException if remote fetch fails
      */
-    private FileExtent fetchFileExtent(final ObjectFetchRequest request) {
+    private FileExtent fetchFileExtent(final ObjectFetcher fetcher, final ObjectFetchRequest request) {
         try {
             final FileFetchJob job = new FileFetchJob(
                 time,
-                objectFetcher,
+                fetcher,
                 request.objectKey(),
                 request.byteRange(),
                 metrics::fetchFileFinished
@@ -203,11 +307,23 @@ public class FetchPlanner implements Supplier<List<CompletableFuture<FileExtent>
      *
      * @param objectKey the storage object key
      * @param byteRange the range of bytes to fetch
+     * @param timestamp the maximum timestamp from batches (for hot/cold path decision).
+     *                  Using max instead of min because if ANY batch in the object is recent,
+     *                  we treat the entire fetch as hot path to prioritize recent data access.
      */
     record ObjectFetchRequest(
         ObjectKey objectKey,
-        ByteRange byteRange
+        ByteRange byteRange,
+        long timestamp
     ) {
+        /**
+         * Converts to cache key for deduplication.
+         *
+         * <p>Note: timestamp is intentionally excluded from cache key.
+         * Timestamp determines hot/cold path routing but doesn't affect cache identity -
+         * the same object+range from different time periods contains identical data
+         * and should hit the same cache entry.
+         */
         CacheKey toCacheKey() {
             return new CacheKey()
                 .setObject(objectKey.value())

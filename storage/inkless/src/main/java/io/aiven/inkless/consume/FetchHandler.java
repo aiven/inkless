@@ -55,6 +55,15 @@ public class FetchHandler implements Closeable {
                 state.brokerTopicStats(),
                 state.config().fetchMetadataThreadPoolSize(),
                 state.config().fetchDataThreadPoolSize(),
+                // Separate storage client for lagging consumers to:
+                // 1. Isolate connection pool usage (lagging consumers shouldn't exhaust connections for hot path)
+                // 2. Allow independent tuning of timeouts/retries for cold storage access patterns
+                //    (This requires some refactoring on how the storage client is built/configured)
+                // If thread pool size is 0, disabling lagging consumer support, don't create a separate client
+                state.config().fetchLaggingConsumerThreadPoolSize() > 0 ? state.buildStorage() : null,
+                state.config().fetchLaggingConsumerThresholdMs(),
+                state.config().fetchLaggingConsumerRequestRateLimit(),
+                state.config().fetchLaggingConsumerThreadPoolSize(),
                 state.config().maxBatchesPerPartitionToFind()
             )
         );

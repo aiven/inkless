@@ -19,6 +19,7 @@ package io.aiven.inkless.config;
 
 import org.apache.kafka.common.config.AbstractConfig;
 import org.apache.kafka.common.config.ConfigDef;
+import org.apache.kafka.common.config.ConfigException;
 import org.apache.kafka.common.metrics.Metrics;
 
 import java.lang.reflect.InvocationTargetException;
@@ -136,8 +137,44 @@ public class InklessConfig extends AbstractConfig {
     private static final int FETCH_DATA_THREAD_POOL_SIZE_DEFAULT = 32;
 
     public static final String FETCH_METADATA_THREAD_POOL_SIZE_CONFIG = "fetch.metadata.thread.pool.size";
-    public static final String FETCH_METADATA_THREAD_POOL_SIZE_DOC = "Thread pool size to concurrently fetch metadata from batch coordinator";
+    public static final String FETCH_METADATA_THREAD_POOL_SIZE_DOC = "Thread pool size to concurrently fetch metadata from batch coordinator. "
+        + "Note: This executor is shared between hot and cold path requests. The hot/cold path separation "
+        + "only applies to data fetching (after metadata is retrieved). A burst of lagging consumer requests "
+        + "can still compete with recent consumer requests at the metadata layer. Consider increasing this "
+        + "pool size if metadata fetching becomes a bottleneck in mixed hot/cold workloads.";
     private static final int FETCH_METADATA_THREAD_POOL_SIZE_DEFAULT = 8;
+
+    public static final String FETCH_LAGGING_CONSUMER_THREAD_POOL_SIZE_CONFIG = "fetch.lagging.consumer.thread.pool.size";
+    public static final String FETCH_LAGGING_CONSUMER_THREAD_POOL_SIZE_DOC = "Thread pool size for lagging consumer fetch requests (consumers reading old data). "
+        + "Set to 0 to disable the lagging consumer feature (all requests will use the recent data path). "
+        + "The default value of 16 is designed as approximately half of the default fetch.data.thread.pool.size (32), "
+        + "providing sufficient capacity for typical cold storage access patterns while leaving headroom for the hot path. "
+        + "The queue capacity is automatically set to thread.pool.size * 100, providing burst buffering "
+        + "(e.g., 16 threads = 1600 queue capacity ≈ 8 seconds buffer at 200 req/s). "
+        + "Tune based on lagging consumer SLA and expected load patterns.";
+    // Default 16: Designed as half of default fetch.data.thread.pool.size (32), sufficient for typical
+    // cold storage access patterns while leaving headroom for hot path. Tune based on lagging consumer SLA.
+    private static final int FETCH_LAGGING_CONSUMER_THREAD_POOL_SIZE_DEFAULT = 16;
+
+    public static final String FETCH_LAGGING_CONSUMER_THRESHOLD_MS_CONFIG = "fetch.lagging.consumer.threshold.ms";
+    public static final String FETCH_LAGGING_CONSUMER_THRESHOLD_MS_DOC = "The time threshold in milliseconds to distinguish between recent and lagging consumers. "
+        + "Fetch requests for data strictly older than this threshold (dataAge > threshold, based on batch timestamp) will use the lagging consumer path. "
+        + "Set to -1 to use the default heuristic: the cache expiration lifespan. "
+        + "This provides a grace period ensuring data remains in cache before being considered 'lagging', "
+        + "accounting for cache warm-up and typical consumer lag variations. "
+        + "Operators can tune this independently from cache settings based on workload patterns and machine capacity.";
+    private static final int FETCH_LAGGING_CONSUMER_THRESHOLD_MS_DEFAULT = -1;
+
+    public static final String FETCH_LAGGING_CONSUMER_REQUEST_RATE_LIMIT_CONFIG = "fetch.lagging.consumer.request.rate.limit";
+    public static final String FETCH_LAGGING_CONSUMER_REQUEST_RATE_LIMIT_DOC = "Maximum requests per second for lagging consumer data fetches. "
+        + "Set to 0 to disable rate limiting. "
+        + "The upper bound of 10000 req/s is a safety limit to prevent misconfiguration. For high-throughput systems, "
+        + "consider the relationship between this rate limit, thread pool size, and storage backend capacity. "
+        + "At the default rate of 200 req/s with ~50ms per request latency, this allows ~10 concurrent requests.";
+    // Default 200 req/s: Conservative limit based on typical object storage GET request costs and latency.
+    // At ~50ms per request, 200 req/s = ~10 concurrent requests, balancing throughput with cost control.
+    // Tune based on storage backend capacity and budget constraints.
+    private static final int FETCH_LAGGING_CONSUMER_REQUEST_RATE_LIMIT_DEFAULT = 200;
 
     public static final String FETCH_FIND_BATCHES_MAX_BATCHES_PER_PARTITION_CONFIG = "fetch.find.batches.max.per.partition";
     public static final String FETCH_FIND_BATCHES_MAX_BATCHES_PER_PARTITION_DOC = "The maximum number of batches to find per partition when processing a fetch request. "
@@ -323,6 +360,31 @@ public class InklessConfig extends AbstractConfig {
             FETCH_METADATA_THREAD_POOL_SIZE_DOC
         );
         configDef.define(
+            FETCH_LAGGING_CONSUMER_THREAD_POOL_SIZE_CONFIG,
+            ConfigDef.Type.INT,
+            FETCH_LAGGING_CONSUMER_THREAD_POOL_SIZE_DEFAULT,
+            ConfigDef.Range.atLeast(0),
+            ConfigDef.Importance.LOW,
+            FETCH_LAGGING_CONSUMER_THREAD_POOL_SIZE_DOC
+        );
+        configDef.define(
+            FETCH_LAGGING_CONSUMER_THRESHOLD_MS_CONFIG,
+            ConfigDef.Type.LONG,
+            FETCH_LAGGING_CONSUMER_THRESHOLD_MS_DEFAULT,
+            ConfigDef.Range.atLeast(-1),
+            ConfigDef.Importance.MEDIUM,
+            FETCH_LAGGING_CONSUMER_THRESHOLD_MS_DOC
+        );
+        configDef.define(
+            FETCH_LAGGING_CONSUMER_REQUEST_RATE_LIMIT_CONFIG,
+            ConfigDef.Type.INT,
+            FETCH_LAGGING_CONSUMER_REQUEST_RATE_LIMIT_DEFAULT,
+            ConfigDef.Range.between(0, 10000), // Safety limit to prevent misconfiguration. For high-throughput systems,
+            // consider the relationship between this rate limit, thread pool size, and storage backend capacity.
+            ConfigDef.Importance.MEDIUM,
+            FETCH_LAGGING_CONSUMER_REQUEST_RATE_LIMIT_DOC
+        );
+        configDef.define(
             FETCH_FIND_BATCHES_MAX_BATCHES_PER_PARTITION_CONFIG,
             ConfigDef.Type.INT,
             FETCH_FIND_BATCHES_MAX_BATCHES_PER_PARTITION_DEFAULT,
@@ -362,7 +424,32 @@ public class InklessConfig extends AbstractConfig {
     }
 
     public InklessConfig(final Map<String, ?> props) {
-        super(configDef(), props);
+        super(validate(props), props);
+    }
+
+    private static ConfigDef validate(final Map<String, ?> props) {
+        final ConfigDef configDef = configDef();
+
+        final AbstractConfig tempConfig = new AbstractConfig(configDef, props);
+
+        final long thresholdMs = tempConfig.getLong(FETCH_LAGGING_CONSUMER_THRESHOLD_MS_CONFIG);
+        final int cacheLifespanSec = tempConfig.getInt(CONSUME_CACHE_EXPIRATION_LIFESPAN_SEC_CONFIG);
+        final long lifespanMs = Duration.ofSeconds(cacheLifespanSec).toMillis();
+
+        // Validate threshold is not less than cache lifespan (unless using default heuristic).
+        // If threshold < cache lifespan, we'd route requests for potentially cached data to the
+        // cold path, defeating the cache and unnecessarily loading the cold path/storage backend.
+        // Special case: thresholdMs == -1 uses default heuristic (cache TTL itself).
+        if (thresholdMs >= 0 && thresholdMs < lifespanMs) {
+            throw new ConfigException(
+                FETCH_LAGGING_CONSUMER_THRESHOLD_MS_CONFIG,
+                thresholdMs,
+                "Lagging consumer threshold (" + thresholdMs + "ms) must be >= cache lifespan ("
+                    + lifespanMs + "ms) to avoid routing requests for cached data to the lagging path. "
+            );
+        }
+
+        return configDef;
     }
 
     @SuppressWarnings("unchecked")
@@ -457,6 +544,23 @@ public class InklessConfig extends AbstractConfig {
 
     public int fetchMetadataThreadPoolSize() {
         return getInt(FETCH_METADATA_THREAD_POOL_SIZE_CONFIG);
+    }
+
+    public int fetchLaggingConsumerThreadPoolSize() {
+        return getInt(FETCH_LAGGING_CONSUMER_THREAD_POOL_SIZE_CONFIG);
+    }
+
+    public long fetchLaggingConsumerThresholdMs() {
+        final long configuredValue = getLong(FETCH_LAGGING_CONSUMER_THRESHOLD_MS_CONFIG);
+        if (configuredValue == -1) {
+            // Use heuristic: cache TTL (provides grace period for recent data)
+            return Duration.ofSeconds(getInt(CONSUME_CACHE_EXPIRATION_LIFESPAN_SEC_CONFIG)).toMillis();
+        }
+        return configuredValue;
+    }
+
+    public int fetchLaggingConsumerRequestRateLimit() {
+        return getInt(FETCH_LAGGING_CONSUMER_REQUEST_RATE_LIMIT_CONFIG);
     }
 
     public int maxBatchesPerPartitionToFind() {
