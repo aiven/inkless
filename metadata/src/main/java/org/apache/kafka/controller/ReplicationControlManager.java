@@ -803,7 +803,8 @@ public class ReplicationControlManager {
                 }
                 newParts.put(
                     assignment.partitionIndex(),
-                    buildPartitionRegistration(partitionAssignment, isr, topic.mirrorName())
+                    buildPartitionRegistration(partitionAssignment, isr,
+                        topic.mirrorInfo() != null ? topic.mirrorInfo().mirrorName() : null)
                 );
             }
             for (int i = 0; i < newParts.size(); i++) {
@@ -850,7 +851,8 @@ public class ReplicationControlManager {
                     }
                     newParts.put(
                         partitionId,
-                        buildPartitionRegistration(partitionAssignment, isr, topic.mirrorName())
+                        buildPartitionRegistration(partitionAssignment, isr,
+                            topic.mirrorInfo() != null ? topic.mirrorInfo().mirrorName() : null)
                     );
                 }
             } catch (InvalidReplicationFactorException e) {
@@ -873,8 +875,8 @@ public class ReplicationControlManager {
 
         Uuid topicId = Uuid.randomUuid();
         // keep source topicId for mirror topics
-        if (!topic.topicId().equals(Uuid.ZERO_UUID)) {
-            topicId = topic.topicId();
+        if (topic.mirrorInfo() != null && !topic.mirrorInfo().topicId().equals(Uuid.ZERO_UUID)) {
+            topicId = topic.mirrorInfo().topicId();
         }
 
         CreatableTopicResult result = new CreatableTopicResult().

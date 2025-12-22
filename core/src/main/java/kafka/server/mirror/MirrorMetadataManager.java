@@ -293,8 +293,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
 
         // Use random node id here because we don't know node id of remote brokers.
         var brokerEndpoint = new BrokerEndPoint(random.nextInt(), addresses.get(rand).getHostString(), addresses.get(rand).getPort());
-        var logContext = new LogContext("[" + MirrorMetadataManager.class.getName() + " replicaId=" + nodeId
-                + ", remoteBootstrapServers=" + mirrorName + ", " + "readOnly=true] ");
+        var logContext = new LogContext("[" + MirrorMetadataManager.class.getName() + " replicaId=" + nodeId + ", mirrorName=" + mirrorName + "] ");
 
         remoteBrokers.put(mirrorName, List.of(new MirrorBlockingSender(
                 brokerEndpoint,

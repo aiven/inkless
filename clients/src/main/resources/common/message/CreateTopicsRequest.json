@@ -31,7 +31,9 @@
   // in the response if the topics creation is throttled (KIP-599).
   //
   // Version 7 is the same as version 6.
-  "validVersions": "2-7",
+  //
+  // Version 8 adds support for creating mirrored partitions.
+  "validVersions": "2-8",
   "flexibleVersions": "5+",
   "fields": [
     { "name": "Topics", "type": "[]CreatableTopic", "versions": "0+",
@@ -56,10 +58,13 @@
         { "name": "Value", "type": "string", "versions": "0+", "nullableVersions": "0+",
           "about": "The configuration value." }
       ]},
-      { "name": "remoteBootstrapServer", "type": "string", "versions": "7+", "ignorable": true,
-        "about": "If true, check that the topics can be created as specified, but don't create anything." },
-      { "name": "mirrorName", "type": "string", "versions": "7+", "ignorable": true, "about": "The cluster mirror name." },
-      { "name": "TopicId", "type": "uuid", "versions": "7+", "ignorable": true, "about": "The unique topic ID."}
+      { "name": "MirrorInfo", "type": "MirrorInfo", "versions": "8+", "nullableVersions": "8+", "ignorable": true,
+        "about": "Mirror information for creating a mirrored topic from a source cluster.", "fields": [
+        { "name": "mirrorName", "type": "string", "versions": "8+",
+          "about": "The cluster mirror name." },
+        { "name": "topicId", "type": "uuid", "versions": "8+",
+          "about": "The topic ID from the source cluster." }
+      ]}
     ]},
     { "name": "timeoutMs", "type": "int32", "versions": "0+", "default": "60000",
       "about": "How long to wait in milliseconds before timing out the request." },

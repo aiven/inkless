@@ -34,7 +34,9 @@
   // in the response if the topics creation is throttled (KIP-599).
   //
   // Version 7 returns the topic ID of the newly created topic if creation is successful.
-  "validVersions": "2-7",
+  //
+  // Version 8 adds support for creating mirrored partitions.
+  "validVersions": "2-8",
   "flexibleVersions": "5+",
   "fields": [
     { "name": "ThrottleTimeMs", "type": "int32", "versions": "2+", "ignorable": true,

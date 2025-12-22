@@ -274,10 +274,11 @@ class KafkaApis(val requestChannel: RequestChannel,
   def handleCreateTopics(request: RequestChannel.Request): Unit = {
     val createTopicsRequest = request.body[CreateTopicsRequest]
     // TODO: might need to have a better way to pass the cluster mirror
-    val mirrorTopic = createTopicsRequest.data.topics.stream().filter(t => t.mirrorName() != null && !t.mirrorName().isEmpty).findFirst()
+    val mirrorTopic = createTopicsRequest.data.topics.stream()
+      .filter(t => t.mirrorInfo() != null && t.mirrorInfo().mirrorName() != null && !t.mirrorInfo().mirrorName().isEmpty).findFirst()
     if (mirrorTopic.isPresent) {
-      logger.info(s"!!! Handling create mirror topics request: ${mirrorTopic.get().mirrorName()}")
-      mirrorCoordinator.updateTopicsToCoordinator(mirrorTopic.get().mirrorName(), util.Set.of(mirrorTopic.get().name()), util.Set.of())
+      logger.info(s"!!! Handling create mirror topics request: ${mirrorTopic.get().mirrorInfo().mirrorName()}")
+      mirrorCoordinator.updateTopicsToCoordinator(mirrorTopic.get().mirrorInfo().mirrorName(), util.Set.of(mirrorTopic.get().name()), util.Set.of())
     }
     forwardToController(request)
   }
@@ -288,7 +289,7 @@ class KafkaApis(val requestChannel: RequestChannel,
     val mirrorTopic = addTopicsToMirrorRequest.data.topics().stream().filter(t => t.mirrorName() != null && !t.mirrorName().isEmpty).findFirst()
     if (mirrorTopic.isPresent) {
       if (isClusterMirroringEnabled) {
-        logger.info(s"!!! Handling adding mirror topics request: ${mirrorTopic.get().mirrorName()}")
+        logger.info(s"!!! Handling add topics to mirror request: ${mirrorTopic.get().mirrorName()}")
         mirrorCoordinator.updateTopicsToCoordinator(mirrorTopic.get().mirrorName(), util.Set.of(mirrorTopic.get().topicName()), util.Set.of())
       } else {
         logger.warn("Cluster mirroring is disabled (mirror.version=0), ignoring mirror topic creation request")
@@ -301,7 +302,7 @@ class KafkaApis(val requestChannel: RequestChannel,
     val removeTopicsFromMirrorRequest = request.body[RemoveTopicsFromMirrorRequest]
     // TODO: might need to have a better way to pass the cluster mirror
     val mirrorTopics = removeTopicsFromMirrorRequest.data.topics.stream().map(t => t.topicName()).toList
-    logger.info(s"!!! Handling remove mirror topics request: ${removeTopicsFromMirrorRequest} ${mirrorTopics}")
+    logger.info(s"!!! Handling remove topics from mirror request: $removeTopicsFromMirrorRequest $mirrorTopics")
 
     mirrorCoordinator.updateTopicsToCoordinator(removeTopicsFromMirrorRequest.data().mirrorName(), util.Set.of(), new util.HashSet[String](mirrorTopics))
     forwardToController(request)
