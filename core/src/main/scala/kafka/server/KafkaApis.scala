@@ -21,6 +21,7 @@ import kafka.coordinator.transaction.{InitProducerIdResult, TransactionCoordinat
 import kafka.network.RequestChannel
 import kafka.server.QuotaFactory.{QuotaManagers, UNBOUNDED_QUOTA}
 import kafka.server.handlers.DescribeTopicPartitionsRequestHandler
+import kafka.server.metadata.KRaftMetadataCache
 import kafka.server.mirror.MirrorCoordinator
 import kafka.server.share.{ShareFetchUtils, SharePartitionManager}
 import kafka.utils.Logging
@@ -30,7 +31,7 @@ import org.apache.kafka.common.acl.AclOperation
 import org.apache.kafka.common.acl.AclOperation._
 import org.apache.kafka.common.config.ConfigResource
 import org.apache.kafka.common.errors._
-import org.apache.kafka.common.internals.Topic.{MIRROR_STATE_TOPIC_NAME, GROUP_METADATA_TOPIC_NAME, SHARE_GROUP_STATE_TOPIC_NAME, TRANSACTION_STATE_TOPIC_NAME, isInternal}
+import org.apache.kafka.common.internals.Topic.{GROUP_METADATA_TOPIC_NAME, MIRROR_STATE_TOPIC_NAME, SHARE_GROUP_STATE_TOPIC_NAME, TRANSACTION_STATE_TOPIC_NAME, isInternal}
 import org.apache.kafka.common.internals.{FatalExitError, Plugin, Topic}
 import org.apache.kafka.common.message.AddPartitionsToTxnResponseData.{AddPartitionsToTxnResult, AddPartitionsToTxnResultCollection}
 import org.apache.kafka.common.message.DeleteRecordsResponseData.{DeleteRecordsPartitionResult, DeleteRecordsTopicResult}
@@ -278,7 +279,7 @@ class KafkaApis(val requestChannel: RequestChannel,
       .filter(t => t.mirrorInfo() != null && t.mirrorInfo().mirrorName() != null && !t.mirrorInfo().mirrorName().isEmpty).findFirst()
     if (mirrorTopic.isPresent) {
       logger.info(s"!!! Handling create mirror topics request: ${mirrorTopic.get().mirrorInfo().mirrorName()}")
-      mirrorCoordinator.updateTopicsToCoordinator(mirrorTopic.get().mirrorInfo().mirrorName(), util.Set.of(mirrorTopic.get().name()), util.Set.of())
+      mirrorCoordinator.updateMirrorTopicsMetadata(mirrorTopic.get().mirrorInfo().mirrorName(), util.Set.of(mirrorTopic.get().name()), util.Set.of())
     }
     forwardToController(request)
   }
@@ -289,8 +290,8 @@ class KafkaApis(val requestChannel: RequestChannel,
     val mirrorTopic = addTopicsToMirrorRequest.data.topics().stream().filter(t => t.mirrorName() != null && !t.mirrorName().isEmpty).findFirst()
     if (mirrorTopic.isPresent) {
       if (isClusterMirroringEnabled) {
-        logger.info(s"!!! Handling add topics to mirror request: ${mirrorTopic.get().mirrorName()}")
-        mirrorCoordinator.updateTopicsToCoordinator(mirrorTopic.get().mirrorName(), util.Set.of(mirrorTopic.get().topicName()), util.Set.of())
+        logger.info(s"!!! Handling adding mirror topics request: ${mirrorTopic.get().mirrorName()}")
+        mirrorCoordinator.updateMirrorTopicsMetadata(mirrorTopic.get().mirrorName(), util.Set.of(mirrorTopic.get().topicName()), util.Set.of())
       } else {
         logger.warn("Cluster mirroring is disabled (mirror.version=0), ignoring mirror topic creation request")
       }
@@ -304,7 +305,27 @@ class KafkaApis(val requestChannel: RequestChannel,
     val mirrorTopics = removeTopicsFromMirrorRequest.data.topics.stream().map(t => t.topicName()).toList
     logger.info(s"!!! Handling remove topics from mirror request: $removeTopicsFromMirrorRequest $mirrorTopics")
 
-    mirrorCoordinator.updateTopicsToCoordinator(removeTopicsFromMirrorRequest.data().mirrorName(), util.Set.of(), new util.HashSet[String](mirrorTopics))
+    // update the cached topics in coordinator
+    mirrorCoordinator.updateMirrorTopicsMetadata(removeTopicsFromMirrorRequest.data().mirrorName(), util.Set.of(), new util.HashSet[String](mirrorTopics))
+
+    // update the last mirrored offset in coordinator
+    val partitionOffsets = new util.HashMap[String, util.Map[java.lang.Integer, java.lang.Long]]()
+    mirrorTopics.forEach(topic => {
+      metadataCache.asInstanceOf[KRaftMetadataCache].numPartitions(topic).ifPresent(numPartitions => {
+        val offsets = new util.HashMap[java.lang.Integer, java.lang.Long]()
+        for(i <- 0 until numPartitions) {
+          val partition = new TopicPartition(topic, i)
+          replicaManager.getPartitionOrError(partition) match {
+            case Left(err) => logger.error(s"Failed to get partition $partition from mirror: ${err.message}")
+            case Right(partition) => partition.log.foreach(log => offsets.put(i, log.lastStableOffset()))
+          }
+        }
+        partitionOffsets.put(topic, offsets)
+      })
+    })
+
+    logger.info(s"!!! Partition offsets for mirror topics: ${partitionOffsets}")
+    mirrorCoordinator.updateLastMirroredOffsetsMetadata(removeTopicsFromMirrorRequest.data().mirrorName(), partitionOffsets)
     forwardToController(request)
   }
 

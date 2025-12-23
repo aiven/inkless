@@ -99,6 +99,7 @@ import java.util.Optional;
 import java.util.Properties;
 import java.util.Random;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Supplier;
 
 import static java.util.Collections.singletonList;
@@ -154,6 +155,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     private final Supplier<GroupCoordinator> groupCoordinatorSupplier;
     private final LogManager logManager;
     private final Scheduler scheduler;
+    private Map<String, Set<LastMirroredOffset>> lastMirroredOffsets = new ConcurrentHashMap<>();
 
     public MirrorMetadataManager(
         KafkaConfig config,
@@ -238,13 +240,33 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         return new Node(random.nextInt(), addresses.get(rand).getHostString(), addresses.get(rand).getPort());
     }
 
-    public Set<String> updateMirroredTopics(String clusterName, Set<String> addedTopics, Set<String> removedTopics) {
+    public Set<String> updateMirrorTopicsCache(String clusterName, Set<String> addedTopics, Set<String> removedTopics) {
         Set<String> mutableTopics = new HashSet<>(this.topics.getOrDefault(clusterName, Set.of()));
         mutableTopics.removeAll(removedTopics);
         mutableTopics.addAll(addedTopics);
         this.topics.put(clusterName, mutableTopics);
 
         return mutableTopics;
+    }
+
+    // update the cache for the last mirrored offests
+    public Set<LastMirroredOffset> updateLastMirroredOffsetsCache(String clusterName,
+                                                                  Map<String, Map<Integer, Long>> addedCheckpointOffsets,
+                                                                  Map<String, Map<Integer, Long>> removedCheckpointOffsets) {
+        Set<LastMirroredOffset> offsets = new HashSet<>(this.lastMirroredOffsets.getOrDefault(clusterName, Set.of()));
+        removedCheckpointOffsets.forEach((topic, partitionOffsets) -> {
+            partitionOffsets.forEach((partition, offset) -> {
+                offsets.remove(new LastMirroredOffset(topic, partition, offset));
+            });
+        });
+        addedCheckpointOffsets.forEach((topic, partitionOffsets) -> {
+            partitionOffsets.forEach((partition, offset) -> {
+                offsets.add(new LastMirroredOffset(topic, partition, offset));
+            });
+        });
+        this.lastMirroredOffsets.put(clusterName, offsets);
+
+        return offsets;
     }
 
     public void refreshMetadata() {
@@ -705,4 +727,6 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
             LOG.info("!!! Update topics: {}", response);
         }
     }
+
+    public record LastMirroredOffset(String topic, int partition, long offset) {}
 }
