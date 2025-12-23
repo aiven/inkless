@@ -51,7 +51,6 @@ import org.apache.kafka.common.message.AlterPartitionResponseData;
 import org.apache.kafka.common.message.AssignReplicasToDirsRequestData;
 import org.apache.kafka.common.message.AssignReplicasToDirsResponseData;
 import org.apache.kafka.common.message.BrokerHeartbeatRequestData;
-import org.apache.kafka.common.message.BumpLeaderEpochResponseData;
 import org.apache.kafka.common.message.CreatePartitionsRequestData.CreatePartitionsTopic;
 import org.apache.kafka.common.message.CreatePartitionsResponseData.CreatePartitionsTopicResult;
 import org.apache.kafka.common.message.CreateTopicsRequestData;
@@ -139,7 +138,6 @@ import static org.apache.kafka.common.protocol.Errors.NO_REASSIGNMENT_IN_PROGRES
 import static org.apache.kafka.common.protocol.Errors.TOPIC_AUTHORIZATION_FAILED;
 import static org.apache.kafka.common.protocol.Errors.UNKNOWN_TOPIC_ID;
 import static org.apache.kafka.common.protocol.Errors.UNKNOWN_TOPIC_OR_PARTITION;
-import static org.apache.kafka.common.record.RecordBatch.NO_PARTITION_LEADER_EPOCH;
 import static org.apache.kafka.controller.PartitionReassignmentReplicas.isReassignmentInProgress;
 import static org.apache.kafka.controller.QuorumController.MAX_RECORDS_PER_USER_OP;
 import static org.apache.kafka.metadata.LeaderConstants.NO_LEADER;
@@ -680,38 +678,6 @@ public class ReplicationControlManager {
         }
 
         return ControllerResult.of(records, new RemoveTopicsFromMirrorResponseData().setErrorCode((short) 0));
-    }
-
-    public ControllerResult<BumpLeaderEpochResponseData> bumpLeaderEpochs(Map<Uuid, Map<Integer, Integer>> partitionLeaderEpochs) {
-
-        List<ApiMessageAndVersion> records = BoundedList.newArrayBacked(MAX_RECORDS_PER_USER_OP);
-        for (Entry<Uuid, Map<Integer, Integer>> partitionLeaderEpoch : partitionLeaderEpochs.entrySet()) {
-            Uuid topicId = partitionLeaderEpoch.getKey();
-            Map<Integer, Integer> leaderEpochs = partitionLeaderEpoch.getValue();
-            TopicControlInfo info = topics.get(topicId);
-            String topicName = info.name;
-            for (int partitionId : info.parts.keySet()) {
-                PartitionRegistration partition = info.parts.get(partitionId);
-                PartitionChangeBuilder builder = new PartitionChangeBuilder(
-                        partition,
-                        info.topicId(),
-                        partitionId,
-                        new LeaderAcceptor(clusterControl, partition),
-                        featureControl.metadataVersionOrThrow(),
-                        getTopicEffectiveMinIsr(topicName)
-                )
-                        // set the min leader epoch for each partition
-                        .setMinLeaderEpoch(leaderEpochs.getOrDefault(partitionId, NO_PARTITION_LEADER_EPOCH))
-                        .setMirrorName(partition.mirrorName)
-                        .setEligibleLeaderReplicasEnabled(featureControl.isElrFeatureEnabled())
-                        .setDefaultDirProvider(clusterDescriber);
-
-                builder.build().ifPresent(records::add);
-                log.info("!!! update partition {} for topic {} with cluster mirror: {}", partitionId, topicName, records);
-            }
-        }
-
-        return ControllerResult.of(records, new BumpLeaderEpochResponseData().setErrorCode((short) 0));
     }
 
     ControllerResult<CreateTopicsResponseData> createTopics(
