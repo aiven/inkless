@@ -21,6 +21,7 @@ import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.message.CreateTopicsRequestData.CreatableReplicaAssignment;
 import org.apache.kafka.common.message.CreateTopicsRequestData.CreatableTopic;
 import org.apache.kafka.common.message.CreateTopicsRequestData.CreatableTopicConfig;
+import org.apache.kafka.common.message.CreateTopicsRequestData.MirrorInfo;
 import org.apache.kafka.common.requests.CreateTopicsRequest;
 
 import java.util.Collection;
@@ -40,9 +41,8 @@ public class NewTopic {
     private final Optional<Short> replicationFactor;
     private final Map<Integer, List<Integer>> replicasAssignments;
     private Map<String, String> configs = null;
-    private Optional<String> remoteBootstrapServer = Optional.empty();
     private Optional<String> topicId = Optional.empty();
-    private Optional<String> linkName = Optional.empty();
+    private Optional<String> mirrorName = Optional.empty();
 
     /**
      * A new topic with the specified replication factor and number of partitions.
@@ -63,14 +63,13 @@ public class NewTopic {
         this.replicasAssignments = null;
     }
 
-    public NewTopic(String name, Optional<Integer> numPartitions, Optional<Short> replicationFactor, Optional<String> remoteBootstrapServer, Optional<String> topicId, Optional<String> linkName) {
+    public NewTopic(String name, Optional<Integer> numPartitions, Optional<Short> replicationFactor, Optional<String> mirrorName, Optional<String> topicId) {
         this.name = name;
         this.numPartitions = numPartitions;
         this.replicationFactor = replicationFactor;
         this.replicasAssignments = null;
-        this.remoteBootstrapServer = remoteBootstrapServer;
+        this.mirrorName = mirrorName;
         this.topicId = topicId;
-        this.linkName = linkName;
     }
 
     /**
@@ -93,10 +92,6 @@ public class NewTopic {
      */
     public String name() {
         return name;
-    }
-
-    public Optional<String> remoteBootstrapServer() {
-        return remoteBootstrapServer;
     }
 
     /**
@@ -144,15 +139,13 @@ public class NewTopic {
             setName(name).
             setNumPartitions(numPartitions.orElse(CreateTopicsRequest.NO_NUM_PARTITIONS)).
             setReplicationFactor(replicationFactor.orElse(CreateTopicsRequest.NO_REPLICATION_FACTOR));
-        if (remoteBootstrapServer.isPresent()) {
-            creatableTopic.setRemoteBootstrapServer(remoteBootstrapServer.get());
-        }
-        if (topicId.isPresent()) {
-            creatableTopic.setTopicId(Uuid.fromString(topicId.get()));
-        }
 
-        if (linkName.isPresent()) {
-            creatableTopic.setMirrorName(linkName.get());
+        if (mirrorName.isPresent() && topicId.isPresent()) {
+            creatableTopic.setMirrorInfo(
+                new MirrorInfo()
+                    .setMirrorName(mirrorName.get())
+                    .setTopicId(Uuid.fromString(topicId.get()))
+            );
         }
         if (replicasAssignments != null) {
             for (Entry<Integer, List<Integer>> entry : replicasAssignments.entrySet()) {

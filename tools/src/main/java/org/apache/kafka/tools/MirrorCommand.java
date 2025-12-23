@@ -33,7 +33,6 @@ import org.apache.kafka.common.Node;
 import org.apache.kafka.common.errors.TopicExistsException;
 import org.apache.kafka.common.utils.Exit;
 import org.apache.kafka.common.utils.Utils;
-import org.apache.kafka.server.config.MirrorConfig;
 import org.apache.kafka.server.util.CommandDefaultOptions;
 import org.apache.kafka.server.util.CommandLineUtils;
 
@@ -126,14 +125,9 @@ public abstract class MirrorCommand {
         public void createMirror(MirrorCommandOptions opts) throws ExecutionException, InterruptedException {
             System.out.println("Creating mirror " + opts.mirror().get());
 
-            // Use the remote bootstrap server from command line option if provided
-            Map<String, String> effectiveMirrorConfigs = new HashMap<>(mirrorConfigs);
-            opts.remoteBootstrapServer().ifPresent(server ->
-                effectiveMirrorConfigs.put(MirrorConfig.BOOTSTRAP_SERVERS_CONFIG, server));
-
             CreateMirrorResult result = adminClient.createMirror(
                 opts.mirror().get(),
-                effectiveMirrorConfigs,
+                mirrorConfigs,
                 new CreateMirrorOptions()
             );
             result.all().get();
@@ -160,9 +154,8 @@ public abstract class MirrorCommand {
             NewTopic newTopic = new NewTopic(topicName,
                 Optional.empty(), // partitions - will use source topic partitions
                 opts.replicationFactor(), // replicationFactor - use provided value or cluster default
-                Optional.of(opts.remoteBootstrapServer().get()),
-                Optional.of(opts.topicId().get()),
-                Optional.of(mirrorName));
+                Optional.of(mirrorName),
+                Optional.of(opts.topicId().get()));
 
             // Create topic using coordinator's bootstrap server
             Node node = coordinator.get();
@@ -230,7 +223,6 @@ public abstract class MirrorCommand {
 
     public static final class MirrorCommandOptions extends CommandDefaultOptions {
         private final ArgumentAcceptingOptionSpec<String> bootstrapServerOpt;
-        private final ArgumentAcceptingOptionSpec<String> remoteBootstrapServerOpt;
         private final ArgumentAcceptingOptionSpec<String> commandConfigOpt;
         private final ArgumentAcceptingOptionSpec<String> mirrorConfigOpt;
         private final OptionSpecBuilder createOpt;
@@ -247,11 +239,6 @@ public abstract class MirrorCommand {
             bootstrapServerOpt = parser.accepts("bootstrap-server", "REQUIRED: The destination Kafka server to connect to.")
                 .withRequiredArg()
                 .describedAs("server to connect to")
-                .ofType(String.class);
-
-            remoteBootstrapServerOpt = parser.accepts("remote-bootstrap-server", "The source Kafka server to connect to for mirroring.")
-                .withRequiredArg()
-                .describedAs("remote server to connect to")
                 .ofType(String.class);
 
             commandConfigOpt = parser.accepts("command-config", "Property file containing configs to be passed to Admin Client.")
@@ -316,10 +303,6 @@ public abstract class MirrorCommand {
             return valueAsOption(bootstrapServerOpt);
         }
 
-        public Optional<String> remoteBootstrapServer() {
-            return valueAsOption(remoteBootstrapServerOpt);
-        }
-
         public Properties commandConfig() throws IOException {
             if (has(commandConfigOpt)) {
                 return Utils.loadProps(options.valueOf(commandConfigOpt));
@@ -372,14 +355,11 @@ public abstract class MirrorCommand {
             if (!has(mirrorOpt))
                 throw new IllegalArgumentException("--mirror must be specified");
 
-            if (has(createOpt) && !has(mirrorConfigOpt) && !has(remoteBootstrapServerOpt))
-                throw new IllegalArgumentException("Either --mirror-config or --remote-bootstrap-server must be specified when creating a mirror");
+            if (has(createOpt) && !has(mirrorConfigOpt))
+                throw new IllegalArgumentException("--mirror-config must be specified when creating a mirror");
 
             if (has(addOpt) && !has(topicOpt))
                 throw new IllegalArgumentException("--topic must be specified when adding a topic to a mirror");
-
-            if (has(addOpt) && !has(remoteBootstrapServerOpt))
-                throw new IllegalArgumentException("--remote-bootstrap-server must be specified when adding a topic to a mirror");
 
             if (has(addOpt) && !has(topicIdOpt))
                 throw new IllegalArgumentException("--topic-id must be specified when adding a topic to a mirror");
