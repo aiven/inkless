@@ -228,10 +228,7 @@ public class Reader implements AutoCloseable {
     }
 
     /**
-     * Waits for all file extent futures to complete and collects results without blocking threads.
-     * <p>
-     * This method preserves the original order of the input list, regardless of the order
-     * in which the futures complete.
+     * Waits for all file extent futures to complete and collects results in order.
      *
      * @param fileExtentFutures the list of futures to wait for
      * @return a future that completes with a list of file extents in the same order as the input
@@ -239,6 +236,11 @@ public class Reader implements AutoCloseable {
     static CompletableFuture<List<FileExtent>> allOfFileExtents(
         List<CompletableFuture<FileExtent>> fileExtentFutures
     ) {
+        // This does **not** block the calling thread or fork-join pool:
+        // 1. allOf() returns immediately with a future (non-blocking)
+        // 2. thenApply() registers a callback without waiting (non-blocking)
+        // 3. join() inside the callback is safe - it only runs _after_ allOf completes,
+        //    meaning all futures are already done, so join() returns immediately
         final CompletableFuture<?>[] futuresArray = fileExtentFutures.toArray(CompletableFuture[]::new);
         return CompletableFuture.allOf(futuresArray)
             .thenApply(v ->
