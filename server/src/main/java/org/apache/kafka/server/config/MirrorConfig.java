@@ -51,6 +51,13 @@ public class MirrorConfig {
     public static final String MIRROR_TOPIC_REPLICATION_FACTOR_DOC = "The replication factor for the Cluster Mirror internal topic. " +
             "Topic creation will fail until the cluster size meets this replication factor requirement.";
 
+    // Fetcher configuration
+    public static final String NUM_REPLICA_FETCHERS_CONFIG = "mirror.num.replica.fetchers";
+    public static final int NUM_REPLICA_FETCHERS_DEFAULT = 1;
+    public static final String NUM_REPLICA_FETCHERS_DOC = "Number of fetcher threads used to replicate records from remote clusters via cluster mirror. " +
+            "The total number of remote fetchers on each broker is bound by <code>mirror.num.replica.fetchers</code> multiplied by the number of cluster mirrors. " +
+            "Increasing this value can increase the degree of I/O parallelism for cross-cluster replication at the cost of higher CPU and memory utilization.";
+
     // Connection configuration
     public static final String BOOTSTRAP_SERVERS_CONFIG = CommonClientConfigs.BOOTSTRAP_SERVERS_CONFIG;
     public static final String BOOTSTRAP_SERVERS_DOC = "A list of host/port pairs to use for establishing the initial connection to the Kafka cluster for Cluster Mirror.";
@@ -194,6 +201,9 @@ public class MirrorConfig {
             .define(MIRROR_TOPIC_NUM_PARTITIONS_CONFIG, INT, MIRROR_TOPIC_NUM_PARTITIONS_DEFAULT, atLeast(1), HIGH, MIRROR_TOPIC_NUM_PARTITIONS_DOC)
             .define(MIRROR_TOPIC_REPLICATION_FACTOR_CONFIG, SHORT, MIRROR_TOPIC_REPLICATION_FACTOR_DEFAULT, atLeast(1), HIGH, MIRROR_TOPIC_REPLICATION_FACTOR_DOC)
 
+            // Fetcher configuration
+            .define(NUM_REPLICA_FETCHERS_CONFIG, INT, NUM_REPLICA_FETCHERS_DEFAULT, atLeast(1), HIGH, NUM_REPLICA_FETCHERS_DOC)
+
             // Connection configuration
             .define(BOOTSTRAP_SERVERS_CONFIG, LIST, null, HIGH, BOOTSTRAP_SERVERS_DOC)
             .define(METADATA_MAX_AGE_CONFIG, LONG, METADATA_MAX_AGE_DEFAULT, atLeast(0), LOW, METADATA_MAX_AGE_DOC)
@@ -292,6 +302,10 @@ public class MirrorConfig {
         return sslProtocol;
     }
 
+    public int numReplicaFetchers() {
+        return config.getInt(NUM_REPLICA_FETCHERS_CONFIG);
+    }
+
     /**
      * Returns the underlying AbstractConfig instance.
      * This provides access to all configuration values including those processed by config providers.
@@ -314,14 +328,15 @@ public class MirrorConfig {
     }
 
     /**
-     * Creates a ConfigDef that only includes internal topic properties.
-     * This is used in AbstractKafkaConfig to only merge the internal topic configurations.
+     * Creates a ConfigDef that includes broker-level mirror configurations.
+     * This is used in AbstractKafkaConfig to merge mirror configurations into the broker config.
      *
-     * @return ConfigDef containing only internal topic configurations
+     * @return ConfigDef containing broker-level mirror configurations
      */
     public static ConfigDef topicConfigDef() {
         return new ConfigDef()
             .define(MIRROR_TOPIC_NUM_PARTITIONS_CONFIG, INT, MIRROR_TOPIC_NUM_PARTITIONS_DEFAULT, atLeast(1), HIGH, MIRROR_TOPIC_NUM_PARTITIONS_DOC)
-            .define(MIRROR_TOPIC_REPLICATION_FACTOR_CONFIG, SHORT, MIRROR_TOPIC_REPLICATION_FACTOR_DEFAULT, atLeast(1), HIGH, MIRROR_TOPIC_REPLICATION_FACTOR_DOC);
+            .define(MIRROR_TOPIC_REPLICATION_FACTOR_CONFIG, SHORT, MIRROR_TOPIC_REPLICATION_FACTOR_DEFAULT, atLeast(1), HIGH, MIRROR_TOPIC_REPLICATION_FACTOR_DOC)
+            .define(NUM_REPLICA_FETCHERS_CONFIG, INT, NUM_REPLICA_FETCHERS_DEFAULT, atLeast(1), HIGH, NUM_REPLICA_FETCHERS_DOC);
     }
 }
