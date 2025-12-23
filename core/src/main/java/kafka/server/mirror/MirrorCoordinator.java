@@ -113,6 +113,10 @@ public class MirrorCoordinator {
         this.mirrorMetadataManager = mirrorMetadataManager;
     }
 
+    /**
+     * Starts the mirror coordinator and begins periodic metadata refresh from source clusters.
+     * Schedules background tasks to synchronize topic metadata, offsets, and ACLs.
+     */
     public void startup() {
         if (!isActive.compareAndSet(false, true)) {
             LOG.warn("MirrorCoordinator is already running.");
@@ -130,9 +134,17 @@ public class MirrorCoordinator {
         numPartitions = config.mirrorConfig().mirrorTopicNumPartitions();
     }
 
+    /**
+     * Updates the mirrored topics metadata for a given cluster mirror.
+     * Adds or removes topics from the mirror configuration and persists changes to the internal topic.
+     *
+     * @param mirrorName the name of the cluster mirror
+     * @param addedTopics topics to add to the mirror
+     * @param removedTopics topics to remove from the mirror
+     */
     // TODO: handle response
     public void updateMirrorTopicsMetadata(String mirrorName, Set<String> addedTopics, Set<String> removedTopics) {
-        var mirrorTopicPartition = new TopicPartition(Topic.MIRROR_STATE_TOPIC_NAME, partitionFor(new MirrorRecordKey(mirrorName)));
+        var mirrorTopicPartition = new TopicPartition(Topic.MIRROR_STATE_TOPIC_NAME, partitionIndexForKey(new MirrorRecordKey(mirrorName)));
         var mirrorTopicIdPartition = replicaManager.topicIdPartition(mirrorTopicPartition);
 
         var topics = mirrorMetadataManager.updateMirrorTopicsCache(mirrorName, addedTopics, removedTopics);
@@ -159,17 +171,23 @@ public class MirrorCoordinator {
 
     private Map<String, Map<Integer, Long>> lastMirroredOffstesToCoordinatorRecords(Set<MirrorMetadataManager.LastMirroredOffset> offsets) {
         Map<String, Map<Integer, Long>> results = new HashMap<>();
-
         offsets.forEach(offset -> {
-           Map<Integer, Long> partitionOffsets = results.getOrDefault(offset.topic(), new HashMap<Integer, Long>());
-           partitionOffsets.put(offset.partition(), offset.offset());
-           results.put(offset.topic(), partitionOffsets);
+            Map<Integer, Long> partitionOffsets = results.getOrDefault(offset.topic(), new HashMap<Integer, Long>());
+            partitionOffsets.put(offset.partition(), offset.offset());
+            results.put(offset.topic(), partitionOffsets);
         });
         return results;
     }
 
+    /**
+     * Updates the last mirrored offsets metadata for a given cluster mirror.
+     * Records the latest successfully mirrored offset for each partition to support failback scenarios.
+     *
+     * @param mirrorName the name of the cluster mirror
+     * @param partitionOffsets map of topic names to partition offsets
+     */
     public void updateLastMirroredOffsetsMetadata(String mirrorName, Map<String, Map<Integer, Long>> partitionOffsets) {
-        var mirrorTopicPartition = new TopicPartition(Topic.MIRROR_STATE_TOPIC_NAME, partitionFor(new MirrorRecordKey(mirrorName)));
+        var mirrorTopicPartition = new TopicPartition(Topic.MIRROR_STATE_TOPIC_NAME, partitionIndexForKey(new MirrorRecordKey(mirrorName)));
         var mirrorTopicIdPartition = replicaManager.topicIdPartition(mirrorTopicPartition);
 
         var updatedOffsets = mirrorMetadataManager.updateLastMirroredOffsetsCache(mirrorName, partitionOffsets, Map.of());
@@ -192,7 +210,6 @@ public class MirrorCoordinator {
                 RequestLocal.noCaching(),
                 CollectionConverters.asScala(Map.of())
         );
-
     }
 
     private static CoordinatorRecord generateMirrorTopics(String mirrorName, Set<String> topics) {
@@ -208,13 +225,12 @@ public class MirrorCoordinator {
         var val = new LastMirroredOffsetsValue();
         var topics = new ArrayList<LastMirroredOffsetsValue.Topic>();
         offsets.forEach((topic, partitionOffsets) -> {
-           var top = new LastMirroredOffsetsValue.Topic();
-           List<LastMirroredOffsetsValue.Partition> partitions = new ArrayList<>();
-           partitionOffsets.forEach((partition, offset) -> {
-               partitions.add(new LastMirroredOffsetsValue.Partition().setPartitionIndex(partition).setLastMirroredOffset(offset));
-           });
-           top.setPartitions(partitions);
-           topics.add(top);
+            var top = new LastMirroredOffsetsValue.Topic();
+            List<LastMirroredOffsetsValue.Partition> partitions = new ArrayList<>();
+            partitionOffsets.forEach((partition, offset) ->
+                    partitions.add(new LastMirroredOffsetsValue.Partition().setPartitionIndex(partition).setLastMirroredOffset(offset)));
+            top.setPartitions(partitions);
+            topics.add(top);
         });
         val.setTopics(topics);
         var apiVersion = new ApiMessageAndVersion(val, LastMirroredOffsetsValue.HIGHEST_SUPPORTED_VERSION);
@@ -245,19 +261,19 @@ public class MirrorCoordinator {
     }
 
     private Map<String, Map<Integer, Long>> readLastMirroredOffsetsValue(ByteBuffer buffer) {
-        Map<String, Map<Integer, Long>> checkpoints = new HashMap<>();
+        Map<String, Map<Integer, Long>> offsets = new HashMap<>();
         short version = buffer.getShort();
         if (version <= LastMirroredOffsetsValue.HIGHEST_SUPPORTED_VERSION & version >= LastMirroredOffsetsValue.LOWEST_SUPPORTED_VERSION) {
             LastMirroredOffsetsValue value = new LastMirroredOffsetsValue(new ByteBufferAccessor(buffer), version);
             value.topics().forEach(t -> {
                 Map<Integer, Long> partitions = new HashMap<>();
                 t.partitions().forEach(p -> partitions.put(p.partitionIndex(), p.lastMirroredOffset()));
-                checkpoints.put(t.name(), partitions);
+                offsets.put(t.name(), partitions);
             });
         } else {
-            throw new IllegalStateException("Unknown version {} from the mirror checkpoint value");
+            throw new IllegalStateException("Unknown version {} from last mirrored offsets value");
         }
-        return checkpoints;
+        return offsets;
     }
 
     private void loadMirrorMetadata(TopicPartition topicPartition) {
@@ -317,8 +333,8 @@ public class MirrorCoordinator {
                                 mirrorMetadataManager.updateMirrorTopicsCache(clusterName, topics, Set.of());
                             } else if (version == CoordinatorRecordType.LAST_MIRRORED_OFFSETS.id()) {
                                 String clusterName = readMirrorNameFromKey(record.key());
-                                Map<String, Map<Integer, Long>> checkpoints = readLastMirroredOffsetsValue(record.value());
-                                mirrorMetadataManager.updateLastMirroredOffsetsCache(clusterName, checkpoints, Map.of());
+                                Map<String, Map<Integer, Long>> offsets = readLastMirroredOffsetsValue(record.value());
+                                mirrorMetadataManager.updateLastMirroredOffsetsCache(clusterName, offsets, Map.of());
                             } else {
                                 throw new IllegalArgumentException("Unknown cluster mirror log key version " + version);
                             }
@@ -334,7 +350,13 @@ public class MirrorCoordinator {
         });
     }
 
-    // called when onMetadataUpdate, needs to handle new leader elected
+    /**
+     * Handles leadership election for a mirror state topic partition.
+     * Loads mirror metadata from the internal topic when this broker becomes the leader.
+     *
+     * @param partitionIndex the partition index of the mirror state topic
+     * @param partitionLeaderEpoch the leader epoch of the partition
+     */
     public void onElection(
             int partitionIndex,
             int partitionLeaderEpoch
@@ -343,7 +365,13 @@ public class MirrorCoordinator {
         loadMirrorMetadata(new TopicPartition(Topic.MIRROR_STATE_TOPIC_NAME, partitionIndex));
     }
 
-    // called when onMetadataUpdate, needs to handle old leader resigned
+    /**
+     * Handles leadership resignation for a mirror state topic partition.
+     * Clears cached mirror metadata when this broker is no longer the leader.
+     *
+     * @param partitionIndex the partition index of the mirror state topic
+     * @param partitionLeaderEpoch the leader epoch of the partition
+     */
     public void onResignation(
             int partitionIndex,
             OptionalInt partitionLeaderEpoch
@@ -357,6 +385,10 @@ public class MirrorCoordinator {
         mirrorMetadataManager.clear();
     }
 
+    /**
+     * Shuts down the mirror coordinator and releases all resources.
+     * Stops periodic metadata refresh and closes metrics.
+     */
     public void shutdown() {
         if (!isActive.compareAndSet(true, false)) {
             LOG.warn("MirrorCoordinator is already shutting down.");
@@ -369,9 +401,13 @@ public class MirrorCoordinator {
     }
 
     /**
-     * Return the partition index for the given key.
+     * Returns the partition index for the given mirror record key.
+     * Used to determine which partition in the mirror state topic should store this key.
+     *
+     * @param key the mirror record key
+     * @return the partition index
      */
-    public int partitionFor(MirrorRecordKey key) {
+    public int partitionIndexForKey(MirrorRecordKey key) {
         throwIfNotActive();
         return Utils.abs(key.asCoordinatorKey().hashCode()) % numPartitions;
     }

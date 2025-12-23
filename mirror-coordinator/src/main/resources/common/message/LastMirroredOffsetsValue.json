@@ -22,7 +22,7 @@
   "flexibleVersions": "0+",
   "fields": [
     { "name": "Topics", "type": "[]Topic", "versions": "0+",
-      "about": "The mirror topics for which we want to store the last mirrored offsets..",  "fields": [
+      "about": "The mirror topics for which we want to store the last mirrored offsets.",  "fields": [
       { "name": "Name", "type": "string", "versions": "0",
         "about": "The topic name." },
       { "name": "Partitions", "type": "[]Partition", "versions": "0+",
