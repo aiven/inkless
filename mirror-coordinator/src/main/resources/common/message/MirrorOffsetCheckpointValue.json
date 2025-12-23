@@ -30,8 +30,6 @@
         { "name": "PartitionIndex", "type": "int32", "versions": "0+",
           "about": "The partition index." },
         { "name": "CheckpointOffset", "type": "int64", "versions": "0+",
-          "about": "The message offset to be checkpointed." },
-        { "name": "LeaderEpoch", "type": "int64", "versions": "0+",
           "about": "The message offset to be checkpointed." }
       ]}
     ]}

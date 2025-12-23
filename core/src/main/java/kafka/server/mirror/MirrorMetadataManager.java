@@ -252,10 +252,20 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         return mutableTopics;
     }
 
-    public Set<CheckpointOffset> checkpointOffsets(String clusterName, Set<CheckpointOffset> addedCheckpointOffsets, Set<CheckpointOffset> removedCheckpointOffsets) {
+    public Set<CheckpointOffset> checkpointOffsets(String clusterName,
+                                                   Map<String, Map<Integer, Long>> addedCheckpointOffsets,
+                                                   Map<String, Map<Integer, Long>> removedCheckpointOffsets) {
         Set<CheckpointOffset> offsets = new HashSet<>(this.checkpointOffsets.getOrDefault(clusterName, Set.of()));
-        offsets.removeAll(removedCheckpointOffsets);
-        offsets.addAll(addedCheckpointOffsets);
+        removedCheckpointOffsets.forEach((topic, partitionOffsets) -> {
+            partitionOffsets.forEach((partition, offset) -> {
+                offsets.remove(new CheckpointOffset(topic, partition, offset));
+            });
+        });
+        addedCheckpointOffsets.forEach((topic, partitionOffsets) -> {
+            partitionOffsets.forEach((partition, offset) -> {
+                offsets.add(new CheckpointOffset(topic, partition, offset));
+            });
+        });
         this.checkpointOffsets.put(clusterName, offsets);
 
         return offsets;

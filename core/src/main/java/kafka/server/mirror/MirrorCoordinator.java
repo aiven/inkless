@@ -56,6 +56,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
+import java.util.List;
 import java.util.Map;
 import java.util.OptionalInt;
 import java.util.Set;
@@ -154,21 +155,31 @@ public class MirrorCoordinator {
                 RequestLocal.noCaching(),
                 CollectionConverters.asScala(Map.of())
         );
-
     }
 
-    public void checkpointOffsetsToCoordinator(String mirrorName, Set<MirrorMetadataManager.CheckpointOffset> offsets) {
+    private Map<String, Map<Integer, Long>> convertCheckpointOffsets(Set<MirrorMetadataManager.CheckpointOffset> offsets) {
+        Map<String, Map<Integer, Long>> results = new HashMap<>();
+
+        offsets.forEach(offset -> {
+           Map<Integer, Long> partitionOffsets = results.getOrDefault(offset.topic(), new HashMap<Integer, Long>());
+           partitionOffsets.put(offset.partition(), offset.offset());
+           results.put(offset.topic(), partitionOffsets);
+        });
+        return results;
+    }
+
+    public void checkpointOffsetsToCoordinator(String mirrorName, Map<String, Map<Integer, Long>> partitionOffsets) {
         var mirrorTopicPartition = new TopicPartition(Topic.MIRROR_STATE_TOPIC_NAME, partitionFor(new MirrorRecordKey(mirrorName)));
         var mirrorTopicIdPartition = replicaManager.topicIdPartition(mirrorTopicPartition);
 
-        var updatedOffsets = mirrorMetadataManager.checkpointOffsets(mirrorName, offsets, Set.of());
-        var record = generateMirrorTopics(mirrorName, topics);
+        var updatedOffsets = mirrorMetadataManager.checkpointOffsets(mirrorName, partitionOffsets, Map.of());
+        var record = generateCheckpointOffsetRecords(mirrorName, convertCheckpointOffsets(updatedOffsets));
         var keyBytes = serde.serializeKey(record);
         var valueBytes = serde.serializeValue(record);
         var timestamp = time.milliseconds();
         var memRecord = MemoryRecords.withRecords(Compression.NONE, new SimpleRecord(timestamp, keyBytes, valueBytes));
 
-        LOG.info("!!! Appending record to {}: {}", mirrorTopicPartition, record);
+        LOG.info("!!! Appending offset record to {}: {}", mirrorTopicPartition, record);
         replicaManager.appendRecords(
                 // TODO: replace this with Cluster Mirror specific timeout
                 Duration.ofSeconds(5).toMillis(),
@@ -192,38 +203,59 @@ public class MirrorCoordinator {
         return CoordinatorRecord.record(key, apiVersion);
     }
 
-    private static CoordinatorRecord generateCheckpointOffsetRecords(String mirrorName, Set<MirrorMetadataManager.CheckpointOffset> offsets) {
+    private static CoordinatorRecord generateCheckpointOffsetRecords(String mirrorName, Map<String, Map<Integer, Long>> offsets) {
         var key = new MirrorOffsetCheckpointsKey().setMirrorName(mirrorName);
         var val = new MirrorOffsetCheckpointsValue();
         var topics = new ArrayList<MirrorOffsetCheckpointsValue.Topic>();
-        offsets.forEach(offset -> {
-
+        offsets.forEach((topic, partitionOffsets) -> {
+           var top = new MirrorOffsetCheckpointsValue.Topic();
+           List<MirrorOffsetCheckpointsValue.Partition> partitions = new ArrayList<>();
+           partitionOffsets.forEach((partition, offset) -> {
+               partitions.add(new MirrorOffsetCheckpointsValue.Partition().setPartitionIndex(partition).setCheckpointOffset(offset));
+           });
+           top.setPartitions(partitions);
+           topics.add(top);
         });
-        var checkpointTopics = new MirrorOffsetCheckpointsValue().setTopics()
-//        .setTopics(
-//                topics.stream().map(topic -> new MirrorTopicsValue.Topic().setName(topic)).toList());
-        var apiVersion = new ApiMessageAndVersion(val, (short) 0);
+        val.setTopics(topics);
+        var apiVersion = new ApiMessageAndVersion(val, MirrorOffsetCheckpointsValue.HIGHEST_SUPPORTED_VERSION);
         return CoordinatorRecord.record(key, apiVersion);
     }
 
     private String readMirrorNameFromKey(ByteBuffer buffer) {
         short version = buffer.getShort();
-        if (version != CoordinatorRecordType.MIRROR_TOPICS.id()) {
+        if (version == CoordinatorRecordType.MIRROR_TOPICS.id()) {
+            return new MirrorTopicsKey(new ByteBufferAccessor(buffer), version).mirrorName();
+        } else if (version == CoordinatorRecordType.MIRROR_OFFSET_CHECKPOINTS.id()) {
+            return new MirrorOffsetCheckpointsKey(new ByteBufferAccessor(buffer), version).mirrorName();
+        } else {
             throw new IllegalArgumentException("Unknown cluster mirror log key version " + version);
         }
-        return new MirrorTopicsKey(new ByteBufferAccessor(buffer), version).mirrorName();
     }
 
     private Set<String> readMirrorTopicsFromValue(ByteBuffer buffer) {
         Set<String> topics = new HashSet<>();
         short version = buffer.getShort();
-        if (version >= MirrorTopicsValue.LOWEST_SUPPORTED_VERSION && version <= MirrorTopicsValue.HIGHEST_SUPPORTED_VERSION) {
+        if (version <= MirrorTopicsValue.HIGHEST_SUPPORTED_VERSION & version >= MirrorTopicsValue.LOWEST_SUPPORTED_VERSION) {
             MirrorTopicsValue value = new MirrorTopicsValue(new ByteBufferAccessor(buffer), version);
             value.topics().forEach(t -> topics.add(t.name()));
-        } else {
-            throw new IllegalStateException("Unknown version {} from the mirror message value");
         }
         return topics;
+    }
+
+    private Map<String, Map<Integer, Long>> readCheckpointFromValue(ByteBuffer buffer) {
+        Map<String, Map<Integer, Long>> checkpoints = new HashMap<>();
+        short version = buffer.getShort();
+        if (version <= MirrorOffsetCheckpointsValue.HIGHEST_SUPPORTED_VERSION & version >= MirrorOffsetCheckpointsValue.LOWEST_SUPPORTED_VERSION) {
+            MirrorOffsetCheckpointsValue value = new MirrorOffsetCheckpointsValue(new ByteBufferAccessor(buffer), version);
+            value.topics().forEach(t -> {
+                Map<Integer, Long> partitions = new HashMap<>();
+                t.partitions().forEach(p -> partitions.put(p.partitionIndex(), p.checkpointOffset()));
+                checkpoints.put(t.name(), partitions);
+            });
+        } else {
+            throw new IllegalArgumentException("Unknown cluster mirror log key version " + version);
+        }
+        return checkpoints;
     }
 
     private void loadMirrorMetadata(TopicPartition topicPartition) {
@@ -276,9 +308,19 @@ public class MirrorCoordinator {
                         MutableRecordBatch batch = itr.next();
                         batch.iterator().forEachRemaining(record -> {
                             require(record.hasKey(), "Mirror log's key should not be null");
-                            String clusterName = readMirrorNameFromKey(record.key());
-                            Set<String> topics = readMirrorTopicsFromValue(record.value());
-                            mirrorMetadataManager.updateMirroredTopics(clusterName, topics, Set.of());
+                            short version = record.key().getShort();
+                            if (version ==  CoordinatorRecordType.MIRROR_TOPICS.id()) {
+                                String clusterName = readMirrorNameFromKey(record.key());
+                                Set<String> topics = readMirrorTopicsFromValue(record.value());
+                                mirrorMetadataManager.updateMirroredTopics(clusterName, topics, Set.of());
+                            } else if (version == CoordinatorRecordType.MIRROR_OFFSET_CHECKPOINTS.id()) {
+                                String clusterName = readMirrorNameFromKey(record.key());
+                                Map<String, Map<Integer, Long>> checkpoints = readCheckpointFromValue(record.value());
+                                mirrorMetadataManager.checkpointOffsets(clusterName, checkpoints, Map.of());
+                            } else {
+                                throw new IllegalArgumentException("Unknown cluster mirror log key version " + version);
+                            }
+
                         });
                         currOffset = batch.nextOffset();
                     }
