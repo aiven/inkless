@@ -35,8 +35,8 @@ import org.apache.kafka.coordinator.common.runtime.CoordinatorRecord;
 import org.apache.kafka.coordinator.mirror.MirrorRecordKey;
 import org.apache.kafka.coordinator.mirror.MirrorRecordSerde;
 import org.apache.kafka.coordinator.mirror.generated.CoordinatorRecordType;
-import org.apache.kafka.coordinator.mirror.generated.MirrorOffsetCheckpointsKey;
-import org.apache.kafka.coordinator.mirror.generated.MirrorOffsetCheckpointsValue;
+import org.apache.kafka.coordinator.mirror.generated.LastMirroredOffsetsKey;
+import org.apache.kafka.coordinator.mirror.generated.LastMirroredOffsetsValue;
 import org.apache.kafka.coordinator.mirror.generated.MirrorTopicsKey;
 import org.apache.kafka.coordinator.mirror.generated.MirrorTopicsValue;
 import org.apache.kafka.metadata.MetadataCache;
@@ -157,7 +157,7 @@ public class MirrorCoordinator {
         );
     }
 
-    private Map<String, Map<Integer, Long>> convertCheckpointOffsets(Set<MirrorMetadataManager.CheckpointOffset> offsets) {
+    private Map<String, Map<Integer, Long>> convertCheckpointOffsets(Set<MirrorMetadataManager.LastMirroredOffset> offsets) {
         Map<String, Map<Integer, Long>> results = new HashMap<>();
 
         offsets.forEach(offset -> {
@@ -172,7 +172,7 @@ public class MirrorCoordinator {
         var mirrorTopicPartition = new TopicPartition(Topic.MIRROR_STATE_TOPIC_NAME, partitionFor(new MirrorRecordKey(mirrorName)));
         var mirrorTopicIdPartition = replicaManager.topicIdPartition(mirrorTopicPartition);
 
-        var updatedOffsets = mirrorMetadataManager.checkpointOffsets(mirrorName, partitionOffsets, Map.of());
+        var updatedOffsets = mirrorMetadataManager.updateLastMirroredOffsetsCache(mirrorName, partitionOffsets, Map.of());
         var record = generateCheckpointOffsetRecords(mirrorName, convertCheckpointOffsets(updatedOffsets));
         var keyBytes = serde.serializeKey(record);
         var valueBytes = serde.serializeValue(record);
@@ -204,20 +204,20 @@ public class MirrorCoordinator {
     }
 
     private static CoordinatorRecord generateCheckpointOffsetRecords(String mirrorName, Map<String, Map<Integer, Long>> offsets) {
-        var key = new MirrorOffsetCheckpointsKey().setMirrorName(mirrorName);
-        var val = new MirrorOffsetCheckpointsValue();
-        var topics = new ArrayList<MirrorOffsetCheckpointsValue.Topic>();
+        var key = new LastMirroredOffsetsKey().setMirrorName(mirrorName);
+        var val = new LastMirroredOffsetsValue();
+        var topics = new ArrayList<LastMirroredOffsetsValue.Topic>();
         offsets.forEach((topic, partitionOffsets) -> {
-           var top = new MirrorOffsetCheckpointsValue.Topic();
-           List<MirrorOffsetCheckpointsValue.Partition> partitions = new ArrayList<>();
+           var top = new LastMirroredOffsetsValue.Topic();
+           List<LastMirroredOffsetsValue.Partition> partitions = new ArrayList<>();
            partitionOffsets.forEach((partition, offset) -> {
-               partitions.add(new MirrorOffsetCheckpointsValue.Partition().setPartitionIndex(partition).setCheckpointOffset(offset));
+               partitions.add(new LastMirroredOffsetsValue.Partition().setPartitionIndex(partition).setLastMirroredOffset(offset));
            });
            top.setPartitions(partitions);
            topics.add(top);
         });
         val.setTopics(topics);
-        var apiVersion = new ApiMessageAndVersion(val, MirrorOffsetCheckpointsValue.HIGHEST_SUPPORTED_VERSION);
+        var apiVersion = new ApiMessageAndVersion(val, LastMirroredOffsetsValue.HIGHEST_SUPPORTED_VERSION);
         return CoordinatorRecord.record(key, apiVersion);
     }
 
@@ -225,8 +225,8 @@ public class MirrorCoordinator {
         short version = buffer.getShort();
         if (version == CoordinatorRecordType.MIRROR_TOPICS.id()) {
             return new MirrorTopicsKey(new ByteBufferAccessor(buffer), version).mirrorName();
-        } else if (version == CoordinatorRecordType.MIRROR_OFFSET_CHECKPOINTS.id()) {
-            return new MirrorOffsetCheckpointsKey(new ByteBufferAccessor(buffer), version).mirrorName();
+        } else if (version == CoordinatorRecordType.LAST_MIRRORED_OFFSETS.id()) {
+            return new LastMirroredOffsetsKey(new ByteBufferAccessor(buffer), version).mirrorName();
         } else {
             throw new IllegalArgumentException("Unknown cluster mirror log key version " + version);
         }
@@ -244,14 +244,14 @@ public class MirrorCoordinator {
         return topics;
     }
 
-    private Map<String, Map<Integer, Long>> readCheckpointFromValue(ByteBuffer buffer) {
+    private Map<String, Map<Integer, Long>> readLastMirroredOffsetsValue(ByteBuffer buffer) {
         Map<String, Map<Integer, Long>> checkpoints = new HashMap<>();
         short version = buffer.getShort();
-        if (version <= MirrorOffsetCheckpointsValue.HIGHEST_SUPPORTED_VERSION & version >= MirrorOffsetCheckpointsValue.LOWEST_SUPPORTED_VERSION) {
-            MirrorOffsetCheckpointsValue value = new MirrorOffsetCheckpointsValue(new ByteBufferAccessor(buffer), version);
+        if (version <= LastMirroredOffsetsValue.HIGHEST_SUPPORTED_VERSION & version >= LastMirroredOffsetsValue.LOWEST_SUPPORTED_VERSION) {
+            LastMirroredOffsetsValue value = new LastMirroredOffsetsValue(new ByteBufferAccessor(buffer), version);
             value.topics().forEach(t -> {
                 Map<Integer, Long> partitions = new HashMap<>();
-                t.partitions().forEach(p -> partitions.put(p.partitionIndex(), p.checkpointOffset()));
+                t.partitions().forEach(p -> partitions.put(p.partitionIndex(), p.lastMirroredOffset()));
                 checkpoints.put(t.name(), partitions);
             });
         } else {
@@ -315,10 +315,10 @@ public class MirrorCoordinator {
                                 String clusterName = readMirrorNameFromKey(record.key());
                                 Set<String> topics = readMirrorTopicsFromValue(record.value());
                                 mirrorMetadataManager.updateMirroredTopics(clusterName, topics, Set.of());
-                            } else if (version == CoordinatorRecordType.MIRROR_OFFSET_CHECKPOINTS.id()) {
+                            } else if (version == CoordinatorRecordType.LAST_MIRRORED_OFFSETS.id()) {
                                 String clusterName = readMirrorNameFromKey(record.key());
-                                Map<String, Map<Integer, Long>> checkpoints = readCheckpointFromValue(record.value());
-                                mirrorMetadataManager.checkpointOffsets(clusterName, checkpoints, Map.of());
+                                Map<String, Map<Integer, Long>> checkpoints = readLastMirroredOffsetsValue(record.value());
+                                mirrorMetadataManager.updateLastMirroredOffsetsCache(clusterName, checkpoints, Map.of());
                             } else {
                                 throw new IllegalArgumentException("Unknown cluster mirror log key version " + version);
                             }

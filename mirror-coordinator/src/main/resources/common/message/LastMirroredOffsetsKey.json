@@ -16,22 +16,12 @@
 // Cluster Mirror is in development. This schema is subject to non-backwards-compatible changes.
 {
   "apiKey": 1,
-  "type": "coordinator-value",
-  "name": "MirrorOffsetCheckpointsValue",
+  "type": "coordinator-key",
+  "name": "LastMirroredOffsetsKey",
   "validVersions": "0",
-  "flexibleVersions": "0+",
+  "flexibleVersions": "none",
   "fields": [
-    { "name": "Topics", "type": "[]Topic", "versions": "0+",
-      "about": "The topics to checkpoint offsets for.",  "fields": [
-      { "name": "Name", "type": "string", "versions": "0",
-        "about": "The topic name." },
-      { "name": "Partitions", "type": "[]Partition", "versions": "0+",
-        "about": "Each partition to checkpoint offsets for.", "fields": [
-        { "name": "PartitionIndex", "type": "int32", "versions": "0+",
-          "about": "The partition index." },
-        { "name": "CheckpointOffset", "type": "int64", "versions": "0+",
-          "about": "The message offset to be checkpointed." }
-      ]}
-    ]}
+    { "name": "MirrorName", "type": "string", "versions": "0",
+      "about": "The cluster mirror name."}
   ]
 }
