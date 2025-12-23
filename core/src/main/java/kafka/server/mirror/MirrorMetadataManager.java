@@ -256,13 +256,13 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     }
 
     /**
-     * Updates the cached set of mirrored topics for a cluster mirror.
+     * Updates the cached set of mirror topics for a cluster mirror.
      * Adds and removes topics from the cache and returns the updated set.
      *
      * @param clusterName the name of the cluster mirror
      * @param addedTopics topics to add to the cache
      * @param removedTopics topics to remove from the cache
-     * @return the updated set of mirrored topics
+     * @return the updated set of mirror topics
      */
     public Set<String> updateMirrorTopicsCache(String clusterName, Set<String> addedTopics, Set<String> removedTopics) {
         Set<String> mutableTopics = new HashSet<>(this.topics.getOrDefault(clusterName, Set.of()));

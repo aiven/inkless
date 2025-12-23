@@ -59,7 +59,7 @@
           "about": "The configuration value." }
       ]},
       { "name": "MirrorInfo", "type": "MirrorInfo", "versions": "8+", "nullableVersions": "8+", "ignorable": true,
-        "about": "Mirror information for creating a mirrored topic from a source cluster.", "fields": [
+        "about": "Mirror information for creating a mirror topic from a source cluster.", "fields": [
         { "name": "MirrorName", "type": "string", "versions": "8+",
           "about": "The cluster mirror name." },
         { "name": "TopicId", "type": "uuid", "versions": "8+",

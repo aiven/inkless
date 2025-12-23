@@ -79,7 +79,7 @@ import static org.apache.kafka.common.utils.Utils.require;
  * The coordinator maintains state about which topics are being mirrored for each cluster
  * mirror and ensures proper coordination between source and destination clusters.
  * It integrates with the ReplicaManager to handle log operations and with the
- * MirrorMetadataManager to maintain metadata about mirrored topics.
+ * MirrorMetadataManager to maintain metadata about mirror topics.
  */
 public class MirrorCoordinator {
     private static final Logger LOG = LoggerFactory.getLogger(MirrorCoordinator.class);
@@ -135,7 +135,7 @@ public class MirrorCoordinator {
     }
 
     /**
-     * Updates the mirrored topics metadata for a given cluster mirror.
+     * Updates the mirror topics metadata for a given cluster mirror.
      * Adds or removes topics from the mirror configuration and persists changes to the internal topic.
      *
      * @param mirrorName the name of the cluster mirror

@@ -167,7 +167,7 @@ public abstract class MirrorCommand {
                 CreateTopicsResult createResult = admin.createTopics(Set.of(newTopic),
                     new CreateTopicsOptions().retryOnQuotaViolation(false));
                 createResult.all().whenComplete((future, ex) -> {
-                    System.out.println("Create mirrored topic result: " + ex);
+                    System.out.println("Create mirror topic result: " + ex);
 
                     if (ex != null) {
                         if (ex instanceof TopicExistsException) {
