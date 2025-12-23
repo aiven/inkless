@@ -279,7 +279,7 @@ class KafkaApis(val requestChannel: RequestChannel,
       .filter(t => t.mirrorInfo() != null && t.mirrorInfo().mirrorName() != null && !t.mirrorInfo().mirrorName().isEmpty).findFirst()
     if (mirrorTopic.isPresent) {
       logger.info(s"!!! Handling create mirror topics request: ${mirrorTopic.get().mirrorInfo().mirrorName()}")
-      mirrorCoordinator.updateTopicsToCoordinator(mirrorTopic.get().mirrorInfo().mirrorName(), util.Set.of(mirrorTopic.get().name()), util.Set.of())
+      mirrorCoordinator.updateMirrorTopicsMetadata(mirrorTopic.get().mirrorInfo().mirrorName(), util.Set.of(mirrorTopic.get().name()), util.Set.of())
     }
     forwardToController(request)
   }
@@ -290,8 +290,8 @@ class KafkaApis(val requestChannel: RequestChannel,
     val mirrorTopic = addTopicsToMirrorRequest.data.topics().stream().filter(t => t.mirrorName() != null && !t.mirrorName().isEmpty).findFirst()
     if (mirrorTopic.isPresent) {
       if (isClusterMirroringEnabled) {
-        logger.info(s"!!! Handling add topics to mirror request: ${mirrorTopic.get().mirrorName()}")
-        mirrorCoordinator.updateTopicsToCoordinator(mirrorTopic.get().mirrorName(), util.Set.of(mirrorTopic.get().topicName()), util.Set.of())
+        logger.info(s"!!! Handling adding mirror topics request: ${mirrorTopic.get().mirrorName()}")
+        mirrorCoordinator.updateMirrorTopicsMetadata(mirrorTopic.get().mirrorName(), util.Set.of(mirrorTopic.get().topicName()), util.Set.of())
       } else {
         logger.warn("Cluster mirroring is disabled (mirror.version=0), ignoring mirror topic creation request")
       }
@@ -306,7 +306,7 @@ class KafkaApis(val requestChannel: RequestChannel,
     logger.info(s"!!! Handling remove topics from mirror request: $removeTopicsFromMirrorRequest $mirrorTopics")
 
     // update the cached topics in coordinator
-    mirrorCoordinator.updateTopicsToCoordinator(removeTopicsFromMirrorRequest.data().mirrorName(), util.Set.of(), new util.HashSet[String](mirrorTopics))
+    mirrorCoordinator.updateMirrorTopicsMetadata(removeTopicsFromMirrorRequest.data().mirrorName(), util.Set.of(), new util.HashSet[String](mirrorTopics))
 
     // update the last mirrored offset in coordinator
     val partitionOffsets = new util.HashMap[String, util.Map[java.lang.Integer, java.lang.Long]]()
@@ -325,7 +325,7 @@ class KafkaApis(val requestChannel: RequestChannel,
     })
 
     logger.info(s"!!! Partition offsets for mirror topics: ${partitionOffsets}")
-    mirrorCoordinator.checkpointOffsetsToCoordinator(removeTopicsFromMirrorRequest.data().mirrorName(), partitionOffsets)
+    mirrorCoordinator.updateLastMirroredOffsetsMetadata(removeTopicsFromMirrorRequest.data().mirrorName(), partitionOffsets)
     forwardToController(request)
   }
 

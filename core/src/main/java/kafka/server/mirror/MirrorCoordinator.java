@@ -131,11 +131,11 @@ public class MirrorCoordinator {
     }
 
     // TODO: handle response
-    public void updateTopicsToCoordinator(String mirrorName, Set<String> addedTopics, Set<String> removedTopics) {
+    public void updateMirrorTopicsMetadata(String mirrorName, Set<String> addedTopics, Set<String> removedTopics) {
         var mirrorTopicPartition = new TopicPartition(Topic.MIRROR_STATE_TOPIC_NAME, partitionFor(new MirrorRecordKey(mirrorName)));
         var mirrorTopicIdPartition = replicaManager.topicIdPartition(mirrorTopicPartition);
 
-        var topics = mirrorMetadataManager.updateMirroredTopics(mirrorName, addedTopics, removedTopics);
+        var topics = mirrorMetadataManager.updateMirrorTopicsCache(mirrorName, addedTopics, removedTopics);
         var record = generateMirrorTopics(mirrorName, topics);
         var keyBytes = serde.serializeKey(record);
         var valueBytes = serde.serializeValue(record);
@@ -157,7 +157,7 @@ public class MirrorCoordinator {
         );
     }
 
-    private Map<String, Map<Integer, Long>> convertCheckpointOffsets(Set<MirrorMetadataManager.LastMirroredOffset> offsets) {
+    private Map<String, Map<Integer, Long>> lastMirroredOffstesToCoordinatorRecords(Set<MirrorMetadataManager.LastMirroredOffset> offsets) {
         Map<String, Map<Integer, Long>> results = new HashMap<>();
 
         offsets.forEach(offset -> {
@@ -168,12 +168,12 @@ public class MirrorCoordinator {
         return results;
     }
 
-    public void checkpointOffsetsToCoordinator(String mirrorName, Map<String, Map<Integer, Long>> partitionOffsets) {
+    public void updateLastMirroredOffsetsMetadata(String mirrorName, Map<String, Map<Integer, Long>> partitionOffsets) {
         var mirrorTopicPartition = new TopicPartition(Topic.MIRROR_STATE_TOPIC_NAME, partitionFor(new MirrorRecordKey(mirrorName)));
         var mirrorTopicIdPartition = replicaManager.topicIdPartition(mirrorTopicPartition);
 
         var updatedOffsets = mirrorMetadataManager.updateLastMirroredOffsetsCache(mirrorName, partitionOffsets, Map.of());
-        var record = generateCheckpointOffsetRecords(mirrorName, convertCheckpointOffsets(updatedOffsets));
+        var record = generateLastMirroredOffsets(mirrorName, lastMirroredOffstesToCoordinatorRecords(updatedOffsets));
         var keyBytes = serde.serializeKey(record);
         var valueBytes = serde.serializeValue(record);
         var timestamp = time.milliseconds();
@@ -203,7 +203,7 @@ public class MirrorCoordinator {
         return CoordinatorRecord.record(key, apiVersion);
     }
 
-    private static CoordinatorRecord generateCheckpointOffsetRecords(String mirrorName, Map<String, Map<Integer, Long>> offsets) {
+    private static CoordinatorRecord generateLastMirroredOffsets(String mirrorName, Map<String, Map<Integer, Long>> offsets) {
         var key = new LastMirroredOffsetsKey().setMirrorName(mirrorName);
         var val = new LastMirroredOffsetsValue();
         var topics = new ArrayList<LastMirroredOffsetsValue.Topic>();
@@ -314,7 +314,7 @@ public class MirrorCoordinator {
                             if (version ==  CoordinatorRecordType.MIRROR_TOPICS.id()) {
                                 String clusterName = readMirrorNameFromKey(record.key());
                                 Set<String> topics = readMirrorTopicsFromValue(record.value());
-                                mirrorMetadataManager.updateMirroredTopics(clusterName, topics, Set.of());
+                                mirrorMetadataManager.updateMirrorTopicsCache(clusterName, topics, Set.of());
                             } else if (version == CoordinatorRecordType.LAST_MIRRORED_OFFSETS.id()) {
                                 String clusterName = readMirrorNameFromKey(record.key());
                                 Map<String, Map<Integer, Long>> checkpoints = readLastMirroredOffsetsValue(record.value());
