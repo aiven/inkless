@@ -54,18 +54,25 @@ public class AppendHandler implements Closeable {
             state,
             new Writer(
                 state.time(),
-                state.brokerId(),
-                state.objectKeyCreator(),
-                state.buildStorage(),
-                state.keyAlignmentStrategy(),
-                state.cache(),
-                state.batchCoordinateCache(),
-                state.controlPlane(),
                 state.config().commitInterval(),
                 state.config().produceBufferMaxBytes(),
-                state.config().produceMaxUploadAttempts(),
-                state.config().produceUploadBackoff(),
-                state.config().produceUploadThreadPoolSize(),
+                state.produceCommitTickScheduler(),
+                new FileCommitter(
+                    state.brokerId(),
+                    state.controlPlane(),
+                    state.objectKeyCreator(),
+                    state.produceStorage(),
+                    state.keyAlignmentStrategy(),
+                    state.cache(),
+                    state.batchCoordinateCache(),
+                    state.time(),
+                    state.config().produceMaxUploadAttempts(),
+                    state.config().produceUploadBackoff(),
+                    state.produceUploadExecutor(),
+                    state.produceCommitExecutor(),
+                    new FileCommitterMetrics(state.time())
+                ),
+                new WriterMetrics(state.time()),
                 state.brokerTopicStats()
             )
         );

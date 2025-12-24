@@ -51,11 +51,11 @@ public class FetchHandler implements Closeable {
                 state.keyAlignmentStrategy(),
                 state.cache(),
                 state.controlPlane(),
-                state.buildStorage(),
-                state.brokerTopicStats(),
-                state.config().fetchMetadataThreadPoolSize(),
-                state.config().fetchDataThreadPoolSize(),
-                state.config().maxBatchesPerPartitionToFind()
+                state.fetchStorage(),
+                state.config().maxBatchesPerPartitionToFind(),
+                state.fetchMetadataExecutor(),
+                state.fetchDataExecutor(),
+                state.brokerTopicStats()
             )
         );
     }

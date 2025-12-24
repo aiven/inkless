@@ -20,7 +20,6 @@ package io.aiven.inkless.consume;
 import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.requests.FetchRequest;
-import org.apache.kafka.common.utils.ThreadUtils;
 import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.server.storage.log.FetchParams;
 import org.apache.kafka.server.storage.log.FetchPartitionData;
@@ -35,21 +34,17 @@ import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.TimeUnit;
 
 import io.aiven.inkless.TimeUtils;
 import io.aiven.inkless.cache.KeyAlignmentStrategy;
 import io.aiven.inkless.cache.ObjectCache;
-import io.aiven.inkless.common.InklessThreadFactory;
 import io.aiven.inkless.common.ObjectKeyCreator;
-import io.aiven.inkless.common.metrics.ThreadPoolMonitor;
 import io.aiven.inkless.control_plane.ControlPlane;
 import io.aiven.inkless.storage_backend.common.ObjectFetcher;
 
 public class Reader implements AutoCloseable {
     private static final Logger LOGGER = LoggerFactory.getLogger(Reader.class);
-    private static final long EXECUTOR_SHUTDOWN_TIMEOUT_SECONDS = 5;
+
     private final Time time;
     private final ObjectKeyCreator objectKeyCreator;
     private final KeyAlignmentStrategy keyAlignmentStrategy;
@@ -61,35 +56,13 @@ public class Reader implements AutoCloseable {
     private final ExecutorService dataExecutor;
     private final InklessFetchMetrics fetchMetrics;
     private final BrokerTopicStats brokerTopicStats;
-    private ThreadPoolMonitor metadataThreadPoolMonitor;
-    private ThreadPoolMonitor dataThreadPoolMonitor;
 
-    public Reader(
-        Time time,
-        ObjectKeyCreator objectKeyCreator,
-        KeyAlignmentStrategy keyAlignmentStrategy,
-        ObjectCache cache,
-        ControlPlane controlPlane,
-        ObjectFetcher objectFetcher,
-        BrokerTopicStats brokerTopicStats,
-        int fetchMetadataThreadPoolSize,
-        int fetchDataThreadPoolSize,
-        int maxBatchesPerPartitionToFind
-    ) {
-        this(
-            time,
-            objectKeyCreator,
-            keyAlignmentStrategy,
-            cache,
-            controlPlane,
-            objectFetcher,
-            maxBatchesPerPartitionToFind,
-            Executors.newFixedThreadPool(fetchMetadataThreadPoolSize, new InklessThreadFactory("inkless-fetch-metadata-", false)),
-            Executors.newFixedThreadPool(fetchDataThreadPoolSize, new InklessThreadFactory("inkless-fetch-data-", false)),
-            brokerTopicStats
-        );
-    }
-
+    /**
+     * Creates a Reader with injected executor services.
+     *
+     * <p>The executor services are managed by the caller (typically SharedState) and will be
+     * shut down externally. This Reader does not own the lifecycle of the executors.
+     */
     public Reader(
         Time time,
         ObjectKeyCreator objectKeyCreator,
@@ -113,13 +86,6 @@ public class Reader implements AutoCloseable {
         this.dataExecutor = dataExecutor;
         this.fetchMetrics = new InklessFetchMetrics(time, cache);
         this.brokerTopicStats = brokerTopicStats;
-        try {
-            this.metadataThreadPoolMonitor = new ThreadPoolMonitor("inkless-fetch-metadata", metadataExecutor);
-            this.dataThreadPoolMonitor = new ThreadPoolMonitor("inkless-fetch-data", dataExecutor);
-        } catch (final Exception e) {
-            // only expected to happen on tests passing other types of pools
-            LOGGER.warn("Failed to create thread pool monitors", e);
-        }
     }
 
     public CompletableFuture<Map<TopicIdPartition, FetchPartitionData>> fetch(
@@ -205,11 +171,6 @@ public class Reader implements AutoCloseable {
 
     @Override
     public void close() throws IOException {
-        ThreadUtils.shutdownExecutorServiceQuietly(metadataExecutor, EXECUTOR_SHUTDOWN_TIMEOUT_SECONDS, TimeUnit.SECONDS);
-        ThreadUtils.shutdownExecutorServiceQuietly(dataExecutor, EXECUTOR_SHUTDOWN_TIMEOUT_SECONDS, TimeUnit.SECONDS);
-        if (metadataThreadPoolMonitor != null) metadataThreadPoolMonitor.close();
-        if (dataThreadPoolMonitor != null) dataThreadPoolMonitor.close();
-        objectFetcher.close();
         fetchMetrics.close();
     }
 }

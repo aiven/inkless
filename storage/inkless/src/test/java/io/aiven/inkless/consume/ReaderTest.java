@@ -24,6 +24,7 @@ import org.apache.kafka.server.storage.log.FetchParams;
 import org.apache.kafka.server.storage.log.FetchPartitionData;
 import org.apache.kafka.storage.log.metrics.BrokerTopicStats;
 
+import org.jspecify.annotations.NonNull;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
@@ -51,6 +52,7 @@ import io.aiven.inkless.storage_backend.common.ObjectFetcher;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.atLeastOnce;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 
@@ -77,7 +79,7 @@ public class ReaderTest {
 
     @Test
     public void testReaderEmptyRequests() throws IOException {
-        try(final var reader = new Reader(time, OBJECT_KEY_CREATOR, KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, controlPlane, objectFetcher, 0, metadataExecutor, dataExecutor, new BrokerTopicStats())) {
+        try (final var reader = getReader()) {
             final CompletableFuture<Map<TopicIdPartition, FetchPartitionData>> fetch = reader.fetch(fetchParams, Collections.emptyMap());
             verify(metadataExecutor, atLeastOnce()).execute(any());
             verifyNoInteractions(dataExecutor);
@@ -87,9 +89,25 @@ public class ReaderTest {
 
     @Test
     public void testClose() throws Exception {
-        final var reader = new Reader(time, OBJECT_KEY_CREATOR, KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, controlPlane, objectFetcher, 0, metadataExecutor, dataExecutor, new BrokerTopicStats());
+        final var reader = getReader();
         reader.close();
-        verify(metadataExecutor, atLeastOnce()).shutdown();
-        verify(dataExecutor, atLeastOnce()).shutdown();
+        // Executors created outside of Reader should not be shutdown by Reader.close()
+        verify(metadataExecutor, times(0)).shutdown();
+        verify(dataExecutor, times(0)).shutdown();
+    }
+
+    private @NonNull Reader getReader() {
+        return new Reader(
+            time,
+            OBJECT_KEY_CREATOR,
+            KEY_ALIGNMENT_STRATEGY,
+            OBJECT_CACHE,
+            controlPlane,
+            objectFetcher,
+            0,
+            metadataExecutor,
+            dataExecutor,
+            new BrokerTopicStats()
+        );
     }
 }

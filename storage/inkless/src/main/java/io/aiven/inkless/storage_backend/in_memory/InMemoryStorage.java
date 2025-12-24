@@ -51,6 +51,10 @@ public final class InMemoryStorage extends StorageBackend {
         super(new Metrics(Time.SYSTEM));
     }
 
+    public InMemoryStorage(final Metrics metrics) {
+        super(metrics);
+    }
+
     @Override
     public void configure(final Map<String, ?> configs) {
         // do nothing

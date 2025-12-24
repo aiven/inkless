@@ -56,7 +56,7 @@ import org.apache.kafka.common.requests.FetchRequest.PartitionData
 import org.apache.kafka.common.requests.ProduceResponse.PartitionResponse
 import org.apache.kafka.common.requests._
 import org.apache.kafka.common.security.auth.KafkaPrincipal
-import org.apache.kafka.common.utils.{LogContext, Time, Utils}
+import org.apache.kafka.common.utils.{LogContext, ThreadUtils, Time, Utils}
 import org.apache.kafka.coordinator.transaction.{AddPartitionsToTxnConfig, TransactionLogConfig}
 import org.apache.kafka.image._
 import org.apache.kafka.metadata.LeaderConstants.NO_LEADER
@@ -98,7 +98,7 @@ import java.net.InetAddress
 import java.nio.file.{Files, Paths}
 import java.util
 import java.util.concurrent.atomic.{AtomicBoolean, AtomicLong, AtomicReference}
-import java.util.concurrent.{Callable, CompletableFuture, ConcurrentHashMap, CountDownLatch, TimeUnit}
+import java.util.concurrent.{Callable, CompletableFuture, ConcurrentHashMap, CountDownLatch, ExecutorService, Executors, TimeUnit}
 import java.util.function.BiConsumer
 import java.util.stream.IntStream
 import java.util.{Collections, Optional, OptionalInt, OptionalLong, Properties}
@@ -6368,6 +6368,20 @@ class ReplicaManagerTest {
     val disklessTopicPartition = new TopicIdPartition(Uuid.randomUuid(), 0, "diskless")
     val classicTopicPartition = new TopicIdPartition(Uuid.randomUuid(), 0, "classic")
 
+    var commitExecutorService: ExecutorService = _
+
+    @BeforeEach
+    def setup(): Unit = {
+      // Single thread executor to simulate the commit log thread in ReplicaManager
+      // needed as validated on AppendHandler creation.
+      commitExecutorService = Executors.newFixedThreadPool(1)
+    }
+
+    @AfterEach
+    def teardown(): Unit = {
+      ThreadUtils.shutdownExecutorServiceQuietly(commitExecutorService, 5, TimeUnit.SECONDS)
+    }
+
     @Test
     def testAppendDisklessEntries(): Unit = {
       val entriesPerPartition = Map(disklessTopicPartition -> RECORDS)
@@ -7148,6 +7162,7 @@ class ReplicaManagerTest {
       }
       disklessTopics.foreach(t => when(inklessMetadata.isDisklessTopic(t)).thenReturn(true))
       when(sharedState.metadata()).thenReturn(inklessMetadata)
+      when(sharedState.produceCommitExecutor()).thenReturn(commitExecutorService)
 
       val logDirFailureChannel = new LogDirFailureChannel(config.logDirs.size)
 

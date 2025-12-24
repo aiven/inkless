@@ -26,8 +26,6 @@ import org.apache.kafka.server.common.RequestLocal;
 import org.apache.kafka.storage.internals.log.LogConfig;
 import org.apache.kafka.storage.log.metrics.BrokerTopicStats;
 
-import com.groupcdg.pitest.annotations.DoNotMutate;
-
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -38,7 +36,6 @@ import java.time.Instant;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
@@ -46,13 +43,6 @@ import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 
 import io.aiven.inkless.TimeUtils;
-import io.aiven.inkless.cache.BatchCoordinateCache;
-import io.aiven.inkless.cache.KeyAlignmentStrategy;
-import io.aiven.inkless.cache.ObjectCache;
-import io.aiven.inkless.common.InklessThreadFactory;
-import io.aiven.inkless.common.ObjectKeyCreator;
-import io.aiven.inkless.control_plane.ControlPlane;
-import io.aiven.inkless.storage_backend.common.StorageBackend;
 
 /**
  * The entry point for diskless writing.
@@ -70,7 +60,6 @@ class Writer implements Closeable {
 
     private final Lock lock = new ReentrantLock();
     private ActiveFile activeFile;
-    private final StorageBackend storage;
     private final FileCommitter fileCommitter;
     private final Time time;
     private final Duration commitInterval;
@@ -82,44 +71,16 @@ class Writer implements Closeable {
     private Instant openedAt;
     private ScheduledFuture<?> scheduledTick;
 
-    @DoNotMutate
-    Writer(final Time time,
-           final int brokerId,
-           final ObjectKeyCreator objectKeyCreator,
-           final StorageBackend storage,
-           final KeyAlignmentStrategy keyAlignmentStrategy,
-           final ObjectCache objectCache,
-           final BatchCoordinateCache batchCoordinateCache,
-           final ControlPlane controlPlane,
-           final Duration commitInterval,
-           final int maxBufferSize,
-           final int maxFileUploadAttempts,
-           final Duration fileUploadRetryBackoff,
-           final int fileUploaderThreadPoolSize,
-           final BrokerTopicStats brokerTopicStats
-    ) {
-        this(
-            time,
-            commitInterval,
-            maxBufferSize,
-            Executors.newScheduledThreadPool(1, new InklessThreadFactory("inkless-file-commit-ticker-", true)),
-            storage,
-            new FileCommitter(
-                brokerId, controlPlane, objectKeyCreator, storage,
-                keyAlignmentStrategy, objectCache, batchCoordinateCache, time,
-                maxFileUploadAttempts, fileUploadRetryBackoff,
-                fileUploaderThreadPoolSize),
-            new WriterMetrics(time),
-            brokerTopicStats
-        );
-    }
-
-    // Visible for testing
+    /**
+     * Creates a Writer with injected scheduled executor service.
+     *
+     * <p>The ScheduledExecutorService is managed by the caller (typically SharedState) and will be
+     * shut down externally. This Writer does not own the lifecycle of the scheduler.
+     */
     Writer(final Time time,
            final Duration commitInterval,
            final int maxBufferSize,
            final ScheduledExecutorService commitTickScheduler,
-           final StorageBackend storage,
            final FileCommitter fileCommitter,
            final WriterMetrics writerMetrics,
            final BrokerTopicStats brokerTopicStats) {
@@ -130,7 +91,6 @@ class Writer implements Closeable {
         }
         this.maxBufferSize = maxBufferSize;
         this.commitTickScheduler = Objects.requireNonNull(commitTickScheduler, "commitTickScheduler cannot be null");
-        this.storage = Objects.requireNonNull(storage, "storage cannot be null");
         this.fileCommitter = Objects.requireNonNull(fileCommitter, "fileCommitter cannot be null");
         this.writerMetrics = Objects.requireNonNull(writerMetrics, "writerMetrics cannot be null");
         this.brokerTopicStats = brokerTopicStats;
@@ -222,12 +182,18 @@ class Writer implements Closeable {
             if (closed) {
                 return;
             }
+
+            // Cancel any scheduled tick before marking as closed to prevent race condition
+            // where a tick could fire after close() starts but before resources are cleaned up
+            if (this.scheduledTick != null) {
+                this.scheduledTick.cancel(false);
+                this.scheduledTick = null;
+            }
+
             closed = true;
-            commitTickScheduler.shutdownNow();
             // Rotate file before closing the uploader so the file gets into the queue first.
             rotateFile(true);
             fileCommitter.close();
-            storage.close();
             writerMetrics.close();
         } finally {
             lock.unlock();

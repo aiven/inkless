@@ -36,20 +36,11 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 
-import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 
-import io.aiven.inkless.cache.BatchCoordinateCache;
-import io.aiven.inkless.cache.CaffeineBatchCoordinateCache;
-import io.aiven.inkless.cache.FixedBlockAlignment;
-import io.aiven.inkless.cache.KeyAlignmentStrategy;
-import io.aiven.inkless.cache.NullCache;
-import io.aiven.inkless.cache.ObjectCache;
-import io.aiven.inkless.common.ObjectKey;
-import io.aiven.inkless.common.ObjectKeyCreator;
 import io.aiven.inkless.common.SharedState;
 import io.aiven.inkless.config.InklessConfig;
 import io.aiven.inkless.control_plane.ControlPlane;
@@ -72,16 +63,10 @@ import static org.mockito.Mockito.when;
 @MockitoSettings(strictness = Strictness.STRICT_STUBS)
 class DeleteRecordsInterceptorTest {
     static final int BROKER_ID = 11;
-    static final ObjectKeyCreator OBJECT_KEY_CREATOR = ObjectKey.creator("", false);
-    private static final KeyAlignmentStrategy KEY_ALIGNMENT_STRATEGY = new FixedBlockAlignment(Integer.MAX_VALUE);
-    private static final ObjectCache OBJECT_CACHE = new NullCache();
-    private static final BatchCoordinateCache BATCH_COORDINATE_CACHE = new CaffeineBatchCoordinateCache(Duration.ofSeconds(30));
 
     static final Supplier<LogConfig> DEFAULT_TOPIC_CONFIGS = () -> new LogConfig(Map.of());
 
     Time time = new MockTime();
-    @Mock
-    InklessConfig disklessConfig;
     @Mock
     MetadataView metadataView;
     @Mock
@@ -96,70 +81,71 @@ class DeleteRecordsInterceptorTest {
     @Captor
     ArgumentCaptor<List<DeleteRecordsRequest>> deleteRecordsCaptor;
 
-    @Test
-    public void mixingDisklessAndClassicTopicsIsNotAllowed() {
-        when(metadataView.isDisklessTopic(eq("diskless"))).thenReturn(true);
-        when(metadataView.isDisklessTopic(eq("non_diskless"))).thenReturn(false);
-        final SharedState state = new SharedState(
+    private SharedState getSharedState() {
+        return SharedState.initialize(
             time,
             BROKER_ID,
-            disklessConfig,
+            new InklessConfig(Map.of()),
             metadataView,
             controlPlane,
-            OBJECT_KEY_CREATOR,
-            KEY_ALIGNMENT_STRATEGY,
-            OBJECT_CACHE,
-            BATCH_COORDINATE_CACHE,
             brokerTopicStats,
             DEFAULT_TOPIC_CONFIGS
         );
-        final DeleteRecordsInterceptor interceptor = new DeleteRecordsInterceptor(state);
-
-        final Map<TopicPartition, Long> entriesPerPartition = Map.of(
-            new TopicPartition("diskless", 0),
-            1234L,
-            new TopicPartition("non_diskless", 0),
-            4567L
-        );
-
-        final boolean result = interceptor.intercept(entriesPerPartition, responseCallback);
-        assertThat(result).isTrue();
-
-        verify(responseCallback).accept(resultCaptor.capture());
-        assertThat(resultCaptor.getValue()).isEqualTo(Map.of(
-            new TopicPartition("diskless", 0),
-            new DeleteRecordsResponseData.DeleteRecordsPartitionResult()
-                .setPartitionIndex(0)
-                .setErrorCode(Errors.INVALID_REQUEST.code())
-                .setLowWatermark(INVALID_LOW_WATERMARK),
-            new TopicPartition("non_diskless", 0),
-            new DeleteRecordsResponseData.DeleteRecordsPartitionResult()
-                .setPartitionIndex(0)
-                .setErrorCode(Errors.INVALID_REQUEST.code())
-                .setLowWatermark(INVALID_LOW_WATERMARK)
-        ));
-        verify(controlPlane, never()).deleteRecords(any());
     }
 
     @Test
-    public void notInterceptDeletingRecordsFromClassicTopics() {
+    public void mixingDisklessAndClassicTopicsIsNotAllowed() throws Exception {
+        when(metadataView.isDisklessTopic(eq("diskless"))).thenReturn(true);
         when(metadataView.isDisklessTopic(eq("non_diskless"))).thenReturn(false);
-        final DeleteRecordsInterceptor interceptor = new DeleteRecordsInterceptor(
-            new SharedState(time, BROKER_ID, disklessConfig, metadataView, controlPlane,
-                OBJECT_KEY_CREATOR, KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, BATCH_COORDINATE_CACHE, brokerTopicStats, DEFAULT_TOPIC_CONFIGS));
+        try (final SharedState sharedState = getSharedState()) {
+            final DeleteRecordsInterceptor interceptor = new DeleteRecordsInterceptor(sharedState);
 
-        final Map<TopicPartition, Long> entriesPerPartition = Map.of(
-            new TopicPartition("non_diskless", 0), 4567L
-        );
+            final Map<TopicPartition, Long> entriesPerPartition = Map.of(
+                new TopicPartition("diskless", 0),
+                1234L,
+                new TopicPartition("non_diskless", 0),
+                4567L
+            );
 
-        final boolean result = interceptor.intercept(entriesPerPartition, responseCallback);
-        assertThat(result).isFalse();
-        verify(responseCallback, never()).accept(any());
-        verify(controlPlane, never()).deleteRecords(any());
+            final boolean result = interceptor.intercept(entriesPerPartition, responseCallback);
+            assertThat(result).isTrue();
+
+            verify(responseCallback).accept(resultCaptor.capture());
+            assertThat(resultCaptor.getValue()).isEqualTo(Map.of(
+                new TopicPartition("diskless", 0),
+                new DeleteRecordsResponseData.DeleteRecordsPartitionResult()
+                    .setPartitionIndex(0)
+                    .setErrorCode(Errors.INVALID_REQUEST.code())
+                    .setLowWatermark(INVALID_LOW_WATERMARK),
+                new TopicPartition("non_diskless", 0),
+                new DeleteRecordsResponseData.DeleteRecordsPartitionResult()
+                    .setPartitionIndex(0)
+                    .setErrorCode(Errors.INVALID_REQUEST.code())
+                    .setLowWatermark(INVALID_LOW_WATERMARK)
+            ));
+            verify(controlPlane, never()).deleteRecords(any());
+        }
     }
 
     @Test
-    public void interceptDeletingRecordsFromDisklessTopics() {
+    public void notInterceptDeletingRecordsFromClassicTopics() throws Exception {
+        when(metadataView.isDisklessTopic(eq("non_diskless"))).thenReturn(false);
+        try(final SharedState sharedState = getSharedState()) {
+            final DeleteRecordsInterceptor interceptor = new DeleteRecordsInterceptor(sharedState);
+
+            final Map<TopicPartition, Long> entriesPerPartition = Map.of(
+                new TopicPartition("non_diskless", 0), 4567L
+            );
+
+            final boolean result = interceptor.intercept(entriesPerPartition, responseCallback);
+            assertThat(result).isFalse();
+            verify(responseCallback, never()).accept(any());
+            verify(controlPlane, never()).deleteRecords(any());
+        }
+    }
+
+    @Test
+    public void interceptDeletingRecordsFromDisklessTopics() throws Exception {
         final Uuid topicId = new Uuid(1, 2);
         when(metadataView.isDisklessTopic(eq("diskless"))).thenReturn(true);
         when(metadataView.getTopicId(eq("diskless"))).thenReturn(topicId);
@@ -181,77 +167,75 @@ class DeleteRecordsInterceptorTest {
             }
         });
 
-        final DeleteRecordsInterceptor interceptor = new DeleteRecordsInterceptor(
-            new SharedState(time, BROKER_ID, disklessConfig, metadataView, controlPlane,
-                OBJECT_KEY_CREATOR, KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, BATCH_COORDINATE_CACHE, brokerTopicStats, DEFAULT_TOPIC_CONFIGS),
-            new SynchronousExecutor());
+        try(final SharedState sharedState = getSharedState()) {
+            final DeleteRecordsInterceptor interceptor = new DeleteRecordsInterceptor(sharedState, new SynchronousExecutor());
 
-        final TopicPartition tp0 = new TopicPartition("diskless", 0);
-        final TopicPartition tp1 = new TopicPartition("diskless", 1);
-        final Map<TopicPartition, Long> entriesPerPartition = Map.of(
-            tp0, 4567L,
-            tp1, 999L
-        );
+            final TopicPartition tp0 = new TopicPartition("diskless", 0);
+            final TopicPartition tp1 = new TopicPartition("diskless", 1);
+            final Map<TopicPartition, Long> entriesPerPartition = Map.of(
+                tp0, 4567L,
+                tp1, 999L
+            );
 
-        final boolean result = interceptor.intercept(entriesPerPartition, responseCallback);
-        assertThat(result).isTrue();
-        verify(controlPlane).deleteRecords(deleteRecordsCaptor.capture());
-        assertThat(deleteRecordsCaptor.getValue()).containsExactlyInAnyOrder(
-            new DeleteRecordsRequest(new TopicIdPartition(topicId, tp0), 4567L),
-            new DeleteRecordsRequest(new TopicIdPartition(topicId, tp1), 999L)
-        );
+            final boolean result = interceptor.intercept(entriesPerPartition, responseCallback);
+            assertThat(result).isTrue();
+            verify(controlPlane).deleteRecords(deleteRecordsCaptor.capture());
+            assertThat(deleteRecordsCaptor.getValue()).containsExactlyInAnyOrder(
+                new DeleteRecordsRequest(new TopicIdPartition(topicId, tp0), 4567L),
+                new DeleteRecordsRequest(new TopicIdPartition(topicId, tp1), 999L)
+            );
 
-        verify(responseCallback).accept(resultCaptor.capture());
-        assertThat(resultCaptor.getValue()).isEqualTo(Map.of(
-            new TopicPartition("diskless", 0),
-            new DeleteRecordsResponseData.DeleteRecordsPartitionResult()
-                .setPartitionIndex(0)
-                .setErrorCode(Errors.NONE.code())
-                .setLowWatermark(123L),
-            new TopicPartition("diskless", 1),
-            new DeleteRecordsResponseData.DeleteRecordsPartitionResult()
-                .setPartitionIndex(1)
-                .setErrorCode(Errors.KAFKA_STORAGE_ERROR.code())
-                .setLowWatermark(INVALID_LOW_WATERMARK)
-        ));
+            verify(responseCallback).accept(resultCaptor.capture());
+            assertThat(resultCaptor.getValue()).isEqualTo(Map.of(
+                new TopicPartition("diskless", 0),
+                new DeleteRecordsResponseData.DeleteRecordsPartitionResult()
+                    .setPartitionIndex(0)
+                    .setErrorCode(Errors.NONE.code())
+                    .setLowWatermark(123L),
+                new TopicPartition("diskless", 1),
+                new DeleteRecordsResponseData.DeleteRecordsPartitionResult()
+                    .setPartitionIndex(1)
+                    .setErrorCode(Errors.KAFKA_STORAGE_ERROR.code())
+                    .setLowWatermark(INVALID_LOW_WATERMARK)
+            ));
+        }
     }
 
     @Test
-    public void controlPlaneException() {
+    public void controlPlaneException() throws Exception {
         final Uuid topicId = new Uuid(1, 2);
         when(metadataView.isDisklessTopic(eq("diskless"))).thenReturn(true);
         when(metadataView.getTopicId(eq("diskless"))).thenReturn(topicId);
 
         when(controlPlane.deleteRecords(anyList())).thenThrow(new RuntimeException("test"));
 
-        final DeleteRecordsInterceptor interceptor = new DeleteRecordsInterceptor(
-            new SharedState(time, BROKER_ID, disklessConfig, metadataView, controlPlane,
-                OBJECT_KEY_CREATOR, KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, BATCH_COORDINATE_CACHE, brokerTopicStats, DEFAULT_TOPIC_CONFIGS),
-            new SynchronousExecutor());
+        try (final SharedState sharedState = getSharedState()) {
+            final DeleteRecordsInterceptor interceptor = new DeleteRecordsInterceptor(sharedState, new SynchronousExecutor());
 
-        final TopicPartition topicPartition = new TopicPartition("diskless", 1);
-        final Map<TopicPartition, Long> entriesPerPartition = Map.of(
-            topicPartition, 4567L
-        );
+            final TopicPartition topicPartition = new TopicPartition("diskless", 1);
+            final Map<TopicPartition, Long> entriesPerPartition = Map.of(
+                topicPartition, 4567L
+            );
 
-        final boolean result = interceptor.intercept(entriesPerPartition, responseCallback);
-        assertThat(result).isTrue();
-        verify(controlPlane).deleteRecords(eq(List.of(
-            new DeleteRecordsRequest(new TopicIdPartition(topicId, topicPartition), 4567L)
-        )));
+            final boolean result = interceptor.intercept(entriesPerPartition, responseCallback);
+            assertThat(result).isTrue();
+            verify(controlPlane).deleteRecords(eq(List.of(
+                new DeleteRecordsRequest(new TopicIdPartition(topicId, topicPartition), 4567L)
+            )));
 
-        verify(responseCallback).accept(resultCaptor.capture());
-        assertThat(resultCaptor.getValue()).isEqualTo(Map.of(
-            new TopicPartition("diskless", 1),
-            new DeleteRecordsResponseData.DeleteRecordsPartitionResult()
-                .setPartitionIndex(1)
-                .setErrorCode(Errors.UNKNOWN_SERVER_ERROR.code())
-                .setLowWatermark(INVALID_LOW_WATERMARK)
-        ));
+            verify(responseCallback).accept(resultCaptor.capture());
+            assertThat(resultCaptor.getValue()).isEqualTo(Map.of(
+                new TopicPartition("diskless", 1),
+                new DeleteRecordsResponseData.DeleteRecordsPartitionResult()
+                    .setPartitionIndex(1)
+                    .setErrorCode(Errors.UNKNOWN_SERVER_ERROR.code())
+                    .setLowWatermark(INVALID_LOW_WATERMARK)
+            ));
+        }
     }
 
     @Test
-    public void topicIdNotFound() {
+    public void topicIdNotFound() throws Exception {
         when(metadataView.isDisklessTopic(eq("diskless1"))).thenReturn(true);
         when(metadataView.isDisklessTopic(eq("diskless2"))).thenReturn(true);
         // This instead of the normal thenReturn to not depend on the map key iteration order
@@ -265,34 +249,33 @@ class DeleteRecordsInterceptorTest {
             }
         });
 
-        final DeleteRecordsInterceptor interceptor = new DeleteRecordsInterceptor(
-            new SharedState(time, BROKER_ID, disklessConfig, metadataView, controlPlane,
-                OBJECT_KEY_CREATOR, KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, BATCH_COORDINATE_CACHE, brokerTopicStats, DEFAULT_TOPIC_CONFIGS),
-            new SynchronousExecutor());
+        try (final SharedState sharedState = getSharedState()) {
+            final DeleteRecordsInterceptor interceptor = new DeleteRecordsInterceptor(sharedState, new SynchronousExecutor());
 
-        final TopicPartition topicPartition1 = new TopicPartition("diskless1", 1);
-        final TopicPartition topicPartition2 = new TopicPartition("diskless2", 2);
-        final Map<TopicPartition, Long> entriesPerPartition = Map.of(
-            topicPartition1, 4567L,
-            topicPartition2, 8590L
-        );
+            final TopicPartition topicPartition1 = new TopicPartition("diskless1", 1);
+            final TopicPartition topicPartition2 = new TopicPartition("diskless2", 2);
+            final Map<TopicPartition, Long> entriesPerPartition = Map.of(
+                topicPartition1, 4567L,
+                topicPartition2, 8590L
+            );
 
-        final boolean result = interceptor.intercept(entriesPerPartition, responseCallback);
-        assertThat(result).isTrue();
-        verify(controlPlane, never()).deleteRecords(anyList());
+            final boolean result = interceptor.intercept(entriesPerPartition, responseCallback);
+            assertThat(result).isTrue();
+            verify(controlPlane, never()).deleteRecords(anyList());
 
-        verify(responseCallback).accept(resultCaptor.capture());
-        assertThat(resultCaptor.getValue()).isEqualTo(Map.of(
-            new TopicPartition("diskless1", 1),
-            new DeleteRecordsResponseData.DeleteRecordsPartitionResult()
-                .setPartitionIndex(1)
-                .setErrorCode(Errors.UNKNOWN_SERVER_ERROR.code())
-                .setLowWatermark(INVALID_LOW_WATERMARK),
-            new TopicPartition("diskless2", 2),
-            new DeleteRecordsResponseData.DeleteRecordsPartitionResult()
-                .setPartitionIndex(2)
-                .setErrorCode(Errors.UNKNOWN_SERVER_ERROR.code())
-                .setLowWatermark(INVALID_LOW_WATERMARK)
-        ));
+            verify(responseCallback).accept(resultCaptor.capture());
+            assertThat(resultCaptor.getValue()).isEqualTo(Map.of(
+                new TopicPartition("diskless1", 1),
+                new DeleteRecordsResponseData.DeleteRecordsPartitionResult()
+                    .setPartitionIndex(1)
+                    .setErrorCode(Errors.UNKNOWN_SERVER_ERROR.code())
+                    .setLowWatermark(INVALID_LOW_WATERMARK),
+                new TopicPartition("diskless2", 2),
+                new DeleteRecordsResponseData.DeleteRecordsPartitionResult()
+                    .setPartitionIndex(2)
+                    .setErrorCode(Errors.UNKNOWN_SERVER_ERROR.code())
+                    .setLowWatermark(INVALID_LOW_WATERMARK)
+            ));
+        }
     }
 }

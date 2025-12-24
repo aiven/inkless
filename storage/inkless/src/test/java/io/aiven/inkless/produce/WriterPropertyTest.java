@@ -134,11 +134,10 @@ class WriterPropertyTest {
                                   @ForAll @IntRange(min = 10, max = 30) int uploadDurationAvg,
                                   @ForAll @IntRange(min = 5, max = 10) int commitDurationAvg,
                                   @ForAll @IntRange(min = 5, max = 10) int completeDurationAvg,
-                                  @ForAll @IntRange(min = 5, max = 10) int cacheStoreAvg,
                                   @ForAll @IntRange(min = 1, max = 1 * 1024) int maxBufferSize) throws Exception {
         try (final ControlPlane controlPlane = new InMemoryControlPlane(new MockTime(0, 0, 0))) {
             controlPlane.configure(Map.of());
-            test(requestCount, requestIntervalMsAvg, commitIntervalMsAvg, uploadDurationAvg, commitDurationAvg, completeDurationAvg, cacheStoreAvg, maxBufferSize, controlPlane);
+            test(requestCount, requestIntervalMsAvg, commitIntervalMsAvg, uploadDurationAvg, commitDurationAvg, completeDurationAvg, maxBufferSize, controlPlane);
         }
     }
 
@@ -150,7 +149,6 @@ class WriterPropertyTest {
                                   @ForAll @IntRange(min = 10, max = 30) int uploadDurationAvg,
                                   @ForAll @IntRange(min = 5, max = 10) int commitDurationAvg,
                                   @ForAll @IntRange(min = 5, max = 10) int completeDurationAvg,
-                                  @ForAll @IntRange(min = 5, max = 10) int cacheStoreAvg,
                                   @ForAll @IntRange(min = 1, max = 1 * 1024) int maxBufferSize) throws Exception {
         String dbName = "test-" + requestCount
             + "-" + requestIntervalMsAvg
@@ -170,7 +168,7 @@ class WriterPropertyTest {
                 "password", pgContainer.getPassword()
             ));
 
-            test(requestCount, requestIntervalMsAvg, commitIntervalMsAvg, uploadDurationAvg, commitDurationAvg, completeDurationAvg, cacheStoreAvg, maxBufferSize, controlPlane);
+            test(requestCount, requestIntervalMsAvg, commitIntervalMsAvg, uploadDurationAvg, commitDurationAvg, completeDurationAvg, maxBufferSize, controlPlane);
         }
     }
 
@@ -180,7 +178,6 @@ class WriterPropertyTest {
               final int uploadDurationAvg,
               final int commitDurationAvg,
               final int completeDurationAvg,
-              final int cacheStoreDurationAvg,
               final int maxBufferSize,
               final ControlPlane controlPlane)
         throws Exception
@@ -204,7 +201,7 @@ class WriterPropertyTest {
         );
         final CommitterHandler committerHandler = new CommitterHandler(
             uploaderHandler,
-            new MockExecutorServiceWithFutureSupport(),
+            new MockSingleThreadedExecutorService(),
             new Timer("commit",
                 time,
                 Instant.ofEpochMilli(time.milliseconds()),
@@ -217,14 +214,6 @@ class WriterPropertyTest {
                         time,
                         Instant.ofEpochMilli(time.milliseconds()),
                         Arbitraries.longs().between(completeDurationAvg - 2, completeDurationAvg + 2))
-        );
-        final CacheStoreHandler cacheStoreHandler = new CacheStoreHandler(
-                uploaderHandler,
-                new MockExecutorServiceWithFutureSupport(),
-                new Timer("cacheStore",
-                        time,
-                        Instant.ofEpochMilli(time.milliseconds()),
-                        Arbitraries.longs().between(cacheStoreDurationAvg - 2, cacheStoreDurationAvg + 2))
         );
         try(final FileCommitter fileCommitter = new FileCommitter(
             11,
@@ -239,7 +228,6 @@ class WriterPropertyTest {
             Duration.ZERO,
             uploaderHandler.executorService,
             committerHandler.executorService,
-            cacheStoreHandler.executorService,
             mock(FileCommitterMetrics.class)
         )) {
 
@@ -248,7 +236,6 @@ class WriterPropertyTest {
                 Duration.ofMillis(commitIntervalMsAvg),  // it doesn't matter as the scheduling doesn't happen
                 maxBufferSize,
                 mock(ScheduledExecutorService.class),
-                storage,
                 fileCommitter,
                 mock(WriterMetrics.class),
                 new BrokerTopicStats()
@@ -283,7 +270,6 @@ class WriterPropertyTest {
                 uploaderHandler.maybeRunNext();
                 committerHandler.maybeRunNext();
                 completerHandler.maybeRunNext();
-                cacheStoreHandler.maybeRunNext();
                 time.sleep(1);
             }
             assertThat(finished).withFailMessage(String.format("Not finished in %d virtual ms", maxTime)).isTrue();
@@ -583,6 +569,68 @@ class WriterPropertyTest {
         }
     }
 
+    /**
+     * A single-threaded ThreadPoolExecutor that can be controlled for testing.
+     * This meets FileCommitter's requirement for a ThreadPoolExecutor with corePoolSize=1 and maximumPoolSize=1.
+     */
+    private static class MockSingleThreadedExecutorService extends java.util.concurrent.ThreadPoolExecutor {
+        final LinkedBlockingQueue<Future<?>> returnedFutures = new LinkedBlockingQueue<>();
+        private final LinkedBlockingQueue<Runnable> taskQueue = new LinkedBlockingQueue<>();
+
+        MockSingleThreadedExecutorService() {
+            super(1, 1, 0L, TimeUnit.MILLISECONDS, new LinkedBlockingQueue<>());
+        }
+
+        @Override
+        public void execute(final Runnable command) {
+            this.submit(command);
+        }
+
+        @Override
+        public Future<?> submit(final Runnable task) {
+            return this.submit(() -> {
+                task.run();
+                return null;
+            });
+        }
+
+        @Override
+        public <T> Future<T> submit(final Callable<T> task) {
+            final var result = new CompletableFuture<T>();
+            returnedFutures.offer(result);
+            taskQueue.offer(() -> {
+                try {
+                    result.complete(task.call());
+                } catch (final Exception e) {
+                    result.completeExceptionally(e);
+                }
+            });
+            return result;
+        }
+
+        boolean runNextIfExists() throws InterruptedException {
+            assertThat(returnedFutures.size()).isEqualTo(taskQueue.size());
+            final Runnable nextRunnable = taskQueue.poll();
+            if (nextRunnable != null) {
+                nextRunnable.run();
+                assert returnedFutures.take().isDone();
+                return true;
+            } else {
+                return false;
+            }
+        }
+
+        @Override
+        public void shutdown() {
+            // No-op for testing
+        }
+
+        @Override
+        public List<Runnable> shutdownNow() {
+            return List.of();
+        }
+    }
+
     private static class UploaderHandler {
         private final MockExecutorServiceWithFutureSupport executorService;
         private final Timer timer;
@@ -608,11 +656,11 @@ class WriterPropertyTest {
 
     private static class CommitterHandler {
         private final UploaderHandler uploaderHandler;
-        private final MockExecutorServiceWithFutureSupport executorService;
+        private final MockSingleThreadedExecutorService executorService;
         private final Timer timer;
 
         private CommitterHandler(final UploaderHandler uploaderHandler,
-                                 final MockExecutorServiceWithFutureSupport executorService,
+                                 final MockSingleThreadedExecutorService executorService,
                                  final Timer timer) {
             this.uploaderHandler = uploaderHandler;
             this.executorService = executorService;

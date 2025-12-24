@@ -21,7 +21,6 @@ import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.record.TimestampType;
 import org.apache.kafka.common.utils.Time;
-import org.apache.kafka.storage.log.metrics.BrokerTopicStats;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -46,7 +45,6 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
-import java.util.function.Supplier;
 
 import io.aiven.inkless.common.ObjectFormat;
 import io.aiven.inkless.common.ObjectKey;
@@ -59,7 +57,6 @@ import io.aiven.inkless.control_plane.ControlPlane;
 import io.aiven.inkless.control_plane.ControlPlaneException;
 import io.aiven.inkless.control_plane.FileMergeWorkItem;
 import io.aiven.inkless.control_plane.MergedFileBatch;
-import io.aiven.inkless.control_plane.MetadataView;
 import io.aiven.inkless.storage_backend.common.StorageBackend;
 import io.aiven.inkless.storage_backend.common.StorageBackendException;
 
@@ -110,28 +107,33 @@ class FileMergerMockedTest {
     @Captor
     ArgumentCaptor<Long> sleepCaptor;
 
+    @Mock
     SharedState sharedState;
 
     @BeforeEach
     void setup() {
-        when(inklessConfig.objectKeyPrefix()).thenReturn("prefix");
+        // only the necessary config values for this test
         when(inklessConfig.fileMergeWorkDir()).thenReturn(WORK_DIR);
-        when(inklessConfig.cacheMaxCount()).thenReturn(10000L);
-
-        sharedState = SharedState.initialize(time, BROKER_ID, inklessConfig, mock(MetadataView.class), controlPlane,
-            mock(BrokerTopicStats.class), mock(Supplier.class));
+        when(sharedState.time()).thenReturn(time);
+        when(sharedState.config()).thenReturn(inklessConfig);
+        when(sharedState.controlPlane()).thenReturn(controlPlane);
+        when(sharedState.objectKeyCreator()).thenReturn(ObjectKey.creator("prefix", false));
+        when(sharedState.backgroundStorage()).thenReturn(storage);
+        when(sharedState.brokerId()).thenReturn(BROKER_ID);
+        when(time.milliseconds()).thenReturn(System.currentTimeMillis());
     }
 
     @AfterEach
-    void tearDown() {
+    void tearDown() throws IOException {
         assertThat(WORK_DIR).isEmptyDirectory();
+
+        sharedState.close();
     }
 
     @Test
     void singleFileSingleBatch() throws StorageBackendException, IOException {
         when(inklessConfig.produceMaxUploadAttempts()).thenReturn(1);
         when(inklessConfig.produceUploadBackoff()).thenReturn(Duration.ZERO);
-        when(inklessConfig.storage(any())).thenReturn(storage);
 
         final String obj1 = "obj1";
 
@@ -187,7 +189,6 @@ class FileMergerMockedTest {
     void twoFilesWithGaps(final boolean directFileOrder, final boolean directBatchOrder) throws StorageBackendException, IOException {
         when(inklessConfig.produceMaxUploadAttempts()).thenReturn(1);
         when(inklessConfig.produceUploadBackoff()).thenReturn(Duration.ZERO);
-        when(inklessConfig.storage(any())).thenReturn(storage);
 
         final String obj1 = "obj1";
         final String obj2 = "obj2";
@@ -317,7 +318,6 @@ class FileMergerMockedTest {
 
     @Test
     void errorInReading() throws Exception {
-        when(inklessConfig.storage(any())).thenReturn(storage);
 
         final String obj1 = "obj1";
         final long batch1Id = 1;
@@ -345,7 +345,6 @@ class FileMergerMockedTest {
 
     @Test
     void errorInWriting() throws Exception {
-        when(inklessConfig.storage(any())).thenReturn(storage);
         when(inklessConfig.produceMaxUploadAttempts()).thenReturn(1);
         when(inklessConfig.produceUploadBackoff()).thenReturn(Duration.ZERO);
 
@@ -387,7 +386,6 @@ class FileMergerMockedTest {
     @ParameterizedTest
     @ValueSource(booleans = {true, false})
     void errorInCommittingFromControlPlane(boolean isSafeToDelete) throws Exception {
-        when(inklessConfig.storage(any())).thenReturn(storage);
         when(inklessConfig.produceMaxUploadAttempts()).thenReturn(1);
         when(inklessConfig.produceUploadBackoff()).thenReturn(Duration.ZERO);
 
@@ -431,7 +429,6 @@ class FileMergerMockedTest {
 
     @Test
     void errorInCommittingNotFromControlPlane() throws Exception {
-        when(inklessConfig.storage(any())).thenReturn(storage);
         when(inklessConfig.produceMaxUploadAttempts()).thenReturn(1);
         when(inklessConfig.produceUploadBackoff()).thenReturn(Duration.ZERO);
 

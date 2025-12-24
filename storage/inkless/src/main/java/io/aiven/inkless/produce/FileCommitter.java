@@ -19,8 +19,6 @@ package io.aiven.inkless.produce;
 
 import org.apache.kafka.common.utils.Time;
 
-import com.groupcdg.pitest.annotations.DoNotMutate;
-
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -33,8 +31,8 @@ import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
@@ -43,10 +41,8 @@ import io.aiven.inkless.TimeUtils;
 import io.aiven.inkless.cache.BatchCoordinateCache;
 import io.aiven.inkless.cache.KeyAlignmentStrategy;
 import io.aiven.inkless.cache.ObjectCache;
-import io.aiven.inkless.common.InklessThreadFactory;
 import io.aiven.inkless.common.ObjectKey;
 import io.aiven.inkless.common.ObjectKeyCreator;
-import io.aiven.inkless.common.metrics.ThreadPoolMonitor;
 import io.aiven.inkless.control_plane.CommitBatchResponse;
 import io.aiven.inkless.control_plane.ControlPlane;
 import io.aiven.inkless.storage_backend.common.StorageBackend;
@@ -75,35 +71,18 @@ class FileCommitter implements Closeable {
     private final Duration fileUploadRetryBackoff;
     private final ExecutorService executorServiceUpload;
     private final ExecutorService executorServiceCommit;
-    private final ExecutorService executorServiceCacheStore;
-    private ThreadPoolMonitor threadPoolMonitor;
 
     private final AtomicInteger totalFilesInProgress = new AtomicInteger(0);
     private final AtomicInteger totalBytesInProgress = new AtomicInteger(0);
 
-    @DoNotMutate
-    FileCommitter(final int brokerId,
-                  final ControlPlane controlPlane,
-                  final ObjectKeyCreator objectKeyCreator,
-                  final StorageBackend storage,
-                  final KeyAlignmentStrategy keyAlignmentStrategy,
-                  final ObjectCache objectCache,
-                  final BatchCoordinateCache batchCoordinateCache,
-                  final Time time,
-                  final int maxFileUploadAttempts,
-                  final Duration fileUploadRetryBackoff,
-                  final int fileUploaderThreadPoolSize) {
-        this(brokerId, controlPlane, objectKeyCreator, storage, keyAlignmentStrategy, objectCache, batchCoordinateCache, time, maxFileUploadAttempts, fileUploadRetryBackoff,
-            Executors.newFixedThreadPool(fileUploaderThreadPoolSize, new InklessThreadFactory("inkless-file-uploader-", false)),
-            // It must be single-thread to preserve the commit order.
-            Executors.newSingleThreadExecutor(new InklessThreadFactory("inkless-file-committer-", false)),
-            // Reuse the same thread pool size as uploads, as there are no more concurrency expected to handle
-            Executors.newFixedThreadPool(fileUploaderThreadPoolSize, new InklessThreadFactory("inkless-file-cache-store-", false)),
-            new FileCommitterMetrics(time)
-        );
-    }
-
-    // Visible for testing
+    /**
+     * Creates a FileCommitter with injected executor services.
+     *
+     * <p>The ExecutorService instances are managed by the caller (typically SharedState) and will be
+     * shut down externally. This FileCommitter does not own the lifecycle of the executors.
+     *
+     * <p><b>IMPORTANT:</b> executorServiceCommit MUST be single-threaded to preserve commit ordering.
+     */
     FileCommitter(final int brokerId,
                   final ControlPlane controlPlane,
                   final ObjectKeyCreator objectKeyCreator,
@@ -116,7 +95,6 @@ class FileCommitter implements Closeable {
                   final Duration fileUploadRetryBackoff,
                   final ExecutorService executorServiceUpload,
                   final ExecutorService executorServiceCommit,
-                  final ExecutorService executorServiceCacheStore,
                   final FileCommitterMetrics metrics) {
         this.brokerId = brokerId;
         this.controlPlane = Objects.requireNonNull(controlPlane, "controlPlane cannot be null");
@@ -136,19 +114,14 @@ class FileCommitter implements Closeable {
             "executorServiceUpload cannot be null");
         this.executorServiceCommit = Objects.requireNonNull(executorServiceCommit,
             "executorServiceCommit cannot be null");
-        this.executorServiceCacheStore = Objects.requireNonNull(executorServiceCacheStore,
-                "executorServiceCacheStore cannot be null");
+        if (!isSingleThreadedExecutor(executorServiceCommit)) {
+            throw new IllegalArgumentException("executorServiceCommit must be a single-threaded ThreadPoolExecutor");
+        }
 
         this.metrics = Objects.requireNonNull(metrics, "metrics cannot be null");
         // Can't do this in the FileCommitterMetrics constructor, so initializing this way.
         this.metrics.initTotalFilesInProgressMetric(totalFilesInProgress::get);
         this.metrics.initTotalBytesInProgressMetric(totalBytesInProgress::get);
-        try {
-            this.threadPoolMonitor = new ThreadPoolMonitor("inkless-produce-uploader", executorServiceUpload);
-        } catch (final Exception e) {
-            // only expected to happen on tests passing other types of pools
-            LOGGER.warn("Failed to create ThreadPoolMonitor for inkless-produce-uploader", e);
-        }
     }
 
     void commit(final ClosedFile file) throws InterruptedException {
@@ -209,15 +182,21 @@ class FileCommitter implements Closeable {
                             }
                         });
 
-                final CacheStoreJob cacheStoreJob = new CacheStoreJob(
+                // Caching is not strictly IO-bound, but may be slowed by memory pressure.
+                commitFuture.thenRunAsync(
+                    new CacheStoreJob(
                         time,
                         objectCache,
                         keyAlignmentStrategy,
                         file.data(),
                         uploadFuture,
                         metrics::cacheStoreFinished
+                    ),
+                    // Reuse the upload executor for caching as well.
+                    // Caching is substantially faster than uploading,
+                    // so this should be fine to allocating some upload executor's capacity to caching.
+                    executorServiceUpload
                 );
-                executorServiceCacheStore.submit(cacheStoreJob);
             }
             commitFuture.whenComplete((commitBatchResponses, throwable) -> {
                 final AppendCompleter completerJob = new AppendCompleter(file, batchCoordinateCache);
@@ -242,12 +221,19 @@ class FileCommitter implements Closeable {
         return totalBytesInProgress.get();
     }
 
+    /**
+     * Checks if the given ExecutorService is a single-threaded ThreadPoolExecutor.
+     * Only supports ThreadPoolExecutor as created by SharedState with Executors.newFixedThreadPool(1).
+     */
+    static boolean isSingleThreadedExecutor(ExecutorService executor) {
+        if (!(executor instanceof ThreadPoolExecutor)) return false;
+        final int maximumPoolSize = ((ThreadPoolExecutor) executor).getMaximumPoolSize();
+        final int corePoolSize = ((ThreadPoolExecutor) executor).getCorePoolSize();
+        return maximumPoolSize == 1 && corePoolSize == 1;
+    }
+
     @Override
     public void close() throws IOException {
-        // Don't wait here, they should try to finish their work.
-        executorServiceUpload.shutdown();
-        executorServiceCommit.shutdown();
         metrics.close();
-        if (threadPoolMonitor != null) threadPoolMonitor.close();
     }
 }

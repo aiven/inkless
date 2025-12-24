@@ -25,6 +25,7 @@ import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.record.TimestampType;
 import org.apache.kafka.common.requests.ProduceResponse.PartitionResponse;
 import org.apache.kafka.common.utils.MockTime;
+import org.apache.kafka.common.utils.ThreadUtils;
 import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.server.common.RequestLocal;
 import org.apache.kafka.storage.internals.log.LogConfig;
@@ -43,6 +44,7 @@ import java.time.Duration;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
@@ -131,15 +133,33 @@ class WriterIntegrationTest {
         );
         controlPlane.createTopicAndPartitions(createTopicAndPartitionsRequests);
 
+        final var commitTickScheduler = Executors.newScheduledThreadPool(1);
+        final var fileUploadExecutor = Executors.newFixedThreadPool(8);
+        final var fileCommitExecutor = Executors.newFixedThreadPool(1);
+
         try (
-            final Writer writer = new Writer(
-                time, 11, ObjectKey.creator("", false), storage,
-                KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, BATCH_COORDINATE_CACHE,
-                controlPlane, Duration.ofMillis(10),
-                10 * 1024,
+            final var fileCommitter = new FileCommitter(
+                11,
+                controlPlane,
+                ObjectKey.creator("", false),
+                storage,
+                KEY_ALIGNMENT_STRATEGY,
+                OBJECT_CACHE,
+                BATCH_COORDINATE_CACHE,
+                time,
                 1,
                 Duration.ofMillis(10),
-                8,
+                fileUploadExecutor,
+                fileCommitExecutor,
+                new FileCommitterMetrics(time)
+            );
+            final Writer writer = new Writer(
+                time,
+                Duration.ofMillis(10),
+                10 * 1024,
+                commitTickScheduler,
+                fileCommitter,
+                new WriterMetrics(time),
                 new BrokerTopicStats()
             )
         ) {
@@ -182,6 +202,10 @@ class WriterIntegrationTest {
             assertThat(result3).isEqualTo(Map.of(
                 T1P0, new PartitionResponse(Errors.NONE, 103 + 13, ts2, 0)
             ));
+        } finally {
+            ThreadUtils.shutdownExecutorServiceQuietly(commitTickScheduler, 5, TimeUnit.SECONDS);
+            ThreadUtils.shutdownExecutorServiceQuietly(fileUploadExecutor, 5, TimeUnit.SECONDS);
+            ThreadUtils.shutdownExecutorServiceQuietly(fileCommitExecutor, 5, TimeUnit.SECONDS);
         }
     }
 }
