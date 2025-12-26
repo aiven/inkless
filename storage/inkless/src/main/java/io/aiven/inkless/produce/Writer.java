@@ -70,7 +70,6 @@ class Writer implements Closeable {
 
     private final Lock lock = new ReentrantLock();
     private ActiveFile activeFile;
-    private final StorageBackend storage;
     private final FileCommitter fileCommitter;
     private final Time time;
     private final Duration commitInterval;
@@ -103,12 +102,19 @@ class Writer implements Closeable {
             commitInterval,
             maxBufferSize,
             Executors.newScheduledThreadPool(1, new InklessThreadFactory("inkless-file-commit-ticker-", true)),
-            storage,
             new FileCommitter(
-                brokerId, controlPlane, objectKeyCreator, storage,
-                keyAlignmentStrategy, objectCache, batchCoordinateCache, time,
-                maxFileUploadAttempts, fileUploadRetryBackoff,
-                fileUploaderThreadPoolSize),
+                brokerId,
+                controlPlane,
+                objectKeyCreator,
+                storage,
+                keyAlignmentStrategy,
+                objectCache,
+                batchCoordinateCache,
+                time,
+                maxFileUploadAttempts,
+                fileUploadRetryBackoff,
+                fileUploaderThreadPoolSize
+            ),
             new WriterMetrics(time),
             brokerTopicStats
         );
@@ -119,7 +125,6 @@ class Writer implements Closeable {
            final Duration commitInterval,
            final int maxBufferSize,
            final ScheduledExecutorService commitTickScheduler,
-           final StorageBackend storage,
            final FileCommitter fileCommitter,
            final WriterMetrics writerMetrics,
            final BrokerTopicStats brokerTopicStats) {
@@ -130,7 +135,6 @@ class Writer implements Closeable {
         }
         this.maxBufferSize = maxBufferSize;
         this.commitTickScheduler = Objects.requireNonNull(commitTickScheduler, "commitTickScheduler cannot be null");
-        this.storage = Objects.requireNonNull(storage, "storage cannot be null");
         this.fileCommitter = Objects.requireNonNull(fileCommitter, "fileCommitter cannot be null");
         this.writerMetrics = Objects.requireNonNull(writerMetrics, "writerMetrics cannot be null");
         this.brokerTopicStats = brokerTopicStats;
@@ -227,7 +231,6 @@ class Writer implements Closeable {
             // Rotate file before closing the uploader so the file gets into the queue first.
             rotateFile(true);
             fileCommitter.close();
-            storage.close();
             writerMetrics.close();
         } finally {
             lock.unlock();

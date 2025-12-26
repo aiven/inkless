@@ -154,7 +154,6 @@ public class AppendHandlerTest {
     @Test
     public void close() throws IOException {
         final AppendHandler interceptor = new AppendHandler(writer, GET_LOG_CONFIG);
-
         interceptor.close();
 
         verify(writer).close();
