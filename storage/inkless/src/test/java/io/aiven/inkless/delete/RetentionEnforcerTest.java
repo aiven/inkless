@@ -21,6 +21,7 @@ import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.utils.MockTime;
 import org.apache.kafka.common.utils.Time;
+import org.apache.kafka.storage.internals.log.LogConfig;
 
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -76,81 +77,82 @@ class RetentionEnforcerTest {
     @Nested
     class RetentionSettings {
         @Test
-        void fullDefault() {
+        void fullDefault() throws Exception {
             when(retentionEnforcementScheduler.getReadyPartitions()).thenReturn(List.of(T0P0));
-            when(metadataView.getDefaultConfig()).thenReturn(Map.of());
-            when(metadataView.getTopicConfig(any())).thenReturn(new Properties());
+            when(metadataView.getTopicConfig(any())).thenReturn(new LogConfig(Map.of()));
+            try (final var enforcer = new RetentionEnforcer(time, metadataView, controlPlane, retentionEnforcementScheduler, 0)) {
+                enforcer.run();
 
-            final var enforcer = new RetentionEnforcer(time, metadataView, controlPlane, retentionEnforcementScheduler, 0);
-            enforcer.run();
-
-            verify(controlPlane).enforceRetention(requestCaptor.capture(), eq(0));
-            assertThat(requestCaptor.getValue()).map(EnforceRetentionRequest::retentionBytes).containsExactly(-1L);
-            assertThat(requestCaptor.getValue()).map(EnforceRetentionRequest::retentionMs).containsExactly(604800000L);
+                verify(controlPlane).enforceRetention(requestCaptor.capture(), eq(0));
+                assertThat(requestCaptor.getValue()).map(EnforceRetentionRequest::retentionBytes).containsExactly(-1L);
+                assertThat(requestCaptor.getValue()).map(EnforceRetentionRequest::retentionMs).containsExactly(604800000L);
+            }
         }
 
         @Test
-        void logConfig() {
+        void logConfig() throws Exception {
             when(retentionEnforcementScheduler.getReadyPartitions()).thenReturn(List.of(T0P0));
-            when(metadataView.getDefaultConfig()).thenReturn(Map.of(
+            when(metadataView.getTopicConfig(any())).thenReturn(new LogConfig(Map.of(
                 RETENTION_BYTES_CONFIG, "123",
                 RETENTION_MS_CONFIG, "567"
-            ));
-            when(metadataView.getTopicConfig(any())).thenReturn(new Properties());
+            )));
 
-            final var enforcer = new RetentionEnforcer(time, metadataView, controlPlane, retentionEnforcementScheduler, 0);
-            enforcer.run();
+            try (final var enforcer = new RetentionEnforcer(time, metadataView, controlPlane, retentionEnforcementScheduler, 0)) {
+                enforcer.run();
 
-            verify(controlPlane).enforceRetention(requestCaptor.capture(), eq(0));
-            assertThat(requestCaptor.getValue()).map(EnforceRetentionRequest::retentionBytes).containsExactly(123L);
-            assertThat(requestCaptor.getValue()).map(EnforceRetentionRequest::retentionMs).containsExactly(567L);
+                verify(controlPlane).enforceRetention(requestCaptor.capture(), eq(0));
+                assertThat(requestCaptor.getValue()).map(EnforceRetentionRequest::retentionBytes).containsExactly(123L);
+                assertThat(requestCaptor.getValue()).map(EnforceRetentionRequest::retentionMs).containsExactly(567L);
+            }
         }
 
         @Test
-        void definedForTopic() {
+        void definedForTopic() throws Exception {
             when(retentionEnforcementScheduler.getReadyPartitions()).thenReturn(List.of(T0P0));
-            when(metadataView.getDefaultConfig()).thenReturn(Map.of(
+            final var defaultConfigs = Map.of(
                 RETENTION_BYTES_CONFIG, "123",
                 RETENTION_MS_CONFIG, "567"
-            ));
+            );
             final Properties topicConfig = new Properties();
             topicConfig.put(RETENTION_BYTES_CONFIG, "123000");
             topicConfig.put(RETENTION_MS_CONFIG, "567000");
-            when(metadataView.getTopicConfig(any())).thenReturn(topicConfig);
+            when(metadataView.getTopicConfig(any())).thenReturn(LogConfig.fromProps(defaultConfigs, topicConfig));
 
-            final var enforcer = new RetentionEnforcer(time, metadataView, controlPlane, retentionEnforcementScheduler, 0);
-            enforcer.run();
+            try (final var enforcer = new RetentionEnforcer(time, metadataView, controlPlane, retentionEnforcementScheduler, 0)) {
+                enforcer.run();
 
-            verify(controlPlane).enforceRetention(requestCaptor.capture(), eq(0));
-            assertThat(requestCaptor.getValue()).map(EnforceRetentionRequest::retentionBytes).containsExactly(123000L);
-            assertThat(requestCaptor.getValue()).map(EnforceRetentionRequest::retentionMs).containsExactly(567000L);
+                verify(controlPlane).enforceRetention(requestCaptor.capture(), eq(0));
+                assertThat(requestCaptor.getValue()).map(EnforceRetentionRequest::retentionBytes).containsExactly(123000L);
+                assertThat(requestCaptor.getValue()).map(EnforceRetentionRequest::retentionMs).containsExactly(567000L);
+            }
         }
     }
 
     @Test
-    void onlyDeleteTopics() {
+    void onlyDeleteTopics() throws Exception {
         when(retentionEnforcementScheduler.getReadyPartitions()).thenReturn(List.of(T0P0, T1P0, T2P0));
-        when(metadataView.getDefaultConfig()).thenReturn(Map.of(
+        final var defaultConfigs = Map.of(
             RETENTION_BYTES_CONFIG, "123",
             RETENTION_MS_CONFIG, "567"
-        ));
+        );
 
         final var t0Config = new Properties();
         t0Config.put(CLEANUP_POLICY_CONFIG, "compact");
-        when(metadataView.getTopicConfig(eq(TOPIC_0))).thenReturn(t0Config);
+        when(metadataView.getTopicConfig(eq(TOPIC_0))).thenReturn(LogConfig.fromProps(defaultConfigs, t0Config));
         final var t1Config = new Properties();
         t1Config.put(CLEANUP_POLICY_CONFIG, "delete,compact");
-        when(metadataView.getTopicConfig(eq(TOPIC_1))).thenReturn(t1Config);
+        when(metadataView.getTopicConfig(eq(TOPIC_1))).thenReturn(LogConfig.fromProps(defaultConfigs, t1Config));
         final var t2Config = new Properties();
         t2Config.put(CLEANUP_POLICY_CONFIG, "delete");
-        when(metadataView.getTopicConfig(eq(TOPIC_2))).thenReturn(t2Config);
+        when(metadataView.getTopicConfig(eq(TOPIC_2))).thenReturn(LogConfig.fromProps(defaultConfigs, t2Config));
 
-        final var enforcer = new RetentionEnforcer(time, metadataView, controlPlane, retentionEnforcementScheduler, 0);
-        enforcer.run();
+        try (final var enforcer = new RetentionEnforcer(time, metadataView, controlPlane, retentionEnforcementScheduler, 0)) {
+            enforcer.run();
 
-        verify(controlPlane).enforceRetention(requestCaptor.capture(), eq(0));
-        assertThat(requestCaptor.getValue())
-            .map(EnforceRetentionRequest::topicId)
-            .containsExactly(TOPIC_ID_1, TOPIC_ID_2);
+            verify(controlPlane).enforceRetention(requestCaptor.capture(), eq(0));
+            assertThat(requestCaptor.getValue())
+                .map(EnforceRetentionRequest::topicId)
+                .containsExactly(TOPIC_ID_1, TOPIC_ID_2);
+        }
     }
 }

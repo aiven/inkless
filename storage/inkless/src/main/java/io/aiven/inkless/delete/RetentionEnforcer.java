@@ -94,8 +94,7 @@ public class RetentionEnforcer implements Runnable, Closeable {
         final List<TopicIdPartition> readyPartitions = retentionEnforcementScheduler.getReadyPartitions();
         final Map<String, LogConfig> topicConfigs = new HashMap<>();
         for (final TopicIdPartition partition : readyPartitions) {
-            final LogConfig topicConfig = topicConfigs.computeIfAbsent(partition.topic(),
-                t -> LogConfig.fromProps(metadataView.getDefaultConfig(), metadataView.getTopicConfig(t)));
+            final LogConfig topicConfig = topicConfigs.computeIfAbsent(partition.topic(), metadataView::getTopicConfig);
 
             // This check must be done here and not at scheduling, because the config may change at any moment.
             if (topicConfig.delete) {

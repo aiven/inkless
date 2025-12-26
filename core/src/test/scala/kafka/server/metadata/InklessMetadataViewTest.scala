@@ -19,7 +19,7 @@
 package kafka.server.metadata
 
 import org.apache.kafka.common.config.TopicConfig
-import org.junit.jupiter.api.{BeforeEach, Test}
+import org.junit.jupiter.api.{BeforeEach, Nested, Test}
 import org.junit.jupiter.api.Assertions._
 import org.mockito.Mockito._
 
@@ -122,6 +122,112 @@ class InklessMetadataViewTest {
     val props = new Properties()
     diskless.foreach(v => props.put(TopicConfig.DISKLESS_ENABLE_CONFIG, v))
     props
+  }
+
+  @Nested
+  class GetTopicConfigTest {
+    @Test
+    def testMergesDefaultConfigsWithTopicOverrides(): Unit = {
+      // Setup default configs
+      val defaultConfig = new util.HashMap[String, Object]()
+      defaultConfig.put(TopicConfig.RETENTION_MS_CONFIG, "86400000") // 1 day
+      defaultConfig.put(TopicConfig.RETENTION_BYTES_CONFIG, "1073741824") // 1 GB
+      when(configSupplier.get()).thenReturn(defaultConfig)
+
+      // Setup topic-specific overrides
+      val topicOverrides = new Properties()
+      topicOverrides.put(TopicConfig.RETENTION_MS_CONFIG, "604800000") // 7 days - overrides default
+      when(metadataCache.topicConfig("test-topic")).thenReturn(topicOverrides)
+
+      // Call the method under test
+      val logConfig = metadataView.getTopicConfig("test-topic")
+
+      // Verify topic override takes precedence
+      assertEquals(604800000L, logConfig.retentionMs)
+      // Verify default is used when no override exists
+      assertEquals(1073741824L, logConfig.retentionSize)
+    }
+
+    @Test
+    def testTopicOverridesCompletelyReplaceDefaults(): Unit = {
+      // Setup default configs
+      val defaultConfig = new util.HashMap[String, Object]()
+      defaultConfig.put(TopicConfig.RETENTION_MS_CONFIG, "86400000")
+      defaultConfig.put(TopicConfig.RETENTION_BYTES_CONFIG, "1073741824")
+      when(configSupplier.get()).thenReturn(defaultConfig)
+
+      // Setup topic-specific overrides for both configs
+      val topicOverrides = new Properties()
+      topicOverrides.put(TopicConfig.RETENTION_MS_CONFIG, "3600000") // 1 hour
+      topicOverrides.put(TopicConfig.RETENTION_BYTES_CONFIG, "536870912") // 512 MB
+      when(metadataCache.topicConfig("test-topic")).thenReturn(topicOverrides)
+
+      // Call the method under test
+      val logConfig = metadataView.getTopicConfig("test-topic")
+
+      // Verify both values are from topic overrides
+      assertEquals(3600000L, logConfig.retentionMs)
+      assertEquals(536870912L, logConfig.retentionSize)
+    }
+
+    @Test
+    def testEmptyTopicConfigUsesDefaults(): Unit = {
+      // Setup default configs
+      val defaultConfig = new util.HashMap[String, Object]()
+      defaultConfig.put(TopicConfig.RETENTION_MS_CONFIG, "86400000")
+      defaultConfig.put(TopicConfig.RETENTION_BYTES_CONFIG, "1073741824")
+      when(configSupplier.get()).thenReturn(defaultConfig)
+
+      // Setup empty topic overrides
+      val topicOverrides = new Properties()
+      when(metadataCache.topicConfig("test-topic")).thenReturn(topicOverrides)
+
+      // Call the method under test
+      val logConfig = metadataView.getTopicConfig("test-topic")
+
+      // Verify default values are used
+      assertEquals(86400000L, logConfig.retentionMs)
+      assertEquals(1073741824L, logConfig.retentionSize)
+    }
+
+    @Test
+    def testNullValuesInDefaultConfigAreFiltered(): Unit = {
+      // Setup default configs with null values
+      val defaultConfig = new util.HashMap[String, Object]()
+      defaultConfig.put(TopicConfig.RETENTION_MS_CONFIG, "86400000")
+      defaultConfig.put(TopicConfig.RETENTION_BYTES_CONFIG, null) // null value should be filtered
+      when(configSupplier.get()).thenReturn(defaultConfig)
+
+      // Setup empty topic overrides
+      val topicOverrides = new Properties()
+      when(metadataCache.topicConfig("test-topic")).thenReturn(topicOverrides)
+
+      // Call the method under test - should not throw due to null filtering
+      val logConfig = metadataView.getTopicConfig("test-topic")
+
+      // Verify the non-null default is applied
+      assertEquals(86400000L, logConfig.retentionMs)
+      // Verify the LogConfig default (-1) is used for the filtered null value
+      assertEquals(-1L, logConfig.retentionSize)
+    }
+
+    @Test
+    def testEmptyDefaultConfigWithTopicOverrides(): Unit = {
+      // Setup empty default configs
+      val defaultConfig = new util.HashMap[String, Object]()
+      when(configSupplier.get()).thenReturn(defaultConfig)
+
+      // Setup topic-specific overrides
+      val topicOverrides = new Properties()
+      topicOverrides.put(TopicConfig.RETENTION_MS_CONFIG, "7200000") // 2 hours
+      when(metadataCache.topicConfig("test-topic")).thenReturn(topicOverrides)
+
+      // Call the method under test
+      val logConfig = metadataView.getTopicConfig("test-topic")
+
+      // Verify topic override is applied
+      assertEquals(7200000L, logConfig.retentionMs)
+    }
   }
 
 }

@@ -26,11 +26,8 @@ import org.apache.kafka.common.record.MemoryRecords;
 import org.apache.kafka.common.record.SimpleRecord;
 import org.apache.kafka.common.record.TimestampType;
 import org.apache.kafka.common.requests.ProduceResponse.PartitionResponse;
-import org.apache.kafka.common.utils.MockTime;
-import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.server.common.RequestLocal;
 import org.apache.kafka.storage.internals.log.LogConfig;
-import org.apache.kafka.storage.log.metrics.BrokerTopicStats;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -41,14 +38,8 @@ import org.mockito.quality.Strictness;
 
 import java.io.IOException;
 import java.util.Map;
-import java.util.Properties;
 import java.util.concurrent.CompletableFuture;
-import java.util.function.Supplier;
-
-import io.aiven.inkless.common.SharedState;
-import io.aiven.inkless.config.InklessConfig;
-import io.aiven.inkless.control_plane.ControlPlane;
-import io.aiven.inkless.control_plane.MetadataView;
+import java.util.function.Function;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -61,22 +52,11 @@ import static org.mockito.Mockito.when;
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.STRICT_STUBS)
 public class AppendHandlerTest {
-    static final int BROKER_ID = 11;
+    static final Function<String, LogConfig> GET_LOG_CONFIGS = (topicName) -> new LogConfig(Map.of());
 
-    static final Supplier<LogConfig> DEFAULT_TOPIC_CONFIGS = () -> new LogConfig(Map.of());
-
-    Time time = new MockTime();
     RequestLocal requestLocal = RequestLocal.noCaching();
     @Mock
-    InklessConfig inklessConfig;
-    @Mock
-    MetadataView metadataView;
-    @Mock
-    ControlPlane controlPlane;
-    @Mock
     Writer writer;
-    @Mock
-    BrokerTopicStats brokerTopicStats;
 
     private static final MemoryRecords TRANSACTIONAL_RECORDS = MemoryRecords.withTransactionalRecords(
         Compression.NONE,
@@ -100,11 +80,7 @@ public class AppendHandlerTest {
 
     @Test
     public void rejectTransactionalProduce() throws Exception {
-        try (
-            final SharedState sharedState = SharedState.initialize(time, BROKER_ID, inklessConfig, metadataView, controlPlane,
-                brokerTopicStats, DEFAULT_TOPIC_CONFIGS);
-            final AppendHandler interceptor = new AppendHandler(sharedState, writer)
-        ) {
+        try (final AppendHandler interceptor = new AppendHandler(writer, GET_LOG_CONFIGS)) {
 
             final TopicIdPartition topicIdPartition1 = new TopicIdPartition(Uuid.randomUuid(), 0, "inkless1");
             final TopicIdPartition topicIdPartition2 = new TopicIdPartition(Uuid.randomUuid(), 0, "inkless2");
@@ -126,11 +102,7 @@ public class AppendHandlerTest {
 
     @Test
     public void emptyRequests() throws Exception {
-        try (
-            final SharedState sharedState = SharedState.initialize(time, BROKER_ID, inklessConfig, metadataView, controlPlane,
-                brokerTopicStats, DEFAULT_TOPIC_CONFIGS);
-            final AppendHandler interceptor = new AppendHandler(sharedState, writer)
-        ) {
+        try (final AppendHandler interceptor = new AppendHandler(writer, GET_LOG_CONFIGS)) {
 
             final Map<TopicIdPartition, MemoryRecords> entriesPerPartition = Map.of();
 
@@ -155,13 +127,7 @@ public class AppendHandlerTest {
             CompletableFuture.completedFuture(writeResult)
         );
 
-        when(metadataView.getTopicConfig(any())).thenReturn(new Properties());
-        try (
-            final SharedState sharedState = SharedState.initialize(time, BROKER_ID, inklessConfig, metadataView, controlPlane,
-                brokerTopicStats, DEFAULT_TOPIC_CONFIGS);
-            final AppendHandler interceptor = new AppendHandler(sharedState, writer)
-        ) {
-
+        try (final AppendHandler interceptor = new AppendHandler(writer, GET_LOG_CONFIGS)) {
             final var result = interceptor.handle(entriesPerPartition, requestLocal).get();
             assertThat(result).isEqualTo(writeResult);
         }
@@ -180,25 +146,17 @@ public class AppendHandlerTest {
             CompletableFuture.failedFuture(exception)
         );
 
-        when(metadataView.getTopicConfig(any())).thenReturn(new Properties());
-        try (
-            final SharedState sharedState = SharedState.initialize(time, BROKER_ID, inklessConfig, metadataView, controlPlane,
-                brokerTopicStats, DEFAULT_TOPIC_CONFIGS);
-            final AppendHandler interceptor = new AppendHandler(sharedState, writer)
-        ) {
+        try (final AppendHandler interceptor = new AppendHandler(writer, GET_LOG_CONFIGS)) {
             assertThatThrownBy(() -> interceptor.handle(entriesPerPartition, requestLocal).get()).hasCause(exception);
         }
     }
 
     @Test
     public void close() throws IOException {
-        try (final SharedState sharedState = SharedState.initialize(time, BROKER_ID, inklessConfig, metadataView, controlPlane,
-            brokerTopicStats, DEFAULT_TOPIC_CONFIGS)) {
-            final AppendHandler interceptor = new AppendHandler(sharedState, writer);
+        final AppendHandler interceptor = new AppendHandler(writer, GET_LOG_CONFIGS);
 
-            interceptor.close();
+        interceptor.close();
 
-            verify(writer).close();
-        }
+        verify(writer).close();
     }
 }

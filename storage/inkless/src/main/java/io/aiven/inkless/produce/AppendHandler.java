@@ -37,6 +37,7 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 
 import io.aiven.inkless.common.SharedState;
@@ -44,14 +45,13 @@ import io.aiven.inkless.common.SharedState;
 public class AppendHandler implements Closeable {
     private static final Logger LOGGER = LoggerFactory.getLogger(AppendHandler.class);
 
-    private final SharedState state;
+    private final Function<String, LogConfig> getLogConfig;
     private final Writer writer;
 
     @DoNotMutate
     @CoverageIgnore
     public AppendHandler(final SharedState state) {
         this(
-            state,
             new Writer(
                 state.time(),
                 state.brokerId(),
@@ -67,14 +67,14 @@ public class AppendHandler implements Closeable {
                 state.config().produceUploadBackoff(),
                 state.config().produceUploadThreadPoolSize(),
                 state.brokerTopicStats()
-            )
+            ),
+            state.metadata()::getTopicConfig
         );
     }
 
     // Visible for tests
-    AppendHandler(final SharedState state,
-                  final Writer writer) {
-        this.state = state;
+    AppendHandler(final Writer writer, final Function<String, LogConfig> getLogConfig) {
+        this.getLogConfig = getLogConfig;
         this.writer = writer;
     }
 
@@ -113,11 +113,9 @@ public class AppendHandler implements Closeable {
     }
 
     private Map<String, LogConfig> getLogConfigs(final Set<TopicIdPartition> topicIdPartitions) {
-        final Map<String, Object> defaultTopicConfigs = state.defaultTopicConfigs().get().originals();
         final Map<String, LogConfig> result = new HashMap<>();
         for (final TopicIdPartition tp : topicIdPartitions) {
-            final var overrides = state.metadata().getTopicConfig(tp.topic());
-            result.put(tp.topic(), LogConfig.fromProps(defaultTopicConfigs, overrides));
+            result.put(tp.topic(), getLogConfig.apply(tp.topic()));
         }
         return result;
     }
