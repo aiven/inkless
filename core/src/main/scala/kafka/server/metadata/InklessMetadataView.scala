@@ -22,8 +22,8 @@ import io.aiven.inkless.control_plane.MetadataView
 import org.apache.kafka.common.config.TopicConfig
 import org.apache.kafka.common.network.ListenerName
 import org.apache.kafka.common.{Node, TopicIdPartition, Uuid}
+import org.apache.kafka.storage.internals.log.LogConfig
 
-import java.util.Properties
 import java.util.function.Supplier
 import java.util.stream.{Collectors, IntStream}
 import java.{lang, util}
@@ -55,10 +55,6 @@ class InklessMetadataView(val metadataCache: KRaftMetadataCache, val defaultConf
     metadataCache.topicConfig(topicName).getProperty(TopicConfig.DISKLESS_ENABLE_CONFIG, "false").toBoolean
   }
 
-  override def getTopicConfig(topicName: String): Properties = {
-    metadataCache.topicConfig(topicName)
-  }
-
   override def getDisklessTopicPartitions: util.Set[TopicIdPartition] = {
     metadataCache.getAllTopics().stream()
       .filter(isDisklessTopic)
@@ -66,4 +62,6 @@ class InklessMetadataView(val metadataCache: KRaftMetadataCache, val defaultConf
         .mapToObj(p => new TopicIdPartition(metadataCache.getTopicId(t), p, t)))
       .collect(Collectors.toSet[TopicIdPartition]())
   }
+
+  override def getTopicConfig(topicName: String): LogConfig = LogConfig.fromProps(getDefaultConfig(), metadataCache.topicConfig(topicName))
 }
