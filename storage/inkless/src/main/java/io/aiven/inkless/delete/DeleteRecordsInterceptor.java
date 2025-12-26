@@ -36,27 +36,31 @@ import java.util.stream.Collectors;
 import io.aiven.inkless.common.SharedState;
 import io.aiven.inkless.common.TopicIdEnricher;
 import io.aiven.inkless.common.TopicTypeCounter;
+import io.aiven.inkless.control_plane.ControlPlane;
 import io.aiven.inkless.control_plane.DeleteRecordsRequest;
 import io.aiven.inkless.control_plane.DeleteRecordsResponse;
+import io.aiven.inkless.control_plane.MetadataView;
 
 import static org.apache.kafka.common.requests.DeleteRecordsResponse.INVALID_LOW_WATERMARK;
 
 public class DeleteRecordsInterceptor {
     private static final Logger LOGGER = LoggerFactory.getLogger(DeleteRecordsInterceptor.class);
 
-    private final SharedState state;
+    private final ControlPlane controlPlane;
+    private final MetadataView metadataView;
     private final Executor executor;
     private final TopicTypeCounter topicTypeCounter;
 
     public DeleteRecordsInterceptor(final SharedState state) {
-        this(state, Executors.newCachedThreadPool());
+        this(state.controlPlane(), state.metadata(), Executors.newCachedThreadPool());
     }
 
     // Visible for testing.
-    DeleteRecordsInterceptor(final SharedState state, final Executor executor) {
-        this.state = state;
+    DeleteRecordsInterceptor(final ControlPlane controlPlane, final MetadataView metadataView, final Executor executor) {
+        this.controlPlane = controlPlane;
         this.executor = executor;
-        this.topicTypeCounter = new TopicTypeCounter(this.state.metadata());
+        this.metadataView = metadataView;
+        this.topicTypeCounter = new TopicTypeCounter(metadataView);
     }
 
     /**
@@ -82,7 +86,7 @@ public class DeleteRecordsInterceptor {
 
         final Map<TopicIdPartition, Long> offsetPerPartitionEnriched;
         try {
-            offsetPerPartitionEnriched = TopicIdEnricher.enrich(state.metadata(), offsetPerPartition);
+            offsetPerPartitionEnriched = TopicIdEnricher.enrich(metadataView, offsetPerPartition);
         } catch (final TopicIdEnricher.TopicIdNotFoundException e) {
             LOGGER.error("Cannot find UUID for topic {}", e.topicName);
             respondAllWithError(offsetPerPartition, responseCallback, Errors.UNKNOWN_SERVER_ERROR);
@@ -95,7 +99,7 @@ public class DeleteRecordsInterceptor {
                 final List<DeleteRecordsRequest> requests = offsetPerPartitionEnriched.entrySet().stream()
                     .map(kv -> new DeleteRecordsRequest(kv.getKey(), kv.getValue()))
                     .toList();
-                final List<DeleteRecordsResponse> responses = state.controlPlane().deleteRecords(requests);
+                final List<DeleteRecordsResponse> responses = controlPlane.deleteRecords(requests);
                 final Map<TopicPartition, DeleteRecordsResponseData.DeleteRecordsPartitionResult> result = new HashMap<>();
                 for (int i = 0; i < responses.size(); i++) {
                     final DeleteRecordsRequest request = requests.get(i);

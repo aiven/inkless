@@ -21,10 +21,8 @@ import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.record.TimestampType;
 import org.apache.kafka.common.utils.Time;
-import org.apache.kafka.storage.log.metrics.BrokerTopicStats;
 
 import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -46,12 +44,11 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
-import java.util.function.Supplier;
 
 import io.aiven.inkless.common.ObjectFormat;
 import io.aiven.inkless.common.ObjectKey;
+import io.aiven.inkless.common.ObjectKeyCreator;
 import io.aiven.inkless.common.PlainObjectKey;
-import io.aiven.inkless.common.SharedState;
 import io.aiven.inkless.config.InklessConfig;
 import io.aiven.inkless.control_plane.BatchInfo;
 import io.aiven.inkless.control_plane.BatchMetadata;
@@ -59,7 +56,6 @@ import io.aiven.inkless.control_plane.ControlPlane;
 import io.aiven.inkless.control_plane.ControlPlaneException;
 import io.aiven.inkless.control_plane.FileMergeWorkItem;
 import io.aiven.inkless.control_plane.MergedFileBatch;
-import io.aiven.inkless.control_plane.MetadataView;
 import io.aiven.inkless.storage_backend.common.StorageBackend;
 import io.aiven.inkless.storage_backend.common.StorageBackendException;
 
@@ -96,6 +92,7 @@ class FileMergerMockedTest {
     static final TopicIdPartition T1P0 = new TopicIdPartition(TOPIC_ID_1, 0, TOPIC_1);
     static final TopicIdPartition T1P1 = new TopicIdPartition(TOPIC_ID_1, 1, TOPIC_1);
     public static final Path WORK_DIR = Path.of("/tmp/inkless/file-merge");
+    public static final ObjectKeyCreator OBJECT_KEY_CREATOR = ObjectKey.creator("prefix", false);
 
     @Mock
     Time time;
@@ -110,28 +107,23 @@ class FileMergerMockedTest {
     @Captor
     ArgumentCaptor<Long> sleepCaptor;
 
-    SharedState sharedState;
-
-    @BeforeEach
-    void setup() {
-        when(inklessConfig.objectKeyPrefix()).thenReturn("prefix");
-        when(inklessConfig.fileMergeWorkDir()).thenReturn(WORK_DIR);
-        when(inklessConfig.cacheMaxCount()).thenReturn(10000L);
-
-        sharedState = SharedState.initialize(time, BROKER_ID, inklessConfig, mock(MetadataView.class), controlPlane,
-            mock(BrokerTopicStats.class), mock(Supplier.class));
-    }
-
     @AfterEach
     void tearDown() {
         assertThat(WORK_DIR).isEmptyDirectory();
     }
 
     @Test
+    void close() throws Exception {
+        final FileMerger fileMerger = new FileMerger(time, inklessConfig, controlPlane, storage, OBJECT_KEY_CREATOR, BROKER_ID, WORK_DIR);
+        fileMerger.close();
+        // storage is shared across background jobs and is managed by SharedState.
+        verify(storage, never()).close();
+    }
+
+    @Test
     void singleFileSingleBatch() throws StorageBackendException, IOException {
         when(inklessConfig.produceMaxUploadAttempts()).thenReturn(1);
         when(inklessConfig.produceUploadBackoff()).thenReturn(Duration.ZERO);
-        when(inklessConfig.storage(any())).thenReturn(storage);
 
         final String obj1 = "obj1";
 
@@ -167,7 +159,7 @@ class FileMergerMockedTest {
             new FileMergeWorkItem(WORK_ITEM_ID, Instant.ofEpochMilli(1234), List.of(file1InWorkItem))
         );
 
-        final FileMerger fileMerger = new FileMerger(sharedState);
+        final FileMerger fileMerger = new FileMerger(time, inklessConfig, controlPlane, storage, OBJECT_KEY_CREATOR, BROKER_ID, WORK_DIR);
         fileMerger.run();
 
         verify(storage).fetch(PlainObjectKey.create("", obj1), null);
@@ -187,7 +179,6 @@ class FileMergerMockedTest {
     void twoFilesWithGaps(final boolean directFileOrder, final boolean directBatchOrder) throws StorageBackendException, IOException {
         when(inklessConfig.produceMaxUploadAttempts()).thenReturn(1);
         when(inklessConfig.produceUploadBackoff()).thenReturn(Duration.ZERO);
-        when(inklessConfig.storage(any())).thenReturn(storage);
 
         final String obj1 = "obj1";
         final String obj2 = "obj2";
@@ -291,7 +282,7 @@ class FileMergerMockedTest {
             new FileMergeWorkItem(WORK_ITEM_ID, Instant.ofEpochMilli(1234), files)
         );
 
-        final FileMerger fileMerger = new FileMerger(sharedState);
+        final FileMerger fileMerger = new FileMerger(time, inklessConfig, controlPlane, storage, OBJECT_KEY_CREATOR, BROKER_ID, WORK_DIR);
         fileMerger.run();
 
         verify(storage).fetch(PlainObjectKey.create("", obj1), null);
@@ -307,7 +298,7 @@ class FileMergerMockedTest {
     void mustSleepWhenNoWorkItem() {
         when(controlPlane.getFileMergeWorkItem()).thenReturn(null);
 
-        final FileMerger fileMerger = new FileMerger(sharedState);
+        final FileMerger fileMerger = new FileMerger(time, inklessConfig, controlPlane, storage, OBJECT_KEY_CREATOR, BROKER_ID, WORK_DIR);
         fileMerger.run();
         verify(time).sleep(sleepCaptor.capture());
         assertThat(sleepCaptor.getValue()).isBetween((long) (10_000L * 0.8), (long) (20_000L * 1.2));
@@ -317,8 +308,6 @@ class FileMergerMockedTest {
 
     @Test
     void errorInReading() throws Exception {
-        when(inklessConfig.storage(any())).thenReturn(storage);
-
         final String obj1 = "obj1";
         final long batch1Id = 1;
         when(storage.fetch(any(ObjectKey.class), isNull()))
@@ -331,7 +320,7 @@ class FileMergerMockedTest {
             new FileMergeWorkItem(WORK_ITEM_ID, Instant.ofEpochMilli(1234), List.of(file1InWorkItem))
         );
 
-        final FileMerger fileMerger = new FileMerger(sharedState);
+        final FileMerger fileMerger = new FileMerger(time, inklessConfig, controlPlane, storage, OBJECT_KEY_CREATOR, BROKER_ID, WORK_DIR);
         fileMerger.run();
 
         verify(controlPlane).releaseFileMergeWorkItem(eq(WORK_ITEM_ID));
@@ -345,7 +334,6 @@ class FileMergerMockedTest {
 
     @Test
     void errorInWriting() throws Exception {
-        when(inklessConfig.storage(any())).thenReturn(storage);
         when(inklessConfig.produceMaxUploadAttempts()).thenReturn(1);
         when(inklessConfig.produceUploadBackoff()).thenReturn(Duration.ZERO);
 
@@ -373,7 +361,7 @@ class FileMergerMockedTest {
             new FileMergeWorkItem(WORK_ITEM_ID, Instant.ofEpochMilli(1234), List.of(file1InWorkItem))
         );
 
-        final FileMerger fileMerger = new FileMerger(sharedState);
+        final FileMerger fileMerger = new FileMerger(time, inklessConfig, controlPlane, storage, OBJECT_KEY_CREATOR, BROKER_ID, WORK_DIR);
         fileMerger.run();
 
         verify(controlPlane).releaseFileMergeWorkItem(eq(WORK_ITEM_ID));
@@ -387,7 +375,6 @@ class FileMergerMockedTest {
     @ParameterizedTest
     @ValueSource(booleans = {true, false})
     void errorInCommittingFromControlPlane(boolean isSafeToDelete) throws Exception {
-        when(inklessConfig.storage(any())).thenReturn(storage);
         when(inklessConfig.produceMaxUploadAttempts()).thenReturn(1);
         when(inklessConfig.produceUploadBackoff()).thenReturn(Duration.ZERO);
 
@@ -418,7 +405,7 @@ class FileMergerMockedTest {
             .when(controlPlane).commitFileMergeWorkItem(anyLong(), anyString(), any(), anyInt(), anyLong(), any());
         when(controlPlane.isSafeToDeleteFile(anyString())).thenReturn(isSafeToDelete);
 
-        final FileMerger fileMerger = new FileMerger(sharedState);
+        final FileMerger fileMerger = new FileMerger(time, inklessConfig, controlPlane, storage, OBJECT_KEY_CREATOR, BROKER_ID, WORK_DIR);
         fileMerger.run();
 
         verify(controlPlane).releaseFileMergeWorkItem(eq(WORK_ITEM_ID));
@@ -431,7 +418,6 @@ class FileMergerMockedTest {
 
     @Test
     void errorInCommittingNotFromControlPlane() throws Exception {
-        when(inklessConfig.storage(any())).thenReturn(storage);
         when(inklessConfig.produceMaxUploadAttempts()).thenReturn(1);
         when(inklessConfig.produceUploadBackoff()).thenReturn(Duration.ZERO);
 
@@ -460,7 +446,7 @@ class FileMergerMockedTest {
         doThrow(new RuntimeException("test"))
             .when(controlPlane).commitFileMergeWorkItem(anyLong(), anyString(), any(), anyInt(), anyLong(), any());
 
-        final FileMerger fileMerger = new FileMerger(sharedState);
+        final FileMerger fileMerger = new FileMerger(time, inklessConfig, controlPlane, storage, OBJECT_KEY_CREATOR, BROKER_ID, WORK_DIR);
         fileMerger.run();
 
         verify(controlPlane).releaseFileMergeWorkItem(eq(WORK_ITEM_ID));
@@ -481,5 +467,4 @@ class FileMergerMockedTest {
             throw new RuntimeException(e);
         }
     }
-
 }

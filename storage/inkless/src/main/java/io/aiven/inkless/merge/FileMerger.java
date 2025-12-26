@@ -67,12 +67,31 @@ public class FileMerger implements Runnable, Closeable {
     private final AtomicInteger attempts = new AtomicInteger();
 
     public FileMerger(final SharedState sharedState) {
-        this.brokerId = sharedState.brokerId();
-        this.time = sharedState.time();
-        this.config = sharedState.config();
-        this.controlPlane = sharedState.controlPlane();
-        this.storage = sharedState.buildStorage();
-        this.objectKeyCreator = sharedState.objectKeyCreator();
+        this(
+            sharedState.time(),
+            sharedState.config(),
+            sharedState.controlPlane(),
+            sharedState.backgroundStorage(),
+            sharedState.objectKeyCreator(),
+            sharedState.brokerId(),
+            sharedState.config().fileMergeWorkDir()
+        );
+    }
+
+    // Visible for testing.
+    FileMerger(final Time time,
+               final InklessConfig config,
+               final ControlPlane controlPlane,
+               final StorageBackend storage,
+               final ObjectKeyCreator objectKeyCreator,
+               final int brokerId,
+               final Path workDir) {
+        this.time = time;
+        this.config = config;
+        this.controlPlane = controlPlane;
+        this.storage = storage;
+        this.objectKeyCreator = objectKeyCreator;
+        this.brokerId = brokerId;
         this.metrics = new FileMergerMetrics();
 
         // This backoff is needed only for jitter, there's no exponent in it.
@@ -80,7 +99,7 @@ public class FileMerger implements Runnable, Closeable {
         final var noWorkBackoff = new ExponentialBackoff(noWorkBackoffDuration, 1, noWorkBackoffDuration * 2, 0.2);
         noWorkBackoffSupplier = () -> noWorkBackoff.backoff(1);
 
-        this.workDir = config.fileMergeWorkDir();
+        this.workDir = workDir;
     }
 
     @Override
@@ -239,7 +258,7 @@ public class FileMerger implements Runnable, Closeable {
 
     @Override
     public void close() throws IOException {
-        storage.close();
+        // Storage backend is managed by SharedState; avoid double-closing shared clients.
         metrics.close();
     }
 }

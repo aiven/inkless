@@ -22,10 +22,6 @@ import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.message.DeleteRecordsResponseData;
 import org.apache.kafka.common.protocol.Errors;
-import org.apache.kafka.common.utils.MockTime;
-import org.apache.kafka.common.utils.Time;
-import org.apache.kafka.storage.internals.log.LogConfig;
-import org.apache.kafka.storage.log.metrics.BrokerTopicStats;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -36,22 +32,10 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 
-import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Consumer;
-import java.util.function.Supplier;
 
-import io.aiven.inkless.cache.BatchCoordinateCache;
-import io.aiven.inkless.cache.CaffeineBatchCoordinateCache;
-import io.aiven.inkless.cache.FixedBlockAlignment;
-import io.aiven.inkless.cache.KeyAlignmentStrategy;
-import io.aiven.inkless.cache.NullCache;
-import io.aiven.inkless.cache.ObjectCache;
-import io.aiven.inkless.common.ObjectKey;
-import io.aiven.inkless.common.ObjectKeyCreator;
-import io.aiven.inkless.common.SharedState;
-import io.aiven.inkless.config.InklessConfig;
 import io.aiven.inkless.control_plane.ControlPlane;
 import io.aiven.inkless.control_plane.DeleteRecordsRequest;
 import io.aiven.inkless.control_plane.DeleteRecordsResponse;
@@ -71,25 +55,12 @@ import static org.mockito.Mockito.when;
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.STRICT_STUBS)
 class DeleteRecordsInterceptorTest {
-    static final int BROKER_ID = 11;
-    static final ObjectKeyCreator OBJECT_KEY_CREATOR = ObjectKey.creator("", false);
-    private static final KeyAlignmentStrategy KEY_ALIGNMENT_STRATEGY = new FixedBlockAlignment(Integer.MAX_VALUE);
-    private static final ObjectCache OBJECT_CACHE = new NullCache();
-    private static final BatchCoordinateCache BATCH_COORDINATE_CACHE = new CaffeineBatchCoordinateCache(Duration.ofSeconds(30));
-
-    static final Supplier<LogConfig> DEFAULT_TOPIC_CONFIGS = () -> new LogConfig(Map.of());
-
-    Time time = new MockTime();
-    @Mock
-    InklessConfig disklessConfig;
     @Mock
     MetadataView metadataView;
     @Mock
     ControlPlane controlPlane;
     @Mock
     Consumer<Map<TopicPartition, DeleteRecordsResponseData.DeleteRecordsPartitionResult>> responseCallback;
-    @Mock
-    BrokerTopicStats brokerTopicStats;
 
     @Captor
     ArgumentCaptor<Map<TopicPartition, DeleteRecordsResponseData.DeleteRecordsPartitionResult>> resultCaptor;
@@ -100,20 +71,8 @@ class DeleteRecordsInterceptorTest {
     public void mixingDisklessAndClassicTopicsIsNotAllowed() {
         when(metadataView.isDisklessTopic(eq("diskless"))).thenReturn(true);
         when(metadataView.isDisklessTopic(eq("non_diskless"))).thenReturn(false);
-        final SharedState state = new SharedState(
-            time,
-            BROKER_ID,
-            disklessConfig,
-            metadataView,
-            controlPlane,
-            OBJECT_KEY_CREATOR,
-            KEY_ALIGNMENT_STRATEGY,
-            OBJECT_CACHE,
-            BATCH_COORDINATE_CACHE,
-            brokerTopicStats,
-            DEFAULT_TOPIC_CONFIGS
-        );
-        final DeleteRecordsInterceptor interceptor = new DeleteRecordsInterceptor(state);
+
+        final DeleteRecordsInterceptor interceptor = new DeleteRecordsInterceptor(controlPlane, metadataView, new SynchronousExecutor());
 
         final Map<TopicPartition, Long> entriesPerPartition = Map.of(
             new TopicPartition("diskless", 0),
@@ -144,9 +103,8 @@ class DeleteRecordsInterceptorTest {
     @Test
     public void notInterceptDeletingRecordsFromClassicTopics() {
         when(metadataView.isDisklessTopic(eq("non_diskless"))).thenReturn(false);
-        final DeleteRecordsInterceptor interceptor = new DeleteRecordsInterceptor(
-            new SharedState(time, BROKER_ID, disklessConfig, metadataView, controlPlane,
-                OBJECT_KEY_CREATOR, KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, BATCH_COORDINATE_CACHE, brokerTopicStats, DEFAULT_TOPIC_CONFIGS));
+
+        final DeleteRecordsInterceptor interceptor = new DeleteRecordsInterceptor(controlPlane, metadataView, new SynchronousExecutor());
 
         final Map<TopicPartition, Long> entriesPerPartition = Map.of(
             new TopicPartition("non_diskless", 0), 4567L
@@ -181,10 +139,8 @@ class DeleteRecordsInterceptorTest {
             }
         });
 
-        final DeleteRecordsInterceptor interceptor = new DeleteRecordsInterceptor(
-            new SharedState(time, BROKER_ID, disklessConfig, metadataView, controlPlane,
-                OBJECT_KEY_CREATOR, KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, BATCH_COORDINATE_CACHE, brokerTopicStats, DEFAULT_TOPIC_CONFIGS),
-            new SynchronousExecutor());
+
+        final DeleteRecordsInterceptor interceptor = new DeleteRecordsInterceptor(controlPlane, metadataView, new SynchronousExecutor());
 
         final TopicPartition tp0 = new TopicPartition("diskless", 0);
         final TopicPartition tp1 = new TopicPartition("diskless", 1);
@@ -224,10 +180,7 @@ class DeleteRecordsInterceptorTest {
 
         when(controlPlane.deleteRecords(anyList())).thenThrow(new RuntimeException("test"));
 
-        final DeleteRecordsInterceptor interceptor = new DeleteRecordsInterceptor(
-            new SharedState(time, BROKER_ID, disklessConfig, metadataView, controlPlane,
-                OBJECT_KEY_CREATOR, KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, BATCH_COORDINATE_CACHE, brokerTopicStats, DEFAULT_TOPIC_CONFIGS),
-            new SynchronousExecutor());
+        final DeleteRecordsInterceptor interceptor = new DeleteRecordsInterceptor(controlPlane, metadataView, new SynchronousExecutor());
 
         final TopicPartition topicPartition = new TopicPartition("diskless", 1);
         final Map<TopicPartition, Long> entriesPerPartition = Map.of(
@@ -265,10 +218,7 @@ class DeleteRecordsInterceptorTest {
             }
         });
 
-        final DeleteRecordsInterceptor interceptor = new DeleteRecordsInterceptor(
-            new SharedState(time, BROKER_ID, disklessConfig, metadataView, controlPlane,
-                OBJECT_KEY_CREATOR, KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, BATCH_COORDINATE_CACHE, brokerTopicStats, DEFAULT_TOPIC_CONFIGS),
-            new SynchronousExecutor());
+        final DeleteRecordsInterceptor interceptor = new DeleteRecordsInterceptor(controlPlane, metadataView, new SynchronousExecutor());
 
         final TopicPartition topicPartition1 = new TopicPartition("diskless1", 1);
         final TopicPartition topicPartition2 = new TopicPartition("diskless2", 2);
