@@ -31,6 +31,7 @@ import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.time.Instant;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
@@ -45,6 +46,7 @@ import io.aiven.inkless.common.InklessThreadFactory;
 import io.aiven.inkless.common.ObjectKeyCreator;
 import io.aiven.inkless.common.metrics.ThreadPoolMonitor;
 import io.aiven.inkless.control_plane.ControlPlane;
+import io.aiven.inkless.generated.FileExtent;
 import io.aiven.inkless.storage_backend.common.ObjectFetcher;
 
 public class Reader implements AutoCloseable {
@@ -86,11 +88,13 @@ public class Reader implements AutoCloseable {
             maxBatchesPerPartitionToFind,
             Executors.newFixedThreadPool(fetchMetadataThreadPoolSize, new InklessThreadFactory("inkless-fetch-metadata-", false)),
             Executors.newFixedThreadPool(fetchDataThreadPoolSize, new InklessThreadFactory("inkless-fetch-data-", false)),
+            new InklessFetchMetrics(time, cache),
             brokerTopicStats
         );
     }
 
-    public Reader(
+    // visible for testing
+    Reader(
         Time time,
         ObjectKeyCreator objectKeyCreator,
         KeyAlignmentStrategy keyAlignmentStrategy,
@@ -100,6 +104,7 @@ public class Reader implements AutoCloseable {
         int maxBatchesPerPartitionToFind,
         ExecutorService metadataExecutor,
         ExecutorService dataExecutor,
+        InklessFetchMetrics fetchMetrics,
         BrokerTopicStats brokerTopicStats
     ) {
         this.time = time;
@@ -111,7 +116,7 @@ public class Reader implements AutoCloseable {
         this.maxBatchesPerPartitionToFind = maxBatchesPerPartitionToFind;
         this.metadataExecutor = metadataExecutor;
         this.dataExecutor = dataExecutor;
-        this.fetchMetrics = new InklessFetchMetrics(time, cache);
+        this.fetchMetrics = fetchMetrics;
         this.brokerTopicStats = brokerTopicStats;
         try {
             this.metadataThreadPoolMonitor = new ThreadPoolMonitor("inkless-fetch-metadata", metadataExecutor);
@@ -122,12 +127,31 @@ public class Reader implements AutoCloseable {
         }
     }
 
+    /**
+     * Asynchronously fetches data for multiple partitions using a staged pipeline:
+     *
+     * <p>1. Finds batches (metadataExecutor);
+     * <p>2. Plans and submits fetches (completing thread);
+     * <p>3. Fetches data (dataExecutor);
+     * <p>4. Assembles final response (completing thread)
+     *
+     * <p>Stages 2 and 4 use non-async methods (thenApply, thenCombine), so they run on
+     * whichever thread completes the previous stage. This is acceptable because these
+     * are lightweight CPU-bound tasks that complete quickly (1-5ms), and the I/O operations
+     * are already fully non-blocking (handled by dataExecutor).
+     *
+     * @param params fetch parameters
+     * @param fetchInfos partitions and offsets to fetch
+     * @return CompletableFuture with fetch results per partition
+     */
     public CompletableFuture<Map<TopicIdPartition, FetchPartitionData>> fetch(
         final FetchParams params,
         final Map<TopicIdPartition, FetchRequest.PartitionData> fetchInfos
     ) {
         final Instant startAt = TimeUtils.durationMeasurementNow(time);
         fetchMetrics.fetchStarted(fetchInfos.size());
+
+        // Find Batches (metadataExecutor): Query control plane to find which storage objects contain the requested data
         final var batchCoordinates = CompletableFuture.supplyAsync(
             new FindBatchesJob(
                 time,
@@ -139,20 +163,28 @@ public class Reader implements AutoCloseable {
             ),
             metadataExecutor
         );
-        return batchCoordinates.thenApply(
-                coordinates ->
-                    new FetchPlanner(
-                        time,
-                        objectKeyCreator,
-                        keyAlignmentStrategy,
-                        cache,
-                        objectFetcher,
-                        dataExecutor,
-                        coordinates,
-                        fetchMetrics
-                    ).get()
-            )
-            .thenCombineAsync(batchCoordinates, (fileExtents, coordinates) ->
+
+        // Plan & Submit (completing thread): Create fetch plan and submit to cache (non-blocking)
+        // Runs on the thread that completed batchCoordinates (metadataExecutor thread)
+        return batchCoordinates.thenApply(coordinates -> {
+                // FetchPlanner creates a plan and submits requests to cache
+                // Returns List<CompletableFuture<FileExtent>> immediately
+                return new FetchPlanner(
+                    time,
+                    objectKeyCreator,
+                    keyAlignmentStrategy,
+                    cache,
+                    objectFetcher,
+                    dataExecutor,
+                    coordinates,
+                    fetchMetrics
+                ).get();
+            })
+            // Fetch Data (dataExecutor): Flatten list of futures into single future with all results
+            .thenCompose(Reader::allOfFileExtents)
+            // Complete Fetch (completing thread): Combine fetched data with batch coordinates to build final response
+            // Runs on whichever thread completes last (typically dataExecutor thread)
+            .thenCombine(batchCoordinates, (fileExtents, coordinates) ->
                 new FetchCompleter(
                     time,
                     objectKeyCreator,
@@ -171,19 +203,14 @@ public class Reader implements AutoCloseable {
                         brokerTopicStats.allTopicsStats().failedFetchRequestRate().mark();
                         brokerTopicStats.topicStats(topic).failedFetchRequestRate().mark();
                     }
-                    // Check if the exception was caused by a fetch related exception and increment the relevant metric
-                    if (throwable instanceof CompletionException) {
-                        // Finding batches fails on the initial stage
-                        if (throwable.getCause() instanceof FindBatchesException) {
+                    // Record specific failure metrics based on exception type
+                    // All exceptions are wrapped in CompletionException due to CompletableFuture
+                    if (throwable instanceof CompletionException && throwable.getCause() != null) {
+                        final Throwable cause = throwable.getCause();
+                        if (cause instanceof FindBatchesException) {
                             fetchMetrics.findBatchesFailed();
-                        } else if (throwable.getCause() instanceof FetchException) {
-                            // but storage-related exceptions are wrapped twice as they happen within the fetch completer
-                            final Throwable fetchException = throwable.getCause();
-                            if (fetchException.getCause() instanceof FileFetchException) {
-                                fetchMetrics.fileFetchFailed();
-                            } else if (fetchException.getCause() instanceof CacheFetchException) {
-                                fetchMetrics.cacheFetchFailed();
-                            }
+                        } else if (cause instanceof FileFetchException) {
+                            fetchMetrics.fileFetchFailed();
                         }
                     }
                     fetchMetrics.fetchFailed();
@@ -201,6 +228,26 @@ public class Reader implements AutoCloseable {
                     fetchMetrics.fetchCompleted(startAt);
                 }
             });
+    }
+
+    /**
+     * Waits for all file extent futures to complete and collects results in order.
+     *
+     * @param fileExtentFutures the list of futures to wait for
+     * @return a future that completes with a list of file extents in the same order as the input
+     */
+    static CompletableFuture<List<FileExtent>> allOfFileExtents(
+        List<CompletableFuture<FileExtent>> fileExtentFutures
+    ) {
+        final CompletableFuture<?>[] futuresArray = fileExtentFutures.toArray(CompletableFuture[]::new);
+        return CompletableFuture.allOf(futuresArray)
+            // The thenApply callback runs on whichever thread completes the last file
+            // extent future (typically a dataExecutor thread or metadataExecutor when data is cached).
+            // The join() calls are safe because all futures are already completed when this callback executes.
+            .thenApply(v ->
+                fileExtentFutures.stream()
+                    .map(CompletableFuture::join)
+                    .toList());
     }
 
     @Override
