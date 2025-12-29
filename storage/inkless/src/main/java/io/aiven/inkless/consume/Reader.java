@@ -131,11 +131,14 @@ public class Reader implements AutoCloseable {
      * Asynchronously fetches data for multiple partitions using a staged pipeline:
      *
      * <p>1. Finds batches (metadataExecutor);
-     * <p>2. Plans and submits fetches (calling thread);
+     * <p>2. Plans and submits fetches (completing thread);
      * <p>3. Fetches data (dataExecutor);
-     * <p>4. Assembles final response (calling thread)
+     * <p>4. Assembles final response (completing thread)
      *
-     * <p>Each stage uses a thread pool or the calling thread for efficiency.
+     * <p>Stages 2 and 4 use non-async methods (thenApply, thenCombine), so they run on
+     * whichever thread completes the previous stage. This is acceptable because these
+     * are lightweight CPU-bound tasks that complete quickly (1-5ms), and the I/O operations
+     * are already fully non-blocking (handled by dataExecutor).
      *
      * @param params fetch parameters
      * @param fetchInfos partitions and offsets to fetch
@@ -161,7 +164,8 @@ public class Reader implements AutoCloseable {
             metadataExecutor
         );
 
-        // Plan & Submit (calling thread): Create fetch plan and submit to cache (non-blocking)
+        // Plan & Submit (completing thread): Create fetch plan and submit to cache (non-blocking)
+        // Runs on the thread that completed batchCoordinates (metadataExecutor thread)
         return batchCoordinates.thenApply(coordinates -> {
                 // FetchPlanner creates a plan and submits requests to cache
                 // Returns List<CompletableFuture<FileExtent>> immediately
@@ -178,7 +182,8 @@ public class Reader implements AutoCloseable {
             })
             // Fetch Data (dataExecutor): Flatten list of futures into single future with all results
             .thenCompose(Reader::allOfFileExtents)
-            // Complete Fetch (calling thread): Combine fetched data with batch coordinates to build final response
+            // Complete Fetch (completing thread): Combine fetched data with batch coordinates to build final response
+            // Runs on whichever thread completes last (typically dataExecutor thread)
             .thenCombine(batchCoordinates, (fileExtents, coordinates) ->
                 new FetchCompleter(
                     time,
@@ -234,13 +239,11 @@ public class Reader implements AutoCloseable {
     static CompletableFuture<List<FileExtent>> allOfFileExtents(
         List<CompletableFuture<FileExtent>> fileExtentFutures
     ) {
-        // This does **not** block the calling thread or fork-join pool:
-        // 1. allOf() returns immediately with a future (non-blocking)
-        // 2. thenApply() registers a callback without waiting (non-blocking)
-        // 3. join() inside the callback is safe - it only runs _after_ allOf completes,
-        //    meaning all futures are already done, so join() returns immediately
         final CompletableFuture<?>[] futuresArray = fileExtentFutures.toArray(CompletableFuture[]::new);
         return CompletableFuture.allOf(futuresArray)
+            // The thenApply callback runs on whichever thread completes the last file
+            // extent future (typically a dataExecutor thread or metadataExecutor when data is cached).
+            // The join() calls are safe because all futures are already completed when this callback executes.
             .thenApply(v ->
                 fileExtentFutures.stream()
                     .map(CompletableFuture::join)
