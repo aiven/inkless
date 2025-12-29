@@ -89,7 +89,7 @@ public class CacheFetchJob implements Callable<FileExtent> {
         try {
             freshFile = fallback.call();
         } catch (Exception e) {
-            throw new FetchException(e);
+            throw new FileFetchException(e);
         }
         return freshFile;
     }
