@@ -88,11 +88,13 @@ public class Reader implements AutoCloseable {
             maxBatchesPerPartitionToFind,
             Executors.newFixedThreadPool(fetchMetadataThreadPoolSize, new InklessThreadFactory("inkless-fetch-metadata-", false)),
             Executors.newFixedThreadPool(fetchDataThreadPoolSize, new InklessThreadFactory("inkless-fetch-data-", false)),
+            new InklessFetchMetrics(time, cache),
             brokerTopicStats
         );
     }
 
-    public Reader(
+    // visible for testing
+    Reader(
         Time time,
         ObjectKeyCreator objectKeyCreator,
         KeyAlignmentStrategy keyAlignmentStrategy,
@@ -102,6 +104,7 @@ public class Reader implements AutoCloseable {
         int maxBatchesPerPartitionToFind,
         ExecutorService metadataExecutor,
         ExecutorService dataExecutor,
+        InklessFetchMetrics fetchMetrics,
         BrokerTopicStats brokerTopicStats
     ) {
         this.time = time;
@@ -113,7 +116,7 @@ public class Reader implements AutoCloseable {
         this.maxBatchesPerPartitionToFind = maxBatchesPerPartitionToFind;
         this.metadataExecutor = metadataExecutor;
         this.dataExecutor = dataExecutor;
-        this.fetchMetrics = new InklessFetchMetrics(time, cache);
+        this.fetchMetrics = fetchMetrics;
         this.brokerTopicStats = brokerTopicStats;
         try {
             this.metadataThreadPoolMonitor = new ThreadPoolMonitor("inkless-fetch-metadata", metadataExecutor);
@@ -195,19 +198,14 @@ public class Reader implements AutoCloseable {
                         brokerTopicStats.allTopicsStats().failedFetchRequestRate().mark();
                         brokerTopicStats.topicStats(topic).failedFetchRequestRate().mark();
                     }
-                    // Check if the exception was caused by a fetch related exception and increment the relevant metric
-                    if (throwable instanceof CompletionException) {
-                        // Finding batches fails on the initial stage
-                        if (throwable.getCause() instanceof FindBatchesException) {
+                    // Record specific failure metrics based on exception type
+                    // All exceptions are wrapped in CompletionException due to CompletableFuture
+                    if (throwable instanceof CompletionException && throwable.getCause() != null) {
+                        final Throwable cause = throwable.getCause();
+                        if (cause instanceof FindBatchesException) {
                             fetchMetrics.findBatchesFailed();
-                        } else if (throwable.getCause() instanceof FetchException) {
-                            // but storage-related exceptions are wrapped twice as they happen within the fetch completer
-                            final Throwable fetchException = throwable.getCause();
-                            if (fetchException.getCause() instanceof FileFetchException) {
-                                fetchMetrics.fileFetchFailed();
-                            } else if (fetchException.getCause() instanceof CacheFetchException) {
-                                fetchMetrics.cacheFetchFailed();
-                            }
+                        } else if (cause instanceof FileFetchException) {
+                            fetchMetrics.fileFetchFailed();
                         }
                     }
                     fetchMetrics.fetchFailed();

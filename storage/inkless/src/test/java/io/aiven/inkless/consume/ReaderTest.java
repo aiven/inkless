@@ -18,12 +18,21 @@
 package io.aiven.inkless.consume;
 
 import org.apache.kafka.common.TopicIdPartition;
+import org.apache.kafka.common.Uuid;
+import org.apache.kafka.common.compress.Compression;
+import org.apache.kafka.common.protocol.Errors;
+import org.apache.kafka.common.record.MemoryRecords;
+import org.apache.kafka.common.record.SimpleRecord;
+import org.apache.kafka.common.record.TimestampType;
+import org.apache.kafka.common.requests.FetchRequest;
 import org.apache.kafka.common.utils.MockTime;
 import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.server.storage.log.FetchParams;
 import org.apache.kafka.server.storage.log.FetchPartitionData;
 import org.apache.kafka.storage.log.metrics.BrokerTopicStats;
 
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -35,10 +44,14 @@ import org.mockito.quality.Strictness;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.nio.channels.ReadableByteChannel;
+import java.nio.charset.StandardCharsets;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -50,16 +63,25 @@ import io.aiven.inkless.common.ByteRange;
 import io.aiven.inkless.common.ObjectKey;
 import io.aiven.inkless.common.ObjectKeyCreator;
 import io.aiven.inkless.common.PlainObjectKey;
+import io.aiven.inkless.control_plane.BatchInfo;
+import io.aiven.inkless.control_plane.BatchMetadata;
 import io.aiven.inkless.control_plane.ControlPlane;
+import io.aiven.inkless.control_plane.FindBatchResponse;
 import io.aiven.inkless.generated.FileExtent;
 import io.aiven.inkless.storage_backend.common.ObjectFetcher;
+import io.aiven.inkless.storage_backend.common.StorageBackendException;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.Mockito.atLeastOnce;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.STRICT_STUBS)
@@ -79,12 +101,14 @@ public class ReaderTest {
     private ObjectFetcher objectFetcher;
     @Mock
     private FetchParams fetchParams;
+    @Mock
+    private InklessFetchMetrics fetchMetrics;
 
     private final Time time = new MockTime();
 
     @Test
     public void testReaderEmptyRequests() throws IOException {
-        try(final var reader = new Reader(time, OBJECT_KEY_CREATOR, KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, controlPlane, objectFetcher, 0, metadataExecutor, dataExecutor, new BrokerTopicStats())) {
+        try (final var reader = getReader()) {
             final CompletableFuture<Map<TopicIdPartition, FetchPartitionData>> fetch = reader.fetch(fetchParams, Collections.emptyMap());
             verify(metadataExecutor, atLeastOnce()).execute(any());
             verifyNoInteractions(dataExecutor);
@@ -94,7 +118,7 @@ public class ReaderTest {
 
     @Test
     public void testClose() throws Exception {
-        final var reader = new Reader(time, OBJECT_KEY_CREATOR, KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, controlPlane, objectFetcher, 0, metadataExecutor, dataExecutor, new BrokerTopicStats());
+        final var reader = getReader();
         reader.close();
         verify(metadataExecutor, atLeastOnce()).shutdown();
         verify(dataExecutor, atLeastOnce()).shutdown();
@@ -169,10 +193,209 @@ public class ReaderTest {
         }
     }
 
+    /**
+     * Tests for error handling and metric recording in Reader.fetch().
+     * Each test simulates different failure scenarios and verifies that
+     * the appropriate exceptions are thrown and metrics are recorded.
+     */
+    @Nested
+    class ErrorMetricTests {
+        // Common test data for fetch requests
+        private final Uuid topicId = Uuid.randomUuid();
+        private final TopicIdPartition partition = new TopicIdPartition(topicId, 0, "test-topic");
+        private final Map<TopicIdPartition, FetchRequest.PartitionData> fetchInfos = Map.of(
+            partition,
+            new FetchRequest.PartitionData(topicId, 0, 0, 1000, Optional.empty())
+        );
+        private final MemoryRecords records = MemoryRecords.withRecords(0L, Compression.NONE, new SimpleRecord((byte[]) null));
+        // Setup for successful fetch - return a proper response with single batch
+        private final FindBatchResponse singleResponse = FindBatchResponse.success(
+            List.of(
+                new BatchInfo(
+                    1L,
+                    "object-key",
+                    BatchMetadata.of(
+                        partition,
+                        0,
+                        records.sizeInBytes(),
+                        0,
+                        0,
+                        10L,
+                        10L,
+                        TimestampType.CREATE_TIME
+                    )
+                )
+            ),
+            0L,
+            1L
+        );
 
+        private ExecutorService metadataExecutor;
+        private ExecutorService dataExecutor;
 
+        @BeforeEach
+        public void setup() {
+            metadataExecutor = Executors.newSingleThreadExecutor();
+            dataExecutor = Executors.newSingleThreadExecutor();
+        }
 
+        @AfterEach
+        public void cleanup() {
+            metadataExecutor.shutdown();
+            dataExecutor.shutdown();
+        }
 
+        /**
+         * Tests that FindBatchesException is properly caught and metrics are recorded.
+         * Exception hierarchy: FindBatchesException -> CompletionException
+         */
+        @Test
+        public void testFindBatchesException() throws IOException {
+            // Simulate control plane throwing an exception
+            when(controlPlane.findBatches(anyList(), anyInt(), anyInt()))
+                .thenThrow(new RuntimeException("Control plane error"));
 
+            try (final var reader = getReader()) {
+                final CompletableFuture<Map<TopicIdPartition, FetchPartitionData>> fetch = reader.fetch(fetchParams, fetchInfos);
+
+                // Verify the exception is properly wrapped
+                assertThatThrownBy(fetch::join)
+                    .isInstanceOf(CompletionException.class)
+                    .hasCauseInstanceOf(FindBatchesException.class)
+                    .satisfies(e -> {
+                        assertThat(e.getCause()).isInstanceOf(FindBatchesException.class);
+                        assertThat(e.getCause().getCause()).isInstanceOf(RuntimeException.class);
+                        assertThat(e.getCause().getCause().getMessage()).isEqualTo("Control plane error");
+                    });
+
+                // Verify metrics are properly recorded
+                verify(fetchMetrics).fetchFailed();
+                verify(fetchMetrics).findBatchesFailed();
+                verify(fetchMetrics, never()).fileFetchFailed();
+                verify(fetchMetrics, never()).fetchCompleted(any());
+            }
+        }
+
+        /**
+         * Tests that FileFetchException is properly caught and metrics are recorded.
+         * Exception hierarchy: FileFetchException -> CompletionException
+         */
+        @Test
+        public void testFileFetchException() throws Exception {
+            // Setup for successful fetch - return a proper response with single batch
+            when(controlPlane.findBatches(any(), anyInt(), anyInt()))
+                .thenReturn(List.of(singleResponse));
+
+            // Simulate fetcher failing and throwing an exception
+            when(objectFetcher.fetch(any(ObjectKey.class), any(ByteRange.class)))
+                .thenThrow(new StorageBackendException("Storage backend error"));
+
+            try (final var reader = getReader()) {
+                final CompletableFuture<Map<TopicIdPartition, FetchPartitionData>> fetch = reader.fetch(fetchParams, fetchInfos);
+
+                // Verify the exception is properly wrapped
+                assertThatThrownBy(fetch::join)
+                    .isInstanceOf(CompletionException.class)
+                    .hasCauseInstanceOf(FileFetchException.class)
+                    .satisfies(e -> {
+                        assertThat(e.getCause()).isInstanceOf(FileFetchException.class);
+                        assertThat(e.getCause().getCause()).isInstanceOf(StorageBackendException.class);
+                        assertThat(e.getCause().getCause().getMessage()).isEqualTo("Storage backend error");
+                    });
+
+                // Verify metrics are properly recorded
+                verify(fetchMetrics).fetchFailed();
+                verify(fetchMetrics, never()).findBatchesFailed();
+                verify(fetchMetrics).fileFetchFailed();
+                verify(fetchMetrics, never()).fetchCompleted(any());
+            }
+        }
+
+        /**
+         * Tests that FetchException is properly caught and metrics are recorded.
+         * Exception hierarchy: FetchException -> CompletionException
+         */
+        @Test
+        public void testFetchException() throws Exception {
+            // Setup for successful fetch - return a proper response with single batch
+            when(controlPlane.findBatches(any(), anyInt(), anyInt()))
+                .thenReturn(List.of(singleResponse));
+
+            // Simulate fetcher returning invalid data that causes FetchException
+            final ReadableByteChannel file1Channel = mock(ReadableByteChannel.class);
+            when(objectFetcher.fetch(any(), any())).thenReturn(file1Channel);
+            // Will be read as MemoryRecords but invalid data will cause exception
+            final ByteBuffer corruptedRecords = ByteBuffer.wrap("corrupt-data".getBytes(StandardCharsets.UTF_8));
+            when(objectFetcher.readToByteBuffer(file1Channel)).thenReturn(corruptedRecords);
+
+            try (final var reader = getReader()) {
+                final CompletableFuture<Map<TopicIdPartition, FetchPartitionData>> fetch = reader.fetch(fetchParams, fetchInfos);
+                // Verify the exception is properly wrapped
+                assertThatThrownBy(fetch::join)
+                    .isInstanceOf(CompletionException.class)
+                    .hasCauseInstanceOf(FetchException.class)
+                    .satisfies(e -> {
+                        assertThat(e.getCause()).isInstanceOf(FetchException.class);
+                        assertThat(e.getCause().getCause()).isInstanceOf(IllegalStateException.class);
+                        assertThat(e.getCause().getCause().getMessage()).isEqualTo("Backing file should have at least one batch");
+                    });
+
+                // Verify metrics are properly recorded
+                verify(fetchMetrics).fetchFailed();
+                verify(fetchMetrics, never()).findBatchesFailed();
+                verify(fetchMetrics, never()).fileFetchFailed();
+                verify(fetchMetrics, never()).fetchCompleted(any());
+            }
+        }
+
+        /**
+         * Tests that successful fetches properly record metrics.
+         */
+        @Test
+        public void testSuccessfulFetchMetrics() throws Exception {
+            // Setup for successful fetch - return a proper response with single batch
+            when(controlPlane.findBatches(any(), anyInt(), anyInt()))
+                .thenReturn(List.of(singleResponse));
+
+            // Simulate fetcher returning valid data
+            final ReadableByteChannel file1Channel = mock(ReadableByteChannel.class);
+            when(objectFetcher.fetch(any(), any())).thenReturn(file1Channel);
+            when(objectFetcher.readToByteBuffer(file1Channel)).thenReturn(records.buffer());
+
+            try (final var reader = getReader()) {
+                final CompletableFuture<Map<TopicIdPartition, FetchPartitionData>> fetch = reader.fetch(fetchParams, fetchInfos);
+                final Map<TopicIdPartition, FetchPartitionData> result = fetch.join();
+                assertThat(result)
+                    .hasSize(1)
+                    .hasEntrySatisfying(
+                        partition,
+                        data -> {
+                            assertThat(data.error).isEqualTo(Errors.NONE);
+                            assertThat(data.records.records()).containsAll(records.records());
+                        }
+                    );
+
+                // Verify metrics are properly recorded
+                verify(fetchMetrics, never()).fetchFailed();
+                verify(fetchMetrics, never()).findBatchesFailed();
+                verify(fetchMetrics, never()).fileFetchFailed();
+                verify(fetchMetrics).fetchCompleted(any());
+            }
+        }
+    }
+
+    private Reader getReader() {
+        return new Reader(
+            time,
+            OBJECT_KEY_CREATOR,
+            KEY_ALIGNMENT_STRATEGY,
+            OBJECT_CACHE,
+            controlPlane,
+            objectFetcher,
+            0,
+            metadataExecutor,
+            dataExecutor,
+            fetchMetrics,
+            new BrokerTopicStats());
     }
 }
