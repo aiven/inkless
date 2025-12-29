@@ -17,7 +17,7 @@
  */
 package io.aiven.inkless.consume;
 
-public class FileFetchException extends Exception {
+public class FileFetchException extends RuntimeException {
     public FileFetchException(Throwable cause) {
         super(cause);
     }
