@@ -24,6 +24,7 @@ import org.apache.kafka.server.storage.log.FetchParams;
 import org.apache.kafka.server.storage.log.FetchPartitionData;
 import org.apache.kafka.storage.log.metrics.BrokerTopicStats;
 
+import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
@@ -40,8 +41,6 @@ import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
 
 import io.aiven.inkless.cache.FixedBlockAlignment;
 import io.aiven.inkless.cache.KeyAlignmentStrategy;
@@ -56,7 +55,7 @@ import io.aiven.inkless.generated.FileExtent;
 import io.aiven.inkless.storage_backend.common.ObjectFetcher;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.awaitility.Awaitility.await;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.verify;
@@ -101,107 +100,79 @@ public class ReaderTest {
         verify(dataExecutor, atLeastOnce()).shutdown();
     }
 
-    /**
-     * Tests that allOfFileExtents preserves the original input order regardless of completion order.
-     */
-    @Test
-    public void testAllOfFileExtentsPreservesOrder() throws Exception {
-        // Create file extents with distinct identifiers
-        final ObjectKey objectKeyA = PlainObjectKey.create("prefix", "object-a");
-        final ObjectKey objectKeyB = PlainObjectKey.create("prefix", "object-b");
-        final ObjectKey objectKeyC = PlainObjectKey.create("prefix", "object-c");
+    @Nested
+    class AllOfFileExtentsTests {
+        /**
+         * Tests that allOfFileExtents preserves the original input order regardless of completion order.
+         */
+        @Test
+        public void testAllOfFileExtentsPreservesOrder() {
+            // Create file extents with distinct identifiers
+            final ObjectKey objectKeyA = PlainObjectKey.create("prefix", "object-a");
+            final ObjectKey objectKeyB = PlainObjectKey.create("prefix", "object-b");
+            final ObjectKey objectKeyC = PlainObjectKey.create("prefix", "object-c");
 
-        final FileExtent extentA = FileFetchJob.createFileExtent(objectKeyA, new ByteRange(0, 10), ByteBuffer.allocate(10));
-        final FileExtent extentB = FileFetchJob.createFileExtent(objectKeyB, new ByteRange(0, 10), ByteBuffer.allocate(10));
-        final FileExtent extentC = FileFetchJob.createFileExtent(objectKeyC, new ByteRange(0, 10), ByteBuffer.allocate(10));
+            final FileExtent extentA = FileFetchJob.createFileExtent(objectKeyA, new ByteRange(0, 10), ByteBuffer.allocate(10));
+            final FileExtent extentB = FileFetchJob.createFileExtent(objectKeyB, new ByteRange(0, 10), ByteBuffer.allocate(10));
+            final FileExtent extentC = FileFetchJob.createFileExtent(objectKeyC, new ByteRange(0, 10), ByteBuffer.allocate(10));
 
-        // Create futures that complete in reverse order: C (100ms), B (200ms), A (300ms)
-        final CompletableFuture<FileExtent> futureA = CompletableFuture.supplyAsync(() -> {
-            try {
-                Thread.sleep(300);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-            }
-            return extentA;
-        });
+            // Create uncompleted futures
+            final CompletableFuture<FileExtent> futureA = new CompletableFuture<>();
+            final CompletableFuture<FileExtent> futureB = new CompletableFuture<>();
+            final CompletableFuture<FileExtent> futureC = new CompletableFuture<>();
 
-        final CompletableFuture<FileExtent> futureB = CompletableFuture.supplyAsync(() -> {
-            try {
-                Thread.sleep(200);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-            }
-            return extentB;
-        });
+            // Complete in reverse order: C, B, A
+            futureC.complete(extentC);
+            futureB.complete(extentB);
+            futureA.complete(extentA);
 
-        final CompletableFuture<FileExtent> futureC = CompletableFuture.supplyAsync(() -> {
-            try {
-                Thread.sleep(100);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-            }
-            return extentC;
-        });
+            // Create the ordered list: A, B, C
+            final List<CompletableFuture<FileExtent>> orderedFutures = List.of(futureA, futureB, futureC);
 
-        // Create the ordered list: A, B, C
-        final List<CompletableFuture<FileExtent>> orderedFutures = List.of(futureA, futureB, futureC);
+            // Call allOfFileExtents
+            final CompletableFuture<List<FileExtent>> resultFuture = Reader.allOfFileExtents(orderedFutures);
 
-        // Call allOfFileExtents and wait for result
-        final CompletableFuture<List<FileExtent>> resultFuture = Reader.allOfFileExtents(orderedFutures);
-        final List<FileExtent> result = resultFuture.get(5, TimeUnit.SECONDS);
+            // Verify result order is preserved as A, B, C (not C, B, A which was the completion order)
+            final List<FileExtent> result = resultFuture.join();
+            assertThat(result)
+                .hasSize(3)
+                .extracting(FileExtent::object)
+                .containsExactly(objectKeyA.value(), objectKeyB.value(), objectKeyC.value());
+        }
 
-        // Verify result order is preserved as A, B, C (not C, B, A which was the completion order)
-        assertThat(result)
-            .hasSize(3)
-            .extracting(FileExtent::object)
-            .containsExactly(objectKeyA.value(), objectKeyB.value(), objectKeyC.value());
+        /**
+         * Tests that allOfFileExtents returns immediately without blocking the calling thread.
+         */
+        @Test
+        public void testAllOfFileExtentsDoesNotBlock() {
+            // Create an incomplete future
+            final CompletableFuture<FileExtent> incompleteFuture = new CompletableFuture<>();
+
+            final List<CompletableFuture<FileExtent>> futures = List.of(incompleteFuture);
+
+            // Call allOfFileExtents - this should return immediately without blocking
+            final CompletableFuture<List<FileExtent>> resultFuture = Reader.allOfFileExtents(futures);
+
+            // Verify the result is not yet complete (proves non-blocking behavior)
+            assertThat(resultFuture).isNotCompleted();
+
+            // Complete the input future
+            final ObjectKey objectKey = PlainObjectKey.create("prefix", "object");
+            final FileExtent extent = FileFetchJob.createFileExtent(objectKey, new ByteRange(0, 10), ByteBuffer.allocate(10));
+            incompleteFuture.complete(extent);
+
+            // Verify the result completes and contains the expected value
+            assertThat(resultFuture.join())
+                .hasSize(1)
+                .extracting(FileExtent::object)
+                .containsExactly(objectKey.value());
+        }
     }
 
-    /**
-     * Tests that allOfFileExtents returns immediately without blocking the calling thread.
-     */
-    @Test
-    public void testAllOfFileExtentsDoesNotBlock() {
-        // Create file extents
-        final ObjectKey objectKey = PlainObjectKey.create("prefix", "object");
-        final FileExtent extent = FileFetchJob.createFileExtent(objectKey, new ByteRange(0, 10), ByteBuffer.allocate(10));
 
-        // Create a future that will complete after a delay
-        final AtomicBoolean futureCompleted = new AtomicBoolean(false);
-        final CompletableFuture<FileExtent> delayedFuture = CompletableFuture.supplyAsync(() -> {
-            try {
-                Thread.sleep(1000); // Simulate slow operation
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-            }
-            futureCompleted.set(true);
-            return extent;
-        });
 
-        final List<CompletableFuture<FileExtent>> futures = List.of(delayedFuture);
 
-        // Call allOfFileExtents - this should return immediately
-        final long startTime = System.currentTimeMillis();
-        final CompletableFuture<List<FileExtent>> resultFuture = Reader.allOfFileExtents(futures);
-        final long callDuration = System.currentTimeMillis() - startTime;
 
-        // Verify the call returned immediately (within 100ms)
-        assertThat(callDuration).isLessThan(100);
 
-        // Verify the future is not yet complete
-        assertThat(resultFuture).isNotCompleted();
-        assertThat(futureCompleted).isFalse();
-
-        // Wait for the result to actually complete
-        await().atMost(2, TimeUnit.SECONDS).untilAsserted(() -> {
-            assertThat(resultFuture).isCompleted();
-            assertThat(futureCompleted).isTrue();
-        });
-
-        // Verify the result is correct
-        assertThat(resultFuture.join())
-            .hasSize(1)
-            .extracting(FileExtent::object)
-            .containsExactly(objectKey.value());
     }
 }
