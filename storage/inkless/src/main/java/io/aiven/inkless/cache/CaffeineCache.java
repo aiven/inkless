@@ -60,8 +60,9 @@ public final class CaffeineCache implements ObjectCache {
             // while Caffeine's internal threads remain unblocked, so cache operations can continue to be served.
             return CompletableFuture.supplyAsync(() -> load.apply(k), loadExecutor)
                 .whenComplete((result, throwable) -> {
-                    // Evict the entry if the future completed exceptionally
-                    // This ensures failed fetches are retried on subsequent requests
+                    // Evict the entry if the future completed exceptionally.
+                    // While Caffeine has built-in failed future cleanup, it happens asynchronously.
+                    // Explicit invalidation ensures immediate removal for faster retry on subsequent requests.
                     if (throwable != null) {
                         cache.synchronous().invalidate(key);
                     }
