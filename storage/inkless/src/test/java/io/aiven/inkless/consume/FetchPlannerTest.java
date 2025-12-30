@@ -246,6 +246,7 @@ public class FetchPlannerTest {
         // Note: This test uses a single-threaded executor, so fetches execute sequentially.
         // In production, a larger thread pool enables parallel execution for improved throughput.
         try (CaffeineCache caffeineCache = new CaffeineCache(100, 3600, 180)) {
+            // The different lengths help distinguish results when ordering is non-deterministic.
             final byte[] dataA = "data-for-a".getBytes();
             final byte[] dataB = "data-for-bb".getBytes();
 
@@ -533,6 +534,7 @@ public class FetchPlannerTest {
         // This ensures observability into the system's behavior.
 
         try (CaffeineCache caffeineCache = new CaffeineCache(100, 3600, 180)) {
+            // The different lengths help distinguish results when ordering is non-deterministic.
             final byte[] dataA = "data-a".getBytes();
             final byte[] dataB = "data-bb".getBytes();
 
