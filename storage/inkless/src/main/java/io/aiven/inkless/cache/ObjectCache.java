@@ -20,11 +20,29 @@ package io.aiven.inkless.cache;
 import org.apache.kafka.common.cache.Cache;
 
 import java.io.Closeable;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executor;
 import java.util.function.Function;
 
 import io.aiven.inkless.generated.CacheKey;
 import io.aiven.inkless.generated.FileExtent;
 
 public interface ObjectCache extends Cache<CacheKey, FileExtent>, Closeable {
-    FileExtent computeIfAbsent(CacheKey key, Function<CacheKey, FileExtent> mappingFunction);
+    /**
+     * Asynchronously computes the value if absent, using the provided executor for the computation.
+     * This method always returns a {@link CompletableFuture} promptly, regardless of whether the key
+     * is already present in the cache. The cache lookup and bookkeeping may still perform synchronous
+     * work on the calling thread, but on a cache miss the actual load computation is executed on the
+     * supplied {@code loadExecutor}.
+     *
+     * @param key the cache key
+     * @param load the function to compute the value if absent
+     * @param loadExecutor the executor to use for async computation on cache miss
+     * @return a CompletableFuture that will complete with the cached or computed value
+     */
+    CompletableFuture<FileExtent> computeIfAbsent(
+        CacheKey key,
+        Function<CacheKey, FileExtent> load,
+        Executor loadExecutor
+    );
 }

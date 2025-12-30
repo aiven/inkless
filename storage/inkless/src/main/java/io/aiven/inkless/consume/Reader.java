@@ -175,12 +175,13 @@ public class Reader implements AutoCloseable {
                     keyAlignmentStrategy,
                     cache,
                     objectFetcher,
-                    dataExecutor,
+                    dataExecutor,  // Will execute remote fetches on this pool
                     coordinates,
                     fetchMetrics
                 ).get();
             })
             // Fetch Data (dataExecutor): Flatten list of futures into single future with all results
+            // Actual remote fetches happen on dataExecutor only when cache misses
             .thenCompose(Reader::allOfFileExtents)
             // Complete Fetch (completing thread): Combine fetched data with batch coordinates to build final response
             // Runs on whichever thread completes last (typically dataExecutor thread)
