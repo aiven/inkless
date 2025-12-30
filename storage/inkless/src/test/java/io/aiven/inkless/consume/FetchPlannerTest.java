@@ -100,7 +100,7 @@ public class FetchPlannerTest {
     @Test
     public void planEmptyRequest() {
         Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of();
-        FetchPlanner planner = fetchPlannerJob(coordinates);
+        FetchPlanner planner = getFetchPlanner(coordinates);
 
         List<ObjectFetchRequest> result = planner.planJobs(coordinates);
 
@@ -116,7 +116,7 @@ public class FetchPlannerTest {
                 ), 0, 1)
             ),
             Set.of(
-                new ObjectFetchRequest(OBJECT_KEY_A, requestRange, 20, 10)
+                new ObjectFetchRequest(OBJECT_KEY_A, requestRange)
             )
         );
     }
@@ -131,8 +131,8 @@ public class FetchPlannerTest {
                 ), 0, 2)
             ),
             Set.of(
-                new ObjectFetchRequest(OBJECT_KEY_A, requestRange, 20, 10),
-                new ObjectFetchRequest(OBJECT_KEY_B, requestRange, 21, 10)
+                new ObjectFetchRequest(OBJECT_KEY_A, requestRange),
+                new ObjectFetchRequest(OBJECT_KEY_B, requestRange)
             )
         );
     }
@@ -149,8 +149,8 @@ public class FetchPlannerTest {
                 ), 0, 1)
             ),
             Set.of(
-                new ObjectFetchRequest(OBJECT_KEY_A, requestRange, 20, 10),
-                new ObjectFetchRequest(OBJECT_KEY_B, requestRange, 21, 10)
+                new ObjectFetchRequest(OBJECT_KEY_A, requestRange),
+                new ObjectFetchRequest(OBJECT_KEY_B, requestRange)
             )
         );
     }
@@ -167,8 +167,8 @@ public class FetchPlannerTest {
                 ), 0, 1)
             ),
             Set.of(
-                // When batches for same object are merged, timestamp is max(20, 21) = 21, byteSize is sum(10, 10) = 20
-                new ObjectFetchRequest(OBJECT_KEY_A, requestRange, 21, 20)
+                // When batches for same object are merged, they create a single aligned fetch request
+                new ObjectFetchRequest(OBJECT_KEY_A, requestRange)
             )
         );
     }
@@ -183,7 +183,7 @@ public class FetchPlannerTest {
                 ), 0, 1)
             ),
             Set.of(
-                new ObjectFetchRequest(OBJECT_KEY_B, requestRange, 21, 10)
+                new ObjectFetchRequest(OBJECT_KEY_B, requestRange)
             )
         );
     }
@@ -198,7 +198,7 @@ public class FetchPlannerTest {
                 ), 0, 1)
             ),
             Set.of(
-                new ObjectFetchRequest(OBJECT_KEY_B, requestRange, 21, 10)
+                new ObjectFetchRequest(OBJECT_KEY_B, requestRange)
             )
         );
     }
@@ -213,12 +213,12 @@ public class FetchPlannerTest {
                 ), 0, 1)
             ),
             Set.of(
-                new ObjectFetchRequest(OBJECT_KEY_B, requestRange, 21, 10)
+                new ObjectFetchRequest(OBJECT_KEY_B, requestRange)
             )
         );
     }
 
-    private FetchPlanner fetchPlannerJob(Map<TopicIdPartition, FindBatchResponse> batchCoordinatesFuture) {
+    private FetchPlanner getFetchPlanner(Map<TopicIdPartition, FindBatchResponse> batchCoordinatesFuture) {
         return new FetchPlanner(
             time, FetchPlannerTest.OBJECT_KEY_CREATOR, keyAlignmentStrategy,
             cache, fetcher, dataExecutor, batchCoordinatesFuture, metrics
@@ -226,7 +226,7 @@ public class FetchPlannerTest {
     }
 
     private void assertBatchPlan(Map<TopicIdPartition, FindBatchResponse> coordinates, Set<ObjectFetchRequest> expectedJobs) {
-        FetchPlanner planner = fetchPlannerJob(coordinates);
+        FetchPlanner planner = getFetchPlanner(coordinates);
 
         // Use the package-private planJobs method to verify the exact jobs planned
         List<ObjectFetchRequest> actualJobs = planner.planJobs(coordinates);
@@ -356,9 +356,7 @@ public class FetchPlannerTest {
             verify(fetcher).fetch(any(ObjectKey.class), any(ByteRange.class));
 
             // Verify the result is now in cache
-            final ObjectFetchRequest request = new ObjectFetchRequest(
-                OBJECT_KEY_A, requestRange, 20, 10
-            );
+            final ObjectFetchRequest request = new ObjectFetchRequest(OBJECT_KEY_A, requestRange);
             final CacheKey cacheKey = request.toCacheKey();
             assertThat(caffeineCache.get(cacheKey)).isNotNull();
         }
@@ -372,9 +370,7 @@ public class FetchPlannerTest {
             final FileExtent cachedFileExtent = new FileExtent().setData(expectedData);
 
             // Pre-populate the cache
-            final ObjectFetchRequest request = new ObjectFetchRequest(
-                OBJECT_KEY_A, requestRange, 20, 10
-            );
+            final ObjectFetchRequest request = new ObjectFetchRequest(OBJECT_KEY_A, requestRange);
             final CacheKey cacheKey = request.toCacheKey();
             caffeineCache.put(cacheKey, cachedFileExtent);
 
@@ -470,10 +466,6 @@ public class FetchPlannerTest {
         // Both requests should be for the same object
         assertThat(result.stream().map(ObjectFetchRequest::objectKey).distinct()).containsExactly(OBJECT_KEY_A);
 
-        // Both should have the same timestamp and total byte size (since they're from the same batch)
-        assertThat(result.stream().map(ObjectFetchRequest::timestamp).distinct()).containsExactly(20L);
-        assertThat(result.stream().map(ObjectFetchRequest::byteSize).distinct()).containsExactly(2000L);
-
         // The byte ranges should be aligned
         final Set<ByteRange> ranges = result.stream().map(ObjectFetchRequest::byteRange).collect(Collectors.toSet());
         // FixedBlockAlignment(1024) should create ranges aligned to 1024-byte blocks
@@ -481,46 +473,16 @@ public class FetchPlannerTest {
     }
 
     @Test
-    public void testTimestampAggregationUsesMaxValue() {
-        // Test that when multiple batches for the same object have different timestamps,
-        // the fetch request uses the maximum timestamp value.
+    public void testPlanningDeduplicatesSameObjectRequests() throws Exception {
+        // Test that when multiple batches for the SAME object and byte range arrive,
+        // the planning phase merges them into a single fetch request via groupingBy(objectKey).
         //
-        // This is important for hot/cold path decisions - the most recent timestamp
-        // should be used to determine if data is "hot" (recent) or "cold" (old).
-
-        final Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of(
-            partition0, FindBatchResponse.success(List.of(
-                new BatchInfo(1L, OBJECT_KEY_A.value(),
-                    BatchMetadata.of(partition0, 0, 10, 0, 0, 10, 100, TimestampType.CREATE_TIME))
-            ), 0, 1),
-            partition1, FindBatchResponse.success(List.of(
-                new BatchInfo(2L, OBJECT_KEY_A.value(),
-                    BatchMetadata.of(partition1, 30, 10, 0, 0, 15, 500, TimestampType.CREATE_TIME))
-            ), 0, 1)
-        );
-
-        final FetchPlanner planner = fetchPlannerJob(coordinates);
-        final List<ObjectFetchRequest> result = planner.planJobs(coordinates);
-
-        // Should merge into single request for OBJECT_KEY_A
-        assertThat(result).hasSize(1);
-
-        final ObjectFetchRequest request = result.get(0);
-        assertThat(request.objectKey()).isEqualTo(OBJECT_KEY_A);
-        // Timestamp should be max(100, 500) = 500
-        assertThat(request.timestamp()).isEqualTo(500L);
-        // ByteSize should be sum(10, 10) = 20
-        assertThat(request.byteSize()).isEqualTo(20L);
-    }
-
-    @Test
-    public void testConcurrentRequestsToSameKeyFetchOnlyOnce() throws Exception {
-        // Test that when multiple requests for the SAME cache key arrive concurrently,
-        // the underlying fetch operation is performed only ONCE, and all requesters
-        // receive the same result.
+        // This test demonstrates fetch deduplication at the planning level, not at the cache level.
+        // When batches with the same objectKey are grouped together during planning,
+        // only one ObjectFetchRequest is created, resulting in a single fetch operation.
         //
-        // This validates the cache's deduplication behavior which prevents redundant
-        // fetches to object storage when multiple threads/requests need the same data.
+        // This validates the planner's ability to eliminate redundant fetches by merging
+        // requests for the same object before they're even submitted to the cache.
 
         try (CaffeineCache caffeineCache = new CaffeineCache(100, 3600, 180)) {
             final byte[] expectedData = "shared-data".getBytes();

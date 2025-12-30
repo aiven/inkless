@@ -112,8 +112,8 @@ public class FetchPlanner implements Supplier<List<CompletableFuture<FileExtent>
      * @return list of planned fetch requests
      */
     List<ObjectFetchRequest> planJobs(final Map<TopicIdPartition, FindBatchResponse> batchCoordinates) {
-        // Group batches by object key and merge metadata
-        final Set<Map.Entry<String, List<MergedBatchRequest>>> objectKeysToRanges =
+        // Group batches by object key
+        final Set<Map.Entry<String, List<ByteRange>>> objectKeysToRanges =
             batchCoordinates.values().stream()
                 // Filter out responses with errors
                 .filter(findBatch -> findBatch.errors() == Errors.NONE)
@@ -122,7 +122,7 @@ public class FetchPlanner implements Supplier<List<CompletableFuture<FileExtent>
                 .flatMap(List::stream)
                 .collect(Collectors.groupingBy(
                     BatchInfo::objectKey,
-                    Collectors.mapping(MergedBatchRequest::create, Collectors.toList())
+                    Collectors.mapping(batch -> batch.metadata().range(), Collectors.toList())
                 ))
                 .entrySet();
 
@@ -136,37 +136,20 @@ public class FetchPlanner implements Supplier<List<CompletableFuture<FileExtent>
 
     /**
      * Creates fetch requests for a single object with multiple batches.
-     * Aligns byte ranges and aggregates metadata.
+     * Aligns byte ranges for efficient fetching.
      */
     private Stream<ObjectFetchRequest> createFetchRequests(
         final String objectKey,
-        final List<MergedBatchRequest> batches
+        final List<ByteRange> byteRanges
     ) {
-        // Get the most recent timestamp (for hot/cold decision)
-        final long timestamp = batches.stream()
-            .mapToLong(MergedBatchRequest::timestamp)
-            .max()
-            .orElse(0L);
-
-        // Sum up all byte sizes (for rate limiting)
-        final long totalBytes = batches.stream()
-            .mapToLong(MergedBatchRequest::byteSize)
-            .sum();
-
         // Align byte ranges for efficient fetching
-        final Set<ByteRange> alignedRanges = keyAlignment.align(
-            batches.stream()
-                .map(MergedBatchRequest::byteRange)
-                .collect(Collectors.toList())
-        );
+        final Set<ByteRange> alignedRanges = keyAlignment.align(byteRanges);
 
         // Create a fetch request for each aligned range
         return alignedRanges.stream()
             .map(byteRange -> new ObjectFetchRequest(
                 objectKeyCreator.from(objectKey),
-                byteRange,
-                timestamp,
-                totalBytes
+                byteRange
             ));
     }
 
@@ -220,14 +203,10 @@ public class FetchPlanner implements Supplier<List<CompletableFuture<FileExtent>
      *
      * @param objectKey the storage object key
      * @param byteRange the range of bytes to fetch
-     * @param timestamp the most recent timestamp (for hot/cold path decision)
-     * @param byteSize the total size in bytes (for rate limiting)
      */
     record ObjectFetchRequest(
         ObjectKey objectKey,
-        ByteRange byteRange,
-        long timestamp,
-        long byteSize
+        ByteRange byteRange
     ) {
         CacheKey toCacheKey() {
             return new CacheKey()
@@ -235,20 +214,6 @@ public class FetchPlanner implements Supplier<List<CompletableFuture<FileExtent>
                 .setRange(new CacheKey.ByteRange()
                     .setOffset(byteRange.offset())
                     .setLength(byteRange.size()));
-        }
-    }
-
-    /**
-     * Intermediate representation of a batch request with metadata.
-     * Used during the planning phase to merge batches for the same object and carry necessary info for further planning.
-     */
-    private record MergedBatchRequest(ByteRange byteRange, long timestamp, long byteSize) {
-        static MergedBatchRequest create(BatchInfo batchInfo) {
-            return new MergedBatchRequest(
-                batchInfo.metadata().range(),
-                batchInfo.metadata().timestamp(),
-                batchInfo.metadata().byteSize()
-            );
         }
     }
 }
