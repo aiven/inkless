@@ -252,7 +252,7 @@ public class FetchPlannerTest {
         // - Confirms data integrity when handling multiple concurrent operations
         try (CaffeineCache caffeineCache = new CaffeineCache(100, 3600, 180)) {
             final byte[] dataA = "data-for-a".getBytes();
-            final byte[] dataB = "data-for-b".getBytes();
+            final byte[] dataB = "data-for-bb".getBytes();
 
             // Mock the fetcher's two-step process: fetch() is called first, then readToByteBuffer()
             // For this test, we only care about the final data returned by readToByteBuffer()
@@ -281,38 +281,14 @@ public class FetchPlannerTest {
                 caffeineCache, fetcher, dataExecutor, coordinates, metrics
             );
 
-            // Execute: Trigger fetch operations
-            final List<CompletableFuture<FileExtent>> futures = planner.get();
+            // Execute and verify
+            assertThat(planner.get())
+                .map(CompletableFuture::join)
+                .map(FileExtent::data)
+                .containsExactlyInAnyOrder(dataA, dataB);
 
-            // Verify: Should have two futures
-            assertThat(futures).hasSize(2);
-
-            // Wait for all to complete
-            CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).get();
-
-            // Verify both were fetched
             verify(fetcher).fetch(eq(OBJECT_KEY_A), any(ByteRange.class));
             verify(fetcher).fetch(eq(OBJECT_KEY_B), any(ByteRange.class));
-
-            // Verify correct data for each
-            final List<FileExtent> results = futures.stream()
-                .map(f -> {
-                    try {
-                        return f.get();
-                    } catch (Exception e) {
-                        throw new RuntimeException(e);
-                    }
-                })
-                .collect(Collectors.toList());
-
-            assertThat(results).hasSize(2);
-
-            // Verify the actual data content matches expected values
-            // Note: We cannot rely on ordering since the futures complete asynchronously,
-            // so we use containsExactlyInAnyOrder to verify both byte arrays are present.
-            assertThat(results)
-                .extracting(FileExtent::data)
-                .containsExactlyInAnyOrder(dataA, dataB);
         }
     }
 
