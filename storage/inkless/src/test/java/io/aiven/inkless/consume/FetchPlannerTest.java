@@ -64,6 +64,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -412,6 +413,58 @@ public class FetchPlannerTest {
 
             // Verify remote fetch was attempted
             verify(fetcher).fetch(any(ObjectKey.class), any(ByteRange.class));
+        }
+    }
+
+    @Test
+    public void testFailedFetchesAreRetried() throws Exception {
+        // Test that when a fetch fails, the error is not cached, and subsequent requests
+        // for the same key will retry the fetch operation.
+        // This ensures transient errors (network issues, temporary S3 unavailability) don't
+        // permanently block access to data.
+
+        try (CaffeineCache caffeineCache = new CaffeineCache(100, 3600, 180)) {
+            final byte[] expectedData = "recovered-data".getBytes();
+
+            // First call fails, second call succeeds
+            when(fetcher.fetch(any(ObjectKey.class), any(ByteRange.class)))
+                .thenThrow(new RuntimeException("Transient S3 error"))
+                .thenReturn(null);
+            when(fetcher.readToByteBuffer(any()))
+                .thenReturn(ByteBuffer.wrap(expectedData));
+
+            final Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of(
+                partition0, FindBatchResponse.success(List.of(
+                    new BatchInfo(1L, OBJECT_KEY_A.value(),
+                        BatchMetadata.of(partition0, 0, 10, 0, 0, 10, 20, TimestampType.CREATE_TIME))
+                ), 0, 1)
+            );
+
+            // First attempt - should fail
+            final FetchPlanner planner1 = new FetchPlanner(
+                time, OBJECT_KEY_CREATOR, keyAlignmentStrategy,
+                caffeineCache, fetcher, dataExecutor, coordinates, metrics
+            );
+
+            final List<CompletableFuture<FileExtent>> futures1 = planner1.get();
+            assertThatThrownBy(() -> futures1.get(0).get())
+                .isInstanceOf(ExecutionException.class)
+                .hasCauseInstanceOf(FileFetchException.class);
+
+            // Second attempt - should retry and succeed
+            final FetchPlanner planner2 = new FetchPlanner(
+                time, OBJECT_KEY_CREATOR, keyAlignmentStrategy,
+                caffeineCache, fetcher, dataExecutor, coordinates, metrics
+            );
+
+            final List<CompletableFuture<FileExtent>> futures2 = planner2.get();
+            final FileExtent result = futures2.get(0).get();
+
+            // Verify the second attempt succeeded
+            assertThat(result.data()).isEqualTo(expectedData);
+
+            // Verify fetch was called twice (once for failure, once for success)
+            verify(fetcher, times(2)).fetch(any(ObjectKey.class), any(ByteRange.class));
         }
     }
 

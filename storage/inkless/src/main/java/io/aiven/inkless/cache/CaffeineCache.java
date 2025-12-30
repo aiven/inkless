@@ -58,7 +58,14 @@ public final class CaffeineCache implements ObjectCache {
             // Use the provided executor instead of Caffeine's default executor.
             // This allows us to control which thread pool handles the fetch and blocks there,
             // while Caffeine's internal threads remain unblocked, so cache operations can continue to be served.
-            return CompletableFuture.supplyAsync(() -> load.apply(k), loadExecutor);
+            return CompletableFuture.supplyAsync(() -> load.apply(k), loadExecutor)
+                .whenComplete((result, throwable) -> {
+                    // Evict the entry if the future completed exceptionally
+                    // This ensures failed fetches are retried on subsequent requests
+                    if (throwable != null) {
+                        cache.synchronous().invalidate(key);
+                    }
+                });
         });
     }
 
