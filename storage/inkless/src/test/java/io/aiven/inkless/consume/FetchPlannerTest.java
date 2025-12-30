@@ -543,7 +543,7 @@ public class FetchPlannerTest {
             // Execute: Both batches will create fetch requests for the same cache key
             final List<CompletableFuture<FileExtent>> futures = planner.get();
 
-            // Should have only 1 future because the cache deduplicates same-key requests
+            // Should have only 1 future because planning merges batches with the same object key
             assertThat(futures).hasSize(1);
 
             // Wait for completion
