@@ -18,6 +18,8 @@
 package io.aiven.inkless.cache;
 
 import java.io.IOException;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executor;
 import java.util.function.Function;
 
 import io.aiven.inkless.generated.CacheKey;
@@ -37,8 +39,13 @@ public class NullCache implements ObjectCache {
     }
 
     @Override
-    public FileExtent computeIfAbsent(CacheKey key, Function<CacheKey, FileExtent> mappingFunction) {
-        return mappingFunction.apply(key);
+    public CompletableFuture<FileExtent> computeIfAbsent(
+        CacheKey key,
+        Function<CacheKey, FileExtent> load,
+        Executor loadExecutor
+    ) {
+        // Always a cache miss, compute on executor
+        return CompletableFuture.supplyAsync(() -> load.apply(key), loadExecutor);
     }
 
     @Override
