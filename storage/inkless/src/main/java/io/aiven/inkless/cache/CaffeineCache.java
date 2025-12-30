@@ -1,3 +1,20 @@
+/*
+ * Inkless
+ * Copyright (C) 2024 - 2025 Aiven OY
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
 package io.aiven.inkless.cache;
 
 import com.github.benmanes.caffeine.cache.AsyncCache;
@@ -7,6 +24,7 @@ import com.github.benmanes.caffeine.cache.stats.CacheStats;
 import java.io.IOException;
 import java.time.Duration;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executor;
 import java.util.function.Function;
 
 import io.aiven.inkless.generated.CacheKey;
@@ -26,7 +44,8 @@ public final class CaffeineCache implements ObjectCache {
     public CaffeineCache(
         final long maxCacheSize,
         final long lifespanSeconds,
-        final int maxIdleSeconds) {
+        final int maxIdleSeconds
+    ) {
         cache = Caffeine.newBuilder()
                 .maximumSize(maxCacheSize)
                 .expireAfterWrite(Duration.ofSeconds(lifespanSeconds))
@@ -42,20 +61,30 @@ public final class CaffeineCache implements ObjectCache {
     }
 
     @Override
-    public FileExtent computeIfAbsent(final CacheKey key, final Function<CacheKey, FileExtent> mappingFunction) {
-        final CompletableFuture<FileExtent> future = new CompletableFuture<>();
-        final CompletableFuture<FileExtent> existingFuture = cache.asMap().computeIfAbsent(key, (cacheKey) -> {
-            return future;
+    public CompletableFuture<FileExtent> computeIfAbsent(
+        final CacheKey key,
+        final Function<CacheKey, FileExtent> load,
+        final Executor loadExecutor
+    ) {
+        // Caffeine's AsyncCache.get() provides atomic cache population per key.
+        // When multiple threads concurrently request the same uncached key, the mapping function
+        // is invoked only once, and all waiting threads receive the same CompletableFuture.
+        // This guarantees that the load function is called at most once per key for successful operations,
+        // preventing duplicate fetch operations from object storage. Failed loads are invalidated and may be retried.
+        return cache.get(key, (k, defaultExecutor) -> {
+            // Use the provided executor instead of Caffeine's default executor.
+            // This allows us to control which thread pool handles the fetch and blocks there,
+            // while Caffeine's internal threads remain unblocked, so cache operations can continue to be served.
+            return CompletableFuture.supplyAsync(() -> load.apply(k), loadExecutor)
+                .whenComplete((result, throwable) -> {
+                    // Evict the entry if the future completed exceptionally.
+                    // While Caffeine has built-in failed future cleanup, it happens asynchronously.
+                    // Explicit invalidation ensures immediate removal for faster retry on subsequent requests.
+                    if (throwable != null) {
+                        cache.synchronous().invalidate(k);
+                    }
+                });
         });
-        // If existing future is not the same object as created in this function
-        // there was a pending cache load and this call is required to join the existing future
-        // and discard the created one.
-        if (future != existingFuture) {
-            return existingFuture.join();
-        }
-        final FileExtent fileExtent = mappingFunction.apply(key);
-        future.complete(fileExtent);
-        return fileExtent;
     }
 
     @Override
