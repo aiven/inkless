@@ -219,14 +219,10 @@ public class FetchPlannerTest {
         );
     }
 
-    private FetchPlanner getFetchPlanner(Map<TopicIdPartition, FindBatchResponse> batchCoordinatesFuture) {
-        return new FetchPlanner(
-            time, FetchPlannerTest.OBJECT_KEY_CREATOR, keyAlignmentStrategy,
-            cache, fetcher, dataExecutor, batchCoordinatesFuture, metrics
-        );
-    }
-
-    private void assertBatchPlan(Map<TopicIdPartition, FindBatchResponse> coordinates, Set<ObjectFetchRequest> expectedJobs) {
+    private void assertBatchPlan(
+        final Map<TopicIdPartition, FindBatchResponse> coordinates,
+        final Set<ObjectFetchRequest> expectedJobs
+    ) {
         FetchPlanner planner = getFetchPlanner(coordinates);
 
         // Use the package-private planJobs method to verify the exact jobs planned
@@ -277,10 +273,7 @@ public class FetchPlannerTest {
                 ), 0, 2)
             );
 
-            final FetchPlanner planner = new FetchPlanner(
-                time, OBJECT_KEY_CREATOR, keyAlignmentStrategy,
-                caffeineCache, fetcher, dataExecutor, coordinates, metrics
-            );
+            final FetchPlanner planner = getFetchPlanner(caffeineCache, coordinates);
 
             // Execute and verify
             assertThat(planner.get())
@@ -313,10 +306,7 @@ public class FetchPlannerTest {
                 ), 0, 1)
             );
 
-            final FetchPlanner planner = new FetchPlanner(
-                time, OBJECT_KEY_CREATOR, keyAlignmentStrategy,
-                caffeineCache, fetcher, dataExecutor, coordinates, metrics
-            );
+            final FetchPlanner planner = getFetchPlanner(caffeineCache, coordinates);
 
             // Execute: Trigger the fetch operation
             final List<CompletableFuture<FileExtent>> futures = planner.get();
@@ -358,10 +348,7 @@ public class FetchPlannerTest {
                 ), 0, 1)
             );
 
-            final FetchPlanner planner = new FetchPlanner(
-                time, OBJECT_KEY_CREATOR, keyAlignmentStrategy,
-                caffeineCache, fetcher, dataExecutor, coordinates, metrics
-            );
+            final FetchPlanner planner = getFetchPlanner(caffeineCache, coordinates);
 
             // Execute: Trigger the fetch operation
             final List<CompletableFuture<FileExtent>> futures = planner.get();
@@ -395,10 +382,7 @@ public class FetchPlannerTest {
                 ), 0, 1)
             );
 
-            final FetchPlanner planner = new FetchPlanner(
-                time, OBJECT_KEY_CREATOR, keyAlignmentStrategy,
-                caffeineCache, fetcher, dataExecutor, coordinates, metrics
-            );
+            final FetchPlanner planner = getFetchPlanner(caffeineCache, coordinates);
 
             // Execute: Trigger fetch operation
             final List<CompletableFuture<FileExtent>> futures = planner.get();
@@ -441,10 +425,7 @@ public class FetchPlannerTest {
             );
 
             // First attempt - should fail
-            final FetchPlanner planner1 = new FetchPlanner(
-                time, OBJECT_KEY_CREATOR, keyAlignmentStrategy,
-                caffeineCache, fetcher, dataExecutor, coordinates, metrics
-            );
+            final FetchPlanner planner1 = getFetchPlanner(caffeineCache, coordinates);
 
             final List<CompletableFuture<FileExtent>> futures1 = planner1.get();
             assertThatThrownBy(() -> futures1.get(0).get())
@@ -452,10 +433,7 @@ public class FetchPlannerTest {
                 .hasCauseInstanceOf(FileFetchException.class);
 
             // Second attempt - should retry and succeed
-            final FetchPlanner planner2 = new FetchPlanner(
-                time, OBJECT_KEY_CREATOR, keyAlignmentStrategy,
-                caffeineCache, fetcher, dataExecutor, coordinates, metrics
-            );
+            final FetchPlanner planner2 = getFetchPlanner(caffeineCache, coordinates);
 
             final List<CompletableFuture<FileExtent>> futures2 = planner2.get();
             final FileExtent result = futures2.get(0).get();
@@ -482,10 +460,7 @@ public class FetchPlannerTest {
             ), 0, 1)
         );
 
-        final FetchPlanner planner = new FetchPlanner(
-            time, OBJECT_KEY_CREATOR, alignment,
-            cache, fetcher, dataExecutor, coordinates, metrics
-        );
+        final FetchPlanner planner = getFetchPlanner(alignment, coordinates);
 
         final List<ObjectFetchRequest> result = planner.planJobs(coordinates);
 
@@ -535,10 +510,7 @@ public class FetchPlannerTest {
                 ), 0, 1)
             );
 
-            final FetchPlanner planner = new FetchPlanner(
-                time, OBJECT_KEY_CREATOR, keyAlignmentStrategy,
-                caffeineCache, fetcher, dataExecutor, coordinates, metrics
-            );
+            final FetchPlanner planner = getFetchPlanner(caffeineCache, coordinates);
 
             // Execute: Both batches will create fetch requests for the same cache key
             final List<CompletableFuture<FileExtent>> futures = planner.get();
@@ -581,10 +553,7 @@ public class FetchPlannerTest {
                 ), 0, 2)
             );
 
-            final FetchPlanner planner = new FetchPlanner(
-                time, OBJECT_KEY_CREATOR, keyAlignmentStrategy,
-                caffeineCache, fetcher, dataExecutor, coordinates, metrics
-            );
+            final FetchPlanner planner = getFetchPlanner(caffeineCache, coordinates);
 
             final List<CompletableFuture<FileExtent>> futures = planner.get();
             CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).get();
@@ -602,5 +571,34 @@ public class FetchPlannerTest {
             // Verify fetch plan finished metric was recorded
             verify(metrics).fetchPlanFinished(any(Long.class));
         }
+    }
+
+    private FetchPlanner getFetchPlanner(
+        final KeyAlignmentStrategy keyAlignment,
+        final ObjectCache objectCache,
+        final Map<TopicIdPartition, FindBatchResponse> batchCoordinatesFuture
+    ) {
+        return new FetchPlanner(
+            time, FetchPlannerTest.OBJECT_KEY_CREATOR, keyAlignment,
+            objectCache, fetcher, dataExecutor, batchCoordinatesFuture, metrics
+        );
+    }
+
+    private FetchPlanner getFetchPlanner(
+        final KeyAlignmentStrategy keyAlignment,
+        final Map<TopicIdPartition, FindBatchResponse> batchCoordinatesFuture
+    ) {
+        return getFetchPlanner(keyAlignment, cache, batchCoordinatesFuture);
+    }
+
+    private FetchPlanner getFetchPlanner(
+        final ObjectCache cache,
+        final Map<TopicIdPartition, FindBatchResponse> batchCoordinatesFuture
+    ) {
+        return getFetchPlanner(keyAlignmentStrategy, cache, batchCoordinatesFuture);
+    }
+
+    private FetchPlanner getFetchPlanner(final Map<TopicIdPartition, FindBatchResponse> batchCoordinatesFuture) {
+        return getFetchPlanner(keyAlignmentStrategy, cache, batchCoordinatesFuture);
     }
 }
