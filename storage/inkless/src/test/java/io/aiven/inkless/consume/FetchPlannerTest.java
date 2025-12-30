@@ -232,21 +232,19 @@ public class FetchPlannerTest {
     }
 
     @Test
-    public void testMultipleConcurrentRequests() throws Exception {
+    public void testMultipleAsyncRequests() throws Exception {
         // This test verifies that the FetchPlanner correctly handles multiple batches from different objects
         // within a single fetch request. This scenario occurs when a Kafka consumer fetches from a partition
         // that has records stored across multiple objects in remote storage.
         //
         // What we're testing:
         // 1. Multiple batch coordinates are converted into separate fetch requests (one per object)
-        // 2. Each fetch request executes asynchronously on the executor
+        // 2. Each fetch request returns a CompletableFuture that executes asynchronously
         // 3. All futures complete successfully with the correct data
         // 4. Each object is fetched exactly once (not duplicated)
         //
-        // Why this matters:
-        // - Ensures parallel fetching of multiple objects improves throughput
-        // - Validates that the async execution model works correctly
-        // - Confirms data integrity when handling multiple concurrent operations
+        // Note: This test uses a single-threaded executor, so fetches execute sequentially.
+        // In production, a larger thread pool enables parallel execution for improved throughput.
         try (CaffeineCache caffeineCache = new CaffeineCache(100, 3600, 180)) {
             final byte[] dataA = "data-for-a".getBytes();
             final byte[] dataB = "data-for-bb".getBytes();
