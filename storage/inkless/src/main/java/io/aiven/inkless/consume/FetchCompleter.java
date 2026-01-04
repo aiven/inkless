@@ -28,6 +28,7 @@ import org.apache.kafka.server.storage.log.FetchPartitionData;
 
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
@@ -79,25 +80,41 @@ public class FetchCompleter implements Supplier<Map<TopicIdPartition, FetchParti
         }
     }
 
+    // Groups file extents by their object keys, handling failures per object.
+    // When a failure occurs for an object key, processing stops for that object and only
+    // successfully fetched ranges up to that point are used.
     private Map<String, List<FileExtent>> groupFileData() {
-        Map<String, List<FileExtent>> files = new HashMap<>();
+        // First, group all results by object key
+        final Map<String, List<FileExtentResult>> resultsByObject = new HashMap<>();
         for (FileExtentResult result : backingData) {
-            // Only process successful fetches - failures are handled as missing data
-            // which results in KAFKA_STORAGE_ERROR in extractRecords/servePartition
-            if (result instanceof FileExtentResult.Success success) {
-                final FileExtent fileExtent = success.extent();
-                files.compute(fileExtent.object(), (k, v) -> {
-                    if (v == null) {
-                        List<FileExtent> out = new ArrayList<>(1);
-                        out.add(fileExtent);
-                        return out;
-                    } else {
-                        v.add(fileExtent);
-                        return v;
-                    }
-                });
+            final String objectKey = result.objectKey().value();
+            resultsByObject.computeIfAbsent(objectKey, k -> new ArrayList<>()).add(result);
+        }
+
+        final Map<String, List<FileExtent>> files = new HashMap<>();
+        for (Map.Entry<String, List<FileExtentResult>> entry : resultsByObject.entrySet()) {
+            final String objectKey = entry.getKey();
+            final List<FileExtentResult> results = entry.getValue();
+
+            // Sort results by range offset to process in order
+            results.sort(Comparator.comparingLong(a -> a.byteRange().offset()));
+
+            // Process results in order, stopping at first failure
+            final List<FileExtent> successfulExtents = new ArrayList<>();
+            for (FileExtentResult result : results) {
+                if (result instanceof FileExtentResult.Failure) {
+                    // Stop processing this object key on first failure
+                    // Only successfully fetched ranges up to this point will be used
+                    break;
+                } else if (result instanceof FileExtentResult.Success success) {
+                    successfulExtents.add(success.extent());
+                }
             }
-            // Failure results are intentionally skipped - they don't contribute to files map
+
+            // Only add object key to files map if we have at least one successful fetch
+            if (!successfulExtents.isEmpty()) {
+                files.put(objectKey, successfulExtents);
+            }
         }
         return files;
     }
@@ -179,27 +196,34 @@ public class FetchCompleter implements Supplier<Map<TopicIdPartition, FetchParti
     /**
      * Extracts memory records from file extents for a partition's batches.
      *
+     * <p><b>Batch Completeness:</b>
+     * A batch must be complete (all required file extents present) to be useful to consumers.
+     * Partial batches are corrupted and cannot be parsed correctly, so we fail incomplete batches
+     * rather than returning corrupted data. This method returns partial results (successful batches
+     * so far) when a batch fails, allowing other complete batches to be returned when possible.
+     *
      * <p><b>Partial Failure Handling:</b>
-     * This method returns partial results if some batches fail to extract (missing files or null records).
-     * This is intentional to support partial failure scenarios where some batches succeed while others fail.
-     * The calling code (servePartition) will check if foundRecords is empty and return KAFKA_STORAGE_ERROR
-     * if no records were found, allowing successful batches to be returned when possible.
+     * If a batch is incomplete (missing extents or failed to construct), that batch is skipped
+     * and we return only the successfully constructed batches up to that point. The calling code
+     * (servePartition) will check if foundRecords is empty and return KAFKA_STORAGE_ERROR if no
+     * records were found, allowing successful batches to be returned when possible.
      *
      * @param metadata the batch metadata for the partition
      * @param allFiles the map of object keys to fetched file extents
-     * @return list of memory records (may be partial if some batches failed)
+     * @return list of memory records (may be partial if some batches failed - only complete batches are included)
      */
     private List<MemoryRecords> extractRecords(FindBatchResponse metadata, Map<String, List<FileExtent>> allFiles) {
         List<MemoryRecords> foundRecords = new ArrayList<>();
         for (BatchInfo batch : metadata.batches()) {
             List<FileExtent> files = allFiles.get(objectKeyCreator.from(batch.objectKey()).value());
             if (files == null || files.isEmpty()) {
-                // Missing file extent for this batch - return partial results (successful batches so far)
+                // Missing file extent for this batch - incomplete batch, fail it and return successful batches so far
                 return foundRecords;
             }
             MemoryRecords fileRecords = constructRecordsFromFile(batch, files);
             if (fileRecords == null) {
-                // Failed to construct records from file - return partial results (successful batches so far)
+                // Failed to construct records (incomplete batch - missing extents or validation failed)
+                // Incomplete batches are useless to consumers, so fail this batch and return successful batches so far
                 return foundRecords;
             }
             foundRecords.add(fileRecords);
@@ -207,19 +231,69 @@ public class FetchCompleter implements Supplier<Map<TopicIdPartition, FetchParti
         return foundRecords;
     }
 
+    /**
+     * Constructs MemoryRecords from file extents for a batch.
+     *
+     * <p><b>Batch Completeness Requirement:</b>
+     * A batch must be complete (all required file extents present and contiguous) to be useful.
+     * Partial batches are corrupted and cannot be parsed correctly by consumers. This method
+     * validates completeness before allocating the buffer to avoid memory waste and returns
+     * null for incomplete batches, causing the batch to be failed.
+     *
+     * @param batch the batch metadata
+     * @param files the list of file extents (should be contiguous from groupFileData)
+     * @return MemoryRecords if batch is complete, null if incomplete (missing extents or gaps)
+     */
     private static MemoryRecords constructRecordsFromFile(
         final BatchInfo batch,
         final List<FileExtent> files
     ) {
-        byte[] buffer = null;
+        if (files == null || files.isEmpty()) {
+            return null;
+        }
+
+        final ByteRange batchRange = batch.metadata().range();
+
+        // Validate that extents fully cover the batch range before allocating buffer.
+        // Incomplete batches are useless to consumers (corrupted data), so we fail early.
+        // This also prevents allocating large buffers for incomplete batches (saves memory).
+        // Collect intersections and check they're contiguous and cover the entire batch range.
+        List<ByteRange> intersections = new ArrayList<>();
         for (FileExtent file : files) {
-            final ByteRange batchRange = batch.metadata().range();
             final ByteRange fileRange = new ByteRange(file.range().offset(), file.range().length());
             ByteRange intersection = ByteRange.intersect(batchRange, fileRange);
             if (intersection.size() > 0) {
-                if (buffer == null) {
-                    buffer = new byte[Math.toIntExact(batchRange.bufferSize())];
-                }
+                intersections.add(intersection);
+            }
+        }
+
+        if (intersections.isEmpty()) {
+            return null;
+        }
+
+        // Sort by offset to check contiguity
+        intersections.sort(Comparator.comparingLong(ByteRange::offset));
+
+        // Check that intersections are contiguous and cover the entire batch range
+        long expectedStart = batchRange.offset();
+        for (ByteRange intersection : intersections) {
+            if (intersection.offset() > expectedStart) {
+                return null; // Gap detected - incomplete batch
+            }
+            expectedStart = Math.max(expectedStart, intersection.offset() + intersection.size());
+        }
+
+        if (expectedStart < batchRange.offset() + batchRange.size()) {
+            return null; // Doesn't cover entire batch range - incomplete batch
+        }
+
+        // All extents cover the batch range, safe to allocate full buffer
+        final byte[] buffer = new byte[Math.toIntExact(batchRange.bufferSize())];
+
+        for (FileExtent file : files) {
+            final ByteRange fileRange = new ByteRange(file.range().offset(), file.range().length());
+            ByteRange intersection = ByteRange.intersect(batchRange, fileRange);
+            if (intersection.size() > 0) {
                 final int position = intersection.bufferOffset() - batchRange.bufferOffset();
                 final int from = intersection.bufferOffset() - fileRange.bufferOffset();
                 final int to = intersection.bufferOffset() - fileRange.bufferOffset() + intersection.bufferSize();
@@ -227,9 +301,7 @@ public class FetchCompleter implements Supplier<Map<TopicIdPartition, FetchParti
                 System.arraycopy(fileData, from, buffer, position, Math.min(fileData.length - from, to - from));
             }
         }
-        if (buffer == null) {
-            return null;
-        }
+
         return createMemoryRecords(ByteBuffer.wrap(buffer), batch);
     }
 

@@ -147,10 +147,11 @@ public class ReaderTest {
             final ObjectKey objectKeyA = PlainObjectKey.create("prefix", "object-a");
             final ObjectKey objectKeyB = PlainObjectKey.create("prefix", "object-b");
             final ObjectKey objectKeyC = PlainObjectKey.create("prefix", "object-c");
+            final ByteRange range = new ByteRange(0, 10);
 
-            final FileExtent extentA = FileFetchJob.createFileExtent(objectKeyA, new ByteRange(0, 10), ByteBuffer.allocate(10));
-            final FileExtent extentB = FileFetchJob.createFileExtent(objectKeyB, new ByteRange(0, 10), ByteBuffer.allocate(10));
-            final FileExtent extentC = FileFetchJob.createFileExtent(objectKeyC, new ByteRange(0, 10), ByteBuffer.allocate(10));
+            final FileExtent extentA = FileFetchJob.createFileExtent(objectKeyA, range, ByteBuffer.allocate(10));
+            final FileExtent extentB = FileFetchJob.createFileExtent(objectKeyB, range, ByteBuffer.allocate(10));
+            final FileExtent extentC = FileFetchJob.createFileExtent(objectKeyC, range, ByteBuffer.allocate(10));
 
             // Create uncompleted futures
             final CompletableFuture<FileExtent> futureA = new CompletableFuture<>();
@@ -162,11 +163,24 @@ public class ReaderTest {
             futureB.complete(extentB);
             futureA.complete(extentA);
 
-            // Create the ordered list: A, B, C
-            final List<CompletableFuture<FileExtent>> orderedFutures = List.of(futureA, futureB, futureC);
+            // Create requests with futures: A, B, C
+            final List<FetchPlanner.FetchRequestWithFuture> orderedRequests = List.of(
+                new FetchPlanner.FetchRequestWithFuture(
+                    new FetchPlanner.ObjectFetchRequest(objectKeyA, range, 0L),
+                    futureA
+                ),
+                new FetchPlanner.FetchRequestWithFuture(
+                    new FetchPlanner.ObjectFetchRequest(objectKeyB, range, 0L),
+                    futureB
+                ),
+                new FetchPlanner.FetchRequestWithFuture(
+                    new FetchPlanner.ObjectFetchRequest(objectKeyC, range, 0L),
+                    futureC
+                )
+            );
 
             // Call allOfFileExtents
-            final CompletableFuture<List<FileExtentResult>> resultFuture = Reader.allOfFileExtents(orderedFutures);
+            final CompletableFuture<List<FileExtentResult>> resultFuture = Reader.allOfFileExtents(orderedRequests);
 
             // Verify result order is preserved as A, B, C (not C, B, A which was the completion order)
             final List<FileExtentResult> result = resultFuture.join();
@@ -183,12 +197,19 @@ public class ReaderTest {
         @Test
         public void testAllOfFileExtentsDoesNotBlock() {
             // Create an incomplete future
+            final ObjectKey testObjectKey = PlainObjectKey.create("prefix", "object");
+            final ByteRange range = new ByteRange(0, 10);
             final CompletableFuture<FileExtent> incompleteFuture = new CompletableFuture<>();
 
-            final List<CompletableFuture<FileExtent>> futures = List.of(incompleteFuture);
+            final List<FetchPlanner.FetchRequestWithFuture> requests = List.of(
+                new FetchPlanner.FetchRequestWithFuture(
+                    new FetchPlanner.ObjectFetchRequest(testObjectKey, range, 0L),
+                    incompleteFuture
+                )
+            );
 
             // Call allOfFileExtents - this should return immediately without blocking
-            final CompletableFuture<List<FileExtentResult>> resultFuture = Reader.allOfFileExtents(futures);
+            final CompletableFuture<List<FileExtentResult>> resultFuture = Reader.allOfFileExtents(requests);
 
             // Verify the result is not yet complete (proves non-blocking behavior)
             assertThat(resultFuture).isNotCompleted();
@@ -218,8 +239,9 @@ public class ReaderTest {
             // Create successful extents for hot path
             final ObjectKey hotKey1 = PlainObjectKey.create("prefix", "hot-object-1");
             final ObjectKey hotKey2 = PlainObjectKey.create("prefix", "hot-object-2");
-            final FileExtent hotExtent1 = FileFetchJob.createFileExtent(hotKey1, new ByteRange(0, 10), ByteBuffer.allocate(10));
-            final FileExtent hotExtent2 = FileFetchJob.createFileExtent(hotKey2, new ByteRange(0, 10), ByteBuffer.allocate(10));
+            final ByteRange range = new ByteRange(0, 10);
+            final FileExtent hotExtent1 = FileFetchJob.createFileExtent(hotKey1, range, ByteBuffer.allocate(10));
+            final FileExtent hotExtent2 = FileFetchJob.createFileExtent(hotKey2, range, ByteBuffer.allocate(10));
 
             // Create futures: success, failure, success pattern
             final CompletableFuture<FileExtent> successFuture1 = CompletableFuture.completedFuture(hotExtent1);
@@ -228,14 +250,23 @@ public class ReaderTest {
             );
             final CompletableFuture<FileExtent> successFuture2 = CompletableFuture.completedFuture(hotExtent2);
 
-            final List<CompletableFuture<FileExtent>> mixedFutures = List.of(
-                successFuture1,
-                failedFuture,
-                successFuture2
+            final List<FetchPlanner.FetchRequestWithFuture> mixedRequests = List.of(
+                new FetchPlanner.FetchRequestWithFuture(
+                    new FetchPlanner.ObjectFetchRequest(hotKey1, range, 0L),
+                    successFuture1
+                ),
+                new FetchPlanner.FetchRequestWithFuture(
+                    new FetchPlanner.ObjectFetchRequest(hotKey2, range, 0L),
+                    failedFuture
+                ),
+                new FetchPlanner.FetchRequestWithFuture(
+                    new FetchPlanner.ObjectFetchRequest(hotKey2, range, 0L),
+                    successFuture2
+                )
             );
 
             // Call allOfFileExtents
-            final CompletableFuture<List<FileExtentResult>> resultFuture = Reader.allOfFileExtents(mixedFutures);
+            final CompletableFuture<List<FileExtentResult>> resultFuture = Reader.allOfFileExtents(mixedRequests);
 
             // Verify the result completes successfully (no exception propagation)
             assertThat(resultFuture).succeedsWithin(java.time.Duration.ofSeconds(1));
@@ -270,6 +301,11 @@ public class ReaderTest {
         @Test
         public void testAllFailuresReturnAllFailureResults() {
             // Create multiple failed futures
+            final ObjectKey key1 = PlainObjectKey.create("prefix", "object-1");
+            final ObjectKey key2 = PlainObjectKey.create("prefix", "object-2");
+            final ObjectKey key3 = PlainObjectKey.create("prefix", "object-3");
+            final ByteRange range = new ByteRange(0, 10);
+
             final CompletableFuture<FileExtent> failedFuture1 = CompletableFuture.failedFuture(
                 new RuntimeException("Failure 1")
             );
@@ -280,14 +316,23 @@ public class ReaderTest {
                 new RuntimeException("Failure 3")
             );
 
-            final List<CompletableFuture<FileExtent>> allFailedFutures = List.of(
-                failedFuture1,
-                failedFuture2,
-                failedFuture3
+            final List<FetchPlanner.FetchRequestWithFuture> allFailedRequests = List.of(
+                new FetchPlanner.FetchRequestWithFuture(
+                    new FetchPlanner.ObjectFetchRequest(key1, range, 0L),
+                    failedFuture1
+                ),
+                new FetchPlanner.FetchRequestWithFuture(
+                    new FetchPlanner.ObjectFetchRequest(key2, range, 0L),
+                    failedFuture2
+                ),
+                new FetchPlanner.FetchRequestWithFuture(
+                    new FetchPlanner.ObjectFetchRequest(key3, range, 0L),
+                    failedFuture3
+                )
             );
 
             // Call allOfFileExtents
-            final CompletableFuture<List<FileExtentResult>> resultFuture = Reader.allOfFileExtents(allFailedFutures);
+            final CompletableFuture<List<FileExtentResult>> resultFuture = Reader.allOfFileExtents(allFailedRequests);
 
             // Verify the result completes successfully (no exception propagation)
             assertThat(resultFuture).succeedsWithin(java.time.Duration.ofSeconds(1));
@@ -310,8 +355,12 @@ public class ReaderTest {
         public void testPartialFailureWithDifferentExceptionTypes() {
             // Create one successful extent
             final ObjectKey successKey = PlainObjectKey.create("prefix", "success-object");
+            final ObjectKey failKey1 = PlainObjectKey.create("prefix", "fail-object-1");
+            final ObjectKey failKey2 = PlainObjectKey.create("prefix", "fail-object-2");
+            final ObjectKey failKey3 = PlainObjectKey.create("prefix", "fail-object-3");
+            final ByteRange range = new ByteRange(0, 10);
             final FileExtent successExtent = FileFetchJob.createFileExtent(
-                successKey, new ByteRange(0, 10), ByteBuffer.allocate(10)
+                successKey, range, ByteBuffer.allocate(10)
             );
 
             // Create futures with different exception types
@@ -326,15 +375,27 @@ public class ReaderTest {
                 new IllegalStateException("Unexpected error")
             );
 
-            final List<CompletableFuture<FileExtent>> mixedFutures = List.of(
-                successFuture,
-                rejectedExecutionFuture,
-                storageBackendFuture,
-                genericFuture
+            final List<FetchPlanner.FetchRequestWithFuture> mixedRequests = List.of(
+                new FetchPlanner.FetchRequestWithFuture(
+                    new FetchPlanner.ObjectFetchRequest(successKey, range, 0L),
+                    successFuture
+                ),
+                new FetchPlanner.FetchRequestWithFuture(
+                    new FetchPlanner.ObjectFetchRequest(failKey1, range, 0L),
+                    rejectedExecutionFuture
+                ),
+                new FetchPlanner.FetchRequestWithFuture(
+                    new FetchPlanner.ObjectFetchRequest(failKey2, range, 0L),
+                    storageBackendFuture
+                ),
+                new FetchPlanner.FetchRequestWithFuture(
+                    new FetchPlanner.ObjectFetchRequest(failKey3, range, 0L),
+                    genericFuture
+                )
             );
 
             // Call allOfFileExtents
-            final CompletableFuture<List<FileExtentResult>> resultFuture = Reader.allOfFileExtents(mixedFutures);
+            final CompletableFuture<List<FileExtentResult>> resultFuture = Reader.allOfFileExtents(mixedRequests);
 
             // Verify the result completes successfully
             assertThat(resultFuture).succeedsWithin(java.time.Duration.ofSeconds(1));
@@ -368,8 +429,9 @@ public class ReaderTest {
             final ObjectKey key3 = PlainObjectKey.create("prefix", "object-3");
             final ObjectKey key4 = PlainObjectKey.create("prefix", "object-4");
 
-            final FileExtent extent1 = FileFetchJob.createFileExtent(key1, new ByteRange(0, 10), ByteBuffer.allocate(10));
-            final FileExtent extent3 = FileFetchJob.createFileExtent(key3, new ByteRange(0, 10), ByteBuffer.allocate(10));
+            final ByteRange range = new ByteRange(0, 10);
+            final FileExtent extent1 = FileFetchJob.createFileExtent(key1, range, ByteBuffer.allocate(10));
+            final FileExtent extent3 = FileFetchJob.createFileExtent(key3, range, ByteBuffer.allocate(10));
 
             // Create pattern: success, failure, success, failure
             final CompletableFuture<FileExtent> future1 = CompletableFuture.completedFuture(extent1);
@@ -377,10 +439,27 @@ public class ReaderTest {
             final CompletableFuture<FileExtent> future3 = CompletableFuture.completedFuture(extent3);
             final CompletableFuture<FileExtent> future4 = CompletableFuture.failedFuture(new RuntimeException("Failed"));
 
-            final List<CompletableFuture<FileExtent>> orderedFutures = List.of(future1, future2, future3, future4);
+            final List<FetchPlanner.FetchRequestWithFuture> orderedRequests = List.of(
+                new FetchPlanner.FetchRequestWithFuture(
+                    new FetchPlanner.ObjectFetchRequest(key1, range, 0L),
+                    future1
+                ),
+                new FetchPlanner.FetchRequestWithFuture(
+                    new FetchPlanner.ObjectFetchRequest(key2, range, 0L),
+                    future2
+                ),
+                new FetchPlanner.FetchRequestWithFuture(
+                    new FetchPlanner.ObjectFetchRequest(key3, range, 0L),
+                    future3
+                ),
+                new FetchPlanner.FetchRequestWithFuture(
+                    new FetchPlanner.ObjectFetchRequest(key4, range, 0L),
+                    future4
+                )
+            );
 
             // Call allOfFileExtents
-            final CompletableFuture<List<FileExtentResult>> resultFuture = Reader.allOfFileExtents(orderedFutures);
+            final CompletableFuture<List<FileExtentResult>> resultFuture = Reader.allOfFileExtents(orderedRequests);
 
             final List<FileExtentResult> result = resultFuture.join();
 
@@ -523,8 +602,12 @@ public class ReaderTest {
         }
 
         /**
-         * Tests that FetchException is properly caught and metrics are recorded.
-         * Exception hierarchy: FetchException -> CompletionException
+         * Tests that corrupted/invalid data is handled gracefully and returns KAFKA_STORAGE_ERROR.
+         * 
+         * <p>With the new validation logic, when corrupted data is provided that doesn't match
+         * the expected batch size, the validation detects that extents don't cover the batch range
+         * and returns null early. This results in empty records being returned with KAFKA_STORAGE_ERROR
+         * instead of throwing a FetchException.
          */
         @Test
         public void testFetchException() throws Exception {
@@ -532,30 +615,31 @@ public class ReaderTest {
             when(controlPlane.findBatches(any(), anyInt(), anyInt()))
                 .thenReturn(List.of(singleResponse));
 
-            // Simulate fetcher returning invalid data that causes FetchException
+            // Simulate fetcher returning invalid/corrupted data that doesn't match expected size
             final ReadableByteChannel file1Channel = mock(ReadableByteChannel.class);
             when(objectFetcher.fetch(any(), any())).thenReturn(file1Channel);
-            // Will be read as MemoryRecords but invalid data will cause exception
-            final ByteBuffer corruptedRecords = ByteBuffer.wrap("corrupt-data".getBytes(StandardCharsets.UTF_8));
+            // Corrupted data with size that doesn't match expected batch size
+            final ByteBuffer corruptedRecords = ByteBuffer.wrap("invalid-batch-data".getBytes(StandardCharsets.UTF_8));
             when(objectFetcher.readToByteBuffer(file1Channel)).thenReturn(corruptedRecords);
 
             try (final var reader = getReader()) {
                 final CompletableFuture<Map<TopicIdPartition, FetchPartitionData>> fetch = reader.fetch(fetchParams, fetchInfos);
-                // Verify the exception is properly wrapped
-                assertThatThrownBy(fetch::join)
-                    .isInstanceOf(CompletionException.class)
-                    .hasCauseInstanceOf(FetchException.class)
-                    .satisfies(e -> {
-                        assertThat(e.getCause()).isInstanceOf(FetchException.class);
-                        assertThat(e.getCause().getCause()).isInstanceOf(IllegalStateException.class);
-                        assertThat(e.getCause().getCause().getMessage()).isEqualTo("Backing file should have at least one batch");
-                    });
+                
+                // Verify fetch completes successfully but returns KAFKA_STORAGE_ERROR
+                // (validation detects incomplete batch and returns empty records)
+                final Map<TopicIdPartition, FetchPartitionData> result = fetch.join();
+                assertThat(result).hasSize(1);
+                final FetchPartitionData data = result.get(partition);
+                assertThat(data.error).isEqualTo(Errors.KAFKA_STORAGE_ERROR);
+                assertThat(data.records).isEqualTo(MemoryRecords.EMPTY);
 
                 // Verify metrics are properly recorded
-                verify(fetchMetrics).fetchFailed();
+                // Note: fetchCompleted is called because the fetch itself succeeded,
+                // even though the data was invalid (returned KAFKA_STORAGE_ERROR)
+                verify(fetchMetrics, never()).fetchFailed();
                 verify(fetchMetrics, never()).findBatchesFailed();
                 verify(fetchMetrics, never()).fileFetchFailed();
-                verify(fetchMetrics, never()).fetchCompleted(any());
+                verify(fetchMetrics).fetchCompleted(any());
             }
         }
 

@@ -375,12 +375,15 @@ public class FetchPlannerTest {
                 final FetchPlanner planner = createFetchPlannerHotPathOnly(keyAlignmentStrategy, caffeineCache, coordinates);
 
                 // Execute: Trigger fetch operations
-                final List<CompletableFuture<FileExtent>> futures = planner.get();
+                final List<FetchPlanner.FetchRequestWithFuture> requestsWithFutures = planner.get();
 
-                // Verify: Should have two futures
-                assertThat(futures).hasSize(2);
+                // Verify: Should have two requests
+                assertThat(requestsWithFutures).hasSize(2);
 
-                // Wait for all to complete
+                // Extract futures and wait for all to complete
+                final List<CompletableFuture<FileExtent>> futures = requestsWithFutures.stream()
+                    .map(FetchPlanner.FetchRequestWithFuture::future)
+                    .toList();
                 CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).get();
 
                 // Verify both were fetched
@@ -432,7 +435,10 @@ public class FetchPlannerTest {
                 final FetchPlanner planner = createFetchPlannerHotPathOnly(keyAlignmentStrategy, caffeineCache, coordinates);
 
                 // Execute: Trigger the fetch operation
-                final List<CompletableFuture<FileExtent>> futures = planner.get();
+                final List<FetchPlanner.FetchRequestWithFuture> requestsWithFutures = planner.get();
+                final List<CompletableFuture<FileExtent>> futures = requestsWithFutures.stream()
+                    .map(FetchPlanner.FetchRequestWithFuture::future)
+                    .toList();
 
                 // Verify: Should have one future
                 assertThat(futures).hasSize(1);
@@ -478,7 +484,10 @@ public class FetchPlannerTest {
                 final FetchPlanner planner = createFetchPlannerHotPathOnly(keyAlignmentStrategy, caffeineCache, coordinates);
 
                 // Execute: Trigger the fetch operation
-                final List<CompletableFuture<FileExtent>> futures = planner.get();
+                final List<FetchPlanner.FetchRequestWithFuture> requestsWithFutures = planner.get();
+                final List<CompletableFuture<FileExtent>> futures = requestsWithFutures.stream()
+                    .map(FetchPlanner.FetchRequestWithFuture::future)
+                    .toList();
 
                 // Verify: Should have one future
                 assertThat(futures).hasSize(1);
@@ -512,7 +521,10 @@ public class FetchPlannerTest {
                 final FetchPlanner planner = createFetchPlannerHotPathOnly(keyAlignmentStrategy, caffeineCache, coordinates);
 
                 // Execute: Trigger fetch operation
-                final List<CompletableFuture<FileExtent>> futures = planner.get();
+                final List<FetchPlanner.FetchRequestWithFuture> requestsWithFutures = planner.get();
+                final List<CompletableFuture<FileExtent>> futures = requestsWithFutures.stream()
+                    .map(FetchPlanner.FetchRequestWithFuture::future)
+                    .toList();
 
                 // Verify: Should have one future
                 assertThat(futures).hasSize(1);
@@ -554,7 +566,10 @@ public class FetchPlannerTest {
                 // First attempt - should fail
                 final FetchPlanner planner1 = createFetchPlannerHotPathOnly(keyAlignmentStrategy, caffeineCache, coordinates);
 
-                final List<CompletableFuture<FileExtent>> futures1 = planner1.get();
+                final List<FetchPlanner.FetchRequestWithFuture> requestsWithFutures1 = planner1.get();
+                final List<CompletableFuture<FileExtent>> futures1 = requestsWithFutures1.stream()
+                    .map(FetchPlanner.FetchRequestWithFuture::future)
+                    .toList();
                 assertThatThrownBy(() -> futures1.get(0).get())
                     .isInstanceOf(ExecutionException.class)
                     .hasCauseInstanceOf(FileFetchException.class);
@@ -562,7 +577,10 @@ public class FetchPlannerTest {
                 // Second attempt - should retry and succeed
                 final FetchPlanner planner2 = createFetchPlannerHotPathOnly(keyAlignmentStrategy, caffeineCache, coordinates);
 
-                final List<CompletableFuture<FileExtent>> futures2 = planner2.get();
+                final List<FetchPlanner.FetchRequestWithFuture> requestsWithFutures2 = planner2.get();
+                final List<CompletableFuture<FileExtent>> futures2 = requestsWithFutures2.stream()
+                    .map(FetchPlanner.FetchRequestWithFuture::future)
+                    .toList();
                 final FileExtent result = futures2.get(0).get();
 
                 // Verify the second attempt succeeded
@@ -607,7 +625,10 @@ public class FetchPlannerTest {
                 final FetchPlanner planner = createFetchPlannerHotPathOnly(keyAlignmentStrategy, caffeineCache, coordinates);
 
                 // Execute: Both batches will create fetch requests for the same cache key
-                final List<CompletableFuture<FileExtent>> futures = planner.get();
+                final List<FetchPlanner.FetchRequestWithFuture> requestsWithFutures = planner.get();
+                final List<CompletableFuture<FileExtent>> futures = requestsWithFutures.stream()
+                    .map(FetchPlanner.FetchRequestWithFuture::future)
+                    .toList();
 
                 // Should have only 1 future because the cache deduplicates same-key requests
                 assertThat(futures).hasSize(1);
@@ -649,7 +670,10 @@ public class FetchPlannerTest {
 
                 final FetchPlanner planner = createFetchPlannerHotPathOnly(keyAlignmentStrategy, caffeineCache, coordinates);
 
-                final List<CompletableFuture<FileExtent>> futures = planner.get();
+                final List<FetchPlanner.FetchRequestWithFuture> requestsWithFutures = planner.get();
+                final List<CompletableFuture<FileExtent>> futures = requestsWithFutures.stream()
+                    .map(FetchPlanner.FetchRequestWithFuture::future)
+                    .toList();
                 CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).get();
 
                 // Verify fetch batch size metric was recorded (2 batches in the response)
@@ -691,7 +715,10 @@ public class FetchPlannerTest {
                 // Feature disabled: laggingConsumerExecutor = null
                 final FetchPlanner planner = createFetchPlannerHotPathOnly(keyAlignmentStrategy, caffeineCache, coordinates);
 
-                final List<CompletableFuture<FileExtent>> futures = planner.get();
+                final List<FetchPlanner.FetchRequestWithFuture> requestsWithFutures = planner.get();
+                final List<CompletableFuture<FileExtent>> futures = requestsWithFutures.stream()
+                    .map(FetchPlanner.FetchRequestWithFuture::future)
+                    .toList();
                 assertThat(futures).hasSize(1);
 
                 final FileExtent result = futures.get(0).get();
@@ -721,7 +748,10 @@ public class FetchPlannerTest {
                 final FetchPlanner planner = createFetchPlannerHotPathOnly(keyAlignmentStrategy, caffeineCache, coordinates);
 
                 // Execute: Should return empty list of futures (no batches to fetch)
-                final List<CompletableFuture<FileExtent>> futures = planner.get();
+                final List<FetchPlanner.FetchRequestWithFuture> requestsWithFutures = planner.get();
+                final List<CompletableFuture<FileExtent>> futures = requestsWithFutures.stream()
+                    .map(FetchPlanner.FetchRequestWithFuture::future)
+                    .toList();
 
                 // Verify: Should have no futures since there are no batches
                 assertThat(futures).isEmpty();
@@ -769,7 +799,10 @@ public class FetchPlannerTest {
                         threshold, laggingFetchDataExecutor, rateLimiter
                     );
 
-                    final List<CompletableFuture<FileExtent>> futures = planner.get();
+                    final List<FetchPlanner.FetchRequestWithFuture> requestsWithFutures = planner.get();
+                final List<CompletableFuture<FileExtent>> futures = requestsWithFutures.stream()
+                    .map(FetchPlanner.FetchRequestWithFuture::future)
+                    .toList();
                     assertThat(futures).hasSize(1);
 
                     final FileExtent result = futures.get(0).get();
@@ -805,7 +838,10 @@ public class FetchPlannerTest {
                         threshold, laggingFetchDataExecutor, null
                     );
 
-                    final List<CompletableFuture<FileExtent>> futures = planner.get();
+                    final List<FetchPlanner.FetchRequestWithFuture> requestsWithFutures = planner.get();
+                final List<CompletableFuture<FileExtent>> futures = requestsWithFutures.stream()
+                    .map(FetchPlanner.FetchRequestWithFuture::future)
+                    .toList();
                     assertThat(futures).hasSize(1);
                     futures.get(0).get();
 
@@ -845,7 +881,10 @@ public class FetchPlannerTest {
                         threshold, laggingFetchDataExecutor, rateLimiter
                     );
 
-                    final List<CompletableFuture<FileExtent>> futures = planner.get();
+                    final List<FetchPlanner.FetchRequestWithFuture> requestsWithFutures = planner.get();
+                final List<CompletableFuture<FileExtent>> futures = requestsWithFutures.stream()
+                    .map(FetchPlanner.FetchRequestWithFuture::future)
+                    .toList();
                     assertThat(futures).hasSize(1);
 
                     final FileExtent result = futures.get(0).get();
@@ -882,7 +921,10 @@ public class FetchPlannerTest {
                         threshold, laggingFetchDataExecutor, null // No rate limiter
                     );
 
-                    final List<CompletableFuture<FileExtent>> futures = planner.get();
+                    final List<FetchPlanner.FetchRequestWithFuture> requestsWithFutures = planner.get();
+                final List<CompletableFuture<FileExtent>> futures = requestsWithFutures.stream()
+                    .map(FetchPlanner.FetchRequestWithFuture::future)
+                    .toList();
                     assertThat(futures).hasSize(1);
 
                     final FileExtent result = futures.get(0).get();
@@ -918,7 +960,10 @@ public class FetchPlannerTest {
                     );
 
                     // Execute: Trigger fetch operation via cold path
-                    final List<CompletableFuture<FileExtent>> futures = planner.get();
+                    final List<FetchPlanner.FetchRequestWithFuture> requestsWithFutures = planner.get();
+                final List<CompletableFuture<FileExtent>> futures = requestsWithFutures.stream()
+                    .map(FetchPlanner.FetchRequestWithFuture::future)
+                    .toList();
                     assertThat(futures).hasSize(1);
 
                     // Verify exception is wrapped in CompletableFuture
@@ -1005,7 +1050,10 @@ public class FetchPlannerTest {
                         );
 
                         // Execute: Cold path returns failed future instead of throwing
-                        final List<CompletableFuture<FileExtent>> futures = planner.get();
+                        final List<FetchPlanner.FetchRequestWithFuture> requestsWithFutures = planner.get();
+                final List<CompletableFuture<FileExtent>> futures = requestsWithFutures.stream()
+                    .map(FetchPlanner.FetchRequestWithFuture::future)
+                    .toList();
 
                         // Verify: Got one future
                         assertThat(futures).hasSize(1);
@@ -1077,7 +1125,10 @@ public class FetchPlannerTest {
                     );
 
                     // Execute: Cold path returns failed future instead of throwing
-                    final List<CompletableFuture<FileExtent>> futures = planner.get();
+                    final List<FetchPlanner.FetchRequestWithFuture> requestsWithFutures = planner.get();
+                final List<CompletableFuture<FileExtent>> futures = requestsWithFutures.stream()
+                    .map(FetchPlanner.FetchRequestWithFuture::future)
+                    .toList();
 
                     // Verify: Got one future
                     assertThat(futures).hasSize(1);
@@ -1131,7 +1182,10 @@ public class FetchPlannerTest {
                         threshold, laggingFetchDataExecutor, null
                     );
 
-                    final List<CompletableFuture<FileExtent>> futures = planner.get();
+                    final List<FetchPlanner.FetchRequestWithFuture> requestsWithFutures = planner.get();
+                final List<CompletableFuture<FileExtent>> futures = requestsWithFutures.stream()
+                    .map(FetchPlanner.FetchRequestWithFuture::future)
+                    .toList();
                     assertThat(futures).hasSize(2);
                     CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).get();
 
@@ -1190,7 +1244,10 @@ public class FetchPlannerTest {
                         );
 
                         // Execute both paths concurrently
-                        final List<CompletableFuture<FileExtent>> futures = planner.get();
+                        final List<FetchPlanner.FetchRequestWithFuture> requestsWithFutures = planner.get();
+                final List<CompletableFuture<FileExtent>> futures = requestsWithFutures.stream()
+                    .map(FetchPlanner.FetchRequestWithFuture::future)
+                    .toList();
                         assertThat(futures).hasSize(2);
 
                         // Both should complete successfully
@@ -1243,7 +1300,10 @@ public class FetchPlannerTest {
 
                     // Pass null for laggingConsumerExecutor to disable feature
                     final FetchPlanner planner = createFetchPlannerHotPathOnly(keyAlignmentStrategy, caffeineCache, coordinates);
-                    final List<CompletableFuture<FileExtent>> futures = planner.get();
+                    final List<FetchPlanner.FetchRequestWithFuture> requestsWithFutures = planner.get();
+                final List<CompletableFuture<FileExtent>> futures = requestsWithFutures.stream()
+                    .map(FetchPlanner.FetchRequestWithFuture::future)
+                    .toList();
                     assertThat(futures).hasSize(1);
 
                     final FileExtent result = futures.get(0).get();
@@ -1273,7 +1333,10 @@ public class FetchPlannerTest {
 
                     // Executor enabled, but no rate limiter
                     final FetchPlanner planner = createFetchPlannerWithLaggingConsumerFeature(keyAlignmentStrategy, caffeineCache, coordinates, laggingFetchDataExecutor, null);
-                    final List<CompletableFuture<FileExtent>> futures = planner.get();
+                    final List<FetchPlanner.FetchRequestWithFuture> requestsWithFutures = planner.get();
+                final List<CompletableFuture<FileExtent>> futures = requestsWithFutures.stream()
+                    .map(FetchPlanner.FetchRequestWithFuture::future)
+                    .toList();
                     assertThat(futures).hasSize(1);
 
                     final FileExtent result = futures.get(0).get();
@@ -1307,7 +1370,10 @@ public class FetchPlannerTest {
 
                     // Both features enabled
                     final FetchPlanner planner = createFetchPlannerWithLaggingConsumerFeature(keyAlignmentStrategy, caffeineCache, coordinates, laggingFetchDataExecutor, rateLimiter);
-                    final List<CompletableFuture<FileExtent>> futures = planner.get();
+                    final List<FetchPlanner.FetchRequestWithFuture> requestsWithFutures = planner.get();
+                final List<CompletableFuture<FileExtent>> futures = requestsWithFutures.stream()
+                    .map(FetchPlanner.FetchRequestWithFuture::future)
+                    .toList();
                     assertThat(futures).hasSize(1);
 
                     final FileExtent result = futures.get(0).get();

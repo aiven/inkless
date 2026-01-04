@@ -59,7 +59,7 @@ import io.github.bucket4j.Bucket;
  * <p>This class uses async cache operations to avoid blocking threads. The cache returns
  * CompletableFuture immediately, and actual fetches run on the provided executor.
  */
-public class FetchPlanner implements Supplier<List<CompletableFuture<FileExtent>>> {
+public class FetchPlanner implements Supplier<List<FetchPlanner.FetchRequestWithFuture>> {
 
     private final Time time;
     private final ObjectKeyCreator objectKeyCreator;
@@ -107,10 +107,10 @@ public class FetchPlanner implements Supplier<List<CompletableFuture<FileExtent>
     /**
      * Executes the fetch plan: plans requests, submits to cache, returns futures.
      *
-     * @return list of futures that will complete with fetched file extents
+     * @return list of fetch requests paired with their futures
      */
     @Override
-    public List<CompletableFuture<FileExtent>> get() {
+    public List<FetchRequestWithFuture> get() {
         return TimeUtils.measureDurationMsSupplier(
             time,
             () -> {
@@ -191,9 +191,9 @@ public class FetchPlanner implements Supplier<List<CompletableFuture<FileExtent>
             ));
     }
 
-    private List<CompletableFuture<FileExtent>> submitAllRequests(final List<ObjectFetchRequest> requests) {
+    private List<FetchRequestWithFuture> submitAllRequests(final List<ObjectFetchRequest> requests) {
         return requests.stream()
-            .map(this::submitSingleRequest)
+            .map(request -> new FetchRequestWithFuture(request, submitSingleRequest(request)))
             .collect(Collectors.toList());
     }
 
@@ -342,4 +342,10 @@ public class FetchPlanner implements Supplier<List<CompletableFuture<FileExtent>
                     .setLength(byteRange.size()));
         }
     }
+
+    /**
+     * Pairs an ObjectFetchRequest with its corresponding CompletableFuture.
+     * This allows preserving request information (object key, range) even when the fetch fails.
+     */
+    public record FetchRequestWithFuture(ObjectFetchRequest request, CompletableFuture<FileExtent> future) {}
 }

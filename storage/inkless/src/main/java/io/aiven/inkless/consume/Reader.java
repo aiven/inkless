@@ -44,6 +44,7 @@ import java.util.concurrent.TimeUnit;
 import io.aiven.inkless.TimeUtils;
 import io.aiven.inkless.cache.KeyAlignmentStrategy;
 import io.aiven.inkless.cache.ObjectCache;
+import io.aiven.inkless.common.ByteRange;
 import io.aiven.inkless.common.InklessThreadFactory;
 import io.aiven.inkless.common.ObjectKeyCreator;
 import io.aiven.inkless.common.metrics.ThreadPoolMonitor;
@@ -364,17 +365,22 @@ public class Reader implements AutoCloseable {
      * This allows successful partitions to return data while failed partitions are marked as failures,
      * enabling consumers to retry only the failed partitions.
      *
-     * @param fileExtentFutures the list of futures to wait for
+     * <p>Both Success and Failure results include object key and range information to enable
+     * proper grouping and ordering when processing results.
+     *
+     * @param requestsWithFutures the list of fetch requests paired with their futures
      * @return a future that completes with a list of file extent results in the same order as the input
      */
     static CompletableFuture<List<FileExtentResult>> allOfFileExtents(
-        List<CompletableFuture<FileExtent>> fileExtentFutures
+        List<FetchPlanner.FetchRequestWithFuture> requestsWithFutures
     ) {
         // Handle each future individually to support partial failures.
         // Convert exceptions to Failure results so successful partitions still get their data.
-        final List<CompletableFuture<FileExtentResult>> handledFutures = fileExtentFutures.stream()
-            .map(future -> future
-                .handle((extent, throwable) -> {
+        final List<CompletableFuture<FileExtentResult>> handledFutures = requestsWithFutures.stream()
+            .<CompletableFuture<FileExtentResult>>map(requestWithFuture -> {
+                final FetchPlanner.ObjectFetchRequest request = requestWithFuture.request();
+                final CompletableFuture<FileExtent> future = requestWithFuture.future();
+                return future.handle((extent, throwable) -> {
                     if (throwable != null) {
                         // Restore interrupt status if the exception is InterruptedException.
                         // This callback may execute on various threads (executor threads, completing thread, etc.),
@@ -385,11 +391,17 @@ public class Reader implements AutoCloseable {
                         }
                         // Log at debug level - metrics are recorded in FetchPlanner
                         LOGGER.debug("File extent fetch failed, returning failure result", throwable);
-                        return new FileExtentResult.Failure(throwable);
+                        // Extract object key and range from request for Failure result
+                        return new FileExtentResult.Failure(request.objectKey(), request.byteRange(), throwable);
                     } else {
-                        return (FileExtentResult) new FileExtentResult.Success(extent);
+                        // Extract object key and range from FileExtent for Success result
+                        // FileExtent.object() returns String, we need to create ObjectKey from it
+                        // For Success, we can use the request's objectKey since it matches
+                        final ByteRange byteRange = new ByteRange(extent.range().offset(), extent.range().length());
+                        return new FileExtentResult.Success(request.objectKey(), byteRange, extent);
                     }
-                }))
+                });
+            })
             .toList();
 
         final CompletableFuture<?>[] futuresArray = handledFutures.toArray(CompletableFuture[]::new);
