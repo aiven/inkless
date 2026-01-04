@@ -103,68 +103,76 @@ public class FetchCompleter implements Supplier<Map<TopicIdPartition, FetchParti
     }
 
     private Map<TopicIdPartition, FetchPartitionData> serveFetch(
-            Map<TopicIdPartition, FindBatchResponse> metadata,
-            Map<String, List<FileExtent>> files
+        final Map<TopicIdPartition, FindBatchResponse> metadata,
+        final Map<String, List<FileExtent>> files
     ) {
         return fetchInfos.entrySet()
-                .stream()
-                .collect(Collectors.toMap(Map.Entry::getKey, e -> servePartition(e.getKey(), metadata, files)));
+            .stream()
+            .collect(
+                Collectors.toMap(
+                    Map.Entry::getKey,
+                    e -> servePartition(e.getKey(), metadata, files))
+            );
     }
 
-    private FetchPartitionData servePartition(TopicIdPartition key, Map<TopicIdPartition, FindBatchResponse> allMetadata, Map<String, List<FileExtent>> allFiles) {
+    private FetchPartitionData servePartition(
+        final TopicIdPartition key,
+        final Map<TopicIdPartition, FindBatchResponse> allMetadata,
+        final Map<String, List<FileExtent>> allFiles
+    ) {
         FindBatchResponse metadata = allMetadata.get(key);
         if (metadata == null) {
             return new FetchPartitionData(
-                    Errors.KAFKA_STORAGE_ERROR,
-                    -1,
-                    -1,
-                    MemoryRecords.EMPTY,
-                    Optional.empty(),
-                    OptionalLong.empty(),
-                    Optional.empty(),
-                    OptionalInt.empty(),
-                    false
+                Errors.KAFKA_STORAGE_ERROR,
+                -1,
+                -1,
+                MemoryRecords.EMPTY,
+                Optional.empty(),
+                OptionalLong.empty(),
+                Optional.empty(),
+                OptionalInt.empty(),
+                false
             );
         }
         if (metadata.errors() != Errors.NONE || metadata.batches().isEmpty()) {
             return new FetchPartitionData(
-                    metadata.errors(),
-                    metadata.highWatermark(),
-                    metadata.logStartOffset(),
-                    MemoryRecords.EMPTY,
-                    Optional.empty(),
-                    OptionalLong.empty(),
-                    Optional.empty(),
-                    OptionalInt.empty(),
-                    false
+                metadata.errors(),
+                metadata.highWatermark(),
+                metadata.logStartOffset(),
+                MemoryRecords.EMPTY,
+                Optional.empty(),
+                OptionalLong.empty(),
+                Optional.empty(),
+                OptionalInt.empty(),
+                false
             );
         }
         List<MemoryRecords> foundRecords = extractRecords(metadata, allFiles);
         if (foundRecords.isEmpty()) {
             // If there is no FetchedFile to serve this topic id partition, the earlier steps which prepared the metadata + data have an error.
             return new FetchPartitionData(
-                    Errors.KAFKA_STORAGE_ERROR,
-                    -1,
-                    -1,
-                    MemoryRecords.EMPTY,
-                    Optional.empty(),
-                    OptionalLong.empty(),
-                    Optional.empty(),
-                    OptionalInt.empty(),
-                    false
+                Errors.KAFKA_STORAGE_ERROR,
+                -1,
+                -1,
+                MemoryRecords.EMPTY,
+                Optional.empty(),
+                OptionalLong.empty(),
+                Optional.empty(),
+                OptionalInt.empty(),
+                false
             );
         }
 
         return new FetchPartitionData(
-                Errors.NONE,
-                metadata.highWatermark(),
-                metadata.logStartOffset(),
-                new ConcatenatedRecords(foundRecords),
-                Optional.empty(),
-                OptionalLong.of(metadata.highWatermark()),
-                Optional.empty(),
-                OptionalInt.empty(),
-                false
+            Errors.NONE,
+            metadata.highWatermark(),
+            metadata.logStartOffset(),
+            new ConcatenatedRecords(foundRecords),
+            Optional.empty(),
+            OptionalLong.of(metadata.highWatermark()),
+            Optional.empty(),
+            OptionalInt.empty(),
+            false
         );
     }
 
@@ -199,7 +207,36 @@ public class FetchCompleter implements Supplier<Map<TopicIdPartition, FetchParti
         return foundRecords;
     }
 
-    private static MemoryRecords createMemoryRecords(ByteBuffer buffer, BatchInfo batch) {
+    private static MemoryRecords constructRecordsFromFile(
+        final BatchInfo batch,
+        final List<FileExtent> files
+    ) {
+        byte[] buffer = null;
+        for (FileExtent file : files) {
+            final ByteRange batchRange = batch.metadata().range();
+            final ByteRange fileRange = new ByteRange(file.range().offset(), file.range().length());
+            ByteRange intersection = ByteRange.intersect(batchRange, fileRange);
+            if (intersection.size() > 0) {
+                if (buffer == null) {
+                    buffer = new byte[Math.toIntExact(batchRange.bufferSize())];
+                }
+                final int position = intersection.bufferOffset() - batchRange.bufferOffset();
+                final int from = intersection.bufferOffset() - fileRange.bufferOffset();
+                final int to = intersection.bufferOffset() - fileRange.bufferOffset() + intersection.bufferSize();
+                final byte[] fileData = file.data();
+                System.arraycopy(fileData, from, buffer, position, Math.min(fileData.length - from, to - from));
+            }
+        }
+        if (buffer == null) {
+            return null;
+        }
+        return createMemoryRecords(ByteBuffer.wrap(buffer), batch);
+    }
+
+    private static MemoryRecords createMemoryRecords(
+        final ByteBuffer buffer,
+        final BatchInfo batch
+    ) {
         MemoryRecords records = MemoryRecords.readableRecords(buffer);
         Iterator<MutableRecordBatch> iterator = records.batches().iterator();
         if (!iterator.hasNext()) {
@@ -221,28 +258,5 @@ public class FetchCompleter implements Supplier<Map<TopicIdPartition, FetchParti
         }
 
         return records;
-    }
-
-    private static MemoryRecords constructRecordsFromFile(BatchInfo batch, List<FileExtent> files) {
-        byte[] buffer = null;
-        for (FileExtent file : files) {
-            final ByteRange batchRange = batch.metadata().range();
-            final ByteRange fileRange = new ByteRange(file.range().offset(), file.range().length());
-            ByteRange intersection = ByteRange.intersect(batchRange, fileRange);
-            if (intersection.size() > 0) {
-                if (buffer == null) {
-                    buffer = new byte[Math.toIntExact(batchRange.bufferSize())];
-                }
-                final int position = intersection.bufferOffset() - batchRange.bufferOffset();
-                final int from = intersection.bufferOffset() - fileRange.bufferOffset();
-                final int to = intersection.bufferOffset() - fileRange.bufferOffset() + intersection.bufferSize();
-                final byte[] fileData = file.data();
-                System.arraycopy(fileData, from, buffer, position, Math.min(fileData.length - from, to - from));
-            }
-        }
-        if (buffer == null) {
-            return null;
-        }
-        return createMemoryRecords(ByteBuffer.wrap(buffer), batch);
     }
 }
