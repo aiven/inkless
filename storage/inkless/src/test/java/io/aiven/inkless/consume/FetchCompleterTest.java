@@ -20,7 +20,9 @@ package io.aiven.inkless.consume;
 import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.compress.Compression;
+import org.apache.kafka.common.errors.CorruptRecordException;
 import org.apache.kafka.common.protocol.Errors;
+import org.apache.kafka.common.record.DefaultRecordBatch;
 import org.apache.kafka.common.record.MemoryRecords;
 import org.apache.kafka.common.record.Record;
 import org.apache.kafka.common.record.SimpleRecord;
@@ -814,5 +816,92 @@ public class FetchCompleterTest {
                 assertThat(d.error).isEqualTo(Errors.KAFKA_STORAGE_ERROR);
                 assertThat(d.records).isEqualTo(MemoryRecords.EMPTY);
             });
+    }
+
+    @Test
+    public void testCorruptedBatchWithInvalidCrcThrowsFetchException() {
+        // Test that ensureValid() catches corrupted batches with invalid CRC checksums.
+        // This validates data integrity even when size validation passes.
+        // 
+        // Scenario: Data passes size validation (extents cover batch range) but has corrupted
+        // CRC checksum. ensureValid() should detect this and throw CorruptRecordException,
+        // which gets wrapped in FetchException.
+        byte[] value = {1, 2, 3};
+        MemoryRecords records = MemoryRecords.withRecords(0L, Compression.NONE, new SimpleRecord(value));
+
+        Map<TopicIdPartition, FetchRequest.PartitionData> fetchInfos = Map.of(
+            partition0, new FetchRequest.PartitionData(topicId, 0, 0, 1000, Optional.empty())
+        );
+        int logStartOffset = 0;
+        long logAppendTimestamp = 10L;
+        long maxBatchTimestamp = 20L;
+        int highWatermark = 1;
+
+        Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of(
+            partition0, FindBatchResponse.success(List.of(
+                new BatchInfo(1L, OBJECT_KEY_A.value(), BatchMetadata.of(partition0, 0, records.sizeInBytes(), 0, 0, logAppendTimestamp, maxBatchTimestamp, TimestampType.CREATE_TIME))
+            ), logStartOffset, highWatermark)
+        );
+
+        // Create corrupted data: valid structure but invalid CRC checksum
+        // Corrupt a field that's covered by CRC (LAST_OFFSET_DELTA) to invalidate the checksum
+        // This will pass size validation but fail ensureValid() CRC check
+        ByteBuffer corruptedBuffer = records.buffer().duplicate();
+        // Modify LAST_OFFSET_DELTA which is covered by CRC, causing CRC mismatch
+        int lastOffsetDeltaOffset = DefaultRecordBatch.LAST_OFFSET_DELTA_OFFSET;
+        corruptedBuffer.putInt(lastOffsetDeltaOffset, 999); // Corrupt the value
+
+        final ByteRange range = new ByteRange(0, records.sizeInBytes());
+        List<FileExtentResult> files = List.of(
+            new FileExtentResult.Success(OBJECT_KEY_A, range, FileFetchJob.createFileExtent(OBJECT_KEY_A, range, corruptedBuffer))
+        );
+
+        FetchCompleter job = new FetchCompleter(
+            new MockTime(),
+            OBJECT_KEY_CREATOR,
+            fetchInfos,
+            coordinates,
+            files,
+            durationMs -> {}
+        );
+
+        // Should throw FetchException because ensureValid() detects corrupted CRC
+        // Exception chain: CorruptRecordException -> FetchException
+        // 
+        // ensureValid() validates:
+        // 1. Batch size >= minimum overhead
+        // 2. CRC checksum matches computed value
+        // When CRC is invalid, it throws CorruptRecordException which gets wrapped in FetchException
+        assertThatThrownBy(() -> {
+            Map<TopicIdPartition, FetchPartitionData> result = job.get();
+            FetchPartitionData data = result.get(partition0);
+            // If we get here without exception, the error should indicate corruption
+            if (data.error == Errors.NONE) {
+                throw new AssertionError("Expected exception for corrupted batch, but got Errors.NONE");
+            }
+        })
+        .isInstanceOf(FetchException.class)
+        .satisfies(exception -> {
+            FetchException fetchException = (FetchException) exception;
+            Throwable cause = fetchException.getCause();
+            
+            assertThat(cause)
+                .as("Cause should be CorruptRecordException from ensureValid() CRC validation")
+                .isNotNull()
+                .isInstanceOf(CorruptRecordException.class);
+            
+            CorruptRecordException corruptException = (CorruptRecordException) cause;
+            
+            // Validate the error message indicates CRC corruption
+            // Example message: "Record is corrupt (stored crc = X, computed crc = Y)"
+            String errorMessage = corruptException.getMessage();
+            assertThat(errorMessage)
+                .as("Error message should indicate corruption/CRC issue")
+                .isNotNull()
+                .satisfies(msg -> {
+                    assertThat(msg.toLowerCase())
+                        .contains("record is corrupt", "crc");
+                });
+        });
     }
 }

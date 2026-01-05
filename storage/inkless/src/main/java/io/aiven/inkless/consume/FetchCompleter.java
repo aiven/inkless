@@ -316,6 +316,11 @@ public class FetchCompleter implements Supplier<Map<TopicIdPartition, FetchParti
         }
         MutableRecordBatch mutableRecordBatch = iterator.next();
 
+        // Validate batch integrity (CRC checksum, size) before modifying it.
+        // This catches corrupted data that passed size validation but has invalid checksums.
+        // We validate before setLastOffset/setMaxTimestamp to avoid modifying corrupted batches.
+        mutableRecordBatch.ensureValid();
+
         // set last offset
         mutableRecordBatch.setLastOffset(batch.metadata().lastOffset());
 
