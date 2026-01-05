@@ -39,6 +39,7 @@ import io.aiven.inkless.common.ObjectKey;
 import io.aiven.inkless.common.PlainObjectKey;
 import io.aiven.inkless.generated.FileExtent;
 import io.aiven.inkless.storage_backend.common.ObjectFetcher;
+import io.aiven.inkless.storage_backend.common.StorageBackendException;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -77,6 +78,20 @@ public class FileFetchJobTest {
         FileExtent actualFile = job.call();
 
         assertThat(actualFile).isEqualTo(expectedFile);
+    }
+
+    @Test
+    public void testShortReadThrowsStorageBackendException() throws Exception {
+        final int expectedSize = 10;
+        final ByteRange range = new ByteRange(0, expectedSize);
+        final FileFetchJob job = new FileFetchJob(time, fetcher, objectA, range, durationMs -> { });
+
+        final ReadableByteChannel channel = mock(ReadableByteChannel.class);
+        when(fetcher.fetch(objectA, range)).thenReturn(channel);
+        // Return fewer bytes than requested (simulates short read / truncated stream).
+        when(fetcher.readToByteBuffer(channel)).thenReturn(ByteBuffer.allocate(expectedSize - 1));
+
+        assertThrows(StorageBackendException.class, job::call);
     }
 
     private List<FileExtent> createCacheAlignedFileExtents(int fileSize, int blockSize) {
