@@ -19,6 +19,7 @@ package io.aiven.inkless.cache;
 
 import com.github.benmanes.caffeine.cache.AsyncCache;
 import com.github.benmanes.caffeine.cache.Caffeine;
+import com.github.benmanes.caffeine.cache.Policy;
 import com.github.benmanes.caffeine.cache.Weigher;
 import com.github.benmanes.caffeine.cache.stats.CacheStats;
 
@@ -57,7 +58,10 @@ public final class CaffeineCache implements ObjectCache {
             builder.maximumSize(maxCacheSize);
         }
         builder.expireAfterWrite(Duration.ofSeconds(lifespanSeconds));
-        builder.expireAfterAccess(Duration.ofSeconds(maxIdleSeconds != -1 ? maxIdleSeconds : 180));
+        // -1 means disabled (see InklessConfig.CONSUME_CACHE_EXPIRATION_MAX_IDLE_SEC_CONFIG doc)
+        if (maxIdleSeconds != -1) {
+            builder.expireAfterAccess(Duration.ofSeconds(maxIdleSeconds));
+        }
         builder.recordStats();
         cache = builder.buildAsync();
         metrics = new CaffeineCacheMetrics(cache.synchronous());
@@ -130,6 +134,11 @@ public final class CaffeineCache implements ObjectCache {
     // visible for testing
     void cleanUp() {
         cache.synchronous().cleanUp();
+    }
+
+    // visible for testing
+    Policy<CacheKey, FileExtent> policy() {
+        return cache.synchronous().policy();
     }
 
     public CacheStats stats() {
