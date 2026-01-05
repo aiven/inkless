@@ -18,7 +18,7 @@
 package io.aiven.inkless.consume;
 
 public class FetchException extends RuntimeException {
-    public FetchException(Throwable cause) {
-        super(cause);
+    public FetchException(String message, Throwable cause) {
+        super(message, cause);
     }
 }

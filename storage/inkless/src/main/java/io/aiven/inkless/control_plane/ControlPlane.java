@@ -38,6 +38,15 @@ public interface ControlPlane extends Closeable, Configurable {
             long fileSize,
             List<CommitBatchRequest> batches);
 
+    /**
+     * Find batches for the given partition requests.
+     *
+     * @param findBatchRequests the list of partition requests
+     * @param fetchMaxBytes maximum bytes to fetch across all partitions
+     * @param maxBatchesPerPartition maximum batches per partition to return
+     * @return list of responses, one per request, in the same order as the requests.
+     *         The contract requires that responses[i] corresponds to findBatchRequests[i] for all i.
+     */
     List<FindBatchResponse> findBatches(
         List<FindBatchRequest> findBatchRequests,
         int fetchMaxBytes,

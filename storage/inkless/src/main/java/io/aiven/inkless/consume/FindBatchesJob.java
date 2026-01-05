@@ -72,6 +72,19 @@ public class FindBatchesJob implements Supplier<Map<TopicIdPartition, FindBatchR
 
             List<FindBatchResponse> responses = controlPlane.findBatches(requests, params.maxBytes, maxBatchesPerPartition);
 
+            // Validate that control plane returned the expected number of responses.
+            // Control plane contract requires responses to be in the same order as requests:
+            // responses[i] must correspond to requests[i] for all i.
+            // This ensures index-based mapping is safe and partitions are mapped correctly.
+            if (responses.size() != requests.size()) {
+                throw new IllegalStateException(
+                    "Control plane returned " + responses.size() + " responses but " + requests.size()
+                        + " were requested. Responses must match requests in count and order."
+                );
+            }
+
+            // Map responses to partitions by index, relying on control plane contract that
+            // responses[i] corresponds to requests[i] for all i.
             Map<TopicIdPartition, FindBatchResponse> out = new HashMap<>();
             for (int i = 0; i < requests.size(); i++) {
                 FindBatchRequest request = requests.get(i);
