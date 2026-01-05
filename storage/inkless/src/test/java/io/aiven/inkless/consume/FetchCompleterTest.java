@@ -52,8 +52,8 @@ import io.aiven.inkless.control_plane.BatchInfo;
 import io.aiven.inkless.control_plane.BatchMetadata;
 import io.aiven.inkless.control_plane.FindBatchResponse;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.STRICT_STUBS)
@@ -79,7 +79,7 @@ public class FetchCompleterTest {
             durationMs -> {}
         );
         Map<TopicIdPartition, FetchPartitionData> result = job.get();
-        assertTrue(result.isEmpty());
+        assertThat(result).isEmpty();
     }
 
     @Test
@@ -97,7 +97,7 @@ public class FetchCompleterTest {
         );
         Map<TopicIdPartition, FetchPartitionData> result = job.get();
         FetchPartitionData data = result.get(partition0);
-        assertEquals(Errors.KAFKA_STORAGE_ERROR, data.error);
+        assertThat(data.error).isEqualTo(Errors.KAFKA_STORAGE_ERROR);
     }
 
     @Test
@@ -120,10 +120,10 @@ public class FetchCompleterTest {
         );
         Map<TopicIdPartition, FetchPartitionData> result = job.get();
         FetchPartitionData data = result.get(partition0);
-        assertEquals(Errors.NONE, data.error);
-        assertEquals(MemoryRecords.EMPTY, data.records);
-        assertEquals(logStartOffset, data.logStartOffset);
-        assertEquals(highWatermark, data.highWatermark);
+        assertThat(data.error).isEqualTo(Errors.NONE);
+        assertThat(data.records).isEqualTo(MemoryRecords.EMPTY);
+        assertThat(data.logStartOffset).isEqualTo(logStartOffset);
+        assertThat(data.highWatermark).isEqualTo(highWatermark);
     }
 
     @Test
@@ -150,7 +150,7 @@ public class FetchCompleterTest {
         );
         Map<TopicIdPartition, FetchPartitionData> result = job.get();
         FetchPartitionData data = result.get(partition0);
-        assertEquals(Errors.KAFKA_STORAGE_ERROR, data.error);
+        assertThat(data.error).isEqualTo(Errors.KAFKA_STORAGE_ERROR);
     }
 
     @Test
@@ -184,9 +184,9 @@ public class FetchCompleterTest {
         );
         Map<TopicIdPartition, FetchPartitionData> result = job.get();
         FetchPartitionData data = result.get(partition0);
-        assertEquals(records.sizeInBytes(), data.records.sizeInBytes());
-        assertEquals(logStartOffset, data.logStartOffset);
-        assertEquals(highWatermark, data.highWatermark);
+        assertThat(data.records.sizeInBytes()).isEqualTo(records.sizeInBytes());
+        assertThat(data.logStartOffset).isEqualTo(logStartOffset);
+        assertThat(data.highWatermark).isEqualTo(highWatermark);
     }
 
     @Test
@@ -222,9 +222,9 @@ public class FetchCompleterTest {
         );
         Map<TopicIdPartition, FetchPartitionData> result = job.get();
         FetchPartitionData data = result.get(partition0);
-        assertEquals(2 * records.sizeInBytes(), data.records.sizeInBytes());
-        assertEquals(logStartOffset, data.logStartOffset);
-        assertEquals(highWatermark, data.highWatermark);
+        assertThat(data.records.sizeInBytes()).isEqualTo(2 * records.sizeInBytes());
+        assertThat(data.logStartOffset).isEqualTo(logStartOffset);
+        assertThat(data.highWatermark).isEqualTo(highWatermark);
     }
 
     @Test
@@ -270,14 +270,18 @@ public class FetchCompleterTest {
         );
         Map<TopicIdPartition, FetchPartitionData> result = job.get();
         FetchPartitionData data = result.get(partition0);
-        assertEquals(records.sizeInBytes(), data.records.sizeInBytes());
-        assertEquals(logStartOffset, data.logStartOffset);
-        assertEquals(highWatermark, data.highWatermark);
+        assertThat(data)
+            .satisfies(d -> {
+                assertThat(d.records.sizeInBytes()).isEqualTo(records.sizeInBytes());
+                assertThat(d.logStartOffset).isEqualTo(logStartOffset);
+                assertThat(d.highWatermark).isEqualTo(highWatermark);
+            });
+        
         Iterator<Record> iterator = data.records.records().iterator();
-        assertTrue(iterator.hasNext());
-        assertEquals(ByteBuffer.wrap(firstValue), iterator.next().value());
-        assertTrue(iterator.hasNext());
-        assertEquals(ByteBuffer.wrap(secondValue), iterator.next().value());
+        assertThat(iterator.hasNext()).isTrue();
+        assertThat(iterator.next().value()).isEqualTo(ByteBuffer.wrap(firstValue));
+        assertThat(iterator.hasNext()).isTrue();
+        assertThat(iterator.next().value()).isEqualTo(ByteBuffer.wrap(secondValue));
     }
 
     @Test
@@ -320,14 +324,18 @@ public class FetchCompleterTest {
         );
         Map<TopicIdPartition, FetchPartitionData> result = job.get();
         FetchPartitionData data = result.get(partition0);
-        assertEquals(totalSize, data.records.sizeInBytes());
-        assertEquals(logStartOffset, data.logStartOffset);
-        assertEquals(highWatermark, data.highWatermark);
+        assertThat(data)
+            .satisfies(d -> {
+                assertThat(d.records.sizeInBytes()).isEqualTo(totalSize);
+                assertThat(d.logStartOffset).isEqualTo(logStartOffset);
+                assertThat(d.highWatermark).isEqualTo(highWatermark);
+            });
+        
         Iterator<Record> iterator = data.records.records().iterator();
-        assertTrue(iterator.hasNext());
-        assertEquals(ByteBuffer.wrap(firstValue), iterator.next().value());
-        assertTrue(iterator.hasNext());
-        assertEquals(ByteBuffer.wrap(secondValue), iterator.next().value());
+        assertThat(iterator.hasNext()).isTrue();
+        assertThat(iterator.next().value()).isEqualTo(ByteBuffer.wrap(firstValue));
+        assertThat(iterator.hasNext()).isTrue();
+        assertThat(iterator.next().value()).isEqualTo(ByteBuffer.wrap(secondValue));
     }
 
     @Test
@@ -381,14 +389,18 @@ public class FetchCompleterTest {
         );
         Map<TopicIdPartition, FetchPartitionData> result = job.get();
         FetchPartitionData data = result.get(partition0);
-        assertEquals(totalSize, data.records.sizeInBytes());
-        assertEquals(logStartOffset, data.logStartOffset);
-        assertEquals(highWatermark, data.highWatermark);
+        assertThat(data)
+            .satisfies(d -> {
+                assertThat(d.records.sizeInBytes()).isEqualTo(totalSize);
+                assertThat(d.logStartOffset).isEqualTo(logStartOffset);
+                assertThat(d.highWatermark).isEqualTo(highWatermark);
+            });
+        
         Iterator<Record> iterator = data.records.records().iterator();
-        assertTrue(iterator.hasNext());
-        assertEquals(ByteBuffer.wrap(firstValue), iterator.next().value());
-        assertTrue(iterator.hasNext());
-        assertEquals(ByteBuffer.wrap(secondValue), iterator.next().value());
+        assertThat(iterator.hasNext()).isTrue();
+        assertThat(iterator.next().value()).isEqualTo(ByteBuffer.wrap(firstValue));
+        assertThat(iterator.hasNext()).isTrue();
+        assertThat(iterator.next().value()).isEqualTo(ByteBuffer.wrap(secondValue));
     }
 
     @Test
@@ -437,8 +449,8 @@ public class FetchCompleterTest {
         FetchPartitionData data = result.get(partition0);
 
         // Should succeed with both batches in order
-        assertEquals(Errors.NONE, data.error);
-        assertEquals(batch1Size + batch2Size, data.records.sizeInBytes());
+        assertThat(data.error).isEqualTo(Errors.NONE);
+        assertThat(data.records.sizeInBytes()).isEqualTo(batch1Size + batch2Size);
     }
 
     @Test
@@ -487,8 +499,8 @@ public class FetchCompleterTest {
 
         // Should return KAFKA_STORAGE_ERROR because no data is available
         // (first range failed, so we stop and don't process the second range to avoid gaps)
-        assertEquals(Errors.KAFKA_STORAGE_ERROR, data.error);
-        assertEquals(MemoryRecords.EMPTY, data.records);
+        assertThat(data.error).isEqualTo(Errors.KAFKA_STORAGE_ERROR);
+        assertThat(data.records).isEqualTo(MemoryRecords.EMPTY);
     }
 
     @Test
@@ -537,8 +549,11 @@ public class FetchCompleterTest {
         FetchPartitionData data = result.get(partition0);
 
         // Should return batch 1 only (complete batch) since batch 2 is incomplete
-        assertEquals(Errors.NONE, data.error);
-        assertEquals(batch1Size, data.records.sizeInBytes());
+        assertThat(data)
+            .satisfies(d -> {
+                assertThat(d.error).isEqualTo(Errors.NONE);
+                assertThat(d.records.sizeInBytes()).isEqualTo(batch1Size);
+            });
     }
 
     @Test
@@ -591,13 +606,17 @@ public class FetchCompleterTest {
         FetchPartitionData data = result.get(partition0);
 
         // Should succeed with complete batch
-        assertEquals(Errors.NONE, data.error);
-        assertEquals(batchSize, data.records.sizeInBytes());
+        assertThat(data)
+            .satisfies(d -> {
+                assertThat(d.error).isEqualTo(Errors.NONE);
+                assertThat(d.records.sizeInBytes()).isEqualTo(batchSize);
+            });
+        
         Iterator<Record> iterator = data.records.records().iterator();
-        assertTrue(iterator.hasNext());
-        assertEquals(ByteBuffer.wrap(firstValue), iterator.next().value());
-        assertTrue(iterator.hasNext());
-        assertEquals(ByteBuffer.wrap(secondValue), iterator.next().value());
+        assertThat(iterator.hasNext()).isTrue();
+        assertThat(iterator.next().value()).isEqualTo(ByteBuffer.wrap(firstValue));
+        assertThat(iterator.hasNext()).isTrue();
+        assertThat(iterator.next().value()).isEqualTo(ByteBuffer.wrap(secondValue));
     }
 
     @Test
@@ -658,8 +677,11 @@ public class FetchCompleterTest {
 
         // Should fail because batch is incomplete (missing middle extent)
         // Incomplete batches are useless to consumers, so we return KAFKA_STORAGE_ERROR
-        assertEquals(Errors.KAFKA_STORAGE_ERROR, data.error);
-        assertEquals(MemoryRecords.EMPTY, data.records);
+        assertThat(data)
+            .satisfies(d -> {
+                assertThat(d.error).isEqualTo(Errors.KAFKA_STORAGE_ERROR);
+                assertThat(d.records).isEqualTo(MemoryRecords.EMPTY);
+            });
     }
 
     @Test
@@ -723,8 +745,11 @@ public class FetchCompleterTest {
 
         // Should fail because batch is incomplete (middle extent failed, groupFileData stops at first failure)
         // Incomplete batches are useless to consumers, so we return KAFKA_STORAGE_ERROR
-        assertEquals(Errors.KAFKA_STORAGE_ERROR, data.error);
-        assertEquals(MemoryRecords.EMPTY, data.records);
+        assertThat(data)
+            .satisfies(d -> {
+                assertThat(d.error).isEqualTo(Errors.KAFKA_STORAGE_ERROR);
+                assertThat(d.records).isEqualTo(MemoryRecords.EMPTY);
+            });
     }
 
     @Test
@@ -784,7 +809,10 @@ public class FetchCompleterTest {
 
         // Should fail because batch has a gap (not contiguous)
         // Incomplete batches are useless to consumers, so we return KAFKA_STORAGE_ERROR
-        assertEquals(Errors.KAFKA_STORAGE_ERROR, data.error);
-        assertEquals(MemoryRecords.EMPTY, data.records);
+        assertThat(data)
+            .satisfies(d -> {
+                assertThat(d.error).isEqualTo(Errors.KAFKA_STORAGE_ERROR);
+                assertThat(d.records).isEqualTo(MemoryRecords.EMPTY);
+            });
     }
 }
