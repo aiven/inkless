@@ -2458,6 +2458,7 @@ project(':storage:inkless') {
     implementation libs.metrics
     implementation libs.commonsIo
     implementation libs.caffeine
+    implementation libs.bucket4jCore
 
     testImplementation project(':clients').sourceSets.test.output.classesDirs
     testImplementation project(':test-common')
