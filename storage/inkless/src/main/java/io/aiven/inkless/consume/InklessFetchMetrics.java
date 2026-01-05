@@ -57,12 +57,12 @@ public class InklessFetchMetrics {
     private static final String FETCH_OBJECTS_PER_FETCH_COUNT = "FetchObjectsPerFetchCount";
     private static final String RECENT_DATA_REQUEST_RATE = "RecentDataRequestRate";
     private static final String LAGGING_CONSUMER_REQUEST_RATE = "LaggingConsumerRequestRate";
-    private static final String LAGGING_CONSUMER_REJECTED_RATE = "LaggingConsumerRejectedRate";
+    private static final String LAGGING_CONSUMER_REQUEST_REJECTED_RATE = "LaggingConsumerRequestRejectedRate";
     // Tracks wait time (including zero-wait) for ALL lagging consumer requests when rate limiting is enabled.
     // When rate limiter is disabled (config = 0), LaggingConsumerRequestRate > 0 but this metric rate = 0.
     // Always records wait time to avoid histogram bias - zero-wait cases show when rate limiting is NOT a bottleneck.
     // Use to monitor: rate limiting latency distribution, actual throttling pressure, and limiter effectiveness.
-    private static final String LAGGING_RATE_LIMIT_WAIT_TIME = "LaggingRateLimitWaitTime";
+    private static final String LAGGING_CONSUMER_RATE_LIMIT_WAIT_TIME = "LaggingConsumerRateLimitWaitTime";
 
     private final Time time;
 
@@ -114,8 +114,8 @@ public class InklessFetchMetrics {
         cacheSize = metricsGroup.newGauge(CACHE_SIZE, () -> cache.size());
         recentDataRequestRate = metricsGroup.newMeter(RECENT_DATA_REQUEST_RATE, "requests", TimeUnit.SECONDS, Map.of());
         laggingConsumerRequestRate = metricsGroup.newMeter(LAGGING_CONSUMER_REQUEST_RATE, "requests", TimeUnit.SECONDS, Map.of());
-        laggingConsumerRejectedRate = metricsGroup.newMeter(LAGGING_CONSUMER_REJECTED_RATE, "rejections", TimeUnit.SECONDS, Map.of());
-        laggingRateLimitWaitTime = metricsGroup.newHistogram(LAGGING_RATE_LIMIT_WAIT_TIME, true, Map.of());
+        laggingConsumerRejectedRate = metricsGroup.newMeter(LAGGING_CONSUMER_REQUEST_REJECTED_RATE, "rejections", TimeUnit.SECONDS, Map.of());
+        laggingRateLimitWaitTime = metricsGroup.newHistogram(LAGGING_CONSUMER_RATE_LIMIT_WAIT_TIME, true, Map.of());
     }
 
     public void fetchCompleted(Instant startAt) {
@@ -197,8 +197,8 @@ public class InklessFetchMetrics {
         metricsGroup.removeMetric(FETCH_OBJECTS_PER_FETCH_COUNT);
         metricsGroup.removeMetric(RECENT_DATA_REQUEST_RATE);
         metricsGroup.removeMetric(LAGGING_CONSUMER_REQUEST_RATE);
-        metricsGroup.removeMetric(LAGGING_CONSUMER_REJECTED_RATE);
-        metricsGroup.removeMetric(LAGGING_RATE_LIMIT_WAIT_TIME);
+        metricsGroup.removeMetric(LAGGING_CONSUMER_REQUEST_REJECTED_RATE);
+        metricsGroup.removeMetric(LAGGING_CONSUMER_RATE_LIMIT_WAIT_TIME);
     }
 
     public void fetchStarted(int partitionSize) {
@@ -261,11 +261,11 @@ public class InklessFetchMetrics {
      * <p>Recording zero-wait cases is intentional to avoid histogram bias. Zero-wait entries
      * show when rate limiting is NOT a bottleneck, which is valuable monitoring data.
      *
-     * <p>Metric: LaggingRateLimitWaitTime (Histogram)
+     * <p>Metric: LaggingConsumerRateLimitWaitTime (Histogram)
      *
      * <p>Relationship:
-     * - When rate limiting is ENABLED: LaggingRateLimitWaitTime.Rate ≈ LaggingConsumerRequestRate
-     * - When rate limiting is DISABLED: LaggingRateLimitWaitTime.Rate = 0, LaggingConsumerRequestRate > 0
+     * - When rate limiting is ENABLED: LaggingConsumerRateLimitWaitTime.Rate ≈ LaggingConsumerRequestRate
+     * - When rate limiting is DISABLED: LaggingConsumerRateLimitWaitTime.Rate = 0, LaggingConsumerRequestRate > 0
      *
      * <p>Use this metric to:
      * - Monitor rate limiting latency distribution (including p50, p99, p999)
