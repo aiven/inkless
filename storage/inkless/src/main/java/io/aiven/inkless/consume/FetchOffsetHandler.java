@@ -22,6 +22,7 @@ import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.errors.ApiException;
 import org.apache.kafka.common.message.ListOffsetsRequestData;
 import org.apache.kafka.common.record.FileRecords;
+import org.apache.kafka.common.utils.ThreadUtils;
 import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.metadata.LeaderAndIsr;
 import org.apache.kafka.storage.internals.log.OffsetResultHolder;
@@ -41,6 +42,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 import io.aiven.inkless.TimeUtils;
@@ -59,10 +61,25 @@ public class FetchOffsetHandler implements Closeable {
     private final InklessFetchOffsetMetrics metrics;
 
     public FetchOffsetHandler(SharedState state) {
+        this(
+            state,
+            Executors.newCachedThreadPool(new InklessThreadFactory("inkless-fetch-offset-metadata", false)),
+            state.time(),
+            new InklessFetchOffsetMetrics(state.time())
+        );
+    }
+
+    // Visible for testing
+    FetchOffsetHandler(
+        final SharedState state,
+        final ExecutorService executor,
+        final Time time,
+        final InklessFetchOffsetMetrics metrics
+    ) {
         this.state = state;
-        this.executor = Executors.newCachedThreadPool(new InklessThreadFactory("inkless-fetch-offset-metadata", false));
-        this.time = state.time();
-        this.metrics = new InklessFetchOffsetMetrics(state.time());
+        this.executor = executor;
+        this.time = time;
+        this.metrics = metrics;
     }
 
     public Job createJob() {
@@ -71,7 +88,7 @@ public class FetchOffsetHandler implements Closeable {
 
     @Override
     public void close() throws IOException {
-        executor.shutdown();
+        ThreadUtils.shutdownExecutorServiceQuietly(executor, 5, TimeUnit.SECONDS);
         metrics.close();
     }
 
