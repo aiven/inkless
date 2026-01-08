@@ -36,6 +36,7 @@ import org.apache.kafka.server.common.MetadataVersion;
 import org.apache.kafka.server.config.ConfigSynonym;
 import org.apache.kafka.server.policy.AlterConfigPolicy;
 import org.apache.kafka.server.policy.AlterConfigPolicy.RequestMetadata;
+import org.apache.kafka.server.policy.AlterConfigV2Policy;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
@@ -366,6 +367,40 @@ public class ConfigurationControlManagerTest {
                 true));
     }
 
+    @Test
+    public void testAlterConfigV2PolicyReceivesBeforeAndAfter() {
+        CaptureAlterConfigV2Policy policy = new CaptureAlterConfigV2Policy();
+        ConfigurationControlManager manager = new ConfigurationControlManager.Builder().
+            setFeatureControl(createFeatureControlManager()).
+            setKafkaConfigSchema(SCHEMA).
+            setAlterConfigV2Policy(Optional.of(policy)).
+            build();
+
+        manager.replay(new ConfigRecord().setResourceType(TOPIC.id()).setResourceName(MYTOPIC.name()).
+            setName("cleanup.policy").setValue("delete"));
+        manager.replay(new ConfigRecord().setResourceType(TOPIC.id()).setResourceName(MYTOPIC.name()).
+            setName("retention.ms").setValue("10000"));
+
+        ControllerResult<ApiError> incrementalResult = manager.incrementalAlterConfig(MYTOPIC,
+            toMap(entry("retention.ms", entry(SET, "20000")),
+                entry("cleanup.policy", entry(SET, "compact"))),
+            true);
+        RecordTestUtils.replayAll(manager, incrementalResult.records());
+
+        AlterConfigV2Policy.RequestMetadata incremental = policy.invocations().get(0);
+        assertEquals(Map.of("cleanup.policy", "delete", "retention.ms", "10000"), incremental.configsBefore());
+        assertEquals(Map.of("cleanup.policy", "compact", "retention.ms", "20000"), incremental.configsAfter());
+
+        ControllerResult<Map<ConfigResource, ApiError>> legacyResult = manager.legacyAlterConfigs(
+            toMap(entry(MYTOPIC, toMap(entry("retention.ms", "30000")))),
+            true);
+        RecordTestUtils.replayAll(manager, legacyResult.records());
+
+        AlterConfigV2Policy.RequestMetadata legacy = policy.invocations().get(1);
+        assertEquals(Map.of("cleanup.policy", "compact", "retention.ms", "20000"), legacy.configsBefore());
+        assertEquals(Map.of("retention.ms", "30000"), legacy.configsAfter());
+    }
+
     private static class CheckForNullValuesPolicy implements AlterConfigPolicy {
         @Override
         public void validate(RequestMetadata actual) throws PolicyViolationException {
@@ -384,6 +419,29 @@ public class ConfigurationControlManagerTest {
         @Override
         public void configure(Map<String, ?> configs) {
             // empty
+        }
+    }
+
+    private static class CaptureAlterConfigV2Policy implements AlterConfigV2Policy {
+        private final List<AlterConfigV2Policy.RequestMetadata> invocations = new ArrayList<>();
+
+        @Override
+        public void validate(AlterConfigV2Policy.RequestMetadata requestMetadata) {
+            invocations.add(requestMetadata);
+        }
+
+        @Override
+        public void close() {
+            // empty
+        }
+
+        @Override
+        public void configure(Map<String, ?> configs) {
+            // empty
+        }
+
+        List<AlterConfigV2Policy.RequestMetadata> invocations() {
+            return invocations;
         }
     }
 
