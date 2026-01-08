@@ -36,9 +36,11 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 
+import java.io.IOException;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ExecutorService;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 
@@ -90,6 +92,8 @@ class DeleteRecordsInterceptorTest {
     Consumer<Map<TopicPartition, DeleteRecordsResponseData.DeleteRecordsPartitionResult>> responseCallback;
     @Mock
     BrokerTopicStats brokerTopicStats;
+    @Mock
+    ExecutorService executorService;
 
     @Captor
     ArgumentCaptor<Map<TopicPartition, DeleteRecordsResponseData.DeleteRecordsPartitionResult>> resultCaptor;
@@ -97,7 +101,7 @@ class DeleteRecordsInterceptorTest {
     ArgumentCaptor<List<DeleteRecordsRequest>> deleteRecordsCaptor;
 
     @Test
-    public void mixingDisklessAndClassicTopicsIsNotAllowed() {
+    public void mixingDisklessAndClassicTopicsIsNotAllowed() throws Exception {
         when(metadataView.isDisklessTopic(eq("diskless"))).thenReturn(true);
         when(metadataView.isDisklessTopic(eq("non_diskless"))).thenReturn(false);
         final SharedState state = new SharedState(
@@ -139,10 +143,11 @@ class DeleteRecordsInterceptorTest {
                 .setLowWatermark(INVALID_LOW_WATERMARK)
         ));
         verify(controlPlane, never()).deleteRecords(any());
+        interceptor.close();
     }
 
     @Test
-    public void notInterceptDeletingRecordsFromClassicTopics() {
+    public void notInterceptDeletingRecordsFromClassicTopics() throws Exception {
         when(metadataView.isDisklessTopic(eq("non_diskless"))).thenReturn(false);
         final DeleteRecordsInterceptor interceptor = new DeleteRecordsInterceptor(
             new SharedState(time, BROKER_ID, disklessConfig, metadataView, controlPlane,
@@ -156,10 +161,11 @@ class DeleteRecordsInterceptorTest {
         assertThat(result).isFalse();
         verify(responseCallback, never()).accept(any());
         verify(controlPlane, never()).deleteRecords(any());
+        interceptor.close();
     }
 
     @Test
-    public void interceptDeletingRecordsFromDisklessTopics() {
+    public void interceptDeletingRecordsFromDisklessTopics() throws Exception {
         final Uuid topicId = new Uuid(1, 2);
         when(metadataView.isDisklessTopic(eq("diskless"))).thenReturn(true);
         when(metadataView.getTopicId(eq("diskless"))).thenReturn(topicId);
@@ -182,9 +188,7 @@ class DeleteRecordsInterceptorTest {
         });
 
         final DeleteRecordsInterceptor interceptor = new DeleteRecordsInterceptor(
-            new SharedState(time, BROKER_ID, disklessConfig, metadataView, controlPlane,
-                OBJECT_KEY_CREATOR, KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, BATCH_COORDINATE_CACHE, brokerTopicStats, DEFAULT_TOPIC_CONFIGS),
-            new SynchronousExecutor());
+            controlPlane, metadataView, new SynchronousExecutor());
 
         final TopicPartition tp0 = new TopicPartition("diskless", 0);
         final TopicPartition tp1 = new TopicPartition("diskless", 1);
@@ -214,10 +218,11 @@ class DeleteRecordsInterceptorTest {
                 .setErrorCode(Errors.KAFKA_STORAGE_ERROR.code())
                 .setLowWatermark(INVALID_LOW_WATERMARK)
         ));
+        interceptor.close();
     }
 
     @Test
-    public void controlPlaneException() {
+    public void controlPlaneException() throws Exception {
         final Uuid topicId = new Uuid(1, 2);
         when(metadataView.isDisklessTopic(eq("diskless"))).thenReturn(true);
         when(metadataView.getTopicId(eq("diskless"))).thenReturn(topicId);
@@ -225,9 +230,7 @@ class DeleteRecordsInterceptorTest {
         when(controlPlane.deleteRecords(anyList())).thenThrow(new RuntimeException("test"));
 
         final DeleteRecordsInterceptor interceptor = new DeleteRecordsInterceptor(
-            new SharedState(time, BROKER_ID, disklessConfig, metadataView, controlPlane,
-                OBJECT_KEY_CREATOR, KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, BATCH_COORDINATE_CACHE, brokerTopicStats, DEFAULT_TOPIC_CONFIGS),
-            new SynchronousExecutor());
+            controlPlane, metadataView, new SynchronousExecutor());
 
         final TopicPartition topicPartition = new TopicPartition("diskless", 1);
         final Map<TopicPartition, Long> entriesPerPartition = Map.of(
@@ -248,10 +251,11 @@ class DeleteRecordsInterceptorTest {
                 .setErrorCode(Errors.UNKNOWN_SERVER_ERROR.code())
                 .setLowWatermark(INVALID_LOW_WATERMARK)
         ));
+        interceptor.close();
     }
 
     @Test
-    public void topicIdNotFound() {
+    public void topicIdNotFound() throws Exception {
         when(metadataView.isDisklessTopic(eq("diskless1"))).thenReturn(true);
         when(metadataView.isDisklessTopic(eq("diskless2"))).thenReturn(true);
         // This instead of the normal thenReturn to not depend on the map key iteration order
@@ -266,9 +270,7 @@ class DeleteRecordsInterceptorTest {
         });
 
         final DeleteRecordsInterceptor interceptor = new DeleteRecordsInterceptor(
-            new SharedState(time, BROKER_ID, disklessConfig, metadataView, controlPlane,
-                OBJECT_KEY_CREATOR, KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, BATCH_COORDINATE_CACHE, brokerTopicStats, DEFAULT_TOPIC_CONFIGS),
-            new SynchronousExecutor());
+            controlPlane, metadataView, new SynchronousExecutor());
 
         final TopicPartition topicPartition1 = new TopicPartition("diskless1", 1);
         final TopicPartition topicPartition2 = new TopicPartition("diskless2", 2);
@@ -294,5 +296,18 @@ class DeleteRecordsInterceptorTest {
                 .setErrorCode(Errors.UNKNOWN_SERVER_ERROR.code())
                 .setLowWatermark(INVALID_LOW_WATERMARK)
         ));
+        interceptor.close();
+    }
+
+    @Test
+    public void closeShutdownsExecutorService() throws IOException, InterruptedException {
+        when(executorService.awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS)).thenReturn(true);
+
+        final DeleteRecordsInterceptor interceptor = new DeleteRecordsInterceptor(controlPlane, metadataView, executorService);
+
+        interceptor.close();
+
+        verify(executorService).shutdown();
+        verify(executorService).awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS);
     }
 }

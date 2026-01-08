@@ -37,12 +37,15 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 
+import java.io.IOException;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 
+import io.aiven.inkless.common.SharedState;
 import io.aiven.inkless.control_plane.ControlPlane;
 import io.aiven.inkless.control_plane.ListOffsetsRequest;
 import io.aiven.inkless.control_plane.ListOffsetsResponse;
@@ -200,5 +203,18 @@ class FetchOffsetHandlerTest {
         }
 
         verify(submittedFuture).cancel(eq(true));
+    }
+
+    @Test
+    void closeShutdownsExecutorService() throws IOException, InterruptedException {
+        when(executor.awaitTermination(5, TimeUnit.SECONDS)).thenReturn(true);
+
+        final InklessFetchOffsetMetrics metricsToClose = new InklessFetchOffsetMetrics(time);
+        final FetchOffsetHandler handler = new FetchOffsetHandler(mock(SharedState.class), executor, time, metricsToClose);
+
+        handler.close();
+
+        verify(executor).shutdown();
+        verify(executor).awaitTermination(5, TimeUnit.SECONDS);
     }
 }
