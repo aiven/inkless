@@ -258,7 +258,6 @@ public class MirrorConfig {
     private final short mirrorTopicReplicationFactor;
     private final String securityProtocol;
     private final String saslMechanism;
-    private final String sslProtocol;
 
     public MirrorConfig(AbstractConfig config) {
         this.config = config;
@@ -266,7 +265,6 @@ public class MirrorConfig {
         mirrorTopicReplicationFactor = config.getShort(MIRROR_TOPIC_REPLICATION_FACTOR_CONFIG);
         securityProtocol = config.getString(SECURITY_PROTOCOL_CONFIG);
         saslMechanism = config.getString(SASL_MECHANISM_CONFIG);
-        sslProtocol = config.getString(SSL_PROTOCOL_CONFIG);
     }
 
     /**
@@ -296,10 +294,6 @@ public class MirrorConfig {
 
     public String saslMechanism() {
         return saslMechanism;
-    }
-
-    public String sslProtocol() {
-        return sslProtocol;
     }
 
     public int numReplicaFetchers() {
