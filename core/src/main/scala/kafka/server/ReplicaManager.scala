@@ -1834,16 +1834,16 @@ class ReplicaManager(val config: KafkaConfig,
               false
           }
         }
-        println("canDisklessFetch: " + canDisklessFetch)
-        println("needsClassicFetch: " + needsClassicFetch)
+//        println("canDisklessFetch: " + canDisklessFetch)
+//        println("needsClassicFetch: " + needsClassicFetch)
 
         (canDisklessFetch, initialClassicFetchInfos ++ needsClassicFetch)
       case _ =>
         (disklessTopicFetchInfosWithTopicId, initialClassicFetchInfos)
     }
 
-    println("disklessFetchInfos: " + disklessFetchInfos)
-    println("classicFetchInfos: " + classicFetchInfos)
+//    println("disklessFetchInfos: " + disklessFetchInfos)
+//    println("classicFetchInfos: " + classicFetchInfos)
 
 
 //    if (params.isFromFollower && disklessFetchInfos.nonEmpty) {
