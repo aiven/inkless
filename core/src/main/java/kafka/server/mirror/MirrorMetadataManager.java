@@ -16,7 +16,6 @@
  */
 package kafka.server.mirror;
 
-import kafka.log.LogManager;
 import kafka.server.KafkaConfig;
 
 import org.apache.kafka.clients.ClientResponse;
@@ -82,7 +81,6 @@ import org.apache.kafka.server.common.NodeToControllerChannelManager;
 import org.apache.kafka.server.common.RequestLocal;
 import org.apache.kafka.server.config.MirrorConfig;
 import org.apache.kafka.server.network.BrokerEndPoint;
-import org.apache.kafka.server.util.Scheduler;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -153,8 +151,6 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     private MetadataCache metadataCache;
     private NodeToControllerChannelManager channelManager;
     private final Supplier<GroupCoordinator> groupCoordinatorSupplier;
-    private final LogManager logManager;
-    private final Scheduler scheduler;
     private Map<String, Set<LastMirroredOffset>> lastMirroredOffsets = new ConcurrentHashMap<>();
 
     public MirrorMetadataManager(
@@ -163,9 +159,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         Time time,
         MetadataCache metadataCache,
         NodeToControllerChannelManager channelManager,
-        Supplier<GroupCoordinator> groupCoordinatorSupplier,
-        LogManager logManager,
-        Scheduler scheduler
+        Supplier<GroupCoordinator> groupCoordinatorSupplier
     ) {
         this.brokerConfig = config;
         this.nodeId = config.nodeId();
@@ -180,25 +174,46 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         this.metadataCache = metadataCache;
         this.channelManager = channelManager;
         this.groupCoordinatorSupplier = groupCoordinatorSupplier;
-        this.logManager = logManager;
-        this.scheduler = scheduler;
     }
 
+    /**
+     * Returns the name identifier for this metadata publisher.
+     *
+     * @return the metadata publisher name including broker node ID
+     */
     @Override
     public String name() {
         return "MirrorMetadataManager(id=" + brokerConfig.nodeId() + ")";
     }
 
+    /**
+     * Called when cluster metadata is updated.
+     * Updates the local metadata image to reflect the latest cluster state.
+     *
+     * @param delta the metadata delta containing changes
+     * @param newImage the new complete metadata image
+     * @param manifest the loader manifest with provenance information
+     */
     @Override
     public void onMetadataUpdate(MetadataDelta delta, MetadataImage newImage, LoaderManifest manifest) {
         this.metadataImage = newImage;
     }
 
+    /**
+     * Closes the metadata manager and releases resources.
+     */
     @Override
     public void close() throws Exception {
-
     }
 
+    /**
+     * Gets the current leader node for a partition in a remote cluster.
+     * Refreshes metadata synchronously if no cached information is available.
+     *
+     * @param mirrorName the name of the cluster mirror
+     * @param tp the topic partition
+     * @return the leader node for the partition
+     */
     public Node getRemotePartitionLeader(String mirrorName, TopicPartition tp) {
         var partitionLeaders = remotePartitionLeaders.get(mirrorName);
         if (partitionLeaders != null) {
@@ -240,35 +255,55 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         return new Node(random.nextInt(), addresses.get(rand).getHostString(), addresses.get(rand).getPort());
     }
 
+    /**
+     * Updates the cached set of mirror topics for a cluster mirror.
+     * Adds and removes topics from the cache and returns the updated set.
+     *
+     * @param clusterName the name of the cluster mirror
+     * @param addedTopics topics to add to the cache
+     * @param removedTopics topics to remove from the cache
+     * @return the updated set of mirror topics
+     */
     public Set<String> updateMirrorTopicsCache(String clusterName, Set<String> addedTopics, Set<String> removedTopics) {
         Set<String> mutableTopics = new HashSet<>(this.topics.getOrDefault(clusterName, Set.of()));
         mutableTopics.removeAll(removedTopics);
         mutableTopics.addAll(addedTopics);
         this.topics.put(clusterName, mutableTopics);
-
         return mutableTopics;
     }
 
-    // update the cache for the last mirrored offests
+    /**
+     * Updates the cached last mirrored offsets for a cluster mirror.
+     * Adds and removes partition offsets from the cache and returns the updated set.
+     *
+     * @param clusterName the name of the cluster mirror
+     * @param addedOffsets map of topic names to partition offsets to add
+     * @param removedOffsets map of topic names to partition offsets to remove
+     * @return the updated set of last mirrored offsets
+     */
     public Set<LastMirroredOffset> updateLastMirroredOffsetsCache(String clusterName,
-                                                                  Map<String, Map<Integer, Long>> addedCheckpointOffsets,
-                                                                  Map<String, Map<Integer, Long>> removedCheckpointOffsets) {
+                                                                  Map<String, Map<Integer, Long>> addedOffsets,
+                                                                  Map<String, Map<Integer, Long>> removedOffsets) {
         Set<LastMirroredOffset> offsets = new HashSet<>(this.lastMirroredOffsets.getOrDefault(clusterName, Set.of()));
-        removedCheckpointOffsets.forEach((topic, partitionOffsets) -> {
+        removedOffsets.forEach((topic, partitionOffsets) -> {
             partitionOffsets.forEach((partition, offset) -> {
                 offsets.remove(new LastMirroredOffset(topic, partition, offset));
             });
         });
-        addedCheckpointOffsets.forEach((topic, partitionOffsets) -> {
+        addedOffsets.forEach((topic, partitionOffsets) -> {
             partitionOffsets.forEach((partition, offset) -> {
                 offsets.add(new LastMirroredOffset(topic, partition, offset));
             });
         });
         this.lastMirroredOffsets.put(clusterName, offsets);
-
         return offsets;
     }
 
+    /**
+     * Refreshes metadata from all remote clusters.
+     * Synchronizes topic metadata, configurations, consumer group offsets, and ACLs.
+     * Called periodically by the scheduler to keep clusters in sync.
+     */
     public void refreshMetadata() {
         if (!topics.isEmpty()) {
             LOG.info("!!! Refreshing mirror metadata for topics:" + topics);
@@ -284,10 +319,6 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         });
     }
 
-    /**
-     * Ensures that connections to all remote clusters are established.
-     * Creates new connections for cluster mirrors that don't have existing connections.
-     */
     private void checkMirrorConnections() {
         // make sure all mirror names has at least one connections ready
         // TODO: we should find another connection if it is not accessible
@@ -299,9 +330,6 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         });
     }
 
-    /**
-     * Creates a new connection to the specified remote cluster.
-     */
     private void createMirrorConnection(String mirrorName) {
         // should get the cluster name from records
         Properties props = metadataCache.config(new ConfigResource(ConfigResource.Type.MIRROR, mirrorName));
@@ -328,10 +356,6 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         )));
     }
 
-    /**
-     * Synchronizes topic metadata for a specific remote cluster.
-     * This includes updating broker nodes, partition leaders, and handling partition scaling.
-     */
     private void syncTopicMetadata(String mirrorName, List<MirrorBlockingSender> senders) {
         // get a random node in source cluster
         var response = getRandomSender(senders).sendRequest(
@@ -340,16 +364,13 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
 
         if (response.responseBody() instanceof MetadataResponse metadataResponse) {
             LOG.debug("!!! Periodic metadataResponse: {}", metadataResponse);
-            updateRemoteClusterNodes(mirrorName, metadataResponse);
+            updateRemoteClusterNodesCache(mirrorName, metadataResponse);
             var createPartitionsTopics = processTopicMetadata(mirrorName, metadataResponse.topicMetadata());
             maybeDeleteTopic(mirrorName, metadataResponse.topicMetadata());
             handlePartitionScaling(createPartitionsTopics);
         }
     }
 
-    /**
-     * Synchronizes topic configurations for a specific remote cluster.
-     */
     private void syncTopicConfigurations(String mirrorName, List<MirrorBlockingSender> senders) {
         LOG.info("!!! Describing topic configs for topics: {}", topics);
 
@@ -372,18 +393,13 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         }
     }
 
-    /**
-     * Updates the remote cluster nodes mapping from metadata response.
-     */
-    private void updateRemoteClusterNodes(String mirrorName, MetadataResponse metadataResponse) {
+    private void updateRemoteClusterNodesCache(String mirrorName, MetadataResponse metadataResponse) {
         metadataResponse.brokers().forEach(broker -> {
             remoteClusterNodes.computeIfAbsent(mirrorName, k -> new HashMap<>()).put(broker.id(), broker);
         });
     }
 
-    /**
-     * Processes topic metadata and returns topics that need partition scaling.
-     */
+    // Processes topic metadata and returns topics that need partition scaling
     private CreatePartitionsRequestData.CreatePartitionsTopicCollection processTopicMetadata(
             String mirrorName, Collection<MetadataResponse.TopicMetadata> topicMetadataResp) {
         var createPartitionsTopics = new CreatePartitionsRequestData.CreatePartitionsTopicCollection();
@@ -411,9 +427,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         return createPartitionsTopics;
     }
 
-    /**
-     * Handles partition scaling by sending create partitions requests.
-     */
+    // Handles partition scaling by sending create partitions requests
     private void handlePartitionScaling(CreatePartitionsRequestData.CreatePartitionsTopicCollection createPartitionsTopics) {
         if (!createPartitionsTopics.isEmpty()) {
             LOG.info("!!! Detected partition count change, sending CreatePartitionsRequest: {}", createPartitionsTopics);
@@ -426,12 +440,8 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         }
     }
 
-    /**
-     * Detects configuration changes between remote and local topics.
-     */
     private Map<String, Map<String, String>> detectConfigurationChanges(
             String mirrorName, DescribeConfigsResponse describeConfigsRes) {
-
         Map<String, Map<String, String>> configsToChange = new HashMap<>();
 
         describeConfigsRes.data().results().forEach(describeConfigResult -> {
@@ -462,9 +472,6 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         return configsToChange;
     }
 
-    /**
-     * Applies configuration changes to local topics.
-     */
     private void applyConfigurationChanges(Map<String, Map<String, String>> configsToChange) {
         LOG.info("!!! Applying config change: {}", configsToChange);
 
@@ -497,9 +504,6 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         }
     }
 
-    /**
-     * Returns a random sender from the list of available senders.
-     */
     private MirrorBlockingSender getRandomSender(List<MirrorBlockingSender> senders) {
         return senders.get(random.nextInt(senders.size()));
     }
@@ -526,9 +530,6 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         deletedTopics.forEach(name -> topics.get(mirrorName).remove(name));
     }
 
-    /**
-     * Synchronizes consumer group offsets for a specific remote cluster.
-     */
     private void syncConsumerGroupOffsets(List<MirrorBlockingSender> senders) {
         // 1. list group
         ListGroupsRequest.Builder builder = new ListGroupsRequest.Builder(new ListGroupsRequestData()
@@ -559,9 +560,6 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         }
     }
 
-    /**
-     * Builds the topic list for offset commit requests.
-     */
     private List<OffsetCommitRequestData.OffsetCommitRequestTopic> buildOffsetCommitTopicList(OffsetFetchResponseData.OffsetFetchResponseGroup group) {
         List<OffsetCommitRequestData.OffsetCommitRequestTopic> topicList = new ArrayList<>();
         group.topics().forEach(t -> {
@@ -581,9 +579,6 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         return topicList;
     }
 
-    /**
-     * Commits offsets to the group coordinator.
-     */
     private void commitOffsetsToGroupCoordinator(String groupId, List<OffsetCommitRequestData.OffsetCommitRequestTopic> topicList) {
         groupCoordinatorSupplier.get().commitOffsets(
                 new RequestContext(
@@ -615,9 +610,6 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         });
     }
 
-    /**
-     * Synchronizes ACLs for a specific remote cluster.
-     */
     private void syncACLs(String mirrorName, List<MirrorBlockingSender> senders) {
         // TODO: We currently mirror all ACLs from the source to the target.
         //       Any ACLs added/removed directly on the target will be overwritten
@@ -641,9 +633,6 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         applyACLChanges(mirrorName, aclChanges);
     }
 
-    /**
-     * Detects ACL changes between remote and local clusters.
-     */
     private ACLChanges detectACLChanges(List<AclBinding> allRemoteAcls) {
         var addACLsList = new ArrayList<AclBinding>();
         var deleteACLsList = new ArrayList<AclBinding>();
@@ -666,9 +655,6 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         return new ACLChanges(addACLsList, deleteACLsList);
     }
 
-    /**
-     * Applies ACL changes by sending create and delete requests.
-     */
     private void applyACLChanges(String mirrorName, ACLChanges aclChanges) {
         // send createAcls request
         if (!aclChanges.aclsToAdd().isEmpty()) {
@@ -711,6 +697,10 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
 
     private record ACLChanges(List<AclBinding> aclsToAdd, List<AclBinding> aclsToDelete) { }
 
+    /**
+     * Clears all cached mirror metadata including topics and remote broker connections.
+     * Called when the broker resigns as leader for mirror state topic partitions.
+     */
     public void clear() {
         topics.clear();
         remoteBrokers.clear();
@@ -728,5 +718,5 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         }
     }
 
-    public record LastMirroredOffset(String topic, int partition, long offset) {}
+    public record LastMirroredOffset(String topic, int partition, long offset) { }
 }

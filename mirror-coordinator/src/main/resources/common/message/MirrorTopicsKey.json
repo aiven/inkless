@@ -14,6 +14,9 @@
 // limitations under the License.
 
 // Cluster Mirror is in development. This schema is subject to non-backwards-compatible changes.
+//
+// MirrorTopics record stores the list of topics being mirrored from a source cluster.
+// The key identifies the source cluster by mirror name, while the value contains topic names to replicate.
 {
   "apiKey": 0,
   "type": "coordinator-key",

@@ -1427,7 +1427,7 @@ class KafkaApis(val requestChannel: RequestChannel,
           (shareCoordinator.partitionFor(SharePartitionKey.getInstance(key)), SHARE_GROUP_STATE_TOPIC_NAME)
 
         case CoordinatorType.MIRROR =>
-          (mirrorCoordinator.partitionFor(MirrorRecordKey.getInstance(key)), MIRROR_STATE_TOPIC_NAME)
+          (mirrorCoordinator.partitionIndexForKey(MirrorRecordKey.getInstance(key)), MIRROR_STATE_TOPIC_NAME)
       }
 
       logger.info("!!! The partition of coordinator key " + key + " is " + partition + ", the internal topic name is " + internalTopicName)
