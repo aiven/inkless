@@ -170,3 +170,112 @@ block-beta
 WAL Segments consist of a 1-byte header (version byte = 0), followed by batches from multiple partitions.
 Batches are sorted lexicographically by topic, partition, and batch processing time.
 Batches from the same partition are always stored consecutively.
+
+# Produce Path
+```mermaid
+---
+title: Produce Path
+---
+sequenceDiagram
+    autonumber
+    participant P0 as Producer 1
+    participant P1 as Producer 2
+    participant B as Broker
+    participant O as Remote Storage
+    participant M0 as Diskless Coordinator 1
+    participant M1 as Diskless Coordinator 2
+    Note over P0, P1: Multiple producers send requests <br/> concurrently for 250ms or 4MiB
+    par
+        P0->>B: Produce partition 0
+        activate B
+    and
+        P1->>B: Produce partition 1
+    end
+    Note over B, O: Multiple brokers upload <br/> files independently
+    B->>O: Upload file
+    activate O
+    O-->>B: Upload finished
+    deactivate O
+    Note over M0, M1: Multiple independent coordinators <br/> may be represented in a single file
+    par
+        B->>+M0: Commit file
+        M0-->>-B: Offsets assigned
+    and
+        B->>+M1: Commit file
+        M1-->>-B: Offsets assigned
+    end
+    par
+        B-->>P0: Ack partition 0
+    and
+        B-->>P1: Ack partition 1
+    end
+    deactivate B
+```
+
+# Consume Path
+```mermaid
+---
+title: Consume Path
+---
+sequenceDiagram
+    autonumber
+    participant C0 as Consumer 0
+    participant B as Broker
+    participant O as Object Storage
+    participant M as Diskless Coordinator
+    participant T as Tiered Storage
+    C0->>B: Consume multiple partitions
+    activate B
+    B->>B: Authn/Authz checks
+    alt Data in Local segments
+        B->>B: Fetch data
+    else Broker in ISR and fetch is at tail
+        B->>B: Enter purgatory
+        Note over B, M: Replica fetcher thread polling <br/> for new batches in background
+        par
+            B->>+M: Find Batches
+            M-->>-B: Batch Coordinates
+            B->>+O: GET Object (id, range)
+            O-->>-B: WAL Segment Data
+            B->>B: Append to local segments
+        end
+        B->>B: Exit purgatory
+        B->>B: Fetch data
+    else Broker is replica and data moved to Tiered Storage
+        B->>B: Fetch Remote Segment Metadata (RLMM)
+        B->>B: Fetch Remote Segment Data (RSM)
+        B->>+T: GET Object
+        T-->>-B: Remote Segment
+    else Broker not in ISR or fetch not at tail
+        B->>+M: Find Batches
+        M-->>-B: Batch Coordinates
+        B->>O: GET Object (id, range)
+        O-->>B: WAL Segment Data
+        B->>B: Inject Offsets
+    end
+    B-->>C0: Batches
+    deactivate B
+```
+
+# Offset Regions
+```mermaid
+block-beta
+    columns 6
+    0 1000 2000 3000 4000 5000
+    
+    space:1 P["WAL Segments"]:5
+    
+    T["Tiered Segments"]:2 space:4
+    
+    space:2 U["On Disk for tiered upload"] space:3
+    
+    space:4 L["Inactive Segments"] A["Active Segment"]
+```
+
+Above is a diagram representing an example layout of 6 segments for a single partition.
+
+* Data present in the local segments (4000-5500) is served in the same manner as classic topics. 
+* Fetches for the end of the topic (>5500) while the replica is in-sync wait for a background thread to populate the active segment.
+* Fetches for data in tiered segments (0-2000) is served from Tiered Storage.
+* Fetches for data not in the local segments or tiered storage (2000-4000) is served directly from WAL Segments
+* Nodes that are elected the leader of the partition will begin assembling segments at the earliest non-tiered segment (2000). This data is not served to consumers.
