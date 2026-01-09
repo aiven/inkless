@@ -91,6 +91,26 @@ public class InMemoryControlPlane extends AbstractControlPlane {
     }
 
     @Override
+    public synchronized void initLogDisklessStartOffset(final Set<InitLogDisklessStartOffsetRequest> requests) {
+        for (final InitLogDisklessStartOffsetRequest request : requests) {
+            final TopicIdPartition topicIdPartition = new TopicIdPartition(
+                request.topicId(), request.partition(), request.topicName());
+
+            // Only create if not already exists
+            if (!logs.containsKey(topicIdPartition)) {
+                LOGGER.info("Initializing {} with logStartOffset {}, disklessStartOffset {}",
+                    topicIdPartition, request.logStartOffset(), request.disklessStartOffset());
+                final LogInfo logInfo = new LogInfo();
+                logInfo.logStartOffset = request.logStartOffset();
+                logInfo.highWatermark = request.disklessStartOffset();
+                logInfo.disklessStartOffset = request.disklessStartOffset();
+                logs.put(topicIdPartition, logInfo);
+                batches.putIfAbsent(topicIdPartition, new TreeMap<>());
+            }
+        }
+    }
+
+    @Override
     protected synchronized Iterator<CommitBatchResponse> commitFileForValidRequests(
             final String objectKey,
             final ObjectFormat format,
@@ -645,6 +665,27 @@ public class InMemoryControlPlane extends AbstractControlPlane {
     }
 
     @Override
+    public synchronized List<GetDisklessLogResponse> getDisklessLog(final List<GetDisklessLogRequest> requests) {
+        final List<GetDisklessLogResponse> result = new ArrayList<>();
+        for (final GetDisklessLogRequest request : requests) {
+            final TopicIdPartition tidp = findTopicIdPartition(request.topicId(), request.partition());
+            final LogInfo logInfo;
+            if (tidp == null || (logInfo = logs.get(tidp)) == null) {
+                result.add(GetDisklessLogResponse.unknownTopicOrPartition(request.topicId(), request.partition()));
+            } else {
+                result.add(GetDisklessLogResponse.success(
+                    request.topicId(),
+                    request.partition(),
+                    logInfo.logStartOffset,
+                    logInfo.highWatermark,
+                    logInfo.disklessStartOffset
+                ));
+            }
+        }
+        return result;
+    }
+
+    @Override
     public synchronized List<GetLogInfoResponse> getLogInfo(final List<GetLogInfoRequest> requests) {
         final List<GetLogInfoResponse> result = new ArrayList<>();
         for (final GetLogInfoRequest request : requests) {
@@ -679,6 +720,7 @@ public class InMemoryControlPlane extends AbstractControlPlane {
         long logStartOffset = 0;
         long highWatermark = 0;
         long byteSize = 0;
+        Long disklessStartOffset = null;
     }
 
     private static class FileInfo {

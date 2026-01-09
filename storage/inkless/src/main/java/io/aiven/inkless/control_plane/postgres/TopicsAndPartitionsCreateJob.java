@@ -69,10 +69,11 @@ public class TopicsAndPartitionsCreateJob implements Runnable {
                 LOGS.TOPIC_NAME,
                 LOGS.LOG_START_OFFSET,
                 LOGS.HIGH_WATERMARK,
-                LOGS.BYTE_SIZE);
+                LOGS.BYTE_SIZE,
+                LOGS.DISKLESS_START_OFFSET);
             for (final var request : requests) {
                 for (int partition = 0; partition < request.numPartitions(); partition++) {
-                    insertStep = insertStep.values(request.topicId(), partition, request.topicName(), 0L, 0L, 0L);
+                    insertStep = insertStep.values(request.topicId(), partition, request.topicName(), 0L, 0L, 0L, 0L);
                 }
             }
             final int rowsInserted = insertStep.onConflictDoNothing().execute();

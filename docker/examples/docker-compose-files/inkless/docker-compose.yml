@@ -11,7 +11,9 @@ services:
       KAFKA_PROCESS_ROLES: "broker,controller"
       KAFKA_NODE_ID: 1
       # Add rack to the broker to simulate AZ placement
-      # KAFKA_BROKER_RACK: "az1"
+      KAFKA_BROKER_RACK: "az1"
+      # Enable fetch from follower with rack-aware replica selector
+      KAFKA_REPLICA_SELECTOR_CLASS: "org.apache.kafka.common.replica.RackAwareReplicaSelector"
       KAFKA_CONTROLLER_QUORUM_VOTERS: "1@broker:29090,2@broker2:29090"
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT"
       KAFKA_LISTENERS: "CONTROLLER://:29090,PLAINTEXT_HOST://:9092,PLAINTEXT://:19092"
@@ -67,7 +69,7 @@ services:
       <<: *base-broker-env
       KAFKA_NODE_ID: 2
       # Add rack to the broker to simulate AZ placement
-      # KAFKA_BROKER_RACK: "az2"
+      KAFKA_BROKER_RACK: "az2"
       KAFKA_LISTENERS: "CONTROLLER://:29090,PLAINTEXT_HOST://:9093,PLAINTEXT://:19093"
       KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT_HOST://localhost:9093,PLAINTEXT://broker2:19093"
 
