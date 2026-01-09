@@ -57,7 +57,6 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.Properties;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
@@ -156,8 +155,7 @@ class FileMergerIntegrationTest {
 
     @BeforeEach
     void setup() {
-        when(metadataView.getTopicConfig(anyString())).thenReturn(new Properties());
-        when(defaultTopicConfigs.get()).thenReturn(new LogConfig(Map.of()));
+        when(metadataView.getTopicConfig(anyString())).thenReturn(new LogConfig(Map.of()));
 
         controlPlane = new InMemoryControlPlane(time);
         controlPlane.configure(Map.of(
