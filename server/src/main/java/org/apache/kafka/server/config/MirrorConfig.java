@@ -58,6 +58,12 @@ public class MirrorConfig {
             "The total number of remote fetchers on each broker is bound by <code>mirror.num.replica.fetchers</code> multiplied by the number of cluster mirrors. " +
             "Increasing this value can increase the degree of I/O parallelism for cross-cluster replication at the cost of higher CPU and memory utilization.";
 
+    // Metadata refresh interval
+    public static final String METADATA_REFRESH_INTERVAL_MS_CONFIG = "mirror.metadata.refresh.interval.ms";
+    public static final long METADATA_REFRESH_INTERVAL_MS_DEFAULT = 30000L; // 30 seconds
+    public static final String METADATA_REFRESH_INTERVAL_MS_DOC = "The interval in milliseconds at which the coordinator refreshes metadata from source clusters. " +
+            "This controls how frequently the coordinator polls source clusters to detect new topics and metadata changes.";
+
     // Connection configuration
     public static final String BOOTSTRAP_SERVERS_CONFIG = CommonClientConfigs.BOOTSTRAP_SERVERS_CONFIG;
     public static final String BOOTSTRAP_SERVERS_DOC = "A list of host/port pairs to use for establishing the initial connection to the Kafka cluster for Cluster Mirror.";
@@ -197,42 +203,29 @@ public class MirrorConfig {
      * This includes all supported configurations with proper validation, defaults, and documentation.
      */
     public static final ConfigDef CONFIG_DEF = new ConfigDef()
-            // Internal topic configuration
             .define(MIRROR_TOPIC_NUM_PARTITIONS_CONFIG, INT, MIRROR_TOPIC_NUM_PARTITIONS_DEFAULT, atLeast(1), HIGH, MIRROR_TOPIC_NUM_PARTITIONS_DOC)
             .define(MIRROR_TOPIC_REPLICATION_FACTOR_CONFIG, SHORT, MIRROR_TOPIC_REPLICATION_FACTOR_DEFAULT, atLeast(1), HIGH, MIRROR_TOPIC_REPLICATION_FACTOR_DOC)
-
-            // Fetcher configuration
             .define(NUM_REPLICA_FETCHERS_CONFIG, INT, NUM_REPLICA_FETCHERS_DEFAULT, atLeast(1), HIGH, NUM_REPLICA_FETCHERS_DOC)
-
-            // Connection configuration
+            .define(METADATA_REFRESH_INTERVAL_MS_CONFIG, LONG, METADATA_REFRESH_INTERVAL_MS_DEFAULT, atLeast(0L), MEDIUM, METADATA_REFRESH_INTERVAL_MS_DOC)
             .define(BOOTSTRAP_SERVERS_CONFIG, LIST, null, HIGH, BOOTSTRAP_SERVERS_DOC)
             .define(METADATA_MAX_AGE_CONFIG, LONG, METADATA_MAX_AGE_DEFAULT, atLeast(0), LOW, METADATA_MAX_AGE_DOC)
-
             .define(SEND_BUFFER_CONFIG, INT, SEND_BUFFER_DEFAULT, atLeast(-1), MEDIUM, SEND_BUFFER_DOC)
             .define(RECEIVE_BUFFER_CONFIG, INT, RECEIVE_BUFFER_DEFAULT, atLeast(-1), MEDIUM, RECEIVE_BUFFER_DOC)
-
             .define(REQUEST_TIMEOUT_MS_CONFIG, INT, REQUEST_TIMEOUT_MS_DEFAULT, atLeast(0), MEDIUM, REQUEST_TIMEOUT_MS_DOC)
             .define(SOCKET_CONNECTION_SETUP_TIMEOUT_MS_CONFIG, LONG, SOCKET_CONNECTION_SETUP_TIMEOUT_MS_DEFAULT, atLeast(0L), MEDIUM, SOCKET_CONNECTION_SETUP_TIMEOUT_MS_DOC)
             .define(SOCKET_CONNECTION_SETUP_TIMEOUT_MAX_MS_CONFIG, LONG, SOCKET_CONNECTION_SETUP_TIMEOUT_MAX_MS_DEFAULT, atLeast(0L), MEDIUM, SOCKET_CONNECTION_SETUP_TIMEOUT_MAX_MS_DOC)
-
             .define(RECONNECT_BACKOFF_MS_CONFIG, LONG, RECONNECT_BACKOFF_MS_DEFAULT, atLeast(0L), LOW, RECONNECT_BACKOFF_MS_DOC)
             .define(RECONNECT_BACKOFF_MAX_MS_CONFIG, LONG, RECONNECT_BACKOFF_MAX_MS_DEFAULT, atLeast(0L), LOW, RECONNECT_BACKOFF_MAX_MS_DOC)
             .define(RETRIES_CONFIG, INT, RETRIES_DEFAULT, ConfigDef.Range.between(0, Integer.MAX_VALUE), LOW, RETRIES_DOC)
             .define(RETRY_BACKOFF_MS_CONFIG, LONG, RETRY_BACKOFF_MS_DEFAULT, atLeast(0L), LOW, RETRY_BACKOFF_MS_DOC)
-
-            // Security configuration
             .define(SECURITY_PROTOCOL_CONFIG, STRING, SECURITY_PROTOCOL_DEFAULT, ConfigDef.ValidString.in(SecurityProtocol.PLAINTEXT.name, SecurityProtocol.SSL.name,
                     SecurityProtocol.SASL_PLAINTEXT.name, SecurityProtocol.SASL_SSL.name), MEDIUM, SECURITY_PROTOCOL_DOC)
-
-            // SASL configuration
             .define(SASL_MECHANISM_CONFIG, STRING, SASL_MECHANISM_DEFAULT, MEDIUM, SASL_MECHANISM_DOC)
             .define(SASL_JAAS_CONFIG, PASSWORD, null, MEDIUM, SASL_JAAS_CONFIG_DOC)
             .define(SASL_CLIENT_CALLBACK_HANDLER_CLASS, STRING, null, LOW, SASL_CLIENT_CALLBACK_HANDLER_CLASS_DOC)
             .define(SASL_LOGIN_CALLBACK_HANDLER_CLASS, STRING, null, LOW, SASL_LOGIN_CALLBACK_HANDLER_CLASS_DOC)
             .define(SASL_LOGIN_CLASS, STRING, null, LOW, SASL_LOGIN_CLASS_DOC)
             .define(SASL_KERBEROS_SERVICE_NAME, STRING, null, MEDIUM, SASL_KERBEROS_SERVICE_NAME_DOC)
-
-            // SSL configuration
             .define(SSL_PROTOCOL_CONFIG, STRING, SSL_PROTOCOL_DEFAULT, MEDIUM, SSL_PROTOCOL_DOC)
             .define(SSL_PROVIDER_CONFIG, STRING, null, LOW, SSL_PROVIDER_DOC)
             .define(SSL_CIPHER_SUITES_CONFIG, LIST, null, LOW, SSL_CIPHER_SUITES_DOC)
@@ -306,6 +299,10 @@ public class MirrorConfig {
         return config.getInt(NUM_REPLICA_FETCHERS_CONFIG);
     }
 
+    public long metadataRefreshIntervalMs() {
+        return config.getLong(METADATA_REFRESH_INTERVAL_MS_CONFIG);
+    }
+
     /**
      * Returns the underlying AbstractConfig instance.
      * This provides access to all configuration values including those processed by config providers.
@@ -337,6 +334,7 @@ public class MirrorConfig {
         return new ConfigDef()
             .define(MIRROR_TOPIC_NUM_PARTITIONS_CONFIG, INT, MIRROR_TOPIC_NUM_PARTITIONS_DEFAULT, atLeast(1), HIGH, MIRROR_TOPIC_NUM_PARTITIONS_DOC)
             .define(MIRROR_TOPIC_REPLICATION_FACTOR_CONFIG, SHORT, MIRROR_TOPIC_REPLICATION_FACTOR_DEFAULT, atLeast(1), HIGH, MIRROR_TOPIC_REPLICATION_FACTOR_DOC)
-            .define(NUM_REPLICA_FETCHERS_CONFIG, INT, NUM_REPLICA_FETCHERS_DEFAULT, atLeast(1), HIGH, NUM_REPLICA_FETCHERS_DOC);
+            .define(NUM_REPLICA_FETCHERS_CONFIG, INT, NUM_REPLICA_FETCHERS_DEFAULT, atLeast(1), HIGH, NUM_REPLICA_FETCHERS_DOC)
+            .define(METADATA_REFRESH_INTERVAL_MS_CONFIG, LONG, METADATA_REFRESH_INTERVAL_MS_DEFAULT, atLeast(0L), MEDIUM, METADATA_REFRESH_INTERVAL_MS_DOC);
     }
 }
