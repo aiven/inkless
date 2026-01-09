@@ -19,7 +19,7 @@ flowchart LR
     Producer == ProduceRequest ==> Diskless
     Diskless <==> ObjectStorage
     Diskless == Append ==> Local 
-    Local & RemoteStorageManager == FetchRequest ==> Consumer
+    Diskless & Local & RemoteStorageManager == FetchRequest ==> Consumer
     Local == Copy To Remote ==> RemoteStorageManager 
     RemoteStorageManager <==> TieredStorage
 ```
@@ -79,7 +79,7 @@ flowchart LR
     Producer[Producer]
     Consumer[Consumer]
     subgraph Broker1[Broker]
-        BatchIndex[Batch Coordinator<br><i>Assign Offsets</i>]
+        BatchIndex[Diskless Coordinator<br><i>Assign Offsets</i>]
     end
     subgraph Broker2[Broker]
         Broker2Diskless[Diskless Writer<br><i>Validate Data</i>]
@@ -100,9 +100,9 @@ flowchart LR
 
 Data from ProduceRequests is written to object storage without assigning offsets.
 Multiple ProduceRequests from multiple clients may be combined together into a single object to reduce the number of object writes.
-The batch metadata (topic, partition, etc.) and location of the data (object ID & extent) are sent to the batch coordinator to be committed in a linear order.
+The batch metadata (topic, partition, etc.) and location of the data (object ID & extent) are sent to the diskless coordinator to be committed in a linear order.
 
-Appending to replicas is done by querying the Batch Coordinator to find upcoming batch metadata for the requested partitions. 
+Appending to replicas is done by querying the Diskless Coordinator to find upcoming batch metadata for the requested partitions. 
 For each object containing needed data, the object is read from object storage and then split by partition.
 Offsets for the returned data are inserted from the batch metadata, and the data is appended to the local segments. 
 Once the data lands in the local segments, it is available for consumers to read.
@@ -144,3 +144,29 @@ When a cluster is deployed in multiple racks/zones, one replica should be placed
 This will permit all Kafka requests from rack-aware clients to be directed to the local zone replica, avoiding cross-zone charges for client traffic.
 Each broker will request objects from object storage independently, and these requests for object data will also not incur cross-zone charges
 
+# WAL Segment Layout
+```mermaid
+block-beta
+    columns 1
+    block
+        columns 1
+        Title["WAL Segment Header"]
+        columns 1
+        T0P0B0["Topic 0 Partition 0 Batch 0"]
+        space
+        T0P0BN["Topic 0 Partition 0 Batch N_0"]
+        T0P0B0 --> T0P0BN
+        T0PPB0["Topic 0 Partition 1 Batch 0"]
+        space
+        T0PPBN["Topic 0 Partition 1 Batch N_1"]
+        T0PPB0 --> T0PPBN
+        TMPPB0["Topic M Partition 0 Batch 0"]
+        space
+        TMPPBN["Topic M Partition P Batch N_2"]
+        TMPPB0 --> TMPPBN
+    end
+```
+
+WAL Segments consist of a 1-byte header (version byte = 0), followed by batches from multiple partitions.
+Batches are sorted lexicographically by topic, partition, and batch processing time.
+Batches from the same partition are always stored consecutively.
