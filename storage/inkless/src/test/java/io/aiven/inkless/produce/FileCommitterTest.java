@@ -277,6 +277,7 @@ class FileCommitterTest {
 
         verify(executorServiceUpload).shutdown();
         verify(executorServiceCommit).shutdown();
+        verify(executorServiceCacheStore).shutdown();
         verify(metrics).close();
     }
 

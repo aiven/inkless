@@ -54,7 +54,22 @@ import io.aiven.inkless.storage_backend.common.StorageBackend;
 /**
  * The file committer.
  *
- * <p>It uploads files concurrently, but commits them to the control plan sequentially.
+ * <p>It uploads files concurrently, but commits them to the control plane sequentially.
+ *
+ * <h2>Thread Pool Lifecycle</h2>
+ * <p>This class manages three thread pools for upload, commit, and cache storage operations.
+ * The pools are created during construction and must be shut down via {@link #close()}.
+ *
+ * <p><b>Design Note:</b> Thread pools are created in the constructor arguments before delegation.
+ * If construction fails after pool creation (e.g., due to invalid arguments), the pools may leak.
+ * This is acceptable because:
+ * <ul>
+ *   <li>This is a broker startup component - construction failure prevents broker startup</li>
+ *   <li>The JVM would exit anyway, cleaning up all threads</li>
+ *   <li>Failure scenarios are low-probability edge cases (null arguments, OOM)</li>
+ * </ul>
+ * <p>Arguments are validated early in the delegated constructor to fail-fast before
+ * any significant work is done with the thread pools.
  */
 class FileCommitter implements Closeable {
     private static final Logger LOGGER = LoggerFactory.getLogger(FileCommitter.class);
@@ -247,6 +262,7 @@ class FileCommitter implements Closeable {
         // Don't wait here, they should try to finish their work.
         executorServiceUpload.shutdown();
         executorServiceCommit.shutdown();
+        executorServiceCacheStore.shutdown();
         metrics.close();
         if (threadPoolMonitor != null) threadPoolMonitor.close();
     }

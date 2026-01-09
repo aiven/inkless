@@ -32,8 +32,10 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 
+import java.io.IOException;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ExecutorService;
 import java.util.function.Consumer;
 
 import io.aiven.inkless.control_plane.ControlPlane;
@@ -61,6 +63,8 @@ class DeleteRecordsInterceptorTest {
     ControlPlane controlPlane;
     @Mock
     Consumer<Map<TopicPartition, DeleteRecordsResponseData.DeleteRecordsPartitionResult>> responseCallback;
+    @Mock
+    ExecutorService executorService;
 
     @Captor
     ArgumentCaptor<Map<TopicPartition, DeleteRecordsResponseData.DeleteRecordsPartitionResult>> resultCaptor;
@@ -68,7 +72,7 @@ class DeleteRecordsInterceptorTest {
     ArgumentCaptor<List<DeleteRecordsRequest>> deleteRecordsCaptor;
 
     @Test
-    public void mixingDisklessAndClassicTopicsIsNotAllowed() {
+    public void mixingDisklessAndClassicTopicsIsNotAllowed() throws Exception {
         when(metadataView.isDisklessTopic(eq("diskless"))).thenReturn(true);
         when(metadataView.isDisklessTopic(eq("non_diskless"))).thenReturn(false);
 
@@ -98,10 +102,11 @@ class DeleteRecordsInterceptorTest {
                 .setLowWatermark(INVALID_LOW_WATERMARK)
         ));
         verify(controlPlane, never()).deleteRecords(any());
+        interceptor.close();
     }
 
     @Test
-    public void notInterceptDeletingRecordsFromClassicTopics() {
+    public void notInterceptDeletingRecordsFromClassicTopics() throws Exception {
         when(metadataView.isDisklessTopic(eq("non_diskless"))).thenReturn(false);
 
         final DeleteRecordsInterceptor interceptor = new DeleteRecordsInterceptor(controlPlane, metadataView, new SynchronousExecutor());
@@ -114,10 +119,11 @@ class DeleteRecordsInterceptorTest {
         assertThat(result).isFalse();
         verify(responseCallback, never()).accept(any());
         verify(controlPlane, never()).deleteRecords(any());
+        interceptor.close();
     }
 
     @Test
-    public void interceptDeletingRecordsFromDisklessTopics() {
+    public void interceptDeletingRecordsFromDisklessTopics() throws Exception {
         final Uuid topicId = new Uuid(1, 2);
         when(metadataView.isDisklessTopic(eq("diskless"))).thenReturn(true);
         when(metadataView.getTopicId(eq("diskless"))).thenReturn(topicId);
@@ -170,10 +176,11 @@ class DeleteRecordsInterceptorTest {
                 .setErrorCode(Errors.KAFKA_STORAGE_ERROR.code())
                 .setLowWatermark(INVALID_LOW_WATERMARK)
         ));
+        interceptor.close();
     }
 
     @Test
-    public void controlPlaneException() {
+    public void controlPlaneException() throws Exception {
         final Uuid topicId = new Uuid(1, 2);
         when(metadataView.isDisklessTopic(eq("diskless"))).thenReturn(true);
         when(metadataView.getTopicId(eq("diskless"))).thenReturn(topicId);
@@ -201,10 +208,11 @@ class DeleteRecordsInterceptorTest {
                 .setErrorCode(Errors.UNKNOWN_SERVER_ERROR.code())
                 .setLowWatermark(INVALID_LOW_WATERMARK)
         ));
+        interceptor.close();
     }
 
     @Test
-    public void topicIdNotFound() {
+    public void topicIdNotFound() throws Exception {
         when(metadataView.isDisklessTopic(eq("diskless1"))).thenReturn(true);
         when(metadataView.isDisklessTopic(eq("diskless2"))).thenReturn(true);
         // This instead of the normal thenReturn to not depend on the map key iteration order
@@ -244,5 +252,18 @@ class DeleteRecordsInterceptorTest {
                 .setErrorCode(Errors.UNKNOWN_SERVER_ERROR.code())
                 .setLowWatermark(INVALID_LOW_WATERMARK)
         ));
+        interceptor.close();
+    }
+
+    @Test
+    public void closeShutdownsExecutorService() throws IOException, InterruptedException {
+        when(executorService.awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS)).thenReturn(true);
+
+        final DeleteRecordsInterceptor interceptor = new DeleteRecordsInterceptor(controlPlane, metadataView, executorService);
+
+        interceptor.close();
+
+        verify(executorService).shutdown();
+        verify(executorService).awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS);
     }
 }

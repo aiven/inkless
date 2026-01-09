@@ -56,6 +56,18 @@ import io.aiven.inkless.storage_backend.common.StorageBackend;
 import io.github.bucket4j.Bandwidth;
 import io.github.bucket4j.Bucket;
 
+/**
+ * Reader for fetching data from Inkless storage.
+ *
+ * <h2>Thread Pool Lifecycle</h2>
+ * <p>This class manages thread pools for metadata fetching, data fetching, and optionally
+ * for lagging consumer requests. All pools must be shut down via {@link #close()}.
+ *
+ * <p><b>Design Note:</b> Thread pools are created in the constructor arguments before delegation.
+ * If construction fails after pool creation (e.g., invalid lagging consumer configuration),
+ * the pools may leak. This is acceptable for broker startup components where failure prevents
+ * broker startup and JVM exit cleans up resources.
+ */
 public class Reader implements AutoCloseable {
     private static final Logger LOGGER = LoggerFactory.getLogger(Reader.class);
     private static final long EXECUTOR_SHUTDOWN_TIMEOUT_SECONDS = 5;

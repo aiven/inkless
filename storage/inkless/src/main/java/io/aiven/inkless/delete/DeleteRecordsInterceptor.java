@@ -21,18 +21,23 @@ import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.message.DeleteRecordsResponseData;
 import org.apache.kafka.common.protocol.Errors;
+import org.apache.kafka.common.utils.ThreadUtils;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.Closeable;
+import java.io.IOException;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.Executor;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
 
+import io.aiven.inkless.common.InklessThreadFactory;
 import io.aiven.inkless.common.SharedState;
 import io.aiven.inkless.common.TopicIdEnricher;
 import io.aiven.inkless.common.TopicTypeCounter;
@@ -43,22 +48,30 @@ import io.aiven.inkless.control_plane.MetadataView;
 
 import static org.apache.kafka.common.requests.DeleteRecordsResponse.INVALID_LOW_WATERMARK;
 
-public class DeleteRecordsInterceptor {
+public class DeleteRecordsInterceptor implements Closeable {
     private static final Logger LOGGER = LoggerFactory.getLogger(DeleteRecordsInterceptor.class);
 
     private final ControlPlane controlPlane;
     private final MetadataView metadataView;
-    private final Executor executor;
+    private final ExecutorService executorService;
     private final TopicTypeCounter topicTypeCounter;
 
     public DeleteRecordsInterceptor(final SharedState state) {
-        this(state.controlPlane(), state.metadata(), Executors.newCachedThreadPool());
+        this(
+            state.controlPlane(), 
+            state.metadata(), 
+            Executors.newCachedThreadPool(new InklessThreadFactory("inkless-delete-records", false))
+        );
     }
 
     // Visible for testing.
-    DeleteRecordsInterceptor(final ControlPlane controlPlane, final MetadataView metadataView, final Executor executor) {
+    DeleteRecordsInterceptor(
+        final ControlPlane controlPlane,
+        final MetadataView metadataView,
+        final ExecutorService executorService
+    ) {
         this.controlPlane = controlPlane;
-        this.executor = executor;
+        this.executorService = executorService;
         this.metadataView = metadataView;
         this.topicTypeCounter = new TopicTypeCounter(metadataView);
     }
@@ -94,7 +107,7 @@ public class DeleteRecordsInterceptor {
         }
 
         // TODO use purgatory
-        executor.execute(() -> {
+        executorService.execute(() -> {
             try {
                 final List<DeleteRecordsRequest> requests = offsetPerPartitionEnriched.entrySet().stream()
                     .map(kv -> new DeleteRecordsRequest(kv.getKey(), kv.getValue()))
@@ -131,5 +144,10 @@ public class DeleteRecordsInterceptor {
                     .setLowWatermark(INVALID_LOW_WATERMARK)
             ));
         responseCallback.accept(response);
+    }
+
+    @Override
+    public void close() throws IOException {
+        ThreadUtils.shutdownExecutorServiceQuietly(executorService, 5, TimeUnit.SECONDS);
     }
 }

@@ -2863,6 +2863,7 @@ class ReplicaManager(val config: KafkaConfig,
     inklessFetchOffsetHandler.foreach(_.close())
     inklessRetentionEnforcer.foreach(_.close())
     inklessFileCleaner.foreach(_.close())
+    inklessDeleteRecordsInterceptor.foreach(_.close())
     inklessSharedState.foreach(_.close())
     info("Shut down completely")
   }
