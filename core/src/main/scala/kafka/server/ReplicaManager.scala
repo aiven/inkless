@@ -1895,7 +1895,7 @@ class ReplicaManager(val config: KafkaConfig,
 
     // check if this fetch request can be satisfied right away
     val logReadResults = readFromLog(classicParams, classicFetchInfos, quota, readFromPurgatory = false)
-    println("logReadResult: " + logReadResults)
+//    println("logReadResult: " + logReadResults)
     var bytesReadable: Long = 0
     var errorReadingData = false
 
