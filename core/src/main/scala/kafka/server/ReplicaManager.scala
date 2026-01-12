@@ -1778,7 +1778,7 @@ class ReplicaManager(val config: KafkaConfig,
                     fetchInfos: Seq[(TopicIdPartition, PartitionData)],
                     quota: ReplicaQuota,
                     responseCallback: Seq[(TopicIdPartition, FetchPartitionData)] => Unit): Unit = {
-    println(fetchInfos)
+//    println(fetchInfos)
     if (fetchInfos.isEmpty) {
       responseCallback(Seq.empty)
       return

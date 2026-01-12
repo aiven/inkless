@@ -167,29 +167,13 @@ public class ClassicToDisklessMigrationTest {
         }
 
         // Step 2: Produce messages to classic topic
-        AtomicInteger recordsProducedBeforeMigration = new AtomicInteger();
         final long now = System.currentTimeMillis();
-        try (Producer<byte[], byte[]> producer = new KafkaProducer<>(clientConfigs)) {
-            for (int i = 0; i < numRecordsBeforeMigration; i++) {
-                byte[] value = new byte[10000];
-                final ProducerRecord<byte[], byte[]> record = new ProducerRecord<>(topicName, 0, now, null, value);
-                producer.send(record, (metadata, exception) -> {
-                    if (exception != null) {
-                        log.error("Failed to send record", exception);
-                    } else {
-                        log.info("Committed value at offset {} at {}", metadata.offset(), now);
-                        recordsProducedBeforeMigration.incrementAndGet();
-                    }
-                });
-            }
-            producer.flush();
-        }
-        assertEquals(numRecordsBeforeMigration, recordsProducedBeforeMigration.get());
+        int nextOffset = produceRecords(clientConfigs, topicName, now, 0, numRecordsBeforeMigration);
 
-        // Step 2: Consume messages from classic topic to verify it works
+        // Step 3: Consume messages from classic topic to verify it works
         consumeWithSubscription(TimestampType.CREATE_TIME, clientConfigs, topicName, now, numRecordsBeforeMigration);
 
-        // Step 3: Migrate topic to diskless mode by changing config
+        // Step 4: Migrate topic to diskless mode by changing config
         try (Admin admin = AdminClient.create(clientConfigs)) {
             ConfigResource topicResource = new ConfigResource(ConfigResource.Type.TOPIC, topicName);
             AlterConfigOp alterConfigOp = new AlterConfigOp(
@@ -200,27 +184,33 @@ public class ClassicToDisklessMigrationTest {
                 .all().get(10, TimeUnit.SECONDS);
         }
 
-        // Step 4: Produce more messages after migration
-        AtomicInteger recordsProducedAfterMigration = new AtomicInteger();
+        // Step 5: Produce more messages after migration
+        produceRecords(clientConfigs, topicName, now, nextOffset, numRecordsAfterMigration);
+
+        // Step 6: Consume from the beginning to verify all messages are available
+        consumeWithSubscription(TimestampType.CREATE_TIME, clientConfigs, topicName, now, totalRecords);
+    }
+
+    private static int produceRecords(Map<String, Object> clientConfigs, String topicName, long timestamp, int startOffset, int numRecords) {
+        AtomicInteger recordsProduced = new AtomicInteger();
         try (Producer<byte[], byte[]> producer = new KafkaProducer<>(clientConfigs)) {
-            for (int i = 0; i < numRecordsAfterMigration; i++) {
-                byte[] value = new byte[10000];
-                final ProducerRecord<byte[], byte[]> record = new ProducerRecord<>(topicName, 0, now, null, value);
+            for (int i = 0; i < numRecords; i++) {
+                int offset = startOffset + i;
+                byte[] value = String.valueOf(offset).getBytes();
+                final ProducerRecord<byte[], byte[]> record = new ProducerRecord<>(topicName, 0, timestamp, null, value);
                 producer.send(record, (metadata, exception) -> {
                     if (exception != null) {
                         log.error("Failed to send record", exception);
                     } else {
-                        log.info("Committed value at offset {} at {}", metadata.offset(), now);
-                        recordsProducedAfterMigration.incrementAndGet();
+                        log.info("Committed value at offset {} at {}", metadata.offset(), timestamp);
+                        recordsProduced.incrementAndGet();
                     }
                 });
             }
             producer.flush();
         }
-        assertEquals(numRecordsAfterMigration, recordsProducedAfterMigration.get());
-
-        // Step 4: Consume from the beginning to verify all messages are available
-        consumeWithSubscription(TimestampType.CREATE_TIME, clientConfigs, topicName, now, totalRecords);
+        assertEquals(numRecords, recordsProduced.get());
+        return startOffset + numRecords;
     }
 
     private static void consumeWithSubscription(TimestampType timestampType, Map<String, Object> clientConfigs, String topicName, long now, int numRecords) {
