@@ -60,15 +60,12 @@ class MirrorBlockingSender(sourceBroker: BrokerEndPoint,
   private val socketTimeout: Int = config.getLong(MirrorConfig.SOCKET_CONNECTION_SETUP_TIMEOUT_MS_CONFIG).toInt
 
   private val networkClient = {
-    val securityProtocol = SecurityProtocol.forName(mirrorConfig.securityProtocol())
-    val saslMechanism = mirrorConfig.saslMechanism()
-
     val channelBuilder = ChannelBuilders.clientChannelBuilder(
-      securityProtocol,
+      SecurityProtocol.forName(mirrorConfig.securityProtocol()),
       JaasContext.Type.CLIENT,
       config,
       null,
-      saslMechanism,
+      mirrorConfig.saslMechanism(),
       time,
       logContext
     )

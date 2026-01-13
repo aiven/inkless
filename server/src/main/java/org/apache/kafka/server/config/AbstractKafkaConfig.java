@@ -91,10 +91,6 @@ public abstract class AbstractKafkaConfig extends AbstractConfig {
         return getInt(ReplicationConfigs.NUM_REPLICA_FETCHERS_CONFIG);
     }
 
-    public int numMirrorReplicaFetchers() {
-        return getInt(MirrorConfig.NUM_REPLICA_FETCHERS_CONFIG);
-    }
-
     public int numRecoveryThreadsPerDataDir() {
         return getInt(ServerLogConfigs.NUM_RECOVERY_THREADS_PER_DATA_DIR_CONFIG);
     }

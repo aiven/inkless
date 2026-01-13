@@ -64,7 +64,7 @@ class MirrorFetcherManager(brokerConfig: KafkaConfig,
     extends AbstractFetcherManager[MirrorFetcherThread](
       name = "MirrorFetcherManager on broker " + brokerConfig.brokerId,
       clientId = "MirrorReplica",
-      numFetchers = brokerConfig.numMirrorReplicaFetchers) {
+      numFetchers = brokerConfig.mirrorConfig.numReplicaFetchers) {
   private val mirrorFetcherThreadMap = new mutable.HashMap[BrokerAndFetcherIdWithMirror, MirrorFetcherThread]
 
   override def createFetcherThread(fetcherId: Int, sourceBroker: BrokerEndPoint): MirrorFetcherThread = {
