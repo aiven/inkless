@@ -4,6 +4,7 @@
 
 1. [Objectives](#objectives)
 2. [Activation Model](#activation-model-binary-version)
+   - [Existing Diskless Topics](#existing-diskless-topics)
 3. [Placement Model](#placement-model)
 4. [Controller Behavior](#controller-behavior)
    - [Topic Creation](#topic-creation)
@@ -14,20 +15,24 @@
 6. [Metadata Transformation](#metadata-transformation)
 7. [Observability](#observability)
 8. [Implementation Path](#implementation-path)
+   - [Phase 0: Research and Validation](#phase-0-research-and-validation)
+   - [Testing Strategy](#testing-strategy)
+   - [Future Work: RLM Integration](#future-work-rlm-integration)
 9. [Rejected Alternatives](#rejected-alternatives)
 10. [Appendix: Topic Migration Interactions](#appendix-topic-migration-interactions)
+11. [Open Items](#open-items)
 
 ---
 
 ## Objectives
 
-Enable **rack-aware, dynamic, stable KRaft-managed replicas** for diskless topics:
+Enable **rack-aware, stable KRaft-managed replicas** for diskless topics:
 
 - **KRaft-managed replicas**: Diskless topics will have actual KRaft-managed replicas, not the current "faked" RF=1 metadata. These replicas are tracked by the controller, participate in leader election, and appear in standard Kafka tooling. The key difference from classic replicas: **they don't replicate data** (object storage handles durability), but they do provide partition assignments for RLM integration and operational consistency. See [No Replica Fetcher for Diskless Topics](#no-replica-fetcher-for-diskless-topics) for implementation details.
 - **Rack-aware at creation**: Topics are created with one replica per rack (RF = rack count)
 - **Standard operations after creation**: Once created, diskless topics use standard Kafka replica management — no custom reconciliation or drift handling
-- **Controller-managed RF**: Users don't specify RF at creation; the controller computes it from rack topology
-- **Leader-agnostic produce**: Keep the diskless produce model where any broker can accept writes, while still having a leader for controller duties
+- **Controller-managed RF**: Users don't specify RF at creation; the controller computes it from rack topology. Requests with `replicationFactor=-1` or `replicationFactor=1` are accepted for compatibility (both result in RF=rack_count).
+- **Leader-agnostic produce and consume**: Keep the diskless model where any replica can accept writes and serve reads, while still having a KRaft leader for controller duties (e.g., future RLM coordination)
 
 **Non-goal:** 
 Topic migration mechanics (Tiered Classic → Diskless), including sealing and offset boundary tracking.
@@ -37,7 +42,7 @@ Those are covered in [DESIGN.md](DESIGN.md).
 
 ## Activation Model (Binary Version)
 
-Managed RF is activated by **deploying a new binary version**. No feature flags, no topic attributes, no server configs.
+Managed RF is activated by **deploying a new binary version**. No feature flags, no topic attributes, no server configs. See [Rejected Alternative: Feature Flag Activation](#rejected-alternative-feature-flag-activation) for why we chose this simpler approach.
 
 ### Behavior Summary
 
@@ -56,26 +61,180 @@ Managed RF is activated by **deploying a new binary version**. No feature flags,
 3. No new KRaft records needed; existing topic and partition records are sufficient
 4. After creation, standard Kafka replica management applies
 
-### Rolling Upgrade
+### Mixed Binary Compatibility
 
-During rolling restart:
-- Old brokers return synthetic RF=1 metadata
-- New brokers return KRaft-based filtered metadata
-- Clients handle inconsistency via standard metadata refresh/retry
-- After full upgrade, all brokers return consistent KRaft-based metadata
+If a new controller updates partition metadata (e.g., RF=3 with replicas in multiple racks) while some brokers still run the old binary:
+
+- **Data plane is unaffected**: Produce and consume APIs are not modified. Old brokers continue serving diskless requests via existing `AppendHandler`/`FetchHandler`.
+- **Metadata plane differs**: Old brokers use transformer hashing, new brokers filter KRaft metadata. Clients may see different leader/replicas depending on which broker they query.
+- **No correctness issues**: Diskless data lives in object storage. Any broker can serve any partition regardless of what metadata says.
+
+This temporary inconsistency resolves once all brokers run the new binary. In our deployment model (new VMs), this period is brief or non-existent.
+
+### Cluster Migration
+
+In our deployment model, new binaries are deployed on **new VMs with new broker IDs** (not in-place rolling upgrade). This simplifies the transition:
+
+**Before migration:**
+- Old cluster with old broker IDs
+- Diskless topics have RF=1 pointing to old broker IDs
+- Transformer uses hash-based leader selection
+
+**After migration:**
+- New cluster with new broker IDs
+- Controller detects orphaned replicas (old broker IDs not in cluster)
+- Auto-migration expands RF to rack_count with new broker IDs
+- Transformer filters KRaft metadata by client AZ
+
+**Client behavior:**
+- Clients reconnect to new cluster via bootstrap servers
+- Metadata requests return new broker IDs with rack-aware placement
+- No inconsistency period (unlike rolling upgrade)
 
 ### Existing Diskless Topics
 
-- Managed RF applies **immediately** to all diskless topics on upgrade
-- No data movement required (diskless data lives in object storage)
-- One-time metadata update as controller sets proper replica assignments
+Existing diskless topics created before this feature have RF=1 in KRaft. These need to be expanded to RF=rack_count.
 
-### Rationale
+**Migration approach: Automatic migration for orphaned replicas**
 
-Inkless is a new component with faster iteration cycles than upstream Kafka. 
-We control deployments and can coordinate version upgrades. 
-Complex feature gating adds overhead without proportional benefit for this internal enabler feature. 
-See [Rejected Alternative: Feature Flag Activation](#rejected-alternative-feature-flag-activation) for the more complex approach we considered.
+Legacy diskless topics were created with RF=1 pointing to a broker that existed at creation time. In our deployment model, **new binaries are deployed on new VMs with new broker IDs**. This means legacy topics will have broker IDs that no longer exist in the cluster, allowing safe automatic detection.
+
+#### Deployment Model Assumption
+
+```
+Old cluster (legacy diskless topics created here):
+  Brokers: 1, 2, 3, 4, 5, 6
+
+New cluster (after infrastructure migration):
+  Brokers: 101, 102, 103, 104, 105, 106  ← new VMs, new IDs
+  
+Legacy topic in KRaft:
+  Topic: foo, Partition 0, Replicas=[3]  ← broker 3 no longer exists
+```
+
+#### Detection Logic
+
+```
+IF diskless.enable=true 
+   AND RF=1 
+   AND replica broker ID is NOT in active cluster
+THEN auto-migrate to RF=rack_count
+```
+
+#### Why This Is Safe
+
+The detection has **no false positives** given the deployment model:
+
+| Scenario | RF | Broker ID | Auto-migrate? |
+|----------|-----|-----------|---------------|
+| Legacy diskless (old cluster) | 1 | Orphaned (old broker ID) | ✅ Yes |
+| Already migrated diskless | rack_count | Valid | ❌ No (RF > 1) |
+| Operator-managed diskless | 1 | Valid (current broker) | ❌ No (valid ID) |
+| Classic topic | any | Valid | ❌ No (not diskless) |
+
+**Key insight:** The deployment model (new VMs = new broker IDs) ensures legacy topics have orphaned broker IDs.
+
+#### Other Deployment Models (Broker IDs Overlap)
+
+If the new cluster reuses broker IDs from the old cluster (e.g., in-place upgrade on same VMs), automatic migration won't trigger because the broker ID is still valid.
+
+**In this case:**
+- Topics continue to work (RF=1 is functional, just not rack-aware)
+- Operator uses standard replica placement tools to migrate manually
+- Metric `kafka.controller.diskless.rf1_topics_total` tracks diskless topics with RF=1
+- Log warning: `WARN Diskless topic 'foo' has RF=1; consider migrating to rack-aware placement`
+
+**Manual migration steps:**
+
+1. Generate reassignment plan:
+```bash
+# List diskless topics with RF=1
+kafka-topics.sh --bootstrap-server localhost:9092 --describe \
+  | grep -B1 "ReplicationFactor: 1" | grep "diskless.enable=true"
+
+# Generate reassignment JSON (one replica per rack)
+cat > reassignment.json << 'EOF'
+{
+  "version": 1,
+  "partitions": [
+    {"topic": "foo", "partition": 0, "replicas": [101, 103, 105]}
+  ]
+}
+EOF
+```
+
+2. Execute reassignment:
+```bash
+kafka-reassign-partitions.sh --bootstrap-server localhost:9092 \
+  --reassignment-json-file reassignment.json \
+  --execute
+```
+
+3. Verify:
+```bash
+kafka-reassign-partitions.sh --bootstrap-server localhost:9092 \
+  --reassignment-json-file reassignment.json \
+  --verify
+```
+
+**Note:** For diskless topics, reassignment is metadata-only (no data movement), so it completes instantly.
+
+#### Migration Process
+
+When controller detects an orphaned diskless topic:
+
+1. Log: `INFO Detected orphaned diskless topic 'foo' (RF=1, broker 3 not in cluster)`
+2. Compute target replica assignment (one broker per rack)
+3. Issue `AlterPartitionReassignments` to set new replicas
+4. Log: `INFO Migrated diskless topic 'foo' to RF=3, replicas=[1,3,5]`
+
+**This is metadata-only** — no data movement required (data is in object storage).
+
+#### Example
+
+```
+Legacy topic (created on old cluster):
+  Topic: foo (diskless.enable=true)
+  Partition 0: Replicas=[3], Leader=3, ISR=[3]
+                        ↑
+                        Broker 3 was valid on old cluster
+
+New cluster brokers: [101, 102, 103, 104, 105, 106] in racks [A, A, B, B, C, C]
+                      ↑
+                      Broker 3 doesn't exist anymore
+
+After auto-migration:
+  Topic: foo (diskless.enable=true)  
+  Partition 0: Replicas=[101,103,105], Leader=101, ISR=[101,103,105]
+                        ↑    ↑    ↑
+                        One broker per rack (A, B, C)
+```
+
+#### When Migration Runs
+
+- **Trigger:** Controller startup, metadata change, or periodic scan
+- **Pacing:** Batched to avoid overwhelming controller (configurable)
+- **Idempotent:** Re-running on already-migrated topics is a no-op (RF > 1)
+
+#### Observability
+
+**Auto-migration:**
+- Log: `INFO Detected orphaned diskless topic 'foo' (RF=1, broker 3 not in cluster)`
+- Log: `INFO Migrated diskless topic 'foo' to RF=3`
+- Metric: `kafka.controller.diskless.topics_migrated_total` (counter)
+- Metric: `kafka.controller.diskless.orphaned_topics_total` (gauge) — pending migration
+
+**RF=1 with valid broker (needs manual migration):**
+- Log: `WARN Diskless topic 'foo' has RF=1; consider migrating to rack-aware placement`
+- Metric: `kafka.controller.diskless.rf1_topics_total` (gauge) — topics that need manual migration
+
+#### Rollback
+
+If rolled back to old binary:
+- Expanded RF is preserved in KRaft metadata
+- Old brokers ignore KRaft RF and use transformer hashing
+- No harm — metadata is unused until re-upgraded
+- Re-upgrade will see RF > 1 and skip migration (idempotent)
 
 ---
 
@@ -152,8 +311,14 @@ kafka-topics.sh --alter --topic foo --partitions 10
 - New partitions are placed using the same one-per-rack logic as creation
 - RF for new partitions = current rack count (may differ from original if racks changed)
 - Existing partitions are not affected
+- Manual replica assignments are rejected (same as topic creation)
 
 This ensures consistency: all partitions of a diskless topic use rack-aware placement.
+
+**Implementation note:** Currently `ReplicationControlManager.createPartitions()` uses the standard replica placer without diskless-specific handling. This needs to be updated to:
+1. Detect diskless topics via `diskless.enable=true` config
+2. Use rack-aware placement instead of standard placer
+3. Reject manual replica assignments
 
 ### Standard Operations (After Creation)
 
@@ -163,6 +328,9 @@ After topic creation, diskless topics behave like classic Kafka topics for all o
 - Standard Kafka leader election from ISR
 - For diskless topics, all replicas are always in ISR (data is in object storage)
 - `kafka-leader-election.sh` works normally
+- Leader can be any replica in ISR (shuffled on election)
+
+**Important:** This is unchanged from current diskless behavior. For diskless topics with AZ-aware clients, leader election doesn't force cross-AZ traffic. The transformer returns the local replica to each client regardless of who the KRaft leader is. The KRaft leader is primarily for controller coordination (e.g., future RLM tasks), not for directing client traffic.
 
 **Broker Failure:**
 - Replicas on failed broker become offline
@@ -254,7 +422,7 @@ For diskless topics, **all replicas are always considered in-sync** because:
 - All replicas have immediate access to the same committed data
 - No replication lag in the classic sense
 
-ISR membership is trivially "all assigned replicas" for diskless partitions.
+**Implementation:** ISR is stored in KRaft as all assigned replicas. At topic creation, controller sets `ISR = replicas`. No `AlterPartition` requests are needed since there's no lag tracking — replicas don't fetch from each other.
 
 **This is unchanged from today** — diskless topics already have this property. The difference is that now there are multiple replicas in the ISR (one per rack) instead of a single faked replica.
 
@@ -329,6 +497,54 @@ With managed RF, diskless topics will have multiple replicas (one per rack). How
 
 The managed RF design **does not change** this behavior — it only changes how replica assignments are computed and stored in KRaft.
 
+#### No Local Partition Objects — Implications
+
+**Current behavior:** `ReplicaManager` skips `getOrCreatePartition()` for diskless topics, meaning:
+- No `Partition` objects on brokers
+- No `UnifiedLog` objects
+- No local log directories
+
+**This raises questions:**
+
+1. **How does leader election work without `Partition` objects?**
+   
+   Leader election is handled by the KRaft controller, not broker `Partition` objects. The controller updates partition metadata (leader, ISR) in KRaft records. Brokers observe these changes via metadata updates but don't need local `Partition` objects to "become" leader — they just serve requests for partitions where metadata says they're a replica.
+
+2. **How do brokers know they should serve requests for a partition?**
+   
+   Currently: `InklessTopicMetadataTransformer` returns metadata pointing clients to brokers. Brokers check `isDisklessTopic()` and route to Inkless handlers (`AppendHandler`, `FetchHandler`) instead of local log.
+   
+   With managed RF: Same flow, but transformer filters KRaft metadata instead of computing synthetic placement.
+
+3. **What about RLM integration?**
+   
+   RLM requires `Partition` and `UnifiedLog` objects to:
+   - Track local vs. tiered segment boundaries
+   - Coordinate segment uploads
+   - Run expiration tasks
+   
+   **This is out of scope for this design.** RLM integration will be addressed separately when implementing the tiering pipeline (see [DESIGN.md](DESIGN.md)). At that point, we may need to create `Partition` objects for the leader, but this can be deferred.
+
+4. **Can we avoid `Partition` objects entirely?**
+   
+   For the initial managed RF implementation: **yes**. We only need:
+   - KRaft metadata (replicas, leader, ISR)
+   - Transformer filtering
+   - Inkless handlers (already working)
+   
+   `Partition` objects become necessary when:
+   - Implementing local disk cache (future)
+   - Integrating with RLM for tiering (future)
+   
+   **Recommendation:** Start without `Partition` integration. Add it when implementing local cache or RLM integration.
+
+#### Research Needed
+
+Before implementation, verify:
+1. Leader election works correctly without broker `Partition` objects (test with existing diskless topics)
+2. ISR updates in KRaft don't require broker-side `Partition` state
+3. `DescribeTopics` / `ListOffsets` work correctly for diskless topics with RF > 1
+
 ---
 
 ## Metadata Transformation
@@ -355,8 +571,10 @@ The managed RF design **does not change** this behavior — it only changes how 
 - Filtered `replicaNodes` / `isrNodes` for diskless partitions
 
 **Filtering logic:**
-- If partition has replica in `clientAZ`: return only that local replica
-- If no replica in `clientAZ`: fallback to cross-AZ view (full replica set or deterministic subset)
+- If partition has replica in `clientAZ`: return only that local replica as leader/replicas/ISR
+- If no replica in `clientAZ`: return full replica set (standard Kafka behavior — client talks to leader)
+
+**Note:** This is consistent with current diskless behavior. Today, the transformer returns one replica based on hash as a "fake" leader. With managed RF, we have one real replica per AZ and return the local one. The cross-AZ fallback (returning full replica set) handles edge cases like rack removal or misconfigured client AZ.
 
 **Detection:**
 - New binary always uses KRaft-placement-based projection for diskless topics
@@ -368,11 +586,14 @@ The managed RF design **does not change** this behavior — it only changes how 
 
 ### Metrics
 
-**Controller metrics:**
-- `kafka.controller.diskless.effective_rf{topic}` - RF assigned at creation
-- `kafka.controller.diskless.rack_aware{topic,partition}` - 1 if one-per-rack, 0 if not
-- `kafka.controller.diskless.rack_aware_total{topic}` - Count of rack-aware partitions
-- `kafka.controller.diskless.non_rack_aware_total{topic}` - Count of non-rack-aware partitions
+**Controller metrics (all prefixed `kafka.controller.diskless.`):**
+- `effective_rf{topic}` - RF assigned at creation
+- `rack_aware{topic,partition}` - 1 if one-per-rack, 0 if not
+- `rack_aware_partitions_total{topic}` - Count of rack-aware partitions
+- `non_rack_aware_partitions_total{topic}` - Count of non-rack-aware partitions
+- `rf1_topics_total` - Count of diskless topics with RF=1 (need manual migration)
+- `topics_migrated_total` - Count of topics auto-migrated from RF=1
+- `orphaned_topics_total` - Count of topics pending auto-migration
 
 **Standard Kafka metrics (already exist):**
 - `kafka.server:type=ReplicaManager,name=UnderReplicatedPartitions`
@@ -407,6 +628,16 @@ This warning is logged:
 
 ## Implementation Path
 
+### Phase 0: Research and Validation
+
+Verify assumptions before implementation:
+
+1. Leader election works correctly without broker `Partition` objects (test with existing diskless topics)
+2. ISR updates in KRaft don't require broker-side `Partition` state
+3. `DescribeTopics` / `ListOffsets` work correctly for diskless topics with RF > 1
+
+**Estimate:** 1 week
+
 ### Phase 1: Topic Creation with Rack-Aware Placement
 
 1. Modify `ReplicationControlManager` to detect `diskless.enable=true` topics
@@ -431,9 +662,18 @@ This warning is logged:
 
 **Estimate:** 1 week
 
-### Phase 4: Observability
+### Phase 4: Existing Topics Migration
 
-1. Add `rack_aware` metric
+1. Implement orphaned replica detection (RF=1 with non-existent broker ID)
+2. Add auto-migration logic in controller
+3. Add pacing controls (batch size, interval)
+4. Add metrics: `topics_migrated_total`, `orphaned_topics_total`, `rf1_topics_total`
+
+**Estimate:** 1 week
+
+### Phase 5: Observability
+
+1. Add `rack_aware`, `rack_aware_partitions_total`, `non_rack_aware_partitions_total` metrics
 2. Add warning logs for non-rack-aware placement
 3. Documentation
 
@@ -441,9 +681,53 @@ This warning is logged:
 
 ### Total Estimate
 
-**6 weeks with 1 engineer, or 3-4 weeks with 2 engineers**
+**8 weeks with 1 engineer, or 5 weeks with 2 engineers**
 
 This is significantly simpler than the original design which included reconciliation loops and drift handling.
+
+### Testing Strategy
+
+**Unit Tests:**
+- `ReplicationControlManager`: rack-aware placement logic, RF computation, validation
+- `InklessTopicMetadataTransformer`: AZ filtering, cross-AZ fallback
+- Migration detection: orphaned replica identification
+
+**Integration Tests:**
+- Topic creation with `diskless.enable=true` results in RF=rack_count
+- Add partitions uses rack-aware placement
+- Existing topics with orphaned replicas are auto-migrated
+- Reassignment works and logs warnings for non-rack-aware placement
+- No replica fetcher threads started for diskless topics with RF > 1
+
+**System Tests:**
+- Multi-AZ cluster with diskless topics
+- Client AZ awareness: verify clients talk to local replica
+- Broker failure: verify leader election and continued availability
+- Rolling restart: verify no disruption
+
+**Existing Test Coverage:**
+See [DISKLESS_INTEGRATION_TEST_COVERAGE.md](../../DISKLESS_INTEGRATION_TEST_COVERAGE.md) for current Inkless test coverage. Managed RF tests should extend this framework.
+
+### Future Work: RLM Integration
+
+This design enables RLM integration but doesn't implement it. Key considerations for future RLM work:
+
+**Why RLM needs managed RF:**
+- RLM's `onLeadershipChange()` is the entry point for tiering tasks
+- Requires KRaft-managed partition leadership (not faked)
+- Managed RF provides this foundation
+
+**What RLM integration will require:**
+1. **Partition objects on leader:** RLM uses `Partition` and `UnifiedLog` APIs. The leader broker may need to create lightweight `Partition` objects for diskless topics.
+2. **Segment boundary tracking:** RLM needs to know which offsets are local vs. tiered. For diskless, "local" means Control Plane (PostgreSQL), "tiered" means S3 segments.
+3. **Expiration coordination:** Leader runs RLM expiration tasks to clean up tiered segments.
+
+**Design hints for RLM integration:**
+- Create `Partition` objects only on the leader, not followers
+- `UnifiedLog` can be a thin wrapper that delegates to Inkless handlers
+- Alternatively, implement RLM hooks directly without full `Partition` — needs investigation
+
+**This is out of scope for managed RF** but the decisions here (KRaft-managed replicas, stable leader election) provide the foundation. See [DESIGN.md](DESIGN.md) Stream 7 for tiering pipeline details.
 
 ---
 
@@ -477,6 +761,12 @@ See [DESIGN.md](DESIGN.md) Stream 7 for tiering pipeline details.
 
 **Concept:** Follow upstream Kafka patterns with `DisklessVersion` feature enum, server config, and KRaft records.
 
+**Why we initially considered it:**
+- Upstream Kafka uses feature flags for backward-compatible feature rollout (e.g., `EligibleLeaderReplicasVersion`)
+- Allows gradual activation: deploy new binary first, then enable feature cluster-wide
+- Provides explicit opt-in, reducing risk of unexpected behavior changes
+- Supports mixed-version clusters where some brokers have the feature and others don't
+
 **What it would have involved:**
 - Policy flag (`disklessManagedRF`) as new KRaft record
 - Feature enum (`DisklessVersion`) following `EligibleLeaderReplicasVersion` pattern
@@ -484,74 +774,101 @@ See [DESIGN.md](DESIGN.md) Stream 7 for tiering pipeline details.
 - Manual activation via `kafka-features.sh --upgrade --feature diskless.version=1`
 
 **Why we dropped it:**
-- Not needed; `diskless.enable` config is sufficient
-- Binary version is the gate
-- Adds operational step without benefit
-- Binary rollback is simpler
+- **Inkless deployment model is different**: We deploy new binaries on new VMs, not rolling upgrades on existing clusters. There's no mixed-version period to manage.
+- **`diskless.enable` already gates behavior**: Topics must explicitly opt into diskless mode. The feature flag would be redundant.
+- **Operational overhead without benefit**: Adds a manual activation step that doesn't provide additional safety in our deployment model.
+- **Simpler rollback**: Binary rollback is sufficient; no need to coordinate feature flag state.
 
 **When to reconsider:**
-- If upstreaming to Apache Kafka (strict backward compatibility)
-- If needing per-topic opt-in/opt-out
-- If supporting long-lived mixed-version clusters
+- If upstreaming to Apache Kafka (strict backward compatibility requirements)
+- If needing per-topic opt-in/opt-out for managed RF specifically
+- If supporting long-lived mixed-version clusters (not our deployment model)
 
 ### Rejected Alternative: Dynamic Reconciliation
 
 **Concept:** Controller continuously reconciles replica placement to maintain one-per-rack as topology changes.
 
+**Why we initially considered it:**
+- Ensures rack-awareness is always maintained, even after topology changes
+- Automatically adapts RF when racks are added (more availability) or removed (avoid under-replication)
+- Reduces operational burden — no manual reassignment needed
+- Provides "self-healing" behavior similar to Kubernetes operators
+
 **What it would have involved:**
 - Reconciliation loop monitoring rack changes
 - Automatic RF adjustment when racks added/removed
-- Drift detection and auto-fix
-- Rack liveness state machine (HEALTHY → DEGRADED → UNAVAILABLE)
+- Drift detection and auto-fix when operator breaks rack-awareness
+- Rack liveness state machine (HEALTHY → DEGRADED → UNAVAILABLE) to distinguish transient failures from permanent rack loss
 
 **Why we dropped it:**
-- Significant complexity in controller
-- Divergent behavior from standard Kafka operations
-- Topology changes are rare in practice
-- Operator can handle edge cases manually
-- Standard Kafka reassignment tools work fine
+- **Significant complexity**: Adds new controller component with its own state machine, edge cases, and failure modes
+- **Divergent from Kafka norms**: Standard Kafka doesn't auto-adjust RF or auto-reassign. Operators expect explicit control.
+- **Rare scenarios**: Topology changes (adding/removing racks) are infrequent in practice. Optimizing for rare cases adds constant complexity.
+- **Existing tools work**: `kafka-reassign-partitions.sh` handles all cases. Operators already know this workflow.
+- **Harder to reason about**: Auto-reconciliation can surprise operators. "Why did my partition move?" is a common complaint with auto-rebalancing systems.
 
 **When to reconsider:**
-- If customers frequently add/remove racks
-- If manual reassignment becomes burdensome
+- If customers frequently add/remove racks and manual reassignment becomes burdensome
+- If we build a broader "Kafka operator" that manages cluster topology holistically
 
 ### Rejected Alternative A: Virtual Leader for RLM Tasks
 
-**Concept:** Keep RF=1, designate deterministic "virtual leader" per partition for RLM tasks.
+**Concept:** Keep RF=1 (current faked metadata), but designate a deterministic "virtual leader" per partition for RLM tasks.
+
+**Why we considered it:**
+- Avoids changing the current RF=1 model that works for produce/consume
+- RLM only needs *some* broker to run expiration tasks — could be a "virtual" designation
+- Simpler than managing real replicas if we can make RLM work with virtual leadership
 
 **Why it fails:**
-- Two sources of leadership creates confusion
-- Virtual leader failover requires new coordination mechanism
-- RLM assumes real `Partition` objects with `UnifiedLog`
-- Tiering pipeline merge phase needs `ReplicaManager` context
+- **Two sources of leadership**: KRaft has one leader (faked), RLM needs another (virtual). Confusing for operators and tooling.
+- **Failover complexity**: Virtual leader failover requires new coordination mechanism outside KRaft. What happens when the virtual leader dies?
+- **RLM assumptions**: RLM code assumes real `Partition` objects with `UnifiedLog`. Significant refactoring needed to work with virtual concept.
+- **Tiering pipeline needs `ReplicaManager`**: The merge phase that creates tiered segments needs broker-side context that only exists with real partitions.
 
 ### Rejected Alternative B: Control Plane Manages Tiered Expiration
 
-**Concept:** Extend PostgreSQL to track tiered segment metadata and run expiration directly.
+**Concept:** Extend PostgreSQL (Control Plane) to track tiered segment metadata and run expiration directly, bypassing RLM.
+
+**Why we considered it:**
+- Control Plane already tracks batch metadata — could extend to track tiered segments
+- Avoids needing KRaft-managed replicas entirely
+- Keeps all Inkless metadata in one place (PostgreSQL)
 
 **Why it fails:**
-- Contradicts goal of reducing PG load
-- Duplicates RLM retention logic
-- Breaks RLMM integration and Kafka tooling
-- Creates cross-system consistency problems
+- **Contradicts PG scalability goal**: The whole point of tiering is to *reduce* PG load. Adding more metadata to PG defeats the purpose.
+- **Duplicates RLM logic**: Retention policies (`retention.ms`, `retention.bytes`) are already implemented in RLM. Reimplementing in Control Plane doubles the code and bugs.
+- **Breaks tooling**: Kafka admin tools expect RLM for tiered storage management. Custom Control Plane expiration wouldn't integrate.
+- **Cross-system consistency**: Tiered segments in S3, metadata in PG, Kafka expecting RLM — three systems to keep consistent. Recipe for orphaned data.
 
 ### Rejected Alternative C: Direct Tiered Read via FetchHandler
 
-**Concept:** Extend `FetchHandler` to read tiered storage directly, bypassing RLM read path.
+**Concept:** Extend `FetchHandler` to read tiered storage (S3 segments) directly, bypassing RLM read path.
+
+**Why we considered it:**
+- `FetchHandler` already serves diskless reads from object storage — could extend to tiered segments
+- Avoids RLM dependency for reads
+- Potentially simpler than full RLM integration
 
 **Why it fails:**
-- Only solves read path, not expiration
-- Must combine with Alternative A or B
-- Duplicates RLM index handling
+- **Only solves reads**: Expiration (the main RLM value) still needs a solution. Must combine with Alternative A or B, inheriting their problems.
+- **Duplicates index handling**: RLM maintains indexes for tiered segments. `FetchHandler` would need to duplicate this or depend on RLM indexes anyway.
+- **Partial solution**: Doesn't address the core problem (needing KRaft leadership for RLM). Just moves complexity around.
 
 ### Rejected Alternative D: Treat Tiered Data as Read-Only Archival
 
-**Concept:** Freeze tiered portion, use S3 lifecycle policies for expiration.
+**Concept:** Freeze tiered portion as read-only archive, use S3 lifecycle policies for expiration instead of RLM.
+
+**Why we considered it:**
+- S3 lifecycle policies are simple and battle-tested
+- Avoids RLM complexity entirely for expiration
+- "Archival" use case doesn't need sophisticated retention
 
 **Why it fails:**
-- No programmatic retention (can't implement `retention.ms`/`retention.bytes`)
-- Breaks topic deletion cleanup
-- Doesn't address PG scalability for new diskless data
+- **No programmatic retention**: S3 lifecycle can't implement `retention.ms` or `retention.bytes` based on Kafka semantics. Can only do "delete after N days" globally.
+- **Topic deletion broken**: Deleting a Kafka topic should clean up tiered data. S3 lifecycle doesn't know about Kafka topics.
+- **Doesn't solve PG scalability**: The goal is to tier *new* diskless data to reduce PG load. This alternative only addresses old/archived data.
+- **User expectations**: Users expect Kafka retention semantics to work. "Your retention.ms doesn't apply to tiered data" is a poor user experience.
 
 ---
 
@@ -608,5 +925,11 @@ The managed RF design ensures a KRaft-managed partition leader exists for step 4
 
 ## Open Items
 
-- Behavior when `broker.rack` config changes on a broker (rare edge case)
-- Whether to add a tool to "re-rack-aware" a topic (reassign to restore one-per-rack)
+**Resolved in this design:**
+- ~~Transformer fallback behavior~~ → Return full replica set (standard Kafka behavior)
+- ~~ISR storage~~ → Stored in KRaft as all replicas
+- ~~`broker.rack` config changes~~ → Use existing reassignment tooling to fix placement if needed (rare edge case)
+- ~~Re-rack-aware tooling~~ → Use existing `kafka-reassign-partitions.sh` (no new tooling needed)
+
+**Research (Phase 0):**
+- See [Phase 0: Research and Validation](#phase-0-research-and-validation)
