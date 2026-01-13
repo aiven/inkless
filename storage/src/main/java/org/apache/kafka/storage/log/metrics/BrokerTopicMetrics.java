@@ -59,9 +59,19 @@ public final class BrokerTopicMetrics {
     // For backward compatibility, we keep the old package name as metric group name.
     private final KafkaMetricsGroup metricsGroup = new KafkaMetricsGroup("kafka.server", "BrokerTopicMetrics");
     private final Map<String, String> tags;
+    // topicType tags are only used for broker-level "all topics" meters.
+    // They intentionally do NOT depend on any topic name: they represent a broker-wide split of traffic.
+    // We also intentionally avoid adding topicType tags to per-topic metrics to prevent metric cardinality
+    // explosion (classic + diskless variants for every topic would double the meters kept in memory).
+    private final Map<String, String> classicTags = Map.of("topicType", "classic");
+    private final Map<String, String> disklessTags = Map.of("topicType", "diskless");
     private final boolean isAllTopicsStats;
     private final Map<String, MeterWrapper> metricTypeMap = new HashMap<>();
     private final Map<String, GaugeWrapper> metricGaugeTypeMap = new HashMap<>();
+    // Only used for all-topics bytes metrics (topicType=diskless). Classic meters are stored in metricTypeMap.
+    // These are not additional metric names, but mappings to existing bytesIn/Out names + diskless topic type tags.
+    private final MeterWrapper disklessBytesInRate;
+    private final MeterWrapper disklessBytesOutRate;
 
     public BrokerTopicMetrics(boolean remoteStorageEnabled) {
         this(Optional.empty(), remoteStorageEnabled);
@@ -76,8 +86,27 @@ public final class BrokerTopicMetrics {
         this.isAllTopicsStats = name.isEmpty();
 
         metricTypeMap.put(MESSAGE_IN_PER_SEC, new MeterWrapper(MESSAGE_IN_PER_SEC, "messages"));
-        metricTypeMap.put(BYTES_IN_PER_SEC, new MeterWrapper(BYTES_IN_PER_SEC, "bytes"));
-        metricTypeMap.put(BYTES_OUT_PER_SEC, new MeterWrapper(BYTES_OUT_PER_SEC, "bytes"));
+
+        final MeterWrapper classicBytesInRate;
+        final MeterWrapper classicBytesOutRate;
+        if (isAllTopicsStats) {
+            classicBytesInRate = new MeterWrapper(BYTES_IN_PER_SEC, "bytes", classicTags);
+            classicBytesOutRate = new MeterWrapper(BYTES_OUT_PER_SEC, "bytes", classicTags);
+            disklessBytesInRate = new MeterWrapper(BYTES_IN_PER_SEC, "bytes", disklessTags);
+            disklessBytesOutRate = new MeterWrapper(BYTES_OUT_PER_SEC, "bytes", disklessTags);
+
+            // Keep broker-level behavior: eagerly initialize the classic meters.
+            classicBytesInRate.meter();
+            classicBytesOutRate.meter();
+        } else {
+            classicBytesInRate = new MeterWrapper(BYTES_IN_PER_SEC, "bytes", tags);
+            classicBytesOutRate = new MeterWrapper(BYTES_OUT_PER_SEC, "bytes", tags);
+            disklessBytesInRate = null;
+            disklessBytesOutRate = null;
+        }
+        metricTypeMap.put(BYTES_IN_PER_SEC, classicBytesInRate);
+        metricTypeMap.put(BYTES_OUT_PER_SEC, classicBytesOutRate);
+
         metricTypeMap.put(BYTES_REJECTED_PER_SEC, new MeterWrapper(BYTES_REJECTED_PER_SEC, "bytes"));
         metricTypeMap.put(FAILED_PRODUCE_REQUESTS_PER_SEC, new MeterWrapper(FAILED_PRODUCE_REQUESTS_PER_SEC, "requests"));
         metricTypeMap.put(FAILED_FETCH_REQUESTS_PER_SEC, new MeterWrapper(FAILED_FETCH_REQUESTS_PER_SEC, "requests"));
@@ -126,12 +155,24 @@ public final class BrokerTopicMetrics {
     public void closeMetric(String metricName) {
         MeterWrapper mw = metricTypeMap.get(metricName);
         if (mw != null) mw.close();
+        if (isAllTopicsStats) {
+            if (BYTES_IN_PER_SEC.equals(metricName) && disklessBytesInRate != null) {
+                disklessBytesInRate.close();
+            }
+            if (BYTES_OUT_PER_SEC.equals(metricName) && disklessBytesOutRate != null) {
+                disklessBytesOutRate.close();
+            }
+        }
         GaugeWrapper mg = metricGaugeTypeMap.get(metricName);
         if (mg != null) mg.close();
     }
 
     public void close() {
         metricTypeMap.values().forEach(MeterWrapper::close);
+        if (isAllTopicsStats) {
+            if (disklessBytesInRate != null) disklessBytesInRate.close();
+            if (disklessBytesOutRate != null) disklessBytesOutRate.close();
+        }
         metricGaugeTypeMap.values().forEach(GaugeWrapper::close);
     }
 
@@ -176,7 +217,9 @@ public final class BrokerTopicMetrics {
      *   <li><b>Topic-specific stats</b> (when a topic name was specified in constructor):
      *       The {@code isDiskless} parameter is ignored. Returns the same meter regardless
      *       of the parameter value, as topic-specific metrics are only tagged by the topic
-     *       name and do not include a {@code topicType} tag.</li>
+     *       name and do not include a {@code topicType} tag. This is intentional: tagging per-topic
+     *       meters with topicType would double the number of meters we keep in memory (classic + diskless
+     *       variants per topic).</li>
      * </ul>
      *
      * @param isDiskless if true, returns the diskless-tagged meter (for all-topics stats only);
@@ -184,7 +227,11 @@ public final class BrokerTopicMetrics {
      * @return the bytes in rate meter
      */
     public Meter bytesInRate(boolean isDiskless) {
-        return metricTypeMap.get(BYTES_IN_PER_SEC).meter(isDiskless);
+        if (isAllTopicsStats && isDiskless) {
+            return disklessBytesInRate.meter();
+        }
+        // For topic-specific stats, isDiskless is intentionally ignored.
+        return metricTypeMap.get(BYTES_IN_PER_SEC).meter();
     }
 
     /**
@@ -215,7 +262,9 @@ public final class BrokerTopicMetrics {
      *   <li><b>Topic-specific stats</b> (when a topic name was specified in constructor):
      *       The {@code isDiskless} parameter is ignored. Returns the same meter regardless
      *       of the parameter value, as topic-specific metrics are only tagged by the topic
-     *       name and do not include a {@code topicType} tag.</li>
+     *       name and do not include a {@code topicType} tag. This is intentional: tagging per-topic
+     *       meters with topicType would double the number of meters we keep in memory (classic + diskless
+     *       variants per topic).</li>
      * </ul>
      *
      * @param isDiskless if true, returns the diskless-tagged meter (for all-topics stats only);
@@ -223,7 +272,11 @@ public final class BrokerTopicMetrics {
      * @return the bytes out rate meter
      */
     public Meter bytesOutRate(boolean isDiskless) {
-        return metricTypeMap.get(BYTES_OUT_PER_SEC).meter(isDiskless);
+        if (isAllTopicsStats && isDiskless) {
+            return disklessBytesOutRate.meter();
+        }
+        // For topic-specific stats, isDiskless is intentionally ignored.
+        return metricTypeMap.get(BYTES_OUT_PER_SEC).meter();
     }
 
     public Meter bytesRejectedRate() {
@@ -423,16 +476,13 @@ public final class BrokerTopicMetrics {
         private final String eventType;
         private final Map<String, String> metricTags;
         private volatile Meter lazyMeter;
-        private final ConcurrentHashMap<String, Meter> lazyMetersWithTopicType = new ConcurrentHashMap<>();
         private final Lock meterLock = new ReentrantLock();
 
         public MeterWrapper(String metricType, String eventType) {
             this(metricType, eventType, BrokerTopicMetrics.this.tags);
         }
 
-        public MeterWrapper(String metricType,
-                            String eventType,
-                            Map<String, String> metricTags) {
+        public MeterWrapper(String metricType, String eventType, Map<String, String> metricTags) {
             this.metricType = metricType;
             this.eventType = eventType;
             this.metricTags = new HashMap<>(metricTags);
@@ -442,52 +492,20 @@ public final class BrokerTopicMetrics {
         }
 
         public Meter meter() {
-            return meter(false);
-        }
-
-        public Meter meter(boolean isDiskless) {
-            // Only add topicType tag for allTopicsStats (when no topic name was specified)
-            if (isAllTopicsStats) {
-                String topicType = isDiskless ? "diskless" : "classic";
-                // Fast path: check if meter already exists (lock-free read)
-                Meter meter = lazyMetersWithTopicType.get(topicType);
-                if (meter != null) {
-                    return meter;
-                }
-
-                // Slow path: create meter if not exists, protected by lock to prevent
-                // race with close() and avoid meter leaks
+            Meter meter = lazyMeter;
+            if (meter == null) {
                 meterLock.lock();
                 try {
-                    // Use computeIfAbsent for atomic insert, but we're already under lock
-                    // so this is safe from the close() race
-                    return lazyMetersWithTopicType.computeIfAbsent(topicType, tt -> {
-                        Map<String, String> tagsWithTopicType = new HashMap<>(metricTags);
-                        tagsWithTopicType.put("topicType", tt);
-                        return metricsGroup.newMeter(metricType, eventType, TimeUnit.SECONDS, tagsWithTopicType);
-                    });
+                    meter = lazyMeter;
+                    if (meter == null) {
+                        meter = metricsGroup.newMeter(metricType, eventType, TimeUnit.SECONDS, metricTags);
+                        lazyMeter = meter;
+                    }
                 } finally {
                     meterLock.unlock();
                 }
-            } else {
-                // For topic-specific metrics, use the meter without topicType tag.
-                // The isDiskless parameter is intentionally ignored here as documented
-                // in the public bytesInRate(boolean) and bytesOutRate(boolean) methods.
-                Meter meter = lazyMeter;
-                if (meter == null) {
-                    meterLock.lock();
-                    try {
-                        meter = lazyMeter;
-                        if (meter == null) {
-                            meter = metricsGroup.newMeter(metricType, eventType, TimeUnit.SECONDS, metricTags);
-                            lazyMeter = meter;
-                        }
-                    } finally {
-                        meterLock.unlock();
-                    }
-                }
-                return meter;
             }
+            return meter;
         }
 
         public void close() {
@@ -497,13 +515,6 @@ public final class BrokerTopicMetrics {
                     metricsGroup.removeMetric(metricType, metricTags);
                     lazyMeter = null;
                 }
-                // Close all topic-type-specific meters
-                lazyMetersWithTopicType.forEach((topicType, meter) -> {
-                    Map<String, String> tagsWithTopicType = new HashMap<>(metricTags);
-                    tagsWithTopicType.put("topicType", topicType);
-                    metricsGroup.removeMetric(metricType, tagsWithTopicType);
-                });
-                lazyMetersWithTopicType.clear();
             } finally {
                 meterLock.unlock();
             }

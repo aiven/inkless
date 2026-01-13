@@ -34,8 +34,8 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
@@ -64,7 +64,10 @@ public class BrokerTopicMetricsTest {
 
     @Test
     public void testAllTopicsStatsHasSeparateMetersForClassicAndDiskless() {
-        // All-topics stats should have different meters for classic vs diskless (different topicType tags)
+        // All-topics stats should have different meters for classic vs diskless (different topicType tags).
+        // This is a broker-level split of traffic (not tied to any topic name).
+        int initialMetricNameCount = allTopicsStats.metricMapKeySet().size();
+
         Meter classicBytesIn = allTopicsStats.bytesInRate(false);
         Meter disklessBytesIn = allTopicsStats.bytesInRate(true);
 
@@ -80,12 +83,18 @@ public class BrokerTopicMetricsTest {
         assertNotNull(disklessBytesOut, "Diskless bytesOutRate should not be null");
         assertNotEquals(classicBytesOut, disklessBytesOut, 
             "All-topics stats should have different meters for classic vs diskless (different topicType tags)");
+
+        // Even though we have two meters for bytes in/out (classic + diskless), we do not introduce additional
+        // metric NAMES into the registry/map (avoids key-space explosion).
+        assertEquals(initialMetricNameCount, allTopicsStats.metricMapKeySet().size(),
+            "Creating diskless all-topics meters should not add extra metric names");
     }
 
     @Test
     public void testTopicSpecificStatsIgnoresIsDisklessFlag() {
         // Topic-specific stats should return the same meter regardless of isDiskless flag
-        // (only tagged by topic name, no topicType tag)
+        // (only tagged by topic name, no topicType tag). This is intentional to avoid doubling the
+        // amount of per-topic meters kept in memory (classic + diskless variants per topic).
         Meter bytesIn1 = topicSpecificStats.bytesInRate(false);
         Meter bytesIn2 = topicSpecificStats.bytesInRate(true);
         Meter bytesIn3 = topicSpecificStats.bytesInRate();
