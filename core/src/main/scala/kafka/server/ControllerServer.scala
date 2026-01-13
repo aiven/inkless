@@ -43,12 +43,12 @@ import org.apache.kafka.raft.QuorumConfig
 import org.apache.kafka.security.CredentialProvider
 import org.apache.kafka.server.{DelegationTokenManager, ProcessRole, SimpleApiVersionManager}
 import org.apache.kafka.server.authorizer.Authorizer
-import org.apache.kafka.server.config.ServerLogConfigs.{ALTER_CONFIG_POLICY_CLASS_NAME_CONFIG, CREATE_TOPIC_POLICY_CLASS_NAME_CONFIG}
+import org.apache.kafka.server.config.ServerLogConfigs.{ALTER_CONFIG_POLICY_CLASS_NAME_CONFIG, ALTER_CONFIG_V2_POLICY_CLASS_NAME_CONFIG, CREATE_TOPIC_POLICY_CLASS_NAME_CONFIG}
 import org.apache.kafka.server.common.{ApiMessageAndVersion, KRaftVersion, NodeToControllerChannelManager}
 import org.apache.kafka.server.config.{ConfigType, DelegationTokenManagerConfigs}
 import org.apache.kafka.server.metrics.{KafkaMetricsGroup, KafkaYammerMetrics, LinuxIoMetricsCollector}
 import org.apache.kafka.server.network.{EndpointReadyFutures, KafkaAuthorizerServerInfo}
-import org.apache.kafka.server.policy.{AlterConfigPolicy, CreateTopicPolicy}
+import org.apache.kafka.server.policy.{AlterConfigPolicy, AlterConfigV2Policy, CreateTopicPolicy}
 import org.apache.kafka.server.util.{Deadline, FutureUtils}
 
 import java.util
@@ -90,6 +90,7 @@ class ControllerServer(
   val socketServerFirstBoundPortFuture = new CompletableFuture[Integer]()
   var createTopicPolicy: Option[CreateTopicPolicy] = None
   var alterConfigPolicy: Option[AlterConfigPolicy] = None
+  var alterConfigV2Policy: Option[AlterConfigV2Policy] = None
   @volatile var quorumControllerMetrics: QuorumControllerMetrics = _
   var controller: Controller = _
   var quotaManagers: QuotaManagers = _
@@ -194,6 +195,8 @@ class ControllerServer(
 
       createTopicPolicy = Option(config.
         getConfiguredInstance(CREATE_TOPIC_POLICY_CLASS_NAME_CONFIG, classOf[CreateTopicPolicy]))
+      alterConfigV2Policy = Option(config.
+        getConfiguredInstance(ALTER_CONFIG_V2_POLICY_CLASS_NAME_CONFIG, classOf[AlterConfigV2Policy]))
       alterConfigPolicy = Option(config.
         getConfiguredInstance(ALTER_CONFIG_POLICY_CLASS_NAME_CONFIG, classOf[AlterConfigPolicy]))
 
@@ -243,6 +246,7 @@ class ControllerServer(
           setMetrics(quorumControllerMetrics).
           setCreateTopicPolicy(createTopicPolicy.toJava).
           setAlterConfigPolicy(alterConfigPolicy.toJava).
+          setAlterConfigV2Policy(alterConfigV2Policy.toJava).
           setConfigurationValidator(new ControllerConfigurationValidator(sharedServer.brokerConfig)).
           setStaticConfig(config.originals).
           setBootstrapMetadata(bootstrapMetadata).
@@ -478,6 +482,7 @@ class ControllerServer(
       authorizerPlugin.foreach(Utils.closeQuietly(_, "authorizer plugin"))
       createTopicPolicy.foreach(policy => Utils.closeQuietly(policy, "create topic policy"))
       alterConfigPolicy.foreach(policy => Utils.closeQuietly(policy, "alter config policy"))
+      alterConfigV2Policy.foreach(policy => Utils.closeQuietly(policy, "alter config v2 policy"))
       socketServerFirstBoundPortFuture.completeExceptionally(new RuntimeException("shutting down"))
       CoreUtils.swallow(config.dynamicConfig.clear(), this)
       sharedServer.stopForController()

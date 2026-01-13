@@ -120,6 +120,7 @@ import org.apache.kafka.server.common.OffsetAndEpoch;
 import org.apache.kafka.server.fault.FaultHandler;
 import org.apache.kafka.server.fault.FaultHandlerException;
 import org.apache.kafka.server.policy.AlterConfigPolicy;
+import org.apache.kafka.server.policy.AlterConfigV2Policy;
 import org.apache.kafka.server.policy.CreateTopicPolicy;
 import org.apache.kafka.snapshot.SnapshotReader;
 import org.apache.kafka.snapshot.Snapshots;
@@ -208,6 +209,7 @@ public final class QuorumController implements Controller {
         private QuorumControllerMetrics controllerMetrics = null;
         private Optional<CreateTopicPolicy> createTopicPolicy = Optional.empty();
         private Optional<AlterConfigPolicy> alterConfigPolicy = Optional.empty();
+        private Optional<AlterConfigV2Policy> alterConfigV2Policy = Optional.empty();
         private ConfigurationValidator configurationValidator = ConfigurationValidator.NO_OP;
         private Map<String, Object> staticConfig = Map.of();
         private BootstrapMetadata bootstrapMetadata = null;
@@ -353,6 +355,11 @@ public final class QuorumController implements Controller {
             return this;
         }
 
+        public Builder setAlterConfigV2Policy(Optional<AlterConfigV2Policy> alterConfigV2Policy) {
+            this.alterConfigV2Policy = alterConfigV2Policy;
+            return this;
+        }
+
         public Builder setConfigurationValidator(ConfigurationValidator configurationValidator) {
             this.configurationValidator = configurationValidator;
             return this;
@@ -443,6 +450,7 @@ public final class QuorumController implements Controller {
                     controllerMetrics,
                     createTopicPolicy,
                     alterConfigPolicy,
+                    alterConfigV2Policy,
                     configurationValidator,
                     staticConfig,
                     bootstrapMetadata,
@@ -1489,6 +1497,7 @@ public final class QuorumController implements Controller {
         QuorumControllerMetrics controllerMetrics,
         Optional<CreateTopicPolicy> createTopicPolicy,
         Optional<AlterConfigPolicy> alterConfigPolicy,
+        Optional<AlterConfigV2Policy> alterConfigV2Policy,
         ConfigurationValidator configurationValidator,
         Map<String, Object> staticConfig,
         BootstrapMetadata bootstrapMetadata,
@@ -1548,6 +1557,7 @@ public final class QuorumController implements Controller {
             setKafkaConfigSchema(configSchema).
             setExistenceChecker(resourceExists).
             setAlterConfigPolicy(alterConfigPolicy).
+            setAlterConfigV2Policy(alterConfigV2Policy).
             setValidator(configurationValidator).
             setStaticConfig(staticConfig).
             setNodeId(nodeId).

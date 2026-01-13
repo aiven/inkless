@@ -37,6 +37,7 @@ import org.apache.kafka.server.common.EligibleLeaderReplicasVersion;
 import org.apache.kafka.server.mutable.BoundedList;
 import org.apache.kafka.server.policy.AlterConfigPolicy;
 import org.apache.kafka.server.policy.AlterConfigPolicy.RequestMetadata;
+import org.apache.kafka.server.policy.AlterConfigV2Policy;
 import org.apache.kafka.timeline.SnapshotRegistry;
 import org.apache.kafka.timeline.TimelineHashMap;
 import org.apache.kafka.timeline.TimelineHashSet;
@@ -71,6 +72,7 @@ public class ConfigurationControlManager {
     private final KafkaConfigSchema configSchema;
     private final Consumer<ConfigResource> existenceChecker;
     private final Optional<AlterConfigPolicy> alterConfigPolicy;
+    private final Optional<AlterConfigV2Policy> alterConfigV2Policy;
     private final ConfigurationValidator validator;
     private final TimelineHashMap<ConfigResource, TimelineHashMap<String, String>> configData;
     private final TimelineHashSet<Integer> brokersWithConfigs;
@@ -84,6 +86,7 @@ public class ConfigurationControlManager {
         private KafkaConfigSchema configSchema = null;
         private Consumer<ConfigResource> existenceChecker = __ -> { };
         private Optional<AlterConfigPolicy> alterConfigPolicy = Optional.empty();
+        private Optional<AlterConfigV2Policy> alterConfigV2Policy = Optional.empty();
         private ConfigurationValidator validator = ConfigurationValidator.NO_OP;
         private Map<String, Object> staticConfig = Map.of();
         private int nodeId = 0;
@@ -111,6 +114,11 @@ public class ConfigurationControlManager {
 
         Builder setAlterConfigPolicy(Optional<AlterConfigPolicy> alterConfigPolicy) {
             this.alterConfigPolicy = alterConfigPolicy;
+            return this;
+        }
+
+        Builder setAlterConfigV2Policy(Optional<AlterConfigV2Policy> alterConfigV2Policy) {
+            this.alterConfigV2Policy = alterConfigV2Policy;
             return this;
         }
 
@@ -149,6 +157,7 @@ public class ConfigurationControlManager {
                 configSchema,
                 existenceChecker,
                 alterConfigPolicy,
+                alterConfigV2Policy,
                 validator,
                 staticConfig,
                 nodeId,
@@ -161,6 +170,7 @@ public class ConfigurationControlManager {
             KafkaConfigSchema configSchema,
             Consumer<ConfigResource> existenceChecker,
             Optional<AlterConfigPolicy> alterConfigPolicy,
+            Optional<AlterConfigV2Policy> alterConfigV2Policy,
             ConfigurationValidator validator,
             Map<String, Object> staticConfig,
             int nodeId,
@@ -171,6 +181,7 @@ public class ConfigurationControlManager {
         this.configSchema = configSchema;
         this.existenceChecker = existenceChecker;
         this.alterConfigPolicy = alterConfigPolicy;
+        this.alterConfigV2Policy = alterConfigV2Policy;
         this.validator = validator;
         this.configData = new TimelineHashMap<>(snapshotRegistry, 0);
         this.brokersWithConfigs = new TimelineHashSet<>(snapshotRegistry, 0);
@@ -369,7 +380,12 @@ public class ConfigurationControlManager {
             if (!newlyCreatedResource) {
                 existenceChecker.accept(configResource);
             }
-            if (alterConfigPolicy.isPresent()) {
+            if (alterConfigV2Policy.isPresent()) {
+                alterConfigV2Policy.get().validate(new AlterConfigV2Policy.RequestMetadata(
+                    configResource,
+                    Map.copyOf(existingConfigsMap),
+                    Map.copyOf(allConfigs)));
+            } else if (alterConfigPolicy.isPresent()) {
                 alterConfigPolicy.get().validate(new RequestMetadata(configResource, alteredConfigsForAlterConfigPolicyCheck));
             }
         } catch (ConfigException e) {
