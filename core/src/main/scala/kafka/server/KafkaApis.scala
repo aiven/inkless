@@ -679,11 +679,8 @@ class KafkaApis(val requestChannel: RequestChannel,
             // If the topic name was not known, we will have no bytes out.
             if (topicResponse.topic != null) {
               val tp = new TopicIdPartition(topicResponse.topicId, new TopicPartition(topicResponse.topic, data.partitionIndex))
-              if (inklessSharedState.exists(_.metadata().isDisklessTopic(tp.topic))) {
-                brokerTopicStats.updateBytesOutForDisklessTopic(tp.topic, fetchRequest.isFromFollower, reassigningPartitions.contains(tp), FetchResponse.recordsSize(data))
-              } else {
-                brokerTopicStats.updateBytesOut(tp.topic, fetchRequest.isFromFollower, reassigningPartitions.contains(tp), FetchResponse.recordsSize(data))
-              }
+              val isDiskless = inklessSharedState.exists(_.metadata().isDisklessTopic(tp.topic))
+              brokerTopicStats.updateBytesOut(tp.topic, fetchRequest.isFromFollower, reassigningPartitions.contains(tp), FetchResponse.recordsSize(data), isDiskless)
             }
           }
         }
@@ -4078,11 +4075,8 @@ class KafkaApis(val requestChannel: RequestChannel,
           // If the topic name was not known, we will have no bytes out.
           if (topicResponse.topicId != null) {
             val tp = new TopicIdPartition(topicResponse.topicId, new TopicPartition(topicIdNames.get(topicResponse.topicId), data.partitionIndex))
-            if (inklessSharedState.exists(_.metadata().isDisklessTopic(tp.topic))) {
-              brokerTopicStats.updateBytesOutForDisklessTopic(tp.topic, false, false, ShareFetchResponse.recordsSize(data))
-            } else {
-              brokerTopicStats.updateBytesOut(tp.topic, false, false, ShareFetchResponse.recordsSize(data))
-            }
+            val isDiskless = inklessSharedState.exists(_.metadata().isDisklessTopic(tp.topic))
+            brokerTopicStats.updateBytesOut(tp.topic, false, false, ShareFetchResponse.recordsSize(data), isDiskless)
           }
         }
       }
