@@ -14,8 +14,13 @@
    - [No Replica Fetcher for Diskless Topics](#no-replica-fetcher-for-diskless-topics)
 6. [Metadata Transformation](#metadata-transformation)
 7. [Observability](#observability)
-8. [Implementation Path](#implementation-path)
+8. [Implementation Path](#implementation-path) *(9 weeks / 1 eng, 5-6 weeks / 2 eng)*
    - [Phase 0: Research and Validation](#phase-0-research-and-validation)
+   - [Phase 1: Topic Creation with Rack-Aware Placement](#phase-1-topic-creation-with-rack-aware-placement)
+   - [Phase 2: Transformer Changes](#phase-2-transformer-changes)
+   - [Phase 3: Add Partitions Support](#phase-3-add-partitions-support)
+   - [Phase 4: Offline Replica Auto-Reassignment](#phase-4-offline-replica-auto-reassignment)
+   - [Phase 5: Observability](#phase-5-observability)
    - [Testing Strategy](#testing-strategy)
    - [Future Work: RLM Integration](#future-work-rlm-integration)
 9. [Rejected Alternatives](#rejected-alternatives)
@@ -30,7 +35,7 @@ Enable **rack-aware, stable KRaft-managed replicas** for diskless topics:
 
 - **KRaft-managed replicas**: Diskless topics will have actual KRaft-managed replicas, not the current "faked" RF=1 metadata. These replicas are tracked by the controller, participate in leader election, and appear in standard Kafka tooling. The key difference from classic replicas: **they don't replicate data** (object storage handles durability), but they do provide partition assignments for RLM integration and operational consistency. See [No Replica Fetcher for Diskless Topics](#no-replica-fetcher-for-diskless-topics) for implementation details.
 - **Rack-aware at creation**: Topics are created with one replica per rack (RF = rack count)
-- **Standard operations after creation**: Once created, diskless topics use standard Kafka replica management — no custom reconciliation or drift handling
+- **Standard operations after creation**: Once created, diskless topics use standard Kafka replica management. The only automatic action is **offline replica reassignment** to preserve availability (see [Existing Diskless Topics](#existing-diskless-topics)).
 - **Controller-managed RF**: Users don't specify RF at creation; the controller computes it from rack topology. Requests with `replicationFactor=-1` or `replicationFactor=1` are accepted for compatibility (both result in RF=rack_count).
 - **Leader-agnostic produce and consume**: Keep the diskless model where any replica can accept writes and serve reads, while still having a KRaft leader for controller duties (e.g., future RLM coordination)
 
@@ -116,42 +121,57 @@ Legacy topic in KRaft:
 
 ```
 IF diskless.enable=true 
-   AND RF=1 
-   AND replica broker ID is NOT in active cluster
-THEN auto-migrate to RF=rack_count
+   AND ANY replica broker is offline
+THEN:
+   IF broker ID is not registered in cluster metadata:
+      # Legacy topic from old cluster
+      Reassign ALL replicas, expand to RF=rack_count
+   ELSE:
+      # Broker exists but offline (failure/maintenance)
+      Reassign ONLY offline replica(s), preserve current RF
 ```
 
-#### Why This Is Safe
+**Key distinction:**
+- **Not registered:** Broker ID was never seen by this cluster (e.g., old cluster had brokers 1-6, new cluster has 101-106). This is a legacy topic that should be modernized.
+- **Registered but offline:** Broker ID exists in cluster metadata but is currently unavailable. Operator chose this RF intentionally, so preserve it.
 
-The detection has **no false positives** given the deployment model:
+#### Why This Is Safe for Diskless
 
-| Scenario | RF | Broker ID | Auto-migrate? |
-|----------|-----|-----------|---------------|
-| Legacy diskless (old cluster) | 1 | Orphaned (old broker ID) | ✅ Yes |
-| Already migrated diskless | rack_count | Valid | ❌ No (RF > 1) |
-| Operator-managed diskless | 1 | Valid (current broker) | ❌ No (valid ID) |
-| Classic topic | any | Valid | ❌ No (not diskless) |
+Auto-reassigning offline replicas is safe for diskless topics because:
 
-**Key insight:** The deployment model (new VMs = new broker IDs) ensures legacy topics have orphaned broker IDs.
+| Property | Classic Topics | Diskless Topics |
+|----------|----------------|-----------------|
+| Data location | Local broker disk | Object storage (shared) |
+| Reassignment cost | Data copy (slow) | Metadata only (instant) |
+| Data loss risk | Yes (if out of sync) | No (all brokers see same data) |
+| ISR meaning | Replication lag tracking | Meaningless (all always in sync) |
+
+**This preserves "always available" semantics:**
+- Current diskless: Transformer hashes to any alive broker → always available
+- Managed RF diskless: Controller reassigns offline replicas to online brokers → always available
+
+| Scenario | Broker Status | RF Change | Action |
+|----------|---------------|-----------|--------|
+| Legacy topic, cluster migration | Not registered | Expand to rack_count | Modernize to rack-aware |
+| RF=3, one broker failed | Registered, offline | Keep RF=3 | Replace offline replica |
+| RF=1, broker maintenance | Registered, offline | Keep RF=1 | Move to online broker |
+| Classic topic | Any | N/A | No action (not diskless) |
 
 #### Other Deployment Models (Broker IDs Overlap)
 
-If the new cluster reuses broker IDs from the old cluster (e.g., in-place upgrade on same VMs), automatic migration won't trigger because the broker ID is still valid.
+If the new cluster reuses broker IDs from the old cluster (e.g., in-place upgrade on same VMs):
 
-**In this case:**
-- Topics continue to work (RF=1 is functional, just not rack-aware)
-- Operator uses standard replica placement tools to migrate manually
+**If old brokers are offline:** Auto-reassignment triggers (offline replica detection)
+**If old brokers are online:** Topics work normally with existing placement
+
+**For RF=1 topics that should be expanded to rack-aware:**
 - Metric `kafka.controller.diskless.rf1_topics_total` tracks diskless topics with RF=1
-- Log warning: `WARN Diskless topic 'foo' has RF=1; consider migrating to rack-aware placement`
+- Log warning: `WARN Diskless topic 'foo' has RF=1; consider expanding to rack-aware placement`
+- Operator can manually expand using `kafka-reassign-partitions.sh`
 
-**Manual migration steps:**
+**Manual expansion to rack-aware:**
 
-1. Generate reassignment plan:
 ```bash
-# List diskless topics with RF=1
-kafka-topics.sh --bootstrap-server localhost:9092 --describe \
-  | grep -B1 "ReplicationFactor: 1" | grep "diskless.enable=true"
-
 # Generate reassignment JSON (one replica per rack)
 cat > reassignment.json << 'EOF'
 {
@@ -161,32 +181,42 @@ cat > reassignment.json << 'EOF'
   ]
 }
 EOF
-```
 
-2. Execute reassignment:
-```bash
+# Execute (instant for diskless - metadata only)
 kafka-reassign-partitions.sh --bootstrap-server localhost:9092 \
   --reassignment-json-file reassignment.json \
   --execute
 ```
 
-3. Verify:
-```bash
-kafka-reassign-partitions.sh --bootstrap-server localhost:9092 \
-  --reassignment-json-file reassignment.json \
-  --verify
-```
+#### Reassignment Process
 
-**Note:** For diskless topics, reassignment is metadata-only (no data movement), so it completes instantly.
+When controller detects a diskless partition with offline replica(s):
 
-#### Migration Process
+**Case 1: Broker ID does not exist in cluster (e.g., cluster migration)**
 
-When controller detects an orphaned diskless topic:
+This indicates the partition was created on an old cluster with different broker IDs. Expand to rack-aware placement.
 
-1. Log: `INFO Detected orphaned diskless topic 'foo' (RF=1, broker 3 not in cluster)`
-2. Compute target replica assignment (one broker per rack)
+1. Log: `INFO Detected diskless partition 'foo-0' with non-existent broker (broker 3 not registered)`
+2. Compute target: one broker per rack (RF=rack_count)
 3. Issue `AlterPartitionReassignments` to set new replicas
-4. Log: `INFO Migrated diskless topic 'foo' to RF=3, replicas=[1,3,5]`
+4. Log: `INFO Reassigned diskless partition 'foo-0' to RF=3, replicas=[101,103,105]`
+
+**Case 2: Broker ID exists but is offline (e.g., broker failure, maintenance)**
+
+This indicates a temporary or permanent broker outage. Preserve current RF, just replace offline replica.
+
+1. Log: `INFO Detected diskless partition 'foo-0' with offline replica (broker 101)`
+2. Find online broker in same rack as offline broker (preserve rack-awareness)
+3. If no broker in same rack: pick any online broker (preserve RF, log warning about rack-awareness)
+4. Issue `AlterPartitionReassignments` to replace offline replica
+5. Log: `INFO Reassigned diskless partition 'foo-0' replica: broker 101 → 102`
+
+**Summary:**
+
+| Condition | RF Change | Rationale |
+|-----------|-----------|-----------|
+| Broker not registered in cluster | Expand to rack_count | Legacy topic from old cluster, modernize |
+| Broker registered but offline | Keep current RF | Operator's RF choice respected |
 
 **This is metadata-only** — no data movement required (data is in object storage).
 
@@ -210,23 +240,23 @@ After auto-migration:
                         One broker per rack (A, B, C)
 ```
 
-#### When Migration Runs
+#### When Auto-Reassignment Runs
 
 - **Trigger:** Controller startup, metadata change, or periodic scan
 - **Pacing:** Batched to avoid overwhelming controller (configurable)
-- **Idempotent:** Re-running on already-migrated topics is a no-op (RF > 1)
+- **Idempotent:** Re-running when no offline replicas exist is a no-op
 
 #### Observability
 
-**Auto-migration:**
-- Log: `INFO Detected orphaned diskless topic 'foo' (RF=1, broker 3 not in cluster)`
-- Log: `INFO Migrated diskless topic 'foo' to RF=3`
-- Metric: `kafka.controller.diskless.topics_migrated_total` (counter)
-- Metric: `kafka.controller.diskless.orphaned_topics_total` (gauge) — pending migration
+**Auto-reassignment of offline replicas:**
+- Log: `INFO Detected diskless partition 'foo-0' with offline replica (broker 101)`
+- Log: `INFO Reassigned diskless partition 'foo-0' replica: broker 101 → 102`
+- Metric: `kafka.controller.diskless.replicas_reassigned_total` (counter)
+- Metric: `kafka.controller.diskless.offline_replicas_total` (gauge) — pending reassignment
 
-**RF=1 with valid broker (needs manual migration):**
-- Log: `WARN Diskless topic 'foo' has RF=1; consider migrating to rack-aware placement`
-- Metric: `kafka.controller.diskless.rf1_topics_total` (gauge) — topics that need manual migration
+**RF=1 topics (informational):**
+- Log: `WARN Diskless topic 'foo' has RF=1; consider expanding to rack-aware placement`
+- Metric: `kafka.controller.diskless.rf1_topics_total` (gauge) — topics with RF=1
 
 #### Rollback
 
@@ -334,9 +364,10 @@ After topic creation, diskless topics behave like classic Kafka topics for all o
 
 **Broker Failure:**
 - Replicas on failed broker become offline
-- Partition becomes under-replicated (reported in metrics)
+- Controller detects offline replica and **auto-reassigns** to online broker (preserving RF and rack-awareness when possible)
 - Leader fails over if leader was on failed broker
-- When broker returns, replica immediately rejoins ISR (no catch-up needed)
+- Partition remains available (unlike classic topics which would be under-replicated)
+- If original broker returns later, no automatic action — new assignment is kept
 
 **Broker Shutdown (Controlled):**
 - Standard controlled shutdown
@@ -385,11 +416,12 @@ If an operator reassigns replicas such that rack-awareness is broken (e.g., 2 re
 - New topics will include the new rack
 
 **Rack removed (all brokers gone):**
-- Partitions with replicas on that rack become under-replicated
-- Standard Kafka under-replication handling
-- Operator reassigns to remove references to gone rack
+- Replicas on that rack become offline
+- Controller auto-reassigns to online brokers in other racks (preserving RF)
+- Rack-awareness may be temporarily broken (logged as warning)
+- Operator can manually rebalance to restore rack-awareness if desired
 
-**Note:** These are edge cases that rarely happen in practice. The design prioritizes simplicity over automatic handling of rare topology changes.
+**Note:** These are edge cases that rarely happen in practice. Auto-reassignment ensures availability; rack-awareness restoration is optional.
 
 ---
 
@@ -540,7 +572,7 @@ The managed RF design **does not change** this behavior — it only changes how 
 
 #### Research Needed
 
-Before implementation, verify:
+These items are covered in [Phase 0: Research and Validation](#phase-0-research-and-validation):
 1. Leader election works correctly without broker `Partition` objects (test with existing diskless topics)
 2. ISR updates in KRaft don't require broker-side `Partition` state
 3. `DescribeTopics` / `ListOffsets` work correctly for diskless topics with RF > 1
@@ -571,14 +603,35 @@ Before implementation, verify:
 - Filtered `replicaNodes` / `isrNodes` for diskless partitions
 
 **Filtering logic:**
-- If partition has replica in `clientAZ`: return only that local replica as leader/replicas/ISR
-- If no replica in `clientAZ`: return full replica set (standard Kafka behavior — client talks to leader)
+1. Check if KRaft-assigned replicas exist in the cluster (are alive)
+2. If replicas exist:
+   - If partition has replica in `clientAZ`: return only that local replica as leader/replicas/ISR
+   - If no replica in `clientAZ`: return full replica set (standard Kafka behavior — client talks to leader)
+3. If replicas are orphaned (none exist in cluster): **fall back to legacy hash-based selection**
 
-**Note:** This is consistent with current diskless behavior. Today, the transformer returns one replica based on hash as a "fake" leader. With managed RF, we have one real replica per AZ and return the local one. The cross-AZ fallback (returning full replica set) handles edge cases like rack removal or misconfigured client AZ.
+**Why the orphaned fallback is needed:**
+
+During cluster migration, there's a brief window between:
+1. New cluster starts with restored KRaft metadata (contains old broker IDs)
+2. Controller completes auto-migration to new broker IDs
+
+In this window, legacy topics have `Replicas=[3]` where broker 3 no longer exists. Without the fallback:
+- New transformer would return empty/invalid metadata
+- Partition would be effectively offline for clients
+
+The fallback ensures partitions remain available during this migration window (typically seconds to minutes). Once auto-migration completes, the fallback is no longer triggered.
+
+**Note:** This is consistent with current diskless behavior. Today, the transformer returns one replica based on hash as a "fake" leader. With managed RF, we have one real replica per AZ and return the local one. The orphaned fallback preserves availability only during the migration window.
 
 **Detection:**
 - New binary always uses KRaft-placement-based projection for diskless topics
 - Check `diskless.enable=true` topic config to identify diskless topics
+
+### Unclean Leader Election
+
+For diskless topics, `unclean.leader.election.enable=true` can be safely enabled — there is no data loss risk since all data is in object storage.
+
+However, **auto-reassignment of offline replicas** (not unclean election) is our primary availability mechanism. See [Rejected Alternative E: Unclean Leader Election for Availability](#rejected-alternative-e-unclean-leader-election-for-availability) for the full analysis.
 
 ---
 
@@ -591,9 +644,9 @@ Before implementation, verify:
 - `rack_aware{topic,partition}` - 1 if one-per-rack, 0 if not
 - `rack_aware_partitions_total{topic}` - Count of rack-aware partitions
 - `non_rack_aware_partitions_total{topic}` - Count of non-rack-aware partitions
-- `rf1_topics_total` - Count of diskless topics with RF=1 (need manual migration)
-- `topics_migrated_total` - Count of topics auto-migrated from RF=1
-- `orphaned_topics_total` - Count of topics pending auto-migration
+- `rf1_topics_total` - Count of diskless topics with RF=1
+- `replicas_reassigned_total` - Count of replicas auto-reassigned due to offline broker
+- `offline_replicas_total` - Count of replicas pending reassignment
 
 **Standard Kafka metrics (already exist):**
 - `kafka.server:type=ReplicaManager,name=UnderReplicatedPartitions`
@@ -628,6 +681,8 @@ This warning is logged:
 
 ## Implementation Path
 
+**Total Estimate: 9 weeks with 1 engineer, or 5-6 weeks with 2 engineers**
+
 ### Phase 0: Research and Validation
 
 Verify assumptions before implementation:
@@ -651,7 +706,8 @@ Verify assumptions before implementation:
 
 1. Update `InklessTopicMetadataTransformer` to read KRaft placement
 2. Implement AZ filtering logic
-3. Remove synthetic hashing calculation
+3. **Add orphaned replica fallback** — if KRaft replicas don't exist, fall back to legacy hash-based selection
+4. Remove synthetic hashing calculation (but keep as fallback path)
 
 **Estimate:** 2 weeks
 
@@ -662,28 +718,38 @@ Verify assumptions before implementation:
 
 **Estimate:** 1 week
 
-### Phase 4: Existing Topics Migration
+### Phase 4: Offline Replica Auto-Reassignment
 
-1. Implement orphaned replica detection (RF=1 with non-existent broker ID)
-2. Add auto-migration logic in controller
+1. Implement offline replica detection (any diskless partition with offline broker)
+2. Add auto-reassignment logic in controller:
+   - Broker ID not registered in cluster → expand to RF=rack_count (legacy topic modernization)
+   - Broker ID registered but offline → keep current RF, replace offline replica (same rack if possible)
 3. Add pacing controls (batch size, interval)
-4. Add metrics: `topics_migrated_total`, `orphaned_topics_total`, `rf1_topics_total`
+4. Add metrics: `replicas_reassigned_total`, `offline_replicas_total`, `rf1_topics_total`
 
-**Estimate:** 1 week
+**Estimate:** 2 weeks (increased due to broader scope)
 
 ### Phase 5: Observability
 
 1. Add `rack_aware`, `rack_aware_partitions_total`, `non_rack_aware_partitions_total` metrics
-2. Add warning logs for non-rack-aware placement
+2. Add warning logs for non-rack-aware placement and RF=1 topics
 3. Documentation
 
 **Estimate:** 1 week
 
-### Total Estimate
+### Summary
 
-**8 weeks with 1 engineer, or 5 weeks with 2 engineers**
+| Phase | Scope | Estimate |
+|-------|-------|----------|
+| 0 | Research and Validation | 1 week |
+| 1 | Topic Creation with Rack-Aware Placement | 2 weeks |
+| 2 | Transformer Changes | 2 weeks |
+| 3 | Add Partitions Support | 1 week |
+| 4 | Offline Replica Auto-Reassignment | 2 weeks |
+| 5 | Observability | 1 week |
+| **Total** | | **9 weeks (1 eng) / 5-6 weeks (2 eng)** |
 
-This is significantly simpler than the original design which included reconciliation loops and drift handling.
+This includes the offline replica auto-reassignment which preserves "always available" semantics.
 
 ### Testing Strategy
 
@@ -698,6 +764,9 @@ This is significantly simpler than the original design which included reconcilia
 - Existing topics with orphaned replicas are auto-migrated
 - Reassignment works and logs warnings for non-rack-aware placement
 - No replica fetcher threads started for diskless topics with RF > 1
+- **Orphaned replica fallback**: Transformer returns valid broker when KRaft replicas don't exist
+- **Offline replica auto-reassignment**: Broker goes offline → replica reassigned to online broker
+- **Legacy topic modernization**: Broker ID not in cluster → RF expanded to rack_count
 
 **System Tests:**
 - Multi-AZ cluster with diskless topics
@@ -870,6 +939,30 @@ See [DESIGN.md](DESIGN.md) Stream 7 for tiering pipeline details.
 - **Doesn't solve PG scalability**: The goal is to tier *new* diskless data to reduce PG load. This alternative only addresses old/archived data.
 - **User expectations**: Users expect Kafka retention semantics to work. "Your retention.ms doesn't apply to tiered data" is a poor user experience.
 
+### Rejected Alternative E: Unclean Leader Election for Availability
+
+**Concept:** Enable `unclean.leader.election.enable=true` for diskless topics to ensure availability when replicas go offline.
+
+**Why we considered it:**
+- For diskless topics, there is no data loss risk from unclean election (all data is in object storage)
+- ISR membership is a metadata concept, not a data consistency concept
+- Simple configuration change, no new code required
+- Standard Kafka mechanism
+
+**Why it's not the primary solution:**
+- **Doesn't work for RF=1**: Unclean election needs multiple replicas to elect from. With RF=1, there's no alternative replica.
+- **Reactive, not proactive**: Waits for election to happen rather than proactively ensuring availability
+- **Doesn't preserve rack-awareness**: Elects from existing (possibly degraded) replica set
+
+**What we do instead:**
+Auto-reassignment of offline replicas is more powerful:
+- Works for any RF (including RF=1)
+- Proactively moves replica to online broker
+- Preserves rack-awareness when possible
+- Metadata-only operation (instant)
+
+**Note:** Unclean leader election *can* be enabled for diskless topics (no downside), but auto-reassignment is the primary availability mechanism.
+
 ---
 
 ## Appendix: Topic Migration Interactions
@@ -906,9 +999,11 @@ Topic migration (Tiered Classic → Diskless) may trigger replica set changes:
 **After migration:** RF=rack_count with managed placement (one per rack)
 
 If rack_count differs from original RF:
-- Controller reconciles to target placement
+- Controller adjusts to target placement as part of the migration process
 - Uses standard add-then-remove approach
 - Paced to avoid disruption
+
+**Note:** This is a one-time adjustment during topic migration, not ongoing reconciliation.
 
 ### Interaction with Tiering Pipeline
 
