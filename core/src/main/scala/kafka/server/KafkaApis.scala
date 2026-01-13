@@ -287,6 +287,7 @@ class KafkaApis(val requestChannel: RequestChannel,
 
   def handleLastMirroredOffset(request: RequestChannel.Request): Unit = {
     val lastMirroredOffsetRequest = request.body[LastMirroredOffsetRequest]
+    logger.info(s"!!! Handling last mirrored offset request: ${lastMirroredOffsetRequest}")
     val responseData = new LastMirroredOffsetResponseData()
     val topicList = new util.ArrayList[LastMirroredOffsetResponseData.OffsetResponseTopic]()
     lastMirroredOffsetRequest.data().topics().forEach(topic => {
@@ -304,6 +305,7 @@ class KafkaApis(val requestChannel: RequestChannel,
             // after leadership change in the target cluster
             case Right(partition) => partition.log.foreach(log => offsetPartition.setCommittedOffset(log.lastStableOffset()))
           }
+          partitionList.add(offsetPartition)
         }
       })
       responseTopic.setName(topic)
@@ -323,6 +325,7 @@ class KafkaApis(val requestChannel: RequestChannel,
       if (isClusterMirroringEnabled) {
         logger.info(s"!!! Handling adding mirror topics request: ${mirrorTopic.get().mirrorName()}")
         mirrorCoordinator.updateMirrorTopicsMetadata(mirrorTopic.get().mirrorName(), util.Set.of(mirrorTopic.get().topicName()), util.Set.of())
+        mirrorCoordinator.maybeScheduleForTruncate(mirrorTopic.get().mirrorName(), util.Set.of(mirrorTopic.get().topicName()))
       } else {
         logger.warn("Cluster mirroring is disabled (mirror.version=0), ignoring mirror topic creation request")
       }

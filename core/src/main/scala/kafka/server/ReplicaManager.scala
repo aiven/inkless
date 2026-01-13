@@ -1667,6 +1667,15 @@ class ReplicaManager(val config: KafkaConfig,
     delayedRemoteFetchPurgatory.tryCompleteElseWatch(remoteFetch, delayedFetchKeys.asJava)
   }
 
+  def maybeTruncate(offsets: util.Map[TopicPartition, JLong]): Unit = {
+    info("!!! maybeTruncate:" + offsets)
+    offsets.forEach((tp, offset) => {
+      getLog(tp).map(log => {
+        log.truncateTo(offset)
+      })
+    })
+  }
+
   /**
    * Fetch messages from a replica, and wait until enough data can be fetched and return;
    * the callback function will be triggered either when timeout or required fetch info is satisfied.

@@ -18,6 +18,7 @@ package kafka.server.mirror;
 
 import kafka.server.KafkaConfig;
 
+import kafka.server.ReplicaManager;
 import org.apache.kafka.clients.ClientResponse;
 import org.apache.kafka.clients.ClientUtils;
 import org.apache.kafka.clients.admin.AlterConfigOp;
@@ -36,6 +37,7 @@ import org.apache.kafka.common.message.DeleteAclsRequestData;
 import org.apache.kafka.common.message.DeleteTopicsRequestData;
 import org.apache.kafka.common.message.DescribeConfigsRequestData;
 import org.apache.kafka.common.message.IncrementalAlterConfigsRequestData;
+import org.apache.kafka.common.message.LastMirroredOffsetRequestData;
 import org.apache.kafka.common.message.ListGroupsRequestData;
 import org.apache.kafka.common.message.OffsetCommitRequestData;
 import org.apache.kafka.common.message.OffsetFetchRequestData;
@@ -54,6 +56,8 @@ import org.apache.kafka.common.requests.DescribeAclsResponse;
 import org.apache.kafka.common.requests.DescribeConfigsRequest;
 import org.apache.kafka.common.requests.DescribeConfigsResponse;
 import org.apache.kafka.common.requests.IncrementalAlterConfigsRequest;
+import org.apache.kafka.common.requests.LastMirroredOffsetRequest;
+import org.apache.kafka.common.requests.LastMirroredOffsetResponse;
 import org.apache.kafka.common.requests.ListGroupsRequest;
 import org.apache.kafka.common.requests.ListGroupsResponse;
 import org.apache.kafka.common.requests.MetadataRequest;
@@ -204,6 +208,28 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
      */
     @Override
     public void close() throws Exception {
+    }
+
+    public void maybeTruncate(ReplicaManager replicaManager, String mirrorName, Set<String> topics) {
+        LOG.info("!!! maybeTruncate: {} {}", mirrorName, topics);
+        createMirrorConnection(mirrorName);
+
+        var response = getRandomSender(remoteBrokers.get(mirrorName)).sendRequest(
+                new LastMirroredOffsetRequest.Builder(
+                        new LastMirroredOffsetRequestData().setTopics(new ArrayList<>(topics)))
+        );
+
+        if (response.responseBody() instanceof LastMirroredOffsetResponse lastMirroredOffsetResponse) {
+            LOG.info("!!! lastMirroredOffsetResponse: {}", lastMirroredOffsetResponse);
+            Map<TopicPartition, Long> offsets = new HashMap<>();
+            lastMirroredOffsetResponse.data().topics().forEach(topic -> {
+                String name = topic.name();
+                topic.partitions().forEach(partition -> {
+                    offsets.put(new TopicPartition(name, partition.partitionIndex()), partition.committedOffset());
+                });
+            });
+            replicaManager.maybeTruncate(offsets);
+        }
     }
 
     /**

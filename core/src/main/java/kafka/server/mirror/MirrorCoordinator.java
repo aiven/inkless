@@ -134,12 +134,12 @@ public class MirrorCoordinator {
         numPartitions = config.mirrorConfig().mirrorTopicNumPartitions();
     }
 
-    public void maybeScheduleForTruncate(Set<String> topics) {
-        scheduler.scheduleOnce("last-mirrored-offset", () -> maybeTruncate(topics));
+    public void maybeScheduleForTruncate(String mirrorName, Set<String> topics) {
+        scheduler.scheduleOnce("last-mirrored-offset", () -> maybeTruncate(mirrorName, topics));
     }
 
-    private void maybeTruncate(Set<String> topics) {
-
+    private void maybeTruncate(String mirrorName, Set<String> topics) {
+        mirrorMetadataManager.maybeTruncate(replicaManager, mirrorName, topics);
     }
 
     /**
