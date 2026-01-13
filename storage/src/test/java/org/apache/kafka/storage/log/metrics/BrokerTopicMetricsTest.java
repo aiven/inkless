@@ -35,9 +35,10 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -192,9 +193,9 @@ public class BrokerTopicMetricsTest {
     }
 
     @Test
-    public void testMeterAccessAfterCloseThrowsException() {
-        // Verify that accessing meters after close() throws IllegalStateException
-        // This prevents NPE at call sites and makes debugging easier
+    public void testMeterAccessAfterCloseIsSafe() {
+        // Accessing meters after close() should be safe: it may recreate meters as needed.
+        // This avoids throwing from metrics paths and prevents NPE at call sites.
         BrokerTopicMetrics metrics = new BrokerTopicMetrics(false);
         
         // Access meters before close - should work fine
@@ -204,22 +205,20 @@ public class BrokerTopicMetricsTest {
         // Close the metrics
         metrics.close();
         
-        // Access after close should throw IllegalStateException for all-topics stats
-        IllegalStateException exception = assertThrows(IllegalStateException.class,
-            () -> metrics.bytesInRate(true),
-            "Accessing meter after close should throw IllegalStateException");
-        assertTrue(exception.getMessage().contains("closed"),
-            "Exception message should indicate the metrics are closed");
+        // Access after close should be safe (may recreate and re-register the meter)
+        Meter meterAfterClose = metrics.bytesInRate(true);
+        assertNotNull(meterAfterClose, "Meter should be accessible after close");
+        assertDoesNotThrow(() -> meterAfterClose.mark(1), "Marking after close should not throw");
+        assertNotSame(meterBeforeClose, meterAfterClose, "Meter should be recreated after close");
         
         // Also verify for bytesOutRate
-        assertThrows(IllegalStateException.class,
-            () -> metrics.bytesOutRate(false),
-            "Accessing bytesOutRate after close should throw IllegalStateException");
+        assertDoesNotThrow(() -> metrics.bytesOutRate(false),
+            "Accessing bytesOutRate after close should be safe");
     }
 
     @Test
-    public void testTopicSpecificMeterAccessAfterCloseThrowsException() {
-        // Verify that topic-specific metrics also throw IllegalStateException after close
+    public void testTopicSpecificMeterAccessAfterCloseIsSafe() {
+        // Verify that topic-specific metrics are also safe to access after close
         BrokerTopicMetrics topicMetrics = new BrokerTopicMetrics("test-topic-close", false);
         
         // Access meters before close - should work fine
@@ -229,20 +228,18 @@ public class BrokerTopicMetricsTest {
         // Close the metrics
         topicMetrics.close();
         
-        // Access after close should throw IllegalStateException
-        IllegalStateException exception = assertThrows(IllegalStateException.class,
-            topicMetrics::bytesInRate,
-            "Accessing topic-specific meter after close should throw IllegalStateException");
-        assertTrue(exception.getMessage().contains("closed"),
-            "Exception message should indicate the metrics are closed");
+        // Access after close should be safe (may recreate and re-register the meter)
+        Meter meterAfterClose = topicMetrics.bytesInRate();
+        assertNotNull(meterAfterClose, "Meter should be accessible after close");
+        assertDoesNotThrow(() -> meterAfterClose.mark(1), "Marking after close should not throw");
+        assertNotSame(meterBeforeClose, meterAfterClose, "Meter should be recreated after close");
     }
 
     @Test
     public void testConcurrentMeterAccessAndClose() throws InterruptedException {
         // Deterministic concurrency test:
         // - Ensure meters can be obtained concurrently before close().
-        // - Ensure that once close() is called, further meter access fails with IllegalStateException
-        //   (instead of returning null and causing NPE at call sites).
+        // - Ensure that once close() is called, further meter access is still safe.
         //
         // This does not attempt to probabilistically "hit" a narrow timing window. Instead, it
         // coordinates threads so the post-close behavior is exercised while threads are active.
@@ -266,7 +263,7 @@ public class BrokerTopicMetricsTest {
             // Barrier includes access threads + closer thread; ensures close() runs while access threads are active.
             CyclicBarrier barrier = new CyclicBarrier(accessThreadCount + 1);
             AtomicInteger successfulMeterGets = new AtomicInteger(0);
-            AtomicInteger illegalStateExceptionsAfterClose = new AtomicInteger(0);
+            AtomicInteger successfulMeterGetsAfterClose = new AtomicInteger(0);
             CountDownLatch initialMeterGetsDone = new CountDownLatch(accessThreadCount);
             CountDownLatch closed = new CountDownLatch(1);
             List<Future<Void>> futures = new ArrayList<>(accessThreadCount + 1);
@@ -284,10 +281,11 @@ public class BrokerTopicMetricsTest {
                         successfulMeterGets.incrementAndGet();
                         initialMeterGetsDone.countDown();
 
-                        // Phase 2: wait for close to complete, then meter access must fail
+                        // Phase 2: wait for close to complete, then meter access should still be safe
                         assertTrue(closed.await(10, TimeUnit.SECONDS), "Close should complete within timeout");
-                        assertThrows(IllegalStateException.class, () -> metrics.bytesInRate(isDiskless));
-                        illegalStateExceptionsAfterClose.incrementAndGet();
+                        Meter meterAfterClose = metrics.bytesInRate(isDiskless);
+                        assertNotNull(meterAfterClose, "Meter should be accessible after close");
+                        successfulMeterGetsAfterClose.incrementAndGet();
                         return null;
                     }));
                 }
@@ -335,13 +333,8 @@ public class BrokerTopicMetricsTest {
 
                 assertEquals(accessThreadCount, successfulMeterGets.get(),
                     "All access threads should succeed in obtaining meters before close");
-                assertEquals(accessThreadCount, illegalStateExceptionsAfterClose.get(),
-                    "All access threads should fail meter access after close with IllegalStateException");
-
-                // The key verification: after close, accessing meters throws exception
-                // This is the deterministic behavior we're testing
-                assertThrows(IllegalStateException.class, () -> metrics.bytesInRate(true),
-                    "Meter access after close should throw IllegalStateException");
+                assertEquals(accessThreadCount, successfulMeterGetsAfterClose.get(),
+                    "All access threads should succeed in obtaining meters after close");
 
             } finally {
                 executor.shutdownNow();

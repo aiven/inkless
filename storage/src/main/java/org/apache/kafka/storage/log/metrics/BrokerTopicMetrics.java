@@ -426,16 +426,6 @@ public final class BrokerTopicMetrics {
         private final ConcurrentHashMap<String, Meter> lazyMetersWithTopicType = new ConcurrentHashMap<>();
         private final Lock meterLock = new ReentrantLock();
 
-        // Closed flag to prevent race condition between meter() and close():
-        // Without this flag, the following race is possible:
-        //   Thread A: meter() -> computeIfAbsent() creates a new meter
-        //   Thread B: close() -> forEach() removes meters -> clear()
-        // If Thread A's computeIfAbsent() executes after Thread B's forEach() but before clear(),
-        // a new meter would be created and registered with metricsGroup but never removed,
-        // causing a metric leak. The closed flag ensures that once close() starts, no new
-        // meters can be created.
-        private volatile boolean closed = false;
-
         public MeterWrapper(String metricType, String eventType) {
             this(metricType, eventType, BrokerTopicMetrics.this.tags);
         }
@@ -456,14 +446,6 @@ public final class BrokerTopicMetrics {
         }
 
         public Meter meter(boolean isDiskless) {
-            // Check closed flag first for both all-topics and topic-specific metrics.
-            // Throwing IllegalStateException prevents NPE at call sites (e.g., .mark())
-            // and makes debugging easier by providing a clear error message.
-            if (closed) {
-                throw new IllegalStateException(
-                    "Cannot access meter for metric '" + metricType + "' after BrokerTopicMetrics has been closed");
-            }
-
             // Only add topicType tag for allTopicsStats (when no topic name was specified)
             if (isAllTopicsStats) {
                 String topicType = isDiskless ? "diskless" : "classic";
@@ -477,11 +459,6 @@ public final class BrokerTopicMetrics {
                 // race with close() and avoid meter leaks
                 meterLock.lock();
                 try {
-                    // Double-check after acquiring lock
-                    if (closed) {
-                        throw new IllegalStateException(
-                            "Cannot access meter for metric '" + metricType + "' after BrokerTopicMetrics has been closed");
-                    }
                     // Use computeIfAbsent for atomic insert, but we're already under lock
                     // so this is safe from the close() race
                     return lazyMetersWithTopicType.computeIfAbsent(topicType, tt -> {
@@ -492,38 +469,30 @@ public final class BrokerTopicMetrics {
                 } finally {
                     meterLock.unlock();
                 }
-            }
-
-            // For topic-specific metrics, use the meter without topicType tag.
-            // The isDiskless parameter is intentionally ignored here as documented
-            // in the public bytesInRate(boolean) and bytesOutRate(boolean) methods.
-            Meter meter = lazyMeter;
-            if (meter == null) {
-                meterLock.lock();
-                try {
-                    // Double-check after acquiring lock
-                    if (closed) {
-                        throw new IllegalStateException(
-                            "Cannot access meter for metric '" + metricType + "' after BrokerTopicMetrics has been closed");
+            } else {
+                // For topic-specific metrics, use the meter without topicType tag.
+                // The isDiskless parameter is intentionally ignored here as documented
+                // in the public bytesInRate(boolean) and bytesOutRate(boolean) methods.
+                Meter meter = lazyMeter;
+                if (meter == null) {
+                    meterLock.lock();
+                    try {
+                        meter = lazyMeter;
+                        if (meter == null) {
+                            meter = metricsGroup.newMeter(metricType, eventType, TimeUnit.SECONDS, metricTags);
+                            lazyMeter = meter;
+                        }
+                    } finally {
+                        meterLock.unlock();
                     }
-                    meter = lazyMeter;
-                    if (meter == null) {
-                        meter = metricsGroup.newMeter(metricType, eventType, TimeUnit.SECONDS, metricTags);
-                        lazyMeter = meter;
-                    }
-                } finally {
-                    meterLock.unlock();
                 }
+                return meter;
             }
-            return meter;
         }
 
         public void close() {
             meterLock.lock();
             try {
-                // Set closed flag first to prevent new meters from being created
-                closed = true;
-
                 if (lazyMeter != null) {
                     metricsGroup.removeMetric(metricType, metricTags);
                     lazyMeter = null;
