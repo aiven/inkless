@@ -45,9 +45,7 @@ docs:
 
 .PHONY: fmt
 fmt:
-	./gradlew :core:spotlessJavaApply
-	./gradlew :metadata:spotlessJavaApply
-	./gradlew :storage:inkless:spotlessJavaApply
+	./gradlew :core:spotlessJavaApply :metadata:spotlessJavaApply :storage:spotlessJavaApply :storage:inkless:spotlessJavaApply
 
 .PHONY: test
 test:

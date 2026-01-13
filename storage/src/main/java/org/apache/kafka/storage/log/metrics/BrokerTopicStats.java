@@ -116,6 +116,10 @@ public class BrokerTopicStats implements AutoCloseable {
     }
 
     public void updateBytesOut(String topic, boolean isFollower, boolean isReassignment, long value) {
+        updateBytesOut(topic, isFollower, isReassignment, value, false);
+    }
+
+    public void updateBytesOut(String topic, boolean isFollower, boolean isReassignment, long value, boolean isDiskless) {
         if (isFollower) {
             if (isReassignment) {
                 updateReassignmentBytesOut(value);
@@ -123,22 +127,7 @@ public class BrokerTopicStats implements AutoCloseable {
             updateReplicationBytesOut(value);
         } else {
             topicStats(topic).bytesOutRate().mark(value);
-            allTopicsStats.bytesOutRate().mark(value);
-        }
-    }
-
-    /**
-     * Like {@link #updateBytesOut(String, boolean, boolean, long)}, but for diskless topics.
-     */
-    public void updateBytesOutForDisklessTopic(String topic, boolean isFollower, boolean isReassignment, long value) {
-        if (isFollower) {
-            if (isReassignment) {
-                updateReassignmentBytesOut(value);
-            }
-            updateReplicationBytesOut(value);
-        } else {
-            topicStats(topic).bytesOutRateDisklessTopicType().mark(value);
-            allTopicsStats.bytesOutRateDisklessTopicType().mark(value);
+            allTopicsStats.bytesOutRate(isDiskless).mark(value);
         }
     }
 
