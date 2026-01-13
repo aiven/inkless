@@ -1832,7 +1832,6 @@ public class KafkaAdminClient extends AdminClient {
             @Override
             void handleResponse(AbstractResponse abstractResponse) {
                 final FindCoordinatorResponse response = (FindCoordinatorResponse) abstractResponse;
-                System.out.println("The findCoordinator response is: " + response);
                 ApiError error = new ApiError(response.data().errorCode(), response.data().errorMessage());
                 if (error.isFailure()) {
                     future.completeExceptionally(error.exception());

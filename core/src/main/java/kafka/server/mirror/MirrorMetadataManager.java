@@ -104,7 +104,7 @@ import static java.util.Collections.singletonList;
 import static org.apache.kafka.clients.CommonClientConfigs.BOOTSTRAP_SERVERS_CONFIG;
 
 /**
- * Cluster Mirror component that provides synchronization of cluster state.
+ * Component that provides cluster state synchronization for cluster mirroring.
  *
  * The synchronized state include:
  * - Topic metadata (leaders, partitions, configurations)

@@ -40,8 +40,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
-import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Properties;
@@ -108,10 +108,10 @@ public abstract class MirrorCommand {
      */
     public static class MirrorService implements AutoCloseable {
         private final Admin adminClient;
-        private final Map<String, String> mirrorConfigs;
         private final Properties commandConfig;
+        private final Properties mirrorConfigs;
 
-        public MirrorService(Optional<String> bootstrapServer, Properties commandConfig, Map<String, String> mirrorConfigs) {
+        public MirrorService(Optional<String> bootstrapServer, Properties commandConfig, Properties mirrorConfigs) {
             this.adminClient = createAdminClient(bootstrapServer, commandConfig);
             this.commandConfig = commandConfig;
             this.mirrorConfigs = mirrorConfigs;
@@ -122,96 +122,139 @@ public abstract class MirrorCommand {
             return Admin.create(commandConfig);
         }
 
+        private Node findCoordinator(String mirrorName) throws ExecutionException, InterruptedException {
+            FindCoordinatorResult findCoordinatorResult = adminClient.findCoordinator(mirrorName);
+            Node coordinator = findCoordinatorResult.node().get();
+            if (coordinator == null) {
+                throw new RuntimeException("Could not find coordinator for mirror " + mirrorName);
+            }
+            System.out.printf("Found coordinator %s for mirror %s%n", coordinator.idString(), mirrorName);
+            return coordinator;
+        }
+
+        private Set<String> matchTopics(Set<String> allTopics, String topicPattern) {
+            Set<String> matchingTopics = new HashSet<>();
+            var pattern = java.util.regex.Pattern.compile(topicPattern);
+            for (String topic : allTopics) {
+                if (topic.equals(topicPattern) || pattern.matcher(topic).matches()) {
+                    matchingTopics.add(topic);
+                }
+            }
+            if (matchingTopics.isEmpty()) {
+                throw new RuntimeException("No topics matching pattern '" + topicPattern + "' found");
+            }
+            System.out.printf("Found %d topic(s) matching pattern '%s': %s%n", matchingTopics.size(), topicPattern, matchingTopics);
+            return matchingTopics;
+        }
+
         public void createMirror(MirrorCommandOptions opts) throws ExecutionException, InterruptedException {
-            System.out.println("Creating mirror " + opts.mirror().get());
+            System.out.printf("Creating mirror %s%n", opts.mirror().get());
+
+            Map<String, String> configMap = new HashMap<>();
+            mirrorConfigs.forEach((k, v) -> configMap.put(k.toString(), v.toString()));
 
             CreateMirrorResult result = adminClient.createMirror(
                 opts.mirror().get(),
-                mirrorConfigs,
+                configMap,
                 new CreateMirrorOptions()
             );
             result.all().get();
-            System.out.println("Successfully created mirror " + opts.mirror().get());
+            System.out.printf("Successfully created mirror %s%n", opts.mirror().get());
         }
 
         public void addTopicsToMirror(MirrorCommandOptions opts) throws Exception {
-            String topicName = opts.topic().get();
+            String topicPattern = opts.topic().get();
             String mirrorName = opts.mirror().get();
 
-            System.out.println("Adding topic " + topicName + " to mirror " + mirrorName);
+            // Connect to source cluster and get matching topics
+            Set<String> matchingTopics;
+            Map<String, String> topicIds = new HashMap<>();
 
-            // Find coordinator for the mirror
-            FindCoordinatorResult findCoordinatorResult = adminClient.findCoordinator(mirrorName);
-            Optional<Node> coordinator = Optional.ofNullable(findCoordinatorResult.node().get());
+            try (Admin sourceAdmin = Admin.create(mirrorConfigs)) {
+                // List all topics from source cluster and match against the pattern
+                var allTopics = sourceAdmin.listTopics().names().get();
+                matchingTopics = matchTopics(allTopics, topicPattern);
 
-            if (coordinator.isEmpty()) {
-                throw new RuntimeException("Could not find coordinator for mirror " + mirrorName);
+                // Fetch topic IDs for all matching topics
+                var topicDescriptions = sourceAdmin.describeTopics(matchingTopics).allTopicNames().get();
+                for (var entry : topicDescriptions.entrySet()) {
+                    topicIds.put(entry.getKey(), entry.getValue().topicId().toString());
+                }
             }
 
-            System.out.println("Found coordinator " + coordinator.get().idString() + " for mirror " + mirrorName);
-
-            // Create the mirror topic with the provided topic ID
-            NewTopic newTopic = new NewTopic(topicName,
-                Optional.empty(), // partitions - will use source topic partitions
-                opts.replicationFactor(), // replicationFactor - use provided value or cluster default
-                Optional.of(mirrorName),
-                Optional.of(opts.topicId().get()));
-
-            // Create topic using coordinator's bootstrap server
-            Node node = coordinator.get();
+            Node node = findCoordinator(mirrorName);
             String bootstrapServer = node.host() + ":" + node.port();
-            System.out.println("Creating mirror topic " + topicName + " using bootstrap server " + bootstrapServer);
 
             try (Admin admin = createAdminClient(Optional.of(bootstrapServer), commandConfig)) {
-                // try to create the topic, if failed, we attach the mirror to an existing topic
-                CreateTopicsResult createResult = admin.createTopics(Set.of(newTopic),
-                    new CreateTopicsOptions().retryOnQuotaViolation(false));
-                createResult.all().whenComplete((future, ex) -> {
-                    System.out.println("Create mirror topic result: " + ex);
+                // Prepare all NewTopic objects for batch creation
+                Set<NewTopic> newTopics = new HashSet<>();
+                for (String topicName : matchingTopics) {
+                    String topicId = topicIds.get(topicName);
+                    NewTopic newTopic = new NewTopic(topicName,
+                        Optional.empty(), // use source topic partitions
+                        opts.replicationFactor(), // use provided replicationFactor or cluster default
+                        Optional.of(mirrorName),
+                        Optional.of(topicId));
+                    newTopics.add(newTopic);
+                }
 
-                    if (ex != null) {
-                        if (ex instanceof TopicExistsException) {
-                            System.out.printf("Topic %s already exists, adding to mirror %s%n", topicName, mirrorName);
-                            try (Admin admin1 = createAdminClient(Optional.of(bootstrapServer), commandConfig)) {
-                                AddTopicsToMirrorResult addTopicsToMirrorResult = admin1.addTopicsToMirror(Collections.singletonMap(topicName, mirrorName), new AddTopicsToMirrorOptions());
-                                try {
-                                    addTopicsToMirrorResult.all().get();
-                                    System.out.printf("Successfully added topic %s to mirror %s%n", topicName, mirrorName);
-                                } catch (Exception e) {
-                                    throw new RuntimeException(e);
-                                }
-                            }
+                System.out.printf("Adding %d topic(s) to mirror %s%n", newTopics.size(), mirrorName);
+
+                // Try to create all matching topics
+                CreateTopicsResult createResult = admin.createTopics(newTopics,
+                    new CreateTopicsOptions().retryOnQuotaViolation(false));
+
+                // Attach created and existing topic to the mirror
+                Set<String> createdTopics = new HashSet<>();
+                Map<String, String> existingTopics = new HashMap<>();
+
+                for (String topicName : matchingTopics) {
+                    try {
+                        createResult.values().get(topicName).get();
+                        createdTopics.add(topicName);
+                    } catch (ExecutionException e) {
+                        if (e.getCause() instanceof TopicExistsException) {
+                            existingTopics.put(topicName, mirrorName);
                         } else {
-                            throw new RuntimeException("Failed to create topic " + topicName, ex);
+                            System.err.printf("Failed to add topic %s: %s%n", topicName, e.getCause().getMessage());
                         }
-                    } else {
-                        System.out.printf("Successfully added topic %s to mirror %s%n", topicName, mirrorName);
                     }
-                });
+                }
+
+                if (!createdTopics.isEmpty()) {
+                    System.out.printf("Successfully added %d topic(s) to mirror %s: %s%n",
+                        createdTopics.size(), mirrorName, createdTopics);
+                }
+
+                if (!existingTopics.isEmpty()) {
+                    AddTopicsToMirrorResult addResult = admin.addTopicsToMirror(
+                        existingTopics, new AddTopicsToMirrorOptions());
+                    addResult.all().get();
+                    System.out.printf("Successfully added %d existing topic(s) to mirror %s%n",
+                        existingTopics.size(), mirrorName);
+                }
             }
         }
 
         public void removeTopicsFromMirror(MirrorCommandOptions opts) throws Exception {
-            String topicName = opts.topic().get();
+            String topicPattern = opts.topic().get();
             String mirrorName = opts.mirror().get();
 
-            Optional<Node> coordinator = Optional.empty();
-            FindCoordinatorResult findCoordinatorResult = adminClient.findCoordinator(mirrorName);
-            coordinator = Optional.ofNullable(findCoordinatorResult.node().get());
-            System.out.println("Found coordinator " + coordinator.map(Node::idString).orElse("none") + " for mirror " + mirrorName);
+            Node node = findCoordinator(mirrorName);
+            String bootstrapServer = node.host() + ":" + node.port();
 
-            if (coordinator.isPresent()) {
-                Node node = coordinator.get();
-                System.out.println("Node info: " + node);
-                String bootstrapServer = node.host() + ":" + node.port();
-                System.out.printf("Removing topic %s from mirror %s using bootstrap server %s%n", topicName, mirrorName, bootstrapServer);
-                try (Admin admin = createAdminClient(Optional.of(bootstrapServer), commandConfig)) {
-                    RemoveTopicsFromMirrorResult removeTopicsFromMirrorResult = admin.removeTopicsFromMirror(mirrorName, Set.of(topicName), new RemoveTopicsFromMirrorOptions());
-                    removeTopicsFromMirrorResult.all().get();
-                    System.out.println("Successfully removed topic " + topicName + " from mirror " + mirrorName);
-                }
-            } else {
-                throw new RuntimeException(String.format("Error when removing topic %s from mirror %s%n", topicName, mirrorName));
+            Set<String> matchingTopics;
+
+            try (Admin admin = createAdminClient(Optional.of(bootstrapServer), commandConfig)) {
+                // List all topics from destination cluster and match against the pattern
+                var allTopics = admin.listTopics().names().get();
+                matchingTopics = matchTopics(allTopics, topicPattern);
+
+                // Remove all matching topics from the mirror
+                RemoveTopicsFromMirrorResult removeTopicsFromMirrorResult = admin.removeTopicsFromMirror(
+                    mirrorName, matchingTopics, new RemoveTopicsFromMirrorOptions());
+                removeTopicsFromMirrorResult.all().get();
+                System.out.printf("Successfully removed %d topic(s) from mirror %s%n", matchingTopics.size(), mirrorName);
             }
         }
 
@@ -230,7 +273,6 @@ public abstract class MirrorCommand {
         private final OptionSpecBuilder removeOpt;
         private final ArgumentAcceptingOptionSpec<String> mirrorOpt;
         private final ArgumentAcceptingOptionSpec<String> topicOpt;
-        private final ArgumentAcceptingOptionSpec<String> topicIdOpt;
         private final ArgumentAcceptingOptionSpec<Short> replicationFactorOpt;
 
         public MirrorCommandOptions(String[] args) {
@@ -252,22 +294,17 @@ public abstract class MirrorCommand {
                 .ofType(String.class);
 
             createOpt = parser.accepts("create", "Create a new cluster mirror from a source cluster.");
-            addOpt = parser.accepts("add", "Add a topic to an existing cluster mirror.");
-            removeOpt = parser.accepts("remove", "Remove a topic from an existing cluster mirror.");
+            addOpt = parser.accepts("add", "Add topic(s) to an existing cluster mirror (supports regex).");
+            removeOpt = parser.accepts("remove", "Remove topic(s) from an existing cluster mirror (supports regex).");
 
             mirrorOpt = parser.accepts("mirror", "The name of the cluster mirror.")
                 .withRequiredArg()
                 .describedAs("mirror")
                 .ofType(String.class);
 
-            topicOpt = parser.accepts("topic", "The topic name to add to the mirror.")
+            topicOpt = parser.accepts("topic", "Topic name or regex pattern to match topics (e.g., 'my-topic' or 'test-.*').")
                 .withRequiredArg()
                 .describedAs("topic")
-                .ofType(String.class);
-
-            topicIdOpt = parser.accepts("topic-id", "The topic ID to use when adding the topic to the mirror.")
-                .withRequiredArg()
-                .describedAs("topic-id")
                 .ofType(String.class);
 
             replicationFactorOpt = parser.accepts("replication-factor", "The replication factor to use for the mirror topic. If not specified, uses the destination cluster's default.")
@@ -311,13 +348,12 @@ public abstract class MirrorCommand {
             }
         }
 
-        public Map<String, String> mirrorConfig() throws IOException {
-            Map<String, String> config = new HashMap<>();
+        public Properties mirrorConfig() throws IOException {
             if (has(mirrorConfigOpt)) {
-                Properties properties = Utils.loadProps(options.valueOf(mirrorConfigOpt));
-                properties.forEach((k, v) -> config.put(k.toString(), v.toString()));
+                return Utils.loadProps(options.valueOf(mirrorConfigOpt));
+            } else {
+                return new Properties();
             }
-            return config;
         }
 
         public Optional<String> mirror() {
@@ -326,10 +362,6 @@ public abstract class MirrorCommand {
 
         public Optional<String> topic() {
             return valueAsOption(topicOpt);
-        }
-
-        public Optional<String> topicId() {
-            return valueAsOption(topicIdOpt);
         }
 
         public Optional<Short> replicationFactor() {
@@ -359,10 +391,13 @@ public abstract class MirrorCommand {
                 throw new IllegalArgumentException("--mirror-config must be specified when creating a mirror");
 
             if (has(addOpt) && !has(topicOpt))
-                throw new IllegalArgumentException("--topic must be specified when adding a topic to a mirror");
+                throw new IllegalArgumentException("--topic must be specified when adding topic(s) to a mirror");
 
-            if (has(addOpt) && !has(topicIdOpt))
-                throw new IllegalArgumentException("--topic-id must be specified when adding a topic to a mirror");
+            if (has(addOpt) && !has(mirrorConfigOpt))
+                throw new IllegalArgumentException("--mirror-config must be specified when adding topic(s) to a mirror");
+
+            if (has(removeOpt) && !has(topicOpt))
+                throw new IllegalArgumentException("--topic must be specified when removing topic(s) from a mirror");
         }
     }
 }
