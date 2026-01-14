@@ -1,20 +1,23 @@
 # Diskless-Managed Replication Factor
 
+> **Alternative design under review:** [DISKLESS_MANAGED_RF_SIMPLIFIED.md](DISKLESS_MANAGED_RF_SIMPLIFIED.md) proposes a simpler approach using transformer-first availability instead of controller auto-reassignment. Review both before deciding.
+
 ## Table of Contents
 
-1. [Objectives](#objectives)
-2. [Activation Model](#activation-model-binary-version)
+1. [Purpose](#purpose)
+2. [Objectives](#objectives)
+3. [Activation Model](#activation-model-binary-version)
    - [Existing Diskless Topics](#existing-diskless-topics)
-3. [Placement Model](#placement-model)
-4. [Controller Behavior](#controller-behavior)
+4. [Placement Model](#placement-model)
+5. [Controller Behavior](#controller-behavior)
    - [Topic Creation](#topic-creation)
    - [Add Partitions](#add-partitions)
    - [Standard Operations](#standard-operations-after-creation)
-5. [Broker Behavior](#broker-behavior)
+6. [Broker Behavior](#broker-behavior)
    - [No Replica Fetcher for Diskless Topics](#no-replica-fetcher-for-diskless-topics)
-6. [Metadata Transformation](#metadata-transformation)
-7. [Observability](#observability)
-8. [Implementation Path](#implementation-path) *(9 weeks / 1 eng, 5-6 weeks / 2 eng)*
+7. [Metadata Transformation](#metadata-transformation)
+8. [Observability](#observability)
+9. [Implementation Path](#implementation-path) *(9 weeks / 1 eng, 5-6 weeks / 2 eng)*
    - [Phase 0: Research and Validation](#phase-0-research-and-validation)
    - [Phase 1: Topic Creation with Rack-Aware Placement](#phase-1-topic-creation-with-rack-aware-placement)
    - [Phase 2: Transformer Changes](#phase-2-transformer-changes)
@@ -23,9 +26,53 @@
    - [Phase 5: Observability](#phase-5-observability)
    - [Testing Strategy](#testing-strategy)
    - [Future Work: RLM Integration](#future-work-rlm-integration)
-9. [Rejected Alternatives](#rejected-alternatives)
-10. [Appendix: Topic Migration Interactions](#appendix-topic-migration-interactions)
-11. [Open Items](#open-items)
+10. [Rejected Alternatives](#rejected-alternatives)
+11. [Appendix: Topic Migration Interactions](#appendix-topic-migration-interactions)
+12. [Open Items](#open-items)
+
+---
+
+## Purpose
+
+### Current State: RF=1 with Transformer Override
+
+Current diskless topics use **RF=1 in KRaft** with the transformer routing requests to any alive broker. This was a deliberate decision that enabled:
+- Fast iteration without controller changes
+- Simple implementation
+- Flexibility in routing
+
+**This has worked well for pure diskless topics.**
+
+### The Question: What Does Topic Migration Require?
+
+We need to support **bidirectional topic migration**:
+1. **Classic → Diskless** (immediate need)
+2. **Diskless → Classic** (future need)
+
+### Why Real Replicas Matter
+
+| Capability                    | RF=1 (current)              | RF=rack_count (this design)  |
+|-------------------------------|-----------------------------|-----------------------------|
+| Topic migration coordination  | Custom coordinator needed   | Leader coordinates          |
+| RLM integration               | Custom hooks (~11 weeks)    | Standard (~0 weeks)         |
+| Background job assignment     | Racing/randomized           | Deterministic (leader)      |
+| Diskless → Classic migration  | RF expansion + migration    | Migration only              |
+| Operational debugging         | "Which broker ran this?"    | "Leader of partition X"     |
+
+### What This Feature Enables
+
+| Capability                | How                                    | Status         |
+|---------------------------|----------------------------------------|----------------|
+| Rack-aware placement      | One replica per AZ at creation         | ✅ This design |
+| Topic migration           | Real replicas to migrate to            | ✅ This design |
+| RLM integration           | Stable partition leader                | 🔜 Future      |
+| Standard Kafka operations | Reassignment, election work normally   | ✅ This design |
+| Deterministic job owner   | Leader owns partition operations       | ✅ This design |
+
+### Related Documents
+
+- [DESIGN.md](DESIGN.md) — Overall tiered storage unification design
+- [DISKLESS_MANAGED_RF_SIMPLIFIED.md](DISKLESS_MANAGED_RF_SIMPLIFIED.md) — Simplified variant (transformer-first availability)
 
 ---
 
