@@ -2,7 +2,7 @@
 
 ## Table of Contents
 
-1. [Purpose](#purpose)
+1. [Motivation](#motivation)
 2. [Objectives](#objectives)
 3. [Design: Transformer-First Availability](#design-transformer-first-availability)
 4. [Activation Model](#activation-model-binary-version)
@@ -11,7 +11,7 @@
 7. [Broker Behavior](#broker-behavior)
 8. [Metadata Transformation](#metadata-transformation)
 9. [Observability](#observability)
-10. [Implementation Path](#implementation-path) *(6 weeks / 1 eng, 4 weeks / 2 eng)*
+10. [Implementation Path](#implementation-path) *(6-8 weeks / 1 eng)*
 11. [Rejected Alternatives](#rejected-alternatives)
 12. [Appendix](#appendix)
     - [Ghost Replicas Problem](#ghost-replicas-problem)
@@ -20,7 +20,7 @@
 
 ---
 
-## Purpose
+## Motivation
 
 ### Current State: RF=1 with Transformer Override
 
@@ -51,6 +51,13 @@ We evaluate three approaches (A, B, C) below, starting with reverse migration re
 
 ### Approach Comparison
 
+We evaluate three approaches:
+- **Approach A: Shrink to RF=1** — Reduce RF during migration, use current diskless model
+- **Approach B: Keep RF=3, fake metadata** — Keep classic RF, but transformer ignores it
+- **Approach C: RF=rack_count with real replicas** — Proposed design with KRaft-managed replicas
+
+The following terminology helps distinguish the key differences:
+
 **Terminology:**
 - **Offline replica**: KRaft shows replica on broker X, but broker X doesn't exist or is down. No `Partition` object.
 - **Ghost replica**: KRaft shows replica on broker X, broker X is alive, but `ReplicaManager` skips creating `Partition` object for diskless. Broker doesn't know it's a replica.
@@ -63,6 +70,7 @@ We evaluate three approaches (A, B, C) below, starting with reverse migration re
 | KRaft RF after migrate  | 1                        | 3 (unchanged)            | 3 (managed, rack-aware)      |
 | Transformer behavior    | Hash to any broker       | Hash to any broker       | Filter by AZ (KRaft-sourced) |
 | Replica objects         | None (offline in KRaft)  | Ghost (no `Partition`)   | Real (metadata-only)         |
+| Local state after migr. | **Must delete** (risk)   | **Must delete** (risk)   | Standard handoff             |
 | Migration coordinator   | Custom (who?)            | Custom (who?)            | **Leader**                   |
 | RLM integration         | Custom hooks (~11 wks)   | Custom hooks (~11 wks)   | **Standard (~0 wks)**        |
 | Job assignment          | Racing                   | Racing                   | **Leader-based**             |
@@ -133,18 +141,56 @@ What "real (metadata-only) replica" means:
 
 ### Diskless → Classic Migration Readiness
 
-| Aspect            | A: RF=1               | B: RF=3 faked           | C: RF=rack_count        |
-|-------------------|-----------------------|-------------------------|-------------------------|
-| Starting RF       | 1                     | 3 (ghost replicas)      | 3 (real replicas)       |
-| Before migration  | Must expand RF=1 → RF=3| Must "un-ghost" replicas| **Ready as-is**         |
-| Replica state     | Create from scratch   | Create `Partition` objects| Already correct        |
-| Complexity        | High (2 operations)   | Medium (fix ghosts)     | **Low (just migrate)**  |
+| Aspect            | A: RF=1                 | B: RF=3 faked             | C: RF=rack_count          |
+|-------------------|-------------------------|---------------------------|---------------------------|
+| Starting RF       | 1                       | 3 (ghost replicas)        | 3 (real replicas)         |
+| Before migration  | Must expand RF=1 → RF=3 | Must "un-ghost" replicas  | **Ready as-is**           |
+| Replica state     | Create from scratch     | Create `Partition` objects| Already correct           |
+| Complexity        | High (2 operations)     | Medium (fix ghosts)       | **Low (just migrate)**    |
 
 **Key insight:** Only Approach C is ready for reverse migration without additional work.
 
 ### Cost Analysis
 
 #### Cost of Keeping RF=1/Faked (Approaches A and B)
+
+Approaches A and B appear simpler but have **hidden upfront costs** related to local state management:
+
+**The local state problem:**
+
+When migrating Classic → Diskless, brokers still have local log directories with segment files. Diskless handlers ignore local state, but:
+
+| Problem                     | Risk                                          | Severity     |
+|-----------------------------|-----------------------------------------------|--------------|
+| Stale local metadata        | Partition metadata files (LEO, etc.) diverge from object storage | **Critical** |
+| Orphaned segment files      | Requires tiering to object storage + retention cleanup | Medium       |
+| Log cleaner interaction     | May attempt to clean diskless partitions      | High         |
+| Broker restart recovery     | Which is source of truth? Local metadata or object storage? | **Critical** |
+| Replica fetcher state       | Followers may have stale fetch positions      | High         |
+
+**Note:** Some of these issues (metadata sync, fetcher state) must be solved for *all* approaches. However, Approach C addresses them via standard replica handoff patterns, while A/B require custom one-off fixes.
+
+**Required work for A/B to be safe:**
+
+| Task                                | Effort    |
+|-------------------------------------|-----------|
+| Sync local metadata → object storage| ~1-2 weeks|
+| Tier local segments to object storage| ~1 week   |
+| Delete local logs after tiering     | ~0.5 week |
+| Prevent log cleaner on diskless     | ~0.5 week |
+| Block replica fetcher startup       | ~0.5 week |
+| Handle broker restart (source of truth) | ~1 week |
+| Custom TS fetch path (no `UnifiedLog`)  | ~2-3 weeks |
+| **Subtotal (local state + TS)**     | **~6-8 weeks** |
+
+This is **not** near-zero — it's ~6-8 weeks of custom work just to make migration safe, with ongoing risk if any edge case is missed.
+
+**Additional deferred cost** (for future features):
+- Diskless → Classic migration (reverse direction)
+- RLM integration for tiering pipeline
+- KIP-aligned features
+
+The table below shows the deferred cost for RLM integration:
 
 | Aspect                    | Custom Solution Required           | Effort    |
 |---------------------------|-----------------------------------|-----------|
@@ -167,45 +213,72 @@ What "real (metadata-only) replica" means:
 
 *RLM integration comes "for free" once we have real leadership.
 
+**Buffer for unknowns:** Add ~1-2 weeks for edge cases, testing, and unexpected issues.
+
+**Realistic total: ~7-8 weeks**
+
+**Why local state is simpler with Approach C:**
+
+With real replicas, the migration can use standard Kafka replica handoff patterns:
+- **Leader coordinates** data movement to object storage (deterministic owner)
+- **Metadata sync** is part of standard replica protocol (LEO, offsets tracked by leader)
+- **Local logs cleanup** follows standard tiering (RLM-style) — not custom deletion
+- **Broker restart** has clear source of truth: leader + object storage
+- **Fetcher state** managed via standard replica protocol (followers follow leader)
+
+The same problems exist, but Approach C solves them via **standard Kafka patterns** rather than custom one-off fixes.
+
 #### Decision Framework
 
 | Factor                   | A: Shrink to RF=1        | B: Keep RF=3, fake       | C: RF=rack_count (proposed) |
 |--------------------------|--------------------------|--------------------------|------------------------------|
-| Short-term cost          | Lower                    | Lower                    | ~6 weeks                     |
+| Short-term cost          | ~7 weeks (local + TS)    | ~7 weeks (local + TS)    | ~6-8 weeks (incl. buffer)    |
+| Local state risk         | **High** (must cleanup)  | **High** (must cleanup)  | Low (standard handoff)       |
 | Classic → Diskless       | Custom coordination      | Custom coordination      | Standard replica handoff     |
 | RLM integration          | Custom hooks (~11 wks)   | Custom hooks (~11 wks)   | Standard (~0 wks)            |
 | Diskless → Classic       | RF expansion + migration | Un-ghost + migration     | Migration only               |
 | Long-term maintenance    | Two code paths           | Two code paths           | One code path                |
-| Kafka alignment          | Divergent                | Divergent                | Aligned                      |
+| Kafka/KIP alignment      | Divergent                | Divergent                | Aligned                      |
 
 #### Summary
 
 ```
-Approach A/B: 0 weeks now + ~11 weeks later = 11+ weeks total
-Approach C:   6 weeks now + 0 weeks later   = 6 weeks total
-                                              ─────────────
-                                              Savings: 5+ weeks
+Approach A/B: ~7 weeks now (local state + TS) + ~11 weeks later (RLM) = 18+ weeks total
+Approach C:   ~6 weeks now + ~2 weeks buffer + 0 weeks later          = 8 weeks total
+                                                                        ─────────────
+                                                                        Savings: 10+ weeks
 ```
+
+**Plus ongoing risk with A/B:** Custom local state cleanup and TS fetch has edge cases — if any are missed, data corruption, metadata drift, or fetch failures can occur during/after migration.
 
 Plus, deferring creates technical debt:
 - Two code paths for leadership (KRaft vs. custom)
 - Custom tiering pipeline that diverges from Kafka
 - Every new feature asks "does this work with faked RF?"
 
+**Operational cost of A/B:**
+- Misleading tooling (`describe topic` shows ghost replicas)
+- Debugging complexity ("which broker ran this job?")
+- False alerts (under-replicated metrics for healthy topics)
+- See [Operational Benefits Summary](#operational-benefits-summary)
+
 ### Recommendation
 
 **Implement the proposed design (Approach C: RF=rack_count)** because:
 1. Topic migration (both directions) benefits from real replicas
 2. RLM integration becomes standard rather than custom
-3. One-time 6-week investment vs. 11+ weeks of custom work
-4. Avoids accumulating technical debt
-5. Aligns diskless with Kafka's replica model
+3. One-time 6-8 week investment vs. 15+ weeks with A/B
+4. Avoids local state cleanup risks (data corruption, offset drift)
+5. Avoids accumulating technical debt
+6. Aligns diskless with Kafka's replica model
 
 ### Related Documents
 
 - [DESIGN.md](DESIGN.md) — Overall tiered storage unification design
 
 ---
+
+*The following sections detail the proposed design (Approach C: RF=rack_count with real replicas).*
 
 ## Objectives
 
@@ -224,7 +297,11 @@ Enable **rack-aware, stable KRaft-managed replicas** for diskless topics:
 
 ### The Insight
 
-For diskless topics, **availability** and **metadata accuracy** can be decoupled:
+For diskless topics, **availability** and **metadata accuracy** can be decoupled.
+
+Unlike classic topics where data lives on specific brokers (making KRaft metadata critical for routing), diskless data lives in object storage — any broker can serve any partition. This means:
+- **Availability** can be handled instantly by the transformer (route to any alive broker)
+- **Metadata accuracy** can be eventually consistent (controller updates KRaft when convenient)
 
 | Concern           | Priority     | Who Handles       | Speed      |
 |-------------------|--------------|-------------------|------------|
@@ -291,6 +368,46 @@ Existing diskless topics (RF=1) continue to work:
 - Falls back to hash-based selection (same as today)
 - No downtime
 
+**Note on RF < rack_count:**
+
+The same fallback logic applies to any RF < rack_count (including RF=1). This is intentional:
+
+| Aspect | Design Decision | Rationale |
+|--------|-----------------|-----------|
+| RF=1 valid? | **Yes** | Fewer replicas = fewer brokers with jobs, but still available |
+| Target RF | rack_count at creation | Default, not enforced after creation |
+| RF < racks after ops | **Allowed** | Operator can reassign; transformer handles availability |
+| Future configurability | Possible | Could allow `min.insync.replicas` style config later |
+
+**Tiered Storage (TS) reading — Important Consideration:**
+
+TS fetching via `RemoteLogManager.read()` requires local state that current diskless doesn't have:
+
+| Requirement | What RLM needs | Current diskless | Approach C |
+|-------------|----------------|------------------|------------|
+| `UnifiedLog` | `fetchLog.apply(tp)` must return log | **Missing** (no `Partition`) | Has it (real replicas) |
+| `LeaderEpochFileCache` | For segment lookup | **Missing** | Has it |
+| Segment metadata | To locate tiered data | **Missing** | Has it |
+
+**Impact on topic migration:**
+
+During Classic → Diskless migration, the read path must handle tiered data:
+```
+Offset < disklessStartOffset → Read from Tiered Storage (via RLM)
+Offset >= disklessStartOffset → Read from Diskless (object storage)
+```
+
+With Approaches A/B:
+- Broker has no `UnifiedLog` for diskless partitions
+- `RLM.read()` fails with `OffsetOutOfRangeException`
+- **Custom TS fetch path required** (~2-3 weeks additional work)
+
+With Approach C:
+- Real replicas have `Partition` → `UnifiedLog` → works with RLM
+- Standard TS fetch path works
+
+**Note:** Pure diskless topics (never migrated) use Inkless `FetchHandler` which reads from object storage directly — no RLM dependency. The issue is specifically for **migrated topics** that have tiered data.
+
 **Eventual modernization (optional):**
 - Controller can lazily detect RF=1 diskless topics
 - Background task expands to RF=rack_count when convenient
@@ -329,7 +446,9 @@ When creating diskless topics (`diskless.enable=true`):
 - Controller counts distinct racks from registered brokers
 - RF = rack count
 - One replica assigned per rack
-- Reject `replicationFactor > 1` and manual assignments
+- Accept `replicationFactor=-1` (recommended) or `replicationFactor=1` (for compatibility)
+- Reject `replicationFactor > 1` (RF is system-managed)
+- Reject manual replica assignments
 
 ### Add Partitions
 
@@ -440,7 +559,7 @@ This is acceptable because:
 
 ## Implementation Path
 
-**Total Estimate: 6 weeks with 1 engineer, or 4 weeks with 2 engineers**
+**Total Estimate: 6-8 weeks with 1 engineer** (includes ~1-2 weeks buffer for unknowns)
 
 ### Phase 0: Research and Validation (1 week)
 
@@ -476,7 +595,8 @@ This is acceptable because:
 | 1         | Topic Creation with Rack-Aware Placement | 2 weeks  |
 | 2         | Transformer Changes (with fallback)      | 2 weeks  |
 | 3         | Add Partitions Support                   | 1 week   |
-| **Total** |                                          | **6 weeks (1 eng) / 4 weeks (2 eng)** |
+| Buffer    | Edge cases, testing, unknowns            | 1-2 weeks|
+| **Total** |                                          | **6-8 weeks** |
 
 ---
 
@@ -491,11 +611,12 @@ This is acceptable because:
 - No need to change existing diskless implementation
 
 **Why rejected:**
-1. Timing complexity (when does RF shrink happen?)
-2. Loses rack-awareness — must recreate for reverse migration
-3. **Reverse migration requires RF expansion** (two operations)
-4. RLM integration still blocked
-5. Racing job assignment continues
+1. **Local state cleanup required** — Must delete local logs on all replicas to avoid drift/corruption (~3-4 weeks)
+2. Timing complexity (when does RF shrink happen?)
+3. Loses rack-awareness — must recreate for reverse migration
+4. **Reverse migration requires RF expansion** (two operations)
+5. RLM integration still blocked
+6. Racing job assignment continues
 
 See [Approach Comparison](#approach-comparison) for details.
 
@@ -511,11 +632,12 @@ See [Approach Comparison](#approach-comparison) for details.
 - If users migrate back, they keep same partition assignments
 
 **Why rejected:**
-1. **Ghost replicas** — KRaft shows healthy replicas that aren't real
-2. **RLM blocked** — `onLeadershipChange()` needs `Partition` objects. Adding them would be similar complexity to proposed approach.
-3. **Reverse migration requires "un-ghosting"** replicas
-4. Misleading tooling output
-5. Racing job assignment continues
+1. **Local state cleanup required** — Must delete local logs on all replicas to avoid drift/corruption (~3-4 weeks)
+2. **Ghost replicas** — KRaft shows healthy replicas that aren't real
+3. **RLM blocked** — `onLeadershipChange()` needs `Partition` objects. Adding them would be similar complexity to proposed approach.
+4. **Reverse migration requires "un-ghosting"** replicas
+5. Misleading tooling output
+6. Racing job assignment continues
 
 See [Ghost Replicas Problem](#ghost-replicas-problem) for details.
 
