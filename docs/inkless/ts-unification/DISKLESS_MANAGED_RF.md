@@ -13,7 +13,7 @@ the tiering pipeline.
 | Factor | Constraint/Consideration |
 |--------|--------------------------|
 | **Topic migration** | Must support Classic → Diskless (immediate) and Diskless → Classic (future) |
-| **Tiered Storage reads** | RLM requires `UnifiedLog` state — only replica brokers can serve tiered reads |
+| **Tiered Storage reads** | RLM requires `UnifiedLog` state — only replica brokers can serve tiered reads (or requires RLM extension; see [Decision Option](#decision-option-keep-alive-allow-tiered-storage-rlm-reads-from-any-broker)) |
 | **Always-available semantics** | Diskless topics must remain available even when KRaft replicas are offline |
 | **RLM/tiering pipeline** | Standard `onLeadershipChange()` integration requires real KRaft leadership |
 | **Operational clarity** | Tooling (`describe topic`) should reflect reality; deterministic job ownership |
@@ -115,13 +115,16 @@ We evaluate three approaches:
 
 Kafka **Metadata** responses are offset-unaware, but Tiered Storage reads via `RemoteLogManager` require local `UnifiedLog`
 state on the serving broker. This creates a hard constraint:
-- When a partition can serve **tiered/local reads** (migration state `TIERED_ONLY` / `HYBRID`), metadata transformation must
-  return only brokers in the **KRaft replica set** (Kafka semantics).
+- When a partition can serve **tiered/local reads** (`DISKLESS_TIERED`), metadata transformation must return only brokers in
+  the **KRaft replica set** (Kafka semantics).
 - Only when a partition is **`DISKLESS_ONLY`** can we safely decouple “availability routing” from KRaft placement and route to
   any alive broker (transformer-first availability).
 
 This is a deliberate trade-off: it keeps the “always available” property for diskless-only partitions, while preserving
 correctness for tiered/hybrid reads.
+
+> **Terminology**: `DISKLESS_TIERED` encompasses migration states where tiered data exists (`TIERED_ONLY`, `HYBRID` per
+> `DESIGN.md`). Routing logic treats these identically: replicas-only.
 
 If we later decide to make **tiered reads serveable from any broker**, then we can remove this constraint and strengthen the
 decoupling (see [Decision Option: Tiered reads from any broker](#decision-option-keep-alive-allow-tiered-storage-rlm-reads-from-any-broker)).
@@ -141,17 +144,19 @@ The following terminology helps distinguish the key differences:
 
 #### Summary Table
 
-| Aspect                  | A: Shrink to RF=1        | B: Keep RF=3, fake       | C: RF=rack_count (proposed) |
-|-------------------------|--------------------------|--------------------------|------------------------------|
-| KRaft RF after migrate  | 1                        | 3 (unchanged)            | 3 (managed, rack-aware)      |
-| Transformer behavior    | Hash to any broker       | Hash to any broker       | Filter by AZ (KRaft-sourced) |
-| Hybrid/tiered reads     | **Custom / risky**       | **Custom / risky**       | **Replicas only (safe)**     |
-| Replica objects         | None (offline in KRaft)  | Ghost (no `Partition`)   | Real (metadata-only)         |
-| Local state after migr. | **Must delete** (risk)   | **Must delete** (risk)   | Standard handoff             |
-| Migration coordinator   | Custom (who?)            | Custom (who?)            | **Leader**                   |
-| RLM integration         | Custom hooks (~11 wks)   | Custom hooks (~11 wks)   | **Standard (~0 wks)**        |
-| Job assignment          | Racing                   | Racing                   | **Leader-based**             |
-| Reverse migration ready | No (must expand RF)      | No (must fix ghosts)     | **Yes**                      |
+```
+Aspect                 | A: Shrink RF=1      | B: Keep RF=3 fake   | C: RF=rack_count ✓
+-----------------------|---------------------|---------------------|---------------------
+KRaft RF after migrate | 1                   | 3 (unchanged)       | 3 (rack-aware)
+Transformer behavior   | Hash to any broker  | Hash to any broker  | Filter by AZ
+Hybrid/tiered reads    | Custom / risky      | Custom / risky      | Replicas only (safe)
+Replica objects        | None (offline)      | Ghost (no Partition)| Real (metadata-only)
+Local state after migr | Must delete (risk)  | Must delete (risk)  | Standard handoff
+Migration coordinator  | Custom (who?)       | Custom (who?)       | Leader
+RLM integration        | Custom (~11 wks)    | Custom (~11 wks)    | Standard (~0 wks)
+Job assignment         | Racing              | Racing              | Leader-based
+Reverse migration      | No (must expand RF) | No (must fix ghosts)| Yes
+```
 
 #### Migration RF Normalization (Classic → Diskless)
 
@@ -162,11 +167,19 @@ This matters because diskless-managed RF assumes replicas are meaningful for **l
 
 We have three options:
 
-| Option | What happens | Pros | Cons |
-|--------|--------------|------|------|
-| Pre-migration (operator) | Operator increases RF / fixes placement before switching to diskless | Simplifies migration implementation | Often **expensive and slow** (classic replication copies data we are about to move to object storage anyway); higher ops burden |
-| Pre-migration (automatic) | Migration pipeline expands RF while still classic | Fully automated | Same cost as operator path; adds risk/complexity during classic operation |
-| Post-switch (recommended) | Switch partition to diskless storage first, then expand RF to `rack_count` as **metadata-only replicas** (eventually) | Avoids wasting time/resources replicating classic data; keeps a single migration pipeline | Rack-awareness/job distribution may be suboptimal until normalization completes |
+```
+Option                     | What happens
+---------------------------|----------------------------------------------------------
+Pre-migration (operator)   | Operator increases RF before switching to diskless
+Pre-migration (automatic)  | Migration pipeline expands RF while still classic
+Post-switch (recommended)  | Switch to diskless first, expand RF eventually
+```
+
+| Option | Pros | Cons |
+|--------|------|------|
+| Pre-migration (operator) | Simplifies migration impl | Expensive/slow (replicates data we'll move anyway); ops burden |
+| Pre-migration (automatic) | Fully automated | Same cost; adds risk during classic operation |
+| Post-switch ✓ | Avoids wasting resources; single pipeline | Suboptimal placement until normalization |
 
 **Encoding in the proposed algorithm:** After switching a partition to `DISKLESS_ONLY`, the controller may *eventually*
 normalize RF/placement (background task) but does not block availability or correctness on completing that step.
@@ -247,12 +260,14 @@ What "real (metadata-only) replica" means:
 
 ### Diskless → Classic Migration Readiness
 
-| Aspect            | A: RF=1                 | B: RF=3 faked             | C: RF=rack_count          |
-|-------------------|-------------------------|---------------------------|---------------------------|
-| Starting RF       | 1                       | 3 (ghost replicas)        | 3 (real replicas)         |
-| Before migration  | Must expand RF=1 → RF=3 | Must "un-ghost" replicas  | **Ready as-is**           |
-| Replica state     | Create from scratch     | Create `Partition` objects| Already correct           |
-| Complexity        | High (2 operations)     | Medium (fix ghosts)       | **Low (just migrate)**    |
+```
+Aspect           | A: RF=1             | B: RF=3 faked          | C: RF=rack_count ✓
+-----------------|---------------------|------------------------|--------------------
+Starting RF      | 1                   | 3 (ghost replicas)     | 3 (real replicas)
+Before migration | Must expand RF=1→3  | Must "un-ghost"        | Ready as-is
+Replica state    | Create from scratch | Create Partition objs  | Already correct
+Complexity       | High (2 operations) | Medium (fix ghosts)    | Low (just migrate)
+```
 
 **Key insight:** Only Approach C is ready for reverse migration without additional work.
 
@@ -336,15 +351,17 @@ The same problems exist, but Approach C solves them via **standard Kafka pattern
 
 #### Decision Framework
 
-| Factor                   | A: Shrink to RF=1        | B: Keep RF=3, fake       | C: RF=rack_count (proposed) |
-|--------------------------|--------------------------|--------------------------|------------------------------|
-| Short-term cost          | ~7 weeks (local + TS)    | ~7 weeks (local + TS)    | ~6-8 weeks (incl. buffer)    |
-| Local state risk         | **High** (must cleanup)  | **High** (must cleanup)  | Low (standard handoff)       |
-| Classic → Diskless       | Custom coordination      | Custom coordination      | Standard replica handoff     |
-| RLM integration          | Custom hooks (~11 wks)   | Custom hooks (~11 wks)   | Standard (~0 wks)            |
-| Diskless → Classic       | RF expansion + migration | Un-ghost + migration     | Migration only               |
-| Long-term maintenance    | Two code paths           | Two code paths           | One code path                |
-| Kafka/KIP alignment      | Divergent                | Divergent                | Aligned                      |
+```
+Factor                | A: Shrink RF=1       | B: Keep RF=3 fake    | C: RF=rack_count ✓
+----------------------|----------------------|----------------------|---------------------
+Short-term cost       | ~7 wks (local + TS)  | ~7 wks (local + TS)  | ~6-8 wks (w/ buffer)
+Local state risk      | High (must cleanup)  | High (must cleanup)  | Low (std handoff)
+Classic → Diskless    | Custom coordination  | Custom coordination  | Std replica handoff
+RLM integration       | Custom (~11 wks)     | Custom (~11 wks)     | Standard (~0 wks)
+Diskless → Classic    | RF expand + migrate  | Un-ghost + migrate   | Migration only
+Long-term maintenance | Two code paths       | Two code paths       | One code path
+Kafka/KIP alignment   | Divergent            | Divergent            | Aligned
+```
 
 #### Summary
 
@@ -377,6 +394,26 @@ Plus, deferring creates technical debt:
 4. Avoids local state cleanup risks (data corruption, offset drift)
 5. Avoids accumulating technical debt
 6. Aligns diskless with Kafka's replica model
+
+### Open Questions for Review
+
+1. **Tiered reads: replicas-only vs any broker**
+   - Current decision: replicas-only (RLM requires `UnifiedLog`)
+   - Alternative kept alive as [Decision Option](#decision-option-keep-alive-allow-tiered-storage-rlm-reads-from-any-broker)
+   - **Question:** Is this the right default? Should we invest in "tiered reads from any broker" sooner?
+
+2. **Post-switch RF normalization: automatic vs operator-triggered**
+   - Current decision: eventual/best-effort, controller may normalize in background
+   - **Question:** Should normalization be fully automatic, or should operators trigger it explicitly?
+
+3. **`Partition` objects for diskless**
+   - Current: skipped (`ReplicaManager.isDisklessTopic()` check)
+   - Future: may add for RLM coordination
+   - **Question:** Should we add minimal `Partition` objects now (for RLM hooks), or defer?
+
+4. **Existing RF=1 diskless topics modernization**
+   - Current: eventual background task or manual `kafka-reassign-partitions.sh`
+   - **Question:** Should we proactively modernize existing RF=1 topics, or leave as opt-in?
 
 ### Related Documents
 
@@ -489,22 +526,24 @@ The same fallback logic applies to any RF < rack_count (including RF=1). This is
 
 **Decision summary (routing vs tiered correctness):**
 
-- **If a partition may require Tiered Storage reads** (`TIERED_ONLY` / `HYBRID`): metadata must return **replica brokers only**
+- **If a partition may require Tiered Storage reads** (`DISKLESS_TIERED`): metadata must return **replica brokers only**
   (brokers with `UnifiedLog`/RLM state). Availability follows Kafka semantics.
 - **If a partition is `DISKLESS_ONLY`**: metadata can prioritize KRaft placement but may fall back to **any alive broker**
   (transformer-first availability).
 - If we later choose [Tiered reads from any broker](#decision-option-keep-alive-allow-tiered-storage-rlm-reads-from-any-broker),
   we can remove the “replicas-only for tiered/hybrid” constraint and strengthen decoupling.
 
-**Tiered Storage (TS) reading — Important Consideration:**
+#### Tiered Storage (TS) reading — Important Consideration
 
 TS fetching via `RemoteLogManager.read()` requires local state that current diskless doesn't have:
 
-| Requirement | What RLM needs | Current diskless | Approach C |
-|-------------|----------------|------------------|------------|
-| `UnifiedLog` | `fetchLog.apply(tp)` must return log | **Missing** (no `Partition`) | Has it (real replicas) |
-| `LeaderEpochFileCache` | For segment lookup | **Missing** | Has it |
-| Segment metadata | To locate tiered data | **Missing** | Has it |
+```
+Requirement          | What RLM needs                 | Current diskless    | Approach C
+---------------------|--------------------------------|---------------------|-------------------
+UnifiedLog           | fetchLog.apply(tp) returns log | Missing             | Has it (real)
+LeaderEpochFileCache | For segment lookup             | Missing             | Has it
+Segment metadata     | To locate tiered data          | Missing             | Has it
+```
 
 **Therefore:** for migrated topics, “any broker can serve” is only safe once the partition is `DISKLESS_ONLY`, unless we
 implement the “tiered reads from any broker” decision option.
@@ -533,7 +572,7 @@ Kafka **Metadata** responses do not include fetch offsets, so the transformer ca
 - Diskless range (can be served by any broker).
 
 Therefore the transformer must be conservative **per partition state**:
-- **If tiered reads are possible** (migration state is `TIERED_ONLY` / `HYBRID` per `DESIGN.md`), the transformer must return only brokers in the **KRaft replica set** (so TS reads work).
+- **If tiered reads are possible** (`DISKLESS_TIERED`), the transformer must return only brokers in the **KRaft replica set** (so TS reads work).
 - **Only when the partition is `DISKLESS_ONLY`** (no tiered reads), the transformer may route to any alive broker for availability.
 
 **Note:** Pure diskless topics (never migrated) use Inkless `FetchHandler` which reads from object storage directly — no RLM dependency. The TS limitation matters during/around migration when a partition still has tiered/local data.
@@ -651,18 +690,22 @@ decision” in [Approach Comparison](#approach-comparison).
 FOR each diskless partition:
   # Important: Metadata responses are offset-unaware, so routing must be
   # conservative when tiered reads are possible.
-  mode = migrationState(tp)   # DISKLESS_ONLY vs HYBRID/TIERED_ONLY
+  mode = migrationState(tp)   # DISKLESS_ONLY or DISKLESS_TIERED (has tiered data)
 
   assigned_replicas = KRaft replica set
   alive_replicas = assigned_replicas ∩ alive_brokers
   
-  IF mode != DISKLESS_ONLY:
+  IF mode == DISKLESS_TIERED:
     # Tiered reads may be required -> must stay on replicas that have UnifiedLog/RLM state
     IF alive_replicas is not empty:
       RETURN alive_replicas (prefer clientAZ, else cross-AZ)
     ELSE:
-      RETURN assigned_replicas (Kafka semantics: partition unavailable until replica returns)
-  ELSE:
+      # Yes, this loses availability — but tiered reads REQUIRE replica brokers.
+      # This is standard Kafka semantics: partition unavailable until replica returns.
+      # Note: This scenario is rare (all replicas down) and temporary.
+      # Rolling restarts or upgrades replacing nodes won't hit this path — at least one replica is alive.
+      RETURN assigned_replicas (partition unavailable)
+  ELSE:  # DISKLESS_ONLY
     # Diskless-only: any broker can serve, so we can preserve "always available"
     IF alive_replicas is not empty:
       # Normal case: use KRaft placement
@@ -677,11 +720,12 @@ FOR each diskless partition:
 
 ### Key Properties
 
-1. **Instant availability (diskless-only)**: No waiting for controller when `DISKLESS_ONLY`
+1. **Instant availability (`DISKLESS_ONLY`)**: No waiting for controller; falls back to hash if all replicas offline
 2. **AZ-aware when possible**: Uses KRaft placement if alive
-3. **Graceful degradation (diskless-only)**: Falls back to hash if needed
-4. **Tiered-safe routing (hybrid/tiered)**: When tiered reads are possible, only replica brokers are returned
-5. **Availability semantics are state-dependent**: Hybrid/tiered behaves like Kafka; diskless-only is always available
+3. **Graceful degradation (`DISKLESS_ONLY`)**: Falls back to hash-based selection if needed
+4. **Tiered-safe routing (`DISKLESS_TIERED`)**: Only replica brokers are returned (RLM requires `UnifiedLog`)
+5. **Availability trade-off (`DISKLESS_TIERED`)**: If all replicas offline, partition is unavailable (standard Kafka semantics)
+6. **State-dependent semantics**: Hybrid/tiered behaves like Kafka; diskless-only is always available
 
 ---
 
@@ -875,7 +919,7 @@ If 101 flaps (comes back quickly), we may churn again unless we add damping/heur
 for hybrid/tiered partitions.
 
 **Why it matters to this design:** It directly affects whether metadata transformation must be migration-state-aware
-(`HYBRID`/`TIERED_ONLY` → replicas-only) or can always return “best available” brokers without risking tiered-read failures.
+(`DISKLESS_TIERED` → replicas-only) or can always return “best available” brokers without risking tiered-read failures.
 
 #### Integration path if we choose this option (high level)
 
@@ -900,13 +944,15 @@ proxy approach.
 
 #### How this would change A/B/C (weighting)
 
-| Impact area | A/B (faking) | C (proposed) |
-|------------|--------------|--------------|
-| Remove “custom TS fetch path” work | **Yes** (saves ~2-3 weeks) | Not needed either way |
-| Fix ghost replicas / lack of `Partition` objects | **No** | Already addressed by C |
-| Enable standard RLM integration for tiering pipeline (`onLeadershipChange`) | **No** | **Yes** |
-| Reduce need to modernize RF=1/orphans before tiered reads | **Partially** | Still recommended for ops + leadership |
-| New complexity introduced | **High** (proxying, cross-AZ, quotas) | Medium (optional future) |
+```
+Impact area                            | A/B (faking)           | C (proposed)
+---------------------------------------|------------------------|-------------------------
+Remove "custom TS fetch path" work     | Yes (saves ~2-3 wks)   | Not needed either way
+Fix ghost replicas / no Partition      | No                     | Already addressed
+Enable std RLM integration             | No                     | Yes
+Reduce need to modernize RF=1/orphans  | Partially              | Still recommended
+New complexity introduced              | High (proxy, cross-AZ) | Medium (optional future)
+```
 
 **Bottom line:** This option can reduce *one* major A/B gap (tiered reads during migration) and could strengthen the
 “availability routing” story, but it does **not** remove the main reasons we prefer C (real replicas, leadership, avoiding
