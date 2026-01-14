@@ -1,7 +1,60 @@
 # Diskless-Managed Replication Factor
 
+## Overview
+
+### Problem
+
+Current diskless topics use **RF=1 with faked metadata** — the transformer routes to any broker, ignoring KRaft placement.
+This works for pure diskless, but **blocks bidirectional topic migration** (Classic ↔ Diskless) and **RLM integration** for
+the tiering pipeline.
+
+### Key Factors Considered
+
+| Factor | Constraint/Consideration |
+|--------|--------------------------|
+| **Topic migration** | Must support Classic → Diskless (immediate) and Diskless → Classic (future) |
+| **Tiered Storage reads** | RLM requires `UnifiedLog` state — only replica brokers can serve tiered reads |
+| **Always-available semantics** | Diskless topics must remain available even when KRaft replicas are offline |
+| **RLM/tiering pipeline** | Standard `onLeadershipChange()` integration requires real KRaft leadership |
+| **Operational clarity** | Tooling (`describe topic`) should reflect reality; deterministic job ownership |
+| **Implementation cost** | Minimize weeks-to-value while avoiding technical debt |
+
+### Proposed Approach: RF=rack_count with Transformer-First Availability
+
+**At topic creation:**
+- Controller assigns **RF = rack_count** (one replica per rack/AZ)
+- Real KRaft-managed replicas with rack-aware placement
+
+**At runtime (routing):**
+- **Hybrid/tiered partitions**: metadata returns replica brokers only (tiered reads require `UnifiedLog`)
+- **Diskless-only partitions**: metadata prefers replicas but falls back to any alive broker if all are offline
+
+**Key simplification:** No controller auto-reassignment. Availability is handled by the transformer at routing time, not by
+moving replicas in KRaft. This keeps the design simple while preserving the "always available" property.
+
+### Trade-offs Accepted
+
+| Trade-off | Accepted | Rationale |
+|-----------|----------|-----------|
+| KRaft metadata may show offline brokers | Yes | Availability is not blocked; eventual consistency is acceptable |
+| `describe topic` may be temporarily stale | Yes | Operator can see actual state via metrics; availability is real |
+| Tiered reads require replica brokers | Yes | Necessary for RLM correctness; can revisit with "tiered reads from any broker" option |
+
+### Estimate
+
+**6-8 weeks** (1 engineer) — vs **18+ weeks** for alternatives that defer real replicas.
+
+### Key Decisions for Review
+
+1. **Tiered reads: replicas-only vs any broker** — Currently replicas-only; "any broker" kept as explicit decision option
+2. **Post-switch RF normalization** — Eventual/best-effort, not forced prerequisite
+3. **No controller auto-reassignment** — Transformer handles availability; simpler design
+
+---
+
 ## Table of Contents
 
+0. [Overview](#overview)
 1. [Motivation](#motivation)
 2. [Objectives](#objectives)
 3. [Design: Transformer-First Availability](#design-transformer-first-availability)
