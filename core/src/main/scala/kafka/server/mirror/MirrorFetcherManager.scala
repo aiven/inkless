@@ -32,7 +32,7 @@ import org.apache.kafka.server.network.BrokerEndPoint
 import scala.collection.{Map, mutable}
 
 /**
- * Cluster Mirror component that manages replica fetcher threads for cluster mirroring scenarios
+ * Component that manages replica fetcher threads for cluster mirroring scenarios
  * where the local Kafka cluster needs to replicate data from multiple remote Kafka clusters.
  *
  * This manager extends the standard AbstractFetcherManager with specialized logic for handling

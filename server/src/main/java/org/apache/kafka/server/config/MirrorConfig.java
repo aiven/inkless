@@ -38,7 +38,7 @@ import static org.apache.kafka.common.config.ConfigDef.Type.STRING;
 
 /**
  * This class provides proper validation, defaults, and documentation for all
- * configurations supported by the Cluster Mirroring functionality.
+ * configurations supported by the Cluster Mirroring feature.
  */
 public class MirrorConfig {
     // Internal topic configuration
