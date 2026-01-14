@@ -141,23 +141,6 @@ public class MirrorCoordinator {
         }
     }
 
-    public void updateLastMirroredOffsets(String mirrorName, Set<String> mirrorTopics) {
-        Map<String, Map<Integer, Long>> partitionOffsets = new HashMap<>();
-        mirrorTopics.forEach(topic -> {
-            ((KRaftMetadataCache) metadataCache).numPartitions(topic).ifPresent(numPartitions -> {
-                Map<Integer, Long> offsets = new HashMap<>();
-                IntStream.range(0, numPartitions).forEach(i -> {
-                    TopicPartition topicPartition = new TopicPartition(topic, i);
-                    replicaManager.getPartitionOrException(topicPartition).log().foreach(log -> offsets.put(i, log.lastStableOffset()));
-                });
-                partitionOffsets.put(topic, offsets);
-            });
-        });
-
-        LOG.info("!!! Partition offsets for mirror topics: " + partitionOffsets);
-        updateLastMirroredOffsetsMetadata(mirrorName, partitionOffsets);
-    }
-
     public void transitionTo(String mirrorName, Set<String> topics, MirrorState newState) {
         topics.forEach(topic -> {
             ((KRaftMetadataCache) metadataCache).numPartitions(topic).ifPresent(numPartitions -> {
@@ -184,6 +167,22 @@ public class MirrorCoordinator {
         }
     }
 
+    public void updateLastMirroredOffsets(String mirrorName, Set<String> mirrorTopics) {
+        Map<String, Map<Integer, Long>> partitionOffsets = new HashMap<>();
+        mirrorTopics.forEach(topic -> {
+            ((KRaftMetadataCache) metadataCache).numPartitions(topic).ifPresent(numPartitions -> {
+                Map<Integer, Long> offsets = new HashMap<>();
+                IntStream.range(0, numPartitions).forEach(i -> {
+                    TopicPartition topicPartition = new TopicPartition(topic, i);
+                    replicaManager.getPartitionOrException(topicPartition).log().foreach(log -> offsets.put(i, log.lastStableOffset()));
+                });
+                partitionOffsets.put(topic, offsets);
+            });
+        });
+
+        LOG.info("!!! Partition offsets for mirror topics: " + partitionOffsets);
+        updateLastMirroredOffsetsMetadata(mirrorName, partitionOffsets);
+    }
 
     public void updateMirrorPartitionState(String mirrorName, TopicPartition topicPartition, MirrorState newState) {
         var mirrorTopicPartition = new TopicPartition(Topic.MIRROR_STATE_TOPIC_NAME, partitionIndexForKey(new MirrorRecordKey(mirrorName)));
