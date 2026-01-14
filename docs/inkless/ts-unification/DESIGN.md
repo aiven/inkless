@@ -555,6 +555,9 @@ public class DisklessMigrationHandler {
 
 ### 4.4 Stream 4: Multi-Replica Model for Diskless Topics
 
+> **📄 Detailed Design:** See [DISKLESS_MANAGED_RF.md](DISKLESS_MANAGED_RF.md) for the comprehensive design of rack-aware,
+> KRaft-managed replicas for diskless topics, including approach comparison, cost analysis, and implementation path.
+
 **Objective:** Enable diskless topics to use 3 actual Kafka replicas while preserving write-to-any semantics.
 
 #### 4.4.1 Current vs. Proposed Model
@@ -1972,6 +1975,7 @@ Once the tiering pipeline is complete, enabling reverse migration becomes straig
 
 - [KIP-405: Tiered Storage](https://cwiki.apache.org/confluence/display/KAFKA/KIP-405%3A+Kafka+Tiered+Storage)
 - [Inkless Architecture Documentation](./architecture.md)
+- [Diskless-Managed Replication Factor](DISKLESS_MANAGED_RF.md) — Detailed design for rack-aware, KRaft-managed replicas
 - [RemoteLogManager Implementation](../../core/src/main/java/kafka/log/remote/RemoteLogManager.java)
 - [ControlPlane Interface](../../storage/inkless/src/main/java/io/aiven/inkless/control_plane/ControlPlane.java)
 
