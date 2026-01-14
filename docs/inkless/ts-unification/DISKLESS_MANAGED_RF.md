@@ -303,6 +303,8 @@ Unlike classic topics where data lives on specific brokers (making KRaft metadat
 - **Availability** can be handled instantly by the transformer (route to any alive broker)
 - **Metadata accuracy** can be eventually consistent (controller updates KRaft when convenient)
 
+**Scope note:** This decoupling applies to partitions in a **diskless-only** state. During tiered→diskless migration (hybrid/tiered state), reads may require a broker with `UnifiedLog`/RLM state, so routing must stay within the KRaft replica set (Kafka semantics).
+
 | Concern           | Priority     | Who Handles       | Speed      |
 |-------------------|--------------|-------------------|------------|
 | Availability      | Critical     | Transformer       | Instant    |
@@ -406,7 +408,17 @@ With Approach C:
 - Real replicas have `Partition` → `UnifiedLog` → works with RLM
 - Standard TS fetch path works
 
-**Note:** Pure diskless topics (never migrated) use Inkless `FetchHandler` which reads from object storage directly — no RLM dependency. The issue is specifically for **migrated topics** that have tiered data.
+**Implication for metadata transformation (offset-unaware):**
+
+Kafka **Metadata** responses do not include fetch offsets, so the transformer cannot know whether a client will read:
+- Tiered/local range (must be served by a broker with `UnifiedLog`/RLM state), or
+- Diskless range (can be served by any broker).
+
+Therefore the transformer must be conservative **per partition state**:
+- **If tiered reads are possible** (migration state is `TIERED_ONLY` / `HYBRID` per `DESIGN.md`), the transformer must return only brokers in the **KRaft replica set** (so TS reads work).
+- **Only when the partition is `DISKLESS_ONLY`** (no tiered reads), the transformer may route to any alive broker for availability.
+
+**Note:** Pure diskless topics (never migrated) use Inkless `FetchHandler` which reads from object storage directly — no RLM dependency. The TS limitation matters during/around migration when a partition still has tiered/local data.
 
 **Eventual modernization (optional):**
 - Controller can lazily detect RF=1 diskless topics
@@ -490,26 +502,39 @@ New partitions use same one-per-rack logic as creation.
 
 ```
 FOR each diskless partition:
+  # Important: Metadata responses are offset-unaware, so routing must be
+  # conservative when tiered reads are possible.
+  mode = migrationState(tp)   # DISKLESS_ONLY vs HYBRID/TIERED_ONLY
+
   assigned_replicas = KRaft replica set
   alive_replicas = assigned_replicas ∩ alive_brokers
   
-  IF alive_replicas is not empty:
-    # Normal case: use KRaft placement
-    IF any alive_replica in clientAZ:
-      RETURN local replica (AZ-aware routing)
+  IF mode != DISKLESS_ONLY:
+    # Tiered reads may be required -> must stay on replicas that have UnifiedLog/RLM state
+    IF alive_replicas is not empty:
+      RETURN alive_replicas (prefer clientAZ, else cross-AZ)
     ELSE:
-      RETURN all alive_replicas (cross-AZ fallback)
+      RETURN assigned_replicas (Kafka semantics: partition unavailable until replica returns)
   ELSE:
-    # All assigned replicas offline: fall back to hash
-    RETURN hash-based selection from all alive brokers in clientAZ
+    # Diskless-only: any broker can serve, so we can preserve "always available"
+    IF alive_replicas is not empty:
+      # Normal case: use KRaft placement
+      IF any alive_replica in clientAZ:
+        RETURN local replica (AZ-aware routing)
+      ELSE:
+        RETURN all alive_replicas (cross-AZ fallback)
+    ELSE:
+      # All assigned replicas offline: fall back to hash
+      RETURN hash-based selection from all alive brokers in clientAZ
 ```
 
 ### Key Properties
 
-1. **Instant availability**: No waiting for controller
+1. **Instant availability (diskless-only)**: No waiting for controller when `DISKLESS_ONLY`
 2. **AZ-aware when possible**: Uses KRaft placement if alive
-3. **Graceful degradation**: Falls back to hash if needed
-4. **No metadata dependency for availability**: Stale metadata doesn't cause downtime
+3. **Graceful degradation (diskless-only)**: Falls back to hash if needed
+4. **Tiered-safe routing (hybrid/tiered)**: When tiered reads are possible, only replica brokers are returned
+5. **Availability semantics are state-dependent**: Hybrid/tiered behaves like Kafka; diskless-only is always available
 
 ---
 
