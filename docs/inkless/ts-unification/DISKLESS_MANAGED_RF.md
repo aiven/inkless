@@ -390,7 +390,7 @@ Plus, deferring creates technical debt:
 **Implement the proposed design (Approach C: RF=rack_count)** because:
 1. Topic migration (both directions) benefits from real replicas
 2. RLM integration becomes standard rather than custom
-3. One-time 6-8 week investment vs. 15+ weeks with A/B
+3. One-time 6-8 week investment vs. 18+ weeks with A/B
 4. Avoids local state cleanup risks (data corruption, offset drift)
 5. Avoids accumulating technical debt
 6. Aligns diskless with Kafka's replica model
