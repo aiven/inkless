@@ -175,3 +175,172 @@ During the initial find and planning stages, the broker will fetch the batch coo
 The observed P99 latencies for this stage are around ~10ms.
 Fetching the objects from remote storage depends on the object size and the number of objects to fetch.
 For instance, for AWS S3, the latencies are around 100-200ms for 2-8MB objects.
+
+### Caching and Consumer Performance
+
+Consumer fetch performance is heavily influenced by caching. Inkless implements a **local in-memory cache (Caffeine) per broker**, combined with **deterministic partition-to-broker assignment**:
+
+- **Cache Hits**: When data is already cached (from recent producer writes or previous consumer reads), fetch latencies are significantly lower - typically in the range of 10-50ms depending on the broker's local processing
+- **Cache Misses**: When data must be fetched from object storage, latencies include the object storage GET operation (~100-200ms for S3)
+- **Cache Configuration**: The cache is configurable via:
+  - `inkless.consume.cache.max.count` (default: 1000 objects)
+  - `inkless.consume.cache.expiration.lifespan.sec` (default: 60 seconds)
+  - `inkless.consume.cache.block.bytes` (default: 16MB)
+
+#### AZ-Awareness and Cache Efficiency
+
+Inkless achieves per-AZ cache locality through **deterministic partition assignment** and **AZ-aware metadata routing**, not a distributed cache. Each broker maintains its own independent local cache (Caffeine), and the system ensures clients in the same AZ consistently connect to the same broker for a given partition.
+
+| Property         | How It Works                                                                      |
+|------------------|-----------------------------------------------------------------------------------|
+| Cache per broker | Each broker has an independent local Caffeine cache                               |
+| AZ locality      | Metadata routing directs clients to brokers in their AZ                           |
+| Partition affinity | Deterministic hash ensures same partition maps to same broker within an AZ      |
+| Result           | Clients in the same AZ hit the same broker's cache for a given partition          |
+
+**Optimal scenario**: When all clients (producers and consumers) are configured with the same `diskless_az` value matching their broker's `broker.rack`:
+- Producers write to a deterministically-assigned broker in their AZ, populating that broker's local cache
+- Consumers read from the same broker (same partition maps to same broker), benefiting from cache hits
+- With sufficient cache capacity, **all recent data can be served from memory**
+- Object storage GET requests are minimized, significantly reducing costs
+
+**Multi-AZ scenario**: When clients are distributed across AZs:
+- Each AZ has its own set of brokers, each with independent local caches
+- A consumer in AZ-A reading data produced in AZ-B will incur a cache miss (different broker)
+- Cross-AZ data transfer costs apply in addition to object storage costs
+
+**Recommendations for cost optimization**:
+1. Configure all clients with appropriate `diskless_az` in their `client.id`
+2. Size the cache (`inkless.consume.cache.max.count`) to hold your hot working set
+3. Adjust cache TTL (`inkless.consume.cache.expiration.lifespan.sec`) based on your consumer lag patterns
+4. Monitor cache hit rates to validate your configuration
+
+See [CLIENT-BROKER-AZ-ALIGNMENT.md](CLIENT-BROKER-AZ-ALIGNMENT.md) for detailed AZ configuration guidance and an explanation of how deterministic assignment achieves distributed-cache-like properties.
+
+### Hot Path vs Cold Path (Lagging Consumers)
+
+Inkless implements a two-tier fetch architecture that separates recent data requests from lagging consumer requests:
+
+**Hot Path** (recent data):
+- Uses the object cache for fast repeated access
+- Dedicated executor pool (`inkless.fetch.data.thread.pool.size`, default: 32 threads)
+- Low latency, typically served from cache
+- No rate limiting
+
+**Cold Path** (lagging consumers):
+- For consumers reading data older than the threshold (`inkless.fetch.lagging.consumer.threshold.ms`)
+- Bypasses cache to avoid evicting hot data
+- Dedicated bounded executor pool (`inkless.fetch.lagging.consumer.thread.pool.size`, default: 16 threads)
+- Optional rate limiting (`inkless.fetch.lagging.consumer.request.rate.limit`, default: 200 req/s)
+- Separate storage client for resource isolation
+
+**Path selection** is based on data age (batch timestamp), not consumer lag:
+- Data newer than threshold → hot path (with cache)
+- Data older than threshold → cold path (bypasses cache)
+- Default threshold (`-1`) uses cache TTL, ensuring data stays "recent" while potentially in cache
+
+> **Note:** The terms "trailing consumer" and "lagging consumer" are used interchangeably in Kafka literature. Inkless uses "lagging consumer" in configuration names.
+
+### Consumer Rack Awareness
+
+Similar to producers, consumers should configure rack awareness to minimize cross-AZ data transfer costs:
+
+```properties
+client.id=<custom_id>,diskless_az=<rack>
+```
+
+Where `<rack>` matches the `broker.rack` configuration. This ensures:
+- Consumers fetch from deterministically-assigned brokers in the same availability zone
+- Cache hits are served from the broker's local cache (same broker handles same partition)
+- Cross-AZ data transfer costs are minimized
+
+### Optimizing Consumer Performance
+
+1. **Increase consumer concurrency**: Multiple consumers reading from different partitions can parallelize fetches
+2. **Align consumer rack with data**: Configure `client.id` with the appropriate `diskless_az` to stay within the same rack/AZ
+3. **Understand cold path behavior**: Lagging consumers bypass the cache to avoid evicting hot data; consider rate limiting and thread pool sizing
+4. **Monitor cache metrics**: Track cache hit rates to understand performance characteristics
+5. **File merging**: The background file merger consolidates small objects, improving read performance for lagging consumers over time
+
+### Read Amplification
+
+Unlike traditional Kafka where each partition's data is stored contiguously, Inkless stores data from multiple partitions in the same object. This can lead to read amplification when:
+- Reading from a single partition requires fetching objects containing data from multiple partitions
+- The `inkless.consume.cache.block.bytes` setting controls the granularity of fetches (default 16MB blocks)
+
+File merging helps reduce this over time by reorganizing data for better partition locality in merged objects.
+
+### Tuning the Read Path
+
+#### Broker Configuration
+
+The read path can be tuned using three key broker configurations under the `inkless.` prefix:
+
+| Configuration | Default | Description |
+|---------------|---------|-------------|
+| `fetch.lagging.consumer.thread.pool.size` | 16 | Thread pool size for lagging consumers. Set to **0** to disable the feature entirely. |
+| `fetch.lagging.consumer.threshold.ms` | -1 (auto) | Time threshold (ms) to distinguish recent vs lagging data. `-1` uses cache TTL automatically. Must be ≥ cache lifespan when set explicitly. |
+| `fetch.lagging.consumer.request.rate.limit` | 200 | Maximum requests/second for lagging consumers. Set to **0** to disable rate limiting. |
+
+**Tuning guidance:**
+
+- **Thread pool size**: Default of 16 threads (half of hot path's 32) is suitable for most workloads. Increase for higher lagging consumer concurrency, but be mindful of storage backend capacity.
+- **Threshold**: The `-1` default aligns with cache lifecycle. Set an explicit value (e.g., `120000` for 2 minutes) if you need different lagging consumer classification.
+- **Rate limit**: Default 200 req/s balances throughput with cost control. Adjust based on your object storage budget and capacity requirements.
+
+#### Consumer Configuration
+
+Inkless consumers should be configured for **throughput** rather than low latency. This applies to all consumers, not just those catching up from behind - a consumer starting from the beginning will eventually reach the hot path and continue with the same configuration.
+
+```properties
+fetch.max.bytes=67108864        # 64 MiB - maximum data per fetch request
+max.partition.fetch.bytes=8388608  # 8 MiB - maximum data per partition
+fetch.min.bytes=8388608         # 8 MiB - wait for substantial data
+fetch.max.wait.ms=5000          # 5 seconds - allow time to accumulate data
+```
+
+**Why throughput-oriented configuration?**
+
+Unlike traditional Kafka where data is read from local disk, Inkless reads involve:
+- Object storage requests (when cache misses occur)
+- Per-request costs regardless of data size
+- Higher baseline latency (~100-200ms for object storage vs ~1-10ms for local disk)
+
+Large batch fetches amortize these costs and latencies across more data. Whether reading from the hot path (cache) or cold path (object storage), larger batches are more efficient.
+
+> **Note:** The hot/cold path distinction affects where data comes from, not how consumers should be configured. A consumer catching up will transition from cold path to hot path as it reaches recent data, but the same throughput-oriented configuration works well for both scenarios.
+
+#### Monitoring the Read Path
+
+Four metrics track hot/cold path behavior:
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `RecentDataRequestRate` | Meter | Hot path request rate (recent data) |
+| `LaggingConsumerRequestRate` | Meter | Cold path request rate (all lagging requests) |
+| `LaggingConsumerRejectedRate` | Meter | Rejection events (queue full or executor shutdown) |
+| `LaggingRateLimitWaitTime` | Histogram | Rate limit wait times |
+
+**What to watch:**
+
+- **High `LaggingConsumerRejectedRate`**: Consider increasing thread pool size or rate limit
+- **High `LaggingRateLimitWaitTime`**: Indicates rate limiting is actively throttling requests (expected behavior under load)
+- **Ratio of recent vs lagging requests**: Helps understand workload patterns and tune thresholds
+
+#### Why Hot/Cold Separation Matters
+
+**Before hot/cold separation**, when lagging consumers were active (e.g., during backfills):
+
+- Unpredictable, severe performance spikes (producer latencies could spike to 40+ seconds)
+- Complete producer blocking due to resource contention
+- All consumers affected by resource contention
+- Cache pollution: lagging consumer data evicting recent data
+
+**After hot/cold separation**:
+
+- Stable, predictable performance with controlled degradation
+- Producers and tail-consumers maintain consistent performance
+- Backfill jobs run at a stable, controlled rate
+- Resource isolation prevents cascading failures
+
+> **Key insight**: End-to-end latency may not improve in absolute terms, but **severe degradation and instability are removed entirely**. The system becomes predictable and controllable.
