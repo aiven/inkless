@@ -13,10 +13,12 @@
 9. [Observability](#observability)
 10. [Implementation Path](#implementation-path) *(6-8 weeks / 1 eng)*
 11. [Rejected Alternatives](#rejected-alternatives)
+    - [Decision Option: Tiered reads from any broker](#decision-option-keep-alive-allow-tiered-storage-rlm-reads-from-any-broker)
 12. [Appendix](#appendix)
     - [Ghost Replicas Problem](#ghost-replicas-problem)
-    - [Operational Benefits Summary](#operational-benefits-summary)
-    - [Leadership Benefits for Operations](#leadership-benefits-for-operations)
+    - [Operational Benefits (Day-2)](#operational-benefits-day-2)
+      - [Operational Benefits Summary](#operational-benefits-summary)
+      - [Leadership Benefits for Operations](#leadership-benefits-for-operations)
 
 ---
 
@@ -69,7 +71,13 @@ This is a deliberate trade-off: it keeps the “always available” property for
 correctness for tiered/hybrid reads.
 
 If we later decide to make **tiered reads serveable from any broker**, then we can remove this constraint and strengthen the
-decoupling (see “Decision Option: Tiered reads from any broker” below).
+decoupling (see [Decision Option: Tiered reads from any broker](#decision-option-keep-alive-allow-tiered-storage-rlm-reads-from-any-broker)).
+
+**Scope/impact clarification:**
+- **Approach C does not require this option** to reach a consistent architecture. Without it, we still get correctness by
+  keeping hybrid/tiered reads on replica brokers and “always available” behavior for diskless-only partitions.
+- **Approaches A/B benefit partially** if this option is implemented (it can remove the “custom TS fetch path” gap), but it
+  does **not** fix the core A/B problems (ghost replicas, lack of real leadership/job ownership, RLM/tiering pipeline hooks).
 
 The following terminology helps distinguish the key differences:
 
@@ -106,6 +114,9 @@ We have three options:
 | Pre-migration (operator) | Operator increases RF / fixes placement before switching to diskless | Simplifies migration implementation | Often **expensive and slow** (classic replication copies data we are about to move to object storage anyway); higher ops burden |
 | Pre-migration (automatic) | Migration pipeline expands RF while still classic | Fully automated | Same cost as operator path; adds risk/complexity during classic operation |
 | Post-switch (recommended) | Switch partition to diskless storage first, then expand RF to `rack_count` as **metadata-only replicas** (eventually) | Avoids wasting time/resources replicating classic data; keeps a single migration pipeline | Rack-awareness/job distribution may be suboptimal until normalization completes |
+
+**Encoding in the proposed algorithm:** After switching a partition to `DISKLESS_ONLY`, the controller may *eventually*
+normalize RF/placement (background task) but does not block availability or correctness on completing that step.
 
 **Recommendation:** Prefer **post-switch normalization**, but treat it as **eventual / best-effort**, not a forced prerequisite.
 
@@ -423,6 +434,15 @@ The same fallback logic applies to any RF < rack_count (including RF=1). This is
 | RF < racks after ops | **Allowed** | Operator can reassign; transformer handles availability |
 | Future configurability | Possible | Could allow `min.insync.replicas` style config later |
 
+**Decision summary (routing vs tiered correctness):**
+
+- **If a partition may require Tiered Storage reads** (`TIERED_ONLY` / `HYBRID`): metadata must return **replica brokers only**
+  (brokers with `UnifiedLog`/RLM state). Availability follows Kafka semantics.
+- **If a partition is `DISKLESS_ONLY`**: metadata can prioritize KRaft placement but may fall back to **any alive broker**
+  (transformer-first availability).
+- If we later choose [Tiered reads from any broker](#decision-option-keep-alive-allow-tiered-storage-rlm-reads-from-any-broker),
+  we can remove the “replicas-only for tiered/hybrid” constraint and strengthen decoupling.
+
 **Tiered Storage (TS) reading — Important Consideration:**
 
 TS fetching via `RemoteLogManager.read()` requires local state that current diskless doesn't have:
@@ -432,6 +452,9 @@ TS fetching via `RemoteLogManager.read()` requires local state that current disk
 | `UnifiedLog` | `fetchLog.apply(tp)` must return log | **Missing** (no `Partition`) | Has it (real replicas) |
 | `LeaderEpochFileCache` | For segment lookup | **Missing** | Has it |
 | Segment metadata | To locate tiered data | **Missing** | Has it |
+
+**Therefore:** for migrated topics, “any broker can serve” is only safe once the partition is `DISKLESS_ONLY`, unless we
+implement the “tiered reads from any broker” decision option.
 
 **Impact on topic migration:**
 
@@ -522,6 +545,18 @@ New partitions use same one-per-rack logic as creation.
 
 **No auto-reassignment on broker failure.** Transformer handles availability.
 
+**Why we do not auto-reassign (even within the same rack):**
+- **Diskless-only partitions:** availability does not require reassignment; the transformer can route to any alive broker when
+  all assigned replicas are offline. Auto-reassignment adds churn and new failure modes for marginal benefit.
+- **Hybrid/tiered partitions:** tiered reads must be served by replica brokers (needs `UnifiedLog`/RLM state). If all replicas
+  are offline, we prefer **Kafka semantics** (unavailable until a replica returns) over silently routing to non-replica
+  brokers that cannot serve tiered reads.
+- **Avoid thrash:** reassigning on every transient broker flap can cause repeated metadata churn and operational instability.
+
+**Trade-off:** we prefer *temporary cross-AZ serving* (diskless-only fallback) over controller-driven reassignment, because
+it preserves the “always available” property with fewer moving parts. If an operator wants rack-locality restored, standard
+reassignment tooling remains available.
+
 **Leader Election:**
 - Standard Kafka leader election from ISR
 - For diskless topics, all replicas are always in ISR
@@ -542,15 +577,22 @@ New partitions use same one-per-rack logic as creation.
 
 ## Broker Behavior
 
-- No replica fetcher threads for diskless topics
+- No replica fetcher threads for diskless topics (invariant: must not regress)
 - No local `Partition` objects (for now — may add for RLM coordination later)
 - Inkless handlers (`AppendHandler`, `FetchHandler`) serve requests
+
+**Regression guardrail:** diskless topics must not start follower fetchers or attempt log replication. Add tests/metrics to
+ensure diskless partitions never create fetcher state.
 
 ---
 
 ## Metadata Transformation
 
 ### Filtering Logic
+
+This is the concrete encoding of the “offset-unaware metadata” constraint described in
+[Tiered Storage (TS) reading — Important Consideration](#tiered-storage-ts-reading--important-consideration) and the “key
+decision” in [Approach Comparison](#approach-comparison).
 
 ```
 FOR each diskless partition:
@@ -724,6 +766,21 @@ See [Ghost Replicas Problem](#ghost-replicas-problem) for details.
 
 **Concept:** Controller proactively detects offline replicas and reassigns to online brokers immediately.
 
+**Example:**
+
+```
+diskless topic foo-0 (RF=3, rack-aware)
+  Replicas: [101(rack=a), 202(rack=b), 303(rack=c)]
+
+Broker 101 goes offline.
+
+Auto-reassign approach:
+  Controller immediately replaces 101 with 111 (also rack=a):
+    Replicas become [111, 202, 303]
+
+If 101 flaps (comes back quickly), we may churn again unless we add damping/heuristics.
+```
+
 **Why considered:**
 - KRaft metadata always accurate
 - Standard tooling shows correct state
@@ -752,6 +809,8 @@ See [Ghost Replicas Problem](#ghost-replicas-problem) for details.
 1. **Two leadership systems** — KRaft vs. custom coordinator
 2. **RLM still blocked** — RLM uses KRaft leadership
 3. **More complexity** — three systems (KRaft + transformer + coordinator)
+   - Hard to battle-proof: split-brain risk, conflicting ownership, retries/timeouts, and unclear source of truth during
+     partial outages
 4. **Defeats purpose** — if adding coordinator, why not use KRaft's?
 
 ---
@@ -851,9 +910,18 @@ Topic: diskless-foo  Replicas: 1,2,3  ISR: 1,2,3
 
 This creates technical debt and operational confusion that compounds over time — essentially throwing problems at operators.
 
+It also increases the risk of **unknown bugs**: tests/alerts may report “healthy ISR” while the data-plane is effectively
+running a different system, masking real issues.
+
 ---
 
-### Operational Benefits Summary
+### Operational Benefits (Day-2)
+
+The next two sections are related but distinct:
+- **Operational Benefits Summary**: impact on tooling/alerts and operator mental model.
+- **Leadership Benefits for Operations**: impact on partition-scoped job ownership and debugging.
+
+#### Operational Benefits Summary
 
 The proposed design (Approach C) provides clear operational benefits compared to alternatives:
 
@@ -866,9 +934,7 @@ The proposed design (Approach C) provides clear operational benefits compared to
 | Capacity planning         | Unpredictable load             | Proportional to leadership     |
 | Standard Kafka ops        | May not work as expected       | Work normally                  |
 
----
-
-### Leadership Benefits for Operations
+#### Leadership Benefits for Operations
 
 Current diskless uses **racing/randomized** job assignment. Leadership provides:
 
@@ -879,5 +945,10 @@ Current diskless uses **racing/randomized** job assignment. Leadership provides:
 | Capacity planning       | Add brokers, hope it helps | Rebalance partition leaders   |
 | Incident response       | Check all broker logs      | Check leader broker           |
 | Tooling                 | Custom                     | Standard Kafka tooling        |
+
+**Observing progress / correctness:**
+- **Leadership distribution**: standard `LeaderCount` / leader imbalance metrics per broker.
+- **Job ownership**: leader-scoped logs/metrics (e.g., “job started/completed for partition X on leader Y”).
+- **Rebalancing effectiveness**: changes in leader distribution after preferred leader election / reassignment.
 
 Leadership isn't just about RLM — it's about having a **deterministic owner** for partition-level operations.
