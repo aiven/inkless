@@ -41,18 +41,14 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.junit.jupiter.api.io.TempDir;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.io.IOException;
-import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -100,8 +96,6 @@ import static org.mockito.Mockito.when;
 @Testcontainers
 @Tag("integration")
 class FileCleanerIntegrationTest {
-    private static final Logger LOGGER = LoggerFactory.getLogger(FileCleanerIntegrationTest.class);
-
     @Container
     static final MinioContainer MINIO = S3TestContainer.minio();
 
@@ -134,8 +128,6 @@ class FileCleanerIntegrationTest {
     MetadataView metadataView;
     @Mock
     Supplier<LogConfig> defaultTopicConfigs;
-    @TempDir
-    Path logDir;
 
     ControlPlane controlPlane;
     SharedState sharedState;

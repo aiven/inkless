@@ -63,7 +63,7 @@ public class FileCleaner implements Runnable, Closeable {
         this(
             sharedState.time(),
             sharedState.controlPlane(),
-            sharedState.buildStorage(),
+            sharedState.backgroundStorage(),
             sharedState.objectKeyCreator(),
             sharedState.config().fileCleanerRetentionPeriod()
         );
@@ -143,7 +143,7 @@ public class FileCleaner implements Runnable, Closeable {
 
     @Override
     public void close() throws IOException {
-        storage.close();
+        // SharedState owns the storage backend lifecycle; only close component metrics here.
         metrics.close();
     }
 }

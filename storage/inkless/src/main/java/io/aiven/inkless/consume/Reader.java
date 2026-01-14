@@ -33,6 +33,7 @@ import java.io.IOException;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
@@ -51,6 +52,7 @@ import io.aiven.inkless.common.metrics.ThreadPoolMonitor;
 import io.aiven.inkless.control_plane.ControlPlane;
 import io.aiven.inkless.generated.FileExtent;
 import io.aiven.inkless.storage_backend.common.ObjectFetcher;
+import io.aiven.inkless.storage_backend.common.StorageBackend;
 import io.github.bucket4j.Bandwidth;
 import io.github.bucket4j.Bucket;
 
@@ -107,7 +109,7 @@ public class Reader implements AutoCloseable {
         BrokerTopicStats brokerTopicStats,
         int fetchMetadataThreadPoolSize,
         int fetchDataThreadPoolSize,
-        ObjectFetcher laggingObjectFetcher,
+        Optional<StorageBackend> maybeLaggingObjectFetcher,
         long laggingConsumerThresholdMs,
         int laggingConsumerRequestRateLimit,
         int laggingConsumerThreadPoolSize,
@@ -125,33 +127,34 @@ public class Reader implements AutoCloseable {
             Executors.newFixedThreadPool(fetchDataThreadPoolSize, new InklessThreadFactory("inkless-fetch-data-", false)),
             // Only create lagging consumer fetcher when feature is enabled (pool size > 0).
             // A pool size of 0 is a valid configuration that explicitly disables the feature (null fetcher and executor).
-            laggingConsumerThreadPoolSize > 0 ? laggingObjectFetcher : null,
+            maybeLaggingObjectFetcher,
             laggingConsumerThresholdMs,
             laggingConsumerRequestRateLimit,
             // Only create lagging consumer resources when feature is enabled (pool size > 0).
             // A pool size of 0 is a valid configuration that explicitly disables the feature
             // by passing both a null executor and a null laggingObjectFetcher.
-            laggingConsumerThreadPoolSize > 0
-                ? createBoundedThreadPool(laggingConsumerThreadPoolSize)
-                : null,
+            maybeCreateBoundedThreadPool(laggingConsumerThreadPoolSize),
             new InklessFetchMetrics(time, cache),
             brokerTopicStats
         );
     }
 
-    private static ExecutorService createBoundedThreadPool(int poolSize) {
+    private static Optional<ExecutorService> maybeCreateBoundedThreadPool(int poolSize) {
         // Creates a bounded thread pool for lagging consumer fetch requests.
         // Fixed pool design: all threads persist for executor lifetime (never removed when idle).
+        if (poolSize == 0) return Optional.empty();
         final int queueCapacity = poolSize * LAGGING_CONSUMER_QUEUE_MULTIPLIER;
-        return new ThreadPoolExecutor(
-            poolSize,                    // corePoolSize: fixed pool, always this many threads
-            poolSize,                    // maximumPoolSize: no dynamic scaling (core == max)
-            0L,                          // keepAliveTime: unused for fixed pools (core threads don't time out)
-            TimeUnit.MILLISECONDS,
-            new ArrayBlockingQueue<>(queueCapacity),  // Bounded queue prevents OOM
-            new InklessThreadFactory("inkless-fetch-lagging-consumer-", false),
-            // Why AbortPolicy: CallerRunsPolicy would block request handler threads causing broker-wide degradation
-            new ThreadPoolExecutor.AbortPolicy()      // Reject when full, don't block callers
+        return Optional.of(
+            new ThreadPoolExecutor(
+                poolSize,                    // corePoolSize: fixed pool, always this many threads
+                poolSize,                    // maximumPoolSize: no dynamic scaling (core == max)
+                0L,                          // keepAliveTime: unused for fixed pools (core threads don't time out)
+                TimeUnit.MILLISECONDS,
+                new ArrayBlockingQueue<>(queueCapacity),  // Bounded queue prevents OOM
+                new InklessThreadFactory("inkless-fetch-lagging-consumer-", false),
+                // Why AbortPolicy: CallerRunsPolicy would block request handler threads causing broker-wide degradation
+                new ThreadPoolExecutor.AbortPolicy()      // Reject when full, don't block callers
+            )
         );
     }
 
@@ -166,10 +169,10 @@ public class Reader implements AutoCloseable {
         int maxBatchesPerPartitionToFind,
         ExecutorService metadataExecutor,
         ExecutorService fetchDataExecutor,
-        ObjectFetcher laggingConsumerObjectFetcher,
+        Optional<StorageBackend> maybeLaggingConsumerObjectFetcher,
         long laggingConsumerThresholdMs,
         int laggingConsumerRequestRateLimit,
-        ExecutorService laggingFetchDataExecutor,
+        Optional<ExecutorService> maybeLaggingFetchDataExecutor,
         InklessFetchMetrics fetchMetrics,
         BrokerTopicStats brokerTopicStats
     ) {
@@ -182,25 +185,31 @@ public class Reader implements AutoCloseable {
         this.maxBatchesPerPartitionToFind = maxBatchesPerPartitionToFind;
         this.metadataExecutor = metadataExecutor;
         this.fetchDataExecutor = fetchDataExecutor;
-        this.laggingFetchDataExecutor = laggingFetchDataExecutor;
         this.laggingConsumerThresholdMs = laggingConsumerThresholdMs;
-        this.laggingConsumerObjectFetcher = laggingConsumerObjectFetcher;
 
         // Validate that lagging consumer resources are consistently configured:
         // both executor and fetcher must be null (feature disabled) or both must be non-null (feature enabled).
         // This ensures fail-fast behavior rather than silent runtime failure.
-        if ((laggingFetchDataExecutor == null) != (laggingConsumerObjectFetcher == null)) {
+        if (maybeLaggingFetchDataExecutor.isPresent() != maybeLaggingConsumerObjectFetcher.isPresent()) {
             throw new IllegalArgumentException(
                 "Lagging consumer feature requires both laggingFetchDataExecutor and laggingConsumerObjectFetcher "
                     + "to be non-null (feature enabled) or both to be null (feature disabled). "
-                    + "Found: executor=" + (laggingFetchDataExecutor != null ? "non-null" : "null")
-                    + ", fetcher=" + (laggingConsumerObjectFetcher != null ? "non-null" : "null")
+                    + "Found: executor=" + (maybeLaggingFetchDataExecutor.isPresent() ? "non-null" : "null")
+                    + ", fetcher=" + (maybeLaggingConsumerObjectFetcher.isPresent() ? "non-null" : "null")
             );
         }
 
+        // Unwrap Optional to nullable fields. This is safe because:
+        // 1. Validation above ensures both are consistently present or absent
+        // 2. Internal code (FetchPlanner) uses efficient null checks: laggingExecutor != null && laggingFetcher != null
+        // 3. Null checks are already present throughout the codebase for feature detection
+        // 4. Using Optional in internal fields/parameters would add overhead in the hot fetch path
+        this.laggingFetchDataExecutor = maybeLaggingFetchDataExecutor.orElse(null);
+        this.laggingConsumerObjectFetcher = maybeLaggingConsumerObjectFetcher.orElse(null);
+
         // Initialize rate limiter only if lagging consumer feature is enabled (executor exists) and rate limit > 0
         // This avoids creating unused objects when the feature is disabled
-        if (laggingFetchDataExecutor != null && laggingConsumerRequestRateLimit > 0) {
+        if (this.laggingFetchDataExecutor != null && laggingConsumerRequestRateLimit > 0) {
             // Rate limiter configuration:
             // - capacity = rateLimit: Allows initial burst up to full rate limit (e.g., 200 tokens for 200 req/s)
             // - refillGreedy: Refills at rateLimit tokens per second
@@ -423,8 +432,6 @@ public class Reader implements AutoCloseable {
         if (metadataThreadPoolMonitor != null) metadataThreadPoolMonitor.close();
         if (dataThreadPoolMonitor != null) dataThreadPoolMonitor.close();
         if (laggingConsumerThreadPoolMonitor != null) laggingConsumerThreadPoolMonitor.close();
-        objectFetcher.close();
-        if (laggingConsumerObjectFetcher != null) laggingConsumerObjectFetcher.close();
         fetchMetrics.close();
     }
 }
