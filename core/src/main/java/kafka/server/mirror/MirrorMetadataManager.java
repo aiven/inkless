@@ -97,6 +97,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Properties;
 import java.util.Random;
@@ -156,6 +157,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     private NodeToControllerChannelManager channelManager;
     private final Supplier<GroupCoordinator> groupCoordinatorSupplier;
     private Map<String, Set<LastMirroredOffset>> lastMirroredOffsets = new ConcurrentHashMap<>();
+    private Map<MirroredPartitionStateRecordKey, MirrorState> mirroredPartitionState = new ConcurrentHashMap<>();
 
     public MirrorMetadataManager(
         KafkaConfig config,
@@ -210,7 +212,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     public void close() throws Exception {
     }
 
-    public void maybeTruncate(ReplicaManager replicaManager, String mirrorName, Set<String> topics) {
+    public void maybeTruncate(ReplicaManager replicaManager, String mirrorName, Set<String> topics, Runnable onTruncateComplete) {
         LOG.info("!!! maybeTruncate: {} {}", mirrorName, topics);
         createMirrorConnection(mirrorName);
 
@@ -229,6 +231,8 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                 });
             });
             replicaManager.maybeTruncate(offsets);
+
+            onTruncateComplete.run();
         }
     }
 
@@ -296,6 +300,20 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         mutableTopics.addAll(addedTopics);
         this.topics.put(clusterName, mutableTopics);
         return mutableTopics;
+    }
+
+    public MirrorState getMirrorPartitionState(String clusterName, TopicPartition topicPartition) {
+        return mirroredPartitionState.get(new MirroredPartitionStateRecordKey(clusterName, topicPartition.topic(), topicPartition.partition()));
+    }
+
+    public void updateMirrorPartitionStateCache(String clusterName, TopicPartition topicPartition, MirrorState mirrorState) {
+        mirroredPartitionState.put(new MirroredPartitionStateRecordKey(clusterName, topicPartition.topic(), topicPartition.partition()), mirrorState);
+    }
+
+    public void transitionAll(MirrorCoordinator.Transitioner transitioner) {
+        mirroredPartitionState.forEach((key, value) -> {
+            transitioner.transitionTo(key.mirrorName, new TopicPartition(key.topic, key.partition), MirrorState.fromValue(value.value()));
+        });
     }
 
     /**
@@ -745,4 +763,29 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     }
 
     public record LastMirroredOffset(String topic, int partition, long offset) { }
+
+    public record MirroredPartitionStateRecordValue(String topic, int partition, MirrorState state) { }
+    public record MirroredPartitionStateRecordKey(String mirrorName, String topic, int partition) {
+        @Override
+        public int hashCode() {
+            return Objects.hash(mirrorName, topic, partition);
+        }
+
+        @Override
+        public boolean equals(Object obj) {
+            if (this == obj)
+                return true;
+            if (obj == null)
+                return false;
+            if (getClass() != obj.getClass())
+                return false;
+            MirroredPartitionStateRecordKey other = (MirroredPartitionStateRecordKey) obj;
+            return mirrorName.equals(other.mirrorName) && partition == other.partition && Objects.equals(topic, other.topic);
+        }
+
+        @Override
+        public String toString() {
+            return mirrorName + "-" + topic + "-" + partition;
+        }
+    }
 }
