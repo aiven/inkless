@@ -106,6 +106,7 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
+import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
 import static java.util.Collections.singletonList;
@@ -161,7 +162,8 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     private final Supplier<GroupCoordinator> groupCoordinatorSupplier;
     private Map<String, Set<LastMirroredOffset>> lastMirroredOffsets = new ConcurrentHashMap<>();
     private Map<MirroredPartitionStateRecordKey, MirrorState> mirroredPartitionState = new ConcurrentHashMap<>();
-    private Map<MirroredPartitionStateRecordKey, Runnable> onMirroringWatingList = new ConcurrentHashMap<>();
+    private Map<MirroredPartitionStateRecordKey, Runnable> onMirroringWaitingList = new ConcurrentHashMap<>();
+    private Map<String, Map<String, Consumer<MirrorState>>> onPreparingWaitingList = new ConcurrentHashMap<>();
 
     public MirrorMetadataManager(
         KafkaConfig config,
@@ -207,6 +209,20 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     @Override
     public void onMetadataUpdate(MetadataDelta delta, MetadataImage newImage, LoaderManifest manifest) {
         this.metadataImage = newImage;
+
+        if (delta.topicsDelta() != null) {
+            LOG.info("!!! onMetadataUpdate: {}", delta.topicsDelta().localChanges(nodeId).readOnlyLeaders());
+            delta.topicsDelta().localChanges(nodeId).readOnlyLeaders().entrySet().forEach(entry -> {
+                TopicPartition tp = entry.getKey();
+                LocalReplicaChanges.PartitionInfo info = entry.getValue();
+                MirroredPartitionStateRecordKey key = new MirroredPartitionStateRecordKey(info.partition().mirrorName, tp.topic(), tp.partition());
+                // moving the topics in METADATA_UPDATE into PREPAREING_MIRRORING state
+                // or moving the topics don't have state (due to topic not created yet) directly into MIRRORING state because no truncation needed
+                if (!mirroredPartitionState.containsKey(key) || mirroredPartitionState.get(key) == MirrorState.METADATA_UPDATE) {
+                    operateOnPreparing(info.partition().mirrorName, tp.topic(), mirroredPartitionState.containsKey(key) ? MirrorState.PREPARING_MIRRORING : MirrorState.MIRRORING);
+                }
+            });
+        }
     }
 
     /**
@@ -318,13 +334,16 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     public void operateAll(MirrorCoordinator.Operator operator) {
         Map<String, Map<String, MirrorState>> topics = new HashMap<>();
         mirroredPartitionState.forEach((key, value) -> {
+            LOG.info("!!! operateAll: {} {}", key, value);
             topics.compute(key.mirrorName, (k, prevVal) -> {
-                Map<String, MirrorState> result = new HashMap<>();
-                if (prevVal != null) {
-                    result.putAll(prevVal);
+                Map<String, MirrorState> result;
+                if (prevVal == null) {
+                    result = new HashMap<>();
+                } else {
+                    result = new HashMap<>(prevVal);
                 }
                 result.put(key.topic, MirrorState.fromValue(value.value()));
-               return topics.put(key.mirrorName, result);
+               return result;
             });
         });
 
@@ -362,6 +381,31 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         return offsets;
     }
 
+    public void onPreparing(String clusterName, Set<String> topics, Consumer<MirrorState> onPreparingComplete) {
+        LOG.info("!!! onPreparing: {} {}", clusterName, topics);
+        onPreparingWaitingList.compute(clusterName, (key, prevVal) -> {
+            Map<String, Consumer<MirrorState>> result = new HashMap<>();
+            if (prevVal != null) {
+                result.putAll(prevVal);
+            }
+            result.putAll(topics.stream().collect(Collectors.toMap(topic -> topic, topic -> onPreparingComplete)));
+            return result;
+        });
+        LOG.info("!!! onPreparingWaitingList: {}", onPreparingWaitingList);
+    }
+
+    public void operateOnPreparing(String mirrorName, String topic, MirrorState state) {
+        LOG.info("!!! operateOnPreparing: {} {}", mirrorName, topic);
+        Map<String, Consumer<MirrorState>> runs = onPreparingWaitingList.get(mirrorName);
+        runs.get(topic).accept(state);
+        runs.remove(topic);
+        if (runs.isEmpty()) {
+            onPreparingWaitingList.remove(mirrorName);
+        } else {
+            onPreparingWaitingList.put(mirrorName, runs);
+        }
+    }
+
     // wait until the state entering MIRRORING state and then start fetching
     public void onMirroring(Map<TopicPartition, LocalReplicaChanges.PartitionInfo> readOnlyLeaders, Consumer<Map<TopicPartition, LocalReplicaChanges.PartitionInfo>> onMirroring) {
         readOnlyLeaders.forEach((tp, info) -> {
@@ -369,7 +413,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
             if (mirroredPartitionState.get(key) == MirrorState.MIRRORING) {
                 onMirroring.accept(Map.of(tp, info));
             } else {
-                onMirroringWatingList.put(key, () -> onMirroring.accept(Map.of(tp, info)));
+                onMirroringWaitingList.put(key, () -> onMirroring.accept(Map.of(tp, info)));
             }
         });
     }
@@ -377,13 +421,15 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     // operate the onMirroring callback and remove from the list
     public void operateOnMirroring(String mirrorName, Set<String> topics) {
         topics.forEach(topic -> {
-            IntStream.range(0, ((KRaftMetadataCache) metadataCache).numPartitions(topic).get()).forEach(i -> {
-                MirroredPartitionStateRecordKey key = new MirroredPartitionStateRecordKey(mirrorName, topic, i);
-                Runnable runnable = onMirroringWatingList.get(key);
-                if (runnable != null) {
-                    runnable.run();
-                    onMirroringWatingList.remove(key);
-                }
+            ((KRaftMetadataCache) metadataCache).numPartitions(topic).ifPresent(numPartitions -> {
+                IntStream.range(0, numPartitions).forEach(i -> {
+                    MirroredPartitionStateRecordKey key = new MirroredPartitionStateRecordKey(mirrorName, topic, i);
+                    Runnable runnable = onMirroringWaitingList.get(key);
+                    if (runnable != null) {
+                        runnable.run();
+                        onMirroringWaitingList.remove(key);
+                    }
+                });
             });
         });
     }
@@ -808,7 +854,6 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     }
 
     public record LastMirroredOffset(String topic, int partition, long offset) { }
-
     public record MirroredPartitionStateRecordValue(String topic, int partition, MirrorState state) { }
     public record MirroredPartitionStateRecordKey(String mirrorName, String topic, int partition) {
         @Override

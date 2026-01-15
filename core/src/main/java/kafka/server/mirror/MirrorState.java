@@ -17,11 +17,12 @@
 package kafka.server.mirror;
 
 public enum MirrorState {
-    PREPARING_MIRRORING((byte) 0),
-    MIRRORING((byte) 1),
-    STOPPING((byte) 2),
-    STOPPED((byte) 4),
-    FAILED((byte) 8);
+    METADATA_UPDATE((byte) 0),
+    PREPARING_MIRRORING((byte) 1),
+    MIRRORING((byte) 2),
+    STOPPING((byte) 4),
+    STOPPED((byte) 8),
+    FAILED((byte) 16);
 
     private final byte value;
 
@@ -36,14 +37,16 @@ public enum MirrorState {
     public static MirrorState fromValue(byte value) {
         switch (value) {
             case 0:
-                return PREPARING_MIRRORING;
+                return METADATA_UPDATE;
             case 1:
-                return MIRRORING;
+                return PREPARING_MIRRORING;
             case 2:
-                return STOPPING;
+                return MIRRORING;
             case 4:
-                return STOPPED;
+                return STOPPING;
             case 8:
+                return STOPPED;
+            case 16:
                 return FAILED;
         }
         throw new IllegalArgumentException("Unknown mirror state: " + value);

@@ -120,6 +120,10 @@ public class MirrorCoordinator {
 
     private void operateOnNewState(String mirrorName, Set<String> topics, MirrorState newState) {
         switch (newState) {
+            case METADATA_UPDATE:
+                LOG.info("!!! Updating metadata for topics {}.", topics);
+                mirrorMetadataManager.onPreparing(mirrorName, topics, (state) -> transitionTo(mirrorName, topics, state));
+                break;
             case PREPARING_MIRRORING:
                 LOG.info("!!! Preparing mirroring for topics {}.", topics);
                 updateMirrorTopicsMetadata(mirrorName, topics, Set.of());
@@ -233,12 +237,7 @@ public class MirrorCoordinator {
 
     public void maybeScheduleForTruncate(String mirrorName, Set<String> topics) {
         topics.forEach(topic -> {
-            if (metadataCache.contains(topic)) {
-                scheduler.scheduleOnce("last-mirrored-offset", () -> maybeTruncate(mirrorName, topics));
-            } else {
-                // directly transition to MIRRORING state is this topic is a new created topic
-                transitionTo(mirrorName, Set.of(topic), MirrorState.MIRRORING);
-            }
+            scheduler.scheduleOnce("last-mirrored-offset", () -> maybeTruncate(mirrorName, topics));
         });
     }
 
@@ -368,6 +367,8 @@ public class MirrorCoordinator {
             return new MirrorTopicsKey(new ByteBufferAccessor(buffer), version).mirrorName();
         } else if (version == CoordinatorRecordType.LAST_MIRRORED_OFFSETS.id()) {
             return new LastMirroredOffsetsKey(new ByteBufferAccessor(buffer), version).mirrorName();
+        } else if (version == CoordinatorRecordType.MIRROR_PARTITION_STATE.id()) {
+            return new MirrorPartitionStateKey(new ByteBufferAccessor(buffer), version).mirrorName();
         } else {
             throw new IllegalArgumentException("Unknown cluster mirror log key version " + version);
         }

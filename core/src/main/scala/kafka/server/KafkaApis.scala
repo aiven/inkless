@@ -280,7 +280,7 @@ class KafkaApis(val requestChannel: RequestChannel,
       .filter(t => t.mirrorInfo() != null && t.mirrorInfo().mirrorName() != null && !t.mirrorInfo().mirrorName().isEmpty).findFirst()
     if (mirrorTopic.isPresent) {
       logger.info(s"!!! Handling create mirror topics request: ${mirrorTopic.get().mirrorInfo().mirrorName()}")
-      mirrorCoordinator.transitionTo(mirrorTopic.get().mirrorInfo().mirrorName(), util.Set.of(mirrorTopic.get().name()), MirrorState.PREPARING_MIRRORING)
+      mirrorCoordinator.transitionTo(mirrorTopic.get().mirrorInfo().mirrorName(), util.Set.of(mirrorTopic.get().name()), MirrorState.METADATA_UPDATE)
     }
     forwardToController(request)
   }
@@ -324,7 +324,7 @@ class KafkaApis(val requestChannel: RequestChannel,
     if (mirrorTopic.isPresent) {
       if (isClusterMirroringEnabled) {
         logger.info(s"!!! Handling adding mirror topics request: ${mirrorTopic.get().mirrorName()}")
-        mirrorCoordinator.transitionTo(mirrorTopic.get().mirrorName(), util.Set.of(mirrorTopic.get().topicName()), MirrorState.PREPARING_MIRRORING)
+        mirrorCoordinator.transitionTo(mirrorTopic.get().mirrorName(), util.Set.of(mirrorTopic.get().topicName()), MirrorState.METADATA_UPDATE)
       } else {
         logger.warn("Cluster mirroring is disabled (mirror.version=0), ignoring mirror topic creation request")
       }
