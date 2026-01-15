@@ -438,6 +438,23 @@ Enable **rack-aware, stable KRaft-managed replicas** for diskless topics:
 
 ## Design: Transformer-First Availability
 
+### Diskless ISR Semantics
+
+Diskless replicas never diverge because user data lives in remote object storage rather than broker-local logs. As a result,
+ISR membership for `DISKLESS_ONLY` partitions is liveness-gated, not lag-gated:
+
+- The controller drops a replica from ISR when it is fenced, unregistered, or explicitly removed (rolling restart or broker replacement).
+- When the replica re-registers (rolling restart/upgrade completes), the controller can add it back immediately—no catch-up fetch or
+`Partition` object is required, because the replica is “in sync” by construction.
+- `min.insync.replicas` semantics remain intact: as long as the required number of replicas are alive/unfenced, they are considered in-sync.
+  There is no risk of serving stale data since all reads/writes ultimately hit remote storage.
+- Rolling maintenance therefore behaves predictably: ISR temporarily shrinks while a broker is fenced and expands as soon as it comes back,
+  while availability is preserved by the transformer’s routing logic.
+
+This weaker ISR definition is intentional for `DISKLESS_ONLY`. Hybrid/tiered states still rely on `UnifiedLog` state and classic
+lag-based ISR semantics. If a future KIP introduces local logs as caches, that iteration can extend/restore traditional ISR behavior for
+diskless replicas.
+
 ### The Insight
 
 For diskless topics, **availability** and **metadata accuracy** can be decoupled.
@@ -771,6 +788,15 @@ This is acceptable because:
 2. Operator can see actual state via broker metrics
 3. Eventually consistent (when broker returns or is reassigned)
 
+**`DescribeTopicPartitions` path today:** brokers handle this RPC (controllers do not). `KafkaApis` responds from the local `MetadataCache`,
+then applies the same diskless transformation as `MetadataResponse` (hashing/faking placement). Once KRaft metadata maintains diskless RF>1
+state, this post-processing must be updated (or removed) to simply reflect controller placement.
+
+**`ListOffsets` path today:** brokers call `ReplicaManager.fetchOffset`. For diskless topics this invokes
+`ReplicaManager.disklessFetchOffset`, which fans out to the Inkless control plane to look up offsets in remote storage. This already bypasses
+local logs, but once RF>1 diskless placement is real, the response still needs to prefer controller-provided replica IDs and no longer rely
+on synthetic hashing.
+
 ---
 
 ## Implementation Path
@@ -779,9 +805,9 @@ This is acceptable because:
 
 ### Phase 0: Research and Validation (1 week)
 
-1. Leader election works without broker `Partition` objects
-2. ISR updates don't require broker-side `Partition` state
-3. `DescribeTopics` / `ListOffsets` work with RF > 1
+1. Leader election works without broker `Partition` objects *(validated; controller depends only on KRaft `PartitionInfo` and broker liveness)*
+2. ISR updates don't require broker-side `Partition` state *(validated; controller drops/adds replicas purely via metadata, see [Diskless ISR Semantics](#diskless-isr-semantics))*
+3. `DescribeTopics` / `ListOffsets` work with RF > 1 *(sanity check once RF>1 diskless is enabled: broker responses must reflect KRaft placement for metadata and use control-plane offsets without synthetic hashing)*
 
 ### Phase 1: Topic Creation with Rack-Aware Placement (2 weeks)
 
