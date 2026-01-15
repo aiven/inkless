@@ -185,10 +185,10 @@ class DeleteRecordsJobTest {
         assertThat(responses).containsExactlyElementsOf(expectedResponses);
 
         assertThat(DBUtils.getAllLogs(pgContainer.getDataSource())).containsExactlyInAnyOrder(
-            new LogsRecord(TOPIC_ID_0, 0, TOPIC_0, 18L, 36L, (long) file2Batch1Size + file3Batch1Size),
-            new LogsRecord(TOPIC_ID_0, 1, TOPIC_0, 24L, 24L, 0L),
-            new LogsRecord(TOPIC_ID_1, 0, TOPIC_1, 0L, 0L, 0L),
-            new LogsRecord(TOPIC_ID_2, 0, TOPIC_2, 0L, 24L, (long) file2Batch2Size + file3Batch3Size)
+            new LogsRecord(TOPIC_ID_0, 0, TOPIC_0, 18L, 36L, (long) file2Batch1Size + file3Batch1Size, 0L, null, 0),
+            new LogsRecord(TOPIC_ID_0, 1, TOPIC_0, 24L, 24L, 0L, 0L, null, 0),
+            new LogsRecord(TOPIC_ID_1, 0, TOPIC_1, 0L, 0L, 0L, 0L, null, 0),
+            new LogsRecord(TOPIC_ID_2, 0, TOPIC_2, 0L, 24L, (long) file2Batch2Size + file3Batch3Size, 0L, null, 0)
         );
 
         assertThat(DBUtils.getAllBatches(pgContainer.getDataSource())).containsExactlyInAnyOrder(

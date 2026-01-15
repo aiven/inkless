@@ -112,9 +112,9 @@ class CommitFileJobTest {
 
         assertThat(DBUtils.getAllLogs(pgContainer.getDataSource()))
             .containsExactlyInAnyOrder(
-                new LogsRecord(TOPIC_ID_0, 0, TOPIC_0, 0L, 0L, 0L),
-                new LogsRecord(TOPIC_ID_0, 1, TOPIC_0, 0L, 15L, 100L),
-                new LogsRecord(TOPIC_ID_1, 0, TOPIC_1, 0L, 27L, 50L)
+                new LogsRecord(TOPIC_ID_0, 0, TOPIC_0, 0L, 0L, 0L, 0L, null, 0),
+                new LogsRecord(TOPIC_ID_0, 1, TOPIC_0, 0L, 15L, 100L, 0L, null, 0),
+                new LogsRecord(TOPIC_ID_1, 0, TOPIC_1, 0L, 27L, 50L, 0L, null, 0)
             );
 
         assertThat(DBUtils.getAllFiles(pgContainer.getDataSource()))
@@ -168,9 +168,9 @@ class CommitFileJobTest {
 
         assertThat(DBUtils.getAllLogs(pgContainer.getDataSource()))
             .containsExactlyInAnyOrder(
-                new LogsRecord(TOPIC_ID_0, 0, TOPIC_0, 0L, 159L, 111L),
-                new LogsRecord(TOPIC_ID_0, 1, TOPIC_0, 0L, 15L + 245, 322L),
-                new LogsRecord(TOPIC_ID_1, 0, TOPIC_1, 0L, 27L, 50L)
+                new LogsRecord(TOPIC_ID_0, 0, TOPIC_0, 0L, 159L, 111L, 0L, null, 0),
+                new LogsRecord(TOPIC_ID_0, 1, TOPIC_0, 0L, 15L + 245, 322L, 0L, null, 0),
+                new LogsRecord(TOPIC_ID_1, 0, TOPIC_1, 0L, 27L, 50L, 0L, null, 0)
             );
 
         assertThat(DBUtils.getAllFiles(pgContainer.getDataSource()))
@@ -215,9 +215,9 @@ class CommitFileJobTest {
 
         assertThat(DBUtils.getAllLogs(pgContainer.getDataSource()))
             .containsExactlyInAnyOrder(
-                new LogsRecord(TOPIC_ID_0, 0, TOPIC_0, 0L, 0L, 0L),
-                new LogsRecord(TOPIC_ID_0, 1, TOPIC_0, 0L, 15L, 100L),
-                new LogsRecord(TOPIC_ID_1, 0, TOPIC_1, 0L, 27L, 50L)
+                new LogsRecord(TOPIC_ID_0, 0, TOPIC_0, 0L, 0L, 0L, 0L, null, 0),
+                new LogsRecord(TOPIC_ID_0, 1, TOPIC_0, 0L, 15L, 100L, 0L, null, 0),
+                new LogsRecord(TOPIC_ID_1, 0, TOPIC_1, 0L, 27L, 50L, 0L, null, 0)
             );
 
         assertThat(DBUtils.getAllFiles(pgContainer.getDataSource()))
@@ -249,9 +249,9 @@ class CommitFileJobTest {
 
         assertThat(DBUtils.getAllLogs(pgContainer.getDataSource()))
             .containsExactlyInAnyOrder(
-                new LogsRecord(TOPIC_ID_0, 0, TOPIC_0, 0L, 0L, 0L),
-                new LogsRecord(TOPIC_ID_0, 1, TOPIC_0, 0L, 15L, 100L),
-                new LogsRecord(TOPIC_ID_1, 0, TOPIC_1, 0L, 27L, 50L)
+                new LogsRecord(TOPIC_ID_0, 0, TOPIC_0, 0L, 0L, 0L, 0L, null, 0),
+                new LogsRecord(TOPIC_ID_0, 1, TOPIC_0, 0L, 15L, 100L, 0L, null, 0),
+                new LogsRecord(TOPIC_ID_1, 0, TOPIC_1, 0L, 27L, 50L, 0L, null, 0)
             );
 
         assertThat(DBUtils.getAllFiles(pgContainer.getDataSource()))
@@ -283,9 +283,9 @@ class CommitFileJobTest {
 
         assertThat(DBUtils.getAllLogs(pgContainer.getDataSource()))
             .containsExactlyInAnyOrder(
-                new LogsRecord(TOPIC_ID_0, 0, TOPIC_0, 0L, 0L, 0L),
-                new LogsRecord(TOPIC_ID_0, 1, TOPIC_0, 0L, 27L, 150L),
-                new LogsRecord(TOPIC_ID_1, 0, TOPIC_1, 0L, 0L, 0L)
+                new LogsRecord(TOPIC_ID_0, 0, TOPIC_0, 0L, 0L, 0L, 0L, null, 0),
+                new LogsRecord(TOPIC_ID_0, 1, TOPIC_0, 0L, 27L, 150L, 0L, null, 0),
+                new LogsRecord(TOPIC_ID_1, 0, TOPIC_1, 0L, 0L, 0L, 0L, null, 0)
             );
 
         assertThat(DBUtils.getAllFiles(pgContainer.getDataSource()))
@@ -325,9 +325,9 @@ class CommitFileJobTest {
 
         assertThat(DBUtils.getAllLogs(pgContainer.getDataSource()))
             .containsExactlyInAnyOrder(
-                new LogsRecord(TOPIC_ID_0, 0, TOPIC_0, 0L, 0L, 0L),
-                new LogsRecord(TOPIC_ID_0, 1, TOPIC_0, 0L, 15L, 100L),
-                new LogsRecord(TOPIC_ID_1, 0, TOPIC_1, 0L, 0L, 0L)
+                new LogsRecord(TOPIC_ID_0, 0, TOPIC_0, 0L, 0L, 0L, 0L, null, 0),
+                new LogsRecord(TOPIC_ID_0, 1, TOPIC_0, 0L, 15L, 100L, 0L, null, 0),
+                new LogsRecord(TOPIC_ID_1, 0, TOPIC_1, 0L, 0L, 0L, 0L, null, 0)
             );
 
         assertThat(DBUtils.getAllFiles(pgContainer.getDataSource()))
@@ -357,9 +357,9 @@ class CommitFileJobTest {
 
         assertThat(DBUtils.getAllLogs(pgContainer.getDataSource()))
             .containsExactlyInAnyOrder(
-                new LogsRecord(TOPIC_ID_0, 0, TOPIC_0, 0L, 0L, 0L),
-                new LogsRecord(TOPIC_ID_0, 1, TOPIC_0, 0L, 0L, 0L),
-                new LogsRecord(TOPIC_ID_1, 0, TOPIC_1, 0L, 0L, 0L)
+                new LogsRecord(TOPIC_ID_0, 0, TOPIC_0, 0L, 0L, 0L, 0L, null, 0),
+                new LogsRecord(TOPIC_ID_0, 1, TOPIC_0, 0L, 0L, 0L, 0L, null, 0),
+                new LogsRecord(TOPIC_ID_1, 0, TOPIC_1, 0L, 0L, 0L, 0L, null, 0)
             );
 
         // The file will be deleted because its only batch is rejected.
@@ -389,9 +389,9 @@ class CommitFileJobTest {
 
         assertThat(DBUtils.getAllLogs(pgContainer.getDataSource()))
             .containsExactlyInAnyOrder(
-                new LogsRecord(TOPIC_ID_0, 0, TOPIC_0, 0L, 0L, 0L),
-                new LogsRecord(TOPIC_ID_0, 1, TOPIC_0, 0L, 15L, 100L),
-                new LogsRecord(TOPIC_ID_1, 0, TOPIC_1, 0L, 0L, 0L)
+                new LogsRecord(TOPIC_ID_0, 0, TOPIC_0, 0L, 0L, 0L, 0L, null, 0),
+                new LogsRecord(TOPIC_ID_0, 1, TOPIC_0, 0L, 15L, 100L, 0L, null, 0),
+                new LogsRecord(TOPIC_ID_1, 0, TOPIC_1, 0L, 0L, 0L, 0L, null, 0)
             );
 
         assertThat(DBUtils.getAllFiles(pgContainer.getDataSource()))

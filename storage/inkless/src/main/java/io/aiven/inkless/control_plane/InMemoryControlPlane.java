@@ -91,6 +91,70 @@ public class InMemoryControlPlane extends AbstractControlPlane {
     }
 
     @Override
+    public synchronized void initDisklessLog(final Set<InitDisklessLogRequest> requests) {
+        for (final InitDisklessLogRequest request : requests) {
+            final TopicIdPartition topicIdPartition = new TopicIdPartition(
+                request.topicId(), request.partition(), request.topicName());
+
+            final LogInfo existingLogInfo = logs.get(topicIdPartition);
+            if (existingLogInfo != null) {
+                // Check if leader epoch is stale
+                if (request.leaderEpoch() < existingLogInfo.leaderEpochAtInit) {
+                    throw new StaleLeaderEpochException(
+                        request.topicId(), request.partition(), request.leaderEpoch());
+                }
+
+                // Check for invalid state: disklessStartOffset should never exceed highWatermark
+                if (existingLogInfo.disklessStartOffset > existingLogInfo.highWatermark) {
+                    throw new IllegalStateException(String.format(
+                        "Invalid state for %s: disklessStartOffset (%d) > highWatermark (%d)",
+                        topicIdPartition, existingLogInfo.disklessStartOffset, existingLogInfo.highWatermark));
+                }
+
+                // Check if messages have been appended (no longer in migration phase)
+                if (existingLogInfo.disklessStartOffset < existingLogInfo.highWatermark) {
+                    throw new DisklessLogAlreadyInitializedException(
+                        request.topicId(), request.partition());
+                }
+
+                // Still in migration phase with valid epoch - update existing log
+                LOGGER.info("Updating {} with logStartOffset {}, disklessStartOffset {}, leaderEpoch {}",
+                    topicIdPartition, request.logStartOffset(), request.disklessStartOffset(), request.leaderEpoch());
+                existingLogInfo.logStartOffset = request.logStartOffset();
+                existingLogInfo.highWatermark = request.disklessStartOffset();
+                existingLogInfo.disklessStartOffset = request.disklessStartOffset();
+                existingLogInfo.leaderEpochAtInit = request.leaderEpoch();
+
+                // Clear existing producer state for this partition
+                producers.remove(topicIdPartition);
+            } else {
+                // Create new log entry
+                LOGGER.info("Initializing {} with logStartOffset {}, disklessStartOffset {}, leaderEpoch {}",
+                    topicIdPartition, request.logStartOffset(), request.disklessStartOffset(), request.leaderEpoch());
+                final LogInfo logInfo = new LogInfo();
+                logInfo.logStartOffset = request.logStartOffset();
+                logInfo.highWatermark = request.disklessStartOffset();
+                logInfo.disklessStartOffset = request.disklessStartOffset();
+                logInfo.leaderEpochAtInit = request.leaderEpoch();
+                logs.put(topicIdPartition, logInfo);
+                batches.putIfAbsent(topicIdPartition, new TreeMap<>());
+            }
+
+            // Insert producer state entries
+            if (request.producerStateEntries() != null && !request.producerStateEntries().isEmpty()) {
+                final TreeMap<Long, LatestProducerState> partitionProducers =
+                    producers.computeIfAbsent(topicIdPartition, k -> new TreeMap<>());
+                for (final ProducerStateSnapshot entry : request.producerStateEntries()) {
+                    final LatestProducerState producerState = partitionProducers
+                        .computeIfAbsent(entry.producerId(), k -> LatestProducerState.empty(entry.producerEpoch()));
+                    producerState.addElement(entry.baseSequence(), entry.lastSequence(),
+                        entry.assignedOffset(), entry.batchMaxTimestamp());
+                }
+            }
+        }
+    }
+
+    @Override
     protected synchronized Iterator<CommitBatchResponse> commitFileForValidRequests(
             final String objectKey,
             final ObjectFormat format,
@@ -645,6 +709,27 @@ public class InMemoryControlPlane extends AbstractControlPlane {
     }
 
     @Override
+    public synchronized List<GetDisklessLogResponse> getDisklessLog(final List<GetDisklessLogRequest> requests) {
+        final List<GetDisklessLogResponse> result = new ArrayList<>();
+        for (final GetDisklessLogRequest request : requests) {
+            final TopicIdPartition tidp = findTopicIdPartition(request.topicId(), request.partition());
+            final LogInfo logInfo;
+            if (tidp == null || (logInfo = logs.get(tidp)) == null) {
+                result.add(GetDisklessLogResponse.unknownTopicOrPartition(request.topicId(), request.partition()));
+            } else {
+                result.add(GetDisklessLogResponse.success(
+                    request.topicId(),
+                    request.partition(),
+                    logInfo.logStartOffset,
+                    logInfo.highWatermark,
+                    logInfo.disklessStartOffset
+                ));
+            }
+        }
+        return result;
+    }
+
+    @Override
     public synchronized List<GetLogInfoResponse> getLogInfo(final List<GetLogInfoRequest> requests) {
         final List<GetLogInfoResponse> result = new ArrayList<>();
         for (final GetLogInfoRequest request : requests) {
@@ -679,6 +764,8 @@ public class InMemoryControlPlane extends AbstractControlPlane {
         long logStartOffset = 0;
         long highWatermark = 0;
         long byteSize = 0;
+        Long disklessStartOffset = null;
+        int leaderEpochAtInit = 0;
     }
 
     private static class FileInfo {
