@@ -36,6 +36,7 @@ public class PostgresControlPlaneMetrics implements Closeable {
     private final QueryMetrics commitFileMetrics = new QueryMetrics("CommitFile");
     private final QueryMetrics commitFileMergeWorkItemMetrics = new QueryMetrics("CommitFileMergeWorkItem");
     private final QueryMetrics topicCreateMetrics = new QueryMetrics("TopicCreate");
+    private final QueryMetrics initLogDisklessStartOffsetMetrics = new QueryMetrics("InitLogDisklessStartOffset");
     private final QueryMetrics topicDeleteMetrics = new QueryMetrics("TopicDelete");
     private final QueryMetrics fileDeleteMetrics = new QueryMetrics("FilesDelete");
     private final QueryMetrics listOffsetsMetrics = new QueryMetrics("ListOffsets");
@@ -46,6 +47,7 @@ public class PostgresControlPlaneMetrics implements Closeable {
     private final QueryMetrics releaseFileMergeWorkItemMetrics = new QueryMetrics("ReleaseFileMergeWorkItem");
     private final QueryMetrics safeDeleteFileCheckMetrics = new QueryMetrics("SafeDeleteFileCheck");
     private final QueryMetrics getLogInfoMetrics = new QueryMetrics("GetLogInfo");
+    private final QueryMetrics getDisklessLogMetrics = new QueryMetrics("GetDisklessLog");
 
     public PostgresControlPlaneMetrics(Time time) {
         this.time = Objects.requireNonNull(time, "time cannot be null");
@@ -73,6 +75,10 @@ public class PostgresControlPlaneMetrics implements Closeable {
 
     public void onTopicCreateCompleted(Long duration) {
         topicCreateMetrics.record(duration);
+    }
+
+    public void onInitLogDisklessStartOffsetCompleted(Long duration) {
+        initLogDisklessStartOffsetMetrics.record(duration);
     }
 
     public void onFilesDeleteCompleted(Long duration) {
@@ -111,6 +117,10 @@ public class PostgresControlPlaneMetrics implements Closeable {
         getLogInfoMetrics.record(duration);
     }
 
+    public void onGetDisklessLogCompleted(Long duration) {
+        getDisklessLogMetrics.record(duration);
+    }
+
     @Override
     public void close() {
         findBatchesMetrics.remove();
@@ -118,6 +128,7 @@ public class PostgresControlPlaneMetrics implements Closeable {
         commitFileMetrics.remove();
         commitFileMergeWorkItemMetrics.remove();
         topicCreateMetrics.remove();
+        initLogDisklessStartOffsetMetrics.remove();
         topicDeleteMetrics.remove();
         fileDeleteMetrics.remove();
         listOffsetsMetrics.remove();
@@ -128,6 +139,7 @@ public class PostgresControlPlaneMetrics implements Closeable {
         releaseFileMergeWorkItemMetrics.remove();
         safeDeleteFileCheckMetrics.remove();
         getLogInfoMetrics.remove();
+        getDisklessLogMetrics.remove();
     }
 
     private class QueryMetrics {

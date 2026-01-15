@@ -55,6 +55,8 @@ public interface ControlPlane extends Closeable, Configurable {
 
     void createTopicAndPartitions(Set<CreateTopicAndPartitionsRequest> requests);
 
+    void initLogDisklessStartOffset(Set<InitLogDisklessStartOffsetRequest> requests);
+
     List<DeleteRecordsResponse> deleteRecords(List<DeleteRecordsRequest> requests);
 
     void deleteTopics(Set<Uuid> topicIds);
@@ -93,6 +95,8 @@ public interface ControlPlane extends Closeable, Configurable {
     }
 
     boolean isSafeToDeleteFile(String objectKeyPath);
+
+    List<GetDisklessLogResponse> getDisklessLog(List<GetDisklessLogRequest> requests);
 
     // used for testing purposes only
     List<GetLogInfoResponse> getLogInfo(List<GetLogInfoRequest> requests);

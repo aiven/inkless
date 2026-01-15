@@ -396,6 +396,10 @@ public class LogConfig extends AbstractConfig {
         else
             return 0;
     }
+    
+    public boolean disklessEnable() {
+        return getBoolean(TopicConfig.DISKLESS_ENABLE_CONFIG);
+    }
 
     public boolean remoteStorageEnable() {
         return remoteLogConfig.remoteStorageEnable;
@@ -512,11 +516,11 @@ public class LogConfig extends AbstractConfig {
         Optional.ofNullable((Boolean) newConfigs.get(TopicConfig.DISKLESS_ENABLE_CONFIG))
             .ifPresent(isBeingEnabled -> {
                 if (isBeingEnabled) {
-                    // diskless.enable=true -> diskless.enable must be already set to true
-                    if (wasDiskless.isPresent() && !wasDiskless.get()) {
-                        // cannot change from diskless.enable = false to diskless.enable = true
-                        throw new InvalidConfigurationException("It is invalid to enable diskless");
-                    }
+//                    // diskless.enable=true -> diskless.enable must be already set to true
+//                    if (wasDiskless.isPresent() && !wasDiskless.get()) {
+//                        // cannot change from diskless.enable = false to diskless.enable = true
+//                        throw new InvalidConfigurationException("It is invalid to enable diskless");
+//                    }
 
                     if (isRemoteLogStorageEnabled) {
                         throw new InvalidConfigurationException("Diskless and remote storage cannot be enabled simultaneously");

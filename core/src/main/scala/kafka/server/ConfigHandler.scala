@@ -17,6 +17,8 @@
 
 package kafka.server
 
+import io.aiven.inkless.control_plane.InitLogDisklessStartOffsetRequest
+
 import java.util.{Collections, Properties}
 import kafka.server.QuotaFactory.QuotaManagers
 import kafka.utils.Logging
@@ -53,10 +55,52 @@ class TopicConfigHandler(private val replicaManager: ReplicaManager,
     val logs = logManager.logsByTopic(topic)
     val wasRemoteLogEnabled = logs.exists(_.remoteLogEnabled())
     val wasCopyDisabled = logs.exists(_.config.remoteLogCopyDisable())
+    val wasDisklessEnabled = logs.exists(_.config.disklessEnable())
 
     logManager.updateTopicConfig(topic, topicConfig, kafkaConfig.remoteLogManagerConfig.isRemoteStorageSystemEnabled,
       wasRemoteLogEnabled)
     maybeUpdateRemoteLogComponents(topic, logs, wasRemoteLogEnabled, wasCopyDisabled)
+    maybeInitializeDisklessLog(topic, logs, wasDisklessEnabled)
+  }
+
+  /**
+   * Initialize the diskless log in the control plane for topics that are being migrated
+   * from classic (local disk) storage to diskless storage.
+   *
+   * This is called when a topic's diskless.enable config changes to true.
+   * Only the leader partitions need to initialize the diskless log, using each partition's
+   * log end offset as its diskless start offset.
+   */
+  private[server] def maybeInitializeDisklessLog(topic: String,
+                                                 logs: Seq[UnifiedLog],
+                                                 wasDisklessEnabled: Boolean): Unit = {
+    val isDisklessEnabled = logs.exists(_.config.disklessEnable())
+
+    // Only initialize if diskless is being enabled (was false, now true) and we have leader partitions
+    if (isDisklessEnabled && !wasDisklessEnabled) {
+      val leaderPartitions = logs.flatMap(log => replicaManager.onlinePartition(log.topicPartition)).filter(_.isLeader)
+
+      if (leaderPartitions.nonEmpty) {
+        replicaManager.getInklessSharedState.foreach { sharedState =>
+          val topicId = replicaManager.metadataCache.getTopicId(topic)
+
+          // Create a request for each leader partition with its own offsets
+          val requests = leaderPartitions.flatMap { partition =>
+            logs.find(_.topicPartition == partition.topicPartition).map { log =>
+              val logStartOffset = log.logStartOffset
+              val disklessStartOffset = log.logEndOffset
+              info(s"Initializing diskless log for partition ${partition.topicPartition} with topicId $topicId, " +
+                s"logStartOffset $logStartOffset, disklessStartOffset $disklessStartOffset")
+              new InitLogDisklessStartOffsetRequest(topicId, topic, partition.topicPartition.partition(), logStartOffset, disklessStartOffset)
+            }
+          }
+
+          if (requests.nonEmpty) {
+            sharedState.controlPlane().initLogDisklessStartOffset(requests.toSet.asJava)
+          }
+        }
+      }
+    }
   }
 
   private[server] def maybeUpdateRemoteLogComponents(topic: String,
