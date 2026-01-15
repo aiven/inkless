@@ -103,9 +103,9 @@ inkless-4.2.0-0.32    ← Kafka 4.2.0 + Inkless iteration 0.32
 apache/kafka trunk
     ↓ merge commits (favor velocity, avoid repeated rebase conflicts)
     
-inkless trunk/main (active development)
+inkless:main (active development)
     • Inkless feature commits
-    • Merge commits from apache/kafka
+    • Merge commits from apache/kafka:trunk
     • Fast iteration on ideas
     |
     ├─→ inkless-4.0 (release branch)
@@ -133,7 +133,7 @@ inkless trunk/main (active development)
 
 ### Key Workflow Principles
 
-1. **Trunk development uses merge commits** from apache/kafka
+1. **Main development uses merge commits** from apache/kafka
    - Favors velocity over clean history
    - Allows quick iteration on ideas
    - Avoids resolving rebase conflicts multiple times
@@ -163,14 +163,21 @@ inkless trunk/main (active development)
 
 **Process:**
 ```bash
-# Regular development
-git checkout main
+# Regular development happens via PRs.
+# Do not commit directly to main.
+
+git checkout -b <feature-branch>
 # ... make Inkless changes ...
 git commit -m "inkless: Add feature X"
 
-# Sync with Apache Kafka (merge commits)
+git push origin <feature-branch>
+# Open PR targeting main
+
+# Sync with Apache Kafka (merge commits) via PR as well
+# (to keep review/audit trail)
 git fetch apache
 git merge apache/trunk
+# Open PR targeting main
 ```
 
 **Notes:**
@@ -230,7 +237,9 @@ git tag | grep "^inkless-release-" | sort -V | tail -n 5
 First, tag the canonical Inkless release on `main`:
 
 ```bash
-# On main
+# On main (after PR merge)
+# Tagging happens on the main branch HEAD after the PR is merged.
+
 git checkout main
 
 git tag -a inkless-release-0.33 -m "Inkless release 0.33"
@@ -409,7 +418,11 @@ inkless-4.1.1-0.32  vs  inkless-4.1.1-0.33
 
 ## Migration from Current Versioning
 
-This repository historically used per-branch `rc` numbers (e.g. `inkless-4.0.0-rc32` vs `inkless-4.1.1-rc1`). Going forward, Inkless releases are identified by `inkless-release-<inkless-version>` tags on `main` and use a global Inkless iteration number so versions are comparable across Kafka branches.
+This repository historically used per-branch `rc` numbers (e.g. `inkless-4.0.0-rc32` vs `inkless-4.1.1-rc1`). Going forward:
+- Inkless releases are identified by `inkless-release-<inkless-version>` tags on `main` and tracked via GitHub Releases (release notes / changelog).
+- Kafka-base compatibility tags continue to use git tags on the release branches: `inkless-<kafka-version>-<inkless-version>`.
+
+This uses a global Inkless iteration number so versions are comparable across Kafka branches.
 
 **Migration approach (tag mapping):**
 
