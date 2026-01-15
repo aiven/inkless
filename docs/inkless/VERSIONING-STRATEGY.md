@@ -182,6 +182,7 @@ git merge apache/trunk
 
 **Notes:**
 - Merge commits from apache/kafka for velocity
+- Syncs with upstream typically happen when catching up with upstream releases (not frequently; usually every 2–3 months)
 - No need for clean rebase history
 - Focus on fast iteration
 
