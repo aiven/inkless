@@ -17,8 +17,6 @@
 
 package org.apache.kafka.common.requests;
 
-import org.apache.kafka.common.message.AddTopicsToMirrorRequestData;
-import org.apache.kafka.common.message.AddTopicsToMirrorResponseData;
 import org.apache.kafka.common.message.LastMirroredOffsetRequestData;
 import org.apache.kafka.common.message.LastMirroredOffsetResponseData;
 import org.apache.kafka.common.protocol.ApiKeys;
@@ -26,7 +24,6 @@ import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.protocol.Readable;
 
 import java.util.ArrayList;
-import java.util.Map;
 import java.util.Set;
 
 public class LastMirroredOffsetRequest extends AbstractRequest {

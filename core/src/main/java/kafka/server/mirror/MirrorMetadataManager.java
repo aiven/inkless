@@ -17,8 +17,8 @@
 package kafka.server.mirror;
 
 import kafka.server.KafkaConfig;
-
 import kafka.server.ReplicaManager;
+
 import org.apache.kafka.clients.ClientResponse;
 import org.apache.kafka.clients.ClientUtils;
 import org.apache.kafka.clients.admin.AlterConfigOp;
