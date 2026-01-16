@@ -52,5 +52,3 @@ public enum MirrorState {
         throw new IllegalArgumentException("Unknown mirror state: " + value);
     }
 }
-
-

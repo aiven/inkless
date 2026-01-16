@@ -19,6 +19,7 @@ package kafka.server.mirror;
 import kafka.server.KafkaConfig;
 import kafka.server.ReplicaManager;
 import kafka.server.metadata.KRaftMetadataCache;
+
 import org.apache.kafka.clients.ClientResponse;
 import org.apache.kafka.clients.ClientUtils;
 import org.apache.kafka.clients.admin.AlterConfigOp;
@@ -345,7 +346,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                     result = new HashMap<>(prevVal);
                 }
                 result.put(key.topic, MirrorState.fromValue(value.value()));
-               return result;
+                return result;
             });
         });
 

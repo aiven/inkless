@@ -18,8 +18,8 @@ package kafka.server.mirror;
 
 import kafka.server.KafkaConfig;
 import kafka.server.ReplicaManager;
-
 import kafka.server.metadata.KRaftMetadataCache;
+
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.compress.Compression;
 import org.apache.kafka.common.internals.Topic;
@@ -63,7 +63,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.OptionalInt;
 import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.IntStream;
 
@@ -123,7 +122,7 @@ public class MirrorCoordinator {
             case METADATA_UPDATE:
                 LOG.info("!!! Updating metadata for topics {}.", topics);
                 updateMirrorTopicsMetadata(mirrorName, topics, Set.of());
-                mirrorMetadataManager.onPreparing(mirrorName, topics, (state) -> transitionTo(mirrorName, topics, state));
+                mirrorMetadataManager.onPreparing(mirrorName, topics, state -> transitionTo(mirrorName, topics, state));
                 break;
             case PREPARING_MIRRORING:
                 LOG.info("!!! Preparing mirroring for topics {}.", topics);
@@ -243,7 +242,7 @@ public class MirrorCoordinator {
 
     private void maybeTruncate(String mirrorName, Set<String> topics) {
         mirrorMetadataManager.maybeTruncate(replicaManager, mirrorName, topics,
-                (tp) -> transitionTo(mirrorName, Set.of(tp.topic()), MirrorState.MIRRORING));
+                tp -> transitionTo(mirrorName, Set.of(tp.topic()), MirrorState.MIRRORING));
     }
 
     /**
