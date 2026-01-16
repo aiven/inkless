@@ -1669,11 +1669,14 @@ class ReplicaManager(val config: KafkaConfig,
     delayedRemoteFetchPurgatory.tryCompleteElseWatch(remoteFetch, delayedFetchKeys.asJava)
   }
 
-  def maybeTruncate(offsets: util.Map[TopicPartition, JLong]): Unit = {
+  def maybeTruncate(offsets: util.Map[TopicPartition, JLong], onTruncateComplete: Consumer[TopicPartition]): Unit = {
     info("!!! maybeTruncate:" + offsets)
     offsets.forEach((tp, offset) => {
       getLog(tp).map(log => {
         log.truncateTo(offset)
+        val partition = getPartitionOrException(tp)
+        partition.onTruncation = Optional.of(onTruncateComplete)
+        partition.maybeMoveToMirroringState(log)
       })
     })
   }

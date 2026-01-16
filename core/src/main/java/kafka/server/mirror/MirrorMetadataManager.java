@@ -232,7 +232,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     public void close() throws Exception {
     }
 
-    public void maybeTruncate(ReplicaManager replicaManager, String mirrorName, Set<String> topics, Runnable onTruncateComplete) {
+    public void maybeTruncate(ReplicaManager replicaManager, String mirrorName, Set<String> topics, Consumer<TopicPartition> onTruncateComplete) {
         LOG.info("!!! maybeTruncate: {} {}", mirrorName, topics);
         createMirrorConnection(mirrorName);
 
@@ -250,9 +250,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                     offsets.put(new TopicPartition(name, partition.partitionIndex()), partition.committedOffset());
                 });
             });
-            replicaManager.maybeTruncate(offsets);
-
-            onTruncateComplete.run();
+            replicaManager.maybeTruncate(offsets, onTruncateComplete);
         }
     }
 
@@ -327,7 +325,6 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     }
 
     public long getLastMirroredOffset(String clusterName, TopicPartition topicPartition) {
-        LOG.info("!!! getLastMirroredOffset: {} {} :: {}", clusterName, topicPartition, lastMirroredOffsets);
         return lastMirroredOffsets.get(new MirroredPartitionKey(clusterName, topicPartition.topic(), topicPartition.partition()));
     }
 

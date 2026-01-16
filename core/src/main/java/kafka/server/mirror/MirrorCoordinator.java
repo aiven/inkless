@@ -243,7 +243,7 @@ public class MirrorCoordinator {
 
     private void maybeTruncate(String mirrorName, Set<String> topics) {
         mirrorMetadataManager.maybeTruncate(replicaManager, mirrorName, topics,
-                () -> transitionTo(mirrorName, topics, MirrorState.MIRRORING));
+                (tp) -> transitionTo(mirrorName, Set.of(tp.topic()), MirrorState.MIRRORING));
     }
 
     /**
