@@ -805,9 +805,48 @@ on synthetic hashing.
 
 ### Phase 0: Research and Validation (1 week)
 
-1. Leader election works without broker `Partition` objects *(validated; controller depends only on KRaft `PartitionInfo` and broker liveness)*
-2. ISR updates don't require broker-side `Partition` state *(validated; controller drops/adds replicas purely via metadata, see [Diskless ISR Semantics](#diskless-isr-semantics))*
-3. `DescribeTopics` / `ListOffsets` work with RF > 1 *(sanity check once RF>1 diskless is enabled: broker responses must reflect KRaft placement for metadata and use control-plane offsets without synthetic hashing)*
+**Objective:** Validate that controller operations are metadata-driven and do not require broker-side `Partition` objects.
+
+**Findings:**
+
+1. **Leader election** *(validated)*
+   - Controller (`ReplicationControlManager`) elects leaders purely from KRaft `PartitionInfo` + broker liveness/fencing
+   - No dependency on broker-side `Partition` objects
+   - `handleBrokerFenced()` removes broker from ISR and triggers re-election via `generateLeaderAndIsrUpdates()`
+
+2. **ISR maintenance** *(validated)*
+   - ISR updates are metadata-driven via `handleBrokerFenced()`, `handleBrokerUnregistered()`, `handleBrokerInControlledShutdown()`
+   - Controller shrinks/expands ISR without broker `Partition`/fetcher state
+   - For `DISKLESS_ONLY`, ISR is intentionally liveness-gated (no divergence risk; data is in remote storage)
+   - `min.insync.replicas` remains satisfied as long as enough replicas are alive
+
+3. **Broker heartbeats** *(validated)*
+   - `BrokerHeartbeatManager` is broker-scoped (epochs, metadata offsets, fencing)
+   - No per-partition payload, no dependency on `Partition` objects
+
+4. **DescribeTopicPartitions path** *(documented)*
+   - Served by brokers (controllers don't handle it)
+   - Brokers answer from `MetadataCache` and currently apply diskless "fake placement" transformation
+   - Once diskless RF>1 uses real KRaft placement, post-processing must be updated to reflect controller placement
+
+5. **ListOffsets path** *(documented)*
+   - Served by brokers via `ReplicaManager.fetchOffset`
+   - Diskless topics use `disklessFetchOffset` to query Inkless control plane/remote storage (no local logs)
+   - When RF>1 diskless lands, responses should rely on controller placement without synthetic hashing
+
+6. **Staleness/consistency** *(documented)*
+   - All broker-served metadata is as current as broker's `MetadataCache`
+   - Clients see eventually consistent view until brokers apply latest KRaft deltas (matches classic Kafka)
+
+**Remaining item:**
+- Item 3 (`DescribeTopics`/`ListOffsets` with RF>1) cannot be exercised until diskless RF>1 is implemented
+- It remains a future sanity check to ensure broker replies reflect KRaft placement plus control-plane offsets
+
+**Test coverage:**
+- See `ReplicationControlManagerTest.DisklessRfPhase0Tests` in `metadata/src/test/java/`
+- Classic topic tests validate controller behavior (pass today)
+- Diskless RF>1 tests are `@DisabledIf` until Phase 1 is implemented
+- Run disabled tests: `DISKLESS_RF_FUTURE_TESTS_ENABLED=true ./gradlew :metadata:test --tests "...DisklessRfPhase0Tests.*" --rerun`
 
 ### Phase 1: Topic Creation with Rack-Aware Placement (2 weeks)
 
