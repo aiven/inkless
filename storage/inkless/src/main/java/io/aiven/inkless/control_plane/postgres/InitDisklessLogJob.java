@@ -78,7 +78,6 @@ public class InitDisklessLogJob implements Callable<Void> {
             .fetchInto(InitDisklessLogResponseV1Record.class)
         );
 
-        // Process responses outside the transaction to avoid jOOQ exception wrapping
         for (final var response : responses) {
             if (response.getError() == InitDisklessLogResponseErrorV1.stale_leader_epoch) {
                 throw new StaleLeaderEpochException(

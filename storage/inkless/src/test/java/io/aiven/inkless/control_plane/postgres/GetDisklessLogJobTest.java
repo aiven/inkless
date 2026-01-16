@@ -91,7 +91,7 @@ class GetDisklessLogJobTest {
         assertThat(response.error()).isEqualTo(Errors.UNKNOWN_TOPIC_OR_PARTITION);
         assertThat(response.logStartOffset()).isEqualTo(GetDisklessLogResponse.INVALID_OFFSET);
         assertThat(response.highWatermark()).isEqualTo(GetDisklessLogResponse.INVALID_OFFSET);
-        assertThat(response.disklessStartOffset()).isNull();
+        assertThat(response.disklessStartOffset()).isEqualTo(GetDisklessLogResponse.INVALID_OFFSET);
     }
 
     @Test

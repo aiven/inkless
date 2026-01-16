@@ -37,6 +37,6 @@ public record GetDisklessLogResponse(Uuid topicId,
     }
 
     public static GetDisklessLogResponse unknownTopicOrPartition(final Uuid topicId, final int partition) {
-        return new GetDisklessLogResponse(topicId, partition, Errors.UNKNOWN_TOPIC_OR_PARTITION, INVALID_OFFSET, INVALID_OFFSET, null);
+        return new GetDisklessLogResponse(topicId, partition, Errors.UNKNOWN_TOPIC_OR_PARTITION, INVALID_OFFSET, INVALID_OFFSET, INVALID_OFFSET);
     }
 }
