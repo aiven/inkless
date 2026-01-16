@@ -1237,8 +1237,8 @@ class Partition(val topicPartition: TopicPartition,
 
       info("!!! replicaState.logEndOffsetMetadata:" + replicaState.logEndOffsetMetadata + ";;" + leaderLogEndOffset)
       // Note here we are using the "maximal", see explanation above
-      // We want to make sure all LEO are
-      if (replicaState.logEndOffsetMetadata.messageOffset != leaderLogEndOffset.messageOffset &&
+      // We want to make sure all LEO are <= leader LEO
+      if (replicaState.logEndOffsetMetadata.messageOffset > leaderLogEndOffset.messageOffset &&
         (partitionState.maximalIsr.contains(replica.brokerId) || shouldWaitForReplicaToJoinIsr)
       ) {
         info("!!! ISR is not all truncated to the expected offset: " + replicaState)
