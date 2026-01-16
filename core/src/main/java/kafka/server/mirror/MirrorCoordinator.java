@@ -281,14 +281,18 @@ public class MirrorCoordinator {
         );
     }
 
-    private Map<String, Map<Integer, Long>> lastMirroredOffsetsToCoordinatorRecords(Set<MirrorMetadataManager.LastMirroredOffset> offsets) {
+    private Map<String, Map<Integer, Long>> lastMirroredOffsetsToCoordinatorRecords(Map<MirrorMetadataManager.MirroredPartitionKey, Long> offsets) {
         Map<String, Map<Integer, Long>> results = new HashMap<>();
-        offsets.forEach(offset -> {
-            Map<Integer, Long> partitionOffsets = results.getOrDefault(offset.topic(), new HashMap<Integer, Long>());
-            partitionOffsets.put(offset.partition(), offset.offset());
-            results.put(offset.topic(), partitionOffsets);
+        offsets.forEach((key, value) -> {
+            Map<Integer, Long> partitionOffsets = results.getOrDefault(key.topic(), new HashMap<Integer, Long>());
+            partitionOffsets.put(key.partition(), value);
+            results.put(key.topic(), partitionOffsets);
         });
         return results;
+    }
+
+    public long lastMirroredOffset(String mirrorName, TopicPartition topicPartition) {
+        return mirrorMetadataManager.getLastMirroredOffset(mirrorName, topicPartition);
     }
 
     /**

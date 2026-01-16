@@ -289,6 +289,7 @@ class KafkaApis(val requestChannel: RequestChannel,
     val lastMirroredOffsetRequest = request.body[LastMirroredOffsetRequest]
     logger.info(s"!!! Handling last mirrored offset request: ${lastMirroredOffsetRequest}")
     val responseData = new LastMirroredOffsetResponseData()
+    val mirrorName = lastMirroredOffsetRequest.data().mirrorName()
     val topicList = new util.ArrayList[LastMirroredOffsetResponseData.OffsetResponseTopic]()
     lastMirroredOffsetRequest.data().topics().forEach(topic => {
       val responseTopic = new LastMirroredOffsetResponseData.OffsetResponseTopic()
@@ -299,12 +300,7 @@ class KafkaApis(val requestChannel: RequestChannel,
           val partition = new TopicPartition(topic, i)
           val offsetPartition = new LastMirroredOffsetResponseData.OffsetResponsePartition()
           offsetPartition.setPartitionIndex(i)
-          replicaManager.getPartitionOrError(partition) match {
-            case Left(err) => logger.error(s"Failed to get partition $partition from mirror: ${err.message}")
-            // set the last mirrored offset as LSO in the target cluster since it could be the offset beyond LSO be truncated
-            // after leadership change in the target cluster
-            case Right(partition) => partition.log.foreach(log => offsetPartition.setCommittedOffset(log.lastStableOffset()))
-          }
+            .setCommittedOffset(mirrorCoordinator.lastMirroredOffset(mirrorName, partition))
           partitionList.add(offsetPartition)
         }
       })

@@ -160,9 +160,9 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     private MetadataCache metadataCache;
     private NodeToControllerChannelManager channelManager;
     private final Supplier<GroupCoordinator> groupCoordinatorSupplier;
-    private Map<String, Set<LastMirroredOffset>> lastMirroredOffsets = new ConcurrentHashMap<>();
-    private Map<MirroredPartitionStateRecordKey, MirrorState> mirroredPartitionState = new ConcurrentHashMap<>();
-    private Map<MirroredPartitionStateRecordKey, Runnable> onMirroringWaitingList = new ConcurrentHashMap<>();
+    private Map<MirroredPartitionKey, Long> lastMirroredOffsets = new ConcurrentHashMap<>();
+    private Map<MirroredPartitionKey, MirrorState> mirroredPartitionState = new ConcurrentHashMap<>();
+    private Map<MirroredPartitionKey, Runnable> onMirroringWaitingList = new ConcurrentHashMap<>();
     private Map<String, Map<String, Consumer<MirrorState>>> onPreparingWaitingList = new ConcurrentHashMap<>();
 
     public MirrorMetadataManager(
@@ -215,7 +215,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
             delta.topicsDelta().localChanges(nodeId).readOnlyLeaders().entrySet().forEach(entry -> {
                 TopicPartition tp = entry.getKey();
                 LocalReplicaChanges.PartitionInfo info = entry.getValue();
-                MirroredPartitionStateRecordKey key = new MirroredPartitionStateRecordKey(info.partition().mirrorName, tp.topic(), tp.partition());
+                MirroredPartitionKey key = new MirroredPartitionKey(info.partition().mirrorName, tp.topic(), tp.partition());
                 // moving the topics in METADATA_UPDATE into PREPAREING_MIRRORING state
                 // or moving the topics don't have state (due to topic not created yet) directly into MIRRORING state because no truncation needed
                 if (!mirroredPartitionState.containsKey(key) || mirroredPartitionState.get(key) == MirrorState.METADATA_UPDATE) {
@@ -238,7 +238,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
 
         var response = getRandomSender(remoteBrokers.get(mirrorName)).sendRequest(
                 new LastMirroredOffsetRequest.Builder(
-                        new LastMirroredOffsetRequestData().setTopics(new ArrayList<>(topics)))
+                        new LastMirroredOffsetRequestData().setMirrorName(mirrorName).setTopics(new ArrayList<>(topics)))
         );
 
         if (response.responseBody() instanceof LastMirroredOffsetResponse lastMirroredOffsetResponse) {
@@ -323,11 +323,16 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     }
 
     public MirrorState getMirrorPartitionState(String clusterName, TopicPartition topicPartition) {
-        return mirroredPartitionState.get(new MirroredPartitionStateRecordKey(clusterName, topicPartition.topic(), topicPartition.partition()));
+        return mirroredPartitionState.get(new MirroredPartitionKey(clusterName, topicPartition.topic(), topicPartition.partition()));
+    }
+
+    public long getLastMirroredOffset(String clusterName, TopicPartition topicPartition) {
+        LOG.info("!!! getLastMirroredOffset: {} {} :: {}", clusterName, topicPartition, lastMirroredOffsets);
+        return lastMirroredOffsets.get(new MirroredPartitionKey(clusterName, topicPartition.topic(), topicPartition.partition()));
     }
 
     public void updateMirrorPartitionStateCache(String clusterName, TopicPartition topicPartition, MirrorState mirrorState) {
-        mirroredPartitionState.put(new MirroredPartitionStateRecordKey(clusterName, topicPartition.topic(), topicPartition.partition()), mirrorState);
+        mirroredPartitionState.put(new MirroredPartitionKey(clusterName, topicPartition.topic(), topicPartition.partition()), mirrorState);
     }
 
     // TODO: Should operate on partition level
@@ -363,22 +368,21 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
      * @param removedOffsets map of topic names to partition offsets to remove
      * @return the updated set of last mirrored offsets
      */
-    public Set<LastMirroredOffset> updateLastMirroredOffsetsCache(String clusterName,
+    public Map<MirroredPartitionKey, Long> updateLastMirroredOffsetsCache(String clusterName,
                                                                   Map<String, Map<Integer, Long>> addedOffsets,
                                                                   Map<String, Map<Integer, Long>> removedOffsets) {
-        Set<LastMirroredOffset> offsets = new HashSet<>(this.lastMirroredOffsets.getOrDefault(clusterName, Set.of()));
         removedOffsets.forEach((topic, partitionOffsets) -> {
             partitionOffsets.forEach((partition, offset) -> {
-                offsets.remove(new LastMirroredOffset(topic, partition, offset));
+                lastMirroredOffsets.remove(new MirroredPartitionKey(clusterName, topic, partition));
             });
         });
         addedOffsets.forEach((topic, partitionOffsets) -> {
             partitionOffsets.forEach((partition, offset) -> {
-                offsets.add(new LastMirroredOffset(topic, partition, offset));
+                lastMirroredOffsets.put(new MirroredPartitionKey(clusterName, topic, partition), offset);
             });
         });
-        this.lastMirroredOffsets.put(clusterName, offsets);
-        return offsets;
+        LOG.info("!!! updateLastMirroredOffsetsCache: {} {}", clusterName, lastMirroredOffsets);
+        return lastMirroredOffsets;
     }
 
     public void onPreparing(String clusterName, Set<String> topics, Consumer<MirrorState> onPreparingComplete) {
@@ -409,7 +413,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     // wait until the state entering MIRRORING state and then start fetching
     public void onMirroring(Map<TopicPartition, LocalReplicaChanges.PartitionInfo> readOnlyLeaders, Consumer<Map<TopicPartition, LocalReplicaChanges.PartitionInfo>> onMirroring) {
         readOnlyLeaders.forEach((tp, info) -> {
-            MirroredPartitionStateRecordKey key = new MirroredPartitionStateRecordKey(info.partition().mirrorName, tp.topic(), tp.partition());
+            MirroredPartitionKey key = new MirroredPartitionKey(info.partition().mirrorName, tp.topic(), tp.partition());
             if (mirroredPartitionState.get(key) == MirrorState.MIRRORING) {
                 onMirroring.accept(Map.of(tp, info));
             } else {
@@ -423,7 +427,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         topics.forEach(topic -> {
             ((KRaftMetadataCache) metadataCache).numPartitions(topic).ifPresent(numPartitions -> {
                 IntStream.range(0, numPartitions).forEach(i -> {
-                    MirroredPartitionStateRecordKey key = new MirroredPartitionStateRecordKey(mirrorName, topic, i);
+                    MirroredPartitionKey key = new MirroredPartitionKey(mirrorName, topic, i);
                     Runnable runnable = onMirroringWaitingList.get(key);
                     if (runnable != null) {
                         runnable.run();
@@ -855,7 +859,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
 
     public record LastMirroredOffset(String topic, int partition, long offset) { }
     public record MirroredPartitionStateRecordValue(String topic, int partition, MirrorState state) { }
-    public record MirroredPartitionStateRecordKey(String mirrorName, String topic, int partition) {
+    public record MirroredPartitionKey(String mirrorName, String topic, int partition) {
         @Override
         public int hashCode() {
             return Objects.hash(mirrorName, topic, partition);
@@ -869,7 +873,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                 return false;
             if (getClass() != obj.getClass())
                 return false;
-            MirroredPartitionStateRecordKey other = (MirroredPartitionStateRecordKey) obj;
+            MirroredPartitionKey other = (MirroredPartitionKey) obj;
             return mirrorName.equals(other.mirrorName) && partition == other.partition && Objects.equals(topic, other.topic);
         }
 

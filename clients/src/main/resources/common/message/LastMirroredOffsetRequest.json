@@ -21,6 +21,7 @@
   "validVersions": "0",
   "flexibleVersions": "0+",
   "fields": [
+    { "name": "MirrorName", "type": "string", "versions": "0+", "about": "The mirror name." },
     { "name": "Topics", "type": "[]string", "versions": "0+", "about": "The topic names." }
   ]
 }
