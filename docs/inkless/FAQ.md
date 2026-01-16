@@ -190,16 +190,16 @@
     * **No Share Groups:** Queues for Kafka are currently not supported in diskless topics.
 * **Q: How does the producer work with Inkless?**  
   * A: The Inkless producer collects messages and buffers them according to the batching parameters. Once a batch is full (either by time or size), it writes the batch as an object to object storage. The producer then receives confirmation of the successful write and continues sending more data.  
-* **Q: How is producer rack awareness configured?**  
-  * A: Producers should configure rack awareness by setting the `client.id` to a specific format. This format is `<custom_id>,diskless_az=<rack>`, where `<custom_id>` is a unique identifier for the user's application or their existing `client.id`, and `<rack>` corresponds to the `broker.rack` configuration for brokers. This allows Inkless to route producer requests to the appropriate brokers within the same availability zone.  
-* **Q: How does producer rack awareness avoid inter-zone costs?**  
-  * A: When a producer is configured with a specific rack ID, it will primarily produce data to brokers that have the same rack ID. This ensures that data transmission stays within the same availability zone. Producers that are not configured with a rack ID might send data to brokers in other zones, which can result in inter-zone data transfer costs. Therefore, properly configured producer rack awareness significantly reduces the risk of incurring these costs.
-* **Q: How is consumer rack awareness configured?**
-  * A: Consumers should configure rack awareness by setting the `client.id` to a specific format. This format is `<custom_id>,diskless_az=<rack>`, where `<custom_id>` is a unique identifier for the user's application or their existing `client.id`, and `<rack>` corresponds to the `broker.rack` configuration for brokers. This allows Inkless to route consumer requests to the appropriate brokers within the same availability zone.
-* **Q: How does consumer rack awareness avoid inter-zone costs?**
-  * A: When a consumer is configured with a specific rack ID, it will primarily consume data from brokers that have the same rack ID. This ensures that data transmission stays within the same availability zone. Consumers that are not configured with a rack ID might receive data from brokers in other zones, which can result in inter-zone data transfer costs. Therefore, properly configured consumer rack awareness significantly reduces the risk of incurring these costs.
-* **Q: Is there producer rack awareness for Classic Topics?**  
-  * A: No but for keyless data, [KIP-1123: Rack-aware partitioning for Kafka Producer](https://cwiki.apache.org/confluence/display/KAFKA/KIP-1123:%20Rack-aware%20partitioning%20for%20Kafka%20Producer) will send keyless data to a leader in the local rack. This is a proposal that will address this in the future, but it is not implemented in the same way as the producer rack awareness with diskless topics.  
+* **Q: How is producer client rack awareness configured?**  
+  * A: See [Client-Broker AZ Alignment](./CLIENT-BROKER-AZ-ALIGNMENT.md#current-implementation) for detailed configuration. In short, set `client.id=<your-app>,diskless_az=<rack>` where `<rack>` matches the broker's `broker.rack` value.
+* **Q: How does producer client rack awareness avoid inter-zone costs?**  
+  * A: Producers with a configured rack ID route requests to brokers in the same AZ, keeping data transmission local. See [Client-Broker AZ Alignment](./CLIENT-BROKER-AZ-ALIGNMENT.md#overview) for details.
+* **Q: How is consumer client rack awareness configured?**
+  * A: Same as producers: set `client.id=<your-app>,diskless_az=<rack>`. See [Client-Broker AZ Alignment](./CLIENT-BROKER-AZ-ALIGNMENT.md#current-implementation) for details.
+* **Q: How does consumer client rack awareness avoid inter-zone costs?**
+  * A: Consumers with a configured rack ID fetch from brokers in the same AZ, accessing AZ-local cache. See [Client-Broker AZ Alignment](./CLIENT-BROKER-AZ-ALIGNMENT.md#overview) for details.
+* **Q: Is there producer client rack awareness for Classic Topics?**  
+  * A: Yes, [KIP-1123: Rack-aware partitioning for Kafka Producer](https://cwiki.apache.org/confluence/display/KAFKA/KIP-1123:%20Rack-aware%20partitioning%20for%20Kafka%20Producer) has been approved ([PR #19850](https://github.com/apache/kafka/pull/19850)). It adds `client.rack` to the producer, enabling rack-aware partition selection for keyless records. For diskless topics, Inkless currently uses the `client.id` pattern and will adopt `client.rack` once KIP-1123 is released. See [Client-Broker AZ Alignment](./CLIENT-BROKER-AZ-ALIGNMENT.md) for details.  
 * **Q: How is data from multiple producers distributed to multiple consumers?**  
   * A: In Inkless, each object containing batched messages is cached by one broker per availability zone. When consumers make fetch requests, these cached objects are then distributed by inter-broker requests to other brokers that are serving the fetch requests. This way, data produced by multiple producers gets distributed across different brokers and made available to multiple consumers in different parts of the system. This caching and distribution mechanism ensures that:  
     * Consumers can access data with low latency, particularly for frequently accessed or recently produced data.  
@@ -224,10 +224,7 @@
 * **Q: Does Inkless work with S3 Express?**  
   * A: Support for S3 Express is not currently implemented but is in the backlog. The architecture should support integration with high-performance object storage services, but specific testing and integration work needs to be done.  
 * **Q: How do I avoid all inter-availability-zone traffic in Inkless?**  
-  * A: To avoid inter-AZ traffic:  
-    * **Use Producer Rack Awareness (PRA):** Configure producers with the `client.id` format to ensure they write primarily to brokers within the same rack/AZ.  
-    * **Use Consumer Rack Awareness (CRA):** Configure consumers with the `client.id` format to ensure they receive primarily from brokers within the same rack/AZ.  
-    * **Strategic Replication:** Although data replication is handled by object storage, ensure the object storage configuration minimizes cross-AZ data transfer costs (e.g., ensure object storage replicas are within the same region or AZ as much as possible).  
+  * A: Configure both producers and consumers with client rack awareness using `client.id=<your-app>,diskless_az=<rack>`. See [Client-Broker AZ Alignment](./CLIENT-BROKER-AZ-ALIGNMENT.md) for comprehensive guidance on configuration, cost optimization, and monitoring.  
 * **Q: Is KRaft stable?**  
   * A: Yes, KRaft (Kafka Raft metadata mode) is considered stable, and there's a plan to move to using KRaft General Availability (GA) soon. KRaft replaces ZooKeeper for metadata management and provides a more robust and integrated metadata management system.  
 * **Q: What are some commercial alternatives to Inkless?**  
