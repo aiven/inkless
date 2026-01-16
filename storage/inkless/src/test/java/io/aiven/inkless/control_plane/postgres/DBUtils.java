@@ -18,6 +18,8 @@
 package io.aiven.inkless.control_plane.postgres;
 
 
+import org.apache.kafka.common.Uuid;
+
 import com.zaxxer.hikari.HikariDataSource;
 
 import org.jooq.DSLContext;
@@ -26,17 +28,20 @@ import org.jooq.SQLDialect;
 import org.jooq.generated.tables.records.BatchesRecord;
 import org.jooq.generated.tables.records.FilesRecord;
 import org.jooq.generated.tables.records.LogsRecord;
+import org.jooq.generated.tables.records.ProducerStateRecord;
 import org.jooq.impl.DSL;
 import org.jooq.impl.TableImpl;
 
 import java.sql.Connection;
 import java.sql.SQLException;
+import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
 
 import static org.jooq.generated.Tables.BATCHES;
 import static org.jooq.generated.Tables.FILES;
 import static org.jooq.generated.Tables.LOGS;
+import static org.jooq.generated.Tables.PRODUCER_STATE;
 import static org.jooq.impl.DSL.asterisk;
 
 public class DBUtils {
@@ -50,6 +55,31 @@ public class DBUtils {
 
     static Set<BatchesRecord> getAllBatches(final HikariDataSource hikariDataSource) {
         return getAll(hikariDataSource, BATCHES, BatchesRecord.class);
+    }
+
+    static List<ProducerStateRecord> getAllProducerState(final HikariDataSource hikariDataSource) {
+        try (final Connection connection = hikariDataSource.getConnection()) {
+            final DSLContext ctx = DSL.using(connection, SQLDialect.POSTGRES);
+            return ctx.select(asterisk())
+                .from(PRODUCER_STATE)
+                .orderBy(PRODUCER_STATE.TOPIC_ID, PRODUCER_STATE.PARTITION, PRODUCER_STATE.PRODUCER_ID, PRODUCER_STATE.ROW_ID)
+                .fetchInto(ProducerStateRecord.class);
+        } catch (final SQLException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    static Integer getLeaderEpochAtInit(final HikariDataSource hikariDataSource, final Uuid topicId, final int partition) {
+        try (final Connection connection = hikariDataSource.getConnection()) {
+            final DSLContext ctx = DSL.using(connection, SQLDialect.POSTGRES);
+            return ctx.select(LOGS.LEADER_EPOCH_AT_INIT)
+                .from(LOGS)
+                .where(LOGS.TOPIC_ID.eq(topicId)
+                    .and(LOGS.PARTITION.eq(partition)))
+                .fetchOne(LOGS.LEADER_EPOCH_AT_INIT);
+        } catch (final SQLException e) {
+            throw new RuntimeException(e);
+        }
     }
 
     private static <T extends Record> Set<T> getAll(final HikariDataSource hikariDataSource,
