@@ -24,6 +24,7 @@ import org.jooq.Configuration;
 import org.jooq.DSLContext;
 import org.jooq.Field;
 import org.jooq.Row2;
+import org.jooq.impl.SQLDataType;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -42,7 +43,7 @@ import static org.jooq.impl.DSL.row;
 import static org.jooq.impl.DSL.values;
 
 public class GetDisklessLogJob implements Callable<List<GetDisklessLogResponse>> {
-    private static final Field<Uuid> REQUEST_TOPIC_ID = field(name("topic_id"), LOGS.TOPIC_ID.getDataType());
+    private static final Field<UUID> REQUEST_TOPIC_ID = field(name("topic_id"), SQLDataType.UUID);
     private static final Field<Integer> REQUEST_PARTITION = field(name("partition"), LOGS.PARTITION.getDataType());
 
     private final Time time;
@@ -62,6 +63,9 @@ public class GetDisklessLogJob implements Callable<List<GetDisklessLogResponse>>
 
     @Override
     public List<GetDisklessLogResponse> call() throws Exception {
+        if (requests.isEmpty()) {
+            return List.of();
+        }
         return JobUtils.run(this::runOnce, time, durationCallback);
     }
 
@@ -84,14 +88,13 @@ public class GetDisklessLogJob implements Callable<List<GetDisklessLogResponse>>
                     LOGS.HIGH_WATERMARK,
                     LOGS.DISKLESS_START_OFFSET
                 ).from(requestsTable)
-                .leftJoin(LOGS).on(LOGS.TOPIC_ID.eq(requestsTable.field(REQUEST_TOPIC_ID))
+                .leftJoin(LOGS).on(LOGS.TOPIC_ID.coerce(SQLDataType.UUID).eq(requestsTable.field(REQUEST_TOPIC_ID))
                     .and(LOGS.PARTITION.eq(requestsTable.field(REQUEST_PARTITION))));
 
             final List<GetDisklessLogResponse> responses = new ArrayList<>();
             try (final var cursor = select.fetchSize(1000).fetchLazy()) {
                 for (final var record : cursor) {
-                    // The synthetic table stores raw java.util.UUID, need to convert explicitly
-                    final UUID rawTopicId = (UUID) (Object) record.get(requestsTable.field(REQUEST_TOPIC_ID));
+                    final UUID rawTopicId = record.get(requestsTable.field(REQUEST_TOPIC_ID));
                     final Uuid topicId = uuidConverter.from(rawTopicId);
                     final Integer partition = record.get(requestsTable.field(REQUEST_PARTITION));
                     final Long logStartOffset = record.get(LOGS.LOG_START_OFFSET);

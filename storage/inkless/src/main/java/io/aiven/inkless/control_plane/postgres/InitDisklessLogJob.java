@@ -17,6 +17,7 @@
  */
 package io.aiven.inkless.control_plane.postgres;
 
+import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.utils.Time;
 
 import org.jooq.Configuration;
@@ -122,7 +123,7 @@ public class InitDisklessLogJob implements Callable<Void> {
         );
     }
 
-    private int findLeaderEpoch(final org.apache.kafka.common.Uuid topicId, final int partition) {
+    private int findLeaderEpoch(final Uuid topicId, final int partition) {
         return requests.stream()
             .filter(r -> r.topicId().equals(topicId) && r.partition() == partition)
             .findFirst()
