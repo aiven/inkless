@@ -37,7 +37,7 @@ import java.util.Optional;
  */
 public class BootstrapMetadata {
     private final List<ApiMessageAndVersion> records;
-    private final MetadataVersion metadataVersion;
+    private final short metadataVersionLevel;
     private final String source;
 
     public static BootstrapMetadata fromVersions(
@@ -67,7 +67,7 @@ public class BootstrapMetadata {
                     setFeatureLevel(level), (short) 0));
             }
         }
-        return new BootstrapMetadata(records, metadataVersion, source);
+        return new BootstrapMetadata(records, metadataVersion.featureLevel(), source);
     }
 
     public static BootstrapMetadata fromVersion(MetadataVersion metadataVersion, String source) {
@@ -75,29 +75,28 @@ public class BootstrapMetadata {
             new ApiMessageAndVersion(new FeatureLevelRecord().
                 setName(MetadataVersion.FEATURE_NAME).
                 setFeatureLevel(metadataVersion.featureLevel()), (short) 0));
-        return new BootstrapMetadata(records, metadataVersion, source);
+        return new BootstrapMetadata(records, metadataVersion.featureLevel(), source);
     }
 
     public static BootstrapMetadata fromRecords(List<ApiMessageAndVersion> records, String source) {
-        MetadataVersion metadataVersion = null;
+        Optional<Short> metadataVersionLevel = Optional.empty();
         for (ApiMessageAndVersion record : records) {
-            Optional<MetadataVersion> version = recordToMetadataVersion(record.message());
-            if (version.isPresent()) {
-                metadataVersion = version.get();
+            Optional<Short> level = recordToMetadataVersionLevel(record.message());
+            if (level.isPresent()) {
+                metadataVersionLevel = level;
             }
         }
-        if (metadataVersion == null) {
+        if (metadataVersionLevel.isEmpty()) {
             throw new RuntimeException("No FeatureLevelRecord for " + MetadataVersion.FEATURE_NAME +
                     " was found in the bootstrap metadata from " + source);
         }
-        return new BootstrapMetadata(records, metadataVersion, source);
+        return new BootstrapMetadata(records, metadataVersionLevel.get(), source);
     }
 
-    public static Optional<MetadataVersion> recordToMetadataVersion(ApiMessage record) {
-        if (record instanceof FeatureLevelRecord) {
-            FeatureLevelRecord featureLevel = (FeatureLevelRecord) record;
+    public static Optional<Short> recordToMetadataVersionLevel(ApiMessage record) {
+        if (record instanceof FeatureLevelRecord featureLevel) {
             if (featureLevel.name().equals(MetadataVersion.FEATURE_NAME)) {
-                return Optional.of(MetadataVersion.fromFeatureLevel(featureLevel.featureLevel()));
+                return Optional.of(featureLevel.featureLevel());
             }
         }
         return Optional.empty();
@@ -105,11 +104,11 @@ public class BootstrapMetadata {
 
     BootstrapMetadata(
         List<ApiMessageAndVersion> records,
-        MetadataVersion metadataVersion,
+        short metadataVersionLevel,
         String source
     ) {
         this.records = Objects.requireNonNull(records);
-        this.metadataVersion = metadataVersion;
+        this.metadataVersionLevel = metadataVersionLevel;
         Objects.requireNonNull(source);
         this.source = source;
     }
@@ -119,7 +118,7 @@ public class BootstrapMetadata {
     }
 
     public MetadataVersion metadataVersion() {
-        return metadataVersion;
+        return MetadataVersion.fromFeatureLevel(metadataVersionLevel);
     }
 
     public String source() {
@@ -167,7 +166,7 @@ public class BootstrapMetadata {
 
     @Override
     public int hashCode() {
-        return Objects.hash(records, metadataVersion, source);
+        return Objects.hash(records, metadataVersionLevel, source);
     }
 
     @Override
@@ -175,14 +174,14 @@ public class BootstrapMetadata {
         if (o == null || !o.getClass().equals(this.getClass())) return false;
         BootstrapMetadata other = (BootstrapMetadata) o;
         return Objects.equals(records, other.records) &&
-            metadataVersion.equals(other.metadataVersion) &&
+            metadataVersionLevel == other.metadataVersionLevel &&
             source.equals(other.source);
     }
 
     @Override
     public String toString() {
         return "BootstrapMetadata(records=" + records.toString() +
-            ", metadataVersion=" + metadataVersion +
+            ", metadataVersionLevel=" + metadataVersionLevel +
             ", source=" + source +
             ")";
     }

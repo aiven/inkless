@@ -346,6 +346,7 @@ public class StreamThread extends Thread implements ProcessingThread {
     // These are used to signal from outside the stream thread, but the variables themselves are internal to the thread
     private final AtomicLong cacheResizeSize = new AtomicLong(-1L);
     private final AtomicBoolean leaveGroupRequested = new AtomicBoolean(false);
+    private final AtomicLong lastShutdownWarningTimestamp = new AtomicLong(0L);
     private final boolean eosEnabled;
     private final boolean stateUpdaterEnabled;
     private final boolean processingThreadsEnabled;
@@ -549,7 +550,7 @@ public class StreamThread extends Thread implements ProcessingThread {
             final String name = clientId + STATE_UPDATER_ID_SUBSTRING + threadIdx;
             final StateUpdater stateUpdater = new DefaultStateUpdater(
                 name,
-                streamsMetrics.metricsRegistry(),
+                streamsMetrics,
                 streamsConfig,
                 restoreConsumer,
                 changelogReader,
@@ -627,7 +628,7 @@ public class StreamThread extends Thread implements ProcessingThread {
         ThreadMetrics.addThreadStateMetric(
             threadId,
             streamsMetrics,
-            (metricConfig, now) -> this.state());
+            (metricConfig, now) -> this.state().name());
         ThreadMetrics.addThreadBlockedTimeMetric(
             threadId,
             new StreamThreadTotalBlockedTime(
@@ -869,8 +870,14 @@ public class StreamThread extends Thread implements ProcessingThread {
 
     public void maybeSendShutdown() {
         if (assignmentErrorCode.get() == AssignorError.SHUTDOWN_REQUESTED.code()) {
-            log.warn("Detected that shutdown was requested. " +
-                    "All clients in this app will now begin to shutdown");
+            final long now = time.milliseconds();
+            final long lastLogged = lastShutdownWarningTimestamp.get();
+            if (now - lastLogged >= 10_000L) {
+                if (lastShutdownWarningTimestamp.compareAndSet(lastLogged, now)) {
+                    log.warn("Detected that shutdown was requested. " +
+                            "All clients in this app will now begin to shutdown");
+                }
+            }
             mainConsumer.enforceRebalance("Shutdown requested");
         }
     }
