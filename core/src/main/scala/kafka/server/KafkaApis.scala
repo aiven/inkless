@@ -255,7 +255,7 @@ class KafkaApis(val requestChannel: RequestChannel,
         case ApiKeys.CREATE_MIRROR => forwardToController(request)
         case ApiKeys.ADD_TOPICS_TO_MIRROR => handleAddTopicsToMirror(request)
         case ApiKeys.REMOVE_TOPICS_FROM_MIRROR => handleRemoveTopicsFromMirror(request)
-        case ApiKeys.LAST_MIRRORED_OFFSET => handleLastMirroredOffset(request)
+        case ApiKeys.LAST_MIRRORED_OFFSETS => handleLastMirroredOffset(request)
         case _ => throw new IllegalStateException(s"No handler for request api key ${request.header.apiKey}")
       }
     } catch {
@@ -286,21 +286,21 @@ class KafkaApis(val requestChannel: RequestChannel,
   }
 
   def handleLastMirroredOffset(request: RequestChannel.Request): Unit = {
-    val lastMirroredOffsetRequest = request.body[LastMirroredOffsetRequest]
+    val lastMirroredOffsetRequest = request.body[LastMirroredOffsetsRequest]
     logger.info(s"!!! Handling last mirrored offset request: ${lastMirroredOffsetRequest}")
-    val responseData = new LastMirroredOffsetResponseData()
+    val responseData = new LastMirroredOffsetsResponseData()
     val mirrorName = lastMirroredOffsetRequest.data().mirrorName()
-    val topicList = new util.ArrayList[LastMirroredOffsetResponseData.OffsetResponseTopic]()
+    val topicList = new util.ArrayList[LastMirroredOffsetsResponseData.OffsetResponseTopic]()
     lastMirroredOffsetRequest.data().topics().forEach(topic => {
-      val responseTopic = new LastMirroredOffsetResponseData.OffsetResponseTopic()
-      val partitionList = new util.ArrayList[LastMirroredOffsetResponseData.OffsetResponsePartition]()
+      val responseTopic = new LastMirroredOffsetsResponseData.OffsetResponseTopic()
+      val partitionList = new util.ArrayList[LastMirroredOffsetsResponseData.OffsetResponsePartition]()
 
       metadataCache.asInstanceOf[KRaftMetadataCache].numPartitions(topic).ifPresent(numPartitions => {
         for(i <- 0 until numPartitions) {
           val partition = new TopicPartition(topic, i)
-          val offsetPartition = new LastMirroredOffsetResponseData.OffsetResponsePartition()
+          val offsetPartition = new LastMirroredOffsetsResponseData.OffsetResponsePartition()
           offsetPartition.setPartitionIndex(i)
-            .setCommittedOffset(mirrorCoordinator.lastMirroredOffset(mirrorName, partition))
+            .setLastMirroredOffset(mirrorCoordinator.lastMirroredOffset(mirrorName, partition))
           partitionList.add(offsetPartition)
         }
       })
@@ -310,7 +310,7 @@ class KafkaApis(val requestChannel: RequestChannel,
     })
     responseData.setTopics(topicList)
 
-    requestHelper.sendMaybeThrottle(request, new LastMirroredOffsetResponse(responseData))
+    requestHelper.sendMaybeThrottle(request, new LastMirroredOffsetsResponse(responseData))
   }
 
   def handleAddTopicsToMirror(request: RequestChannel.Request): Unit = {

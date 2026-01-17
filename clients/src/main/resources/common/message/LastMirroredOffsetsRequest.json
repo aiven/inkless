@@ -17,7 +17,7 @@
   "apiKey":97,
   "type": "request",
   "listeners": ["broker", "controller"],
-  "name": "LastMirroredOffsetRequest",
+  "name": "LastMirroredOffsetsRequest",
   "validVersions": "0",
   "flexibleVersions": "0+",
   "fields": [

@@ -38,7 +38,7 @@ import org.apache.kafka.common.message.DeleteAclsRequestData;
 import org.apache.kafka.common.message.DeleteTopicsRequestData;
 import org.apache.kafka.common.message.DescribeConfigsRequestData;
 import org.apache.kafka.common.message.IncrementalAlterConfigsRequestData;
-import org.apache.kafka.common.message.LastMirroredOffsetRequestData;
+import org.apache.kafka.common.message.LastMirroredOffsetsRequestData;
 import org.apache.kafka.common.message.ListGroupsRequestData;
 import org.apache.kafka.common.message.OffsetCommitRequestData;
 import org.apache.kafka.common.message.OffsetFetchRequestData;
@@ -57,8 +57,8 @@ import org.apache.kafka.common.requests.DescribeAclsResponse;
 import org.apache.kafka.common.requests.DescribeConfigsRequest;
 import org.apache.kafka.common.requests.DescribeConfigsResponse;
 import org.apache.kafka.common.requests.IncrementalAlterConfigsRequest;
-import org.apache.kafka.common.requests.LastMirroredOffsetRequest;
-import org.apache.kafka.common.requests.LastMirroredOffsetResponse;
+import org.apache.kafka.common.requests.LastMirroredOffsetsRequest;
+import org.apache.kafka.common.requests.LastMirroredOffsetsResponse;
 import org.apache.kafka.common.requests.ListGroupsRequest;
 import org.apache.kafka.common.requests.ListGroupsResponse;
 import org.apache.kafka.common.requests.MetadataRequest;
@@ -233,22 +233,30 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     public void close() throws Exception {
     }
 
+    /**
+     * maybe truncate the topics on the mirrorName by sending LAST_MIRRORED_OFFSET API to the source cluster
+     *
+     * @param replicaManager the replicaManager
+     * @param mirrorName the name of the cluster mirror
+     * @param topics the topics to be truncated
+     * @param onTruncateComplete the callback when truncation completed
+     */
     public void maybeTruncate(ReplicaManager replicaManager, String mirrorName, Set<String> topics, Consumer<TopicPartition> onTruncateComplete) {
         LOG.info("!!! maybeTruncate: {} {}", mirrorName, topics);
         createMirrorConnection(mirrorName);
 
         var response = getRandomSender(remoteBrokers.get(mirrorName)).sendRequest(
-                new LastMirroredOffsetRequest.Builder(
-                        new LastMirroredOffsetRequestData().setMirrorName(mirrorName).setTopics(new ArrayList<>(topics)))
+                new LastMirroredOffsetsRequest.Builder(
+                        new LastMirroredOffsetsRequestData().setMirrorName(mirrorName).setTopics(new ArrayList<>(topics)))
         );
 
-        if (response.responseBody() instanceof LastMirroredOffsetResponse lastMirroredOffsetResponse) {
+        if (response.responseBody() instanceof LastMirroredOffsetsResponse lastMirroredOffsetResponse) {
             LOG.info("!!! lastMirroredOffsetResponse: {}", lastMirroredOffsetResponse);
             Map<TopicPartition, Long> offsets = new HashMap<>();
             lastMirroredOffsetResponse.data().topics().forEach(topic -> {
                 String name = topic.name();
                 topic.partitions().forEach(partition -> {
-                    offsets.put(new TopicPartition(name, partition.partitionIndex()), partition.committedOffset());
+                    offsets.put(new TopicPartition(name, partition.partitionIndex()), partition.lastMirroredOffset());
                 });
             });
             replicaManager.maybeTruncate(offsets, onTruncateComplete);

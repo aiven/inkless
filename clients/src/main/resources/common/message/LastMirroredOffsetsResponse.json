@@ -16,7 +16,7 @@
 {
   "apiKey":97,
   "type": "response",
-  "name": "LastMirroredOffsetResponse",
+  "name": "LastMirroredOffsetsResponse",
   "validVersions": "0",
   "flexibleVersions": "0+",
   "fields": [
@@ -32,8 +32,8 @@
         "about": "The responses per partition.", "fields": [
         { "name": "PartitionIndex", "type": "int32", "versions": "0",
           "about": "The partition index." },
-        { "name": "CommittedOffset", "type": "int64", "versions": "0",
-          "about": "The committed message offset." },
+        { "name": "LastMirroredOffset", "type": "int64", "versions": "0",
+          "about": "The last mirrored record offset." },
         { "name": "ErrorCode", "type": "int16", "versions": "0",
           "about": "The error code, or 0 if there was no error." }
       ]}
