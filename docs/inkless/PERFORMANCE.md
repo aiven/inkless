@@ -252,7 +252,8 @@ client.id=<custom_id>,diskless_az=<rack>
 Where `<rack>` matches the `broker.rack` configuration. This ensures:
 - Consumers fetch from deterministically-assigned brokers in the same availability zone
 - Cache hits are served from the broker's local cache (same broker handles same partition)
-- Cross-AZ data transfer costs are minimized
+- Cross-AZ data transfer costs are minimized as latest records are served from memory; no remote storage GET issued.
+- If all clients are on the same AZ, then remote storage data transfer can be effectively zero. Otherwise, reads on other AZ represent at least 1 GET per AZ to cache an object.
 
 ### Optimizing Consumer Performance
 
