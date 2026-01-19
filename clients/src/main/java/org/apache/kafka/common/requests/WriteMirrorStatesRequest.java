@@ -36,14 +36,6 @@ public class WriteMirrorStatesRequest extends AbstractRequest {
             this.data = data;
         }
 
-        public Builder(Set<String> topics) {
-            super(ApiKeys.WRITE_MIRROR_STATES, ApiKeys.WRITE_MIRROR_STATES.oldestVersion(),
-                    ApiKeys.WRITE_MIRROR_STATES.latestVersion());
-            WriteMirrorStatesRequestData data = new WriteMirrorStatesRequestData();
-            data.setTopics(new ArrayList<>(topics));
-            this.data = data;
-        }
-
         @Override
         public WriteMirrorStatesRequest build(short version) {
             return new WriteMirrorStatesRequest(data, version);
