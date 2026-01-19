@@ -137,6 +137,10 @@ import org.apache.kafka.common.message.JoinGroupResponseDataJsonConverter;
 import org.apache.kafka.common.message.LastMirroredOffsetsRequestDataJsonConverter;
 import org.apache.kafka.common.message.LastMirroredOffsetsResponseDataJsonConverter;
 import org.apache.kafka.common.message.LeaveGroupRequestDataJsonConverter;
+import org.apache.kafka.common.message.ReadMirrorStatesRequestDataJsonConverter;
+import org.apache.kafka.common.message.ReadMirrorStatesResponseDataJsonConverter;
+import org.apache.kafka.common.message.WriteMirrorStatesRequestDataJsonConverter;
+import org.apache.kafka.common.message.WriteMirrorStatesResponseDataJsonConverter;
 import org.apache.kafka.common.message.LeaveGroupResponseDataJsonConverter;
 import org.apache.kafka.common.message.ListConfigResourcesRequestDataJsonConverter;
 import org.apache.kafka.common.message.ListConfigResourcesResponseDataJsonConverter;
@@ -329,6 +333,10 @@ import org.apache.kafka.common.requests.JoinGroupResponse;
 import org.apache.kafka.common.requests.LastMirroredOffsetsRequest;
 import org.apache.kafka.common.requests.LastMirroredOffsetsResponse;
 import org.apache.kafka.common.requests.LeaveGroupRequest;
+import org.apache.kafka.common.requests.ReadMirrorStatesRequest;
+import org.apache.kafka.common.requests.ReadMirrorStatesResponse;
+import org.apache.kafka.common.requests.WriteMirrorStatesRequest;
+import org.apache.kafka.common.requests.WriteMirrorStatesResponse;
 import org.apache.kafka.common.requests.LeaveGroupResponse;
 import org.apache.kafka.common.requests.ListConfigResourcesRequest;
 import org.apache.kafka.common.requests.ListConfigResourcesResponse;
@@ -600,6 +608,10 @@ public class RequestConvertToJson {
                 return RemoveTopicsFromMirrorRequestDataJsonConverter.write(((RemoveTopicsFromMirrorRequest) request).data(), request.version());
             case LAST_MIRRORED_OFFSETS:
                 return LastMirroredOffsetsRequestDataJsonConverter.write(((LastMirroredOffsetsRequest) request).data(), request.version());
+            case WRITE_MIRROR_STATES:
+                return WriteMirrorStatesRequestDataJsonConverter.write(((WriteMirrorStatesRequest) request).data(), request.version());
+            case READ_MIRROR_STATES:
+                return ReadMirrorStatesRequestDataJsonConverter.write(((ReadMirrorStatesRequest) request).data(), request.version());
             default:
                 throw new IllegalStateException("ApiKey " + request.apiKey() + " is not currently handled in `request`, the " +
                     "code should be updated to do so.");
@@ -796,6 +808,10 @@ public class RequestConvertToJson {
                 return RemoveTopicsFromMirrorResponseDataJsonConverter.write(((RemoveTopicsFromMirrorResponse) response).data(), version);
             case LAST_MIRRORED_OFFSETS:
                 return LastMirroredOffsetsResponseDataJsonConverter.write(((LastMirroredOffsetsResponse) response).data(), version);
+            case WRITE_MIRROR_STATES:
+                return WriteMirrorStatesResponseDataJsonConverter.write(((WriteMirrorStatesResponse) response).data(), version);
+            case READ_MIRROR_STATES:
+                return ReadMirrorStatesResponseDataJsonConverter.write(((ReadMirrorStatesResponse) response).data(), version);
             default:
                 throw new IllegalStateException("ApiKey " + response.apiKey() + " is not currently handled in `response`, the " +
                     "code should be updated to do so.");
