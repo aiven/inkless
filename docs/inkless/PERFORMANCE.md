@@ -18,7 +18,7 @@ Rotating the WAL segment is bound by the `inkless.produce.commit.interval.ms` co
 and `inkless.produce.buffer.max.bytes` (default 8MiB).
 
 Once a WAL segment is rotated, upload to remote storage is triggered.
-e.g. for AWS S3 the upload latency depends on the segment size, with observed P99 latencies of 200-400ms for 2-8MB segments.
+e.g. for AWS S3 the upload latency depends on the segment size, with observed P99 latencies of 200-400ms for 2-8 MiB segments.
 
 Committing batches to the Batch Coordinator depends on the batches per commit, and observed P99 latences for the PG implementation are around ~10-20ms.
 
@@ -174,7 +174,7 @@ When reading from Diskless topics, the following stages are involved when a Fetc
 During the initial find and planning stages, the broker will fetch the batch coordinates from the Batch Coordinator.
 The observed P99 latencies for this stage are around ~10ms.
 Fetching the objects from remote storage depends on the object size and the number of objects to fetch.
-For instance, for AWS S3, the latencies are around 100-200ms for 2-8MB objects.
+For instance, for AWS S3, the latencies are around 100-200ms for 2-8 MiB objects.
 
 ### Caching and Consumer Performance
 
@@ -185,7 +185,7 @@ Consumer fetch performance is heavily influenced by caching. Inkless implements 
 - **Cache Configuration**: The cache is configurable via:
   - `inkless.consume.cache.max.count` (default: 1000 objects)
   - `inkless.consume.cache.expiration.lifespan.sec` (default: 60 seconds)
-  - `inkless.consume.cache.block.bytes` (default: 16MB)
+  - `inkless.consume.cache.block.bytes` (default: 16 MiB)
 
 #### AZ-Awareness and Cache Efficiency
 
@@ -266,7 +266,7 @@ Where `<rack>` matches the `broker.rack` configuration. This ensures:
 
 Unlike traditional Kafka where each partition's data is stored contiguously, Inkless stores data from multiple partitions in the same object. This can lead to read amplification when:
 - Reading from a single partition requires fetching objects containing data from multiple partitions
-- The `inkless.consume.cache.block.bytes` setting controls the granularity of fetches (default 16MB blocks)
+- The `inkless.consume.cache.block.bytes` setting controls the granularity of fetches (default 16 MiB blocks)
 
 File merging helps reduce this over time by reorganizing data for better partition locality in merged objects.
 
@@ -339,7 +339,7 @@ Four metrics track hot/cold path behavior:
 **After hot/cold separation**:
 
 - Stable, predictable performance with controlled degradation
-- Producers and tail-consumers maintain consistent performance
+- Producers and tail-consumers (those reading recent data) maintain consistent performance
 - Backfill jobs run at a stable, controlled rate
 - Resource isolation prevents cascading failures
 
