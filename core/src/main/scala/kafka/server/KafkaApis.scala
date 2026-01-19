@@ -255,6 +255,7 @@ class KafkaApis(val requestChannel: RequestChannel,
         case ApiKeys.CREATE_MIRROR => forwardToController(request)
         case ApiKeys.ADD_TOPICS_TO_MIRROR => handleAddTopicsToMirror(request)
         case ApiKeys.REMOVE_TOPICS_FROM_MIRROR => handleRemoveTopicsFromMirror(request)
+        case ApiKeys.LAST_MIRRORED_OFFSET => handleLastMirroredOffset(request)
         case _ => throw new IllegalStateException(s"No handler for request api key ${request.header.apiKey}")
       }
     } catch {
@@ -284,6 +285,38 @@ class KafkaApis(val requestChannel: RequestChannel,
     forwardToController(request)
   }
 
+  def handleLastMirroredOffset(request: RequestChannel.Request): Unit = {
+    val lastMirroredOffsetRequest = request.body[LastMirroredOffsetRequest]
+    logger.info(s"!!! Handling last mirrored offset request: ${lastMirroredOffsetRequest}")
+    val responseData = new LastMirroredOffsetResponseData()
+    val topicList = new util.ArrayList[LastMirroredOffsetResponseData.OffsetResponseTopic]()
+    lastMirroredOffsetRequest.data().topics().forEach(topic => {
+      val responseTopic = new LastMirroredOffsetResponseData.OffsetResponseTopic()
+      val partitionList = new util.ArrayList[LastMirroredOffsetResponseData.OffsetResponsePartition]()
+
+      metadataCache.asInstanceOf[KRaftMetadataCache].numPartitions(topic).ifPresent(numPartitions => {
+        for(i <- 0 until numPartitions) {
+          val partition = new TopicPartition(topic, i)
+          val offsetPartition = new LastMirroredOffsetResponseData.OffsetResponsePartition()
+          offsetPartition.setPartitionIndex(i)
+          replicaManager.getPartitionOrError(partition) match {
+            case Left(err) => logger.error(s"Failed to get partition $partition from mirror: ${err.message}")
+            // set the last mirrored offset as LSO in the target cluster since it could be the offset beyond LSO be truncated
+            // after leadership change in the target cluster
+            case Right(partition) => partition.log.foreach(log => offsetPartition.setCommittedOffset(log.lastStableOffset()))
+          }
+          partitionList.add(offsetPartition)
+        }
+      })
+      responseTopic.setName(topic)
+      responseTopic.setPartitions(partitionList)
+      topicList.add(responseTopic)
+    })
+    responseData.setTopics(topicList)
+
+    requestHelper.sendMaybeThrottle(request, new LastMirroredOffsetResponse(responseData))
+  }
+
   def handleAddTopicsToMirror(request: RequestChannel.Request): Unit = {
     val addTopicsToMirrorRequest = request.body[AddTopicsToMirrorRequest]
     // TODO: might need to have a better way to pass the cluster mirror
@@ -292,6 +325,7 @@ class KafkaApis(val requestChannel: RequestChannel,
       if (isClusterMirroringEnabled) {
         logger.info(s"!!! Handling adding mirror topics request: ${mirrorTopic.get().mirrorName()}")
         mirrorCoordinator.updateMirrorTopicsMetadata(mirrorTopic.get().mirrorName(), util.Set.of(mirrorTopic.get().topicName()), util.Set.of())
+        mirrorCoordinator.maybeScheduleForTruncate(mirrorTopic.get().mirrorName(), util.Set.of(mirrorTopic.get().topicName()))
       } else {
         logger.warn("Cluster mirroring is disabled (mirror.version=0), ignoring mirror topic creation request")
       }
@@ -317,6 +351,7 @@ class KafkaApis(val requestChannel: RequestChannel,
           val partition = new TopicPartition(topic, i)
           replicaManager.getPartitionOrError(partition) match {
             case Left(err) => logger.error(s"Failed to get partition $partition from mirror: ${err.message}")
+            // use the LSO because the data after LSO might be truncated
             case Right(partition) => partition.log.foreach(log => offsets.put(i, log.lastStableOffset()))
           }
         }

@@ -135,6 +135,14 @@ public class MirrorCoordinator {
         numPartitions = config.mirrorConfig().mirrorTopicNumPartitions();
     }
 
+    public void maybeScheduleForTruncate(String mirrorName, Set<String> topics) {
+        scheduler.scheduleOnce("last-mirrored-offset", () -> maybeTruncate(mirrorName, topics));
+    }
+
+    private void maybeTruncate(String mirrorName, Set<String> topics) {
+        mirrorMetadataManager.maybeTruncate(replicaManager, mirrorName, topics);
+    }
+
     /**
      * Updates the mirror topics metadata for a given cluster mirror.
      * Adds or removes topics from the mirror configuration and persists changes to the internal topic.
