@@ -406,51 +406,49 @@ fetch.max.wait.ms=500
 #### AWS: 3 AZs, 6 Brokers
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│ AWS Region: us-east-1                                       │
-├─────────────────────────────────────────────────────────────┤
-│                                                             │
-│  ┌──────────────────┐  ┌──────────────────┐  ┌───────────┐  │
-│  │ us-east-1a       │  │ us-east-1b       │  │ us-east-1c│  │
-│  │                  │  │                  │  │           │  │
-│  │ Broker 0         │  │ Broker 2         │  │ Broker 4  │  │
-│  │ broker.rack=     │  │ broker.rack=     │  │ broker.   │  │
-│  │   us-east-1a     │  │   us-east-1b     │  │   rack=   │  │
-│  │ [Caffeine cache] │  │ [Caffeine cache] │  │   us-east │  │
-│  │                  │  │                  │  │   -1c     │  │
-│  │ Broker 1         │  │ Broker 3         │  │ [Caffeine │  │
-│  │ broker.rack=     │  │ broker.rack=     │  │  cache]   │  │
-│  │   us-east-1a     │  │   us-east-1b     │  │           │  │
-│  │ [Caffeine cache] │  │ [Caffeine cache] │  │ Broker 5  │  │
-│  │                  │  │                  │  │ broker.   │  │
-│  │ Producers        │  │ Producers        │  │   rack=   │  │
-│  │ client.id=       │  │ client.id=       │  │   us-east │  │
-│  │   app,diskless_  │  │   app,diskless_  │  │   -1c     │  │
-│  │   az=us-east-1a  │  │   az=us-east-1b  │  │ [Caffeine │  │
-│  │                  │  │                  │  │  cache]   │  │
-│  │ Consumers        │  │ Consumers        │  │           │  │
-│  │ client.id=       │  │ client.id=       │  │ Producers │  │
-│  │   app,diskless_  │  │   app,diskless_  │  │ Consumers │  │
-│  │   az=us-east-1a  │  │   az=us-east-1b  │  │ diskless_ │  │
-│  │                  │  │                  │  │ az=us-    │  │
-│  │                  │  │                  │  │ east-1c   │  │
-│  └──────────────────┘  └──────────────────┘  └───────────┘  │
-│            │                      │                  │      │
-│            └───────────┬──────────┴──────────────────┘      │
-│                        │                                    │
-│                        ▼                                    │
-│              ┌──────────────────┐                           │
-│              │ S3 Bucket        │                           │
-│              │ (multi-AZ)       │                           │
-│              └──────────────────┘                           │
-│                        ▲                                    │
-│                        │                                    │
-│              ┌─────────┴─────────┐                          │
-│              │ PostgreSQL        │                          │
-│              │ (Batch Coord.)    │                          │
-│              │ (multi-AZ)        │                          │
-│              └───────────────────┘                          │
-└─────────────────────────────────────────────────────────────┘
+┌───────────────────────────────────────────────────────────────────────┐
+│ AWS Region: us-east-1                                                 │
+├───────────────────────────────────────────────────────────────────────┤
+│                                                                       │
+│  ┌───────────────────┐  ┌───────────────────┐  ┌───────────────────┐  │
+│  │ us-east-1a        │  │ us-east-1b        │  │ us-east-1c        │  │
+│  │                   │  │                   │  │                   │  │
+│  │ Broker 0          │  │ Broker 2          │  │ Broker 4          │  │
+│  │ broker.rack=      │  │ broker.rack=      │  │ broker.rack=      │  │
+│  │   us-east-1a      │  │   us-east-1b      │  │   us-east-1c      │  │
+│  │ [Caffeine cache]  │  │ [Caffeine cache]  │  │ [Caffeine cache]  │  │
+│  │                   │  │                   │  │                   │  │
+│  │ Broker 1          │  │ Broker 3          │  │ Broker 5          │  │
+│  │ broker.rack=      │  │ broker.rack=      │  │ broker.rack=      │  │
+│  │   us-east-1a      │  │   us-east-1b      │  │   us-east-1c      │  │
+│  │ [Caffeine cache]  │  │ [Caffeine cache]  │  │ [Caffeine cache]  │  │
+│  │                   │  │                   │  │                   │  │
+│  │ Producers         │  │ Producers         │  │ Producers         │  │
+│  │ client.id=app,    │  │ client.id=app,    │  │ client.id=app,    │  │
+│  │  diskless_az=     │  │  diskless_az=     │  │  diskless_az=     │  │
+│  │  us-east-1a       │  │  us-east-1b       │  │  us-east-1c       │  │
+│  │                   │  │                   │  │                   │  │
+│  │ Consumers         │  │ Consumers         │  │ Consumers         │  │
+│  │ client.id=app,    │  │ client.id=app,    │  │ client.id=app,    │  │
+│  │  diskless_az=     │  │  diskless_az=     │  │  diskless_az=     │  │
+│  │  us-east-1a       │  │  us-east-1b       │  │  us-east-1c       │  │
+│  └───────────────────┘  └───────────────────┘  └───────────────────┘  │
+│            │                      │                      │            │
+│            └──────────────────────┼──────────────────────┘            │
+│                                   │                                   │
+│                                   ▼                                   │
+│                        ┌──────────────────┐                           │
+│                        │ S3 Bucket        │                           │
+│                        │ (multi-AZ)       │                           │
+│                        └──────────────────┘                           │
+│                                   ▲                                   │
+│                                   │                                   │
+│                        ┌──────────┴───────┐                           │
+│                        │ PostgreSQL       │                           │
+│                        │ (Batch Coord.)   │                           │
+│                        │ (multi-AZ)       │                           │
+│                        └──────────────────┘                           │
+└───────────────────────────────────────────────────────────────────────┘
 ```
 
 ##### Configuration Summary
