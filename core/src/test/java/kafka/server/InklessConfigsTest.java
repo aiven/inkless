@@ -68,7 +68,11 @@ public class InklessConfigsTest {
     @Container
     protected static MinioContainer s3Container = S3TestContainer.minio();
 
-    private KafkaClusterTestKit init(boolean defaultDisklessEnableConfig, boolean disklessStorageEnableConfig)  throws Exception  {
+    private KafkaClusterTestKit init(boolean defaultDisklessEnableConfig, boolean disklessStorageEnableConfig) throws Exception {
+        return init(defaultDisklessEnableConfig, disklessStorageEnableConfig, false);
+    }
+
+    private KafkaClusterTestKit init(boolean defaultDisklessEnableConfig, boolean disklessStorageEnableConfig, boolean disklessMigrationEnableConfig) throws Exception {
         final TestKitNodes nodes = new TestKitNodes.Builder()
             .setCombined(true)
             .setNumBrokerNodes(1)
@@ -78,6 +82,7 @@ public class InklessConfigsTest {
             .setConfigProp(GroupCoordinatorConfig.OFFSETS_TOPIC_REPLICATION_FACTOR_CONFIG, "1")
             .setConfigProp(ServerLogConfigs.DISKLESS_ENABLE_CONFIG, String.valueOf(defaultDisklessEnableConfig))
             .setConfigProp(ServerConfigs.DISKLESS_STORAGE_SYSTEM_ENABLE_CONFIG, String.valueOf(disklessStorageEnableConfig))
+            .setConfigProp(ServerConfigs.DISKLESS_MIGRATION_ENABLE_CONFIG, String.valueOf(disklessMigrationEnableConfig))
             // PG control plane config
             .setConfigProp(InklessConfig.PREFIX + InklessConfig.CONTROL_PLANE_CLASS_CONFIG, PostgresControlPlane.class.getName())
             .setConfigProp(InklessConfig.PREFIX + InklessConfig.CONTROL_PLANE_PREFIX + PostgresControlPlaneConfig.CONNECTION_STRING_CONFIG, pgContainer.getJdbcUrl())
@@ -182,6 +187,33 @@ public class InklessConfigsTest {
                 DISKLESS_ENABLE_CONFIG, "true")));
             // Then it's not possible to delete diskless.enable=false because the default is true and it would enable diskless
             assertThrows(ExecutionException.class, () -> deleteTopicConfigs(admin, disklessDisabledTopic, List.of(DISKLESS_ENABLE_CONFIG)));
+        }
+        cluster.close();
+    }
+
+    @Test
+    public void disklessMigrationEnabled() throws Exception {
+        // Initialize cluster with diskless migration enabled
+        var cluster = init(false, true, true);
+        Map<String, Object> clientConfigs = new HashMap<>();
+        clientConfigs.put(CommonClientConfigs.BOOTSTRAP_SERVERS_CONFIG, cluster.bootstrapServers());
+
+        try (Admin admin = AdminClient.create(clientConfigs)) {
+            // When creating a new topic with diskless.enable=false
+            final String classicTopic = "classicTopic";
+            createTopic(admin, classicTopic, Map.of(DISKLESS_ENABLE_CONFIG, "false"));
+            // Then diskless.enable is set to false in the topic config
+            var classicTopicConfig = getTopicConfig(admin, classicTopic);
+            assertEquals("false", classicTopicConfig.get(DISKLESS_ENABLE_CONFIG));
+
+            // When migration is enabled, it SHOULD be possible to turn on diskless after the topic is created
+            alterTopicConfig(admin, classicTopic, Map.of(DISKLESS_ENABLE_CONFIG, "true"));
+            // Verify the config was updated
+            var updatedTopicConfig = getTopicConfig(admin, classicTopic);
+            assertEquals("true", updatedTopicConfig.get(DISKLESS_ENABLE_CONFIG));
+
+            // But it should still NOT be possible to turn off diskless after enabling it
+            assertThrows(ExecutionException.class, () -> alterTopicConfig(admin, classicTopic, Map.of(DISKLESS_ENABLE_CONFIG, "false")));
         }
         cluster.close();
     }

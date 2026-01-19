@@ -478,6 +478,37 @@ class LogConfigTest {
     LogConfig.validate(disklessAlreadyDisabled, setDisklessFalse, kafkaConfig.extractLogConfigMap, false)
   }
 
+  @Test
+  def testDisklessMigrationEnabled(): Unit = {
+    val kafkaProps = TestUtils.createDummyBrokerConfig()
+    val kafkaConfig = KafkaConfig.fromProps(kafkaProps)
+    val isDisklessMigrationEnabled = true
+
+    val disklessAlreadyEnabled = util.Map.of(TopicConfig.DISKLESS_ENABLE_CONFIG, "true")
+    val disklessAlreadyDisabled = util.Map.of(TopicConfig.DISKLESS_ENABLE_CONFIG, "false")
+
+    val setDisklessTrue = new Properties()
+    setDisklessTrue.put(TopicConfig.DISKLESS_ENABLE_CONFIG, "true")
+    val setDisklessFalse = new Properties()
+    setDisklessFalse.put(TopicConfig.DISKLESS_ENABLE_CONFIG, "false")
+
+    // When migration is enabled:
+    // 1. Should be possible to switch from diskless.enable=false to diskless.enable=true
+    LogConfig.validate(disklessAlreadyDisabled, setDisklessTrue, kafkaConfig.extractLogConfigMap, false, isDisklessMigrationEnabled)
+
+    // 2. Should still NOT be possible to switch from diskless.enable=true to diskless.enable=false (even with migration enabled)
+    assertThrows(
+      classOf[InvalidConfigurationException],
+      () => LogConfig.validate(disklessAlreadyEnabled, setDisklessFalse, kafkaConfig.extractLogConfigMap, false, isDisklessMigrationEnabled)
+    )
+
+    // 3. Should still be possible to keep diskless.enable=true
+    LogConfig.validate(disklessAlreadyEnabled, setDisklessTrue, kafkaConfig.extractLogConfigMap, false, isDisklessMigrationEnabled)
+
+    // 4. Should still be possible to keep diskless.enable=false
+    LogConfig.validate(disklessAlreadyDisabled, setDisklessFalse, kafkaConfig.extractLogConfigMap, false, isDisklessMigrationEnabled)
+  }
+
 
   @Test
   def testValidDisklessAndRemoteStorageEnable(): Unit = {

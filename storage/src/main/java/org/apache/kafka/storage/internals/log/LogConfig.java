@@ -506,16 +506,20 @@ public class LogConfig extends AbstractConfig {
 
     private static void validateDiskless(Map<String, String> existingConfigs,
                                          Map<?, ?> newConfigs,
-                                         boolean isRemoteLogStorageEnabled) {
+                                         boolean isRemoteLogStorageEnabled,
+                                         boolean isDisklessMigrationEnabled) {
         Optional<Boolean> wasDiskless = Optional.ofNullable(existingConfigs.get(TopicConfig.DISKLESS_ENABLE_CONFIG)).map(Boolean::parseBoolean);
 
         Optional.ofNullable((Boolean) newConfigs.get(TopicConfig.DISKLESS_ENABLE_CONFIG))
             .ifPresent(isBeingEnabled -> {
                 if (isBeingEnabled) {
-                    // diskless.enable=true -> diskless.enable must be already set to true
+                    // diskless.enable=true -> diskless.enable must be already set to true (unless migration is enabled)
                     if (wasDiskless.isPresent() && !wasDiskless.get()) {
-                        // cannot change from diskless.enable = false to diskless.enable = true
-                        throw new InvalidConfigurationException("It is invalid to enable diskless");
+                        // cannot change from diskless.enable = false to diskless.enable = true (unless migration is enabled)
+                        if (!isDisklessMigrationEnabled) {
+                            throw new InvalidConfigurationException("It is invalid to enable diskless");
+                        }
+                        // Migration is enabled, allow the change from false to true
                     }
 
                     if (isRemoteLogStorageEnabled) {
@@ -538,10 +542,12 @@ public class LogConfig extends AbstractConfig {
      * @param existingConfigs                   The existing properties
      * @param newConfigs                        The new properties to be validated
      * @param isRemoteLogStorageSystemEnabled   true if system wise remote log storage is enabled
+     * @param isDisklessMigrationEnabled        true if diskless migration is enabled (allows switching diskless.enable from false to true)
      */
     private static void validateTopicLogConfigValues(Map<String, String> existingConfigs,
                                                      Map<?, ?> newConfigs,
-                                                     boolean isRemoteLogStorageSystemEnabled) {
+                                                     boolean isRemoteLogStorageSystemEnabled,
+                                                     boolean isDisklessMigrationEnabled) {
         validateValues(newConfigs);
 
         boolean isRemoteLogStorageEnabled = (Boolean) newConfigs.get(TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG);
@@ -557,7 +563,7 @@ public class LogConfig extends AbstractConfig {
             validateTurningOffRemoteStorageWithDelete(newConfigs, wasRemoteLogEnabled, isRemoteLogStorageEnabled);
         }
 
-        validateDiskless(existingConfigs, newConfigs, isRemoteLogStorageEnabled);
+        validateDiskless(existingConfigs, newConfigs, isRemoteLogStorageEnabled, isDisklessMigrationEnabled);
     }
 
     public static void validateTurningOffRemoteStorageWithDelete(Map<?, ?> newConfigs, boolean wasRemoteLogEnabled, boolean isRemoteLogStorageEnabled) {
@@ -646,13 +652,21 @@ public class LogConfig extends AbstractConfig {
      * Check that the given properties contain only valid log config names and that all values can be parsed and are valid
      */
     public static void validate(Properties props) {
-        validate(Map.of(), props, Map.of(), false);
+        validate(Map.of(), props, Map.of(), false, false);
     }
 
     public static void validate(Map<String, String> existingConfigs,
                                 Properties props,
                                 Map<?, ?> configuredProps,
                                 boolean isRemoteLogStorageSystemEnabled) {
+        validate(existingConfigs, props, configuredProps, isRemoteLogStorageSystemEnabled, false);
+    }
+
+    public static void validate(Map<String, String> existingConfigs,
+                                Properties props,
+                                Map<?, ?> configuredProps,
+                                boolean isRemoteLogStorageSystemEnabled,
+                                boolean isDisklessMigrationEnabled) {
         validateNames(props);
         if (configuredProps == null || configuredProps.isEmpty()) {
             Map<?, ?> valueMaps = CONFIG.parse(props);
@@ -661,7 +675,7 @@ public class LogConfig extends AbstractConfig {
             Map<Object, Object> combinedConfigs = new HashMap<>(configuredProps);
             combinedConfigs.putAll(props);
             Map<?, ?> valueMaps = CONFIG.parse(combinedConfigs);
-            validateTopicLogConfigValues(existingConfigs, valueMaps, isRemoteLogStorageSystemEnabled);
+            validateTopicLogConfigValues(existingConfigs, valueMaps, isRemoteLogStorageSystemEnabled, isDisklessMigrationEnabled);
         }
     }
 
