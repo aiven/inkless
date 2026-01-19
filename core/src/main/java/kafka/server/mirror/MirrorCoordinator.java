@@ -117,6 +117,12 @@ public class MirrorCoordinator {
         this.mirrorMetadataManager = mirrorMetadataManager;
     }
 
+    public void writeMirrorTopics(String mirrorName, Set<String> topics) {
+        LOG.info("!!! Writing mirror topics {} for mirror {}.", topics, mirrorName);
+        updateMirrorTopicsMetadata(mirrorName, topics, Set.of());
+    }
+
+
     private void operateOnNewState(String mirrorName, Set<String> topics, MirrorState newState) {
         switch (newState) {
             case METADATA_UPDATE:

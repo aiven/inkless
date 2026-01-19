@@ -37,6 +37,7 @@ import org.apache.kafka.common.message.CreatePartitionsRequestData;
 import org.apache.kafka.common.message.DeleteAclsRequestData;
 import org.apache.kafka.common.message.DeleteTopicsRequestData;
 import org.apache.kafka.common.message.DescribeConfigsRequestData;
+import org.apache.kafka.common.message.FindCoordinatorRequestData;
 import org.apache.kafka.common.message.IncrementalAlterConfigsRequestData;
 import org.apache.kafka.common.message.LastMirroredOffsetsRequestData;
 import org.apache.kafka.common.message.ListGroupsRequestData;
@@ -56,6 +57,8 @@ import org.apache.kafka.common.requests.DescribeAclsRequest;
 import org.apache.kafka.common.requests.DescribeAclsResponse;
 import org.apache.kafka.common.requests.DescribeConfigsRequest;
 import org.apache.kafka.common.requests.DescribeConfigsResponse;
+import org.apache.kafka.common.requests.FindCoordinatorRequest;
+import org.apache.kafka.common.requests.FindCoordinatorResponse;
 import org.apache.kafka.common.requests.IncrementalAlterConfigsRequest;
 import org.apache.kafka.common.requests.LastMirroredOffsetsRequest;
 import org.apache.kafka.common.requests.LastMirroredOffsetsResponse;
@@ -165,6 +168,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     private Map<MirroredPartitionKey, MirrorState> mirroredPartitionState = new ConcurrentHashMap<>();
     private Map<MirroredPartitionKey, Runnable> onMirroringWaitingList = new ConcurrentHashMap<>();
     private Map<String, Map<String, Consumer<MirrorState>>> onPreparingWaitingList = new ConcurrentHashMap<>();
+    private Map<String, Node> coordinatorNodesCache = new ConcurrentHashMap<>();
 
     public MirrorMetadataManager(
         KafkaConfig config,
@@ -231,6 +235,49 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
      */
     @Override
     public void close() throws Exception {
+    }
+
+    // luke
+    public Optional<Node> findCoordinator(String mirrorName) {
+        LOG.info("!!! maybeTruncate: {} {}", mirrorName, topics);
+        createMirrorConnection(mirrorName);
+
+        var response = getRandomSender(remoteBrokers.get(mirrorName)).sendRequest(
+                new FindCoordinatorRequest.Builder(
+                        new FindCoordinatorRequestData()
+                                .setKeyType(FindCoordinatorRequest.CoordinatorType.MIRROR.id())
+                                .setKey(mirrorName)
+                                .setCoordinatorKeys(List.of())
+                )
+        );
+
+        if (response.responseBody() instanceof FindCoordinatorResponse findCoordinatorResponse) {
+            LOG.info("!!! findCoordinatorResponse: {}", findCoordinatorResponse);
+            coordinatorNodesCache.put(mirrorName, findCoordinatorResponse.node());
+            return Optional.of(findCoordinatorResponse.node());
+        }
+        return Optional.empty();
+    }
+
+    public void writeStatesToRemoteCoordinator(String mirrorName) {
+        LOG.info("!!! writeStatesToRemoteCoordinator: {} {}", mirrorName, topics);
+
+        if (coordinatorNodesCache.get(mirrorName) == null && findCoordinator(mirrorName).isEmpty()) {
+            // TODO: we should retry it
+            LOG.warn("!!! coordinatorNodesCache is empty, cannot write states to remote coordinator");
+            return;
+        }
+
+        Node coordinatorNode = coordinatorNodesCache.get(mirrorName);
+        if (remoteBrokers.get(mirrorName) == null ||
+                !remoteBrokers.get(mirrorName).stream().anyMatch(
+                        sender -> sender.brokerEndPoint().host().equals(coordinatorNode.host())
+                                && sender.brokerEndPoint().port() == coordinatorNode.port())) {
+            createMirrorConnection(mirrorName, coordinatorNode.host(), coordinatorNode.port());
+        }
+
+        
+
     }
 
     /**
@@ -485,14 +532,18 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         // get the 1st one bootstrap server
         var addresses = ClientUtils.parseAndValidateAddresses(Arrays.stream(bootstrapServers.split(",")).toList(), "use_all_dns_ips");
         int rand = random.nextInt(addresses.size());
+        createMirrorConnection(mirrorName, addresses.get(rand).getHostString(), addresses.get(rand).getPort());
+    }
+
+    private void createMirrorConnection(String mirrorName, String host, int port) {
 
         // Use random node id here because we don't know node id of remote brokers.
-        var brokerEndpoint = new BrokerEndPoint(random.nextInt(), addresses.get(rand).getHostString(), addresses.get(rand).getPort());
+        var brokerEndpoint = new BrokerEndPoint(random.nextInt(), host, port);
         var logContext = new LogContext("[" + MirrorMetadataManager.class.getName() + " replicaId=" + nodeId + ", mirrorName=" + mirrorName + "] ");
 
         remoteBrokers.put(mirrorName, List.of(new MirrorBlockingSender(
                 brokerEndpoint,
-                MirrorConfig.fromProperties(props),
+                MirrorConfig.fromProperties(metadataCache.config(new ConfigResource(ConfigResource.Type.MIRROR, mirrorName))),
                 metrics,
                 time,
                 brokerEndpoint.id(),
@@ -863,7 +914,6 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         }
     }
 
-    public record LastMirroredOffset(String topic, int partition, long offset) { }
     public record MirroredPartitionStateRecordValue(String topic, int partition, MirrorState state) { }
     public record MirroredPartitionKey(String mirrorName, String topic, int partition) {
         @Override
