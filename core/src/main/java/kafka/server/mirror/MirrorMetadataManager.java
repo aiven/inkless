@@ -18,7 +18,7 @@ package kafka.server.mirror;
 
 import kafka.server.KafkaConfig;
 import kafka.server.ReplicaManager;
-
+import kafka.server.metadata.KRaftMetadataCache;
 import org.apache.kafka.clients.ClientResponse;
 import org.apache.kafka.clients.ClientUtils;
 import org.apache.kafka.clients.admin.AlterConfigOp;
@@ -74,6 +74,7 @@ import org.apache.kafka.common.security.auth.SecurityProtocol;
 import org.apache.kafka.common.utils.LogContext;
 import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.coordinator.group.GroupCoordinator;
+import org.apache.kafka.image.LocalReplicaChanges;
 import org.apache.kafka.image.MetadataDelta;
 import org.apache.kafka.image.MetadataImage;
 import org.apache.kafka.image.loader.LoaderManifest;
@@ -103,7 +104,9 @@ import java.util.Properties;
 import java.util.Random;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Consumer;
 import java.util.function.Supplier;
+import java.util.stream.IntStream;
 
 import static java.util.Collections.singletonList;
 import static org.apache.kafka.clients.CommonClientConfigs.BOOTSTRAP_SERVERS_CONFIG;
@@ -158,6 +161,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     private final Supplier<GroupCoordinator> groupCoordinatorSupplier;
     private Map<String, Set<LastMirroredOffset>> lastMirroredOffsets = new ConcurrentHashMap<>();
     private Map<MirroredPartitionStateRecordKey, MirrorState> mirroredPartitionState = new ConcurrentHashMap<>();
+    private Map<MirroredPartitionStateRecordKey, Runnable> onMirroringWatingList = new ConcurrentHashMap<>();
 
     public MirrorMetadataManager(
         KafkaConfig config,
@@ -310,9 +314,24 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         mirroredPartitionState.put(new MirroredPartitionStateRecordKey(clusterName, topicPartition.topic(), topicPartition.partition()), mirrorState);
     }
 
-    public void transitionAll(MirrorCoordinator.Transitioner transitioner) {
+    // TODO: Should operate on partition level
+    public void operateAll(MirrorCoordinator.Operator operator) {
+        Map<String, Map<String, MirrorState>> topics = new HashMap<>();
         mirroredPartitionState.forEach((key, value) -> {
-            transitioner.transitionTo(key.mirrorName, new TopicPartition(key.topic, key.partition), MirrorState.fromValue(value.value()));
+            topics.compute(key.mirrorName, (k, prevVal) -> {
+                Map<String, MirrorState> result = new HashMap<>();
+                if (prevVal != null) {
+                    result.putAll(prevVal);
+                }
+                result.put(key.topic, MirrorState.fromValue(value.value()));
+               return topics.put(key.mirrorName, result);
+            });
+        });
+
+        topics.forEach((key, value) -> {
+            value.forEach((topic, state) -> {
+                operator.operateOnNewState(key, Set.of(topic), state);
+            });
         });
     }
 
@@ -341,6 +360,32 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         });
         this.lastMirroredOffsets.put(clusterName, offsets);
         return offsets;
+    }
+
+    // wait until the state entering MIRRORING state and then start fetching
+    public void onMirroring(Map<TopicPartition, LocalReplicaChanges.PartitionInfo> readOnlyLeaders, Consumer<Map<TopicPartition, LocalReplicaChanges.PartitionInfo>> onMirroring) {
+        readOnlyLeaders.forEach((tp, info) -> {
+            MirroredPartitionStateRecordKey key = new MirroredPartitionStateRecordKey(info.partition().mirrorName, tp.topic(), tp.partition());
+            if (mirroredPartitionState.get(key) == MirrorState.MIRRORING) {
+                onMirroring.accept(Map.of(tp, info));
+            } else {
+                onMirroringWatingList.put(key, () -> onMirroring.accept(Map.of(tp, info)));
+            }
+        });
+    }
+
+    // operate the onMirroring callback and remove from the list
+    public void operateOnMirroring(String mirrorName, Set<String> topics) {
+        topics.forEach(topic -> {
+            IntStream.range(0, ((KRaftMetadataCache) metadataCache).numPartitions(topic).get()).forEach(i -> {
+                MirroredPartitionStateRecordKey key = new MirroredPartitionStateRecordKey(mirrorName, topic, i);
+                Runnable runnable = onMirroringWatingList.get(key);
+                if (runnable != null) {
+                    runnable.run();
+                    onMirroringWatingList.remove(key);
+                }
+            });
+        });
     }
 
     /**

@@ -127,6 +127,8 @@ public class MirrorCoordinator {
                 break;
             case MIRRORING:
                 LOG.info("!!! Mirroring topics {}.", topics);
+                // start mirroring
+                mirrorMetadataManager.operateOnMirroring(mirrorName, topics);
                 break;
             case STOPPING:
                 LOG.info("!!! Stopping mirroring for topics {}.", topics);
@@ -135,6 +137,7 @@ public class MirrorCoordinator {
                 break;
             case STOPPED:
                 LOG.info("!!! Stopped mirroring for topics {}.", topics);
+                // topic becomes writable
                 break;
             case FAILED:
                 LOG.info("!!! Failed mirroring for topics {}.", topics);
@@ -152,10 +155,6 @@ public class MirrorCoordinator {
         });
 
         operateOnNewState(mirrorName, topics, newState);
-    }
-
-    public void transitionTo(String mirrorName, TopicPartition topicPartition, MirrorState newState) {
-        transitionTo(mirrorName, topicPartition, newState, true);
     }
 
     public void transitionTo(String mirrorName, TopicPartition topicPartition, MirrorState newState, boolean shouldOperate) {
@@ -326,11 +325,8 @@ public class MirrorCoordinator {
         );
 
         // transition to stopped state after last mirrored offset stored
-        partitionOffsets.forEach((topic, partitions) -> {
-            partitions.forEach((partition, offset) -> {
-                transitionTo(mirrorName, new TopicPartition(topic, partition), MirrorState.STOPPED);
-            });
-        });
+        // TODO: now we assume all partitions work without error, we should handle error cases
+        transitionTo(mirrorName, partitionOffsets.keySet(), MirrorState.STOPPED);
     }
 
     // luke
@@ -491,15 +487,15 @@ public class MirrorCoordinator {
             }
 
             // we've read all the mirrored records, transition the state for each topic partitions
-            Transitioner transitioner = (mirrorName, tp, state) -> transitionTo(mirrorName, tp, state);
-            mirrorMetadataManager.transitionAll(transitioner);
+            Operator operator = (mirrorName, topics, state) -> operateOnNewState(mirrorName, topics, state);
+            mirrorMetadataManager.operateAll(operator);
 
             return null;
         });
     }
 
-    interface Transitioner {
-        void transitionTo(String mirrorName, TopicPartition partitions, MirrorState state);
+    interface Operator {
+        void operateOnNewState(String mirrorName, Set<String> topics, MirrorState state);
     }
 
     /**
