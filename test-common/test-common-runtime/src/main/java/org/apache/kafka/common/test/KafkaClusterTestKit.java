@@ -114,6 +114,7 @@ public class KafkaClusterTestKit implements AutoCloseable {
         private final String controllerListenerName;
         private final String brokerSecurityProtocol;
         private final String controllerSecurityProtocol;
+        private boolean deleteOnClose;
 
         public Builder(TestKitNodes nodes) {
             this.nodes = nodes;
@@ -121,6 +122,7 @@ public class KafkaClusterTestKit implements AutoCloseable {
             this.controllerListenerName = nodes.controllerListenerName().value();
             this.brokerSecurityProtocol = nodes.brokerListenerProtocol().name;
             this.controllerSecurityProtocol = nodes.controllerListenerProtocol().name;
+            this.deleteOnClose = true;
         }
 
         public Builder setConfigProp(String key, Object value) {
@@ -204,6 +206,11 @@ public class KafkaClusterTestKit implements AutoCloseable {
                 props.putIfAbsent(StandardAuthorizer.ALLOW_EVERYONE_IF_NO_ACL_IS_FOUND_CONFIG, "false");
                 props.putIfAbsent(StandardAuthorizer.SUPER_USERS_CONFIG, "User:" + JaasUtils.KAFKA_PLAIN_ADMIN);
             }
+        }
+
+        public Builder setDeleteOnClose(boolean deleteOnClose) {
+            this.deleteOnClose = deleteOnClose;
+            return this;
         }
 
         public KafkaClusterTestKit build() throws Exception {
@@ -308,7 +315,8 @@ public class KafkaClusterTestKit implements AutoCloseable {
                     baseDirectory,
                     faultHandlerFactory,
                     socketFactoryManager,
-                    jaasFile == null ? Optional.empty() : Optional.of(jaasFile));
+                    Optional.ofNullable(jaasFile),
+                    deleteOnClose);
         }
 
         private String listeners(int node) {
@@ -353,6 +361,7 @@ public class KafkaClusterTestKit implements AutoCloseable {
     private final PreboundSocketFactoryManager socketFactoryManager;
     private final String controllerListenerName;
     private final Optional<File> jaasFile;
+    private final boolean deleteOnClose;
 
     private KafkaClusterTestKit(
         TestKitNodes nodes,
@@ -361,7 +370,8 @@ public class KafkaClusterTestKit implements AutoCloseable {
         File baseDirectory,
         SimpleFaultHandlerFactory faultHandlerFactory,
         PreboundSocketFactoryManager socketFactoryManager,
-        Optional<File> jaasFile
+        Optional<File> jaasFile,
+        boolean deleteOnClose
     ) {
         /*
           Number of threads = Total number of brokers + Total number of controllers + Total number of Raft Managers
@@ -378,6 +388,7 @@ public class KafkaClusterTestKit implements AutoCloseable {
         this.socketFactoryManager = socketFactoryManager;
         this.controllerListenerName = nodes.controllerListenerName().value();
         this.jaasFile = jaasFile;
+        this.deleteOnClose = deleteOnClose;
     }
 
     public void format() throws Exception {
@@ -640,9 +651,11 @@ public class KafkaClusterTestKit implements AutoCloseable {
             }
             waitForAllFutures(futureEntries);
             futureEntries.clear();
-            Utils.delete(baseDirectory);
-            if (jaasFile.isPresent()) {
-                Utils.delete(jaasFile.get());
+            if (deleteOnClose) {
+                Utils.delete(baseDirectory);
+                if (jaasFile.isPresent()) {
+                    Utils.delete(jaasFile.get());
+                }
             }
         } catch (Exception e) {
             for (Entry<String, Future<?>> entry : futureEntries) {

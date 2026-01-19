@@ -374,6 +374,10 @@ class BrokerServer(
       tokenManager = new DelegationTokenManager(config, tokenCache, time)
       tokenManager.startup()
 
+      // Create and initialize an authorizer if one is configured.
+      authorizer = config.createNewAuthorizer()
+      authorizer.foreach(_.configure(config.originals))
+
       /* initializing the groupConfigManager */
       groupConfigManager = new GroupConfigManager(config.groupCoordinatorConfig.extractGroupConfigMap(config.shareGroupConfig))
 
@@ -417,7 +421,7 @@ class BrokerServer(
         config,
         "heartbeat",
         s"broker-${config.nodeId}-",
-        config.brokerSessionTimeoutMs / 2 // KAFKA-14392
+        config.brokerHeartbeatIntervalMs
       )
       lifecycleManager.start(
         () => sharedServer.loader.lastAppliedOffset(),
@@ -427,10 +431,6 @@ class BrokerServer(
         featuresRemapped,
         logManager.readBrokerEpochFromCleanShutdownFiles()
       )
-
-      // Create and initialize an authorizer if one is configured.
-      authorizer = config.createNewAuthorizer()
-      authorizer.foreach(_.configure(config.originals))
 
       // The FetchSessionCache is divided into config.numIoThreads shards, each responsible
       // for Math.max(1, shardNum * sessionIdRange) <= sessionId < (shardNum + 1) * sessionIdRange

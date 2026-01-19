@@ -93,6 +93,9 @@ public class LogSegment implements Closeable {
     // NOTED: the offset is the last offset of batch having the max timestamp.
     private volatile TimestampOffset maxTimestampAndOffsetSoFar = TimestampOffset.UNKNOWN;
 
+    // Lock for maxTimestampAndOffsetSoFar to ensure that it will be initialized only once
+    private final Object maxTimestampAndOffsetLock = new Object();
+
     private long created;
 
     /* the number of bytes since we last added an entry in the offset index */
@@ -177,7 +180,7 @@ public class LogSegment implements Closeable {
     public void sanityCheck(boolean timeIndexFileNewlyCreated) throws IOException {
         if (offsetIndexFile().exists()) {
             // Resize the time index file to 0 if it is newly created.
-            if (timeIndexFileNewlyCreated) 
+            if (timeIndexFileNewlyCreated)
                 timeIndex().resize(0);
             // Sanity checks for time index and offset index are skipped because
             // we will recover the segments above the recovery point in recoverLog()
@@ -192,8 +195,17 @@ public class LogSegment implements Closeable {
      * the time index).
      */
     public TimestampOffset readMaxTimestampAndOffsetSoFar() throws IOException {
-        if (maxTimestampAndOffsetSoFar == TimestampOffset.UNKNOWN)
-            maxTimestampAndOffsetSoFar = timeIndex().lastEntry();
+        if (maxTimestampAndOffsetSoFar == TimestampOffset.UNKNOWN) {
+            // As stated in LogSegment class javadoc, this class is not thread-safe so basically we assume that
+            // methods are called within UnifiedLog#lock.
+            // However, there's exceptional paths where this method can be called outside of the lock,
+            // so we need lock here to prevent multiple threads trying to modify maxTimestampAndOffsetSoFar
+            synchronized (maxTimestampAndOffsetLock) {
+                if (maxTimestampAndOffsetSoFar == TimestampOffset.UNKNOWN) {
+                    maxTimestampAndOffsetSoFar = timeIndex().lastEntry();
+                }
+            }
+        }
         return maxTimestampAndOffsetSoFar;
     }
 
@@ -232,38 +244,38 @@ public class LogSegment implements Closeable {
      * It is assumed this method is being called from within a lock, it is not thread-safe otherwise.
      *
      * @param largestOffset The last offset in the message set
-     * @param largestTimestampMs The largest timestamp in the message set.
-     * @param shallowOffsetOfMaxTimestamp The last offset of earliest batch with max timestamp in the messages to append.
-     * @param records The log entries to append.
+     * @param records       The log entries to append.
      * @throws LogSegmentOffsetOverflowException if the largest offset causes index offset overflow
      */
     public void append(long largestOffset,
-                       long largestTimestampMs,
-                       long shallowOffsetOfMaxTimestamp,
                        MemoryRecords records) throws IOException {
         if (records.sizeInBytes() > 0) {
-            LOGGER.trace("Inserting {} bytes at end offset {} at position {} with largest timestamp {} at offset {}",
-                records.sizeInBytes(), largestOffset, log.sizeInBytes(), largestTimestampMs, shallowOffsetOfMaxTimestamp);
+            LOGGER.trace("Inserting {} bytes at end offset {} at position {}",
+                records.sizeInBytes(), largestOffset, log.sizeInBytes());
             int physicalPosition = log.sizeInBytes();
-            if (physicalPosition == 0)
-                rollingBasedTimestamp = OptionalLong.of(largestTimestampMs);
 
             ensureOffsetInRange(largestOffset);
 
             // append the messages
             long appendedBytes = log.append(records);
             LOGGER.trace("Appended {} to {} at end offset {}", appendedBytes, log.file(), largestOffset);
-            // Update the in memory max timestamp and corresponding offset.
-            if (largestTimestampMs > maxTimestampSoFar()) {
-                maxTimestampAndOffsetSoFar = new TimestampOffset(largestTimestampMs, shallowOffsetOfMaxTimestamp);
+
+            for (RecordBatch batch : records.batches()) {
+                long batchMaxTimestamp = batch.maxTimestamp();
+                long batchLastOffset = batch.lastOffset();
+                if (batchMaxTimestamp > maxTimestampSoFar()) {
+                    maxTimestampAndOffsetSoFar = new TimestampOffset(batchMaxTimestamp, batchLastOffset);
+                }
+
+                if (bytesSinceLastIndexEntry > indexIntervalBytes) {
+                    offsetIndex().append(batchLastOffset, physicalPosition);
+                    timeIndex().maybeAppend(maxTimestampSoFar(), shallowOffsetOfMaxTimestampSoFar());
+                    bytesSinceLastIndexEntry = 0;
+                }
+                var sizeInBytes = batch.sizeInBytes();
+                physicalPosition += sizeInBytes;
+                bytesSinceLastIndexEntry += sizeInBytes;
             }
-            // append an entry to the index (if needed)
-            if (bytesSinceLastIndexEntry > indexIntervalBytes) {
-                offsetIndex().append(largestOffset, physicalPosition);
-                timeIndex().maybeAppend(maxTimestampSoFar(), shallowOffsetOfMaxTimestampSoFar());
-                bytesSinceLastIndexEntry = 0;
-            }
-            bytesSinceLastIndexEntry += records.sizeInBytes();
         }
     }
 
@@ -274,8 +286,6 @@ public class LogSegment implements Closeable {
 
     private int appendChunkFromFile(FileRecords records, int position, BufferSupplier bufferSupplier) throws IOException {
         int bytesToAppend = 0;
-        long maxTimestamp = Long.MIN_VALUE;
-        long shallowOffsetOfMaxTimestamp = Long.MIN_VALUE;
         long maxOffset = Long.MIN_VALUE;
         ByteBuffer readBuffer = bufferSupplier.get(1024 * 1024);
 
@@ -284,10 +294,6 @@ public class LogSegment implements Closeable {
         Iterator<FileChannelRecordBatch> nextBatches = records.batchesFrom(position).iterator();
         FileChannelRecordBatch batch;
         while ((batch = nextAppendableBatch(nextBatches, readBuffer, bytesToAppend)) != null) {
-            if (batch.maxTimestamp() > maxTimestamp) {
-                maxTimestamp = batch.maxTimestamp();
-                shallowOffsetOfMaxTimestamp = batch.lastOffset();
-            }
             maxOffset = batch.lastOffset();
             bytesToAppend += batch.sizeInBytes();
         }
@@ -300,7 +306,7 @@ public class LogSegment implements Closeable {
             readBuffer.limit(bytesToAppend);
             records.readInto(readBuffer, position);
 
-            append(maxOffset, maxTimestamp, shallowOffsetOfMaxTimestamp, MemoryRecords.readableRecords(readBuffer));
+            append(maxOffset, MemoryRecords.readableRecords(readBuffer));
         }
 
         bufferSupplier.release(readBuffer);
@@ -757,10 +763,7 @@ public class LogSegment implements Closeable {
     public void close() throws IOException {
         if (maxTimestampAndOffsetSoFar != TimestampOffset.UNKNOWN)
             Utils.swallow(LOGGER, Level.WARN, "maybeAppend", () -> timeIndex().maybeAppend(maxTimestampSoFar(), shallowOffsetOfMaxTimestampSoFar(), true));
-        Utils.closeQuietly(lazyOffsetIndex, "offsetIndex", LOGGER);
-        Utils.closeQuietly(lazyTimeIndex, "timeIndex", LOGGER);
-        Utils.closeQuietly(log, "log", LOGGER);
-        Utils.closeQuietly(txnIndex, "txnIndex", LOGGER);
+        Utils.closeAll(lazyOffsetIndex, lazyTimeIndex, log, txnIndex);
     }
 
     /**

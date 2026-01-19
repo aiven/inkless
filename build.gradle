@@ -200,7 +200,10 @@ allprojects {
           // ensure we have a single version in the classpath despite transitive dependencies
           libs.scalaLibrary,
           libs.scalaReflect,
-          libs.jacksonAnnotations
+          // Workaround before `commons-validator` has new release. See KAFKA-19359.
+          libs.commonsBeanutils,
+          libs.jacksonAnnotations,
+          libs.commonsLang
         )
       }
     }
@@ -1130,6 +1133,7 @@ project(':core') {
     testImplementation project(':test-common:test-common-util')
     testImplementation libs.bcpkix
     testImplementation libs.mockitoCore
+    testImplementation libs.jqwik
     testImplementation(libs.apacheda) {
       exclude group: 'xml-apis', module: 'xml-apis'
       // `mina-core` is a transitive dependency for `apacheds` and `apacheda`.
@@ -1334,6 +1338,12 @@ project(':core') {
     attributes(
       'Version': "${version}"
     )
+  }
+
+  test {
+    useJUnitPlatform {
+      includeEngines 'jqwik', 'junit-jupiter'
+    }
   }
 
   tasks.create(name: "copyDependantTestLibs", type: Copy) {
@@ -1903,6 +1913,7 @@ project(':clients') {
     testImplementation libs.jacksonJakartarsJsonProvider
     testImplementation libs.jose4j
     testImplementation libs.junitJupiter
+    testImplementation libs.jqwik
     testImplementation libs.spotbugs
     testImplementation libs.mockitoCore
     testImplementation libs.mockitoJunitJupiter // supports MockitoExtension
@@ -2291,6 +2302,7 @@ project(':storage') {
     implementation project(':transaction-coordinator')
     implementation(libs.caffeine) {
       exclude group: 'org.checkerframework', module: 'checker-qual'
+      exclude group: 'com.google.errorprone', module: 'error_prone_annotations'
     }
     implementation libs.slf4jApi
     implementation libs.jacksonDatabind
