@@ -11,18 +11,18 @@ This document describes how Inkless enables **client rack awareness** to route c
 - ✅ Eliminates most cross-AZ costs for diskless topics
 - ⚠️ Non-standard approach, requires user awareness
 
-### Future State (KIP-1123)
+### Future State (KIP-1163)
 
-- ⏳ KIP-1123: Adds `client.rack` to producer (approved)
+- ⏳ KIP-1163: Adds `client.rack` to metadata requests (under discussion)
 - ⏳ Standard `client.rack` configuration for both producers and consumers
 - ⏳ Inkless will support both approaches for backward compatibility
 
 ### Migration
 
 - Phase 1: Use `client.id` pattern (now)
-- Phase 2: Support both mechanisms (when KIP-1123 is available)
+- Phase 2: Support both mechanisms (when KIP-1163 is available)
 
-**Recommendation:** Start using `client.id=app,diskless_az=<rack>` pattern now for immediate cost savings. When KIP-1123 becomes available in Kafka clients, consider migrating to `client.rack` for a standard configuration.
+**Recommendation:** Start using `client.id=app,diskless_az=<rack>` pattern now for immediate cost savings. When KIP-1163 becomes available in Kafka clients, consider migrating to `client.rack` for a standard configuration.
 
 ## Table of Contents
 
@@ -30,7 +30,7 @@ This document describes how Inkless enables **client rack awareness** to route c
 - [Overview](#overview)
 - [Relationship to Kafka Rack Awareness](#relationship-to-kafka-rack-awareness)
 - [Current Implementation](#current-implementation)
-- [Future Implementation (KIP-1123)](#future-implementation-kip-1123)
+- [Future Implementation (KIP-1163)](#future-implementation-kip-1163)
 - [Migration Path](#migration-path)
 - [Configuration Guide](#configuration-guide)
 - [Monitoring](#monitoring)
@@ -105,7 +105,9 @@ For **diskless topics**, Inkless extends rack awareness to both producers and co
 
 **Key difference**: In classic Kafka, rack awareness helps consumers fetch from nearby *replicas*. In Inkless, client rack awareness routes requests to nearby *brokers* since any broker can serve any diskless partition (data is in object storage).
 
-**Note on KIP-1123**: [KIP-1123](https://cwiki.apache.org/confluence/display/KAFKA/KIP-1123%3A+Rack-aware+partitioning+for+Kafka+Producer) has been approved ([PR #19850](https://github.com/apache/kafka/pull/19850)). This adds `client.rack` support to the producer, enabling rack-aware partition selection for keyless records in classic topics. Once available in Kafka clients, Inkless will support `client.rack` as an alternative to the current `client.id` pattern.
+**Note on related KIPs**:
+- [KIP-1123](https://cwiki.apache.org/confluence/display/KAFKA/KIP-1123%3A+Rack-aware+partitioning+for+Kafka+Producer) (approved, [PR #19850](https://github.com/apache/kafka/pull/19850)): Adds `client.rack` to the producer configuration for rack-aware *partition selection* of keyless records. However, this KIP does **not** add `client.rack` to the metadata request protocol.
+- [KIP-1163: Diskless Core](https://cwiki.apache.org/confluence/display/KAFKA/KIP-1163%3A+Diskless+Core) (under discussion): Adds `RackId` field to MetadataRequest and DescribeTopicPartitionsRequest, enabling brokers to return rack-aware metadata for diskless topics. **This is the KIP required for standard `client.rack` support in Inkless.**
 
 ---
 
@@ -252,11 +254,13 @@ Diskless topics have fundamentally different ISR (In-Sync Replicas) semantics co
 
 ---
 
-## Future Implementation (KIP-1123)
+## Future Implementation (KIP-1163)
 
-[KIP-1123: Rack-aware partitioning for Kafka Producer](https://cwiki.apache.org/confluence/display/KAFKA/KIP-1123%3A+Rack-aware+partitioning+for+Kafka+Producer) has been **approved** ([PR #19850](https://github.com/apache/kafka/pull/19850)).
+[KIP-1163: Diskless Core](https://cwiki.apache.org/confluence/display/KAFKA/KIP-1163%3A+Diskless+Core) is currently **under discussion**.
 
-This KIP adds the `client.rack` configuration to the Kafka producer, which was previously only available for consumers. Once available in Kafka clients, Inkless will support `client.rack` as an alternative to the current `client.id` pattern, enabling a standard configuration for client rack awareness.
+This KIP adds the `RackId` field to MetadataRequest and DescribeTopicPartitionsRequest, allowing clients to communicate their rack to brokers via the Kafka protocol. This enables brokers to return rack-aware metadata for diskless topics, directing clients to brokers in their local AZ.
+
+**Note**: While [KIP-1123](https://cwiki.apache.org/confluence/display/KAFKA/KIP-1123%3A+Rack-aware+partitioning+for+Kafka+Producer) adds `client.rack` to the producer configuration, it only uses this for partition selection (choosing which partition to send keyless records to). KIP-1163 is required to transmit the rack information in metadata requests, which is what Inkless needs for AZ-aware broker routing.
 
 ### Configuration
 
@@ -270,20 +274,23 @@ client.rack=us-east-1a
 - **Consistent configuration**: Producers and consumers use the same `client.rack` property
 - **No workarounds**: No need to embed rack information in `client.id`
 - **Standard approach**: Aligns with upstream Apache Kafka
+- **Protocol-level support**: Rack information transmitted via MetadataRequest
 
 ### How It Will Work
 
 1. Producer/Consumer configured with `client.rack=us-east-1a`
-2. Inkless broker receives the rack information via metadata requests
-3. Broker routes requests to brokers in the same AZ (same as current implementation)
-4. Falls back to other AZs if no local brokers are available
+2. Client sends MetadataRequest with `RackId=us-east-1a`
+3. Broker returns metadata with partition leaders assigned to brokers in the client's rack
+4. Client sends Produce/Fetch requests to the assigned local broker
+5. Falls back to other AZs if no local brokers are available
 
 ### Differences from Current Implementation
 
-| Aspect                 | Current (client.id pattern)            | Future (client.rack)                |
+| Aspect                 | Current (client.id pattern)            | Future (KIP-1163)                   |
 |------------------------|----------------------------------------|-------------------------------------|
 | Configuration          | `client.id=app,diskless_az=us-east-1a` | `client.rack=us-east-1a`            |
-| Producer support       | Via `client.id` pattern                | Native via `client.rack` (KIP-1123) |
+| Protocol support       | Extracted from client.id string        | Native `RackId` in MetadataRequest  |
+| Producer support       | Via `client.id` pattern                | Native via `client.rack`            |
 | Consumer support       | Via `client.id` pattern                | Native via `client.rack`            |
 | Validation             | No validation of rack IDs              | Potential for validation            |
 | Monitoring             | Parse client.id in logs/metrics        | Standard property                   |
@@ -316,7 +323,7 @@ This approach works with any Kafka client version and requires no protocol chang
 
 ### Phase 2: Dual Support (Future)
 
-**Status:** Planned for when KIP-1123 is available in Kafka clients
+**Status:** Planned for when KIP-1163 is available in Kafka clients
 
 **Action:** Support both mechanisms simultaneously
 
@@ -329,7 +336,7 @@ client.rack=us-east-1a
 ```
 
 **Behavior:**
-- If `client.rack` is set, use it (preferred)
+- If `client.rack` is set and transmitted via MetadataRequest (KIP-1163), use it (preferred)
 - If only `client.id` pattern is detected, use current mechanism
 - If both are set, `client.rack` takes precedence
 
@@ -338,7 +345,7 @@ client.rack=us-east-1a
 - Allows mixed deployments with clients on different Kafka versions
 - Provides flexibility for environments where client upgrades are constrained
 
-**Timeline:** When KIP-1123 is released in Apache Kafka
+**Timeline:** When KIP-1163 is released in Apache Kafka
 
 ---
 
@@ -530,7 +537,8 @@ bin/kafka-console-producer.sh \
 
 ## References
 
-- [KIP-1123: Rack-aware partitioning for Kafka Producer](https://cwiki.apache.org/confluence/display/KAFKA/KIP-1123%3A+Rack-aware+partitioning+for+Kafka+Producer) - Adds `client.rack` to producer ([PR #19850](https://github.com/apache/kafka/pull/19850))
+- [KIP-1163: Diskless Core](https://cwiki.apache.org/confluence/display/KAFKA/KIP-1163%3A+Diskless+Core) - Adds `RackId` to MetadataRequest for rack-aware broker routing (under discussion)
+- [KIP-1123: Rack-aware partitioning for Kafka Producer](https://cwiki.apache.org/confluence/display/KAFKA/KIP-1123%3A+Rack-aware+partitioning+for+Kafka+Producer) - Adds `client.rack` to producer for partition selection ([PR #19850](https://github.com/apache/kafka/pull/19850))
 - [Architecture](./ARCHITECTURE.md) - Caching and rack topology
 - [Performance](./PERFORMANCE.md) - Performance tuning with client rack awareness
 - [FAQ](./FAQ.md) - Common questions about client rack awareness
