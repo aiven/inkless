@@ -58,7 +58,7 @@ moving replicas in KRaft. This keeps the design simple while preserving the "alw
 1. [Motivation](#motivation)
 2. [Objectives](#objectives)
 3. [Design: Transformer-First Availability](#design-transformer-first-availability)
-4. [Activation Model](#activation-model-binary-version)
+4. [Activation Model](#activation-model-controller-server-config)
 5. [Placement Model](#placement-model)
 6. [Controller Behavior](#controller-behavior)
 7. [Broker Behavior](#broker-behavior)
@@ -506,17 +506,43 @@ It can make instant routing decisions without waiting for controller.
 
 ---
 
-## Activation Model (Binary Version)
+## Activation Model (Controller Server Config)
 
-Managed RF is activated by **deploying a new binary version**. No feature flags, no topic attributes, no server configs.
+Managed RF is activated by a **controller server configuration**. This allows incremental PRs to be merged without impacting
+existing clusters, and enables controlled rollout per environment.
 
-### Behavior Summary
+### Configuration
 
-**Old binary:**
+```properties
+# Controller config (server.properties)
+diskless.managed.rf.enabled=false   # default: disabled for backward compatibility
+```
+
+When `diskless.managed.rf.enabled=true`:
+- New diskless topics use KRaft-managed placement (one replica per rack at creation)
+- Transformer filters KRaft placement by client AZ
+- **Falls back to alive brokers if assigned replicas are offline**
+
+When `diskless.managed.rf.enabled=false` (default):
 - Diskless topics use legacy "RF=1 / faked metadata" behavior
 - Transformer calculates synthetic placement via hashing
 
-**New binary:**
+### Rollout Strategy
+
+This config-based activation enables:
+
+1. **Safe incremental PRs**: Code changes can be merged without affecting existing clusters
+2. **Per-environment enablement**: Enable in dev/staging first, then production
+3. **Instant rollback**: Disable config without binary rollback if issues arise
+4. **Mixed-state clusters**: Existing RF=1 topics continue working; new topics get RF=rack_count when enabled
+
+### Behavior Summary
+
+**Config disabled (default):**
+- Diskless topics use legacy "RF=1 / faked metadata" behavior
+- Transformer calculates synthetic placement via hashing
+
+**Config enabled:**
 - Diskless topics use KRaft-managed placement (one replica per rack at creation)
 - Transformer filters KRaft placement by client AZ
 - **Falls back to alive brokers if assigned replicas are offline**
