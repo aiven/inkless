@@ -34,6 +34,8 @@
           "about": "The partition index." },
         { "name": "LastMirroredOffset", "type": "int64", "versions": "0",
           "about": "The last mirrored record offset." },
+        { "name": "state", "type": "int8", "versions": "0+",
+          "about": "The mirror partition state." },
         { "name": "ErrorCode", "type": "int16", "versions": "0",
           "about": "The error code, or 0 if there was no error." }
       ]}

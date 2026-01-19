@@ -22,6 +22,20 @@
   "flexibleVersions": "0+",
   "fields": [
     { "name": "MirrorName", "type": "string", "versions": "0+", "about": "The mirror name." },
-    { "name": "Topics", "type": "[]string", "versions": "0+", "about": "The topic names." }
+    { "name": "TopicsUpdated", "type": "[]TopicStates", "versions": "0",
+      "about": "The topics to be updated.", "fields": [
+      { "name": "Name", "type": "string", "versions": "0", "entityType": "topicName",
+        "about": "The topic name." },
+      { "name": "Partitions", "type": "[]PartitionStates", "versions": "0",
+        "about": "The responses per partition.", "fields": [
+        { "name": "PartitionIndex", "type": "int32", "versions": "0",
+          "about": "The partition index." },
+        { "name": "LastMirroredOffset", "type": "int64", "versions": "0",
+          "about": "The last mirrored record offset." },
+        { "name": "state", "type": "int8", "versions": "0+",
+          "about": "The mirror partition state." }
+      ]}
+    ]},
+    { "name": "RemovedTopics", "type": "[]string", "versions": "0+", "about": "The topic names to be removed." }
   ]
 }
