@@ -50,9 +50,9 @@ In cloud deployments (AWS, GCP, Azure), data transfer within the same availabili
 Inkless enables **client rack awareness** to route client requests to brokers within the same availability zone, eliminating most cross-AZ traffic for diskless topics:
 
 1. **Producers** send produce requests to brokers in their local AZ
-2. **Consumers** fetch data from brokers in their local AZ (preferring local cached data)
+2. **Consumers** fetch data from brokers in their local AZ (benefiting from broker-local cache)
 3. **Brokers** store data in shared object storage accessible from all AZs
-4. **Caching** is AZ-local, with each AZ maintaining its own cache
+4. **Caching** uses deterministic partition-to-broker assignment with local in-memory cache per broker (Caffeine), maximizing cache hit rates
 
 ### Benefits
 
@@ -96,12 +96,12 @@ This allows consumers to fetch from the closest replica instead of always fetchi
 
 For **diskless topics**, Inkless extends rack awareness to both producers and consumers:
 
-| Feature                    | Classic Topics                     | Diskless Topics (Inkless)                               |
-|----------------------------|------------------------------------|---------------------------------------------------------|
-| Broker rack config         | `broker.rack`                      | `broker.rack` (same)                                    |
-| Consumer rack-aware fetch  | `client.rack` (follower fetching)  | `client.id` pattern (current) / `client.rack` (future)  |
-| Producer rack-aware routing| `client.rack` (KIP-1123, approved) | `client.id` pattern (current) / `client.rack` (future)  |
-| Mechanism                  | Fetch from nearest replica         | Route to broker in same AZ                              |
+| Feature                     | Classic Topics                     | Diskless Topics (Inkless)                              |
+|-----------------------------|------------------------------------|---------------------------------------------------------|
+| Broker rack config          | `broker.rack`                      | `broker.rack` (same)                                   |
+| Consumer rack-aware fetch   | `client.rack` (follower fetching)  | `client.id` pattern (current) / `client.rack` (future) |
+| Producer rack-aware routing | `client.rack` (KIP-1123, approved) | `client.id` pattern (current) / `client.rack` (future) |
+| Mechanism                   | Fetch from nearest replica         | Route to broker in same AZ                             |
 
 **Key difference**: In classic Kafka, rack awareness helps consumers fetch from nearby *replicas*. In Inkless, client rack awareness routes requests to nearby *brokers* since any broker can serve any diskless partition (data is in object storage).
 
@@ -154,28 +154,48 @@ This allows flexibility in placement:
 
 #### Producer Flow
 
-1. Producer sends Produce request with `client.id=my-producer,diskless_az=us-east-1a`
-2. Broker extracts AZ: `us-east-1a`
-3. Broker compares with its own `broker.rack` configuration
-4. If match, broker accepts and processes the request locally
-5. If no match, broker can still process but with cross-AZ costs
+AZ matching happens during the **Metadata request**, not the Produce request:
 
-**Metadata Response Behavior:**
-- When a client requests metadata, the broker identifies the client's AZ from the `client.id`
-- The broker returns metadata with brokers in the same rack prioritized
-- Producers route requests to brokers in the same rack
+1. Producer sends Metadata request with `client.id=my-producer,diskless_az=us-east-1a`
+2. Broker extracts the client's AZ (`us-east-1a`) from the `client.id`
+3. Broker returns metadata with partition leaders assigned to brokers in the client's AZ
+4. Producer caches this metadata and sends Produce requests to the assigned brokers
+5. Subsequent Produce requests go directly to the local AZ broker (no AZ extraction needed per request)
+
+**Key Points:**
+- The AZ-aware routing decision is made once during metadata fetch, not per produce request
+- Producers automatically refresh metadata periodically, adapting to broker topology changes
+- If no brokers exist in the client's rack, brokers from other racks are assigned as fallback
 
 #### Consumer Flow
 
-1. Consumer sends Fetch request with `client.id=my-consumer,diskless_az=us-east-1a`
-2. Broker extracts AZ: `us-east-1a`
-3. Broker uses existing follower fetching mechanism (PreferredReadReplica)
-4. Broker returns metadata pointing to replicas in the consumer's rack
-5. Consumer fetches from local rack, accessing AZ-local cache
+AZ matching happens during the **Metadata request**, similar to producers:
+
+1. Consumer sends Metadata request with `client.id=my-consumer,diskless_az=us-east-1a`
+2. Broker extracts the client's AZ and returns metadata with partition leaders in the client's AZ
+3. Consumer fetches from the assigned broker, which serves data from its local cache or object storage
+4. Deterministic partition assignment ensures the same broker handles the same partitions, improving cache hit rates
 
 **Key Points:**
 - If no brokers exist in the client's rack, brokers from other racks are used as fallback
-- Cache is AZ-local; each rack has its own distributed cache
+- Each broker maintains its own local in-memory cache (Caffeine)
+
+#### Caching Architecture
+
+Inkless uses a **local in-memory cache (Caffeine) per broker** combined with **deterministic partition-to-broker assignment** and **AZ-aware metadata routing**. This architecture achieves cache locality properties similar to a distributed cache:
+
+| Property         | Distributed Cache (e.g., Infinispan)       | Inkless Approach                                                                     |
+|------------------|--------------------------------------------|---------------------------------------------------------------------------------------|
+| Cache per AZ     | Shared distributed cache across AZ brokers | Each broker has local cache; AZ-aware routing directs clients to consistent brokers  |
+| Data locality    | Entries replicated within AZ               | Deterministic assignment ensures same partition always served by same broker per AZ  |
+| Cache efficiency | Network overhead for cache coordination    | No coordination overhead; hash-based assignment provides consistency                 |
+| Complexity       | Requires distributed cache infrastructure  | Simple local cache with deterministic routing                                        |
+
+##### How It Achieves Similar Results
+
+- **Deterministic partition assignment**: A partition always maps to the same broker within an AZ (via MurmurHash2), so repeated fetches hit the same broker's cache
+- **AZ-aware metadata**: Clients in the same AZ are directed to the same set of brokers, ensuring cache is warmed per-AZ
+- **Result**: Within an AZ, cache entries are effectively "per-AZ" because all clients in that AZ hit the same broker for a given partition
 
 #### Broker Selection Algorithm
 
@@ -189,12 +209,14 @@ The broker selection for diskless partitions uses a **deterministic hash-based a
 broker_index = abs(murmur2(topicId + "-" + partitionIndex)) % eligible_brokers.size()
 ```
 
-**Benefits of deterministic selection:**
+##### Benefits of Deterministic Selection
+
 - **Consistency**: The same partition always routes to the same broker (within an AZ) across restarts
 - **Cache efficiency**: Clients consistently connect to the same broker, improving cache hit rates
 - **Load distribution**: Partitions are evenly distributed across brokers using the hash
 
-**Behavior during broker changes:**
+##### Behavior During Broker Changes
+
 - When a broker joins or leaves, some partitions may be reassigned to different brokers
 - Clients will receive updated metadata and reconnect to the new broker
 - Cache misses may occur temporarily until the new broker warms up
@@ -203,12 +225,12 @@ broker_index = abs(murmur2(topicId + "-" + partitionIndex)) % eligible_brokers.s
 
 Diskless topics have fundamentally different ISR (In-Sync Replicas) semantics compared to classic topics:
 
-| Aspect                     | Classic Topics                            | Diskless Topics                                |
-|----------------------------|-------------------------------------------|------------------------------------------------|
-| Replication                | Brokers replicate data to followers       | No inter-broker replication; object storage    |
-| ISR meaning                | Replicas caught up with the leader        | All alive brokers are effectively "in-sync"    |
-| Leader election            | Based on ISR membership                   | Any broker can serve any partition             |
-| Under-replicated partitions| Possible when followers fall behind       | Not applicable; no replication to fall behind  |
+| Aspect                      | Classic Topics                      | Diskless Topics                               |
+|-----------------------------|-------------------------------------|-----------------------------------------------|
+| Replication                 | Brokers replicate data to followers | No inter-broker replication; object storage   |
+| ISR meaning                 | Replicas caught up with the leader  | All alive brokers are effectively "in-sync"   |
+| Leader election             | Based on ISR membership             | Any broker can serve any partition            |
+| Under-replicated partitions | Possible when followers fall behind | Not applicable; no replication to fall behind |
 
 **Implication for client rack awareness:** Since any broker can serve any diskless partition, the client rack awareness mechanism simply selects a broker in the client's AZ. There's no concern about ISR membership or replica lag.
 
@@ -258,15 +280,15 @@ client.rack=us-east-1a
 
 ### Differences from Current Implementation
 
-| Aspect                | Current (client.id pattern)              | Future (client.rack)                |
-|-----------------------|------------------------------------------|-------------------------------------|
-| Configuration         | `client.id=app,diskless_az=us-east-1a`   | `client.rack=us-east-1a`            |
-| Producer support      | Via `client.id` pattern                  | Native via `client.rack` (KIP-1123) |
-| Consumer support      | Via `client.id` pattern                  | Native via `client.rack`            |
-| Validation            | No validation of rack IDs                | Potential for validation            |
-| Monitoring            | Parse client.id in logs/metrics          | Standard property                   |
-| Client support        | Requires user awareness                  | Built into Kafka clients            |
-| Backward compatibility| N/A                                      | Inkless will support both           |
+| Aspect                 | Current (client.id pattern)            | Future (client.rack)                |
+|------------------------|----------------------------------------|-------------------------------------|
+| Configuration          | `client.id=app,diskless_az=us-east-1a` | `client.rack=us-east-1a`            |
+| Producer support       | Via `client.id` pattern                | Native via `client.rack` (KIP-1123) |
+| Consumer support       | Via `client.id` pattern                | Native via `client.rack`            |
+| Validation             | No validation of rack IDs              | Potential for validation            |
+| Monitoring             | Parse client.id in logs/metrics        | Standard property                   |
+| Client support         | Requires user awareness                | Built into Kafka clients            |
+| Backward compatibility | N/A                                    | Inkless will support both           |
 
 ---
 
@@ -394,24 +416,24 @@ fetch.max.wait.ms=500
 │  │ Broker 0         │  │ Broker 2         │  │ Broker 4  │  │
 │  │ broker.rack=     │  │ broker.rack=     │  │ broker.   │  │
 │  │   us-east-1a     │  │   us-east-1b     │  │   rack=   │  │
-│  │                  │  │                  │  │   us-east │  │
-│  │ Broker 1         │  │ Broker 3         │  │   -1c     │  │
-│  │ broker.rack=     │  │ broker.rack=     │  │           │  │
-│  │   us-east-1a     │  │   us-east-1b     │  │ Broker 5  │  │
+│  │ [Caffeine cache] │  │ [Caffeine cache] │  │   us-east │  │
+│  │                  │  │                  │  │   -1c     │  │
+│  │ Broker 1         │  │ Broker 3         │  │ [Caffeine │  │
+│  │ broker.rack=     │  │ broker.rack=     │  │  cache]   │  │
+│  │   us-east-1a     │  │   us-east-1b     │  │           │  │
+│  │ [Caffeine cache] │  │ [Caffeine cache] │  │ Broker 5  │  │
 │  │                  │  │                  │  │ broker.   │  │
 │  │ Producers        │  │ Producers        │  │   rack=   │  │
 │  │ client.id=       │  │ client.id=       │  │   us-east │  │
 │  │   app,diskless_  │  │   app,diskless_  │  │   -1c     │  │
-│  │   az=us-east-1a  │  │   az=us-east-1b  │  │           │  │
-│  │                  │  │                  │  │ Producers │  │
-│  │ Consumers        │  │ Consumers        │  │ client.id │  │
-│  │ client.id=       │  │ client.id=       │  │   =app,   │  │
-│  │   app,diskless_  │  │   app,diskless_  │  │   diskles │  │
-│  │   az=us-east-1a  │  │   az=us-east-1b  │  │   s_az=us │  │
-│  │                  │  │                  │  │   -east-1c│  │
-│  │                  │  │                  │  │           │  │
-│  │ Cache (local)    │  │ Cache (local)    │  │ Cache     │  │
-│  │                  │  │                  │  │ (local)   │  │
+│  │   az=us-east-1a  │  │   az=us-east-1b  │  │ [Caffeine │  │
+│  │                  │  │                  │  │  cache]   │  │
+│  │ Consumers        │  │ Consumers        │  │           │  │
+│  │ client.id=       │  │ client.id=       │  │ Producers │  │
+│  │   app,diskless_  │  │   app,diskless_  │  │ Consumers │  │
+│  │   az=us-east-1a  │  │   az=us-east-1b  │  │ diskless_ │  │
+│  │                  │  │                  │  │ az=us-    │  │
+│  │                  │  │                  │  │ east-1c   │  │
 │  └──────────────────┘  └──────────────────┘  └───────────┘  │
 │            │                      │                  │      │
 │            └───────────┬──────────┴──────────────────┘      │
@@ -431,12 +453,20 @@ fetch.max.wait.ms=500
 └─────────────────────────────────────────────────────────────┘
 ```
 
-**Configuration summary:**
-- 6 brokers across 3 AZs (2 per AZ)
+##### Configuration Summary
+
+- 6 brokers across 3 AZs (2 per AZ), each with its own local Caffeine cache
 - Each broker has `broker.rack` set to its AZ
 - Producers/consumers in each AZ use matching `diskless_az` in client.id
+- Deterministic partition assignment ensures a partition maps to the same broker within each AZ
 - Object storage (S3) is multi-AZ accessible
 - PostgreSQL can be single-AZ or multi-AZ depending on setup
+
+##### Cache Behavior
+
+- Each broker maintains an independent local cache (Caffeine)
+- Deterministic routing ensures clients in the same AZ always reach the same broker for a given partition
+- This achieves per-AZ cache locality without distributed cache coordination overhead
 
 ---
 
@@ -450,7 +480,8 @@ Inkless exposes JMX metrics to monitor client rack awareness effectiveness:
 | `client-az-miss-rate`    | Requests with configured AZ but no brokers in that AZ |
 | `client-az-unaware-rate` | Requests without AZ configuration in `client.id`      |
 
-**Interpreting metrics:**
+### Interpreting Metrics
+
 - High `client-az-hit-rate` indicates clients are correctly routing to local brokers
 - High `client-az-unaware-rate` indicates clients missing the `diskless_az` pattern
 - High `client-az-miss-rate` indicates AZ mismatch between clients and brokers
