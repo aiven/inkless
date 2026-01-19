@@ -121,11 +121,11 @@ public class MirrorCoordinator {
         switch (newState) {
             case METADATA_UPDATE:
                 LOG.info("!!! Updating metadata for topics {}.", topics);
-                updateMirrorTopicsMetadata(mirrorName, topics, Set.of());
                 mirrorMetadataManager.onPreparing(mirrorName, topics, state -> transitionTo(mirrorName, topics, state));
                 break;
             case PREPARING_MIRRORING:
                 LOG.info("!!! Preparing mirroring for topics {}.", topics);
+                updateMirrorTopicsMetadata(mirrorName, topics, Set.of()); // sync
                 maybeScheduleForTruncate(mirrorName, topics);
                 break;
             case MIRRORING:
