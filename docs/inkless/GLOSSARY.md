@@ -14,7 +14,7 @@ A distinct location within a cloud region with independent infrastructure. Inkle
 ## B
 
 **Batch**
-In Inkless, a batch refers to a group of producer records that are written together as part of an object. Batches are the unit of coordination tracked by the Batch Coordinator.
+In Inkless, a batch refers to a group of producer records from the same topic partition that are written together as part of an object. Batches are the unit of coordination tracked by the Batch Coordinator.
 
 **Batch Coordinator**
 A centralized metadata service that manages batch coordinates and ensures total ordering of messages within partitions. Currently implemented using PostgreSQL.
@@ -127,7 +127,7 @@ A logical grouping of brokers, typically corresponding to an availability zone. 
 Configuration that enables clients (producers/consumers) and brokers to prefer operations within the same rack/AZ, minimizing cross-AZ data transfer costs. See [CLIENT-BROKER-AZ-ALIGNMENT.md](./CLIENT-BROKER-AZ-ALIGNMENT.md) for detailed implementation and configuration guide.
 
 **Read Amplification**
-When reading data for one partition requires fetching objects containing data from multiple partitions.
+Reading more data than you actually need. In Inkless, this happens because objects contain batches from multiple partitions—so fetching data for one partition may pull in data from other partitions stored in the same object.
 
 **Read Replica**
 A PostgreSQL read replica used to scale batch coordinate lookups. Configured via `inkless.control.plane.read.*` properties.
