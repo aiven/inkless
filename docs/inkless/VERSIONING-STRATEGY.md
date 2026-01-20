@@ -370,6 +370,8 @@ inkless-4.2.0-0.33  ← same 0.33 as other branches
 
 ## User-Facing Documentation
 
+For information on how to download Inkless (Docker images and binary distributions), see [Releases](RELEASES.md).
+
 ### How Users Choose a Version
 
 **To use latest Inkless features:**

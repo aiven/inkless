@@ -157,7 +157,6 @@ jobs:
             echo "kafka_major_minor=$KAFKA_MAJOR_MINOR" >> $GITHUB_OUTPUT
             echo "primary_image_tag=${KAFKA_VERSION}-${INKLESS_VERSION}" >> $GITHUB_OUTPUT
             echo "latest_image_tag=${KAFKA_MAJOR_MINOR}-latest" >> $GITHUB_OUTPUT
-            echo "dist_name=kafka_2.13-${KAFKA_VERSION}-inkless-${INKLESS_VERSION}.tgz" >> $GITHUB_OUTPUT
           else
             echo "::error::Cannot parse build tag: $BUILD_TAG"
             exit 1
@@ -185,13 +184,9 @@ jobs:
           TARBALL_NAME=$(basename "$TARBALL")
           DIST_VERSION=$(echo "$TARBALL_NAME" | sed 's/kafka_2.13-\(.*\)\.tgz/\1/')
           
-          echo "original_tarball=$TARBALL" >> $GITHUB_OUTPUT
+          echo "tarball=$TARBALL" >> $GITHUB_OUTPUT
+          echo "tarball_name=$TARBALL_NAME" >> $GITHUB_OUTPUT
           echo "dist_version=$DIST_VERSION" >> $GITHUB_OUTPUT
-          
-          # Create a renamed version with inkless identifier
-          INKLESS_TARBALL="${{ steps.parse-build.outputs.dist_name }}"
-          cp "$TARBALL" "core/build/distributions/$INKLESS_TARBALL"
-          echo "inkless_tarball=core/build/distributions/$INKLESS_TARBALL" >> $GITHUB_OUTPUT
 
       - name: Prepare Docker build context
         run: |
@@ -234,7 +229,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: dist-${{ steps.parse-build.outputs.kafka_version }}-${{ steps.parse-build.outputs.inkless_version }}
-          path: ${{ steps.dist-info.outputs.inkless_tarball }}
+          path: ${{ steps.dist-info.outputs.tarball }}
           retention-days: 1
 
       - name: Upload to Kafka-base release (amd64 only, if direct trigger)
@@ -243,7 +238,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release upload "${{ matrix.kafka_tag }}" \
-            "${{ steps.dist-info.outputs.inkless_tarball }}" \
+            "${{ steps.dist-info.outputs.tarball }}" \
             --clobber || echo "::warning::Could not upload to release ${{ matrix.kafka_tag }}. Release may not exist yet."
 
   # Create multi-arch manifests for Kafka-base images
