@@ -76,44 +76,39 @@ A single cluster which is deployed in multiple zones may produce in one zone and
 # Caching
 ```mermaid
 ---
-title: Multi-Rack Zone Toplogy
+title: Multi-Rack Zone Topology
 ---
 flowchart TB
     subgraph AZ0[Zone 0]
-        subgraph C0[Cache 0]
-            Broker00[Broker-0]
-            Broker01[Broker-1]
-        end
+        Broker00[Broker-0<br/>Local Cache]
+        Broker01[Broker-1<br/>Local Cache]
         Clients0[Clients]
     end
     subgraph AZ1[Zone 1]
-        subgraph C1[Cache 1]
-            Broker10[Broker-2]
-            Broker11[Broker-3]
-        end
+        Broker10[Broker-2<br/>Local Cache]
+        Broker11[Broker-3<br/>Local Cache]
         Clients1[Clients]
     end
     subgraph AZ2[Zone 2]
-        subgraph C2[Cache 2]
-            Broker20[Broker-4]
-            Broker21[Broker-5]
-        end
+        Broker20[Broker-4<br/>Local Cache]
+        Broker21[Broker-5<br/>Local Cache]
         Clients2[Clients]
     end
     ObjectStorage[Object Storage]
-    Broker01 & Broker11 & Broker21 <== Object Requests ===> ObjectStorage
-    Broker00 <== Cache Traffic ==> Broker01
-    Broker10 <== Cache Traffic ==> Broker11
-    Broker20 <== Cache Traffic ==> Broker21
-    Broker01 <== Kafka Requests ==> Clients0
-    Broker11 <== Kafka Requests ==> Clients1
-    Broker21 <== Kafka Requests ==> Clients2
+    Broker00 & Broker01 <== Object Requests ==> ObjectStorage
+    Broker10 & Broker11 <== Object Requests ==> ObjectStorage
+    Broker20 & Broker21 <== Object Requests ==> ObjectStorage
+    Broker00 & Broker01 <== Kafka Requests ==> Clients0
+    Broker10 & Broker11 <== Kafka Requests ==> Clients1
+    Broker20 & Broker21 <== Kafka Requests ==> Clients2
 ```
 
-A single cluster may have a single cache if `broker.rack` is unset.
-If `broker.rack` is set, brokers will join rack-specific caches, which are intended to align with network zones.
-Brokers each contain an embedded distributed cache, and brokers become members of this cache in their local rack.
-Each rack independently serves Kafka requests, and makes Object requests. Cached data is not shared between racks.
+Each broker maintains its own **local in-memory cache (Caffeine)**. Cache locality is achieved through:
+
+1. **AZ-aware metadata routing**: Clients configured with `diskless_az` in their `client.id` receive metadata directing them to brokers in their AZ
+2. **Deterministic partition assignment**: A partition always maps to the same broker within an AZ (via hash), ensuring consistent cache hits
+
+This approach provides per-AZ cache locality without inter-broker cache coordination overhead. Cached data is not shared between brokers or across racks.
 
 ```mermaid
 ---
@@ -121,23 +116,19 @@ title: Producer Write Caching
 ---
 flowchart LR
     subgraph AZ0[Zone 0]
-        subgraph C0[Cache 0]
-            Broker00[Broker-0]
-            Broker01[Broker-1]
-            Broker02[Broker-2]
-        end
+        Broker00[Broker-0<br/>Local Cache]
         Producer00[Producer-0]
         Consumer00[Consumer-0]
     end
     ObjectStorage[Object Storage]
 
-    Producer00 == Produce ==> Broker00 == put ==> Broker01
-    Broker01 == get ==> Broker02 == Fetch ==> Consumer00
+    Producer00 == Produce ==> Broker00
+    Broker00 == Fetch ==> Consumer00
     Broker00 == PUT =====> ObjectStorage
 ```
 
-Data written by producers to object storage is also written to the cache.
-Consumers in the local zone may fetch from this cache without requiring reading the object from storage.
+Data written by producers is stored in the broker's local cache.
+Consumers routed to the same broker (via deterministic partition assignment) can fetch from this cache without requiring object storage reads.
 
 ```mermaid
 ---
@@ -145,23 +136,17 @@ title: Consumer Caching
 ---
 flowchart LR
     subgraph AZ0[Zone 0]
-        subgraph C0[Cache 0]
-            Broker00[Broker-0]
-            Broker01[Broker-1]
-            Broker02[Broker-2]
-        end
+        Broker00[Broker-0<br/>Local Cache]
         Consumer00[Consumer-0]
         Consumer01[Consumer-1]
     end
     ObjectStorage[Object Storage]
 
-    Broker00 == put ==> Broker01
-    Broker01 == get ==> Broker02 == Fetch ==> Consumer01
     Broker00 == Fetch ====> Consumer00
+    Broker00 == Fetch ====> Consumer01
     ObjectStorage == GET ==> Broker00
 ```
 
-When object data is necessary to serve a request, the data is preferentially served from the rack's cache.
-If a cache miss occurs (Consumer-0) data is fetched from the object storage.
-After the cache miss, the data is populated in the cache in one member in the rack.
-If a cache hit occurs (Consumer-1), the data is loaded remotely from another member of the cache.
+When object data is necessary to serve a request, the broker first checks its local cache.
+If a cache miss occurs (Consumer-0's first request for that data), the broker fetches from object storage and populates its local cache.
+Subsequent requests for the same data (Consumer-1) are served from the local cache with lower latency.
