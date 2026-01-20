@@ -518,14 +518,20 @@ existing clusters, and enables controlled rollout per environment.
 diskless.managed.rf.enabled=false   # default: disabled for backward compatibility
 ```
 
+**This config only affects topic creation.** Routing behavior is derived from topic config and KRaft metadata, not this
+server config.
+
+| Aspect | What controls it |
+|--------|------------------|
+| Topic creation (RF assignment) | `diskless.managed.rf.enabled` server config |
+| Routing mode (`DISKLESS_TIERED` vs `DISKLESS_ONLY`) | Topic config (`remote.storage.enable` + `diskless.enable`) |
+| Routing logic | KRaft metadata — always prefers assigned replicas first; hash fallback only when replicas offline |
+
 When `diskless.managed.rf.enabled=true`:
-- New diskless topics use KRaft-managed placement (one replica per rack at creation)
-- Transformer filters KRaft placement by client AZ
-- **Falls back to alive brokers if assigned replicas are offline**
+- New diskless topics get RF=rack_count with one replica per AZ
 
 When `diskless.managed.rf.enabled=false` (default):
-- Diskless topics use legacy "RF=1 / faked metadata" behavior
-- Transformer calculates synthetic placement via hashing
+- New diskless topics get RF=1 (legacy behavior)
 
 ### Rollout Strategy
 
@@ -533,19 +539,24 @@ This config-based activation enables:
 
 1. **Safe incremental PRs**: Code changes can be merged without affecting existing clusters
 2. **Per-environment enablement**: Enable in dev/staging first, then production
-3. **Instant rollback**: Disable config without binary rollback if issues arise
-4. **Mixed-state clusters**: Existing RF=1 topics continue working; new topics get RF=rack_count when enabled
+3. **Instant rollback**: Disable config to stop creating new RF>1 topics; existing topics unaffected
+4. **Mixed-state clusters**: RF=1 and RF>1 diskless topics coexist seamlessly
 
-### Behavior Summary
+### Backward Compatibility
 
-**Config disabled (default):**
-- Diskless topics use legacy "RF=1 / faked metadata" behavior
-- Transformer calculates synthetic placement via hashing
+**Config toggle is safe and reversible:**
 
-**Config enabled:**
-- Diskless topics use KRaft-managed placement (one replica per rack at creation)
-- Transformer filters KRaft placement by client AZ
-- **Falls back to alive brokers if assigned replicas are offline**
+| Scenario | Behavior |
+|----------|----------|
+| Disable after RF>1 topics exist | Existing topics keep working with replica-first routing; new topics get RF=1 |
+| Re-enable after disabling | New topics get RF>1 again; no impact on existing topics |
+| Mixed RF=1 and RF>1 topics | All topics prefer assigned replicas; hash fallback only when replicas offline |
+
+**Why this works:**
+- Transformer derives routing from **KRaft metadata** (assigned replicas), not server config
+- Transformer derives mode from **topic config** (`remote.storage.enable`), not server config
+- **All RF values** (including RF=1) prefer assigned replicas first; hash is fallback only
+- No behavioral cliff when toggling config — topics behave consistently based on their own state
 
 ### Existing Diskless Topics
 
