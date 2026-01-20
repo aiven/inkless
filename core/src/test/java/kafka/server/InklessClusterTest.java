@@ -206,10 +206,11 @@ public class InklessClusterTest {
         int numRecords = 10;
 
         try (Admin admin = AdminClient.create(clientConfigs)) {
-            final NewTopic disklessTopic = new NewTopic(disklessTopicName, Map.of(0, List.of(0)))
-                .configs(Map.of(TopicConfig.DISKLESS_ENABLE_CONFIG, "true"));
             final NewTopic classicTopic = new NewTopic(classicTopicName, Map.of(0, List.of(0)))
                 .configs(Map.of(TopicConfig.DISKLESS_ENABLE_CONFIG, "false"));
+            // manual assignment is not supported for diskless topics
+            final NewTopic disklessTopic = new NewTopic(disklessTopicName, 1, (short) 1)
+                .configs(Map.of(TopicConfig.DISKLESS_ENABLE_CONFIG, "true"));
             CreateTopicsResult topics = admin.createTopics(List.of(disklessTopic, classicTopic));
             topics.all().get(10, TimeUnit.SECONDS);
         }
