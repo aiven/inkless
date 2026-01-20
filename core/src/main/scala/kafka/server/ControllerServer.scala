@@ -236,6 +236,7 @@ class ControllerServer(
           setDefaultNumPartitions(config.numPartitions.intValue()).
           setDefaultDisklessEnable(config.logDisklessEnable).
           setDisklessStorageSystemEnabled(config.disklessStorageSystemEnabled).
+          setDisklessManagedReplicasEnabled(config.disklessManagedReplicasEnabled).
           setSessionTimeoutNs(TimeUnit.NANOSECONDS.convert(config.brokerSessionTimeoutMs.longValue(),
             TimeUnit.MILLISECONDS)).
           setLeaderImbalanceCheckIntervalNs(leaderImbalanceCheckIntervalNs).

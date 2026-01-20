@@ -131,6 +131,17 @@ public class ServerConfigs {
     public static final String DISKLESS_STORAGE_SYSTEM_ENABLE_DOC = "Enable the diskless storage system. " +
         "This enables diskless topics alongside classic topics.";
 
+    // When enabled, diskless topics are created with RF = rack_count (one replica per rack).
+    // When disabled (default), diskless topics use legacy RF=1 behavior.
+    // This config only affects topic creation; routing is handled by the metadata transformer.
+    // See DISKLESS_MANAGED_RF.md for the full design and implementation roadmap.
+    public static final String DISKLESS_MANAGED_REPLICAS_ENABLE_CONFIG = "diskless.managed.rf.enable";
+    public static final boolean DISKLESS_MANAGED_REPLICAS_ENABLE_DEFAULT = false;
+    public static final String DISKLESS_MANAGED_REPLICAS_ENABLE_DOC = "When enabled, new diskless topics are created " +
+        "with replication factor equal to the number of racks (one replica per rack). " +
+        "When disabled, diskless topics use legacy RF=1 behavior. " +
+        "This config only affects topic creation.";
+
 
     /************* Authorizer Configuration ***********/
     public static final String AUTHORIZER_CLASS_NAME_CONFIG = "authorizer.class.name";
@@ -178,6 +189,7 @@ public class ServerConfigs {
             /** Diskless Configurations **/
             .define(DISKLESS_STORAGE_SYSTEM_ENABLE_CONFIG, BOOLEAN, DISKLESS_STORAGE_SYSTEM_ENABLE_DEFAULT, HIGH,
                 DISKLESS_STORAGE_SYSTEM_ENABLE_DOC)
+            .define(DISKLESS_MANAGED_REPLICAS_ENABLE_CONFIG, BOOLEAN, DISKLESS_MANAGED_REPLICAS_ENABLE_DEFAULT, MEDIUM, DISKLESS_MANAGED_REPLICAS_ENABLE_DOC)
             /** Internal Configurations **/
             // This indicates whether unreleased APIs should be advertised by this node.
             .defineInternal(UNSTABLE_API_VERSIONS_ENABLE_CONFIG, BOOLEAN, false, HIGH)
