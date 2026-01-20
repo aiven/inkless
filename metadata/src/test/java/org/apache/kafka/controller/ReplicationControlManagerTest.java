@@ -138,6 +138,7 @@ import static org.apache.kafka.common.protocol.Errors.INELIGIBLE_REPLICA;
 import static org.apache.kafka.common.protocol.Errors.INVALID_PARTITIONS;
 import static org.apache.kafka.common.protocol.Errors.INVALID_REPLICATION_FACTOR;
 import static org.apache.kafka.common.protocol.Errors.INVALID_REPLICA_ASSIGNMENT;
+import static org.apache.kafka.common.protocol.Errors.INVALID_REQUEST;
 import static org.apache.kafka.common.protocol.Errors.INVALID_TOPIC_EXCEPTION;
 import static org.apache.kafka.common.protocol.Errors.NEW_LEADER_ELECTED;
 import static org.apache.kafka.common.protocol.Errors.NONE;
@@ -3977,7 +3978,13 @@ public class ReplicationControlManagerTest {
             ctx.unfenceBrokers(0, 1);
 
             String topic = "foo";
-            ctx.createTestTopic(topic, new int[][] {new int[] {0}}, Map.of(DISKLESS_ENABLE_CONFIG, "true"), (short) 0);
+            ctx.createTestTopic(
+                topic,
+                1,
+                (short) 1,
+                Map.of(DISKLESS_ENABLE_CONFIG, "true"),
+                NONE.code()
+            );
 
             // No change in the replication factor.
             ControllerResult<AlterPartitionReassignmentsResponseData> alterResult1 =
@@ -4036,9 +4043,8 @@ public class ReplicationControlManagerTest {
 
             CreatableTopicResult createResult = ctx.createTestTopic(
                 "foo",
-                new int[][] {
-                    new int[] {0}
-                },
+                1,
+                (short) 1,
                 Map.of(DISKLESS_ENABLE_CONFIG, "true"),
                 NONE.code()
             );
@@ -4067,9 +4073,8 @@ public class ReplicationControlManagerTest {
 
             CreatableTopicResult createResult = ctx.createTestTopic(
                 "foo",
-                new int[][] {
-                    new int[] {0}
-                },
+                1,
+                (short) 1,
                 Map.of(DISKLESS_ENABLE_CONFIG, "true"),
                 NONE.code()
             );
@@ -4151,6 +4156,23 @@ public class ReplicationControlManagerTest {
                 assertArrayEquals(new int[]{0}, partition.isr, "ISR should stay unchanged for partition " + partitionId);
                 assertEquals(-1, partition.leader, "Leader should be offline for partition " + partitionId);
             }
+        }
+
+        @Test
+        void testManualReplicaAssignmentsShouldBeRejected() {
+            ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+                .setDisklessStorageSystemEnabled(true)
+                .build();
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+
+            // Expectation: providing manual replica assignments for a diskless topic should be rejected.
+            ctx.createTestTopic(
+                "foo",
+                new int[][] {new int[] {0, 1}, new int[] {1, 2}},
+                Map.of(DISKLESS_ENABLE_CONFIG, "true"),
+                INVALID_REQUEST.code()
+            );
         }
     }
 

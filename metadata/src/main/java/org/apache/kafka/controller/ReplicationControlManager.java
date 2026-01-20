@@ -765,7 +765,6 @@ public class ReplicationControlManager {
                 return new ApiError(Errors.INVALID_REPLICATION_FACTOR,
                     "Replication factor for diskless topics must be 1 or -1 to use the default value (1).");
             }
-            topic.assignments().clear();
         }
 
         if (!topic.assignments().isEmpty()) {
@@ -778,6 +777,10 @@ public class ReplicationControlManager {
                 return new ApiError(INVALID_REQUEST,
                     "A manual partition assignment was specified, but numPartitions " +
                         "was not set to -1.");
+            }
+            if (disklessEnabled) {
+                return new ApiError(INVALID_REQUEST,
+                    "A manual partition assignment cannot be specified for diskless topics.");
             }
             OptionalInt replicationFactor = OptionalInt.empty();
             for (CreatableReplicaAssignment assignment : topic.assignments()) {
