@@ -22,6 +22,7 @@ import kafka.network.RequestChannel
 import kafka.server.QuotaFactory.{QuotaManagers, UNBOUNDED_QUOTA}
 import kafka.server.handlers.DescribeTopicPartitionsRequestHandler
 import kafka.server.metadata.KRaftMetadataCache
+import kafka.server.mirror.MirrorMetadataManager.MirroredPartitionMetadata
 import kafka.server.mirror.{MirrorCoordinator, MirrorState}
 import kafka.server.share.{ShareFetchUtils, SharePartitionManager}
 import kafka.utils.Logging
@@ -256,6 +257,8 @@ class KafkaApis(val requestChannel: RequestChannel,
         case ApiKeys.ADD_TOPICS_TO_MIRROR => handleAddTopicsToMirror(request)
         case ApiKeys.REMOVE_TOPICS_FROM_MIRROR => handleRemoveTopicsFromMirror(request)
         case ApiKeys.LAST_MIRRORED_OFFSETS => handleLastMirroredOffset(request)
+        case ApiKeys.WRITE_MIRROR_STATES => handleWriteMirrorStates(request)
+        case ApiKeys.READ_MIRROR_STATES => handleReadMirrorStates(request)
         case _ => throw new IllegalStateException(s"No handler for request api key ${request.header.apiKey}")
       }
     } catch {
@@ -271,6 +274,37 @@ class KafkaApis(val requestChannel: RequestChannel,
       if (request.apiLocalCompleteTimeNanos < 0)
         request.apiLocalCompleteTimeNanos = time.nanoseconds
     }
+  }
+
+  def handleWriteMirrorStates(request: RequestChannel.Request): Unit = {
+    val writeMirrorStatesRequest = request.body[WriteMirrorStatesRequest]
+    info("!!! writeMirrorStatesRequest:" + writeMirrorStatesRequest)
+    val mirrorName = writeMirrorStatesRequest.data().mirrorName()
+    val removedTopics = writeMirrorStatesRequest.data().removedTopics()
+    val partitionMetadata = new util.HashMap[String, util.Set[MirroredPartitionMetadata]]()
+    writeMirrorStatesRequest.data().topicsUpdated().forEach(topic => {
+      val partMetadata = new util.HashSet[MirroredPartitionMetadata]()
+      topic.partitions().forEach(part => {
+        partMetadata.add(new MirroredPartitionMetadata(part.partitionIndex(), MirrorState.fromValue(part.state()), part.lastMirroredOffset()))
+      })
+      partitionMetadata.put(topic.name(), partMetadata)
+    })
+    mirrorCoordinator.writeMirroredPartitionMetadata(mirrorName, partitionMetadata, new util.HashSet[String](removedTopics))
+  }
+
+  def handleReadMirrorStates(request: RequestChannel.Request): Unit = {
+    val readMirrorStatesRequest = request.body[ReadMirrorStatesRequest]
+    info("!!! readMirrorStatesRequest:" + readMirrorStatesRequest)
+    val mirrorName = readMirrorStatesRequest.data().mirrorName()
+    val partitionMetadata = new util.HashMap[String, util.Set[Integer]]()
+    readMirrorStatesRequest.data().topics().forEach(topic => {
+      val parts = new util.HashSet[Integer]()
+      topic.partitions().forEach(part => {
+        parts.add(part.partitionIndex())
+      })
+      partitionMetadata.put(topic.name(), parts)
+    })
+    mirrorCoordinator.readMirroredPartitionMetadata(mirrorName, partitionMetadata)
   }
 
   def handleCreateTopics(request: RequestChannel.Request): Unit = {

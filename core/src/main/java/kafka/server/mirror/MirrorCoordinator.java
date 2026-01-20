@@ -116,13 +116,15 @@ public class MirrorCoordinator {
         this.metadataCache = metadataCache;
         this.time = time;
         this.mirrorMetadataManager = mirrorMetadataManager;
+        Transitioner transitioner = (mirrorName, tp, state) -> transitionTo(mirrorName, tp, state, true);
+        this.mirrorMetadataManager.setTransitioner(transitioner);
     }
 
     private void operateOnNewState(String mirrorName, Set<String> topics, MirrorState newState) {
         switch (newState) {
             case METADATA_UPDATE:
                 LOG.info("!!! Updating metadata for topics {}.", topics);
-                mirrorMetadataManager.onPreparing(mirrorName, topics, state -> transitionTo(mirrorName, topics, state));
+                mirrorMetadataManager.onPreparing(mirrorName, topics);
                 break;
             case PREPARING_MIRRORING:
                 LOG.info("!!! Preparing mirroring for topics {}.", topics);
@@ -170,6 +172,17 @@ public class MirrorCoordinator {
         }
     }
 
+    public void writeMirroredPartitionMetadata(String mirrorName,
+                                               Map<String, Set<MirrorMetadataManager.MirroredPartitionMetadata>> topicMetadata,
+                                               Set<String> removedTopics) {
+        mirrorMetadataManager.writeStatesToRemoteCoordinator(mirrorName, topicMetadata, removedTopics, (res) -> { });
+    }
+
+    public void readMirroredPartitionMetadata(String mirrorName,
+                                              Map<String, Set<Integer>> partitions) {
+        mirrorMetadataManager.readStatesToRemoteCoordinator(mirrorName, partitions, (res) -> { });
+    }
+
     public void updateLastMirroredOffsets(String mirrorName, Set<String> mirrorTopics) {
         Map<String, Map<Integer, Long>> partitionOffsets = new HashMap<>();
         mirrorTopics.forEach(topic -> {
@@ -189,7 +202,9 @@ public class MirrorCoordinator {
 
     public void updateMirrorPartitionState(String mirrorName, TopicPartition topicPartition, MirrorState newState) {
         var mirrorTopicPartition = new TopicPartition(Topic.MIRROR_STATE_TOPIC_NAME, partitionIndexForKey(new MirrorRecordKey(mirrorName)));
-        if (replicaManager.getPartitionOrException(mirrorTopicPartition).isLeader()) {
+        var optLeaderAndIsr = metadataCache.getLeaderAndIsr(mirrorTopicPartition.topic(), mirrorTopicPartition.partition());
+        if (optLeaderAndIsr.isPresent() && optLeaderAndIsr.get().leader() == config.nodeId()) {
+            // this is the leader of the coordinator
             var mirrorTopicIdPartition = replicaManager.topicIdPartition(mirrorTopicPartition);
             var record = generateMirrorPartitionState(mirrorName, topicPartition, newState);
             var keyBytes = serde.serializeKey(record);
@@ -253,6 +268,7 @@ public class MirrorCoordinator {
     }
 
     public void maybeScheduleForTruncate(String mirrorName, Set<String> topics) {
+        // should skip this if the source is in old version
         topics.forEach(topic -> {
             scheduler.scheduleOnce("last-mirrored-offset", () -> maybeTruncate(mirrorName, topics));
         });
@@ -274,7 +290,9 @@ public class MirrorCoordinator {
     // TODO: handle response
     public void updateMirrorTopicsMetadata(String mirrorName, Set<String> addedTopics, Set<String> removedTopics) {
         var mirrorTopicPartition = new TopicPartition(Topic.MIRROR_STATE_TOPIC_NAME, partitionIndexForKey(new MirrorRecordKey(mirrorName)));
-        if (replicaManager.getPartitionOrException(mirrorTopicPartition).isLeader()) {
+        var optLeaderAndIsr = metadataCache.getLeaderAndIsr(mirrorTopicPartition.topic(), mirrorTopicPartition.partition());
+        if (optLeaderAndIsr.isPresent() && optLeaderAndIsr.get().leader() == config.nodeId()) {
+            // this is the leader of the coordinator
             var mirrorTopicIdPartition = replicaManager.topicIdPartition(mirrorTopicPartition);
 
             var topics = mirrorMetadataManager.updateMirrorTopicsCache(mirrorName, addedTopics, removedTopics);
@@ -328,7 +346,9 @@ public class MirrorCoordinator {
      */
     public void updateLastMirroredOffsetsMetadata(String mirrorName, Map<String, Map<Integer, Long>> partitionOffsets) {
         var mirrorTopicPartition = new TopicPartition(Topic.MIRROR_STATE_TOPIC_NAME, partitionIndexForKey(new MirrorRecordKey(mirrorName)));
-        if (replicaManager.getPartitionOrException(mirrorTopicPartition).isLeader()) {
+        var optLeaderAndIsr = metadataCache.getLeaderAndIsr(mirrorTopicPartition.topic(), mirrorTopicPartition.partition());
+        if (optLeaderAndIsr.isPresent() && optLeaderAndIsr.get().leader() == config.nodeId()) {
+            // this is the leader of the coordinator
             var mirrorTopicIdPartition = replicaManager.topicIdPartition(mirrorTopicPartition);
 
             var updatedOffsets = mirrorMetadataManager.updateLastMirroredOffsetsCache(mirrorName, partitionOffsets, Map.of());
@@ -542,6 +562,10 @@ public class MirrorCoordinator {
 
     interface Operator {
         void operateOnNewState(String mirrorName, Set<String> topics, MirrorState state);
+    }
+
+    interface Transitioner {
+        void transitionTo(String mirrorName, TopicPartition topicPartition, MirrorState state);
     }
 
     /**
