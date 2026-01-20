@@ -64,6 +64,7 @@ import java.util.Map;
 import java.util.OptionalInt;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
 import scala.jdk.javaapi.CollectionConverters;
@@ -117,21 +118,15 @@ public class MirrorCoordinator {
         this.mirrorMetadataManager = mirrorMetadataManager;
     }
 
-    public void writeMirrorTopics(String mirrorName, Set<String> topics) {
-        LOG.info("!!! Writing mirror topics {} for mirror {}.", topics, mirrorName);
-        updateMirrorTopicsMetadata(mirrorName, topics, Set.of());
-    }
-
-
     private void operateOnNewState(String mirrorName, Set<String> topics, MirrorState newState) {
         switch (newState) {
             case METADATA_UPDATE:
                 LOG.info("!!! Updating metadata for topics {}.", topics);
-                updateMirrorTopicsMetadata(mirrorName, topics, Set.of());
                 mirrorMetadataManager.onPreparing(mirrorName, topics, state -> transitionTo(mirrorName, topics, state));
                 break;
             case PREPARING_MIRRORING:
                 LOG.info("!!! Preparing mirroring for topics {}.", topics);
+                updateMirrorTopicsMetadata(mirrorName, topics, Set.of());
                 maybeScheduleForTruncate(mirrorName, topics);
                 break;
             case MIRRORING:
@@ -194,28 +189,45 @@ public class MirrorCoordinator {
 
     public void updateMirrorPartitionState(String mirrorName, TopicPartition topicPartition, MirrorState newState) {
         var mirrorTopicPartition = new TopicPartition(Topic.MIRROR_STATE_TOPIC_NAME, partitionIndexForKey(new MirrorRecordKey(mirrorName)));
-        var mirrorTopicIdPartition = replicaManager.topicIdPartition(mirrorTopicPartition);
-        var record = generateMirrorPartitionState(mirrorName, topicPartition, newState);
-        var keyBytes = serde.serializeKey(record);
-        var valueBytes = serde.serializeValue(record);
-        var timestamp = time.milliseconds();
-        var memRecord = MemoryRecords.withRecords(Compression.NONE, new SimpleRecord(timestamp, keyBytes, valueBytes));
+        if (replicaManager.getPartitionOrException(mirrorTopicPartition).isLeader()) {
+            var mirrorTopicIdPartition = replicaManager.topicIdPartition(mirrorTopicPartition);
+            var record = generateMirrorPartitionState(mirrorName, topicPartition, newState);
+            var keyBytes = serde.serializeKey(record);
+            var valueBytes = serde.serializeValue(record);
+            var timestamp = time.milliseconds();
+            var memRecord = MemoryRecords.withRecords(Compression.NONE, new SimpleRecord(timestamp, keyBytes, valueBytes));
 
-        LOG.info("!!! Appending record to {}: {}", mirrorTopicPartition, record);
-        replicaManager.appendRecords(
-                // TODO: replace this with Cluster Mirror specific timeout
-                Duration.ofSeconds(5).toMillis(),
-                (short) -1,
-                true,
-                AppendOrigin.COORDINATOR,
-                CollectionConverters.asScala(Map.of(mirrorTopicIdPartition, memRecord)),
-                ignored -> null,
-                ignored -> null,
-                RequestLocal.noCaching(),
-                CollectionConverters.asScala(Map.of())
-        );
+            LOG.info("!!! Appending record to {}: {}", mirrorTopicPartition, record);
+            replicaManager.appendRecords(
+                    // TODO: replace this with Cluster Mirror specific timeout
+                    Duration.ofSeconds(5).toMillis(),
+                    (short) -1,
+                    true,
+                    AppendOrigin.COORDINATOR,
+                    CollectionConverters.asScala(Map.of(mirrorTopicIdPartition, memRecord)),
+                    ignored -> null,
+                    ignored -> null,
+                    RequestLocal.noCaching(),
+                    CollectionConverters.asScala(Map.of())
+            );
+            mirrorMetadataManager.updateMirrorPartitionStateCache(mirrorName, topicPartition, newState);
+        } else {
+            // write state data to remote coordinator
+            Map<String, Set<MirrorMetadataManager.MirroredPartitionMetadata>> topicMetadata =
+                    Map.of(topicPartition.topic(), Set.of(new MirrorMetadataManager.MirroredPartitionMetadata(topicPartition.partition(), newState, -1L)));
+            mirrorMetadataManager.writeStatesToRemoteCoordinator(mirrorName, topicMetadata, Set.of(), (res) -> {
+                res.data().topics().forEach(topic -> {
+                    topic.partitions().forEach(par -> {
+                        if (par.errorCode() == Errors.NONE.code()) {
+                            mirrorMetadataManager.updateMirrorPartitionStateCache(mirrorName, topicPartition, newState);
+                        } else {
+                            LOG.error("Failed to write partition state to remote coordinator: {}", par.errorCode());
+                        }
+                    });
+                });
+            });
+        }
 
-        mirrorMetadataManager.updateMirrorPartitionStateCache(mirrorName, topicPartition, newState);
     }
 
     /**
@@ -262,28 +274,35 @@ public class MirrorCoordinator {
     // TODO: handle response
     public void updateMirrorTopicsMetadata(String mirrorName, Set<String> addedTopics, Set<String> removedTopics) {
         var mirrorTopicPartition = new TopicPartition(Topic.MIRROR_STATE_TOPIC_NAME, partitionIndexForKey(new MirrorRecordKey(mirrorName)));
-        var mirrorTopicIdPartition = replicaManager.topicIdPartition(mirrorTopicPartition);
+        if (replicaManager.getPartitionOrException(mirrorTopicPartition).isLeader()) {
+            var mirrorTopicIdPartition = replicaManager.topicIdPartition(mirrorTopicPartition);
 
-        var topics = mirrorMetadataManager.updateMirrorTopicsCache(mirrorName, addedTopics, removedTopics);
-        var record = generateMirrorTopics(mirrorName, topics);
-        var keyBytes = serde.serializeKey(record);
-        var valueBytes = serde.serializeValue(record);
-        var timestamp = time.milliseconds();
-        var memRecord = MemoryRecords.withRecords(Compression.NONE, new SimpleRecord(timestamp, keyBytes, valueBytes));
+            var topics = mirrorMetadataManager.updateMirrorTopicsCache(mirrorName, addedTopics, removedTopics);
+            var record = generateMirrorTopics(mirrorName, topics);
+            var keyBytes = serde.serializeKey(record);
+            var valueBytes = serde.serializeValue(record);
+            var timestamp = time.milliseconds();
+            var memRecord = MemoryRecords.withRecords(Compression.NONE, new SimpleRecord(timestamp, keyBytes, valueBytes));
 
-        LOG.info("!!! Appending record to {}: {}", mirrorTopicPartition, record);
-        replicaManager.appendRecords(
-                // TODO: replace this with Cluster Mirror specific timeout
-                Duration.ofSeconds(5).toMillis(),
-                (short) -1,
-                true,
-                AppendOrigin.COORDINATOR,
-                CollectionConverters.asScala(Map.of(mirrorTopicIdPartition, memRecord)),
-                ignored -> null,
-                ignored -> null,
-                RequestLocal.noCaching(),
-                CollectionConverters.asScala(Map.of())
-        );
+            LOG.info("!!! Appending record to {}: {}", mirrorTopicPartition, record);
+            replicaManager.appendRecords(
+                    // TODO: replace this with Cluster Mirror specific timeout
+                    Duration.ofSeconds(5).toMillis(),
+                    (short) -1,
+                    true,
+                    AppendOrigin.COORDINATOR,
+                    CollectionConverters.asScala(Map.of(mirrorTopicIdPartition, memRecord)),
+                    ignored -> null,
+                    ignored -> null,
+                    RequestLocal.noCaching(),
+                    CollectionConverters.asScala(Map.of())
+            );
+        } else {
+            // writeMirrored state to remote coordinator
+            Map<String, Set<MirrorMetadataManager.MirroredPartitionMetadata>> mirroredPartitions = addedTopics.stream().collect(Collectors.toMap(topic -> topic, topic -> Set.of()));
+            mirrorMetadataManager.writeStatesToRemoteCoordinator(mirrorName, mirroredPartitions, removedTopics, (res) -> { });
+        }
+
     }
 
     private Map<String, Map<Integer, Long>> lastMirroredOffsetsToCoordinatorRecords(Map<MirrorMetadataManager.MirroredPartitionKey, Long> offsets) {
@@ -309,32 +328,49 @@ public class MirrorCoordinator {
      */
     public void updateLastMirroredOffsetsMetadata(String mirrorName, Map<String, Map<Integer, Long>> partitionOffsets) {
         var mirrorTopicPartition = new TopicPartition(Topic.MIRROR_STATE_TOPIC_NAME, partitionIndexForKey(new MirrorRecordKey(mirrorName)));
-        var mirrorTopicIdPartition = replicaManager.topicIdPartition(mirrorTopicPartition);
+        if (replicaManager.getPartitionOrException(mirrorTopicPartition).isLeader()) {
+            var mirrorTopicIdPartition = replicaManager.topicIdPartition(mirrorTopicPartition);
 
-        var updatedOffsets = mirrorMetadataManager.updateLastMirroredOffsetsCache(mirrorName, partitionOffsets, Map.of());
-        var record = generateLastMirroredOffsets(mirrorName, lastMirroredOffsetsToCoordinatorRecords(updatedOffsets));
-        var keyBytes = serde.serializeKey(record);
-        var valueBytes = serde.serializeValue(record);
-        var timestamp = time.milliseconds();
-        var memRecord = MemoryRecords.withRecords(Compression.NONE, new SimpleRecord(timestamp, keyBytes, valueBytes));
+            var updatedOffsets = mirrorMetadataManager.updateLastMirroredOffsetsCache(mirrorName, partitionOffsets, Map.of());
+            var record = generateLastMirroredOffsets(mirrorName, lastMirroredOffsetsToCoordinatorRecords(updatedOffsets));
+            var keyBytes = serde.serializeKey(record);
+            var valueBytes = serde.serializeValue(record);
+            var timestamp = time.milliseconds();
+            var memRecord = MemoryRecords.withRecords(Compression.NONE, new SimpleRecord(timestamp, keyBytes, valueBytes));
 
-        LOG.info("!!! Appending offset record to {}: {}", mirrorTopicPartition, record);
-        replicaManager.appendRecords(
-                // TODO: replace this with Cluster Mirror specific timeout
-                Duration.ofSeconds(5).toMillis(),
-                (short) -1,
-                true,
-                AppendOrigin.COORDINATOR,
-                CollectionConverters.asScala(Map.of(mirrorTopicIdPartition, memRecord)),
-                ignored -> null,
-                ignored -> null,
-                RequestLocal.noCaching(),
-                CollectionConverters.asScala(Map.of())
-        );
+            LOG.info("!!! Appending offset record to {}: {}", mirrorTopicPartition, record);
+            replicaManager.appendRecords(
+                    // TODO: replace this with Cluster Mirror specific timeout
+                    Duration.ofSeconds(5).toMillis(),
+                    (short) -1,
+                    true,
+                    AppendOrigin.COORDINATOR,
+                    CollectionConverters.asScala(Map.of(mirrorTopicIdPartition, memRecord)),
+                    ignored -> null,
+                    ignored -> null,
+                    RequestLocal.noCaching(),
+                    CollectionConverters.asScala(Map.of())
+            );
 
-        // transition to stopped state after last mirrored offset stored
-        // TODO: now we assume all partitions work without error, we should handle error cases
-        transitionTo(mirrorName, partitionOffsets.keySet(), MirrorState.STOPPED);
+            // transition to stopped state after last mirrored offset stored
+            // TODO: now we assume all partitions work without error, we should handle error cases
+            transitionTo(mirrorName, partitionOffsets.keySet(), MirrorState.STOPPED);
+        } else {
+
+
+            Map<String, Set<MirrorMetadataManager.MirroredPartitionMetadata>> topicMetadata = new HashMap<>();
+            partitionOffsets.forEach((tp, partitionOffsetMap) -> {
+                Set<MirrorMetadataManager.MirroredPartitionMetadata> mirroredPartitions = new HashSet<>();
+                partitionOffsetMap.forEach((partition, offset) -> {
+                    mirroredPartitions.add(new MirrorMetadataManager.MirroredPartitionMetadata(partition, null, offset));
+                });
+                topicMetadata.put(tp, mirroredPartitions);
+            });
+            mirrorMetadataManager.writeStatesToRemoteCoordinator(mirrorName, topicMetadata, Set.of(), (res) -> {
+                transitionTo(mirrorName, partitionOffsets.keySet(), MirrorState.STOPPED);
+            });
+        }
+
     }
 
     // luke
