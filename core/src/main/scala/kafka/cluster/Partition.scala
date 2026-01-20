@@ -1215,10 +1215,11 @@ class Partition(val topicPartition: TopicPartition,
 
   // make sure all ISR are all truncated to the expected offset and then move to the MIRRORING state
   def maybeMoveToMirroringState(leaderLog: UnifiedLog, currentTimeMs: Long = time.milliseconds): Boolean = {
-    info("!!! maybeMoveToMirroringState:" + leaderLog)
     if (onTruncation.isEmpty) {
       return false
     }
+
+    info("!!! maybeMoveToMirroringState:" + leaderLog)
 
     if (isUnderMinIsr) {
       trace(s"Not increasing HWM because partition is under min ISR(ISR=${partitionState.isr})")

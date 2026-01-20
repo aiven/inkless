@@ -29,6 +29,7 @@ import org.apache.kafka.clients.admin.FindCoordinatorResult;
 import org.apache.kafka.clients.admin.NewTopic;
 import org.apache.kafka.clients.admin.RemoveTopicsFromMirrorOptions;
 import org.apache.kafka.clients.admin.RemoveTopicsFromMirrorResult;
+import org.apache.kafka.clients.admin.TopicDescription;
 import org.apache.kafka.common.Node;
 import org.apache.kafka.common.errors.TopicExistsException;
 import org.apache.kafka.common.utils.Exit;
@@ -169,6 +170,8 @@ public abstract class MirrorCommand {
             // Connect to source cluster and get matching topics
             Set<String> matchingTopics;
             Map<String, String> topicIds = new HashMap<>();
+            Map<String, Integer> partNums = new HashMap<>();
+            Map<String, Integer> replicationFactors = new HashMap<>();
 
             try (Admin sourceAdmin = Admin.create(mirrorConfigs)) {
                 // List all topics from source cluster and match against the pattern
@@ -178,7 +181,11 @@ public abstract class MirrorCommand {
                 // Fetch topic IDs for all matching topics
                 var topicDescriptions = sourceAdmin.describeTopics(matchingTopics).allTopicNames().get();
                 for (var entry : topicDescriptions.entrySet()) {
-                    topicIds.put(entry.getKey(), entry.getValue().topicId().toString());
+                    String topic = entry.getKey();
+                    TopicDescription desc = entry.getValue();
+                    topicIds.put(topic, desc.topicId().toString());
+                    partNums.put(topic, desc.partitions().size());
+                    replicationFactors.put(topic, desc.partitions().get(0).replicas().size());
                 }
             }
 
@@ -190,9 +197,11 @@ public abstract class MirrorCommand {
                 Set<NewTopic> newTopics = new HashSet<>();
                 for (String topicName : matchingTopics) {
                     String topicId = topicIds.get(topicName);
+                    int partNum = partNums.get(topicName);
+                    int replicationFactor = replicationFactors.get(topicName);
                     NewTopic newTopic = new NewTopic(topicName,
-                        Optional.empty(), // use source topic partitions
-                        opts.replicationFactor(), // use provided replicationFactor or cluster default
+                        Optional.of(partNum), // use source topic partitions
+                        Optional.of((short) replicationFactor),
                         Optional.of(mirrorName),
                         Optional.of(topicId));
                     newTopics.add(newTopic);

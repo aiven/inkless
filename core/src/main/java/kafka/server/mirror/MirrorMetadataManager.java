@@ -202,7 +202,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         this.channelManager = channelManager;
         this.groupCoordinatorSupplier = groupCoordinatorSupplier;
 
-        KafkaClient networkClient = NetworkUtils.buildNetworkClient(name(), config, metrics, time, new LogContext(name()));
+        KafkaClient networkClient = NetworkUtils.buildNetworkClient("MirrorMetadataManager", config, metrics, time, new LogContext(name()));
         this.interBrokerSender = new InterBrokerSender("mirror-inter-sender", networkClient, config.requestTimeoutMs(), Time.SYSTEM);
         interBrokerSender.start();
     }
@@ -288,18 +288,67 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         Node coordinatorNode = coordinatorNodesCache.get(mirrorName);
 
         WriteMirrorStatesRequestData data = new WriteMirrorStatesRequestData().setMirrorName(mirrorName);
-        List<WriteMirrorStatesRequestData.TopicStates> topicStates = new ArrayList<>();
+        List<WriteMirrorStatesRequestData.TopicState> topicStates = new ArrayList<>();
 
         topicMetadata.forEach((t, metadata) -> {
-            List<WriteMirrorStatesRequestData.PartitionStates> partitionStates = new ArrayList<>();
+            List<WriteMirrorStatesRequestData.PartitionState> partitionStates = new ArrayList<>();
             metadata.forEach(m -> {
-                WriteMirrorStatesRequestData.PartitionStates partitionState = new WriteMirrorStatesRequestData.PartitionStates();
+                WriteMirrorStatesRequestData.PartitionState partitionState = new WriteMirrorStatesRequestData.PartitionState();
                 partitionState.setState(m.state().value());
                 partitionState.setLastMirroredOffset(m.offset);
                 partitionState.setPartitionIndex(m.partition);
                 partitionStates.add(partitionState);
             });
-            WriteMirrorStatesRequestData.TopicStates state = new WriteMirrorStatesRequestData.TopicStates().setName(t).setPartitions(partitionStates);
+            WriteMirrorStatesRequestData.TopicState state = new WriteMirrorStatesRequestData.TopicState().setName(t).setPartitions(partitionStates);
+            topicStates.add(state);
+        });
+        data.setTopicsUpdated(topicStates);
+        data.setRemovedTopics(new ArrayList<>(removedTopics));
+
+        // send
+        interBrokerSender.enqueue(new RequestAndCompletionHandler(
+                time.milliseconds(),
+                coordinatorNode,
+                new WriteMirrorStatesRequest.Builder(data),
+                new RequestCompletionHandler() {
+                    @Override
+                    public void onComplete(ClientResponse response) {
+                        if (response.responseBody() instanceof WriteMirrorStatesResponse writeMirrorStatesResponse) {
+                            LOG.info("!!! writeStatesToRemoteCoordinator onComplete: {}", response.responseBody());
+                            onWriteComplete.accept(writeMirrorStatesResponse);
+                        }
+                    }
+                }
+        ));
+    }
+
+    public void readStatesToRemoteCoordinator(String mirrorName,
+                                              Map<String, Set<MirroredPartitionMetadata>> topicMetadata,
+                                               Set<String> removedTopics,
+                                               Consumer<WriteMirrorStatesResponse> onWriteComplete) {
+        LOG.info("!!! writeStatesToRemoteCoordinator: {} {}", mirrorName, topicMetadata);
+
+        if (coordinatorNodesCache.get(mirrorName) == null && findCoordinator(mirrorName).isEmpty()) {
+            // TODO: we should retry it
+            LOG.warn("!!! coordinatorNodesCache is empty, cannot write states to remote coordinator");
+            return;
+        }
+
+        Node coordinatorNode = coordinatorNodesCache.get(mirrorName);
+
+        WriteMirrorStatesRequestData data = new WriteMirrorStatesRequestData().setMirrorName(mirrorName);
+        List<WriteMirrorStatesRequestData.TopicState> topicStates = new ArrayList<>();
+
+        topicMetadata.forEach((t, metadata) -> {
+            List<WriteMirrorStatesRequestData.PartitionState> partitionStates = new ArrayList<>();
+            metadata.forEach(m -> {
+                WriteMirrorStatesRequestData.PartitionState partitionState = new WriteMirrorStatesRequestData.PartitionState();
+                partitionState.setState(m.state().value());
+                partitionState.setLastMirroredOffset(m.offset);
+                partitionState.setPartitionIndex(m.partition);
+                partitionStates.add(partitionState);
+            });
+            WriteMirrorStatesRequestData.TopicState state = new WriteMirrorStatesRequestData.TopicState().setName(t).setPartitions(partitionStates);
             topicStates.add(state);
         });
         data.setTopicsUpdated(topicStates);

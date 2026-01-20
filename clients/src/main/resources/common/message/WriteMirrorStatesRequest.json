@@ -22,11 +22,11 @@
   "flexibleVersions": "0+",
   "fields": [
     { "name": "MirrorName", "type": "string", "versions": "0+", "about": "The mirror name." },
-    { "name": "TopicsUpdated", "type": "[]TopicStates", "versions": "0",
+    { "name": "TopicsUpdated", "type": "[]TopicState", "versions": "0",
       "about": "The topics to be updated.", "fields": [
       { "name": "Name", "type": "string", "versions": "0", "entityType": "topicName",
         "about": "The topic name." },
-      { "name": "Partitions", "type": "[]PartitionStates", "versions": "0",
+      { "name": "Partitions", "type": "[]PartitionState", "versions": "0",
         "about": "The responses per partition.", "fields": [
         { "name": "PartitionIndex", "type": "int32", "versions": "0",
           "about": "The partition index." },

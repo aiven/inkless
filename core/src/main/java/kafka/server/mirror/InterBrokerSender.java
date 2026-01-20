@@ -1,7 +1,6 @@
 package kafka.server.mirror;
 
 import org.apache.kafka.clients.KafkaClient;
-import org.apache.kafka.common.requests.AbstractRequest;
 import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.server.util.InterBrokerSendThread;
 import org.apache.kafka.server.util.RequestAndCompletionHandler;

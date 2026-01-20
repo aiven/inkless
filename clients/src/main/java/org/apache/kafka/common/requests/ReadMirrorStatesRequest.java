@@ -36,14 +36,6 @@ public class ReadMirrorStatesRequest extends AbstractRequest {
             this.data = data;
         }
 
-        public Builder(Set<String> topics) {
-            super(ApiKeys.READ_MIRROR_STATES, ApiKeys.READ_MIRROR_STATES.oldestVersion(),
-                    ApiKeys.READ_MIRROR_STATES.latestVersion());
-            ReadMirrorStatesRequestData data = new ReadMirrorStatesRequestData();
-            data.setTopics(new ArrayList<>(topics));
-            this.data = data;
-        }
-
         @Override
         public ReadMirrorStatesRequest build(short version) {
             return new ReadMirrorStatesRequest(data, version);
