@@ -170,7 +170,7 @@ A single write ahead log file that is rotated and uploaded to object storage whe
 | Replication via ISR          | Replication via storage backend                          |
 | Partition leaders            | Leaderless (any broker can serve)                        |
 | Segments on disk             | Objects in storage                                       |
-| ZooKeeper/KRaft for metadata | KRaft for cluster metadata + Batch Coordinator for order |
+| ZooKeeper/KRaft for metadata | KRaft for cluster metadata + Batch Coordinator for message metadata and order |
 
 ### Compared to Tiered Storage
 
