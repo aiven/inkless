@@ -560,6 +560,9 @@ public class DisklessMigrationHandler {
 
 **Objective:** Enable diskless topics to use 3 actual Kafka replicas while preserving write-to-any semantics.
 
+**Activation:** Controlled by `diskless.managed.rf.enabled` controller config (default: `false`). This allows incremental
+rollout — when enabled, new diskless topics get RF=rack_count; existing topics are unaffected.
+
 #### 4.4.1 Current vs. Proposed Model
 
 **Current Model:**
@@ -621,37 +624,12 @@ public class AppendHandler {
 
 #### 4.4.4 Metadata Transformer Updates
 
-```java
-// storage/inkless/src/main/java/io/aiven/inkless/metadata/InklessTopicMetadataTransformer.java
-public class InklessTopicMetadataTransformer {
-    
-    public void transformClusterMetadata(
-        final String clientId,
-        final Iterable<MetadataResponseData.MetadataResponseTopic> topicMetadata
-    ) {
-        for (final var topic : topicMetadata) {
-            if (!metadataView.isDisklessTopic(topic.name())) {
-                continue;
-            }
-            
-            for (final var partition : topic.partitions()) {
-                if (metadataView.isHybridTopic(topic.name())) {
-                    // Hybrid topic: use actual replica assignment for RLM compatibility
-                    // Leader selection based on partition metadata
-                    // No transformation needed - use real replicas
-                } else {
-                    // Pure diskless: current behavior - route to any broker
-                    int leader = selectLeaderForInklessPartitions(clientId, topic.topicId(), 
-                        partition.partitionIndex());
-                    partition.setLeaderId(leader);
-                    partition.setReplicaNodes(List.of(leader));
-                    partition.setIsrNodes(List.of(leader));
-                }
-            }
-        }
-    }
-}
-```
+> **📄 See [DISKLESS_MANAGED_RF.md](DISKLESS_MANAGED_RF.md)** for the complete routing algorithm, including AZ-priority
+> logic, mode derivation, and fallback behavior.
+
+**Summary:** The transformer derives routing mode from topic config (`remote.storage.enable` + `diskless.enable`) and
+routes requests with AZ-priority. Both modes prefer assigned replicas first; `DISKLESS_ONLY` can fall back to any broker
+when replicas are unavailable, while `DISKLESS_TIERED` stays on replicas only (RLM requires `UnifiedLog` state).
 
 ### 4.5 Stream 5: RLM Integration for Hybrid Topics
 

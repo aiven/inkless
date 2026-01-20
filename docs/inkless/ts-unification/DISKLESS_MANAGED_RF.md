@@ -736,11 +736,16 @@ reassignment tooling remains available.
 ## Broker Behavior
 
 - No replica fetcher threads for diskless topics (invariant: must not regress)
-- No local `Partition` objects (for now — may add for RLM coordination later)
+- No local `Partition` objects for this phase
 - Inkless handlers (`AppendHandler`, `FetchHandler`) serve requests
 
 **Regression guardrail:** diskless topics must not start follower fetchers or attempt log replication. Add tests/metrics to
 ensure diskless partitions never create fetcher state.
+
+**Note on `DISKLESS_TIERED`:** This document defines the routing logic for `DISKLESS_TIERED` (replicas-only, AZ-priority),
+but the full `Partition`/`UnifiedLog` integration for serving tiered data is a **follow-up effort**. See [DESIGN.md](DESIGN.md)
+for the overall tiered storage unification roadmap. This feature (Managed RF) provides the foundation — real KRaft-managed
+replicas — that the tiered integration will build upon.
 
 ---
 
@@ -945,18 +950,17 @@ on synthetic hashing.
 
 ### Phase 1: Topic Creation with Rack-Aware Placement (2 weeks)
 
-1. Modify `ReplicationControlManager` to detect diskless topics
-2. Compute RF = rack count at creation
-3. Implement one-per-rack broker selection
-4. Reject `replicationFactor > 1` and manual assignments
+1. Add `diskless.managed.rf.enabled` controller config (default: `false`)
+2. Modify `ReplicationControlManager` to detect diskless topics when config enabled
+3. Compute RF = rack count at creation
+4. Implement one-per-rack broker selection
+5. Reject `replicationFactor > 1` and manual assignments
 
 ### Phase 2: Transformer Changes (2 weeks)
 
-1. Update `InklessTopicMetadataTransformer` to read KRaft placement
-2. Implement AZ filtering logic
-3. Add offline replica routing — if KRaft replica offline, route to alive replica
-4. Add hash fallback — if all replicas offline, use legacy hash
-5. Add metrics for fallback tracking
+1. Update `InklessTopicMetadataTransformer` to read KRaft placement when RF > 1
+2. Implement AZ-priority routing with mode-aware fallback (`DISKLESS_TIERED` vs `DISKLESS_ONLY`)
+3. Add metrics for fallback tracking
 
 ### Phase 3: Add Partitions Support (1 week)
 
