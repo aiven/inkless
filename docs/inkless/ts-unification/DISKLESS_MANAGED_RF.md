@@ -26,8 +26,8 @@ the tiering pipeline.
 - Real KRaft-managed replicas with rack-aware placement
 
 **At runtime (routing):**
-- **Hybrid/tiered partitions**: metadata returns replica brokers only (tiered reads require `UnifiedLog`)
-- **Diskless-only partitions**: metadata prefers replicas but falls back to any alive broker if all are offline
+- **Hybrid/tiered partitions (`DISKLESS_TIERED`)**: metadata returns replica brokers only (tiered reads require `UnifiedLog`); prefers same-AZ replica, falls back to cross-AZ replica
+- **Diskless-only partitions (`DISKLESS_ONLY`)**: metadata prefers same-AZ replica, but can fall back to any same-AZ broker before going cross-AZ
 
 **Key simplification:** No controller auto-reassignment. Availability is handled by the transformer at routing time, not by
 moving replicas in KRaft. This keeps the design simple while preserving the "always available" property.
@@ -36,7 +36,7 @@ moving replicas in KRaft. This keeps the design simple while preserving the "alw
 
 | Trade-off | Accepted | Rationale |
 |-----------|----------|-----------|
-| KRaft metadata may show offline brokers | Yes | Availability is not blocked; eventual consistency is acceptable |
+| KRaft metadata (internal) may show offline brokers | Yes | This is internal controller state only; clients never see offline brokers — transformer filters them out before responding |
 | `describe topic` may be temporarily stale | Yes | Operator can see actual state via metrics; availability is real |
 | Tiered reads require replica brokers | Yes | Necessary for RLM correctness; can revisit with "tiered reads from any broker" option |
 
@@ -480,8 +480,9 @@ Unlike classic topics where data lives on specific brokers (making KRaft metadat
 **Proposed behavior (RF=rack_count, real replicas):**
 - KRaft stores RF=rack_count with real broker IDs
 - Transformer filters by client AZ from KRaft replicas
-- **If assigned replica is offline → fall back to any alive broker in AZ**
-- Partition is always available (same as today!)
+- **`DISKLESS_TIERED`**: same-AZ replica preferred, cross-AZ replica as fallback (replicas only)
+- **`DISKLESS_ONLY`**: same-AZ replica preferred, same-AZ any broker next, then cross-AZ
+- Partition is always available for `DISKLESS_ONLY` (same as today!)
 - KRaft metadata may be temporarily stale (shows offline broker)
 
 ### Why This Works for Diskless
@@ -563,9 +564,20 @@ This config-based activation enables:
 Existing diskless topics (RF=1) continue to work:
 
 **Immediate availability:**
-- Transformer sees RF=1 with potentially offline broker
-- Falls back to hash-based selection (same as today)
+- Transformer sees RF=1 with a single assigned replica
+- **If replica is online**: routes to that replica (preferred)
+- **If replica is offline**: falls back to hash-based selection (same availability as today)
 - No downtime
+
+**Note on RF=1 as valid managed state:**
+
+RF=1 is a valid outcome of managed RF when brokers have no rack configuration (rack_count=1). In this case:
+- The single replica is still a "real" KRaft-managed replica
+- Routing **prefers** this replica when online
+- Hash fallback only triggers when the replica is offline
+
+This is intentional: even with RF=1, we want deterministic routing to the assigned broker when possible (for metrics,
+debugging, job ownership), while preserving "always available" semantics via fallback.
 
 **Note on RF < rack_count:**
 
@@ -736,50 +748,96 @@ ensure diskless partitions never create fetcher state.
 
 ### Filtering Logic
 
-This is the concrete encoding of the “offset-unaware metadata” constraint described in
-[Tiered Storage (TS) reading — Important Consideration](#tiered-storage-ts-reading--important-consideration) and the “key
-decision” in [Approach Comparison](#approach-comparison).
+This is the concrete encoding of the "offset-unaware metadata" constraint described in
+[Tiered Storage (TS) reading — Important Consideration](#tiered-storage-ts-reading--important-consideration) and the "key
+decision" in [Approach Comparison](#approach-comparison).
+
+**Key principle:** Cross-AZ routing is a **last resort** for both modes. The transformer prioritizes same-AZ brokers first,
+only falling back to cross-AZ when no same-AZ option exists.
+
+**Why `DISKLESS_TIERED` is constrained to replicas:** Tiered Storage reads via `RemoteLogManager` require `UnifiedLog` state,
+which only exists on replica brokers. Therefore, `DISKLESS_TIERED` cannot fall back to non-replica brokers even if they are
+in the same AZ — doing so would result in fetch failures for tiered data.
+
+**Scope note:** This feature defines the routing logic for both modes, but `DISKLESS_TIERED` integration with
+`Partition`/`UnifiedLog`/RLM is a **follow-up effort** (see [Broker Behavior](#broker-behavior)). The routing logic is
+defined here to ensure the transformer design is forward-compatible.
+
+**Future flexibility:** If [Tiered Storage reads from any broker](#decision-option-keep-alive-allow-tiered-storage-rlm-reads-from-any-broker)
+is implemented (making RLM reads stateless/proxy-able), then `DISKLESS_TIERED` could adopt the same fallback flexibility as
+`DISKLESS_ONLY`. This enhancement can be safely built on top of this feature foundation.
+
+| Priority | `DISKLESS_TIERED` (replicas only) | `DISKLESS_ONLY` (any broker allowed) |
+|----------|-----------------------------------|--------------------------------------|
+| 1st | Replica in client's AZ | Replica in client's AZ |
+| 2nd | Replica in other AZ (cross-AZ) | Any broker in client's AZ |
+| 3rd | Unavailable (Kafka semantics) | Replica in other AZ (cross-AZ) |
+| 4th | — | Any broker in any AZ (absolute last resort) |
 
 ```
 FOR each diskless partition:
   # Important: Metadata responses are offset-unaware, so routing must be
   # conservative when tiered reads are possible.
-  mode = migrationState(tp)   # DISKLESS_ONLY or DISKLESS_TIERED (has tiered data)
+  
+  # Mode is derived from topic config:
+  #   - DISKLESS_TIERED: remote.storage.enable=true AND diskless.enable=true
+  #   - DISKLESS_ONLY:   remote.storage.enable=false AND diskless.enable=true
+  mode = IF topic.remote.storage.enable THEN DISKLESS_TIERED ELSE DISKLESS_ONLY
 
   assigned_replicas = KRaft replica set
   alive_replicas = assigned_replicas ∩ alive_brokers
+  alive_replicas_in_client_az = alive_replicas ∩ brokers_in(clientAZ)
+  all_alive_brokers_in_client_az = alive_brokers ∩ brokers_in(clientAZ)
   
   IF mode == DISKLESS_TIERED:
     # Tiered reads may be required -> must stay on replicas that have UnifiedLog/RLM state
-    IF alive_replicas is not empty:
-      RETURN alive_replicas (prefer clientAZ, else cross-AZ)
+    # Priority: same-AZ replica > cross-AZ replica > unavailable
+    
+    IF alive_replicas_in_client_az is not empty:
+      RETURN alive_replicas_in_client_az           # Best: replica in same AZ
+    
+    ELSE IF alive_replicas is not empty:
+      # No replica in client AZ; use replica in other AZ (cross-AZ, but still a replica)
+      RETURN alive_replicas
+    
     ELSE:
-      # Yes, this loses availability — but tiered reads REQUIRE replica brokers.
-      # This is standard Kafka semantics: partition unavailable until replica returns.
+      # All replicas offline — partition unavailable (standard Kafka semantics)
+      # Tiered reads REQUIRE replica brokers with UnifiedLog/RLM state.
+      # Cannot fall back to non-replica brokers even if they're in the same AZ.
       # Note: This scenario is rare (all replicas down) and temporary.
-      # Rolling restarts or upgrades replacing nodes won't hit this path — at least one replica is alive.
       RETURN assigned_replicas (partition unavailable)
+  
   ELSE:  # DISKLESS_ONLY
     # Diskless-only: any broker can serve, so we can preserve "always available"
-    IF alive_replicas is not empty:
-      # Normal case: use KRaft placement
-      IF any alive_replica in clientAZ:
-        RETURN local replica (AZ-aware routing)
-      ELSE:
-        RETURN all alive_replicas (cross-AZ fallback)
+    # Priority: same-AZ replica > same-AZ any broker > cross-AZ replica > cross-AZ any broker
+    
+    IF alive_replicas_in_client_az is not empty:
+      RETURN alive_replicas_in_client_az           # Best: assigned replica in same AZ
+    
+    ELSE IF all_alive_brokers_in_client_az is not empty:
+      # Assigned replica in client AZ is offline, but other brokers in AZ are alive
+      RETURN hash-based selection from all_alive_brokers_in_client_az
+    
+    ELSE IF alive_replicas is not empty:
+      # No brokers in client AZ available; use replica in other AZ (cross-AZ)
+      RETURN alive_replicas
+    
     ELSE:
-      # All assigned replicas offline: fall back to hash
-      RETURN hash-based selection from all alive brokers in clientAZ
+      # All assigned replicas offline AND no brokers in client AZ
+      # Absolute last resort: any alive broker (cross-AZ, non-replica)
+      RETURN hash-based selection from all alive_brokers
 ```
 
 ### Key Properties
 
-1. **Instant availability (`DISKLESS_ONLY`)**: No waiting for controller; falls back to hash if all replicas offline
-2. **AZ-aware when possible**: Uses KRaft placement if alive
-3. **Graceful degradation (`DISKLESS_ONLY`)**: Falls back to hash-based selection if needed
-4. **Tiered-safe routing (`DISKLESS_TIERED`)**: Only replica brokers are returned (RLM requires `UnifiedLog`)
-5. **Availability trade-off (`DISKLESS_TIERED`)**: If all replicas offline, partition is unavailable (standard Kafka semantics)
-6. **State-dependent semantics**: Hybrid/tiered behaves like Kafka; diskless-only is always available
+1. **Cross-AZ is last resort (both modes)**: Same-AZ routing is always preferred; cross-AZ only when no same-AZ option exists
+2. **Consistent AZ priority**: Both `DISKLESS_TIERED` and `DISKLESS_ONLY` try same-AZ first, then fall back to cross-AZ
+3. **Instant availability (`DISKLESS_ONLY`)**: No waiting for controller; multiple fallback tiers including non-replica brokers
+4. **Graceful degradation (`DISKLESS_ONLY`)**: Falls back through: same-AZ replica → same-AZ any broker → cross-AZ replica → cross-AZ any broker
+5. **Tiered-safe routing (`DISKLESS_TIERED`)**: Only replica brokers are returned (RLM requires `UnifiedLog`); same-AZ replica preferred, then cross-AZ replica
+6. **Availability trade-off (`DISKLESS_TIERED`)**: If all replicas offline, partition is unavailable — cannot use non-replica brokers even in same AZ (standard Kafka semantics)
+7. **State-dependent semantics**: Both modes prioritize AZ locality; difference is whether non-replica fallback is allowed
+8. **RF=1 handled correctly**: The same logic applies to RF=1 — the single replica is preferred when online; hash fallback only when that replica is offline
 
 ---
 
