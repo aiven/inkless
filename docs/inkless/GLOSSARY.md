@@ -26,6 +26,9 @@ Metadata that describes the location of batches in object storage, including:
 - Offset range
 - Timestamp information
 
+**Batch Coordinate Cache**
+A local in-memory cache (Caffeine) on each broker that stores the metadata of recently produced batches. It serves as a metadata cache for improving the performance of fetches. Configured via `inkless.consume.batch.coordinate.cache.*` properties.
+
 **Batch Index**
 Another term for the Batch Coordinator's storage layer. In the PostgreSQL implementation, this refers to the database tables that store batch coordinates.
 
