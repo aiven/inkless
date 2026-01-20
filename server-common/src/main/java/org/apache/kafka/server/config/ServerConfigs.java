@@ -143,15 +143,13 @@ public class ServerConfigs {
         "When enabled, topics can have their diskless.enable config changed from false to true.";
 
     // When enabled, diskless topics are created with RF = rack_count (one replica per rack).
-    // If brokers are registered but none have a rack configured, RF defaults to 1.
-    // If no brokers are registered, topic creation fails with BROKER_NOT_AVAILABLE.
+    // If no brokers have a rack configured, RF defaults to 1.
     // When disabled (default), diskless topics use legacy RF=1 behavior.
-    // This config only affects topic creation.
+    // This config only affects topic creation; routing is handled by the metadata transformer.
     public static final String DISKLESS_MANAGED_REPLICAS_ENABLE_CONFIG = "diskless.managed.rf.enable";
     public static final boolean DISKLESS_MANAGED_REPLICAS_ENABLE_DEFAULT = false;
     public static final String DISKLESS_MANAGED_REPLICAS_ENABLE_DOC = "When enabled, new diskless topics are created " +
         "with replication factor equal to the number of racks (one replica per rack). " +
-        "If brokers are registered but none have a rack configured, RF defaults to 1. " +
         "When disabled, diskless topics use legacy RF=1 behavior. " +
         "This config only affects topic creation.";
 
