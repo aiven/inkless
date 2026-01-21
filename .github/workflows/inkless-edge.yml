@@ -85,7 +85,13 @@ jobs:
       - name: Extract Kafka version from distribution
         id: kafka-version
         run: |
-          TARBALL=$(ls core/build/distributions/kafka_2.13-*.tgz | head -1)
+          shopt -s nullglob
+          TARBALLS=(core/build/distributions/kafka_2.13-*.tgz)
+          if [ ${#TARBALLS[@]} -eq 0 ]; then
+            echo "::error::No Kafka distribution tarball (kafka_2.13-*.tgz) found in core/build/distributions"
+            exit 1
+          fi
+          TARBALL="${TARBALLS[0]}"
           VERSION=$(basename "$TARBALL" | sed 's/kafka_2.13-\(.*\)\.tgz/\1/')
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
