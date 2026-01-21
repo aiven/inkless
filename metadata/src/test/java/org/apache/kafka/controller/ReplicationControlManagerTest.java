@@ -180,6 +180,7 @@ public class ReplicationControlManagerTest {
             private final Map<String, Object> staticConfig = new HashMap<>();
             private boolean defaultDisklessEnable = false;
             private boolean disklessStorageSystemEnable = false;
+            private boolean disklessManagedReplicasEnable = false;
 
             Builder setCreateTopicPolicy(CreateTopicPolicy createTopicPolicy) {
                 this.createTopicPolicy = Optional.of(createTopicPolicy);
@@ -216,6 +217,11 @@ public class ReplicationControlManagerTest {
                 return this;
             }
 
+            Builder setDisklessManagedReplicasEnabled(boolean disklessManagedReplicasEnable) {
+                this.disklessManagedReplicasEnable = disklessManagedReplicasEnable;
+                return this;
+            }
+
             ReplicationControlTestContext build() {
                 return new ReplicationControlTestContext(metadataVersion,
                     createTopicPolicy,
@@ -223,7 +229,8 @@ public class ReplicationControlManagerTest {
                     isElrEnabled,
                     staticConfig,
                     defaultDisklessEnable,
-                    disklessStorageSystemEnable);
+                    disklessStorageSystemEnable,
+                    disklessManagedReplicasEnable);
             }
         }
 
@@ -250,7 +257,8 @@ public class ReplicationControlManagerTest {
             boolean isElrEnabled,
             Map<String, Object> staticConfig,
             boolean defaultDisklessEnable,
-            boolean disklessStorageSystemEnable
+            boolean disklessStorageSystemEnable,
+            boolean disklessManagedReplicasEnable
         ) {
             this.time = time;
             this.featureControl = new FeatureControlManager.Builder().
@@ -296,6 +304,7 @@ public class ReplicationControlManagerTest {
                 setFeatureControl(featureControl).
                 setDefaultDisklessEnable(defaultDisklessEnable).
                 setDisklessStorageSystemEnabled(disklessStorageSystemEnable).
+                setDisklessManagedReplicasEnabled(disklessManagedReplicasEnable).
                 build();
             clusterControl.activate();
         }
@@ -4278,4 +4287,743 @@ public class ReplicationControlManagerTest {
         }
     }
 
+    @Nested
+    // Tests Diskless managed-replicas
+    class DisklessManagedReplicasTests {
+        @ParameterizedTest
+        @CsvSource({
+            "false,false",
+            "false,",
+            "true,false",
+        })
+        public void testCreatesClassicTopicWhenDisklessDisabled(boolean logDisklessEnableServerConfig, String disklessEnableTopicConfig) {
+            ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+                .setDefaultDisklessEnable(logDisklessEnableServerConfig)
+                .setDisklessStorageSystemEnabled(true)
+                .setDisklessManagedReplicasEnabled(true)
+                .build();
+            ReplicationControlManager replicationControl = ctx.replicationControl;
+            // Given a request to create a kafka topic with diskless disabled
+            CreateTopicsRequestData request = new CreateTopicsRequestData();
+            CreateTopicsRequestData.CreatableTopicConfigCollection creatableTopicConfigs = new CreateTopicsRequestData.CreatableTopicConfigCollection();
+            if (disklessEnableTopicConfig != null) {
+                creatableTopicConfigs.add(new CreateTopicsRequestData.CreatableTopicConfig()
+                    .setName(DISKLESS_ENABLE_CONFIG)
+                    .setValue(disklessEnableTopicConfig));
+            }
+
+            request.topics().add(new CreatableTopic().setName("foo").
+                setNumPartitions(-1).setReplicationFactor((short) -1)
+                .setConfigs(creatableTopicConfigs));
+
+            // Given all brokers unfenced
+            ControllerRequestContext requestContext = anonymousContextFor(ApiKeys.CREATE_TOPICS);
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+
+            // When creating a topic with diskless enabled
+            ControllerResult<CreateTopicsResponseData> result =
+                replicationControl.createTopics(requestContext, request, Collections.singleton("foo"));
+            // Then the topic creation should succeed, regardless of the RF
+            CreateTopicsResponseData expectedResponse = new CreateTopicsResponseData();
+            expectedResponse.topics().add(new CreatableTopicResult().setName("foo").
+                setNumPartitions(1).setReplicationFactor((short) 3).
+                setErrorMessage(null).setErrorCode((short) 0).
+                setTopicId(result.response().topics().find("foo").topicId()));
+            assertEquals(expectedResponse, withoutConfigs(result.response()));
+            final List<ConfigRecord> disklessConfigRecords = result.records().stream()
+                .filter(m -> m.message() instanceof ConfigRecord)
+                .map(m -> (ConfigRecord) m.message())
+                .filter(c -> c.name().equals(DISKLESS_ENABLE_CONFIG))
+                .toList();
+            assertEquals(1, disklessConfigRecords.size());
+            // Then always diskless is disabled
+            assertTrue(disklessConfigRecords.stream().allMatch(c -> c.value().equals("false")));
+
+            // Given the topic is registered
+            ctx.replay(result.records());
+            assertEquals(new PartitionRegistration.Builder().setReplicas(new int[] {1, 2, 0}).
+                    setDirectories(new Uuid[] {
+                        Uuid.fromString("TESTBROKER00001DIRAAAA"),
+                        Uuid.fromString("TESTBROKER00002DIRAAAA"),
+                        Uuid.fromString("TESTBROKER00000DIRAAAA")
+                    }).
+                    setIsr(new int[] {1, 2, 0}).setLeader(1).setLeaderRecoveryState(LeaderRecoveryState.RECOVERED).setLeaderEpoch(0).setPartitionEpoch(0).build(),
+                replicationControl.getPartition(
+                    ((TopicRecord) result.records().get(0).message()).topicId(), 0));
+
+            // When creating a topic with diskless enabled and already exists
+            ControllerResult<CreateTopicsResponseData> result1 =
+                replicationControl.createTopics(requestContext, request, Collections.singleton("foo"));
+            CreateTopicsResponseData expectedResponse1 = new CreateTopicsResponseData();
+            // Then the topic creation should fail with TOPIC_ALREADY_EXISTS error
+            expectedResponse1.topics().add(new CreatableTopicResult().setName("foo").
+                setErrorCode(Errors.TOPIC_ALREADY_EXISTS.code()).
+                setErrorMessage("Topic 'foo' already exists."));
+            assertEquals(expectedResponse1, result1.response());
+        }
+
+        @ParameterizedTest
+        @CsvSource({
+            "true,true",
+            "true,",
+            "false,true",
+        })
+        public void testCreateDisklessTopic_noRacks(boolean logDisklessEnableServerConfig, String disklessEnableTopicConfig) {
+            ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+                .setDefaultDisklessEnable(logDisklessEnableServerConfig)
+                .setDisklessStorageSystemEnabled(true)
+                .setDisklessManagedReplicasEnabled(true)
+                .build();
+            ReplicationControlManager replicationControl = ctx.replicationControl;
+            // Given a request to create a kafka topic with diskless enabled
+            CreateTopicsRequestData request = new CreateTopicsRequestData();
+            CreateTopicsRequestData.CreatableTopicConfigCollection creatableTopicConfigs = new CreateTopicsRequestData.CreatableTopicConfigCollection();
+            if (disklessEnableTopicConfig != null) {
+                creatableTopicConfigs.add(new CreateTopicsRequestData.CreatableTopicConfig()
+                    .setName(DISKLESS_ENABLE_CONFIG)
+                    .setValue(disklessEnableTopicConfig));
+            }
+            request.topics().add(new CreatableTopic().setName("foo").
+                setNumPartitions(-1).setReplicationFactor((short) -1)
+                .setConfigs(creatableTopicConfigs));
+
+            // When creating a topic without brokers available
+            ControllerRequestContext requestContext = anonymousContextFor(ApiKeys.CREATE_TOPICS);
+            ControllerResult<CreateTopicsResponseData> result =
+                replicationControl.createTopics(requestContext, request, Set.of("foo"));
+            // Then the topic creation should fail with BROKER_NOT_AVAILABLE error
+            CreateTopicsResponseData expectedResponse = new CreateTopicsResponseData();
+            expectedResponse.topics().add(new CreatableTopicResult().setName("foo").
+                setErrorCode(Errors.BROKER_NOT_AVAILABLE.code()).
+                setErrorMessage("No brokers available to create diskless topic."));
+            assertEquals(expectedResponse, withoutConfigs(result.response()));
+
+            // Given brokers are registered
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0);
+
+            // When creating a topic with diskless enabled
+            ControllerResult<CreateTopicsResponseData> result2 =
+                replicationControl.createTopics(requestContext, request, Set.of("foo"));
+            // Then the topic creation should succeed, regardless of fenced brokers
+            CreateTopicsResponseData expectedResponse2 = new CreateTopicsResponseData();
+            expectedResponse2.topics().add(new CreatableTopicResult().setName("foo").
+                setNumPartitions(1).setReplicationFactor((short) 1).
+                setErrorMessage(null).setErrorCode((short) 0).
+                setTopicId(result2.response().topics().find("foo").topicId()));
+            CreateTopicsResponseData response = result2.response();
+            assertEquals(expectedResponse2, withoutConfigs(response));
+
+            // Given all brokers unfenced
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+
+            // When creating a topic with diskless enabled
+            ControllerResult<CreateTopicsResponseData> result3 =
+                replicationControl.createTopics(requestContext, request, Set.of("foo"));
+            // Then the topic creation should succeed, regardless of the RF
+            CreateTopicsResponseData expectedResponse3 = new CreateTopicsResponseData();
+            expectedResponse3.topics().add(new CreatableTopicResult().setName("foo").
+                setNumPartitions(1).setReplicationFactor((short) 1).
+                setErrorMessage(null).setErrorCode((short) 0).
+                setTopicId(result3.response().topics().find("foo").topicId()));
+            assertEquals(expectedResponse3, withoutConfigs(result3.response()));
+            final List<ConfigRecord> disklessConfigRecords = result3.records().stream()
+                .filter(m -> m.message() instanceof ConfigRecord)
+                .map(m -> (ConfigRecord) m.message())
+                .filter(c -> c.name().equals(DISKLESS_ENABLE_CONFIG))
+                .toList();
+            assertEquals(1, disklessConfigRecords.size());
+            // Then diskless is always enabled
+            assertTrue(disklessConfigRecords.stream().allMatch(c -> c.value().equals("true")));
+
+            // Given the topic is registered
+            ctx.replay(result3.records());
+            assertEquals(
+                new PartitionRegistration.Builder().setReplicas(new int[] {1}).
+                    setDirectories(new Uuid[] {
+                        Uuid.fromString("TESTBROKER00001DIRAAAA"),
+                    }).
+                    setIsr(new int[] {1})
+                    .setLeader(1)
+                    .setLeaderRecoveryState(LeaderRecoveryState.RECOVERED)
+                    .setLeaderEpoch(0)
+                    .setPartitionEpoch(0)
+                    .build(),
+                replicationControl.getPartition(((TopicRecord) result3.records().get(0).message()).topicId(), 0));
+
+            // When creating a topic with diskless enabled and already exists
+            ControllerResult<CreateTopicsResponseData> result4 =
+                replicationControl.createTopics(requestContext, request, Set.of("foo"));
+            CreateTopicsResponseData expectedResponse4 = new CreateTopicsResponseData();
+            // Then the topic creation should fail with TOPIC_ALREADY_EXISTS error
+            expectedResponse4.topics().add(new CreatableTopicResult().setName("foo").
+                setErrorCode(Errors.TOPIC_ALREADY_EXISTS.code()).
+                setErrorMessage("Topic 'foo' already exists."));
+            assertEquals(expectedResponse4, result4.response());
+        }
+
+        @ParameterizedTest
+        @CsvSource({
+            "true,true",
+            "true,",
+            "false,true",
+        })
+        public void testCreateDisklessTopic_withRacks(boolean logDisklessEnableServerConfig, String disklessEnableTopicConfig) {
+            ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+                .setDefaultDisklessEnable(logDisklessEnableServerConfig)
+                .setDisklessStorageSystemEnabled(true)
+                .setDisklessManagedReplicasEnabled(true)
+                .build();
+            ReplicationControlManager replicationControl = ctx.replicationControl;
+            // Given a request to create a kafka topic with diskless enabled
+            CreateTopicsRequestData request = new CreateTopicsRequestData();
+            CreateTopicsRequestData.CreatableTopicConfigCollection creatableTopicConfigs = new CreateTopicsRequestData.CreatableTopicConfigCollection();
+            if (disklessEnableTopicConfig != null) {
+                creatableTopicConfigs.add(new CreateTopicsRequestData.CreatableTopicConfig()
+                    .setName(DISKLESS_ENABLE_CONFIG)
+                    .setValue(disklessEnableTopicConfig));
+            }
+            request.topics().add(new CreatableTopic().setName("foo").
+                setNumPartitions(-1).setReplicationFactor((short) -1)
+                .setConfigs(creatableTopicConfigs));
+
+            // When creating a topic without brokers available
+            ControllerRequestContext requestContext = anonymousContextFor(ApiKeys.CREATE_TOPICS);
+            ControllerResult<CreateTopicsResponseData> result =
+                replicationControl.createTopics(requestContext, request, Set.of("foo"));
+            // Then the topic creation should fail with BROKER_NOT_AVAILABLE error
+            CreateTopicsResponseData expectedResponse = new CreateTopicsResponseData();
+            expectedResponse.topics().add(new CreatableTopicResult().setName("foo").
+                setErrorCode(Errors.BROKER_NOT_AVAILABLE.code()).
+                setErrorMessage("No brokers available to create diskless topic."));
+            assertEquals(expectedResponse, withoutConfigs(result.response()));
+
+            // Given brokers are registered
+            ctx.registerBrokersWithRacks(0, "a", 1, "b", 2, "c");
+            ctx.unfenceBrokers(0);
+
+            // When creating a topic with diskless enabled
+            ControllerResult<CreateTopicsResponseData> result2 =
+                replicationControl.createTopics(requestContext, request, Set.of("foo"));
+            // Then the topic creation should succeed, regardless of fenced brokers
+            CreateTopicsResponseData expectedResponse2 = new CreateTopicsResponseData();
+            expectedResponse2.topics().add(new CreatableTopicResult().setName("foo").
+                setNumPartitions(1).setReplicationFactor((short) 3).
+                setErrorMessage(null).setErrorCode((short) 0).
+                setTopicId(result2.response().topics().find("foo").topicId()));
+            CreateTopicsResponseData response = result2.response();
+            assertEquals(expectedResponse2, withoutConfigs(response));
+
+            // Given all brokers unfenced
+            ctx.registerBrokersWithRacks(0, "a", 1, "b", 2, "c");
+            ctx.unfenceBrokers(0, 1, 2);
+
+            // When creating a topic with diskless enabled
+            ControllerResult<CreateTopicsResponseData> result3 =
+                replicationControl.createTopics(requestContext, request, Set.of("foo"));
+            // Then the topic creation should succeed, regardless of the RF
+            CreateTopicsResponseData expectedResponse3 = new CreateTopicsResponseData();
+            expectedResponse3.topics().add(new CreatableTopicResult().setName("foo").
+                setNumPartitions(1).setReplicationFactor((short) 3).
+                setErrorMessage(null).setErrorCode((short) 0).
+                setTopicId(result3.response().topics().find("foo").topicId()));
+            assertEquals(expectedResponse3, withoutConfigs(result3.response()));
+            final List<ConfigRecord> disklessConfigRecords = result3.records().stream()
+                .filter(m -> m.message() instanceof ConfigRecord)
+                .map(m -> (ConfigRecord) m.message())
+                .filter(c -> c.name().equals(DISKLESS_ENABLE_CONFIG))
+                .toList();
+            assertEquals(1, disklessConfigRecords.size());
+            // Then diskless is always enabled
+            assertTrue(disklessConfigRecords.stream().allMatch(c -> c.value().equals("true")));
+
+            // Given the topic is registered
+            ctx.replay(result3.records());
+            assertEquals(
+                new PartitionRegistration.Builder().setReplicas(new int[] {0, 1, 2}).
+                    setDirectories(new Uuid[] {
+                        Uuid.fromString("TESTBROKER00000DIRAAAA"),
+                        Uuid.fromString("TESTBROKER00001DIRAAAA"),
+                        Uuid.fromString("TESTBROKER00002DIRAAAA"),
+                    }).
+                    setIsr(new int[] {0, 1, 2})
+                    .setLeader(0)
+                    .setLeaderRecoveryState(LeaderRecoveryState.RECOVERED)
+                    .setLeaderEpoch(0)
+                    .setPartitionEpoch(0)
+                    .build(),
+                replicationControl.getPartition(((TopicRecord) result3.records().get(0).message()).topicId(), 0));
+
+            // When creating a topic with diskless enabled and already exists
+            ControllerResult<CreateTopicsResponseData> result4 =
+                replicationControl.createTopics(requestContext, request, Set.of("foo"));
+            CreateTopicsResponseData expectedResponse4 = new CreateTopicsResponseData();
+            // Then the topic creation should fail with TOPIC_ALREADY_EXISTS error
+            expectedResponse4.topics().add(new CreatableTopicResult().setName("foo").
+                setErrorCode(Errors.TOPIC_ALREADY_EXISTS.code()).
+                setErrorMessage("Topic 'foo' already exists."));
+            assertEquals(expectedResponse4, result4.response());
+        }
+
+        @ParameterizedTest
+        @CsvSource({
+            "1, -2, INVALID_REPLICATION_FACTOR",
+            "1, 0, INVALID_REPLICATION_FACTOR",
+            "1, 2, INVALID_REPLICATION_FACTOR",
+            "-2, 1, INVALID_PARTITIONS",
+            "0, 1, INVALID_PARTITIONS",
+        })
+        public void testCreateDisklessTopicWithInvalidInput(int numPartitions, short replicationFactor, String expectedError) {
+            ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+                .setDisklessStorageSystemEnabled(true)
+                .setDisklessManagedReplicasEnabled(true)
+                .build();
+            ReplicationControlManager replicationControl = ctx.replicationControl;
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+
+            ControllerRequestContext requestContext = anonymousContextFor(ApiKeys.CREATE_TOPICS);
+
+            CreateTopicsRequestData.CreatableTopicConfigCollection disklessConfig =
+                new CreateTopicsRequestData.CreatableTopicConfigCollection();
+            disklessConfig.add(
+                new CreateTopicsRequestData.CreatableTopicConfig()
+                    .setName("diskless.enable")
+                    .setValue("true")
+            );
+
+            CreateTopicsRequestData request1 = new CreateTopicsRequestData();
+            request1.topics().add(new CreatableTopic().setName("baz")
+                .setNumPartitions(numPartitions).setReplicationFactor(replicationFactor)
+                .setConfigs(disklessConfig));
+
+            ControllerResult<CreateTopicsResponseData> result1 =
+                replicationControl.createTopics(requestContext, request1, Set.of("baz"));
+            assertEquals(Errors.valueOf(expectedError).code(), result1.response().topics().find("baz").errorCode());
+            assertEquals(List.of(), result1.records());
+        }
+
+        @ParameterizedTest
+        @CsvSource({
+            "true,false",
+            "true,"
+            // This case is not valid because no internal topic should be explicitly created with diskless enabled.
+            // Tested in testInvalidDisklessTopicCreationForInternalTopics
+            // "false,true",
+        })
+        public void testCreateInternalTopicWithDisklessEnabled(boolean logDisklessEnableServerConfig, String disklessEnableTopicConfig) {
+            // Given a setup with diskless defined at the server level
+            ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+                .setDefaultDisklessEnable(logDisklessEnableServerConfig)
+                .setDisklessStorageSystemEnabled(true)
+                .setDisklessManagedReplicasEnabled(true)
+                .build();
+            ReplicationControlManager replicationControl = ctx.replicationControl;
+            // Given an internal kafka topic with diskless enabled
+            CreateTopicsRequestData request = new CreateTopicsRequestData();
+            CreateTopicsRequestData.CreatableTopicConfigCollection creatableTopicConfigs = new CreateTopicsRequestData.CreatableTopicConfigCollection();
+            if (disklessEnableTopicConfig != null) {
+                // If the diskless enable config is set, it should be added to the topic configs
+                creatableTopicConfigs.add(new CreateTopicsRequestData.CreatableTopicConfig()
+                    .setName(DISKLESS_ENABLE_CONFIG)
+                    .setValue(disklessEnableTopicConfig));
+            }
+            final String internalTopic = Topic.GROUP_METADATA_TOPIC_NAME;
+            request.topics().add(new CreatableTopic().setName(internalTopic).
+                setNumPartitions(-1).setReplicationFactor((short) -1)
+                .setConfigs(creatableTopicConfigs));
+            // Given all brokers unfenced
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+            // When creating an internal topic with diskless enabled, disable it
+            ControllerRequestContext requestContext = anonymousContextFor(ApiKeys.CREATE_TOPICS);
+            ControllerResult<CreateTopicsResponseData> result =
+                replicationControl.createTopics(requestContext, request, Set.of(internalTopic));
+            CreateTopicsResponseData expectedResponse = new CreateTopicsResponseData();
+            // Then the topic creation should succeed with diskless disabled for internal topics
+            expectedResponse.topics().add(
+                new CreatableTopicResult()
+                    .setName(internalTopic)
+                    .setNumPartitions(1)
+                    .setReplicationFactor((short) 3)
+                    .setErrorMessage(null).setErrorCode((short) 0)
+                    .setTopicId(result.response().topics().find(internalTopic).topicId()));
+            assertEquals(expectedResponse, withoutConfigs(result.response()));
+            assertTrue(result.response().topics().find(internalTopic)
+                .configs()
+                .stream()
+                .noneMatch(c -> c.name().equals(DISKLESS_ENABLE_CONFIG)));
+            final List<ConfigRecord> disklessConfigRecords = result.records().stream()
+                .filter(m -> m.message() instanceof ConfigRecord)
+                .map(m -> (ConfigRecord) m.message())
+                .filter(c -> c.name().equals(DISKLESS_ENABLE_CONFIG))
+                .toList();
+            // Then always diskless is disabled
+            assertTrue(disklessConfigRecords.stream().allMatch(c -> c.value().equals("false")));
+        }
+
+        @Test
+        public void testInvalidDisklessTopicCreationForInternalTopics() {
+            // Given a setup with diskless defined at the server level
+            ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+                .setDisklessStorageSystemEnabled(true)
+                .setDisklessManagedReplicasEnabled(true)
+                .build();
+            ReplicationControlManager replicationControl = ctx.replicationControl;
+            // Given an internal kafka topic with diskless enabled
+            final String internalTopic = Topic.GROUP_METADATA_TOPIC_NAME;
+            CreateTopicsRequestData request = new CreateTopicsRequestData();
+            CreateTopicsRequestData.CreatableTopicConfigCollection topicConfigs = new CreateTopicsRequestData.CreatableTopicConfigCollection();
+            topicConfigs.add(new CreateTopicsRequestData.CreatableTopicConfig()
+                .setName(DISKLESS_ENABLE_CONFIG)
+                .setValue("true"));
+            request.topics().add(new CreatableTopic().setName(internalTopic).setConfigs(topicConfigs));
+            // Given all brokers unfenced
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+            // When creating an internal topic with diskless enabled, disable it
+            ControllerRequestContext requestContext = anonymousContextFor(ApiKeys.CREATE_TOPICS);
+            ControllerResult<CreateTopicsResponseData> result =
+                replicationControl.createTopics(requestContext, request, Set.of(internalTopic));
+            CreateTopicsResponseData expectedResponse = new CreateTopicsResponseData();
+            // Then the topic creation should fail with TOPIC_ALREADY_EXISTS error
+            expectedResponse.topics().add(
+                new CreatableTopicResult()
+                    .setName(internalTopic)
+                    .setErrorCode(Errors.INVALID_REQUEST.code())
+                    .setErrorMessage("Internal topics cannot be diskless topics."));
+            assertEquals(expectedResponse, withoutConfigs(result.response()));
+        }
+
+        @ParameterizedTest
+        @CsvSource({
+            "false,true",
+            "true,"
+        })
+        public void testInvalidDisklessTopicCreationWithoutSystemEnabled(boolean logDisklessEnableServerConfig, String disklessEnableTopicConfig) {
+            // Given a setup with diskless defined at the server level
+            ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+                .setDisklessStorageSystemEnabled(false)
+                .setDefaultDisklessEnable(logDisklessEnableServerConfig)
+                .setDisklessManagedReplicasEnabled(true)
+                .build();
+            ReplicationControlManager replicationControl = ctx.replicationControl;
+            // Given an internal kafka topic with diskless enabled
+            CreateTopicsRequestData request = new CreateTopicsRequestData();
+            CreateTopicsRequestData.CreatableTopicConfigCollection topicConfigs = new CreateTopicsRequestData.CreatableTopicConfigCollection();
+            if (disklessEnableTopicConfig != null) {
+                // If the diskless enable config is set, it should be added to the topic configs
+                topicConfigs.add(new CreateTopicsRequestData.CreatableTopicConfig()
+                    .setName(DISKLESS_ENABLE_CONFIG)
+                    .setValue(disklessEnableTopicConfig));
+            }
+            final String topicName = "foo";
+            request.topics().add(new CreatableTopic().setName(topicName).setConfigs(topicConfigs));
+            // Given all brokers unfenced
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+            // When creating an internal topic with diskless enabled, disable it
+            ControllerRequestContext requestContext = anonymousContextFor(ApiKeys.CREATE_TOPICS);
+            ControllerResult<CreateTopicsResponseData> result =
+                replicationControl.createTopics(requestContext, request, Set.of(topicName));
+            CreateTopicsResponseData expectedResponse = new CreateTopicsResponseData();
+            // Then the topic creation should fail with TOPIC_ALREADY_EXISTS error
+            expectedResponse.topics().add(
+                new CreatableTopicResult()
+                    .setName(topicName)
+                    .setErrorCode(Errors.INVALID_REQUEST.code())
+                    .setErrorMessage("Cannot create diskless topics when the diskless storage system is disabled. Please enable the diskless storage system to create diskless topics."));
+            assertEquals(expectedResponse, withoutConfigs(result.response()));
+        }
+
+        @Test
+        public void testReassignDisklessPartitions() {
+            MetadataVersion metadataVersion = MetadataVersion.latestTesting();
+            ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+                .setMetadataVersion(metadataVersion)
+                .setDisklessStorageSystemEnabled(true)
+                .setDisklessManagedReplicasEnabled(true)
+                .build();
+
+            ReplicationControlManager replication = ctx.replicationControl;
+            ctx.registerBrokers(0, 1);
+            ctx.unfenceBrokers(0, 1);
+
+            String topic = "foo";
+            ctx.createTestTopic(topic, new int[][] {new int[] {0}}, Map.of(DISKLESS_ENABLE_CONFIG, "true"), (short) 0);
+
+            // No change in the replication factor.
+            ControllerResult<AlterPartitionReassignmentsResponseData> alterResult1 =
+                replication.alterPartitionReassignments(
+                    new AlterPartitionReassignmentsRequestData().setTopics(List.of(
+                        new ReassignableTopic().setName(topic).setPartitions(List.of(
+                            new ReassignablePartition().setPartitionIndex(0).setReplicas(List.of(1)))))));
+            assertEquals(new AlterPartitionReassignmentsResponseData().
+                    setErrorMessage(null).setResponses(List.of(
+                        new ReassignableTopicResponse().setName(topic).setPartitions(List.of(
+                            new ReassignablePartitionResponse().setPartitionIndex(0).setErrorMessage(null))))),
+                alterResult1.response());
+
+            ctx.replay(alterResult1.records());
+            ListPartitionReassignmentsResponseData currentReassigning =
+                new ListPartitionReassignmentsResponseData().setErrorMessage(null).
+                    setTopics(List.of(new OngoingTopicReassignment().setName(topic).setPartitions(List.of(
+                        new OngoingPartitionReassignment().setPartitionIndex(0)
+                            .setRemovingReplicas(List.of(0))
+                            .setAddingReplicas(List.of(1))
+                            .setReplicas(List.of(1, 0))))));
+            assertEquals(currentReassigning, replication.listPartitionReassignments(List.of(
+                new ListPartitionReassignmentsTopics().setName(topic).
+                    setPartitionIndexes(List.of(0))), Long.MAX_VALUE));
+
+            // Try to increase the replication factor.
+            ControllerResult<AlterPartitionReassignmentsResponseData> alterResult2 =
+                replication.alterPartitionReassignments(
+                    new AlterPartitionReassignmentsRequestData().setTopics(List.of(
+                        new ReassignableTopic().setName(topic).setPartitions(List.of(
+                            new ReassignablePartition().setPartitionIndex(0)
+                                .setReplicas(List.of(0, 1)))))));
+            assertEquals(new AlterPartitionReassignmentsResponseData()
+                    .setErrorMessage(null).setResponses(List.of(
+                        new ReassignableTopicResponse().setName(topic).setPartitions(List.of(
+                            new ReassignablePartitionResponse().setPartitionIndex(0)
+                                .setErrorCode(INVALID_REPLICATION_FACTOR.code())
+                                .setErrorMessage("The replication factor is changed from 1 to 2"))))),
+                alterResult2.response());
+            ctx.replay(alterResult2.records());
+            assertEquals(currentReassigning, replication.listPartitionReassignments(List.of(
+                new ListPartitionReassignmentsTopics().setName(topic)
+                    .setPartitionIndexes(List.of(0))), Long.MAX_VALUE));
+        }
+
+        @Test
+        public void testNoLeaderElectionOnBrokerFenced_noRacks() {
+            // With RF=1 (no racks), when the single replica is fenced, the leader goes offline
+            // and no new leader can be elected since there are no other replicas.
+            ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+                .setDisklessStorageSystemEnabled(true)
+                .setDisklessManagedReplicasEnabled(true)
+                .build();
+            ReplicationControlManager replication = ctx.replicationControl;
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+
+            CreatableTopicResult createResult = ctx.createTestTopic(
+                "foo",
+                new int[][] {
+                    new int[] {0}
+                },
+                Map.of(DISKLESS_ENABLE_CONFIG, "true"),
+                NONE.code()
+            );
+            final Uuid topicId = createResult.topicId();
+
+            List<ApiMessageAndVersion> records = new ArrayList<>();
+            replication.handleBrokerFenced(0, records);
+            ctx.replay(records);
+
+            PartitionRegistration partition = replication.getPartition(topicId, 0);
+            assertNotNull(partition, "Partition should exist after leader fencing");
+            assertArrayEquals(new int[]{0}, partition.isr, "ISR should remain unchanged as there is only one replica");
+            assertEquals(-1, partition.leader, "Leader should be offline after fencing");
+        }
+
+        @Test
+        public void testLeaderElectionOnBrokerFenced_withRacks() {
+            // With RF=3 (racks), when the leader is fenced, a new leader should be elected
+            // from the remaining replicas in other racks.
+            ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+                .setDisklessStorageSystemEnabled(true)
+                .setDisklessManagedReplicasEnabled(true)
+                .build();
+            ReplicationControlManager replication = ctx.replicationControl;
+            ctx.registerBrokersWithRacks(0, "a", 1, "b", 2, "c");
+            ctx.unfenceBrokers(0, 1, 2);
+
+            CreatableTopicResult createResult = ctx.createTestTopic(
+                "foo",
+                1,
+                (short) 1,
+                Map.of(DISKLESS_ENABLE_CONFIG, "true"),
+                NONE.code()
+            );
+            final Uuid topicId = createResult.topicId();
+
+            PartitionRegistration partitionBefore = replication.getPartition(topicId, 0);
+            int originalLeader = partitionBefore.leader;
+
+            List<ApiMessageAndVersion> records = new ArrayList<>();
+            replication.handleBrokerFenced(originalLeader, records);
+            ctx.replay(records);
+
+            PartitionRegistration partition = replication.getPartition(topicId, 0);
+            assertNotNull(partition, "Partition should exist after leader fencing");
+            assertEquals(3, partition.replicas.length, "Replicas should remain unchanged (RF=3)");
+            assertEquals(2, partition.isr.length, "ISR should shrink by 1 after fencing the leader");
+            assertNotEquals(originalLeader, partition.leader, "Leader should change after fencing");
+            assertTrue(partition.leader >= 0, "A new leader should be elected from remaining replicas");
+        }
+
+        @Test
+        public void testNoReplicaChangeOnShutdown_noRacks() {
+            // With RF=1 (no racks), when the single replica is shutdown, the leader goes offline
+            // and no new leader can be elected since there are no other replicas.
+            ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+                .setDisklessStorageSystemEnabled(true)
+                .setDisklessManagedReplicasEnabled(true)
+                .build();
+            ReplicationControlManager replication = ctx.replicationControl;
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+
+            CreatableTopicResult createResult = ctx.createTestTopic(
+                "foo",
+                new int[][] {
+                    new int[] {0}
+                },
+                Map.of(DISKLESS_ENABLE_CONFIG, "true"),
+                NONE.code()
+            );
+            final Uuid topicId = createResult.topicId();
+
+            List<ApiMessageAndVersion> records = new ArrayList<>();
+            replication.handleBrokerShutdown(0, true, records);
+            ctx.replay(records);
+
+            PartitionRegistration partition = replication.getPartition(topicId, 0);
+            assertNotNull(partition, "Partition should exist after leader shutdown");
+            assertArrayEquals(new int[]{0}, partition.isr, "ISR should remain unchanged as there is only one replica");
+            assertEquals(-1, partition.leader, "Leader should be offline after shutdown");
+        }
+
+        @Test
+        public void testReplicaChangeOnShutdown_withRacks() {
+            // With RF=3 (racks), when a broker is shutdown, the ISR shrinks and a new leader
+            // is elected from the remaining replicas in other racks.
+            ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+                .setDisklessStorageSystemEnabled(true)
+                .setDisklessManagedReplicasEnabled(true)
+                .build();
+            ReplicationControlManager replication = ctx.replicationControl;
+            ctx.registerBrokersWithRacks(0, "a", 1, "b", 2, "c");
+            ctx.unfenceBrokers(0, 1, 2);
+
+            CreatableTopicResult createResult = ctx.createTestTopic(
+                "foo",
+                1,
+                (short) 1,
+                Map.of(DISKLESS_ENABLE_CONFIG, "true"),
+                NONE.code()
+            );
+            final Uuid topicId = createResult.topicId();
+
+            List<ApiMessageAndVersion> records = new ArrayList<>();
+            replication.handleBrokerShutdown(0, true, records);
+            ctx.replay(records);
+
+            PartitionRegistration partition = replication.getPartition(topicId, 0);
+            assertNotNull(partition, "Partition should exist after broker shutdown");
+            assertEquals(3, partition.replicas.length, "Replicas should remain unchanged (RF=3)");
+            assertEquals(2, partition.isr.length, "ISR should shrink by 1 after shutdown");
+            assertTrue(partition.leader >= 0, "A new leader should be elected from remaining replicas");
+        }
+
+        @Test
+        void testDisklessMarksLeaderOfflineOnUnregister_noRacks() {
+            ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+                .setDisklessStorageSystemEnabled(true)
+                .setDisklessManagedReplicasEnabled(true)
+                .build();
+            ReplicationControlManager replication = ctx.replicationControl;
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+
+            final int numPartitions = 6;
+            CreatableTopicResult createResult = ctx.createTestTopic(
+                "foo",
+                numPartitions,
+                (short) 1,
+                Map.of(DISKLESS_ENABLE_CONFIG, "true"),
+                NONE.code()
+            );
+            final Uuid topicId = createResult.topicId();
+
+            List<ApiMessageAndVersion> records = new ArrayList<>();
+            replication.handleBrokerUnregistered(0, 100, records);
+            ctx.replay(records);
+
+            // All partitions should remain present and keep the original replica/ISR,
+            // only the leader should be marked offline if placed on the unregistered broker.
+            for (int partitionId = 0; partitionId < numPartitions; partitionId++) {
+                PartitionRegistration partition = replication.getPartition(topicId, partitionId);
+                assertNotNull(partition, "Partition " + partitionId + " should exist after broker unregistration");
+                assertEquals(1, partition.replicas.length, "Replicas [" + Arrays.toString(partition.replicas) + "] should stay unchanged for partition " + partitionId);
+                assertEquals(1, partition.isr.length, "ISR [" + Arrays.toString(partition.isr) + "] should stay unchanged for partition " + partitionId);
+                if (partition.preferredReplica() == 0) {
+                    assertEquals(-1, partition.leader, "Leader should be offline for partition " + partitionId);
+                } else {
+                    assertTrue(partition.leader > 0, "Leader should be online for partition " + partitionId);
+                }
+            }
+            // Sticking to keep partitions offline, as availability is managed by the Diskless metadata transformation
+            // with a fallback to "any node available"; not the KRaft registered metadata.
+            // Replicas will be reported as offline, so operators are aware of the underprovisioning, and can act on it.
+            // If they need to move the replicas, they can do that using regular tooling.
+        }
+
+        @Test
+        void testDisklessMarksLeaderOfflineOnUnregister_withRacks() {
+            ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+                .setDisklessStorageSystemEnabled(true)
+                .setDisklessManagedReplicasEnabled(true)
+                .build();
+            ReplicationControlManager replication = ctx.replicationControl;
+            ctx.registerBrokersWithRacks(0, "a", 1, "b", 2, "c");
+            ctx.unfenceBrokers(0, 1, 2);
+
+            final int numPartitions = 6;
+            CreatableTopicResult createResult = ctx.createTestTopic(
+                "foo",
+                numPartitions,
+                (short) 1,
+                Map.of(DISKLESS_ENABLE_CONFIG, "true"),
+                NONE.code()
+            );
+            final Uuid topicId = createResult.topicId();
+
+            List<ApiMessageAndVersion> records = new ArrayList<>();
+            replication.handleBrokerUnregistered(0, 100, records);
+            ctx.replay(records);
+
+            // All partitions should remain present and keep the original replica/ISR,
+            // leaders should be moved to other brokers in different racks.
+            for (int partitionId = 0; partitionId < numPartitions; partitionId++) {
+                PartitionRegistration partition = replication.getPartition(topicId, partitionId);
+                assertNotNull(partition, "Partition " + partitionId + " should exist after broker unregistration");
+                assertEquals(3, partition.replicas.length, "Replicas should stay unchanged for partition " + partitionId);
+                assertEquals(2, partition.isr.length, "ISR should stay unchanged for partition " + partitionId);
+                assertTrue(partition.leader > 0, "Leader should be offline for partition " + partitionId);
+            }
+        }
+
+        @Test
+        void testManualReplicaAssignmentsShouldBeAllowed() {
+            ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+                .setDisklessStorageSystemEnabled(true)
+                .setDisklessManagedReplicasEnabled(true)
+                .build();
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+
+            // Expectation: providing manual replica assignments for a diskless topic with managed-replicas should be allowed.
+            ctx.createTestTopic(
+                "foo",
+                new int[][] {new int[] {0, 1}, new int[] {1, 2}},
+                Map.of(DISKLESS_ENABLE_CONFIG, "true"),
+                NONE.code()
+            );
+        }
+    }
 }
