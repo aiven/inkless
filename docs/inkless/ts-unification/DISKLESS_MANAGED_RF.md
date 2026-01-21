@@ -516,7 +516,7 @@ existing clusters, and enables controlled rollout per environment.
 
 ```properties
 # Controller config (server.properties)
-diskless.managed.rf.enabled=false   # default: disabled for backward compatibility
+diskless.managed.rf.enable=false   # default: disabled for backward compatibility
 ```
 
 **This config only affects topic creation.** Routing behavior is derived from topic config and KRaft metadata, not this
@@ -524,14 +524,14 @@ server config.
 
 | Aspect | What controls it |
 |--------|------------------|
-| Topic creation (RF assignment) | `diskless.managed.rf.enabled` server config |
+| Topic creation (RF assignment) | `diskless.managed.rf.enable` server config |
 | Routing mode (`DISKLESS_TIERED` vs `DISKLESS_ONLY`) | Topic config (`remote.storage.enable` + `diskless.enable`) |
 | Routing logic | KRaft metadata — always prefers assigned replicas first; hash fallback only when replicas offline |
 
-When `diskless.managed.rf.enabled=true`:
+When `diskless.managed.rf.enable=true`:
 - New diskless topics get RF=rack_count with one replica per AZ
 
-When `diskless.managed.rf.enabled=false` (default):
+When `diskless.managed.rf.enable=false` (default):
 - New diskless topics get RF=1 (legacy behavior)
 
 ### Rollout Strategy
@@ -950,7 +950,7 @@ on synthetic hashing.
 
 ### Phase 1: Topic Creation with Rack-Aware Placement (2 weeks)
 
-1. Add `diskless.managed.rf.enabled` controller config (default: `false`)
+1. Add `diskless.managed.rf.enable` controller config (default: `false`)
 2. Modify `ReplicationControlManager` to detect diskless topics when config enabled
 3. Compute RF = rack count at creation
 4. Implement one-per-rack broker selection
