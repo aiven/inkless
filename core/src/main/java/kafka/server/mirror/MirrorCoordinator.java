@@ -123,33 +123,33 @@ public class MirrorCoordinator {
         this.mirrorMetadataManager.setTransitioner(transitioner);
     }
 
-    private void operateOnNewState(String mirrorName, Set<TopicPartition> topics, MirrorState newState) {
+    private void operateOnNewState(String mirrorName, Set<TopicPartition> topicPartitions, MirrorState newState) {
         switch (newState) {
             case NONE:
-                LOG.info("!!! Updating metadata for topics {}.", topics);
+                LOG.info("!!! Updating metadata for topics {}.", topicPartitions);
                 //mirrorMetadataManager.onPreparing(mirrorName, topics);
                 break;
             case PREPARING_MIRRORING:
-                LOG.info("!!! Preparing mirroring for topics {}.", topics);
+                LOG.info("!!! Preparing mirroring for topics {}.", topicPartitions);
 //                updateMirrorTopicsMetadata(mirrorName, topics, Set.of());
-//                maybeScheduleForTruncate(mirrorName, topics);
+                maybeScheduleForTruncate(mirrorName, topicPartitions);
                 break;
             case MIRRORING:
-                LOG.info("!!! Mirroring topics {}.", topics);
+                LOG.info("!!! Mirroring topics {}.", topicPartitions);
                 // start mirroring
-//                mirrorMetadataManager.operateOnMirroring(mirrorName, topics);
+                mirrorMetadataManager.operateOnMirroring(mirrorName, topicPartitions);
                 break;
             case STOPPING:
-                LOG.info("!!! Stopping mirroring for topics {}.", topics);
+                LOG.info("!!! Stopping mirroring for topics {}.", topicPartitions);
 //                updateMirrorTopicsMetadata(mirrorName, Set.of(), topics);
-//                updateLastMirroredOffsets(mirrorName, topics);
+                updateLastMirroredOffsets(mirrorName, topicPartitions);
                 break;
             case STOPPED:
-                LOG.info("!!! Stopped mirroring for topics {}.", topics);
+                LOG.info("!!! Stopped mirroring for topics {}.", topicPartitions);
                 // topic becomes writable
                 break;
             case FAILED:
-                LOG.info("!!! Failed mirroring for topics {}.", topics);
+                LOG.info("!!! Failed mirroring for topics {}.", topicPartitions);
         }
     }
 
@@ -186,17 +186,14 @@ public class MirrorCoordinator {
         mirrorMetadataManager.readStatesFromCache(mirrorName, partitions, sendResponseCallback);
     }
 
-    public void updateLastMirroredOffsets(String mirrorName, Set<String> mirrorTopics) {
+    public void updateLastMirroredOffsets(String mirrorName, Set<TopicPartition> topicPartitions) {
         Map<String, Map<Integer, Long>> partitionOffsets = new HashMap<>();
-        mirrorTopics.forEach(topic -> {
-            ((KRaftMetadataCache) metadataCache).numPartitions(topic).ifPresent(numPartitions -> {
-                Map<Integer, Long> offsets = new HashMap<>();
-                IntStream.range(0, numPartitions).forEach(i -> {
-                    TopicPartition topicPartition = new TopicPartition(topic, i);
-                    replicaManager.getPartitionOrException(topicPartition).log().foreach(log -> offsets.put(i, log.lastStableOffset()));
-                });
-                partitionOffsets.put(topic, offsets);
+        mirrorMetadataManager.convertToTopicToPartitions(topicPartitions).forEach((topic, parts) -> {
+            Map<Integer, Long> offsets = new HashMap<>();
+            parts.forEach(i -> {
+                replicaManager.getPartitionOrException(new TopicPartition(topic, i)).log().foreach(log -> offsets.put(i, log.lastStableOffset()));
             });
+            partitionOffsets.put(topic, offsets);
         });
 
         LOG.info("!!! Partition offsets for mirror topics: " + partitionOffsets);
@@ -270,28 +267,14 @@ public class MirrorCoordinator {
         numPartitions = config.mirrorConfig().mirrorTopicNumPartitions();
     }
 
-    public void maybeScheduleForTruncate(String mirrorName, Set<String> topics) {
+    public void maybeScheduleForTruncate(String mirrorName, Set<TopicPartition> topicPartitions) {
         // should skip this if the source is in old version
-        topics.forEach(topic -> {
-            scheduler.scheduleOnce("last-mirrored-offset", () -> maybeTruncate(mirrorName, topics));
-        });
+        scheduler.scheduleOnce("last-mirrored-offset", () -> maybeTruncate(mirrorName, topicPartitions));
     }
 
-    private void maybeTruncate(String mirrorName, Set<String> topics) {
-        Map<String, Set<Integer>> topicPartitions = new HashMap<>();
-        topics.forEach(topic -> {
-            metadataCache.numPartitions(topic).ifPresent(numPartitions -> {
-                IntStream.range(0, numPartitions).forEach(i -> {
-                    metadataCache.getLeaderAndIsr(topic, i).ifPresent(leaderAndIsr -> {
-                        if (leaderAndIsr.leader() == config.nodeId()) {
-                            topicPartitions.put(topic, Set.of(i));
-                        }
-                    });
-                });
-            });
-        });
-//        mirrorMetadataManager.maybeTruncate(replicaManager, mirrorName, topics,
-//                tp -> transitionTo(mirrorName, Set.of(tp.topic()), MirrorState.MIRRORING));
+    private void maybeTruncate(String mirrorName, Set<TopicPartition> topicPartitions) {
+        mirrorMetadataManager.maybeTruncate(replicaManager, mirrorName, topicPartitions,
+                tp -> transitionTo(mirrorName, Set.of(tp.topic()), MirrorState.MIRRORING));
     }
 
     /**
@@ -568,15 +551,15 @@ public class MirrorCoordinator {
             }
 
             // we've read all the mirrored records, transition the state for each topic partitions
-//            Operator operator = (mirrorName, topics, state) -> operateOnNewState(mirrorName, topics, state);
-//            mirrorMetadataManager.operateAll(operator);
+            Operator operator = (mirrorName, topicPartitions, state) -> operateOnNewState(mirrorName, topicPartitions, state);
+            mirrorMetadataManager.operateAll(operator);
 
             return null;
         });
     }
 
     interface Operator {
-        void operateOnNewState(String mirrorName, Set<String> topics, MirrorState state);
+        void operateOnNewState(String mirrorName, Set<TopicPartition> topicPartitions, MirrorState state);
     }
 
     interface Transitioner {
