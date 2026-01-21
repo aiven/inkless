@@ -37,6 +37,7 @@ jobs:
       kafka_major_minor: ${{ steps.parse.outputs.kafka_major_minor }}
       kafka_base_matrix: ${{ steps.find-kafka-tags.outputs.matrix }}
       build_matrix: ${{ steps.find-kafka-tags.outputs.build_matrix }}
+      latest_tags: ${{ steps.find-kafka-tags.outputs.latest_tags }}
     steps:
       - name: Determine git tag
         id: git-tag
@@ -97,7 +98,39 @@ jobs:
               echo "::warning::No Kafka-base tags found for Inkless version $INKLESS_VERSION"
               echo 'matrix={"include":[]}' >> $GITHUB_OUTPUT
               echo 'build_matrix={"include":[]}' >> $GITHUB_OUTPUT
+              echo 'latest_tags={}' >> $GITHUB_OUTPUT
             else
+              # Determine highest patch version for each minor version
+              # This ensures A.B-latest points to the highest A.B.C
+              declare -A LATEST_FOR_MINOR
+              while IFS= read -r tag; do
+                if [[ "$tag" =~ ^inkless-([0-9]+\.[0-9]+)\.([0-9]+)-(.+)$ ]]; then
+                  MINOR="${BASH_REMATCH[1]}"
+                  PATCH="${BASH_REMATCH[2]}"
+                  CURRENT_PATCH="${LATEST_FOR_MINOR[$MINOR]:-0}"
+                  if [ "$PATCH" -ge "$CURRENT_PATCH" ]; then
+                    LATEST_FOR_MINOR[$MINOR]="$PATCH"
+                  fi
+                fi
+              done <<< "$TAGS"
+              
+              # Build JSON map of minor -> highest patch tag
+              LATEST_TAGS_JSON='{'
+              FIRST_LATEST=true
+              for MINOR in "${!LATEST_FOR_MINOR[@]}"; do
+                PATCH="${LATEST_FOR_MINOR[$MINOR]}"
+                TAG="inkless-${MINOR}.${PATCH}-${INKLESS_VERSION}"
+                if [ "$FIRST_LATEST" = true ]; then
+                  FIRST_LATEST=false
+                else
+                  LATEST_TAGS_JSON="$LATEST_TAGS_JSON,"
+                fi
+                LATEST_TAGS_JSON="$LATEST_TAGS_JSON\"$MINOR\":\"$TAG\""
+              done
+              LATEST_TAGS_JSON="$LATEST_TAGS_JSON}"
+              echo "latest_tags=$LATEST_TAGS_JSON" >> $GITHUB_OUTPUT
+              echo "Highest patch versions per minor: $LATEST_TAGS_JSON"
+              
               # Convert to JSON matrix format (for manifest job - one per tag)
               MATRIX_JSON='{"include":['
               # Build matrix with arch combinations (for build job - tag × arch)
@@ -123,9 +156,12 @@ jobs:
             fi
           else
             # For kafka-base releases, use the tag itself with both architectures
+            # This tag is the latest for its minor version by definition
             GIT_TAG="${{ steps.parse.outputs.git_tag }}"
+            KAFKA_MAJOR_MINOR="${{ steps.parse.outputs.kafka_major_minor }}"
             echo "matrix={\"include\":[{\"tag\":\"$GIT_TAG\"}]}" >> $GITHUB_OUTPUT
             echo "build_matrix={\"include\":[{\"kafka_tag\":\"$GIT_TAG\",\"arch\":\"amd64\",\"runner\":\"ubuntu-latest\"},{\"kafka_tag\":\"$GIT_TAG\",\"arch\":\"arm64\",\"runner\":\"ubuntu-24.04-arm\"}]}" >> $GITHUB_OUTPUT
+            echo "latest_tags={\"$KAFKA_MAJOR_MINOR\":\"$GIT_TAG\"}" >> $GITHUB_OUTPUT
           fi
 
   # Build Kafka-base releases - one job per tag × architecture combination
@@ -252,16 +288,29 @@ jobs:
       matrix: ${{ fromJson(needs.prepare.outputs.kafka_base_matrix) }}
 
     steps:
-      - name: Parse tag
+      - name: Parse tag and check if latest
         id: parse
         run: |
           BUILD_TAG="${{ matrix.tag }}"
+          LATEST_TAGS='${{ needs.prepare.outputs.latest_tags }}'
+          
           if [[ "$BUILD_TAG" =~ ^inkless-([0-9]+\.[0-9]+\.[0-9]+)-(.+)$ ]]; then
             KAFKA_VERSION="${BASH_REMATCH[1]}"
             INKLESS_VERSION="${BASH_REMATCH[2]}"
             KAFKA_MAJOR_MINOR=$(echo "$KAFKA_VERSION" | cut -d. -f1-2)
+            echo "kafka_major_minor=$KAFKA_MAJOR_MINOR" >> $GITHUB_OUTPUT
             echo "primary_image_tag=${KAFKA_VERSION}-${INKLESS_VERSION}" >> $GITHUB_OUTPUT
             echo "latest_image_tag=${KAFKA_MAJOR_MINOR}-latest" >> $GITHUB_OUTPUT
+            
+            # Check if this tag is the highest patch for its minor version
+            LATEST_FOR_THIS_MINOR=$(echo "$LATEST_TAGS" | jq -r ".\"$KAFKA_MAJOR_MINOR\" // empty")
+            if [ "$BUILD_TAG" = "$LATEST_FOR_THIS_MINOR" ]; then
+              echo "is_latest_patch=true" >> $GITHUB_OUTPUT
+              echo "This tag ($BUILD_TAG) is the highest patch for $KAFKA_MAJOR_MINOR"
+            else
+              echo "is_latest_patch=false" >> $GITHUB_OUTPUT
+              echo "This tag ($BUILD_TAG) is NOT the highest patch for $KAFKA_MAJOR_MINOR (highest is $LATEST_FOR_THIS_MINOR)"
+            fi
           fi
 
       - name: Login to GitHub Container Registry
@@ -280,6 +329,7 @@ jobs:
             ${{ env.IMAGE_NAME }}:${PRIMARY_TAG}-arm64
 
       - name: Create multi-arch manifest for latest tag
+        if: steps.parse.outputs.is_latest_patch == 'true'
         run: |
           PRIMARY_TAG="${{ steps.parse.outputs.primary_image_tag }}"
           LATEST_TAG="${{ steps.parse.outputs.latest_image_tag }}"
@@ -294,7 +344,9 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Docker Image Tags:**" >> $GITHUB_STEP_SUMMARY
           echo "- \`${{ env.IMAGE_NAME }}:${{ steps.parse.outputs.primary_image_tag }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- \`${{ env.IMAGE_NAME }}:${{ steps.parse.outputs.latest_image_tag }}\`" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ steps.parse.outputs.is_latest_patch }}" = "true" ]; then
+            echo "- \`${{ env.IMAGE_NAME }}:${{ steps.parse.outputs.latest_image_tag }}\` (latest for ${{ steps.parse.outputs.kafka_major_minor }})" >> $GITHUB_STEP_SUMMARY
+          fi
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Platforms:** linux/amd64, linux/arm64" >> $GITHUB_STEP_SUMMARY
 

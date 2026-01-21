@@ -13,7 +13,7 @@ Inkless is distributed as both Docker images and binary distributions.
 | `latest`        | Latest stable Inkless release                         |
 | `X.Y`           | Specific Inkless version (e.g., `0.33`)               |
 | `A.B.C-X.Y`     | Kafka version + Inkless version (e.g., `4.1.0-0.33`)  |
-| `A.B-latest`    | Latest release for a Kafka minor version (e.g., `4.1-latest`) |
+| `A.B-latest`    | Highest patch release for a Kafka minor (e.g., `4.1-latest` points to `4.1.1-0.33` not `4.1.0-0.33`) |
 | `edge`          | Latest development build from `main`                  |
 | `edge-<sha>`    | Development build for a specific commit               |
 
