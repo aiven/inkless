@@ -6,7 +6,7 @@
 # Triggers:
 # - Manual (workflow_dispatch): For main releases (inkless-release-X.Y)
 #   Finds all Kafka-base tags and builds images/binaries for each
-# - Auto (push): For individual Kafka-base releases (inkless-4.*-*)
+# - Auto (push): For individual Kafka-base releases (inkless-4.x.y-*)
 #   Builds image/binary for that specific Kafka version
 
 name: Inkless Release
@@ -20,7 +20,7 @@ on:
         type: string
   push:
     tags:
-      - 'inkless-4.*-*'
+      - 'inkless-4.[0-9]*.[0-9]*-*'
 
 concurrency:
   group: inkless-docker-release-${{ github.ref }}
