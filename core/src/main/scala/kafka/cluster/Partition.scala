@@ -349,7 +349,7 @@ class Partition(val topicPartition: TopicPartition,
   // If ReplicaAlterLogDir command is in progress, this is future location of the log
   @volatile var futureLog: Option[UnifiedLog] = None
   @volatile var mirrorName: String = ""
-  @volatile var onTruncation: Optional[Consumer[TopicPartition]] = Optional.empty()
+  @volatile var truncationCallback: Optional[Consumer[TopicPartition]] = Optional.empty()
 
   // Partition listeners
   private val listeners = new CopyOnWriteArrayList[PartitionListener]()
@@ -826,7 +826,7 @@ class Partition(val topicPartition: TopicPartition,
       leaderReplicaIdOpt = Some(localBrokerId)
       mirrorName = partitionState.mirrorName()
 
-      maybeMoveToMirroringState(leaderLog)
+      checkIsrTruncationAndTransition(leaderLog)
       // We may need to increment high watermark since ISR could be down to 1.
       (maybeIncrementLeaderHW(leaderLog, currentTimeMs = currentTimeMs), isNewLeader)
     }
@@ -956,7 +956,7 @@ class Partition(val topicPartition: TopicPartition,
       inReadLock(leaderIsrUpdateLock) {
         leaderLogIfLocal.exists(leaderLog => {
           maybeIncrementLeaderHW(leaderLog, followerFetchTimeMs)
-          maybeMoveToMirroringState(leaderLog, followerFetchTimeMs)
+          checkIsrTruncationAndTransition(leaderLog, followerFetchTimeMs)
         })
       }
     } else {
@@ -1213,10 +1213,27 @@ class Partition(val topicPartition: TopicPartition,
     }
   }
 
-  // make sure all ISR are all truncated to the expected offset and then move to the MIRRORING state
-  def maybeMoveToMirroringState(leaderLog: UnifiedLog, currentTimeMs: Long = time.milliseconds): Boolean = {
-    info("!!! maybeMoveToMirroringState:" + leaderLog)
-    if (onTruncation.isEmpty) {
+  /**
+   * Validates that all in-sync replicas have been truncated to the expected offset
+   * and transitions to MIRRORING state if validation succeeds.
+   * <p>
+   * This method ensures that:
+   * <ol>
+   *   <li>A truncation callback is registered (onTruncation is present)</li>
+   *   <li>The partition meets minimum ISR requirements</li>
+   *   <li>All ISR members have log end offsets <= leader's log end offset</li>
+   * </ol>
+   * <p>
+   * The transition only occurs when all conditions are met, ensuring data
+   * consistency before resuming mirroring operations.
+   *
+   * @param leaderLog the leader's unified log
+   * @param currentTimeMs the current time in milliseconds
+   * @return true if the transition occurred, false if validation failed or no callback was registered
+   */
+  def checkIsrTruncationAndTransition(leaderLog: UnifiedLog, currentTimeMs: Long = time.milliseconds): Boolean = {
+    info("!!! checkIsrTruncationAndTransition:" + leaderLog)
+    if (truncationCallback.isEmpty) {
       return false
     }
 
@@ -1245,9 +1262,10 @@ class Partition(val topicPartition: TopicPartition,
         return false
       }
     }
+
     // move state if truncation are done for all ISR
-    onTruncation.ifPresent(onTruncation => onTruncation.accept(topicPartition))
-    onTruncation = Optional.empty()
+    truncationCallback.ifPresent(onTruncation => onTruncation.accept(topicPartition))
+    truncationCallback = Optional.empty()
     true
   }
 
@@ -2015,7 +2033,7 @@ class Partition(val topicPartition: TopicPartition,
       // we may need to increment high watermark since ISR could be down to 1
       leaderLogIfLocal.exists(log => {
         maybeIncrementLeaderHW(log)
-        maybeMoveToMirroringState(log)
+        checkIsrTruncationAndTransition(log)
       })
     }
   }

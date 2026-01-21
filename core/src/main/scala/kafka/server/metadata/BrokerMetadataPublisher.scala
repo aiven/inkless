@@ -254,6 +254,7 @@ class BrokerMetadataPublisher(
       // Apply ACL delta.
       aclPublisher.onMetadataUpdate(delta, newImage, manifest)
 
+      // Apply mirror metadata delta
       mirrorMetadataManager.onMetadataUpdate(delta, newImage, manifest)
 
       try {
