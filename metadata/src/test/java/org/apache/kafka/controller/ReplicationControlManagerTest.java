@@ -4031,9 +4031,9 @@ public class ReplicationControlManagerTest {
         }
 
         @Test
-        public void testNoLeaderElectionOnBrokerFenced() {
+        public void testNoLeaderElectionOnBrokerFenced_noRacks() {
             // As there are no replicas to elect from, the leader should go offline but no new leader should be elected.
-            // Currently, diskless topics ignored replica management. It registers a single replica as the leader, but it's not maintained.
+            // Unmanaged diskless topics register a single replica as the leader, but it's not maintained.
             ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
                 .setDisklessStorageSystemEnabled(true)
                 .build();
@@ -4050,20 +4050,58 @@ public class ReplicationControlManagerTest {
             );
             final Uuid topicId = createResult.topicId();
 
+            // Get the actual leader before fencing
+            PartitionRegistration partitionBefore = replication.getPartition(topicId, 0);
+            int leader = partitionBefore.leader;
+
             List<ApiMessageAndVersion> records = new ArrayList<>();
-            replication.handleBrokerFenced(0, records);
+            replication.handleBrokerFenced(leader, records);
             ctx.replay(records);
 
             PartitionRegistration partition = replication.getPartition(topicId, 0);
             assertNotNull(partition, "Partition should exist after leader fencing");
-            assertArrayEquals(new int[]{0}, partition.isr, "ISR should remain unchanged as there was only one leader");
+            assertArrayEquals(new int[]{leader}, partition.isr, "ISR should remain unchanged as there is only one replica");
             assertEquals(-1, partition.leader, "Leader should be offline after fencing");
         }
 
         @Test
-        public void testNoReplicaChangeOnShutdown() {
+        public void testNoLeaderElectionOnBrokerFenced_withRacks() {
             // As there are no replicas to elect from, the leader should go offline but no new leader should be elected.
-            // Currently, diskless topics ignored replica management. It registers a single replica as the leader, but it's not maintained.
+            // Unmanaged diskless topics register a single replica as the leader, but it's not maintained.
+            ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+                .setDisklessStorageSystemEnabled(true)
+                .build();
+            ReplicationControlManager replication = ctx.replicationControl;
+            ctx.registerBrokersWithRacks(0, "a", 1, "b", 2, "c");
+            ctx.unfenceBrokers(0, 1, 2);
+
+            CreatableTopicResult createResult = ctx.createTestTopic(
+                "foo",
+                1,
+                (short) 1,
+                Map.of(DISKLESS_ENABLE_CONFIG, "true"),
+                NONE.code()
+            );
+            final Uuid topicId = createResult.topicId();
+
+            // Get the actual leader before fencing
+            PartitionRegistration partitionBefore = replication.getPartition(topicId, 0);
+            int leader = partitionBefore.leader;
+
+            List<ApiMessageAndVersion> records = new ArrayList<>();
+            replication.handleBrokerFenced(leader, records);
+            ctx.replay(records);
+
+            PartitionRegistration partition = replication.getPartition(topicId, 0);
+            assertNotNull(partition, "Partition should exist after leader fencing");
+            assertArrayEquals(new int[]{leader}, partition.isr, "ISR should remain unchanged as there is only one replica");
+            assertEquals(-1, partition.leader, "Leader should be offline after fencing");
+        }
+
+        @Test
+        public void testNoReplicaChangeOnShutdown_noRacks() {
+            // As there are no replicas to elect from, the leader should go offline but no new leader should be elected.
+            // Unmanaged diskless topics register a single replica as the leader, but it's not maintained.
             ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
                 .setDisklessStorageSystemEnabled(true)
                 .build();
@@ -4080,14 +4118,52 @@ public class ReplicationControlManagerTest {
             );
             final Uuid topicId = createResult.topicId();
 
+            // Get the actual leader before shutdown
+            PartitionRegistration partitionBefore = replication.getPartition(topicId, 0);
+            int leader = partitionBefore.leader;
+
             List<ApiMessageAndVersion> records = new ArrayList<>();
-            replication.handleBrokerShutdown(0, true, records);
+            replication.handleBrokerShutdown(leader, true, records);
             ctx.replay(records);
 
             PartitionRegistration partition = replication.getPartition(topicId, 0);
-            assertNotNull(partition, "Partition should exist after leader fencing");
-            assertArrayEquals(new int[]{0}, partition.isr, "ISR should remain unchanged as there was only one leader");
-            assertEquals(-1, partition.leader, "Leader should be offline after fencing");
+            assertNotNull(partition, "Partition should exist after leader shutdown");
+            assertArrayEquals(new int[]{leader}, partition.isr, "ISR should remain unchanged as there is only one replica");
+            assertEquals(-1, partition.leader, "Leader should be offline after shutdown");
+        }
+
+        @Test
+        public void testNoReplicaChangeOnShutdown_withRacks() {
+            // As there are no replicas to elect from, the leader should go offline but no new leader should be elected.
+            // Unmanaged diskless topics register a single replica as the leader, but it's not maintained.
+            ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+                .setDisklessStorageSystemEnabled(true)
+                .build();
+            ReplicationControlManager replication = ctx.replicationControl;
+            ctx.registerBrokersWithRacks(0, "a", 1, "b", 2, "c");
+            ctx.unfenceBrokers(0, 1, 2);
+
+            CreatableTopicResult createResult = ctx.createTestTopic(
+                "foo",
+                1,
+                (short) 1,
+                Map.of(DISKLESS_ENABLE_CONFIG, "true"),
+                NONE.code()
+            );
+            final Uuid topicId = createResult.topicId();
+
+            // Get the actual leader before shutdown
+            PartitionRegistration partitionBefore = replication.getPartition(topicId, 0);
+            int leader = partitionBefore.leader;
+
+            List<ApiMessageAndVersion> records = new ArrayList<>();
+            replication.handleBrokerShutdown(leader, true, records);
+            ctx.replay(records);
+
+            PartitionRegistration partition = replication.getPartition(topicId, 0);
+            assertNotNull(partition, "Partition should exist after leader shutdown");
+            assertArrayEquals(new int[]{leader}, partition.isr, "ISR should remain unchanged as there is only one replica");
+            assertEquals(-1, partition.leader, "Leader should be offline after shutdown");
         }
 
         @Test
@@ -4109,18 +4185,31 @@ public class ReplicationControlManagerTest {
             );
             final Uuid topicId = createResult.topicId();
 
+            // Identify partitions that have broker 0 as leader before unregistering
+            Set<Integer> partitionsWithBroker0AsLeader = new HashSet<>();
+            for (int partitionId = 0; partitionId < numPartitions; partitionId++) {
+                PartitionRegistration partition = replication.getPartition(topicId, partitionId);
+                if (partition.leader == 0) {
+                    partitionsWithBroker0AsLeader.add(partitionId);
+                }
+            }
+
             List<ApiMessageAndVersion> records = new ArrayList<>();
             replication.handleBrokerUnregistered(0, 100, records);
             ctx.replay(records);
 
             // All partitions should remain present and keep the original replica/ISR,
-            // only the leader should be marked offline.
+            // only leaders on broker 0 should be marked offline.
             for (int partitionId = 0; partitionId < numPartitions; partitionId++) {
                 PartitionRegistration partition = replication.getPartition(topicId, partitionId);
                 assertNotNull(partition, "Partition " + partitionId + " should exist after broker unregistration");
-                assertArrayEquals(new int[]{0}, partition.replicas, "Replicas should stay unchanged for partition " + partitionId);
-                assertArrayEquals(new int[]{0}, partition.isr, "ISR should stay unchanged for partition " + partitionId);
-                assertEquals(-1, partition.leader, "Leader should be offline for partition " + partitionId);
+                assertEquals(1, partition.replicas.length, "Replicas should have 1 element for partition " + partitionId);
+                assertEquals(1, partition.isr.length, "ISR should have 1 element for partition " + partitionId);
+                if (partitionsWithBroker0AsLeader.contains(partitionId)) {
+                    assertEquals(-1, partition.leader, "Leader should be offline for partition " + partitionId + " (was on broker 0)");
+                } else {
+                    assertTrue(partition.leader >= 0, "Leader should remain online for partition " + partitionId + " (was not on broker 0)");
+                }
             }
         }
 
@@ -4143,18 +4232,31 @@ public class ReplicationControlManagerTest {
             );
             final Uuid topicId = createResult.topicId();
 
+            // Identify partitions that have broker 0 as leader before unregistering
+            Set<Integer> partitionsWithBroker0AsLeader = new HashSet<>();
+            for (int partitionId = 0; partitionId < numPartitions; partitionId++) {
+                PartitionRegistration partition = replication.getPartition(topicId, partitionId);
+                if (partition.leader == 0) {
+                    partitionsWithBroker0AsLeader.add(partitionId);
+                }
+            }
+
             List<ApiMessageAndVersion> records = new ArrayList<>();
             replication.handleBrokerUnregistered(0, 100, records);
             ctx.replay(records);
 
             // All partitions should remain present and keep the original replica/ISR,
-            // only the leader should be marked offline.
+            // only leaders on broker 0 should be marked offline.
             for (int partitionId = 0; partitionId < numPartitions; partitionId++) {
                 PartitionRegistration partition = replication.getPartition(topicId, partitionId);
                 assertNotNull(partition, "Partition " + partitionId + " should exist after broker unregistration");
-                assertArrayEquals(new int[]{0}, partition.replicas, "Replicas should stay unchanged for partition " + partitionId);
-                assertArrayEquals(new int[]{0}, partition.isr, "ISR should stay unchanged for partition " + partitionId);
-                assertEquals(-1, partition.leader, "Leader should be offline for partition " + partitionId);
+                assertEquals(1, partition.replicas.length, "Replicas should have 1 element for partition " + partitionId);
+                assertEquals(1, partition.isr.length, "ISR should have 1 element for partition " + partitionId);
+                if (partitionsWithBroker0AsLeader.contains(partitionId)) {
+                    assertEquals(-1, partition.leader, "Leader should be offline for partition " + partitionId + " (was on broker 0)");
+                } else {
+                    assertTrue(partition.leader >= 0, "Leader should remain online for partition " + partitionId + " (was not on broker 0)");
+                }
             }
         }
 
