@@ -353,7 +353,13 @@ class KafkaApis(val requestChannel: RequestChannel,
     if (mirrorTopic.isPresent) {
       if (isClusterMirroringEnabled) {
         logger.info(s"!!! Handling adding mirror topics request: ${mirrorTopic.get().mirrorName()}")
-        mirrorCoordinator.transitionTo(mirrorTopic.get().mirrorName(), util.Set.of(mirrorTopic.get().topicName()), MirrorState.PREPARING_MIRRORING)
+        val topicPartitions = new util.HashSet[TopicPartition]()
+        metadataCache.numPartitions(mirrorTopic.get().topicName()).map(num => {
+          for (i <- 0 until num) {
+            topicPartitions.add(new TopicPartition(mirrorTopic.get().topicName(), i))
+          }
+        })
+        mirrorCoordinator.transitionTo(mirrorTopic.get().mirrorName(), topicPartitions, MirrorState.PREPARING_MIRRORING)
       } else {
         logger.warn("Cluster mirroring is disabled (mirror.version=0), ignoring mirror topic creation request")
       }

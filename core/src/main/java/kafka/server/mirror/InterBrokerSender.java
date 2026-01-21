@@ -24,7 +24,8 @@ class InterBrokerSender extends InterBrokerSendThread {
     public Collection<RequestAndCompletionHandler> generateRequests() {
         if (!queue.isEmpty()) {
             List<RequestAndCompletionHandler> requests = new ArrayList<>();
-            for (RequestAndCompletionHandler requestAndCompletionHandler : queue) {
+            while (queue.peek() != null) {
+                var requestAndCompletionHandler = queue.poll();
                 requests.add(requestAndCompletionHandler);
             }
             return requests;
