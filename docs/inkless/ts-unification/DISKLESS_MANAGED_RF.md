@@ -534,6 +534,23 @@ When `diskless.managed.rf.enable=true`:
 When `diskless.managed.rf.enable=false` (default):
 - New diskless topics get RF=1 (legacy behavior)
 
+### Known Limitations (Phase 1)
+
+The following limitations apply until subsequent phases are completed:
+
+| Limitation | Impact | Planned Phase |
+|------------|--------|---------------|
+| **Add Partitions uses legacy RF** | New partitions added via `kafka-topics.sh --alter --partitions` will get RF=1 (legacy behavior), not RF=rack_count | Phase 3 |
+| **Transformer not updated** | Metadata transformation still uses legacy routing; real KRaft placement exists but transformer may override | Phase 2 |
+| **Observability metrics not implemented** | Placement quality metrics (`non_rack_aware_partitions_total`, etc.) not yet available | Phase 2 |
+| **Integration tests deferred** | End-to-end integration tests require transformer changes to validate correct behavior | Phase 2 |
+
+**Workaround for Add Partitions**: Use manual replica assignments when adding partitions to specify the desired RF and placement:
+```bash
+# Instead of: kafka-topics.sh --alter --topic foo --partitions 6
+# Use: kafka-reassign-partitions.sh with explicit assignments
+```
+
 ### Rollout Strategy
 
 This config-based activation enables:
@@ -693,7 +710,47 @@ When creating diskless topics (`diskless.enable=true`):
 - One replica assigned per rack
 - Accept `replicationFactor=-1` (recommended) or `replicationFactor=1` (for compatibility)
 - Reject `replicationFactor > 1` (RF is system-managed)
-- Reject manual replica assignments
+- **Allow manual replica assignments** (for operational flexibility)
+
+#### Manual Replica Assignments
+
+Manual assignments are allowed for diskless topics to support standard Kafka operational patterns:
+
+```bash
+# Example: Create diskless topic with explicit placement
+kafka-topics.sh --create --topic my-topic \
+  --replica-assignment 101:201:301,102:202:302 \
+  --config diskless.enable=true
+```
+
+**Why allow manual assignments:**
+- Enables standard `kafka-reassign-partitions.sh` tooling for rebalancing and migration
+- Allows operators to place replicas in specific zones (e.g., known high-traffic zones)
+- Aligns with design goal: "standard Kafka operations after creation"
+
+**Availability guarantees are preserved:**
+- The metadata transformer handles routing regardless of how replicas were assigned
+- **`DISKLESS_ONLY`**: can fall back to any alive broker in any zone when assigned replicas are offline
+- **`DISKLESS_TIERED`**: restricted to replica brokers only (RLM requires `UnifiedLog` state)
+- Non-rack-aware placements may result in suboptimal cross-AZ traffic, but availability is not affected
+
+**Trade-offs:**
+- Operators *can* create suboptimal placements (RF != rack_count, non-rack-aware)
+- System remains correct but may have suboptimal AZ locality
+- Use observability metrics to detect and alert on non-optimal placements
+
+**Validation applied to manual assignments:**
+- All specified brokers must be registered
+- No duplicate brokers in a partition's replica list
+- Consistent RF across all partitions in the topic
+- At least one replica must be on an active (unfenced) broker
+
+**Validation NOT applied (operator responsibility):**
+- Rack-awareness (one replica per rack)
+- RF = rack_count alignment
+
+This is intentional: operators may have valid reasons to deviate from defaults (e.g., testing, specific
+zone affinity, gradual rollout). Metrics and alerts provide visibility into non-optimal placements.
 
 ### Add Partitions
 
@@ -855,9 +912,20 @@ FOR each diskless partition:
 - `kafka.controller.diskless.rack_aware{topic,partition}` - 1 if one-per-rack, 0 if not
 - `kafka.controller.diskless.rf1_topics_total` - Legacy topics not yet modernized
 
+**Placement quality metrics (for alerting on suboptimal placements):**
+- `kafka.controller.diskless.non_rack_aware_partitions_total` - Partitions where replicas don't span all racks
+- `kafka.controller.diskless.rf_mismatch_partitions_total` - Partitions where RF != rack_count
+- `kafka.controller.diskless.single_rack_partitions_total` - Partitions with all replicas in same rack (no AZ redundancy)
+
+These metrics help operators identify topics created with manual assignments that deviate from optimal rack-aware
+placement. Suggested alerting thresholds:
+- **Warning**: `non_rack_aware_partitions_total > 0` — review placement, may be intentional
+- **Critical**: `single_rack_partitions_total > 0` — no AZ redundancy for job ownership
+
 **Transformer metrics:**
 - `kafka.server.diskless.transformer.fallback_total` - Count of hash fallbacks
 - `kafka.server.diskless.transformer.offline_replicas_routed_around` - Routing decisions
+- `kafka.server.diskless.transformer.cross_az_routing_total` - Requests routed to different AZ than client
 
 **Standard Kafka metrics:**
 - `UnderReplicatedPartitions` - Will show diskless partitions with offline brokers
@@ -954,13 +1022,15 @@ on synthetic hashing.
 2. Modify `ReplicationControlManager` to detect diskless topics when config enabled
 3. Compute RF = rack count at creation
 4. Implement one-per-rack broker selection
-5. Reject `replicationFactor > 1` and manual assignments
+5. Reject `replicationFactor > 1` (RF is system-managed for auto-assignment)
+6. Allow manual replica assignments (standard Kafka tooling support)
 
 ### Phase 2: Transformer Changes (2 weeks)
 
 1. Update `InklessTopicMetadataTransformer` to read KRaft placement when RF > 1
 2. Implement AZ-priority routing with mode-aware fallback (`DISKLESS_TIERED` vs `DISKLESS_ONLY`)
-3. Add metrics for fallback tracking
+3. Add metrics for fallback tracking and placement quality
+4. Add integration tests for end-to-end validation
 
 ### Phase 3: Add Partitions Support (1 week)
 
