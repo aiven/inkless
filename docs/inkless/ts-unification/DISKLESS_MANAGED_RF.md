@@ -67,6 +67,7 @@ moving replicas in KRaft. This keeps the design simple while preserving the "alw
 10. [Implementation Path](#implementation-path) *(6-8 weeks / 1 eng)*
 11. [Rejected Alternatives](#rejected-alternatives)
     - [Decision Option: Tiered reads from any broker](#decision-option-keep-alive-allow-tiered-storage-rlm-reads-from-any-broker)
+    - [Future Enhancement: Load Balancing for Multi-Replica AZs](#future-enhancement-load-balancing-for-multi-replica-azs)
 12. [Appendix](#appendix)
     - [Ghost Replicas Problem](#ghost-replicas-problem)
     - [Operational Benefits (Day-2)](#operational-benefits-day-2)
@@ -1189,11 +1190,49 @@ New complexity introduced              | High (proxy, cross-AZ) | Medium (option
 ```
 
 **Bottom line:** This option can reduce *one* major A/B gap (tiered reads during migration) and could strengthen the
-“availability routing” story, but it does **not** remove the main reasons we prefer C (real replicas, leadership, avoiding
+"availability routing" story, but it does **not** remove the main reasons we prefer C (real replicas, leadership, avoiding
 ghost replicas, standard RLM integration).
 
-**Status:** Keep as an explicit team decision. Not required for Approach C, but compatible as a future enhancement if “any
-broker can serve even hybrid/tiered” becomes a hard requirement.
+**Status:** Keep as an explicit team decision. Not required for Approach C, but compatible as a future enhancement if "any
+broker can serve even hybrid/tiered" becomes a hard requirement.
+
+---
+
+### Future Enhancement: Load Balancing for Multi-Replica AZs
+
+**Concept:** When multiple replicas exist in the same AZ (RF > rack_count, or manual assignments with multiple brokers per
+AZ), use round-robin selection to distribute requests evenly across same-AZ replicas.
+
+**Current behavior:** The algorithm returns the set of same-AZ replicas. Kafka's Metadata response includes all replicas,
+and the client uses the `leader` field to determine which broker to contact. For diskless topics, the transformer picks one
+broker to advertise as "leader" — currently this selection is not explicitly load-balanced.
+
+**Why defer:**
+- The current algorithm is correct and handles multi-replica scenarios
+- RF = rack_count (one replica per AZ) is the expected default for new diskless topics
+- Multi-replica per AZ scenarios primarily arise from manual assignments or legacy configurations
+- Round-robin adds state management complexity (per-partition counters)
+
+**Implementation sketch (if needed later):**
+
+```
+FUNCTION round_robin_select(candidates, partition_id):
+  counter = get_and_increment_counter(partition_id)
+  sorted_candidates = sort(candidates)  # Deterministic ordering
+  RETURN sorted_candidates[counter % len(sorted_candidates)]
+```
+
+Apply this selection function at each priority level when `len(candidates) > 1`.
+
+**When to reconsider:**
+- If operators report uneven load distribution with multi-replica AZ configurations
+- If RF > rack_count becomes a common pattern (e.g., for higher availability requirements)
+- If observability metrics show hot-spotting on specific brokers within an AZ
+
+**Observability (if implemented):**
+- `kafka.server.diskless.transformer.routing_by_broker{broker_id,topic,partition}` - Requests routed to each broker
+
+**Status:** Documented as future enhancement. Current algorithm is extensible to adopt this when needed.
 
 ---
 
