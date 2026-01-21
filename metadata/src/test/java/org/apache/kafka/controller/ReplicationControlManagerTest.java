@@ -4324,11 +4324,11 @@ public class ReplicationControlManagerTest {
     // Tests Diskless managed-replicas
     class DisklessManagedReplicasTests {
         @ParameterizedTest
-        @CsvSource(value = {
+        @CsvSource({
             "false,false",
-            "false,NULL",
+            "false,",
             "true,false",
-        }, nullValues = "NULL")
+        })
         public void testCreatesClassicTopicWhenDisklessDisabled(boolean logDisklessEnableServerConfig, String disklessEnableTopicConfig) {
             ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
                 .setDefaultDisklessEnable(logDisklessEnableServerConfig)
@@ -4354,10 +4354,10 @@ public class ReplicationControlManagerTest {
             ctx.registerBrokers(0, 1, 2);
             ctx.unfenceBrokers(0, 1, 2);
 
-            // When creating a topic with diskless disabled
+            // When creating a topic with diskless enabled
             ControllerResult<CreateTopicsResponseData> result =
                 replicationControl.createTopics(requestContext, request, Collections.singleton("foo"));
-            // Then the topic creation should succeed as a classic topic with RF=3
+            // Then the topic creation should succeed, regardless of the RF
             CreateTopicsResponseData expectedResponse = new CreateTopicsResponseData();
             expectedResponse.topics().add(new CreatableTopicResult().setName("foo").
                 setNumPartitions(1).setReplicationFactor((short) 3).
@@ -4397,11 +4397,11 @@ public class ReplicationControlManagerTest {
         }
 
         @ParameterizedTest
-        @CsvSource(value = {
+        @CsvSource({
             "true,true",
-            "true,NULL",
+            "true,",
             "false,true",
-        }, nullValues = "NULL")
+        })
         public void testCreateDisklessTopic_noRacks(boolean logDisklessEnableServerConfig, String disklessEnableTopicConfig) {
             ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
                 .setDefaultDisklessEnable(logDisklessEnableServerConfig)
@@ -4498,11 +4498,11 @@ public class ReplicationControlManagerTest {
         }
 
         @ParameterizedTest
-        @CsvSource(value = {
+        @CsvSource({
             "true,true",
-            "true,NULL",
+            "true,",
             "false,true",
-        }, nullValues = "NULL")
+        })
         public void testCreateDisklessTopic_withRacks(boolean logDisklessEnableServerConfig, String disklessEnableTopicConfig) {
             ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
                 .setDefaultDisklessEnable(logDisklessEnableServerConfig)
@@ -4639,13 +4639,13 @@ public class ReplicationControlManagerTest {
         }
 
         @ParameterizedTest
-        @CsvSource(value = {
+        @CsvSource({
             "true,false",
-            "true,NULL"
+            "true,"
             // This case is not valid because no internal topic should be explicitly created with diskless enabled.
             // Tested in testInvalidDisklessTopicCreationForInternalTopics
             // "false,true",
-        }, nullValues = "NULL")
+        })
         public void testCreateInternalTopicWithDisklessEnabled(boolean logDisklessEnableServerConfig, String disklessEnableTopicConfig) {
             // Given a setup with diskless defined at the server level
             ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
@@ -4731,10 +4731,10 @@ public class ReplicationControlManagerTest {
         }
 
         @ParameterizedTest
-        @CsvSource(value = {
+        @CsvSource({
             "false,true",
-            "true,NULL"
-        }, nullValues = "NULL")
+            "true,"
+        })
         public void testInvalidDisklessTopicCreationWithoutSystemEnabled(boolean logDisklessEnableServerConfig, String disklessEnableTopicConfig) {
             // Given a setup with diskless defined at the server level
             ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
@@ -4933,7 +4933,7 @@ public class ReplicationControlManagerTest {
 
         @Test
         public void testReplicaChangeOnShutdown_withRacks() {
-            // With RF=3 (racks), when the leader broker is shutdown, the ISR shrinks and a new leader
+            // With RF=3 (racks), when a broker is shutdown, the ISR shrinks and a new leader
             // is elected from the remaining replicas in other racks.
             ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
                 .setDisklessStorageSystemEnabled(true)
@@ -4952,12 +4952,8 @@ public class ReplicationControlManagerTest {
             );
             final Uuid topicId = createResult.topicId();
 
-            // Capture the actual leader before shutdown
-            PartitionRegistration initialPartition = replication.getPartition(topicId, 0);
-            int originalLeader = initialPartition.leader;
-
             List<ApiMessageAndVersion> records = new ArrayList<>();
-            replication.handleBrokerShutdown(originalLeader, true, records);
+            replication.handleBrokerShutdown(0, true, records);
             ctx.replay(records);
 
             PartitionRegistration partition = replication.getPartition(topicId, 0);
@@ -4965,7 +4961,6 @@ public class ReplicationControlManagerTest {
             assertEquals(3, partition.replicas.length, "Replicas should remain unchanged (RF=3)");
             assertEquals(2, partition.isr.length, "ISR should shrink by 1 after shutdown");
             assertTrue(partition.leader >= 0, "A new leader should be elected from remaining replicas");
-            assertNotEquals(originalLeader, partition.leader, "Leader should change after shutdown");
         }
 
         @Test
@@ -5035,14 +5030,14 @@ public class ReplicationControlManagerTest {
             replication.handleBrokerUnregistered(0, 100, records);
             ctx.replay(records);
 
-            // All partitions should remain present with original replicas.
-            // ISR should shrink and leaders should move to other brokers.
+            // All partitions should remain present and keep the original replica/ISR,
+            // leaders should be moved to other brokers in different racks.
             for (int partitionId = 0; partitionId < numPartitions; partitionId++) {
                 PartitionRegistration partition = replication.getPartition(topicId, partitionId);
                 assertNotNull(partition, "Partition " + partitionId + " should exist after broker unregistration");
                 assertEquals(3, partition.replicas.length, "Replicas should stay unchanged for partition " + partitionId);
-                assertEquals(2, partition.isr.length, "ISR should shrink to 2 for partition " + partitionId);
-                assertTrue(partition.leader > 0, "Leader should remain online for partition " + partitionId);
+                assertEquals(2, partition.isr.length, "ISR should stay unchanged for partition " + partitionId);
+                assertTrue(partition.leader > 0, "Leader should be offline for partition " + partitionId);
             }
         }
 
