@@ -1591,6 +1591,7 @@ public final class QuorumController implements Controller {
             setDefaultNumPartitions(defaultNumPartitions).
             setDefaultDisklessEnable(defaultDisklessEnable).
             setDisklessStorageSystemEnabled(disklessStorageSystemEnabled).
+            setDisklessManagedReplicasEnabled(disklessManagedReplicasEnabled).
             setClassicRemoteStorageForceEnabled(classicRemoteStorageForceEnabled).
             setClassicRemoteStorageForceExcludeTopicRegexes(classicRemoteStorageForceExcludeTopicRegexes).
             setMaxElectionsPerImbalance(ReplicationControlManager.MAX_ELECTIONS_PER_IMBALANCE).
