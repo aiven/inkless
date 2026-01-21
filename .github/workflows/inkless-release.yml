@@ -170,13 +170,33 @@ jobs:
               echo "Found Kafka-base tags matrix: $MATRIX_JSON"
             fi
           else
-            # For kafka-base releases, use the tag itself with both architectures
-            # This tag is the latest for its minor version by definition
+            # For kafka-base releases, build only the pushed tag for both architectures,
+            # but determine the true latest patch for this Kafka minor from existing tags.
             GIT_TAG="${{ steps.parse.outputs.git_tag }}"
             KAFKA_MAJOR_MINOR="${{ steps.parse.outputs.kafka_major_minor }}"
             echo "matrix={\"include\":[{\"tag\":\"$GIT_TAG\"}]}" >> $GITHUB_OUTPUT
             echo "build_matrix={\"include\":[{\"kafka_tag\":\"$GIT_TAG\",\"arch\":\"amd64\",\"runner\":\"ubuntu-latest\"},{\"kafka_tag\":\"$GIT_TAG\",\"arch\":\"arm64\",\"runner\":\"ubuntu-24.04-arm\"}]}" >> $GITHUB_OUTPUT
-            echo "latest_tags={\"$KAFKA_MAJOR_MINOR\":\"$GIT_TAG\"}" >> $GITHUB_OUTPUT
+
+            # Find the kafka-base tag with the highest Kafka patch version for this minor.
+            # This prevents an older patch (pushed later) from overwriting A.B-latest.
+            LATEST_FOR_MINOR="$GIT_TAG"
+            CANDIDATE_TAGS=$(git tag --list "inkless-${KAFKA_MAJOR_MINOR}.*-*")
+            if [ -n "$CANDIDATE_TAGS" ]; then
+              HIGHEST=$(
+                echo "$CANDIDATE_TAGS" | while read -r TAG; do
+                  if [[ "$TAG" =~ ^inkless-([0-9]+\.[0-9]+\.[0-9]+)-(.+)$ ]]; then
+                    KVER="${BASH_REMATCH[1]}"
+                    echo "$KVER $TAG"
+                  fi
+                done | sort -t' ' -k1,1V | tail -n1 | awk '{print $2}'
+              )
+              if [ -n "$HIGHEST" ]; then
+                LATEST_FOR_MINOR="$HIGHEST"
+              fi
+            fi
+            echo "Highest patch for $KAFKA_MAJOR_MINOR: $LATEST_FOR_MINOR"
+
+            echo "latest_tags={\"$KAFKA_MAJOR_MINOR\":\"$LATEST_FOR_MINOR\"}" >> $GITHUB_OUTPUT
           fi
 
   # Build Kafka-base releases - one job per tag × architecture combination
