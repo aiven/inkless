@@ -36,14 +36,6 @@ public class LastMirroredOffsetsRequest extends AbstractRequest {
             this.data = data;
         }
 
-        public Builder(Set<String> topics) {
-            super(ApiKeys.LAST_MIRRORED_OFFSETS, ApiKeys.LAST_MIRRORED_OFFSETS.oldestVersion(),
-                    ApiKeys.LAST_MIRRORED_OFFSETS.latestVersion());
-            LastMirroredOffsetsRequestData data = new LastMirroredOffsetsRequestData();
-            data.setTopics(new ArrayList<>(topics));
-            this.data = data;
-        }
-
         @Override
         public LastMirroredOffsetsRequest build(short version) {
             return new LastMirroredOffsetsRequest(data, version);

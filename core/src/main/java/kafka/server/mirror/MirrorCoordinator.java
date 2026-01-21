@@ -30,6 +30,8 @@ import org.apache.kafka.common.record.FileRecords;
 import org.apache.kafka.common.record.MemoryRecords;
 import org.apache.kafka.common.record.MutableRecordBatch;
 import org.apache.kafka.common.record.SimpleRecord;
+import org.apache.kafka.common.requests.ReadMirrorStatesResponse;
+import org.apache.kafka.common.requests.WriteMirrorStatesResponse;
 import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.common.utils.Utils;
 import org.apache.kafka.coordinator.common.runtime.CoordinatorRecord;
@@ -64,6 +66,7 @@ import java.util.Map;
 import java.util.OptionalInt;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Consumer;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
@@ -116,30 +119,30 @@ public class MirrorCoordinator {
         this.metadataCache = metadataCache;
         this.time = time;
         this.mirrorMetadataManager = mirrorMetadataManager;
-        Transitioner transitioner = (mirrorName, tp, state) -> transitionTo(mirrorName, tp, state, true);
+        Transitioner transitioner = (mirrorName, tp, state) -> transitionTo(mirrorName, tp, state);
         this.mirrorMetadataManager.setTransitioner(transitioner);
     }
 
-    private void operateOnNewState(String mirrorName, Set<String> topics, MirrorState newState) {
+    private void operateOnNewState(String mirrorName, Set<TopicPartition> topics, MirrorState newState) {
         switch (newState) {
-            case METADATA_UPDATE:
+            case NONE:
                 LOG.info("!!! Updating metadata for topics {}.", topics);
-                mirrorMetadataManager.onPreparing(mirrorName, topics);
+                //mirrorMetadataManager.onPreparing(mirrorName, topics);
                 break;
             case PREPARING_MIRRORING:
                 LOG.info("!!! Preparing mirroring for topics {}.", topics);
-                updateMirrorTopicsMetadata(mirrorName, topics, Set.of());
-                maybeScheduleForTruncate(mirrorName, topics);
+//                updateMirrorTopicsMetadata(mirrorName, topics, Set.of());
+//                maybeScheduleForTruncate(mirrorName, topics);
                 break;
             case MIRRORING:
                 LOG.info("!!! Mirroring topics {}.", topics);
                 // start mirroring
-                mirrorMetadataManager.operateOnMirroring(mirrorName, topics);
+//                mirrorMetadataManager.operateOnMirroring(mirrorName, topics);
                 break;
             case STOPPING:
                 LOG.info("!!! Stopping mirroring for topics {}.", topics);
-                updateMirrorTopicsMetadata(mirrorName, Set.of(), topics);
-                updateLastMirroredOffsets(mirrorName, topics);
+//                updateMirrorTopicsMetadata(mirrorName, Set.of(), topics);
+//                updateLastMirroredOffsets(mirrorName, topics);
                 break;
             case STOPPED:
                 LOG.info("!!! Stopped mirroring for topics {}.", topics);
@@ -152,35 +155,35 @@ public class MirrorCoordinator {
 
     public void transitionTo(String mirrorName, Set<String> topics, MirrorState newState) {
         topics.forEach(topic -> {
-            ((KRaftMetadataCache) metadataCache).numPartitions(topic).ifPresent(numPartitions -> {
+            metadataCache.numPartitions(topic).ifPresent(numPartitions -> {
                 for (int partitionIndex = 0; partitionIndex < numPartitions; partitionIndex++) {
                     TopicPartition topicPartition = new TopicPartition(topic, partitionIndex);
-                    transitionTo(mirrorName, topicPartition, newState, false);
+                    transitionTo(mirrorName, topicPartition, newState);
                 }
             });
         });
 
-        operateOnNewState(mirrorName, topics, newState);
+
     }
 
-    public void transitionTo(String mirrorName, TopicPartition topicPartition, MirrorState newState, boolean shouldOperate) {
+    public void transitionTo(String mirrorName, TopicPartition topicPartition, MirrorState newState) {
         LOG.info("!!! Transitioning {} to {} for partition {}.", mirrorMetadataManager.getMirrorPartitionState(mirrorName, topicPartition), newState, topicPartition);
         updateMirrorPartitionState(mirrorName, topicPartition, newState);
 
-        if (shouldOperate) {
-            operateOnNewState(mirrorName, Set.of(topicPartition.topic()), newState);
-        }
+        operateOnNewState(mirrorName, Set.of(topicPartition), newState);
     }
 
     public void writeMirroredPartitionMetadata(String mirrorName,
                                                Map<String, Set<MirrorMetadataManager.MirroredPartitionMetadata>> topicMetadata,
-                                               Set<String> removedTopics) {
-        mirrorMetadataManager.writeStatesToRemoteCoordinator(mirrorName, topicMetadata, removedTopics, (res) -> { });
+                                               Set<String> removedTopics,
+                                               Consumer<WriteMirrorStatesResponse> sendResponseCallback) {
+        mirrorMetadataManager.writeStatesToRemoteCoordinator(mirrorName, topicMetadata, removedTopics, sendResponseCallback);
     }
 
     public void readMirroredPartitionMetadata(String mirrorName,
-                                              Map<String, Set<Integer>> partitions) {
-        mirrorMetadataManager.readStatesToRemoteCoordinator(mirrorName, partitions, (res) -> { });
+                                              Map<String, Set<Integer>> partitions,
+                                              Consumer<ReadMirrorStatesResponse> sendResponseCallback) {
+        mirrorMetadataManager.readStatesFromCache(mirrorName, partitions, sendResponseCallback);
     }
 
     public void updateLastMirroredOffsets(String mirrorName, Set<String> mirrorTopics) {
@@ -275,8 +278,20 @@ public class MirrorCoordinator {
     }
 
     private void maybeTruncate(String mirrorName, Set<String> topics) {
-        mirrorMetadataManager.maybeTruncate(replicaManager, mirrorName, topics,
-                tp -> transitionTo(mirrorName, Set.of(tp.topic()), MirrorState.MIRRORING));
+        Map<String, Set<Integer>> topicPartitions = new HashMap<>();
+        topics.forEach(topic -> {
+            metadataCache.numPartitions(topic).ifPresent(numPartitions -> {
+                IntStream.range(0, numPartitions).forEach(i -> {
+                    metadataCache.getLeaderAndIsr(topic, i).ifPresent(leaderAndIsr -> {
+                        if (leaderAndIsr.leader() == config.nodeId()) {
+                            topicPartitions.put(topic, Set.of(i));
+                        }
+                    });
+                });
+            });
+        });
+//        mirrorMetadataManager.maybeTruncate(replicaManager, mirrorName, topics,
+//                tp -> transitionTo(mirrorName, Set.of(tp.topic()), MirrorState.MIRRORING));
     }
 
     /**
@@ -553,8 +568,8 @@ public class MirrorCoordinator {
             }
 
             // we've read all the mirrored records, transition the state for each topic partitions
-            Operator operator = (mirrorName, topics, state) -> operateOnNewState(mirrorName, topics, state);
-            mirrorMetadataManager.operateAll(operator);
+//            Operator operator = (mirrorName, topics, state) -> operateOnNewState(mirrorName, topics, state);
+//            mirrorMetadataManager.operateAll(operator);
 
             return null;
         });

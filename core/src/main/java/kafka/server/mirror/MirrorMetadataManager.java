@@ -50,6 +50,7 @@ import org.apache.kafka.common.message.OffsetCommitRequestData;
 import org.apache.kafka.common.message.OffsetFetchRequestData;
 import org.apache.kafka.common.message.OffsetFetchResponseData;
 import org.apache.kafka.common.message.ReadMirrorStatesRequestData;
+import org.apache.kafka.common.message.ReadMirrorStatesResponseData;
 import org.apache.kafka.common.message.WriteMirrorStatesRequestData;
 import org.apache.kafka.common.metrics.Metrics;
 import org.apache.kafka.common.network.ClientInformation;
@@ -179,7 +180,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     private Map<MirroredPartitionKey, Long> lastMirroredOffsets = new ConcurrentHashMap<>();
     private Map<MirroredPartitionKey, MirrorState> mirroredPartitionState = new ConcurrentHashMap<>();
     private Map<MirroredPartitionKey, Runnable> onMirroringWaitingList = new ConcurrentHashMap<>();
-    private Map<String, Set<String>> onPreparingWaitingList = new ConcurrentHashMap<>();
+//    private Map<String, Set<String>> onPreparingWaitingList = new ConcurrentHashMap<>();
     private Map<String, Node> coordinatorNodesCache = new ConcurrentHashMap<>();
     private InterBrokerSender interBrokerSender;
     private Optional<MirrorCoordinator.Transitioner> transitioner = Optional.empty();
@@ -241,9 +242,11 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                 MirroredPartitionKey key = new MirroredPartitionKey(info.partition().mirrorName, tp.topic(), tp.partition());
                 // moving the topics in METADATA_UPDATE into PREPAREING_MIRRORING state
                 // or moving the topics don't have state (due to topic not created yet) directly into MIRRORING state because no truncation needed
-                if (!mirroredPartitionState.containsKey(key) || mirroredPartitionState.get(key) == MirrorState.METADATA_UPDATE) {
-                    transitioner.ifPresent(t -> t.transitionTo(info.partition().mirrorName, tp, MirrorState.PREPARING_MIRRORING));
-                }
+//                if (!mirroredPartitionState.containsKey(key) || mirroredPartitionState.get(key) == MirrorState.METADATA_UPDATE) {
+//                    transitioner.ifPresent(t -> t.transitionTo(info.partition().mirrorName, tp, MirrorState.PREPARING_MIRRORING));
+//                } else {
+                transitioner.ifPresent(t -> t.transitionTo(info.partition().mirrorName, tp, mirroredPartitionState.get(key)));
+//                }
             });
         }
     }
@@ -283,7 +286,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     public void writeStatesToRemoteCoordinator(String mirrorName,
                                                Map<String, Set<MirroredPartitionMetadata>> topicMetadata,
                                                Set<String> removedTopics,
-                                               Consumer<WriteMirrorStatesResponse> onWriteComplete) {
+                                               Consumer<WriteMirrorStatesResponse> responseCallback) {
         LOG.info("!!! writeStatesToRemoteCoordinator: {} {} {}", mirrorName, topicMetadata, removedTopics);
 
         if (coordinatorNodesCache.get(mirrorName) == null && findCoordinator(mirrorName).isEmpty()) {
@@ -322,7 +325,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                     public void onComplete(ClientResponse response) {
                         if (response.responseBody() instanceof WriteMirrorStatesResponse writeMirrorStatesResponse) {
                             LOG.info("!!! writeStatesToRemoteCoordinator onComplete: {}", response.responseBody());
-                            onWriteComplete.accept(writeMirrorStatesResponse);
+                            responseCallback.accept(writeMirrorStatesResponse);
                         }
                     }
                 }
@@ -394,21 +397,61 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         ));
     }
 
+    public void readStatesFromCache(String mirrorName,
+                                    Map<String, Set<Integer>> partitions,
+                                    Consumer<ReadMirrorStatesResponse> responseCallback) {
+        LOG.info("!!! readStatesFromCache: {} {}", mirrorName, partitions);
+
+        ReadMirrorStatesResponseData data = new ReadMirrorStatesResponseData();
+        List<ReadMirrorStatesResponseData.TopicState> topicStates = new ArrayList<>();
+        partitions.forEach((tp, parts) -> {
+            ReadMirrorStatesResponseData.TopicState state = new ReadMirrorStatesResponseData.TopicState().setName(tp);
+            List<ReadMirrorStatesResponseData.PartitionState> partitionStates = new ArrayList<>();
+            parts.forEach(part -> {
+                ReadMirrorStatesResponseData.PartitionState partitionState = new ReadMirrorStatesResponseData.PartitionState();
+                partitionState.setPartitionIndex(part);
+                partitionState.setLastMirroredOffset(lastMirroredOffsets.getOrDefault(new MirroredPartitionKey(mirrorName, tp, part), -1L));
+                partitionState.setState(mirroredPartitionState.getOrDefault(new MirroredPartitionKey(mirrorName, tp, part), MirrorState.NONE).value());
+                partitionStates.add(partitionState);
+            });
+            state.setPartitions(partitionStates);
+            topicStates.add(state);
+        });
+        data.setTopics(topicStates);
+
+        responseCallback.accept(new ReadMirrorStatesResponse(data));
+    }
+
     /**
      * maybe truncate the topics on the mirrorName by sending LAST_MIRRORED_OFFSET API to the source cluster
      *
      * @param replicaManager the replicaManager
      * @param mirrorName the name of the cluster mirror
-     * @param topics the topics to be truncated
+     * @param topicPartitions the topic partitions to be truncated
      * @param onTruncateComplete the callback when truncation completed
      */
-    public void maybeTruncate(ReplicaManager replicaManager, String mirrorName, Set<String> topics, Consumer<TopicPartition> onTruncateComplete) {
-        LOG.info("!!! maybeTruncate: {} {}", mirrorName, topics);
+    public void maybeTruncate(ReplicaManager replicaManager, String mirrorName, Map<String, Set<Integer>> topicPartitions, Consumer<TopicPartition> onTruncateComplete) {
+        LOG.info("!!! maybeTruncate: {} {}", mirrorName, topicPartitions);
         createMirrorConnection(mirrorName);
+
+        Set<TopicPartition> topicPartitionsSet = topicPartitions.entrySet().stream().flatMap(
+                entry -> entry.getValue().stream().map(
+                        partition -> new TopicPartition(entry.getKey(), partition))).collect(Collectors.toSet());
+        List<LastMirroredOffsetsRequestData.TopicState> topicStates = new ArrayList<>();
+        topicPartitions.forEach((topic, partitions) -> {
+            List<LastMirroredOffsetsRequestData.PartitionState> partitionStates = new ArrayList<>();
+            partitions.forEach(partition -> {
+                LastMirroredOffsetsRequestData.PartitionState partitionState = new LastMirroredOffsetsRequestData.PartitionState();
+                partitionState.setPartitionIndex(partition);
+                partitionStates.add(partitionState);
+            });
+            LastMirroredOffsetsRequestData.TopicState state = new LastMirroredOffsetsRequestData.TopicState().setName(topic).setPartitions(partitionStates);
+            topicStates.add(state);
+        });
 
         var response = getRandomSender(remoteBrokers.get(mirrorName)).sendRequest(
                 new LastMirroredOffsetsRequest.Builder(
-                        new LastMirroredOffsetsRequestData().setMirrorName(mirrorName).setTopics(new ArrayList<>(topics)))
+                        new LastMirroredOffsetsRequestData().setMirrorName(mirrorName).setTopics(topicStates))
         );
 
         if (response.responseBody() instanceof LastMirroredOffsetsResponse lastMirroredOffsetResponse) {
@@ -422,15 +465,9 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
             });
             replicaManager.maybeTruncate(offsets, onTruncateComplete);
             // if no last mirrored offset set in the source cluster, ignore it and directly move to MIRRORING state
-            if (topics.size() > offsets.size()) {
-                Set<String> diffTopics = new HashSet<>(topics);
-                diffTopics.removeAll(offsets.keySet().stream().map(TopicPartition::topic).collect(Collectors.toSet()));
-                diffTopics.forEach(topic ->
-                    metadataCache.numPartitions(topic).ifPresent(numPartitions -> {
-                        for (int i = 0; i < numPartitions; i++) {
-                            onTruncateComplete.accept(new TopicPartition(topic, i));
-                        }
-                    }));
+            if (topicPartitionsSet.size() > offsets.size()) {
+                topicPartitionsSet.removeAll(offsets.keySet().stream().map(TopicPartition::topic).collect(Collectors.toSet()));
+                topicPartitionsSet.forEach(onTruncateComplete::accept);
             }
         }
     }
@@ -563,18 +600,18 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         return lastMirroredOffsets;
     }
 
-    public void onPreparing(String clusterName, Set<String> topics) {
-        LOG.info("!!! onPreparing: {} {}", clusterName, topics);
-        onPreparingWaitingList.compute(clusterName, (key, prevVal) -> {
-            Set<String> result = new HashSet<>();
-            if (prevVal != null) {
-                result.addAll(prevVal);
-            }
-            result.addAll(topics);
-            return result;
-        });
-        LOG.info("!!! onPreparingWaitingList: {}", onPreparingWaitingList);
-    }
+//    public void onPreparing(String clusterName, Set<String> topics) {
+//        LOG.info("!!! onPreparing: {} {}", clusterName, topics);
+//        onPreparingWaitingList.compute(clusterName, (key, prevVal) -> {
+//            Set<String> result = new HashSet<>();
+//            if (prevVal != null) {
+//                result.addAll(prevVal);
+//            }
+//            result.addAll(topics);
+//            return result;
+//        });
+//        LOG.info("!!! onPreparingWaitingList: {}", onPreparingWaitingList);
+//    }
 
 //    public void operateOnPreparing(String mirrorName, TopicPartition topicPartition) {
 //        LOG.info("!!! operateOnPreparing: {} {}", mirrorName, topicPartition);

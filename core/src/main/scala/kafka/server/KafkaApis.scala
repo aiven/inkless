@@ -21,7 +21,6 @@ import kafka.coordinator.transaction.{InitProducerIdResult, TransactionCoordinat
 import kafka.network.RequestChannel
 import kafka.server.QuotaFactory.{QuotaManagers, UNBOUNDED_QUOTA}
 import kafka.server.handlers.DescribeTopicPartitionsRequestHandler
-import kafka.server.metadata.KRaftMetadataCache
 import kafka.server.mirror.MirrorMetadataManager.MirroredPartitionMetadata
 import kafka.server.mirror.{MirrorCoordinator, MirrorState}
 import kafka.server.share.{ShareFetchUtils, SharePartitionManager}
@@ -188,7 +187,7 @@ class KafkaApis(val requestChannel: RequestChannel,
         case ApiKeys.LIST_GROUPS => handleListGroupsRequest(request).exceptionally(handleError)
         case ApiKeys.SASL_HANDSHAKE => handleSaslHandshakeRequest(request)
         case ApiKeys.API_VERSIONS => handleApiVersionsRequest(request)
-        case ApiKeys.CREATE_TOPICS => handleCreateTopics(request)
+        case ApiKeys.CREATE_TOPICS => forwardToController(request)
         case ApiKeys.DELETE_TOPICS => forwardToController(request)
         case ApiKeys.DELETE_RECORDS => handleDeleteRecordsRequest(request)
         case ApiKeys.INIT_PRODUCER_ID => handleInitProducerIdRequest(request, requestLocal)
@@ -289,7 +288,9 @@ class KafkaApis(val requestChannel: RequestChannel,
       })
       partitionMetadata.put(topic.name(), partMetadata)
     })
-    mirrorCoordinator.writeMirroredPartitionMetadata(mirrorName, partitionMetadata, new util.HashSet[String](removedTopics))
+    mirrorCoordinator.writeMirroredPartitionMetadata(mirrorName, partitionMetadata, new util.HashSet[String](removedTopics),
+      (res) => requestHelper.sendMaybeThrottle(request, res))
+
   }
 
   def handleReadMirrorStates(request: RequestChannel.Request): Unit = {
@@ -304,20 +305,21 @@ class KafkaApis(val requestChannel: RequestChannel,
       })
       partitionMetadata.put(topic.name(), parts)
     })
-    mirrorCoordinator.readMirroredPartitionMetadata(mirrorName, partitionMetadata)
+    mirrorCoordinator.readMirroredPartitionMetadata(mirrorName, partitionMetadata,
+      (res) => requestHelper.sendMaybeThrottle(request, res))
   }
 
-  def handleCreateTopics(request: RequestChannel.Request): Unit = {
-    val createTopicsRequest = request.body[CreateTopicsRequest]
-    // TODO: might need to have a better way to pass the cluster mirror
-    val mirrorTopic = createTopicsRequest.data.topics.stream()
-      .filter(t => t.mirrorInfo() != null && t.mirrorInfo().mirrorName() != null && !t.mirrorInfo().mirrorName().isEmpty).findFirst()
-    if (mirrorTopic.isPresent) {
-      logger.info(s"!!! Handling create mirror topics request: ${mirrorTopic.get().mirrorInfo().mirrorName()}")
-      mirrorCoordinator.transitionTo(mirrorTopic.get().mirrorInfo().mirrorName(), util.Set.of(mirrorTopic.get().name()), MirrorState.METADATA_UPDATE)
-    }
-    forwardToController(request)
-  }
+//  def handleCreateTopics(request: RequestChannel.Request): Unit = {
+//    val createTopicsRequest = request.body[CreateTopicsRequest]
+//    // TODO: might need to have a better way to pass the cluster mirror
+//    val mirrorTopic = createTopicsRequest.data.topics.stream()
+//      .filter(t => t.mirrorInfo() != null && t.mirrorInfo().mirrorName() != null && !t.mirrorInfo().mirrorName().isEmpty).findFirst()
+//    if (mirrorTopic.isPresent) {
+//      logger.info(s"!!! Handling create mirror topics request: ${mirrorTopic.get().mirrorInfo().mirrorName()}")
+////      mirrorCoordinator.transitionTo(mirrorTopic.get().mirrorInfo().mirrorName(), util.Set.of(mirrorTopic.get().name()), MirrorState.METADATA_UPDATE)
+//    }
+//    forwardToController(request)
+//  }
 
   def handleLastMirroredOffset(request: RequestChannel.Request): Unit = {
     val lastMirroredOffsetRequest = request.body[LastMirroredOffsetsRequest]
@@ -328,17 +330,14 @@ class KafkaApis(val requestChannel: RequestChannel,
     lastMirroredOffsetRequest.data().topics().forEach(topic => {
       val responseTopic = new LastMirroredOffsetsResponseData.OffsetResponseTopic()
       val partitionList = new util.ArrayList[LastMirroredOffsetsResponseData.OffsetResponsePartition]()
-
-      metadataCache.asInstanceOf[KRaftMetadataCache].numPartitions(topic).ifPresent(numPartitions => {
-        for(i <- 0 until numPartitions) {
-          val partition = new TopicPartition(topic, i)
-          val offsetPartition = new LastMirroredOffsetsResponseData.OffsetResponsePartition()
-          offsetPartition.setPartitionIndex(i)
-            .setLastMirroredOffset(mirrorCoordinator.lastMirroredOffset(mirrorName, partition))
-          partitionList.add(offsetPartition)
-        }
+      topic.partitions().forEach(par => {
+        val partition = new TopicPartition(topic.name(), par.partitionIndex())
+        val offsetPartition = new LastMirroredOffsetsResponseData.OffsetResponsePartition()
+        offsetPartition.setPartitionIndex(par.partitionIndex())
+          .setLastMirroredOffset(mirrorCoordinator.lastMirroredOffset(mirrorName, partition))
+        partitionList.add(offsetPartition)
       })
-      responseTopic.setName(topic)
+      responseTopic.setName(topic.name())
       responseTopic.setPartitions(partitionList)
       topicList.add(responseTopic)
     })
@@ -354,7 +353,7 @@ class KafkaApis(val requestChannel: RequestChannel,
     if (mirrorTopic.isPresent) {
       if (isClusterMirroringEnabled) {
         logger.info(s"!!! Handling adding mirror topics request: ${mirrorTopic.get().mirrorName()}")
-        mirrorCoordinator.transitionTo(mirrorTopic.get().mirrorName(), util.Set.of(mirrorTopic.get().topicName()), MirrorState.METADATA_UPDATE)
+        mirrorCoordinator.transitionTo(mirrorTopic.get().mirrorName(), util.Set.of(mirrorTopic.get().topicName()), MirrorState.PREPARING_MIRRORING)
       } else {
         logger.warn("Cluster mirroring is disabled (mirror.version=0), ignoring mirror topic creation request")
       }
@@ -369,7 +368,7 @@ class KafkaApis(val requestChannel: RequestChannel,
     logger.info(s"!!! Handling remove topics from mirror request: $removeTopicsFromMirrorRequest $mirrorTopics")
 
     // update the cached topics in coordinator
-    mirrorCoordinator.transitionTo(removeTopicsFromMirrorRequest.data().mirrorName(), mirrorTopics, MirrorState.STOPPING)
+//    mirrorCoordinator.transitionTo(removeTopicsFromMirrorRequest.data().mirrorName(), mirrorTopics, MirrorState.STOPPING)
     forwardToController(request)
   }
 

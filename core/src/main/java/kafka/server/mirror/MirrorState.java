@@ -17,7 +17,7 @@
 package kafka.server.mirror;
 
 public enum MirrorState {
-    METADATA_UPDATE((byte) 0),
+    NONE((byte) 0),
     PREPARING_MIRRORING((byte) 1),
     MIRRORING((byte) 2),
     STOPPING((byte) 4),
@@ -37,7 +37,7 @@ public enum MirrorState {
     public static MirrorState fromValue(byte value) {
         switch (value) {
             case 0:
-                return METADATA_UPDATE;
+                return NONE;
             case 1:
                 return PREPARING_MIRRORING;
             case 2:

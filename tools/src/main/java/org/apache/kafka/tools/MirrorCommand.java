@@ -235,13 +235,13 @@ public abstract class MirrorCommand {
                         createdTopics.size(), mirrorName, createdTopics);
                 }
 
-                if (!existingTopics.isEmpty()) {
+//                if (!existingTopics.isEmpty()) {
                     AddTopicsToMirrorResult addResult = admin.addTopicsToMirror(
                         existingTopics, new AddTopicsToMirrorOptions());
                     addResult.all().get();
                     System.out.printf("Successfully added %d existing topic(s) to mirror %s%n",
                         existingTopics.size(), mirrorName);
-                }
+//                }
             }
         }
 
