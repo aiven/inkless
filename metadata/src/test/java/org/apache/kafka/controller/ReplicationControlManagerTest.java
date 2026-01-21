@@ -102,7 +102,9 @@ import org.apache.kafka.server.policy.CreateTopicPolicy;
 import org.apache.kafka.server.util.MockRandom;
 import org.apache.kafka.timeline.SnapshotRegistry;
 
+import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.DisabledIf;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
@@ -166,6 +168,408 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 @Timeout(40)
 public class ReplicationControlManagerTest {
+
+    /*
+     * Phase 0 tests for Diskless RF>1
+     * See: docs/inkless/ts-unification/DISKLESS_MANAGED_RF.md
+     *
+     * These tests validate that controller's leader election, ISR management, and heartbeat
+     * handling are metadata-driven and do not require broker-side Partition objects.
+     *
+     * ===================================================================================
+     * REPLICA TERMINOLOGY (from design doc)
+     * ===================================================================================
+     *
+     * OFFLINE REPLICA:
+     *   - KRaft shows replica on broker X, but broker X is down or doesn't exist
+     *   - Current diskless: RF=1 replica may be offline; transformer ignores and hashes to any alive broker
+     *   - Proposed RF>1: Controller tracks in KRaft; transformer routes around to alive replicas
+     *
+     * GHOST REPLICA:
+     *   - KRaft shows replica on broker X, broker X is alive, but no Partition object exists
+     *   - Current diskless: isDisklessTopic() skips getOrCreatePartition() - replicas are "ghosts"
+     *   - Problem: `describe topic` shows healthy replicas that aren't real
+     *   - Proposed RF>1: Still no Partition objects, but replicas meaningful for routing/leadership
+     *
+     * REAL (METADATA-ONLY) REPLICA:
+     *   - Broker recognizes it's a replica, but no local log (data in object storage)
+     *   - Current diskless: N/A (RF=1, faked metadata)
+     *   - Proposed RF>1: Target state for diskless replicas
+     *
+     * ===================================================================================
+     * CURRENT DISKLESS BEHAVIOR (RF=1, faked metadata)
+     * ===================================================================================
+     *
+     * In ReplicaManager.scala, diskless topics skip Partition object creation:
+     *
+     *     if (!_inklessMetadataView.isDisklessTopic(tp.topic()))
+     *       getOrCreatePartition(tp, delta, info.topicId)  // SKIPPED for diskless!
+     *
+     * InklessTopicMetadataTransformer "fakes" the metadata response:
+     *   - Ignores KRaft replica assignments entirely
+     *   - Hashes topic+partition to select any alive broker as "leader"
+     *   - Sets replicas/ISR to single-element list with the hashed broker
+     *   - Sets offlineReplicas to empty (no "real" replicas to be offline)
+     *
+     * ===================================================================================
+     * PROPOSED BEHAVIOR (RF=rack_count, real metadata)
+     * ===================================================================================
+     *
+     *   - Controller assigns real replicas (one per rack) in KRaft metadata
+     *   - Brokers still skip Partition objects (no local logs)
+     *   - Transformer filters KRaft placement by client AZ
+     *   - Falls back to any alive broker if all replicas offline (DISKLESS_ONLY)
+     *   - ISR is liveness-gated (replicas never diverge - data in object storage)
+     *   - offlineReplicas reflects actual broker status from KRaft
+     *
+     * ===================================================================================
+     * PHASE 0 FINDINGS
+     * ===================================================================================
+     *
+     *   - Leader election: Controller elects from KRaft + broker liveness; no Partition objects needed
+     *   - ISR maintenance: Metadata-driven shrink/expand on fence/unfence
+     *   - Broker heartbeats: Broker-scoped, no per-partition payload
+     *
+     * ===================================================================================
+     * TEST ORGANIZATION
+     * ===================================================================================
+     *
+     *   - Classic topic tests: Verify controller behavior (pass today)
+     *   - Diskless RF>1 tests: @DisabledIf until RF>1 topic creation implemented
+     *   - Diskless ISR semantics: Liveness-gated expansion (new behavior, @DisabledIf)
+     *
+     * To force-run disabled tests:
+     *   DISKLESS_RF_FUTURE_TESTS_ENABLED=true ./gradlew :metadata:test \
+     *       --tests "...DisklessRfPhase0Tests.*" --rerun
+     */
+    @Nested
+    class DisklessRfPhase0Tests {
+
+        // Returns true if future tests should be skipped (default behavior)
+        boolean disklessRfFutureTestsDisabled() {
+            return !"true".equals(System.getenv("DISKLESS_RF_FUTURE_TESTS_ENABLED"));
+        }
+
+        // ==================================================================================
+        // CLASSIC TOPIC TESTS
+        // Verify controller behavior that applies to both classic and future diskless RF>1.
+        // These pass today and document the foundation.
+        // ==================================================================================
+
+        // Leader election via controller metadata when leader is fenced.
+        // Finding: Controller elects from KRaft + broker liveness; no Partition objects needed.
+        @Test
+        void leaderElectionWhenLeaderFenced_classicTopic() {
+            ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+                .setDisklessStorageSystemEnabled(true)
+                .build();
+            ReplicationControlManager replication = ctx.replicationControl;
+            ctx.registerBrokers(1, 2, 3);
+            ctx.unfenceBrokers(1, 2, 3);
+
+            CreatableTopicResult topic = ctx.createTestTopic(
+                "classic-rf3", new int[][] {new int[] {1, 2, 3}});
+
+            Uuid topicId = topic.topicId();
+            List<ApiMessageAndVersion> records = new ArrayList<>();
+            replication.handleBrokerFenced(1, records);
+            ctx.replay(records);
+
+            PartitionRegistration partition = replication.getPartition(topicId, 0);
+            assertNotNull(partition, "Partition should exist after leader fencing");
+            assertArrayEquals(new int[] {2, 3}, partition.isr,
+                "ISR should exclude fenced leader");
+            assertTrue(partition.leader == 2 || partition.leader == 3,
+                "Leader should be re-elected from remaining ISR members");
+        }
+
+        // Follower fencing shrinks ISR without affecting leader.
+        // Finding: ISR shrink is metadata-driven via handleBrokerFenced.
+        @Test
+        void isrShrinksWhenFollowerFenced_classicTopic() {
+            ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+                .setDisklessStorageSystemEnabled(true)
+                .build();
+            ReplicationControlManager replication = ctx.replicationControl;
+            ctx.registerBrokers(1, 2, 3);
+            ctx.unfenceBrokers(1, 2, 3);
+
+            CreatableTopicResult topic = ctx.createTestTopic(
+                "classic-rf3", new int[][] {new int[] {1, 2, 3}});
+
+            Uuid topicId = topic.topicId();
+            List<ApiMessageAndVersion> records = new ArrayList<>();
+            replication.handleBrokerFenced(2, records);
+            ctx.replay(records);
+
+            PartitionRegistration partition = replication.getPartition(topicId, 0);
+            assertNotNull(partition);
+            assertArrayEquals(new int[] {1, 3}, partition.isr,
+                "ISR should exclude fenced follower");
+            assertEquals(1, partition.leader,
+                "Leader should remain stable when follower is fenced");
+        }
+
+        // Controlled shutdown removes broker from ISR and re-elects leader if needed.
+        // Finding: handleBrokerInControlledShutdown is metadata-driven.
+        @Test
+        void controlledShutdownRemovesFromIsrAndReelectsLeader_classicTopic() {
+            ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+                .setDisklessStorageSystemEnabled(true)
+                .build();
+            ReplicationControlManager replication = ctx.replicationControl;
+            ctx.registerBrokers(1, 2, 3);
+            ctx.unfenceBrokers(1, 2, 3);
+
+            CreatableTopicResult topic = ctx.createTestTopic(
+                "classic-rf3", new int[][] {new int[] {1, 2, 3}});
+
+            Uuid topicId = topic.topicId();
+            List<ApiMessageAndVersion> records = new ArrayList<>();
+            // Simulate controlled shutdown of the leader
+            replication.handleBrokerInControlledShutdown(1, 101, records);
+            ctx.replay(records);
+
+            PartitionRegistration partition = replication.getPartition(topicId, 0);
+            assertNotNull(partition);
+            assertArrayEquals(new int[] {2, 3}, partition.isr,
+                "ISR should exclude broker in controlled shutdown");
+            assertTrue(partition.leader == 2 || partition.leader == 3,
+                "Leader should be re-elected from remaining ISR");
+        }
+
+        // ==================================================================================
+        // DISKLESS RF>1 TESTS
+        // Same controller behaviors but with diskless topics.
+        // @DisabledIf until diskless RF>1 topic creation is implemented (Phase 1).
+        // ==================================================================================
+
+        // [FUTURE] Leader election for diskless topics.
+        // Blocked on: Diskless RF>1 topic creation.
+        @DisabledIf("disklessRfFutureTestsDisabled")
+        @Test
+        void leaderElectionWhenLeaderFenced_disklessTopic() {
+            ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+                .setDefaultDisklessEnable(true)
+                .setDisklessStorageSystemEnabled(true)
+                .build();
+            ReplicationControlManager replication = ctx.replicationControl;
+            ctx.registerBrokers(1, 2, 3);
+            ctx.unfenceBrokers(1, 2, 3);
+
+            // TODO: Update expected error to NONE.code() when diskless RF>1 is implemented
+            CreatableTopicResult topic = ctx.createTestTopic(
+                "diskless-rf3", new int[][] {new int[] {1, 2, 3}},
+                Map.of(DISKLESS_ENABLE_CONFIG, "true"),
+                NONE.code());
+
+            Uuid topicId = topic.topicId();
+            List<ApiMessageAndVersion> records = new ArrayList<>();
+            replication.handleBrokerFenced(1, records);
+            ctx.replay(records);
+
+            PartitionRegistration partition = replication.getPartition(topicId, 0);
+            assertNotNull(partition);
+            assertArrayEquals(new int[] {2, 3}, partition.isr);
+            assertTrue(partition.leader == 2 || partition.leader == 3,
+                "Leader should be re-elected from remaining ISR");
+        }
+
+        // [FUTURE] ISR shrink for diskless topics.
+        // Blocked on: Diskless RF>1 topic creation.
+        @DisabledIf("disklessRfFutureTestsDisabled")
+        @Test
+        void isrShrinksWhenFollowerFenced_disklessTopic() {
+            ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+                .setDefaultDisklessEnable(true)
+                .setDisklessStorageSystemEnabled(true)
+                .build();
+            ReplicationControlManager replication = ctx.replicationControl;
+            ctx.registerBrokers(1, 2, 3);
+            ctx.unfenceBrokers(1, 2, 3);
+
+            CreatableTopicResult topic = ctx.createTestTopic(
+                "diskless-rf3", new int[][] {new int[] {1, 2, 3}},
+                Map.of(DISKLESS_ENABLE_CONFIG, "true"),
+                NONE.code());
+
+            Uuid topicId = topic.topicId();
+            List<ApiMessageAndVersion> records = new ArrayList<>();
+            replication.handleBrokerFenced(2, records);
+            ctx.replay(records);
+
+            PartitionRegistration partition = replication.getPartition(topicId, 0);
+            assertNotNull(partition);
+            assertArrayEquals(new int[] {1, 3}, partition.isr);
+            assertEquals(1, partition.leader);
+        }
+
+        // ==================================================================================
+        // DISKLESS-SPECIFIC ISR SEMANTICS: Liveness-gated ISR expansion
+        //
+        // For diskless, ISR should be liveness-gated, not lag-gated:
+        //   - Replicas never diverge (data in remote storage)
+        //   - Unfenced broker should immediately rejoin ISR (no catch-up needed)
+        //
+        // This is NEW behavior that differs from classic Kafka.
+        // ==================================================================================
+
+        // [FUTURE - NEW BEHAVIOR] Diskless ISR expands on unfence without lag checks.
+        //
+        // Classic Kafka requires: follower catch-up via fetcher, then AlterPartition from leader.
+        // Diskless: liveness alone is sufficient (replicas can't diverge).
+        //
+        // Blocked on:
+        //   1. Diskless RF>1 topic creation (Phase 1)
+        //   2. Liveness-gated ISR expansion (new controller logic)
+        @DisabledIf("disklessRfFutureTestsDisabled")
+        @Test
+        void isrExpandsOnUnfence_disklessLivenessGated() {
+            ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+                .setDefaultDisklessEnable(true)
+                .setDisklessStorageSystemEnabled(true)
+                .build();
+            ReplicationControlManager replication = ctx.replicationControl;
+            ctx.registerBrokers(1, 2, 3);
+            ctx.unfenceBrokers(1, 2, 3);
+
+            CreatableTopicResult topic = ctx.createTestTopic(
+                "diskless-rf3", new int[][] {new int[] {1, 2, 3}},
+                Map.of(DISKLESS_ENABLE_CONFIG, "true"),
+                NONE.code());
+
+            Uuid topicId = topic.topicId();
+
+            // Fence broker 2 - ISR should shrink (this works today)
+            List<ApiMessageAndVersion> records = new ArrayList<>();
+            replication.handleBrokerFenced(2, records);
+            ctx.replay(records);
+
+            PartitionRegistration partition = replication.getPartition(topicId, 0);
+            assertArrayEquals(new int[] {1, 3}, partition.isr,
+                "ISR should shrink when broker is fenced");
+
+            // Unfence broker 2 - for diskless, ISR should expand immediately (NEW BEHAVIOR)
+            // For classic Kafka, this would require AlterPartition from leader after catch-up
+            records.clear();
+            replication.handleBrokerUnfenced(2, 102, records);
+            ctx.replay(records);
+
+            partition = replication.getPartition(topicId, 0);
+            assertArrayEquals(new int[] {1, 2, 3}, partition.isr,
+                "Diskless ISR should expand on unfence (liveness-gated)");
+            assertEquals(1, partition.leader,
+                "Leader should remain stable during ISR expansion");
+        }
+
+        // [FUTURE] Controlled shutdown for diskless topics.
+        // Blocked on: Diskless RF>1 topic creation.
+        @DisabledIf("disklessRfFutureTestsDisabled")
+        @Test
+        void controlledShutdownRemovesFromIsrAndReelectsLeader_disklessTopic() {
+            ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+                .setDefaultDisklessEnable(true)
+                .setDisklessStorageSystemEnabled(true)
+                .build();
+            ReplicationControlManager replication = ctx.replicationControl;
+            ctx.registerBrokers(1, 2, 3);
+            ctx.unfenceBrokers(1, 2, 3);
+
+            CreatableTopicResult topic = ctx.createTestTopic(
+                "diskless-rf3", new int[][] {new int[] {1, 2, 3}},
+                Map.of(DISKLESS_ENABLE_CONFIG, "true"),
+                NONE.code());
+
+            Uuid topicId = topic.topicId();
+            List<ApiMessageAndVersion> records = new ArrayList<>();
+            replication.handleBrokerInControlledShutdown(1, 101, records);
+            ctx.replay(records);
+
+            PartitionRegistration partition = replication.getPartition(topicId, 0);
+            assertNotNull(partition);
+            assertArrayEquals(new int[] {2, 3}, partition.isr);
+            assertTrue(partition.leader == 2 || partition.leader == 3);
+        }
+
+        // ==================================================================================
+        // Additional Phase 0 tests: Broker unregistration and multiple partition scenarios
+        // ==================================================================================
+
+        // Broker unregistration removes broker from ISR across all partitions.
+        // Finding: handleBrokerUnregistered is metadata-driven.
+        @Test
+        void brokerUnregistrationRemovesFromAllPartitions_classicTopic() {
+            ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+                .setDisklessStorageSystemEnabled(true)
+                .build();
+            ReplicationControlManager replication = ctx.replicationControl;
+            ctx.registerBrokers(1, 2, 3);
+            ctx.unfenceBrokers(1, 2, 3);
+
+            // Create multiple partitions with broker 2 in ISR
+            CreatableTopicResult topic = ctx.createTestTopic(
+                "multi-partition", new int[][] {
+                    new int[] {1, 2, 3},  // partition 0
+                    new int[] {2, 3, 1},  // partition 1 (leader is 2)
+                    new int[] {3, 1, 2}   // partition 2
+                });
+
+            Uuid topicId = topic.topicId();
+
+            // Unregister broker 2
+            List<ApiMessageAndVersion> records = new ArrayList<>();
+            replication.handleBrokerUnregistered(2, 102, records);
+            ctx.replay(records);
+
+            // Verify broker 2 is removed from ISR of all partitions
+            for (int partitionId = 0; partitionId < 3; partitionId++) {
+                PartitionRegistration partition = replication.getPartition(topicId, partitionId);
+                assertNotNull(partition, "Partition " + partitionId + " should exist");
+                for (int isr : partition.isr) {
+                    assertNotEquals(2, isr,
+                        "Broker 2 should be removed from ISR of partition " + partitionId);
+                }
+                assertNotEquals(2, partition.leader,
+                    "Broker 2 should not be leader of partition " + partitionId);
+            }
+        }
+
+        // [FUTURE] Broker unregistration for diskless topics.
+        // Blocked on: Diskless RF>1 topic creation.
+        @DisabledIf("disklessRfFutureTestsDisabled")
+        @Test
+        void brokerUnregistrationRemovesFromAllPartitions_disklessTopic() {
+            ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+                .setDefaultDisklessEnable(true)
+                .setDisklessStorageSystemEnabled(true)
+                .build();
+            ReplicationControlManager replication = ctx.replicationControl;
+            ctx.registerBrokers(1, 2, 3);
+            ctx.unfenceBrokers(1, 2, 3);
+
+            CreatableTopicResult topic = ctx.createTestTopic(
+                "diskless-multi", new int[][] {
+                    new int[] {1, 2, 3},
+                    new int[] {2, 3, 1}
+                },
+                Map.of(DISKLESS_ENABLE_CONFIG, "true"),
+                NONE.code());
+
+            Uuid topicId = topic.topicId();
+
+            List<ApiMessageAndVersion> records = new ArrayList<>();
+            replication.handleBrokerUnregistered(2, 102, records);
+            ctx.replay(records);
+
+            for (int partitionId = 0; partitionId < 2; partitionId++) {
+                PartitionRegistration partition = replication.getPartition(topicId, partitionId);
+                assertNotNull(partition);
+                for (int isr : partition.isr) {
+                    assertNotEquals(2, isr);
+                }
+            }
+        }
+    }
     private static final Logger log = LoggerFactory.getLogger(ReplicationControlManagerTest.class);
     private static final int BROKER_SESSION_TIMEOUT_MS = 1000;
 
