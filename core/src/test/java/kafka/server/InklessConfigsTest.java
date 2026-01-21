@@ -29,6 +29,7 @@ import org.apache.kafka.common.test.TestKitNodes;
 import org.apache.kafka.coordinator.group.GroupCoordinatorConfig;
 import org.apache.kafka.server.config.ServerConfigs;
 import org.apache.kafka.server.config.ServerLogConfigs;
+import org.apache.kafka.server.log.remote.storage.RemoteLogManagerConfig;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -58,6 +59,7 @@ import io.aiven.inkless.test_utils.PostgreSQLTestContainer;
 import io.aiven.inkless.test_utils.S3TestContainer;
 
 import static org.apache.kafka.common.config.TopicConfig.DISKLESS_ENABLE_CONFIG;
+import static org.apache.kafka.common.config.TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
@@ -72,17 +74,20 @@ public class InklessConfigsTest {
         return init(defaultDisklessEnableConfig, disklessStorageEnableConfig, false);
     }
 
-    private KafkaClusterTestKit init(boolean defaultDisklessEnableConfig, boolean disklessStorageEnableConfig, boolean disklessMigrationEnableConfig) throws Exception {
+    private KafkaClusterTestKit init(boolean defaultDisklessEnableConfig, boolean disklessStorageEnableConfig, boolean isDisklessAllowFromClassicEnabled) throws Exception {
         final TestKitNodes nodes = new TestKitNodes.Builder()
             .setCombined(true)
             .setNumBrokerNodes(1)
             .setNumControllerNodes(1)
             .build();
-        var cluster = new KafkaClusterTestKit.Builder(nodes)
+        var builder = new KafkaClusterTestKit.Builder(nodes)
             .setConfigProp(GroupCoordinatorConfig.OFFSETS_TOPIC_REPLICATION_FACTOR_CONFIG, "1")
             .setConfigProp(ServerLogConfigs.DISKLESS_ENABLE_CONFIG, String.valueOf(defaultDisklessEnableConfig))
             .setConfigProp(ServerConfigs.DISKLESS_STORAGE_SYSTEM_ENABLE_CONFIG, String.valueOf(disklessStorageEnableConfig))
-            .setConfigProp(ServerConfigs.DISKLESS_MIGRATION_ENABLE_CONFIG, String.valueOf(disklessMigrationEnableConfig))
+            .setConfigProp(ServerConfigs.DISKLESS_ALLOW_FROM_CLASSIC_ENABLE_CONFIG, String.valueOf(isDisklessAllowFromClassicEnabled))
+            .setConfigProp(RemoteLogManagerConfig.REMOTE_LOG_STORAGE_SYSTEM_ENABLE_PROP, "true")
+            .setConfigProp(RemoteLogManagerConfig.REMOTE_STORAGE_MANAGER_CLASS_NAME_PROP,
+                "org.apache.kafka.server.log.remote.storage.NoOpRemoteStorageManager")
             // PG control plane config
             .setConfigProp(InklessConfig.PREFIX + InklessConfig.CONTROL_PLANE_CLASS_CONFIG, PostgresControlPlane.class.getName())
             .setConfigProp(InklessConfig.PREFIX + InklessConfig.CONTROL_PLANE_PREFIX + PostgresControlPlaneConfig.CONNECTION_STRING_CONFIG, pgContainer.getJdbcUrl())
@@ -96,8 +101,9 @@ public class InklessConfigsTest {
             .setConfigProp(InklessConfig.PREFIX + InklessConfig.STORAGE_PREFIX + S3StorageConfig.S3_PATH_STYLE_ENABLED_CONFIG, "true")
             .setConfigProp(InklessConfig.PREFIX + InklessConfig.STORAGE_PREFIX + S3StorageConfig.AWS_ACCESS_KEY_ID_CONFIG, s3Container.getAccessKey())
             .setConfigProp(InklessConfig.PREFIX + InklessConfig.STORAGE_PREFIX + S3StorageConfig.AWS_SECRET_ACCESS_KEY_CONFIG, s3Container.getSecretKey())
-            .setConfigProp(InklessConfig.PREFIX + InklessConfig.STORAGE_PREFIX + S3StorageConfig.AWS_SECRET_ACCESS_KEY_CONFIG, s3Container.getSecretKey())
-            .build();
+            .setConfigProp(InklessConfig.PREFIX + InklessConfig.STORAGE_PREFIX + S3StorageConfig.AWS_SECRET_ACCESS_KEY_CONFIG, s3Container.getSecretKey());
+
+        var cluster = builder.build();
         cluster.format();
         cluster.startup();
         cluster.waitForReadyBrokers();
@@ -193,31 +199,54 @@ public class InklessConfigsTest {
 
     @Test
     public void disklessMigrationEnabled() throws Exception {
-        // Initialize cluster with diskless migration enabled
         var cluster = init(false, true, true);
         Map<String, Object> clientConfigs = new HashMap<>();
         clientConfigs.put(CommonClientConfigs.BOOTSTRAP_SERVERS_CONFIG, cluster.bootstrapServers());
 
         try (Admin admin = AdminClient.create(clientConfigs)) {
-            // When creating a new topic with diskless.enable=false
+            // When creating a new topic with diskless.enable=false AND remote.log.storage.enable=true
+            final String tieredTopic = "tieredTopic";
+            createTopic(admin, tieredTopic, Map.of(
+                DISKLESS_ENABLE_CONFIG, "false",
+                REMOTE_LOG_STORAGE_ENABLE_CONFIG, "true"
+            ));
+            // Then diskless.enable is set to false in the topic config
+            var tieredTopicConfig = getTopicConfig(admin, tieredTopic);
+            assertEquals("false", tieredTopicConfig.get(DISKLESS_ENABLE_CONFIG));
+            assertEquals("true", tieredTopicConfig.get("remote.storage.enable"));
+
+            // When migration is enabled AND remote storage is enabled, it SHOULD be possible to turn on diskless
+            alterTopicConfig(admin, tieredTopic, Map.of(DISKLESS_ENABLE_CONFIG, "true"));
+            // Verify the config was updated
+            var updatedTopicConfig = getTopicConfig(admin, tieredTopic);
+            assertEquals("true", updatedTopicConfig.get(DISKLESS_ENABLE_CONFIG));
+
+            // But it should still NOT be possible to turn off diskless after enabling it
+            assertThrows(ExecutionException.class, () -> alterTopicConfig(admin, tieredTopic, Map.of(DISKLESS_ENABLE_CONFIG, "false")));
+        }
+        cluster.close();
+    }
+
+    @Test
+    public void disklessMigrationRequiresRemoteStorage() throws Exception {
+        var cluster = init(false, true, true);
+        Map<String, Object> clientConfigs = new HashMap<>();
+        clientConfigs.put(CommonClientConfigs.BOOTSTRAP_SERVERS_CONFIG, cluster.bootstrapServers());
+
+        try (Admin admin = AdminClient.create(clientConfigs)) {
+            // When creating a new topic with diskless.enable=false WITHOUT remote storage
             final String classicTopic = "classicTopic";
             createTopic(admin, classicTopic, Map.of(DISKLESS_ENABLE_CONFIG, "false"));
             // Then diskless.enable is set to false in the topic config
             var classicTopicConfig = getTopicConfig(admin, classicTopic);
             assertEquals("false", classicTopicConfig.get(DISKLESS_ENABLE_CONFIG));
 
-            // When migration is enabled, it SHOULD be possible to turn on diskless after the topic is created
-            alterTopicConfig(admin, classicTopic, Map.of(DISKLESS_ENABLE_CONFIG, "true"));
-            // Verify the config was updated
-            var updatedTopicConfig = getTopicConfig(admin, classicTopic);
-            assertEquals("true", updatedTopicConfig.get(DISKLESS_ENABLE_CONFIG));
-
-            // But it should still NOT be possible to turn off diskless after enabling it
-            assertThrows(ExecutionException.class, () -> alterTopicConfig(admin, classicTopic, Map.of(DISKLESS_ENABLE_CONFIG, "false")));
+            // Even with migration enabled, it should NOT be possible to turn on diskless
+            // because remote storage is not enabled on this topic
+            assertThrows(ExecutionException.class, () -> alterTopicConfig(admin, classicTopic, Map.of(DISKLESS_ENABLE_CONFIG, "true")));
         }
         cluster.close();
     }
-
 
     public void createTopic(Admin admin, String topic, Map<String, String> configs) throws Exception {
         admin.createTopics(Collections.singletonList(
