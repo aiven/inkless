@@ -221,27 +221,29 @@ public abstract class MirrorCommand {
                     try {
                         createResult.values().get(topicName).get();
                         createdTopics.add(topicName);
+
                     } catch (ExecutionException e) {
-                        if (e.getCause() instanceof TopicExistsException) {
-                            existingTopics.put(topicName, mirrorName);
-                        } else {
+                        if (!(e.getCause() instanceof TopicExistsException)) {
                             System.err.printf("Failed to add topic %s: %s%n", topicName, e.getCause().getMessage());
                         }
+                    } finally {
+                        existingTopics.put(topicName, mirrorName);
                     }
                 }
 
                 if (!createdTopics.isEmpty()) {
                     System.out.printf("Successfully added %d topic(s) to mirror %s: %s%n",
-                        createdTopics.size(), mirrorName, createdTopics);
-                }
+                            createdTopics.size(), mirrorName, createdTopics);
+
 
 //                if (!existingTopics.isEmpty()) {
                     AddTopicsToMirrorResult addResult = admin.addTopicsToMirror(
-                        existingTopics, new AddTopicsToMirrorOptions());
+                            existingTopics, new AddTopicsToMirrorOptions());
                     addResult.all().get();
-                    System.out.printf("Successfully added %d existing topic(s) to mirror %s%n",
-                        existingTopics.size(), mirrorName);
+                    System.out.printf("Successfully added %s existing topic(s) to mirror %s%n",
+                            existingTopics, mirrorName);
 //                }
+                }
             }
         }
 

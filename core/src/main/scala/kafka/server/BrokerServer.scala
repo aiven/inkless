@@ -345,8 +345,7 @@ class BrokerServer(
         time,
         metadataCache,
         clientToControllerChannelManager,
-        () => groupCoordinator,
-        kafkaScheduler
+        () => groupCoordinator
       )
 
       this._replicaManager = new ReplicaManager(
