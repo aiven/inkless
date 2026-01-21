@@ -2,19 +2,24 @@
 # Workflow for building and publishing Inkless release images to GHCR
 # and attaching binary distributions to GitHub Releases
 # Uses native runners for each architecture for faster builds
+#
+# Triggers:
+# - Manual (workflow_dispatch): For main releases (inkless-release-X.Y)
+#   Finds all Kafka-base tags and builds images/binaries for each
+# - Auto (push): For individual Kafka-base releases (inkless-4.*-*)
+#   Builds image/binary for that specific Kafka version
 
 name: Inkless Release
 
 on:
   workflow_dispatch:
     inputs:
-      git_tag:
-        description: 'Git tag to build (e.g., inkless-release-0.33 or inkless-4.1.1-0.33)'
-        required: true
+      inkless_version:
+        description: 'Inkless version to release (e.g., 0.33). Leave empty to use latest.'
+        required: false
         type: string
   push:
     tags:
-      - 'inkless-release-*'
       - 'inkless-4.*-*'
 
 concurrency:
@@ -39,49 +44,59 @@ jobs:
       build_matrix: ${{ steps.find-kafka-tags.outputs.build_matrix }}
       latest_tags: ${{ steps.find-kafka-tags.outputs.latest_tags }}
     steps:
-      - name: Determine git tag
-        id: git-tag
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "tag=${{ inputs.git_tag }}" >> $GITHUB_OUTPUT
-          else
-            echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Parse git tag
-        id: parse
-        run: |
-          GIT_TAG="${{ steps.git-tag.outputs.tag }}"
-          echo "git_tag=$GIT_TAG" >> $GITHUB_OUTPUT
-          
-          if [[ "$GIT_TAG" =~ ^inkless-release-(.+)$ ]]; then
-            INKLESS_VERSION="${BASH_REMATCH[1]}"
-            echo "release_type=main" >> $GITHUB_OUTPUT
-            echo "inkless_version=$INKLESS_VERSION" >> $GITHUB_OUTPUT
-            echo "kafka_version=" >> $GITHUB_OUTPUT
-            echo "kafka_major_minor=" >> $GITHUB_OUTPUT
-            echo "Detected main release: inkless version $INKLESS_VERSION"
-            
-          elif [[ "$GIT_TAG" =~ ^inkless-([0-9]+\.[0-9]+\.[0-9]+)-(.+)$ ]]; then
-            KAFKA_VERSION="${BASH_REMATCH[1]}"
-            INKLESS_VERSION="${BASH_REMATCH[2]}"
-            KAFKA_MAJOR_MINOR=$(echo "$KAFKA_VERSION" | cut -d. -f1-2)
-            echo "release_type=kafka-base" >> $GITHUB_OUTPUT
-            echo "inkless_version=$INKLESS_VERSION" >> $GITHUB_OUTPUT
-            echo "kafka_version=$KAFKA_VERSION" >> $GITHUB_OUTPUT
-            echo "kafka_major_minor=$KAFKA_MAJOR_MINOR" >> $GITHUB_OUTPUT
-            echo "Detected Kafka-base release: Kafka $KAFKA_VERSION, Inkless $INKLESS_VERSION"
-            
-          else
-            echo "::error::Unrecognized tag format: $GIT_TAG"
-            exit 1
-          fi
-
       - name: Checkout code (for tag discovery)
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
           persist-credentials: false
+
+      - name: Determine release parameters
+        id: parse
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            # Manual trigger - this is a main release
+            INPUT_VERSION="${{ inputs.inkless_version }}"
+            
+            if [ -z "$INPUT_VERSION" ]; then
+              # Auto-detect latest inkless-release-* tag
+              LATEST_TAG=$(git tag -l "inkless-release-*" | sort -V | tail -n 1)
+              if [ -z "$LATEST_TAG" ]; then
+                echo "::error::No inkless-release-* tags found and no version specified"
+                exit 1
+              fi
+              INKLESS_VERSION="${LATEST_TAG#inkless-release-}"
+              echo "Auto-detected latest Inkless version: $INKLESS_VERSION"
+            else
+              INKLESS_VERSION="$INPUT_VERSION"
+            fi
+            
+            GIT_TAG="inkless-release-${INKLESS_VERSION}"
+            echo "git_tag=$GIT_TAG" >> $GITHUB_OUTPUT
+            echo "release_type=main" >> $GITHUB_OUTPUT
+            echo "inkless_version=$INKLESS_VERSION" >> $GITHUB_OUTPUT
+            echo "kafka_version=" >> $GITHUB_OUTPUT
+            echo "kafka_major_minor=" >> $GITHUB_OUTPUT
+            echo "Main release: Inkless version $INKLESS_VERSION"
+            
+          else
+            # Push trigger - this is a Kafka-base release
+            GIT_TAG="${GITHUB_REF#refs/tags/}"
+            echo "git_tag=$GIT_TAG" >> $GITHUB_OUTPUT
+            
+            if [[ "$GIT_TAG" =~ ^inkless-([0-9]+\.[0-9]+\.[0-9]+)-(.+)$ ]]; then
+              KAFKA_VERSION="${BASH_REMATCH[1]}"
+              INKLESS_VERSION="${BASH_REMATCH[2]}"
+              KAFKA_MAJOR_MINOR=$(echo "$KAFKA_VERSION" | cut -d. -f1-2)
+              echo "release_type=kafka-base" >> $GITHUB_OUTPUT
+              echo "inkless_version=$INKLESS_VERSION" >> $GITHUB_OUTPUT
+              echo "kafka_version=$KAFKA_VERSION" >> $GITHUB_OUTPUT
+              echo "kafka_major_minor=$KAFKA_MAJOR_MINOR" >> $GITHUB_OUTPUT
+              echo "Kafka-base release: Kafka $KAFKA_VERSION, Inkless $INKLESS_VERSION"
+            else
+              echo "::error::Unrecognized tag format: $GIT_TAG"
+              exit 1
+            fi
+          fi
 
       - name: Find Kafka-base tags for main release
         id: find-kafka-tags
