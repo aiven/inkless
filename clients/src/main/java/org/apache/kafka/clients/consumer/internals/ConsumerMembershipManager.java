@@ -44,7 +44,6 @@ import java.util.Set;
 import java.util.SortedSet;
 import java.util.TreeSet;
 import java.util.concurrent.CompletableFuture;
-import java.util.stream.Collectors;
 
 import static org.apache.kafka.clients.consumer.CloseOptions.GroupMembershipOperation.DEFAULT;
 import static org.apache.kafka.clients.consumer.CloseOptions.GroupMembershipOperation.LEAVE_GROUP;
@@ -164,7 +163,7 @@ public class ConsumerMembershipManager extends AbstractMembershipManager<Consume
             logContext,
             backgroundEventHandler,
             time,
-            new ConsumerRebalanceMetricsManager(metrics),
+            new ConsumerRebalanceMetricsManager(metrics, subscriptions),
             autoCommitEnabled);
     }
 
@@ -415,14 +414,14 @@ public class ConsumerMembershipManager extends AbstractMembershipManager<Consume
         Set<TopicPartition> revokePausedPartitions = subscriptions.pausedPartitions();
         revokePausedPartitions.retainAll(partitionsToRevoke);
         if (!revokePausedPartitions.isEmpty()) {
-            log.info("The pause flag in partitions [{}] will be removed due to revocation.", revokePausedPartitions.stream().map(TopicPartition::toString).collect(Collectors.joining(", ")));
+            log.info("The pause flag in partitions {} will be removed due to revocation.", revokePausedPartitions);
         }
     }
 
     @Override
     public boolean isLeavingGroup() {
         CloseOptions.GroupMembershipOperation leaveGroupOperation = leaveGroupOperation();
-        if (REMAIN_IN_GROUP == leaveGroupOperation) {
+        if (REMAIN_IN_GROUP == leaveGroupOperation && groupInstanceId.isEmpty()) {
             return false;
         }
 
@@ -433,7 +432,8 @@ public class ConsumerMembershipManager extends AbstractMembershipManager<Consume
         boolean hasLeaveOperation = DEFAULT == leaveGroupOperation ||
             // Leave operation: both static and dynamic consumers will send a leave heartbeat
             LEAVE_GROUP == leaveGroupOperation ||
-            // Remain in group: only static consumers will send a leave heartbeat, while dynamic members will not
+            // Remain in group: static consumers will send a leave heartbeat with -2 epoch to reflect that a member using the given
+            // instance id decided to leave the group and would be back within the session timeout.
             groupInstanceId().isPresent();
 
         return isLeavingState && hasLeaveOperation;
