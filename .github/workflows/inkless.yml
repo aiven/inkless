@@ -36,12 +36,39 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+
+      # Generate JOOQ classes with JDK 23 to include @SuppressWarnings("this-escape") annotations
+      - name: Setup JDK 23 for JOOQ generation
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 23
+
+      - name: Generate JOOQ classes
+        run: make jooq
+
+      - name: Verify JOOQ classes are up-to-date
+        run: |
+          if [[ -n $(git status -s -- storage/inkless/src/main/jooq) ]]; then
+            echo "JOOQ classes are not up-to-date with Flyway migrations:"
+            git status -s -- storage/inkless/src/main/jooq
+            git diff --stat -- storage/inkless/src/main/jooq
+            echo ""
+            echo "Please run 'make jooq' with JDK 23 and commit the changes"
+            exit 1
+          else
+            echo "JOOQ classes are up-to-date."
+          fi
+        shell: bash
+
+      # Switch to JDK 17 for compilation and validation
       - name: Setup Gradle
         uses: ./.github/actions/setup-gradle
         with:
           java-version: 17
           gradle-cache-read-only: ${{ inputs.gradle-cache-read-only }}
           gradle-cache-write-only: ${{ inputs.gradle-cache-write-only }}
+
       - name: Compile and validate
         env:
           SCAN_ARG: ${{ inputs.is-public-fork && '--no-scan' || '--scan' }}
@@ -51,7 +78,7 @@ jobs:
         # --scan:         Publish the build scan. This will only work on PRs from apache/kafka and trunk
         # --no-scan:      For public fork PRs, we won't attempt to publish the scan
         run: |
-          ./gradlew --build-cache --info $SCAN_ARG check -x test
+          ./gradlew --build-cache --info $SCAN_ARG check -x test -x generateJooqClasses
 
       - name: Gen docs
         run: make docs
@@ -113,23 +140,19 @@ jobs:
           gradle-cache-read-only: ${{ inputs.gradle-cache-read-only }}
           gradle-cache-write-only: ${{ inputs.gradle-cache-write-only }}
           develocity-access-key: ${{ secrets.GE_ACCESS_TOKEN }}
-      # JOOQ classes are generated on the previous validate job,
-      # but if generated with JDK 17, there are no warning suppressions for `this-escape` needed after JDK 21.
-      # see https://github.com/jOOQ/jOOQ/issues/15619
-      - name: Regenerate JOOQ classes (needed after JDK 21)
-        if: matrix.java != '17'
-        run: ./gradlew :storage:inkless:generateJooqClasses
       - name: Test
         # Gradle flags
         # --build-cache:  Let Gradle restore the build cache
         # --no-scan:      Don't attempt to publish the scan yet. We want to archive it first.
         # --continue:     Keep running even if a test fails
         # -PcommitId      Prevent the Git SHA being written into the jar files (which breaks caching)
+        # JOOQ classes are pre-committed with JDK 23, so no regeneration needed
         id: junit-test
         env:
           TIMEOUT_MINUTES: 30
           GRADLE_ARGS: >-
-            --build-cache --no-scan 
+            --build-cache --no-scan
+            -x generateJooqClasses
             -PtestLoggingEvents=started,passed,skipped,failed 
             -PmaxParallelForks=2 
             -PmaxTestRetries=1 -PmaxTestRetryFailures=3 

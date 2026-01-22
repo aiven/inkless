@@ -551,7 +551,7 @@ subprojects {
         maxFailures = userMaxTestRetryFailures
       }
     }
-    
+
     // As we process results, check if there were any test failures.
     afterSuite { desc, result ->
       if (result.resultType == TestResult.ResultType.FAILURE) {
@@ -2576,7 +2576,7 @@ project(':storage:inkless') {
         )
       }
       basePackageName.set("org.jooq.generated")
-      outputDirectory.set(project.layout.projectDirectory.dir("src/main/generated-jooq"))
+      outputDirectory.set(project.layout.projectDirectory.dir("src/main/jooq"))
       includeFlywayTable.set(false)
       outputSchemaToDefault.add("public")
       inputs.dir("src/main/resources/db/migration")
@@ -2588,8 +2588,8 @@ project(':storage:inkless') {
       java {
         srcDirs = [
                 "src/main/java",
-                "${projectDir}/build/generated/main/java",
-                "${projectDir}/src/main/generated-jooq"
+                "src/main/jooq",
+                "${projectDir}/build/generated/main/java"
         ]
       }
     }
