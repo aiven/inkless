@@ -5,7 +5,7 @@ VERSION := 4.1.0-inkless-SNAPSHOT
 
 .PHONY: build
 build:
-	./gradlew :core:build :storage:inkless:build :metadata:build -x test
+	./gradlew :core:build :storage:inkless:build :metadata:build -x test -x generateJooqClasses
 
 core/build/distributions/kafka_2.13-$(VERSION).tgz:
 	echo "Building Kafka distribution with version $(VERSION)"
@@ -51,13 +51,13 @@ fmt:
 
 .PHONY: test
 test:
-	./gradlew :storage:inkless:test :storage:inkless:integrationTest
+	./gradlew :storage:inkless:test :storage:inkless:integrationTest -x generateJooqClasses
 	./gradlew :metadata:test --tests "org.apache.kafka.controller.*"
 	./gradlew :core:test --tests "*Inkless*"
 
 .PHONY: pitest
 pitest:
-	./gradlew :storage:inkless:pitest
+	./gradlew :storage:inkless:pitest -x generateJooqClasses
 
 .PHONY: integration_test
 integration_test_core:
@@ -66,6 +66,10 @@ integration_test_core:
 .PHONY: clean
 clean:
 	./gradlew clean
+
+.PHONY: jooq
+jooq:
+	./gradlew :storage:inkless:generateJooqClasses
 
 DEMO := s3-local
 .PHONY: demo
