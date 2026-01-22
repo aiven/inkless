@@ -86,14 +86,12 @@ public final class BrokerTopicMetrics {
         final MeterWrapper classicBytesInRate;
         final MeterWrapper classicBytesOutRate;
         if (isAllTopicsStats) {
+            // All-topics (broker-level) meters with topicType tag are eagerly initialized
+            // by MeterWrapper constructor since they only have topicType tag (global metrics).
             classicBytesInRate = new MeterWrapper(BYTES_IN_PER_SEC, "bytes", classicTags);
             classicBytesOutRate = new MeterWrapper(BYTES_OUT_PER_SEC, "bytes", classicTags);
             disklessBytesInRate = new MeterWrapper(BYTES_IN_PER_SEC, "bytes", disklessTags);
             disklessBytesOutRate = new MeterWrapper(BYTES_OUT_PER_SEC, "bytes", disklessTags);
-
-            // Keep broker-level behavior: eagerly initialize the classic meters.
-            classicBytesInRate.meter();
-            classicBytesOutRate.meter();
         } else {
             classicBytesInRate = new MeterWrapper(BYTES_IN_PER_SEC, "bytes", tags);
             classicBytesOutRate = new MeterWrapper(BYTES_OUT_PER_SEC, "bytes", tags);
@@ -462,8 +460,14 @@ public final class BrokerTopicMetrics {
             this.metricType = metricType;
             this.eventType = eventType;
             this.metricTags = new HashMap<>(metricTags);
-            if (this.metricTags.isEmpty()) {
-                meter(); // greedily initialize the general topic metrics
+            // Eagerly initialize global metrics so they are always registered and visible in monitoring
+            // systems from broker startup, even before any traffic is recorded.
+            // Global metrics are those with:
+            // - No tags (general broker-level metrics)
+            // - Only topicType tag (broker-level metrics split by topic type, e.g., classic vs diskless)
+            boolean onlyTopicTypeTag = this.metricTags.size() == 1 && this.metricTags.containsKey("topicType");
+            if (this.metricTags.isEmpty() || onlyTopicTypeTag) {
+                meter();
             }
         }
 
