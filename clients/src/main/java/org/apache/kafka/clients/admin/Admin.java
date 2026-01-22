@@ -1688,7 +1688,7 @@ public interface Admin extends AutoCloseable {
      * @param options Options for the add topics to mirror operation
      * @return The AddTopicsToMirrorResult containing futures for each topic addition
      */
-    AddTopicsToMirrorResult addTopicsToMirror(Map<String, String> topicToMirrorName, AddTopicsToMirrorOptions options);
+    AddTopicsToMirrorResult addTopicsToMirror(int destinationNodeId, Map<String, String> topicToMirrorName, AddTopicsToMirrorOptions options);
 
     /**
      * Remove topics from cluster mirror, making them writable on the destination cluster.

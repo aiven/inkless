@@ -621,7 +621,6 @@ public class ReplicationControlManager {
     }
 
     public ControllerResult<AddTopicsToMirrorResponseData> addTopicsToMirror(Map<Uuid, String> topicIdsToMirrorName) {
-        // luke
         List<ApiMessageAndVersion> records = BoundedList.newArrayBacked(MAX_RECORDS_PER_USER_OP);
         for (Entry<Uuid, String> topicIdToMirrorName : topicIdsToMirrorName.entrySet()) {
             Uuid topicId = topicIdToMirrorName.getKey();

@@ -20,6 +20,7 @@ import kafka.server.KafkaConfig;
 import kafka.server.ReplicaManager;
 import kafka.server.metadata.KRaftMetadataCache;
 
+import org.apache.kafka.clients.producer.internals.TransactionManager;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.compress.Compression;
 import org.apache.kafka.common.internals.Topic;
@@ -64,8 +65,10 @@ import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
@@ -127,7 +130,7 @@ public class MirrorCoordinator {
 
     private void operateOnNewState(String mirrorName, Set<TopicPartition> topicPartitions, MirrorState newState) {
         switch (newState) {
-            case NONE:
+            case STARTING:
                 LOG.info("!!! Updating metadata for topics {}.", topicPartitions);
                 //mirrorMetadataManager.onPreparing(mirrorName, topics);
                 break;
@@ -168,12 +171,36 @@ public class MirrorCoordinator {
 //
 //    }
 
+    private boolean isTransitionValid(MirrorState source, MirrorState target) {
+        switch (target) {
+            case STARTING:
+                return source == null;
+            case PREPARING_MIRRORING:
+                return source == MirrorState.STARTING || source == MirrorState.STOPPED || source == MirrorState.FAILED;
+            case MIRRORING:
+                return source == MirrorState.PREPARING_MIRRORING;
+            case STOPPING:
+                return source == MirrorState.MIRRORING;
+            case STOPPED:
+                return source == MirrorState.STOPPING;
+            case FAILED:
+                return true;
+            default:
+                return false;
+        }
+    }
+
     public void transitionTo(String mirrorName, Set<TopicPartition> topicPartitions, MirrorState newState) {
         topicPartitions.forEach(tp -> {
-            LOG.info("!!! Transitioning {} to {} for partition {}.", mirrorMetadataManager.getMirrorPartitionState(mirrorName, tp), newState, tp);
-            updateMirrorPartitionState(mirrorName, tp, newState, true);
+            if (isTransitionValid(mirrorMetadataManager.getMirrorPartitionState(mirrorName, tp), newState)) {
+                LOG.info("!!! Transitioning {} to {} for partition {}.", mirrorMetadataManager.getMirrorPartitionState(mirrorName, tp), newState, tp);
+                updateMirrorPartitionState(mirrorName, tp, newState, true).whenComplete((optTp, ex) -> {
+                    optTp.ifPresent(tp1 -> operateOnNewState(mirrorName, Set.of(tp1), newState));
+                });
+            } else {
+                LOG.info("!!! Skipping transition {} to {} for partition {}.", mirrorMetadataManager.getMirrorPartitionState(mirrorName, tp), newState, tp);
+            }
         });
-        operateOnNewState(mirrorName, topicPartitions, newState);
     }
 
     public void writeMirroredPartitionMetadata(String mirrorName,
@@ -188,7 +215,7 @@ public class MirrorCoordinator {
             partitions.forEach(partition -> {
                 TopicPartition tp = new TopicPartition(topic, partition.partition());
                 partitionIndices.add(tp.partition());
-                if (partition.state() != null) {
+                if (partition.state() != null && partition.state() != MirrorState.UNKNOWN) {
                     updateMirrorPartitionState(mirrorName, tp, partition.state(), false);
                 }
                 if (partition.offset() != -1) {
@@ -239,7 +266,8 @@ public class MirrorCoordinator {
         updateLastMirroredOffsetsMetadata(mirrorName, partitionOffsets, true);
     }
 
-    public void updateMirrorPartitionState(String mirrorName, TopicPartition topicPartition, MirrorState newState, boolean stateChange) {
+    public CompletableFuture<Optional<TopicPartition>> updateMirrorPartitionState(String mirrorName, TopicPartition topicPartition, MirrorState newState, boolean stateChange) {
+        CompletableFuture<Optional<TopicPartition>> future = new CompletableFuture<>();
         var mirrorTopicPartition = new TopicPartition(Topic.MIRROR_STATE_TOPIC_NAME, partitionIndexForKey(new MirrorRecordKey(mirrorName)));
         var optLeaderAndIsr = metadataCache.getLeaderAndIsr(mirrorTopicPartition.topic(), mirrorTopicPartition.partition());
         if (optLeaderAndIsr.isPresent() && optLeaderAndIsr.get().leader() == config.nodeId()) {
@@ -267,6 +295,7 @@ public class MirrorCoordinator {
             if (stateChange) {
                 mirrorMetadataManager.updateMirrorPartitionStateCache(mirrorName, topicPartition, newState);
             }
+            future.complete(Optional.of(topicPartition));
         } else {
             // write state data to remote coordinator
             Map<String, Set<MirrorMetadataManager.MirroredPartitionMetadata>> topicMetadata =
@@ -278,15 +307,17 @@ public class MirrorCoordinator {
                              if (stateChange) {
                                  mirrorMetadataManager.updateMirrorPartitionStateCache(mirrorName, topicPartition, newState);
                              }
+                             future.complete(Optional.of(topicPartition));
                         } else {
                             LOG.error("Failed to write partition state to remote coordinator: {}", par.errorCode());
+                            future.complete(Optional.empty());
                         }
                     });
                 });
             });
 
         }
-
+        return future;
     }
 
     /**
@@ -439,7 +470,6 @@ public class MirrorCoordinator {
 
     }
 
-    // luke
     private static CoordinatorRecord generateMirrorPartitionState(String mirrorName, TopicPartition topicPartition, MirrorState state) {
         var key = new MirrorPartitionStateKey().setMirrorName(mirrorName);
         var val = new MirrorPartitionStateValue().setTopicName(topicPartition.topic()).setPartition(topicPartition.partition()).setState(state.value());

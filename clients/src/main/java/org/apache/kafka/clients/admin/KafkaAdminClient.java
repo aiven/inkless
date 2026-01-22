@@ -4864,11 +4864,11 @@ public class KafkaAdminClient extends AdminClient {
     }
 
     @Override
-    public AddTopicsToMirrorResult addTopicsToMirror(Map<String, String> topicToMirrorName, AddTopicsToMirrorOptions options) {
+    public AddTopicsToMirrorResult addTopicsToMirror(int destinationNodeId, Map<String, String> topicToMirrorName, AddTopicsToMirrorOptions options) {
         final KafkaFutureImpl<Void> future = new KafkaFutureImpl<>();
         final long now = time.milliseconds();
         final Call call = new Call("addTopicsToMirror", calcDeadlineMs(now, options.timeoutMs()),
-                new LeastLoadedBrokerOrActiveKController()) {
+                new ConstantNodeIdProvider(destinationNodeId)) {
 
             @Override
             AddTopicsToMirrorRequest.Builder createRequest(int timeoutMs) {

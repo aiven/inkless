@@ -202,7 +202,7 @@ public abstract class MirrorCommand {
                     NewTopic newTopic = new NewTopic(topicName,
                         Optional.of(partNum), // use source topic partitions
                         Optional.of((short) replicationFactor),
-                        Optional.of(mirrorName),
+                        Optional.of(""),
                         Optional.of(topicId));
                     newTopics.add(newTopic);
                 }
@@ -236,9 +236,12 @@ public abstract class MirrorCommand {
                             createdTopics.size(), mirrorName, createdTopics);
 
 
+                    // We should return error and let the command retry if the topic metadata is not propagated to brokers
+                    // right now, we sleep 1 sec
+                    Thread.sleep(1000);
 //                if (!existingTopics.isEmpty()) {
                     AddTopicsToMirrorResult addResult = admin.addTopicsToMirror(
-                            existingTopics, new AddTopicsToMirrorOptions());
+                            node.id(), existingTopics, new AddTopicsToMirrorOptions());
                     addResult.all().get();
                     System.out.printf("Successfully added %s existing topic(s) to mirror %s%n",
                             existingTopics, mirrorName);

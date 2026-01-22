@@ -359,7 +359,7 @@ class KafkaApis(val requestChannel: RequestChannel,
             topicPartitions.add(new TopicPartition(mirrorTopic.get().topicName(), i))
           }
         })
-        mirrorCoordinator.transitionTo(mirrorTopic.get().mirrorName(), topicPartitions, MirrorState.PREPARING_MIRRORING)
+        mirrorCoordinator.transitionTo(mirrorTopic.get().mirrorName(), topicPartitions, MirrorState.STARTING)
       } else {
         logger.warn("Cluster mirroring is disabled (mirror.version=0), ignoring mirror topic creation request")
       }
@@ -1372,9 +1372,7 @@ class KafkaApis(val requestChannel: RequestChannel,
   }
 
   def handleFindCoordinatorRequest(request: RequestChannel.Request): Unit = {
-    logger.info("!!! handleFindCoordinatorRequest")
     val version = request.header.apiVersion
-    logger.info("!!! the version of FindCoordinatorRequest is " + version)
     if (version < 4) {
       handleFindCoordinatorRequestLessThanV4(request)
     } else {
@@ -1387,7 +1385,6 @@ class KafkaApis(val requestChannel: RequestChannel,
 
     val coordinators = findCoordinatorRequest.data.coordinatorKeys.asScala.map { key =>
       val (error, node) = getCoordinator(request, findCoordinatorRequest.data.keyType, key)
-      logger.info("!!! the node is " + node + ", the error is " + error)
       new FindCoordinatorResponseData.Coordinator()
         .setKey(key)
         .setErrorCode(error.code)
@@ -1478,8 +1475,6 @@ class KafkaApis(val requestChannel: RequestChannel,
         case CoordinatorType.MIRROR =>
           (mirrorCoordinator.partitionIndexForKey(MirrorRecordKey.getInstance(key)), MIRROR_STATE_TOPIC_NAME)
       }
-
-      logger.info("!!! The partition of coordinator key " + key + " is " + partition + ", the internal topic name is " + internalTopicName)
 
       val topicMetadata = metadataCache.getTopicMetadata(Set(internalTopicName).asJava, request.context.listenerName, false, false).asScala
 

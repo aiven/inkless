@@ -18,6 +18,7 @@ class InterBrokerSender extends InterBrokerSendThread {
 
     public void enqueue(RequestAndCompletionHandler requestAndCompletionHandler) {
         queue.offer(requestAndCompletionHandler);
+        wakeup();
     }
 
     @Override
