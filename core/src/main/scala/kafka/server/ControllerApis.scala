@@ -608,7 +608,7 @@ class ControllerApis(
         } else {
           new ApiError(CLUSTER_AUTHORIZATION_FAILED)
         }
-      case ConfigResource.Type.TOPIC =>
+      case ConfigResource.Type.TOPIC | ConfigResource.Type.MIRROR =>
         if (authHelper.authorize(requestContext, ALTER_CONFIGS, TOPIC, resource.name)) {
           new ApiError(NONE)
         } else {

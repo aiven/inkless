@@ -131,7 +131,7 @@ public class MirrorCoordinator {
     private void operateOnNewState(String mirrorName, Set<TopicPartition> topicPartitions, MirrorState newState) {
         switch (newState) {
             case STARTING:
-                LOG.info("!!! Updating metadata for topics {}.", topicPartitions);
+                LOG.info("!!! starting for topics {}.", topicPartitions);
                 //mirrorMetadataManager.onPreparing(mirrorName, topics);
                 break;
             case PREPARING_MIRRORING:
@@ -180,7 +180,7 @@ public class MirrorCoordinator {
             case MIRRORING:
                 return source == MirrorState.PREPARING_MIRRORING;
             case STOPPING:
-                return source == MirrorState.MIRRORING;
+                return source == MirrorState.STARTING || source == MirrorState.PREPARING_MIRRORING || source == MirrorState.MIRRORING;
             case STOPPED:
                 return source == MirrorState.STOPPING;
             case FAILED:
@@ -279,7 +279,6 @@ public class MirrorCoordinator {
             var timestamp = time.milliseconds();
             var memRecord = MemoryRecords.withRecords(Compression.NONE, new SimpleRecord(timestamp, keyBytes, valueBytes));
 
-            LOG.info("!!! Appending record to {}: {}", mirrorTopicPartition, record);
             replicaManager.appendRecords(
                     // TODO: replace this with Cluster Mirror specific timeout
                     Duration.ofSeconds(5).toMillis(),
@@ -375,7 +374,6 @@ public class MirrorCoordinator {
             var timestamp = time.milliseconds();
             var memRecord = MemoryRecords.withRecords(Compression.NONE, new SimpleRecord(timestamp, keyBytes, valueBytes));
 
-            LOG.info("!!! Appending record to {}: {}", mirrorTopicPartition, record);
             replicaManager.appendRecords(
                     // TODO: replace this with Cluster Mirror specific timeout
                     Duration.ofSeconds(5).toMillis(),
@@ -435,7 +433,6 @@ public class MirrorCoordinator {
             var timestamp = time.milliseconds();
             var memRecord = MemoryRecords.withRecords(Compression.NONE, new SimpleRecord(timestamp, keyBytes, valueBytes));
 
-            LOG.info("!!! Appending offset record to {}: {}", mirrorTopicPartition, record);
             replicaManager.appendRecords(
                     // TODO: replace this with Cluster Mirror specific timeout
                     Duration.ofSeconds(5).toMillis(),

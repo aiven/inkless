@@ -243,8 +243,40 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     public void onMetadataUpdate(MetadataDelta delta, MetadataImage newImage, LoaderManifest manifest) {
         this.metadataImage = newImage;
 
-        if (delta.topicsDelta() != null && !delta.topicsDelta().localChanges(nodeId).readOnlyLeaders().isEmpty()) {
-            LOG.info("!!! onMetadataUpdate: {}", delta.topicsDelta().localChanges(nodeId).readOnlyLeaders());
+//        if (delta.configsDelta() != null)
+//            LOG.info("!!! onMetadataUpdate config: {}", delta.configsDelta().changes());
+
+        if (delta.topicsDelta() != null) {
+            LOG.info("!!! onMetadataUpdate: {}", delta.topicsDelta().localChanges(nodeId));
+            delta.topicsDelta().localChanges(nodeId).leaders().forEach((tp, info) -> {
+                MirroredPartitionKey key = new MirroredPartitionKey(info.partition().mirrorName, tp.topic(), tp.partition());
+                MirrorState state = mirroredPartitionState.get(key);
+                // move the state to stopping if mirrorName is unset
+                if ((info.partition().mirrorName == null || info.partition().mirrorName.isBlank())) {
+                    if (state != null) {
+                        if (state == MirrorState.PREPARING_MIRRORING || state == MirrorState.MIRRORING || state == MirrorState.STARTING) {
+                            transitioner.ifPresent(t ->
+                                    t.transitionTo(info.partition().mirrorName, tp, MirrorState.STOPPING));
+                        }
+                    } else {
+                        // get the state from remote coordinator
+                        readStatesToRemoteCoordinator(key.mirrorName, Map.of(tp.topic(), Set.of(tp.partition())), res -> {
+                            res.data().topics().forEach(topic -> {
+                                topic.partitions().forEach(partition -> {
+                                    if (partition.state() != -1) {
+                                        MirrorState curState = MirrorState.fromValue(partition.state());
+                                        mirroredPartitionState.put(new MirroredPartitionKey(key.mirrorName, tp.topic(), tp.partition()), curState);
+                                        if (curState == MirrorState.PREPARING_MIRRORING || curState == MirrorState.MIRRORING || curState == MirrorState.STARTING) {
+                                            transitioner.ifPresent(t ->
+                                                    t.transitionTo(info.partition().mirrorName, tp, MirrorState.STOPPING));
+                                        }
+                                    }
+                                });
+                            });
+                        });
+                    }
+               }
+            });
             delta.topicsDelta().localChanges(nodeId).readOnlyLeaders().entrySet().forEach(entry -> {
                 TopicPartition tp = entry.getKey();
                 LocalReplicaChanges.PartitionInfo info = entry.getValue();
@@ -268,7 +300,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                                     MirrorState state = MirrorState.fromValue(partition.state());
                                     mirroredPartitionState.put(new MirroredPartitionKey(key.mirrorName, tp.topic(), tp.partition()), state);
                                     transitioner.ifPresent(t -> {
-                                        if (mirroredPartitionState.get(key) == MirrorState.STARTING) {
+                                        if (state == MirrorState.STARTING) {
                                             t.transitionTo(key.mirrorName, tp, MirrorState.PREPARING_MIRRORING);
                                         } else {
                                             t.transitionTo(key.mirrorName, tp, state);
@@ -465,34 +497,31 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                 time.milliseconds(),
                 coordinatorNode,
                 new ReadMirrorStatesRequest.Builder(data),
-                new RequestCompletionHandler() {
-                    @Override
-                    public void onComplete(ClientResponse response) {
-                        if (response.responseBody() instanceof ReadMirrorStatesResponse readMirrorStatesResponse) {
-                            LOG.info("!!! readMirrorStatesResponse onComplete: {}", response.responseBody());
-                            onWriteComplete.accept(readMirrorStatesResponse);
+                response -> {
+                    if (response.responseBody() instanceof ReadMirrorStatesResponse readMirrorStatesResponse) {
+                        LOG.info("!!! readMirrorStatesResponse onComplete: {}", response.responseBody());
+                        onWriteComplete.accept(readMirrorStatesResponse);
 
-                            // update cache
-                            readMirrorStatesResponse.data().topics().forEach(topic -> {
-                                topic.partitions().forEach(partition -> {
-                                    if (partition.lastMirroredOffset() != -1) {
-                                        lastMirroredOffsets.put(new MirroredPartitionKey(mirrorName, topic.name(), partition.partitionIndex()), partition.lastMirroredOffset());
+                        // update cache
+                        readMirrorStatesResponse.data().topics().forEach(topic -> {
+                            topic.partitions().forEach(partition -> {
+                                if (partition.lastMirroredOffset() != -1) {
+                                    lastMirroredOffsets.put(new MirroredPartitionKey(mirrorName, topic.name(), partition.partitionIndex()), partition.lastMirroredOffset());
+                                }
+                                if (partition.state() != -1) {
+                                    mirroredPartitionState.put(new MirroredPartitionKey(mirrorName, topic.name(), partition.partitionIndex()), MirrorState.fromValue(partition.state()));
+                                }
+                                topics.compute(mirrorName, (key, oldVal) -> {
+                                    if (oldVal == null) {
+                                        return Set.of(topic.name());
+                                    } else {
+                                        Set<String> newSet = new HashSet<>(oldVal);
+                                        newSet.add(topic.name());
+                                        return newSet;
                                     }
-                                    if (partition.state() != -1) {
-                                        mirroredPartitionState.put(new MirroredPartitionKey(mirrorName, topic.name(), partition.partitionIndex()), MirrorState.fromValue(partition.state()));
-                                    }
-                                    topics.compute(mirrorName, (key, oldVal) -> {
-                                        if (oldVal == null) {
-                                            return Set.of(topic.name());
-                                        } else {
-                                            Set<String> newSet = new HashSet<>(oldVal);
-                                            newSet.add(topic.name());
-                                            return newSet;
-                                        }
-                                    });
                                 });
                             });
-                        }
+                        });
                     }
                 }
         ));
@@ -720,7 +749,6 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                 lastMirroredOffsets.put(new MirroredPartitionKey(clusterName, topic, partition), offset);
             });
         });
-        LOG.info("!!! updateLastMirroredOffsetsCache: {} {}", clusterName, lastMirroredOffsets);
         return lastMirroredOffsets;
     }
 

@@ -181,7 +181,7 @@ object ConfigCommand extends Logging {
     val configsToBeDeleted = parseConfigsToBeDeleted(opts)
 
     entityTypeHead match {
-      case TopicType | ClientMetricsType | BrokerType | GroupType =>
+      case TopicType | ClientMetricsType | BrokerType | GroupType | MirrorType =>
         val configResourceType = entityTypeHead match {
           case TopicType => ConfigResource.Type.TOPIC
           case ClientMetricsType => ConfigResource.Type.CLIENT_METRICS
