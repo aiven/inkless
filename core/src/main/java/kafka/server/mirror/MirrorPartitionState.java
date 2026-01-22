@@ -20,16 +20,16 @@ package kafka.server.mirror;
  * Represents the lifecycle states of a mirrored partition in Cluster Mirroring.
  * <p>
  * State transitions follow this typical flow:
- * UPDATING_METADATA -> PREPARING_MIRROR -> MIRRORING -> STOPPING -> STOPPED
+ * INITIALIZING -> PREPARING -> MIRRORING -> STOPPING -> STOPPED
  * <p>
- * FAILED state can be entered from PREPARING_MIRROR or MIRRORING when errors occur.
+ * FAILED state can be entered from PREPARING or MIRRORING when errors occur.
  */
 public enum MirrorPartitionState {
     /** Initial state when mirror metadata changes are detected and need to be synchronized */
-    UPDATING_METADATA((byte) 0),
+    INITIALIZING((byte) 0),
 
     /** Topics are being prepared for mirroring (truncation may be needed) */
-    PREPARING_MIRROR((byte) 1),
+    PREPARING((byte) 1),
 
     /** Active mirroring from source cluster is in progress */
     MIRRORING((byte) 2),
@@ -56,9 +56,9 @@ public enum MirrorPartitionState {
     public static MirrorPartitionState fromValue(byte value) {
         switch (value) {
             case 0:
-                return UPDATING_METADATA;
+                return INITIALIZING;
             case 1:
-                return PREPARING_MIRROR;
+                return PREPARING;
             case 2:
                 return MIRRORING;
             case 4:

@@ -215,12 +215,12 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                 TopicPartition tp = entry.getKey();
                 LocalReplicaChanges.PartitionInfo info = entry.getValue();
                 MirroredPartitionKey key = new MirroredPartitionKey(info.partition().mirrorName, tp.topic(), tp.partition());
-                // moving the topics from UPDATING_METADATA into PREPARING_MIRROR state
+                // moving the topics from INITIALIZING into PREPARING state
                 // or moving the topics don't have state (due to topic not created yet) directly into MIRRORING state because no truncation needed
-                if (!mirrorPartitionState.containsKey(key) || mirrorPartitionState.get(key) == MirrorPartitionState.UPDATING_METADATA) {
-                    // TODO: We should have a way to store the UPDATING_METADATA state for topics not created yet.
+                if (!mirrorPartitionState.containsKey(key) || mirrorPartitionState.get(key) == MirrorPartitionState.INITIALIZING) {
+                    // TODO: We should have a way to store the INITIALIZING state for topics not created yet.
                     invokeMetadataUpdateCallbacks(info.partition().mirrorName, tp.topic(), mirrorPartitionState.containsKey(key)
-                            ? MirrorPartitionState.PREPARING_MIRROR : MirrorPartitionState.MIRRORING);
+                            ? MirrorPartitionState.PREPARING : MirrorPartitionState.MIRRORING);
                 }
             });
         }

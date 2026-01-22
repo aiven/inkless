@@ -121,8 +121,8 @@ public class MirrorCoordinator {
      * <p>
      * Each state triggers specific operations:
      * <ul>
-     *   <li>UPDATING_METADATA: Registers callbacks for metadata synchronization completion</li>
-     *   <li>PREPARING_MIRROR: Synchronizes topic metadata and schedules truncation</li>
+     *   <li>INITIALIZING: Registers callbacks for metadata synchronization completion</li>
+     *   <li>PREPARING: Synchronizes topic metadata and schedules truncation</li>
      *   <li>MIRRORING: Initiates mirror fetcher threads</li>
      *   <li>STOPPING: Updates metadata and persists last mirrored offsets</li>
      *   <li>STOPPED: Marks topics as writable (no action required)</li>
@@ -135,11 +135,11 @@ public class MirrorCoordinator {
      */
     private void handleStateTransition(String mirrorName, Set<String> topics, MirrorPartitionState newState) {
         switch (newState) {
-            case UPDATING_METADATA:
+            case INITIALIZING:
                 LOG.info("!!! Updating metadata for topics {}.", topics);
                 mirrorMetadataManager.registerMetadataUpdateCallback(mirrorName, topics, state -> transitionTo(mirrorName, topics, state));
                 break;
-            case PREPARING_MIRROR:
+            case PREPARING:
                 LOG.info("!!! Preparing mirror for topics {}.", topics);
                 updateMirrorTopicsMetadata(mirrorName, topics, Set.of());
                 scheduleTruncation(mirrorName, topics);
