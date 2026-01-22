@@ -508,25 +508,40 @@ public class LogConfig extends AbstractConfig {
                                          Map<?, ?> newConfigs,
                                          boolean isRemoteLogStorageEnabled,
                                          boolean isDisklessAllowFromClassicEnabled) {
-        Optional<Boolean> wasDiskless = Optional.ofNullable(existingConfigs.get(TopicConfig.DISKLESS_ENABLE_CONFIG)).map(Boolean::parseBoolean);
+        boolean isCreation = existingConfigs.isEmpty();
+        Optional<Boolean> wasDiskless = Optional.ofNullable(existingConfigs.get(TopicConfig.DISKLESS_ENABLE_CONFIG))
+            .map(Boolean::parseBoolean);
+        boolean wasRemoteStorageEnabled = Boolean.parseBoolean(
+            existingConfigs.getOrDefault(TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG, "false"));
 
         Optional.ofNullable((Boolean) newConfigs.get(TopicConfig.DISKLESS_ENABLE_CONFIG))
             .ifPresent(isBeingEnabled -> {
                 if (isBeingEnabled) {
-                    // diskless.enable=true -> diskless.enable must be already set to true (unless migration is enabled and remote storage is enabled)
-                    if (wasDiskless.isPresent() && !wasDiskless.get()) {
-                        // cannot change from diskless.enable = false to diskless.enable = true (unless migration is enabled and remote storage is enabled)
+                    if (isCreation) {
+                        // Creation: diskless + TS not allowed
+                        if (isRemoteLogStorageEnabled) {
+                            throw new InvalidConfigurationException("Diskless and remote storage cannot be enabled simultaneously");
+                        }
+                    } else if (wasDiskless.isPresent() && !wasDiskless.get()) {
+                        // Update from explicitly false → true: only allowed with migration flag + TS
                         if (!isDisklessAllowFromClassicEnabled || !isRemoteLogStorageEnabled) {
                             throw new InvalidConfigurationException("It is invalid to enable diskless");
                         }
-                        // Migration is enabled and remote storage is enabled, allow the change from false to true
-                    } else if (isRemoteLogStorageEnabled) {
-                        throw new InvalidConfigurationException("Diskless and remote storage cannot be enabled simultaneously");
+                    } else if (wasDiskless.isPresent() && wasDiskless.get()) {
+                        // Keeping diskless=true: block if TS is being added
+                        if (isRemoteLogStorageEnabled && !wasRemoteStorageEnabled) {
+                            throw new InvalidConfigurationException("Diskless and remote storage cannot be enabled simultaneously");
+                        }
+                    } else {
+                        // wasDiskless not present on existing topic, treat same as explicitly false
+                        // Only allowed with migration flag + TS
+                        if (!isDisklessAllowFromClassicEnabled || !isRemoteLogStorageEnabled) {
+                            throw new InvalidConfigurationException("It is invalid to enable diskless");
+                        }
                     }
                 } else {
-                    // diskless.enable = false -> diskless.enable must be not set or set to false
+                    // Cannot disable diskless once enabled
                     if (wasDiskless.isPresent() && wasDiskless.get()) {
-                        // cannot change from diskless.enable = true to diskless.enable = false
                         throw new InvalidConfigurationException("It is invalid to disable diskless");
                     }
                 }
