@@ -219,16 +219,12 @@ jobs:
         with:
           name: combined-test-catalog
 
-      # JOOQ classes are generated on the previous validate job,
-      # but if generated with JDK 17, there are no warning suppressions for `this-escape` needed after JDK 21.
-      # see https://github.com/jOOQ/jOOQ/issues/15619
-      - name: Regenerate JOOQ classes (needed after JDK 21)
-        if: matrix.java != '17'
-        run: ./gradlew :storage:inkless:generateJooqClasses
+      # JOOQ classes are pre-committed with JDK 23 (includes @SuppressWarnings("this-escape") annotations)
+      # No regeneration needed for any JDK version
       - name: Verify JOOQ classes are up-to-date in release branches
         if: startsWith(github.ref_name, 'inkless-')
         run: |
-          git diff --exit-code --stat -- storage/inkless/src/main/generated-jooq || (echo "JOOQ classes are not up-to-date, please run './gradlew :storage:inkless:generateJooqClasses' and commit the changes" && exit 1)
+          git diff --exit-code --stat -- storage/inkless/src/main/jooq || (echo "JOOQ classes are not up-to-date, please run 'make jooq' with JDK 23 and commit the changes" && exit 1)
       - name: JUnit Tests
         id: junit-test
         uses: ./.github/actions/run-gradle

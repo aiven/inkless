@@ -2571,7 +2571,7 @@ project(':storage:inkless') {
         )
       }
       basePackageName.set("org.jooq.generated")
-      outputDirectory.set(project.layout.buildDirectory.dir("generated-jooq"))
+      outputDirectory.set(project.layout.projectDirectory.dir("src/main/jooq"))
       includeFlywayTable.set(false)
       outputSchemaToDefault.add("public")
       inputs.dir("src/main/resources/db/migration")
@@ -2583,8 +2583,8 @@ project(':storage:inkless') {
       java {
         srcDirs = [
                 "src/main/java",
-                "${projectDir}/build/generated/main/java",
-                "${projectDir}/build/generated-jooq"
+                "src/main/jooq",
+                "${projectDir}/build/generated/main/java"
         ]
       }
     }
