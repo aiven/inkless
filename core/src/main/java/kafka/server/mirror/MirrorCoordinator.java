@@ -131,45 +131,31 @@ public class MirrorCoordinator {
     private void operateOnNewState(String mirrorName, Set<TopicPartition> topicPartitions, MirrorState newState) {
         switch (newState) {
             case STARTING:
-                LOG.info("!!! starting for topics {}.", topicPartitions);
-                //mirrorMetadataManager.onPreparing(mirrorName, topics);
+                LOG.info("!!! STARTING for topics {}.", topicPartitions);
+                // waiting for metadata update
                 break;
             case PREPARING_MIRRORING:
-                LOG.info("!!! Preparing mirroring for topics {}.", topicPartitions);
-//                updateMirrorTopicsMetadata(mirrorName, topics, Set.of());
+                LOG.info("!!! PREPARING_MIRRORING for topics {}.", topicPartitions);
                 maybeScheduleForTruncate(mirrorName, topicPartitions);
                 break;
             case MIRRORING:
-                LOG.info("!!! Mirroring topics {}.", topicPartitions);
+                LOG.info("!!! MIRRORING topics {}.", topicPartitions);
                 // start mirroring
                 mirrorMetadataManager.operateOnMirroring(mirrorName, topicPartitions);
                 break;
             case STOPPING:
-                LOG.info("!!! Stopping mirroring for topics {}.", topicPartitions);
+                LOG.info("!!! STOPPING for topics {}.", topicPartitions);
 //                updateMirrorTopicsMetadata(mirrorName, Set.of(), topics);
                 updateLastMirroredOffsets(mirrorName, topicPartitions);
                 break;
             case STOPPED:
-                LOG.info("!!! Stopped mirroring for topics {}.", topicPartitions);
+                LOG.info("!!! STOPPED for topics {}.", topicPartitions);
                 // topic becomes writable
                 break;
             case FAILED:
-                LOG.info("!!! Failed mirroring for topics {}.", topicPartitions);
+                LOG.info("!!! FAILED for topics {}.", topicPartitions);
         }
     }
-
-//    public void transitionTo(String mirrorName, Set<String> topics, MirrorState newState) {
-//        topics.forEach(topic -> {
-//            metadataCache.numPartitions(topic).ifPresent(numPartitions -> {
-//                for (int partitionIndex = 0; partitionIndex < numPartitions; partitionIndex++) {
-//                    TopicPartition topicPartition = new TopicPartition(topic, partitionIndex);
-//                    transitionTo(mirrorName, topicPartition, newState);
-//                }
-//            });
-//        });
-//
-//
-//    }
 
     private boolean isTransitionValid(MirrorState source, MirrorState target) {
         switch (target) {
@@ -242,7 +228,6 @@ public class MirrorCoordinator {
         });
 
         data.setTopics(topicStates);
-        LOG.info("!!! WriteMirrorStatesResponseData: {}", data);
         sendResponseCallback.accept(new WriteMirrorStatesResponse(data));
     }
 
@@ -262,7 +247,6 @@ public class MirrorCoordinator {
             partitionOffsets.put(topic, offsets);
         });
 
-        LOG.info("!!! Partition offsets for mirror topics: " + partitionOffsets);
         updateLastMirroredOffsetsMetadata(mirrorName, partitionOffsets, true);
     }
 
@@ -333,11 +317,11 @@ public class MirrorCoordinator {
         scheduler.startup();
         // periodically query source cluster to get the metadata
         long metadataRefreshIntervalMs = config.mirrorConfig().metadataRefreshIntervalMs();
-//        scheduler.schedule("mirror-metadata-refresh",
-//                mirrorMetadataManager::refreshMetadata,
-//                metadataRefreshIntervalMs,
-//                metadataRefreshIntervalMs
-//        );
+        scheduler.schedule("mirror-metadata-refresh",
+                mirrorMetadataManager::refreshMetadata,
+                metadataRefreshIntervalMs,
+                metadataRefreshIntervalMs
+        );
         numPartitions = config.mirrorConfig().mirrorTopicNumPartitions();
     }
 
