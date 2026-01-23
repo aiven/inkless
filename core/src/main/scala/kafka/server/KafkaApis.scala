@@ -21,7 +21,6 @@ import kafka.coordinator.transaction.{InitProducerIdResult, TransactionCoordinat
 import kafka.network.RequestChannel
 import kafka.server.QuotaFactory.{QuotaManagers, UNBOUNDED_QUOTA}
 import kafka.server.handlers.DescribeTopicPartitionsRequestHandler
-import kafka.server.metadata.KRaftMetadataCache
 import kafka.server.mirror.MirrorMetadataManager.MirroredPartitionMetadata
 import kafka.server.mirror.{MirrorCoordinator, MirrorPartitionState}
 import kafka.server.share.{ShareFetchUtils, SharePartitionManager}
@@ -317,7 +316,7 @@ class KafkaApis(val requestChannel: RequestChannel,
 //      .filter(t => t.mirrorInfo() != null && t.mirrorInfo().mirrorName() != null && !t.mirrorInfo().mirrorName().isEmpty).findFirst()
 //    if (mirrorTopic.isPresent) {
 //      logger.info(s"!!! Handling create mirror topics request: ${mirrorTopic.get().mirrorInfo().mirrorName()}")
-////      mirrorCoordinator.transitionTo(mirrorTopic.get().mirrorInfo().mirrorName(), util.Set.of(mirrorTopic.get().name()), MirrorState.METADATA_UPDATE)
+////      mirrorCoordinator.transitionTo(mirrorTopic.get().mirrorInfo().mirrorName(), util.Set.of(mirrorTopic.get().name()), MirrorPartitionState.METADATA_UPDATE)
 //    }
 //    forwardToController(request)
 //  }
@@ -360,7 +359,7 @@ class KafkaApis(val requestChannel: RequestChannel,
             topicPartitions.add(new TopicPartition(mirrorTopic.get().topicName(), i))
           }
         })
-        mirrorCoordinator.transitionTo(mirrorTopic.get().mirrorName(), util.Set.of(mirrorTopic.get().topicName()), MirrorPartitionState.INITIALIZING)
+        mirrorCoordinator.transitionTo(mirrorTopic.get().mirrorName(), topicPartitions, MirrorPartitionState.INITIALIZING)
       } else {
         logger.warn("Cluster Mirroring is disabled (mirror.version=0), ignoring mirror topic creation request")
       }
