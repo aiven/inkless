@@ -609,6 +609,13 @@ public class MirrorCoordinator {
     }
 
     /**
+     * Returns all mirror names managed by this node.
+     */
+    public Set<String> getAllMirrorNames() {
+        return mirrorMetadataManager.getAllMirrorNames();
+    }
+
+    /**
      * Shuts down the mirror coordinator and releases all resources.
      * Stops periodic metadata refresh and closes metrics.
      */

@@ -299,6 +299,8 @@ public abstract class AbstractResponse implements AbstractRequestResponse {
                 return AddTopicsToMirrorResponse.parse(readable, version);
             case REMOVE_TOPICS_FROM_MIRROR:
                 return RemoveTopicsFromMirrorResponse.parse(readable, version);
+            case LIST_MIRRORS:
+                return ListMirrorsResponse.parse(readable, version);
             case LAST_MIRRORED_OFFSETS:
                 return LastMirroredOffsetsResponse.parse(readable, version);
             default:

@@ -891,6 +891,13 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     private record ACLChanges(List<AclBinding> aclsToAdd, List<AclBinding> aclsToDelete) { }
 
     /**
+     * Returns mirror names managed by this node.
+     */
+    public Set<String> getAllMirrorNames() {
+        return new HashSet<>(topics.keySet());
+    }
+
+    /**
      * Clears all cached mirror metadata including topics and remote broker connections.
      * Called when the broker resigns as leader for mirror state topic partitions.
      */
