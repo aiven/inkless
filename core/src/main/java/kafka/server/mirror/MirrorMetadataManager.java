@@ -388,7 +388,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
             List<WriteMirrorStatesRequestData.PartitionState> partitionStates = new ArrayList<>();
             metadata.forEach(m -> {
                 WriteMirrorStatesRequestData.PartitionState partitionState = new WriteMirrorStatesRequestData.PartitionState();
-                partitionState.setState(m.state() == null ? (byte) -1 : m.state.value());
+                partitionState.setState(m.state() == null ? MirrorPartitionState.UNKNOWN.value() : m.state.value());
                 partitionState.setLastMirroredOffset(m.offset);
                 partitionState.setPartitionIndex(m.partition);
                 partitionStates.add(partitionState);
