@@ -44,7 +44,7 @@ plugins {
   id 'com.gradleup.shadow' version '8.3.9' apply false
   id 'com.diffplug.spotless' version "8.0.0"
 
-  id 'info.solidsoft.pitest' version '1.15.0' apply false
+  id 'info.solidsoft.pitest' version '1.19.0-rc.2' apply false
   id 'dev.monosoul.jooq-docker'  version "6.1.19" apply false
 }
 
