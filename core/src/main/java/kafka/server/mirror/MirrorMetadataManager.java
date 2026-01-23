@@ -250,18 +250,18 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
             delta.topicsDelta().localChanges(nodeId).readOnlyLeaders().entrySet().forEach(entry -> {
                 TopicPartition tp = entry.getKey();
                 LocalReplicaChanges.PartitionInfo info = entry.getValue();
-                boolean shouldStopping;
+                boolean movingToStopped;
                 String mirrorName = info.partition().mirrorName;
                 if (mirrorName.endsWith("*")) {
-                    shouldStopping = true;
+                    movingToStopped = true;
                     mirrorName = mirrorName.substring(0, mirrorName.length() - 1);
                 } else {
-                    shouldStopping = false;
+                    movingToStopped = false;
                 }
                 MirroredPartitionKey key = new MirroredPartitionKey(mirrorName, tp.topic(), tp.partition());
                 if (mirroredPartitionState.containsKey(key)) {
                     transitioner.ifPresent(t -> {
-                        if (shouldStopping) {
+                        if (movingToStopped && mirroredPartitionState.get(key) != MirrorState.STOPPED) {
                             t.transitionTo(key.mirrorName, tp, MirrorState.STOPPING);
                         } else {
                             // moving to preparing_mirroring if it's starting because it's waiting for metadata update.
@@ -282,7 +282,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                                     MirrorState state = MirrorState.fromValue(partition.state());
                                     mirroredPartitionState.put(new MirroredPartitionKey(key.mirrorName, tp.topic(), tp.partition()), state);
                                     transitioner.ifPresent(t -> {
-                                        if (shouldStopping) {
+                                        if (movingToStopped && mirroredPartitionState.get(key) != MirrorState.STOPPED) {
                                             t.transitionTo(key.mirrorName, tp, MirrorState.STOPPING);
                                         } else {
                                             if (state == MirrorState.STARTING) {
