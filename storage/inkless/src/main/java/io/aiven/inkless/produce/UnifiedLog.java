@@ -284,17 +284,17 @@ class UnifiedLog {
                 requestLocal.bufferSupplier()
             );
 
-            validRecords = validateAndOffsetAssignResult.validatedRecords;
-            appendInfo.setMaxTimestamp(validateAndOffsetAssignResult.maxTimestampMs);
+            validRecords = validateAndOffsetAssignResult.validatedRecords();
+            appendInfo.setMaxTimestamp(validateAndOffsetAssignResult.maxTimestampMs());
             appendInfo.setLastOffset(offset.value - 1);
-            appendInfo.setRecordValidationStats(validateAndOffsetAssignResult.recordValidationStats);
+            appendInfo.setRecordValidationStats(validateAndOffsetAssignResult.recordValidationStats());
             if (config.messageTimestampType == TimestampType.LOG_APPEND_TIME) {
-                appendInfo.setLogAppendTime(validateAndOffsetAssignResult.logAppendTimeMs);
+                appendInfo.setLogAppendTime(validateAndOffsetAssignResult.logAppendTimeMs());
             }
 
             // re-validate message sizes if there's a possibility that they have changed (due to re-compression or message
             // format conversion)
-            if (validateAndOffsetAssignResult.messageSizeMaybeChanged) {
+            if (validateAndOffsetAssignResult.messageSizeMaybeChanged()) {
                 validRecords.batches().forEach(batch -> {
                     if (batch.sizeInBytes() > config.maxMessageSize()) {
                         // we record the original message set size instead of the trimmed size
