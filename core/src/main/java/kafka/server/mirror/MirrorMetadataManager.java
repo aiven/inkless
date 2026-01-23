@@ -251,7 +251,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     @Override
     public void onMetadataUpdate(MetadataDelta delta, MetadataImage newImage, LoaderManifest manifest) {
         this.metadataImage = newImage;
-        if (delta.topicsDelta() != null) {
+        if (delta.topicsDelta() != null && !delta.topicsDelta().localChanges(nodeId).readOnlyLeaders().isEmpty()) {
             LOG.info("!!! onMetadataUpdate: {}", delta.topicsDelta().localChanges(nodeId).readOnlyLeaders());
             delta.topicsDelta().localChanges(nodeId).readOnlyLeaders().entrySet().forEach(entry -> {
                 TopicPartition tp = entry.getKey();
@@ -654,7 +654,11 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     }
 
     public long getLastMirroredOffset(String clusterName, TopicPartition topicPartition) {
-        return lastMirroredOffsets.get(new MirroredPartitionKey(clusterName, topicPartition.topic(), topicPartition.partition()));
+        MirroredPartitionKey key = new MirroredPartitionKey(clusterName, topicPartition.topic(), topicPartition.partition());
+        if (lastMirroredOffsets.containsKey(key)) {
+            return lastMirroredOffsets.get(key);
+        }
+        return 0L;
     }
 
     public void updateMirrorPartitionStateCache(String clusterName, TopicPartition topicPartition, MirrorPartitionState mirrorState) {
@@ -787,7 +791,6 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                 mirroringCallbacks.put(key, () -> callback.accept(Map.of(tp, info)));
             }
         });
-        LOG.info("!!! mirroringCallbacks: {}", mirroringCallbacks);
     }
 
     /**
@@ -810,7 +813,13 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     }
 
     public MirrorPartitionState getMirrorPartitionState(String clusterName, TopicPartition topicPartition) {
-        return mirrorPartitionState.get(new MirroredPartitionKey(clusterName, topicPartition.topic(), topicPartition.partition()));
+        String updatedClusterName = clusterName;
+        if (clusterName != null) {
+            if (clusterName.endsWith("*")) {
+                updatedClusterName = clusterName.substring(0, clusterName.length() - 1);
+            }
+        }
+        return mirrorPartitionState.get(new MirroredPartitionKey(updatedClusterName, topicPartition.topic(), topicPartition.partition()));
     }
 
     /**

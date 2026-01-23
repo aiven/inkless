@@ -1237,8 +1237,6 @@ class Partition(val topicPartition: TopicPartition,
       return false
     }
 
-    info("!!! maybeMoveToMirroringState:" + leaderLog)
-
     if (isUnderMinIsr) {
       trace(s"Not increasing HWM because partition is under min ISR(ISR=${partitionState.isr})")
       return false

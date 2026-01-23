@@ -309,18 +309,6 @@ class KafkaApis(val requestChannel: RequestChannel,
       (res) => requestHelper.sendMaybeThrottle(request, res))
   }
 
-//  def handleCreateTopics(request: RequestChannel.Request): Unit = {
-//    val createTopicsRequest = request.body[CreateTopicsRequest]
-//    // TODO: might need to have a better way to pass the cluster mirror
-//    val mirrorTopic = createTopicsRequest.data.topics.stream()
-//      .filter(t => t.mirrorInfo() != null && t.mirrorInfo().mirrorName() != null && !t.mirrorInfo().mirrorName().isEmpty).findFirst()
-//    if (mirrorTopic.isPresent) {
-//      logger.info(s"!!! Handling create mirror topics request: ${mirrorTopic.get().mirrorInfo().mirrorName()}")
-////      mirrorCoordinator.transitionTo(mirrorTopic.get().mirrorInfo().mirrorName(), util.Set.of(mirrorTopic.get().name()), MirrorPartitionState.METADATA_UPDATE)
-//    }
-//    forwardToController(request)
-//  }
-
   def handleLastMirroredOffset(request: RequestChannel.Request): Unit = {
     val lastMirroredOffsetRequest = request.body[LastMirroredOffsetsRequest]
     logger.info(s"!!! Handling last mirrored offset request: ${lastMirroredOffsetRequest}")
