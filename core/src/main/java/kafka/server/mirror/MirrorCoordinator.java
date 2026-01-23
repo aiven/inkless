@@ -192,6 +192,16 @@ public class MirrorCoordinator {
         }
     }
 
+    /**
+     * Transitions all partitions to a new mirror state.
+     * <p>
+     * This method updates the state for every partition and then
+     * executes the state transition actions after transition.
+     *
+     * @param mirrorName the name of the cluster mirror
+     * @param topicPartitions the set of topics to transition
+     * @param newState the target mirror state
+     */
     public void transitionTo(String mirrorName, Set<TopicPartition> topicPartitions, MirrorPartitionState newState) {
         topicPartitions.forEach(tp -> {
             if (isTransitionValid(mirrorMetadataManager.getMirrorPartitionState(mirrorName, tp), newState)) {
@@ -252,6 +262,17 @@ public class MirrorCoordinator {
         mirrorMetadataManager.readStatesFromCache(mirrorName, partitions, sendResponseCallback);
     }
 
+    /**
+     * Collects the current log end offsets for all partitions
+     * and persists them as the last successfully mirrored offsets.
+     * <p>
+     * This method is typically called when transitioning to the STOPPING state to
+     * record the point up to which data was successfully mirrored, enabling
+     * potential failback scenarios.
+     *
+     * @param mirrorName the name of the cluster mirror
+     * @param topicPartitions the topic partitions whose offsets should be captured
+     */
     public void updateLastMirroredOffsets(String mirrorName, Set<TopicPartition> topicPartitions) {
         Map<String, Map<Integer, Long>> partitionOffsets = new HashMap<>();
         mirrorMetadataManager.convertToTopicToPartitions(topicPartitions).forEach((topic, parts) -> {
@@ -328,11 +349,11 @@ public class MirrorCoordinator {
         scheduler.startup();
         // periodically query source cluster to get the metadata
         long metadataRefreshIntervalMs = config.mirrorConfig().metadataRefreshIntervalMs();
-//        scheduler.schedule("mirror-metadata-refresh",
-//                mirrorMetadataManager::refreshMetadata,
-//                metadataRefreshIntervalMs,
-//                metadataRefreshIntervalMs
-//        );
+        scheduler.schedule("mirror-metadata-refresh",
+                mirrorMetadataManager::refreshMetadata,
+                metadataRefreshIntervalMs,
+                metadataRefreshIntervalMs
+        );
         numPartitions = config.mirrorConfig().mirrorTopicNumPartitions();
     }
 

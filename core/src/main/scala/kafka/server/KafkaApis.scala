@@ -336,12 +336,12 @@ class KafkaApis(val requestChannel: RequestChannel,
 
   def handleAddTopicsToMirror(request: RequestChannel.Request): Unit = {
     val addTopicsToMirrorRequest = request.body[AddTopicsToMirrorRequest]
-    // TODO: might need to have a better way to pass the cluster mirror
     val mirrorTopic = addTopicsToMirrorRequest.data.topics().stream().filter(t => t.mirrorName() != null && !t.mirrorName().isEmpty).findFirst()
     if (mirrorTopic.isPresent) {
       if (isClusterMirroringEnabled) {
         logger.info(s"!!! Handling adding mirror topics request: ${mirrorTopic.get().mirrorName()}")
         val topicPartitions = new util.HashSet[TopicPartition]()
+        // TODO: We should return error if the topic is not created, yet
         metadataCache.numPartitions(mirrorTopic.get().topicName()).map(num => {
           for (i <- 0 until num) {
             topicPartitions.add(new TopicPartition(mirrorTopic.get().topicName(), i))

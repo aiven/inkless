@@ -659,8 +659,6 @@ public class ReplicationControlManager {
             for (Entry<Integer, PartitionRegistration> entry : info.parts.entrySet()) {
                 int partitionId = entry.getKey();
                 String mirrorName = info.parts.get(partitionId).mirrorName;
-                // temp: appending * in the end means this is a stopping mirroring
-                // "my-link" -> "my-link*"
                 String newMirrorName = mirrorName.endsWith("*") ? "" : mirrorName + "*";
                 PartitionRegistration partition = info.parts.get(partitionId);
                 PartitionChangeBuilder builder = new PartitionChangeBuilder(

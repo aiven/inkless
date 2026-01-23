@@ -1413,7 +1413,6 @@ class ReplicaManager(val config: KafkaConfig,
       // if it's mirrored topic, it will become writable only when in STOPPED state
       if (mirrorMetadataManager.isDefined && partition.mirrorName.nonEmpty &&
         mirrorMetadataManager.get.getMirrorPartitionState(partition.mirrorName, partition.topicPartition) != MirrorPartitionState.STOPPED) {
-        info("!!! state: ")
         throw new ReadOnlyTopicException("Cannot append to read-only partition %s on broker %d (mirrorName=%s)"
           .format(partition.topicPartition, localBrokerId, partition.mirrorName))
       }
