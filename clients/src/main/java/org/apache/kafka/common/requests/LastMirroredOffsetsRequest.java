@@ -17,8 +17,8 @@
 
 package org.apache.kafka.common.requests;
 
-import org.apache.kafka.common.message.LastMirroredOffsetRequestData;
-import org.apache.kafka.common.message.LastMirroredOffsetResponseData;
+import org.apache.kafka.common.message.LastMirroredOffsetsRequestData;
+import org.apache.kafka.common.message.LastMirroredOffsetsResponseData;
 import org.apache.kafka.common.protocol.ApiKeys;
 import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.protocol.Readable;
@@ -26,27 +26,27 @@ import org.apache.kafka.common.protocol.Readable;
 import java.util.ArrayList;
 import java.util.Set;
 
-public class LastMirroredOffsetRequest extends AbstractRequest {
-    public static class Builder extends AbstractRequest.Builder<LastMirroredOffsetRequest> {
+public class LastMirroredOffsetsRequest extends AbstractRequest {
+    public static class Builder extends AbstractRequest.Builder<LastMirroredOffsetsRequest> {
 
-        private final LastMirroredOffsetRequestData data;
+        private final LastMirroredOffsetsRequestData data;
 
-        public Builder(LastMirroredOffsetRequestData data) {
-            super(ApiKeys.LAST_MIRRORED_OFFSET);
+        public Builder(LastMirroredOffsetsRequestData data) {
+            super(ApiKeys.LAST_MIRRORED_OFFSETS);
             this.data = data;
         }
 
         public Builder(Set<String> topics) {
-            super(ApiKeys.LAST_MIRRORED_OFFSET, ApiKeys.LAST_MIRRORED_OFFSET.oldestVersion(),
-                    ApiKeys.LAST_MIRRORED_OFFSET.latestVersion());
-            LastMirroredOffsetRequestData data = new LastMirroredOffsetRequestData();
+            super(ApiKeys.LAST_MIRRORED_OFFSETS, ApiKeys.LAST_MIRRORED_OFFSETS.oldestVersion(),
+                    ApiKeys.LAST_MIRRORED_OFFSETS.latestVersion());
+            LastMirroredOffsetsRequestData data = new LastMirroredOffsetsRequestData();
             data.setTopics(new ArrayList<>(topics));
             this.data = data;
         }
 
         @Override
-        public LastMirroredOffsetRequest build(short version) {
-            return new LastMirroredOffsetRequest(data, version);
+        public LastMirroredOffsetsRequest build(short version) {
+            return new LastMirroredOffsetsRequest(data, version);
         }
 
         @Override
@@ -55,30 +55,30 @@ public class LastMirroredOffsetRequest extends AbstractRequest {
         }
     }
 
-    private final LastMirroredOffsetRequestData data;
+    private final LastMirroredOffsetsRequestData data;
 
-    public LastMirroredOffsetRequest(LastMirroredOffsetRequestData data, short version) {
-        super(ApiKeys.LAST_MIRRORED_OFFSET, version);
+    public LastMirroredOffsetsRequest(LastMirroredOffsetsRequestData data, short version) {
+        super(ApiKeys.LAST_MIRRORED_OFFSETS, version);
         this.data = data;
     }
 
     @Override
-    public LastMirroredOffsetRequestData data() {
+    public LastMirroredOffsetsRequestData data() {
         return data;
     }
 
     @Override
     public AbstractResponse getErrorResponse(int throttleTimeMs, Throwable e) {
         Errors error = Errors.forException(e);
-        LastMirroredOffsetResponseData responseData = new LastMirroredOffsetResponseData();
+        LastMirroredOffsetsResponseData responseData = new LastMirroredOffsetsResponseData();
         responseData.setErrorCode(error.code());
 
-        return new LastMirroredOffsetResponse(responseData);
+        return new LastMirroredOffsetsResponse(responseData);
     }
 
-    public static LastMirroredOffsetRequest parse(Readable readable, short version) {
-        return new LastMirroredOffsetRequest(
-                new LastMirroredOffsetRequestData(readable, version),
+    public static LastMirroredOffsetsRequest parse(Readable readable, short version) {
+        return new LastMirroredOffsetsRequest(
+                new LastMirroredOffsetsRequestData(readable, version),
                 version
         );
     }

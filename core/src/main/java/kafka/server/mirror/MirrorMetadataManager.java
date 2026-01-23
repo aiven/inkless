@@ -37,7 +37,7 @@ import org.apache.kafka.common.message.DeleteAclsRequestData;
 import org.apache.kafka.common.message.DeleteTopicsRequestData;
 import org.apache.kafka.common.message.DescribeConfigsRequestData;
 import org.apache.kafka.common.message.IncrementalAlterConfigsRequestData;
-import org.apache.kafka.common.message.LastMirroredOffsetRequestData;
+import org.apache.kafka.common.message.LastMirroredOffsetsRequestData;
 import org.apache.kafka.common.message.ListGroupsRequestData;
 import org.apache.kafka.common.message.OffsetCommitRequestData;
 import org.apache.kafka.common.message.OffsetFetchRequestData;
@@ -56,8 +56,8 @@ import org.apache.kafka.common.requests.DescribeAclsResponse;
 import org.apache.kafka.common.requests.DescribeConfigsRequest;
 import org.apache.kafka.common.requests.DescribeConfigsResponse;
 import org.apache.kafka.common.requests.IncrementalAlterConfigsRequest;
-import org.apache.kafka.common.requests.LastMirroredOffsetRequest;
-import org.apache.kafka.common.requests.LastMirroredOffsetResponse;
+import org.apache.kafka.common.requests.LastMirroredOffsetsRequest;
+import org.apache.kafka.common.requests.LastMirroredOffsetsResponse;
 import org.apache.kafka.common.requests.ListGroupsRequest;
 import org.apache.kafka.common.requests.ListGroupsResponse;
 import org.apache.kafka.common.requests.MetadataRequest;
@@ -74,6 +74,7 @@ import org.apache.kafka.common.security.auth.SecurityProtocol;
 import org.apache.kafka.common.utils.LogContext;
 import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.coordinator.group.GroupCoordinator;
+import org.apache.kafka.image.LocalReplicaChanges;
 import org.apache.kafka.image.MetadataDelta;
 import org.apache.kafka.image.MetadataImage;
 import org.apache.kafka.image.loader.LoaderManifest;
@@ -97,12 +98,16 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Properties;
 import java.util.Random;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Consumer;
 import java.util.function.Supplier;
+import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 
 import static java.util.Collections.singletonList;
 import static org.apache.kafka.clients.CommonClientConfigs.BOOTSTRAP_SERVERS_CONFIG;
@@ -155,7 +160,10 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     private MetadataCache metadataCache;
     private NodeToControllerChannelManager channelManager;
     private final Supplier<GroupCoordinator> groupCoordinatorSupplier;
-    private Map<String, Set<LastMirroredOffset>> lastMirroredOffsets = new ConcurrentHashMap<>();
+    private Map<MirroredPartitionKey, Long> lastMirroredOffsets = new ConcurrentHashMap<>();
+    private Map<MirroredPartitionKey, MirrorPartitionState> mirrorPartitionState = new ConcurrentHashMap<>();
+    private Map<String, Map<String, Consumer<MirrorPartitionState>>> metadataUpdateCallbacks = new ConcurrentHashMap<>();
+    private Map<MirroredPartitionKey, Runnable> mirroringCallbacks = new ConcurrentHashMap<>();
 
     public MirrorMetadataManager(
         KafkaConfig config,
@@ -201,6 +209,21 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     @Override
     public void onMetadataUpdate(MetadataDelta delta, MetadataImage newImage, LoaderManifest manifest) {
         this.metadataImage = newImage;
+        if (delta.topicsDelta() != null) {
+            LOG.info("!!! onMetadataUpdate: {}", delta.topicsDelta().localChanges(nodeId).readOnlyLeaders());
+            delta.topicsDelta().localChanges(nodeId).readOnlyLeaders().entrySet().forEach(entry -> {
+                TopicPartition tp = entry.getKey();
+                LocalReplicaChanges.PartitionInfo info = entry.getValue();
+                MirroredPartitionKey key = new MirroredPartitionKey(info.partition().mirrorName, tp.topic(), tp.partition());
+                // moving the topics from INITIALIZING into PREPARING state
+                // or moving the topics don't have state (due to topic not created yet) directly into MIRRORING state because no truncation needed
+                if (!mirrorPartitionState.containsKey(key) || mirrorPartitionState.get(key) == MirrorPartitionState.INITIALIZING) {
+                    // TODO: We should have a way to store the INITIALIZING state for topics not created yet.
+                    invokeMetadataUpdateCallbacks(info.partition().mirrorName, tp.topic(), mirrorPartitionState.containsKey(key)
+                            ? MirrorPartitionState.PREPARING : MirrorPartitionState.MIRRORING);
+                }
+            });
+        }
     }
 
     /**
@@ -210,25 +233,46 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     public void close() throws Exception {
     }
 
-    public void maybeTruncate(ReplicaManager replicaManager, String mirrorName, Set<String> topics) {
-        LOG.info("!!! maybeTruncate: {} {}", mirrorName, topics);
+    /**
+     * Initiates truncation of topic partitions to align with last mirrored offsets from source cluster.
+     * <p>
+     * This method:
+     * <ol>
+     *   <li>Establishes a connection to the remote cluster if not already connected</li>
+     *   <li>Fetches the last successfully mirrored offsets from the source cluster</li>
+     *   <li>Requests the ReplicaManager to truncate local replicas to these offsets</li>
+     *   <li>Invokes the callback when truncation completes for all ISR members</li>
+     * </ol>
+     * <p>
+     * Truncation ensures data consistency when resuming mirroring after a failover or restart.
+     *
+     * @param replicaManager the replica manager to perform truncation
+     * @param mirrorName the name of the cluster mirror
+     * @param topics the topics to truncate
+     * @param callback callback invoked for each partition when truncation completes
+     */
+    public void maybeTruncateToLastMirroredOffsets(ReplicaManager replicaManager,
+                                                   String mirrorName,
+                                                   Set<String> topics,
+                                                   Consumer<TopicPartition> callback) {
+        LOG.info("!!! maybeTruncateToLastMirroredOffsets: {} {}", mirrorName, topics);
         createMirrorConnection(mirrorName);
 
         var response = getRandomSender(remoteBrokers.get(mirrorName)).sendRequest(
-                new LastMirroredOffsetRequest.Builder(
-                        new LastMirroredOffsetRequestData().setTopics(new ArrayList<>(topics)))
+                new LastMirroredOffsetsRequest.Builder(
+                        new LastMirroredOffsetsRequestData().setMirrorName(mirrorName).setTopics(new ArrayList<>(topics)))
         );
 
-        if (response.responseBody() instanceof LastMirroredOffsetResponse lastMirroredOffsetResponse) {
+        if (response.responseBody() instanceof LastMirroredOffsetsResponse lastMirroredOffsetResponse) {
             LOG.info("!!! lastMirroredOffsetResponse: {}", lastMirroredOffsetResponse);
             Map<TopicPartition, Long> offsets = new HashMap<>();
             lastMirroredOffsetResponse.data().topics().forEach(topic -> {
                 String name = topic.name();
                 topic.partitions().forEach(partition -> {
-                    offsets.put(new TopicPartition(name, partition.partitionIndex()), partition.committedOffset());
+                    offsets.put(new TopicPartition(name, partition.partitionIndex()), partition.lastMirroredOffset());
                 });
             });
-            replicaManager.maybeTruncate(offsets);
+            replicaManager.maybeTruncate(offsets, callback);
         }
     }
 
@@ -290,12 +334,48 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
      * @param removedTopics topics to remove from the cache
      * @return the updated set of mirror topics
      */
-    public Set<String> updateMirrorTopicsCache(String clusterName, Set<String> addedTopics, Set<String> removedTopics) {
+    public Set<String> updateMirrorTopics(String clusterName, Set<String> addedTopics, Set<String> removedTopics) {
         Set<String> mutableTopics = new HashSet<>(this.topics.getOrDefault(clusterName, Set.of()));
         mutableTopics.removeAll(removedTopics);
         mutableTopics.addAll(addedTopics);
         this.topics.put(clusterName, mutableTopics);
         return mutableTopics;
+    }
+
+    public long getLastMirroredOffset(String clusterName, TopicPartition topicPartition) {
+        return lastMirroredOffsets.get(new MirroredPartitionKey(clusterName, topicPartition.topic(), topicPartition.partition()));
+    }
+
+    public void updateMirrorPartitionState(String mirrorName, TopicPartition topicPartition, MirrorPartitionState mirrorPartitionState) {
+        this.mirrorPartitionState.put(new MirroredPartitionKey(mirrorName, topicPartition.topic(), topicPartition.partition()), mirrorPartitionState);
+    }
+
+    public MirrorPartitionState getMirrorPartitionState(String clusterName, TopicPartition topicPartition) {
+        return mirrorPartitionState.get(new MirroredPartitionKey(clusterName, topicPartition.topic(), topicPartition.partition()));
+    }
+
+    // TODO: Should operate on partition level
+    public void operateAll(MirrorCoordinator.StateTransitionCallback operator) {
+        Map<String, Map<String, MirrorPartitionState>> topics = new HashMap<>();
+        mirrorPartitionState.forEach((key, value) -> {
+            LOG.info("!!! operateAll: {} {}", key, value);
+            topics.compute(key.mirrorName, (k, prevVal) -> {
+                Map<String, MirrorPartitionState> result;
+                if (prevVal == null) {
+                    result = new HashMap<>();
+                } else {
+                    result = new HashMap<>(prevVal);
+                }
+                result.put(key.topic, MirrorPartitionState.fromValue(value.value()));
+                return result;
+            });
+        });
+
+        topics.forEach((key, value) -> {
+            value.forEach((topic, state) -> {
+                operator.onStateLoaded(key, Set.of(topic), state);
+            });
+        });
     }
 
     /**
@@ -307,22 +387,109 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
      * @param removedOffsets map of topic names to partition offsets to remove
      * @return the updated set of last mirrored offsets
      */
-    public Set<LastMirroredOffset> updateLastMirroredOffsetsCache(String clusterName,
+    public Map<MirroredPartitionKey, Long> updateLastMirroredOffsetsCache(String clusterName,
                                                                   Map<String, Map<Integer, Long>> addedOffsets,
                                                                   Map<String, Map<Integer, Long>> removedOffsets) {
-        Set<LastMirroredOffset> offsets = new HashSet<>(this.lastMirroredOffsets.getOrDefault(clusterName, Set.of()));
         removedOffsets.forEach((topic, partitionOffsets) -> {
             partitionOffsets.forEach((partition, offset) -> {
-                offsets.remove(new LastMirroredOffset(topic, partition, offset));
+                lastMirroredOffsets.remove(new MirroredPartitionKey(clusterName, topic, partition));
             });
         });
         addedOffsets.forEach((topic, partitionOffsets) -> {
             partitionOffsets.forEach((partition, offset) -> {
-                offsets.add(new LastMirroredOffset(topic, partition, offset));
+                lastMirroredOffsets.put(new MirroredPartitionKey(clusterName, topic, partition), offset);
             });
         });
-        this.lastMirroredOffsets.put(clusterName, offsets);
-        return offsets;
+        LOG.info("!!! updateLastMirroredOffsetsCache: {} {}", clusterName, lastMirroredOffsets);
+        return lastMirroredOffsets;
+    }
+
+    /**
+     * Registers a callback to be invoked when metadata update is complete for the specified topics.
+     * <p>
+     * The callback will be triggered when all topic metadata has been synchronized from the
+     * source cluster, allowing the mirroring process to proceed to the next state.
+     *
+     * @param mirrorName the name of the cluster mirror
+     * @param topics the topics to monitor for metadata preparation completion
+     * @param callback callback invoked with the next state when preparation completes
+     */
+    public void registerMetadataUpdateCallback(String mirrorName, Set<String> topics, Consumer<MirrorPartitionState> callback) {
+        LOG.info("!!! registerMetadataUpdateCallback: {} {}", mirrorName, topics);
+        metadataUpdateCallbacks.compute(mirrorName, (key, prevVal) -> {
+            Map<String, Consumer<MirrorPartitionState>> result = new HashMap<>();
+            if (prevVal != null) {
+                result.putAll(prevVal);
+            }
+            result.putAll(topics.stream().collect(Collectors.toMap(topic -> topic, topic -> callback)));
+            return result;
+        });
+        LOG.info("!!! metadataUpdateCallbacks: {}", metadataUpdateCallbacks);
+    }
+
+    /**
+     * Invokes and removes the registered metadata update callbacks for a topic.
+     * <p>
+     * This method is called when metadata preparation completes for a topic,
+     * triggering the registered callback with the appropriate next state.
+     *
+     * @param mirrorName the name of the cluster mirror
+     * @param topic the topic whose metadata preparation has completed
+     * @param state the state to transition to after preparation
+     */
+    public void invokeMetadataUpdateCallbacks(String mirrorName, String topic, MirrorPartitionState state) {
+        LOG.info("!!! invokeMetadataUpdateCallbacks: {} {}", mirrorName, topic);
+        Map<String, Consumer<MirrorPartitionState>> runs = metadataUpdateCallbacks.get(mirrorName);
+        runs.get(topic).accept(state);
+        runs.remove(topic);
+        if (runs.isEmpty()) {
+            metadataUpdateCallbacks.remove(mirrorName);
+        } else {
+            metadataUpdateCallbacks.put(mirrorName, runs);
+        }
+    }
+
+    /**
+     * Registers a callback to be invoked when partitions transition to MIRRORING state.
+     * <p>
+     * This allows delaying the creation of mirror fetcher threads until the partition
+     * state has been persisted and all preparatory steps (metadata sync, truncation) are complete.
+     *
+     * @param readOnlyLeaders map of partitions to their leader information
+     * @param callback callback to invoke when each partition enters MIRRORING state
+     */
+    public void registerMirroringCallback(Map<TopicPartition, LocalReplicaChanges.PartitionInfo> readOnlyLeaders,
+                                          Consumer<Map<TopicPartition, LocalReplicaChanges.PartitionInfo>> callback) {
+        readOnlyLeaders.forEach((tp, info) -> {
+            MirroredPartitionKey key = new MirroredPartitionKey(info.partition().mirrorName, tp.topic(), tp.partition());
+            if (mirrorPartitionState.get(key) == MirrorPartitionState.MIRRORING) {
+                callback.accept(Map.of(tp, info));
+            } else {
+                mirroringCallbacks.put(key, () -> callback.accept(Map.of(tp, info)));
+            }
+        });
+        LOG.info("!!! mirroringCallbacks: {}", mirroringCallbacks);
+    }
+
+    /**
+     * Invokes and removes the registered mirroring callbacks for the given topics.
+     * <p>
+     * This typically triggers the creation of mirror fetcher threads for the specified topics.
+     *
+     * @param mirrorName the name of the cluster mirror
+     * @param topics the topics that have entered MIRRORING state
+     */
+    public void invokeMirroringCallbacks(String mirrorName, Set<String> topics) {
+        topics.forEach(topic -> metadataCache.numPartitions(topic).ifPresent(numPartitions -> {
+            IntStream.range(0, numPartitions).forEach(i -> {
+                MirroredPartitionKey key = new MirroredPartitionKey(mirrorName, topic, i);
+                Runnable runnable = mirroringCallbacks.get(key);
+                if (runnable != null) {
+                    runnable.run();
+                    mirroringCallbacks.remove(key);
+                }
+            });
+        }));
     }
 
     /**
@@ -745,4 +912,28 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     }
 
     public record LastMirroredOffset(String topic, int partition, long offset) { }
+    public record MirroredPartitionStateRecordValue(String topic, int partition, MirrorPartitionState state) { }
+    public record MirroredPartitionKey(String mirrorName, String topic, int partition) {
+        @Override
+        public int hashCode() {
+            return Objects.hash(mirrorName, topic, partition);
+        }
+
+        @Override
+        public boolean equals(Object obj) {
+            if (this == obj)
+                return true;
+            if (obj == null)
+                return false;
+            if (getClass() != obj.getClass())
+                return false;
+            MirroredPartitionKey other = (MirroredPartitionKey) obj;
+            return mirrorName.equals(other.mirrorName) && partition == other.partition && Objects.equals(topic, other.topic);
+        }
+
+        @Override
+        public String toString() {
+            return mirrorName + "-" + topic + "-" + partition;
+        }
+    }
 }

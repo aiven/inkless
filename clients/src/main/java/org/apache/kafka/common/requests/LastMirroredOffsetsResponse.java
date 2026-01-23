@@ -17,7 +17,7 @@
 
 package org.apache.kafka.common.requests;
 
-import org.apache.kafka.common.message.LastMirroredOffsetResponseData;
+import org.apache.kafka.common.message.LastMirroredOffsetsResponseData;
 import org.apache.kafka.common.protocol.ApiKeys;
 import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.protocol.Readable;
@@ -25,16 +25,16 @@ import org.apache.kafka.common.protocol.Readable;
 import java.util.HashMap;
 import java.util.Map;
 
-public class LastMirroredOffsetResponse extends AbstractResponse {
-    private final LastMirroredOffsetResponseData data;
+public class LastMirroredOffsetsResponse extends AbstractResponse {
+    private final LastMirroredOffsetsResponseData data;
 
-    public LastMirroredOffsetResponse(LastMirroredOffsetResponseData data) {
-        super(ApiKeys.LAST_MIRRORED_OFFSET);
+    public LastMirroredOffsetsResponse(LastMirroredOffsetsResponseData data) {
+        super(ApiKeys.LAST_MIRRORED_OFFSETS);
         this.data = data;
     }
 
     @Override
-    public LastMirroredOffsetResponseData data() {
+    public LastMirroredOffsetsResponseData data() {
         return data;
     }
 
@@ -55,7 +55,7 @@ public class LastMirroredOffsetResponse extends AbstractResponse {
         return errorCounts;
     }
 
-    public static LastMirroredOffsetResponse parse(Readable readable, short version) {
-        return new LastMirroredOffsetResponse(new LastMirroredOffsetResponseData(readable, version));
+    public static LastMirroredOffsetsResponse parse(Readable readable, short version) {
+        return new LastMirroredOffsetsResponse(new LastMirroredOffsetsResponseData(readable, version));
     }
 }

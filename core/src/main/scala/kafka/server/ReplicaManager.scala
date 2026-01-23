@@ -23,7 +23,7 @@ import kafka.log.LogManager
 import kafka.server.HostedPartition.Online
 import kafka.server.QuotaFactory.QuotaManagers
 import kafka.server.ReplicaManager.{AtMinIsrPartitionCountMetricName, FailedIsrUpdatesPerSecMetricName, IsrExpandsPerSecMetricName, IsrShrinksPerSecMetricName, LeaderCountMetricName, OfflineReplicaCountMetricName, PartitionCountMetricName, PartitionsWithLateTransactionsCountMetricName, ProducerIdCountMetricName, ReassigningPartitionsMetricName, UnderMinIsrPartitionCountMetricName, UnderReplicatedPartitionsMetricName, createLogReadResult, isListOffsetsTimestampUnsupported}
-import kafka.server.mirror.{MirrorMetadataManager, MirrorFetcherManager}
+import kafka.server.mirror.{MirrorFetcherManager, MirrorMetadataManager, MirrorPartitionState}
 import kafka.server.share.DelayedShareFetch
 import kafka.utils._
 import org.apache.kafka.common.{IsolationLevel, Node, TopicIdPartition, TopicPartition, Uuid}
@@ -800,7 +800,6 @@ class ReplicaManager(val config: KafkaConfig,
           )
       }
       val entriesWithoutErrorsPerPartition = entriesPerPartition.filter { case (key, _) => !errorResults.contains(key) }
-
       val preAppendPartitionResponses = buildProducePartitionStatus(errorResults).map { case (k, status) => k -> status.responseStatus }
 
       def newResponseCallback(responses: Map[TopicIdPartition, PartitionResponse]): Unit = {
@@ -1411,9 +1410,12 @@ class ReplicaManager(val config: KafkaConfig,
     }
 
     def validateReadOnlyTopic(partition: Partition): Unit = {
-      if (partition.mirrorName.nonEmpty)
+      // if it's mirrored topic, it will become writable only when in STOPPED state
+      if (mirrorMetadataManager.isDefined && partition.mirrorName.nonEmpty &&
+        mirrorMetadataManager.get.getMirrorPartitionState(partition.mirrorName, partition.topicPartition) != MirrorPartitionState.STOPPED) {
         throw new ReadOnlyTopicException("Cannot append to read-only partition %s on broker %d (mirrorName=%s)"
           .format(partition.topicPartition, localBrokerId, partition.mirrorName))
+      }
     }
 
     if (traceEnabled)
@@ -1667,11 +1669,14 @@ class ReplicaManager(val config: KafkaConfig,
     delayedRemoteFetchPurgatory.tryCompleteElseWatch(remoteFetch, delayedFetchKeys.asJava)
   }
 
-  def maybeTruncate(offsets: util.Map[TopicPartition, JLong]): Unit = {
+  def maybeTruncate(offsets: util.Map[TopicPartition, JLong], callback: Consumer[TopicPartition]): Unit = {
     info("!!! maybeTruncate:" + offsets)
     offsets.forEach((tp, offset) => {
       getLog(tp).map(log => {
         log.truncateTo(offset)
+        val partition = getPartitionOrException(tp)
+        partition.truncationCallback = Optional.of(callback)
+        partition.checkIsrTruncationAndTransition(log)
       })
     })
   }
@@ -2416,7 +2421,8 @@ class ReplicaManager(val config: KafkaConfig,
         // Handle read-only leaders: these are leaders (already processed above) that also need
         // to start MirrorFetcherThreads to fetch from the source cluster
         if (!localChanges.readOnlyLeaders().isEmpty) {
-          maybeCreateMirrorFetchers(localChanges.readOnlyLeaders.asScala)
+          // wait until the state entering MIRRORING state and then start fetching
+          mirrorMetadataManager.get.registerMirroringCallback(localChanges.readOnlyLeaders(), mirroringLeaders => maybeCreateMirrorFetchers(mirroringLeaders.asScala))
         }
 
         maybeAddLogDirFetchers(leaderChangedPartitions ++ followerChangedPartitions, lazyOffsetCheckpoints,

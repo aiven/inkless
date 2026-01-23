@@ -50,6 +50,7 @@ import java.lang.{Long => JLong}
 import java.util.Optional
 import java.util.concurrent.locks.ReentrantReadWriteLock
 import java.util.concurrent.{CompletableFuture, ConcurrentHashMap, CopyOnWriteArrayList}
+import java.util.function.Consumer
 import scala.collection.Seq
 import scala.jdk.CollectionConverters._
 import scala.jdk.OptionConverters.{RichOption, RichOptional}
@@ -348,6 +349,7 @@ class Partition(val topicPartition: TopicPartition,
   // If ReplicaAlterLogDir command is in progress, this is future location of the log
   @volatile var futureLog: Option[UnifiedLog] = None
   @volatile var mirrorName: String = ""
+  @volatile var truncationCallback: Optional[Consumer[TopicPartition]] = Optional.empty()
 
   // Partition listeners
   private val listeners = new CopyOnWriteArrayList[PartitionListener]()
@@ -824,6 +826,7 @@ class Partition(val topicPartition: TopicPartition,
       leaderReplicaIdOpt = Some(localBrokerId)
       mirrorName = partitionState.mirrorName()
 
+      checkIsrTruncationAndTransition(leaderLog)
       // We may need to increment high watermark since ISR could be down to 1.
       (maybeIncrementLeaderHW(leaderLog, currentTimeMs = currentTimeMs), isNewLeader)
     }
@@ -951,7 +954,10 @@ class Partition(val topicPartition: TopicPartition,
       // the leader log may be updated by ReplicaAlterLogDirsThread so the following method must be in lock of
       // leaderIsrUpdateLock to prevent adding new hw to invalid log.
       inReadLock(leaderIsrUpdateLock) {
-        leaderLogIfLocal.exists(leaderLog => maybeIncrementLeaderHW(leaderLog, followerFetchTimeMs))
+        leaderLogIfLocal.exists(leaderLog => {
+          maybeIncrementLeaderHW(leaderLog, followerFetchTimeMs)
+          checkIsrTruncationAndTransition(leaderLog, followerFetchTimeMs)
+        })
       }
     } else {
       false
@@ -1205,6 +1211,62 @@ class Partition(val topicPartition: TopicPartition,
         }
         false
     }
+  }
+
+  /**
+   * Validates that all in-sync replicas have been truncated to the expected offset
+   * and transitions to MIRRORING state if validation succeeds.
+   * <p>
+   * This method ensures that:
+   * <ol>
+   *   <li>A truncation callback is registered (onTruncation is present)</li>
+   *   <li>The partition meets minimum ISR requirements</li>
+   *   <li>All ISR members have log end offsets <= leader's log end offset</li>
+   * </ol>
+   * <p>
+   * The transition only occurs when all conditions are met, ensuring data
+   * consistency before resuming mirroring operations.
+   *
+   * @param leaderLog the leader's unified log
+   * @param currentTimeMs the current time in milliseconds
+   * @return true if the transition occurred, false if validation failed or no callback was registered
+   */
+  def checkIsrTruncationAndTransition(leaderLog: UnifiedLog, currentTimeMs: Long = time.milliseconds): Boolean = {
+    info("!!! checkIsrTruncationAndTransition:" + leaderLog)
+    if (truncationCallback.isEmpty) {
+      return false
+    }
+
+    if (isUnderMinIsr) {
+      trace(s"Not increasing HWM because partition is under min ISR(ISR=${partitionState.isr})")
+      return false
+    }
+
+    // get the current LEO of the current leader
+    val leaderLogEndOffset = leaderLog.logEndOffsetMetadata
+    remoteReplicasMap.forEach { (_, replica) =>
+      val replicaState = replica.stateSnapshot
+
+      def shouldWaitForReplicaToJoinIsr: Boolean = {
+        replicaState.isCaughtUp(leaderLogEndOffset.messageOffset, currentTimeMs, replicaLagTimeMaxMs) &&
+          isReplicaIsrEligible(replica.brokerId)
+      }
+
+      info("!!! replicaState.logEndOffsetMetadata:" + replicaState.logEndOffsetMetadata + ";;" + leaderLogEndOffset)
+      // Note here we are using the "maximal", see explanation above
+      // We want to make sure all LEO are <= leader LEO
+      if (replicaState.logEndOffsetMetadata.messageOffset > leaderLogEndOffset.messageOffset &&
+        (partitionState.maximalIsr.contains(replica.brokerId) || shouldWaitForReplicaToJoinIsr)
+      ) {
+        info("!!! ISR is not all truncated to the expected offset: " + replicaState)
+        return false
+      }
+    }
+
+    // move state if truncation are done for all ISR
+    truncationCallback.ifPresent(onTruncation => onTruncation.accept(topicPartition))
+    truncationCallback = Optional.empty()
+    true
   }
 
   /**
@@ -1969,7 +2031,10 @@ class Partition(val topicPartition: TopicPartition,
       proposedIsrState.notifyListener(alterPartitionListener)
 
       // we may need to increment high watermark since ISR could be down to 1
-      leaderLogIfLocal.exists(log => maybeIncrementLeaderHW(log))
+      leaderLogIfLocal.exists(log => {
+        maybeIncrementLeaderHW(log)
+        checkIsrTruncationAndTransition(log)
+      })
     }
   }
 

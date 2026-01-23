@@ -139,7 +139,7 @@ public enum ApiKeys {
     CREATE_MIRROR(ApiMessageType.CREATE_MIRROR, false, true),
     ADD_TOPICS_TO_MIRROR(ApiMessageType.ADD_TOPICS_TO_MIRROR, false, true),
     REMOVE_TOPICS_FROM_MIRROR(ApiMessageType.REMOVE_TOPICS_FROM_MIRROR, false, true),
-    LAST_MIRRORED_OFFSET(ApiMessageType.LAST_MIRRORED_OFFSET);
+    LAST_MIRRORED_OFFSETS(ApiMessageType.LAST_MIRRORED_OFFSETS);
 
     private static final Map<ApiMessageType.ListenerType, EnumSet<ApiKeys>> APIS_BY_LISTENER =
         new EnumMap<>(ApiMessageType.ListenerType.class);

@@ -483,6 +483,7 @@ public class PartitionRegistration {
                 ", leaderRecoveryState=" + leaderRecoveryState +
                 ", leaderEpoch=" + leaderEpoch +
                 ", partitionEpoch=" + partitionEpoch +
+                ", mirrorName=" + mirrorName +
                 ")";
     }
 }
