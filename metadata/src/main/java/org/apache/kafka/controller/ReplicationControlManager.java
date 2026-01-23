@@ -656,7 +656,11 @@ public class ReplicationControlManager {
         for (Uuid topicId : topicIds) {
             TopicControlInfo info = topics.get(topicId);
             String topicName = info.name;
-            for (int partitionId : info.parts.keySet()) {
+            for (Entry<Integer, PartitionRegistration> entry : info.parts.entrySet()) {
+                int partitionId = entry.getKey();
+                String mirrorName = info.parts.get(partitionId).mirrorName;
+                // temp: appending * in the end means this is a stopping mirroring
+                String newMirrorName = mirrorName.endsWith("*") ? "" : mirrorName + "*";
                 PartitionRegistration partition = info.parts.get(partitionId);
                 PartitionChangeBuilder builder = new PartitionChangeBuilder(
                         partition,
@@ -667,7 +671,7 @@ public class ReplicationControlManager {
                         getTopicEffectiveMinIsr(topicName)
                 )
                         // clear the mirror name, so the topics become writable
-                        .setMirrorName("")
+                        .setMirrorName(newMirrorName)
                         .setEligibleLeaderReplicasEnabled(featureControl.isElrFeatureEnabled())
                         .setDefaultDirProvider(clusterDescriber);
 

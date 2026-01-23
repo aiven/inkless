@@ -244,51 +244,33 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         this.metadataImage = newImage;
 
 //        if (delta.configsDelta() != null)
-//            LOG.info("!!! onMetadataUpdate config: {}", delta.configsDelta().changes());
-
+//            LOG.info("!!! onMetadataUpdate config: {}", delta.configsDelta().changes())
         if (delta.topicsDelta() != null) {
-            LOG.info("!!! onMetadataUpdate: {}", delta.topicsDelta().localChanges(nodeId));
-            delta.topicsDelta().localChanges(nodeId).leaders().forEach((tp, info) -> {
-                MirroredPartitionKey key = new MirroredPartitionKey(info.partition().mirrorName, tp.topic(), tp.partition());
-                MirrorState state = mirroredPartitionState.get(key);
-                // move the state to stopping if mirrorName is unset
-                if ((info.partition().mirrorName == null || info.partition().mirrorName.isBlank())) {
-                    if (state != null) {
-                        if (state == MirrorState.PREPARING_MIRRORING || state == MirrorState.MIRRORING || state == MirrorState.STARTING) {
-                            transitioner.ifPresent(t ->
-                                    t.transitionTo(info.partition().mirrorName, tp, MirrorState.STOPPING));
-                        }
-                    } else {
-                        // get the state from remote coordinator
-                        readStatesToRemoteCoordinator(key.mirrorName, Map.of(tp.topic(), Set.of(tp.partition())), res -> {
-                            res.data().topics().forEach(topic -> {
-                                topic.partitions().forEach(partition -> {
-                                    if (partition.state() != -1) {
-                                        MirrorState curState = MirrorState.fromValue(partition.state());
-                                        mirroredPartitionState.put(new MirroredPartitionKey(key.mirrorName, tp.topic(), tp.partition()), curState);
-                                        if (curState == MirrorState.PREPARING_MIRRORING || curState == MirrorState.MIRRORING || curState == MirrorState.STARTING) {
-                                            transitioner.ifPresent(t ->
-                                                    t.transitionTo(info.partition().mirrorName, tp, MirrorState.STOPPING));
-                                        }
-                                    }
-                                });
-                            });
-                        });
-                    }
-               }
-            });
+            LOG.info("!!! onMetadataUpdate: {}", delta.topicsDelta().localChanges(nodeId).readOnlyLeaders());
             delta.topicsDelta().localChanges(nodeId).readOnlyLeaders().entrySet().forEach(entry -> {
                 TopicPartition tp = entry.getKey();
                 LocalReplicaChanges.PartitionInfo info = entry.getValue();
-                MirroredPartitionKey key = new MirroredPartitionKey(info.partition().mirrorName, tp.topic(), tp.partition());
+                boolean shouldStopping;
+                String mirrorName = info.partition().mirrorName;
+                if (mirrorName.endsWith("*")) {
+                    shouldStopping = true;
+                    mirrorName = mirrorName.substring(0, mirrorName.length() - 1);
+                } else {
+                    shouldStopping = false;
+                }
+                MirroredPartitionKey key = new MirroredPartitionKey(mirrorName, tp.topic(), tp.partition());
                 if (mirroredPartitionState.containsKey(key)) {
                     transitioner.ifPresent(t -> {
-                        // moving to preparing_mirroring if it's starting because it's waiting for metadata update.
-                        // otherwise, move to what the current state is
-                        if (mirroredPartitionState.get(key) == MirrorState.STARTING) {
-                            t.transitionTo(key.mirrorName, tp, MirrorState.PREPARING_MIRRORING);
+                        if (shouldStopping) {
+                            t.transitionTo(key.mirrorName, tp, MirrorState.STOPPING);
                         } else {
-                            t.transitionTo(key.mirrorName, tp, mirroredPartitionState.get(key));
+                            // moving to preparing_mirroring if it's starting because it's waiting for metadata update.
+                            // otherwise, move to what the current state is
+                            if (mirroredPartitionState.get(key) == MirrorState.STARTING) {
+                                t.transitionTo(key.mirrorName, tp, MirrorState.PREPARING_MIRRORING);
+                            } else {
+                                t.transitionTo(key.mirrorName, tp, mirroredPartitionState.get(key));
+                            }
                         }
                     });
                 } else {
@@ -300,10 +282,14 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                                     MirrorState state = MirrorState.fromValue(partition.state());
                                     mirroredPartitionState.put(new MirroredPartitionKey(key.mirrorName, tp.topic(), tp.partition()), state);
                                     transitioner.ifPresent(t -> {
-                                        if (state == MirrorState.STARTING) {
-                                            t.transitionTo(key.mirrorName, tp, MirrorState.PREPARING_MIRRORING);
+                                        if (shouldStopping) {
+                                            t.transitionTo(key.mirrorName, tp, MirrorState.STOPPING);
                                         } else {
-                                            t.transitionTo(key.mirrorName, tp, state);
+                                            if (state == MirrorState.STARTING) {
+                                                t.transitionTo(key.mirrorName, tp, MirrorState.PREPARING_MIRRORING);
+                                            } else {
+                                                t.transitionTo(key.mirrorName, tp, state);
+                                            }
                                         }
                                     });
                                 }
@@ -321,7 +307,6 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     @Override
     public void close() throws Exception {
     }
-
 
     public Node getMirrorCoordinator(MirrorRecordKey key) {
         try {
@@ -421,11 +406,14 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         Node coordinatorNode = coordinatorNodesCache.get(mirrorName);
         if (coordinatorNode == null) {
             coordinatorNode = getMirrorCoordinator(new MirrorRecordKey(mirrorName));
+            if (coordinatorNode.equals(Node.noNode())) {
+                // coordinator is not available, return it now.
+                LOG.error("!!! coordinator is not available, return it now.");
+                return;
+            }
         }
 
         coordinatorNodesCache.put(mirrorName, coordinatorNode);
-
-        LOG.info("!!! coordinatorNode: {}", coordinatorNode);
 
         WriteMirrorStatesRequestData data = new WriteMirrorStatesRequestData().setMirrorName(mirrorName);
         List<WriteMirrorStatesRequestData.TopicState> topicStates = new ArrayList<>();
@@ -434,7 +422,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
             List<WriteMirrorStatesRequestData.PartitionState> partitionStates = new ArrayList<>();
             metadata.forEach(m -> {
                 WriteMirrorStatesRequestData.PartitionState partitionState = new WriteMirrorStatesRequestData.PartitionState();
-                partitionState.setState(m.state().value());
+                partitionState.setState(m.state() == null ? (byte) -1 : m.state.value());
                 partitionState.setLastMirroredOffset(m.offset);
                 partitionState.setPartitionIndex(m.partition);
                 partitionStates.add(partitionState);
@@ -450,13 +438,10 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                 time.milliseconds(),
                 coordinatorNode,
                 new WriteMirrorStatesRequest.Builder(data),
-                new RequestCompletionHandler() {
-                    @Override
-                    public void onComplete(ClientResponse response) {
-                        if (response.responseBody() instanceof WriteMirrorStatesResponse writeMirrorStatesResponse) {
-                            LOG.info("!!! writeStatesToRemoteCoordinator onComplete: {}", response.responseBody());
-                            responseCallback.accept(writeMirrorStatesResponse);
-                        }
+                response -> {
+                    LOG.info("!!! writeStatesToRemoteCoordinator onComplete: {}", response.responseBody());
+                    if (response.responseBody() instanceof WriteMirrorStatesResponse writeMirrorStatesResponse) {
+                        responseCallback.accept(writeMirrorStatesResponse);
                     }
                 }
         ));
@@ -472,10 +457,14 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         Node coordinatorNode = coordinatorNodesCache.get(mirrorName);
         if (coordinatorNode == null) {
             coordinatorNode = getMirrorCoordinator(new MirrorRecordKey(mirrorName));
+            if (coordinatorNode.equals(Node.noNode())) {
+                // coordinator is not available, return it now.
+                LOG.error("!!! coordinator is not available, return it now.");
+                return;
+            }
         }
         coordinatorNodesCache.put(mirrorName, coordinatorNode);
 
-        LOG.info("!!! coordinatorNode: {}", coordinatorNode);
         ReadMirrorStatesRequestData data = new ReadMirrorStatesRequestData().setMirrorName(mirrorName);
         List<ReadMirrorStatesRequestData.TopicState> topicStates = new ArrayList<>();
 
@@ -697,6 +686,15 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
 
     public void updateMirrorPartitionStateCache(String clusterName, TopicPartition topicPartition, MirrorState mirrorState) {
         mirroredPartitionState.put(new MirroredPartitionKey(clusterName, topicPartition.topic(), topicPartition.partition()), mirrorState);
+        topics.compute(clusterName, (key, oldVal) -> {
+            if (oldVal == null) {
+                return Set.of(topicPartition.topic());
+            } else {
+                Set<String> newSet = new HashSet<>(oldVal);
+                newSet.add(topicPartition.topic());
+                return newSet;
+            }
+        });
     }
 
     public void operateAll(MirrorCoordinator.Operator operator) {
@@ -791,10 +789,14 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     public void onMirroring(Map<TopicPartition, LocalReplicaChanges.PartitionInfo> readOnlyLeaders, Consumer<Map<TopicPartition, LocalReplicaChanges.PartitionInfo>> onMirroring) {
         readOnlyLeaders.forEach((tp, info) -> {
             MirroredPartitionKey key = new MirroredPartitionKey(info.partition().mirrorName, tp.topic(), tp.partition());
+            LOG.info("!!! onMirroring: {}", key);
             if (mirroredPartitionState.get(key) == MirrorState.MIRRORING) {
                 onMirroring.accept(Map.of(tp, info));
             } else {
-                onMirroringWaitingList.put(key, () -> onMirroring.accept(Map.of(tp, info)));
+                onMirroringWaitingList.put(key, () -> {
+                    LOG.info("!!! onMirroring accept: {}", info.partition().mirrorName);
+                    onMirroring.accept(Map.of(tp, info));
+                });
             }
         });
     }
