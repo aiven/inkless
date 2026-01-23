@@ -22,6 +22,7 @@ import kafka.network.RequestChannel
 import kafka.server.QuotaFactory.{QuotaManagers, UNBOUNDED_QUOTA}
 import kafka.server.handlers.DescribeTopicPartitionsRequestHandler
 import kafka.server.metadata.KRaftMetadataCache
+import kafka.server.mirror.MirrorMetadataManager.MirroredPartitionMetadata
 import kafka.server.mirror.{MirrorCoordinator, MirrorPartitionState}
 import kafka.server.share.{ShareFetchUtils, SharePartitionManager}
 import kafka.utils.Logging
@@ -275,7 +276,6 @@ class KafkaApis(val requestChannel: RequestChannel,
     }
   }
 
-<<<<<<< HEAD
   def handleWriteMirrorStates(request: RequestChannel.Request): Unit = {
     val writeMirrorStatesRequest = request.body[WriteMirrorStatesRequest]
     info("!!! writeMirrorStatesRequest:" + writeMirrorStatesRequest)
@@ -285,7 +285,7 @@ class KafkaApis(val requestChannel: RequestChannel,
     writeMirrorStatesRequest.data().topicsUpdated().forEach(topic => {
       val partMetadata = new util.HashSet[MirroredPartitionMetadata]()
       topic.partitions().forEach(part => {
-        partMetadata.add(new MirroredPartitionMetadata(part.partitionIndex(), MirrorState.fromValue(part.state()), part.lastMirroredOffset()))
+        partMetadata.add(new MirroredPartitionMetadata(part.partitionIndex(), MirrorPartitionState.fromValue(part.state()), part.lastMirroredOffset()))
       })
       partitionMetadata.put(topic.name(), partMetadata)
     })

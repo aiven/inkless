@@ -141,10 +141,10 @@ public class MirrorCoordinator {
      * </ul>
      *
      * @param mirrorName the name of the cluster mirror
-     * @param topics the set of topics transitioning to the new state
+     * @param topicPartitions the set of topics transitioning to the new state
      * @param newState the target state after transition
      */
-    private void handleStateTransition(String mirrorName, Set<TopicPartition> topicPartitions, MirrorState newState) {
+    private void handleStateTransition(String mirrorName, Set<TopicPartition> topicPartitions, MirrorPartitionState newState) {
         switch (newState) {
             case INITIALIZING:
                 LOG.info("!!! STARTING for topics {}.", topicPartitions);
@@ -152,7 +152,7 @@ public class MirrorCoordinator {
                 break;
             case PREPARING:
                 LOG.info("!!! PREPARING_MIRRORING for topics {}.", topicPartitions);
-                maybeScheduleForTruncate(mirrorName, topicPartitions);
+                scheduleTruncation(mirrorName, topicPartitions);
                 break;
             case MIRRORING:
                 LOG.info("!!! MIRRORING topics {}.", topicPartitions);
@@ -349,7 +349,7 @@ public class MirrorCoordinator {
      * @param mirrorName the name of the cluster mirror
      * @param topics the topics to schedule for truncation
      */
-    public void scheduleTruncation(String mirrorName, Set<String> topics) {
+    public void scheduleTruncation(String mirrorName, Set<TopicPartition> topics) {
         topics.forEach(topic -> scheduler.scheduleOnce("last-mirrored-offset-truncation",
                 () -> mirrorMetadataManager.maybeTruncateToLastMirroredOffsets(replicaManager, mirrorName, topics,
                         tp -> transitionTo(mirrorName, Set.of(tp.topic()), MirrorPartitionState.MIRRORING))));
@@ -653,13 +653,14 @@ public class MirrorCoordinator {
          * Called for each mirror partition state that was loaded from the coordinator log.
          *
          * @param mirrorName the name of the cluster mirror
-         * @param topics the topics in this state
-         * @param state the mirror state to operate on
+         * @param topics     the topics in this state
+         * @param state      the mirror state to operate on
          */
         void onStateLoaded(String mirrorName, Set<String> topics, MirrorPartitionState state);
+    }
 
     interface Transitioner {
-        void transitionTo(String mirrorName, TopicPartition topicPartition, MirrorState state);
+        void transitionTo(String mirrorName, TopicPartition topicPartition, MirrorPartitionState state);
     }
 
     /**
