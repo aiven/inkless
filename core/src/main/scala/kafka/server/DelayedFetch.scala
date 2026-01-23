@@ -43,8 +43,8 @@ import scala.jdk.CollectionConverters._
  */
 class DelayedFetch(
   params: FetchParams,
-  classicFetchPartitionStatus: Seq[(TopicIdPartition, FetchPartitionStatus)],
-  disklessFetchPartitionStatus: util.LinkedHashMap[TopicIdPartition, FetchPartitionStatus] = Seq.empty,
+  classicFetchPartitionStatus: util.LinkedHashMap[TopicIdPartition, FetchPartitionStatus],
+  disklessFetchPartitionStatus: util.LinkedHashMap[TopicIdPartition, FetchPartitionStatus] = new util.LinkedHashMap[TopicIdPartition, FetchPartitionStatus](),
   replicaManager: ReplicaManager,
   quota: ReplicaQuota,
   maxWaitMs: Option[Long] = None,
@@ -164,16 +164,16 @@ class DelayedFetch(
    * Case D: The fetch offset is equal to the end offset, meaning that we have reached the end of the log
    * Upon completion, should return whatever data is available for each valid partition
    */
-  private def tryCompleteDiskless(fetchPartitionStatus: Seq[(TopicIdPartition, FetchPartitionStatus)]): Option[Long] = {
+  private def tryCompleteDiskless(fetchPartitionStatus: util.LinkedHashMap[TopicIdPartition, FetchPartitionStatus]): Option[Long] = {
     var accumulatedSize = 0L
-    val fetchPartitionStatusMap = fetchPartitionStatus.toMap
-    val requests = fetchPartitionStatus.map { case (topicIdPartition, fetchStatus) =>
+    val fetchPartitionStatusMap = fetchPartitionStatus.asScala
+    val requests = fetchPartitionStatusMap.map { case (topicIdPartition, fetchStatus) =>
       new FindBatchRequest(topicIdPartition, fetchStatus.startOffsetMetadata.messageOffset, fetchStatus.fetchInfo.maxBytes)
     }
     if (requests.isEmpty) return Some(0)
 
     val response = try {
-      replicaManager.findDisklessBatches(requests)
+      replicaManager.findDisklessBatches(requests.toSeq)
     } catch {
       case e: Throwable =>
         error("Error while trying to find diskless batches on delayed fetch.", e)
@@ -265,10 +265,10 @@ class DelayedFetch(
       // adjust the max bytes for diskless fetches based on the percentage of diskless partitions
       val disklessPercentage = disklessRequestsSize / totalRequestsSize
       val disklessParams = replicaManager.fetchParamsWithNewMaxBytes(params, disklessPercentage)
-      val disklessFetchInfos = disklessFetchPartitionStatus.map { case (tp, status) =>
+      val disklessFetchInfos = disklessFetchPartitionStatus.asScala.map { case (tp, status) =>
         tp -> status.fetchInfo
       }
-      val disklessFetchResponseFuture = replicaManager.fetchDisklessMessages(disklessParams, disklessFetchInfos)
+      val disklessFetchResponseFuture = replicaManager.fetchDisklessMessages(disklessParams, disklessFetchInfos.toSeq)
 
       // Combine the classic fetch results with the diskless fetch results
       disklessFetchResponseFuture.whenComplete { case (disklessFetchPartitionData, _) =>
