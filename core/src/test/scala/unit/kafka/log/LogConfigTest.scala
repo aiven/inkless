@@ -575,7 +575,7 @@ class LogConfigTest {
   }
 
   @Test
-  def testValidDisklessAndRemoteStorageEnable(): Unit = {
+  def testInvalidDisklessAndRemoteStorageEnable(): Unit = {
     val kafkaProps = TestUtils.createDummyBrokerConfig()
     val kafkaConfig = KafkaConfig.fromProps(kafkaProps)
 
@@ -587,19 +587,19 @@ class LogConfigTest {
     val t1 = assertThrows(
       classOf[InvalidConfigurationException],
       () => LogConfig.validate(util.Map.of(TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG, "true"), logProps, kafkaConfig.extractLogConfigMap, true))
-    assertEquals("It is invalid to enable diskless", t1.getMessage)
+    assertEquals("To migrate a classic topic to diskless, both diskless.enable and remote.storage.enable must be set to true, and the broker config log.diskless.enable must also be enabled.", t1.getMessage)
 
     // Add remote storage
     val t2 = assertThrows(
       classOf[InvalidConfigurationException],
       () => LogConfig.validate(util.Map.of(TopicConfig.DISKLESS_ENABLE_CONFIG, "true"), logProps, kafkaConfig.extractLogConfigMap, true))
-    assertEquals("Diskless and remote storage cannot be enabled simultaneously", t2.getMessage)
+    assertEquals("It is invalid to enable remote storage on an existing diskless topic.", t2.getMessage)
 
-    // Add both
+    // Create a diskless topic with remote storage enabled is invalid
     val t3 = assertThrows(
       classOf[InvalidConfigurationException],
       () => LogConfig.validate(util.Map.of, logProps, kafkaConfig.extractLogConfigMap, true))
-    assertEquals("Diskless and remote storage cannot be enabled simultaneously", t3.getMessage)
+    assertEquals("It is invalid to create a diskless topic with remote storage enabled.", t3.getMessage)
   }
 
   @Test
