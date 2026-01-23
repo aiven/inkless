@@ -13,8 +13,8 @@
 package kafka.api
 
 import java.util
-import java.util.{Locale, Optional, Properties}
-import kafka.server.{KafkaBroker, GroupProtocolAndMaybeTopicTypeProvider}
+import java.time.Duration
+import kafka.server.GroupProtocolAndMaybeTopicTypeProvider
 import kafka.utils.{TestInfoUtils, TestUtils}
 import org.apache.kafka.clients.consumer._
 import org.apache.kafka.common.errors.InterruptException
@@ -24,7 +24,7 @@ import org.junit.jupiter.api.{Tag, Timeout}
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.ArgumentsSource
 
-import java.util.concurrent.{CompletableFuture, ExecutionException, TimeUnit}
+import java.util.concurrent.ExecutionException
 
 @Tag("inkless")
 @Timeout(600)
