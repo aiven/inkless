@@ -609,7 +609,7 @@ public class MirrorCoordinator {
     }
 
     /**
-     * Returns all mirror names managed by this node.
+     * Returns mirror names managed by this node.
      */
     public Set<String> getAllMirrorNames() {
         return mirrorMetadataManager.getAllMirrorNames();
@@ -623,6 +623,16 @@ public class MirrorCoordinator {
      */
     public String getSourceBootstrap(String mirrorName) {
         return mirrorMetadataManager.getSourceBootstrap(mirrorName);
+    }
+
+    /**
+     * Get all topic partitions for a given mirror along with their states.
+     *
+     * @param mirrorName the name of the cluster mirror
+     * @return partition state map
+     */
+    public Map<TopicPartition, MirrorPartitionState> getMirrorPartitions(String mirrorName) {
+        return mirrorMetadataManager.getMirrorPartitions(mirrorName);
     }
 
     /**

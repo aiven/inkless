@@ -911,11 +911,28 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     }
 
     /**
-     * Clears all cached mirror metadata including topics and remote broker connections.
+     * Get all topic partitions for a given mirror along with their states.
+     *
+     * @param mirrorName the name of the cluster mirror
+     * @return partition state map
+     */
+    public Map<TopicPartition, MirrorPartitionState> getMirrorPartitions(String mirrorName) {
+        Map<TopicPartition, MirrorPartitionState> result = new HashMap<>();
+        mirrorPartitionState.forEach((key, state) -> {
+            if (key.mirrorName().equals(mirrorName)) {
+                result.put(new TopicPartition(key.topic(), key.partition()), state);
+            }
+        });
+        return result;
+    }
+
+    /**
+     * Clears all cached mirror metadata including topics, partition state and remote broker connections.
      * Called when the broker resigns as leader for mirror state topic partitions.
      */
     public void clear() {
         topics.clear();
+        mirrorPartitionState.clear();
         remoteBrokers.clear();
     }
 

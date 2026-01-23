@@ -66,6 +66,7 @@ class MirrorFetcherManager(brokerConfig: KafkaConfig,
       clientId = "MirrorReplica",
       numFetchers = brokerConfig.mirrorConfig.numReplicaFetchers) {
   private val mirrorFetcherThreadMap = new mutable.HashMap[BrokerAndFetcherIdWithMirror, MirrorFetcherThread]
+  private val partitionLagCache = new mutable.HashMap[MirrorPartitionKey, MirrorLagInfo]
 
   override def createFetcherThread(fetcherId: Int, sourceBroker: BrokerEndPoint): MirrorFetcherThread = {
     throw new UnsupportedOperationException("Use createMirrorFetcherThread for mirror fetchers")
@@ -172,9 +173,31 @@ class MirrorFetcherManager(brokerConfig: KafkaConfig,
     }
   }
 
+  /**
+   * Updates the mirroring lag for a partition.
+   */
+  def updateLag(mirrorName: String, topicPartition: TopicPartition, sourceOffset: Long, destinationOffset: Long, lag: Long): Unit = {
+    this.synchronized {
+      val key = MirrorPartitionKey(mirrorName, topicPartition)
+      partitionLagCache.put(key, MirrorLagInfo(sourceOffset, destinationOffset, lag, time.milliseconds()))
+    }
+  }
+
+  /**
+   * Retrieves lag information for a specific mirror.
+   */
+  def getLagInfo(mirrorName: String): Map[TopicPartition, MirrorLagInfo] = {
+    this.synchronized {
+      partitionLagCache.collect {
+        case (key, lagInfo) if key.mirrorName == mirrorName => key.topicPartition -> lagInfo
+      }.toMap
+    }
+  }
+
   def shutdown(): Unit = {
     info("Shutting down MirrorFetcherManager")
     closeAllFetchers()
+    partitionLagCache.clear()
     info("MirrorFetcherManager shutdown completed")
   }
 }
@@ -209,3 +232,18 @@ class MirrorFetcherManager(brokerConfig: KafkaConfig,
  * - Different fetcher ID -> NEW thread (load balancing)
  */
 case class BrokerAndFetcherIdWithMirror(sourceBroker: BrokerEndPoint, fetcherId: Int, mirrorName: String)
+
+/**
+ * Key for identifying a partition within a specific mirror.
+ */
+case class MirrorPartitionKey(mirrorName: String, topicPartition: TopicPartition)
+
+/**
+ * Lag information for a mirrored partition.
+ *
+ * @param sourceOffset The high watermark offset from the source cluster leader
+ * @param destinationOffset The log end offset on the destination cluster
+ * @param lag The computed lag (sourceOffset - destinationOffset)
+ * @param lastUpdateMs Timestamp when this lag was last updated
+ */
+case class MirrorLagInfo(sourceOffset: Long, destinationOffset: Long, lag: Long, lastUpdateMs: Long)

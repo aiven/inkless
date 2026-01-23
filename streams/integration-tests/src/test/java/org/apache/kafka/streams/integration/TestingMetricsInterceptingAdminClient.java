@@ -91,6 +91,8 @@ import org.apache.kafka.clients.admin.DescribeLogDirsOptions;
 import org.apache.kafka.clients.admin.DescribeLogDirsResult;
 import org.apache.kafka.clients.admin.DescribeMetadataQuorumOptions;
 import org.apache.kafka.clients.admin.DescribeMetadataQuorumResult;
+import org.apache.kafka.clients.admin.DescribeMirrorsOptions;
+import org.apache.kafka.clients.admin.DescribeMirrorsResult;
 import org.apache.kafka.clients.admin.DescribeProducersOptions;
 import org.apache.kafka.clients.admin.DescribeProducersResult;
 import org.apache.kafka.clients.admin.DescribeReplicaLogDirsOptions;
@@ -439,6 +441,11 @@ public class TestingMetricsInterceptingAdminClient extends AdminClient {
     @Override
     public RemoveTopicsFromMirrorResult removeTopicsFromMirror(final String mirrorName, final Set<String> topics, final RemoveTopicsFromMirrorOptions options) {
         return adminDelegate.removeTopicsFromMirror(mirrorName, topics, options);
+    }
+
+    @Override
+    public DescribeMirrorsResult describeMirrors(final Collection<String> mirrorNames, final DescribeMirrorsOptions options) {
+        return adminDelegate.describeMirrors(mirrorNames, options);
     }
 
     @Override

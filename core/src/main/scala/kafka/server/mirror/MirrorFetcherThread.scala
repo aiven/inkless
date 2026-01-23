@@ -115,6 +115,12 @@ class MirrorFetcherThread(name: String,
 
     log.maybeIncrementLogStartOffset(leaderLogStartOffset, LogStartOffsetIncrementReason.LeaderOffsetIncremented)
 
+    // Compute and update mirroring lag
+    val sourceLeaderHW = partitionData.highWatermark
+    val destinationLEO = log.logEndOffset
+    val lag = Math.max(0, sourceLeaderHW - destinationLEO)
+    replicaMgr.updateMirrorLag(mirrorName, topicPartition, sourceLeaderHW, destinationLEO, lag)
+
     // Account for replication quota
     if (quota.isThrottled(topicPartition))
       quota.record(records.sizeInBytes)

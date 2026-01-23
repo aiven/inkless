@@ -1393,6 +1393,23 @@ public class MockAdminClient extends AdminClient {
     }
 
     @Override
+    public synchronized DescribeMirrorsResult describeMirrors(Collection<String> mirrorNames, DescribeMirrorsOptions options) {
+        Map<String, MirrorDescription> descriptions = new HashMap<>();
+        for (String mirrorName : mirrorNames) {
+            // Return empty description for mock
+            MirrorDescription description = new MirrorDescription(
+                mirrorName,
+                Collections.emptyMap(),
+                Collections.emptySet()
+            );
+            descriptions.put(mirrorName, description);
+        }
+        KafkaFutureImpl<Map<String, MirrorDescription>> future = new KafkaFutureImpl<>();
+        future.complete(descriptions);
+        return new DescribeMirrorsResult(future);
+    }
+
+    @Override
     public DescribeProducersResult describeProducers(Collection<TopicPartition> partitions, DescribeProducersOptions options) {
         throw new UnsupportedOperationException("Not implemented yet");
     }
