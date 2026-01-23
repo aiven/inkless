@@ -14,7 +14,7 @@ public final class BatchCoordinateCacheMetrics implements Closeable {
     static final String CACHE_EVICTIONS = "CacheEvictions";
     static final String CACHE_SIZE = "CacheSize";
 
-    private final KafkaMetricsGroup metricsGroup = new KafkaMetricsGroup(BatchCoordinateCache.class);
+    private final KafkaMetricsGroup metricsGroup = new KafkaMetricsGroup(BatchCoordinateCache.class.getPackageName(), BatchCoordinateCache.class.getSimpleName());
     private final LongAdder cacheHits = new LongAdder();
     private final LongAdder cacheHitsWithoutData = new LongAdder();
     private final LongAdder cacheMisses = new LongAdder();

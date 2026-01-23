@@ -32,7 +32,7 @@ public class RetentionEnforcerMetrics implements Closeable {
     static final String RETENTION_ENFORCEMENT_TOTAL_BYTES_DELETED = "RetentionEnforcementTotalBytesDeleted";
     static final String RETENTION_ENFORCEMENT_ERROR_RATE = "RetentionEnforcementErrorRate";
 
-    private final KafkaMetricsGroup metricsGroup = new KafkaMetricsGroup(RetentionEnforcer.class);
+    private final KafkaMetricsGroup metricsGroup = new KafkaMetricsGroup(RetentionEnforcer.class.getPackageName(), RetentionEnforcer.class.getSimpleName());
     private final Histogram retentionEnforcementTotalTime;
     private final LongAdder retentionEnforcementRate = new LongAdder();
     private final LongAdder retentionEnforcementTotalBatchesDeleted = new LongAdder();
