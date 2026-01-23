@@ -301,7 +301,7 @@ class DelayedFetchTest {
       val currentLeaderEpoch = Optional.of[Integer](10)
       val minBytes = 100
 
-      val fetchStatus = FetchPartitionStatus(
+      val fetchStatus = new FetchPartitionStatus(
         startOffsetMetadata = new LogOffsetMetadata(fetchOffset),
         fetchInfo = new FetchRequest.PartitionData(topicIdPartition.topicId(), fetchOffset, logStartOffset, maxBytes, currentLeaderEpoch)
       )
@@ -321,10 +321,13 @@ class DelayedFetchTest {
         fetchResultOpt = Some(responses)
       }
 
+      val disklessFetchPartitionStatus = new util.LinkedHashMap[TopicIdPartition, FetchPartitionStatus]()
+      disklessFetchPartitionStatus.put(topicIdPartition, fetchStatus)
+
       val delayedFetch = new DelayedFetch(
         params = fetchParams,
-        classicFetchPartitionStatus = Seq.empty,
-        disklessFetchPartitionStatus = Seq(topicIdPartition -> fetchStatus),
+        classicFetchPartitionStatus = new util.LinkedHashMap[TopicIdPartition, FetchPartitionStatus](),
+        disklessFetchPartitionStatus = disklessFetchPartitionStatus,
         replicaManager = replicaManager,
         quota = replicaQuota,
         responseCallback = callback
@@ -389,7 +392,7 @@ class DelayedFetchTest {
       val minBytes = 100
       val estimatedBatchSize = 150L // This would exceed minBytes if counted, but won't be since fetchOffset == endOffset
 
-      val fetchStatus = FetchPartitionStatus(
+      val fetchStatus = new FetchPartitionStatus(
         startOffsetMetadata = new LogOffsetMetadata(fetchOffset),
         fetchInfo = new FetchRequest.PartitionData(topicIdPartition.topicId(), fetchOffset, logStartOffset, maxBytes, currentLeaderEpoch)
       )
@@ -409,10 +412,12 @@ class DelayedFetchTest {
         fetchResultOpt = Some(responses)
       }
 
+      val disklessFetchPartitionStatus = new util.LinkedHashMap[TopicIdPartition, FetchPartitionStatus]()
+      disklessFetchPartitionStatus.put(topicIdPartition, fetchStatus)
       val delayedFetch = new DelayedFetch(
         params = fetchParams,
-        classicFetchPartitionStatus = Seq.empty,
-        disklessFetchPartitionStatus = Seq(topicIdPartition -> fetchStatus),
+        classicFetchPartitionStatus = new util.LinkedHashMap[TopicIdPartition, FetchPartitionStatus](),
+        disklessFetchPartitionStatus = disklessFetchPartitionStatus,
         replicaManager = replicaManager,
         quota = replicaQuota,
         responseCallback = callback
@@ -474,7 +479,7 @@ class DelayedFetchTest {
       val minBytes = 200 // Set threshold higher than available bytes
       val estimatedBatchSize = 50L // This will NOT exceed minBytes
 
-      val fetchStatus = FetchPartitionStatus(
+      val fetchStatus = new FetchPartitionStatus(
         startOffsetMetadata = new LogOffsetMetadata(fetchOffset),
         fetchInfo = new FetchRequest.PartitionData(topicIdPartition.topicId(), fetchOffset, logStartOffset, maxBytes, currentLeaderEpoch)
       )
@@ -494,10 +499,12 @@ class DelayedFetchTest {
         fetchResultOpt = Some(responses)
       }
 
+      val disklessFetchPartitionStatus = new util.LinkedHashMap[TopicIdPartition, FetchPartitionStatus]
+      disklessFetchPartitionStatus.put(topicIdPartition, fetchStatus)
       val delayedFetch = new DelayedFetch(
         params = fetchParams,
-        classicFetchPartitionStatus = Seq.empty,
-        disklessFetchPartitionStatus = Seq(topicIdPartition -> fetchStatus),
+        classicFetchPartitionStatus = new util.LinkedHashMap[TopicIdPartition, FetchPartitionStatus](),
+        disklessFetchPartitionStatus = disklessFetchPartitionStatus,
         replicaManager = replicaManager,
         quota = replicaQuota,
         responseCallback = callback
@@ -556,7 +563,7 @@ class DelayedFetchTest {
       val minBytes = 100
       val estimatedBatchSize = 150L // This will exceed minBytes
 
-      val fetchStatus = FetchPartitionStatus(
+      val fetchStatus = new FetchPartitionStatus(
         startOffsetMetadata = new LogOffsetMetadata(fetchOffset),
         fetchInfo = new FetchRequest.PartitionData(topicIdPartition.topicId(), fetchOffset, logStartOffset, maxBytes, currentLeaderEpoch)
       )
@@ -576,10 +583,13 @@ class DelayedFetchTest {
         fetchResultOpt = Some(responses)
       }
 
+      val disklessFetchPartitionStatus = new util.LinkedHashMap[TopicIdPartition, FetchPartitionStatus]()
+      disklessFetchPartitionStatus.put(topicIdPartition, fetchStatus)
+
       val delayedFetch = new DelayedFetch(
         params = fetchParams,
-        classicFetchPartitionStatus = Seq.empty,
-        disklessFetchPartitionStatus = Seq(topicIdPartition -> fetchStatus),
+        classicFetchPartitionStatus = new util.LinkedHashMap[TopicIdPartition, FetchPartitionStatus](),
+        disklessFetchPartitionStatus = disklessFetchPartitionStatus,
         replicaManager = replicaManager,
         quota = replicaQuota,
         responseCallback = callback
@@ -641,7 +651,7 @@ class DelayedFetchTest {
       val currentLeaderEpoch = Optional.of[Integer](10)
       val minBytes = 100
 
-      val fetchStatus = FetchPartitionStatus(
+      val fetchStatus = new FetchPartitionStatus(
         startOffsetMetadata = new LogOffsetMetadata(fetchOffset),
         fetchInfo = new FetchRequest.PartitionData(topicIdPartition.topicId(), fetchOffset, logStartOffset, maxBytes, currentLeaderEpoch)
       )
@@ -661,10 +671,13 @@ class DelayedFetchTest {
         fetchResultOpt = Some(responses)
       }
 
+      val disklessFetchPartitionStatus = new util.LinkedHashMap[TopicIdPartition, FetchPartitionStatus]()
+      disklessFetchPartitionStatus.put(topicIdPartition, fetchStatus)
+
       val delayedFetch = new DelayedFetch(
         params = fetchParams,
-        classicFetchPartitionStatus = Seq.empty,
-        disklessFetchPartitionStatus = Seq(topicIdPartition -> fetchStatus),
+        classicFetchPartitionStatus = new util.LinkedHashMap[TopicIdPartition, FetchPartitionStatus](),
+        disklessFetchPartitionStatus = disklessFetchPartitionStatus,
         replicaManager = replicaManager,
         quota = replicaQuota,
         responseCallback = callback
