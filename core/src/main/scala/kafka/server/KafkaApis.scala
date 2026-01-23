@@ -21,8 +21,8 @@ import kafka.coordinator.transaction.{InitProducerIdResult, TransactionCoordinat
 import kafka.network.RequestChannel
 import kafka.server.QuotaFactory.{QuotaManagers, UNBOUNDED_QUOTA}
 import kafka.server.handlers.DescribeTopicPartitionsRequestHandler
-import kafka.server.mirror.MirrorMetadataManager.MirroredPartitionMetadata
-import kafka.server.mirror.{MirrorCoordinator, MirrorState}
+import kafka.server.metadata.KRaftMetadataCache
+import kafka.server.mirror.{MirrorCoordinator, MirrorPartitionState}
 import kafka.server.share.{ShareFetchUtils, SharePartitionManager}
 import kafka.utils.Logging
 import org.apache.kafka.clients.CommonClientConfigs
@@ -275,6 +275,7 @@ class KafkaApis(val requestChannel: RequestChannel,
     }
   }
 
+<<<<<<< HEAD
   def handleWriteMirrorStates(request: RequestChannel.Request): Unit = {
     val writeMirrorStatesRequest = request.body[WriteMirrorStatesRequest]
     info("!!! writeMirrorStatesRequest:" + writeMirrorStatesRequest)
@@ -334,7 +335,7 @@ class KafkaApis(val requestChannel: RequestChannel,
         val partition = new TopicPartition(topic.name(), par.partitionIndex())
         val offsetPartition = new LastMirroredOffsetsResponseData.OffsetResponsePartition()
         offsetPartition.setPartitionIndex(par.partitionIndex())
-          .setLastMirroredOffset(mirrorCoordinator.lastMirroredOffset(mirrorName, partition))
+          .setLastMirroredOffset(mirrorCoordinator.getLastMirroredOffset(mirrorName, partition))
         partitionList.add(offsetPartition)
       })
       responseTopic.setName(topic.name())
@@ -359,9 +360,9 @@ class KafkaApis(val requestChannel: RequestChannel,
             topicPartitions.add(new TopicPartition(mirrorTopic.get().topicName(), i))
           }
         })
-        mirrorCoordinator.transitionTo(mirrorTopic.get().mirrorName(), topicPartitions, MirrorState.STARTING)
+        mirrorCoordinator.transitionTo(mirrorTopic.get().mirrorName(), util.Set.of(mirrorTopic.get().topicName()), MirrorPartitionState.INITIALIZING)
       } else {
-        logger.warn("Cluster mirroring is disabled (mirror.version=0), ignoring mirror topic creation request")
+        logger.warn("Cluster Mirroring is disabled (mirror.version=0), ignoring mirror topic creation request")
       }
     }
     forwardToController(request)
@@ -374,7 +375,6 @@ class KafkaApis(val requestChannel: RequestChannel,
     logger.info(s"!!! Handling remove topics from mirror request: $removeTopicsFromMirrorRequest $mirrorTopics")
 
     // update the cached topics in coordinator
-//    mirrorCoordinator.transitionTo(removeTopicsFromMirrorRequest.data().mirrorName(), mirrorTopics, MirrorState.STOPPING)
     forwardToController(request)
   }
 
@@ -1473,7 +1473,7 @@ class KafkaApis(val requestChannel: RequestChannel,
           (shareCoordinator.partitionFor(SharePartitionKey.getInstance(key)), SHARE_GROUP_STATE_TOPIC_NAME)
 
         case CoordinatorType.MIRROR =>
-          (mirrorCoordinator.partitionIndexForKey(MirrorRecordKey.getInstance(key)), MIRROR_STATE_TOPIC_NAME)
+          (mirrorCoordinator.getPartitionIndexForKey(MirrorRecordKey.getInstance(key)), MIRROR_STATE_TOPIC_NAME)
       }
 
       val topicMetadata = metadataCache.getTopicMetadata(Set(internalTopicName).asJava, request.context.listenerName, false, false).asScala

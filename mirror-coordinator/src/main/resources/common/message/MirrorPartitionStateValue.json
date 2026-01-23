@@ -28,7 +28,7 @@
       "about": "The topic name."},
     { "name": "Partition", "type": "int32", "versions": "0",
       "about": "The partition index."},
-    { "name": "state", "type": "int8", "versions": "0+",
+    { "name": "State", "type": "int8", "versions": "0+",
       "about": "The mirror partition state." }
   ]
 }

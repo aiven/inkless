@@ -39,6 +39,8 @@ import org.apache.kafka.coordinator.group.generated.{GroupMetadataValue, GroupMe
 import org.apache.kafka.coordinator.common.runtime.CoordinatorRecordSerde
 import org.apache.kafka.coordinator.common.runtime.Deserializer.UnknownRecordTypeException
 import org.apache.kafka.coordinator.group.GroupCoordinatorRecordSerde
+import org.apache.kafka.coordinator.mirror.MirrorRecordSerde
+import org.apache.kafka.coordinator.mirror.generated.{CoordinatorRecordJsonConverters => MirrorCoordinatorRecordJsonConverters}
 import org.apache.kafka.coordinator.share.ShareCoordinatorRecordSerde
 import org.apache.kafka.coordinator.share.generated.{CoordinatorRecordJsonConverters => ShareCoordinatorRecordJsonConverters}
 import org.apache.kafka.coordinator.transaction.TransactionCoordinatorRecordSerde
@@ -601,6 +603,17 @@ object DumpLogSegments {
     }
   }
 
+  // Package private for testing.
+  class MirrorStateMessageParser extends CoordinatorRecordMessageParser(new MirrorRecordSerde()) {
+    override protected def keyAsJson(message: ApiMessage): JsonNode = {
+      MirrorCoordinatorRecordJsonConverters.writeRecordKeyAsJson(message)
+    }
+
+    override protected def valueAsJson(message: ApiMessage, version: Short): JsonNode = {
+      MirrorCoordinatorRecordJsonConverters.writeRecordValueAsJson(message, version)
+    }
+  }
+
   private class DumpLogSegmentsOptions(args: Array[String]) extends CommandDefaultOptions(args) {
     private val printOpt = parser.accepts("print-data-log", "If set, printing the messages content when dumping data logs. Automatically set if any decoder option is specified.")
     private val verifyOpt = parser.accepts("verify-index-only", "If set, just verify the index log without printing its content.")
@@ -638,6 +651,8 @@ object DumpLogSegments {
       " Instead, the value-decoder-class option can be used if a custom RLMM implementation is configured.")
     private val shareStateOpt = parser.accepts("share-group-state-decoder", "If set, log data will be parsed as share group state data from the " +
       "__share_group_state topic.")
+    private val mirrorStateOpt = parser.accepts("mirror-state-decoder", "If set, log data will be parsed as mirror state data from the " +
+      "__mirror_state topic.")
     private val skipRecordMetadataOpt = parser.accepts("skip-record-metadata", "Skip metadata when printing records. This flag also skips control records.")
     options = parser.parse(args : _*)
 
@@ -652,6 +667,8 @@ object DumpLogSegments {
         new RemoteMetadataLogMessageParser
       } else if (options.has(shareStateOpt)) {
         new ShareGroupStateMessageParser
+      } else if (options.has(mirrorStateOpt)) {
+        new MirrorStateMessageParser
       } else {
         val valueDecoder = Utils.newInstance(options.valueOf(valueDecoderOpt), classOf[Decoder[_]])
         val keyDecoder = Utils.newInstance(options.valueOf(keyDecoderOpt), classOf[Decoder[_]])
@@ -665,7 +682,8 @@ object DumpLogSegments {
       options.has(remoteMetadataOpt) ||
       options.has(valueDecoderOpt) ||
       options.has(keyDecoderOpt) ||
-      options.has(shareStateOpt)
+      options.has(shareStateOpt) ||
+      options.has(mirrorStateOpt)
 
     lazy val skipRecordMetadata: Boolean = options.has(skipRecordMetadataOpt)
     lazy val isDeepIteration: Boolean = options.has(deepIterationOpt) || shouldPrintDataLog
