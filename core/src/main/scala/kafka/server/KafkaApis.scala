@@ -288,7 +288,7 @@ class KafkaApis(val requestChannel: RequestChannel,
       })
       partitionMetadata.put(topic.name(), partMetadata)
     })
-    mirrorCoordinator.writeMirroredPartitionMetadata(mirrorName, partitionMetadata, new util.HashSet[String](removedTopics),
+    mirrorCoordinator.writeMirroredPartitionMetadataToInternalTopic(mirrorName, partitionMetadata, new util.HashSet[String](removedTopics),
       (res) => requestHelper.sendMaybeThrottle(request, res))
 
   }

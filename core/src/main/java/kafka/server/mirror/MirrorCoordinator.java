@@ -215,7 +215,7 @@ public class MirrorCoordinator {
         });
     }
 
-    public void writeMirroredPartitionMetadata(String mirrorName,
+    public void writeMirroredPartitionMetadataToInternalTopic(String mirrorName,
                                                Map<String, Set<MirrorMetadataManager.MirroredPartitionMetadata>> topicMetadata,
                                                Set<String> removedTopics,
                                                Consumer<WriteMirrorStatesResponse> sendResponseCallback) {

@@ -23,11 +23,8 @@ import kafka.server.ReplicaManager;
 import org.apache.kafka.clients.ClientResponse;
 import org.apache.kafka.clients.ClientUtils;
 import org.apache.kafka.clients.KafkaClient;
-import org.apache.kafka.clients.NetworkClient;
-import org.apache.kafka.clients.RequestCompletionHandler;
 import org.apache.kafka.clients.admin.AlterConfigOp;
 import org.apache.kafka.clients.admin.ConfigEntry;
-import org.apache.kafka.clients.consumer.internals.SubscriptionState;
 import org.apache.kafka.common.GroupState;
 import org.apache.kafka.common.GroupType;
 import org.apache.kafka.common.Node;
@@ -36,13 +33,11 @@ import org.apache.kafka.common.acl.AccessControlEntryFilter;
 import org.apache.kafka.common.acl.AclBinding;
 import org.apache.kafka.common.acl.AclBindingFilter;
 import org.apache.kafka.common.config.ConfigResource;
-import org.apache.kafka.common.internals.Topic;
 import org.apache.kafka.common.message.CreateAclsRequestData;
 import org.apache.kafka.common.message.CreatePartitionsRequestData;
 import org.apache.kafka.common.message.DeleteAclsRequestData;
 import org.apache.kafka.common.message.DeleteTopicsRequestData;
 import org.apache.kafka.common.message.DescribeConfigsRequestData;
-import org.apache.kafka.common.message.FindCoordinatorRequestData;
 import org.apache.kafka.common.message.IncrementalAlterConfigsRequestData;
 import org.apache.kafka.common.message.LastMirroredOffsetsRequestData;
 import org.apache.kafka.common.message.ListGroupsRequestData;
@@ -66,8 +61,6 @@ import org.apache.kafka.common.requests.DescribeAclsRequest;
 import org.apache.kafka.common.requests.DescribeAclsResponse;
 import org.apache.kafka.common.requests.DescribeConfigsRequest;
 import org.apache.kafka.common.requests.DescribeConfigsResponse;
-import org.apache.kafka.common.requests.FindCoordinatorRequest;
-import org.apache.kafka.common.requests.FindCoordinatorResponse;
 import org.apache.kafka.common.requests.IncrementalAlterConfigsRequest;
 import org.apache.kafka.common.requests.LastMirroredOffsetsRequest;
 import org.apache.kafka.common.requests.LastMirroredOffsetsResponse;
@@ -105,9 +98,7 @@ import org.apache.kafka.server.common.RequestLocal;
 import org.apache.kafka.server.config.MirrorConfig;
 import org.apache.kafka.server.network.BrokerEndPoint;
 
-import org.apache.kafka.server.share.SharePartitionKey;
 import org.apache.kafka.server.util.RequestAndCompletionHandler;
-import org.apache.kafka.server.util.Scheduler;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -119,19 +110,16 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.Optional;
 import java.util.Properties;
 import java.util.Random;
 import java.util.Set;
-import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentSkipListSet;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
-import java.util.stream.IntStream;
 
 import static java.util.Collections.singletonList;
 import static org.apache.kafka.clients.CommonClientConfigs.BOOTSTRAP_SERVERS_CONFIG;
@@ -187,7 +175,6 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     private final Supplier<GroupCoordinator> groupCoordinatorSupplier;
     private Map<MirroredPartitionKey, Long> lastMirroredOffsets = new ConcurrentHashMap<>();
     private Map<MirroredPartitionKey, MirrorPartitionState> mirrorPartitionState = new ConcurrentHashMap<>();
-    private Map<String, Map<String, Consumer<MirrorPartitionState>>> metadataUpdateCallbacks = new ConcurrentHashMap<>();
     private Map<MirroredPartitionKey, Runnable> mirroringCallbacks = new ConcurrentHashMap<>();
     private Map<String, Node> coordinatorNodesCache = new ConcurrentHashMap<>();
     private InterBrokerSender interBrokerSender;
@@ -281,7 +268,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                     });
                 } else {
                     // get the state from remote coordinator
-                    readStatesToRemoteCoordinator(key.mirrorName, Map.of(tp.topic(), Set.of(tp.partition())), res -> {
+                    readStatesFromRemoteCoordinator(key.mirrorName, Map.of(tp.topic(), Set.of(tp.partition())), res -> {
                         res.data().topics().forEach(topic -> {
                             topic.partitions().forEach(partition -> {
                                 if (partition.state() != -1) {
@@ -413,9 +400,9 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         ));
     }
 
-    public void readStatesToRemoteCoordinator(String mirrorName,
-                                              Map<String, Set<Integer>> partitions,
-                                              Consumer<ReadMirrorStatesResponse> onWriteComplete) {
+    public void readStatesFromRemoteCoordinator(String mirrorName,
+                                                Map<String, Set<Integer>> partitions,
+                                                Consumer<ReadMirrorStatesResponse> onWriteComplete) {
         LOG.info("!!! readStatesToRemoteCoordinator: {} {}", mirrorName, partitions);
 
         Node coordinatorNode = coordinatorNodesCache.get(mirrorName);
@@ -725,51 +712,6 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
             });
         });
         return lastMirroredOffsets;
-    }
-
-    /**
-     * Registers a callback to be invoked when metadata update is complete for the specified topics.
-     * <p>
-     * The callback will be triggered when all topic metadata has been synchronized from the
-     * source cluster, allowing the mirroring process to proceed to the next state.
-     *
-     * @param mirrorName the name of the cluster mirror
-     * @param topics the topics to monitor for metadata preparation completion
-     * @param callback callback invoked with the next state when preparation completes
-     */
-    public void registerMetadataUpdateCallback(String mirrorName, Set<String> topics, Consumer<MirrorPartitionState> callback) {
-        LOG.info("!!! registerMetadataUpdateCallback: {} {}", mirrorName, topics);
-        metadataUpdateCallbacks.compute(mirrorName, (key, prevVal) -> {
-            Map<String, Consumer<MirrorPartitionState>> result = new HashMap<>();
-            if (prevVal != null) {
-                result.putAll(prevVal);
-            }
-            result.putAll(topics.stream().collect(Collectors.toMap(topic -> topic, topic -> callback)));
-            return result;
-        });
-        LOG.info("!!! metadataUpdateCallbacks: {}", metadataUpdateCallbacks);
-    }
-
-    /**
-     * Invokes and removes the registered metadata update callbacks for a topic.
-     * <p>
-     * This method is called when metadata preparation completes for a topic,
-     * triggering the registered callback with the appropriate next state.
-     *
-     * @param mirrorName the name of the cluster mirror
-     * @param topic the topic whose metadata preparation has completed
-     * @param state the state to transition to after preparation
-     */
-    public void invokeMetadataUpdateCallbacks(String mirrorName, String topic, MirrorPartitionState state) {
-        LOG.info("!!! invokeMetadataUpdateCallbacks: {} {}", mirrorName, topic);
-        Map<String, Consumer<MirrorPartitionState>> runs = metadataUpdateCallbacks.get(mirrorName);
-        runs.get(topic).accept(state);
-        runs.remove(topic);
-        if (runs.isEmpty()) {
-            metadataUpdateCallbacks.remove(mirrorName);
-        } else {
-            metadataUpdateCallbacks.put(mirrorName, runs);
-        }
     }
 
     /**
