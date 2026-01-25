@@ -25,6 +25,7 @@ import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.config.ConfigResource;
 import org.apache.kafka.common.errors.ApiException;
 import org.apache.kafka.common.errors.BrokerIdNotRegisteredException;
+import org.apache.kafka.common.errors.BrokerNotAvailableException;
 import org.apache.kafka.common.errors.InvalidPartitionsException;
 import org.apache.kafka.common.errors.InvalidReplicaAssignmentException;
 import org.apache.kafka.common.errors.InvalidReplicationFactorException;
@@ -162,6 +163,7 @@ public class ReplicationControlManager {
         private int defaultNumPartitions = 1;
         private boolean defaultDisklessEnable = false;
         private boolean isDisklessStorageSystemEnabled = false;
+        private boolean isDisklessManagedReplicasEnabled = false;
 
         private int maxElectionsPerImbalance = MAX_ELECTIONS_PER_IMBALANCE;
         private ConfigurationControlManager configurationControl = null;
@@ -196,6 +198,11 @@ public class ReplicationControlManager {
 
         public Builder setDisklessStorageSystemEnabled(boolean isDisklessStorageSystemEnabled) {
             this.isDisklessStorageSystemEnabled = isDisklessStorageSystemEnabled;
+            return this;
+        }
+
+        public Builder setDisklessManagedReplicasEnabled(boolean isDisklessManagedReplicasEnabled) {
+            this.isDisklessManagedReplicasEnabled = isDisklessManagedReplicasEnabled;
             return this;
         }
 
@@ -241,6 +248,7 @@ public class ReplicationControlManager {
                 defaultNumPartitions,
                 defaultDisklessEnable,
                 isDisklessStorageSystemEnabled,
+                isDisklessManagedReplicasEnabled,
                 maxElectionsPerImbalance,
                 configurationControl,
                 clusterControl,
@@ -318,7 +326,20 @@ public class ReplicationControlManager {
      */
     private final boolean defaultDisklessEnable;
 
+    /**
+     * When true, the diskless storage system is enabled, allowing diskless topics to be created.
+     */
     private final boolean isDisklessStorageSystemEnabled;
+
+    /**
+     * When true, diskless topics use managed replicas with RF = rack_count (one replica per rack).
+     * When false, diskless topics use legacy RF=1 behavior.
+     *
+     * <p>Phase 1 limitation: This config only affects topic creation. Add Partitions inherits
+     * RF from existing partitions (correct behavior - maintains consistency within the topic).
+     * See DISKLESS_MANAGED_RF.md for the full implementation roadmap.
+     */
+    private final boolean isDisklessManagedReplicasEnabled;
 
     /**
      * Maximum number of leader elections to perform during one partition leader balancing operation.
@@ -410,6 +431,7 @@ public class ReplicationControlManager {
         int defaultNumPartitions,
         boolean defaultDisklessEnable,
         boolean isDisklessStorageSystemEnabled,
+        boolean isDisklessManagedReplicasEnabled,
         int maxElectionsPerImbalance,
         ConfigurationControlManager configurationControl,
         ClusterControlManager clusterControl,
@@ -422,6 +444,7 @@ public class ReplicationControlManager {
         this.defaultNumPartitions = defaultNumPartitions;
         this.defaultDisklessEnable = defaultDisklessEnable;
         this.isDisklessStorageSystemEnabled = isDisklessStorageSystemEnabled;
+        this.isDisklessManagedReplicasEnabled = isDisklessManagedReplicasEnabled;
         this.maxElectionsPerImbalance = maxElectionsPerImbalance;
         this.configurationControl = configurationControl;
         this.createTopicPolicy = createTopicPolicy;
@@ -761,6 +784,8 @@ public class ReplicationControlManager {
                         "when the diskless storage system is disabled. " +
                         "Please enable the diskless storage system to create diskless topics.");
             }
+            // Diskless RF: only -1 (system-computed from rack count) or 1 (backward compat) allowed.
+            // Explicit RF > 1 rejected: users shouldn't need to know rack topology.
             if (Math.abs(topic.replicationFactor()) != 1) {
                 return new ApiError(Errors.INVALID_REPLICATION_FACTOR,
                     "Replication factor for diskless topics must be 1 or -1 to use the default value (1).");
@@ -778,7 +803,7 @@ public class ReplicationControlManager {
                     "A manual partition assignment was specified, but numPartitions " +
                         "was not set to -1.");
             }
-            if (disklessEnabled) {
+            if (disklessEnabled && !isDisklessManagedReplicasEnabled) {
                 return new ApiError(INVALID_REQUEST,
                     "A manual partition assignment cannot be specified for diskless topics.");
             }
@@ -826,12 +851,15 @@ public class ReplicationControlManager {
         } else {
             int numPartitions = topic.numPartitions() == -1 ?
                 defaultNumPartitions : topic.numPartitions();
-            short replicationFactor = topic.replicationFactor() == -1 ?
-                defaultReplicationFactor : topic.replicationFactor();
+            short classicReplicationFactor = topic.replicationFactor() == -1 ? defaultReplicationFactor : topic.replicationFactor();
+            short disklessReplicationFactor = disklessEnabled && isDisklessManagedReplicasEnabled ? rackCardinality() : 1;
+            short replicationFactor = disklessEnabled ? disklessReplicationFactor : classicReplicationFactor;
             try {
                 TopicAssignment topicAssignment;
                 Predicate<Integer> brokerFilter;
-                if (!disklessEnabled) {
+                // Diskless managed-replicas is equivalent to classic topic assignment,
+                // but RF is defined by number of racks
+                if (!disklessEnabled || isDisklessManagedReplicasEnabled) {
                     topicAssignment = clusterControl.replicaPlacer().place(new PlacementSpec(
                         0,
                         numPartitions,
@@ -899,6 +927,31 @@ public class ReplicationControlManager {
                 build()));
         }
         return ApiError.NONE;
+    }
+
+    /**
+     * Computes the replication factor for diskless topics based on rack topology.
+     * Returns the number of distinct racks in the cluster, ensuring one replica per rack.
+     * If brokers have no rack configured, each broker is treated as its own "rack" (RF = broker count).
+     *
+     * @return the number of distinct racks as a short
+     * @throws BrokerNotAvailableException if no brokers are registered
+     * @throws InvalidReplicationFactorException if rack count exceeds Short.MAX_VALUE
+     */
+    private short rackCardinality() {
+        final Collection<BrokerRegistration> brokerRegistrations = clusterControl.brokerRegistrations().values();
+        final long racks = brokerRegistrations.stream()
+            .map(BrokerRegistration::rack)
+            .distinct()
+            .count();
+        if (racks > Short.MAX_VALUE) {
+            // Unfeasible but technically possible scenario.
+            // Would require more than 32,768 brokers and each with a different rack
+            throw new InvalidReplicationFactorException("Unexpected scenario: rack cardinality is not within short range (" + racks + "). Failing topic creation.");
+        }
+        if (racks == 0)
+            throw new BrokerNotAvailableException("No brokers available to create diskless topic.");
+        return (short) racks;
     }
 
     private List<ApiMessageAndVersion> validConfigRecords(CreatableTopic topic, List<ApiMessageAndVersion> configRecords, boolean disklessEnabled) {
