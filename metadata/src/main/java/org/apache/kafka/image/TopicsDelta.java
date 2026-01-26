@@ -235,7 +235,6 @@ public final class TopicsDelta {
         Set<TopicPartition> deletes = new HashSet<>();
         Map<TopicPartition, LocalReplicaChanges.PartitionInfo> electedLeaders = new HashMap<>();
         Map<TopicPartition, LocalReplicaChanges.PartitionInfo> leaders = new HashMap<>();
-        Map<TopicPartition, LocalReplicaChanges.PartitionInfo> readOnlyLeaders = new HashMap<>();
         Map<TopicPartition, LocalReplicaChanges.PartitionInfo> followers = new HashMap<>();
         Map<String, Uuid> topicIds = new HashMap<>();
         Map<TopicIdPartition, Uuid> directoryIds = new HashMap<>();
@@ -249,7 +248,6 @@ public final class TopicsDelta {
             followers.putAll(changes.followers());
             topicIds.putAll(changes.topicIds());
             directoryIds.putAll(changes.directoryIds());
-            readOnlyLeaders.putAll(changes.readOnlyLeaders());
         }
 
         // Add all of the removed topic partitions to the set of locally removed partitions
@@ -262,7 +260,7 @@ public final class TopicsDelta {
             });
         });
 
-        return new LocalReplicaChanges(deletes, electedLeaders, leaders, followers, topicIds, directoryIds, readOnlyLeaders);
+        return new LocalReplicaChanges(deletes, electedLeaders, leaders, followers, topicIds, directoryIds);
     }
 
     @Override

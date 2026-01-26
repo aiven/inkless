@@ -49,8 +49,6 @@
       "about": "The eligible leader replicas of this partition." },
     { "name": "LastKnownElr", "type": "[]int32", "default": "null", "entityType": "brokerId",
       "versions": "2+", "nullableVersions": "2+", "taggedVersions": "2+", "tag": 2,
-      "about": "The last known eligible leader replicas of this partition." },
-    { "name": "MirrorName", "type": "string", "versions": "2+", "default": "",
-      "about": "The cluster mirror name." }
+      "about": "The last known eligible leader replicas of this partition." }
   ]
 }

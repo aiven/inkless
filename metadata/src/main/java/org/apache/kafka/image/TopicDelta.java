@@ -130,8 +130,7 @@ public final class TopicDelta {
                     setPartitionId(partitionId).
                     setTopicId(image.id()).
                     setEligibleLeaderReplicas(List.of()).
-                    setLastKnownElr(List.of()).
-                    setMirrorName(partition.mirrorName)
+                    setLastKnownElr(List.of())
             ));
         }
     }
@@ -178,7 +177,6 @@ public final class TopicDelta {
         Set<TopicPartition> deletes = new HashSet<>();
         Map<TopicPartition, LocalReplicaChanges.PartitionInfo> electedLeaders = new HashMap<>();
         Map<TopicPartition, LocalReplicaChanges.PartitionInfo> leaders = new HashMap<>();
-        Map<TopicPartition, LocalReplicaChanges.PartitionInfo> readOnlyLeaders = new HashMap<>();
         Map<TopicPartition, LocalReplicaChanges.PartitionInfo> followers = new HashMap<>();
         Map<String, Uuid> topicIds = new HashMap<>();
         Map<TopicIdPartition, Uuid> directoryIds = new HashMap<>();
@@ -194,9 +192,6 @@ public final class TopicDelta {
                 if (prevPartition == null || prevPartition.partitionEpoch != entry.getValue().partitionEpoch) {
                     TopicPartition tp = new TopicPartition(name(), entry.getKey());
                     LocalReplicaChanges.PartitionInfo partitionInfo = new LocalReplicaChanges.PartitionInfo(id(), entry.getValue());
-                    if (!entry.getValue().mirrorName.isBlank()) {
-                        readOnlyLeaders.put(tp, partitionInfo);
-                    }
                     leaders.put(tp, partitionInfo);
 
                     if (prevPartition == null || prevPartition.leaderEpoch != entry.getValue().leaderEpoch) {
@@ -232,7 +227,7 @@ public final class TopicDelta {
             }
         }
 
-        return new LocalReplicaChanges(deletes, electedLeaders, leaders, followers, topicIds, directoryIds, readOnlyLeaders);
+        return new LocalReplicaChanges(deletes, electedLeaders, leaders, followers, topicIds, directoryIds);
     }
 
     @Override

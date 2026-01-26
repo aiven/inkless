@@ -47,8 +47,6 @@ import static org.apache.kafka.metadata.LeaderConstants.NO_LEADER_CHANGE;
 /**
  * PartitionChangeBuilder handles changing partition registrations.
  *
- * For Cluster Mirroring, this class tracks mirrorName throughout all partition state changes to ensure it's preserved
- * or updated correctly during leader elections, reassignments, or other partition operations.
  */
 public class PartitionChangeBuilder {
     private static final Logger log = LoggerFactory.getLogger(PartitionChangeBuilder.class);
@@ -62,7 +60,6 @@ public class PartitionChangeBuilder {
         if (record.removingReplicas() != null) return false;
         if (record.addingReplicas() != null) return false;
         if (record.leaderRecoveryState() != LeaderRecoveryState.NO_CHANGE) return false;
-        if (record.mirrorName() != null) return false;
         return record.directories() == null;
     }
 
@@ -102,7 +99,6 @@ public class PartitionChangeBuilder {
     private LeaderRecoveryState targetLeaderRecoveryState;
     private boolean eligibleLeaderReplicasEnabled;
     private DefaultDirProvider defaultDirProvider;
-    private String mirrorName;
     private int minLeaderEpoch = -1;
 
     // Whether allow electing last known leader in a Balanced recovery. Note, the last known leader will be stored in the
@@ -199,11 +195,6 @@ public class PartitionChangeBuilder {
 
     public PartitionChangeBuilder setDefaultDirProvider(DefaultDirProvider defaultDirProvider) {
         this.defaultDirProvider = defaultDirProvider;
-        return this;
-    }
-
-    public PartitionChangeBuilder setMirrorName(String mirrorName) {
-        this.mirrorName = mirrorName;
         return this;
     }
 
@@ -446,10 +437,7 @@ public class PartitionChangeBuilder {
     public Optional<ApiMessageAndVersion> build() {
         PartitionChangeRecord record = new PartitionChangeRecord().
             setTopicId(topicId).
-            setPartitionId(partitionId).
-            setMirrorName(mirrorName).
-            setLeaderEpoch(minLeaderEpoch);
-
+            setPartitionId(partitionId);
         completeReassignmentIfNeeded();
 
         maybePopulateTargetElr();

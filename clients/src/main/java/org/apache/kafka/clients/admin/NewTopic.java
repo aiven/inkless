@@ -42,7 +42,6 @@ public class NewTopic {
     private final Map<Integer, List<Integer>> replicasAssignments;
     private Map<String, String> configs = null;
     private Optional<String> topicId = Optional.empty();
-    private Optional<String> mirrorName = Optional.empty();
 
     /**
      * A new topic with the specified replication factor and number of partitions.
@@ -63,12 +62,11 @@ public class NewTopic {
         this.replicasAssignments = null;
     }
 
-    public NewTopic(String name, Optional<Integer> numPartitions, Optional<Short> replicationFactor, Optional<String> mirrorName, Optional<String> topicId) {
+    public NewTopic(String name, Optional<Integer> numPartitions, Optional<Short> replicationFactor, Optional<String> topicId) {
         this.name = name;
         this.numPartitions = numPartitions;
         this.replicationFactor = replicationFactor;
         this.replicasAssignments = null;
-        this.mirrorName = mirrorName;
         this.topicId = topicId;
     }
 
@@ -140,10 +138,9 @@ public class NewTopic {
             setNumPartitions(numPartitions.orElse(CreateTopicsRequest.NO_NUM_PARTITIONS)).
             setReplicationFactor(replicationFactor.orElse(CreateTopicsRequest.NO_REPLICATION_FACTOR));
 
-        if (mirrorName.isPresent() && topicId.isPresent()) {
+        if (topicId.isPresent()) {
             creatableTopic.setMirrorInfo(
                 new MirrorInfo()
-                    .setMirrorName(mirrorName.get())
                     .setTopicId(Uuid.fromString(topicId.get()))
             );
         }

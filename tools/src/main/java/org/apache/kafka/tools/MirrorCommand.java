@@ -202,7 +202,6 @@ public abstract class MirrorCommand {
                     NewTopic newTopic = new NewTopic(topicName,
                         Optional.of(partNum), // use source topic partitions
                         Optional.of((short) replicationFactor),
-                        Optional.of(""),
                         Optional.of(topicId));
                     newTopics.add(newTopic);
                 }

@@ -219,6 +219,11 @@ public class TopicConfig {
         "configuration. If message.timestamp.type=CreateTime, the message will be rejected if the difference in " +
         "timestamps exceeds this specified threshold. This configuration is ignored if message.timestamp.type=LogAppendTime.";
 
+//    public static final String MIRROR_NAME_CONFIG = "read.only";
+//    public static final String MIRROR_NAME_DOC = "The mirror name for this topic.";
+
+
+
     /**
      * @deprecated down-conversion is not possible in Apache Kafka 4.0 and newer, hence this configuration is a no-op,
      *             and it is deprecated for removal in Apache Kafka 5.0.

@@ -639,7 +639,6 @@ public class ReplicationControlManager {
                         getTopicEffectiveMinIsr(topicName)
                 )
                         // set the mirror name
-                        .setMirrorName(mirrorName)
                         .setEligibleLeaderReplicasEnabled(featureControl.isElrFeatureEnabled())
                         .setDefaultDirProvider(clusterDescriber);
 
@@ -653,31 +652,31 @@ public class ReplicationControlManager {
 
     public ControllerResult<RemoveTopicsFromMirrorResponseData> removeTopicsFromMirror(Set<Uuid> topicIds) {
         List<ApiMessageAndVersion> records = BoundedList.newArrayBacked(MAX_RECORDS_PER_USER_OP);
-        for (Uuid topicId : topicIds) {
-            TopicControlInfo info = topics.get(topicId);
-            String topicName = info.name;
-            for (Entry<Integer, PartitionRegistration> entry : info.parts.entrySet()) {
-                int partitionId = entry.getKey();
-                String mirrorName = info.parts.get(partitionId).mirrorName;
-                String newMirrorName = mirrorName.endsWith("*") ? "" : mirrorName + "*";
-                PartitionRegistration partition = info.parts.get(partitionId);
-                PartitionChangeBuilder builder = new PartitionChangeBuilder(
-                        partition,
-                        info.topicId(),
-                        partitionId,
-                        new LeaderAcceptor(clusterControl, partition),
-                        featureControl.metadataVersionOrThrow(),
-                        getTopicEffectiveMinIsr(topicName)
-                )
-                        // clear the mirror name, so the topics become writable
-                        .setMirrorName(newMirrorName)
-                        .setEligibleLeaderReplicasEnabled(featureControl.isElrFeatureEnabled())
-                        .setDefaultDirProvider(clusterDescriber);
-
-                builder.build().ifPresent(records::add);
-                log.info("!!! update partition {} for topic {} with empty cluster mirror to make it writable: {}", partitionId, topicName, records);
-            }
-        }
+//        for (Uuid topicId : topicIds) {
+//            TopicControlInfo info = topics.get(topicId);
+//            String topicName = info.name;
+//            for (Entry<Integer, PartitionRegistration> entry : info.parts.entrySet()) {
+//                int partitionId = entry.getKey();
+//                String mirrorName = info.parts.get(partitionId).mirrorName;
+//                String newMirrorName = mirrorName.endsWith("*") ? "" : mirrorName + "*";
+//                PartitionRegistration partition = info.parts.get(partitionId);
+//                PartitionChangeBuilder builder = new PartitionChangeBuilder(
+//                        partition,
+//                        info.topicId(),
+//                        partitionId,
+//                        new LeaderAcceptor(clusterControl, partition),
+//                        featureControl.metadataVersionOrThrow(),
+//                        getTopicEffectiveMinIsr(topicName)
+//                )
+//                        // clear the mirror name, so the topics become writable
+//                        .setMirrorName(newMirrorName)
+//                        .setEligibleLeaderReplicasEnabled(featureControl.isElrFeatureEnabled())
+//                        .setDefaultDirProvider(clusterDescriber);
+//
+//                builder.build().ifPresent(records::add);
+//                log.info("!!! update partition {} for topic {} with empty cluster mirror to make it writable: {}", partitionId, topicName, records);
+//            }
+//        }
 
         return ControllerResult.of(records, new RemoveTopicsFromMirrorResponseData().setErrorCode((short) 0));
     }
@@ -805,8 +804,7 @@ public class ReplicationControlManager {
                 }
                 newParts.put(
                     assignment.partitionIndex(),
-                    buildPartitionRegistration(partitionAssignment, isr,
-                        topic.mirrorInfo() != null ? topic.mirrorInfo().mirrorName() : null)
+                    buildPartitionRegistration(partitionAssignment, isr)
                 );
             }
             for (int i = 0; i < newParts.size(); i++) {
@@ -853,8 +851,7 @@ public class ReplicationControlManager {
                     }
                     newParts.put(
                         partitionId,
-                        buildPartitionRegistration(partitionAssignment, isr,
-                            topic.mirrorInfo() != null ? topic.mirrorInfo().mirrorName() : null)
+                        buildPartitionRegistration(partitionAssignment, isr)
                     );
                 }
             } catch (InvalidReplicationFactorException e) {
@@ -924,8 +921,7 @@ public class ReplicationControlManager {
 
     private static PartitionRegistration buildPartitionRegistration(
         PartitionAssignment partitionAssignment,
-        List<Integer> isr,
-        String mirrorName
+        List<Integer> isr
     ) {
         return new PartitionRegistration.Builder().
             setReplicas(Replicas.toArray(partitionAssignment.replicas())).
@@ -935,7 +931,6 @@ public class ReplicationControlManager {
             setLeaderRecoveryState(LeaderRecoveryState.RECOVERED).
             setLeaderEpoch(0).
             setPartitionEpoch(0).
-            setMirrorName(mirrorName).
             build();
     }
 
@@ -1203,8 +1198,7 @@ public class ReplicationControlManager {
                     featureControl.metadataVersionOrThrow(),
                     getTopicEffectiveMinIsr(topic.name)
                 )
-                    .setEligibleLeaderReplicasEnabled(featureControl.isElrFeatureEnabled())
-                    .setMirrorName(partition.mirrorName);
+                    .setEligibleLeaderReplicasEnabled(featureControl.isElrFeatureEnabled());
                 if (configurationControl.uncleanLeaderElectionEnabledForTopic(topic.name())) {
                     builder.setElection(PartitionChangeBuilder.Election.UNCLEAN);
                 }
@@ -1668,7 +1662,6 @@ public class ReplicationControlManager {
             .setElection(election)
             .setEligibleLeaderReplicasEnabled(featureControl.isElrFeatureEnabled())
             .setDefaultDirProvider(clusterDescriber)
-            .setMirrorName(partition.mirrorName)
             .build();
         if (record.isEmpty()) {
             if (electionType == ElectionType.PREFERRED) {
@@ -1833,7 +1826,6 @@ public class ReplicationControlManager {
                 .setElection(PartitionChangeBuilder.Election.PREFERRED)
                 .setEligibleLeaderReplicasEnabled(featureControl.isElrFeatureEnabled())
                 .setDefaultDirProvider(clusterDescriber)
-                .setMirrorName(partition.mirrorName)
                 .build().ifPresent(records::add);
         }
     }
@@ -1996,7 +1988,7 @@ public class ReplicationControlManager {
                     "Unable to replicate the partition " + replicationFactor +
                         " time(s): All brokers are currently fenced or in controlled shutdown.");
             }
-            records.add(buildPartitionRegistration(partitionAssignment, isr, "")
+            records.add(buildPartitionRegistration(partitionAssignment, isr)
                 .toRecord(topicId, partitionId, new ImageWriterOptions.Builder(featureControl.metadataVersionOrThrow()).
                         setEligibleLeaderReplicasEnabled(featureControl.isElrFeatureEnabled()).
                         build()));
@@ -2102,7 +2094,6 @@ public class ReplicationControlManager {
                 getTopicEffectiveMinIsr(topic.name)
             );
             builder.setEligibleLeaderReplicasEnabled(featureControl.isElrFeatureEnabled());
-            builder.setMirrorName(partition.mirrorName);
             if (configurationControl.uncleanLeaderElectionEnabledForTopic(topic.name)) {
                 builder.setElection(PartitionChangeBuilder.Election.UNCLEAN);
             }
@@ -2232,7 +2223,6 @@ public class ReplicationControlManager {
             setTargetRemoving(List.of()).
             setTargetAdding(List.of()).
             setDefaultDirProvider(clusterDescriber).
-            setMirrorName(part.mirrorName).
             build();
     }
 
@@ -2290,7 +2280,6 @@ public class ReplicationControlManager {
             getTopicEffectiveMinIsr(topics.get(tp.topicId()).name)
         );
         builder.setEligibleLeaderReplicasEnabled(featureControl.isElrFeatureEnabled());
-        builder.setMirrorName(part.mirrorName);
         if (!reassignment.replicas().equals(currentReplicas)) {
             builder.setTargetReplicas(reassignment.replicas());
         }
@@ -2375,7 +2364,6 @@ public class ReplicationControlManager {
                             )
                                     .setDirectory(brokerId, dirId)
                                     .setDefaultDirProvider(clusterDescriber)
-                                    .setMirrorName(partitionRegistration.mirrorName)
                                     .build();
                             partitionChangeRecord.ifPresent(records::add);
                             if (directoryIsOffline) {
