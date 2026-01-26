@@ -138,8 +138,15 @@ class MirrorFetcherManager(brokerConfig: KafkaConfig,
   override def removeFetcherForPartitions(partitions: scala.collection.Set[TopicPartition]): scala.collection.Map[TopicPartition, PartitionFetchState] = {
     val fetchStates = mutable.Map.empty[TopicPartition, PartitionFetchState]
     this.synchronized {
-      for (fetcher <- mirrorFetcherThreadMap.values)
-        fetchStates ++= fetcher.removePartitions(partitions)
+      for ((key, fetcher) <- mirrorFetcherThreadMap) {
+        val removed = fetcher.removePartitions(partitions)
+        fetchStates ++= removed
+        // Remove lag cache entries for partitions that were actually removed
+        for (partition <- removed.keys) {
+          val lagKey = MirrorPartitionKey(key.mirrorName, partition)
+          partitionLagCache.remove(lagKey)
+        }
+      }
       failedPartitions.removeAll(partitions)
     }
     if (partitions.nonEmpty)
@@ -174,17 +181,26 @@ class MirrorFetcherManager(brokerConfig: KafkaConfig,
   }
 
   /**
-   * Updates the mirroring lag for a partition.
+   * Computes and updates the mirroring lag for a partition.
+   *
+   * @param mirrorName mirror name
+   * @param topicPartition partition
+   * @param sourceOffset source HW
+   * @param destinationOffset destination HW
    */
-  def updateLag(mirrorName: String, topicPartition: TopicPartition, sourceOffset: Long, destinationOffset: Long, lag: Long): Unit = {
+  def updateLag(mirrorName: String, topicPartition: TopicPartition, sourceOffset: Long, destinationOffset: Long): Unit = {
     this.synchronized {
       val key = MirrorPartitionKey(mirrorName, topicPartition)
+      val lag = Math.max(0, sourceOffset - destinationOffset)
       partitionLagCache.put(key, MirrorLagInfo(sourceOffset, destinationOffset, lag, time.milliseconds()))
     }
   }
 
   /**
    * Retrieves lag information for a specific mirror.
+   *
+   * @param mirrorName mirror name
+   * @return lag info
    */
   def getLagInfo(mirrorName: String): Map[TopicPartition, MirrorLagInfo] = {
     this.synchronized {

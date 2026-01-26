@@ -479,7 +479,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
      * @param mirrorName the name of the cluster mirror
      * @param topics the topics that have entered MIRRORING state
      */
-    public void invokeMirroringCallbacks(String mirrorName, Set<String> topics) {
+    public void invokeMirroringCallback(String mirrorName, Set<String> topics) {
         topics.forEach(topic -> metadataCache.numPartitions(topic).ifPresent(numPartitions -> {
             IntStream.range(0, numPartitions).forEach(i -> {
                 MirroredPartitionKey key = new MirroredPartitionKey(mirrorName, topic, i);
@@ -893,7 +893,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     /**
      * Returns mirror names managed by this node.
      */
-    public Set<String> getAllMirrorNames() {
+    public Set<String> getMirrorNames() {
         return new HashSet<>(topics.keySet());
     }
 

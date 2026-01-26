@@ -345,7 +345,7 @@ class KafkaApis(val requestChannel: RequestChannel,
     val responseData = new ListMirrorsResponseData()
 
     if (authHelper.authorize(request.context, DESCRIBE, CLUSTER, CLUSTER_NAME, logIfDenied = false)) {
-      val mirrorNames = mirrorCoordinator.getAllMirrorNames()
+      val mirrorNames = mirrorCoordinator.getMirrorNames()
       val mirrors = new util.ArrayList[ListMirrorsResponseData.ListedMirror]()
       mirrorNames.forEach(mirrorName => {
         val sourceBootstrap = mirrorCoordinator.getSourceBootstrap(mirrorName)
@@ -368,7 +368,7 @@ class KafkaApis(val requestChannel: RequestChannel,
 
     if (authHelper.authorize(request.context, DESCRIBE, CLUSTER, CLUSTER_NAME, logIfDenied = false)) {
       val requestedMirrors = if (describeMirrorsRequest.data.mirrorNames.isEmpty) {
-        mirrorCoordinator.getAllMirrorNames().asScala.toSeq
+        mirrorCoordinator.getMirrorNames().asScala.toSeq
       } else {
         describeMirrorsRequest.data.mirrorNames.asScala.toSeq
       }

@@ -300,39 +300,42 @@ public abstract class MirrorCommand {
                 return;
             }
 
-            // Collect topic states from all mirrors (one entry per mirror+topic)
-            List<TopicInfo> topicInfos = new ArrayList<>();
+            // Collect partition states from all mirrors (one entry per mirror+topic+partition)
+            List<PartitionInfo> partitionInfos = new ArrayList<>();
             for (Map.Entry<String, MirrorDescription> mirrorEntry : descriptions.entrySet()) {
                 String mirrorName = mirrorEntry.getKey();
                 MirrorDescription description = mirrorEntry.getValue();
 
                 for (Map.Entry<String, Set<MirrorDescription.LeaderState>> topicEntry : description.topics().entrySet()) {
                     String topic = topicEntry.getKey();
-                    // Pick any partition as representative (they all have the same state for a topic)
-                    MirrorDescription.LeaderState state = topicEntry.getValue().iterator().next();
-                    topicInfos.add(new TopicInfo(
-                        mirrorName,
-                        topic,
-                        state.sourceOffset(),
-                        state.destinationOffset(),
-                        state.lag(),
-                        state.state()
-                    ));
+                    for (MirrorDescription.LeaderState state : topicEntry.getValue()) {
+                        partitionInfos.add(new PartitionInfo(
+                            mirrorName,
+                            topic,
+                            state.topicPartition().partition(),
+                            state.sourceOffset(),
+                            state.destinationOffset(),
+                            state.lag(),
+                            state.state()
+                        ));
+                    }
                 }
             }
 
-            // Sort by mirror, then topic
-            topicInfos.sort(Comparator.comparing(TopicInfo::mirror)
-                .thenComparing(TopicInfo::topic));
+            // Sort by mirror, then topic, then partition
+            partitionInfos.sort(Comparator.comparing(PartitionInfo::mirror)
+                .thenComparing(PartitionInfo::topic)
+                .thenComparing(PartitionInfo::partition));
 
-            // Only print header and results if there are topics to display
-            if (!topicInfos.isEmpty()) {
-                System.out.printf("%-30s %-40s %-15s %-20s %-15s %-15s%n",
-                    "MIRROR", "TOPIC", "SOURCE-OFFSET", "DESTINATION-OFFSET", "LAG", "STATE");
-                for (TopicInfo info : topicInfos) {
-                    System.out.printf("%-30s %-40s %-15d %-20d %-15d %-15s%n",
+            // Only print header and results if there are partitions to display
+            if (!partitionInfos.isEmpty()) {
+                System.out.printf("%-30s %-40s %-10s %-15s %-20s %-15s %-15s%n",
+                    "MIRROR", "TOPIC", "PARTITION", "SOURCE-OFFSET", "DESTINATION-OFFSET", "LAG", "STATE");
+                for (PartitionInfo info : partitionInfos) {
+                    System.out.printf("%-30s %-40s %-10d %-15d %-20d %-15d %-15s%n",
                         truncateLeft(info.mirror, 30),
                         truncateLeft(info.topic, 40),
+                        info.partition,
                         info.sourceOffset,
                         info.destinationOffset,
                         info.lag,
@@ -355,19 +358,22 @@ public abstract class MirrorCommand {
             adminClient.close();
         }
 
-        // Helper class for formatting topic information
-        private static class TopicInfo {
+        // Helper class for formatting partition information
+        // Each partition is an independent replication unit with its own state
+        private static class PartitionInfo {
             private final String mirror;
             private final String topic;
+            private final int partition;
             private final long sourceOffset;
             private final long destinationOffset;
             private final long lag;
             private final String state;
 
-            TopicInfo(String mirror, String topic, long sourceOffset,
-                      long destinationOffset, long lag, String state) {
+            PartitionInfo(String mirror, String topic, int partition, long sourceOffset,
+                          long destinationOffset, long lag, String state) {
                 this.mirror = mirror;
                 this.topic = topic;
+                this.partition = partition;
                 this.sourceOffset = sourceOffset;
                 this.destinationOffset = destinationOffset;
                 this.lag = lag;
@@ -380,6 +386,10 @@ public abstract class MirrorCommand {
 
             String topic() {
                 return topic;
+            }
+
+            int partition() {
+                return partition;
             }
         }
     }

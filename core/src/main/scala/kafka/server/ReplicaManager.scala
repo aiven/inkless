@@ -2671,8 +2671,9 @@ class ReplicaManager(val config: KafkaConfig,
   /**
    * Updates the mirroring lag for a partition.
    */
-  def updateMirrorLag(mirrorName: String, topicPartition: TopicPartition, sourceOffset: Long, destinationOffset: Long, lag: Long): Unit =
-    mirrorFetcherManager.updateLag(mirrorName, topicPartition, sourceOffset, destinationOffset, lag)
+  def updateMirrorLag(mirrorName: String, topicPartition: TopicPartition, sourceOffset: Long, destinationOffset: Long): Unit = {
+    mirrorFetcherManager.updateLag(mirrorName, topicPartition, sourceOffset, destinationOffset)
+  }
 
   /**
    * Retrieves lag information for a specific mirror.

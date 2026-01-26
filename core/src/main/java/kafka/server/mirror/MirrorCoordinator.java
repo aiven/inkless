@@ -146,7 +146,7 @@ public class MirrorCoordinator {
                 break;
             case MIRRORING:
                 LOG.info("!!! Mirroring topics {}.", topics);
-                mirrorMetadataManager.invokeMirroringCallbacks(mirrorName, topics);
+                mirrorMetadataManager.invokeMirroringCallback(mirrorName, topics);
                 break;
             case STOPPING:
                 LOG.info("!!! Stopping mirror for topics {}.", topics);
@@ -611,8 +611,8 @@ public class MirrorCoordinator {
     /**
      * Returns mirror names managed by this node.
      */
-    public Set<String> getAllMirrorNames() {
-        return mirrorMetadataManager.getAllMirrorNames();
+    public Set<String> getMirrorNames() {
+        return mirrorMetadataManager.getMirrorNames();
     }
 
     /**
