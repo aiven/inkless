@@ -382,6 +382,11 @@ public class ForwardingAdmin implements Admin {
     }
 
     @Override
+    public ListMirrorsResult listMirrors(ListMirrorsOptions options) {
+        return delegate.listMirrors(options);
+    }
+
+    @Override
     public DescribeClassicGroupsResult describeClassicGroups(Collection<String> groupIds, DescribeClassicGroupsOptions options) {
         return delegate.describeClassicGroups(groupIds, options);
     }

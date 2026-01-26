@@ -737,6 +737,13 @@ public class MockAdminClient extends AdminClient {
     }
 
     @Override
+    public synchronized ListMirrorsResult listMirrors(ListMirrorsOptions options) {
+        KafkaFutureImpl<Collection<Object>> future = new KafkaFutureImpl<>();
+        future.complete(Collections.emptyList());
+        return new ListMirrorsResult(future);
+    }
+
+    @Override
     public synchronized DescribeConsumerGroupsResult describeConsumerGroups(Collection<String> groupIds, DescribeConsumerGroupsOptions options) {
         throw new UnsupportedOperationException("Not implemented yet");
     }

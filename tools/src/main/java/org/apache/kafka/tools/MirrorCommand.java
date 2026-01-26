@@ -26,6 +26,8 @@ import org.apache.kafka.clients.admin.CreateMirrorResult;
 import org.apache.kafka.clients.admin.CreateTopicsOptions;
 import org.apache.kafka.clients.admin.CreateTopicsResult;
 import org.apache.kafka.clients.admin.FindCoordinatorResult;
+import org.apache.kafka.clients.admin.ListMirrorsResult;
+import org.apache.kafka.clients.admin.MirrorListing;
 import org.apache.kafka.clients.admin.NewTopic;
 import org.apache.kafka.clients.admin.RemoveTopicsFromMirrorOptions;
 import org.apache.kafka.clients.admin.RemoveTopicsFromMirrorResult;
@@ -84,6 +86,8 @@ public abstract class MirrorCommand {
                 mirrorService.addTopicsToMirror(opts);
             } else if (opts.hasRemoveOption()) {
                 mirrorService.removeTopicsFromMirror(opts);
+            } else if (opts.hasListOption()) {
+                mirrorService.listMirrors();
             }
         } catch (ExecutionException e) {
             Throwable cause = e.getCause();
@@ -258,6 +262,17 @@ public abstract class MirrorCommand {
             }
         }
 
+        public void listMirrors() throws ExecutionException, InterruptedException {
+            ListMirrorsResult result = adminClient.listMirrors();
+            for (MirrorListing listing : result.all().get()) {
+                String output = listing.mirrorName();
+                if (listing.sourceBootstrap() != null && !listing.sourceBootstrap().isEmpty()) {
+                    output += " (source bootstrap: " + listing.sourceBootstrap() + ")";
+                }
+                System.out.println(output);
+            }
+        }
+
         @Override
         public void close() throws Exception {
             adminClient.close();
@@ -271,6 +286,7 @@ public abstract class MirrorCommand {
         private final OptionSpecBuilder createOpt;
         private final OptionSpecBuilder addOpt;
         private final OptionSpecBuilder removeOpt;
+        private final OptionSpecBuilder listOpt;
         private final ArgumentAcceptingOptionSpec<String> mirrorOpt;
         private final ArgumentAcceptingOptionSpec<String> topicOpt;
         private final ArgumentAcceptingOptionSpec<Short> replicationFactorOpt;
@@ -296,6 +312,7 @@ public abstract class MirrorCommand {
             createOpt = parser.accepts("create", "Create a new cluster mirror from a source cluster.");
             addOpt = parser.accepts("add", "Add topic(s) to an existing cluster mirror (supports regex).");
             removeOpt = parser.accepts("remove", "Remove topic(s) from an existing cluster mirror (supports regex).");
+            listOpt = parser.accepts("list", "List all cluster mirrors.");
 
             mirrorOpt = parser.accepts("mirror", "The name of the cluster mirror.")
                 .withRequiredArg()
@@ -334,6 +351,10 @@ public abstract class MirrorCommand {
 
         public boolean hasRemoveOption() {
             return has(removeOpt);
+        }
+
+        public boolean hasListOption() {
+            return has(listOpt);
         }
 
         public Optional<String> bootstrapServer() {
@@ -376,15 +397,15 @@ public abstract class MirrorCommand {
             CommandLineUtils.maybePrintHelpOrVersion(this, "This tool helps to create cluster mirrors and add topics to them.");
 
             // should have exactly one action
-            long actions = (has(createOpt) ? 1 : 0) + (has(addOpt) ? 1 : 0) + (has(removeOpt) ? 1 : 0);
+            long actions = (has(createOpt) ? 1 : 0) + (has(addOpt) ? 1 : 0) + (has(removeOpt) ? 1 : 0) + (has(listOpt) ? 1 : 0);
             if (actions != 1)
-                CommandLineUtils.printUsageAndExit(parser, "Command must include exactly one action: --create or --add");
+                CommandLineUtils.printUsageAndExit(parser, "Command must include exactly one action: --create, --add, --remove, or --list");
 
             // check required args
             if (!has(bootstrapServerOpt))
                 throw new IllegalArgumentException("--bootstrap-server must be specified");
 
-            if (!has(mirrorOpt))
+            if (!has(listOpt) && !has(mirrorOpt))
                 throw new IllegalArgumentException("--mirror must be specified");
 
             if (has(createOpt) && !has(mirrorConfigOpt))

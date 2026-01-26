@@ -255,6 +255,7 @@ class KafkaApis(val requestChannel: RequestChannel,
         case ApiKeys.CREATE_MIRROR => forwardToController(request)
         case ApiKeys.ADD_TOPICS_TO_MIRROR => handleAddTopicsToMirror(request)
         case ApiKeys.REMOVE_TOPICS_FROM_MIRROR => handleRemoveTopicsFromMirror(request)
+        case ApiKeys.LIST_MIRRORS => handleListMirrorsRequest(request)
         case ApiKeys.LAST_MIRRORED_OFFSETS => handleLastMirroredOffset(request)
         case _ => throw new IllegalStateException(s"No handler for request api key ${request.header.apiKey}")
       }
@@ -337,6 +338,27 @@ class KafkaApis(val requestChannel: RequestChannel,
     // update the cached topics in coordinator
     mirrorCoordinator.transitionTo(removeTopicsFromMirrorRequest.data().mirrorName(), mirrorTopics, MirrorPartitionState.STOPPING)
     forwardToController(request)
+  }
+
+  def handleListMirrorsRequest(request: RequestChannel.Request): Unit = {
+    val responseData = new ListMirrorsResponseData()
+
+    if (authHelper.authorize(request.context, DESCRIBE, CLUSTER, CLUSTER_NAME, logIfDenied = false)) {
+      val mirrorNames = mirrorCoordinator.getAllMirrorNames()
+      val mirrors = new util.ArrayList[ListMirrorsResponseData.ListedMirror]()
+      mirrorNames.forEach(mirrorName => {
+        val sourceBootstrap = mirrorCoordinator.getSourceBootstrap(mirrorName)
+        mirrors.add(new ListMirrorsResponseData.ListedMirror()
+          .setMirrorName(mirrorName)
+          .setSourceBootstrap(if (sourceBootstrap != null) sourceBootstrap else ""))
+      })
+      responseData.setMirrors(mirrors)
+      responseData.setErrorCode(Errors.NONE.code)
+    } else {
+      responseData.setErrorCode(Errors.CLUSTER_AUTHORIZATION_FAILED.code)
+    }
+
+    requestHelper.sendMaybeThrottle(request, new ListMirrorsResponse(responseData))
   }
 
   def handleGetReplicaLogInfo(request: RequestChannel.Request): Unit = {

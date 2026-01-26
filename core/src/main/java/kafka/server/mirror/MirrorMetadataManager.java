@@ -891,6 +891,26 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     private record ACLChanges(List<AclBinding> aclsToAdd, List<AclBinding> aclsToDelete) { }
 
     /**
+     * Returns mirror names managed by this node.
+     */
+    public Set<String> getAllMirrorNames() {
+        return new HashSet<>(topics.keySet());
+    }
+
+    /**
+     * Returns the source cluster bootstrap servers for a given mirror.
+     *
+     * @param mirrorName the name of the cluster mirror
+     * @return the bootstrap servers string, or null if not found
+     */
+    public String getSourceBootstrap(String mirrorName) {
+        Properties props = metadataCache.config(new ConfigResource(ConfigResource.Type.MIRROR, mirrorName));
+        return Optional.ofNullable(props.get(BOOTSTRAP_SERVERS_CONFIG))
+                .map(Object::toString)
+                .orElse(null);
+    }
+
+    /**
      * Clears all cached mirror metadata including topics and remote broker connections.
      * Called when the broker resigns as leader for mirror state topic partitions.
      */

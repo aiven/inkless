@@ -124,6 +124,8 @@ import org.apache.kafka.clients.admin.ListConsumerGroupsOptions;
 import org.apache.kafka.clients.admin.ListConsumerGroupsResult;
 import org.apache.kafka.clients.admin.ListGroupsOptions;
 import org.apache.kafka.clients.admin.ListGroupsResult;
+import org.apache.kafka.clients.admin.ListMirrorsOptions;
+import org.apache.kafka.clients.admin.ListMirrorsResult;
 import org.apache.kafka.clients.admin.ListOffsetsOptions;
 import org.apache.kafka.clients.admin.ListOffsetsResult;
 import org.apache.kafka.clients.admin.ListPartitionReassignmentsOptions;
@@ -301,6 +303,11 @@ public class TestingMetricsInterceptingAdminClient extends AdminClient {
     @Override
     public ListGroupsResult listGroups(final ListGroupsOptions options) {
         return adminDelegate.listGroups(options);
+    }
+
+    @Override
+    public ListMirrorsResult listMirrors(final ListMirrorsOptions options) {
+        return adminDelegate.listMirrors(options);
     }
 
     @Override

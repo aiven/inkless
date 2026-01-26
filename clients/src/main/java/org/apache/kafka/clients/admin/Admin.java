@@ -1081,6 +1081,26 @@ public interface Admin extends AutoCloseable {
     ListGroupsResult listGroups(ListGroupsOptions options);
 
     /**
+     * List the cluster mirrors available in the cluster with the default options.
+     *
+     * <p>This is a convenience method for {@link #listMirrors(ListMirrorsOptions)} with default options.
+     * See the overload for more details.
+     *
+     * @return The ListMirrorsResult.
+     */
+    default ListMirrorsResult listMirrors() {
+        return listMirrors(new ListMirrorsOptions());
+    }
+
+    /**
+     * List the cluster mirrors available in the cluster.
+     *
+     * @param options The options to use when listing the mirrors.
+     * @return The ListMirrorsResult.
+     */
+    ListMirrorsResult listMirrors(ListMirrorsOptions options);
+
+    /**
      * Elect a replica as leader for topic partitions.
      * <p>
      * This is a convenience method for {@link #electLeaders(ElectionType, Set, ElectLeadersOptions)}
