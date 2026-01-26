@@ -31,7 +31,7 @@ public class FileMergerMetrics {
     static final String FILE_MERGE_FILES_RATE = "FileMergeFilesRate";
     static final String FILE_MERGE_ERROR_RATE = "FileMergeErrorRate";
 
-    private final KafkaMetricsGroup metricsGroup = new KafkaMetricsGroup(FileMerger.class);
+    private final KafkaMetricsGroup metricsGroup = new KafkaMetricsGroup(FileMerger.class.getPackageName(), FileMerger.class.getSimpleName());
     private final Histogram fileMergeTotalTime;
     private final Histogram fileUploadTime;
     private final LongAdder fileMergeRate = new LongAdder();

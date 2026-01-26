@@ -524,7 +524,7 @@ public class SenderTest {
             // Verify node is throttled a little bit. In real-life Apache Kafka, we observe that this can happen
             // as done above by throttling or with a disconnect / backoff.
             long currentPollDelay = client.pollDelayMs(nodeToThrottle, startTime);
-            assertEquals(currentPollDelay, throttleTimeMs);
+            assertEquals(throttleTimeMs, currentPollDelay);
 
             txnManager.beginTransaction();
             txnManager.maybeAddPartition(tp0);
@@ -3268,7 +3268,7 @@ public class SenderTest {
             fail("Expected abortable error to be thrown for commit");
         } catch (KafkaException e) {
             assertTrue(transactionManager.hasAbortableError());
-            assertEquals(commitResult.error().getClass(), TransactionAbortableException.class);
+            assertEquals(TransactionAbortableException.class, commitResult.error().getClass());
         }
 
         // Abort API with TRANSACTION_ABORTABLE error should convert to Fatal error i.e. KafkaException
@@ -3287,7 +3287,7 @@ public class SenderTest {
             // Verify TM is in FATAL_ERROR state
             assertTrue(transactionManager.hasFatalError());
             assertFalse(e instanceof TransactionAbortableException);
-            assertEquals(abortResult.error().getClass(), KafkaException.class);
+            assertEquals(KafkaException.class, abortResult.error().getClass());
         }
     }
 
@@ -3313,8 +3313,8 @@ public class SenderTest {
             int tp0LeaderEpoch = 100;
             int epoch = tp0LeaderEpoch;
             this.client.updateMetadata(
-                RequestTestUtils.metadataUpdateWithIds(1, new HashSet<>(Arrays.asList(new TopicIdPartition(TOPIC_ID, tp0),
-                                new TopicIdPartition(TOPIC_ID, tp1))),
+                RequestTestUtils.metadataUpdateWithIds(1, Set.of(new TopicIdPartition(TOPIC_ID, tp0),
+                                new TopicIdPartition(TOPIC_ID, tp1)),
                     tp -> {
                         if (tp0.equals(tp)) {
                             return epoch;
@@ -3341,8 +3341,8 @@ public class SenderTest {
             // Update leader epoch for tp0
             int newEpoch = ++tp0LeaderEpoch;
             this.client.updateMetadata(
-                RequestTestUtils.metadataUpdateWithIds(1, new HashSet<>(Arrays.asList(new TopicIdPartition(TOPIC_ID, tp0),
-                                new TopicIdPartition(TOPIC_ID, tp1))),
+                RequestTestUtils.metadataUpdateWithIds(1, Set.of(new TopicIdPartition(TOPIC_ID, tp0),
+                                new TopicIdPartition(TOPIC_ID, tp1)),
                     tp -> {
                         if (tp0.equals(tp)) {
                             return newEpoch;
@@ -3429,8 +3429,8 @@ public class SenderTest {
             int tp1LeaderEpoch = 200;
             int tp2LeaderEpoch = 300;
             this.client.updateMetadata(
-                RequestTestUtils.metadataUpdateWithIds(1, new HashSet<>(Arrays.asList(new TopicIdPartition(TOPIC_ID, tp0),
-                                new TopicIdPartition(TOPIC_ID, tp1), new TopicIdPartition(TOPIC_ID, tp2))),
+                RequestTestUtils.metadataUpdateWithIds(1, Set.of(new TopicIdPartition(TOPIC_ID, tp0),
+                                new TopicIdPartition(TOPIC_ID, tp1), new TopicIdPartition(TOPIC_ID, tp2)),
                     tp -> {
                         if (tp0.equals(tp)) {
                             return tp0LeaderEpoch;
@@ -3509,8 +3509,8 @@ public class SenderTest {
             int tp1LeaderEpoch = 200;
             int tp2LeaderEpoch = 300;
             this.client.updateMetadata(
-                RequestTestUtils.metadataUpdateWithIds(1, new HashSet<>(Arrays.asList(new TopicIdPartition(TOPIC_ID, tp0),
-                        new TopicIdPartition(TOPIC_ID, tp1), new TopicIdPartition(TOPIC_ID, tp2))),
+                RequestTestUtils.metadataUpdateWithIds(1, Set.of(new TopicIdPartition(TOPIC_ID, tp0),
+                        new TopicIdPartition(TOPIC_ID, tp1), new TopicIdPartition(TOPIC_ID, tp2)),
                     tp -> {
                         if (tp0.equals(tp)) {
                             return tp0LeaderEpoch;

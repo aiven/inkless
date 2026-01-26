@@ -28,7 +28,7 @@ import org.apache.kafka.common.{Endpoint, Reconfigurable}
 import org.apache.kafka.common.acl.{AclBinding, AclBindingFilter}
 import org.apache.kafka.common.config.{ConfigException, SslConfigs}
 import org.apache.kafka.common.internals.Plugin
-import org.apache.kafka.common.metrics.{JmxReporter, Metrics}
+import org.apache.kafka.common.metrics.{JmxReporter, KafkaMetric, Metrics, MetricsReporter}
 import org.apache.kafka.common.network.ListenerName
 import org.apache.kafka.common.security.auth.SecurityProtocol
 import org.apache.kafka.raft.QuorumConfig
@@ -37,7 +37,8 @@ import org.apache.kafka.server.DynamicThreadPool
 import org.apache.kafka.server.authorizer._
 import org.apache.kafka.server.config.{KRaftConfigs, ReplicationConfigs, ServerConfigs, ServerLogConfigs}
 import org.apache.kafka.server.log.remote.storage.{RemoteLogManager, RemoteLogManagerConfig}
-import org.apache.kafka.server.metrics.{KafkaYammerMetrics, MetricConfigs}
+import org.apache.kafka.server.metrics.{ClientTelemetryExporterPlugin, KafkaYammerMetrics, MetricConfigs}
+import org.apache.kafka.server.telemetry.{ClientTelemetry, ClientTelemetryContext, ClientTelemetryExporter, ClientTelemetryExporterProvider, ClientTelemetryPayload, ClientTelemetryReceiver}
 import org.apache.kafka.server.util.KafkaScheduler
 import org.apache.kafka.storage.internals.log.{CleanerConfig, LogConfig, ProducerStateManagerConfig}
 import org.apache.kafka.test.MockMetricsReporter
@@ -175,6 +176,7 @@ class DynamicBrokerConfigTest {
     assertEquals(RemoteLogManagerConfig.DEFAULT_REMOTE_LOG_MANAGER_COPIER_THREAD_POOL_SIZE, config.remoteLogManagerConfig.remoteLogManagerCopierThreadPoolSize())
     assertEquals(RemoteLogManagerConfig.DEFAULT_REMOTE_LOG_MANAGER_EXPIRATION_THREAD_POOL_SIZE, config.remoteLogManagerConfig.remoteLogManagerExpirationThreadPoolSize())
     assertEquals(RemoteLogManagerConfig.DEFAULT_REMOTE_LOG_READER_THREADS, config.remoteLogManagerConfig.remoteLogReaderThreads())
+    assertEquals(RemoteLogManagerConfig.DEFAULT_REMOTE_LOG_MANAGER_FOLLOWER_THREAD_POOL_SIZE, config.remoteLogManagerConfig.remoteLogManagerFollowerThreadPoolSize())
 
     val serverMock = mock(classOf[KafkaBroker])
     val remoteLogManager = mock(classOf[RemoteLogManager])
@@ -203,6 +205,13 @@ class DynamicBrokerConfigTest {
     config.dynamicConfig.updateDefaultConfig(props)
     assertEquals(6, config.remoteLogManagerConfig.remoteLogReaderThreads())
     verify(remoteLogManager).resizeReaderThreadPool(6)
+
+    props.put(RemoteLogManagerConfig.REMOTE_LOG_MANAGER_FOLLOWER_THREAD_POOL_SIZE_PROP, "3")
+    config.dynamicConfig.validate(props, perBrokerConfig = false)
+    config.dynamicConfig.updateDefaultConfig(props)
+    assertEquals(3, config.remoteLogManagerConfig.remoteLogManagerFollowerThreadPoolSize())
+    verify(remoteLogManager).resizeFollowerThreadPool(3)
+
     props.clear()
     verifyNoMoreInteractions(remoteLogManager)
   }
@@ -240,6 +249,33 @@ class DynamicBrokerConfigTest {
     props3.put(RemoteLogManagerConfig.REMOTE_LOG_READER_THREADS_PROP, "-1")
     val err3 = assertThrows(classOf[ConfigException], () => config.dynamicConfig.validate(props, perBrokerConfig = true))
     assertTrue(err3.getMessage.contains("Value must be at least 1"))
+    verifyNoMoreInteractions(remoteLogManager)
+
+    val props4 = new Properties()
+    props4.put(RemoteLogManagerConfig.REMOTE_LOG_MANAGER_FOLLOWER_THREAD_POOL_SIZE_PROP, "10")
+    val err4 = assertThrows(classOf[ConfigException], () => config.dynamicConfig.validate(props4, perBrokerConfig = false))
+    assertTrue(err4.getMessage.contains("value should not be greater than double the current value"))
+    verifyNoMoreInteractions(remoteLogManager)
+  }
+
+  @Test
+  def testDynamicRemoteLogManagerFollowerThreadPoolSizeConfig(): Unit = {
+    val origProps = TestUtils.createBrokerConfig(0, port = 9092)
+    origProps.put(RemoteLogManagerConfig.REMOTE_LOG_MANAGER_THREAD_POOL_SIZE_PROP, "10")
+    val config = KafkaConfig(origProps)
+
+    val serverMock = mock(classOf[KafkaBroker])
+    val remoteLogManager = mock(classOf[RemoteLogManager])
+    when(serverMock.config).thenReturn(config)
+    when(serverMock.remoteLogManagerOpt).thenReturn(Some(remoteLogManager))
+
+    config.dynamicConfig.initialize(None)
+    config.dynamicConfig.addBrokerReconfigurable(new DynamicRemoteLogConfig(serverMock))
+
+    val props = new Properties()
+    props.put(RemoteLogManagerConfig.REMOTE_LOG_MANAGER_FOLLOWER_THREAD_POOL_SIZE_PROP, "2")
+    val err = assertThrows(classOf[ConfigException], () => config.dynamicConfig.validate(props, perBrokerConfig = false))
+    assertTrue(err.getMessage.contains("value should be at least half the current value"))
     verifyNoMoreInteractions(remoteLogManager)
   }
 
@@ -1030,6 +1066,45 @@ class DynamicBrokerConfigTest {
     )
     assertFalse(ctx.currentDefaultLogConfig.get().originals().containsKey(SocketServerConfigs.ADVERTISED_LISTENERS_CONFIG))
   }
+
+  @Test
+  def testClientTelemetryExporter(): Unit = {
+    val brokerId = 0
+    val origProps = TestUtils.createBrokerConfig(brokerId, port = 8181)
+    val config = KafkaConfig(origProps)
+    val metrics = mock(classOf[Metrics])
+    val telemetryPlugin = mock(classOf[ClientTelemetryExporterPlugin])
+
+    config.dynamicConfig.initialize(Some(telemetryPlugin))
+    val m = new DynamicMetricsReporters(brokerId, config, metrics, "clusterId")
+    config.dynamicConfig.addReconfigurable(m)
+
+    def updateReporter(reporterClass: Class[_]): Unit = {
+      val props = new Properties()
+      props.put(MetricConfigs.METRIC_REPORTER_CLASSES_CONFIG, reporterClass.getName)
+      config.dynamicConfig.updateDefaultConfig(props)
+    }
+
+    // Reporter implementing only ClientTelemetryExporterProvider
+    updateReporter(classOf[TestExporterOnly])
+    verify(telemetryPlugin, Mockito.times(1)).add(ArgumentMatchers.any(classOf[ClientTelemetryExporter]))
+    Mockito.reset(telemetryPlugin)
+
+    // Reporter implementing only ClientTelemetryReceiver (deprecated)
+    updateReporter(classOf[TestReceiverOnly])
+    verify(telemetryPlugin, Mockito.times(1)).add(ArgumentMatchers.any(classOf[ClientTelemetryReceiver]))
+    Mockito.reset(telemetryPlugin)
+
+    // Reporter implementing both interfaces => only exporter should be used
+    updateReporter(classOf[TestReceiverAndExporter])
+    verify(telemetryPlugin, Mockito.times(1)).add(ArgumentMatchers.any(classOf[ClientTelemetryExporter]))
+    verify(telemetryPlugin, Mockito.never()).add(ArgumentMatchers.any(classOf[ClientTelemetryReceiver]))
+    Mockito.reset(telemetryPlugin)
+
+    // Reporter implementing neither interface => nothing should be added
+    updateReporter(classOf[MockMetricsReporter])
+    verifyNoMoreInteractions(telemetryPlugin)
+  }
 }
 
 class TestDynamicThreadPool extends BrokerReconfigurable {
@@ -1050,4 +1125,39 @@ class TestDynamicThreadPool extends BrokerReconfigurable {
     assertEquals(10, newConfig.numIoThreads)
     assertEquals(100, newConfig.backgroundThreads)
   }
+}
+
+class TestExporterOnly extends MetricsReporter with ClientTelemetryExporterProvider {
+  override def configure(configs: util.Map[String, _]): Unit = {}
+  override def init(metrics: util.List[KafkaMetric]): Unit = {}
+  override def metricChange(metric: KafkaMetric): Unit = {}
+  override def metricRemoval(metric: KafkaMetric): Unit = {}
+  override def close(): Unit = {}
+
+  override def clientTelemetryExporter(): ClientTelemetryExporter = (_: ClientTelemetryContext, _: ClientTelemetryPayload) => {}
+}
+
+@SuppressWarnings(Array("deprecation"))
+class TestReceiverOnly extends MetricsReporter with ClientTelemetry {
+  override def configure(configs: util.Map[String, _]): Unit = {}
+  override def init(metrics: util.List[KafkaMetric]): Unit = {}
+  override def metricChange(metric: KafkaMetric): Unit = {}
+  override def metricRemoval(metric: KafkaMetric): Unit = {}
+  override def close(): Unit = {}
+
+  override def clientReceiver(): ClientTelemetryReceiver = (_: AuthorizableRequestContext, _: ClientTelemetryPayload) => {}
+}
+
+@SuppressWarnings(Array("deprecation"))
+class TestReceiverAndExporter extends MetricsReporter
+  with ClientTelemetryExporterProvider with ClientTelemetry {
+  override def configure(configs: util.Map[String, _]): Unit = {}
+  override def init(metrics: util.List[KafkaMetric]): Unit = {}
+  override def metricChange(metric: KafkaMetric): Unit = {}
+  override def metricRemoval(metric: KafkaMetric): Unit = {}
+  override def close(): Unit = {}
+
+  override def clientTelemetryExporter(): ClientTelemetryExporter = (_: ClientTelemetryContext, _: ClientTelemetryPayload) => {}
+
+  override def clientReceiver(): ClientTelemetryReceiver = (_: AuthorizableRequestContext, _: ClientTelemetryPayload) => {}
 }

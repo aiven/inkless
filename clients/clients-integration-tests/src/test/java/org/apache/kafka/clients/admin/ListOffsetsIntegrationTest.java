@@ -28,12 +28,12 @@ import org.apache.kafka.common.config.TopicConfig;
 import org.apache.kafka.common.record.CompressionType;
 import org.apache.kafka.common.requests.ListOffsetsResponse;
 import org.apache.kafka.common.test.ClusterInstance;
-import org.apache.kafka.common.test.TestUtils;
 import org.apache.kafka.common.test.api.ClusterConfigProperty;
 import org.apache.kafka.common.test.api.ClusterTest;
 import org.apache.kafka.common.test.api.ClusterTestDefaults;
 import org.apache.kafka.common.test.api.Type;
 import org.apache.kafka.common.utils.Utils;
+import org.apache.kafka.test.TestUtils;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -233,7 +233,13 @@ public class ListOffsetsIntegrationTest {
             } catch (InterruptedException | ExecutionException e) {
                 return false;
             }
-        }, String.format("expected leader: %d but actual: %d", newLeader, clusterInstance.getLeaderBrokerId(new TopicPartition(topic, 0))));
+        }, () -> {
+            try {
+                return String.format("expected leader: %d but actual: %d", newLeader, clusterInstance.getLeaderBrokerId(new TopicPartition(topic, 0)));
+            } catch (ExecutionException | InterruptedException e) {
+                throw new RuntimeException(e);
+            }
+        });
         checkListOffsets(topic, expectedMaxTimestampOffset);
 
         // case 2: test the offsets from recovery path.

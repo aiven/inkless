@@ -35,7 +35,6 @@ import org.apache.kafka.storage.internals.log.LogDirFailureChannel;
 import org.apache.kafka.storage.log.metrics.BrokerTopicStats;
 
 import java.util.Map;
-import java.util.concurrent.atomic.AtomicBoolean;
 
 import scala.Option;
 
@@ -124,8 +123,6 @@ public class ReplicaManagerBuilder {
                              logDirFailureChannel,
                              alterPartitionManager,
                              brokerTopicStats,
-                             new AtomicBoolean(false),
-                             Option.empty(),
                              Option.empty(),
                              Option.empty(),
                              Option.empty(),

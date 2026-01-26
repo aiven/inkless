@@ -44,8 +44,8 @@ import org.apache.kafka.server.{DynamicThreadPool, ProcessRole}
 import org.apache.kafka.server.common.ApiMessageAndVersion
 import org.apache.kafka.server.config.{DynamicProducerStateManagerConfig, ServerConfigs, ServerLogConfigs, ServerTopicConfigSynonyms}
 import org.apache.kafka.server.log.remote.storage.RemoteLogManagerConfig
-import org.apache.kafka.server.metrics.{ClientMetricsReceiverPlugin, MetricConfigs}
-import org.apache.kafka.server.telemetry.ClientTelemetry
+import org.apache.kafka.server.metrics.{ClientTelemetryExporterPlugin, MetricConfigs}
+import org.apache.kafka.server.telemetry.{ClientTelemetry, ClientTelemetryExporterProvider}
 import org.apache.kafka.snapshot.RecordsSnapshotReader
 import org.apache.kafka.storage.internals.log.{LogCleaner, LogConfig}
 
@@ -98,7 +98,8 @@ object DynamicBrokerConfig {
     DynamicListenerConfig.ReconfigurableConfigs ++
     SocketServer.ReconfigurableConfigs ++
     DynamicProducerStateManagerConfig ++
-    DynamicRemoteLogConfig.ReconfigurableConfigs
+    DynamicRemoteLogConfig.ReconfigurableConfigs ++
+    Set(AbstractConfig.CONFIG_PROVIDERS_CONFIG)
 
   private val ClusterLevelListenerConfigs = Set(SocketServerConfigs.MAX_CONNECTIONS_CONFIG, SocketServerConfigs.MAX_CONNECTION_CREATION_RATE_CONFIG, SocketServerConfigs.NUM_NETWORK_THREADS_CONFIG)
   private val PerBrokerConfigs = (DynamicSecurityConfigs ++ DynamicListenerConfig.ReconfigurableConfigs).diff(
@@ -238,7 +239,7 @@ object DynamicBrokerConfig {
             }
           }
           val configHandler = new BrokerConfigHandler(config, quotaManagers)
-          configHandler.processConfigChanges("", dynamicPerBrokerConfigs)
+          configHandler.processConfigChanges("", dynamicDefaultConfigs)
           configHandler.processConfigChanges(config.brokerId.toString, dynamicPerBrokerConfigs)
         }
       }
@@ -258,12 +259,12 @@ class DynamicBrokerConfig(private val kafkaConfig: KafkaConfig) extends Logging 
   private[server] val reconfigurables = new CopyOnWriteArrayList[Reconfigurable]()
   private val brokerReconfigurables = new CopyOnWriteArrayList[BrokerReconfigurable]()
   private val lock = new ReentrantReadWriteLock
-  private var metricsReceiverPluginOpt: Option[ClientMetricsReceiverPlugin] = _
+  private var telemetryExporterPluginOpt: Option[ClientTelemetryExporterPlugin] = _
   private var currentConfig: KafkaConfig = _
 
-  private[server] def initialize(clientMetricsReceiverPluginOpt: Option[ClientMetricsReceiverPlugin]): Unit = {
+  private[server] def initialize(clientTelemetryExporterPluginOpt: Option[ClientTelemetryExporterPlugin]): Unit = {
     currentConfig = new KafkaConfig(kafkaConfig.props, false)
-    metricsReceiverPluginOpt = clientMetricsReceiverPluginOpt
+    telemetryExporterPluginOpt = clientTelemetryExporterPluginOpt
   }
 
   /**
@@ -373,8 +374,8 @@ class DynamicBrokerConfig(private val kafkaConfig: KafkaConfig) extends Logging 
     dynamicDefaultConfigs.clone()
   }
 
-  private[server] def clientMetricsReceiverPlugin: Option[ClientMetricsReceiverPlugin] = CoreUtils.inReadLock(lock) {
-    metricsReceiverPluginOpt
+  private[server] def clientTelemetryExporterPlugin: Option[ClientTelemetryExporterPlugin] = CoreUtils.inReadLock(lock) {
+    telemetryExporterPluginOpt
   }
 
   private[server] def updateBrokerConfig(brokerId: Int, persistentProps: Properties, doLog: Boolean = true): Unit = CoreUtils.inWriteLock(lock) {
@@ -842,18 +843,22 @@ class DynamicMetricReporterState(brokerId: Int, config: KafkaConfig, metrics: Me
     reporters.forEach { reporter =>
       metrics.addReporter(reporter)
       currentReporters += reporter.getClass.getName -> reporter
-      val clientTelemetryReceiver = reporter match {
-        case telemetry: ClientTelemetry => telemetry.clientReceiver()
-        case _ => null
-      }
 
-      if (clientTelemetryReceiver != null) {
-        dynamicConfig.clientMetricsReceiverPlugin match {
-          case Some(receiverPlugin) =>
-            receiverPlugin.add(clientTelemetryReceiver)
-          case None =>
-            // Do nothing
-        }
+      // Support both deprecated ClientTelemetry and new ClientTelemetryExporterProvider interfaces
+      // If a class implements both, only use the new (i.e., ClientTelemetryExporterProvider interface)
+      dynamicConfig.clientTelemetryExporterPlugin match {
+        case Some(telemetryExporterPlugin) =>
+          reporter match {
+            case exporterProvider: ClientTelemetryExporterProvider =>
+              // Use new interface (i.e., takes precedence even if class also implements deprecated interface)
+              telemetryExporterPlugin.add(exporterProvider.clientTelemetryExporter())
+            case telemetry: ClientTelemetry =>
+              telemetryExporterPlugin.add(telemetry.clientReceiver())
+            case _ =>
+              // Reporter doesn't support client telemetry
+          }
+        case None =>
+          // Do nothing
       }
     }
     KafkaBroker.notifyClusterListeners(clusterId, reporters.asScala)
@@ -1031,9 +1036,19 @@ class DynamicRemoteLogConfig(server: KafkaBroker) extends BrokerReconfigurable w
 
       if (RemoteLogManagerConfig.REMOTE_LOG_READER_THREADS_PROP.equals(k) ||
           RemoteLogManagerConfig.REMOTE_LOG_MANAGER_COPIER_THREAD_POOL_SIZE_PROP.equals(k) ||
-          RemoteLogManagerConfig.REMOTE_LOG_MANAGER_EXPIRATION_THREAD_POOL_SIZE_PROP.equals(k)) {
+          RemoteLogManagerConfig.REMOTE_LOG_MANAGER_EXPIRATION_THREAD_POOL_SIZE_PROP.equals(k) ||
+          RemoteLogManagerConfig.REMOTE_LOG_MANAGER_FOLLOWER_THREAD_POOL_SIZE_PROP.equals(k)) {
         val newValue = v.asInstanceOf[Int]
-        val oldValue = server.config.getInt(k)
+        val oldValue: Int = {
+          // This logic preserves backward compatibility in scenarios where
+          // `remote.log.manager.thread.pool.size` is configured in config file,
+          // but `remote.log.manager.follower.thread.pool.size` is set dynamically.
+          // This can be removed once `remote.log.manager.thread.pool.size` is removed.
+          if (RemoteLogManagerConfig.REMOTE_LOG_MANAGER_FOLLOWER_THREAD_POOL_SIZE_PROP.equals(k))
+            server.config.remoteLogManagerConfig.remoteLogManagerFollowerThreadPoolSize()
+          else
+            server.config.getInt(k)
+        }
         if (newValue != oldValue) {
           val errorMsg = s"Dynamic thread count update validation failed for $k=$v"
           if (newValue <= 0)
@@ -1085,6 +1100,9 @@ class DynamicRemoteLogConfig(server: KafkaBroker) extends BrokerReconfigurable w
       if (newRLMConfig.remoteLogManagerExpirationThreadPoolSize() != oldRLMConfig.remoteLogManagerExpirationThreadPoolSize())
         remoteLogManager.resizeExpirationThreadPool(newRLMConfig.remoteLogManagerExpirationThreadPoolSize())
 
+      if (newRLMConfig.remoteLogManagerFollowerThreadPoolSize() != oldRLMConfig.remoteLogManagerFollowerThreadPoolSize())
+        remoteLogManager.resizeFollowerThreadPool(newRLMConfig.remoteLogManagerFollowerThreadPoolSize())
+
       if (newRLMConfig.remoteLogReaderThreads() != oldRLMConfig.remoteLogReaderThreads())
         remoteLogManager.resizeReaderThreadPool(newRLMConfig.remoteLogReaderThreads())
     }
@@ -1110,6 +1128,7 @@ object DynamicRemoteLogConfig {
     RemoteLogManagerConfig.REMOTE_LIST_OFFSETS_REQUEST_TIMEOUT_MS_PROP,
     RemoteLogManagerConfig.REMOTE_LOG_MANAGER_COPIER_THREAD_POOL_SIZE_PROP,
     RemoteLogManagerConfig.REMOTE_LOG_MANAGER_EXPIRATION_THREAD_POOL_SIZE_PROP,
+    RemoteLogManagerConfig.REMOTE_LOG_MANAGER_FOLLOWER_THREAD_POOL_SIZE_PROP,
     RemoteLogManagerConfig.REMOTE_LOG_READER_THREADS_PROP
   )
 }

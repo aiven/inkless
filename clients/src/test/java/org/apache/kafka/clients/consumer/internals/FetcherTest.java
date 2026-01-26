@@ -811,7 +811,8 @@ public class FetcherTest {
         int partitionLeaderEpoch = 0;
 
         ByteBuffer buffer = ByteBuffer.allocate(1024);
-        MemoryRecordsBuilder builder = MemoryRecords.idempotentBuilder(buffer, Compression.NONE, 0L, producerId,
+        MemoryRecordsBuilder builder = MemoryRecords.builder(buffer, RecordBatch.CURRENT_MAGIC_VALUE, Compression.NONE,
+                TimestampType.CREATE_TIME, 0L, System.currentTimeMillis(), producerId,
                 producerEpoch, baseSequence);
         builder.append(0L, "key".getBytes(), null);
         builder.close();
@@ -1802,7 +1803,7 @@ public class FetcherTest {
         assertEquals(1, oorExceptions.size());
         OffsetOutOfRangeException oor = oorExceptions.get(0);
         assertTrue(oor.offsetOutOfRangePartitions().containsKey(tp0));
-        assertEquals(oor.offsetOutOfRangePartitions().size(), 1);
+        assertEquals(1, oor.offsetOutOfRangePartitions().size());
 
         fetchRecordsInto(fetchedRecords);
 
@@ -2346,7 +2347,7 @@ public class FetcherTest {
 
         Map<TopicPartition, List<ConsumerRecord<byte[], byte[]>>> fetchedRecords = fetchRecords();
         assertTrue(fetchedRecords.containsKey(tp0));
-        assertEquals(fetchedRecords.get(tp0).size(), 2);
+        assertEquals(2, fetchedRecords.get(tp0).size());
     }
 
     @Test
@@ -2464,9 +2465,9 @@ public class FetcherTest {
 
         Map<TopicPartition, List<ConsumerRecord<byte[], byte[]>>> fetchedRecords = fetchRecords();
         assertTrue(fetchedRecords.containsKey(tp0));
-        assertEquals(fetchedRecords.get(tp0).size(), 2);
+        assertEquals(2, fetchedRecords.get(tp0).size());
         List<ConsumerRecord<byte[], byte[]>> fetchedConsumerRecords = fetchedRecords.get(tp0);
-        Set<String> expectedCommittedKeys = new HashSet<>(Arrays.asList("commit1-1", "commit1-2"));
+        Set<String> expectedCommittedKeys = Set.of("commit1-1", "commit1-2");
         Set<String> actuallyCommittedKeys = new HashSet<>();
         for (ConsumerRecord<byte[], byte[]> consumerRecord : fetchedConsumerRecords) {
             actuallyCommittedKeys.add(new String(consumerRecord.key(), StandardCharsets.UTF_8));
@@ -2728,7 +2729,7 @@ public class FetcherTest {
     public void testConsumingViaIncrementalFetchRequests() {
         buildFetcher(2);
 
-        assignFromUser(new HashSet<>(Arrays.asList(tp0, tp1)));
+        assignFromUser(Set.of(tp0, tp1));
         subscriptions.seekValidated(tp0, new SubscriptionState.FetchPosition(0, Optional.empty(), metadata.currentLeader(tp0)));
         subscriptions.seekValidated(tp1, new SubscriptionState.FetchPosition(1, Optional.empty(), metadata.currentLeader(tp1)));
 
@@ -3054,7 +3055,7 @@ public class FetcherTest {
 
         Map<TopicPartition, List<ConsumerRecord<byte[], byte[]>>> fetchedRecords = fetchRecords();
         assertTrue(fetchedRecords.containsKey(tp0));
-        assertEquals(fetchedRecords.get(tp0).size(), 2);
+        assertEquals(2, fetchedRecords.get(tp0).size());
     }
 
     private MemoryRecords buildRecords(long baseOffset, int count, long firstMessageId) {
@@ -3139,8 +3140,8 @@ public class FetcherTest {
         Map<TopicPartition, List<ConsumerRecord<byte[], byte[]>>> partitionRecords = fetchRecords();
         assertTrue(partitionRecords.containsKey(tp0));
 
-        assertEquals(subscriptions.position(tp0).offset, 3L);
-        assertOptional(subscriptions.position(tp0).offsetEpoch, value -> assertEquals(value.intValue(), 1));
+        assertEquals(3L, subscriptions.position(tp0).offset);
+        assertOptional(subscriptions.position(tp0).offsetEpoch, value -> assertEquals(1, value.intValue()));
     }
 
     @Test
@@ -3217,8 +3218,8 @@ public class FetcherTest {
         Map<TopicPartition, List<ConsumerRecord<byte[], byte[]>>> partitionRecords = fetchRecords();
         assertTrue(partitionRecords.containsKey(tp0));
 
-        assertEquals(subscriptions.position(tp0).offset, 3L);
-        assertOptional(subscriptions.position(tp0).offsetEpoch, value -> assertEquals(value.intValue(), 1));
+        assertEquals(3L, subscriptions.position(tp0).offset);
+        assertOptional(subscriptions.position(tp0).offsetEpoch, value -> assertEquals(1, value.intValue()));
     }
 
     @Test
@@ -3388,7 +3389,7 @@ public class FetcherTest {
         fetchRecords();
 
         Node selected = fetcher.selectReadReplica(tp0, Node.noNode(), time.milliseconds());
-        assertEquals(selected.id(), 1);
+        assertEquals(1, selected.id());
 
         assertEquals(1, sendFetches());
         assertFalse(fetcher.hasCompletedFetches());
@@ -3402,7 +3403,7 @@ public class FetcherTest {
         fetchRecords();
 
         selected = fetcher.selectReadReplica(tp0, Node.noNode(), time.milliseconds());
-        assertEquals(selected.id(), -1);
+        assertEquals(-1, selected.id());
     }
 
     @Test
@@ -3473,7 +3474,7 @@ public class FetcherTest {
 
         // Setup so that tp0 & tp1 are subscribed and will be fetched from.
         // Also, setup client's metadata for tp0 & tp1.
-        subscriptions.assignFromUser(new HashSet<>(Arrays.asList(tp0, tp1)));
+        subscriptions.assignFromUser(Set.of(tp0, tp1));
         client.updateMetadata(
             RequestTestUtils.metadataUpdateWithIds(2, singletonMap(topicName, 4),
                 tp -> validLeaderEpoch, topicIds, false));
@@ -3566,7 +3567,7 @@ public class FetcherTest {
 
         // Setup so that tp0 & tp1 are subscribed and will be fetched from.
         // Also, setup client's metadata for tp0 & tp1.
-        subscriptions.assignFromUser(new HashSet<>(Arrays.asList(tp0, tp1)));
+        subscriptions.assignFromUser(Set.of(tp0, tp1));
         client.updateMetadata(
             RequestTestUtils.metadataUpdateWithIds(2, singletonMap(topicName, 4),
                 tp -> validLeaderEpoch, topicIds, false));
