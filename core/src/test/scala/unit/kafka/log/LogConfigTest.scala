@@ -587,7 +587,7 @@ class LogConfigTest {
     val t1 = assertThrows(
       classOf[InvalidConfigurationException],
       () => LogConfig.validate(util.Map.of(TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG, "true"), logProps, kafkaConfig.extractLogConfigMap, true))
-    assertEquals("To migrate a classic topic to diskless, both diskless.enable and remote.storage.enable must be set to true, and the broker config log.diskless.enable must also be enabled.", t1.getMessage)
+    assertEquals("To migrate a classic topic to diskless, both diskless.enable and remote.storage.enable must be set to true, and the broker config diskless.allow.from.classic.enable must also be enabled.", t1.getMessage)
 
     // Add remote storage
     val t2 = assertThrows(
