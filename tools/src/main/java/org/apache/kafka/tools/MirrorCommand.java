@@ -265,7 +265,11 @@ public abstract class MirrorCommand {
         public void listMirrors() throws ExecutionException, InterruptedException {
             ListMirrorsResult result = adminClient.listMirrors();
             for (MirrorListing listing : result.all().get()) {
-                System.out.println(listing.mirrorName());
+                String output = listing.mirrorName();
+                if (listing.sourceBootstrap() != null && !listing.sourceBootstrap().isEmpty()) {
+                    output += " (source bootstrap: " + listing.sourceBootstrap() + ")";
+                }
+                System.out.println(output);
             }
         }
 

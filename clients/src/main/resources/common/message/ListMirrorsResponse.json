@@ -28,7 +28,9 @@
     { "name": "Mirrors", "type": "[]ListedMirror", "versions": "0+",
       "about": "Each mirror in the response.", "fields": [
       { "name": "MirrorName", "type": "string", "versions": "0+",
-        "about": "The mirror name." }
+        "about": "The mirror name." },
+      { "name": "SourceBootstrap", "type": "string", "versions": "0+",
+        "about": "The source cluster bootstrap servers." }
     ]}
   ]
 }

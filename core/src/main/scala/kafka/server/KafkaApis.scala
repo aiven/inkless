@@ -347,7 +347,10 @@ class KafkaApis(val requestChannel: RequestChannel,
       val mirrorNames = mirrorCoordinator.getAllMirrorNames()
       val mirrors = new util.ArrayList[ListMirrorsResponseData.ListedMirror]()
       mirrorNames.forEach(mirrorName => {
-        mirrors.add(new ListMirrorsResponseData.ListedMirror().setMirrorName(mirrorName))
+        val sourceBootstrap = mirrorCoordinator.getSourceBootstrap(mirrorName)
+        mirrors.add(new ListMirrorsResponseData.ListedMirror()
+          .setMirrorName(mirrorName)
+          .setSourceBootstrap(if (sourceBootstrap != null) sourceBootstrap else ""))
       })
       responseData.setMirrors(mirrors)
       responseData.setErrorCode(Errors.NONE.code)

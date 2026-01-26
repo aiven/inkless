@@ -27,14 +27,17 @@ import java.util.Objects;
 @InterfaceStability.Evolving
 public class MirrorListing {
     private final String mirrorName;
+    private final String sourceBootstrap;
 
     /**
      * Create an instance with the specified parameters.
      *
      * @param mirrorName Mirror name
+     * @param sourceBootstrap Source cluster bootstrap servers
      */
-    public MirrorListing(String mirrorName) {
+    public MirrorListing(String mirrorName, String sourceBootstrap) {
         this.mirrorName = mirrorName;
+        this.sourceBootstrap = sourceBootstrap;
     }
 
     /**
@@ -46,14 +49,23 @@ public class MirrorListing {
         return mirrorName;
     }
 
+    /**
+     * The source cluster bootstrap servers.
+     *
+     * @return Source bootstrap servers, or null if not available
+     */
+    public String sourceBootstrap() {
+        return sourceBootstrap;
+    }
+
     @Override
     public String toString() {
-        return "MirrorListing(mirrorName='" + mirrorName + "')";
+        return "MirrorListing(mirrorName='" + mirrorName + "', sourceBootstrap='" + sourceBootstrap + "')";
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(mirrorName);
+        return Objects.hash(mirrorName, sourceBootstrap);
     }
 
     @Override
@@ -61,6 +73,7 @@ public class MirrorListing {
         if (this == o) return true;
         if (!(o instanceof MirrorListing)) return false;
         MirrorListing that = (MirrorListing) o;
-        return Objects.equals(mirrorName, that.mirrorName);
+        return Objects.equals(mirrorName, that.mirrorName) &&
+               Objects.equals(sourceBootstrap, that.sourceBootstrap);
     }
 }

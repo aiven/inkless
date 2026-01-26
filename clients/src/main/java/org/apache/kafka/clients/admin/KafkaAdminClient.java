@@ -3721,7 +3721,10 @@ public class KafkaAdminClient extends AdminClient {
                                     results.addError(error.exception(), node);
                                 } else {
                                     for (ListMirrorsResponseData.ListedMirror mirror : response.data().mirrors()) {
-                                        final MirrorListing mirrorListing = new MirrorListing(mirror.mirrorName());
+                                        final MirrorListing mirrorListing = new MirrorListing(
+                                            mirror.mirrorName(),
+                                            mirror.sourceBootstrap()
+                                        );
                                         results.addListing(mirrorListing);
                                     }
                                 }
