@@ -407,7 +407,6 @@ public class PartitionRegistration {
                 }
             }
         }
-        System.out.println("!!! record:" + record);
         return new ApiMessageAndVersion(record, options.metadataVersion().partitionRecordVersion());
     }
 

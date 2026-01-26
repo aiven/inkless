@@ -647,8 +647,9 @@ object DynamicLogConfig {
    * the names you would use when setting a static or dynamic broker configuration (not topic
    * configuration).
    */
-  val ReconfigurableConfigs: Set[String] =
+  val ReconfigurableConfigs: Set[String] = {
     ServerTopicConfigSynonyms.TOPIC_CONFIG_SYNONYMS.asScala.values.toSet
+  }
 }
 
 class DynamicLogConfig(logManager: LogManager) extends BrokerReconfigurable with Logging {
