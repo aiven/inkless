@@ -301,7 +301,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     public void close() throws Exception {
     }
 
-    public Node getMirrorCoordinator(MirrorRecordKey key) {
+    public Node findMirrorCoordinatorNode(MirrorRecordKey key) {
         try {
             if (metadataCache.contains(MIRROR_STATE_TOPIC_NAME)) {
                 Set<String> topicSet = new HashSet<>();
@@ -342,10 +342,12 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         return Node.noNode();
     }
 
+    // set transitioner callback
     public void setTransitioner(MirrorCoordinator.Transitioner transitioner) {
         this.transitioner = Optional.of(transitioner);
     }
 
+    // set getKeyToPartition callback
     public void setKeyToPartition(Function<MirrorRecordKey, Integer> function) {
         this.keyToPartition = Optional.of(function);
     }
@@ -358,7 +360,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
 
         Node coordinatorNode = coordinatorNodesCache.get(mirrorName);
         if (coordinatorNode == null) {
-            coordinatorNode = getMirrorCoordinator(new MirrorRecordKey(mirrorName));
+            coordinatorNode = findMirrorCoordinatorNode(new MirrorRecordKey(mirrorName));
             if (coordinatorNode.equals(Node.noNode())) {
                 // coordinator is not available, return it now.
                 LOG.error("!!! coordinator is not available, return it now.");
@@ -407,7 +409,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
 
         Node coordinatorNode = coordinatorNodesCache.get(mirrorName);
         if (coordinatorNode == null) {
-            coordinatorNode = getMirrorCoordinator(new MirrorRecordKey(mirrorName));
+            coordinatorNode = findMirrorCoordinatorNode(new MirrorRecordKey(mirrorName));
             if (coordinatorNode.equals(Node.noNode())) {
                 // coordinator is not available, return it now.
                 LOG.error("!!! coordinator is not available, return it now.");
@@ -526,7 +528,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                                                    String mirrorName,
                                                    Set<TopicPartition> topicPartitionSet,
                                                    Consumer<TopicPartition> callback) {
-        LOG.info("!!! maybeTruncateToLastMirroredOffsets: {} {}", mirrorName, topics);
+        LOG.info("!!! maybeTruncateToLastMirroredOffsets: {} {}", mirrorName, topicPartitionSet);
         createMirrorConnection(mirrorName);
 
         List<LastMirroredOffsetsRequestData.TopicState> topicStates = new ArrayList<>();
@@ -556,12 +558,6 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                 });
             });
             replicaManager.maybeTruncate(offsets, callback);
-            // if no last mirrored offset set in the source cluster, ignore it and directly move to MIRRORING state
-            if (topicPartitionSet.size() > offsets.size()) {
-                Set<TopicPartition> topicPartitionSetWithoutOffsets = new HashSet<>(topicPartitionSet);
-                topicPartitionSetWithoutOffsets.removeAll(offsets.keySet().stream().map(TopicPartition::topic).collect(Collectors.toSet()));
-                topicPartitionSetWithoutOffsets.forEach(callback::accept);
-            }
         }
     }
 
@@ -699,8 +695,8 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
      * @return the updated set of last mirrored offsets
      */
     public Map<MirroredPartitionKey, Long> updateLastMirroredOffsetsCache(String clusterName,
-                                                                  Map<String, Map<Integer, Long>> addedOffsets,
-                                                                  Map<String, Map<Integer, Long>> removedOffsets) {
+                                                                          Map<String, Map<Integer, Long>> addedOffsets,
+                                                                          Map<String, Map<Integer, Long>> removedOffsets) {
         removedOffsets.forEach((topic, partitionOffsets) -> {
             partitionOffsets.forEach((partition, offset) -> {
                 lastMirroredOffsets.remove(new MirroredPartitionKey(clusterName, topic, partition));
@@ -777,10 +773,12 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         checkMirrorConnections();
 
         remoteBrokers.forEach((mirrorName, senders) -> {
-            syncTopicMetadata(mirrorName, senders);
-            syncTopicConfigurations(mirrorName, senders);
-            syncConsumerGroupOffsets(senders);
-            syncACLs(mirrorName, senders);
+            if (isActiveCoordinator(mirrorName)) {
+                syncTopicMetadata(mirrorName, senders);
+                syncTopicConfigurations(mirrorName, senders);
+                syncConsumerGroupOffsets(senders);
+                syncACLs(mirrorName, senders);
+            }
         });
     }
 

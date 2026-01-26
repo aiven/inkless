@@ -216,9 +216,9 @@ public class MirrorCoordinator {
     }
 
     public void writeMirroredPartitionMetadataToInternalTopic(String mirrorName,
-                                               Map<String, Set<MirrorMetadataManager.MirroredPartitionMetadata>> topicMetadata,
-                                               Set<String> removedTopics,
-                                               Consumer<WriteMirrorStatesResponse> sendResponseCallback) {
+                                                              Map<String, Set<MirrorMetadataManager.MirroredPartitionMetadata>> topicMetadata,
+                                                              Set<String> removedTopics,
+                                                              Consumer<WriteMirrorStatesResponse> sendResponseCallback) {
         Map<String, Map<Integer, Long>> offsets = new HashMap<>();
         Map<String, Set<Integer>> tps = new HashMap<>();
         topicMetadata.forEach((topic, partitions) -> {
@@ -367,9 +367,9 @@ public class MirrorCoordinator {
      * @param topicPartitions the topics to schedule for truncation
      */
     public void scheduleTruncation(String mirrorName, Set<TopicPartition> topicPartitions) {
-        topicPartitions.forEach(tp -> scheduler.scheduleOnce("last-mirrored-offset-truncation",
-                () -> mirrorMetadataManager.maybeTruncateToLastMirroredOffsets(replicaManager, mirrorName, Set.of(tp),
-                        partition -> transitionTo(mirrorName, Set.of(partition), MirrorPartitionState.MIRRORING))));
+        scheduler.scheduleOnce("last-mirrored-offset-truncation",
+            () -> mirrorMetadataManager.maybeTruncateToLastMirroredOffsets(replicaManager, mirrorName, topicPartitions,
+                    partition -> transitionTo(mirrorName, Set.of(partition), MirrorPartitionState.MIRRORING)));
     }
 
     private Map<String, Map<Integer, Long>> lastMirroredOffsetsToCoordinatorRecords(Map<MirrorMetadataManager.MirroredPartitionKey, Long> offsets) {
@@ -459,14 +459,6 @@ public class MirrorCoordinator {
         var key = new MirrorPartitionStateKey().setMirrorName(mirrorName);
         var val = new MirrorPartitionStateValue().setTopicName(topicPartition.topic()).setPartition(topicPartition.partition()).setState(state.value());
         var apiVersion = new ApiMessageAndVersion(val, MirrorPartitionStateValue.HIGHEST_SUPPORTED_VERSION);
-        return CoordinatorRecord.record(key, apiVersion);
-    }
-
-    private static CoordinatorRecord generateMirrorTopics(String mirrorName, Set<String> topics) {
-        var key = new MirrorTopicsKey().setMirrorName(mirrorName);
-        var val = new MirrorTopicsValue().setTopics(
-                topics.stream().map(topic -> new MirrorTopicsValue.Topic().setName(topic)).toList());
-        var apiVersion = new ApiMessageAndVersion(val, MirrorTopicsValue.HIGHEST_SUPPORTED_VERSION);
         return CoordinatorRecord.record(key, apiVersion);
     }
 
