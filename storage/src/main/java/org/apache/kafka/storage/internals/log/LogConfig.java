@@ -30,6 +30,7 @@ import org.apache.kafka.common.record.TimestampType;
 import org.apache.kafka.common.utils.ConfigUtils;
 import org.apache.kafka.common.utils.Utils;
 import org.apache.kafka.server.config.QuotaConfig;
+import org.apache.kafka.server.config.ServerConfigs;
 import org.apache.kafka.server.config.ServerLogConfigs;
 import org.apache.kafka.server.config.ServerTopicConfigSynonyms;
 import org.apache.kafka.server.record.BrokerCompressionType;
@@ -506,26 +507,42 @@ public class LogConfig extends AbstractConfig {
 
     private static void validateDiskless(Map<String, String> existingConfigs,
                                          Map<?, ?> newConfigs,
-                                         boolean isRemoteLogStorageEnabled) {
-        Optional<Boolean> wasDiskless = Optional.ofNullable(existingConfigs.get(TopicConfig.DISKLESS_ENABLE_CONFIG)).map(Boolean::parseBoolean);
+                                         boolean isRemoteLogStorageEnabled,
+                                         boolean isDisklessAllowFromClassicEnabled) {
+        boolean isCreation = existingConfigs.isEmpty();
+        boolean wasDisklessEnabled = Boolean.parseBoolean(existingConfigs.getOrDefault(TopicConfig.DISKLESS_ENABLE_CONFIG, "false"));
+        boolean wasRemoteStorageEnabled = Boolean.parseBoolean(
+            existingConfigs.getOrDefault(TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG, "false"));
 
         Optional.ofNullable((Boolean) newConfigs.get(TopicConfig.DISKLESS_ENABLE_CONFIG))
-            .ifPresent(isBeingEnabled -> {
-                if (isBeingEnabled) {
-                    // diskless.enable=true -> diskless.enable must be already set to true
-                    if (wasDiskless.isPresent() && !wasDiskless.get()) {
-                        // cannot change from diskless.enable = false to diskless.enable = true
-                        throw new InvalidConfigurationException("It is invalid to enable diskless");
-                    }
-
-                    if (isRemoteLogStorageEnabled) {
-                        throw new InvalidConfigurationException("Diskless and remote storage cannot be enabled simultaneously");
+            .ifPresent(disklessIsBeingEnabled -> {
+                if (disklessIsBeingEnabled) {
+                    // Enabling or keeping diskless enabled
+                    if (isCreation) {
+                        // Creation: diskless + remote storage not allowed
+                        if (isRemoteLogStorageEnabled) {
+                            throw new InvalidConfigurationException(
+                                "It is invalid to create a diskless topic with remote storage enabled.");
+                        }
+                    } else if (wasDisklessEnabled) {
+                        // Diskless already enabled: block adding remote storage to existing diskless topic
+                        if (isRemoteLogStorageEnabled && !wasRemoteStorageEnabled) {
+                            throw new InvalidConfigurationException(
+                                "It is invalid to enable remote storage on an existing diskless topic.");
+                        }
+                    } else {
+                        // Was not diskless (false or not set): migration requires both flags
+                        if (!isDisklessAllowFromClassicEnabled || !isRemoteLogStorageEnabled) {
+                            throw new InvalidConfigurationException("To migrate a classic topic to diskless, both "
+                                + TopicConfig.DISKLESS_ENABLE_CONFIG + " and "
+                                + TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG + " must be set to true, and the broker config "
+                                + ServerConfigs.DISKLESS_ALLOW_FROM_CLASSIC_ENABLE_CONFIG + " must also be enabled.");
+                        }
                     }
                 } else {
-                    // diskless.enable = false -> diskless.enable must be not set or set to false
-                    if (wasDiskless.isPresent() && wasDiskless.get()) {
-                        // cannot change from diskless.enable = true to diskless.enable = false
-                        throw new InvalidConfigurationException("It is invalid to disable diskless");
+                    // Cannot disable diskless once enabled
+                    if (wasDisklessEnabled) {
+                        throw new InvalidConfigurationException("It is invalid to disable diskless.");
                     }
                 }
             });
@@ -538,10 +555,12 @@ public class LogConfig extends AbstractConfig {
      * @param existingConfigs                   The existing properties
      * @param newConfigs                        The new properties to be validated
      * @param isRemoteLogStorageSystemEnabled   true if system wise remote log storage is enabled
+     * @param isDisklessAllowFromClassicEnabled true if diskless migration is enabled (allows switching diskless.enable from false to true)
      */
     private static void validateTopicLogConfigValues(Map<String, String> existingConfigs,
                                                      Map<?, ?> newConfigs,
-                                                     boolean isRemoteLogStorageSystemEnabled) {
+                                                     boolean isRemoteLogStorageSystemEnabled,
+                                                     boolean isDisklessAllowFromClassicEnabled) {
         validateValues(newConfigs);
 
         boolean isRemoteLogStorageEnabled = (Boolean) newConfigs.get(TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG);
@@ -557,7 +576,7 @@ public class LogConfig extends AbstractConfig {
             validateTurningOffRemoteStorageWithDelete(newConfigs, wasRemoteLogEnabled, isRemoteLogStorageEnabled);
         }
 
-        validateDiskless(existingConfigs, newConfigs, isRemoteLogStorageEnabled);
+        validateDiskless(existingConfigs, newConfigs, isRemoteLogStorageEnabled, isDisklessAllowFromClassicEnabled);
     }
 
     public static void validateTurningOffRemoteStorageWithDelete(Map<?, ?> newConfigs, boolean wasRemoteLogEnabled, boolean isRemoteLogStorageEnabled) {
@@ -646,13 +665,21 @@ public class LogConfig extends AbstractConfig {
      * Check that the given properties contain only valid log config names and that all values can be parsed and are valid
      */
     public static void validate(Properties props) {
-        validate(Map.of(), props, Map.of(), false);
+        validate(Map.of(), props, Map.of(), false, false);
     }
 
     public static void validate(Map<String, String> existingConfigs,
                                 Properties props,
                                 Map<?, ?> configuredProps,
                                 boolean isRemoteLogStorageSystemEnabled) {
+        validate(existingConfigs, props, configuredProps, isRemoteLogStorageSystemEnabled, false);
+    }
+
+    public static void validate(Map<String, String> existingConfigs,
+                                Properties props,
+                                Map<?, ?> configuredProps,
+                                boolean isRemoteLogStorageSystemEnabled,
+                                boolean isDisklessAllowFromClassicEnabled) {
         validateNames(props);
         if (configuredProps == null || configuredProps.isEmpty()) {
             Map<?, ?> valueMaps = CONFIG.parse(props);
@@ -661,7 +688,7 @@ public class LogConfig extends AbstractConfig {
             Map<Object, Object> combinedConfigs = new HashMap<>(configuredProps);
             combinedConfigs.putAll(props);
             Map<?, ?> valueMaps = CONFIG.parse(combinedConfigs);
-            validateTopicLogConfigValues(existingConfigs, valueMaps, isRemoteLogStorageSystemEnabled);
+            validateTopicLogConfigValues(existingConfigs, valueMaps, isRemoteLogStorageSystemEnabled, isDisklessAllowFromClassicEnabled);
         }
     }
 

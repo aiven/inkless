@@ -131,6 +131,12 @@ public class ServerConfigs {
     public static final String DISKLESS_STORAGE_SYSTEM_ENABLE_DOC = "Enable the diskless storage system. " +
         "This enables diskless topics alongside classic topics.";
 
+    public static final String DISKLESS_ALLOW_FROM_CLASSIC_ENABLE_CONFIG = "diskless.allow.from.classic.enable";
+    public static final boolean DISKLESS_ALLOW_FROM_CLASSIC_ENABLE_DEFAULT = false;
+    public static final String DISKLESS_ALLOW_FROM_CLASSIC_ENABLE_DOC = "Allow migrating existing topics with remote.storage.enable=true from classic (diskless.enable=false) to diskless (diskless.enable=true). " +
+        "This should only be enabled in non-production environments for testing or migration purposes. " +
+        "When enabled, topics can have their diskless.enable config changed from false to true.";
+
 
     /************* Authorizer Configuration ***********/
     public static final String AUTHORIZER_CLASS_NAME_CONFIG = "authorizer.class.name";
@@ -178,6 +184,8 @@ public class ServerConfigs {
             /** Diskless Configurations **/
             .define(DISKLESS_STORAGE_SYSTEM_ENABLE_CONFIG, BOOLEAN, DISKLESS_STORAGE_SYSTEM_ENABLE_DEFAULT, HIGH,
                 DISKLESS_STORAGE_SYSTEM_ENABLE_DOC)
+            .define(DISKLESS_ALLOW_FROM_CLASSIC_ENABLE_CONFIG, BOOLEAN, DISKLESS_ALLOW_FROM_CLASSIC_ENABLE_DEFAULT, LOW,
+                DISKLESS_ALLOW_FROM_CLASSIC_ENABLE_DOC)
             /** Internal Configurations **/
             // This indicates whether unreleased APIs should be advertised by this node.
             .defineInternal(UNSTABLE_API_VERSIONS_ENABLE_CONFIG, BOOLEAN, false, HIGH)
