@@ -508,9 +508,8 @@ public abstract class MirrorCommand {
             CommandLineUtils.maybePrintHelpOrVersion(this, "This tool helps to create cluster mirrors and add topics to them.");
 
             // should have exactly one action
-            long actions = (has(createOpt) ? 1 : 0) + (has(addOpt) ? 1 : 0)
-                    + (has(removeOpt) ? 1 : 0) + (has(listOpt) ? 1 : 0) + (has(describeOpt) ? 1 : 0);
-            if (actions != 1)
+            if ((has(createOpt) ? 1 : 0) + (has(addOpt) ? 1 : 0) + (has(removeOpt) ? 1 : 0)
+                    + (has(listOpt) ? 1 : 0) + (has(describeOpt) ? 1 : 0) != 1)
                 CommandLineUtils.printUsageAndExit(parser, "Command must include exactly one action: --create, --add, --remove, --list, or --describe");
 
             // check required args
@@ -518,7 +517,7 @@ public abstract class MirrorCommand {
                 throw new IllegalArgumentException("--bootstrap-server must be specified");
 
             // --mirror is required for create, add, and remove operations, but optional for list and describe
-            if ((!has(listOpt) && !has(mirrorOpt)) || (!has(describeOpt) && !has(mirrorOpt)))
+            if (!has(listOpt) && !has(describeOpt) && !has(mirrorOpt))
                 throw new IllegalArgumentException("--mirror must be specified");
 
             if (has(createOpt) && !has(mirrorConfigOpt))
