@@ -1726,6 +1726,33 @@ public interface Admin extends AutoCloseable {
     RemoveTopicsFromMirrorResult removeTopicsFromMirror(String mirrorName, Set<String> topics, RemoveTopicsFromMirrorOptions options);
 
     /**
+     * Describe cluster mirrors with the default options.
+     *
+     * <p>This is a convenience method for {@link #describeMirrors(Collection, DescribeMirrorsOptions)}
+     * with default options. See the overload for more details.
+     *
+     * @param mirrorNames The names of the mirrors to describe
+     * @return The DescribeMirrorsResult
+     */
+    default DescribeMirrorsResult describeMirrors(Collection<String> mirrorNames) {
+        return describeMirrors(mirrorNames, new DescribeMirrorsOptions());
+    }
+
+    /**
+     * Describe cluster mirrors.
+     *
+     * This operation retrieves detailed information about cluster mirrors including:
+     * - Topics being mirrored
+     * - Partition-level lag information (source offset vs destination offset)
+     * - Mirroring state for each partition (INITIALIZING, PREPARING, MIRRORING, etc.)
+     *
+     * @param mirrorNames The names of the mirrors to describe
+     * @param options The options to use when describing mirrors
+     * @return The DescribeMirrorsResult
+     */
+    DescribeMirrorsResult describeMirrors(Collection<String> mirrorNames, DescribeMirrorsOptions options);
+
+    /**
      * Describe producer state on a set of topic partitions. See
      * {@link #describeProducers(Collection, DescribeProducersOptions)} for more details.
      *

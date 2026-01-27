@@ -146,7 +146,7 @@ public class MirrorCoordinator {
                 break;
             case MIRRORING:
                 LOG.info("!!! Mirroring topics {}.", topics);
-                mirrorMetadataManager.invokeMirroringCallbacks(mirrorName, topics);
+                mirrorMetadataManager.invokeMirroringCallback(mirrorName, topics);
                 break;
             case STOPPING:
                 LOG.info("!!! Stopping mirror for topics {}.", topics);
@@ -199,7 +199,7 @@ public class MirrorCoordinator {
     public void transitionTo(String mirrorName, TopicPartition topicPartition, MirrorPartitionState newState, boolean executeActions) {
         LOG.info("!!! Transitioning partition {} from {} to {}.", topicPartition,
                 mirrorMetadataManager.getMirrorPartitionState(mirrorName, topicPartition), newState);
-        updateMirrorPartitionStateMetadata(mirrorName, topicPartition, newState);
+        updateMirrorPartitionState(mirrorName, topicPartition, newState);
         if (executeActions) {
             handleStateTransition(mirrorName, Set.of(topicPartition.topic()), newState);
         }
@@ -231,7 +231,7 @@ public class MirrorCoordinator {
         updateLastMirroredOffsetsMetadata(mirrorName, partitionOffsets);
     }
 
-    public void updateMirrorPartitionStateMetadata(String mirrorName, TopicPartition topicPartition, MirrorPartitionState newState) {
+    public void updateMirrorPartitionState(String mirrorName, TopicPartition topicPartition, MirrorPartitionState newState) {
         var mirrorTopicPartition = new TopicPartition(Topic.MIRROR_STATE_TOPIC_NAME, getPartitionIndexForKey(new MirrorRecordKey(mirrorName)));
         var mirrorTopicIdPartition = replicaManager.topicIdPartition(mirrorTopicPartition);
         var record = generateMirrorPartitionState(mirrorName, topicPartition, newState);
@@ -609,10 +609,10 @@ public class MirrorCoordinator {
     }
 
     /**
-     * Returns all mirror names managed by this node.
+     * Returns mirror names managed by this node.
      */
-    public Set<String> getAllMirrorNames() {
-        return mirrorMetadataManager.getAllMirrorNames();
+    public Set<String> getMirrorNames() {
+        return mirrorMetadataManager.getMirrorNames();
     }
 
     /**
@@ -623,6 +623,16 @@ public class MirrorCoordinator {
      */
     public String getSourceBootstrap(String mirrorName) {
         return mirrorMetadataManager.getSourceBootstrap(mirrorName);
+    }
+
+    /**
+     * Get all topic partitions for a given mirror along with their states.
+     *
+     * @param mirrorName the name of the cluster mirror
+     * @return partition state map
+     */
+    public Map<TopicPartition, MirrorPartitionState> getMirrorPartitions(String mirrorName) {
+        return mirrorMetadataManager.getMirrorPartitions(mirrorName);
     }
 
     /**

@@ -23,7 +23,7 @@ import kafka.log.LogManager
 import kafka.server.HostedPartition.Online
 import kafka.server.QuotaFactory.QuotaManagers
 import kafka.server.ReplicaManager.{AtMinIsrPartitionCountMetricName, FailedIsrUpdatesPerSecMetricName, IsrExpandsPerSecMetricName, IsrShrinksPerSecMetricName, LeaderCountMetricName, OfflineReplicaCountMetricName, PartitionCountMetricName, PartitionsWithLateTransactionsCountMetricName, ProducerIdCountMetricName, ReassigningPartitionsMetricName, UnderMinIsrPartitionCountMetricName, UnderReplicatedPartitionsMetricName, createLogReadResult, isListOffsetsTimestampUnsupported}
-import kafka.server.mirror.{MirrorFetcherManager, MirrorMetadataManager, MirrorPartitionState}
+import kafka.server.mirror.{MirrorFetcherManager, MirrorLagInfo, MirrorMetadataManager, MirrorPartitionState}
 import kafka.server.share.DelayedShareFetch
 import kafka.utils._
 import org.apache.kafka.common.{IsolationLevel, Node, TopicIdPartition, TopicPartition, Uuid}
@@ -2667,4 +2667,24 @@ class ReplicaManager(val config: KafkaConfig,
       () => ()
     )
   }
+
+  /**
+   * Updates the mirroring lag for a partition.
+   *
+   * @param mirrorName mirror name
+   * @param topicPartition partition
+   * @param sourceOffset source HW
+   * @param destinationOffset destination HW
+   */
+  def updateMirrorLag(mirrorName: String, topicPartition: TopicPartition, sourceOffset: Long, destinationOffset: Long): Unit =
+    mirrorFetcherManager.updateLag(mirrorName, topicPartition, sourceOffset, destinationOffset)
+
+  /**
+   * Retrieves lag information for a specific mirror.
+   *
+   * @param mirrorName mirror name
+   * @return lag info
+   */
+  def getMirrorLagInfo(mirrorName: String): Map[TopicPartition, MirrorLagInfo] =
+    mirrorFetcherManager.getLagInfo(mirrorName)
 }

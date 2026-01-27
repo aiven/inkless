@@ -25,8 +25,11 @@ import org.apache.kafka.clients.admin.CreateMirrorOptions;
 import org.apache.kafka.clients.admin.CreateMirrorResult;
 import org.apache.kafka.clients.admin.CreateTopicsOptions;
 import org.apache.kafka.clients.admin.CreateTopicsResult;
+import org.apache.kafka.clients.admin.DescribeMirrorsOptions;
+import org.apache.kafka.clients.admin.DescribeMirrorsResult;
 import org.apache.kafka.clients.admin.FindCoordinatorResult;
 import org.apache.kafka.clients.admin.ListMirrorsResult;
+import org.apache.kafka.clients.admin.MirrorDescription;
 import org.apache.kafka.clients.admin.MirrorListing;
 import org.apache.kafka.clients.admin.NewTopic;
 import org.apache.kafka.clients.admin.RemoveTopicsFromMirrorOptions;
@@ -42,8 +45,11 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Properties;
@@ -88,6 +94,8 @@ public abstract class MirrorCommand {
                 mirrorService.removeTopicsFromMirror(opts);
             } else if (opts.hasListOption()) {
                 mirrorService.listMirrors();
+            } else if (opts.hasDescribeOption()) {
+                mirrorService.describeMirrors(opts);
             }
         } catch (ExecutionException e) {
             Throwable cause = e.getCause();
@@ -273,9 +281,116 @@ public abstract class MirrorCommand {
             }
         }
 
+        public void describeMirrors(MirrorCommandOptions opts) throws ExecutionException, InterruptedException {
+            // If --mirror is specified, describe only that mirror; otherwise describe all mirrors
+            List<String> mirrorNames = opts.mirror().isPresent()
+                ? List.of(opts.mirror().get())
+                : List.of();
+
+            // Describe the mirror(s) using the admin client
+            DescribeMirrorsResult result = adminClient.describeMirrors(
+                mirrorNames,
+                new DescribeMirrorsOptions()
+            );
+
+            Map<String, MirrorDescription> descriptions = result.allDescriptions().get();
+
+            if (descriptions.isEmpty()) {
+                System.out.println("No mirrors found");
+                return;
+            }
+
+            // Collect partition states from all mirrors (one entry per mirror+topic+partition)
+            List<PartitionInfo> partitionInfos = new ArrayList<>();
+            for (Map.Entry<String, MirrorDescription> mirrorEntry : descriptions.entrySet()) {
+                String mirrorName = mirrorEntry.getKey();
+                MirrorDescription description = mirrorEntry.getValue();
+
+                for (Map.Entry<String, Set<MirrorDescription.LeaderState>> topicEntry : description.topics().entrySet()) {
+                    String topic = topicEntry.getKey();
+                    for (MirrorDescription.LeaderState state : topicEntry.getValue()) {
+                        partitionInfos.add(new PartitionInfo(
+                            mirrorName,
+                            topic,
+                            state.topicPartition().partition(),
+                            state.sourceOffset(),
+                            state.destinationOffset(),
+                            state.lag(),
+                            state.state()
+                        ));
+                    }
+                }
+            }
+
+            // Sort by mirror, then topic, then partition
+            partitionInfos.sort(Comparator.comparing(PartitionInfo::mirror)
+                .thenComparing(PartitionInfo::topic)
+                .thenComparing(PartitionInfo::partition));
+
+            // Only print header and results if there are partitions to display
+            if (!partitionInfos.isEmpty()) {
+                System.out.printf("%-30s %-40s %-10s %-15s %-20s %-15s %-15s%n",
+                    "MIRROR", "TOPIC", "PARTITION", "SOURCE-OFFSET", "DESTINATION-OFFSET", "LAG", "STATE");
+                for (PartitionInfo info : partitionInfos) {
+                    System.out.printf("%-30s %-40s %-10d %-15d %-20d %-15d %-15s%n",
+                        truncateLeft(info.mirror, 30),
+                        truncateLeft(info.topic, 40),
+                        info.partition,
+                        info.sourceOffset,
+                        info.destinationOffset,
+                        info.lag,
+                        info.state);
+                }
+            }
+        }
+
+        // Truncate string from the left, keeping the rightmost characters
+        // Example: truncateLeft("my-very-long-mirror-name", 10) -> "...or-name"
+        private String truncateLeft(String str, int maxLength) {
+            if (str.length() <= maxLength) {
+                return str;
+            }
+            return "..." + str.substring(str.length() - (maxLength - 3));
+        }
+
         @Override
         public void close() throws Exception {
             adminClient.close();
+        }
+
+        // Helper class for formatting partition information
+        // Each partition is an independent replication unit with its own state
+        private static class PartitionInfo {
+            private final String mirror;
+            private final String topic;
+            private final int partition;
+            private final long sourceOffset;
+            private final long destinationOffset;
+            private final long lag;
+            private final String state;
+
+            PartitionInfo(String mirror, String topic, int partition, long sourceOffset,
+                          long destinationOffset, long lag, String state) {
+                this.mirror = mirror;
+                this.topic = topic;
+                this.partition = partition;
+                this.sourceOffset = sourceOffset;
+                this.destinationOffset = destinationOffset;
+                this.lag = lag;
+                this.state = state;
+            }
+
+            String mirror() {
+                return mirror;
+            }
+
+            String topic() {
+                return topic;
+            }
+
+            int partition() {
+                return partition;
+            }
         }
     }
 
@@ -287,6 +402,7 @@ public abstract class MirrorCommand {
         private final OptionSpecBuilder addOpt;
         private final OptionSpecBuilder removeOpt;
         private final OptionSpecBuilder listOpt;
+        private final OptionSpecBuilder describeOpt;
         private final ArgumentAcceptingOptionSpec<String> mirrorOpt;
         private final ArgumentAcceptingOptionSpec<String> topicOpt;
         private final ArgumentAcceptingOptionSpec<Short> replicationFactorOpt;
@@ -313,6 +429,7 @@ public abstract class MirrorCommand {
             addOpt = parser.accepts("add", "Add topic(s) to an existing cluster mirror (supports regex).");
             removeOpt = parser.accepts("remove", "Remove topic(s) from an existing cluster mirror (supports regex).");
             listOpt = parser.accepts("list", "List all cluster mirrors.");
+            describeOpt = parser.accepts("describe", "Describe a cluster mirror including partition lag and state.");
 
             mirrorOpt = parser.accepts("mirror", "The name of the cluster mirror.")
                 .withRequiredArg()
@@ -357,6 +474,10 @@ public abstract class MirrorCommand {
             return has(listOpt);
         }
 
+        public boolean hasDescribeOption() {
+            return has(describeOpt);
+        }
+
         public Optional<String> bootstrapServer() {
             return valueAsOption(bootstrapServerOpt);
         }
@@ -397,15 +518,16 @@ public abstract class MirrorCommand {
             CommandLineUtils.maybePrintHelpOrVersion(this, "This tool helps to create cluster mirrors and add topics to them.");
 
             // should have exactly one action
-            long actions = (has(createOpt) ? 1 : 0) + (has(addOpt) ? 1 : 0) + (has(removeOpt) ? 1 : 0) + (has(listOpt) ? 1 : 0);
-            if (actions != 1)
-                CommandLineUtils.printUsageAndExit(parser, "Command must include exactly one action: --create, --add, --remove, or --list");
+            if ((has(createOpt) ? 1 : 0) + (has(addOpt) ? 1 : 0) + (has(removeOpt) ? 1 : 0)
+                    + (has(listOpt) ? 1 : 0) + (has(describeOpt) ? 1 : 0) != 1)
+                CommandLineUtils.printUsageAndExit(parser, "Command must include exactly one action: --create, --add, --remove, --list, or --describe");
 
             // check required args
             if (!has(bootstrapServerOpt))
                 throw new IllegalArgumentException("--bootstrap-server must be specified");
 
-            if (!has(listOpt) && !has(mirrorOpt))
+            // --mirror is required for create, add, and remove operations, but optional for list and describe
+            if (!has(listOpt) && !has(describeOpt) && !has(mirrorOpt))
                 throw new IllegalArgumentException("--mirror must be specified");
 
             if (has(createOpt) && !has(mirrorConfigOpt))

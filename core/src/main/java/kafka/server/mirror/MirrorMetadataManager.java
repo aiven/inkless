@@ -479,7 +479,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
      * @param mirrorName the name of the cluster mirror
      * @param topics the topics that have entered MIRRORING state
      */
-    public void invokeMirroringCallbacks(String mirrorName, Set<String> topics) {
+    public void invokeMirroringCallback(String mirrorName, Set<String> topics) {
         topics.forEach(topic -> metadataCache.numPartitions(topic).ifPresent(numPartitions -> {
             IntStream.range(0, numPartitions).forEach(i -> {
                 MirroredPartitionKey key = new MirroredPartitionKey(mirrorName, topic, i);
@@ -893,7 +893,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     /**
      * Returns mirror names managed by this node.
      */
-    public Set<String> getAllMirrorNames() {
+    public Set<String> getMirrorNames() {
         return new HashSet<>(topics.keySet());
     }
 
@@ -911,11 +911,28 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     }
 
     /**
-     * Clears all cached mirror metadata including topics and remote broker connections.
+     * Get topic partitions for a given mirror along with their states.
+     *
+     * @param mirrorName the name of the cluster mirror
+     * @return partition state map
+     */
+    public Map<TopicPartition, MirrorPartitionState> getMirrorPartitions(String mirrorName) {
+        Map<TopicPartition, MirrorPartitionState> result = new HashMap<>();
+        mirrorPartitionState.forEach((key, state) -> {
+            if (key.mirrorName().equals(mirrorName)) {
+                result.put(new TopicPartition(key.topic(), key.partition()), state);
+            }
+        });
+        return result;
+    }
+
+    /**
+     * Clears all cached mirror metadata including topics, partition state and remote broker connections.
      * Called when the broker resigns as leader for mirror state topic partitions.
      */
     public void clear() {
         topics.clear();
+        mirrorPartitionState.clear();
         remoteBrokers.clear();
     }
 
