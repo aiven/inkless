@@ -649,6 +649,7 @@ object DynamicLogConfig {
    */
   val ReconfigurableConfigs: Set[String] =
     ServerTopicConfigSynonyms.TOPIC_CONFIG_SYNONYMS.asScala.values.toSet
+}
 
 class DynamicLogConfig(logManager: LogManager) extends BrokerReconfigurable with Logging {
 

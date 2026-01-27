@@ -26,6 +26,7 @@ import kafka.server.ReplicaManager.{AtMinIsrPartitionCountMetricName, FailedIsrU
 import kafka.server.mirror.{MirrorFetcherManager, MirrorMetadataManager, MirrorPartitionState}
 import kafka.server.share.DelayedShareFetch
 import kafka.utils._
+import org.apache.kafka.common.config.{ConfigResource, TopicConfig}
 import org.apache.kafka.common.{IsolationLevel, Node, TopicIdPartition, TopicPartition, Uuid}
 import org.apache.kafka.common.errors._
 import org.apache.kafka.common.internals.{Plugin, Topic}
@@ -77,6 +78,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.{CompletableFuture, ConcurrentHashMap, Future, RejectedExecutionException, TimeUnit}
 import java.util.{Collections, Optional, OptionalInt, OptionalLong}
 import java.util.function.Consumer
+import java.util.stream.Collectors
 import scala.collection.{Map, Seq, Set, immutable, mutable}
 import scala.jdk.CollectionConverters._
 import scala.jdk.OptionConverters.RichOptional
@@ -2414,16 +2416,24 @@ class ReplicaManager(val config: KafkaConfig,
         val followerChangedPartitions = new mutable.HashSet[Partition]
         if (!localChanges.leaders.isEmpty) {
           applyLocalLeadersDelta(leaderChangedPartitions, delta, lazyOffsetCheckpoints, localChanges.leaders.asScala, localChanges.directoryIds.asScala)
+
         }
         if (!localChanges.followers.isEmpty) {
           applyLocalFollowersDelta(followerChangedPartitions, newImage, delta, lazyOffsetCheckpoints, localChanges.followers.asScala, localChanges.directoryIds.asScala)
         }
         // Handle read-only leaders: these are leaders (already processed above) that also need
         // to start MirrorFetcherThreads to fetch from the source cluster
-//        if (!localChanges.readOnlyLeaders().isEmpty) {
-//          // wait until the state entering MIRRORING state and then start fetching
-//          mirrorMetadataManager.get.registerMirroringCallback(localChanges.readOnlyLeaders(), mirroringLeaders => maybeCreateMirrorFetchers(mirroringLeaders.asScala))
-//        }
+
+        // luke
+        val readOnlyLeaders = localChanges.leaders().entrySet().stream().filter((entry: java.util.Map.Entry[TopicPartition, LocalReplicaChanges.PartitionInfo]) =>
+          newImage.configs().configProperties(new ConfigResource(ConfigResource.Type.TOPIC, entry.getKey.topic())).containsKey(TopicConfig.MIRROR_NAME_CONFIG))
+          .collect(Collectors.toMap((entry: java.util.Map.Entry[TopicPartition, LocalReplicaChanges.PartitionInfo]) => entry.getKey, (entry: java.util.Map.Entry[TopicPartition, LocalReplicaChanges.PartitionInfo]) => entry.getValue))
+
+
+        if (!readOnlyLeaders.isEmpty) {
+          // wait until the state entering MIRRORING state and then start fetching
+          mirrorMetadataManager.get.registerMirroringCallback(readOnlyLeaders, mirroringLeaders => maybeCreateMirrorFetchers(mirroringLeaders.asScala))
+        }
 
         maybeAddLogDirFetchers(leaderChangedPartitions ++ followerChangedPartitions, lazyOffsetCheckpoints,
           name => Option(newImage.topics().getTopic(name)).map(_.id()))
@@ -2614,46 +2624,46 @@ class ReplicaManager(val config: KafkaConfig,
    * @param readOnlyLeaders Map of partitions to their metadata for partitions that became
    *                        read-only leaders on this broker
    */
-//  private def maybeCreateMirrorFetchers(readOnlyLeaders: mutable.Map[TopicPartition, LocalReplicaChanges.PartitionInfo]): Unit = {
-//    if (readOnlyLeaders.isEmpty) return
-//
-//    stateChangeLogger.info(s"Starting mirror fetchers for ${readOnlyLeaders.size} read-only leader partition(s).")
-//    val partitionAndOffsets = new mutable.HashMap[TopicPartition, InitialFetchState]
-//
-//    readOnlyLeaders.foreachEntry { (tp, info) =>
-//      getPartition(tp) match {
-//        case HostedPartition.Online(partition) =>
-//          try {
-//            val mirrorName = ""
-//            if (mirrorName != null && !mirrorName.isEmpty) {
-//              // Get the remote partition leader from mirror metadata manager
-//              // This will return the actual leader if known, or a random bootstrap server as fallback
-//              val remoteLeader = mirrorMetadataManager.get.getRemotePartitionLeader(mirrorName, tp)
-//              val leaderEndpoint = new BrokerEndPoint(remoteLeader.id(), remoteLeader.host(), remoteLeader.port())
-//
-//              val fetchState = InitialFetchState(
-//                topicId = Some(info.topicId),
-//                leader = leaderEndpoint,
-//                currentLeaderEpoch = 0, // this will trigger source epoch discovery through fencing
-//                initOffset = partition.localLogOrException.logEndOffset,
-//                mirrorName = mirrorName
-//              )
-//              partitionAndOffsets.put(tp, fetchState)
-//            }
-//          } catch {
-//            case e: Exception =>
-//              stateChangeLogger.error(s"Error setting up mirror fetcher for partition $tp", e)
-//          }
-//        case _ =>
-//          stateChangeLogger.warn(s"Skipping mirror fetcher setup for offline partition $tp")
-//      }
-//    }
-//
-//    if (partitionAndOffsets.nonEmpty) {
-//      mirrorFetcherManager.addFetcherForPartitions(partitionAndOffsets)
-//      stateChangeLogger.info(s"Started mirror fetchers for ${partitionAndOffsets.size} read-only leader partitions")
-//    }
-//  }
+  private def maybeCreateMirrorFetchers(readOnlyLeaders: mutable.Map[TopicPartition, LocalReplicaChanges.PartitionInfo]): Unit = {
+    if (readOnlyLeaders.isEmpty) return
+
+    stateChangeLogger.info(s"Starting mirror fetchers for ${readOnlyLeaders.size} read-only leader partition(s).")
+    val partitionAndOffsets = new mutable.HashMap[TopicPartition, InitialFetchState]
+
+    readOnlyLeaders.foreachEntry { (tp, info) =>
+      getPartition(tp) match {
+        case HostedPartition.Online(partition) =>
+          try {
+            val mirrorName = ""
+            if (mirrorName != null && !mirrorName.isEmpty) {
+              // Get the remote partition leader from mirror metadata manager
+              // This will return the actual leader if known, or a random bootstrap server as fallback
+              val remoteLeader = mirrorMetadataManager.get.getRemotePartitionLeader(mirrorName, tp)
+              val leaderEndpoint = new BrokerEndPoint(remoteLeader.id(), remoteLeader.host(), remoteLeader.port())
+
+              val fetchState = InitialFetchState(
+                topicId = Some(info.topicId),
+                leader = leaderEndpoint,
+                currentLeaderEpoch = 0, // this will trigger source epoch discovery through fencing
+                initOffset = partition.localLogOrException.logEndOffset,
+                mirrorName = mirrorName
+              )
+              partitionAndOffsets.put(tp, fetchState)
+            }
+          } catch {
+            case e: Exception =>
+              stateChangeLogger.error(s"Error setting up mirror fetcher for partition $tp", e)
+          }
+        case _ =>
+          stateChangeLogger.warn(s"Skipping mirror fetcher setup for offline partition $tp")
+      }
+    }
+
+    if (partitionAndOffsets.nonEmpty) {
+      mirrorFetcherManager.addFetcherForPartitions(partitionAndOffsets)
+      stateChangeLogger.info(s"Started mirror fetchers for ${partitionAndOffsets.size} read-only leader partitions")
+    }
+  }
 
   private def maybeUpdateTopicAssignment(partition: TopicIdPartition, partitionDirectoryId: Uuid): Unit = {
     for {

@@ -620,67 +620,6 @@ public class ReplicationControlManager {
         return numRemoved;
     }
 
-//    public ControllerResult<AddTopicsToMirrorResponseData> addTopicsToMirror(Map<Uuid, String> topicIdsToMirrorName) {
-//        List<ApiMessageAndVersion> records = BoundedList.newArrayBacked(MAX_RECORDS_PER_USER_OP);
-//        for (Entry<Uuid, String> topicIdToMirrorName : topicIdsToMirrorName.entrySet()) {
-//            Uuid topicId = topicIdToMirrorName.getKey();
-//            String mirrorName = topicIdToMirrorName.getValue();
-//            TopicControlInfo info = topics.get(topicId);
-//            // TODO: handle info not exists
-//            String topicName = info.name;
-//            for (int partitionId : info.parts.keySet()) {
-//                PartitionRegistration partition = info.parts.get(partitionId);
-//                PartitionChangeBuilder builder = new PartitionChangeBuilder(
-//                        partition,
-//                        info.topicId(),
-//                        partitionId,
-//                        new LeaderAcceptor(clusterControl, partition),
-//                        featureControl.metadataVersionOrThrow(),
-//                        getTopicEffectiveMinIsr(topicName)
-//                )
-//                        // set the mirror name
-//                        .setEligibleLeaderReplicasEnabled(featureControl.isElrFeatureEnabled())
-//                        .setDefaultDirProvider(clusterDescriber);
-//
-//                builder.build().ifPresent(records::add);
-//                log.info("!!! update partition {} for topic {} with mirror name {}: {}", partitionId, topicName, mirrorName, records);
-//            }
-//        }
-//
-//        return ControllerResult.of(records, new AddTopicsToMirrorResponseData().setErrorCode((short) 0));
-//    }
-
-    public ControllerResult<RemoveTopicsFromMirrorResponseData> removeTopicsFromMirror(Set<Uuid> topicIds) {
-        List<ApiMessageAndVersion> records = BoundedList.newArrayBacked(MAX_RECORDS_PER_USER_OP);
-//        for (Uuid topicId : topicIds) {
-//            TopicControlInfo info = topics.get(topicId);
-//            String topicName = info.name;
-//            for (Entry<Integer, PartitionRegistration> entry : info.parts.entrySet()) {
-//                int partitionId = entry.getKey();
-//                String mirrorName = info.parts.get(partitionId).mirrorName;
-//                String newMirrorName = mirrorName.endsWith("*") ? "" : mirrorName + "*";
-//                PartitionRegistration partition = info.parts.get(partitionId);
-//                PartitionChangeBuilder builder = new PartitionChangeBuilder(
-//                        partition,
-//                        info.topicId(),
-//                        partitionId,
-//                        new LeaderAcceptor(clusterControl, partition),
-//                        featureControl.metadataVersionOrThrow(),
-//                        getTopicEffectiveMinIsr(topicName)
-//                )
-//                        // clear the mirror name, so the topics become writable
-//                        .setMirrorName(newMirrorName)
-//                        .setEligibleLeaderReplicasEnabled(featureControl.isElrFeatureEnabled())
-//                        .setDefaultDirProvider(clusterDescriber);
-//
-//                builder.build().ifPresent(records::add);
-//                log.info("!!! update partition {} for topic {} with empty cluster mirror to make it writable: {}", partitionId, topicName, records);
-//            }
-//        }
-
-        return ControllerResult.of(records, new RemoveTopicsFromMirrorResponseData().setErrorCode((short) 0));
-    }
-
     ControllerResult<CreateTopicsResponseData> createTopics(
         ControllerRequestContext context,
         CreateTopicsRequestData request,
