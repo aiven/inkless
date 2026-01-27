@@ -665,6 +665,33 @@ public class MirrorCoordinator {
     }
 
     /**
+     * Returns mirror names managed by this node.
+     */
+    public Set<String> getMirrorNames() {
+        return mirrorMetadataManager.getMirrorNames();
+    }
+
+    /**
+     * Returns the source cluster bootstrap servers for a given mirror.
+     *
+     * @param mirrorName the name of the cluster mirror
+     * @return the bootstrap servers string, or null if not found
+     */
+    public String getSourceBootstrap(String mirrorName) {
+        return mirrorMetadataManager.getSourceBootstrap(mirrorName);
+    }
+
+    /**
+     * Get all topic partitions for a given mirror along with their states.
+     *
+     * @param mirrorName the name of the cluster mirror
+     * @return partition state map
+     */
+    public Map<TopicPartition, MirrorPartitionState> getMirrorPartitions(String mirrorName) {
+        return mirrorMetadataManager.getMirrorPartitions(mirrorName);
+    }
+
+    /**
      * Shuts down the mirror coordinator and releases all resources.
      * Stops periodic metadata refresh and closes metrics.
      */

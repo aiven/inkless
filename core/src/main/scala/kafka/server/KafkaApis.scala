@@ -255,6 +255,8 @@ class KafkaApis(val requestChannel: RequestChannel,
         case ApiKeys.CREATE_MIRROR => forwardToController(request)
         case ApiKeys.ADD_TOPICS_TO_MIRROR => handleAddTopicsToMirror(request)
         case ApiKeys.REMOVE_TOPICS_FROM_MIRROR => handleRemoveTopicsFromMirror(request)
+        case ApiKeys.LIST_MIRRORS => handleListMirrorsRequest(request)
+        case ApiKeys.DESCRIBE_MIRRORS => handleDescribeMirrorsRequest(request)
         case ApiKeys.LAST_MIRRORED_OFFSETS => handleLastMirroredOffset(request)
         case ApiKeys.WRITE_MIRROR_STATES => handleWriteMirrorStates(request)
         case ApiKeys.READ_MIRROR_STATES => handleReadMirrorStates(request)
@@ -363,6 +365,87 @@ class KafkaApis(val requestChannel: RequestChannel,
 
     // update the cached topics in coordinator
     forwardToController(request)
+  }
+
+  def handleListMirrorsRequest(request: RequestChannel.Request): Unit = {
+    val responseData = new ListMirrorsResponseData()
+
+    if (authHelper.authorize(request.context, DESCRIBE, CLUSTER, CLUSTER_NAME, logIfDenied = false)) {
+      val mirrorNames = mirrorCoordinator.getMirrorNames()
+      val mirrors = new util.ArrayList[ListMirrorsResponseData.ListedMirror]()
+      mirrorNames.forEach(mirrorName => {
+        val sourceBootstrap = mirrorCoordinator.getSourceBootstrap(mirrorName)
+        mirrors.add(new ListMirrorsResponseData.ListedMirror()
+          .setMirrorName(mirrorName)
+          .setSourceBootstrap(if (sourceBootstrap != null) sourceBootstrap else ""))
+      })
+      responseData.setMirrors(mirrors)
+      responseData.setErrorCode(Errors.NONE.code)
+    } else {
+      responseData.setErrorCode(Errors.CLUSTER_AUTHORIZATION_FAILED.code)
+    }
+
+    requestHelper.sendMaybeThrottle(request, new ListMirrorsResponse(responseData))
+  }
+
+  def handleDescribeMirrorsRequest(request: RequestChannel.Request): Unit = {
+    val describeMirrorsRequest = request.body[DescribeMirrorsRequest]
+    val responseData = new DescribeMirrorsResponseData()
+
+    if (authHelper.authorize(request.context, DESCRIBE, CLUSTER, CLUSTER_NAME, logIfDenied = false)) {
+      val requestedMirrors = if (describeMirrorsRequest.data.mirrorNames.isEmpty) {
+        mirrorCoordinator.getMirrorNames().asScala.toSeq
+      } else {
+        describeMirrorsRequest.data.mirrorNames.asScala.toSeq
+      }
+
+      requestedMirrors.foreach { mirrorName =>
+        val describedMirror = new DescribeMirrorsResponseData.DescribedMirror()
+          .setMirrorName(mirrorName)
+          .setErrorCode(Errors.NONE.code)
+
+        // Get all partitions for this mirror from metadata manager
+        val mirrorPartitions = mirrorCoordinator.getMirrorPartitions(mirrorName).asScala
+
+        // Get lag information from mirror fetcher manager (only for partitions being actively fetched)
+        val lagInfoMap = replicaManager.getMirrorLagInfo(mirrorName)
+
+        // Group partitions by topic
+        val topicsMap = scala.collection.mutable.Map[String, DescribeMirrorsResponseData.TopicPartitions]()
+
+        // Process all partitions from metadata manager
+        mirrorPartitions.foreach { case (topicPartition, partitionState) =>
+          val topicName = topicPartition.topic()
+          val topicPartitions = topicsMap.getOrElseUpdate(topicName, {
+            val tp = new DescribeMirrorsResponseData.TopicPartitions().setTopicName(topicName)
+            tp.setPartitions(new util.ArrayList[DescribeMirrorsResponseData.PartitionDetail]())
+            tp
+          })
+
+          // Try to get lag info, if available
+          val lagInfo = lagInfoMap.get(topicPartition)
+
+          val partitionDetail = new DescribeMirrorsResponseData.PartitionDetail()
+            .setPartitionIndex(topicPartition.partition())
+            .setSourceOffset(lagInfo.map(_.sourceOffset).getOrElse(-1L))
+            .setDestinationOffset(lagInfo.map(_.destinationOffset).getOrElse(-1L))
+            .setLag(lagInfo.map(_.lag).getOrElse(-1L))
+            .setState(partitionState.name())
+
+          topicPartitions.partitions().add(partitionDetail)
+        }
+
+        val topicsList = new util.ArrayList[DescribeMirrorsResponseData.TopicPartitions]()
+        topicsMap.values.foreach(tp => topicsList.add(tp))
+        describedMirror.setTopics(topicsList)
+        responseData.mirrors().add(describedMirror)
+      }
+    } else {
+      // Authorization failed - return empty list with no error
+      // Individual mirror errors would be set per mirror if needed
+    }
+
+    requestHelper.sendMaybeThrottle(request, new DescribeMirrorsResponse(responseData))
   }
 
   def handleGetReplicaLogInfo(request: RequestChannel.Request): Unit = {

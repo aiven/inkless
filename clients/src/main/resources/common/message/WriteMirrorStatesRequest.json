@@ -14,7 +14,7 @@
 // limitations under the License.
 
 {
-  "apiKey":98,
+  "apiKey":101,
   "type": "request",
   "listeners": ["broker", "controller"],
   "name": "WriteMirrorStatesRequest",

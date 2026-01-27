@@ -289,6 +289,9 @@ public class ForwardingAdmin implements Admin {
     public AddTopicsToMirrorResult addTopicsToMirror(int destinationNodeId, Map<String, String> topicToMirrorName, AddTopicsToMirrorOptions options) {
         return delegate.addTopicsToMirror(destinationNodeId, topicToMirrorName, options);
     }
+    public DescribeMirrorsResult describeMirrors(Collection<String> mirrorNames, DescribeMirrorsOptions options) {
+        return delegate.describeMirrors(mirrorNames, options);
+    }
 
     @Override
     public DescribeProducersResult describeProducers(Collection<TopicPartition> partitions, DescribeProducersOptions options) {
@@ -379,6 +382,11 @@ public class ForwardingAdmin implements Admin {
     @Override
     public ListGroupsResult listGroups(ListGroupsOptions options) {
         return delegate.listGroups(options);
+    }
+
+    @Override
+    public ListMirrorsResult listMirrors(ListMirrorsOptions options) {
+        return delegate.listMirrors(options);
     }
 
     @Override

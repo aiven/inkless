@@ -737,6 +737,13 @@ public class MockAdminClient extends AdminClient {
     }
 
     @Override
+    public synchronized ListMirrorsResult listMirrors(ListMirrorsOptions options) {
+        KafkaFutureImpl<Collection<Object>> future = new KafkaFutureImpl<>();
+        future.complete(Collections.emptyList());
+        return new ListMirrorsResult(future);
+    }
+
+    @Override
     public synchronized DescribeConsumerGroupsResult describeConsumerGroups(Collection<String> groupIds, DescribeConsumerGroupsOptions options) {
         throw new UnsupportedOperationException("Not implemented yet");
     }
@@ -1383,6 +1390,23 @@ public class MockAdminClient extends AdminClient {
     @Override
     public RemoveTopicsFromMirrorResult removeTopicsFromMirror(String mirrorName, Set<String> topics, RemoveTopicsFromMirrorOptions options) {
         throw new UnsupportedOperationException("Not implemented yet");
+    }
+
+    @Override
+    public synchronized DescribeMirrorsResult describeMirrors(Collection<String> mirrorNames, DescribeMirrorsOptions options) {
+        Map<String, MirrorDescription> descriptions = new HashMap<>();
+        for (String mirrorName : mirrorNames) {
+            // Return empty description for mock
+            MirrorDescription description = new MirrorDescription(
+                mirrorName,
+                Collections.emptyMap(),
+                Collections.emptySet()
+            );
+            descriptions.put(mirrorName, description);
+        }
+        KafkaFutureImpl<Map<String, MirrorDescription>> future = new KafkaFutureImpl<>();
+        future.complete(descriptions);
+        return new DescribeMirrorsResult(future);
     }
 
     @Override
