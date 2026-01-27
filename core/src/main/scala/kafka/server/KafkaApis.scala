@@ -21,7 +21,7 @@ import kafka.coordinator.transaction.{InitProducerIdResult, TransactionCoordinat
 import kafka.network.RequestChannel
 import kafka.server.QuotaFactory.{QuotaManagers, UNBOUNDED_QUOTA}
 import kafka.server.handlers.DescribeTopicPartitionsRequestHandler
-import kafka.server.mirror.MirrorMetadataManager.MirroredPartitionMetadata
+import kafka.server.mirror.MirrorMetadataManager.MirrorPartitionMetadata
 import kafka.server.mirror.{MirrorCoordinator, MirrorPartitionState}
 import kafka.server.share.{ShareFetchUtils, SharePartitionManager}
 import kafka.utils.Logging
@@ -282,11 +282,11 @@ class KafkaApis(val requestChannel: RequestChannel,
     info("!!! writeMirrorStatesRequest:" + writeMirrorStatesRequest)
     val mirrorName = writeMirrorStatesRequest.data().mirrorName()
     val removedTopics = writeMirrorStatesRequest.data().removedTopics()
-    val partitionMetadata = new util.HashMap[String, util.Set[MirroredPartitionMetadata]]()
+    val partitionMetadata = new util.HashMap[String, util.Set[MirrorPartitionMetadata]]()
     writeMirrorStatesRequest.data().topicsUpdated().forEach(topic => {
-      val partMetadata = new util.HashSet[MirroredPartitionMetadata]()
+      val partMetadata = new util.HashSet[MirrorPartitionMetadata]()
       topic.partitions().forEach(part => {
-        partMetadata.add(new MirroredPartitionMetadata(part.partitionIndex(), MirrorPartitionState.fromValue(part.state()), part.lastMirroredOffset()))
+        partMetadata.add(new MirrorPartitionMetadata(part.partitionIndex(), MirrorPartitionState.fromValue(part.state()), part.lastMirroredOffset()))
       })
       partitionMetadata.put(topic.name(), partMetadata)
     })
