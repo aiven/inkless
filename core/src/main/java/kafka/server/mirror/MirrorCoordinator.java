@@ -122,9 +122,6 @@ public class MirrorCoordinator {
         this.metadataCache = metadataCache;
         this.time = time;
         this.mirrorMetadataManager = mirrorMetadataManager;
-        Transitioner transitioner = (mirrorName, tp, state) -> transitionTo(mirrorName, Set.of(tp), state);
-        this.mirrorMetadataManager.setTransitioner(transitioner);
-        this.mirrorMetadataManager.setKeyToPartition(key -> getPartitionIndexForKey(key));
     }
 
     /**
@@ -344,6 +341,10 @@ public class MirrorCoordinator {
             LOG.warn("MirrorCoordinator is already running.");
             return;
         }
+
+        Transitioner transitioner = (mirrorName, tp, state) -> transitionTo(mirrorName, Set.of(tp), state);
+        this.mirrorMetadataManager.setTransitioner(transitioner);
+        this.mirrorMetadataManager.setKeyToPartition(key -> getPartitionIndexForKey(key));
 
         LOG.info("Starting up.");
         scheduler.startup();

@@ -202,10 +202,6 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         this.metadataCache = metadataCache;
         this.channelManager = channelManager;
         this.groupCoordinatorSupplier = groupCoordinatorSupplier;
-
-        KafkaClient networkClient = NetworkUtils.buildNetworkClient("MirrorMetadataManager", config, metrics, time, new LogContext(name()));
-        this.interBrokerSender = new InterBrokerSender("mirror-inter-sender", networkClient, config.requestTimeoutMs(), Time.SYSTEM);
-        interBrokerSender.start();
     }
 
     /**
@@ -237,6 +233,12 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
      */
     @Override
     public void onMetadataUpdate(MetadataDelta delta, MetadataImage newImage, LoaderManifest manifest) {
+        if (interBrokerSender == null) {
+            KafkaClient networkClient = NetworkUtils.buildNetworkClient("MirrorMetadataManager", brokerConfig, metrics, time, new LogContext(name()));
+            this.interBrokerSender = new InterBrokerSender("mirror-inter-sender", networkClient, brokerConfig.requestTimeoutMs(), Time.SYSTEM);
+            interBrokerSender.start();
+        }
+
         this.metadataImage = newImage;
         if (delta.topicsDelta() != null && !delta.topicsDelta().localChanges(nodeId).readOnlyLeaders().isEmpty()) {
             LOG.info("!!! onMetadataUpdate: {}", delta.topicsDelta().localChanges(nodeId).readOnlyLeaders());
