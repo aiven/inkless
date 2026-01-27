@@ -165,6 +165,7 @@ public class MirrorCoordinator {
                 break;
             case FAILED:
                 LOG.info("!!! FAILED for topics {}.", topicPartitions);
+                // TODO: implement recovery actions (i.e. exponential backoff retry)
         }
     }
 
