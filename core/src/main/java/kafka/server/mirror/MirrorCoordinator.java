@@ -199,7 +199,7 @@ public class MirrorCoordinator {
     public void transitionTo(String mirrorName, TopicPartition topicPartition, MirrorPartitionState newState, boolean executeActions) {
         LOG.info("!!! Transitioning partition {} from {} to {}.", topicPartition,
                 mirrorMetadataManager.getMirrorPartitionState(mirrorName, topicPartition), newState);
-        updateMirrorPartitionStateMetadata(mirrorName, topicPartition, newState);
+        updateMirrorPartitionState(mirrorName, topicPartition, newState);
         if (executeActions) {
             handleStateTransition(mirrorName, Set.of(topicPartition.topic()), newState);
         }
@@ -231,7 +231,7 @@ public class MirrorCoordinator {
         updateLastMirroredOffsetsMetadata(mirrorName, partitionOffsets);
     }
 
-    public void updateMirrorPartitionStateMetadata(String mirrorName, TopicPartition topicPartition, MirrorPartitionState newState) {
+    public void updateMirrorPartitionState(String mirrorName, TopicPartition topicPartition, MirrorPartitionState newState) {
         var mirrorTopicPartition = new TopicPartition(Topic.MIRROR_STATE_TOPIC_NAME, getPartitionIndexForKey(new MirrorRecordKey(mirrorName)));
         var mirrorTopicIdPartition = replicaManager.topicIdPartition(mirrorTopicPartition);
         var record = generateMirrorPartitionState(mirrorName, topicPartition, newState);

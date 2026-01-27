@@ -911,7 +911,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     }
 
     /**
-     * Get all topic partitions for a given mirror along with their states.
+     * Get topic partitions for a given mirror along with their states.
      *
      * @param mirrorName the name of the cluster mirror
      * @return partition state map
