@@ -309,7 +309,7 @@ public class MirrorCoordinator {
                     RequestLocal.noCaching(),
                     CollectionConverters.asScala(Map.of())
             );
-            mirrorMetadataManager.updateMirrorPartitionStateCache(mirrorName, topicPartition, newState);
+            mirrorMetadataManager.updateMirrorPartitionState(mirrorName, topicPartition, newState);
             future.complete(Optional.of(topicPartition));
         } else {
             // write state data to remote coordinator
@@ -319,7 +319,7 @@ public class MirrorCoordinator {
                 res.data().topics().forEach(topic -> {
                     topic.partitions().forEach(par -> {
                         if (par.errorCode() == Errors.NONE.code()) {
-                            mirrorMetadataManager.updateMirrorPartitionStateCache(mirrorName, topicPartition, newState);
+                            mirrorMetadataManager.updateMirrorPartitionState(mirrorName, topicPartition, newState);
                              future.complete(Optional.of(topicPartition));
                         } else {
                             LOG.error("Failed to write partition state to remote coordinator: {}", par.errorCode());
@@ -414,7 +414,7 @@ public class MirrorCoordinator {
             // this is the leader of the coordinator
             var mirrorTopicIdPartition = replicaManager.topicIdPartition(mirrorTopicPartition);
 
-            var updatedOffsets = mirrorMetadataManager.updateLastMirroredOffsetsCache(mirrorName, partitionOffsets, Map.of());
+            var updatedOffsets = mirrorMetadataManager.updateLastMirroredOffsets(mirrorName, partitionOffsets, Map.of());
             var record = generateLastMirroredOffsets(mirrorName, lastMirroredOffsetsToCoordinatorRecords(updatedOffsets));
             var keyBytes = serde.serializeKey(record);
             var valueBytes = serde.serializeValue(record);
@@ -588,11 +588,11 @@ public class MirrorCoordinator {
                             } else if (version == CoordinatorRecordType.LAST_MIRRORED_OFFSETS.id()) {
                                 String clusterName = readMirrorNameFromKey(record.key());
                                 Map<String, Map<Integer, Long>> offsets = readLastMirroredOffsetsValue(record.value());
-                                mirrorMetadataManager.updateLastMirroredOffsetsCache(clusterName, offsets, Map.of());
+                                mirrorMetadataManager.updateLastMirroredOffsets(clusterName, offsets, Map.of());
                             } else if (version == CoordinatorRecordType.MIRROR_PARTITION_STATE.id()) {
                                 String clusterName = readMirrorNameFromKey(record.key());
                                 MirrorMetadataManager.MirroredPartitionStateRecordValue value = readMirroredPartitionStateValue(record.value());
-                                mirrorMetadataManager.updateMirrorPartitionStateCache(clusterName, new TopicPartition(value.topic(), value.partition()), value.state());
+                                mirrorMetadataManager.updateMirrorPartitionState(clusterName, new TopicPartition(value.topic(), value.partition()), value.state());
                             } else {
                                 throw new IllegalArgumentException("Unknown cluster mirror log key version " + version);
                             }
@@ -685,6 +685,10 @@ public class MirrorCoordinator {
      */
     public Map<TopicPartition, MirrorPartitionState> getMirrorPartitions(String mirrorName) {
         return mirrorMetadataManager.getMirrorPartitions(mirrorName);
+    }
+
+    public MirrorPartitionState getMirrorPartitionState(String mirrorName, TopicPartition topicPartition) {
+        return mirrorMetadataManager.getMirrorPartitionState(mirrorName, topicPartition);
     }
 
     /**

@@ -156,6 +156,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     private static final Logger LOG = LoggerFactory.getLogger(MirrorMetadataManager.class);
     private static final ResourcePatternFilter ANY_RESOURCE = new ResourcePatternFilter(ResourceType.ANY, null, PatternType.ANY);
     private static final AclBindingFilter ANY_RESOURCE_ACL = new AclBindingFilter(ANY_RESOURCE, AccessControlEntryFilter.ANY);
+    private static final String REMOVED_TOPIC_SUFFIX = ".removed";
 
     private final KafkaConfig brokerConfig;
     private final int nodeId;
@@ -253,7 +254,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                 LocalReplicaChanges.PartitionInfo info = entry.getValue();
                 boolean stopRequested;
                 String mirrorName = info.partition().mirrorName;
-                if (mirrorName.endsWith("*")) {
+                if (mirrorName.endsWith(REMOVED_TOPIC_SUFFIX)) {
                     stopRequested = true;
                     mirrorName = mirrorName.substring(0, mirrorName.length() - 1);
                 } else {
@@ -664,7 +665,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         return 0L;
     }
 
-    public void updateMirrorPartitionStateCache(String clusterName, TopicPartition topicPartition, MirrorPartitionState mirrorState) {
+    public void updateMirrorPartitionState(String clusterName, TopicPartition topicPartition, MirrorPartitionState mirrorState) {
         mirrorPartitionState.put(new MirroredPartitionKey(clusterName, topicPartition.topic(), topicPartition.partition()), mirrorState);
         topics.compute(clusterName, (key, oldVal) -> {
             if (oldVal == null) {
@@ -675,6 +676,16 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                 return newSet;
             }
         });
+    }
+
+    public MirrorPartitionState getMirrorPartitionState(String mirrorName, TopicPartition topicPartition) {
+        String updatedMirrorName = mirrorName;
+        if (mirrorName != null) {
+            if (mirrorName.endsWith(REMOVED_TOPIC_SUFFIX)) {
+                updatedMirrorName = mirrorName.substring(0, mirrorName.length() - 1);
+            }
+        }
+        return mirrorPartitionState.get(new MirroredPartitionKey(updatedMirrorName, topicPartition.topic(), topicPartition.partition()));
     }
 
     public void operateAll(MirrorCoordinator.StateTransitionCallback operator) {
@@ -714,9 +725,9 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
      * @param removedOffsets map of topic names to partition offsets to remove
      * @return the updated set of last mirrored offsets
      */
-    public Map<MirroredPartitionKey, Long> updateLastMirroredOffsetsCache(String clusterName,
-                                                                          Map<String, Map<Integer, Long>> addedOffsets,
-                                                                          Map<String, Map<Integer, Long>> removedOffsets) {
+    public Map<MirroredPartitionKey, Long> updateLastMirroredOffsets(String clusterName,
+                                                                     Map<String, Map<Integer, Long>> addedOffsets,
+                                                                     Map<String, Map<Integer, Long>> removedOffsets) {
         removedOffsets.forEach((topic, partitionOffsets) -> {
             partitionOffsets.forEach((partition, offset) -> {
                 lastMirroredOffsets.remove(new MirroredPartitionKey(clusterName, topic, partition));
@@ -768,16 +779,6 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                 mirroringCallbacks.remove(key);
             }
         });
-    }
-
-    public MirrorPartitionState getMirrorPartitionState(String clusterName, TopicPartition topicPartition) {
-        String updatedClusterName = clusterName;
-        if (clusterName != null) {
-            if (clusterName.endsWith("*")) {
-                updatedClusterName = clusterName.substring(0, clusterName.length() - 1);
-            }
-        }
-        return mirrorPartitionState.get(new MirroredPartitionKey(updatedClusterName, topicPartition.topic(), topicPartition.partition()));
     }
 
     /**

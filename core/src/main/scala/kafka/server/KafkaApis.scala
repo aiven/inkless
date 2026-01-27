@@ -404,35 +404,35 @@ class KafkaApis(val requestChannel: RequestChannel,
           .setMirrorName(mirrorName)
           .setErrorCode(Errors.NONE.code)
 
-        // Get all partitions for this mirror from metadata manager
-        val mirrorPartitions = mirrorCoordinator.getMirrorPartitions(mirrorName).asScala
-
         // Get lag information from mirror fetcher manager (only for partitions being actively fetched)
         val lagInfoMap = replicaManager.getMirrorLagInfo(mirrorName)
 
         // Group partitions by topic
         val topicsMap = scala.collection.mutable.Map[String, DescribeMirrorsResponseData.TopicPartitions]()
 
-        // Process all partitions from metadata manager
-        mirrorPartitions.foreach { case (topicPartition, partitionState) =>
-          val topicName = topicPartition.topic()
-          val topicPartitions = topicsMap.getOrElseUpdate(topicName, {
-            val tp = new DescribeMirrorsResponseData.TopicPartitions().setTopicName(topicName)
-            tp.setPartitions(new util.ArrayList[DescribeMirrorsResponseData.PartitionDetail]())
-            tp
-          })
+        // Only return partitions that this broker is actively managing (has lag info for).
+        // This prevents duplicate entries when AdminClient queries multiple brokers.
+        lagInfoMap.foreach { case (topicPartition, lagInfo) =>
+          // Get the state for this partition
+          val partitionState = mirrorCoordinator.getMirrorPartitionState(mirrorName, topicPartition)
 
-          // Try to get lag info, if available
-          val lagInfo = lagInfoMap.get(topicPartition)
+          if (partitionState != null) {
+            val topicName = topicPartition.topic()
+            val topicPartitions = topicsMap.getOrElseUpdate(topicName, {
+              val tp = new DescribeMirrorsResponseData.TopicPartitions().setTopicName(topicName)
+              tp.setPartitions(new util.ArrayList[DescribeMirrorsResponseData.PartitionDetail]())
+              tp
+            })
 
-          val partitionDetail = new DescribeMirrorsResponseData.PartitionDetail()
-            .setPartitionIndex(topicPartition.partition())
-            .setSourceOffset(lagInfo.map(_.sourceOffset).getOrElse(-1L))
-            .setDestinationOffset(lagInfo.map(_.destinationOffset).getOrElse(-1L))
-            .setLag(lagInfo.map(_.lag).getOrElse(-1L))
-            .setState(partitionState.name())
+            val partitionDetail = new DescribeMirrorsResponseData.PartitionDetail()
+              .setPartitionIndex(topicPartition.partition())
+              .setSourceOffset(lagInfo.sourceOffset)
+              .setDestinationOffset(lagInfo.destinationOffset)
+              .setLag(lagInfo.lag)
+              .setState(partitionState.name())
 
-          topicPartitions.partitions().add(partitionDetail)
+            topicPartitions.partitions().add(partitionDetail)
+          }
         }
 
         val topicsList = new util.ArrayList[DescribeMirrorsResponseData.TopicPartitions]()
