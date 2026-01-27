@@ -21,8 +21,6 @@
   "validVersions": "0",
   "flexibleVersions": "0+",
   "fields": [
-    { "name": "MirrorName", "type": "string", "versions": "0+", "ignorable": true,
-      "about": "The cluster mirror name." },
     { "name": "Topics", "type": "[]TopicState", "versions": "0+", "about": "The topic state.",
       "fields": [
         { "name": "TopicId", "type": "uuid", "versions": "0+", "about": "The unique topic ID."},

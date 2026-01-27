@@ -262,7 +262,7 @@ public abstract class MirrorCommand {
 
                 // Remove all matching topics from the mirror
                 RemoveTopicsFromMirrorResult removeTopicsFromMirrorResult = admin.removeTopicsFromMirror(
-                    mirrorName, matchingTopics, new RemoveTopicsFromMirrorOptions());
+                    matchingTopics, new RemoveTopicsFromMirrorOptions());
                 removeTopicsFromMirrorResult.all().get();
                 System.out.printf("Successfully removed %d topic(s) from mirror %s%n", matchingTopics.size(), mirrorName);
             }

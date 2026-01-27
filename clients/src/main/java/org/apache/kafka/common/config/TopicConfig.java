@@ -222,8 +222,6 @@ public class TopicConfig {
     public static final String MIRROR_NAME_CONFIG = "mirror.name";
     public static final String MIRROR_NAME_DOC = "The mirror name for this topic.";
 
-
-
     /**
      * @deprecated down-conversion is not possible in Apache Kafka 4.0 and newer, hence this configuration is a no-op,
      *             and it is deprecated for removal in Apache Kafka 5.0.

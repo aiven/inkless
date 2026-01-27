@@ -430,8 +430,8 @@ public class TestingMetricsInterceptingAdminClient extends AdminClient {
     }
 
     @Override
-    public RemoveTopicsFromMirrorResult removeTopicsFromMirror(final String mirrorName, final Set<String> topics, final RemoveTopicsFromMirrorOptions options) {
-        return adminDelegate.removeTopicsFromMirror(mirrorName, topics, options);
+    public RemoveTopicsFromMirrorResult removeTopicsFromMirror(final Set<String> topics, final RemoveTopicsFromMirrorOptions options) {
+        return adminDelegate.removeTopicsFromMirror(topics, options);
     }
 
     @Override

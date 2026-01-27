@@ -1381,7 +1381,7 @@ public class MockAdminClient extends AdminClient {
     }
 
     @Override
-    public RemoveTopicsFromMirrorResult removeTopicsFromMirror(String mirrorName, Set<String> topics, RemoveTopicsFromMirrorOptions options) {
+    public RemoveTopicsFromMirrorResult removeTopicsFromMirror(Set<String> topics, RemoveTopicsFromMirrorOptions options) {
         throw new UnsupportedOperationException("Not implemented yet");
     }
 

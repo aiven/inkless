@@ -20,18 +20,23 @@ package org.apache.kafka.controller;
 import org.apache.kafka.clients.admin.AlterConfigOp.OpType;
 import org.apache.kafka.clients.admin.ConfigEntry;
 import org.apache.kafka.clients.admin.FeatureUpdate;
+import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.config.ConfigException;
 import org.apache.kafka.common.config.ConfigResource;
 import org.apache.kafka.common.config.ConfigResource.Type;
 import org.apache.kafka.common.config.TopicConfig;
 import org.apache.kafka.common.config.types.Password;
+import org.apache.kafka.common.message.AddTopicsToMirrorResponseData;
 import org.apache.kafka.common.message.CreateMirrorResponseData;
+import org.apache.kafka.common.message.RemoveTopicsFromMirrorRequestData;
+import org.apache.kafka.common.message.RemoveTopicsFromMirrorResponseData;
 import org.apache.kafka.common.metadata.ClearElrRecord;
 import org.apache.kafka.common.metadata.ConfigRecord;
 import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.requests.ApiError;
 import org.apache.kafka.common.utils.LogContext;
 import org.apache.kafka.metadata.KafkaConfigSchema;
+import org.apache.kafka.metadata.PartitionRegistration;
 import org.apache.kafka.server.common.ApiMessageAndVersion;
 import org.apache.kafka.server.common.EligibleLeaderReplicasVersion;
 import org.apache.kafka.server.mutable.BoundedList;
@@ -43,6 +48,7 @@ import org.apache.kafka.timeline.TimelineHashSet;
 
 import org.slf4j.Logger;
 
+import java.util.AbstractMap;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
@@ -52,9 +58,11 @@ import java.util.Map.Entry;
 import java.util.NoSuchElementException;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.function.Consumer;
 
 import static org.apache.kafka.clients.admin.AlterConfigOp.OpType.APPEND;
+import static org.apache.kafka.clients.admin.AlterConfigOp.OpType.SET;
 import static org.apache.kafka.common.config.ConfigResource.Type.BROKER;
 import static org.apache.kafka.common.config.TopicConfig.MIN_IN_SYNC_REPLICAS_CONFIG;
 import static org.apache.kafka.common.config.TopicConfig.UNCLEAN_LEADER_ELECTION_ENABLE_CONFIG;
@@ -212,6 +220,91 @@ public class ConfigurationControlManager {
         }
         outputRecords.addAll(createClearElrRecordsAsNeeded(outputRecords));
         return ControllerResult.atomicOf(outputRecords, outputResults);
+    }
+
+    ControllerResult<RemoveTopicsFromMirrorResponseData> removeTopicsFromMirror(Set<String> topics) {
+        List<ApiMessageAndVersion> records = BoundedList.newArrayBacked(MAX_RECORDS_PER_USER_OP);
+        RemoveTopicsFromMirrorResponseData data = new RemoveTopicsFromMirrorResponseData();
+        List<RemoveTopicsFromMirrorResponseData.TopicResponse> topicResList = new ArrayList<>();
+        for (String topic : topics) {
+            String mirrorNameConfig = TopicConfig.MIRROR_NAME_CONFIG;
+
+            RemoveTopicsFromMirrorResponseData.TopicResponse topicRes = new RemoveTopicsFromMirrorResponseData.TopicResponse();
+
+            ConfigResource configResource = new ConfigResource(Type.TOPIC, topic);
+
+            TimelineHashMap<String, String> currentConfigs = configData.get(configResource);
+            String curVal;
+            if (currentConfigs == null) {
+                topicRes.setErrorCode(Errors.INVALID_REQUEST.code());
+            } else {
+                curVal = currentConfigs.get(mirrorNameConfig);
+                log.info("!!! curVal: {} for topic: {}", curVal, topic);
+                // Verify the current value should not be empty
+                if (curVal == null || curVal.isBlank()) {
+                    topicRes.setErrorCode(Errors.INVALID_REQUEST.code());
+                    continue;
+                }
+
+                // decide if we should clear the mirror name or append a stopped symbol
+                String newMirrorName = curVal.endsWith("*") ? "" : curVal + "*" ;
+                Map<String, Entry<OpType, String>> keyToOps = Map.of(mirrorNameConfig, new AbstractMap.SimpleImmutableEntry<>(SET, newMirrorName));
+
+                ControllerResult<ApiError> configResult = incrementalAlterConfig(configResource, keyToOps, true);
+                if (configResult.response().isFailure()) {
+                    topicRes.setErrorCode(configResult.response().error().code());
+                    continue;
+                }
+
+                records.addAll(configResult.records());
+                topicRes.setName(topic);
+                topicResList.add(topicRes);
+            }
+        }
+        data.setTopics(topicResList);
+
+        return ControllerResult.of(records, data);
+    }
+
+    ControllerResult<AddTopicsToMirrorResponseData> addTopicsToMirror(Map<String, String> topicToMirrorName) {
+        List<ApiMessageAndVersion> records = BoundedList.newArrayBacked(MAX_RECORDS_PER_USER_OP);
+        AddTopicsToMirrorResponseData data = new AddTopicsToMirrorResponseData();
+        List<AddTopicsToMirrorResponseData.TopicResponse> topicResList = new ArrayList<>();
+        for (Entry<String, String> topicIdToMirrorName : topicToMirrorName.entrySet()) {
+            String topic = topicIdToMirrorName.getKey();
+            String mirrorName = topicIdToMirrorName.getValue();
+            String mirrorNameConfig = TopicConfig.MIRROR_NAME_CONFIG;
+
+            AddTopicsToMirrorResponseData.TopicResponse topicRes = new AddTopicsToMirrorResponseData.TopicResponse();
+
+            ConfigResource configResource = new ConfigResource(Type.TOPIC, topic);
+
+            TimelineHashMap<String, String> currentConfigs = configData.get(configResource);
+            if (currentConfigs != null) {
+                String curVal = currentConfigs.get(mirrorNameConfig);
+                log.info("!!! curVal: {} for topic: {}", curVal, topic);
+                // Verify the current value should be empty
+                if (curVal != null && !curVal.isBlank()) {
+                    topicRes.setErrorCode(Errors.INVALID_REQUEST.code());
+                    continue;
+                }
+            }
+
+            Map<String, Entry<OpType, String>> keyToOps = Map.of(mirrorNameConfig, new AbstractMap.SimpleImmutableEntry<>(SET, mirrorName));
+
+            ControllerResult<ApiError> configResult = incrementalAlterConfig(configResource, keyToOps, true);
+            if (configResult.response().isFailure()) {
+                topicRes.setErrorCode(configResult.response().error().code());
+                continue;
+            }
+
+            records.addAll(configResult.records());
+            topicRes.setName(topic);
+            topicResList.add(topicRes);
+        }
+        data.setTopics(topicResList);
+
+        return ControllerResult.of(records, data);
     }
 
     ControllerResult<CreateMirrorResponseData> addMirrorConfig(
