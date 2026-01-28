@@ -19,6 +19,7 @@ package kafka.server.mirror;
 import kafka.server.KafkaConfig;
 import kafka.server.ReplicaManager;
 
+import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.compress.Compression;
 import org.apache.kafka.common.internals.Topic;
@@ -30,6 +31,7 @@ import org.apache.kafka.common.record.FileRecords;
 import org.apache.kafka.common.record.MemoryRecords;
 import org.apache.kafka.common.record.MutableRecordBatch;
 import org.apache.kafka.common.record.SimpleRecord;
+import org.apache.kafka.common.requests.ProduceResponse;
 import org.apache.kafka.common.requests.ReadMirrorStatesResponse;
 import org.apache.kafka.common.requests.WriteMirrorStatesResponse;
 import org.apache.kafka.common.utils.Time;
@@ -207,7 +209,15 @@ public class MirrorCoordinator {
             if (isValidTransition(mirrorMetadataManager.getMirrorPartitionState(mirrorName, tp), newState)) {
                 LOG.info("!!! Transitioning {} to {} for partition {}.", mirrorMetadataManager.getMirrorPartitionState(mirrorName, tp), newState, tp);
                 updateMirrorPartitionState(mirrorName, tp, newState)
-                        .whenComplete((optTp, ex) -> optTp.ifPresent(tp1 -> handleStateTransition(mirrorName, Set.of(tp1), newState)));
+                        .whenComplete((optTp, ex) -> {
+                            if (ex != null) {
+                                LOG.error("Failed to update partition state for {}: {}, retrying", tp, ex.getMessage());
+                                scheduler.scheduleOnce("retrying writing records", () -> updateMirrorPartitionState(mirrorName, tp, newState), 100);
+                            } else {
+                                // successfully writes data into internal log
+                                optTp.ifPresent(tp1 -> handleStateTransition(mirrorName, Set.of(tp1), newState));
+                            }
+                        });
             } else {
                 LOG.info("!!! Skipping transition {} to {} for partition {}.", mirrorMetadataManager.getMirrorPartitionState(mirrorName, tp), newState, tp);
             }
@@ -305,13 +315,26 @@ public class MirrorCoordinator {
                     true,
                     AppendOrigin.COORDINATOR,
                     CollectionConverters.asScala(Map.of(mirrorTopicIdPartition, memRecord)),
-                    ignored -> null,
+                    partitionResponses -> {
+                        partitionResponses.foreach(partitionRes -> {
+                            TopicIdPartition tpid = partitionRes._1;
+                            ProduceResponse.PartitionResponse pr = partitionRes._2;
+                            if (pr.error.code() != Errors.NONE.code()) {
+                                LOG.error("Failed to write partition state to coordinator: {}", pr.error.message());
+                                future.completeExceptionally(pr.error.exception());
+                            } else {
+                                mirrorMetadataManager.updateMirrorPartitionState(mirrorName, topicPartition, newState);
+                                future.complete(Optional.of(tpid.topicPartition()));
+                            }
+                            return null;
+                        });
+                        return null;
+                    },
                     ignored -> null,
                     RequestLocal.noCaching(),
                     CollectionConverters.asScala(Map.of())
             );
-            mirrorMetadataManager.updateMirrorPartitionState(mirrorName, topicPartition, newState);
-            future.complete(Optional.of(topicPartition));
+
         } else {
             // write state data to remote coordinator
             Map<String, Set<MirrorMetadataManager.MirrorPartitionMetadata>> topicMetadata =
