@@ -168,6 +168,10 @@ public class MirrorCoordinator {
             case FAILED:
                 LOG.info("!!! FAILED for topics {}.", topicPartitions);
                 // TODO: implement recovery actions (i.e. exponential backoff retry)
+                break;
+            default:
+                LOG.error("Illegal state transition to " + newState);
+                throw new IllegalArgumentException("Illegal state transition to " + newState);
         }
     }
 

@@ -33,23 +33,19 @@ class InterBrokerSender extends InterBrokerSendThread {
     }
 
     public void enqueue(RequestAndCompletionHandler requestAndCompletionHandler) {
-        synchronized (queue) {
-            queue.offer(requestAndCompletionHandler);
-        }
+        queue.offer(requestAndCompletionHandler);
         wakeup();
     }
 
     @Override
     public Collection<RequestAndCompletionHandler> generateRequests() {
-        synchronized (queue) {
-            if (!queue.isEmpty()) {
-                List<RequestAndCompletionHandler> requests = new ArrayList<>();
-                while (queue.peek() != null) {
-                    var requestAndCompletionHandler = queue.poll();
-                    requests.add(requestAndCompletionHandler);
-                }
-                return requests;
+        if (!queue.isEmpty()) {
+            List<RequestAndCompletionHandler> requests = new ArrayList<>();
+            while (queue.peek() != null) {
+                var requestAndCompletionHandler = queue.poll();
+                requests.add(requestAndCompletionHandler);
             }
+            return requests;
         }
         return List.of();
     }
