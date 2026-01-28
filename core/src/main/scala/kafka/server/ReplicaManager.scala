@@ -2419,20 +2419,6 @@ class ReplicaManager(val config: KafkaConfig,
         if (!localChanges.followers.isEmpty) {
           applyLocalFollowersDelta(followerChangedPartitions, newImage, delta, lazyOffsetCheckpoints, localChanges.followers.asScala, localChanges.directoryIds.asScala)
         }
-//        // Handle read-only leaders: these are leaders (already processed above) that also need
-//        // to start MirrorFetcherThreads to fetch from the source cluster
-//
-//        // luke
-//        val readOnlyLeaders = localChanges.leaders().entrySet().stream().filter((entry: java.util.Map.Entry[TopicPartition, LocalReplicaChanges.PartitionInfo]) =>
-//          newImage.configs().configProperties(new ConfigResource(ConfigResource.Type.TOPIC, entry.getKey.topic())).containsKey(TopicConfig.MIRROR_NAME_CONFIG) &&
-//          newImage.configs().configProperties(new ConfigResource(ConfigResource.Type.TOPIC, entry.getKey.topic())).get(TopicConfig.MIRROR_NAME_CONFIG).asInstanceOf[String].nonEmpty)
-//          .collect(Collectors.toMap((entry: java.util.Map.Entry[TopicPartition, LocalReplicaChanges.PartitionInfo]) => entry.getKey, (entry: java.util.Map.Entry[TopicPartition, LocalReplicaChanges.PartitionInfo]) => entry.getValue))
-//        logger.info(s"!!! readonlyLeaders: ${readOnlyLeaders.keySet()} ;; ${localChanges.leaders().entrySet()} ;; ${newImage.configs().configProperties(new ConfigResource(ConfigResource.Type.TOPIC, "quickstart-events"))} ;; ${metadataCache.config(new ConfigResource(ConfigResource.Type.TOPIC, "quickstart-events"))}")
-//
-//        if (!readOnlyLeaders.isEmpty) {
-//          // wait until the state entering MIRRORING state and then start fetching
-//          mirrorMetadataManager.get.registerMirroringCallback(readOnlyLeaders, mirroringLeaders => maybeCreateMirrorFetchers(mirroringLeaders.asScala))
-//        }
 
         maybeAddLogDirFetchers(leaderChangedPartitions ++ followerChangedPartitions, lazyOffsetCheckpoints,
           name => Option(newImage.topics().getTopic(name)).map(_.id()))
