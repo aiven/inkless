@@ -39,7 +39,7 @@ public final class LocalReplicaChanges {
     // partitions for which directory id changes or newly added to the broker
     private final Map<TopicIdPartition, Uuid> directoryIds;
     // partitions that are read only and mirroring from a remote leader
-    private final Map<TopicPartition, PartitionInfo> readOnlyLeaders;
+    private final Map<TopicPartition, PartitionInfo> mirrorLeaders;
 
     LocalReplicaChanges(
         Set<TopicPartition> deletes,
@@ -48,7 +48,7 @@ public final class LocalReplicaChanges {
         Map<TopicPartition, PartitionInfo> followers,
         Map<String, Uuid> topicIds,
         Map<TopicIdPartition, Uuid> directoryIds,
-        Map<TopicPartition, PartitionInfo> readOnlyLeaders
+        Map<TopicPartition, PartitionInfo> mirrorLeaders
     ) {
         this.deletes = deletes;
         this.electedLeaders = electedLeaders;
@@ -56,7 +56,7 @@ public final class LocalReplicaChanges {
         this.followers = followers;
         this.topicIds = topicIds;
         this.directoryIds = directoryIds;
-        this.readOnlyLeaders = readOnlyLeaders;
+        this.mirrorLeaders = mirrorLeaders;
     }
 
     public Set<TopicPartition> deletes() {
@@ -83,21 +83,21 @@ public final class LocalReplicaChanges {
         return directoryIds;
     }
 
-    public Map<TopicPartition, PartitionInfo> readOnlyLeaders() {
-        return readOnlyLeaders;
+    public Map<TopicPartition, PartitionInfo> mirrorLeaders() {
+        return mirrorLeaders;
     }
 
     @Override
     public String toString() {
         return String.format(
-            "LocalReplicaChanges(deletes = %s, newly elected leaders = %s, leaders = %s, followers = %s, topicIds = %s, directoryIds = %s, remoteLeaderss = %s)",
+            "LocalReplicaChanges(deletes = %s, newly elected leaders = %s, leaders = %s, followers = %s, topicIds = %s, directoryIds = %s, mirrorLeaders = %s)",
             deletes,
             electedLeaders,
             leaders,
             followers,
             topicIds,
             directoryIds,
-            readOnlyLeaders
+            mirrorLeaders
         );
     }
 

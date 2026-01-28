@@ -249,7 +249,7 @@ public final class TopicsDelta {
             followers.putAll(changes.followers());
             topicIds.putAll(changes.topicIds());
             directoryIds.putAll(changes.directoryIds());
-            readOnlyLeaders.putAll(changes.readOnlyLeaders());
+            readOnlyLeaders.putAll(changes.mirrorLeaders());
         }
 
         // Add all of the removed topic partitions to the set of locally removed partitions

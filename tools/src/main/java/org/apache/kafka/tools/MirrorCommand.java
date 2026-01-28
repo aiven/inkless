@@ -201,8 +201,8 @@ public abstract class MirrorCommand {
                 }
             }
 
-            Node node = findCoordinator(mirrorName);
-            String bootstrapServer = node.host() + ":" + node.port();
+            Node coordinatorNode = findCoordinator(mirrorName);
+            String bootstrapServer = coordinatorNode.host() + ":" + coordinatorNode.port();
 
             try (Admin admin = createAdminClient(Optional.of(bootstrapServer), commandConfig)) {
                 // Prepare all NewTopic objects for batch creation
@@ -233,7 +233,6 @@ public abstract class MirrorCommand {
                     try {
                         createResult.values().get(topicName).get();
                         createdTopics.add(topicName);
-
                     } catch (ExecutionException e) {
                         if (!(e.getCause() instanceof TopicExistsException)) {
                             System.err.printf("Failed to add topic %s: %s%n", topicName, e.getCause().getMessage());
@@ -248,11 +247,10 @@ public abstract class MirrorCommand {
                         createdTopics.size(), mirrorName, createdTopics);
                 }
 
-                // We should return error and let the command retry if the topic metadata is not propagated to brokers
-                // right now, we sleep 1 sec
+                // TODO: We should return error and let the command retry if the topic metadata is not propagated to brokers. Right now, we sleep 1 sec
                 Thread.sleep(1000);
                 AddTopicsToMirrorResult addResult = admin.addTopicsToMirror(
-                        node.id(), existingTopics, new AddTopicsToMirrorOptions());
+                        coordinatorNode.id(), existingTopics, new AddTopicsToMirrorOptions());
                 addResult.all().get();
                 System.out.printf("Successfully added %s existing topic(s) to mirror %s%n",
                         existingTopics, mirrorName);

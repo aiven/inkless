@@ -164,7 +164,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     // Mapping from remote bootstrap servers to its corresponding broker sender and topics.
     // TODO: A better key might be a cluster id or cluster-mirror. For now, we use remote bootstrap servers for demo.
     private final Map<String, List<MirrorBlockingSender>> remoteBrokers;
-    private final Map<String, Set<String>> topics;
+    private final Map<String, Set<String>> mirrorTopics;
     private final Map<String, Map<Integer, Node>> remoteClusterNodes;
     private final Map<String, Map<TopicPartition, Node>> remotePartitionLeaders;
     private final Metrics metrics;
@@ -181,7 +181,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     private InterBrokerSender interBrokerSender;
     private Optional<StateTransitioner> stateTransitioner = Optional.empty();
     private Optional<Function<MirrorRecordKey, Integer>> coordinatingPartFinder = Optional.empty();
-    private Map<TopicPartition, LocalReplicaChanges.PartitionInfo> previousReadOnlyLeaders = Collections.emptyMap();
+    private Map<TopicPartition, LocalReplicaChanges.PartitionInfo> previousMirrorLeaders = Collections.emptyMap();
 
     public MirrorMetadataManager(
         KafkaConfig config,
@@ -194,7 +194,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         this.brokerConfig = config;
         this.nodeId = config.nodeId();
         this.remoteBrokers = new HashMap<>();
-        this.topics = new HashMap<>();
+        this.mirrorTopics = new HashMap<>();
         this.remoteClusterNodes = new HashMap<>();
         this.remotePartitionLeaders = new HashMap<>();
         this.metrics = metrics;
@@ -216,13 +216,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         return "MirrorMetadataManager(id=" + brokerConfig.nodeId() + ")";
     }
 
-    /**
-     * Check whether this broker is coordinating the mirror or not.
-     *
-     * @param mirrorName mirror name
-     * @return true if this broker is coordinating the mirror
-     */
-    private boolean hasLocalCoordinator(String mirrorName) {
+    private boolean isLocalCoordinator(String mirrorName) {
         if (coordinatingPartFinder.isPresent()) {
             int activeCoordinator = metadataImage.topics().getTopic(MIRROR_STATE_TOPIC_NAME)
                     .partitions().get(coordinatingPartFinder.get().apply(new MirrorRecordKey(mirrorName))).leader;
@@ -243,15 +237,15 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     public void onMetadataUpdate(MetadataDelta delta, MetadataImage newImage, LoaderManifest manifest) {
         if (interBrokerSender == null) {
             KafkaClient networkClient = NetworkUtils.buildNetworkClient("MirrorMetadataManager", brokerConfig, metrics, time, new LogContext(name()));
-            this.interBrokerSender = new InterBrokerSender("mirror-inter-sender", networkClient, brokerConfig.requestTimeoutMs(), Time.SYSTEM);
+            interBrokerSender = new InterBrokerSender("mirror-inter-broker-sender", networkClient, brokerConfig.requestTimeoutMs(), Time.SYSTEM);
             interBrokerSender.start();
         }
 
         this.metadataImage = newImage;
-        // we act only on partitions this broker leads
-        if (delta.topicsDelta() != null && !delta.topicsDelta().localChanges(nodeId).readOnlyLeaders().isEmpty()) {
-            LOG.info("!!! onMetadataUpdate: {}", delta.topicsDelta().localChanges(nodeId).readOnlyLeaders());
-            delta.topicsDelta().localChanges(nodeId).readOnlyLeaders().entrySet().forEach(entry -> {
+        // we act only on mirror partitions that this broker leads
+        if (delta.topicsDelta() != null && !delta.topicsDelta().localChanges(nodeId).mirrorLeaders().isEmpty()) {
+            LOG.info("!!! onMetadataUpdate: {}", delta.topicsDelta().localChanges(nodeId).mirrorLeaders());
+            delta.topicsDelta().localChanges(nodeId).mirrorLeaders().entrySet().forEach(entry -> {
                 TopicPartition tp = entry.getKey();
                 LocalReplicaChanges.PartitionInfo info = entry.getValue();
                 boolean stopRequested;
@@ -263,7 +257,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                     stopRequested = false;
                 }
                 MirrorPartitionKey key = new MirrorPartitionKey(mirrorName, tp.topic(), tp.partition());
-                if (hasLocalCoordinator(key.mirrorName) && mirrorPartitionState.containsKey(key)) {
+                if (isLocalCoordinator(key.mirrorName) && mirrorPartitionState.containsKey(key)) {
                     stateTransitioner.ifPresent(t -> {
                         if (stopRequested && mirrorPartitionState.get(key) != MirrorPartitionState.STOPPED) {
                             t.transitionTo(key.mirrorName, tp, MirrorPartitionState.STOPPING);
@@ -303,23 +297,23 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                 }
             });
 
-            cleanFollowersState(delta.topicsDelta().localChanges(nodeId).readOnlyLeaders());
+            cleanFollowersState(delta.topicsDelta().localChanges(nodeId).mirrorLeaders());
         }
     }
 
     // luke
-    private void cleanFollowersState(Map<TopicPartition, LocalReplicaChanges.PartitionInfo> readOnlyLeaders) {
-        Set<TopicPartition> removedLeaders = new HashSet<>(previousReadOnlyLeaders.keySet());
-        removedLeaders.removeAll(readOnlyLeaders.keySet());
+    private void cleanFollowersState(Map<TopicPartition, LocalReplicaChanges.PartitionInfo> mirrorLeaders) {
+        Set<TopicPartition> removedLeaders = new HashSet<>(previousMirrorLeaders.keySet());
+        removedLeaders.removeAll(mirrorLeaders.keySet());
         removedLeaders.forEach(oldLeaderTp -> {
-            MirrorPartitionKey key = new MirrorPartitionKey(previousReadOnlyLeaders.get(oldLeaderTp)
+            MirrorPartitionKey key = new MirrorPartitionKey(previousMirrorLeaders.get(oldLeaderTp)
                     .partition().mirrorName, oldLeaderTp.topic(), oldLeaderTp.partition());
             mirrorPartitionState.remove(key);
             lastMirroredOffsets.remove(key);
             mirroringCallbacks.remove(key);
         });
 
-        previousReadOnlyLeaders = readOnlyLeaders;
+        previousMirrorLeaders = mirrorLeaders;
     }
 
     /**
@@ -456,7 +450,6 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                 return;
             }
         }
-        coordinatorNodes.put(mirrorName, coordinatorNode);
 
         ReadMirrorStatesRequestData data = new ReadMirrorStatesRequestData().setMirrorName(mirrorName);
         List<ReadMirrorStatesRequestData.TopicState> topicStates = new ArrayList<>();
@@ -493,7 +486,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                                 if (partition.state() != -1) {
                                     mirrorPartitionState.put(new MirrorPartitionKey(mirrorName, topic.name(), partition.partitionIndex()), MirrorPartitionState.fromValue(partition.state()));
                                 }
-                                topics.compute(mirrorName, (key, oldVal) -> {
+                                mirrorTopics.compute(mirrorName, (key, oldVal) -> {
                                     if (oldVal == null) {
                                         return Set.of(topic.name());
                                     } else {
@@ -621,7 +614,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         // No cached metadata.
         // Refresh synchronously to get correct broker IDs before creating fetcher threads.
         LOG.info("No cached metadata for mirror {} partition {}. Refreshing metadata from remote cluster.", mirrorName, tp);
-        topics.compute(mirrorName, (k, preV) -> {
+        mirrorTopics.compute(mirrorName, (k, preV) -> {
             Set<String> sets;
             if (preV == null) {
                 sets = new ConcurrentSkipListSet<>();
@@ -669,10 +662,10 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
      * @return the updated set of mirror topics
      */
     public Set<String> updateMirrorTopics(String clusterName, Set<String> addedTopics, Set<String> removedTopics) {
-        Set<String> mutableTopics = new HashSet<>(this.topics.getOrDefault(clusterName, Set.of()));
+        Set<String> mutableTopics = new HashSet<>(this.mirrorTopics.getOrDefault(clusterName, Set.of()));
         mutableTopics.removeAll(removedTopics);
         mutableTopics.addAll(addedTopics);
-        this.topics.put(clusterName, mutableTopics);
+        this.mirrorTopics.put(clusterName, mutableTopics);
         return mutableTopics;
     }
 
@@ -686,7 +679,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
 
     public void updateMirrorPartitionState(String clusterName, TopicPartition topicPartition, MirrorPartitionState mirrorState) {
         mirrorPartitionState.put(new MirrorPartitionKey(clusterName, topicPartition.topic(), topicPartition.partition()), mirrorState);
-        topics.compute(clusterName, (key, oldVal) -> {
+        mirrorTopics.compute(clusterName, (key, oldVal) -> {
             if (oldVal == null) {
                 return Set.of(topicPartition.topic());
             } else {
@@ -806,14 +799,14 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
      * Called periodically by the scheduler to keep clusters in sync.
      */
     public void refreshMetadata() {
-        if (!topics.isEmpty()) {
-            LOG.info("!!! Refreshing mirror metadata for topics:" + topics);
+        if (!mirrorTopics.isEmpty()) {
+            LOG.info("!!! Refreshing mirror metadata for topics:" + mirrorTopics);
         }
 
         checkMirrorConnections();
 
         remoteBrokers.forEach((mirrorName, senders) -> {
-            if (hasLocalCoordinator(mirrorName)) {
+            if (isLocalCoordinator(mirrorName)) {
                 syncTopicMetadata(mirrorName, senders);
                 syncTopicConfigurations(mirrorName, senders);
                 syncConsumerGroupOffsets(senders);
@@ -825,7 +818,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     private void checkMirrorConnections() {
         // make sure all mirror names has at least one connections ready
         // TODO: we should find another connection if it is not accessible
-        topics.keySet().forEach(mirrorName -> {
+        mirrorTopics.keySet().forEach(mirrorName -> {
             // create a connection for the mirrorName
             if (!remoteBrokers.containsKey(mirrorName)) {
                 createMirrorConnection(mirrorName);
@@ -869,7 +862,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     private void syncTopicMetadata(String mirrorName, List<MirrorBlockingSender> senders) {
         // get a random node in source cluster
         var response = getRandomSender(senders).sendRequest(
-            MetadataRequest.Builder.forTopicNames(topics.get(mirrorName).stream().toList(), false)
+            MetadataRequest.Builder.forTopicNames(mirrorTopics.get(mirrorName).stream().toList(), false)
         );
 
         if (response.responseBody() instanceof MetadataResponse metadataResponse) {
@@ -882,10 +875,10 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     }
 
     private void syncTopicConfigurations(String mirrorName, List<MirrorBlockingSender> senders) {
-        LOG.info("!!! Describing topic configs for topics: {}", topics);
+        LOG.info("!!! Describing topic configs for topics: {}", mirrorTopics);
 
         List<DescribeConfigsRequestData.DescribeConfigsResource> describeConfigsResources =
-            topics.get(mirrorName).stream()
+            mirrorTopics.get(mirrorName).stream()
                 .map(topic -> new DescribeConfigsRequestData.DescribeConfigsResource()
                     .setResourceType(ConfigResource.Type.TOPIC.id())
                     .setResourceName(topic))
@@ -956,7 +949,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
 
         describeConfigsRes.data().results().forEach(describeConfigResult -> {
             if (describeConfigResult.resourceType() == ConfigResource.Type.TOPIC.id() &&
-                topics.get(mirrorName).contains(describeConfigResult.resourceName())) {
+                mirrorTopics.get(mirrorName).contains(describeConfigResult.resourceName())) {
 
                 Properties props = metadataCache.topicConfig(describeConfigResult.resourceName());
                 Map<String, String> conChange = new HashMap<>();
@@ -1025,7 +1018,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         List<String> remoteTopicNamesDeleted = topicMetadataResp.stream()
                 .filter(topicMetadata -> topicMetadata.error() == Errors.UNKNOWN_TOPIC_OR_PARTITION)
                 .map(MetadataResponse.TopicMetadata::topic).toList();
-        topics.get(mirrorName).forEach(name -> {
+        mirrorTopics.get(mirrorName).forEach(name -> {
             if (remoteTopicNamesDeleted.contains(name)) {
                 LOG.info("!!! Detected topic {} deleted in remote cluster {}, removing it locally too", name, mirrorName);
                 // send a delete topic request to the controller
@@ -1037,7 +1030,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                 deletedTopics.add(name);
             }
         });
-        deletedTopics.forEach(name -> topics.get(mirrorName).remove(name));
+        deletedTopics.forEach(name -> mirrorTopics.get(mirrorName).remove(name));
     }
 
     private void syncConsumerGroupOffsets(List<MirrorBlockingSender> senders) {
@@ -1211,7 +1204,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
      * Returns mirror names managed by this node.
      */
     public Set<String> getMirrorNames() {
-        return new HashSet<>(topics.keySet());
+        return new HashSet<>(mirrorTopics.keySet());
     }
 
     /**
@@ -1248,7 +1241,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
      * Called when the broker resigns as leader for mirror state topic partitions.
      */
     public void clear() {
-        topics.clear();
+        mirrorTopics.clear();
         mirrorPartitionState.clear();
         remoteBrokers.clear();
     }
