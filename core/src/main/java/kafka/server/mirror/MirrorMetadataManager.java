@@ -242,16 +242,14 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     public void onMetadataUpdate(MetadataDelta delta, MetadataImage newImage, LoaderManifest manifest) {
         this.metadataImage = newImage;
 
-        if (delta.topicsDelta() == null && delta.configsDelta() == null) {
-            return;
-        } else if (delta.topicsDelta() == null && !hasTopicsWithMirrorNameChange(delta)) {
+        // get all mirror partition leaders on this node based on the delta.
+        Set<TopicPartition> mirrorLeaders = mirrorLeaders(delta, newImage);
+        if (mirrorLeaders.isEmpty()) {
             return;
         }
 
-        Set<TopicPartition> readOnlyLeaders = readOnlyLeaders(newImage);
-
-        LOG.info("!!! onMetadataUpdate: {}", readOnlyLeaders);
-        readOnlyLeaders.forEach(tp -> {
+        LOG.info("!!! onMetadataUpdate: {}", mirrorLeaders);
+        mirrorLeaders.forEach(tp -> {
             boolean movingToStopped;
             String mirrorName = (String) newImage.configs().configProperties(new ConfigResource(ConfigResource.Type.TOPIC, tp.topic())).get(TopicConfig.MIRROR_NAME_CONFIG);
             if (mirrorName.endsWith("*")) {
@@ -302,35 +300,55 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         });
     }
 
-    private boolean hasTopicsWithMirrorNameChange(MetadataDelta delta) {
-        return delta.configsDelta().changes().entrySet().stream().anyMatch(entry ->
-                        entry.getValue().changes().containsKey(TopicConfig.MIRROR_NAME_CONFIG) &&
-                                !entry.getValue().changes().get(TopicConfig.MIRROR_NAME_CONFIG).isEmpty());
-    }
+    /** get leaders with non-empty mirror name in this node
+     * Here, we care about:
+     *  1. new partition leader in topicsDelta that has `mirror.name` not empty
+     *  2. the config change in configsDelta contains the `mirror.name` setting from empty to non-empty
+     */
+    private Set<TopicPartition> mirrorLeaders(MetadataDelta delta, MetadataImage image) {
+        Set<TopicPartition> mirrorLeaderPartitions = new HashSet<>();
 
-
-    // get leaders with non-empty mirror name in this node
-    private Set<TopicPartition> readOnlyLeaders(MetadataImage image) {
-        Set<String> mirrorTopics = metadataCache.getAllTopics().stream().filter(topic -> {
-            Properties props = image.configs().configProperties(new ConfigResource(ConfigResource.Type.TOPIC, topic));
-            return props.containsKey(TopicConfig.MIRROR_NAME_CONFIG) && !props.getProperty(TopicConfig.MIRROR_NAME_CONFIG).isBlank();
-        }).collect(Collectors.toSet());
-
-        // get the leader partitions in this node
-        Set<TopicPartition> mirrorLeaders = new HashSet<>();
-        mirrorTopics.stream().forEach(topic -> {
-            metadataCache.numPartitions(topic).ifPresent(num -> {
-                for (int i = 0; i < num; i++) {
-                    TopicPartition tp = new TopicPartition(topic, i);
-                    metadataCache.getLeaderAndIsr(topic, i).ifPresent(leaderAndIsr -> {
-                        if (leaderAndIsr.leader() == nodeId) {
-                            mirrorLeaders.add(tp);
-                        }
-                    });
+        // leader partitions in (1)
+        if (delta.topicsDelta() != null) {
+            delta.topicsDelta().localChanges(nodeId).leaders().keySet().forEach(tp -> {
+                Properties props = image.configs().configProperties(new ConfigResource(ConfigResource.Type.TOPIC, tp.topic()));
+                if (props.containsKey(TopicConfig.MIRROR_NAME_CONFIG)) {
+                    String mirrorName = (String) props.get(TopicConfig.MIRROR_NAME_CONFIG);
+                    if (mirrorName != null && !mirrorName.isEmpty()) {
+                        mirrorLeaderPartitions.add(tp);
+                    }
                 }
             });
-        });
-        return mirrorLeaders;
+        }
+
+        // leader partitions in (2)
+        if (delta.configsDelta() != null) {
+            // get all resources containing the non-empty mirror name change
+            Map<ConfigResource, ConfigurationDelta> mirrorNameChanged = delta.configsDelta().changes().entrySet().stream().filter(entry ->
+                            entry.getValue().changes().containsKey(TopicConfig.MIRROR_NAME_CONFIG) &&
+                                    !entry.getValue().changes().get(TopicConfig.MIRROR_NAME_CONFIG).isEmpty())
+                    .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
+
+            // get all topics from the resources
+            Set<String> topicsWithMirrorNameChanged = mirrorNameChanged.keySet().stream().filter(configResource -> configResource.type().equals(ConfigResource.Type.TOPIC))
+                    .map(configResource -> configResource.name()).collect(Collectors.toSet());
+
+            // get the partition leader is the local node
+            topicsWithMirrorNameChanged.stream().forEach(topic -> {
+                metadataCache.numPartitions(topic).ifPresent(num -> {
+                    for (int i = 0; i < num; i++) {
+                        TopicPartition tp = new TopicPartition(topic, i);
+                        metadataCache.getLeaderAndIsr(topic, i).ifPresent(leaderAndIsr -> {
+                            if (leaderAndIsr.leader() == nodeId) {
+                                mirrorLeaderPartitions.add(tp);
+                            }
+                        });
+                    }
+                });
+            });
+        }
+
+        return mirrorLeaderPartitions;
     }
 
     /**
