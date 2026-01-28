@@ -106,6 +106,7 @@ import java.net.InetAddress;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -180,6 +181,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     private InterBrokerSender interBrokerSender;
     private Optional<StateTransitioner> stateTransitioner = Optional.empty();
     private Optional<Function<MirrorRecordKey, Integer>> coordinatingPartFinder = Optional.empty();
+    private Map<TopicPartition, LocalReplicaChanges.PartitionInfo> previousReadOnlyLeaders = Collections.emptyMap();
 
     public MirrorMetadataManager(
         KafkaConfig config,
@@ -300,7 +302,23 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                     });
                 }
             });
+
+            clearStatesForFollowers(delta.topicsDelta().localChanges(nodeId).readOnlyLeaders());
         }
+    }
+
+    // luke
+    private void clearStatesForFollowers(Map<TopicPartition, LocalReplicaChanges.PartitionInfo> readOnlyLeaders) {
+        Set<TopicPartition> removedLeaders = new HashSet<>(previousReadOnlyLeaders.keySet());
+        removedLeaders.removeAll(readOnlyLeaders.keySet());
+        removedLeaders.forEach( oldLeaderTp -> {
+            MirrorPartitionKey key = new MirrorPartitionKey(previousReadOnlyLeaders.get(oldLeaderTp).partition().mirrorName, oldLeaderTp.topic(), oldLeaderTp.partition());
+            mirrorPartitionState.remove(key);
+            lastMirroredOffsets.remove(key);
+            mirroringCallbacks.remove(key);
+        });
+
+        previousReadOnlyLeaders = readOnlyLeaders;
     }
 
     /**
