@@ -281,7 +281,6 @@ class KafkaApis(val requestChannel: RequestChannel,
     val writeMirrorStatesRequest = request.body[WriteMirrorStatesRequest]
     info("!!! writeMirrorStatesRequest:" + writeMirrorStatesRequest)
     val mirrorName = writeMirrorStatesRequest.data().mirrorName()
-    val removedTopics = writeMirrorStatesRequest.data().removedTopics()
     val partitionMetadata = new util.HashMap[String, util.Set[MirrorPartitionMetadata]]()
     writeMirrorStatesRequest.data().topicsUpdated().forEach(topic => {
       val partMetadata = new util.HashSet[MirrorPartitionMetadata]()
@@ -290,9 +289,7 @@ class KafkaApis(val requestChannel: RequestChannel,
       })
       partitionMetadata.put(topic.name(), partMetadata)
     })
-    mirrorCoordinator.writeMirroredPartitionMetadataToInternalTopic(mirrorName, partitionMetadata, new util.HashSet[String](removedTopics),
-      (res) => requestHelper.sendMaybeThrottle(request, res))
-
+    mirrorCoordinator.writeMirrorPartitionMetadataToInternalTopic(mirrorName, partitionMetadata, res => requestHelper.sendMaybeThrottle(request, res))
   }
 
   def handleReadMirrorStates(request: RequestChannel.Request): Unit = {

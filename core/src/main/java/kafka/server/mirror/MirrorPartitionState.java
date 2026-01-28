@@ -92,4 +92,27 @@ public enum MirrorPartitionState {
         }
         throw new IllegalArgumentException("Illegal mirror state: " + value);
     }
+
+    public static boolean isValidTransition(MirrorPartitionState source, MirrorPartitionState target) {
+        switch (target) {
+            case INITIALIZING:
+                return source == null;
+            case PREPARING:
+                return source == MirrorPartitionState.INITIALIZING
+                        || source == MirrorPartitionState.STOPPED
+                        || source == MirrorPartitionState.FAILED;
+            case MIRRORING:
+                return source == MirrorPartitionState.PREPARING;
+            case STOPPING:
+                return source == MirrorPartitionState.INITIALIZING
+                        || source == MirrorPartitionState.PREPARING
+                        || source == MirrorPartitionState.MIRRORING;
+            case STOPPED:
+                return source == MirrorPartitionState.STOPPING;
+            case FAILED:
+                return true;
+            default:
+                return false;
+        }
+    }
 }

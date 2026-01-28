@@ -303,12 +303,12 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                 }
             });
 
-            clearStatesForFollowers(delta.topicsDelta().localChanges(nodeId).readOnlyLeaders());
+            cleanFollowersState(delta.topicsDelta().localChanges(nodeId).readOnlyLeaders());
         }
     }
 
     // luke
-    private void clearStatesForFollowers(Map<TopicPartition, LocalReplicaChanges.PartitionInfo> readOnlyLeaders) {
+    private void cleanFollowersState(Map<TopicPartition, LocalReplicaChanges.PartitionInfo> readOnlyLeaders) {
         Set<TopicPartition> removedLeaders = new HashSet<>(previousReadOnlyLeaders.keySet());
         removedLeaders.removeAll(readOnlyLeaders.keySet());
         removedLeaders.forEach(oldLeaderTp -> {

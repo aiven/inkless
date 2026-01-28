@@ -175,29 +175,6 @@ public class MirrorCoordinator {
         }
     }
 
-    private boolean isValidTransition(MirrorPartitionState source, MirrorPartitionState target) {
-        switch (target) {
-            case INITIALIZING:
-                return source == null;
-            case PREPARING:
-                return source == MirrorPartitionState.INITIALIZING
-                        || source == MirrorPartitionState.STOPPED
-                        || source == MirrorPartitionState.FAILED;
-            case MIRRORING:
-                return source == MirrorPartitionState.PREPARING;
-            case STOPPING:
-                return source == MirrorPartitionState.INITIALIZING
-                        || source == MirrorPartitionState.PREPARING
-                        || source == MirrorPartitionState.MIRRORING;
-            case STOPPED:
-                return source == MirrorPartitionState.STOPPING;
-            case FAILED:
-                return true;
-            default:
-                return false;
-        }
-    }
-
     /**
      * Transitions all partitions to a new mirror state.
      * <p>
@@ -210,7 +187,7 @@ public class MirrorCoordinator {
      */
     public void transitionTo(String mirrorName, Set<TopicPartition> topicPartitions, MirrorPartitionState newState) {
         topicPartitions.forEach(tp -> {
-            if (isValidTransition(mirrorMetadataManager.getMirrorPartitionState(mirrorName, tp), newState)) {
+            if (MirrorPartitionState.isValidTransition(mirrorMetadataManager.getMirrorPartitionState(mirrorName, tp), newState)) {
                 LOG.info("!!! Transitioning {} to {} for partition {}.", mirrorMetadataManager.getMirrorPartitionState(mirrorName, tp), newState, tp);
                 updateMirrorPartitionState(mirrorName, tp, newState)
                         .whenComplete((optTp, ex) -> {
@@ -228,10 +205,9 @@ public class MirrorCoordinator {
         });
     }
 
-    public void writeMirroredPartitionMetadataToInternalTopic(String mirrorName,
-                                                              Map<String, Set<MirrorMetadataManager.MirrorPartitionMetadata>> topicMetadata,
-                                                              Set<String> removedTopics,
-                                                              Consumer<WriteMirrorStatesResponse> sendResponseCallback) {
+    public void writeMirrorPartitionMetadataToInternalTopic(String mirrorName,
+                                                            Map<String, Set<MirrorMetadataManager.MirrorPartitionMetadata>> topicMetadata,
+                                                            Consumer<WriteMirrorStatesResponse> sendResponseCallback) {
         Map<String, Map<Integer, Long>> offsets = new HashMap<>();
         Map<String, Set<Integer>> tps = new HashMap<>();
         topicMetadata.forEach((topic, partitions) -> {
