@@ -251,13 +251,13 @@ public class MirrorCoordinator {
         WriteMirrorStatesResponseData data = new WriteMirrorStatesResponseData();
         List<WriteMirrorStatesResponseData.TopicState> topicStates = new ArrayList<>();
         tps.forEach((topic, indices) -> {
-           List<WriteMirrorStatesResponseData.PartitionState> partitionStates = new ArrayList<>();
+            List<WriteMirrorStatesResponseData.PartitionState> partitionStates = new ArrayList<>();
             indices.forEach(i -> {
-               WriteMirrorStatesResponseData.PartitionState state = new WriteMirrorStatesResponseData.PartitionState();
-               state.setPartitionIndex(i);
-               state.setErrorCode((short) 0);
-               partitionStates.add(state);
-           });
+                WriteMirrorStatesResponseData.PartitionState state = new WriteMirrorStatesResponseData.PartitionState();
+                state.setPartitionIndex(i);
+                state.setErrorCode((short) 0);
+                partitionStates.add(state);
+            });
             topicStates.add(new WriteMirrorStatesResponseData.TopicState().setName(topic).setPartitions(partitionStates));
         });
 
@@ -339,19 +339,16 @@ public class MirrorCoordinator {
             // write state data to remote coordinator
             Map<String, Set<MirrorMetadataManager.MirrorPartitionMetadata>> topicMetadata =
                     Map.of(topicPartition.topic(), Set.of(new MirrorMetadataManager.MirrorPartitionMetadata(topicPartition.partition(), newState, -1L)));
-            mirrorMetadataManager.writeStatesToRemoteCoordinator(mirrorName, topicMetadata, Set.of(), (res) -> {
-                res.data().topics().forEach(topic -> {
-                    topic.partitions().forEach(par -> {
+            mirrorMetadataManager.writeStatesToRemoteCoordinator(mirrorName, topicMetadata, Set.of(),
+                    res -> res.data().topics().forEach(topic -> topic.partitions().forEach(par -> {
                         if (par.errorCode() == Errors.NONE.code()) {
                             mirrorMetadataManager.updateMirrorPartitionState(mirrorName, topicPartition, newState);
-                             future.complete(Optional.of(topicPartition));
+                            future.complete(Optional.of(topicPartition));
                         } else {
                             LOG.error("Failed to write partition state to remote coordinator: {}", par.errorCode());
                             future.complete(Optional.empty());
                         }
-                    });
-                });
-            });
+                    })));
 
         }
         return future;
@@ -471,7 +468,7 @@ public class MirrorCoordinator {
                 });
                 topicMetadata.put(tp, mirroredPartitions);
             });
-            mirrorMetadataManager.writeStatesToRemoteCoordinator(mirrorName, topicMetadata, Set.of(), (res) -> {
+            mirrorMetadataManager.writeStatesToRemoteCoordinator(mirrorName, topicMetadata, Set.of(), res -> {
                 if (stateChange)
                     transitionTo(mirrorName, topicPartitions, MirrorPartitionState.STOPPED);
             });

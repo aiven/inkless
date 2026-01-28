@@ -97,8 +97,8 @@ import org.apache.kafka.server.common.NodeToControllerChannelManager;
 import org.apache.kafka.server.common.RequestLocal;
 import org.apache.kafka.server.config.MirrorConfig;
 import org.apache.kafka.server.network.BrokerEndPoint;
-
 import org.apache.kafka.server.util.RequestAndCompletionHandler;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -311,8 +311,9 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     private void clearStatesForFollowers(Map<TopicPartition, LocalReplicaChanges.PartitionInfo> readOnlyLeaders) {
         Set<TopicPartition> removedLeaders = new HashSet<>(previousReadOnlyLeaders.keySet());
         removedLeaders.removeAll(readOnlyLeaders.keySet());
-        removedLeaders.forEach( oldLeaderTp -> {
-            MirrorPartitionKey key = new MirrorPartitionKey(previousReadOnlyLeaders.get(oldLeaderTp).partition().mirrorName, oldLeaderTp.topic(), oldLeaderTp.partition());
+        removedLeaders.forEach(oldLeaderTp -> {
+            MirrorPartitionKey key = new MirrorPartitionKey(previousReadOnlyLeaders.get(oldLeaderTp)
+                    .partition().mirrorName, oldLeaderTp.topic(), oldLeaderTp.partition());
             mirrorPartitionState.remove(key);
             lastMirroredOffsets.remove(key);
             mirroringCallbacks.remove(key);

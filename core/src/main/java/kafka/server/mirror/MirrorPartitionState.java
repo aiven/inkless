@@ -17,7 +17,7 @@
 package kafka.server.mirror;
 
 /**
- * Represents the lifecycle states of a mirrored partition in Cluster Mirroring.
+ * Represents the lifecycle states of a mirror partition.
  * FAILED state can be entered from PREPARING or MIRRORING when errors occur.
  * <pre>
  * 1. INITIALIZING
@@ -56,8 +56,10 @@ public enum MirrorPartitionState {
 
     /** Mirroring has stopped; topic is now writable on this cluster */
     STOPPED((byte) 8),
+
     /** Error occurred during preparation or mirroring */
     FAILED((byte) 16),
+
     /** Unknown state */
     UNKNOWN((byte) 32);
 
@@ -88,6 +90,6 @@ public enum MirrorPartitionState {
             case 32:
                 return UNKNOWN;
         }
-        throw new IllegalArgumentException("Unknown mirror state: " + value);
+        throw new IllegalArgumentException("Illegal mirror state: " + value);
     }
 }

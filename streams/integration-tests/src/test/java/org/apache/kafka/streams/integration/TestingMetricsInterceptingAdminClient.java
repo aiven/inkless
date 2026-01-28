@@ -434,7 +434,7 @@ public class TestingMetricsInterceptingAdminClient extends AdminClient {
     }
 
     @Override
-    public AddTopicsToMirrorResult addTopicsToMirror(int destinationNodeId, final Map<String, String> topicToMirrorName, final AddTopicsToMirrorOptions options) {
+    public AddTopicsToMirrorResult addTopicsToMirror(final int destinationNodeId, final Map<String, String> topicToMirrorName, final AddTopicsToMirrorOptions options) {
         return adminDelegate.addTopicsToMirror(destinationNodeId, topicToMirrorName, options);
     }
 
