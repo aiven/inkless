@@ -157,7 +157,7 @@ public class MirrorCoordinator {
             case MIRRORING:
                 LOG.info("!!! MIRRORING topics {}.", topicPartitions);
                 // start mirroring
-                mirrorMetadataManager.invokeMirroringCallbacks(mirrorName, topicPartitions);
+                replicaManager.maybeCreateMirrorFetchers(topicPartitions);
                 break;
             case STOPPING:
                 LOG.info("!!! STOPPING for topics {}.", topicPartitions);
