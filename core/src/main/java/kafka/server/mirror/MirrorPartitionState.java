@@ -18,8 +18,7 @@ package kafka.server.mirror;
 
 /**
  * Represents the lifecycle states of a mirrored partition in Cluster Mirroring.
- * <p>
- * State transition flow:
+ * FAILED state can be entered from PREPARING or MIRRORING when errors occur.
  * <pre>
  * 1. INITIALIZING
  *    Triggered by: AddTopicsToMirror API call
