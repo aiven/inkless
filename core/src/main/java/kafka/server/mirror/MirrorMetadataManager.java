@@ -53,6 +53,8 @@ import org.apache.kafka.common.network.ClientInformation;
 import org.apache.kafka.common.network.ListenerName;
 import org.apache.kafka.common.protocol.ApiKeys;
 import org.apache.kafka.common.protocol.Errors;
+import org.apache.kafka.common.requests.ApiVersionsRequest;
+import org.apache.kafka.common.requests.ApiVersionsResponse;
 import org.apache.kafka.common.requests.CreateAclsRequest;
 import org.apache.kafka.common.requests.CreatePartitionsRequest;
 import org.apache.kafka.common.requests.DeleteAclsRequest;
@@ -564,6 +566,19 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                                                    Consumer<TopicPartition> callback) {
         LOG.info("!!! maybeTruncateToLastMirroredOffsets: {} {}", mirrorName, topicPartitionSet);
         createMirrorConnection(mirrorName);
+
+        // get api versions of the source cluster
+        var apiResponse = getRandomSender(remoteBrokers.get(mirrorName)).sendRequest(new ApiVersionsRequest.Builder());
+
+        if (apiResponse.responseBody() instanceof ApiVersionsResponse apiVersionsResponse) {
+            if (apiVersionsResponse.apiVersion(ApiKeys.LAST_MIRRORED_OFFSETS.id) == null) {
+                LOG.info("!!! LAST_MIRRORED_OFFSETS is not supported in the source cluster, truncate to offset 0 instead.");
+                Map<TopicPartition, Long> offsets = new HashMap<>();
+                topicPartitionSet.forEach(tp -> offsets.put(tp, 0L));
+                replicaManager.maybeTruncate(offsets, callback);
+                return;
+            }
+        }
 
         List<LastMirroredOffsetsRequestData.TopicState> topicStates = new ArrayList<>();
         convertToTopicToPartitions(topicPartitionSet).forEach((topic, partitions) -> {
