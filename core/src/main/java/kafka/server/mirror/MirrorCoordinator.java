@@ -285,7 +285,7 @@ public class MirrorCoordinator {
     public CompletableFuture<Optional<TopicPartition>> updateMirrorPartitionState(String mirrorName, TopicPartition topicPartition, MirrorPartitionState newState) {
         CompletableFuture<Optional<TopicPartition>> future = new CompletableFuture<>();
         if (isLocalCoordinator(mirrorName)) {
-            // this is the leader of the coordinator
+            // this is the leader of the coordinator (async disk I/O operation)
             var mirrorTopicPartition = new TopicPartition(Topic.MIRROR_STATE_TOPIC_NAME, getCoordinatingPartitionByKey(new MirrorRecordKey(mirrorName)));
             var mirrorTopicIdPartition = replicaManager.topicIdPartition(mirrorTopicPartition);
             var record = generateMirrorPartitionState(mirrorName, topicPartition, newState);
@@ -319,9 +319,8 @@ public class MirrorCoordinator {
                     RequestLocal.noCaching(),
                     CollectionConverters.asScala(Map.of())
             );
-
         } else {
-            // write state data to remote coordinator
+            // write state data to remote coordinator (async network operation)
             Map<String, Set<MirrorMetadataManager.MirrorPartitionMetadata>> topicMetadata =
                     Map.of(topicPartition.topic(), Set.of(new MirrorMetadataManager.MirrorPartitionMetadata(topicPartition.partition(), newState, -1L)));
             mirrorMetadataManager.writeStatesToRemoteCoordinator(mirrorName, topicMetadata, Set.of(),

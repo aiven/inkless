@@ -149,8 +149,9 @@ class MirrorFetcherManager(brokerConfig: KafkaConfig,
       }
       failedPartitions.removeAll(partitions)
     }
-    if (partitions.nonEmpty)
-      info(s"#### Removed mirror fetcher for partitions $partitions")
+    // Only log if we actually removed mirror partitions (not regular partitions)
+    if (fetchStates.nonEmpty)
+      info(s"#### Removed mirror fetcher for partitions ${fetchStates.keySet}")
     fetchStates
   }
 
