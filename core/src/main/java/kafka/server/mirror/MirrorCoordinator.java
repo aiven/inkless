@@ -304,14 +304,13 @@ public class MirrorCoordinator {
                     CollectionConverters.asScala(Map.of(mirrorTopicIdPartition, memRecord)),
                     partitionResponses -> {
                         partitionResponses.foreach(partitionRes -> {
-                            TopicIdPartition tpid = partitionRes._1;
                             ProduceResponse.PartitionResponse pr = partitionRes._2;
                             if (pr.error.code() != Errors.NONE.code()) {
                                 LOG.error("Failed to write partition state to coordinator: {}", pr.error.message());
                                 future.completeExceptionally(pr.error.exception());
                             } else {
                                 mirrorMetadataManager.updateMirrorPartitionState(mirrorName, topicPartition, newState);
-                                future.complete(Optional.of(tpid.topicPartition()));
+                                future.complete(Optional.of(topicPartition));
                             }
                             return null;
                         });
