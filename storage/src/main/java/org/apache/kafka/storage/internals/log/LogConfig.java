@@ -418,6 +418,14 @@ public class LogConfig extends AbstractConfig {
         return remoteLogConfig.localRetentionBytes == LogConfig.DEFAULT_LOCAL_RETENTION_BYTES ? retentionSize : remoteLogConfig.localRetentionBytes;
     }
 
+    /**
+     * Returns whether diskless storage is enabled for this log.
+     * When true, this log is (or should be) stored in diskless storage.
+     */
+    public boolean disklessEnable() {
+        return getBoolean(TopicConfig.DISKLESS_ENABLE_CONFIG);
+    }
+
     public String overriddenConfigsAsLoggableString() {
         Map<String, Object> overriddenTopicProps = new HashMap<>();
         props.forEach((k, v) -> {

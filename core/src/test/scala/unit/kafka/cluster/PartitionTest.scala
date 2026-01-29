@@ -4112,4 +4112,139 @@ class PartitionTest extends AbstractPartitionTest {
       alterPartitionManager)
     partition.tryCompleteDelayedRequests()
   }
+
+  // ==================== Diskless Migration Sealing Tests ====================
+
+  @Test
+  def testSealForDisklessMigrationCaputresLEOAndBlocksAppends(): Unit = {
+    val leaderEpoch = 1
+    val controllerEpoch = 0
+    val replicas = List(brokerId)
+    val isr = replicas
+    val requestLocal = RequestLocal.withThreadConfinedCaching
+
+    // Create partition and make it leader
+    partition.createLogIfNotExists(isNew = true, isFutureReplica = false, offsetCheckpoints, topicId)
+    partition.makeLeader(
+      new LeaderAndIsrRequest.PartitionState()
+        .setControllerEpoch(controllerEpoch)
+        .setLeader(brokerId)
+        .setLeaderEpoch(leaderEpoch)
+        .setIsr(isr.map(Int.box).asJava)
+        .setPartitionEpoch(1)
+        .setReplicas(replicas.map(Int.box).asJava)
+        .setIsNew(true),
+      offsetCheckpoints,
+      topicId
+    )
+
+    // Append some records before sealing
+    val records = TestUtils.records(List(
+      new SimpleRecord("k1".getBytes, "v1".getBytes),
+      new SimpleRecord("k2".getBytes, "v2".getBytes)
+    ))
+    partition.appendRecordsToLeader(records, origin = AppendOrigin.CLIENT, requiredAcks = 0, requestLocal)
+
+    val leaderLog = partition.localLogOrException
+    val leoBeforeSeal = leaderLog.logEndOffset
+    val hwBeforeSeal = leaderLog.highWatermark
+    assertEquals(2L, leoBeforeSeal, "Expected 2 records to be appended")
+
+    // Verify partition is not sealed initially
+    assertFalse(partition.isSealedForDisklessMigration, "Partition should not be sealed initially")
+
+    // Seal the partition for diskless migration
+    val sealResult = partition.sealForDisklessMigration()
+    assertTrue(sealResult.isDefined, "Seal should succeed for leader partition")
+    assertEquals(topicPartition, sealResult.get.topicPartition)
+    assertEquals(topicId, sealResult.get.topicId, "Seal should capture correct topic ID")
+    assertEquals(0L, sealResult.get.logStartOffset, "Seal should capture correct log start offset")
+    assertEquals(leoBeforeSeal, sealResult.get.logEndOffset, "Seal should capture correct LEO")
+    assertEquals(hwBeforeSeal, sealResult.get.highWatermark, "Seal should capture correct HW")
+    assertEquals(leaderEpoch, sealResult.get.leaderEpoch, "Seal should capture correct leader epoch")
+    assertNotNull(sealResult.get.producerStateManager, "Seal should capture producer state manager")
+
+    // Verify partition is now sealed
+    assertTrue(partition.isSealedForDisklessMigration, "Partition should be sealed after sealing")
+
+    // Appending after seal should throw NotLeaderOrFollowerException
+    val moreRecords = TestUtils.records(List(new SimpleRecord("k3".getBytes, "v3".getBytes)))
+    val exception = assertThrows(
+      classOf[NotLeaderOrFollowerException],
+      () => partition.appendRecordsToLeader(moreRecords, origin = AppendOrigin.CLIENT, requiredAcks = 0, requestLocal)
+    )
+    assertTrue(exception.getMessage.contains("sealed for diskless migration"),
+      s"Exception message should mention sealing: ${exception.getMessage}")
+
+    // LEO should not have changed after the failed append
+    assertEquals(leoBeforeSeal, leaderLog.logEndOffset, "LEO should not change after sealed append attempt")
+  }
+
+  @Test
+  def testSealForDisklessMigrationIsIdempotent(): Unit = {
+    val leaderEpoch = 1
+    val controllerEpoch = 0
+    val replicas = List(brokerId)
+    val isr = replicas
+    val requestLocal = RequestLocal.withThreadConfinedCaching
+
+    // Create partition and make it leader
+    partition.createLogIfNotExists(isNew = true, isFutureReplica = false, offsetCheckpoints, topicId)
+    partition.makeLeader(
+      new LeaderAndIsrRequest.PartitionState()
+        .setControllerEpoch(controllerEpoch)
+        .setLeader(brokerId)
+        .setLeaderEpoch(leaderEpoch)
+        .setIsr(isr.map(Int.box).asJava)
+        .setPartitionEpoch(1)
+        .setReplicas(replicas.map(Int.box).asJava)
+        .setIsNew(true),
+      offsetCheckpoints,
+      topicId
+    )
+
+    // Append some records
+    val records = TestUtils.records(List(new SimpleRecord("k1".getBytes, "v1".getBytes)))
+    partition.appendRecordsToLeader(records, origin = AppendOrigin.CLIENT, requiredAcks = 0, requestLocal)
+
+    // Seal the partition
+    val firstSealResult = partition.sealForDisklessMigration()
+    assertTrue(firstSealResult.isDefined)
+
+    // Seal again - should be idempotent
+    val secondSealResult = partition.sealForDisklessMigration()
+    assertTrue(secondSealResult.isDefined, "Second seal should also succeed (idempotent)")
+    assertEquals(firstSealResult.get.logEndOffset, secondSealResult.get.logEndOffset,
+      "LEO should be the same on second seal")
+    assertEquals(firstSealResult.get.highWatermark, secondSealResult.get.highWatermark,
+      "HW should be the same on second seal")
+  }
+
+  @Test
+  def testSealForDisklessMigrationFailsForFollower(): Unit = {
+    val leaderEpoch = 1
+    val controllerEpoch = 0
+    val replicas = List(brokerId, remoteReplicaId)
+    val isr = replicas
+
+    // Create partition and make it follower
+    partition.createLogIfNotExists(isNew = true, isFutureReplica = false, offsetCheckpoints, topicId)
+    partition.makeFollower(
+      new LeaderAndIsrRequest.PartitionState()
+        .setControllerEpoch(controllerEpoch)
+        .setLeader(remoteReplicaId) // Remote broker is leader
+        .setLeaderEpoch(leaderEpoch)
+        .setIsr(isr.map(Int.box).asJava)
+        .setPartitionEpoch(1)
+        .setReplicas(replicas.map(Int.box).asJava)
+        .setIsNew(true),
+      offsetCheckpoints,
+      topicId
+    )
+
+    // Seal should return None for follower partition
+    val sealResult = partition.sealForDisklessMigration()
+    assertTrue(sealResult.isEmpty, "Seal should fail for follower partition")
+    assertFalse(partition.isSealedForDisklessMigration, "Follower partition should not be marked as sealed")
+  }
 }

@@ -20,6 +20,7 @@ package kafka.server
 import java.util.{Collections, Properties}
 import kafka.server.QuotaFactory.QuotaManagers
 import kafka.utils.Logging
+import org.apache.kafka.common.config.TopicConfig
 import org.apache.kafka.server.config.QuotaConfig
 import org.apache.kafka.common.metrics.Quota._
 import org.apache.kafka.coordinator.group.GroupCoordinator
@@ -41,10 +42,16 @@ trait ConfigHandler {
 /**
   * The TopicConfigHandler will process topic config changes from the metadata log.
   * The callback provides the topic name and the full properties set.
+  *
+  * @param replicaManager The ReplicaManager to access logs and partitions
+  * @param kafkaConfig The broker configuration
+  * @param quotas The quota managers for throttled replicas
+  * @param disklessMigrationHandler Optional handler for diskless migration (Delos-style chain sealing)
   */
 class TopicConfigHandler(private val replicaManager: ReplicaManager,
                          kafkaConfig: KafkaConfig,
-                         val quotas: QuotaManagers) extends ConfigHandler with Logging  {
+                         val quotas: QuotaManagers,
+                         val disklessMigrationHandler: Option[DisklessMigrationHandler] = None) extends ConfigHandler with Logging  {
 
   private def updateLogConfig(topic: String,
                               topicConfig: Properties): Unit = {
@@ -53,10 +60,67 @@ class TopicConfigHandler(private val replicaManager: ReplicaManager,
     val logs = logManager.logsByTopic(topic)
     val wasRemoteLogEnabled = logs.exists(_.remoteLogEnabled())
     val wasCopyDisabled = logs.exists(_.config.remoteLogCopyDisable())
+    // Check if diskless was previously enabled (before the config update)
+    val wasDisklessEnabled = logs.exists(_.config.disklessEnable())
 
     logManager.updateTopicConfig(topic, topicConfig, kafkaConfig.remoteLogManagerConfig.isRemoteStorageSystemEnabled,
       wasRemoteLogEnabled)
     maybeUpdateRemoteLogComponents(topic, logs, wasRemoteLogEnabled, wasCopyDisabled)
+
+    // Handle diskless migration: seal the chain when transitioning from classic to diskless
+    maybeHandleDisklessMigration(topic, wasDisklessEnabled, topicConfig)
+  }
+
+  /**
+   * Handles the migration from classic (diskful) to diskless storage.
+   *
+   * When diskless.enable is switched from false to true, this method:
+   * 1. Seals all leader partitions (via the DisklessMigrationHandler)
+   * 2. Initializes the diskless log in the control plane with the captured B0 offset
+   *
+   * This implements the Delos-style chain sealing protocol for safe online migration.
+   *
+   * @param topic The topic being configured
+   * @param wasDisklessEnabled Whether diskless was enabled before this config change
+   * @param topicConfig The new topic configuration
+   */
+  private def maybeHandleDisklessMigration(topic: String, wasDisklessEnabled: Boolean, topicConfig: Properties): Unit = {
+    val isDisklessEnabled = topicConfig.getProperty(TopicConfig.DISKLESS_ENABLE_CONFIG, "false").toBoolean
+
+    if (!wasDisklessEnabled && isDisklessEnabled) {
+      info(s"Detected diskless migration for topic $topic: diskless.enable changed from false to true")
+
+      disklessMigrationHandler match {
+        case Some(handler) =>
+          try {
+            val results = handler.migrateTopicToDiskless(topic)
+            val successCount = results.values.count(_.isInstanceOf[MigrationSuccess])
+            val failedCount = results.values.count(_.isInstanceOf[MigrationFailed])
+
+            if (failedCount > 0) {
+              warn(s"Diskless migration for topic $topic had $failedCount failures. " +
+                s"Partitions are sealed but control plane initialization may have failed for some. " +
+                s"Results: $results")
+            } else {
+              info(s"Diskless migration for topic $topic completed successfully. " +
+                s"$successCount partitions sealed and initialized.")
+            }
+          } catch {
+            case e: Exception =>
+              error(s"Failed to perform diskless migration for topic $topic", e)
+              // Note: We don't rethrow here because:
+              // 1. The config has already been updated in KRaft metadata
+              // 2. The partitions may be partially sealed
+              // 3. The migration can be retried by triggering another config update
+              // The error will be logged and operators should monitor for this condition
+          }
+
+        case None =>
+          warn(s"Diskless migration triggered for topic $topic but no DisklessMigrationHandler is configured. " +
+            s"This may indicate a configuration issue - diskless storage system should be enabled when " +
+            s"diskless topics are allowed.")
+      }
+    }
   }
 
   private[server] def maybeUpdateRemoteLogComponents(topic: String,

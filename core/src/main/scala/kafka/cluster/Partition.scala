@@ -193,6 +193,34 @@ case class OngoingReassignmentState(addingReplicas: Seq[Int],
 
 case class SimpleAssignmentState(replicas: Seq[Int]) extends AssignmentState
 
+/**
+ * Result of sealing a partition for diskless migration.
+ *
+ * All fields are captured atomically while holding the leaderIsrUpdateLock write lock,
+ * ensuring a consistent snapshot of the partition state at the moment of sealing.
+ * This is critical for data safety - no appends can be in-flight when these values are captured.
+ *
+ * @param topicPartition   The topic partition that was sealed
+ * @param topicId          The topic ID (required for diskless initialization)
+ * @param logStartOffset   The log start offset at seal time
+ * @param logEndOffset     The log end offset at the time of sealing (B0 - the diskless start offset).
+ *                         All offsets >= logEndOffset will be in diskless format.
+ * @param highWatermark    The high watermark at the time of sealing. For safety, disklessStartOffset
+ *                         in InitDisklessLogRequest should use this value as it represents committed data.
+ * @param leaderEpoch      The leader epoch at the time of sealing
+ * @param producerStateManager The producer state manager for extracting idempotent producer state.
+ *                         Note: This is a reference to the manager, producer state should be extracted
+ *                         immediately after sealing while the partition is still sealed.
+ */
+case class SealResult(
+  topicPartition: TopicPartition,
+  topicId: Option[Uuid],
+  logStartOffset: Long,
+  logEndOffset: Long,
+  highWatermark: Long,
+  leaderEpoch: Int,
+  producerStateManager: org.apache.kafka.storage.internals.log.ProducerStateManager
+)
 
 sealed trait PartitionState {
   /**
@@ -348,6 +376,13 @@ class Partition(val topicPartition: TopicPartition,
   // If ReplicaAlterLogDir command is in progress, this is future location of the log
   @volatile var futureLog: Option[UnifiedLog] = None
 
+  // Indicates that this partition has been sealed for diskless migration.
+  // When sealed, no more classic appends are allowed. This flag is set atomically
+  // while holding the leaderIsrUpdateLock write lock, ensuring no appends are
+  // in-flight when the seal happens. This implements the Delos-style chain sealing
+  // protocol for safe migration from classic to diskless storage.
+  @volatile private var sealedForDisklessMigration: Boolean = false
+
   // Partition listeners
   private val listeners = new CopyOnWriteArrayList[PartitionListener]()
 
@@ -371,6 +406,81 @@ class Partition(val topicPartition: TopicPartition,
   metricsGroup.newGauge("LastStableOffsetLag", () => log.map(_.lastStableOffsetLag).getOrElse(0), tags)
 
   def unifiedLog(): Optional[UnifiedLog] = log.toJava
+
+  /**
+   * Returns true if this partition has been sealed for diskless migration.
+   * When sealed, classic appends are rejected with NOT_LEADER_OR_FOLLOWER to trigger
+   * client metadata refresh and retry through the diskless path.
+   */
+  def isSealedForDisklessMigration: Boolean = sealedForDisklessMigration
+
+  /**
+   * Seals this partition for diskless migration following the Delos chain sealing protocol.
+   *
+   * This method atomically:
+   * 1. Acquires the write lock on leaderIsrUpdateLock to ensure no appends are in-flight
+   * 2. Captures the current log end offset (LEO) as the boundary B0
+   * 3. Marks the partition as sealed
+   *
+   * After sealing, all classic appends will be rejected with NOT_LEADER_OR_FOLLOWER,
+   * causing clients to refresh metadata and retry through the diskless path.
+   *
+   * The B0 offset returned is the first offset that should be written in diskless format.
+   * It equals LEO, meaning all offsets < B0 are in classic format, and all offsets >= B0
+   * will be in diskless format.
+   *
+   * This is a one-way operation - once sealed, a partition cannot be unsealed.
+   * The sealed state is not persisted; on broker restart, the partition state will be
+   * determined by the topic configuration (which will indicate diskless.enable=true).
+   *
+   * @return SealResult containing the log end offset (B0) and leader epoch at seal time,
+   *         or None if this broker is not the leader for this partition
+   */
+  def sealForDisklessMigration(): Option[SealResult] = inWriteLock(leaderIsrUpdateLock) {
+    leaderLogIfLocal match {
+      case Some(leaderLog) =>
+        // Capture all state atomically while holding the write lock.
+        // This ensures no appends are in-flight and the state is consistent.
+        val topicIdOpt = leaderLog.topicId.toScala
+        val logStartOffset = leaderLog.logStartOffset
+        val logEndOffset = leaderLog.logEndOffset
+        val highWatermark = leaderLog.highWatermark
+        val currentLeaderEpoch = this.leaderEpoch
+        val producerStateMgr = leaderLog.producerStateManager
+
+        if (sealedForDisklessMigration) {
+          // Already sealed, return the current state (idempotent)
+          info(s"Partition $topicPartition already sealed for diskless migration")
+          Some(SealResult(
+            topicPartition = topicPartition,
+            topicId = topicIdOpt,
+            logStartOffset = logStartOffset,
+            logEndOffset = logEndOffset,
+            highWatermark = highWatermark,
+            leaderEpoch = currentLeaderEpoch,
+            producerStateManager = producerStateMgr
+          ))
+        } else {
+          // Seal the partition - after this, no more classic appends are allowed
+          sealedForDisklessMigration = true
+          info(s"Partition $topicPartition sealed for diskless migration. " +
+            s"B0 (disklessStartOffset) = $highWatermark, logEndOffset = $logEndOffset, " +
+            s"logStartOffset = $logStartOffset, leaderEpoch = $currentLeaderEpoch")
+          Some(SealResult(
+            topicPartition = topicPartition,
+            topicId = topicIdOpt,
+            logStartOffset = logStartOffset,
+            logEndOffset = logEndOffset,
+            highWatermark = highWatermark,
+            leaderEpoch = currentLeaderEpoch,
+            producerStateManager = producerStateMgr
+          ))
+        }
+      case None =>
+        info(s"Cannot seal partition $topicPartition for diskless migration: not the leader")
+        None
+    }
+  }
 
   def hasLateTransaction(currentTimeMs: Long): Boolean = leaderLogIfLocal.exists(_.hasLateTransaction(currentTimeMs))
 
@@ -1361,6 +1471,19 @@ class Partition(val topicPartition: TopicPartition,
   def appendRecordsToLeader(records: MemoryRecords, origin: AppendOrigin, requiredAcks: Int,
                             requestLocal: RequestLocal, verificationGuard: VerificationGuard = VerificationGuard.SENTINEL): LogAppendInfo = {
     val (info, leaderHWIncremented) = inReadLock(leaderIsrUpdateLock) {
+      // Check if the partition is sealed for diskless migration.
+      // This check is performed inside the read lock to ensure atomic ordering with the sealing operation,
+      // which acquires the write lock. This guarantees that:
+      // 1. If we see sealed=true, the sealing operation has completed and captured the B0 offset
+      // 2. If we see sealed=false, we can proceed with the append, and the sealing operation
+      //    (if in progress) will wait for us to complete before capturing B0
+      // This implements the safe chain sealing protocol from Delos paper.
+      if (sealedForDisklessMigration) {
+        throw new NotLeaderOrFollowerException(
+          s"Partition $topicPartition is sealed for diskless migration. " +
+          "The client should refresh metadata and retry through the diskless path.")
+      }
+
       leaderLogIfLocal match {
         case Some(leaderLog) =>
           val minIsr = effectiveMinIsr(leaderLog)

@@ -413,8 +413,14 @@ class BrokerServer(
         config, clientToControllerChannelManager, groupCoordinator,
         transactionCoordinator, shareCoordinator)
 
+      // Create diskless migration handler for online topic migration from classic to diskless
+      // This implements the Delos-style chain sealing protocol for safe migration
+      val disklessMigrationHandler = sharedServer.inklessControlPlane.map { controlPlane =>
+        new DisklessMigrationHandler(replicaManager, Some(controlPlane))
+      }
+
       dynamicConfigHandlers = Map[ConfigType, ConfigHandler](
-        ConfigType.TOPIC -> new TopicConfigHandler(replicaManager, config, quotaManagers),
+        ConfigType.TOPIC -> new TopicConfigHandler(replicaManager, config, quotaManagers, disklessMigrationHandler),
         ConfigType.BROKER -> new BrokerConfigHandler(config, quotaManagers),
         ConfigType.CLIENT_METRICS -> new ClientMetricsConfigHandler(clientMetricsManager),
         ConfigType.GROUP -> new GroupConfigHandler(groupCoordinator))
