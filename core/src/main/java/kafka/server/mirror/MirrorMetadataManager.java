@@ -53,6 +53,8 @@ import org.apache.kafka.common.network.ClientInformation;
 import org.apache.kafka.common.network.ListenerName;
 import org.apache.kafka.common.protocol.ApiKeys;
 import org.apache.kafka.common.protocol.Errors;
+import org.apache.kafka.common.requests.ApiVersionsRequest;
+import org.apache.kafka.common.requests.ApiVersionsResponse;
 import org.apache.kafka.common.requests.CreateAclsRequest;
 import org.apache.kafka.common.requests.CreatePartitionsRequest;
 import org.apache.kafka.common.requests.DeleteAclsRequest;
@@ -252,7 +254,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                 String mirrorName = info.partition().mirrorName;
                 if (mirrorName.endsWith(REMOVED_TOPIC_SUFFIX)) {
                     stopRequested = true;
-                    mirrorName = mirrorName.substring(0, mirrorName.length() - 1);
+                    mirrorName = mirrorName.substring(0, mirrorName.length() - REMOVED_TOPIC_SUFFIX.length());
                 } else {
                     stopRequested = false;
                 }
@@ -565,6 +567,19 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         LOG.info("!!! maybeTruncateToLastMirroredOffsets: {} {}", mirrorName, topicPartitionSet);
         createMirrorConnection(mirrorName);
 
+        // get api versions of the source cluster
+        var apiResponse = getRandomSender(remoteBrokers.get(mirrorName)).sendRequest(new ApiVersionsRequest.Builder());
+
+        if (apiResponse.responseBody() instanceof ApiVersionsResponse apiVersionsResponse) {
+            if (apiVersionsResponse.apiVersion(ApiKeys.LAST_MIRRORED_OFFSETS.id) == null) {
+                LOG.info("!!! LAST_MIRRORED_OFFSETS is not supported in the source cluster, truncate to offset 0 instead.");
+                Map<TopicPartition, Long> offsets = new HashMap<>();
+                topicPartitionSet.forEach(tp -> offsets.put(tp, 0L));
+                replicaManager.maybeTruncate(offsets, callback);
+                return;
+            }
+        }
+
         List<LastMirroredOffsetsRequestData.TopicState> topicStates = new ArrayList<>();
         convertToTopicToPartitions(topicPartitionSet).forEach((topic, partitions) -> {
             List<LastMirroredOffsetsRequestData.PartitionState> partitionStates = new ArrayList<>();
@@ -695,7 +710,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         String updatedMirrorName = mirrorName;
         if (mirrorName != null) {
             if (mirrorName.endsWith(REMOVED_TOPIC_SUFFIX)) {
-                updatedMirrorName = mirrorName.substring(0, mirrorName.length() - 1);
+                updatedMirrorName = mirrorName.substring(0, mirrorName.length() - REMOVED_TOPIC_SUFFIX.length());
             }
         }
         return mirrorPartitionState.get(new MirrorPartitionKey(updatedMirrorName, topicPartition.topic(), topicPartition.partition()));
