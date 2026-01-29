@@ -19,7 +19,6 @@ package kafka.server.mirror;
 import kafka.server.KafkaConfig;
 import kafka.server.ReplicaManager;
 
-import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.compress.Compression;
 import org.apache.kafka.common.internals.Topic;
