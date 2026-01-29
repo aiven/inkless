@@ -883,7 +883,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
 
         if (response.responseBody() instanceof MetadataResponse metadataResponse) {
             LOG.debug("!!! Periodic metadataResponse: {}", metadataResponse);
-            updateRemoteClusterNodesCache(mirrorName, metadataResponse);
+            updateRemoteClusterNodes(mirrorName, metadataResponse);
             var createPartitionsTopics = processTopicMetadata(mirrorName, metadataResponse.topicMetadata());
             maybeDeleteTopic(mirrorName, metadataResponse.topicMetadata());
             handlePartitionScaling(createPartitionsTopics);
@@ -912,10 +912,9 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         }
     }
 
-    private void updateRemoteClusterNodesCache(String mirrorName, MetadataResponse metadataResponse) {
-        metadataResponse.brokers().forEach(broker -> {
-            remoteClusterNodes.computeIfAbsent(mirrorName, k -> new HashMap<>()).put(broker.id(), broker);
-        });
+    private void updateRemoteClusterNodes(String mirrorName, MetadataResponse metadataResponse) {
+        metadataResponse.brokers().forEach(broker ->
+                remoteClusterNodes.computeIfAbsent(mirrorName, k -> new HashMap<>()).put(broker.id(), broker));
     }
 
     // Processes topic metadata and returns topics that need partition scaling
@@ -926,18 +925,19 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         topicMetadataResp.forEach(topicMetadata -> {
             var partitionLeaders = remotePartitionLeaders.computeIfAbsent(mirrorName, k -> new HashMap<>());
 
-            topicMetadata.partitionMetadata().forEach(partitionMetadata -> {
-                partitionLeaders.put(
-                    partitionMetadata.topicPartition,
-                    remoteClusterNodes.get(mirrorName).get(partitionMetadata.leaderId.get())
-                );
-            });
+            // Count partitions for this specific topic only
+            int sourcePartitionCount = topicMetadata.partitionMetadata().size();
+
+            topicMetadata.partitionMetadata().forEach(partitionMetadata -> partitionLeaders.put(
+                partitionMetadata.topicPartition,
+                remoteClusterNodes.get(mirrorName).get(partitionMetadata.leaderId.get())
+            ));
 
             if (metadataImage.topics().getTopic(topicMetadata.topicId()) != null &&
-                    metadataImage.topics().getTopic(topicMetadata.topicId()).partitions().size() < partitionLeaders.size()) {
+                    metadataImage.topics().getTopic(topicMetadata.topicId()).partitions().size() < sourcePartitionCount) {
                 createPartitionsTopics.add(new CreatePartitionsRequestData.CreatePartitionsTopic()
                     .setName(topicMetadata.topic())
-                    .setCount(partitionLeaders.size())
+                    .setCount(sourcePartitionCount)
                     .setAssignments(null)
                 );
             }

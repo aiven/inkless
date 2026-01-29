@@ -123,7 +123,13 @@ public class MirrorCoordinator {
         this.mirrorMetadataManager = mirrorMetadataManager;
     }
 
-    private boolean isLocalCoordinator(String mirrorName) {
+    /**
+     * Checks if this broker is the coordinator for the given mirror.
+     *
+     * @param mirrorName the name of the cluster mirror
+     * @return true if this broker is the leader of the coordinator partition for this mirror
+     */
+    public boolean isLocalCoordinator(String mirrorName) {
         var mirrorTopicPartition = new TopicPartition(Topic.MIRROR_STATE_TOPIC_NAME, getCoordinatingPartitionByKey(new MirrorRecordKey(mirrorName)));
         var optLeaderAndIsr = metadataCache.getLeaderAndIsr(mirrorTopicPartition.topic(), mirrorTopicPartition.partition());
         return optLeaderAndIsr.isPresent() && optLeaderAndIsr.get().leader() == kafkaConfig.nodeId();
@@ -681,14 +687,13 @@ public class MirrorCoordinator {
     }
 
     /**
-     * Get mirror partition state.
+     * Get all partitions for a mirror with their states.
      *
      * @param mirrorName mirror name
-     * @param topicPartition topic partition
-     * @return partition state
+     * @return map of topic partitions to their states
      */
-    public MirrorPartitionState getMirrorPartitionState(String mirrorName, TopicPartition topicPartition) {
-        return mirrorMetadataManager.getMirrorPartitionState(mirrorName, topicPartition);
+    public Map<TopicPartition, MirrorPartitionState> getMirrorPartitions(String mirrorName) {
+        return mirrorMetadataManager.getMirrorPartitions(mirrorName);
     }
 
     /**

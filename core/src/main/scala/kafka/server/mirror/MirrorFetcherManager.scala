@@ -109,6 +109,18 @@ class MirrorFetcherManager(brokerConfig: KafkaConfig,
         }
         // failed partitions are removed when added partitions to thread
         addPartitionsToFetcherThread(fetcherThread, initialFetchOffsets)
+
+        // Initialize lag information for newly added partitions
+        initialFetchOffsets.foreach { case (topicPartition, initialState) =>
+          val lagKey = MirrorPartitionKey(remoteFetcherKey.mirrorName, topicPartition)
+          // Initialize with 0 values until first fetch updates it
+          val destinationOffset = replicaManager.getPartition(topicPartition) match {
+            case HostedPartition.Online(partition) =>
+              partition.log.map(_.highWatermark).getOrElse(0L)
+            case _ => 0L
+          }
+          partitionLagCache.put(lagKey, MirrorLagInfo(destinationOffset, destinationOffset, 0, time.milliseconds()))
+        }
       }
     }
   }

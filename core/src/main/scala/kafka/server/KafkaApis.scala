@@ -396,24 +396,27 @@ class KafkaApis(val requestChannel: RequestChannel,
         describeMirrorsRequest.data.mirrorNames.asScala.toSeq
       }
 
+      // Each broker only returns partitions it's actively fetching (has lag info for).
+      // This ensures each partition appears exactly once in the final result.
+      // The AdminClient will merge results from all brokers to get the complete picture.
       requestedMirrors.foreach { mirrorName =>
-        val describedMirror = new DescribeMirrorsResponseData.DescribedMirror()
-          .setMirrorName(mirrorName)
-          .setErrorCode(Errors.NONE.code)
-
-        // Get lag information from mirror fetcher manager (only for partitions being actively fetched)
+        // Get lag information from mirror fetcher manager (only for partitions this broker is fetching)
         val lagInfoMap = replicaManager.getMirrorLagInfo(mirrorName)
 
-        // Group partitions by topic
-        val topicsMap = scala.collection.mutable.Map[String, DescribeMirrorsResponseData.TopicPartitions]()
+        // Only respond if this broker is actively fetching partitions for this mirror
+        if (lagInfoMap.nonEmpty) {
+          val describedMirror = new DescribeMirrorsResponseData.DescribedMirror()
+            .setMirrorName(mirrorName)
+            .setErrorCode(Errors.NONE.code)
 
-        // Only return partitions that this broker is actively managing (has lag info for).
-        // This prevents duplicate entries when AdminClient queries multiple brokers.
-        lagInfoMap.foreach { case (topicPartition, lagInfo) =>
-          // Get the state for this partition
-          val partitionState = mirrorCoordinator.getMirrorPartitionState(mirrorName, topicPartition)
+          // Get partition states to include state information
+          val partitionStates = mirrorCoordinator.getMirrorPartitions(mirrorName).asScala
 
-          if (partitionState != null) {
+          // Group partitions by topic
+          val topicsMap = scala.collection.mutable.Map[String, DescribeMirrorsResponseData.TopicPartitions]()
+
+          // Return only partitions this broker has lag info for
+          lagInfoMap.foreach { case (topicPartition, lagInfo) =>
             val topicName = topicPartition.topic()
             val topicPartitions = topicsMap.getOrElseUpdate(topicName, {
               val tp = new DescribeMirrorsResponseData.TopicPartitions().setTopicName(topicName)
@@ -421,21 +424,24 @@ class KafkaApis(val requestChannel: RequestChannel,
               tp
             })
 
+            // Get state if available, otherwise default to MIRRORING
+            val state = partitionStates.get(topicPartition).getOrElse(MirrorPartitionState.MIRRORING)
+
             val partitionDetail = new DescribeMirrorsResponseData.PartitionDetail()
               .setPartitionIndex(topicPartition.partition())
               .setSourceOffset(lagInfo.sourceOffset)
               .setDestinationOffset(lagInfo.destinationOffset)
               .setLag(lagInfo.lag)
-              .setState(partitionState.name())
+              .setState(state.name())
 
             topicPartitions.partitions().add(partitionDetail)
           }
-        }
 
-        val topicsList = new util.ArrayList[DescribeMirrorsResponseData.TopicPartitions]()
-        topicsMap.values.foreach(tp => topicsList.add(tp))
-        describedMirror.setTopics(topicsList)
-        responseData.mirrors().add(describedMirror)
+          val topicsList = new util.ArrayList[DescribeMirrorsResponseData.TopicPartitions]()
+          topicsMap.values.foreach(tp => topicsList.add(tp))
+          describedMirror.setTopics(topicsList)
+          responseData.mirrors().add(describedMirror)
+        }
       }
     } else {
       // Authorization failed - return empty list with no error
