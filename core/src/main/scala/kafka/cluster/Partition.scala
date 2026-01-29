@@ -1234,10 +1234,12 @@ class Partition(val topicPartition: TopicPartition,
   def maybeCompleteIsrTruncation(leaderLog: UnifiedLog,
                                   currentTimeMs: Long = time.milliseconds,
                                   onComplete: Optional[Consumer[TopicPartition]] = Optional.empty()): Boolean = {
-    info("!!! maybeCompleteIsrTruncation: " + leaderLog)
+    // Only perform truncation validation for mirrored partitions (when callback is provided)
     if (onComplete.isEmpty) {
-      return false
+      return true
     }
+
+    info("!!! maybeCompleteIsrTruncation: " + leaderLog)
 
     if (isUnderMinIsr) {
       trace(s"Not increasing HWM because partition is under min ISR (ISR=${partitionState.isr})")
