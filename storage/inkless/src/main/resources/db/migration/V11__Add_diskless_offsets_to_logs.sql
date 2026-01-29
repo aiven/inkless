@@ -27,9 +27,7 @@ CREATE TYPE init_diskless_log_request_v1 AS (
 
 CREATE TYPE init_diskless_log_response_error_v1 AS ENUM (
     'none',
-    'stale_leader_epoch',
-    'already_initialized',
-    'invalid_state'
+    'already_initialized'
 );
 
 CREATE TYPE init_diskless_log_response_v1 AS (
@@ -39,9 +37,7 @@ CREATE TYPE init_diskless_log_response_v1 AS (
 );
 
 -- Init diskless log function:
--- - Rejects with stale_leader_epoch if leader_epoch < leader_epoch_at_init
--- - Rejects with invalid_state if diskless_start_offset > high_watermark (corrupted state)
--- - Rejects with already_initialized if messages have been appended (diskless_start_offset < high_watermark)
+-- - Rejects with already_initialized if log already exists
 CREATE FUNCTION init_diskless_log_v1(
     arg_requests init_diskless_log_request_v1[]
 )
@@ -63,37 +59,9 @@ BEGIN
           AND partition = l_request.partition;
 
         IF FOUND THEN
-            -- Check if leader epoch is stale
-            IF l_request.leader_epoch < l_existing_log.leader_epoch_at_init THEN
-                RETURN NEXT (l_request.topic_id, l_request.partition, 'stale_leader_epoch')::init_diskless_log_response_v1;
-                CONTINUE;
-            END IF;
-
-            -- Check for invalid state: diskless_start_offset should never exceed high_watermark
-            IF l_existing_log.diskless_start_offset > l_existing_log.high_watermark THEN
-                RETURN NEXT (l_request.topic_id, l_request.partition, 'invalid_state')::init_diskless_log_response_v1;
-                CONTINUE;
-            END IF;
-
-            -- Check if messages have been appended (no longer in migration phase)
-            IF l_existing_log.diskless_start_offset < l_existing_log.high_watermark THEN
-                RETURN NEXT (l_request.topic_id, l_request.partition, 'already_initialized')::init_diskless_log_response_v1;
-                CONTINUE;
-            END IF;
-
-            -- Still in migration phase with valid epoch - update existing log
-            UPDATE logs
-            SET log_start_offset = l_request.log_start_offset,
-                high_watermark = l_request.diskless_start_offset,
-                diskless_start_offset = l_request.diskless_start_offset,
-                leader_epoch_at_init = l_request.leader_epoch
-            WHERE topic_id = l_request.topic_id
-              AND partition = l_request.partition;
-
-            -- Delete existing producer state for this partition
-            DELETE FROM producer_state
-            WHERE topic_id = l_request.topic_id
-              AND partition = l_request.partition;
+            -- Log already exists - reject initialization
+            RETURN NEXT (l_request.topic_id, l_request.partition, 'already_initialized')::init_diskless_log_response_v1;
+            CONTINUE;
         ELSE
             -- Insert new log record
             INSERT INTO logs (

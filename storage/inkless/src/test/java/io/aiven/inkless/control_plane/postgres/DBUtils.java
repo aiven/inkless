@@ -82,27 +82,6 @@ public class DBUtils {
         }
     }
 
-    /**
-     * Simulates messages being appended by updating the high_watermark.
-     * This makes diskless_start_offset < high_watermark, indicating the log is no longer in migration phase.
-     */
-    static void simulateMessagesAppended(final HikariDataSource hikariDataSource, final Uuid topicId, final int partition, final long newHighWatermark) {
-        try (final Connection connection = hikariDataSource.getConnection()) {
-            final DSLContext ctx = DSL.using(connection, SQLDialect.POSTGRES);
-            final int rowsUpdated = ctx.update(LOGS)
-                .set(LOGS.HIGH_WATERMARK, newHighWatermark)
-                .where(LOGS.TOPIC_ID.eq(topicId)
-                    .and(LOGS.PARTITION.eq(partition)))
-                .execute();
-            if (rowsUpdated == 0) {
-                throw new RuntimeException("No rows updated - log entry not found for topic " + topicId + " partition " + partition);
-            }
-            connection.commit();
-        } catch (final SQLException e) {
-            throw new RuntimeException(e);
-        }
-    }
-
     private static <T extends Record> Set<T> getAll(final HikariDataSource hikariDataSource,
                                                     final TableImpl<T> table,
                                                     final Class<T> recordClass) {

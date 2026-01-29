@@ -34,7 +34,6 @@ import java.util.Set;
 import io.aiven.inkless.control_plane.DisklessLogAlreadyInitializedException;
 import io.aiven.inkless.control_plane.InitDisklessLogRequest;
 import io.aiven.inkless.control_plane.ProducerStateSnapshot;
-import io.aiven.inkless.control_plane.StaleLeaderEpochException;
 import io.aiven.inkless.test_utils.InklessPostgreSQLContainer;
 import io.aiven.inkless.test_utils.PostgreSQLTestContainer;
 
@@ -112,19 +111,18 @@ class InitDisklessLogJobTest {
     }
 
     @Test
-    void throwsExceptionWhenStaleLeaderEpoch() {
+    void throwsExceptionWhenLogAlreadyExists() {
         // First initialization with leader epoch 5
         runInitJob(Set.of(new InitDisklessLogRequest(TOPIC_ID1, TOPIC_1, 0, 100L, 200L, 5, List.of())));
 
-        // Second initialization attempt with lower epoch (should throw StaleLeaderEpochException)
-        final var secondRequests = Set.of(new InitDisklessLogRequest(TOPIC_ID1, TOPIC_1, 0, 300L, 400L, 3, List.of()));
+        // Second initialization attempt should throw DisklessLogAlreadyInitializedException
+        final var secondRequests = Set.of(new InitDisklessLogRequest(TOPIC_ID1, TOPIC_1, 0, 300L, 400L, 7, List.of()));
         assertThatThrownBy(() -> runInitJob(secondRequests))
-            .isInstanceOf(StaleLeaderEpochException.class)
+            .isInstanceOf(DisklessLogAlreadyInitializedException.class)
             .satisfies(e -> {
-                final StaleLeaderEpochException ex = (StaleLeaderEpochException) e;
+                final var ex = (DisklessLogAlreadyInitializedException) e;
                 assertThat(ex.topicId()).isEqualTo(TOPIC_ID1);
                 assertThat(ex.partition()).isEqualTo(0);
-                assertThat(ex.requestedEpoch()).isEqualTo(3);
             });
 
         // Verify the log still has the original values
@@ -136,77 +134,6 @@ class InitDisklessLogJobTest {
         assertThat(DBUtils.getLeaderEpochAtInit(pgContainer.getDataSource(), TOPIC_ID1, 0)).isEqualTo(5);
     }
 
-    @Test
-    void throwsExceptionWhenMessagesAppended() {
-        // First initialization with leader epoch 5
-        final var producerState = List.of(new ProducerStateSnapshot(1001L, (short) 1, 0, 9, 100L, 1000L));
-        runInitJob(Set.of(new InitDisklessLogRequest(TOPIC_ID1, TOPIC_1, 0, 100L, 200L, 5, producerState)));
-
-        // Simulate messages being appended (high_watermark moves past diskless_start_offset)
-        DBUtils.simulateMessagesAppended(pgContainer.getDataSource(), TOPIC_ID1, 0, 300L);
-
-        // Second initialization with higher leader epoch should fail because messages have been appended
-        final var secondRequests = Set.of(new InitDisklessLogRequest(TOPIC_ID1, TOPIC_1, 0, 300L, 400L, 7, List.of()));
-        assertThatThrownBy(() -> runInitJob(secondRequests))
-            .isInstanceOf(DisklessLogAlreadyInitializedException.class)
-            .satisfies(e -> {
-                final var ex = (DisklessLogAlreadyInitializedException) e;
-                assertThat(ex.topicId()).isEqualTo(TOPIC_ID1);
-                assertThat(ex.partition()).isEqualTo(0);
-            });
-
-        // Verify the log still has the original values (except high_watermark which was updated by simulation)
-        final var log = DBUtils.getAllLogs(pgContainer.getDataSource()).iterator().next();
-        assertThat(log.getLogStartOffset()).isEqualTo(100L);
-        assertThat(log.getHighWatermark()).isEqualTo(300L);
-        assertThat(log.getDisklessStartOffset()).isEqualTo(200L);
-        assertThat(DBUtils.getLeaderEpochAtInit(pgContainer.getDataSource(), TOPIC_ID1, 0)).isEqualTo(5);
-
-        // Verify producer state was not changed
-        assertThat(DBUtils.getAllProducerState(pgContainer.getDataSource()))
-            .hasSize(1)
-            .extracting(ProducerStateRecord::getProducerId)
-            .containsExactly(1001L);
-    }
-
-    @Test
-    void updateLogInMigrationPhase() {
-        // First initialization with leader epoch 5
-        final var producerState = List.of(new ProducerStateSnapshot(1001L, (short) 1, 0, 9, 100L, 1000L));
-        runInitJob(Set.of(new InitDisklessLogRequest(TOPIC_ID1, TOPIC_1, 0, 100L, 200L, 5, producerState)));
-        assertThat(DBUtils.getAllProducerState(pgContainer.getDataSource())).hasSize(1);
-
-        // Second initialization with equal leader epoch while still in migration phase - should succeed
-        runInitJob(Set.of(new InitDisklessLogRequest(TOPIC_ID1, TOPIC_1, 0, 150L, 250L, 5, List.of())));
-
-        // Verify the log was updated and producer state was cleared
-        var log = DBUtils.getAllLogs(pgContainer.getDataSource()).iterator().next();
-        assertThat(log.getLogStartOffset()).isEqualTo(150L);
-        assertThat(log.getHighWatermark()).isEqualTo(250L);
-        assertThat(log.getDisklessStartOffset()).isEqualTo(250L);
-        assertThat(DBUtils.getLeaderEpochAtInit(pgContainer.getDataSource(), TOPIC_ID1, 0)).isEqualTo(5);
-        assertThat(DBUtils.getAllProducerState(pgContainer.getDataSource())).isEmpty();
-
-        // Third initialization with higher leader epoch while still in migration phase - should succeed
-        final var newProducerState = List.of(
-            new ProducerStateSnapshot(2001L, (short) 3, 0, 14, 300L, 3000L),
-            new ProducerStateSnapshot(2002L, (short) 1, 5, 10, 320L, 3200L)
-        );
-        runInitJob(Set.of(new InitDisklessLogRequest(TOPIC_ID1, TOPIC_1, 0, 300L, 400L, 7, newProducerState)));
-
-        // Verify the log was updated
-        log = DBUtils.getAllLogs(pgContainer.getDataSource()).iterator().next();
-        assertThat(log.getLogStartOffset()).isEqualTo(300L);
-        assertThat(log.getHighWatermark()).isEqualTo(400L);
-        assertThat(log.getDisklessStartOffset()).isEqualTo(400L);
-        assertThat(DBUtils.getLeaderEpochAtInit(pgContainer.getDataSource(), TOPIC_ID1, 0)).isEqualTo(7);
-
-        // Verify producer state was inserted
-        assertThat(DBUtils.getAllProducerState(pgContainer.getDataSource()))
-            .hasSize(2)
-            .extracting(ProducerStateRecord::getProducerId)
-            .containsExactlyInAnyOrder(2001L, 2002L);
-    }
 
     @Test
     void multiplePartitionsCanBeInitialized() {

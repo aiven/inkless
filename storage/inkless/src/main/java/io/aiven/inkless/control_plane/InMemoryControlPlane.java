@@ -98,44 +98,17 @@ public class InMemoryControlPlane extends AbstractControlPlane {
 
             final LogInfo existingLogInfo = logs.get(topicIdPartition);
             if (existingLogInfo != null) {
-                // Check if leader epoch is stale
-                if (request.leaderEpoch() < existingLogInfo.leaderEpochAtInit) {
-                    throw new StaleLeaderEpochException(
-                        request.topicId(), request.partition(), request.leaderEpoch());
-                }
-
-                // Check for invalid state: disklessStartOffset should never exceed highWatermark
-                if (existingLogInfo.disklessStartOffset > existingLogInfo.highWatermark) {
-                    throw new IllegalStateException(String.format(
-                        "Invalid state for %s: disklessStartOffset (%d) > highWatermark (%d)",
-                        topicIdPartition, existingLogInfo.disklessStartOffset, existingLogInfo.highWatermark));
-                }
-
-                // Check if messages have been appended (no longer in migration phase)
-                if (existingLogInfo.disklessStartOffset < existingLogInfo.highWatermark) {
-                    throw new DisklessLogAlreadyInitializedException(
-                        request.topicId(), request.partition());
-                }
-
-                // Still in migration phase with valid epoch - update existing log
-                LOGGER.info("Updating {} with logStartOffset {}, disklessStartOffset {}, leaderEpoch {}",
-                    topicIdPartition, request.logStartOffset(), request.disklessStartOffset(), request.leaderEpoch());
-                existingLogInfo.logStartOffset = request.logStartOffset();
-                existingLogInfo.highWatermark = request.disklessStartOffset();
-                existingLogInfo.disklessStartOffset = request.disklessStartOffset();
-                existingLogInfo.leaderEpochAtInit = request.leaderEpoch();
-
-                // Clear existing producer state for this partition
-                producers.remove(topicIdPartition);
+                // Log already exists - reject initialization
+                throw new DisklessLogAlreadyInitializedException(
+                    request.topicId(), request.partition());
             } else {
                 // Create new log entry
-                LOGGER.info("Initializing {} with logStartOffset {}, disklessStartOffset {}, leaderEpoch {}",
-                    topicIdPartition, request.logStartOffset(), request.disklessStartOffset(), request.leaderEpoch());
+                LOGGER.info("Initializing {} with logStartOffset {}, disklessStartOffset {}",
+                    topicIdPartition, request.logStartOffset(), request.disklessStartOffset());
                 final LogInfo logInfo = new LogInfo();
                 logInfo.logStartOffset = request.logStartOffset();
                 logInfo.highWatermark = request.disklessStartOffset();
                 logInfo.disklessStartOffset = request.disklessStartOffset();
-                logInfo.leaderEpochAtInit = request.leaderEpoch();
                 logs.put(topicIdPartition, logInfo);
                 batches.putIfAbsent(topicIdPartition, new TreeMap<>());
             }
@@ -765,7 +738,6 @@ public class InMemoryControlPlane extends AbstractControlPlane {
         long highWatermark = 0;
         long byteSize = 0;
         Long disklessStartOffset = null;
-        int leaderEpochAtInit = 0;
     }
 
     private static class FileInfo {

@@ -17,7 +17,6 @@
  */
 package io.aiven.inkless.control_plane.postgres;
 
-import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.utils.Time;
 
 import org.jooq.Configuration;
@@ -35,7 +34,6 @@ import java.util.function.Consumer;
 import io.aiven.inkless.control_plane.DisklessLogAlreadyInitializedException;
 import io.aiven.inkless.control_plane.InitDisklessLogRequest;
 import io.aiven.inkless.control_plane.ProducerStateSnapshot;
-import io.aiven.inkless.control_plane.StaleLeaderEpochException;
 
 import static org.jooq.generated.Tables.INIT_DISKLESS_LOG_V1;
 
@@ -81,15 +79,6 @@ public class InitDisklessLogJob implements Callable<Void> {
         for (final var response : responses) {
             switch (response.getError()) {
                 case none -> { }
-                case stale_leader_epoch -> throw new StaleLeaderEpochException(
-                    response.getTopicId(),
-                    response.getPartition(),
-                    findLeaderEpoch(response.getTopicId(), response.getPartition())
-                );
-                case invalid_state -> throw new IllegalStateException(String.format(
-                    "Invalid state for topic %s partition %d: disklessStartOffset > highWatermark",
-                    response.getTopicId(), response.getPartition()
-                ));
                 case already_initialized -> throw new DisklessLogAlreadyInitializedException(
                     response.getTopicId(),
                     response.getPartition()
@@ -129,13 +118,5 @@ public class InitDisklessLogJob implements Callable<Void> {
             entry.assignedOffset(),
             entry.batchMaxTimestamp()
         );
-    }
-
-    private int findLeaderEpoch(final Uuid topicId, final int partition) {
-        return requests.stream()
-            .filter(r -> r.topicId().equals(topicId) && r.partition() == partition)
-            .findFirst()
-            .map(InitDisklessLogRequest::leaderEpoch)
-            .orElse(-1);
     }
 }
