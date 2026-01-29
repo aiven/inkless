@@ -254,7 +254,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                 String mirrorName = info.partition().mirrorName;
                 if (mirrorName.endsWith(REMOVED_TOPIC_SUFFIX)) {
                     stopRequested = true;
-                    mirrorName = mirrorName.substring(0, mirrorName.length() - 1);
+                    mirrorName = mirrorName.substring(0, mirrorName.length() - REMOVED_TOPIC_SUFFIX.length());
                 } else {
                     stopRequested = false;
                 }
@@ -710,7 +710,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         String updatedMirrorName = mirrorName;
         if (mirrorName != null) {
             if (mirrorName.endsWith(REMOVED_TOPIC_SUFFIX)) {
-                updatedMirrorName = mirrorName.substring(0, mirrorName.length() - 1);
+                updatedMirrorName = mirrorName.substring(0, mirrorName.length() - REMOVED_TOPIC_SUFFIX.length());
             }
         }
         return mirrorPartitionState.get(new MirrorPartitionKey(updatedMirrorName, topicPartition.topic(), topicPartition.partition()));

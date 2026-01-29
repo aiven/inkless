@@ -152,6 +152,7 @@ import static org.apache.kafka.metadata.LeaderConstants.NO_LEADER_CHANGE;
 public class ReplicationControlManager {
     static final int MAX_ELECTIONS_PER_IMBALANCE = 1_000;
     static final int MAX_PARTITIONS_PER_BATCH = 10_000;
+    private static final String REMOVED_TOPIC_SUFFIX = ".removed";
 
     static class Builder {
         private SnapshotRegistry snapshotRegistry = null;
@@ -659,7 +660,7 @@ public class ReplicationControlManager {
             for (Entry<Integer, PartitionRegistration> entry : info.parts.entrySet()) {
                 int partitionId = entry.getKey();
                 String mirrorName = info.parts.get(partitionId).mirrorName;
-                String newMirrorName = mirrorName.endsWith("*") ? "" : mirrorName + "*";
+                String newMirrorName = mirrorName.endsWith(REMOVED_TOPIC_SUFFIX) ? "" : mirrorName + REMOVED_TOPIC_SUFFIX;
                 PartitionRegistration partition = info.parts.get(partitionId);
                 PartitionChangeBuilder builder = new PartitionChangeBuilder(
                         partition,
