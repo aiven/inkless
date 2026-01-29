@@ -183,7 +183,6 @@ public abstract class MirrorCommand {
             Set<String> matchingTopics;
             Map<String, String> topicIds = new HashMap<>();
             Map<String, Integer> partNums = new HashMap<>();
-            Map<String, Integer> replicationFactors = new HashMap<>();
 
             try (Admin sourceAdmin = Admin.create(mirrorConfigs)) {
                 // List all topics from source cluster and match against the pattern
@@ -197,7 +196,6 @@ public abstract class MirrorCommand {
                     TopicDescription desc = entry.getValue();
                     topicIds.put(topic, desc.topicId().toString());
                     partNums.put(topic, desc.partitions().size());
-                    replicationFactors.put(topic, desc.partitions().get(0).replicas().size());
                 }
             }
 
@@ -210,10 +208,9 @@ public abstract class MirrorCommand {
                 for (String topicName : matchingTopics) {
                     String topicId = topicIds.get(topicName);
                     int partNum = partNums.get(topicName);
-                    int replicationFactor = replicationFactors.get(topicName);
                     NewTopic newTopic = new NewTopic(topicName,
                         Optional.of(partNum), // use source topic partitions
-                        Optional.of((short) replicationFactor),
+                        opts.replicationFactor(), // use provided replicationFactor or cluster default
                         Optional.of(""),
                         Optional.of(topicId));
                     newTopics.add(newTopic);

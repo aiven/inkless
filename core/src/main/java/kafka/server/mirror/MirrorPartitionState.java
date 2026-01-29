@@ -94,6 +94,9 @@ public enum MirrorPartitionState {
     }
 
     public static boolean isValidTransition(MirrorPartitionState source, MirrorPartitionState target) {
+        if (source == target) {
+            return true;
+        }
         switch (target) {
             case INITIALIZING:
                 return source == null;

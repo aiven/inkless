@@ -321,6 +321,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
      */
     @Override
     public void close() throws Exception {
+        interBrokerSender.shutdown();
     }
 
     public Node findMirrorCoordinatorNode(MirrorRecordKey key) {
