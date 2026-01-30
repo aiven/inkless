@@ -36,6 +36,7 @@ import org.apache.kafka.clients.admin.RemoveTopicsFromMirrorOptions;
 import org.apache.kafka.clients.admin.RemoveTopicsFromMirrorResult;
 import org.apache.kafka.clients.admin.TopicDescription;
 import org.apache.kafka.common.Node;
+import org.apache.kafka.common.config.ConfigResource;
 import org.apache.kafka.common.errors.TopicExistsException;
 import org.apache.kafka.common.utils.Exit;
 import org.apache.kafka.common.utils.Utils;
@@ -177,12 +178,27 @@ public abstract class MirrorCommand {
             String topicPattern = opts.topic().get();
             String mirrorName = opts.mirror().get();
 
+            // Retrieve the full mirror configuration from the coordinator
+            ConfigResource mirrorConfigResource = new ConfigResource(ConfigResource.Type.MIRROR, mirrorName);
+            var configResult = adminClient.describeConfigs(List.of(mirrorConfigResource)).all().get();
+            var mirrorConfigEntries = configResult.get(mirrorConfigResource);
+
+            if (mirrorConfigEntries == null || mirrorConfigEntries.entries().isEmpty()) {
+                throw new RuntimeException("Mirror '" + mirrorName + "' not found or has no configuration");
+            }
+
+            // Convert config entries to Properties for creating source Admin client
+            Properties sourceConfig = new Properties();
+            for (var entry : mirrorConfigEntries.entries()) {
+                sourceConfig.put(entry.name(), entry.value());
+            }
+
             // Connect to source cluster and get matching topics
             Set<String> matchingTopics;
             Map<String, String> topicIds = new HashMap<>();
             Map<String, Integer> partNums = new HashMap<>();
 
-            try (Admin sourceAdmin = Admin.create(mirrorConfigs)) {
+            try (Admin sourceAdmin = Admin.create(sourceConfig)) {
                 // List all topics from source cluster and match against the pattern
                 var allTopics = sourceAdmin.listTopics().names().get();
                 matchingTopics = matchTopics(allTopics, topicPattern);
@@ -209,7 +225,7 @@ public abstract class MirrorCommand {
                     NewTopic newTopic = new NewTopic(topicName,
                         Optional.of(partNum), // use source topic partitions
                         opts.replicationFactor(), // use provided replicationFactor or cluster default
-                        Optional.of(""),
+                        Optional.of(""), // mirrorName will be set later via addTopicsToMirror
                         Optional.of(topicId));
                     newTopics.add(newTopic);
                 }
@@ -315,7 +331,7 @@ public abstract class MirrorCommand {
             Map<String, MirrorDescription> descriptions = result.allDescriptions().get();
 
             if (descriptions.isEmpty()) {
-                System.out.println("No mirror partition found");
+                System.out.println("No mirror partitions found");
                 return;
             }
 
@@ -554,9 +570,6 @@ public abstract class MirrorCommand {
 
             if (has(addOpt) && !has(topicOpt))
                 throw new IllegalArgumentException("--topic must be specified when adding topic(s) to a mirror");
-
-            if (has(addOpt) && !has(mirrorConfigOpt))
-                throw new IllegalArgumentException("--mirror-config must be specified when adding topic(s) to a mirror");
 
             if (has(removeOpt) && !has(topicOpt))
                 throw new IllegalArgumentException("--topic must be specified when removing topic(s) from a mirror");
