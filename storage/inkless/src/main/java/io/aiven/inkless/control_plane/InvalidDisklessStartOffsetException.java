@@ -20,16 +20,20 @@ package io.aiven.inkless.control_plane;
 import org.apache.kafka.common.Uuid;
 
 /**
- * Exception thrown when attempting to initialize a diskless log that has already been initialized.
+ * Exception thrown when a diskless log initialization is attempted with a different
+ * disklessStartOffset than what is already stored in the control plane.
+ *
+ * This indicates a protocol violation - according to the Delos-style chain sealing protocol,
+ * all leaders should converge to the same disklessStartOffset. If this exception is thrown,
+ * it means there's a bug in the migration protocol implementation that must be investigated immediately.
  */
-public class DisklessLogAlreadyInitializedException extends ControlPlaneException {
-
+public class InvalidDisklessStartOffsetException extends RuntimeException {
     private final Uuid topicId;
     private final int partition;
 
-    public DisklessLogAlreadyInitializedException(final Uuid topicId, final int partition) {
-        super(String.format("Diskless log already initialized for topic %s partition %d",
-            topicId, partition));
+    public InvalidDisklessStartOffsetException(final Uuid topicId, final int partition) {
+        super("Invalid disklessStartOffset for partition " + topicId + "-" + partition +
+              ". This indicates a protocol violation - all leaders should converge to the same disklessStartOffset.");
         this.topicId = topicId;
         this.partition = partition;
     }

@@ -383,6 +383,15 @@ class Partition(val topicPartition: TopicPartition,
   // protocol for safe migration from classic to diskless storage.
   @volatile private var sealedForDisklessMigration: Boolean = false
 
+  // Target LEO for diskless migration. When sealed, we wait for HW to catch up to this
+  // value before completing the migration. This ensures all data is replicated (HW = LEO)
+  // before we establish the diskless boundary B0.
+  @volatile private var disklessMigrationTargetLeo: Option[Long] = None
+
+  // Callback to be invoked when diskless migration is ready (HW caught up to target LEO).
+  // This is set during seal and called when the condition is met.
+  @volatile private var disklessMigrationReadyCallback: Option[SealResult => Unit] = None
+
   // Partition listeners
   private val listeners = new CopyOnWriteArrayList[PartitionListener]()
 
@@ -390,6 +399,40 @@ class Partition(val topicPartition: TopicPartition,
     override def onHighWatermarkUpdated(offset: Long): Unit = {
       listeners.forEach { listener =>
         listener.onHighWatermarkUpdated(topicPartition, offset)
+      }
+      // Check if diskless migration is ready (HW caught up to target LEO)
+      maybeCompleteDisklessMigration(offset)
+    }
+  }
+
+  /**
+   * Called when HW is updated to check if diskless migration can be completed.
+   * Migration is ready when HW >= target LEO (all data is replicated).
+   */
+  private def maybeCompleteDisklessMigration(newHighWatermark: Long): Unit = {
+    // Check if we're waiting for migration to complete
+    disklessMigrationTargetLeo.foreach { targetLeo =>
+      if (newHighWatermark >= targetLeo) {
+        disklessMigrationReadyCallback.foreach { callback =>
+          // Clear the callback to prevent duplicate calls
+          disklessMigrationReadyCallback = None
+          disklessMigrationTargetLeo = None
+
+          // Build the SealResult with B0 = targetLeo (HW has caught up)
+          log.foreach { leaderLog =>
+            val sealResult = SealResult(
+              topicPartition = topicPartition,
+              topicId = leaderLog.topicId.toScala,
+              logStartOffset = leaderLog.logStartOffset,
+              logEndOffset = targetLeo,
+              highWatermark = targetLeo, // HW = LEO after catch-up
+              leaderEpoch = leaderEpoch,
+              producerStateManager = leaderLog.producerStateManager
+            )
+            info(s"Diskless migration ready for $topicPartition: HW=$newHighWatermark caught up to target LEO=$targetLeo")
+            callback(sealResult)
+          }
+        }
       }
     }
   }
@@ -416,27 +459,30 @@ class Partition(val topicPartition: TopicPartition,
 
   /**
    * Seals this partition for diskless migration following the Delos chain sealing protocol.
+   * This is the async version that takes a callback.
    *
    * This method atomically:
    * 1. Acquires the write lock on leaderIsrUpdateLock to ensure no appends are in-flight
-   * 2. Captures the current log end offset (LEO) as the boundary B0
+   * 2. Captures the current log end offset (LEO) as the target B0
    * 3. Marks the partition as sealed
+   * 4. Waits for high watermark to catch up to LEO before completing migration
    *
    * After sealing, all classic appends will be rejected with NOT_LEADER_OR_FOLLOWER,
    * causing clients to refresh metadata and retry through the diskless path.
    *
-   * The B0 offset returned is the first offset that should be written in diskless format.
-   * It equals LEO, meaning all offsets < B0 are in classic format, and all offsets >= B0
-   * will be in diskless format.
+   * The B0 offset is the LEO at seal time. All offsets < B0 are in classic format,
+   * and all offsets >= B0 will be in diskless format.
+   *
+   * The callback is invoked when HW catches up to LEO (migration ready). If HW already
+   * equals LEO at seal time, the callback is invoked immediately (still within the lock).
    *
    * This is a one-way operation - once sealed, a partition cannot be unsealed.
-   * The sealed state is not persisted; on broker restart, the partition state will be
-   * determined by the topic configuration (which will indicate diskless.enable=true).
    *
-   * @return SealResult containing the log end offset (B0) and leader epoch at seal time,
-   *         or None if this broker is not the leader for this partition
+   * @param onMigrationReady Callback invoked when HW catches up to LEO and migration is ready.
+   *                         The SealResult contains B0 = LEO = HW (after catch-up).
+   * @return true if seal was initiated (or already sealed), false if not the leader
    */
-  def sealForDisklessMigration(): Option[SealResult] = inWriteLock(leaderIsrUpdateLock) {
+  def sealForDisklessMigrationAsync(onMigrationReady: SealResult => Unit): Boolean = inWriteLock(leaderIsrUpdateLock) {
     leaderLogIfLocal match {
       case Some(leaderLog) =>
         // Capture all state atomically while holding the write lock.
@@ -449,40 +495,111 @@ class Partition(val topicPartition: TopicPartition,
         val producerStateMgr = leaderLog.producerStateManager
 
         if (sealedForDisklessMigration) {
-          // Already sealed, return the current state (idempotent)
-          info(s"Partition $topicPartition already sealed for diskless migration")
-          Some(SealResult(
-            topicPartition = topicPartition,
-            topicId = topicIdOpt,
-            logStartOffset = logStartOffset,
-            logEndOffset = logEndOffset,
-            highWatermark = highWatermark,
-            leaderEpoch = currentLeaderEpoch,
-            producerStateManager = producerStateMgr
-          ))
+          // Already sealed - check if we're still waiting for HW to catch up
+          if (disklessMigrationTargetLeo.isDefined) {
+            info(s"Partition $topicPartition already sealed, waiting for HW to catch up to ${disklessMigrationTargetLeo.get}")
+            // Update the callback (new leader might have a new callback)
+            disklessMigrationReadyCallback = Some(onMigrationReady)
+          } else {
+            // Migration already completed, call callback immediately with current state
+            info(s"Partition $topicPartition already sealed and migration completed")
+            val sealResult = SealResult(
+              topicPartition = topicPartition,
+              topicId = topicIdOpt,
+              logStartOffset = logStartOffset,
+              logEndOffset = logEndOffset,
+              highWatermark = highWatermark,
+              leaderEpoch = currentLeaderEpoch,
+              producerStateManager = producerStateMgr
+            )
+            onMigrationReady(sealResult)
+          }
+          true
         } else {
           // Seal the partition - after this, no more classic appends are allowed
           sealedForDisklessMigration = true
-          info(s"Partition $topicPartition sealed for diskless migration. " +
-            s"B0 (disklessStartOffset) = $highWatermark, logEndOffset = $logEndOffset, " +
-            s"logStartOffset = $logStartOffset, leaderEpoch = $currentLeaderEpoch")
-          Some(SealResult(
-            topicPartition = topicPartition,
-            topicId = topicIdOpt,
-            logStartOffset = logStartOffset,
-            logEndOffset = logEndOffset,
-            highWatermark = highWatermark,
-            leaderEpoch = currentLeaderEpoch,
-            producerStateManager = producerStateMgr
-          ))
+
+          if (highWatermark >= logEndOffset) {
+            // HW already caught up to LEO - migration ready immediately
+            info(s"Partition $topicPartition sealed for diskless migration. " +
+              s"B0 = $logEndOffset, HW = $highWatermark (already caught up), leaderEpoch = $currentLeaderEpoch")
+            val sealResult = SealResult(
+              topicPartition = topicPartition,
+              topicId = topicIdOpt,
+              logStartOffset = logStartOffset,
+              logEndOffset = logEndOffset,
+              highWatermark = highWatermark,
+              leaderEpoch = currentLeaderEpoch,
+              producerStateManager = producerStateMgr
+            )
+            onMigrationReady(sealResult)
+          } else {
+            // Need to wait for HW to catch up to LEO
+            disklessMigrationTargetLeo = Some(logEndOffset)
+            disklessMigrationReadyCallback = Some(onMigrationReady)
+            info(s"Partition $topicPartition sealed for diskless migration. " +
+              s"Target B0 = $logEndOffset, current HW = $highWatermark, waiting for HW catch-up, leaderEpoch = $currentLeaderEpoch")
+          }
+          true
         }
       case None =>
         info(s"Cannot seal partition $topicPartition for diskless migration: not the leader")
+        false
+    }
+  }
+
+  /**
+   * Synchronous version of sealForDisklessMigrationAsync that blocks until HW catches up to LEO.
+   * 
+   * @return SealResult containing the log end offset (B0) and leader epoch at seal time,
+   *         or None if this broker is not the leader for this partition
+   */
+  def sealForDisklessMigration(): Option[SealResult] = {
+    val resultPromise = new java.util.concurrent.atomic.AtomicReference[Option[SealResult]](None)
+    val latch = new java.util.concurrent.CountDownLatch(1)
+    
+    val wasSealed = sealForDisklessMigrationAsync { sealResult =>
+      resultPromise.set(Some(sealResult))
+      latch.countDown()
+    }
+    
+    if (!wasSealed) {
+      None
+    } else {
+      // Wait for HW to catch up (with timeout to prevent indefinite blocking)
+      val timeoutMs = 30000L // 30 second timeout
+      if (latch.await(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS)) {
+        resultPromise.get()
+      } else {
+        warn(s"Timeout waiting for HW to catch up to LEO for diskless migration of $topicPartition")
         None
+      }
     }
   }
 
   def hasLateTransaction(currentTimeMs: Long): Boolean = leaderLogIfLocal.exists(_.hasLateTransaction(currentTimeMs))
+
+  /**
+   * Checks if this partition should be sealed for diskless migration and seals it if needed.
+   * This should be called when becoming leader to ensure no classic produces are accepted
+   * for a topic that has diskless.enable=true.
+   *
+   * @param onMigrationReady Callback invoked when migration is ready (HW caught up to LEO)
+   * @return true if the partition was sealed (or already sealed), false if not needed or not leader
+   */
+  def maybeSealForDisklessMigrationIfEnabled(onMigrationReady: SealResult => Unit): Boolean = {
+    log.exists { localLog =>
+      if (localLog.config.disklessEnable() && !sealedForDisklessMigration) {
+        info(s"Topic ${topicPartition.topic()} has diskless.enable=true, sealing partition for migration")
+        sealForDisklessMigrationAsync(onMigrationReady)
+      } else if (sealedForDisklessMigration) {
+        // Already sealed, register the callback for HW catch-up
+        sealForDisklessMigrationAsync(onMigrationReady)
+      } else {
+        false
+      }
+    }
+  }
 
   def isUnderReplicated: Boolean = isLeader && (assignmentState.replicationFactor - partitionState.isr.size) > 0
 
@@ -839,11 +956,21 @@ class Partition(val topicPartition: TopicPartition,
    * Make the local replica the leader by resetting LogEndOffset for remote replicas (there could be old LogEndOffset
    * from the time when this broker was the leader last time) and setting the new leader and ISR.
    * If the leader replica id does not change, return false to indicate the replica manager.
+   *
+   * @param partitionState The new partition state from the leader and ISR request
+   * @param highWatermarkCheckpoints The high watermark checkpoints
+   * @param topicId The topic ID
+   * @param targetDirectoryId The target directory ID for the log
+   * @param isDisklessFromMetadata Whether this topic has diskless.enable=true according to the NEW metadata.
+   *                               This is used to seal the partition for migration BEFORE any produces can
+   *                               squeeze in. We use this instead of log.config because the log config
+   *                               is updated AFTER leader changes are applied.
    */
   def makeLeader(partitionState: LeaderAndIsrRequest.PartitionState,
                  highWatermarkCheckpoints: OffsetCheckpoints,
                  topicId: Option[Uuid],
-                 targetDirectoryId: Option[Uuid] = None): Boolean = {
+                 targetDirectoryId: Option[Uuid] = None,
+                 isDisklessFromMetadata: Boolean = false): Boolean = {
     val (leaderHWIncremented, isNewLeader) = inWriteLock(leaderIsrUpdateLock) {
       // Partition state changes are expected to have a partition epoch larger or equal
       // to the current partition epoch. The latter is allowed because the partition epoch
@@ -927,6 +1054,21 @@ class Partition(val topicPartition: TopicPartition,
 
       partitionEpoch = partitionState.partitionEpoch
       leaderReplicaIdOpt = Some(localBrokerId)
+
+      // CRITICAL: If diskless.enable=true (from NEW metadata), seal the partition immediately
+      // to prevent any classic produces from being accepted. This must happen INSIDE the write lock
+      // to ensure no produce requests can squeeze in between becoming leader and sealing.
+      // We use isDisklessFromMetadata instead of leaderLog.config.disklessEnable() because
+      // the log config is updated AFTER leader changes are applied in the metadata processing order.
+      // This implements the Delos chain sealing protocol for safe migration.
+      if (isDisklessFromMetadata && !sealedForDisklessMigration) {
+        sealedForDisklessMigration = true
+        val logEndOffset = leaderLog.logEndOffset
+        val highWatermark = leaderLog.highWatermark
+        disklessMigrationTargetLeo = Some(logEndOffset)
+        stateChangeLogger.info(s"Partition $topicPartition sealed for diskless migration upon becoming leader. " +
+          s"Target B0 = $logEndOffset, HW = $highWatermark, leaderEpoch = ${partitionState.leaderEpoch}")
+      }
 
       // We may need to increment high watermark since ISR could be down to 1.
       (maybeIncrementLeaderHW(leaderLog, currentTimeMs = currentTimeMs), isNewLeader)

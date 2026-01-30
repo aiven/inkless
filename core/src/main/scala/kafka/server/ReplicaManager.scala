@@ -2518,7 +2518,10 @@ class ReplicaManager(val config: KafkaConfig,
       // Update the partition information to be the leader
       partitionStates.foreachEntry { (partition, partitionState) =>
         try {
-          if (partition.makeLeader(partitionState, highWatermarkCheckpoints, topicIds(partitionState.topicName))) {
+          // Check if diskless is enabled from metadata view (for migration)
+          val isDiskless = _inklessMetadataView.isDisklessTopic(partition.topic)
+          if (partition.makeLeader(partitionState, highWatermarkCheckpoints, topicIds(partitionState.topicName),
+              isDisklessFromMetadata = isDiskless)) {
             partitionsToMakeLeaders += partition
           }
         } catch {
@@ -3115,12 +3118,29 @@ class ReplicaManager(val config: KafkaConfig,
       "local leaders.")
     replicaFetcherManager.removeFetcherForPartitions(localLeaders.keySet)
     localLeaders.foreachEntry { (tp, info) =>
-      if (!_inklessMetadataView.isDisklessTopic(tp.topic()))
+      val isDiskless = _inklessMetadataView.isDisklessTopic(tp.topic())
+      val hasLocalLog = logManager.getLog(tp).isDefined
+
+      // Process the partition if:
+      // 1. It's not a diskless topic (normal case), OR
+      // 2. It's a diskless topic with existing local logs (migration case - need to seal)
+      if (!isDiskless || hasLocalLog) {
         getOrCreatePartition(tp, delta, info.topicId).foreach { case (partition, isNew) =>
           try {
             val state = info.partition.toLeaderAndIsrPartitionState(tp, isNew)
             val partitionAssignedDirectoryId = directoryIds.find(_._1.topicPartition() == tp).map(_._2)
-            partition.makeLeader(state, offsetCheckpoints, Some(info.topicId), partitionAssignedDirectoryId)
+            
+            // For migration case: seal BEFORE makeLeader completes so no produces can squeeze in
+            // We check isDiskless here (from NEW metadata) rather than log.config (OLD config)
+            // to ensure we seal immediately when config changes
+            if (isDiskless && hasLocalLog && !partition.isSealedForDisklessMigration) {
+              stateChangeLogger.info(s"Partition $tp is being migrated to diskless, sealing immediately")
+              // The seal will happen inside makeLeader, but we need to ensure the config is checked
+              // from the new metadata image, not the old log config
+            }
+            
+            partition.makeLeader(state, offsetCheckpoints, Some(info.topicId), partitionAssignedDirectoryId,
+              isDisklessFromMetadata = isDiskless)
 
             changedPartitions.add(partition)
           } catch {
@@ -3134,6 +3154,7 @@ class ReplicaManager(val config: KafkaConfig,
               markPartitionOffline(tp)
           }
         }
+      }
     }
   }
 

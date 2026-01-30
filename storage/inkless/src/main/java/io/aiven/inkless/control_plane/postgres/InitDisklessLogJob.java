@@ -31,8 +31,8 @@ import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.function.Consumer;
 
-import io.aiven.inkless.control_plane.DisklessLogAlreadyInitializedException;
 import io.aiven.inkless.control_plane.InitDisklessLogRequest;
+import io.aiven.inkless.control_plane.InvalidDisklessStartOffsetException;
 import io.aiven.inkless.control_plane.ProducerStateSnapshot;
 
 import static org.jooq.generated.Tables.INIT_DISKLESS_LOG_V1;
@@ -79,7 +79,7 @@ public class InitDisklessLogJob implements Callable<Void> {
         for (final var response : responses) {
             switch (response.getError()) {
                 case none -> { }
-                case already_initialized -> throw new DisklessLogAlreadyInitializedException(
+                case invalid_diskless_start_offset -> throw new InvalidDisklessStartOffsetException(
                     response.getTopicId(),
                     response.getPartition()
                 );

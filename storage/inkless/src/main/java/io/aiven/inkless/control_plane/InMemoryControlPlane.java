@@ -98,20 +98,26 @@ public class InMemoryControlPlane extends AbstractControlPlane {
 
             final LogInfo existingLogInfo = logs.get(topicIdPartition);
             if (existingLogInfo != null) {
-                // Log already exists - reject initialization
-                throw new DisklessLogAlreadyInitializedException(
-                    request.topicId(), request.partition());
-            } else {
-                // Create new log entry
-                LOGGER.info("Initializing {} with logStartOffset {}, disklessStartOffset {}",
-                    topicIdPartition, request.logStartOffset(), request.disklessStartOffset());
-                final LogInfo logInfo = new LogInfo();
-                logInfo.logStartOffset = request.logStartOffset();
-                logInfo.highWatermark = request.disklessStartOffset();
-                logInfo.disklessStartOffset = request.disklessStartOffset();
-                logs.put(topicIdPartition, logInfo);
-                batches.putIfAbsent(topicIdPartition, new TreeMap<>());
+                // Log already exists - check if B0 matches
+                if (existingLogInfo.disklessStartOffset == request.disklessStartOffset()) {
+                    // Same B0 - idempotent success
+                    LOGGER.debug("Partition {} already initialized with same B0, skipping (idempotent)", topicIdPartition);
+                    continue;
+                } else {
+                    // Different disklessStartOffset - protocol violation!
+                    throw new InvalidDisklessStartOffsetException(request.topicId(), request.partition());
+                }
             }
+
+            // Create new log entry
+            LOGGER.info("Initializing {} with logStartOffset {}, disklessStartOffset {}",
+                topicIdPartition, request.logStartOffset(), request.disklessStartOffset());
+            final LogInfo logInfo = new LogInfo();
+            logInfo.logStartOffset = request.logStartOffset();
+            logInfo.highWatermark = request.disklessStartOffset();
+            logInfo.disklessStartOffset = request.disklessStartOffset();
+            logs.put(topicIdPartition, logInfo);
+            batches.putIfAbsent(topicIdPartition, new TreeMap<>());
 
             // Insert producer state entries
             if (request.producerStateEntries() != null && !request.producerStateEntries().isEmpty()) {

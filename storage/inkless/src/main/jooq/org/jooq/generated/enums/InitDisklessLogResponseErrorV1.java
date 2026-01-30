@@ -28,7 +28,7 @@ public enum InitDisklessLogResponseErrorV1 implements EnumType {
 
     none("none"),
 
-    already_initialized("already_initialized");
+    invalid_diskless_start_offset("invalid_diskless_start_offset");
 
     private final String literal;
 

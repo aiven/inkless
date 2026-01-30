@@ -14,7 +14,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-// Copyright (c) 2024 Aiven, Helsinki, Finland. https://aiven.io/
+// Copyright (c) 2026 Aiven, Helsinki, Finland. https://aiven.io/
 
 package kafka.server
 
@@ -41,17 +41,21 @@ case class MigrationFailed(topicPartition: TopicPartition, exception: Throwable)
  *
  * 1. **Seal Phase**: For each partition, acquires the leaderIsrUpdateLock write lock to:
  *    - Block any in-flight append operations
- *    - Capture the exact Log End Offset (LEO) as B0 (diskless start offset)
+ *    - Capture the exact Log End Offset (LEO) as target B0 (diskless start offset)
  *    - Mark the partition as sealed to prevent future classic appends
  *
- * 2. **Initialize Phase**: Initializes the diskless log in the control plane with:
- *    - The captured B0 offset (using high watermark for safety, as it represents committed data)
+ * 2. **Wait for HW Catch-up**: Wait for high watermark to reach LEO to ensure all data
+ *    is replicated before establishing the diskless boundary.
+ *
+ * 3. **Initialize Phase**: Initializes the diskless log in the control plane with:
+ *    - B0 = LEO = HW (after catch-up) - all data is replicated
  *    - Producer state snapshots for idempotent producer support
  *
  * The protocol guarantees:
- * - No data loss: B0 is captured while holding the lock, ensuring no appends are in-flight
+ * - No data loss: B0 = LEO = HW ensures all committed data is preserved
  * - Safe boundary: All offsets < B0 are in classic format, all offsets >= B0 are in diskless format
  * - Online migration: No broker restart required, only produces are briefly blocked during sealing
+ * - Convergence: All leaders will seal at the same B0 due to metadata ordering and ISR invariants
  *
  * @param replicaManager The ReplicaManager to access partitions
  * @param controlPlane   Optional ControlPlane for diskless log initialization
@@ -68,7 +72,8 @@ class DisklessMigrationHandler(
    * It performs the following steps:
    *
    * 1. Seals all leader partitions (non-leaders are skipped)
-   * 2. Initializes the diskless log in the control plane
+   * 2. Waits for high watermark to catch up to LEO on each partition
+   * 3. Initializes the diskless log in the control plane when ready
    *
    * The migration is idempotent - if a partition is already sealed, it will be skipped.
    *
@@ -90,72 +95,97 @@ class DisklessMigrationHandler(
     info(s"Found ${partitionsToSeal.size} leader partitions to seal for topic $topic: " +
       s"${partitionsToSeal.map(_.topicPartition).mkString(", ")}")
 
-    // Step 2: Seal each partition and collect seal results
-    val sealResults = mutable.Map[TopicPartition, SealResult]()
-    val initRequests = mutable.Set[InitDisklessLogRequest]()
+    // Step 2: Seal each partition and wait for HW to catch up to LEO
+    // Use a synchronous approach with CountDownLatch for simplicity
+    val initRequests = java.util.Collections.synchronizedSet(new java.util.HashSet[InitDisklessLogRequest]())
+    val completionLatch = new java.util.concurrent.CountDownLatch(partitionsToSeal.size)
+    val sealedPartitions = mutable.Set[TopicPartition]()
 
     for (partition <- partitionsToSeal) {
       val tp = partition.topicPartition
       try {
-        partition.sealForDisklessMigration() match {
-          case Some(sealResult) =>
-            sealResults(tp) = sealResult
-
-            // Create InitDisklessLogRequest using the captured state from SealResult
-            // This is critical: we use the state captured atomically during sealing,
-            // not the current state of the log, to ensure consistency
-            sealResult.topicId match {
-              case Some(topicId) =>
-                val initRequest = createInitRequestFromSealResult(sealResult, topicId)
-                initRequests.add(initRequest)
-              case None =>
-                error(s"Topic ID is required for diskless initialization of partition $tp")
+        // Seal with callback that fires when HW catches up to LEO
+        val wasSealed = partition.sealForDisklessMigrationAsync { sealResult =>
+          sealResult.topicId match {
+            case Some(topicId) =>
+              val initRequest = createInitRequestFromSealResult(sealResult, topicId)
+              initRequests.add(initRequest)
+              info(s"Partition $tp ready for diskless init: B0=${sealResult.logEndOffset}")
+            case None =>
+              error(s"Topic ID is required for diskless initialization of partition $tp")
+              results.synchronized {
                 results(tp) = MigrationFailed(tp,
                   new IllegalStateException("Topic ID is required for diskless initialization"))
-            }
+              }
+          }
+          completionLatch.countDown()
+        }
 
-          case None =>
-            results(tp) = MigrationSkipped(tp, "Broker is not the leader for this partition")
+        if (wasSealed) {
+          sealedPartitions.add(tp)
+        } else {
+          results(tp) = MigrationSkipped(tp, "Broker is not the leader for this partition")
+          completionLatch.countDown()
         }
       } catch {
         case e: Exception =>
           error(s"Failed to seal partition $tp for diskless migration", e)
           results(tp) = MigrationFailed(tp, e)
+          completionLatch.countDown()
       }
     }
 
-    // Step 3: Initialize diskless logs in the control plane
-    if (initRequests.nonEmpty) {
+    // Step 3: Wait for all partitions to have HW catch up to LEO
+    val timeoutMs = 60000L // 60 second timeout for all partitions
+    val allReady = completionLatch.await(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS)
+    if (!allReady) {
+      warn(s"Timeout waiting for HW catch-up on some partitions for topic $topic. " +
+        s"Proceeding with partitions that are ready.")
+    }
+
+    // Step 4: Initialize diskless logs in the control plane
+    if (!initRequests.isEmpty) {
       controlPlane match {
         case Some(cp) =>
           try {
-            info(s"Initializing diskless logs in control plane for ${initRequests.size} partitions")
-            cp.initDisklessLog(initRequests.asJava)
+            info(s"Initializing diskless logs in control plane for ${initRequests.size()} partitions")
+            cp.initDisklessLog(initRequests)
 
-            // Mark all sealed partitions as successful
-            for ((tp, sealResult) <- sealResults if !results.contains(tp)) {
-              results(tp) = MigrationSuccess(tp, sealResult.highWatermark)
-              info(s"Successfully migrated partition $tp to diskless with B0=${sealResult.highWatermark}")
+            // Mark all initialized partitions as successful
+            initRequests.forEach { req =>
+              val tp = new TopicPartition(req.topicName(), req.partition())
+              if (!results.contains(tp)) {
+                results(tp) = MigrationSuccess(tp, req.disklessStartOffset())
+                info(s"Successfully migrated partition $tp to diskless with B0=${req.disklessStartOffset()}")
+              }
             }
           } catch {
             case e: Exception =>
               error(s"Failed to initialize diskless logs in control plane for topic $topic", e)
-              // Mark all sealed partitions as failed
-              // Note: The partitions are still sealed, but the control plane initialization failed.
-              // This is intentional - we don't unseal to prevent data inconsistency.
-              // The initialization should be retried.
-              for ((tp, _) <- sealResults if !results.contains(tp)) {
-                results(tp) = MigrationFailed(tp, e)
+              // Mark partitions as failed but keep them sealed
+              sealedPartitions.foreach { tp =>
+                if (!results.contains(tp)) {
+                  results(tp) = MigrationFailed(tp, e)
+                }
               }
           }
 
         case None =>
-          warn(s"Control plane not available. Partitions are sealed but diskless logs not initialized. " +
-            s"This should not happen in production - diskless storage system should be enabled.")
-          for ((tp, sealResult) <- sealResults if !results.contains(tp)) {
-            results(tp) = MigrationFailed(tp,
-              new IllegalStateException("Control plane not available for diskless initialization"))
+          warn(s"Control plane not available. Partitions are sealed but diskless logs not initialized.")
+          sealedPartitions.foreach { tp =>
+            if (!results.contains(tp)) {
+              results(tp) = MigrationFailed(tp,
+                new IllegalStateException("Control plane not available for diskless initialization"))
+            }
           }
+      }
+    }
+
+    // Mark any sealed partitions without results as failed (timeout waiting for HW)
+    sealedPartitions.foreach { tp =>
+      if (!results.contains(tp)) {
+        results(tp) = MigrationFailed(tp,
+          new IllegalStateException("Timeout waiting for high watermark to catch up to log end offset"))
       }
     }
 
@@ -183,12 +213,12 @@ class DisklessMigrationHandler(
    * NOT the current state of the log. This is critical for data safety:
    * - The SealResult was captured while holding the write lock
    * - No appends were in-flight when these values were captured
-   * - Using the captured state ensures consistency between the seal point and initialization
+   * - The SealResult is only provided after HW has caught up to LEO
    *
-   * We use highWatermark as disklessStartOffset because:
-   * - The highWatermark represents committed data that has been acknowledged
-   * - For diskless topics with replication factor 1, HW should equal LEO
-   * - Using HW provides an extra safety margin for data that is "committed"
+   * We use logEndOffset as disklessStartOffset because:
+   * - We wait for HW to catch up to LEO before completing the seal
+   * - At that point, HW = LEO, meaning all data is replicated
+   * - Using LEO ensures no data is orphaned between HW and LEO
    */
   private def createInitRequestFromSealResult(
     sealResult: SealResult,
@@ -203,7 +233,7 @@ class DisklessMigrationHandler(
       sealResult.topicPartition.topic(),
       sealResult.topicPartition.partition(),
       sealResult.logStartOffset,
-      sealResult.highWatermark, // Use HW as disklessStartOffset for safety
+      sealResult.logEndOffset, // Use LEO as disklessStartOffset (HW = LEO after catch-up)
       sealResult.leaderEpoch,
       producerStateEntries.asJava
     )

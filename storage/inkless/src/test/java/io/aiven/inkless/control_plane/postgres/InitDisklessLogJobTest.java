@@ -31,8 +31,8 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import java.util.List;
 import java.util.Set;
 
-import io.aiven.inkless.control_plane.DisklessLogAlreadyInitializedException;
 import io.aiven.inkless.control_plane.InitDisklessLogRequest;
+import io.aiven.inkless.control_plane.InvalidDisklessStartOffsetException;
 import io.aiven.inkless.control_plane.ProducerStateSnapshot;
 import io.aiven.inkless.test_utils.InklessPostgreSQLContainer;
 import io.aiven.inkless.test_utils.PostgreSQLTestContainer;
@@ -111,27 +111,44 @@ class InitDisklessLogJobTest {
     }
 
     @Test
-    void throwsExceptionWhenLogAlreadyExists() {
-        // First initialization with leader epoch 5
+    void idempotentWhenLogAlreadyExistsWithSameB0() {
+        // First initialization with B0 = 200
         runInitJob(Set.of(new InitDisklessLogRequest(TOPIC_ID1, TOPIC_1, 0, 100L, 200L, 5, List.of())));
 
-        // Second initialization attempt should throw DisklessLogAlreadyInitializedException
-        final var secondRequests = Set.of(new InitDisklessLogRequest(TOPIC_ID1, TOPIC_1, 0, 300L, 400L, 7, List.of()));
-        assertThatThrownBy(() -> runInitJob(secondRequests))
-            .isInstanceOf(DisklessLogAlreadyInitializedException.class)
-            .satisfies(e -> {
-                final var ex = (DisklessLogAlreadyInitializedException) e;
-                assertThat(ex.topicId()).isEqualTo(TOPIC_ID1);
-                assertThat(ex.partition()).isEqualTo(0);
-            });
+        // Second initialization with SAME B0 should be idempotent (no exception, no change)
+        final var secondRequests = Set.of(new InitDisklessLogRequest(TOPIC_ID1, TOPIC_1, 0, 100L, 200L, 5, List.of()));
+        runInitJob(secondRequests); // Should not throw
 
-        // Verify the log still has the original values
+        // Verify the log still has the original values (unchanged)
         final var logs = DBUtils.getAllLogs(pgContainer.getDataSource());
         assertThat(logs).hasSize(1);
         final var log = logs.iterator().next();
         assertThat(log.getLogStartOffset()).isEqualTo(100L);
         assertThat(log.getHighWatermark()).isEqualTo(200L);
         assertThat(DBUtils.getLeaderEpochAtInit(pgContainer.getDataSource(), TOPIC_ID1, 0)).isEqualTo(5);
+    }
+
+    @Test
+    void throwsExceptionWhenDisklessStartOffsetDiffers() {
+        // First initialization with disklessStartOffset = 200
+        runInitJob(Set.of(new InitDisklessLogRequest(TOPIC_ID1, TOPIC_1, 0, 100L, 200L, 5, List.of())));
+
+        // Second initialization with DIFFERENT disklessStartOffset should throw InvalidDisklessStartOffsetException
+        // This indicates a protocol violation that must be investigated
+        final var secondRequests = Set.of(new InitDisklessLogRequest(TOPIC_ID1, TOPIC_1, 0, 100L, 300L, 5, List.of()));
+        assertThatThrownBy(() -> runInitJob(secondRequests))
+            .isInstanceOf(InvalidDisklessStartOffsetException.class)
+            .satisfies(e -> {
+                final var ex = (InvalidDisklessStartOffsetException) e;
+                assertThat(ex.topicId()).isEqualTo(TOPIC_ID1);
+                assertThat(ex.partition()).isEqualTo(0);
+            });
+
+        // Verify the log still has the original values (unchanged)
+        final var logs = DBUtils.getAllLogs(pgContainer.getDataSource());
+        assertThat(logs).hasSize(1);
+        final var log = logs.iterator().next();
+        assertThat(log.getDisklessStartOffset()).isEqualTo(200L);
     }
 
 
