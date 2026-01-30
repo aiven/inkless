@@ -670,10 +670,22 @@ public class MirrorCoordinator {
     }
 
     /**
-     * Returns mirror topics managed by this node.
+     * Returns all configured mirrors from the metadata cache.
+     *
+     * @return the set of all configured mirror names
      */
-    public Set<String> getMirrorTopics() {
-        return mirrorMetadataManager.getMirrorTopics();
+    public Set<String> getConfiguredMirrors() {
+        return mirrorMetadataManager.getConfiguredMirrors();
+    }
+
+    /**
+     * Returns the configured topics for a specific mirror from the metadata image.
+     *
+     * @param mirrorName the name of the cluster mirror
+     * @return the set of configured topic names for this mirror
+     */
+    public Set<String> getConfiguredTopics(String mirrorName) {
+        return mirrorMetadataManager.getConfiguredTopics(mirrorName);
     }
 
     /**
@@ -687,10 +699,10 @@ public class MirrorCoordinator {
     }
 
     /**
-     * Get all partitions for a mirror with their states.
+     * Get mirror partitions this broker is fetching from.
      *
      * @param mirrorName mirror name
-     * @return map of topic partitions to their states
+     * @return partition state map
      */
     public Map<TopicPartition, MirrorPartitionState> getMirrorPartitions(String mirrorName) {
         return mirrorMetadataManager.getMirrorPartitions(mirrorName);

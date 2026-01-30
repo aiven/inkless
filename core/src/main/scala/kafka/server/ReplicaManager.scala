@@ -2638,6 +2638,19 @@ class ReplicaManager(val config: KafkaConfig,
                 mirrorName = mirrorName
               )
               partitionAndOffsets.put(tp, fetchState)
+
+              // Register listener to update mirror lag when HW advances
+              val mirrorLagListener = new PartitionListener {
+                override def onHighWatermarkUpdated(partition: TopicPartition, offset: Long): Unit = {
+                  // Update mirror lag with the new HW
+                  // Keep the existing source offset, it will be updated by the next mirror fetch
+                  val lagInfo = mirrorFetcherManager.getLagInfo(mirrorName).get(tp)
+                  lagInfo.foreach { info =>
+                    updateMirrorLag(mirrorName, tp, info.sourceOffset, offset)
+                  }
+                }
+              }
+              maybeAddListener(tp, mirrorLagListener)
             }
           } catch {
             case e: Exception =>

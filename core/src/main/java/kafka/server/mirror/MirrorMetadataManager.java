@@ -389,6 +389,29 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         this.coordinatingPartFinder = Optional.of(function);
     }
 
+    /**
+     * Asynchronously writes mirror partition states to the remote coordinator.
+     * <p>
+     * This method sends partition state updates (including state and last mirrored offset) to the
+     * coordinator broker responsible for this mirror. The coordinator persists these states to the
+     * {@code __cluster_mirror_state} internal topic. This enables failover scenarios where another
+     * broker can resume mirroring from the last known state.
+     * </p>
+     * <p>
+     * The method performs the following:
+     * <ul>
+     *   <li>Finds the coordinator broker for the given mirror (caching the result)</li>
+     *   <li>Constructs a WriteMirrorStatesRequest with partition metadata and removed topics</li>
+     *   <li>Sends the request asynchronously via inter-broker sender</li>
+     *   <li>Invokes the response callback when the coordinator responds</li>
+     * </ul>
+     * </p>
+     *
+     * @param mirrorName the name of the cluster mirror
+     * @param topicMetadata map of topic names to sets of partition metadata (state and offset)
+     * @param removedTopics set of topic names that have been removed from the mirror
+     * @param responseCallback callback invoked with the coordinator's response
+     */
     public void writeStatesToRemoteCoordinator(String mirrorName,
                                                Map<String, Set<MirrorPartitionMetadata>> topicMetadata,
                                                Set<String> removedTopics,
@@ -439,6 +462,32 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         ));
     }
 
+    /**
+     * Asynchronously reads mirror partition states from the remote coordinator.
+     * <p>
+     * This method queries the coordinator broker responsible for this mirror to retrieve the
+     * current state and last mirrored offset for the specified partitions. The coordinator reads
+     * this data from the {@code __cluster_mirror_state} internal topic.
+     * </p>
+     * <p>
+     * The method performs the following:
+     * <ul>
+     *   <li>Finds the coordinator broker for the given mirror</li>
+     *   <li>Constructs a ReadMirrorStatesRequest for the specified partitions</li>
+     *   <li>Sends the request asynchronously via inter-broker sender</li>
+     *   <li>Updates local cache (lastMirroredOffsets and mirrorPartitionState) with the response</li>
+     *   <li>Invokes the callback with the coordinator's response</li>
+     * </ul>
+     * </p>
+     * <p>
+     * This is useful when a broker needs to query the authoritative state from the coordinator,
+     * for example when handling describe requests or during initialization.
+     * </p>
+     *
+     * @param mirrorName the name of the cluster mirror
+     * @param partitions map of topic names to their partition indices to query
+     * @param onWriteComplete callback invoked with the coordinator's response containing partition states
+     */
     public void readStatesFromRemoteCoordinator(String mirrorName,
                                                 Map<String, Set<Integer>> partitions,
                                                 Consumer<ReadMirrorStatesResponse> onWriteComplete) {
@@ -505,6 +554,33 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         ));
     }
 
+    /**
+     * Reads mirror partition states from the local in-memory cache.
+     * <p>
+     * This method retrieves partition state and last mirrored offset information from the local
+     * cache ({@code lastMirroredOffsets} and {@code mirrorPartitionState} maps) without making
+     * any network requests. It's used when the current broker is the coordinator for this mirror
+     * and already has the authoritative state in memory.
+     * </p>
+     * <p>
+     * The method performs the following:
+     * <ul>
+     *   <li>Looks up state and offset for each requested partition in local cache</li>
+     *   <li>Uses {@code -1} for lastMirroredOffset if not found in cache</li>
+     *   <li>Uses {@code UNKNOWN} state if not found in cache</li>
+     *   <li>Constructs a ReadMirrorStatesResponse from the cached data</li>
+     *   <li>Invokes the callback immediately with the response (no async operation)</li>
+     * </ul>
+     * </p>
+     * <p>
+     * This is typically called when handling ReadMirrorStatesRequest on the coordinator broker,
+     * where the local cache contains the authoritative state from the {@code __cluster_mirror_state} topic.
+     * </p>
+     *
+     * @param mirrorName the name of the cluster mirror
+     * @param partitions map of topic names to their partition indices to query
+     * @param responseCallback callback invoked immediately with cached partition states
+     */
     public void readStatesFromCache(String mirrorName,
                                     Map<String, Set<Integer>> partitions,
                                     Consumer<ReadMirrorStatesResponse> responseCallback) {
@@ -542,6 +618,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         });
         return topicToPartitions;
     }
+
     /**
      * Initiates truncation of topic partitions to align with last mirrored offsets from source cluster.
      * <p>
@@ -822,8 +899,11 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         checkMirrorConnections();
 
         remoteBrokers.forEach((mirrorName, senders) -> {
+            // Always sync topic metadata so all brokers can find partition leaders
+            syncTopicMetadata(mirrorName, senders);
+
+            // Only coordinator syncs configurations, consumer groups, and ACLs
             if (isLocalCoordinator(mirrorName)) {
-                syncTopicMetadata(mirrorName, senders);
                 syncTopicConfigurations(mirrorName, senders);
                 syncConsumerGroupOffsets(senders);
                 syncACLs(mirrorName, senders);
@@ -1217,10 +1297,29 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     private record ACLChanges(List<AclBinding> aclsToAdd, List<AclBinding> aclsToDelete) { }
 
     /**
-     * Returns mirror topics managed by this node.
+     * Returns all configured mirrors from the metadata cache.
+     *
+     * @return the set of all configured mirror names
      */
-    public Set<String> getMirrorTopics() {
-        return new HashSet<>(mirrorTopics.keySet());
+    public Set<String> getConfiguredMirrors() {
+        return metadataImage.configs().resourceData().keySet().stream()
+                .filter(resource -> resource.type() == ConfigResource.Type.MIRROR)
+                .map(ConfigResource::name)
+                .collect(java.util.stream.Collectors.toSet());
+    }
+
+    /**
+     * Returns the configured topics for a specific mirror from the metadata image.
+     *
+     * @param mirrorName the name of the cluster mirror
+     * @return the set of configured topic names for this mirror
+     */
+    public Set<String> getConfiguredTopics(String mirrorName) {
+        return metadataImage.topics().topicsByName().values().stream()
+                .filter(topicImage -> topicImage.partitions().values().stream()
+                        .anyMatch(partition -> mirrorName.equals(partition.mirrorName)))
+                .map(org.apache.kafka.image.TopicImage::name)
+                .collect(java.util.stream.Collectors.toSet());
     }
 
     /**
@@ -1237,7 +1336,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     }
 
     /**
-     * Get topic partitions for a given mirror along with their states.
+     * Get mirror partitions this broker is fetching from.
      *
      * @param mirrorName the name of the cluster mirror
      * @return partition state map

@@ -368,13 +368,13 @@ class KafkaApis(val requestChannel: RequestChannel,
     val responseData = new ListMirrorsResponseData()
 
     if (authHelper.authorize(request.context, DESCRIBE, CLUSTER, CLUSTER_NAME, logIfDenied = false)) {
-      val mirrorTopics = mirrorCoordinator.getMirrorTopics()
       val mirrors = new util.ArrayList[ListMirrorsResponseData.ListedMirror]()
-      mirrorTopics.forEach(mirrorName => {
-        val sourceBootstrap = mirrorCoordinator.getSourceBootstrap(mirrorName)
+      mirrorCoordinator.getConfiguredMirrors().forEach(mirrorName => {
         mirrors.add(new ListMirrorsResponseData.ListedMirror()
           .setMirrorName(mirrorName)
-          .setSourceBootstrap(if (sourceBootstrap != null) sourceBootstrap else ""))
+          .setSourceBootstrap(if (mirrorCoordinator.getSourceBootstrap(mirrorName) != null)
+            mirrorCoordinator.getSourceBootstrap(mirrorName) else "")
+          .setTopicCount(mirrorCoordinator.getConfiguredTopics(mirrorName).size()))
       })
       responseData.setMirrors(mirrors)
       responseData.setErrorCode(Errors.NONE.code)
@@ -391,7 +391,7 @@ class KafkaApis(val requestChannel: RequestChannel,
 
     if (authHelper.authorize(request.context, DESCRIBE, CLUSTER, CLUSTER_NAME, logIfDenied = false)) {
       val requestedMirrors = if (describeMirrorsRequest.data.mirrorNames.isEmpty) {
-        mirrorCoordinator.getMirrorTopics().asScala.toSeq // get all
+        mirrorCoordinator.getConfiguredMirrors().asScala.toSeq // get all
       } else {
         describeMirrorsRequest.data.mirrorNames.asScala.toSeq
       }
@@ -424,8 +424,8 @@ class KafkaApis(val requestChannel: RequestChannel,
               tp
             })
 
-            // Get state if available
-            val state = partitionStates.get(topicPartition).getOrElse(MirrorPartitionState.UNKNOWN)
+            // Get state if available, otherwise assume mirroring since we have lag info
+            val state = partitionStates.get(topicPartition).getOrElse(MirrorPartitionState.MIRRORING)
 
             val partitionDetail = new DescribeMirrorsResponseData.PartitionDetail()
               .setPartitionIndex(topicPartition.partition())

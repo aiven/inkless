@@ -141,7 +141,6 @@ public abstract class MirrorCommand {
             if (coordinator == null) {
                 throw new RuntimeException("Could not find coordinator for mirror " + mirrorName);
             }
-            System.out.printf("Found coordinator %s for mirror %s%n", coordinator.idString(), mirrorName);
             return coordinator;
         }
 
@@ -156,7 +155,6 @@ public abstract class MirrorCommand {
             if (matchingTopics.isEmpty()) {
                 throw new RuntimeException("No topics matching pattern '" + topicPattern + "' found");
             }
-            System.out.printf("Found %d topic(s) matching pattern '%s': %s%n", matchingTopics.size(), topicPattern, matchingTopics);
             return matchingTopics;
         }
 
@@ -240,17 +238,15 @@ public abstract class MirrorCommand {
                 }
 
                 if (!createdTopics.isEmpty()) {
+                    // TODO: We should return error and let the command retry if the topic metadata is not propagated to brokers. Right now, we sleep 1 sec
+                    Thread.sleep(1000);
+                    AddTopicsToMirrorResult addResult = admin.addTopicsToMirror(
+                            coordinatorNode.id(), existingTopics, new AddTopicsToMirrorOptions());
+                    addResult.all().get();
+
                     System.out.printf("Successfully added %d topic(s) to mirror %s: %s%n",
                         createdTopics.size(), mirrorName, createdTopics);
                 }
-
-                // TODO: We should return error and let the command retry if the topic metadata is not propagated to brokers. Right now, we sleep 1 sec
-                Thread.sleep(1000);
-                AddTopicsToMirrorResult addResult = admin.addTopicsToMirror(
-                        coordinatorNode.id(), existingTopics, new AddTopicsToMirrorOptions());
-                addResult.all().get();
-                System.out.printf("Successfully added %s existing topic(s) to mirror %s%n",
-                        existingTopics, mirrorName);
             }
         }
 
@@ -272,18 +268,35 @@ public abstract class MirrorCommand {
                 RemoveTopicsFromMirrorResult removeTopicsFromMirrorResult = admin.removeTopicsFromMirror(
                     mirrorName, matchingTopics, new RemoveTopicsFromMirrorOptions());
                 removeTopicsFromMirrorResult.all().get();
-                System.out.printf("Successfully removed %d topic(s) from mirror %s%n", matchingTopics.size(), mirrorName);
+                System.out.printf("Successfully removed %d topic(s) from mirror %s: %s%n",
+                    matchingTopics.size(), mirrorName, matchingTopics);
             }
         }
 
         public void listMirrors() throws ExecutionException, InterruptedException {
             ListMirrorsResult result = adminClient.listMirrors();
-            for (MirrorListing listing : result.all().get()) {
-                String output = listing.mirrorName();
-                if (listing.sourceBootstrap() != null && !listing.sourceBootstrap().isEmpty()) {
-                    output += " (source bootstrap: " + listing.sourceBootstrap() + ")";
-                }
-                System.out.println(output);
+            List<MirrorListing> listings = new ArrayList<>(result.all().get());
+
+            if (listings.isEmpty()) {
+                System.out.println("No mirrors found");
+                return;
+            }
+
+            // Sort by mirror name
+            listings.sort(Comparator.comparing(MirrorListing::mirrorName));
+
+            // Print header
+            System.out.printf("%-30s %-10s %-50s%n", "MIRROR", "TOPICS", "SOURCE-BOOTSTRAP");
+
+            // Print each mirror
+            for (MirrorListing listing : listings) {
+                String sourceBootstrap = listing.sourceBootstrap() != null && !listing.sourceBootstrap().isEmpty()
+                    ? listing.sourceBootstrap()
+                    : "-";
+                System.out.printf("%-30s %-10d %-50s%n",
+                    truncateLeft(listing.mirrorName(), 30),
+                    listing.topicCount(),
+                    truncateLeft(sourceBootstrap, 50));
             }
         }
 
@@ -302,7 +315,7 @@ public abstract class MirrorCommand {
             Map<String, MirrorDescription> descriptions = result.allDescriptions().get();
 
             if (descriptions.isEmpty()) {
-                System.out.println("No mirrors found");
+                System.out.println("No mirror partition found");
                 return;
             }
 
@@ -335,7 +348,7 @@ public abstract class MirrorCommand {
 
             // Only print header and results if there are partitions to display
             if (!partitionInfos.isEmpty()) {
-                System.out.printf("%-30s %-40s %-10s %-15s %-18s %-12s %-12s%n",
+                System.out.printf("%-30s %-40s %-10s %-15s %-18s %-10s %-12s%n",
                     "MIRROR", "TOPIC", "PARTITION", "SOURCE-OFFSET", "DESTINATION-OFFSET", "LAG", "STATE");
                 for (PartitionInfo info : partitionInfos) {
                     System.out.printf("%-30s %-40s %-10d %-15d %-18d %-10d %-12s%n",
