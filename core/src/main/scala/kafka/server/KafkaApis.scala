@@ -368,9 +368,9 @@ class KafkaApis(val requestChannel: RequestChannel,
     val responseData = new ListMirrorsResponseData()
 
     if (authHelper.authorize(request.context, DESCRIBE, CLUSTER, CLUSTER_NAME, logIfDenied = false)) {
-      val mirrorNames = mirrorCoordinator.getMirrorNames()
+      val mirrorTopics = mirrorCoordinator.getMirrorTopics()
       val mirrors = new util.ArrayList[ListMirrorsResponseData.ListedMirror]()
-      mirrorNames.forEach(mirrorName => {
+      mirrorTopics.forEach(mirrorName => {
         val sourceBootstrap = mirrorCoordinator.getSourceBootstrap(mirrorName)
         mirrors.add(new ListMirrorsResponseData.ListedMirror()
           .setMirrorName(mirrorName)
@@ -391,7 +391,7 @@ class KafkaApis(val requestChannel: RequestChannel,
 
     if (authHelper.authorize(request.context, DESCRIBE, CLUSTER, CLUSTER_NAME, logIfDenied = false)) {
       val requestedMirrors = if (describeMirrorsRequest.data.mirrorNames.isEmpty) {
-        mirrorCoordinator.getMirrorNames().asScala.toSeq
+        mirrorCoordinator.getMirrorTopics().asScala.toSeq // get all
       } else {
         describeMirrorsRequest.data.mirrorNames.asScala.toSeq
       }
@@ -424,8 +424,8 @@ class KafkaApis(val requestChannel: RequestChannel,
               tp
             })
 
-            // Get state if available, otherwise default to MIRRORING
-            val state = partitionStates.get(topicPartition).getOrElse(MirrorPartitionState.MIRRORING)
+            // Get state if available
+            val state = partitionStates.get(topicPartition).getOrElse(MirrorPartitionState.UNKNOWN)
 
             val partitionDetail = new DescribeMirrorsResponseData.PartitionDetail()
               .setPartitionIndex(topicPartition.partition())

@@ -670,10 +670,10 @@ public class MirrorCoordinator {
     }
 
     /**
-     * Returns mirror names managed by this node.
+     * Returns mirror topics managed by this node.
      */
-    public Set<String> getMirrorNames() {
-        return mirrorMetadataManager.getMirrorNames();
+    public Set<String> getMirrorTopics() {
+        return mirrorMetadataManager.getMirrorTopics();
     }
 
     /**

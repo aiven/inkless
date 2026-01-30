@@ -1217,9 +1217,9 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     private record ACLChanges(List<AclBinding> aclsToAdd, List<AclBinding> aclsToDelete) { }
 
     /**
-     * Returns mirror names managed by this node.
+     * Returns mirror topics managed by this node.
      */
-    public Set<String> getMirrorNames() {
+    public Set<String> getMirrorTopics() {
         return new HashSet<>(mirrorTopics.keySet());
     }
 
