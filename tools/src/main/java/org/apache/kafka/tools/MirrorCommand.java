@@ -335,7 +335,7 @@ public abstract class MirrorCommand {
 
             // Only print header and results if there are partitions to display
             if (!partitionInfos.isEmpty()) {
-                System.out.printf("%-30s %-40s %-10s %-15s %-18s %-10s %-12s%n",
+                System.out.printf("%-30s %-40s %-10s %-15s %-18s %-12s %-12s%n",
                     "MIRROR", "TOPIC", "PARTITION", "SOURCE-OFFSET", "DESTINATION-OFFSET", "LAG", "STATE");
                 for (PartitionInfo info : partitionInfos) {
                     System.out.printf("%-30s %-40s %-10d %-15d %-18d %-10d %-12s%n",
