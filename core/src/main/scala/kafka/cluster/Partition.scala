@@ -954,8 +954,8 @@ class Partition(val topicPartition: TopicPartition,
       // leaderIsrUpdateLock to prevent adding new hw to invalid log.
       inReadLock(leaderIsrUpdateLock) {
         leaderLogIfLocal.exists(leaderLog => {
-          maybeIncrementLeaderHW(leaderLog, followerFetchTimeMs)
           maybeCompleteIsrTruncation(leaderLog, followerFetchTimeMs)
+          maybeIncrementLeaderHW(leaderLog, followerFetchTimeMs)
         })
       }
     } else {
@@ -1236,7 +1236,7 @@ class Partition(val topicPartition: TopicPartition,
                                   onComplete: Optional[Consumer[TopicPartition]] = Optional.empty()): Boolean = {
     // Only perform truncation validation for mirrored partitions (when callback is provided)
     if (onComplete.isEmpty) {
-      return true
+      return false
     }
 
     info("!!! maybeCompleteIsrTruncation: " + leaderLog)
@@ -2035,8 +2035,8 @@ class Partition(val topicPartition: TopicPartition,
 
       // we may need to increment high watermark since ISR could be down to 1
       leaderLogIfLocal.exists(log => {
-        maybeIncrementLeaderHW(log)
         maybeCompleteIsrTruncation(log)
+        maybeIncrementLeaderHW(log)
       })
     }
   }
