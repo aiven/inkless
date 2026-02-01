@@ -3533,47 +3533,6 @@ public class KafkaAdminClient extends AdminClient {
         }
     }
 
-    private static final class ListMirrorsResults {
-        private final List<Throwable> errors;
-        private final HashMap<String, MirrorListing> listings;
-        private final HashSet<Node> remaining;
-        private final KafkaFutureImpl<Collection<Object>> future;
-
-        ListMirrorsResults(Collection<Node> brokers,
-                           KafkaFutureImpl<Collection<Object>> future) {
-            this.errors = new ArrayList<>();
-            this.listings = new HashMap<>();
-            this.remaining = new HashSet<>(brokers);
-            this.future = future;
-            tryComplete();
-        }
-
-        synchronized void addError(Throwable throwable, Node node) {
-            ApiError error = ApiError.fromThrowable(throwable);
-            if (error.message() == null || error.message().isEmpty()) {
-                errors.add(error.error().exception("Error listing mirrors on " + node));
-            } else {
-                errors.add(error.error().exception("Error listing mirrors on " + node + ": " + error.message()));
-            }
-        }
-
-        synchronized void addListing(MirrorListing listing) {
-            listings.put(listing.mirrorName(), listing);
-        }
-
-        synchronized void tryComplete(Node broker) {
-            remaining.remove(broker);
-            tryComplete();
-        }
-
-        private synchronized void tryComplete() {
-            if (remaining.isEmpty()) {
-                ArrayList<Object> results = new ArrayList<>(listings.values());
-                results.addAll(errors);
-                future.complete(results);
-            }
-        }
-    }
 
     @Override
     public ListGroupsResult listGroups(ListGroupsOptions options) {
@@ -3680,81 +3639,6 @@ public class KafkaAdminClient extends AdminClient {
         }, nowMetadata);
 
         return new ListGroupsResult(all);
-    }
-
-    @Override
-    public ListMirrorsResult listMirrors(ListMirrorsOptions options) {
-        final KafkaFutureImpl<Collection<Object>> all = new KafkaFutureImpl<>();
-        final long nowMetadata = time.milliseconds();
-        final long deadline = calcDeadlineMs(nowMetadata, options.timeoutMs());
-        // Send list mirrors RPCs to all brokers and merge results
-        runnable.call(new Call("findAllBrokers", deadline, new LeastLoadedNodeProvider()) {
-            @Override
-            MetadataRequest.Builder createRequest(int timeoutMs) {
-                return new MetadataRequest.Builder(new MetadataRequestData()
-                    .setTopics(Collections.emptyList())
-                    .setAllowAutoTopicCreation(true));
-            }
-
-            @Override
-            void handleResponse(AbstractResponse abstractResponse) {
-                MetadataResponse metadataResponse = (MetadataResponse) abstractResponse;
-                Collection<Node> nodes = metadataResponse.brokers();
-                if (nodes.isEmpty())
-                    throw new StaleMetadataException("Metadata fetch failed due to missing broker list");
-
-                HashSet<Node> allNodes = new HashSet<>(nodes);
-                final ListMirrorsResults results = new ListMirrorsResults(allNodes, all);
-
-                for (final Node node : allNodes) {
-                    final long nowList = time.milliseconds();
-                    runnable.call(new Call("listMirrors", deadline, new ConstantNodeIdProvider(node.id())) {
-                        @Override
-                        ListMirrorsRequest.Builder createRequest(int timeoutMs) {
-                            return new ListMirrorsRequest.Builder(new ListMirrorsRequestData());
-                        }
-
-                        @Override
-                        void handleResponse(AbstractResponse abstractResponse) {
-                            final ListMirrorsResponse response = (ListMirrorsResponse) abstractResponse;
-                            synchronized (results) {
-                                Errors error = Errors.forCode(response.data().errorCode());
-                                if (error == Errors.COORDINATOR_LOAD_IN_PROGRESS || error == Errors.COORDINATOR_NOT_AVAILABLE) {
-                                    throw error.exception();
-                                } else if (error != Errors.NONE) {
-                                    results.addError(error.exception(), node);
-                                } else {
-                                    for (ListMirrorsResponseData.ListedMirror mirror : response.data().mirrors()) {
-                                        final MirrorListing mirrorListing = new MirrorListing(
-                                            mirror.mirrorName(),
-                                            mirror.sourceBootstrap()
-                                        );
-                                        results.addListing(mirrorListing);
-                                    }
-                                }
-                                results.tryComplete(node);
-                            }
-                        }
-
-                        @Override
-                        void handleFailure(Throwable throwable) {
-                            synchronized (results) {
-                                results.addError(throwable, node);
-                                results.tryComplete(node);
-                            }
-                        }
-                    }, nowList);
-                }
-            }
-
-            @Override
-            void handleFailure(Throwable throwable) {
-                KafkaException exception = new KafkaException("Failed to find brokers to send ListMirrors", throwable);
-                all.complete(Collections.singletonList(exception));
-            }
-        }, nowMetadata);
-
-        return new ListMirrorsResult(all);
     }
 
     @Override
@@ -4989,11 +4873,11 @@ public class KafkaAdminClient extends AdminClient {
     }
 
     @Override
-    public AddTopicsToMirrorResult addTopicsToMirror(Map<String, String> topicToMirrorName, AddTopicsToMirrorOptions options) {
+    public AddTopicsToMirrorResult addTopicsToMirror(int destinationNodeId, Map<String, String> topicToMirrorName, AddTopicsToMirrorOptions options) {
         final KafkaFutureImpl<Void> future = new KafkaFutureImpl<>();
         final long now = time.milliseconds();
         final Call call = new Call("addTopicsToMirror", calcDeadlineMs(now, options.timeoutMs()),
-                new LeastLoadedBrokerOrActiveKController()) {
+                new ConstantNodeIdProvider(destinationNodeId)) {
 
             @Override
             AddTopicsToMirrorRequest.Builder createRequest(int timeoutMs) {
@@ -5068,64 +4952,119 @@ public class KafkaAdminClient extends AdminClient {
         return new RemoveTopicsFromMirrorResult(future);
     }
 
+    @Override
+    public ListMirrorsResult listMirrors(ListMirrorsOptions options) {
+        final KafkaFutureImpl<Collection<Object>> all = new KafkaFutureImpl<>();
+        final long now = time.milliseconds();
+        final long deadline = calcDeadlineMs(now, options.timeoutMs());
+
+        // We query one broker for static metadata (mirror names, topic counts, bootstrap servers)
+        // Data comes from metadata cache
+        runnable.call(new Call("listMirrors", deadline, new LeastLoadedNodeProvider()) {
+            @Override
+            ListMirrorsRequest.Builder createRequest(int timeoutMs) {
+                return new ListMirrorsRequest.Builder(new ListMirrorsRequestData());
+            }
+
+            @Override
+            void handleResponse(AbstractResponse abstractResponse) {
+                final ListMirrorsResponse response = (ListMirrorsResponse) abstractResponse;
+                Errors error = Errors.forCode(response.data().errorCode());
+                if (error == Errors.COORDINATOR_LOAD_IN_PROGRESS || error == Errors.COORDINATOR_NOT_AVAILABLE) {
+                    throw error.exception();
+                } else if (error != Errors.NONE) {
+                    all.complete(Collections.singletonList(error.exception()));
+                } else {
+                    List<Object> listings = new ArrayList<>();
+                    for (ListMirrorsResponseData.ListedMirror mirror : response.data().mirrors()) {
+                        listings.add(new MirrorListing(
+                                mirror.mirrorName(),
+                                mirror.sourceBootstrap(),
+                                mirror.topicCount()
+                        ));
+                    }
+                    all.complete(listings);
+                }
+            }
+
+            @Override
+            void handleFailure(Throwable throwable) {
+                all.complete(Collections.singletonList(throwable));
+            }
+        }, now);
+
+        return new ListMirrorsResult(all);
+    }
+
+    @Override
+    public DescribeMirrorsResult describeMirrors(Collection<String> mirrorNames, DescribeMirrorsOptions options) {
+        final KafkaFutureImpl<Map<String, MirrorDescription>> all = new KafkaFutureImpl<>();
+        final long nowMetadata = time.milliseconds();
+        final long deadline = calcDeadlineMs(nowMetadata, options.timeoutMs());
+        // We query all brokers to get up-to-date lag AND state
+        // Each broker that's actively fetching partitions already has state in its local cache
+        runnable.call(new Call("findAllBrokers", deadline, new LeastLoadedNodeProvider()) {
+            @Override
+            MetadataRequest.Builder createRequest(int timeoutMs) {
+                return new MetadataRequest.Builder(new MetadataRequestData()
+                    .setTopics(Collections.emptyList())
+                    .setAllowAutoTopicCreation(true));
+            }
+
+            @Override
+            void handleResponse(AbstractResponse abstractResponse) {
+                MetadataResponse metadataResponse = (MetadataResponse) abstractResponse;
+                Collection<Node> nodes = metadataResponse.brokers();
+                if (nodes.isEmpty())
+                    throw new StaleMetadataException("Metadata fetch failed due to missing broker list");
+
+                HashSet<Node> allNodes = new HashSet<>(nodes);
+                final DescribeMirrorsResults results = new DescribeMirrorsResults(allNodes, mirrorNames, all);
+
+                for (final Node node : allNodes) {
+                    final long nowDescribe = time.milliseconds();
+                    runnable.call(new Call("describeMirrors", deadline, new ConstantNodeIdProvider(node.id())) {
+                        @Override
+                        DescribeMirrorsRequest.Builder createRequest(int timeoutMs) {
+                            DescribeMirrorsRequestData data = new DescribeMirrorsRequestData()
+                                .setMirrorNames(new ArrayList<>(mirrorNames))
+                                .setIncludeAuthorizedOperations(options.includeAuthorizedOperations());
+                            return new DescribeMirrorsRequest.Builder(data);
+                        }
+
+                        @Override
+                        void handleResponse(AbstractResponse abstractResponse) {
+                            final DescribeMirrorsResponse response = (DescribeMirrorsResponse) abstractResponse;
+                            synchronized (results) {
+                                for (DescribeMirrorsResponseData.DescribedMirror mirror : response.data().mirrors()) {
+                                    results.handleMirror(mirror);
+                                }
+                                results.tryComplete(node);
+                            }
+                        }
+
+                        @Override
+                        void handleFailure(Throwable throwable) {
+                            synchronized (results) {
+                                results.completeAllExceptionally(throwable);
+                                results.tryComplete(node);
+                            }
+                        }
+                    }, nowDescribe);
+                }
+            }
+
+            @Override
+            void handleFailure(Throwable throwable) {
+                KafkaException exception = new KafkaException("Failed to find brokers to send DescribeMirrors", throwable);
+                all.completeExceptionally(exception);
+            }
+        }, nowMetadata);
+
+        return new DescribeMirrorsResult(all);
+    }
+
     private static final class DescribeMirrorsResults {
-        // Accumulated MirrorDescription data from all brokers
-        private static class PartialMirrorDescription {
-            final String mirrorName;
-            final Map<String, Set<MirrorDescription.LeaderState>> topicPartitions;
-            final Set<Integer> authorizedOps;
-            Throwable error;
-
-            PartialMirrorDescription(String mirrorName) {
-                this.mirrorName = mirrorName;
-                this.topicPartitions = new HashMap<>();
-                this.authorizedOps = new HashSet<>();
-                this.error = null;
-            }
-
-            void merge(DescribeMirrorsResponseData.DescribedMirror mirror) {
-                Errors errorCode = Errors.forCode(mirror.errorCode());
-                if (errorCode != Errors.NONE) {
-                    if (this.error == null) {
-                        this.error = errorCode.exception();
-                    }
-                    return;
-                }
-
-                // Merge topic partitions
-                for (DescribeMirrorsResponseData.TopicPartitions topic : mirror.topics()) {
-                    Set<MirrorDescription.LeaderState> partitions =
-                        topicPartitions.computeIfAbsent(topic.topicName(), k -> new HashSet<>());
-
-                    for (DescribeMirrorsResponseData.PartitionDetail partition : topic.partitions()) {
-                        TopicPartition tp = new TopicPartition(topic.topicName(), partition.partitionIndex());
-                        MirrorDescription.LeaderState leaderState =
-                            new MirrorDescription.LeaderState(
-                                tp,
-                                partition.sourceOffset(),
-                                partition.destinationOffset(),
-                                partition.lag(),
-                                partition.state()
-                            );
-                        partitions.add(leaderState);
-                    }
-                }
-
-                // Merge authorized operations
-                if (mirror.authorizedOperations() != -2147483648) {
-                    authorizedOps.add(mirror.authorizedOperations());
-                }
-            }
-
-            MirrorDescription toMirrorDescription() {
-                return new MirrorDescription(
-                    mirrorName,
-                    topicPartitions,
-                    authorizedOps.isEmpty() ? Collections.emptySet() : authorizedOps
-                );
-            }
-        }
-
         private final Map<String, PartialMirrorDescription> partialDescriptions;
         private final Set<String> requestedMirrors;
         private final boolean describeAll;
@@ -5193,73 +5132,63 @@ public class KafkaAdminClient extends AdminClient {
                 allFuture.completeExceptionally(throwable);
             }
         }
-    }
 
-    @Override
-    public DescribeMirrorsResult describeMirrors(Collection<String> mirrorNames, DescribeMirrorsOptions options) {
-        final KafkaFutureImpl<Map<String, MirrorDescription>> all = new KafkaFutureImpl<>();
-        final long nowMetadata = time.milliseconds();
-        final long deadline = calcDeadlineMs(nowMetadata, options.timeoutMs());
-        // Send describe mirrors RPCs to all brokers and merge results
-        runnable.call(new Call("findAllBrokers", deadline, new LeastLoadedNodeProvider()) {
-            @Override
-            MetadataRequest.Builder createRequest(int timeoutMs) {
-                return new MetadataRequest.Builder(new MetadataRequestData()
-                    .setTopics(Collections.emptyList())
-                    .setAllowAutoTopicCreation(true));
+        // Accumulated MirrorDescription data from all brokers
+        private static class PartialMirrorDescription {
+            final String mirrorName;
+            final Map<String, Set<MirrorDescription.LeaderState>> topicPartitions;
+            final Set<Integer> authorizedOps;
+            Throwable error;
+
+            PartialMirrorDescription(String mirrorName) {
+                this.mirrorName = mirrorName;
+                this.topicPartitions = new HashMap<>();
+                this.authorizedOps = new HashSet<>();
+                this.error = null;
             }
 
-            @Override
-            void handleResponse(AbstractResponse abstractResponse) {
-                MetadataResponse metadataResponse = (MetadataResponse) abstractResponse;
-                Collection<Node> nodes = metadataResponse.brokers();
-                if (nodes.isEmpty())
-                    throw new StaleMetadataException("Metadata fetch failed due to missing broker list");
+            void merge(DescribeMirrorsResponseData.DescribedMirror mirror) {
+                Errors errorCode = Errors.forCode(mirror.errorCode());
+                if (errorCode != Errors.NONE) {
+                    if (this.error == null) {
+                        this.error = errorCode.exception();
+                    }
+                    return;
+                }
 
-                HashSet<Node> allNodes = new HashSet<>(nodes);
-                final DescribeMirrorsResults results = new DescribeMirrorsResults(allNodes, mirrorNames, all);
+                // Merge topic partitions
+                for (DescribeMirrorsResponseData.TopicPartitions topic : mirror.topics()) {
+                    Set<MirrorDescription.LeaderState> partitions =
+                            topicPartitions.computeIfAbsent(topic.topicName(), k -> new HashSet<>());
 
-                for (final Node node : allNodes) {
-                    final long nowDescribe = time.milliseconds();
-                    runnable.call(new Call("describeMirrors", deadline, new ConstantNodeIdProvider(node.id())) {
-                        @Override
-                        DescribeMirrorsRequest.Builder createRequest(int timeoutMs) {
-                            DescribeMirrorsRequestData data = new DescribeMirrorsRequestData()
-                                .setMirrorNames(new ArrayList<>(mirrorNames))
-                                .setIncludeAuthorizedOperations(options.includeAuthorizedOperations());
-                            return new DescribeMirrorsRequest.Builder(data);
-                        }
+                    for (DescribeMirrorsResponseData.PartitionDetail partition : topic.partitions()) {
+                        TopicPartition tp = new TopicPartition(topic.topicName(), partition.partitionIndex());
+                        MirrorDescription.LeaderState leaderState =
+                                new MirrorDescription.LeaderState(
+                                        tp,
+                                        partition.sourceOffset(),
+                                        partition.destinationOffset(),
+                                        partition.lag(),
+                                        partition.state()
+                                );
+                        partitions.add(leaderState);
+                    }
+                }
 
-                        @Override
-                        void handleResponse(AbstractResponse abstractResponse) {
-                            final DescribeMirrorsResponse response = (DescribeMirrorsResponse) abstractResponse;
-                            synchronized (results) {
-                                for (DescribeMirrorsResponseData.DescribedMirror mirror : response.data().mirrors()) {
-                                    results.handleMirror(mirror);
-                                }
-                                results.tryComplete(node);
-                            }
-                        }
-
-                        @Override
-                        void handleFailure(Throwable throwable) {
-                            synchronized (results) {
-                                results.completeAllExceptionally(throwable);
-                                results.tryComplete(node);
-                            }
-                        }
-                    }, nowDescribe);
+                // Merge authorized operations
+                if (mirror.authorizedOperations() != -2147483648) {
+                    authorizedOps.add(mirror.authorizedOperations());
                 }
             }
 
-            @Override
-            void handleFailure(Throwable throwable) {
-                KafkaException exception = new KafkaException("Failed to find brokers to send DescribeMirrors", throwable);
-                all.completeExceptionally(exception);
+            MirrorDescription toMirrorDescription() {
+                return new MirrorDescription(
+                        mirrorName,
+                        topicPartitions,
+                        authorizedOps.isEmpty() ? Collections.emptySet() : authorizedOps
+                );
             }
-        }, nowMetadata);
-
-        return new DescribeMirrorsResult(all);
+        }
     }
 
     @Override

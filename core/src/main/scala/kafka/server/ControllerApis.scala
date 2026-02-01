@@ -168,7 +168,6 @@ class ControllerApis(
   }
 
   def handleAddTopicsToMirror(request: RequestChannel.Request): CompletableFuture[Unit] = {
-    // luke
     authHelper.authorizeClusterOperation(request, CLUSTER_ACTION)
     val addTopicsToMirrorRequest = request.body[AddTopicsToMirrorRequest]
     info("!!! attach mirror topic request: " + addTopicsToMirrorRequest)
@@ -199,7 +198,6 @@ class ControllerApis(
   }
 
   def handleRemoveTopicsFromMirror(request: RequestChannel.Request): CompletableFuture[Unit] = {
-    // luke
     authHelper.authorizeClusterOperation(request, CLUSTER_ACTION)
     val removeTopicsFromMirrorRequest = request.body[RemoveTopicsFromMirrorRequest]
     info("!!! delete mirror topic request: " + removeTopicsFromMirrorRequest)
@@ -610,7 +608,7 @@ class ControllerApis(
         } else {
           new ApiError(CLUSTER_AUTHORIZATION_FAILED)
         }
-      case ConfigResource.Type.TOPIC =>
+      case ConfigResource.Type.TOPIC | ConfigResource.Type.MIRROR =>
         if (authHelper.authorize(requestContext, ALTER_CONFIGS, TOPIC, resource.name)) {
           new ApiError(NONE)
         } else {

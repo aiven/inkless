@@ -28,16 +28,29 @@ import java.util.Objects;
 public class MirrorListing {
     private final String mirrorName;
     private final String sourceBootstrap;
+    private final int topicCount;
 
     /**
      * Create an instance with the specified parameters.
      *
      * @param mirrorName Mirror name
      * @param sourceBootstrap Source cluster bootstrap servers
+     * @param topicCount Number of topics configured for this mirror
      */
-    public MirrorListing(String mirrorName, String sourceBootstrap) {
+    public MirrorListing(String mirrorName, String sourceBootstrap, int topicCount) {
         this.mirrorName = mirrorName;
         this.sourceBootstrap = sourceBootstrap;
+        this.topicCount = topicCount;
+    }
+
+    /**
+     * Create an instance with the specified parameters (backwards compatibility).
+     *
+     * @param mirrorName Mirror name
+     * @param sourceBootstrap Source cluster bootstrap servers
+     */
+    public MirrorListing(String mirrorName, String sourceBootstrap) {
+        this(mirrorName, sourceBootstrap, 0);
     }
 
     /**
@@ -58,14 +71,23 @@ public class MirrorListing {
         return sourceBootstrap;
     }
 
+    /**
+     * The number of topics configured for this mirror.
+     *
+     * @return Number of topics, or 0 if mirror has no topics configured
+     */
+    public int topicCount() {
+        return topicCount;
+    }
+
     @Override
     public String toString() {
-        return "MirrorListing(mirrorName='" + mirrorName + "', sourceBootstrap='" + sourceBootstrap + "')";
+        return "MirrorListing(mirrorName='" + mirrorName + "', sourceBootstrap='" + sourceBootstrap + "', topicCount=" + topicCount + ")";
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(mirrorName, sourceBootstrap);
+        return Objects.hash(mirrorName, sourceBootstrap, topicCount);
     }
 
     @Override
@@ -73,7 +95,8 @@ public class MirrorListing {
         if (this == o) return true;
         if (!(o instanceof MirrorListing)) return false;
         MirrorListing that = (MirrorListing) o;
-        return Objects.equals(mirrorName, that.mirrorName) &&
+        return topicCount == that.topicCount &&
+               Objects.equals(mirrorName, that.mirrorName) &&
                Objects.equals(sourceBootstrap, that.sourceBootstrap);
     }
 }

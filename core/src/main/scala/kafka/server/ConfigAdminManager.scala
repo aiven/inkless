@@ -143,7 +143,7 @@ class ConfigAdminManager(nodeId: Int,
                 validateResourceNameIsCurrentNodeId(resource.resourceName())
               }
               validateBrokerConfigChange(resource, configResource)
-            case TOPIC | CLIENT_METRICS | GROUP =>
+            case TOPIC | CLIENT_METRICS | GROUP | ConfigResource.Type.MIRROR =>
             // Nothing to do.
             case _ =>
               throw new InvalidRequestException(s"Unknown resource type ${resource.resourceType().toInt}")

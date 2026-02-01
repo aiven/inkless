@@ -30,7 +30,9 @@
       { "name": "MirrorName", "type": "string", "versions": "0+",
         "about": "The mirror name." },
       { "name": "SourceBootstrap", "type": "string", "versions": "0+",
-        "about": "The source cluster bootstrap servers." }
+        "about": "The source cluster bootstrap servers." },
+      { "name": "TopicCount", "type": "int32", "versions": "0+", "default": "0",
+        "about": "The number of topics configured for this mirror. 0 indicates an empty mirror with no topics." }
     ]}
   ]
 }

@@ -162,6 +162,8 @@ import org.apache.kafka.common.message.ProduceRequestDataJsonConverter;
 import org.apache.kafka.common.message.ProduceResponseDataJsonConverter;
 import org.apache.kafka.common.message.PushTelemetryRequestDataJsonConverter;
 import org.apache.kafka.common.message.PushTelemetryResponseDataJsonConverter;
+import org.apache.kafka.common.message.ReadMirrorStatesRequestDataJsonConverter;
+import org.apache.kafka.common.message.ReadMirrorStatesResponseDataJsonConverter;
 import org.apache.kafka.common.message.ReadShareGroupStateRequestDataJsonConverter;
 import org.apache.kafka.common.message.ReadShareGroupStateResponseDataJsonConverter;
 import org.apache.kafka.common.message.ReadShareGroupStateSummaryRequestDataJsonConverter;
@@ -201,6 +203,8 @@ import org.apache.kafka.common.message.UpdateRaftVoterRequestDataJsonConverter;
 import org.apache.kafka.common.message.UpdateRaftVoterResponseDataJsonConverter;
 import org.apache.kafka.common.message.VoteRequestDataJsonConverter;
 import org.apache.kafka.common.message.VoteResponseDataJsonConverter;
+import org.apache.kafka.common.message.WriteMirrorStatesRequestDataJsonConverter;
+import org.apache.kafka.common.message.WriteMirrorStatesResponseDataJsonConverter;
 import org.apache.kafka.common.message.WriteShareGroupStateRequestDataJsonConverter;
 import org.apache.kafka.common.message.WriteShareGroupStateResponseDataJsonConverter;
 import org.apache.kafka.common.message.WriteTxnMarkersRequestDataJsonConverter;
@@ -354,6 +358,8 @@ import org.apache.kafka.common.requests.ProduceRequest;
 import org.apache.kafka.common.requests.ProduceResponse;
 import org.apache.kafka.common.requests.PushTelemetryRequest;
 import org.apache.kafka.common.requests.PushTelemetryResponse;
+import org.apache.kafka.common.requests.ReadMirrorStatesRequest;
+import org.apache.kafka.common.requests.ReadMirrorStatesResponse;
 import org.apache.kafka.common.requests.ReadShareGroupStateRequest;
 import org.apache.kafka.common.requests.ReadShareGroupStateResponse;
 import org.apache.kafka.common.requests.ReadShareGroupStateSummaryRequest;
@@ -394,6 +400,8 @@ import org.apache.kafka.common.requests.UpdateRaftVoterRequest;
 import org.apache.kafka.common.requests.UpdateRaftVoterResponse;
 import org.apache.kafka.common.requests.VoteRequest;
 import org.apache.kafka.common.requests.VoteResponse;
+import org.apache.kafka.common.requests.WriteMirrorStatesRequest;
+import org.apache.kafka.common.requests.WriteMirrorStatesResponse;
 import org.apache.kafka.common.requests.WriteShareGroupStateRequest;
 import org.apache.kafka.common.requests.WriteShareGroupStateResponse;
 import org.apache.kafka.common.requests.WriteTxnMarkersRequest;
@@ -600,6 +608,10 @@ public class RequestConvertToJson {
                 return RemoveTopicsFromMirrorRequestDataJsonConverter.write(((RemoveTopicsFromMirrorRequest) request).data(), request.version());
             case LAST_MIRRORED_OFFSETS:
                 return LastMirroredOffsetsRequestDataJsonConverter.write(((LastMirroredOffsetsRequest) request).data(), request.version());
+            case WRITE_MIRROR_STATES:
+                return WriteMirrorStatesRequestDataJsonConverter.write(((WriteMirrorStatesRequest) request).data(), request.version());
+            case READ_MIRROR_STATES:
+                return ReadMirrorStatesRequestDataJsonConverter.write(((ReadMirrorStatesRequest) request).data(), request.version());
             default:
                 throw new IllegalStateException("ApiKey " + request.apiKey() + " is not currently handled in `request`, the " +
                     "code should be updated to do so.");
@@ -796,6 +808,10 @@ public class RequestConvertToJson {
                 return RemoveTopicsFromMirrorResponseDataJsonConverter.write(((RemoveTopicsFromMirrorResponse) response).data(), version);
             case LAST_MIRRORED_OFFSETS:
                 return LastMirroredOffsetsResponseDataJsonConverter.write(((LastMirroredOffsetsResponse) response).data(), version);
+            case WRITE_MIRROR_STATES:
+                return WriteMirrorStatesResponseDataJsonConverter.write(((WriteMirrorStatesResponse) response).data(), version);
+            case READ_MIRROR_STATES:
+                return ReadMirrorStatesResponseDataJsonConverter.write(((ReadMirrorStatesResponse) response).data(), version);
             default:
                 throw new IllegalStateException("ApiKey " + response.apiKey() + " is not currently handled in `response`, the " +
                     "code should be updated to do so.");

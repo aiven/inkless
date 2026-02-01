@@ -14,14 +14,16 @@
 // limitations under the License.
 
 {
-  "apiKey":97,
-  "type": "request",
-  "listeners": ["broker", "controller"],
-  "name": "LastMirroredOffsetsRequest",
+  "apiKey":100,
+  "type": "response",
+  "name": "ReadMirrorStatesResponse",
   "validVersions": "0",
   "flexibleVersions": "0+",
   "fields": [
-    { "name": "MirrorName", "type": "string", "versions": "0+", "about": "The mirror name." },
+    { "name": "ThrottleTimeMs", "type": "int32", "versions": "0+",
+      "about": "The duration in milliseconds for which the request was throttled due to a quota violation, or zero if the request did not violate any quota." },
+    { "name": "ErrorCode", "type": "int16", "versions": "0+",
+      "about": "The error code, or 0 if there was no error." },
     { "name": "Topics", "type": "[]TopicState", "versions": "0",
       "about": "The responses per topic.", "fields": [
       { "name": "Name", "type": "string", "versions": "0", "entityType": "topicName",
@@ -29,7 +31,13 @@
       { "name": "Partitions", "type": "[]PartitionState", "versions": "0",
         "about": "The responses per partition.", "fields": [
         { "name": "PartitionIndex", "type": "int32", "versions": "0",
-          "about": "The partition index." }
+          "about": "The partition index." },
+        { "name": "LastMirroredOffset", "type": "int64", "versions": "0",
+          "about": "The last mirrored record offset." },
+        { "name": "state", "type": "int8", "versions": "0+",
+          "about": "The mirror partition state." },
+        { "name": "ErrorCode", "type": "int16", "versions": "0",
+          "about": "The error code, or 0 if there was no error." }
       ]}
     ]}
   ]

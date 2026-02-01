@@ -14,10 +14,10 @@
 // limitations under the License.
 
 {
-  "apiKey":97,
+  "apiKey":100,
   "type": "request",
   "listeners": ["broker", "controller"],
-  "name": "LastMirroredOffsetsRequest",
+  "name": "ReadMirrorStatesRequest",
   "validVersions": "0",
   "flexibleVersions": "0+",
   "fields": [
@@ -30,7 +30,9 @@
         "about": "The responses per partition.", "fields": [
         { "name": "PartitionIndex", "type": "int32", "versions": "0",
           "about": "The partition index." }
-      ]}
-    ]}
+        ]}
+      ]},
+    { "name": "NeedPartitionStates", "type": "bool", "versions": "0+", "default": "true",
+      "about": "Need the partition states or only topics states needed." }
   ]
 }

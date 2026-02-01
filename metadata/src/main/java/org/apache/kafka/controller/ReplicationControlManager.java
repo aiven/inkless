@@ -152,6 +152,7 @@ import static org.apache.kafka.metadata.LeaderConstants.NO_LEADER_CHANGE;
 public class ReplicationControlManager {
     static final int MAX_ELECTIONS_PER_IMBALANCE = 1_000;
     static final int MAX_PARTITIONS_PER_BATCH = 10_000;
+    private static final String REMOVED_TOPIC_SUFFIX = ".removed";
 
     static class Builder {
         private SnapshotRegistry snapshotRegistry = null;
@@ -621,7 +622,6 @@ public class ReplicationControlManager {
     }
 
     public ControllerResult<AddTopicsToMirrorResponseData> addTopicsToMirror(Map<Uuid, String> topicIdsToMirrorName) {
-        // luke
         List<ApiMessageAndVersion> records = BoundedList.newArrayBacked(MAX_RECORDS_PER_USER_OP);
         for (Entry<Uuid, String> topicIdToMirrorName : topicIdsToMirrorName.entrySet()) {
             Uuid topicId = topicIdToMirrorName.getKey();
@@ -657,7 +657,10 @@ public class ReplicationControlManager {
         for (Uuid topicId : topicIds) {
             TopicControlInfo info = topics.get(topicId);
             String topicName = info.name;
-            for (int partitionId : info.parts.keySet()) {
+            for (Entry<Integer, PartitionRegistration> entry : info.parts.entrySet()) {
+                int partitionId = entry.getKey();
+                String mirrorName = info.parts.get(partitionId).mirrorName;
+                String newMirrorName = mirrorName.endsWith(REMOVED_TOPIC_SUFFIX) ? "" : mirrorName + REMOVED_TOPIC_SUFFIX;
                 PartitionRegistration partition = info.parts.get(partitionId);
                 PartitionChangeBuilder builder = new PartitionChangeBuilder(
                         partition,
@@ -668,7 +671,7 @@ public class ReplicationControlManager {
                         getTopicEffectiveMinIsr(topicName)
                 )
                         // clear the mirror name, so the topics become writable
-                        .setMirrorName("")
+                        .setMirrorName(newMirrorName)
                         .setEligibleLeaderReplicasEnabled(featureControl.isElrFeatureEnabled())
                         .setDefaultDirProvider(clusterDescriber);
 
