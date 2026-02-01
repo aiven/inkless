@@ -99,7 +99,7 @@ public enum MirrorPartitionState {
         }
         switch (target) {
             case INITIALIZING:
-                return source == null;
+                return source == null || source == MirrorPartitionState.STOPPED || source == MirrorPartitionState.FAILED;
             case PREPARING:
                 return source == MirrorPartitionState.INITIALIZING
                         || source == MirrorPartitionState.STOPPED

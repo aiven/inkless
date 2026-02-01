@@ -250,9 +250,7 @@ public abstract class MirrorCommand {
                     } finally {
                         existingTopics.put(topicName, mirrorName);
                     }
-                }
 
-                if (!createdTopics.isEmpty()) {
                     // TODO: We should return error and let the command retry if the topic metadata is not propagated to brokers. Right now, we sleep 1 sec
                     Thread.sleep(1000);
                     AddTopicsToMirrorResult addResult = admin.addTopicsToMirror(
@@ -260,8 +258,10 @@ public abstract class MirrorCommand {
                     addResult.all().get();
 
                     System.out.printf("Successfully added %d topic(s) to mirror %s: %s%n",
-                        createdTopics.size(), mirrorName, createdTopics);
+                            createdTopics.size(), mirrorName, createdTopics);
                 }
+
+
             }
         }
 

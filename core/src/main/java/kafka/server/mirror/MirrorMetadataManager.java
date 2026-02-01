@@ -1069,7 +1069,9 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                 Map<String, String> conChange = new HashMap<>();
 
                 describeConfigResult.configs().forEach(con -> {
-                    if (con.configSource() == DescribeConfigsResponse.ConfigSource.TOPIC_CONFIG.id()) {
+                    // Don't apply the change for the mirror name config
+                    if (con.configSource() == DescribeConfigsResponse.ConfigSource.TOPIC_CONFIG.id()
+                            && !con.name().equals(TopicConfig.MIRROR_NAME_CONFIG)) {
                         if (props.containsKey(con.name())) {
                             if (!props.get(con.name()).equals(con.value())) {
                                 conChange.put(con.name(), con.value());
