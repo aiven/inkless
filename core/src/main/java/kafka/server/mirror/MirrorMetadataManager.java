@@ -162,7 +162,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     private static final Logger LOG = LoggerFactory.getLogger(MirrorMetadataManager.class);
     private static final ResourcePatternFilter ANY_RESOURCE = new ResourcePatternFilter(ResourceType.ANY, null, PatternType.ANY);
     private static final AclBindingFilter ANY_RESOURCE_ACL = new AclBindingFilter(ANY_RESOURCE, AccessControlEntryFilter.ANY);
-    private static final String REMOVED_TOPIC_SUFFIX = ".removed";
+    public static final String REMOVED_TOPIC_SUFFIX = ".removed";
 
     private final KafkaConfig brokerConfig;
     private final int nodeId;
@@ -310,7 +310,9 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
             }
         });
 
-        clearFollowersState(delta.topicsDelta().localChanges(nodeId).followers().keySet(), newImage);
+        if (delta.topicsDelta() != null) {
+            clearFollowersState(delta.topicsDelta().localChanges(nodeId).followers().keySet(), newImage);
+        }
     }
 
     /** get leaders with non-empty mirror name in this node
@@ -368,10 +370,8 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         followers.forEach(followerTp -> {
             String mirrorName = (String) newImage.configs().configProperties(new ConfigResource(ConfigResource.Type.TOPIC, followerTp.topic())).get(TopicConfig.MIRROR_NAME_CONFIG);
             if (mirrorName != null && !mirrorName.isEmpty()) {
-                if (mirrorName.endsWith(REMOVED_TOPIC_SUFFIX)) {
-                    mirrorName = mirrorName.substring(0, mirrorName.length() - REMOVED_TOPIC_SUFFIX.length());
-                }
-                MirrorPartitionKey key = new MirrorPartitionKey(mirrorName, followerTp.topic(), followerTp.partition());
+                String updatedMirrorName = originalMirrorName(mirrorName);
+                MirrorPartitionKey key = new MirrorPartitionKey(updatedMirrorName, followerTp.topic(), followerTp.partition());
                 mirrorPartitionState.remove(key);
                 lastMirroredOffsets.remove(key);
             }
@@ -644,6 +644,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     public void readStatesFromCache(String mirrorName,
                                     Map<String, Set<Integer>> partitions,
                                     Consumer<ReadMirrorStatesResponse> responseCallback) {
+        LOG.info("!!! readStatesFromCache: {} {} ;; {} {}", mirrorName, partitions, lastMirroredOffsets, mirrorPartitionState);
         ReadMirrorStatesResponseData data = new ReadMirrorStatesResponseData();
         List<ReadMirrorStatesResponseData.TopicState> topicStates = new ArrayList<>();
         partitions.forEach((tp, parts) -> {
@@ -660,6 +661,8 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
             topicStates.add(state);
         });
         data.setTopics(topicStates);
+
+        LOG.info("!!! readStatesFromCache: {} {}", mirrorName, data);
 
         responseCallback.accept(new ReadMirrorStatesResponse(data));
     }
@@ -844,12 +847,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     }
 
     public MirrorPartitionState getMirrorPartitionState(String mirrorName, TopicPartition topicPartition) {
-        String updatedMirrorName = mirrorName;
-        if (mirrorName != null) {
-            if (mirrorName.endsWith(REMOVED_TOPIC_SUFFIX)) {
-                updatedMirrorName = mirrorName.substring(0, mirrorName.length() - REMOVED_TOPIC_SUFFIX.length());
-            }
-        }
+        String updatedMirrorName = originalMirrorName(mirrorName);
         return mirrorPartitionState.get(new MirrorPartitionKey(updatedMirrorName, topicPartition.topic(), topicPartition.partition()));
     }
 
@@ -1377,6 +1375,16 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         mirrorTopics.clear();
         mirrorPartitionState.clear();
         remoteBrokers.clear();
+    }
+
+    public static String originalMirrorName(String mirrorName) {
+        if (mirrorName == null) {
+            return "";
+        }
+        if (mirrorName.endsWith(REMOVED_TOPIC_SUFFIX)) {
+            return mirrorName.substring(0, mirrorName.length() - REMOVED_TOPIC_SUFFIX.length());
+        }
+        return mirrorName;
     }
 
     private static class TimeoutHandler implements ControllerRequestCompletionHandler {

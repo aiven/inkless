@@ -2608,7 +2608,7 @@ class ReplicaManager(val config: KafkaConfig,
    * @param mirrorLeaders Map of partitions to their metadata for partitions that became
    *                        read-only leaders on this broker
    */
-  def maybeCreateMirrorFetchers(mirrorLeaders: java.util.Set[TopicPartition]): Unit = {
+  def maybeCreateMirrorFetchers(mirrorName: String, mirrorLeaders: java.util.Set[TopicPartition]): Unit = {
     if (mirrorLeaders.isEmpty) return
 
     stateChangeLogger.info(s"Starting mirror fetchers for ${mirrorLeaders.size} read-only leader partition(s).")
@@ -2618,7 +2618,6 @@ class ReplicaManager(val config: KafkaConfig,
       getPartition(tp) match {
         case HostedPartition.Online(partition) =>
           try {
-            val mirrorName = ""
             if (mirrorName != null && !mirrorName.isEmpty) {
               // Get the remote partition leader from mirror metadata manager
               // This will return the actual leader if known, or a random bootstrap server as fallback

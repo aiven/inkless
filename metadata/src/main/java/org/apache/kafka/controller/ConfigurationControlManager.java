@@ -72,6 +72,7 @@ import static org.apache.kafka.controller.QuorumController.MAX_RECORDS_PER_USER_
 
 public class ConfigurationControlManager {
     public static final ConfigResource DEFAULT_NODE = new ConfigResource(Type.BROKER, "");
+    private static final String REMOVED_TOPIC_SUFFIX = ".removed";
 
     private final Logger log;
     private final SnapshotRegistry snapshotRegistry;
@@ -247,7 +248,7 @@ public class ConfigurationControlManager {
                 }
 
                 // decide if we should clear the mirror name or append a stopped symbol
-                String newMirrorName = curVal.endsWith("*") ? "" : curVal + "*" ;
+                String newMirrorName = curVal.endsWith(REMOVED_TOPIC_SUFFIX) ? "" : curVal + REMOVED_TOPIC_SUFFIX ;
                 Map<String, Entry<OpType, String>> keyToOps = Map.of(mirrorNameConfig, new AbstractMap.SimpleImmutableEntry<>(SET, newMirrorName));
 
                 ControllerResult<ApiError> configResult = incrementalAlterConfig(configResource, keyToOps, true);

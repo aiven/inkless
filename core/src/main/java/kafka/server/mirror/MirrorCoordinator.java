@@ -165,7 +165,7 @@ public class MirrorCoordinator {
             case MIRRORING:
                 LOG.info("!!! MIRRORING topics {}.", topicPartitions);
                 // start mirroring
-                replicaManager.maybeCreateMirrorFetchers(topicPartitions);
+                replicaManager.maybeCreateMirrorFetchers(mirrorName, topicPartitions);
                 break;
             case STOPPING:
                 LOG.info("!!! STOPPING for topics {}.", topicPartitions);
@@ -221,6 +221,7 @@ public class MirrorCoordinator {
     public void writeMirrorPartitionMetadataToInternalTopic(String mirrorName,
                                                             Map<String, Set<MirrorMetadataManager.MirrorPartitionMetadata>> topicMetadata,
                                                             Consumer<WriteMirrorStatesResponse> sendResponseCallback) {
+        String updatedMirrorName = MirrorMetadataManager.originalMirrorName(mirrorName);
         Map<String, Map<Integer, Long>> offsets = new HashMap<>();
         Map<String, Set<Integer>> tps = new HashMap<>();
         topicMetadata.forEach((topic, partitions) -> {
@@ -229,7 +230,7 @@ public class MirrorCoordinator {
                 TopicPartition tp = new TopicPartition(topic, partition.partition());
                 partitionIndices.add(tp.partition());
                 if (partition.state() != null && partition.state() != MirrorPartitionState.UNKNOWN) {
-                    updateMirrorPartitionState(mirrorName, tp, partition.state());
+                    updateMirrorPartitionState(updatedMirrorName, tp, partition.state());
                 }
                 if (partition.offset() != -1) {
                     offsets.putIfAbsent(topic, new HashMap<>());
@@ -239,7 +240,7 @@ public class MirrorCoordinator {
             tps.put(topic, partitionIndices);
         });
 
-        updateLastMirroredOffsetsMetadata(mirrorName, offsets, false);
+        updateLastMirroredOffsetsMetadata(updatedMirrorName, offsets, false);
 
         WriteMirrorStatesResponseData data = new WriteMirrorStatesResponseData();
         List<WriteMirrorStatesResponseData.TopicState> topicStates = new ArrayList<>();
@@ -261,7 +262,8 @@ public class MirrorCoordinator {
     public void readMirroredPartitionMetadata(String mirrorName,
                                               Map<String, Set<Integer>> partitions,
                                               Consumer<ReadMirrorStatesResponse> sendResponseCallback) {
-        mirrorMetadataManager.readStatesFromCache(mirrorName, partitions, sendResponseCallback);
+        String updatedMirrorName = MirrorMetadataManager.originalMirrorName(mirrorName);
+        mirrorMetadataManager.readStatesFromCache(updatedMirrorName, partitions, sendResponseCallback);
     }
 
     /**
