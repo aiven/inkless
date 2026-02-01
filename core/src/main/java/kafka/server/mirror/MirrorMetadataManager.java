@@ -181,12 +181,10 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     private final Supplier<GroupCoordinator> groupCoordinatorSupplier;
     private Map<MirrorPartitionKey, Long> lastMirroredOffsets = new ConcurrentHashMap<>();
     private Map<MirrorPartitionKey, MirrorPartitionState> mirrorPartitionState = new ConcurrentHashMap<>();
-    private Map<MirrorPartitionKey, Runnable> mirroringCallbacks = new ConcurrentHashMap<>();
     private Map<String, Node> coordinatorNodes = new ConcurrentHashMap<>();
     private InterBrokerSender interBrokerSender;
     private Optional<StateTransitioner> stateTransitioner = Optional.empty();
     private Optional<Function<MirrorRecordKey, Integer>> coordinatingPartFinder = Optional.empty();
-    private Map<TopicPartition, LocalReplicaChanges.PartitionInfo> previousMirrorLeaders = Collections.emptyMap();
 
     public MirrorMetadataManager(
         KafkaConfig config,
@@ -311,6 +309,8 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                 });
             }
         });
+
+        clearFollowersState(delta.topicsDelta().localChanges(nodeId).followers().keySet(), newImage);
     }
 
     /** get leaders with non-empty mirror name in this node
@@ -332,8 +332,6 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                     }
                 }
             });
-
-//            cleanFollowersState(delta.topicsDelta().localChanges(nodeId).mirrorLeaders());
         }
 
         // leader partitions in (2)
@@ -366,20 +364,19 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         return mirrorLeaderPartitions;
     }
 
-    // luke
-//    private void cleanFollowersState(Map<TopicPartition, LocalReplicaChanges.PartitionInfo> mirrorLeaders) {
-//        Set<TopicPartition> removedLeaders = new HashSet<>(previousMirrorLeaders.keySet());
-//        removedLeaders.removeAll(mirrorLeaders.keySet());
-//        removedLeaders.forEach(oldLeaderTp -> {
-//            MirrorPartitionKey key = new MirrorPartitionKey(previousMirrorLeaders.get(oldLeaderTp)
-//                    .partition().mirrorName, oldLeaderTp.topic(), oldLeaderTp.partition());
-//            mirrorPartitionState.remove(key);
-//            lastMirroredOffsets.remove(key);
-//            mirroringCallbacks.remove(key);
-//        });
-//
-//        previousMirrorLeaders = mirrorLeaders;
-//    }
+    private void clearFollowersState(Set<TopicPartition> followers, MetadataImage newImage) {
+        followers.forEach(followerTp -> {
+            String mirrorName = (String) newImage.configs().configProperties(new ConfigResource(ConfigResource.Type.TOPIC, followerTp.topic())).get(TopicConfig.MIRROR_NAME_CONFIG);
+            if (mirrorName != null && !mirrorName.isEmpty()) {
+                if (mirrorName.endsWith(REMOVED_TOPIC_SUFFIX)) {
+                    mirrorName = mirrorName.substring(0, mirrorName.length() - REMOVED_TOPIC_SUFFIX.length());
+                }
+                MirrorPartitionKey key = new MirrorPartitionKey(mirrorName, followerTp.topic(), followerTp.partition());
+                mirrorPartitionState.remove(key);
+                lastMirroredOffsets.remove(key);
+            }
+        });
+    }
 
     /**
      * Closes the metadata manager and releases resources.
