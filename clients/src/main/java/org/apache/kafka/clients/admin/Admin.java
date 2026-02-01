@@ -1081,6 +1081,26 @@ public interface Admin extends AutoCloseable {
     ListGroupsResult listGroups(ListGroupsOptions options);
 
     /**
+     * List the cluster mirrors available in the cluster with the default options.
+     *
+     * <p>This is a convenience method for {@link #listMirrors(ListMirrorsOptions)} with default options.
+     * See the overload for more details.
+     *
+     * @return The ListMirrorsResult.
+     */
+    default ListMirrorsResult listMirrors() {
+        return listMirrors(new ListMirrorsOptions());
+    }
+
+    /**
+     * List the cluster mirrors available in the cluster.
+     *
+     * @param options The options to use when listing the mirrors.
+     * @return The ListMirrorsResult.
+     */
+    ListMirrorsResult listMirrors(ListMirrorsOptions options);
+
+    /**
      * Elect a replica as leader for topic partitions.
      * <p>
      * This is a convenience method for {@link #electLeaders(ElectionType, Set, ElectLeadersOptions)}
@@ -1703,6 +1723,33 @@ public interface Admin extends AutoCloseable {
      * @return The RemoveTopicsFromMirrorResult containing futures for each topic removal
      */
     RemoveTopicsFromMirrorResult removeTopicsFromMirror(Set<String> topics, RemoveTopicsFromMirrorOptions options);
+
+    /**
+     * Describe cluster mirrors with the default options.
+     *
+     * <p>This is a convenience method for {@link #describeMirrors(Collection, DescribeMirrorsOptions)}
+     * with default options. See the overload for more details.
+     *
+     * @param mirrorNames The names of the mirrors to describe
+     * @return The DescribeMirrorsResult
+     */
+    default DescribeMirrorsResult describeMirrors(Collection<String> mirrorNames) {
+        return describeMirrors(mirrorNames, new DescribeMirrorsOptions());
+    }
+
+    /**
+     * Describe cluster mirrors.
+     *
+     * This operation retrieves detailed information about cluster mirrors including:
+     * - Topics being mirrored
+     * - Partition-level lag information (source offset vs destination offset)
+     * - Mirroring state for each partition (INITIALIZING, PREPARING, MIRRORING, etc.)
+     *
+     * @param mirrorNames The names of the mirrors to describe
+     * @param options The options to use when describing mirrors
+     * @return The DescribeMirrorsResult
+     */
+    DescribeMirrorsResult describeMirrors(Collection<String> mirrorNames, DescribeMirrorsOptions options);
 
     /**
      * Describe producer state on a set of topic partitions. See

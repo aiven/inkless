@@ -17,12 +17,29 @@
 package kafka.server.mirror;
 
 /**
- * Represents the lifecycle states of a mirrored partition in Cluster Mirroring.
- * <p>
- * State transitions follow this typical flow:
- * INITIALIZING -> PREPARING -> MIRRORING -> STOPPING -> STOPPED
- * <p>
+ * Represents the lifecycle states of a mirror partition.
  * FAILED state can be entered from PREPARING or MIRRORING when errors occur.
+ * <pre>
+ * 1. INITIALIZING
+ *    Triggered by: AddTopicsToMirror API call
+ *    Waits for: Metadata update (partition becomes read-only leader)
+ *
+ * 2. PREPARING
+ *    Triggered by: Metadata update callback in MirrorMetadataManager
+ *    Actions: Fetch last mirrored offsets, schedule truncation
+ *
+ * 3. MIRRORING
+ *    Triggered by: ISR truncation completion in Partition.checkIsrTruncationAndTransition
+ *    Actions: Start MirrorFetcherThread to replicate data
+ *
+ * 4. STOPPING
+ *    Triggered by: RemoveTopicsFromMirror API or topic deletion
+ *    Actions: Record last mirrored offsets to internal topic
+ *
+ * 5. STOPPED
+ *    Triggered by: Last mirrored offsets persisted
+ *    Result: Topic becomes writable on destination cluster
+ * </pre>
  */
 public enum MirrorPartitionState {
     /** Initial state when mirror metadata changes are detected and need to be synchronized */
@@ -39,8 +56,10 @@ public enum MirrorPartitionState {
 
     /** Mirroring has stopped; topic is now writable on this cluster */
     STOPPED((byte) 8),
+
     /** Error occurred during preparation or mirroring */
     FAILED((byte) 16),
+
     /** Unknown state */
     UNKNOWN((byte) 32);
 
@@ -71,6 +90,32 @@ public enum MirrorPartitionState {
             case 32:
                 return UNKNOWN;
         }
-        throw new IllegalArgumentException("Unknown mirror state: " + value);
+        throw new IllegalArgumentException("Illegal mirror state: " + value);
+    }
+
+    public static boolean isValidTransition(MirrorPartitionState source, MirrorPartitionState target) {
+        if (source == target) {
+            return true;
+        }
+        switch (target) {
+            case INITIALIZING:
+                return source == null;
+            case PREPARING:
+                return source == MirrorPartitionState.INITIALIZING
+                        || source == MirrorPartitionState.STOPPED
+                        || source == MirrorPartitionState.FAILED;
+            case MIRRORING:
+                return source == MirrorPartitionState.PREPARING;
+            case STOPPING:
+                return source == MirrorPartitionState.INITIALIZING
+                        || source == MirrorPartitionState.PREPARING
+                        || source == MirrorPartitionState.MIRRORING;
+            case STOPPED:
+                return source == MirrorPartitionState.STOPPING;
+            case FAILED:
+                return true;
+            default:
+                return false;
+        }
     }
 }

@@ -91,6 +91,8 @@ import org.apache.kafka.clients.admin.DescribeLogDirsOptions;
 import org.apache.kafka.clients.admin.DescribeLogDirsResult;
 import org.apache.kafka.clients.admin.DescribeMetadataQuorumOptions;
 import org.apache.kafka.clients.admin.DescribeMetadataQuorumResult;
+import org.apache.kafka.clients.admin.DescribeMirrorsOptions;
+import org.apache.kafka.clients.admin.DescribeMirrorsResult;
 import org.apache.kafka.clients.admin.DescribeProducersOptions;
 import org.apache.kafka.clients.admin.DescribeProducersResult;
 import org.apache.kafka.clients.admin.DescribeReplicaLogDirsOptions;
@@ -124,6 +126,8 @@ import org.apache.kafka.clients.admin.ListConsumerGroupsOptions;
 import org.apache.kafka.clients.admin.ListConsumerGroupsResult;
 import org.apache.kafka.clients.admin.ListGroupsOptions;
 import org.apache.kafka.clients.admin.ListGroupsResult;
+import org.apache.kafka.clients.admin.ListMirrorsOptions;
+import org.apache.kafka.clients.admin.ListMirrorsResult;
 import org.apache.kafka.clients.admin.ListOffsetsOptions;
 import org.apache.kafka.clients.admin.ListOffsetsResult;
 import org.apache.kafka.clients.admin.ListPartitionReassignmentsOptions;
@@ -304,6 +308,11 @@ public class TestingMetricsInterceptingAdminClient extends AdminClient {
     }
 
     @Override
+    public ListMirrorsResult listMirrors(final ListMirrorsOptions options) {
+        return adminDelegate.listMirrors(options);
+    }
+
+    @Override
     public DescribeConsumerGroupsResult describeConsumerGroups(final Collection<String> groupIds, final DescribeConsumerGroupsOptions options) {
         return adminDelegate.describeConsumerGroups(groupIds, options);
     }
@@ -425,13 +434,18 @@ public class TestingMetricsInterceptingAdminClient extends AdminClient {
     }
 
     @Override
-    public AddTopicsToMirrorResult addTopicsToMirror(int destinationNodeId, final Map<String, String> topicToMirrorName, final AddTopicsToMirrorOptions options) {
+    public AddTopicsToMirrorResult addTopicsToMirror(final int destinationNodeId, final Map<String, String> topicToMirrorName, final AddTopicsToMirrorOptions options) {
         return adminDelegate.addTopicsToMirror(destinationNodeId, topicToMirrorName, options);
     }
 
     @Override
     public RemoveTopicsFromMirrorResult removeTopicsFromMirror(final Set<String> topics, final RemoveTopicsFromMirrorOptions options) {
         return adminDelegate.removeTopicsFromMirror(topics, options);
+    }
+
+    @Override
+    public DescribeMirrorsResult describeMirrors(final Collection<String> mirrorNames, final DescribeMirrorsOptions options) {
+        return adminDelegate.describeMirrors(mirrorNames, options);
     }
 
     @Override

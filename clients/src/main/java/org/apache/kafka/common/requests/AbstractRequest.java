@@ -362,6 +362,10 @@ public abstract class AbstractRequest implements AbstractRequestResponse {
                 return AddTopicsToMirrorRequest.parse(readable, apiVersion);
             case REMOVE_TOPICS_FROM_MIRROR:
                 return RemoveTopicsFromMirrorRequest.parse(readable, apiVersion);
+            case LIST_MIRRORS:
+                return ListMirrorsRequest.parse(readable, apiVersion);
+            case DESCRIBE_MIRRORS:
+                return DescribeMirrorsRequest.parse(readable, apiVersion);
             case LAST_MIRRORED_OFFSETS:
                 return LastMirroredOffsetsRequest.parse(readable, apiVersion);
             case WRITE_MIRROR_STATES:

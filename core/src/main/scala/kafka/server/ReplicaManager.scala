@@ -23,7 +23,7 @@ import kafka.log.LogManager
 import kafka.server.HostedPartition.Online
 import kafka.server.QuotaFactory.QuotaManagers
 import kafka.server.ReplicaManager.{AtMinIsrPartitionCountMetricName, FailedIsrUpdatesPerSecMetricName, IsrExpandsPerSecMetricName, IsrShrinksPerSecMetricName, LeaderCountMetricName, OfflineReplicaCountMetricName, PartitionCountMetricName, PartitionsWithLateTransactionsCountMetricName, ProducerIdCountMetricName, ReassigningPartitionsMetricName, UnderMinIsrPartitionCountMetricName, UnderReplicatedPartitionsMetricName, createLogReadResult, isListOffsetsTimestampUnsupported}
-import kafka.server.mirror.{MirrorFetcherManager, MirrorMetadataManager, MirrorPartitionState}
+import kafka.server.mirror.{MirrorFetcherManager, MirrorLagInfo, MirrorMetadataManager, MirrorPartitionState}
 import kafka.server.share.DelayedShareFetch
 import kafka.utils._
 import org.apache.kafka.common.{IsolationLevel, Node, TopicIdPartition, TopicPartition, Uuid}
@@ -1675,8 +1675,7 @@ class ReplicaManager(val config: KafkaConfig,
       getLog(tp).map(log => {
         log.truncateTo(offset)
         val partition = getPartitionOrException(tp)
-        partition.truncationCallback = Optional.of(callback)
-        partition.checkIsrTruncationAndTransition(log)
+        partition.maybeCompleteIsrTruncation(log, onComplete = Optional.of(callback))
       })
     })
   }
@@ -2606,16 +2605,16 @@ class ReplicaManager(val config: KafkaConfig,
    *
    * TODO: we should handle the error cases like in applyLocalFollowersDelta
    *
-   * @param readOnlyLeaders Map of partitions to their metadata for partitions that became
+   * @param mirrorLeaders Map of partitions to their metadata for partitions that became
    *                        read-only leaders on this broker
    */
-  def maybeCreateMirrorFetchers(readOnlyLeaders: java.util.Set[TopicPartition]): Unit = {
-    if (readOnlyLeaders.isEmpty) return
+  def maybeCreateMirrorFetchers(mirrorLeaders: java.util.Set[TopicPartition]): Unit = {
+    if (mirrorLeaders.isEmpty) return
 
-    stateChangeLogger.info(s"Starting mirror fetchers for ${readOnlyLeaders.size} read-only leader partition(s).")
+    stateChangeLogger.info(s"Starting mirror fetchers for ${mirrorLeaders.size} read-only leader partition(s).")
     val partitionAndOffsets = new mutable.HashMap[TopicPartition, InitialFetchState]
 
-    readOnlyLeaders.stream().forEach { tp =>
+    mirrorLeaders.stream().forEach { tp =>
       getPartition(tp) match {
         case HostedPartition.Online(partition) =>
           try {
@@ -2634,6 +2633,19 @@ class ReplicaManager(val config: KafkaConfig,
                 mirrorName = mirrorName
               )
               partitionAndOffsets.put(tp, fetchState)
+
+              // Register listener to update mirror lag when HW advances
+              val mirrorLagListener = new PartitionListener {
+                override def onHighWatermarkUpdated(partition: TopicPartition, offset: Long): Unit = {
+                  // Update mirror lag with the new HW
+                  // Keep the existing source offset, it will be updated by the next mirror fetch
+                  val lagInfo = mirrorFetcherManager.getLagInfo(mirrorName).get(tp)
+                  lagInfo.foreach { info =>
+                    updateMirrorLag(mirrorName, tp, info.sourceOffset, offset)
+                  }
+                }
+              }
+              maybeAddListener(tp, mirrorLagListener)
             }
           } catch {
             case e: Exception =>
@@ -2662,4 +2674,24 @@ class ReplicaManager(val config: KafkaConfig,
       () => ()
     )
   }
+
+  /**
+   * Updates the mirroring lag for a partition.
+   *
+   * @param mirrorName mirror name
+   * @param topicPartition partition
+   * @param sourceOffset source HW
+   * @param destinationOffset destination HW
+   */
+  def updateMirrorLag(mirrorName: String, topicPartition: TopicPartition, sourceOffset: Long, destinationOffset: Long): Unit =
+    mirrorFetcherManager.updateLag(mirrorName, topicPartition, sourceOffset, destinationOffset)
+
+  /**
+   * Retrieves lag information for a specific mirror.
+   *
+   * @param mirrorName mirror name
+   * @return lag info
+   */
+  def getMirrorLagInfo(mirrorName: String): Map[TopicPartition, MirrorLagInfo] =
+    mirrorFetcherManager.getLagInfo(mirrorName)
 }

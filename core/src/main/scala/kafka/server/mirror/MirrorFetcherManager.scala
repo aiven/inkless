@@ -66,6 +66,7 @@ class MirrorFetcherManager(brokerConfig: KafkaConfig,
       clientId = "MirrorReplica",
       numFetchers = brokerConfig.mirrorConfig.numReplicaFetchers) {
   private val mirrorFetcherThreadMap = new mutable.HashMap[BrokerAndFetcherIdWithMirror, MirrorFetcherThread]
+  private val lagInfo = new mutable.HashMap[MirrorPartitionKey, MirrorLagInfo]
 
   override def createFetcherThread(fetcherId: Int, sourceBroker: BrokerEndPoint): MirrorFetcherThread = {
     throw new UnsupportedOperationException("Use createMirrorFetcherThread for mirror fetchers")
@@ -108,6 +109,18 @@ class MirrorFetcherManager(brokerConfig: KafkaConfig,
         }
         // failed partitions are removed when added partitions to thread
         addPartitionsToFetcherThread(fetcherThread, initialFetchOffsets)
+
+        // Initialize lag information for newly added partitions
+        initialFetchOffsets.foreach { case (topicPartition, initialState) =>
+          val lagKey = MirrorPartitionKey(remoteFetcherKey.mirrorName, topicPartition)
+          // Initialize with 0 values until first fetch updates it
+          val destinationOffset = replicaManager.getPartition(topicPartition) match {
+            case HostedPartition.Online(partition) =>
+              partition.log.map(_.highWatermark).getOrElse(0L)
+            case _ => 0L
+          }
+          lagInfo.put(lagKey, MirrorLagInfo(destinationOffset, destinationOffset, 0, time.milliseconds()))
+        }
       }
     }
   }
@@ -137,12 +150,20 @@ class MirrorFetcherManager(brokerConfig: KafkaConfig,
   override def removeFetcherForPartitions(partitions: scala.collection.Set[TopicPartition]): scala.collection.Map[TopicPartition, PartitionFetchState] = {
     val fetchStates = mutable.Map.empty[TopicPartition, PartitionFetchState]
     this.synchronized {
-      for (fetcher <- mirrorFetcherThreadMap.values)
-        fetchStates ++= fetcher.removePartitions(partitions)
+      for ((key, fetcher) <- mirrorFetcherThreadMap) {
+        val removed = fetcher.removePartitions(partitions)
+        fetchStates ++= removed
+        // Remove lag cache entries for partitions that were actually removed
+        for (partition <- removed.keys) {
+          val lagKey = MirrorPartitionKey(key.mirrorName, partition)
+          lagInfo.remove(lagKey)
+        }
+      }
       failedPartitions.removeAll(partitions)
     }
-    if (partitions.nonEmpty)
-      info(s"#### Removed mirror fetcher for partitions $partitions")
+    // Only log if we actually removed mirror partitions (not regular partitions)
+    if (fetchStates.nonEmpty)
+      info(s"#### Removed mirror fetcher for partitions ${fetchStates.keySet}")
     fetchStates
   }
 
@@ -172,9 +193,40 @@ class MirrorFetcherManager(brokerConfig: KafkaConfig,
     }
   }
 
+  /**
+   * Computes and updates the mirroring lag for a partition.
+   *
+   * @param mirrorName mirror name
+   * @param topicPartition partition
+   * @param sourceOffset source HW
+   * @param destinationOffset destination HW
+   */
+  def updateLag(mirrorName: String, topicPartition: TopicPartition, sourceOffset: Long, destinationOffset: Long): Unit = {
+    this.synchronized {
+      val key = MirrorPartitionKey(mirrorName, topicPartition)
+      val lag = Math.max(0, sourceOffset - destinationOffset)
+      lagInfo.put(key, MirrorLagInfo(sourceOffset, destinationOffset, lag, time.milliseconds()))
+    }
+  }
+
+  /**
+   * Retrieves lag information by mirror name.
+   *
+   * @param mirrorName mirror name
+   * @return lag info
+   */
+  def getLagInfo(mirrorName: String): Map[TopicPartition, MirrorLagInfo] = {
+    this.synchronized {
+      lagInfo.collect {
+        case (key, lagInfo) if key.mirrorName == mirrorName => key.topicPartition -> lagInfo
+      }.toMap
+    }
+  }
+
   def shutdown(): Unit = {
     info("Shutting down MirrorFetcherManager")
     closeAllFetchers()
+    lagInfo.clear()
     info("MirrorFetcherManager shutdown completed")
   }
 }
@@ -209,3 +261,18 @@ class MirrorFetcherManager(brokerConfig: KafkaConfig,
  * - Different fetcher ID -> NEW thread (load balancing)
  */
 case class BrokerAndFetcherIdWithMirror(sourceBroker: BrokerEndPoint, fetcherId: Int, mirrorName: String)
+
+/**
+ * Key for identifying a partition within a specific mirror.
+ */
+case class MirrorPartitionKey(mirrorName: String, topicPartition: TopicPartition)
+
+/**
+ * Lag information for a mirrored partition.
+ *
+ * @param sourceOffset The high watermark offset from the source cluster leader
+ * @param destinationOffset The log end offset on the destination cluster
+ * @param lag The computed lag (sourceOffset - destinationOffset)
+ * @param lastUpdateMs Timestamp when this lag was last updated
+ */
+case class MirrorLagInfo(sourceOffset: Long, destinationOffset: Long, lag: Long, lastUpdateMs: Long)

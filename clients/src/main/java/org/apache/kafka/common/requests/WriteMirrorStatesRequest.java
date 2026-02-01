@@ -23,8 +23,6 @@ import org.apache.kafka.common.protocol.ApiKeys;
 import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.protocol.Readable;
 
-import java.util.ArrayList;
-import java.util.Set;
 
 public class WriteMirrorStatesRequest extends AbstractRequest {
     public static class Builder extends AbstractRequest.Builder<WriteMirrorStatesRequest> {

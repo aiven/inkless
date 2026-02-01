@@ -14,7 +14,7 @@
 // limitations under the License.
 
 {
-  "apiKey":99,
+  "apiKey":100,
   "type": "response",
   "name": "ReadMirrorStatesResponse",
   "validVersions": "0",

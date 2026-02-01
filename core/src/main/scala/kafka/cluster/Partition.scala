@@ -349,7 +349,6 @@ class Partition(val topicPartition: TopicPartition,
   // If ReplicaAlterLogDir command is in progress, this is future location of the log
   @volatile var futureLog: Option[UnifiedLog] = None
   @volatile var mirrorName: String = ""
-  @volatile var truncationCallback: Optional[Consumer[TopicPartition]] = Optional.empty()
 
   // Partition listeners
   private val listeners = new CopyOnWriteArrayList[PartitionListener]()
@@ -826,7 +825,7 @@ class Partition(val topicPartition: TopicPartition,
       leaderReplicaIdOpt = Some(localBrokerId)
       mirrorName = partitionState.mirrorName()
 
-      checkIsrTruncationAndTransition(leaderLog)
+      maybeCompleteIsrTruncation(leaderLog)
       // We may need to increment high watermark since ISR could be down to 1.
       (maybeIncrementLeaderHW(leaderLog, currentTimeMs = currentTimeMs), isNewLeader)
     }
@@ -955,8 +954,8 @@ class Partition(val topicPartition: TopicPartition,
       // leaderIsrUpdateLock to prevent adding new hw to invalid log.
       inReadLock(leaderIsrUpdateLock) {
         leaderLogIfLocal.exists(leaderLog => {
+          maybeCompleteIsrTruncation(leaderLog, followerFetchTimeMs)
           maybeIncrementLeaderHW(leaderLog, followerFetchTimeMs)
-          checkIsrTruncationAndTransition(leaderLog, followerFetchTimeMs)
         })
       }
     } else {
@@ -1229,16 +1228,21 @@ class Partition(val topicPartition: TopicPartition,
    *
    * @param leaderLog the leader's unified log
    * @param currentTimeMs the current time in milliseconds
+   * @param onComplete optional callback to invoke when truncation completes
    * @return true if the transition occurred, false if validation failed or no callback was registered
    */
-  def checkIsrTruncationAndTransition(leaderLog: UnifiedLog, currentTimeMs: Long = time.milliseconds): Boolean = {
-    info("!!! checkIsrTruncationAndTransition:" + leaderLog)
-    if (truncationCallback.isEmpty) {
+  def maybeCompleteIsrTruncation(leaderLog: UnifiedLog,
+                                  currentTimeMs: Long = time.milliseconds,
+                                  onComplete: Optional[Consumer[TopicPartition]] = Optional.empty()): Boolean = {
+    // Only perform truncation validation for mirrored partitions (when callback is provided)
+    if (onComplete.isEmpty) {
       return false
     }
 
+    info("!!! maybeCompleteIsrTruncation: " + leaderLog)
+
     if (isUnderMinIsr) {
-      trace(s"Not increasing HWM because partition is under min ISR(ISR=${partitionState.isr})")
+      trace(s"Not increasing HWM because partition is under min ISR (ISR=${partitionState.isr})")
       return false
     }
 
@@ -1264,8 +1268,7 @@ class Partition(val topicPartition: TopicPartition,
     }
 
     // move state if truncation are done for all ISR
-    truncationCallback.ifPresent(onTruncation => onTruncation.accept(topicPartition))
-    truncationCallback = Optional.empty()
+    onComplete.ifPresent(callback => callback.accept(topicPartition))
     true
   }
 
@@ -2032,8 +2035,8 @@ class Partition(val topicPartition: TopicPartition,
 
       // we may need to increment high watermark since ISR could be down to 1
       leaderLogIfLocal.exists(log => {
+        maybeCompleteIsrTruncation(log)
         maybeIncrementLeaderHW(log)
-        checkIsrTruncationAndTransition(log)
       })
     }
   }
