@@ -20,7 +20,6 @@ package org.apache.kafka.controller;
 import org.apache.kafka.clients.admin.AlterConfigOp.OpType;
 import org.apache.kafka.clients.admin.ConfigEntry;
 import org.apache.kafka.clients.admin.FeatureUpdate;
-import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.config.ConfigException;
 import org.apache.kafka.common.config.ConfigResource;
 import org.apache.kafka.common.config.ConfigResource.Type;
@@ -28,7 +27,6 @@ import org.apache.kafka.common.config.TopicConfig;
 import org.apache.kafka.common.config.types.Password;
 import org.apache.kafka.common.message.AddTopicsToMirrorResponseData;
 import org.apache.kafka.common.message.CreateMirrorResponseData;
-import org.apache.kafka.common.message.RemoveTopicsFromMirrorRequestData;
 import org.apache.kafka.common.message.RemoveTopicsFromMirrorResponseData;
 import org.apache.kafka.common.metadata.ClearElrRecord;
 import org.apache.kafka.common.metadata.ConfigRecord;
@@ -36,7 +34,6 @@ import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.requests.ApiError;
 import org.apache.kafka.common.utils.LogContext;
 import org.apache.kafka.metadata.KafkaConfigSchema;
-import org.apache.kafka.metadata.PartitionRegistration;
 import org.apache.kafka.server.common.ApiMessageAndVersion;
 import org.apache.kafka.server.common.EligibleLeaderReplicasVersion;
 import org.apache.kafka.server.mutable.BoundedList;
@@ -249,7 +246,7 @@ public class ConfigurationControlManager {
                 }
 
                 // decide if we should clear the mirror name or append a stopped symbol
-                String newMirrorName = curVal.endsWith(REMOVED_TOPIC_SUFFIX) ? "" : curVal + REMOVED_TOPIC_SUFFIX ;
+                String newMirrorName = curVal.endsWith(REMOVED_TOPIC_SUFFIX) ? "" : curVal + REMOVED_TOPIC_SUFFIX;
                 Map<String, Entry<OpType, String>> keyToOps = Map.of(mirrorNameConfig, new AbstractMap.SimpleImmutableEntry<>(SET, newMirrorName));
 
                 ControllerResult<ApiError> configResult = incrementalAlterConfig(configResource, keyToOps, true);

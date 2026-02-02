@@ -89,7 +89,6 @@ import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.coordinator.group.GroupCoordinator;
 import org.apache.kafka.coordinator.mirror.MirrorRecordKey;
 import org.apache.kafka.image.ConfigurationDelta;
-import org.apache.kafka.image.LocalReplicaChanges;
 import org.apache.kafka.image.MetadataDelta;
 import org.apache.kafka.image.MetadataImage;
 import org.apache.kafka.image.loader.LoaderManifest;
@@ -110,7 +109,6 @@ import java.net.InetAddress;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -309,10 +307,12 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         }
     }
 
-    /** get leaders with non-empty mirror name in this node
-     *  Here, we care about:
-     *  1. new partition leader in topicsDelta that has `mirror.name` not empty
-     *  2. the config change in configsDelta contains the `mirror.name` setting from empty to non-empty
+    /**
+     * Get leaders with non-empty mirror name in this node.
+     *
+     * Here, we care about:
+     * 1. new partition leader in topicsDelta that has `mirror.name` not empty
+     * 2. the config change in configsDelta contains the `mirror.name` setting from empty to non-empty
      */
     private Set<TopicPartition> mirrorLeaders(MetadataDelta delta, MetadataImage image) {
         Set<TopicPartition> mirrorLeaderPartitions = new HashSet<>();
@@ -852,27 +852,26 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                 // only operate when this node is the leader of the partition
                 if (metadata.leader() == nodeId) {
                     statesToPartitionsToOperate.compute(key.mirrorName, (k, v) -> {
-                       if (v == null) {
-                           Map<MirrorPartitionState, Set<TopicPartition>> map = new HashMap<>();
-                           map.put(value, Set.of(new TopicPartition(key.topic(), key.partition())));
-                           return map;
-                       }
-                       v.compute(value, (state, prevTps) -> {
-                           if (prevTps == null) {
-                               Set<TopicPartition> set = new HashSet<>();
-                               set.add(new TopicPartition(key.topic(), key.partition()));
-                               return set;
-                           } else {
-                               Set<TopicPartition> result = new HashSet<>(prevTps);
-                               result.add(new TopicPartition(key.topic(), key.partition()));
-                               return result;
-                           }
-                       });
-                       return v;
-                   });
-               }
+                        if (v == null) {
+                            Map<MirrorPartitionState, Set<TopicPartition>> map = new HashMap<>();
+                            map.put(value, Set.of(new TopicPartition(key.topic(), key.partition())));
+                            return map;
+                        }
+                        v.compute(value, (state, prevTps) -> {
+                            if (prevTps == null) {
+                                Set<TopicPartition> set = new HashSet<>();
+                                set.add(new TopicPartition(key.topic(), key.partition()));
+                                return set;
+                            } else {
+                                Set<TopicPartition> result = new HashSet<>(prevTps);
+                                result.add(new TopicPartition(key.topic(), key.partition()));
+                                return result;
+                            }
+                        });
+                        return v;
+                    });
+                }
             });
-
         });
 
         statesToPartitionsToOperate.forEach((mirrorName, statesToPartitionsMap) -> {
