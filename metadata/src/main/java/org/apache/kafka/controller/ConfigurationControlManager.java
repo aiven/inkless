@@ -243,7 +243,8 @@ public class ConfigurationControlManager {
                 log.info("!!! curVal: {} for topic: {}", curVal, topic);
                 // Verify the current value should not be empty
                 if (curVal == null || curVal.isBlank()) {
-                    topicRes.setErrorCode(Errors.INVALID_REQUEST.code());
+                    topicRes.setErrorCode(Errors.INVALID_REQUEST.code()).setName(topic);
+                    topicResList.add(topicRes);
                     continue;
                 }
 
@@ -253,7 +254,8 @@ public class ConfigurationControlManager {
 
                 ControllerResult<ApiError> configResult = incrementalAlterConfig(configResource, keyToOps, true);
                 if (configResult.response().isFailure()) {
-                    topicRes.setErrorCode(configResult.response().error().code());
+                    topicRes.setErrorCode(configResult.response().error().code()).setName(topic);
+                    topicResList.add(topicRes);
                     continue;
                 }
 
@@ -277,16 +279,16 @@ public class ConfigurationControlManager {
             String mirrorNameConfig = TopicConfig.MIRROR_NAME_CONFIG;
 
             AddTopicsToMirrorResponseData.TopicResponse topicRes = new AddTopicsToMirrorResponseData.TopicResponse();
-
             ConfigResource configResource = new ConfigResource(Type.TOPIC, topic);
 
             TimelineHashMap<String, String> currentConfigs = configData.get(configResource);
             if (currentConfigs != null) {
                 String curVal = currentConfigs.get(mirrorNameConfig);
                 log.info("!!! curVal: {} for topic: {}", curVal, topic);
-                // Verify the current value should be empty
-                if (curVal != null && !curVal.isBlank()) {
-                    topicRes.setErrorCode(Errors.INVALID_REQUEST.code());
+                // Verify the current value should be empty or ends with ".removed"
+                if (curVal != null && (curVal.isBlank() || !curVal.endsWith(REMOVED_TOPIC_SUFFIX))) {
+                    topicRes.setErrorCode(Errors.INVALID_REQUEST.code()).setName(topic);
+                    topicResList.add(topicRes);
                     continue;
                 }
             }
@@ -295,7 +297,8 @@ public class ConfigurationControlManager {
 
             ControllerResult<ApiError> configResult = incrementalAlterConfig(configResource, keyToOps, true);
             if (configResult.response().isFailure()) {
-                topicRes.setErrorCode(configResult.response().error().code());
+                topicRes.setErrorCode(configResult.response().error().code()).setName(topic);
+                topicResList.add(topicRes);
                 continue;
             }
 

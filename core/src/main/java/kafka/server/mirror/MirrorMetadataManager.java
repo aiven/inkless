@@ -274,13 +274,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                         if (mirrorPartitionState.get(key) == MirrorPartitionState.INITIALIZING) {
                             t.transitionTo(key.mirrorName, tp, MirrorPartitionState.PREPARING);
                         } else {
-                            // moving to preparing_mirroring if it's starting because it's waiting for metadata update.
-                            // otherwise, move to what the current state is
-                            if (mirrorPartitionState.get(key) == MirrorPartitionState.INITIALIZING) {
-                                t.transitionTo(key.mirrorName, tp, MirrorPartitionState.PREPARING);
-                            } else {
-                                t.transitionTo(key.mirrorName, tp, mirrorPartitionState.get(key));
-                            }
+                            t.transitionTo(key.mirrorName, tp, mirrorPartitionState.get(key));
                         }
                     }
                 });
@@ -316,7 +310,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     }
 
     /** get leaders with non-empty mirror name in this node
-     * Here, we care about:
+     *  Here, we care about:
      *  1. new partition leader in topicsDelta that has `mirror.name` not empty
      *  2. the config change in configsDelta contains the `mirror.name` setting from empty to non-empty
      */
@@ -366,10 +360,12 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         return mirrorLeaderPartitions;
     }
 
-    private void clearFollowersState(Set<TopicPartition> followers, MetadataImage newImage) {
-        followers.forEach(followerTp -> {
+    // get from the follow delta and clear the cache attached to it if this node is not the active coordinator.
+    // For the active coordinator, we want to cache the state that it manages
+    private void clearFollowersState(Set<TopicPartition> followerDelta, MetadataImage newImage) {
+        followerDelta.forEach(followerTp -> {
             String mirrorName = (String) newImage.configs().configProperties(new ConfigResource(ConfigResource.Type.TOPIC, followerTp.topic())).get(TopicConfig.MIRROR_NAME_CONFIG);
-            if (mirrorName != null && !mirrorName.isEmpty()) {
+            if (mirrorName != null && !mirrorName.isEmpty() && !isLocalCoordinator(mirrorName)) {
                 String updatedMirrorName = originalMirrorName(mirrorName);
                 MirrorPartitionKey key = new MirrorPartitionKey(updatedMirrorName, followerTp.topic(), followerTp.partition());
                 mirrorPartitionState.remove(key);
@@ -644,7 +640,6 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     public void readStatesFromCache(String mirrorName,
                                     Map<String, Set<Integer>> partitions,
                                     Consumer<ReadMirrorStatesResponse> responseCallback) {
-        LOG.info("!!! readStatesFromCache: {} {} ;; {} {}", mirrorName, partitions, lastMirroredOffsets, mirrorPartitionState);
         ReadMirrorStatesResponseData data = new ReadMirrorStatesResponseData();
         List<ReadMirrorStatesResponseData.TopicState> topicStates = new ArrayList<>();
         partitions.forEach((tp, parts) -> {
@@ -661,8 +656,6 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
             topicStates.add(state);
         });
         data.setTopics(topicStates);
-
-        LOG.info("!!! readStatesFromCache: {} {}", mirrorName, data);
 
         responseCallback.accept(new ReadMirrorStatesResponse(data));
     }
@@ -852,27 +845,37 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     }
 
     public void operateAll(MirrorCoordinator.StateTransitionCallback operator) {
-        Map<String, Map<MirrorPartitionState, Set<TopicPartition>>> statesToPartitions = new HashMap<>();
+        Map<String, Map<MirrorPartitionState, Set<TopicPartition>>> statesToPartitionsToOperate = new HashMap<>();
         mirrorPartitionState.forEach((key, value) -> {
             LOG.info("!!! operateAll: {} {}", key, value);
-            statesToPartitions.compute(key.mirrorName, (k, v) -> {
-                if (v == null) {
-                    return Map.of(value, Set.of(new TopicPartition(key.topic(), key.partition())));
-                }
-                v.compute(value, (state, prevTps) -> {
-                    if (prevTps == null) {
-                        return Set.of(new TopicPartition(key.topic(), key.partition()));
-                    } else {
-                        Set<TopicPartition> result = new HashSet<>(prevTps);
-                        result.add(new TopicPartition(key.topic(), key.partition()));
-                        return result;
-                    }
-                });
-                return v;
+            metadataCache.getLeaderAndIsr(key.topic(), key.partition()).ifPresent(metadata -> {
+                // only operate when this node is the leader of the partition
+                if (metadata.leader() == nodeId) {
+                    statesToPartitionsToOperate.compute(key.mirrorName, (k, v) -> {
+                       if (v == null) {
+                           Map<MirrorPartitionState, Set<TopicPartition>> map = new HashMap<>();
+                           map.put(value, Set.of(new TopicPartition(key.topic(), key.partition())));
+                           return map;
+                       }
+                       v.compute(value, (state, prevTps) -> {
+                           if (prevTps == null) {
+                               Set<TopicPartition> set = new HashSet<>();
+                               set.add(new TopicPartition(key.topic(), key.partition()));
+                               return set;
+                           } else {
+                               Set<TopicPartition> result = new HashSet<>(prevTps);
+                               result.add(new TopicPartition(key.topic(), key.partition()));
+                               return result;
+                           }
+                       });
+                       return v;
+                   });
+               }
             });
+
         });
 
-        statesToPartitions.forEach((mirrorName, statesToPartitionsMap) -> {
+        statesToPartitionsToOperate.forEach((mirrorName, statesToPartitionsMap) -> {
             statesToPartitionsMap.forEach((state, tps) -> {
                 operator.onStateLoaded(mirrorName, tps, state);
             });
