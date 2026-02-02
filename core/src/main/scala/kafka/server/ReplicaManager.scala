@@ -2413,7 +2413,6 @@ class ReplicaManager(val config: KafkaConfig,
         val followerChangedPartitions = new mutable.HashSet[Partition]
         if (!localChanges.leaders.isEmpty) {
           applyLocalLeadersDelta(leaderChangedPartitions, delta, lazyOffsetCheckpoints, localChanges.leaders.asScala, localChanges.directoryIds.asScala)
-
         }
         if (!localChanges.followers.isEmpty) {
           applyLocalFollowersDelta(followerChangedPartitions, newImage, delta, lazyOffsetCheckpoints, localChanges.followers.asScala, localChanges.directoryIds.asScala)

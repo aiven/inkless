@@ -144,9 +144,9 @@ class ConfigAdminManager(nodeId: Int,
               }
               validateBrokerConfigChange(resource, configResource)
             case TOPIC =>
-                // validate the config contains "mirror.name"
+                // mirror.name check
                 if (resource.configs().stream().anyMatch(config => TopicConfig.MIRROR_NAME_CONFIG.equals(config.name()))) {
-                  throw new InvalidRequestException("'mirror.name' can only be changed via addTopicsToMirror/removeTopicsFromMirror API.")
+                  throw new InvalidRequestException("The 'mirror.name' configuration can only be modified through dedicated mirror management APIs.")
                 }
             case CLIENT_METRICS | GROUP | ConfigResource.Type.MIRROR =>
             // Nothing to do.

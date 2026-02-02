@@ -4896,8 +4896,7 @@ public class KafkaAdminClient extends AdminClient {
                     case REQUEST_TIMED_OUT:
                         throw error.exception();
                     default:
-                        log.error("attach mirror topic {} failed",
-                                topicToMirrorName);
+                        log.error("Mirror topics addition failed: ", topicToMirrorName.keySet());
                         future.completeExceptionally(error.exception());
                         break;
                 }
@@ -4936,7 +4935,7 @@ public class KafkaAdminClient extends AdminClient {
                     case REQUEST_TIMED_OUT:
                         throw error.exception();
                     default:
-                        log.error("delete mirror topic failed");
+                        log.error("Mirror topics removal failed: {}", topics);
                         future.completeExceptionally(error.exception());
                         break;
                 }

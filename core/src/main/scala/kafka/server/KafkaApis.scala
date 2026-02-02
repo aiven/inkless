@@ -280,11 +280,13 @@ class KafkaApis(val requestChannel: RequestChannel,
   def handleCreateTopics(request: RequestChannel.Request): Unit = {
     val createTopicsRequest = request.body[CreateTopicsRequest]
 
+    // mirror.name check
     createTopicsRequest.data().topics().stream().forEach(creatableTopic => {
       if (creatableTopic.configs().stream().anyMatch(creatableTopicConfig =>
         TopicConfig.MIRROR_NAME_CONFIG.equals(creatableTopicConfig.name())))
-        throw new InvalidRequestException("'mirror.name' can only be changed via addTopicsToMirror/removeTopicsFromMirror API.")
+        throw new InvalidRequestException("The 'mirror.name' configuration can only be modified through dedicated mirror management APIs.")
     })
+
     forwardToController(request)
   }
 

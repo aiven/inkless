@@ -270,27 +270,26 @@ public class ConfigurationControlManager {
         List<ApiMessageAndVersion> records = BoundedList.newArrayBacked(MAX_RECORDS_PER_USER_OP);
         AddTopicsToMirrorResponseData data = new AddTopicsToMirrorResponseData();
         List<AddTopicsToMirrorResponseData.TopicResponse> topicResList = new ArrayList<>();
-        for (Entry<String, String> topicIdToMirrorName : topicToMirrorName.entrySet()) {
-            String topic = topicIdToMirrorName.getKey();
-            String mirrorName = topicIdToMirrorName.getValue();
-            String mirrorNameConfig = TopicConfig.MIRROR_NAME_CONFIG;
+        for (Entry<String, String> topicToMirrorNameEntry : topicToMirrorName.entrySet()) {
+            String topic = topicToMirrorNameEntry.getKey();
+            String mirrorName = topicToMirrorNameEntry.getValue();
 
             AddTopicsToMirrorResponseData.TopicResponse topicRes = new AddTopicsToMirrorResponseData.TopicResponse();
             ConfigResource configResource = new ConfigResource(Type.TOPIC, topic);
 
             TimelineHashMap<String, String> currentConfigs = configData.get(configResource);
             if (currentConfigs != null) {
-                String curVal = currentConfigs.get(mirrorNameConfig);
-                log.info("!!! curVal: {} for topic: {}", curVal, topic);
-                // Verify the current value should be empty or ends with ".removed"
-                if (curVal != null && (curVal.isBlank() || !curVal.endsWith(REMOVED_TOPIC_SUFFIX))) {
+                String currMirrorNameValue = currentConfigs.get(TopicConfig.MIRROR_NAME_CONFIG);
+                log.info("!!! currMirrorNameValue: {} for topic: {}", currMirrorNameValue, topic);
+                // Verify the current value should be empty or ends with removed suffix
+                if (currMirrorNameValue != null && (currMirrorNameValue.isBlank() || !currMirrorNameValue.endsWith(REMOVED_TOPIC_SUFFIX))) {
                     topicRes.setErrorCode(Errors.INVALID_REQUEST.code()).setName(topic);
                     topicResList.add(topicRes);
                     continue;
                 }
             }
 
-            Map<String, Entry<OpType, String>> keyToOps = Map.of(mirrorNameConfig, new AbstractMap.SimpleImmutableEntry<>(SET, mirrorName));
+            Map<String, Entry<OpType, String>> keyToOps = Map.of(TopicConfig.MIRROR_NAME_CONFIG, new AbstractMap.SimpleImmutableEntry<>(SET, mirrorName));
 
             ControllerResult<ApiError> configResult = incrementalAlterConfig(configResource, keyToOps, true);
             if (configResult.response().isFailure()) {

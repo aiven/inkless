@@ -229,7 +229,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     /**
      * Called when cluster metadata is updated.
      * Updates the local metadata image to reflect the latest cluster state.
-     * This must be run after ReplicaManager#applyDelta
+     * This must be run after ReplicaManager#applyDelta.
      *
      * @param delta the metadata delta containing changes
      * @param newImage the new complete metadata image
@@ -245,8 +245,8 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
 
         this.metadataImage = newImage;
 
-        // get all mirror partition leaders on this node based on the delta.
-        Set<TopicPartition> mirrorLeaders = mirrorLeaders(delta, newImage);
+        // get all mirror partition leaders on this node based on the delta
+        Set<TopicPartition> mirrorLeaders = getMirrorLeaders(delta, newImage);
         if (mirrorLeaders.isEmpty()) {
             return;
         }
@@ -254,7 +254,8 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         LOG.info("!!! onMetadataUpdate: {}", mirrorLeaders);
         mirrorLeaders.forEach(tp -> {
             boolean stopRequested;
-            String mirrorName = (String) newImage.configs().configProperties(new ConfigResource(ConfigResource.Type.TOPIC, tp.topic())).get(TopicConfig.MIRROR_NAME_CONFIG);
+            String mirrorName = (String) newImage.configs().configProperties(
+                    new ConfigResource(ConfigResource.Type.TOPIC, tp.topic())).get(TopicConfig.MIRROR_NAME_CONFIG);
             if (mirrorName.endsWith(REMOVED_TOPIC_SUFFIX)) {
                 stopRequested = true;
                 mirrorName = mirrorName.substring(0, mirrorName.length() - REMOVED_TOPIC_SUFFIX.length());
@@ -308,29 +309,38 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     }
 
     /**
-     * Get leaders with non-empty mirror name in this node.
+     * Identifies partitions that this broker leads which belong to a mirror (have non-empty mirror.name configured).
+     * <p>
+     * This method detects two distinct scenarios:
+     * <ol>
+     *   <li>Leadership changes: Partitions where leadership transitioned to this broker and the topic already has
+     *       a non-empty mirror.name configuration. Detected via topicsDelta.</li>
+     *   <li>Configuration changes: Partitions where this broker already leads and the mirror.name configuration
+     *       was added or changed from empty to non-empty. Detected via configsDelta.</li>
+     * </ol>
+     * Both checks are necessary because leadership changes and configuration changes are independent events.
      *
-     * Here, we care about:
-     * 1. new partition leader in topicsDelta that has `mirror.name` not empty
-     * 2. the config change in configsDelta contains the `mirror.name` setting from empty to non-empty
+     * @param delta the metadata delta containing leadership and configuration changes
+     * @param image the current metadata image for querying topic configurations
+     * @return set of topic partitions led by this broker that belong to a mirror
      */
-    private Set<TopicPartition> mirrorLeaders(MetadataDelta delta, MetadataImage image) {
+    private Set<TopicPartition> getMirrorLeaders(MetadataDelta delta, MetadataImage image) {
         Set<TopicPartition> mirrorLeaderPartitions = new HashSet<>();
 
-        // leader partitions in (1)
+        // new partition leader in topicsDelta that has mirror.name not empty
         if (delta.topicsDelta() != null) {
             delta.topicsDelta().localChanges(nodeId).leaders().keySet().forEach(tp -> {
                 Properties props = image.configs().configProperties(new ConfigResource(ConfigResource.Type.TOPIC, tp.topic()));
                 if (props.containsKey(TopicConfig.MIRROR_NAME_CONFIG)) {
                     String mirrorName = (String) props.get(TopicConfig.MIRROR_NAME_CONFIG);
-                    if (mirrorName != null && !mirrorName.isEmpty()) {
+                    if (mirrorName != null && !mirrorName.isBlank()) {
                         mirrorLeaderPartitions.add(tp);
                     }
                 }
             });
         }
 
-        // leader partitions in (2)
+        // the config change in configsDelta contains the mirror.name setting from empty to non-empty
         if (delta.configsDelta() != null) {
             // get all resources containing the non-empty mirror name change
             Map<ConfigResource, ConfigurationDelta> mirrorNameChanged = delta.configsDelta().changes().entrySet().stream().filter(entry ->
@@ -339,7 +349,8 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                     .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
 
             // get all topics from the resources
-            Set<String> topicsWithMirrorNameChanged = mirrorNameChanged.keySet().stream().filter(configResource -> configResource.type().equals(ConfigResource.Type.TOPIC))
+            Set<String> topicsWithMirrorNameChanged = mirrorNameChanged.keySet().stream()
+                    .filter(configResource -> configResource.type().equals(ConfigResource.Type.TOPIC))
                     .map(configResource -> configResource.name()).collect(Collectors.toSet());
 
             // get the partition leader is the local node
@@ -360,8 +371,17 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         return mirrorLeaderPartitions;
     }
 
-    // get from the follow delta and clear the cache attached to it if this node is not the active coordinator.
-    // For the active coordinator, we want to cache the state that it manages
+    /**
+     * Clears cached mirror state for partitions where this broker transitioned from leader to follower.
+     * <p>
+     * When leadership moves away from this broker, mirror state (mirrorPartitionState and lastMirroredOffsets)
+     * must be cleaned up to prevent memory leaks and stale state tracking. However, if this broker is the
+     * active coordinator for the mirror, it retains the state even when not leading partitions, as coordinators
+     * need to maintain global state for the mirrors they manage.
+     *
+     * @param followerDelta set of partitions where this broker became a follower
+     * @param newImage the current metadata image for querying topic configurations
+     */
     private void clearFollowersState(Set<TopicPartition> followerDelta, MetadataImage newImage) {
         followerDelta.forEach(followerTp -> {
             String mirrorName = (String) newImage.configs().configProperties(new ConfigResource(ConfigResource.Type.TOPIC, followerTp.topic())).get(TopicConfig.MIRROR_NAME_CONFIG);
@@ -1071,7 +1091,8 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                 Map<String, String> conChange = new HashMap<>();
 
                 describeConfigResult.configs().forEach(con -> {
-                    // Don't apply the change for the mirror name config
+                    // Ensures the destination cluster's mirror.name setting is never overwritten
+                    // by source cluster configs (which wouldn't have this config set)
                     if (con.configSource() == DescribeConfigsResponse.ConfigSource.TOPIC_CONFIG.id()
                             && !con.name().equals(TopicConfig.MIRROR_NAME_CONFIG)) {
                         if (props.containsKey(con.name())) {
