@@ -328,28 +328,6 @@ jobs:
           path: ${{ steps.dist-info.outputs.tarball }}
           retention-days: 1
 
-      - name: Upload to Kafka-base release (amd64 only, if direct trigger)
-        if: matrix.arch == 'amd64' && needs.prepare.outputs.release_type == 'kafka-base'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASE_TAG: ${{ matrix.kafka_tag }}
-          GITHUB_REPOSITORY: ${{ github.repository }}
-          TARBALL_PATH: ${{ steps.dist-info.outputs.tarball }}
-        run: |
-          # Create release if it doesn't exist
-          if ! gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
-            echo "Creating release $RELEASE_TAG"
-            gh release create "$RELEASE_TAG" \
-              --repo "$GITHUB_REPOSITORY" \
-              --title "$RELEASE_TAG" \
-              --notes "Kafka-base release $RELEASE_TAG" \
-              --draft=false
-          fi
-          # Upload tarball
-          gh release upload "$RELEASE_TAG" \
-            "$TARBALL_PATH" \
-            --clobber --repo "$GITHUB_REPOSITORY"
-
   # Create multi-arch manifests for Kafka-base images
   manifest-kafka-base:
     needs: [prepare, build-kafka-base]
@@ -464,17 +442,50 @@ jobs:
           RELEASE_TAG: ${{ needs.prepare.outputs.git_tag }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           INKLESS_VERSION: ${{ needs.prepare.outputs.inkless_version }}
+          KAFKA_BASE_MATRIX: ${{ needs.prepare.outputs.kafka_base_matrix }}
         run: |
+          # Build release notes with Docker images and kafka-base tags
+          RELEASE_NOTES="Inkless version ${INKLESS_VERSION}
+
+          ## Docker Images
+
+          \`\`\`bash
+          docker pull ghcr.io/aiven/inkless:${INKLESS_VERSION}
+          docker pull ghcr.io/aiven/inkless:latest
+          \`\`\`
+
+          ## Kafka Versions"
+
+          # Add kafka-base tags from matrix
+          if [ -n "$KAFKA_BASE_MATRIX" ] && [ "$KAFKA_BASE_MATRIX" != '{"include":[]}' ]; then
+            TAGS=$(echo "$KAFKA_BASE_MATRIX" | jq -r '.include[].tag // .include[].kafka_tag // empty' 2>/dev/null | sort -V | uniq)
+            if [ -n "$TAGS" ]; then
+              while IFS= read -r tag; do
+                if [ -n "$tag" ]; then
+                  # Extract kafka version from tag (e.g., inkless-4.1.1-0.33 -> 4.1.1)
+                  if [[ "$tag" =~ ^inkless-([0-9]+\.[0-9]+\.[0-9]+)-(.+)$ ]]; then
+                    KAFKA_VER="${BASH_REMATCH[1]}"
+                    RELEASE_NOTES="${RELEASE_NOTES}
+          - Kafka ${KAFKA_VER}: [\`${tag}\`](https://github.com/${GITHUB_REPOSITORY}/tree/${tag})"
+                  fi
+                fi
+              done <<< "$TAGS"
+            fi
+          fi
+
           # Check if release exists, create if not
           if ! gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
             echo "Creating release $RELEASE_TAG"
             gh release create "$RELEASE_TAG" \
               --repo "$GITHUB_REPOSITORY" \
               --title "Inkless ${INKLESS_VERSION}" \
-              --notes "Release for Inkless version ${INKLESS_VERSION}" \
+              --notes "$RELEASE_NOTES" \
               --draft=false
           else
-            echo "Release $RELEASE_TAG already exists"
+            echo "Release $RELEASE_TAG already exists, updating notes"
+            gh release edit "$RELEASE_TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --notes "$RELEASE_NOTES"
           fi
 
       - name: Upload distributions to main release
