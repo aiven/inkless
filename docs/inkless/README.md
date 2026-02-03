@@ -14,6 +14,19 @@ Each release on version branches represents stable progress of the Inkless imple
 > **Note:** Any S3-compatible storage backend should work in principle. MinIO has been used for integration testing, though we are evaluating alternatives given [MinIO's recent changes](https://github.com/minio/minio/commit/27742d469462e1561c776f88ca7a1f26816d69e2) to their Docker image and single-node deployment support.
 - PostgreSQL (for batch coordinator) or in-memory mode for testing
 
+## Quick Start
+
+Choose your path based on what you want to do:
+
+| Goal                         | Command / Action                                              |
+|------------------------------|---------------------------------------------------------------|
+| **Try Inkless in 5 minutes** | `make demo` ([details](QUICKSTART.md#dockerized-demo))        |
+| **Use prebuilt Docker image**| `docker pull ghcr.io/aiven/inkless:latest`                    |
+| **Use prebuilt binaries**    | [Binary usage guide](QUICKSTART.md#using-prebuilt-binaries)   |
+| **Build from source**        | `make docker_build` ([details](QUICKSTART.md#using-a-locally-built-image))|
+
+See [Releases](RELEASES.md) for available versions.
+
 ## Documentation Index
 
 ### Getting Started
