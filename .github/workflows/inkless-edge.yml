@@ -1,0 +1,153 @@
+# Copyright (c) 2025 Aiven, Helsinki, Finland. https://aiven.io/
+# Workflow for building and publishing Inkless edge (development) images to GHCR
+# Uses native runners for each architecture for faster builds
+
+name: Inkless Edge
+
+on:
+  workflow_dispatch:
+    inputs:
+      push_image:
+        description: 'Push image to GHCR'
+        type: boolean
+        default: true
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: inkless-edge-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ghcr.io/aiven/inkless
+
+jobs:
+  # Determine the image tags
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      edge_tag: ${{ 'edge' }}
+      sha_tag: ${{ steps.sha-tag.outputs.tag }}
+    steps:
+      - name: Determine SHA tag
+        id: sha-tag
+        env:
+          GITHUB_SHA: ${{ github.sha }}
+        run: |
+          SHORT_SHA=$(echo "$GITHUB_SHA" | cut -c1-7)
+          echo "tag=edge-${SHORT_SHA}" >> $GITHUB_OUTPUT
+
+  # Build on each architecture using native runners
+  # TODO: Kafka distribution is arch-independent but rebuilds on each runner.
+  # Could build once and share via artifacts to reduce build time.
+  build:
+    needs: prepare
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup Gradle
+        uses: ./.github/actions/setup-gradle
+        with:
+          java-version: 17
+          gradle-cache-read-only: false
+
+      - name: Build Kafka distribution
+        run: make build_release
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push architecture-specific image
+        env:
+          ARCH: ${{ matrix.arch }}
+          EDGE_TAG: ${{ needs.prepare.outputs.edge_tag }}
+          SHA_TAG: ${{ needs.prepare.outputs.sha_tag }}
+          SHOULD_PUSH: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.push_image) }}
+          BUILD_TIMESTAMP: ${{ github.event.head_commit.timestamp }}
+        run: |
+          make docker_build \
+            PLATFORM="linux/${ARCH}" \
+            DOCKER_TAGS="${IMAGE_NAME}:${EDGE_TAG}-${ARCH} ${IMAGE_NAME}:${SHA_TAG}-${ARCH}" \
+            PUSH="${SHOULD_PUSH}" \
+            BUILD_DATE="${BUILD_TIMESTAMP}" \
+            CACHE_FROM="type=gha,scope=${ARCH}" \
+            CACHE_TO="type=gha,mode=max,scope=${ARCH}"
+
+  # Create multi-arch manifests
+  manifest:
+    needs: [prepare, build]
+    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.push_image)
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+
+    steps:
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create and push edge manifest
+        run: |
+          docker buildx imagetools create -t ${{ env.IMAGE_NAME }}:edge \
+            ${{ env.IMAGE_NAME }}:edge-amd64 \
+            ${{ env.IMAGE_NAME }}:edge-arm64
+
+      - name: Create and push SHA manifest
+        env:
+          SHA_TAG: ${{ needs.prepare.outputs.sha_tag }}
+        run: |
+          docker buildx imagetools create -t "${IMAGE_NAME}:${SHA_TAG}" \
+            "${IMAGE_NAME}:${SHA_TAG}-amd64" \
+            "${IMAGE_NAME}:${SHA_TAG}-arm64"
+
+      - name: Inspect manifest
+        run: |
+          docker buildx imagetools inspect ${{ env.IMAGE_NAME }}:edge
+
+      - name: Output image details
+        run: |
+          echo "## Edge Docker Image Published" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Images:**" >> $GITHUB_STEP_SUMMARY
+          echo "- \`${{ env.IMAGE_NAME }}:edge\`" >> $GITHUB_STEP_SUMMARY
+          echo "- \`${{ env.IMAGE_NAME }}:${{ needs.prepare.outputs.sha_tag }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Platforms:** linux/amd64, linux/arm64" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Pull Command" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
+          echo "docker pull ${{ env.IMAGE_NAME }}:edge" >> $GITHUB_STEP_SUMMARY
+          echo "# or for this specific commit:" >> $GITHUB_STEP_SUMMARY
+          echo "docker pull ${{ env.IMAGE_NAME }}:${{ needs.prepare.outputs.sha_tag }}" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
