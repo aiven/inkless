@@ -3,6 +3,11 @@ all: clean fmt test pitest build_release
 
 VERSION := 4.1.0-inkless-SNAPSHOT
 
+# Docker image settings (aligned with .github/workflows/inkless-release.yml)
+REGISTRY := ghcr.io
+IMAGE_NAME := $(REGISTRY)/aiven/inkless
+DOCKER := docker
+
 .PHONY: build
 build:
 	./gradlew :core:build :storage:inkless:build :metadata:build -x test
@@ -14,30 +19,117 @@ core/build/distributions/kafka_2.13-$(VERSION).tgz:
 .PHONY: build_release
 build_release: core/build/distributions/kafka_2.13-$(VERSION).tgz
 
+# Get the actual version from the built tarball (handles SNAPSHOT versions)
+# Exclude -site-docs.tgz; uses sort -V for deterministic selection when multiple tarballs exist
+DIST_VERSION = $(shell find core/build/distributions -name "kafka_2.13-*.tgz" ! -name "*-site-docs.tgz" 2>/dev/null | sort -V | tail -1 | xargs basename 2>/dev/null | sed 's/kafka_2.13-\(.*\)\.tgz/\1/')
+
+# Prepare docker build context (aligned with workflow)
+# Only copy the main distribution tarball, exclude site-docs
 .PHONY: docker_build_prep
-docker_build_prep:
-	cd docker && \
-	  [ -d .venv ] || python3 -m venv .venv && \
-	  .venv/bin/pip install -r requirements.txt
+docker_build_prep: build_release
+	mkdir -p docker/resources/distributions
+	find core/build/distributions -name "kafka_2.13-*.tgz" ! -name "*-site-docs.tgz" -exec cp {} docker/resources/distributions/ \;
 
-# download prometheus jmx exporter
-docker/extra/prometheus-jmx-javaagent/jmx_prometheus_javaagent.jar:
-	curl -o docker/extra/prometheus-jmx-javaagent/jmx_prometheus_javaagent.jar \
-	  https://repo1.maven.org/maven2/io/prometheus/jmx/jmx_prometheus_javaagent/1.0.1/jmx_prometheus_javaagent-1.0.1.jar
+.PHONY: docker_clean
+docker_clean:
+	rm -rf docker/resources/distributions
 
+# Build docker image (used by both local development and CI)
+#
+# Optional parameters (CI can override these):
+#   PLATFORM    - Target platform (e.g., linux/amd64). Default: native
+#   DOCKER_TAGS - Space-separated image tags. Default: $(IMAGE_NAME):local $(IMAGE_NAME):$(DIST_VERSION)
+#   PUSH        - Set to "true" to push to registry. Default: false (loads locally)
+#   BUILD_DATE  - Build timestamp. Default: current time
+#   CACHE_FROM  - Buildx cache source (e.g., type=gha,scope=mykey)
+#   CACHE_TO    - Buildx cache destination
+#
+# Local usage:
+#   make docker_build
+#
+# CI usage:
+#   make docker_build PLATFORM=linux/amd64 DOCKER_TAGS="ghcr.io/aiven/inkless:4.1.0-0.33-amd64" PUSH=true
+#
 .PHONY: docker_build
-docker_build: build_release docker_build_prep
-	cp -R core/build/distributions docker/resources/.
-	# use existing docker tooling to build image
-	cd docker && \
-	  .venv/bin/python3 docker_build_test.py -b aivenoy/kafka --image-tag=$(VERSION) --image-type=inkless
+docker_build: docker_build_prep
+	@if [ -z "$(DIST_VERSION)" ]; then \
+		echo "Error: No distribution tarball found. Run 'make build_release' first."; \
+		exit 1; \
+	fi
+	@echo "Building Docker image with version $(DIST_VERSION)"
+	$(DOCKER) buildx build \
+		$(if $(PLATFORM),--platform '$(PLATFORM)') \
+		--build-arg kafka_version=$(DIST_VERSION) \
+		--build-arg build_date=$(or $(BUILD_DATE),$$(date -u +%Y-%m-%dT%H:%M:%SZ)) \
+		$(if $(DOCKER_TAGS),$(foreach tag,$(DOCKER_TAGS),-t '$(tag)'),-t '$(IMAGE_NAME):local' -t '$(IMAGE_NAME):$(DIST_VERSION)') \
+		$(if $(CACHE_FROM),--cache-from '$(CACHE_FROM)') \
+		$(if $(CACHE_TO),--cache-to '$(CACHE_TO)') \
+		$(if $(filter true,$(PUSH)),--push,--load) \
+		-f docker/inkless/Dockerfile \
+		docker
 
-DOCKER := docker
+# Build docker image without cache (useful when build fails due to stale cache)
+.PHONY: docker_build_nocache
+docker_build_nocache: docker_build_prep
+	@if [ -z "$(DIST_VERSION)" ]; then \
+		echo "Error: No distribution tarball found. Run 'make build_release' first."; \
+		exit 1; \
+	fi
+	@echo "Building Docker image with version $(DIST_VERSION) (no cache)"
+	$(DOCKER) buildx build \
+		--no-cache \
+		--build-arg kafka_version=$(DIST_VERSION) \
+		--build-arg build_date=$$(date -u +%Y-%m-%dT%H:%M:%SZ) \
+		-t $(IMAGE_NAME):local \
+		-t $(IMAGE_NAME):$(DIST_VERSION) \
+		--load \
+		-f docker/inkless/Dockerfile \
+		docker
 
+# Build and push multi-arch docker image (requires buildx with multi-arch support)
+# Note: Multi-arch images cannot be loaded locally, they must be pushed to a registry
+.PHONY: docker_build_multiarch
+docker_build_multiarch: docker_login docker_build_prep
+	@if [ -z "$(DIST_VERSION)" ]; then \
+		echo "Error: No distribution tarball found. Run 'make build_release' first."; \
+		exit 1; \
+	fi
+	@echo "Building and pushing multi-arch Docker image with version $(DIST_VERSION)"
+	$(DOCKER) buildx build \
+		--platform linux/amd64,linux/arm64 \
+		--build-arg kafka_version=$(DIST_VERSION) \
+		--build-arg build_date=$$(date -u +%Y-%m-%dT%H:%M:%SZ) \
+		-t $(IMAGE_NAME):$(DIST_VERSION) \
+		--push \
+		-f docker/inkless/Dockerfile \
+		docker
+
+# Login to GitHub Container Registry
+# Requires GITHUB_TOKEN environment variable or gh cli authentication
+.PHONY: docker_login
+docker_login:
+	@if [ -n "$$GITHUB_TOKEN" ]; then \
+		if [ -z "$(GITHUB_USER)" ]; then \
+			echo "Error: GITHUB_TOKEN is set but GITHUB_USER is not. Set both or use gh cli."; \
+			exit 1; \
+		fi; \
+		echo "$$GITHUB_TOKEN" | $(DOCKER) login $(REGISTRY) -u $(GITHUB_USER) --password-stdin; \
+	elif command -v gh >/dev/null 2>&1; then \
+		gh auth token | $(DOCKER) login $(REGISTRY) -u $$(gh api user -q .login) --password-stdin; \
+	else \
+		echo "Error: Set GITHUB_TOKEN and GITHUB_USER, or install gh cli"; \
+		exit 1; \
+	fi
+
+# Push docker image to GHCR (aligned with workflow)
 .PHONY: docker_push
-docker_push: docker_build
-	# use existing docker tooling to push image
-	$(DOCKER) push aivenoy/kafka:$(VERSION)
+docker_push: docker_login docker_build
+	@echo "Pushing $(IMAGE_NAME):$(DIST_VERSION)"
+	$(DOCKER) push $(IMAGE_NAME):$(DIST_VERSION)
+
+# Alias for docker_build_multiarch (kept for backward compatibility)
+.PHONY: docker_push_multiarch
+docker_push_multiarch: docker_build_multiarch
 
 .PHONY: docs
 docs:
@@ -70,7 +162,7 @@ clean:
 DEMO := s3-local
 .PHONY: demo
 demo:
-	$(MAKE) -C docker/examples/docker-compose-files/inkless $(DEMO) KAFKA_VERSION=$(VERSION)
+	$(MAKE) -C docker/examples/docker-compose-files/inkless $(DEMO)
 
 core/build/distributions/kafka_2.13-$(VERSION): core/build/distributions/kafka_2.13-$(VERSION).tgz
 	tar -xf $< -C core/build/distributions

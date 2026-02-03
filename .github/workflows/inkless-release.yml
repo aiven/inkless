@@ -1,0 +1,621 @@
+# Copyright (c) 2025 Aiven, Helsinki, Finland. https://aiven.io/
+# Workflow for building and publishing Inkless release images to GHCR
+# and attaching binary distributions to GitHub Releases
+# Uses native runners for each architecture for faster builds
+#
+# Triggers:
+# - Manual (workflow_dispatch): For main releases (inkless-release-X.Y)
+#   Finds all Kafka-base tags and builds images/binaries for each
+# - Auto (push): For individual Kafka-base releases (inkless-4.x.y-*)
+#   Builds image/binary for that specific Kafka version
+
+name: Inkless Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      inkless_version:
+        description: 'Inkless version to release (e.g., 0.33). Leave empty to use latest.'
+        required: false
+        type: string
+  push:
+    tags:
+      - 'inkless-4.[0-9]*.[0-9]*-*'
+
+# TODO: Concurrency group uses github.ref which works well for push triggers (unique per tag),
+# but could cancel unrelated workflow_dispatch runs if triggered from the same branch.
+# Consider using a more specific group key if this becomes an issue.
+concurrency:
+  group: inkless-docker-release-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ghcr.io/aiven/inkless
+
+jobs:
+  # Determine what type of release this is
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      git_tag: ${{ steps.parse.outputs.git_tag }}
+      release_type: ${{ steps.parse.outputs.release_type }}
+      inkless_version: ${{ steps.parse.outputs.inkless_version }}
+      kafka_version: ${{ steps.parse.outputs.kafka_version }}
+      kafka_major_minor: ${{ steps.parse.outputs.kafka_major_minor }}
+      kafka_base_matrix: ${{ steps.find-kafka-tags.outputs.matrix }}
+      build_matrix: ${{ steps.find-kafka-tags.outputs.build_matrix }}
+      latest_tags: ${{ steps.find-kafka-tags.outputs.latest_tags }}
+    steps:
+      - name: Checkout code (for tag discovery)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Determine release parameters
+        id: parse
+        env:
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          INKLESS_VERSION_INPUT: ${{ inputs.inkless_version }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            # Manual trigger - this is a main release
+            INPUT_VERSION="$INKLESS_VERSION_INPUT"
+            
+            if [ -z "$INPUT_VERSION" ]; then
+              # Auto-detect latest inkless-release-* tag
+              LATEST_TAG=$(git tag -l "inkless-release-*" | sort -V | tail -n 1)
+              if [ -z "$LATEST_TAG" ]; then
+                echo "::error::No inkless-release-* tags found and no version specified"
+                exit 1
+              fi
+              INKLESS_VERSION="${LATEST_TAG#inkless-release-}"
+              echo "Auto-detected latest Inkless version: $INKLESS_VERSION"
+            else
+              INKLESS_VERSION="$INPUT_VERSION"
+            fi
+            
+            GIT_TAG="inkless-release-${INKLESS_VERSION}"
+
+            # Validate tag exists
+            if ! git rev-parse "$GIT_TAG" >/dev/null 2>&1; then
+              echo "::error::Tag $GIT_TAG does not exist. Create the tag first or check the version."
+              exit 1
+            fi
+
+            echo "git_tag=$GIT_TAG" >> $GITHUB_OUTPUT
+            echo "release_type=main" >> $GITHUB_OUTPUT
+            echo "inkless_version=$INKLESS_VERSION" >> $GITHUB_OUTPUT
+            echo "kafka_version=" >> $GITHUB_OUTPUT
+            echo "kafka_major_minor=" >> $GITHUB_OUTPUT
+            echo "Main release: Inkless version $INKLESS_VERSION"
+            
+          else
+            # Push trigger - this is a Kafka-base release
+            GIT_TAG="${GITHUB_REF#refs/tags/}"
+            echo "git_tag=$GIT_TAG" >> $GITHUB_OUTPUT
+            
+            if [[ "$GIT_TAG" =~ ^inkless-([0-9]+\.[0-9]+\.[0-9]+)-(.+)$ ]]; then
+              KAFKA_VERSION="${BASH_REMATCH[1]}"
+              INKLESS_VERSION="${BASH_REMATCH[2]}"
+              KAFKA_MAJOR_MINOR=$(echo "$KAFKA_VERSION" | cut -d. -f1-2)
+              echo "release_type=kafka-base" >> $GITHUB_OUTPUT
+              echo "inkless_version=$INKLESS_VERSION" >> $GITHUB_OUTPUT
+              echo "kafka_version=$KAFKA_VERSION" >> $GITHUB_OUTPUT
+              echo "kafka_major_minor=$KAFKA_MAJOR_MINOR" >> $GITHUB_OUTPUT
+              echo "Kafka-base release: Kafka $KAFKA_VERSION, Inkless $INKLESS_VERSION"
+            else
+              echo "::error::Unrecognized tag format: $GIT_TAG"
+              exit 1
+            fi
+          fi
+
+      - name: Find Kafka-base tags for main release
+        id: find-kafka-tags
+        env:
+          RELEASE_TYPE: ${{ steps.parse.outputs.release_type }}
+          INKLESS_VERSION: ${{ steps.parse.outputs.inkless_version }}
+          GIT_TAG: ${{ steps.parse.outputs.git_tag }}
+          KAFKA_MAJOR_MINOR: ${{ steps.parse.outputs.kafka_major_minor }}
+        run: |
+          if [ "$RELEASE_TYPE" = "main" ]; then
+            
+            # Find all tags matching inkless-X.Y.Z-<inkless_version>
+            TAGS=$(git tag -l "inkless-*-$INKLESS_VERSION" | grep -E '^inkless-[0-9]+\.[0-9]+\.[0-9]+-' | sort -V)
+            
+            if [ -z "$TAGS" ]; then
+              echo "::warning::No Kafka-base tags found for Inkless version $INKLESS_VERSION"
+              echo 'matrix={"include":[]}' >> $GITHUB_OUTPUT
+              echo 'build_matrix={"include":[]}' >> $GITHUB_OUTPUT
+              echo 'latest_tags={}' >> $GITHUB_OUTPUT
+            else
+              # Determine highest patch version for each minor version
+              # This ensures A.B-latest points to the highest A.B.C
+              declare -A LATEST_FOR_MINOR
+              while IFS= read -r tag; do
+                if [[ "$tag" =~ ^inkless-([0-9]+\.[0-9]+)\.([0-9]+)-(.+)$ ]]; then
+                  MINOR="${BASH_REMATCH[1]}"
+                  PATCH="${BASH_REMATCH[2]}"
+                  CURRENT_PATCH="${LATEST_FOR_MINOR[$MINOR]:-0}"
+                  if [ "$PATCH" -ge "$CURRENT_PATCH" ]; then
+                    LATEST_FOR_MINOR[$MINOR]="$PATCH"
+                  fi
+                fi
+              done <<< "$TAGS"
+              
+              # Build JSON map of minor -> highest patch tag
+              LATEST_TAGS_JSON='{'
+              FIRST_LATEST=true
+              for MINOR in "${!LATEST_FOR_MINOR[@]}"; do
+                PATCH="${LATEST_FOR_MINOR[$MINOR]}"
+                TAG="inkless-${MINOR}.${PATCH}-${INKLESS_VERSION}"
+                if [ "$FIRST_LATEST" = true ]; then
+                  FIRST_LATEST=false
+                else
+                  LATEST_TAGS_JSON="$LATEST_TAGS_JSON,"
+                fi
+                LATEST_TAGS_JSON="$LATEST_TAGS_JSON\"$MINOR\":\"$TAG\""
+              done
+              LATEST_TAGS_JSON="$LATEST_TAGS_JSON}"
+              echo "latest_tags=$LATEST_TAGS_JSON" >> $GITHUB_OUTPUT
+              echo "Highest patch versions per minor: $LATEST_TAGS_JSON"
+              
+              # Convert to JSON matrix format (for manifest job - one per tag)
+              MATRIX_JSON='{"include":['
+              # Build matrix with arch combinations (for build job - tag × arch)
+              BUILD_MATRIX_JSON='{"include":['
+              FIRST=true
+              while IFS= read -r tag; do
+                if [ -n "$tag" ]; then
+                  if [ "$FIRST" = true ]; then
+                    FIRST=false
+                  else
+                    MATRIX_JSON="$MATRIX_JSON,"
+                    BUILD_MATRIX_JSON="$BUILD_MATRIX_JSON,"
+                  fi
+                  MATRIX_JSON="$MATRIX_JSON{\"tag\":\"$tag\"}"
+                  BUILD_MATRIX_JSON="$BUILD_MATRIX_JSON{\"kafka_tag\":\"$tag\",\"arch\":\"amd64\",\"runner\":\"ubuntu-latest\"},{\"kafka_tag\":\"$tag\",\"arch\":\"arm64\",\"runner\":\"ubuntu-24.04-arm\"}"
+                fi
+              done <<< "$TAGS"
+              MATRIX_JSON="$MATRIX_JSON]}"
+              BUILD_MATRIX_JSON="$BUILD_MATRIX_JSON]}"
+              echo "matrix=$MATRIX_JSON" >> $GITHUB_OUTPUT
+              echo "build_matrix=$BUILD_MATRIX_JSON" >> $GITHUB_OUTPUT
+              echo "Found Kafka-base tags matrix: $MATRIX_JSON"
+            fi
+          else
+            # For kafka-base releases, build only the pushed tag for both architectures,
+            # but determine the true latest patch for this Kafka minor from existing tags.
+            echo "matrix={\"include\":[{\"tag\":\"$GIT_TAG\"}]}" >> $GITHUB_OUTPUT
+            echo "build_matrix={\"include\":[{\"kafka_tag\":\"$GIT_TAG\",\"arch\":\"amd64\",\"runner\":\"ubuntu-latest\"},{\"kafka_tag\":\"$GIT_TAG\",\"arch\":\"arm64\",\"runner\":\"ubuntu-24.04-arm\"}]}" >> $GITHUB_OUTPUT
+
+            # Find the kafka-base tag with the highest Kafka patch version for this minor.
+            # This prevents an older patch (pushed later) from overwriting A.B-latest.
+            LATEST_FOR_MINOR="$GIT_TAG"
+            CANDIDATE_TAGS=$(git tag --list "inkless-${KAFKA_MAJOR_MINOR}.*-*")
+            if [ -n "$CANDIDATE_TAGS" ]; then
+              HIGHEST=$(
+                echo "$CANDIDATE_TAGS" | while read -r TAG; do
+                  if [[ "$TAG" =~ ^inkless-([0-9]+\.[0-9]+\.[0-9]+)-(.+)$ ]]; then
+                    KVER="${BASH_REMATCH[1]}"
+                    echo "$KVER $TAG"
+                  fi
+                done | sort -t' ' -k1,1V | tail -n1 | awk '{print $2}'
+              )
+              if [ -n "$HIGHEST" ]; then
+                LATEST_FOR_MINOR="$HIGHEST"
+              fi
+            fi
+            echo "Highest patch for $KAFKA_MAJOR_MINOR: $LATEST_FOR_MINOR"
+
+            echo "latest_tags={\"$KAFKA_MAJOR_MINOR\":\"$LATEST_FOR_MINOR\"}" >> $GITHUB_OUTPUT
+          fi
+
+  # Build Kafka-base releases - one job per tag × architecture combination
+  # TODO: Optimization opportunities:
+  # 1. Permissions: All runners get contents:write but only one uploads to releases.
+  #    Could segregate release upload into a separate job for least-privilege.
+  # 2. Build: Kafka distribution is arch-independent but rebuilds on each runner.
+  #    Could build once and share via artifacts to reduce build time.
+  build-kafka-base:
+    needs: prepare
+    if: needs.prepare.outputs.build_matrix != '{"include":[]}'
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: write
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.prepare.outputs.build_matrix) }}
+
+    steps:
+      - name: Parse build tag
+        id: parse-build
+        env:
+          BUILD_TAG: ${{ matrix.kafka_tag }}
+        run: |
+          echo "build_tag=$BUILD_TAG" >> $GITHUB_OUTPUT
+          
+          if [[ "$BUILD_TAG" =~ ^inkless-([0-9]+\.[0-9]+\.[0-9]+)-(.+)$ ]]; then
+            KAFKA_VERSION="${BASH_REMATCH[1]}"
+            INKLESS_VERSION="${BASH_REMATCH[2]}"
+            KAFKA_MAJOR_MINOR=$(echo "$KAFKA_VERSION" | cut -d. -f1-2)
+            
+            echo "kafka_version=$KAFKA_VERSION" >> $GITHUB_OUTPUT
+            echo "inkless_version=$INKLESS_VERSION" >> $GITHUB_OUTPUT
+            echo "kafka_major_minor=$KAFKA_MAJOR_MINOR" >> $GITHUB_OUTPUT
+            echo "primary_image_tag=${KAFKA_VERSION}-${INKLESS_VERSION}" >> $GITHUB_OUTPUT
+            echo "latest_image_tag=${KAFKA_MAJOR_MINOR}-latest" >> $GITHUB_OUTPUT
+          else
+            echo "::error::Cannot parse build tag: $BUILD_TAG"
+            exit 1
+          fi
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.kafka_tag }}
+          persist-credentials: false
+
+      - name: Setup Gradle
+        uses: ./.github/actions/setup-gradle
+        with:
+          java-version: 17
+          gradle-cache-read-only: false
+
+      - name: Build Kafka distribution
+        run: make build_release
+
+      - name: Prepare distribution artifact info
+        id: dist-info
+        run: |
+          shopt -s nullglob
+          TARBALLS=(core/build/distributions/kafka_2.13-*.tgz)
+          if [ ${#TARBALLS[@]} -eq 0 ]; then
+            echo "::error::No Kafka distribution tarball (kafka_2.13-*.tgz) found in core/build/distributions"
+            exit 1
+          fi
+          # Find the main tarball (exclude site-docs)
+          TARBALL=""
+          for tb in "${TARBALLS[@]}"; do
+            if [[ "$tb" != *-site-docs.tgz ]]; then
+              TARBALL="$tb"
+              break
+            fi
+          done
+          if [ -z "$TARBALL" ]; then
+            echo "::error::No non-site-docs Kafka distribution tarball found in core/build/distributions"
+            exit 1
+          fi
+          TARBALL_NAME=$(basename "$TARBALL")
+          DIST_VERSION=$(echo "$TARBALL_NAME" | sed 's/kafka_2.13-\(.*\)\.tgz/\1/')
+
+          echo "tarball=$TARBALL" >> $GITHUB_OUTPUT
+          echo "tarball_name=$TARBALL_NAME" >> $GITHUB_OUTPUT
+          echo "dist_version=$DIST_VERSION" >> $GITHUB_OUTPUT
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push architecture-specific image
+        env:
+          ARCH: ${{ matrix.arch }}
+          PRIMARY_IMAGE_TAG: ${{ steps.parse-build.outputs.primary_image_tag }}
+          BUILD_TIMESTAMP: ${{ github.event.head_commit.timestamp }}
+          KAFKA_TAG: ${{ matrix.kafka_tag }}
+        run: |
+          make docker_build \
+            PLATFORM="linux/${ARCH}" \
+            DOCKER_TAGS="${IMAGE_NAME}:${PRIMARY_IMAGE_TAG}-${ARCH}" \
+            PUSH=true \
+            BUILD_DATE="${BUILD_TIMESTAMP}" \
+            CACHE_FROM="type=gha,scope=${KAFKA_TAG}-${ARCH}" \
+            CACHE_TO="type=gha,mode=max,scope=${KAFKA_TAG}-${ARCH}"
+
+      - name: Upload distribution as artifact (amd64 only to avoid duplicates)
+        if: matrix.arch == 'amd64'
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ steps.parse-build.outputs.kafka_version }}-${{ steps.parse-build.outputs.inkless_version }}
+          path: ${{ steps.dist-info.outputs.tarball }}
+          retention-days: 1
+
+      - name: Upload to Kafka-base release (amd64 only, if direct trigger)
+        if: matrix.arch == 'amd64' && needs.prepare.outputs.release_type == 'kafka-base'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ matrix.kafka_tag }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          TARBALL_PATH: ${{ steps.dist-info.outputs.tarball }}
+        run: |
+          # Create release if it doesn't exist
+          if ! gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            echo "Creating release $RELEASE_TAG"
+            gh release create "$RELEASE_TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "$RELEASE_TAG" \
+              --notes "Kafka-base release $RELEASE_TAG" \
+              --draft=false
+          fi
+          # Upload tarball
+          gh release upload "$RELEASE_TAG" \
+            "$TARBALL_PATH" \
+            --clobber --repo "$GITHUB_REPOSITORY"
+
+  # Create multi-arch manifests for Kafka-base images
+  manifest-kafka-base:
+    needs: [prepare, build-kafka-base]
+    if: needs.prepare.outputs.kafka_base_matrix != '{"include":[]}'
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+    strategy:
+      matrix: ${{ fromJson(needs.prepare.outputs.kafka_base_matrix) }}
+
+    steps:
+      - name: Parse tag and check if latest
+        id: parse
+        env:
+          BUILD_TAG: ${{ matrix.tag }}
+          LATEST_TAGS: ${{ needs.prepare.outputs.latest_tags }}
+        run: |
+          if [[ "$BUILD_TAG" =~ ^inkless-([0-9]+\.[0-9]+\.[0-9]+)-(.+)$ ]]; then
+            KAFKA_VERSION="${BASH_REMATCH[1]}"
+            INKLESS_VERSION="${BASH_REMATCH[2]}"
+            KAFKA_MAJOR_MINOR=$(echo "$KAFKA_VERSION" | cut -d. -f1-2)
+            echo "kafka_major_minor=$KAFKA_MAJOR_MINOR" >> $GITHUB_OUTPUT
+            echo "primary_image_tag=${KAFKA_VERSION}-${INKLESS_VERSION}" >> $GITHUB_OUTPUT
+            echo "latest_image_tag=${KAFKA_MAJOR_MINOR}-latest" >> $GITHUB_OUTPUT
+            
+            # Check if this tag is the highest patch for its minor version
+            LATEST_FOR_THIS_MINOR=$(echo "$LATEST_TAGS" | jq -r ".\"$KAFKA_MAJOR_MINOR\" // empty")
+            if [ "$BUILD_TAG" = "$LATEST_FOR_THIS_MINOR" ]; then
+              echo "is_latest_patch=true" >> $GITHUB_OUTPUT
+              echo "This tag ($BUILD_TAG) is the highest patch for $KAFKA_MAJOR_MINOR"
+            else
+              echo "is_latest_patch=false" >> $GITHUB_OUTPUT
+              echo "This tag ($BUILD_TAG) is NOT the highest patch for $KAFKA_MAJOR_MINOR (highest is $LATEST_FOR_THIS_MINOR)"
+            fi
+          fi
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create multi-arch manifest for primary tag
+        env:
+          PRIMARY_TAG: ${{ steps.parse.outputs.primary_image_tag }}
+        run: |
+          docker buildx imagetools create \
+            -t "${IMAGE_NAME}:${PRIMARY_TAG}" \
+            "${IMAGE_NAME}:${PRIMARY_TAG}-amd64" \
+            "${IMAGE_NAME}:${PRIMARY_TAG}-arm64"
+
+      - name: Create multi-arch manifest for latest tag
+        if: steps.parse.outputs.is_latest_patch == 'true'
+        env:
+          PRIMARY_TAG: ${{ steps.parse.outputs.primary_image_tag }}
+          LATEST_TAG: ${{ steps.parse.outputs.latest_image_tag }}
+        run: |
+          docker buildx imagetools create \
+            -t "${IMAGE_NAME}:${LATEST_TAG}" \
+            "${IMAGE_NAME}:${PRIMARY_TAG}-amd64" \
+            "${IMAGE_NAME}:${PRIMARY_TAG}-arm64"
+
+      - name: Output build summary
+        env:
+          TAG: ${{ matrix.tag }}
+          PRIMARY_IMAGE_TAG: ${{ steps.parse.outputs.primary_image_tag }}
+          LATEST_IMAGE_TAG: ${{ steps.parse.outputs.latest_image_tag }}
+          IS_LATEST_PATCH: ${{ steps.parse.outputs.is_latest_patch }}
+          KAFKA_MAJOR_MINOR: ${{ steps.parse.outputs.kafka_major_minor }}
+        run: |
+          echo "## Kafka-base Image: ${TAG}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Docker Image Tags:**" >> $GITHUB_STEP_SUMMARY
+          echo "- \`${IMAGE_NAME}:${PRIMARY_IMAGE_TAG}\`" >> $GITHUB_STEP_SUMMARY
+          if [ "$IS_LATEST_PATCH" = "true" ]; then
+            echo "- \`${IMAGE_NAME}:${LATEST_IMAGE_TAG}\` (latest for ${KAFKA_MAJOR_MINOR})" >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Platforms:** linux/amd64, linux/arm64" >> $GITHUB_STEP_SUMMARY
+
+  # For main releases: collect all artifacts and upload to the main release
+  # Uses always() to run even when build-kafka-base is skipped (no kafka-base tags exist)
+  upload-to-main-release:
+    if: ${{ always() && needs.prepare.outputs.release_type == 'main' && !cancelled() }}
+    needs: [prepare, build-kafka-base]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download all distribution artifacts
+        id: download
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          pattern: dist-*
+          path: distributions
+          merge-multiple: true
+
+      - name: List downloaded distributions
+        run: |
+          echo "Downloaded distributions:"
+          ls -la distributions/ 2>/dev/null || echo "No distributions found"
+
+      - name: Ensure release exists
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.git_tag }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          INKLESS_VERSION: ${{ needs.prepare.outputs.inkless_version }}
+        run: |
+          # Check if release exists, create if not
+          if ! gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            echo "Creating release $RELEASE_TAG"
+            gh release create "$RELEASE_TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "Inkless ${INKLESS_VERSION}" \
+              --notes "Release for Inkless version ${INKLESS_VERSION}" \
+              --draft=false
+          else
+            echo "Release $RELEASE_TAG already exists"
+          fi
+
+      - name: Upload distributions to main release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.git_tag }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          echo "Uploading to release: $RELEASE_TAG"
+
+          if [ -d distributions ] && [ "$(ls -A distributions/ 2>/dev/null)" ]; then
+            for file in distributions/*.tgz; do
+              if [ -f "$file" ]; then
+                echo "Uploading: $file"
+                gh release upload "$RELEASE_TAG" "$file" --clobber --repo "$GITHUB_REPOSITORY"
+              fi
+            done
+          else
+            echo "::warning::No distribution files found to upload"
+          fi
+
+      - name: Output release summary
+        env:
+          GIT_TAG: ${{ needs.prepare.outputs.git_tag }}
+          INKLESS_VERSION: ${{ needs.prepare.outputs.inkless_version }}
+        run: |
+          echo "## Main Release: ${GIT_TAG}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Inkless Version:** ${INKLESS_VERSION}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Distributions uploaded:**" >> $GITHUB_STEP_SUMMARY
+          if [ -d distributions ] && [ "$(ls -A distributions/)" ]; then
+            for file in distributions/*.tgz; do
+              if [ -f "$file" ]; then
+                echo "- \`$(basename $file)\`" >> $GITHUB_STEP_SUMMARY
+              fi
+            done
+          else
+            echo "- None (no Kafka-base tags found)" >> $GITHUB_STEP_SUMMARY
+          fi
+
+  # For main releases: build the "latest" Docker image from main
+  build-main-docker:
+    if: needs.prepare.outputs.release_type == 'main'
+    needs: prepare
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.git_tag }}
+          persist-credentials: false
+
+      - name: Setup Gradle
+        uses: ./.github/actions/setup-gradle
+        with:
+          java-version: 17
+          gradle-cache-read-only: false
+
+      - name: Build Kafka distribution
+        run: make build_release
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push architecture-specific image
+        env:
+          ARCH: ${{ matrix.arch }}
+          INKLESS_VERSION: ${{ needs.prepare.outputs.inkless_version }}
+          BUILD_TIMESTAMP: ${{ github.event.head_commit.timestamp }}
+        run: |
+          make docker_build \
+            PLATFORM="linux/${ARCH}" \
+            DOCKER_TAGS="${IMAGE_NAME}:${INKLESS_VERSION}-${ARCH} ${IMAGE_NAME}:latest-${ARCH}" \
+            PUSH=true \
+            BUILD_DATE="${BUILD_TIMESTAMP}" \
+            CACHE_FROM="type=gha,scope=main-${ARCH}" \
+            CACHE_TO="type=gha,mode=max,scope=main-${ARCH}"
+
+  # Create multi-arch manifest for main release
+  manifest-main:
+    if: needs.prepare.outputs.release_type == 'main'
+    needs: [prepare, build-main-docker]
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+
+    steps:
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create multi-arch manifest for version tag
+        env:
+          VERSION: ${{ needs.prepare.outputs.inkless_version }}
+        run: |
+          docker buildx imagetools create \
+            -t "${IMAGE_NAME}:${VERSION}" \
+            "${IMAGE_NAME}:${VERSION}-amd64" \
+            "${IMAGE_NAME}:${VERSION}-arm64"
+
+      - name: Create multi-arch manifest for latest tag
+        run: |
+          docker buildx imagetools create \
+            -t "${IMAGE_NAME}:latest" \
+            "${IMAGE_NAME}:latest-amd64" \
+            "${IMAGE_NAME}:latest-arm64"
+
+      - name: Output build summary
+        env:
+          INKLESS_VERSION: ${{ needs.prepare.outputs.inkless_version }}
+        run: |
+          echo "## Main Docker Image" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Docker Image Tags:**" >> $GITHUB_STEP_SUMMARY
+          echo "- \`${IMAGE_NAME}:${INKLESS_VERSION}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- \`${IMAGE_NAME}:latest\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Platforms:** linux/amd64, linux/arm64" >> $GITHUB_STEP_SUMMARY

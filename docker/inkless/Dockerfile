@@ -24,8 +24,8 @@ USER root
 
 ARG kafka_version
 
-COPY ./resources/distributions/kafka_2.13-$kafka_version.tgz /kafka.tgz
-COPY jsa_launch /etc/kafka/docker/jsa_launch
+COPY resources/distributions/kafka_2.13-$kafka_version.tgz /kafka.tgz
+COPY inkless/jsa_launch /etc/kafka/docker/jsa_launch
 
 RUN set -eux ; \
     apk update ; \
@@ -49,7 +49,7 @@ ARG build_date
 
 ARG kafka_version
 
-COPY ./resources/distributions/kafka_2.13-$kafka_version.tgz /kafka.tgz
+COPY resources/distributions/kafka_2.13-$kafka_version.tgz /kafka.tgz
 
 LABEL org.label-schema.name="kafka" \
       org.label-schema.description="Apache Kafka" \
@@ -77,7 +77,7 @@ RUN set -eux ; \
 COPY --from=build-jsa kafka.jsa /opt/kafka/kafka.jsa
 COPY --from=build-jsa storage.jsa /opt/kafka/storage.jsa
 COPY --chown=appuser:appuser resources/common-scripts /etc/kafka/docker
-COPY --chown=appuser:appuser launch /etc/kafka/docker/launch
+COPY --chown=appuser:appuser inkless/launch /etc/kafka/docker/launch
 
 USER appuser
 
