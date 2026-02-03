@@ -286,6 +286,16 @@ git push origin inkless-4.1.1-0.33
 - `inkless-release-0.33` identifies the Inkless change set
 - `inkless-4.0.0-0.33` and `inkless-4.1.1-0.33` apply it to specific Kafka versions
 
+**Note on CI/CD automation:**
+The release workflow automatically builds Docker images and binaries when Kafka-base tags
+(`inkless-A.B.C-X.Y`, e.g., `inkless-4.0.0-0.33`) are pushed.
+
+Main Inkless releases (`inkless-release-X.Y`) are triggered manually via GitHub Actions
+`workflow_dispatch`. The workflow looks for existing `inkless-A.B.C-X.Y` tags to determine
+which Kafka versions to build. Therefore, push the Kafka-base tags (`inkless-4.0.0-0.33`,
+`inkless-4.1.1-0.33`, etc.) **before** manually triggering the main release workflow to
+ensure all binaries are included in the release.
+
 ---
 
 ### 4. Merging Kafka Patch Releases
@@ -369,6 +379,8 @@ inkless-4.2.0-0.33  ← same 0.33 as other branches
 ---
 
 ## User-Facing Documentation
+
+For information on how to download Inkless (Docker images and binary distributions), see [Releases](RELEASES.md).
 
 ### How Users Choose a Version
 
