@@ -199,6 +199,9 @@ class RemoteLeaderEndPoint(logPrefix: String,
     val builder = fetchSessionHandler.newBuilder(partitions.size, false)
     val readOnlyTopics = new mutable.HashSet[Uuid]()
     partitions.forEach { (topicPartition, fetchState) =>
+      if (shouldFollowerThrottle(quota, fetchState, topicPartition)) {
+        info(s"Skipping fetch for partition $topicPartition since it is throttled")
+      }
       // We will not include a replica in the fetch request if it should be throttled.
       if (fetchState.isReadyForFetch && !shouldFollowerThrottle(quota, fetchState, topicPartition)) {
         try {
