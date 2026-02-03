@@ -1,65 +1,27 @@
-# Inkless demo
+# Inkless Docker Compose Demo
 
-Contains examples of how to run Inkless with Postgres as batch coordinator and different object storage back-ends using Docker Compose.
+Docker Compose examples for running Inkless with different storage backends.
 
-Running the make task for a setup will start the necessary services and run the Inkless demo, including topic creation, producer/consumer perf clients, and monitoring with Prometheus and Grafana.
+See the [Quickstart guide](../../../../docs/inkless/QUICKSTART.md#dockerized-demo) for complete setup instructions.
 
-## Run the demo
+## Quick reference
 
-### in-memory
+| Command               | Description                                       |
+|-----------------------|---------------------------------------------------|
+| `make s3-local`       | MinIO S3-compatible storage (default)             |
+| `make gcs-local`      | Fake GCS server                                   |
+| `make azure-local`    | Azurite Azure-compatible storage                  |
+| `make s3-aws`         | Real AWS S3 (requires AWS credentials)            |
+| `make destroy`        | Manual cleanup (automatic on Ctrl+C)              |
 
-This setup uses an in-memory object storage and Postgres as a metadata store.
+## Image version
 
-```
-make in-memory
-```
-
-### S3 local
-
-This setup uses MinIO as a local S3-compatible object storage and Postgres as a metadata store.
-
-```
-make s3-local
-```
-
-### GCS local
-
-This setup uses `fake-gcs-server` as a local GCS-compatible object storage and Postgres as a metadata store.
-
-```
-make gcs-local
-```
-
-### Azure local
-
-This setup uses `azurite` as a local Azure-compatible object storage and Postgres as a metadata store.
-
-```
-make azure-local
-```
-
-### AWS S3
-
-This example demonstrates how to use Inkless with remote data and metadata stores,
-using a Remote Postgres instance for metadata and AWS S3 for data storage.
-
-#### Prerequisites
-
-Set the environment variables:
-
-For AWS S3:
-
-```properties
-AWS_ACCESS_KEY_ID=
-AWS_SECRET_ACCESS_KEY=
-AWS_SESSION_TOKEN=
-AWS_REGION=
-AWS_S3_BUCKET_NAME=
-```
-
-Then run
+By default, the demo pulls the `edge` image (latest development build). Override with `KAFKA_VERSION`:
 
 ```bash
-make s3-aws
+make s3-local KAFKA_VERSION=latest        # Latest stable release
+make s3-local KAFKA_VERSION=4.1.0-0.33    # Specific Kafka+Inkless version
+make s3-local KAFKA_VERSION=local         # Locally built image (requires: make docker_build)
 ```
 
+See [Releases](../../../../docs/inkless/RELEASES.md#docker-images) for all available tags.
