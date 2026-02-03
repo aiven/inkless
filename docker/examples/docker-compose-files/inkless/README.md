@@ -16,10 +16,12 @@ See the [Quickstart guide](../../../../docs/inkless/QUICKSTART.md#dockerized-dem
 
 ## Image version
 
-By default, the demo pulls the `edge` image. Override with `KAFKA_VERSION`:
+By default, the demo pulls the `edge` image (latest development build). Override with `KAFKA_VERSION`:
 
 ```bash
 make s3-local KAFKA_VERSION=latest        # Latest stable release
-make s3-local KAFKA_VERSION=4.1.0-0.33    # Specific version
-make s3-local KAFKA_VERSION=local         # Locally built image
+make s3-local KAFKA_VERSION=4.1.0-0.33    # Specific Kafka+Inkless version
+make s3-local KAFKA_VERSION=local         # Locally built image (requires: make docker_build)
 ```
+
+See [Releases](../../../../docs/inkless/RELEASES.md#docker-images) for all available tags.
