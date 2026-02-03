@@ -69,7 +69,7 @@ import static org.apache.kafka.controller.QuorumController.MAX_RECORDS_PER_USER_
 
 public class ConfigurationControlManager {
     public static final ConfigResource DEFAULT_NODE = new ConfigResource(Type.BROKER, "");
-    private static final String REMOVED_TOPIC_SUFFIX = ".removed";
+    public static final String REMOVED_TOPIC_SUFFIX = ".removed";
 
     private final Logger log;
     private final SnapshotRegistry snapshotRegistry;

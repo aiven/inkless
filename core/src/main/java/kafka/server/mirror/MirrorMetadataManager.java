@@ -91,6 +91,7 @@ import org.apache.kafka.coordinator.mirror.MirrorRecordKey;
 import org.apache.kafka.image.ConfigurationDelta;
 import org.apache.kafka.image.MetadataDelta;
 import org.apache.kafka.image.MetadataImage;
+import org.apache.kafka.image.TopicImage;
 import org.apache.kafka.image.loader.LoaderManifest;
 import org.apache.kafka.image.publisher.MetadataPublisher;
 import org.apache.kafka.metadata.MetadataCache;
@@ -127,6 +128,7 @@ import java.util.stream.Collectors;
 import static java.util.Collections.singletonList;
 import static org.apache.kafka.clients.CommonClientConfigs.BOOTSTRAP_SERVERS_CONFIG;
 import static org.apache.kafka.common.internals.Topic.MIRROR_STATE_TOPIC_NAME;
+import static org.apache.kafka.controller.ConfigurationControlManager.REMOVED_TOPIC_SUFFIX;
 
 /**
  * Component that provides cluster state synchronization for cluster mirroring.
@@ -160,7 +162,6 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     private static final Logger LOG = LoggerFactory.getLogger(MirrorMetadataManager.class);
     private static final ResourcePatternFilter ANY_RESOURCE = new ResourcePatternFilter(ResourceType.ANY, null, PatternType.ANY);
     private static final AclBindingFilter ANY_RESOURCE_ACL = new AclBindingFilter(ANY_RESOURCE, AccessControlEntryFilter.ANY);
-    public static final String REMOVED_TOPIC_SUFFIX = ".removed";
 
     private final KafkaConfig brokerConfig;
     private final int nodeId;
@@ -355,16 +356,14 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
 
             // get the partition leader is the local node
             topicsWithMirrorNameChanged.stream().forEach(topic -> {
-                metadataCache.numPartitions(topic).ifPresent(num -> {
-                    for (int i = 0; i < num; i++) {
-                        TopicPartition tp = new TopicPartition(topic, i);
-                        metadataCache.getLeaderAndIsr(topic, i).ifPresent(leaderAndIsr -> {
-                            if (leaderAndIsr.leader() == nodeId) {
-                                mirrorLeaderPartitions.add(tp);
-                            }
-                        });
-                    }
-                });
+                TopicImage topicImage = image.topics().getTopic(topic);
+                if (topicImage != null) {
+                    topicImage.partitions().forEach((partitionId, partition) -> {
+                        if (partition.leader == nodeId) {
+                            mirrorLeaderPartitions.add(new TopicPartition(topic, partitionId));
+                        }
+                    });
+                }
             });
         }
 
