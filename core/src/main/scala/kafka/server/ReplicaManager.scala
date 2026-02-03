@@ -1411,10 +1411,11 @@ class ReplicaManager(val config: KafkaConfig,
 
     def validateReadOnlyTopic(partition: Partition): Unit = {
       // if it's mirrored topic, it will become writable only when in STOPPED state
-      if (mirrorMetadataManager.isDefined && partition.mirrorName.nonEmpty &&
-        mirrorMetadataManager.get.getMirrorPartitionState(partition.mirrorName, partition.topicPartition) != MirrorPartitionState.STOPPED) {
+      val mirrorName = partition.getMirrorName()
+      if (mirrorMetadataManager.isDefined && mirrorName.nonEmpty &&
+        mirrorMetadataManager.get.getMirrorPartitionState(mirrorName, partition.topicPartition) != MirrorPartitionState.STOPPED) {
         throw new ReadOnlyTopicException("Cannot append to read-only partition %s on broker %d (mirrorName=%s)"
-          .format(partition.topicPartition, localBrokerId, partition.mirrorName))
+          .format(partition.topicPartition, localBrokerId, mirrorName))
       }
     }
 
@@ -2554,7 +2555,7 @@ class ReplicaManager(val config: KafkaConfig,
 
             // This flag is used is used in AbstractFetcherThread.partitionFetchState to distinguish mirror from regular followers
             // and it triggers different epoch handling logic throughout the fetch lifecycle.
-            val mirrorName = if (partition.mirrorName != null && partition.mirrorName.nonEmpty) partition.mirrorName else ""
+            val mirrorName = partition.getMirrorName()
 
             partitionAndOffsets.put(topicPartition, InitialFetchState(
               log.topicId.toScala,
