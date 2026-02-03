@@ -51,11 +51,12 @@ ARG kafka_version
 
 COPY resources/distributions/kafka_2.13-$kafka_version.tgz /kafka.tgz
 
-LABEL org.label-schema.name="kafka" \
-      org.label-schema.description="Apache Kafka" \
+LABEL org.label-schema.name="inkless" \
+      org.label-schema.description="Inkless - Apache Kafka with object storage" \
       org.label-schema.build-date="${build_date}" \
-      org.label-schema.vcs-url="https://github.com/apache/kafka" \
-      maintainer="Apache Kafka"
+      org.label-schema.vcs-url="https://github.com/aiven/inkless" \
+      org.opencontainers.image.source="https://github.com/aiven/inkless" \
+      maintainer="Aiven"
 
 RUN set -eux ; \
     apk update ; \
