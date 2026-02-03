@@ -250,17 +250,17 @@ public abstract class MirrorCommand {
                     } finally {
                         existingTopics.put(topicName, mirrorName);
                     }
-
-                    // TODO: We should return error and let the command retry if the topic metadata is not propagated to brokers. Right now, we sleep 1 sec
-                    Thread.sleep(1000);
-                    // Ensures the mirror.name config is properly set even when topics already exist
-                    AddTopicsToMirrorResult addResult = admin.addTopicsToMirror(
-                            coordinatorNode.id(), existingTopics, new AddTopicsToMirrorOptions());
-                    addResult.all().get();
-
-                    System.out.printf("Successfully added %d topic(s) to mirror %s: %s%n",
-                            createdTopics.size(), mirrorName, createdTopics);
                 }
+
+                // TODO: We should return error and let the command retry if the topic metadata is not propagated to brokers. Right now, we sleep 1 sec
+                Thread.sleep(1000);
+                // Ensures the mirror.name config is properly set even when topics already exist
+                AddTopicsToMirrorResult addResult = admin.addTopicsToMirror(
+                        coordinatorNode.id(), existingTopics, new AddTopicsToMirrorOptions());
+                addResult.all().get();
+
+                System.out.printf("Successfully added %d topic(s) to mirror %s: %s%n",
+                        createdTopics.size(), mirrorName, createdTopics);
             }
         }
 
