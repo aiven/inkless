@@ -348,18 +348,26 @@ class KafkaApis(val requestChannel: RequestChannel,
 
   def handleAddTopicsToMirror(request: RequestChannel.Request): Unit = {
     val addTopicsToMirrorRequest = request.body[AddTopicsToMirrorRequest]
-    val mirrorTopic = addTopicsToMirrorRequest.data.topics().stream().filter(t => t.mirrorName() != null && !t.mirrorName().isEmpty).findFirst()
-    if (mirrorTopic.isPresent) {
+    val mirrorTopics = addTopicsToMirrorRequest.data.topics().stream()
+      .filter(t => t.mirrorName() != null && !t.mirrorName().isEmpty)
+      .collect(Collectors.toList())
+    if (!mirrorTopics.isEmpty) {
       if (isClusterMirroringEnabled) {
-        logger.info(s"!!! Handling adding mirror topics request: ${mirrorTopic.get().mirrorName()}")
+        val mirrorName = mirrorTopics.get(0).mirrorName()
+        val topicNames = mirrorTopics.stream()
+          .map(t => t.topicName())
+          .collect(Collectors.toSet())
+        logger.info(s"!!! Handling adding mirror topics request: $mirrorName with topics: $topicNames")
         val topicPartitions = new util.HashSet[TopicPartition]()
         // TODO: We should return error if the topic is not created, yet
-        metadataCache.numPartitions(mirrorTopic.get().topicName()).map(num => {
-          for (i <- 0 until num) {
-            topicPartitions.add(new TopicPartition(mirrorTopic.get().topicName(), i))
-          }
+        topicNames.forEach(topicName => {
+          metadataCache.numPartitions(topicName).map(num => {
+            for (i <- 0 until num) {
+              topicPartitions.add(new TopicPartition(topicName, i))
+            }
+          })
         })
-        mirrorCoordinator.transitionTo(mirrorTopic.get().mirrorName(), topicPartitions, MirrorPartitionState.INITIALIZING)
+        mirrorCoordinator.transitionTo(mirrorName, topicPartitions, MirrorPartitionState.INITIALIZING)
       } else {
         logger.warn("Cluster Mirroring is disabled (mirror.version=0), ignoring mirror topic creation request")
       }
@@ -369,11 +377,36 @@ class KafkaApis(val requestChannel: RequestChannel,
 
   def handleRemoveTopicsFromMirror(request: RequestChannel.Request): Unit = {
     val removeTopicsFromMirrorRequest = request.body[RemoveTopicsFromMirrorRequest]
-    // TODO: might need to have a better way to pass the cluster mirror
-    val mirrorTopics: util.Set[String] = removeTopicsFromMirrorRequest.data.topics.stream().map(t => t.topicName()).collect(Collectors.toSet())
-    logger.info(s"!!! Handling remove topics from mirror request: $removeTopicsFromMirrorRequest $mirrorTopics")
+    val topicNames = removeTopicsFromMirrorRequest.data.topics.stream()
+      .map(t => t.topicName())
+      .collect(Collectors.toSet())
 
-    // update the cached topics in coordinator
+    if (!topicNames.isEmpty) {
+      // Group topics by their mirror name
+      val topicsByMirror = new util.HashMap[String, util.Set[String]]()
+      topicNames.forEach(topicName => {
+        val mirrorName = mirrorCoordinator.getMirrorNameForTopic(topicName)
+        if (mirrorName != null && !mirrorName.isEmpty) {
+          topicsByMirror.putIfAbsent(mirrorName, new util.HashSet[String]())
+          topicsByMirror.get(mirrorName).add(topicName)
+        }
+      })
+
+      // Transition each mirror's topics to STOPPING state
+      topicsByMirror.forEach((mirrorName, topics) => {
+        logger.info(s"!!! Handling remove topics from mirror request: $mirrorName with topics: $topics")
+        val topicPartitions = new util.HashSet[TopicPartition]()
+        topics.forEach(topicName => {
+          metadataCache.numPartitions(topicName).map(num => {
+            for (i <- 0 until num) {
+              topicPartitions.add(new TopicPartition(topicName, i))
+            }
+          })
+        })
+        mirrorCoordinator.transitionTo(mirrorName, topicPartitions, MirrorPartitionState.STOPPING)
+      })
+    }
+
     forwardToController(request)
   }
 

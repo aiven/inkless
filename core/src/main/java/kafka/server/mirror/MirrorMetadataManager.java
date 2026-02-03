@@ -230,8 +230,13 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     /**
      * Called when cluster metadata is updated.
      * Updates the local metadata image to reflect the latest cluster state.
-     * This must be run after ReplicaManager#applyDelta.
-     *
+     * 
+     * The metadata cache can't be used here because it is updated concurrently.
+     * 
+     * This must be called after ReplicaManager#applyDelta because:
+     * - ReplicaManager determines which partitions are local leaders/followers for this broker
+     * - MirrorMetadataManager needs that information to know which mirror partitions to start managing
+     * 
      * @param delta the metadata delta containing changes
      * @param newImage the new complete metadata image
      * @param manifest the loader manifest with provenance information
@@ -1357,9 +1362,20 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
      * @return the set of configured topic names for this mirror
      */
     public Set<String> getConfiguredTopics(String mirrorName) {
-        return metadataImage.topics().topicsByName().keySet().stream()
-                .filter(topic -> mirrorName.equals(metadataImage.configs().configProperties(new ConfigResource(ConfigResource.Type.TOPIC, topic)).get(TopicConfig.MIRROR_NAME_CONFIG)))
+        return metadataCache.getAllTopics().stream()
+                .filter(topic -> mirrorName.equals(metadataCache.topicConfig(topic).get(TopicConfig.MIRROR_NAME_CONFIG)))
                 .collect(java.util.stream.Collectors.toSet());
+    }
+
+    /**
+     * Returns the mirror name for a given topic.
+     *
+     * @param topicName the name of the topic
+     * @return the mirror name, or null if the topic is not mirrored
+     */
+    public String getMirrorNameForTopic(String topicName) {
+        Properties props = metadataCache.topicConfig(topicName);
+        return (String) props.get(TopicConfig.MIRROR_NAME_CONFIG);
     }
 
     /**

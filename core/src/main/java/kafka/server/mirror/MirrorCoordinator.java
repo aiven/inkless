@@ -691,6 +691,16 @@ public class MirrorCoordinator {
     }
 
     /**
+     * Returns the mirror name for a given topic, or null if the topic is not mirrored.
+     *
+     * @param topicName the name of the topic
+     * @return the mirror name, or null if not found
+     */
+    public String getMirrorNameForTopic(String topicName) {
+        return mirrorMetadataManager.getMirrorNameForTopic(topicName);
+    }
+
+    /**
      * Returns the source cluster bootstrap servers for a given mirror.
      *
      * @param mirrorName the name of the cluster mirror
