@@ -864,7 +864,7 @@ class KafkaApis(val requestChannel: RequestChannel,
     val versionId = request.header.apiVersion
     val clientId = request.header.clientId
     val fetchRequest = request.body[FetchRequest]
-    debug("#### Handling fetch request: " + fetchRequest)
+    debug("!!! Handling fetch request: " + fetchRequest)
 
     val topicNames =
       if (fetchRequest.version() >= 13)
