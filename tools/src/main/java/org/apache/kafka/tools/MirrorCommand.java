@@ -160,8 +160,6 @@ public abstract class MirrorCommand {
         }
 
         public void createMirror(MirrorCommandOptions opts) throws ExecutionException, InterruptedException {
-            System.out.printf("Creating mirror %s%n", opts.mirror().get());
-
             Map<String, String> configMap = new HashMap<>();
             mirrorConfigs.forEach((k, v) -> configMap.put(k.toString(), v.toString()));
 
@@ -171,7 +169,7 @@ public abstract class MirrorCommand {
                 new CreateMirrorOptions()
             );
             result.all().get();
-            System.out.printf("Successfully created mirror %s%n", opts.mirror().get());
+            System.out.printf("Created mirror %s%n", opts.mirror().get());
         }
 
         public void addTopicsToMirror(MirrorCommandOptions opts) throws Exception {
@@ -229,8 +227,6 @@ public abstract class MirrorCommand {
                     newTopics.add(newTopic);
                 }
 
-                System.out.printf("Adding %d topic(s) to mirror %s%n", newTopics.size(), mirrorName);
-
                 // Try to create all matching topics
                 CreateTopicsResult createResult = admin.createTopics(newTopics,
                     new CreateTopicsOptions().retryOnQuotaViolation(false));
@@ -259,8 +255,7 @@ public abstract class MirrorCommand {
                         coordinatorNode.id(), existingTopics, new AddTopicsToMirrorOptions());
                 addResult.all().get();
 
-                System.out.printf("Successfully added %d topic(s) to mirror %s: %s%n",
-                        createdTopics.size(), mirrorName, createdTopics);
+                System.out.printf("Added %d topic(s) to mirror %s: %s%n", createdTopics.size(), mirrorName, createdTopics);
             }
         }
 
@@ -282,8 +277,7 @@ public abstract class MirrorCommand {
                 RemoveTopicsFromMirrorResult removeTopicsFromMirrorResult = admin.removeTopicsFromMirror(
                     matchingTopics, new RemoveTopicsFromMirrorOptions());
                 removeTopicsFromMirrorResult.all().get();
-                System.out.printf("Successfully removed %d topic(s) from mirror %s: %s%n",
-                    matchingTopics.size(), mirrorName, matchingTopics);
+                System.out.printf("Removed %d topic(s) from mirror %s: %s%n", matchingTopics.size(), mirrorName, matchingTopics);
             }
         }
 
