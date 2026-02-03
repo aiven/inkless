@@ -1,6 +1,6 @@
 services:
   create_topic:
-    image: aivenoy/kafka:${KAFKA_VERSION}
+    image: ghcr.io/aiven/inkless:${KAFKA_VERSION}
     restart: "no"
     depends_on:
       broker:

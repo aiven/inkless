@@ -2,19 +2,34 @@
 
 Contains examples of how to run Inkless with Postgres as batch coordinator and different object storage back-ends using Docker Compose.
 
-Running the make task for a setup will start the necessary services and run the Inkless demo, including topic creation, producer/consumer perf clients, and monitoring with Prometheus and Grafana.
+Running a make task will start all services and run the Inkless demo, including topic creation, producer/consumer perf clients, and monitoring with Prometheus and Grafana. Press `Ctrl+C` to stop, then run `make destroy` to clean up all containers and networks.
+
+## Prerequisites
+
+- Docker and Docker Compose v2
+- Available ports: 9092 (Kafka), 3000 (Grafana), 9001 (MinIO), 5432 (PostgreSQL)
+- ~2GB disk space for images
+
+## Services and credentials
+
+| Service | URL | Credentials |
+|---------|-----|-------------|
+| Grafana | http://localhost:3000 | `admin` / `admin` |
+| MinIO Console | http://localhost:9001 | `minioadmin` / `minioadmin` |
+| Kafka Bootstrap | localhost:9092 | - |
+| PostgreSQL | localhost:5432 | `admin` / `admin` |
 
 ## Run the demo
 
-### in-memory
+By default, the demo pulls the `edge` image from GHCR. To use a different image:
 
-This setup uses an in-memory object storage and Postgres as a metadata store.
-
+```bash
+make s3-local KAFKA_VERSION=latest        # Latest stable release
+make s3-local KAFKA_VERSION=4.1.0-0.33    # Specific version
+make s3-local KAFKA_VERSION=local         # Locally built (requires: make docker_build from repo root)
 ```
-make in-memory
-```
 
-### S3 local
+### S3 local (recommended)
 
 This setup uses MinIO as a local S3-compatible object storage and Postgres as a metadata store.
 
@@ -63,3 +78,18 @@ Then run
 make s3-aws
 ```
 
+## Monitoring
+
+### View logs (in a separate terminal)
+
+```bash
+docker compose logs -f broker        # Kafka broker logs
+docker compose logs -f producer-1    # Producer performance stats
+docker compose logs -f consumer      # Consumer performance stats
+```
+
+### Grafana dashboards
+
+Access Grafana at http://localhost:3000 and navigate to:
+- **Kafka Inkless** - Inkless-specific metrics (batch sizes, object storage operations)
+- **Kafka Clients** - Producer and consumer performance metrics
