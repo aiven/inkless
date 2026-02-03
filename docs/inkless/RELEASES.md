@@ -71,15 +71,17 @@ Examples:
 
 ### Downloading
 
+> **Note:** The examples below use Inkless 0.33 with Kafka 4.1.1. Check the [Releases page](https://github.com/aiven/inkless/releases) for available versions.
+
 ```bash
-# Download all binaries for a release
-gh release download inkless-release-0.33 --pattern "*.tgz"
+# Download a specific Kafka version using GitHub CLI
+gh release download inkless-release-0.33 --repo aiven/inkless --pattern "*4.1.1*"
 
-# Download specific Kafka version
-gh release download inkless-release-0.33 --pattern "*4.1.0*.tgz"
+# Download a specific Kafka version using curl
+curl -LO https://github.com/aiven/inkless/releases/download/inkless-release-0.33/kafka_2.13-4.1.1-inkless.tgz
 
-# Direct download via curl
-curl -LO https://github.com/aiven/inkless/releases/download/inkless-release-0.33/kafka_2.13-4.1.0-inkless.tgz
+# Download all Kafka versions for an Inkless release
+gh release download inkless-release-0.33 --repo aiven/inkless --pattern "*.tgz"
 ```
 
 ## Versioning
