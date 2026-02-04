@@ -14,7 +14,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package kafka.server
 
 import java.{lang, util}
@@ -64,7 +63,6 @@ import org.apache.kafka.server.quota.ControllerMutationQuota
 import org.apache.kafka.server.record.BrokerCompressionType
 
 import scala.jdk.CollectionConverters._
-
 
 /**
  * Request handler for Controller APIs
@@ -190,7 +188,6 @@ class ControllerApis(
       }
 
     CompletableFuture.completedFuture[Unit](())
-
   }
 
   def handleRemoveTopicsFromMirror(request: RequestChannel.Request): CompletableFuture[Unit] = {
@@ -216,7 +213,6 @@ class ControllerApis(
       }
 
     CompletableFuture.completedFuture[Unit](())
-
   }
 
   def handleCreateMirror(request: RequestChannel.Request): CompletableFuture[Unit] = {

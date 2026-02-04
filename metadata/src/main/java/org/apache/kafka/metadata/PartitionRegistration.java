@@ -33,7 +33,6 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
 
-import static org.apache.kafka.common.record.RecordBatch.NO_PARTITION_LEADER_EPOCH;
 import static org.apache.kafka.metadata.LeaderConstants.NO_LEADER_CHANGE;
 
 public class PartitionRegistration {

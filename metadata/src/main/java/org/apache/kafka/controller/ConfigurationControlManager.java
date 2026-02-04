@@ -20,7 +20,6 @@ package org.apache.kafka.controller;
 import org.apache.kafka.clients.admin.AlterConfigOp.OpType;
 import org.apache.kafka.clients.admin.ConfigEntry;
 import org.apache.kafka.clients.admin.FeatureUpdate;
-import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.config.ConfigException;
 import org.apache.kafka.common.config.ConfigResource;
 import org.apache.kafka.common.config.ConfigResource.Type;
@@ -28,7 +27,6 @@ import org.apache.kafka.common.config.TopicConfig;
 import org.apache.kafka.common.config.types.Password;
 import org.apache.kafka.common.message.AddTopicsToMirrorResponseData;
 import org.apache.kafka.common.message.CreateMirrorResponseData;
-import org.apache.kafka.common.message.RemoveTopicsFromMirrorRequestData;
 import org.apache.kafka.common.message.RemoveTopicsFromMirrorResponseData;
 import org.apache.kafka.common.metadata.ClearElrRecord;
 import org.apache.kafka.common.metadata.ConfigRecord;
@@ -36,7 +34,6 @@ import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.requests.ApiError;
 import org.apache.kafka.common.utils.LogContext;
 import org.apache.kafka.metadata.KafkaConfigSchema;
-import org.apache.kafka.metadata.PartitionRegistration;
 import org.apache.kafka.server.common.ApiMessageAndVersion;
 import org.apache.kafka.server.common.EligibleLeaderReplicasVersion;
 import org.apache.kafka.server.mutable.BoundedList;
@@ -72,7 +69,7 @@ import static org.apache.kafka.controller.QuorumController.MAX_RECORDS_PER_USER_
 
 public class ConfigurationControlManager {
     public static final ConfigResource DEFAULT_NODE = new ConfigResource(Type.BROKER, "");
-    private static final String REMOVED_TOPIC_SUFFIX = ".removed";
+    public static final String REMOVED_TOPIC_SUFFIX = ".removed";
 
     private final Logger log;
     private final SnapshotRegistry snapshotRegistry;
@@ -249,7 +246,7 @@ public class ConfigurationControlManager {
                 }
 
                 // decide if we should clear the mirror name or append a stopped symbol
-                String newMirrorName = curVal.endsWith(REMOVED_TOPIC_SUFFIX) ? "" : curVal + REMOVED_TOPIC_SUFFIX ;
+                String newMirrorName = curVal.endsWith(REMOVED_TOPIC_SUFFIX) ? "" : curVal + REMOVED_TOPIC_SUFFIX;
                 Map<String, Entry<OpType, String>> keyToOps = Map.of(mirrorNameConfig, new AbstractMap.SimpleImmutableEntry<>(SET, newMirrorName));
 
                 ControllerResult<ApiError> configResult = incrementalAlterConfig(configResource, keyToOps, true);
@@ -273,27 +270,26 @@ public class ConfigurationControlManager {
         List<ApiMessageAndVersion> records = BoundedList.newArrayBacked(MAX_RECORDS_PER_USER_OP);
         AddTopicsToMirrorResponseData data = new AddTopicsToMirrorResponseData();
         List<AddTopicsToMirrorResponseData.TopicResponse> topicResList = new ArrayList<>();
-        for (Entry<String, String> topicIdToMirrorName : topicToMirrorName.entrySet()) {
-            String topic = topicIdToMirrorName.getKey();
-            String mirrorName = topicIdToMirrorName.getValue();
-            String mirrorNameConfig = TopicConfig.MIRROR_NAME_CONFIG;
+        for (Entry<String, String> topicToMirrorNameEntry : topicToMirrorName.entrySet()) {
+            String topic = topicToMirrorNameEntry.getKey();
+            String mirrorName = topicToMirrorNameEntry.getValue();
 
             AddTopicsToMirrorResponseData.TopicResponse topicRes = new AddTopicsToMirrorResponseData.TopicResponse();
             ConfigResource configResource = new ConfigResource(Type.TOPIC, topic);
 
             TimelineHashMap<String, String> currentConfigs = configData.get(configResource);
             if (currentConfigs != null) {
-                String curVal = currentConfigs.get(mirrorNameConfig);
-                log.info("!!! curVal: {} for topic: {}", curVal, topic);
-                // Verify the current value should be empty or ends with ".removed"
-                if (curVal != null && (curVal.isBlank() || !curVal.endsWith(REMOVED_TOPIC_SUFFIX))) {
+                String currMirrorNameValue = currentConfigs.get(TopicConfig.MIRROR_NAME_CONFIG);
+                log.info("!!! currMirrorNameValue: {} for topic: {}", currMirrorNameValue, topic);
+                // Verify the current value should be empty or ends with removed suffix
+                if (currMirrorNameValue != null && (currMirrorNameValue.isBlank() || !currMirrorNameValue.endsWith(REMOVED_TOPIC_SUFFIX))) {
                     topicRes.setErrorCode(Errors.INVALID_REQUEST.code()).setName(topic);
                     topicResList.add(topicRes);
                     continue;
                 }
             }
 
-            Map<String, Entry<OpType, String>> keyToOps = Map.of(mirrorNameConfig, new AbstractMap.SimpleImmutableEntry<>(SET, mirrorName));
+            Map<String, Entry<OpType, String>> keyToOps = Map.of(TopicConfig.MIRROR_NAME_CONFIG, new AbstractMap.SimpleImmutableEntry<>(SET, mirrorName));
 
             ControllerResult<ApiError> configResult = incrementalAlterConfig(configResource, keyToOps, true);
             if (configResult.response().isFailure()) {

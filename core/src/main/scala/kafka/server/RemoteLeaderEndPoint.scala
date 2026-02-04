@@ -100,7 +100,7 @@ class RemoteLeaderEndPoint(logPrefix: String,
         throw t
     }
     val fetchResponse = clientResponse.responseBody.asInstanceOf[FetchResponse]
-    debug("#### Got fetch response: " + fetchResponse)
+    debug("!!! Got fetch response: " + fetchResponse)
     lastSeenEndpointList.clear()
     fetchResponse.data().nodeEndpoints().forEach(
       node => lastSeenEndpointList.put(node.nodeId(), new Node(node.nodeId(), node.host(), node.port(), node.rack())))

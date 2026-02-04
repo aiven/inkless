@@ -22,6 +22,7 @@ import kafka.server._
 import kafka.server.share.DelayedShareFetch
 import kafka.utils.CoreUtils.{inReadLock, inWriteLock}
 import kafka.utils._
+import org.apache.kafka.common.config.{ConfigResource, TopicConfig}
 import org.apache.kafka.common.errors._
 import org.apache.kafka.common.message.AlterPartitionRequestData.BrokerState
 import org.apache.kafka.common.message.OffsetForLeaderEpochResponseData.EpochEndOffset
@@ -348,7 +349,6 @@ class Partition(val topicPartition: TopicPartition,
   @volatile var log: Option[UnifiedLog] = None
   // If ReplicaAlterLogDir command is in progress, this is future location of the log
   @volatile var futureLog: Option[UnifiedLog] = None
-  @volatile var mirrorName: String = ""
 
   // Partition listeners
   private val listeners = new CopyOnWriteArrayList[PartitionListener]()
@@ -371,10 +371,6 @@ class Partition(val topicPartition: TopicPartition,
   metricsGroup.newGauge("AtMinIsr", () => if (isAtMinIsr) 1 else 0, tags)
   metricsGroup.newGauge("ReplicasCount", () => if (isLeader) assignmentState.replicationFactor else 0, tags)
   metricsGroup.newGauge("LastStableOffsetLag", () => log.map(_.lastStableOffsetLag).getOrElse(0), tags)
-
-  def setMirrorName(name: String): Unit = {
-    this.mirrorName = name
-  }
 
   def unifiedLog(): Optional[UnifiedLog] = log.toJava
 
@@ -823,7 +819,6 @@ class Partition(val topicPartition: TopicPartition,
 
       partitionEpoch = partitionState.partitionEpoch
       leaderReplicaIdOpt = Some(localBrokerId)
-      mirrorName = partitionState.mirrorName()
 
       maybeCompleteIsrTruncation(leaderLog)
       // We may need to increment high watermark since ISR could be down to 1.
@@ -862,7 +857,6 @@ class Partition(val topicPartition: TopicPartition,
       leaderEpoch = partitionState.leaderEpoch
       leaderEpochStartOffsetOpt = None
       partitionEpoch = partitionState.partitionEpoch
-      mirrorName = partitionState.mirrorName()
 
       updateAssignmentAndIsr(
         replicas = partitionState.replicas.asScala.iterator.map(_.toInt).toSeq,
@@ -1384,6 +1378,11 @@ class Partition(val topicPartition: TopicPartition,
     }
   }
 
+  def getMirrorName(): String = {
+    val mirrorName = metadataCache.config(new ConfigResource(ConfigResource.Type.TOPIC, topic)).get(TopicConfig.MIRROR_NAME_CONFIG).asInstanceOf[String]
+    if (mirrorName == null) "" else mirrorName
+  }
+
   private def doAppendRecordsToFollowerOrFutureReplica(
     records: MemoryRecords,
     isFuture: Boolean,
@@ -1395,13 +1394,13 @@ class Partition(val topicPartition: TopicPartition,
       inReadLock(leaderIsrUpdateLock) {
         // Note the replica may be undefined if it is removed by a non-ReplicaAlterLogDirsThread before
         // this method is called
-        futureLog.map { _.appendAsFollower(records, partitionLeaderEpoch, mirrorName.nonEmpty && isLeader) }
+        futureLog.map { _.appendAsFollower(records, partitionLeaderEpoch, getMirrorName().nonEmpty && isLeader) }
       }
     } else {
       // The lock is needed to prevent the follower replica from being updated while ReplicaAlterDirThread
       // is executing maybeReplaceCurrentWithFutureReplica() to replace follower replica with the future replica.
       futureLogLock.synchronized {
-        Some(localLogOrException.appendAsFollower(records, partitionLeaderEpoch, mirrorName.nonEmpty && isLeader))
+        Some(localLogOrException.appendAsFollower(records, partitionLeaderEpoch, getMirrorName().nonEmpty && isLeader))
       }
     }
   }
