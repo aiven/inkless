@@ -232,19 +232,16 @@ public abstract class MirrorCommand {
                     new CreateTopicsOptions().retryOnQuotaViolation(false));
 
                 // Attach created and existing topic to the mirror
-                Set<String> createdTopics = new HashSet<>();
-                Map<String, String> existingTopics = new HashMap<>();
-
+                Map<String, String> topics = new HashMap<>();
                 for (String topicName : matchingTopics) {
                     try {
                         createResult.values().get(topicName).get();
-                        createdTopics.add(topicName);
                     } catch (ExecutionException e) {
                         if (!(e.getCause() instanceof TopicExistsException)) {
                             System.err.printf("Failed to add topic %s: %s%n", topicName, e.getCause().getMessage());
                         }
                     } finally {
-                        existingTopics.put(topicName, mirrorName);
+                        topics.put(topicName, mirrorName);
                     }
                 }
 
@@ -252,10 +249,10 @@ public abstract class MirrorCommand {
                 Thread.sleep(1000);
                 // Ensures the mirror.name config is properly set even when topics already exist
                 AddTopicsToMirrorResult addResult = admin.addTopicsToMirror(
-                        coordinatorNode.id(), existingTopics, new AddTopicsToMirrorOptions());
+                        coordinatorNode.id(), topics, new AddTopicsToMirrorOptions());
                 addResult.all().get();
 
-                System.out.printf("Added %d topic(s) to mirror %s: %s%n", existingTopics.size(), mirrorName, existingTopics);
+                System.out.printf("Added %d topic(s) to mirror %s: %s%n", topics.size(), mirrorName, topics);
             }
         }
 
