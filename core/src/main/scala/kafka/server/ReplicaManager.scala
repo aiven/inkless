@@ -2553,16 +2553,11 @@ class ReplicaManager(val config: KafkaConfig,
           case Some(node) =>
             val log = partition.localLogOrException
 
-            // This flag is used is used in AbstractFetcherThread.partitionFetchState to distinguish mirror from regular followers
-            // and it triggers different epoch handling logic throughout the fetch lifecycle.
-            val mirrorName = partition.getMirrorName()
-
             partitionAndOffsets.put(topicPartition, InitialFetchState(
               log.topicId.toScala,
               new BrokerEndPoint(node.id, node.host, node.port),
               partition.getLeaderEpoch,
-              initialFetchOffset(log),
-              mirrorName))
+              initialFetchOffset(log)))
           case None =>
             stateChangeLogger.trace(s"Unable to start fetching $topicPartition with topic ID ${partition.topicId} " +
               s"from leader ${partition.leaderReplicaIdOpt} because it is not alive.")
