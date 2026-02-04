@@ -14,7 +14,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.kafka.tools;
 
 import org.apache.kafka.clients.admin.AddTopicsToMirrorOptions;
@@ -252,7 +251,7 @@ public abstract class MirrorCommand {
                         coordinatorNode.id(), topics, new AddTopicsToMirrorOptions());
                 addResult.all().get();
 
-                System.out.printf("Added %d topic(s) to mirror %s: %s%n", topics.size(), mirrorName, topics);
+                System.out.printf("Added %d topic(s) to mirror %s: %s%n", topics.size(), mirrorName, topics.keySet());
             }
         }
 
