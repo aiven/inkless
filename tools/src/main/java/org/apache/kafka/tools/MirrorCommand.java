@@ -255,7 +255,7 @@ public abstract class MirrorCommand {
                         coordinatorNode.id(), existingTopics, new AddTopicsToMirrorOptions());
                 addResult.all().get();
 
-                System.out.printf("Added %d topic(s) to mirror %s: %s%n", createdTopics.size(), mirrorName, createdTopics);
+                System.out.printf("Added %d topic(s) to mirror %s: %s%n", existingTopics.size(), mirrorName, existingTopics);
             }
         }
 
