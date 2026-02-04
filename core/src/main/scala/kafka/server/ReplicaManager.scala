@@ -265,7 +265,7 @@ class ReplicaManager(val config: KafkaConfig,
   protected val allPartitions = new ConcurrentHashMap[TopicPartition, HostedPartition]
   private val replicaStateChangeLock = new Object
   val replicaFetcherManager = createReplicaFetcherManager(metrics, time, quotaManagers.follower)
-  val mirrorFetcherManager = createMirrorFetcherManager(metrics, time, quotaManagers.follower)
+  val mirrorFetcherManager = createMirrorFetcherManager(metrics, time, quotaManagers.mirror)
   private[server] val replicaAlterLogDirsManager = createReplicaAlterLogDirsManager(quotaManagers.alterLogDirs, brokerTopicStats)
   private val highWatermarkCheckPointThreadStarted = new AtomicBoolean(false)
   @volatile private[server] var highWatermarkCheckpoints: Map[String, OffsetCheckpointFile] = logManager.liveLogDirs.map(dir =>

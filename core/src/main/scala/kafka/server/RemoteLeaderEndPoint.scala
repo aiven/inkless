@@ -199,6 +199,9 @@ class RemoteLeaderEndPoint(logPrefix: String,
     val builder = fetchSessionHandler.newBuilder(partitions.size, false)
     val readOnlyTopics = new mutable.HashSet[Uuid]()
     partitions.forEach { (topicPartition, fetchState) =>
+      if (shouldFollowerThrottle(quota, fetchState, topicPartition)) {
+        info(s"Skipping fetch for partition $topicPartition since it is throttled")
+      }
       // We will not include a replica in the fetch request if it should be throttled.
       if (fetchState.isReadyForFetch && !shouldFollowerThrottle(quota, fetchState, topicPartition)) {
         try {
@@ -258,9 +261,16 @@ class RemoteLeaderEndPoint(logPrefix: String,
   /**
    *  To avoid ISR thrashing, we only throttle a replica on the follower if it's in the throttled replica list,
    *  the quota is exceeded and the replica is not in sync.
+   *
+   *  In async mirroring, because the source cluster doesn't include the target cluster node into ISR,
+   *  we always throttle it if quota exceeded.
    */
   private def shouldFollowerThrottle(quota: ReplicaQuota, fetchState: PartitionFetchState, topicPartition: TopicPartition): Boolean = {
-    !fetchState.isReplicaInSync && quota.isThrottled(topicPartition) && quota.isQuotaExceeded
+    if (fetchState.isMirrorFetch()) {
+      quota.isThrottled(topicPartition) && quota.isQuotaExceeded
+    } else {
+      !fetchState.isReplicaInSync && quota.isThrottled(topicPartition) && quota.isQuotaExceeded
+    }
   }
 
   override def toString: String = s"RemoteLeaderEndPoint(blockingSender=$blockingSender)"
