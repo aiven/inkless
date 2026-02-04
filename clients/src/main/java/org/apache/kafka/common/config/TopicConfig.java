@@ -225,9 +225,9 @@ public class TopicConfig {
 
     // transaction records support
     public static final String MIRROR_TRANSACTION_SUPPORT_ENABLE_CONFIG = "mirror.transaction.support.enable";
-    public static final boolean MIRROR_TRANSACTION_SUPPORT_ENABLE_DEFAULT = false;
+    public static final boolean MIRROR_TRANSACTION_SUPPORT_ENABLE_DEFAULT = true;
     public static final String MIRROR_TRANSACTION_SUPPORT_ENABLE_DOC = "Indicates whether to enable the transactional records support " +
-            "in cluster mirror. By default it is disabled. When it is enabled, the log will be truncated to the last stable offset after stopping the mirroring " +
+            "in cluster mirror. By default it is enabled. When it is enabled, the log will be truncated to the last stable offset after stopping the mirroring " +
             "to avoid the pending transaction records in the log.";
 
     /**
