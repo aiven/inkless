@@ -1078,6 +1078,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         if (describeConfigResponse.responseBody() instanceof DescribeConfigsResponse describeConfigsRes) {
             LOG.debug("!!! Periodic describeConfigResponse: {}", describeConfigsRes);
 
+            checkUncleanLeaderElection(mirrorName, describeConfigsRes);
             Map<String, Map<String, String>> configsToChange = detectConfigurationChanges(mirrorName, describeConfigsRes);
             applyConfigurationChanges(configsToChange);
         }
@@ -1128,6 +1129,28 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                     .setTimeoutMs(3000)
             ), new TimeoutHandler());
         }
+    }
+
+    private void checkUncleanLeaderElection(String mirrorName, DescribeConfigsResponse describeConfigsRes) {
+        describeConfigsRes.data().results().forEach(describeConfigResult -> {
+            if (describeConfigResult.resourceType() == ConfigResource.Type.TOPIC.id() &&
+                    mirrorTopics.get(mirrorName).contains(describeConfigResult.resourceName())) {
+                describeConfigResult.configs().stream()
+                    .filter(con -> con.name().equals(TopicConfig.UNCLEAN_LEADER_ELECTION_ENABLE_CONFIG) && "true".equals(con.value()))
+                    .findFirst()
+                    .ifPresent(con -> {
+                        if (con.configSource() == DescribeConfigsResponse.ConfigSource.TOPIC_CONFIG.id()) {
+                            LOG.warn("Mirror topic '{}' has unclean.leader.election.enable=true set at topic level. " +
+                                    "This is not supported as log divergence cannot be reconciled across clusters.",
+                                    describeConfigResult.resourceName());
+                        } else {
+                            LOG.warn("Mirror topic '{}' has unclean.leader.election.enable=true (inherited from broker or cluster default). " +
+                                    "This is not supported as log divergence cannot be reconciled across clusters.",
+                                    describeConfigResult.resourceName());
+                        }
+                    });
+            }
+        });
     }
 
     private Map<String, Map<String, String>> detectConfigurationChanges(
