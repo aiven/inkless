@@ -21,8 +21,6 @@ import kafka.server.ReplicaManager;
 
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.compress.Compression;
-import org.apache.kafka.common.config.ConfigResource;
-import org.apache.kafka.common.config.TopicConfig;
 import org.apache.kafka.common.internals.Topic;
 import org.apache.kafka.common.message.WriteMirrorStatesResponseData;
 import org.apache.kafka.common.metrics.Metrics;
@@ -55,7 +53,6 @@ import org.apache.kafka.server.util.Scheduler;
 import org.apache.kafka.storage.internals.log.AppendOrigin;
 import org.apache.kafka.storage.internals.log.FetchDataInfo;
 
-import org.apache.kafka.storage.internals.log.UnifiedLog;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -69,7 +66,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalInt;
-import java.util.Properties;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -187,9 +183,9 @@ public class MirrorCoordinator {
                 break;
             case STOPPING:
                 LOG.info("!!! STOPPING for topics {}.", topicPartitions);
-                // 1. if txn support is enabled, truncating the log into LSO
+                // 1. truncating the log into LSO
                 // 2. register the last mirrored offsets for each partition in internal topic
-                maybeTruncateToLSO(topicPartitions, tp -> updateLastMirroredOffsets(mirrorName, Set.of(tp)));
+                truncateLogToLSO(topicPartitions, tp -> updateLastMirroredOffsets(mirrorName, Set.of(tp)));
                 break;
             case STOPPED:
                 LOG.info("!!! STOPPED for topics {}.", topicPartitions);
@@ -237,22 +233,14 @@ public class MirrorCoordinator {
         });
     }
 
-    public void maybeTruncateToLSO(Set<TopicPartition> topicPartitions,
-                                   Consumer<TopicPartition> callback) {
+    public void truncateLogToLSO(Set<TopicPartition> topicPartitions,
+                                 Consumer<TopicPartition> callback) {
         Map<TopicPartition, Long> offsets = new HashMap<>();
         topicPartitions.forEach(tp -> {
-            // Only truncation to LSO when `mirror.transaction.support.enable=true`
-            Properties props = metadataCache.config(new ConfigResource(ConfigResource.Type.TOPIC, tp.topic()));
-            if (props != null && props.containsKey(TopicConfig.MIRROR_TRANSACTION_SUPPORT_ENABLE_CONFIG) && "true".equals(props.get(TopicConfig.MIRROR_TRANSACTION_SUPPORT_ENABLE_CONFIG))) {
-                Optional<UnifiedLog> log = Optional.ofNullable(replicaManager.getLog(tp).getOrElse(null));
-                if (log.isPresent()) {
-                    offsets.put(tp, log.get().lastStableOffset());
-                } else {
-                    LOG.warn("Cannot get the log for partition: {}. Skipping log truncation.", tp);
-                    callback.accept(tp);
-                }
+            if (replicaManager.getLog(tp).isDefined()) {
+                offsets.put(tp, replicaManager.getLog(tp).get().lastStableOffset());
             } else {
-                // don't support the txn, run callback directly.
+                LOG.warn("Cannot get the log for partition: {}. Skipping log truncation.", tp);
                 callback.accept(tp);
             }
         });
