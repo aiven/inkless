@@ -183,8 +183,9 @@ public class MirrorCoordinator {
                 break;
             case STOPPING:
                 LOG.info("!!! STOPPING for topics {}.", topicPartitions);
-                // register the last mirrored offsets for each partition in internal topic
-                updateLastMirroredOffsets(mirrorName, topicPartitions);
+                // 1. truncating the log into LSO
+                // 2. register the last mirrored offsets for each partition in internal topic
+                truncateLogToLSO(topicPartitions, tp -> updateLastMirroredOffsets(mirrorName, Set.of(tp)));
                 break;
             case STOPPED:
                 LOG.info("!!! STOPPED for topics {}.", topicPartitions);
@@ -230,6 +231,22 @@ public class MirrorCoordinator {
                 LOG.info("!!! Skipping transition {} to {} for partition {}.", mirrorMetadataManager.getMirrorPartitionState(mirrorName, tp), newState, tp);
             }
         });
+    }
+
+    public void truncateLogToLSO(Set<TopicPartition> topicPartitions,
+                                 Consumer<TopicPartition> callback) {
+        Map<TopicPartition, Long> offsets = new HashMap<>();
+        topicPartitions.forEach(tp -> {
+            if (replicaManager.getLog(tp).isDefined()) {
+                offsets.put(tp, replicaManager.getLog(tp).get().lastStableOffset());
+            } else {
+                LOG.warn("Cannot get the log for partition: {}. Skipping log truncation.", tp);
+                callback.accept(tp);
+            }
+        });
+        if (!offsets.isEmpty()) {
+            replicaManager.maybeTruncate(offsets, callback);
+        }
     }
 
     /**
