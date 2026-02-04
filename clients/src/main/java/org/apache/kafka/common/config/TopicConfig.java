@@ -223,6 +223,13 @@ public class TopicConfig {
     public static final String MIRROR_NAME_DOC = "Identifies the mirror that manages this topic. " +
             "Topics with this configuration set are read-only and can only be modified through mirror management APIs.";
 
+    // transaction records support
+    public static final String MIRROR_TRANSACTION_SUPPORT_ENABLE_CONFIG = "mirror.transaction.support.enable";
+    public static final boolean MIRROR_TRANSACTION_SUPPORT_ENABLE_DEFAULT = false;
+    public static final String MIRROR_TRANSACTION_SUPPORT_ENABLE_DOC = "Indicates whether to enable the transactional records support " +
+            "in cluster mirror. By default it is disabled. When it is enabled, the log will be truncated to the last stable offset after stopping the mirroring " +
+            "to avoid the pending transaction records in the log.";
+
     /**
      * @deprecated down-conversion is not possible in Apache Kafka 4.0 and newer, hence this configuration is a no-op,
      *             and it is deprecated for removal in Apache Kafka 5.0.
