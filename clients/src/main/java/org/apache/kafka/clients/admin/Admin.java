@@ -1718,12 +1718,11 @@ public interface Admin extends AutoCloseable {
      * the mirror clears the mirrorName field from partition metadata, which allows producers to write
      * to these partitions.
      *
-     * @param mirrorName The name of the mirror from which to remove topics
      * @param topics Set of topic names to remove from mirroring
      * @param options Options for the remove topics from mirror operation
      * @return The RemoveTopicsFromMirrorResult containing futures for each topic removal
      */
-    RemoveTopicsFromMirrorResult removeTopicsFromMirror(String mirrorName, Set<String> topics, RemoveTopicsFromMirrorOptions options);
+    RemoveTopicsFromMirrorResult removeTopicsFromMirror(Set<String> topics, RemoveTopicsFromMirrorOptions options);
 
     /**
      * Describe cluster mirrors with the default options.

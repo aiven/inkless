@@ -1411,10 +1411,11 @@ class ReplicaManager(val config: KafkaConfig,
 
     def validateReadOnlyTopic(partition: Partition): Unit = {
       // if it's mirrored topic, it will become writable only when in STOPPED state
-      if (mirrorMetadataManager.isDefined && partition.mirrorName.nonEmpty &&
-        mirrorMetadataManager.get.getMirrorPartitionState(partition.mirrorName, partition.topicPartition) != MirrorPartitionState.STOPPED) {
+      val mirrorName = partition.getMirrorName()
+      if (mirrorMetadataManager.isDefined && mirrorName.nonEmpty &&
+        mirrorMetadataManager.get.getMirrorPartitionState(mirrorName, partition.topicPartition) != MirrorPartitionState.STOPPED) {
         throw new ReadOnlyTopicException("Cannot append to read-only partition %s on broker %d (mirrorName=%s)"
-          .format(partition.topicPartition, localBrokerId, partition.mirrorName))
+          .format(partition.topicPartition, localBrokerId, mirrorName))
       }
     }
 
@@ -2417,12 +2418,6 @@ class ReplicaManager(val config: KafkaConfig,
         if (!localChanges.followers.isEmpty) {
           applyLocalFollowersDelta(followerChangedPartitions, newImage, delta, lazyOffsetCheckpoints, localChanges.followers.asScala, localChanges.directoryIds.asScala)
         }
-        // Handle read-only leaders: these are leaders (already processed above) that also need
-        // to start MirrorFetcherThreads to fetch from the source cluster
-        if (!localChanges.mirrorLeaders().isEmpty) {
-          // wait until the state entering MIRRORING state and then start fetching
-          mirrorMetadataManager.get.registerMirroringCallback(localChanges.mirrorLeaders(), mirroringLeaders => maybeCreateMirrorFetchers(mirroringLeaders.asScala))
-        }
 
         maybeAddLogDirFetchers(leaderChangedPartitions ++ followerChangedPartitions, lazyOffsetCheckpoints,
           name => Option(newImage.topics().getTopic(name)).map(_.id()))
@@ -2560,7 +2555,7 @@ class ReplicaManager(val config: KafkaConfig,
 
             // This flag is used is used in AbstractFetcherThread.partitionFetchState to distinguish mirror from regular followers
             // and it triggers different epoch handling logic throughout the fetch lifecycle.
-            val mirrorName = if (partition.mirrorName != null && partition.mirrorName.nonEmpty) partition.mirrorName else ""
+            val mirrorName = partition.getMirrorName()
 
             partitionAndOffsets.put(topicPartition, InitialFetchState(
               log.topicId.toScala,
@@ -2613,17 +2608,16 @@ class ReplicaManager(val config: KafkaConfig,
    * @param mirrorLeaders Map of partitions to their metadata for partitions that became
    *                        read-only leaders on this broker
    */
-  private def maybeCreateMirrorFetchers(mirrorLeaders: mutable.Map[TopicPartition, LocalReplicaChanges.PartitionInfo]): Unit = {
+  def maybeCreateMirrorFetchers(mirrorName: String, mirrorLeaders: java.util.Set[TopicPartition]): Unit = {
     if (mirrorLeaders.isEmpty) return
 
     stateChangeLogger.info(s"Starting mirror fetchers for ${mirrorLeaders.size} read-only leader partition(s).")
     val partitionAndOffsets = new mutable.HashMap[TopicPartition, InitialFetchState]
 
-    mirrorLeaders.foreachEntry { (tp, info) =>
+    mirrorLeaders.stream().forEach { tp =>
       getPartition(tp) match {
         case HostedPartition.Online(partition) =>
           try {
-            val mirrorName = info.partition.mirrorName
             if (mirrorName != null && !mirrorName.isEmpty) {
               // Get the remote partition leader from mirror metadata manager
               // This will return the actual leader if known, or a random bootstrap server as fallback
@@ -2631,7 +2625,7 @@ class ReplicaManager(val config: KafkaConfig,
               val leaderEndpoint = new BrokerEndPoint(remoteLeader.id(), remoteLeader.host(), remoteLeader.port())
 
               val fetchState = InitialFetchState(
-                topicId = Some(info.topicId),
+                topicId = Some(metadataCache.getTopicId(tp.topic)),
                 leader = leaderEndpoint,
                 currentLeaderEpoch = 0, // this will trigger source epoch discovery through fencing
                 initOffset = partition.localLogOrException.logEndOffset,

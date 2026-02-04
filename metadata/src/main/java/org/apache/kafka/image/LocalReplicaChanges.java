@@ -38,8 +38,6 @@ public final class LocalReplicaChanges {
     private final Map<String, Uuid> topicIds;
     // partitions for which directory id changes or newly added to the broker
     private final Map<TopicIdPartition, Uuid> directoryIds;
-    // partitions that are read only and mirroring from a remote leader
-    private final Map<TopicPartition, PartitionInfo> mirrorLeaders;
 
     LocalReplicaChanges(
         Set<TopicPartition> deletes,
@@ -47,8 +45,7 @@ public final class LocalReplicaChanges {
         Map<TopicPartition, PartitionInfo> leaders,
         Map<TopicPartition, PartitionInfo> followers,
         Map<String, Uuid> topicIds,
-        Map<TopicIdPartition, Uuid> directoryIds,
-        Map<TopicPartition, PartitionInfo> mirrorLeaders
+        Map<TopicIdPartition, Uuid> directoryIds
     ) {
         this.deletes = deletes;
         this.electedLeaders = electedLeaders;
@@ -56,7 +53,6 @@ public final class LocalReplicaChanges {
         this.followers = followers;
         this.topicIds = topicIds;
         this.directoryIds = directoryIds;
-        this.mirrorLeaders = mirrorLeaders;
     }
 
     public Set<TopicPartition> deletes() {
@@ -83,10 +79,6 @@ public final class LocalReplicaChanges {
         return directoryIds;
     }
 
-    public Map<TopicPartition, PartitionInfo> mirrorLeaders() {
-        return mirrorLeaders;
-    }
-
     @Override
     public String toString() {
         return String.format(
@@ -96,8 +88,7 @@ public final class LocalReplicaChanges {
             leaders,
             followers,
             topicIds,
-            directoryIds,
-            mirrorLeaders
+            directoryIds
         );
     }
 

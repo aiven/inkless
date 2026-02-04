@@ -160,8 +160,6 @@ public abstract class MirrorCommand {
         }
 
         public void createMirror(MirrorCommandOptions opts) throws ExecutionException, InterruptedException {
-            System.out.printf("Creating mirror %s%n", opts.mirror().get());
-
             Map<String, String> configMap = new HashMap<>();
             mirrorConfigs.forEach((k, v) -> configMap.put(k.toString(), v.toString()));
 
@@ -171,7 +169,7 @@ public abstract class MirrorCommand {
                 new CreateMirrorOptions()
             );
             result.all().get();
-            System.out.printf("Successfully created mirror %s%n", opts.mirror().get());
+            System.out.printf("Created mirror %s%n", opts.mirror().get());
         }
 
         public void addTopicsToMirror(MirrorCommandOptions opts) throws Exception {
@@ -225,12 +223,9 @@ public abstract class MirrorCommand {
                     NewTopic newTopic = new NewTopic(topicName,
                         Optional.of(partNum), // use source topic partitions
                         opts.replicationFactor(), // use provided replicationFactor or cluster default
-                        Optional.of(""), // mirrorName will be set later via addTopicsToMirror
                         Optional.of(topicId));
                     newTopics.add(newTopic);
                 }
-
-                System.out.printf("Adding %d topic(s) to mirror %s%n", newTopics.size(), mirrorName);
 
                 // Try to create all matching topics
                 CreateTopicsResult createResult = admin.createTopics(newTopics,
@@ -253,16 +248,14 @@ public abstract class MirrorCommand {
                     }
                 }
 
-                if (!createdTopics.isEmpty()) {
-                    // TODO: We should return error and let the command retry if the topic metadata is not propagated to brokers. Right now, we sleep 1 sec
-                    Thread.sleep(1000);
-                    AddTopicsToMirrorResult addResult = admin.addTopicsToMirror(
-                            coordinatorNode.id(), existingTopics, new AddTopicsToMirrorOptions());
-                    addResult.all().get();
+                // TODO: We should return error and let the command retry if the topic metadata is not propagated to brokers. Right now, we sleep 1 sec
+                Thread.sleep(1000);
+                // Ensures the mirror.name config is properly set even when topics already exist
+                AddTopicsToMirrorResult addResult = admin.addTopicsToMirror(
+                        coordinatorNode.id(), existingTopics, new AddTopicsToMirrorOptions());
+                addResult.all().get();
 
-                    System.out.printf("Successfully added %d topic(s) to mirror %s: %s%n",
-                        createdTopics.size(), mirrorName, createdTopics);
-                }
+                System.out.printf("Added %d topic(s) to mirror %s: %s%n", createdTopics.size(), mirrorName, createdTopics);
             }
         }
 
@@ -282,10 +275,9 @@ public abstract class MirrorCommand {
 
                 // Remove all matching topics from the mirror
                 RemoveTopicsFromMirrorResult removeTopicsFromMirrorResult = admin.removeTopicsFromMirror(
-                    mirrorName, matchingTopics, new RemoveTopicsFromMirrorOptions());
+                    matchingTopics, new RemoveTopicsFromMirrorOptions());
                 removeTopicsFromMirrorResult.all().get();
-                System.out.printf("Successfully removed %d topic(s) from mirror %s: %s%n",
-                    matchingTopics.size(), mirrorName, matchingTopics);
+                System.out.printf("Removed %d topic(s) from mirror %s: %s%n", matchingTopics.size(), mirrorName, matchingTopics);
             }
         }
 

@@ -33,7 +33,6 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
 
-import static org.apache.kafka.common.record.RecordBatch.NO_PARTITION_LEADER_EPOCH;
 import static org.apache.kafka.metadata.LeaderConstants.NO_LEADER_CHANGE;
 
 public class PartitionRegistration {
@@ -52,8 +51,6 @@ public class PartitionRegistration {
         private LeaderRecoveryState leaderRecoveryState;
         private Integer leaderEpoch;
         private Integer partitionEpoch;
-        private String mirrorName;
-
 
         public Builder setReplicas(int[] replicas) {
             this.replicas = replicas;
@@ -110,11 +107,6 @@ public class PartitionRegistration {
             return this;
         }
 
-        public Builder setMirrorName(String mirrorName) {
-            this.mirrorName = mirrorName;
-            return this;
-        }
-
         public PartitionRegistration build() {
             if (replicas == null) {
                 throw new IllegalStateException("You must set replicas.");
@@ -153,8 +145,7 @@ public class PartitionRegistration {
                 leaderEpoch,
                 partitionEpoch,
                 elr,
-                lastKnownElr,
-                mirrorName == null ? "" : mirrorName
+                lastKnownElr
             );
         }
     }
@@ -170,7 +161,6 @@ public class PartitionRegistration {
     public final LeaderRecoveryState leaderRecoveryState;
     public final int leaderEpoch;
     public final int partitionEpoch;
-    public final String mirrorName;
 
     public static boolean electionWasUnclean(byte leaderRecoveryState) {
         return leaderRecoveryState == LeaderRecoveryState.RECOVERING.value();
@@ -220,13 +210,12 @@ public class PartitionRegistration {
             record.leaderEpoch(),
             record.partitionEpoch(),
             Replicas.toArray(record.eligibleLeaderReplicas()),
-            Replicas.toArray(record.lastKnownElr()),
-            record.mirrorName());
+            Replicas.toArray(record.lastKnownElr()));
     }
 
     private PartitionRegistration(int[] replicas, Uuid[] directories, int[] isr, int[] removingReplicas,
                                   int[] addingReplicas, int leader, LeaderRecoveryState leaderRecoveryState,
-                                  int leaderEpoch, int partitionEpoch, int[] elr, int[] lastKnownElr, String mirrorName) {
+                                  int leaderEpoch, int partitionEpoch, int[] elr, int[] lastKnownElr) {
         Objects.requireNonNull(directories);
         if (directories.length > 0 && directories.length != replicas.length) {
             throw new IllegalArgumentException("The lengths for replicas and directories do not match.");
@@ -244,7 +233,6 @@ public class PartitionRegistration {
         // We could parse a lower version record without elr/lastKnownElr.
         this.elr = elr == null ? new int[0] : elr;
         this.lastKnownElr = lastKnownElr == null ? new int[0] : lastKnownElr;
-        this.mirrorName = mirrorName;
     }
 
     public PartitionRegistration merge(PartitionChangeRecord record) {
@@ -272,13 +260,6 @@ public class PartitionRegistration {
             newLeaderEpoch = leaderEpoch + 1;
         }
 
-        // We should bump the leader epoch when leaderEpoch is assigned (from bump_leader_epoch request), even if no_leader_change
-        if (record.leaderEpoch() != NO_PARTITION_LEADER_EPOCH) {
-            // If it's coming from bump leader epoch request, we should bump to a leader epoch > record.leaderEpoch(), ex:
-            // current leader epoch is 0, record.leaderEpoch is 2, we should bump to 3
-            // current leader epoch is 2, record.leaderEpoch is 0, we should bump to 3
-            newLeaderEpoch = Math.max(record.leaderEpoch(), leaderEpoch) + 1;
-        }
         LeaderRecoveryState newLeaderRecoveryState = leaderRecoveryState.changeTo(record.leaderRecoveryState());
 
         int[] newElr = (record.eligibleLeaderReplicas() == null) ? elr : Replicas.toArray(record.eligibleLeaderReplicas());
@@ -293,8 +274,7 @@ public class PartitionRegistration {
             newLeaderEpoch,
             partitionEpoch + 1,
             newElr,
-            newLastKnownElr,
-            record.mirrorName());
+            newLastKnownElr);
     }
 
     public String diff(PartitionRegistration prev) {
@@ -404,8 +384,7 @@ public class PartitionRegistration {
             setLeader(leader).
             setLeaderRecoveryState(leaderRecoveryState.value()).
             setLeaderEpoch(leaderEpoch).
-            setPartitionEpoch(partitionEpoch).
-                setMirrorName(mirrorName);
+            setPartitionEpoch(partitionEpoch);
         if (options.isEligibleLeaderReplicasEnabled()) {
             // The following are tagged fields, we should only set them when there are some contents, in order to save
             // spaces.
@@ -427,7 +406,6 @@ public class PartitionRegistration {
                 }
             }
         }
-        System.out.println("!!! record:" + record);
         return new ApiMessageAndVersion(record, options.metadataVersion().partitionRecordVersion());
     }
 
@@ -443,8 +421,7 @@ public class PartitionRegistration {
             setAddingReplicas(Replicas.toList(addingReplicas)).
             setRemovingReplicas(Replicas.toList(removingReplicas)).
             setLeaderRecoveryState(leaderRecoveryState.value()).
-            setIsNew(isNew).
-            setMirrorName(mirrorName);
+            setIsNew(isNew);
     }
 
     @Override
@@ -483,7 +460,6 @@ public class PartitionRegistration {
                 ", leaderRecoveryState=" + leaderRecoveryState +
                 ", leaderEpoch=" + leaderEpoch +
                 ", partitionEpoch=" + partitionEpoch +
-                ", mirrorName=" + mirrorName +
                 ")";
     }
 }

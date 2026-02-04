@@ -168,12 +168,12 @@ public interface Controller extends AclMutator, AutoCloseable {
 
     CompletableFuture<AddTopicsToMirrorResponseData> addTopicsToMirror(
             ControllerRequestContext context,
-            Map<Uuid, String> topicIdsToMirrorName
+            Map<String, String> topicToMirrorName
     );
 
     CompletableFuture<RemoveTopicsFromMirrorResponseData> removeTopicsFromMirror(
             ControllerRequestContext context,
-            Set<Uuid> topicIds
+            Set<String> topics
     );
 
     /**

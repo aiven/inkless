@@ -118,14 +118,14 @@ public class MockController implements Controller {
     @Override
     public CompletableFuture<RemoveTopicsFromMirrorResponseData> removeTopicsFromMirror(
             ControllerRequestContext context,
-            Set<Uuid> topicIds) {
+            Set<String> topics) {
         throw new UnsupportedOperationException();
     }
 
     @Override
     public CompletableFuture<AddTopicsToMirrorResponseData> addTopicsToMirror(
             ControllerRequestContext context,
-            Map<Uuid, String> topicIdsToMirrorName
+            Map<String, String> topicToMirrorName
     ) {
         throw new UnsupportedOperationException();
     }

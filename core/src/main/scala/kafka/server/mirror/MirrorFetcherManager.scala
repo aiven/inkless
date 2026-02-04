@@ -14,7 +14,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package kafka.server.mirror
 
 import kafka.server._
@@ -73,7 +72,7 @@ class MirrorFetcherManager(brokerConfig: KafkaConfig,
   }
 
   override def addFetcherForPartitions(partitionAndOffsets: Map[TopicPartition, InitialFetchState]): Unit = {
-    logger.info("#### mirrorFetcherThreadMap: " + mirrorFetcherThreadMap.keys)
+    logger.info("!!! mirrorFetcherThreadMap: " + mirrorFetcherThreadMap.keys)
     // Ensures partitions with different cluster mirrors get separate fetcher threads.
     // This is crucial because different cluster mirrors may require different authentication credentials.
     val partitionsPerFetcher = partitionAndOffsets.groupBy { case (topicPartition, brokerAndInitialFetchOffset) =>
@@ -97,14 +96,14 @@ class MirrorFetcherManager(brokerConfig: KafkaConfig,
         val fetcherThread = mirrorFetcherThreadMap.get(remoteFetcherKey) match {
           case Some(currentFetcherThread) if currentFetcherThread.leader.brokerEndPoint() == remoteFetcherKey.sourceBroker =>
             // reuse the fetcher thread
-            logger.info("#### Reusing mirror fetcher")
+            logger.info("!!! Reusing mirror fetcher")
             currentFetcherThread
           case Some(f) =>
-            logger.info("#### Recreating mirror fetcher")
+            logger.info("!!! Recreating mirror fetcher")
             f.shutdown()
             addAndStartFetcherThread(remoteFetcherKey)
           case None =>
-            logger.info("#### Creating new mirror fetcher")
+            logger.info("!!! Creating new mirror fetcher")
             addAndStartFetcherThread(remoteFetcherKey)
         }
         // failed partitions are removed when added partitions to thread
@@ -163,7 +162,7 @@ class MirrorFetcherManager(brokerConfig: KafkaConfig,
     }
     // Only log if we actually removed mirror partitions (not regular partitions)
     if (fetchStates.nonEmpty)
-      info(s"#### Removed mirror fetcher for partitions ${fetchStates.keySet}")
+      info(s"!!! Removed mirror fetcher for partitions ${fetchStates.keySet}")
     fetchStates
   }
 

@@ -4894,11 +4894,10 @@ public class KafkaAdminClient extends AdminClient {
                         future.complete(null);
                         break;
                     case REQUEST_TIMED_OUT:
-                        throw error.exception(response.data().errorMessage());
+                        throw error.exception();
                     default:
-                        log.error("attach mirror topic {} failed: {}",
-                                topicToMirrorName, response.data().errorMessage());
-                        future.completeExceptionally(error.exception(response.data().errorMessage()));
+                        log.error("Mirror topics addition failed: ", topicToMirrorName.keySet());
+                        future.completeExceptionally(error.exception());
                         break;
                 }
             }
@@ -4913,7 +4912,7 @@ public class KafkaAdminClient extends AdminClient {
     }
 
     @Override
-    public RemoveTopicsFromMirrorResult removeTopicsFromMirror(String mirrorName, Set<String> topics, RemoveTopicsFromMirrorOptions options) {
+    public RemoveTopicsFromMirrorResult removeTopicsFromMirror(Set<String> topics, RemoveTopicsFromMirrorOptions options) {
         final KafkaFutureImpl<Void> future = new KafkaFutureImpl<>();
         final long now = time.milliseconds();
         final Call call = new Call("removeTopicsFromMirror", calcDeadlineMs(now, options.timeoutMs()),
@@ -4921,7 +4920,7 @@ public class KafkaAdminClient extends AdminClient {
 
             @Override
             RemoveTopicsFromMirrorRequest.Builder createRequest(int timeoutMs) {
-                return new RemoveTopicsFromMirrorRequest.Builder(mirrorName, topics);
+                return new RemoveTopicsFromMirrorRequest.Builder(topics);
             }
 
             @Override
@@ -4934,11 +4933,10 @@ public class KafkaAdminClient extends AdminClient {
                         future.complete(null);
                         break;
                     case REQUEST_TIMED_OUT:
-                        throw error.exception(response.data().errorMessage());
+                        throw error.exception();
                     default:
-                        log.error("delete mirror topic {} failed: {}",
-                                mirrorName, response.data().errorMessage());
-                        future.completeExceptionally(error.exception(response.data().errorMessage()));
+                        log.error("Mirror topics removal failed: {}", topics);
+                        future.completeExceptionally(error.exception());
                         break;
                 }
             }

@@ -1780,21 +1780,21 @@ public final class QuorumController implements Controller {
     }
 
     @Override
-    public CompletableFuture<RemoveTopicsFromMirrorResponseData> removeTopicsFromMirror(
+    public CompletableFuture<AddTopicsToMirrorResponseData> addTopicsToMirror(
             ControllerRequestContext context,
-            Set<Uuid> topicIds
+            Map<String, String> topicToMirrorName
     ) {
-        return appendWriteEvent("removeTopicsFromMirror", context.deadlineNs(),
-                () -> replicationControl.removeTopicsFromMirror(topicIds));
+        return appendWriteEvent("addTopicsToMirror", context.deadlineNs(),
+                () -> configurationControl.addTopicsToMirror(topicToMirrorName));
     }
 
     @Override
-    public CompletableFuture<AddTopicsToMirrorResponseData> addTopicsToMirror(
+    public CompletableFuture<RemoveTopicsFromMirrorResponseData> removeTopicsFromMirror(
             ControllerRequestContext context,
-            Map<Uuid, String> topicIdsToMirrorName
+            Set<String> topics
     ) {
-        return appendWriteEvent("addTopicsToMirror", context.deadlineNs(),
-                () -> replicationControl.addTopicsToMirror(topicIdsToMirrorName));
+        return appendWriteEvent("removeTopicsFromMirror", context.deadlineNs(),
+                () -> configurationControl.removeTopicsFromMirror(topics));
     }
 
     @Override

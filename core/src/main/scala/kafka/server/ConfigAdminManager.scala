@@ -25,7 +25,7 @@ import org.apache.kafka.clients.admin.{AlterConfigOp, ConfigEntry}
 import org.apache.kafka.clients.admin.AlterConfigOp.OpType
 import org.apache.kafka.common.config.ConfigDef.ConfigKey
 import org.apache.kafka.common.config.ConfigResource.Type.{BROKER, BROKER_LOGGER, CLIENT_METRICS, GROUP, TOPIC}
-import org.apache.kafka.common.config.{ConfigDef, ConfigResource}
+import org.apache.kafka.common.config.{ConfigDef, ConfigResource, TopicConfig}
 import org.apache.kafka.common.errors.{ApiException, InvalidConfigurationException, InvalidRequestException}
 import org.apache.kafka.common.message.{AlterConfigsRequestData, AlterConfigsResponseData, IncrementalAlterConfigsRequestData, IncrementalAlterConfigsResponseData}
 import org.apache.kafka.common.message.AlterConfigsRequestData.{AlterConfigsResource => LAlterConfigsResource}
@@ -143,7 +143,12 @@ class ConfigAdminManager(nodeId: Int,
                 validateResourceNameIsCurrentNodeId(resource.resourceName())
               }
               validateBrokerConfigChange(resource, configResource)
-            case TOPIC | CLIENT_METRICS | GROUP | ConfigResource.Type.MIRROR =>
+            case TOPIC =>
+                // mirror.name check
+                if (resource.configs().stream().anyMatch(config => TopicConfig.MIRROR_NAME_CONFIG.equals(config.name()))) {
+                  throw new InvalidRequestException("The 'mirror.name' configuration can only be modified through dedicated mirror management APIs.")
+                }
+            case CLIENT_METRICS | GROUP | ConfigResource.Type.MIRROR =>
             // Nothing to do.
             case _ =>
               throw new InvalidRequestException(s"Unknown resource type ${resource.resourceType().toInt}")

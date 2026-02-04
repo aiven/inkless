@@ -14,7 +14,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package kafka.server
 
 import java.{lang, util}
@@ -64,7 +63,6 @@ import org.apache.kafka.server.quota.ControllerMutationQuota
 import org.apache.kafka.server.record.BrokerCompressionType
 
 import scala.jdk.CollectionConverters._
-
 
 /**
  * Request handler for Controller APIs
@@ -173,15 +171,11 @@ class ControllerApis(
     info("!!! attach mirror topic request: " + addTopicsToMirrorRequest)
     val context = new ControllerRequestContext(request.context.header.data, request.context.principal,
       OptionalLong.empty())
-    val topicIdToMirrorName: util.Map[Uuid, String] = new util.HashMap[Uuid, String]()
+    val topicToMirrorName: util.Map[String, String] = new util.HashMap[String, String]()
     addTopicsToMirrorRequest.data().topics().forEach( topic => {
-      if (!topic.topicId().equals(Uuid.ZERO_UUID)) {
-        topicIdToMirrorName.put(topic.topicId(), topic.mirrorName())
-      } else {
-        topicIdToMirrorName.put(metadataCache.getTopicId(topic.topicName()), topic.mirrorName())
-      }
+        topicToMirrorName.put(topic.topicName(), topic.mirrorName())
     })
-    controller.addTopicsToMirror(context, topicIdToMirrorName)
+    controller.addTopicsToMirror(context, topicToMirrorName)
       .handle[Unit] { (response, exception) =>
         logger.info("!!! attach mirror topic response: " + response + " exception: " + exception)
         if (exception != null) {
@@ -194,7 +188,6 @@ class ControllerApis(
       }
 
     CompletableFuture.completedFuture[Unit](())
-
   }
 
   def handleRemoveTopicsFromMirror(request: RequestChannel.Request): CompletableFuture[Unit] = {
@@ -203,15 +196,11 @@ class ControllerApis(
     info("!!! delete mirror topic request: " + removeTopicsFromMirrorRequest)
     val context = new ControllerRequestContext(request.context.header.data, request.context.principal,
       OptionalLong.empty())
-    val topicIds: util.Set[Uuid] = new util.HashSet[Uuid]()
+    val topics: util.Set[String] = new util.HashSet[String]()
     removeTopicsFromMirrorRequest.data().topics().forEach( topic => {
-      if (!topic.topicId().equals(Uuid.ZERO_UUID)) {
-        topicIds.add(topic.topicId())
-      } else {
-        topicIds.add(metadataCache.getTopicId(topic.topicName()))
-      }
+        topics.add(topic.topicName())
     })
-    controller.removeTopicsFromMirror(context, topicIds)
+    controller.removeTopicsFromMirror(context, topics)
       .handle[Unit] { (response, exception) =>
         logger.info("!!! delete mirror topic response: " + response + " exception: " + exception)
         if (exception != null) {
@@ -224,7 +213,6 @@ class ControllerApis(
       }
 
     CompletableFuture.completedFuture[Unit](())
-
   }
 
   def handleCreateMirror(request: RequestChannel.Request): CompletableFuture[Unit] = {

@@ -36,6 +36,10 @@ public final class ConfigurationDelta {
         this.image = image;
     }
 
+    public Map<String, Optional<String>> changes() {
+        return changes;
+    }
+
     public void finishSnapshot() {
         for (String key : image.data().keySet()) {
             if (!changes.containsKey(key)) {
