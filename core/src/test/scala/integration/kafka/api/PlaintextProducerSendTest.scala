@@ -30,7 +30,8 @@ import org.apache.kafka.common.record.{DefaultRecord, DefaultRecordBatch, Record
 import org.apache.kafka.common.serialization.ByteArraySerializer
 import org.apache.kafka.server.config.ServerLogConfigs
 import org.junit.jupiter.api.Assertions._
-import org.junit.jupiter.api.{BeforeEach, Tag, TestInfo, Timeout}
+import org.junit.jupiter.api.{Tag, Timeout}
+import org.junit.jupiter.api.{BeforeEach, TestInfo}
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.{Arguments, ArgumentsSource, MethodSource}
 
@@ -50,7 +51,6 @@ class PlaintextProducerSendTest extends BaseProducerSendTest {
     }
     props
   }
-
   @BeforeEach
   override def setUp(testInfo: TestInfo): Unit = {
     disableAutoTopicCreation = testInfo.getDisplayName.contains("autoCreateTopicsEnabled=false")

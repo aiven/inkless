@@ -1922,7 +1922,7 @@ class KafkaApis(val requestChannel: RequestChannel,
         val unauthorizedTopicErrors = mutable.Map[TopicPartition, Errors]()
         val nonExistingTopicErrors = mutable.Map[TopicPartition, Errors]()
         val prohibitedInklessTopicErrors = mutable.Map[TopicPartition, Errors]()
-        val authorizedPartitions = mutable.Set[TopicPartition]()
+        val authorizedPartitions = new util.HashSet[TopicPartition]()
 
         // Only request versions less than 4 need write authorization since they come from clients.
         val authorizedTopics =
@@ -1947,7 +1947,7 @@ class KafkaApis(val requestChannel: RequestChannel,
           // partitions which failed, and an 'OPERATION_NOT_ATTEMPTED' error code for the partitions which succeeded
           // the authorization check to indicate that they were not added to the transaction.
           val partitionErrors = unauthorizedTopicErrors ++ nonExistingTopicErrors ++ prohibitedInklessTopicErrors ++
-            authorizedPartitions.map(_ -> Errors.OPERATION_NOT_ATTEMPTED)
+            authorizedPartitions.asScala.map(_ -> Errors.OPERATION_NOT_ATTEMPTED)
           addResultAndMaybeSendResponse(AddPartitionsToTxnResponse.resultForTransaction(transactionalId, partitionErrors.asJava))
         } else {
           def sendResponseCallback(error: Errors): Unit = {
@@ -1967,7 +1967,7 @@ class KafkaApis(val requestChannel: RequestChannel,
             txnCoordinator.handleAddPartitionsToTransaction(transactionalId,
               transaction.producerId,
               transaction.producerEpoch,
-              authorizedPartitions.asJava,
+              authorizedPartitions,
               sendResponseCallback,
               TransactionVersion.transactionVersionForAddPartitionsToTxn(addPartitionsToTxnRequest),
               requestLocal)
@@ -1975,7 +1975,7 @@ class KafkaApis(val requestChannel: RequestChannel,
             txnCoordinator.handleVerifyPartitionsInTransaction(transactionalId,
               transaction.producerId,
               transaction.producerEpoch,
-              authorizedPartitions.asJava,
+              authorizedPartitions,
               addResultAndMaybeSendResponse)
           }
         }
@@ -2854,11 +2854,11 @@ class KafkaApis(val requestChannel: RequestChannel,
               val timeoutMs = heartbeatIntervalMs * 2
 
               autoTopicCreationManager.createStreamsInternalTopics(topicsToCreate, requestContext, timeoutMs)
-              
+
               // Check for cached topic creation errors only if there's already a MISSING_INTERNAL_TOPICS status
-              val hasMissingInternalTopicsStatus = responseData.status() != null && 
+              val hasMissingInternalTopicsStatus = responseData.status() != null &&
                 responseData.status().stream().anyMatch(s => s.statusCode() == StreamsGroupHeartbeatResponse.Status.MISSING_INTERNAL_TOPICS.code())
-              
+
               if (hasMissingInternalTopicsStatus) {
                 val currentTimeMs = time.milliseconds()
                 val cachedErrors = autoTopicCreationManager.getStreamsInternalTopicCreationErrors(topicsToCreate.keys.toSet, currentTimeMs)

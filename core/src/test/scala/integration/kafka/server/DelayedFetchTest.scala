@@ -18,7 +18,6 @@ package kafka.server
 
 import io.aiven.inkless.control_plane.{BatchInfo, BatchMetadata, FindBatchRequest, FindBatchResponse}
 
-import java.util
 import java.util.{Collections, Optional, OptionalLong}
 import scala.collection.Seq
 import kafka.cluster.Partition
@@ -38,6 +37,8 @@ import org.mockito.ArgumentMatchers.{any, anyFloat, anyInt, anyLong}
 import org.mockito.Mockito.{mock, never, verify, when}
 
 import java.util.concurrent.CompletableFuture
+
+import java.util
 
 class DelayedFetchTest {
   private val maxBytes = 1024
@@ -62,12 +63,9 @@ class DelayedFetchTest {
       fetchResultOpt = Some(responses.head._2)
     }
 
-    val classicFetchPartitionStatus = new util.LinkedHashMap[TopicIdPartition, FetchPartitionStatus]()
-    classicFetchPartitionStatus.put(topicIdPartition, fetchStatus)
-
     val delayedFetch = new DelayedFetch(
       params = fetchParams,
-      classicFetchPartitionStatus = classicFetchPartitionStatus,
+      classicFetchPartitionStatus = createFetchPartitionStatusMap(topicIdPartition, fetchStatus),
       replicaManager = replicaManager,
       quota = replicaQuota,
       responseCallback = callback
@@ -113,12 +111,9 @@ class DelayedFetchTest {
       fetchResultOpt = Some(responses.head._2)
     }
 
-    val classicFetchPartitionStatus = new util.LinkedHashMap[TopicIdPartition, FetchPartitionStatus]()
-    classicFetchPartitionStatus.put(topicIdPartition, fetchStatus)
-
     val delayedFetch = new DelayedFetch(
       params = fetchParams,
-      classicFetchPartitionStatus = classicFetchPartitionStatus,
+      classicFetchPartitionStatus = createFetchPartitionStatusMap(topicIdPartition, fetchStatus),
       replicaManager = replicaManager,
       quota = replicaQuota,
       responseCallback = callback
@@ -158,12 +153,9 @@ class DelayedFetchTest {
       fetchResultOpt = Some(responses.head._2)
     }
 
-    val classicFetchPartitionStatus = new util.LinkedHashMap[TopicIdPartition, FetchPartitionStatus]()
-    classicFetchPartitionStatus.put(topicIdPartition, fetchStatus)
-
     val delayedFetch = new DelayedFetch(
       params = fetchParams,
-      classicFetchPartitionStatus = classicFetchPartitionStatus,
+      classicFetchPartitionStatus = createFetchPartitionStatusMap(topicIdPartition, fetchStatus),
       replicaManager = replicaManager,
       quota = replicaQuota,
       responseCallback = callback
@@ -214,12 +206,9 @@ class DelayedFetchTest {
       fetchResultOpt = Some(responses.head._2)
     }
 
-    val classicFetchPartitionStatus = new util.LinkedHashMap[TopicIdPartition, FetchPartitionStatus]()
-    classicFetchPartitionStatus.put(topicIdPartition, fetchStatus)
-
     val delayedFetch = new DelayedFetch(
       params = fetchParams,
-      classicFetchPartitionStatus = classicFetchPartitionStatus,
+      classicFetchPartitionStatus = createFetchPartitionStatusMap(topicIdPartition, fetchStatus),
       replicaManager = replicaManager,
       quota = replicaQuota,
       responseCallback = callback
@@ -290,6 +279,12 @@ class DelayedFetchTest {
       -1L,
       OptionalLong.empty(),
       error)
+  }
+
+  private def createFetchPartitionStatusMap(tpId: TopicIdPartition, status: FetchPartitionStatus): util.LinkedHashMap[TopicIdPartition, FetchPartitionStatus] = {
+    val statusMap = new util.LinkedHashMap[TopicIdPartition, FetchPartitionStatus]
+    statusMap.put(tpId, status)
+    statusMap
   }
 
   @Nested
@@ -417,14 +412,12 @@ class DelayedFetchTest {
         fetchResultOpt = Some(responses)
       }
 
+      val disklessFetchPartitionStatus = new util.LinkedHashMap[TopicIdPartition, FetchPartitionStatus]()
+      disklessFetchPartitionStatus.put(topicIdPartition, fetchStatus)
       val delayedFetch = new DelayedFetch(
         params = fetchParams,
         classicFetchPartitionStatus = new util.LinkedHashMap[TopicIdPartition, FetchPartitionStatus](),
-        disklessFetchPartitionStatus = {
-          val map = new util.LinkedHashMap[TopicIdPartition, FetchPartitionStatus]()
-          map.put(topicIdPartition, fetchStatus)
-          map
-        },
+        disklessFetchPartitionStatus = disklessFetchPartitionStatus,
         replicaManager = replicaManager,
         quota = replicaQuota,
         responseCallback = callback
@@ -506,14 +499,12 @@ class DelayedFetchTest {
         fetchResultOpt = Some(responses)
       }
 
+      val disklessFetchPartitionStatus = new util.LinkedHashMap[TopicIdPartition, FetchPartitionStatus]
+      disklessFetchPartitionStatus.put(topicIdPartition, fetchStatus)
       val delayedFetch = new DelayedFetch(
         params = fetchParams,
         classicFetchPartitionStatus = new util.LinkedHashMap[TopicIdPartition, FetchPartitionStatus](),
-        disklessFetchPartitionStatus = {
-          val map = new util.LinkedHashMap[TopicIdPartition, FetchPartitionStatus]()
-          map.put(topicIdPartition, fetchStatus)
-          map
-        },
+        disklessFetchPartitionStatus = disklessFetchPartitionStatus,
         replicaManager = replicaManager,
         quota = replicaQuota,
         responseCallback = callback
@@ -592,14 +583,13 @@ class DelayedFetchTest {
         fetchResultOpt = Some(responses)
       }
 
+      val disklessFetchPartitionStatus = new util.LinkedHashMap[TopicIdPartition, FetchPartitionStatus]()
+      disklessFetchPartitionStatus.put(topicIdPartition, fetchStatus)
+
       val delayedFetch = new DelayedFetch(
         params = fetchParams,
         classicFetchPartitionStatus = new util.LinkedHashMap[TopicIdPartition, FetchPartitionStatus](),
-        disklessFetchPartitionStatus = {
-          val map = new util.LinkedHashMap[TopicIdPartition, FetchPartitionStatus]()
-          map.put(topicIdPartition, fetchStatus)
-          map
-        },
+        disklessFetchPartitionStatus = disklessFetchPartitionStatus,
         replicaManager = replicaManager,
         quota = replicaQuota,
         responseCallback = callback
@@ -681,14 +671,13 @@ class DelayedFetchTest {
         fetchResultOpt = Some(responses)
       }
 
+      val disklessFetchPartitionStatus = new util.LinkedHashMap[TopicIdPartition, FetchPartitionStatus]()
+      disklessFetchPartitionStatus.put(topicIdPartition, fetchStatus)
+
       val delayedFetch = new DelayedFetch(
         params = fetchParams,
         classicFetchPartitionStatus = new util.LinkedHashMap[TopicIdPartition, FetchPartitionStatus](),
-        disklessFetchPartitionStatus = {
-          val map = new util.LinkedHashMap[TopicIdPartition, FetchPartitionStatus]()
-          map.put(topicIdPartition, fetchStatus)
-          map
-        },
+        disklessFetchPartitionStatus = disklessFetchPartitionStatus,
         replicaManager = replicaManager,
         quota = replicaQuota,
         responseCallback = callback

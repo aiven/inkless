@@ -601,6 +601,4 @@ class LogConfigTest {
     assertEquals("It is invalid to create a diskless topic with remote storage enabled.", t3.getMessage)
   }
 
-  // INKLESS NOTE: Test removed during upstream sync - validateWithMetadataVersion was removed from KafkaConfig
-  // TODO(inkless): Re-evaluate if this test is still needed and update accordingly
 }

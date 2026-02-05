@@ -17,7 +17,6 @@
 package kafka.server
 
 import java.io.File
-import java.util
 import java.util.{Collections, Optional, Properties}
 import kafka.cluster.{Partition, PartitionTest}
 import kafka.log.LogManager
@@ -41,6 +40,7 @@ import org.mockito.ArgumentMatchers.{any, anyBoolean, anyInt, anyLong}
 import org.mockito.Mockito.{mock, when}
 import org.mockito.{AdditionalMatchers, ArgumentMatchers}
 
+import java.util
 import scala.jdk.CollectionConverters._
 
 class ReplicaManagerQuotasTest {
@@ -185,12 +185,9 @@ class ReplicaManagerQuotasTest {
         Optional.empty()
       )
 
-      val classicFetchPartitionStatus = new util.LinkedHashMap[TopicIdPartition, FetchPartitionStatus]()
-      classicFetchPartitionStatus.put(tp, fetchPartitionStatus)
-
       new DelayedFetch(
         params = fetchParams,
-        classicFetchPartitionStatus = classicFetchPartitionStatus,
+        classicFetchPartitionStatus = createFetchPartitionStatusMap(tp, fetchPartitionStatus),
         replicaManager = replicaManager,
         quota = null,
         responseCallback = null
@@ -239,12 +236,9 @@ class ReplicaManagerQuotasTest {
         Optional.empty()
       )
 
-      val classicFetchPartitionStatus = new util.LinkedHashMap[TopicIdPartition, FetchPartitionStatus]()
-      classicFetchPartitionStatus.put(tidp, fetchPartitionStatus)
-
       new DelayedFetch(
         params = fetchParams,
-        classicFetchPartitionStatus = classicFetchPartitionStatus,
+        classicFetchPartitionStatus = createFetchPartitionStatusMap(tidp, fetchPartitionStatus),
         replicaManager = replicaManager,
         quota = null,
         responseCallback = null
@@ -346,5 +340,11 @@ class ReplicaManagerQuotasTest {
     val quota: ReplicaQuota = mock(classOf[ReplicaQuota])
     when(quota.isThrottled(any[TopicPartition])).thenReturn(true)
     quota
+  }
+
+  private def createFetchPartitionStatusMap(tpId: TopicIdPartition, status: FetchPartitionStatus): util.LinkedHashMap[TopicIdPartition, FetchPartitionStatus] = {
+    val statusMap = new util.LinkedHashMap[TopicIdPartition, FetchPartitionStatus]
+    statusMap.put(tpId, status)
+    statusMap
   }
 }

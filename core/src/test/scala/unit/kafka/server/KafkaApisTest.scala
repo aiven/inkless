@@ -2473,12 +2473,12 @@ class KafkaApisTest extends Logging {
     addTopicToMetadataCache(topicName, 1, topicId = topicId)
     val memberId: String = Uuid.randomUuid().toString
     val groupId = "group"
-    
+
     // Create test principal and client address to verify quota tags
     val testPrincipal = new KafkaPrincipal(KafkaPrincipal.USER_TYPE, "test-user")
     val testClientAddress = InetAddress.getByName("192.168.1.100")
     val testClientId = "test-client-id"
-    
+
     // Mock share partition manager responses
     val records = memoryRecords(10, 0)
     when(sharePartitionManager.fetchMessages(any(), any(), any(), any(), anyInt(), anyInt(), anyInt(), any())).thenReturn(
@@ -2504,7 +2504,7 @@ class KafkaApisTest extends Logging {
     val sessionCaptorFetch = ArgumentCaptor.forClass(classOf[Session])
     val clientIdCaptor = ArgumentCaptor.forClass(classOf[String])
     val requestCaptor = ArgumentCaptor.forClass(classOf[RequestChannel.Request])
-    
+
     // Mock quota manager responses and capture arguments
     when(quotas.fetch.maybeRecordAndGetThrottleTimeMs(
       sessionCaptorFetch.capture(), clientIdCaptor.capture(), anyDouble, anyLong)).thenReturn(0)
@@ -2525,12 +2525,12 @@ class KafkaApisTest extends Logging {
       ).iterator))
 
     val shareFetchRequest = new ShareFetchRequest.Builder(shareFetchRequestData).build(ApiKeys.SHARE_FETCH.latestVersion)
-    
+
     // Create request with custom principal and client address to test quota tags
     val requestHeader = new RequestHeader(shareFetchRequest.apiKey, shareFetchRequest.version, testClientId, 0)
-    val request = buildRequest(shareFetchRequest, testPrincipal, testClientAddress, 
+    val request = buildRequest(shareFetchRequest, testPrincipal, testClientAddress,
       ListenerName.forSecurityProtocol(SecurityProtocol.SSL), fromPrivilegedListener = false, Some(requestHeader), requestChannelMetrics)
-    
+
     // Test that the request itself contains the proper tags and information
     assertEquals(testClientId, request.header.clientId)
     assertEquals(testPrincipal, request.context.principal)
@@ -2541,17 +2541,17 @@ class KafkaApisTest extends Logging {
     kafkaApis = createKafkaApis()
     kafkaApis.handleShareFetchRequest(request)
     val response = verifyNoThrottling[ShareFetchResponse](request)
-    
+
     // Verify response is successful
     val responseData = response.data()
     assertEquals(Errors.NONE.code, responseData.errorCode)
-    
+
     // Verify that quota methods were called and captured session information
     verify(quotas.fetch, times(1)).maybeRecordAndGetThrottleTimeMs(
       any[Session](), anyString, anyDouble, anyLong)
     verify(quotas.request, times(1)).maybeRecordAndGetThrottleTimeMs(
       any[RequestChannel.Request](), anyLong)
-    
+
     // Verify the Session data passed to fetch quota manager is exactly what was defined in the test
     val capturedSession = sessionCaptorFetch.getValue
     assertNotNull(capturedSession)
@@ -2560,11 +2560,11 @@ class KafkaApisTest extends Logging {
     assertEquals("test-user", capturedSession.principal.getName)
     assertEquals(testClientAddress, capturedSession.clientAddress)
     assertEquals("test-user", capturedSession.sanitizedUser)
-    
+
     // Verify client ID passed to fetch quota manager matches what was defined
     val capturedClientId = clientIdCaptor.getValue
     assertEquals(testClientId, capturedClientId)
-    
+
     // Verify the Request data passed to request quota manager is exactly what was defined
     val capturedRequest = requestCaptor.getValue
     assertNotNull(capturedRequest)
@@ -2583,12 +2583,12 @@ class KafkaApisTest extends Logging {
     addTopicToMetadataCache(topicName, 1, topicId = topicId)
     val memberId: Uuid = Uuid.randomUuid()
     val groupId = "group"
-    
+
     // Create test principal and client address to verify quota tags
     val testPrincipal = new KafkaPrincipal(KafkaPrincipal.USER_TYPE, "test-user")
     val testClientAddress = InetAddress.getByName("192.168.1.100")
     val testClientId = "test-client-id"
-    
+
     // Mock share partition manager acknowledge response
     when(sharePartitionManager.acknowledge(any(), any(), any())).thenReturn(
       CompletableFuture.completedFuture(util.Map.of[TopicIdPartition, ShareAcknowledgeResponseData.PartitionData](
@@ -2599,7 +2599,7 @@ class KafkaApisTest extends Logging {
 
     // Create argument captors to verify session information passed to quota managers
     val requestCaptor = ArgumentCaptor.forClass(classOf[RequestChannel.Request])
-    
+
     // Mock quota manager responses and capture arguments
     // For ShareAcknowledge, we only verify Request quota (not fetch quota)
     when(quotas.request.maybeRecordAndGetThrottleTimeMs(
@@ -2626,12 +2626,12 @@ class KafkaApisTest extends Logging {
         ).iterator))
 
     val shareAcknowledgeRequest = new ShareAcknowledgeRequest.Builder(shareAcknowledgeRequestData).build(ApiKeys.SHARE_ACKNOWLEDGE.latestVersion)
-    
+
     // Create request with custom principal and client address to test quota tags
     val requestHeader = new RequestHeader(shareAcknowledgeRequest.apiKey, shareAcknowledgeRequest.version, testClientId, 0)
     val request = buildRequest(shareAcknowledgeRequest, testPrincipal, testClientAddress,
       ListenerName.forSecurityProtocol(SecurityProtocol.SSL), fromPrivilegedListener = false, Some(requestHeader), requestChannelMetrics)
-    
+
     // Test that the request itself contains the proper tags and information
     assertEquals(testClientId, request.header.clientId)
     assertEquals(testPrincipal, request.context.principal)
@@ -2642,19 +2642,19 @@ class KafkaApisTest extends Logging {
     kafkaApis = createKafkaApis()
     kafkaApis.handleShareAcknowledgeRequest(request)
     val response = verifyNoThrottling[ShareAcknowledgeResponse](request)
-    
+
     // Verify response is successful
     val responseData = response.data()
     assertEquals(Errors.NONE.code, responseData.errorCode)
-    
+
     // Verify that request quota method was called
     verify(quotas.request, times(1)).maybeRecordAndGetThrottleTimeMs(
       any[RequestChannel.Request](), anyLong)
-    
+
     // Verify that fetch quota method was NOT called (ShareAcknowledge only uses request quota)
     verify(quotas.fetch, times(0)).maybeRecordAndGetThrottleTimeMs(
       any[Session](), anyString, anyDouble, anyLong)
-    
+
     // Verify the Request data passed to request quota manager is exactly what was defined
     val capturedRequest = requestCaptor.getValue
     assertNotNull(capturedRequest)
@@ -2673,12 +2673,12 @@ class KafkaApisTest extends Logging {
     addTopicToMetadataCache(topicName, 1, topicId = topicId)
     val memberId: String = Uuid.randomUuid().toString
     val groupId = "group"
-    
+
     // Create test principal and client address to verify quota tags
     val testPrincipal = new KafkaPrincipal(KafkaPrincipal.USER_TYPE, "test-user")
     val testClientAddress = InetAddress.getByName("192.168.1.100")
     val testClientId = "test-client-id"
-    
+
     // Mock share partition manager responses for both fetch and acknowledge
     val records = memoryRecords(10, 0)
     when(sharePartitionManager.fetchMessages(any(), any(), any(), any(), anyInt(), anyInt(), anyInt(), any())).thenReturn(
@@ -2711,7 +2711,7 @@ class KafkaApisTest extends Logging {
     val sessionCaptorFetch = ArgumentCaptor.forClass(classOf[Session])
     val clientIdCaptor = ArgumentCaptor.forClass(classOf[String])
     val requestCaptor = ArgumentCaptor.forClass(classOf[RequestChannel.Request])
-    
+
     // Mock quota manager responses and capture arguments
     when(quotas.fetch.maybeRecordAndGetThrottleTimeMs(
       sessionCaptorFetch.capture(), clientIdCaptor.capture(), anyDouble, anyLong)).thenReturn(0)
@@ -2741,12 +2741,12 @@ class KafkaApisTest extends Logging {
       ).iterator))
 
     val shareFetchRequest = new ShareFetchRequest.Builder(shareFetchRequestData).build(ApiKeys.SHARE_FETCH.latestVersion)
-    
+
     // Create request with custom principal and client address to test quota tags
     val requestHeader = new RequestHeader(shareFetchRequest.apiKey, shareFetchRequest.version, testClientId, 0)
     val request = buildRequest(shareFetchRequest, testPrincipal, testClientAddress,
       ListenerName.forSecurityProtocol(SecurityProtocol.SSL), fromPrivilegedListener = false, Some(requestHeader), requestChannelMetrics)
-    
+
     // Test that the request itself contains the proper tags and information
     assertEquals(testClientId, request.header.clientId)
     assertEquals(testPrincipal, request.context.principal)
@@ -2757,17 +2757,17 @@ class KafkaApisTest extends Logging {
     kafkaApis = createKafkaApis()
     kafkaApis.handleShareFetchRequest(request)
     val response = verifyNoThrottling[ShareFetchResponse](request)
-    
+
     // Verify response is successful
     val responseData = response.data()
     assertEquals(Errors.NONE.code, responseData.errorCode)
-    
+
     // Verify that quota methods were called exactly once each (not twice despite having acknowledgements)
     verify(quotas.fetch, times(1)).maybeRecordAndGetThrottleTimeMs(
       any[Session](), anyString, anyDouble, anyLong)
     verify(quotas.request, times(1)).maybeRecordAndGetThrottleTimeMs(
       any[RequestChannel.Request](), anyLong)
-    
+
     // Verify the Session data passed to fetch quota manager is exactly what was defined in the test
     val capturedSession = sessionCaptorFetch.getValue
     assertNotNull(capturedSession)
@@ -2776,11 +2776,11 @@ class KafkaApisTest extends Logging {
     assertEquals("test-user", capturedSession.principal.getName)
     assertEquals(testClientAddress, capturedSession.clientAddress)
     assertEquals("test-user", capturedSession.sanitizedUser)
-    
+
     // Verify client ID passed to fetch quota manager matches what was defined
     val capturedClientId = clientIdCaptor.getValue
     assertEquals(testClientId, capturedClientId)
-    
+
     // Verify the Request data passed to request quota manager is exactly what was defined
     val capturedRequest = requestCaptor.getValue
     assertNotNull(capturedRequest)
@@ -3498,7 +3498,7 @@ class KafkaApisTest extends Logging {
     val currentEpoch = 5.toShort
     // For TV2, same epoch is ALSO invalid; for TV1, old epoch is invalid
     val oldEpoch = if (transactionVersion >= 2) currentEpoch else (currentEpoch - 1).toShort
-    
+
     val writeTxnMarkersRequest = new WriteTxnMarkersRequest.Builder(
       util.List.of(
         new TxnMarkerEntry(
@@ -3511,22 +3511,22 @@ class KafkaApisTest extends Logging {
         )
       )
     ).build()
-    
+
     val requestChannelRequest = buildRequest(writeTxnMarkersRequest)
-    
+
     // Set up partition and log
     val partition = mock(classOf[Partition])
     when(replicaManager.onlinePartition(topicPartition))
       .thenReturn(Some(partition))
     when(replicaManager.topicIdPartition(topicPartition))
       .thenReturn(new TopicIdPartition(topicId, topicPartition))
-    
+
     // Set up appendRecords to simulate epoch validation failure
     val entriesPerPartition: ArgumentCaptor[Map[TopicIdPartition, MemoryRecords]] =
       ArgumentCaptor.forClass(classOf[Map[TopicIdPartition, MemoryRecords]])
     val responseCallback: ArgumentCaptor[Map[TopicIdPartition, PartitionResponse] => Unit] =
       ArgumentCaptor.forClass(classOf[Map[TopicIdPartition, PartitionResponse] => Unit])
-    
+
     when(replicaManager.appendRecords(
       ArgumentMatchers.eq(ServerConfigs.REQUEST_TIMEOUT_MS_DEFAULT.toLong),
       ArgumentMatchers.eq(-1),
@@ -3545,10 +3545,10 @@ class KafkaApisTest extends Logging {
         Map(topicIdPartition -> new PartitionResponse(Errors.INVALID_PRODUCER_EPOCH))
       )
     }
-    
+
     kafkaApis = createKafkaApis()
     kafkaApis.handleWriteTxnMarkersRequest(requestChannelRequest, RequestLocal.noCaching)
-    
+
     // Verify the response contains INVALID_PRODUCER_EPOCH error
     val expectedResponse = new WriteTxnMarkersResponseData()
       .setMarkers(util.List.of(
@@ -3564,10 +3564,10 @@ class KafkaApisTest extends Logging {
               ))
           ))
       ))
-    
+
     val response = verifyNoThrottling[WriteTxnMarkersResponse](requestChannelRequest)
     assertEquals(normalize(expectedResponse), normalize(response.data))
-    
+
     // Verify appendRecords was called with the correct transactionVersion
     verify(replicaManager).appendRecords(
       anyLong,
@@ -11462,17 +11462,17 @@ class KafkaApisTest extends Logging {
 
     future.complete(new StreamsGroupHeartbeatResult(streamsGroupHeartbeatResponse, missingTopics))
     val response = verifyNoThrottling[StreamsGroupHeartbeatResponse](requestChannelRequest)
-    
+
     assertEquals(Errors.NONE.code, response.data.errorCode())
     assertEquals(null, response.data.errorMessage())
-    
+
     // Verify that the cached error was appended to the existing status detail
     assertEquals(1, response.data.status().size())
     val status = response.data.status().get(0)
     assertEquals(StreamsGroupHeartbeatResponse.Status.MISSING_INTERNAL_TOPICS.code(), status.statusCode())
     assertTrue(status.statusDetail().contains("Internal topics are missing: [test-topic]"))
     assertTrue(status.statusDetail().contains("Creation failed: test-topic (INVALID_REPLICATION_FACTOR)"))
-    
+
     // Verify that createStreamsInternalTopics was called
     verify(mockAutoTopicCreationManager).createStreamsInternalTopics(any(), any(), anyLong())
     verify(mockAutoTopicCreationManager).getStreamsInternalTopicCreationErrors(ArgumentMatchers.eq(Set("test-topic")), any())

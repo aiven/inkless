@@ -1865,8 +1865,9 @@ class ReplicaManager(val config: KafkaConfig,
 
     def delayedResponse(classicFetchPartitionStatus: util.LinkedHashMap[TopicIdPartition, FetchPartitionStatus]): Boolean = {
       val disklessFetchPartitionStatus = new util.LinkedHashMap[TopicIdPartition, FetchPartitionStatus]()
-      disklessFetchInfos.foreach { case (k, partitionData) =>
-        disklessFetchPartitionStatus.put(k, new FetchPartitionStatus(new LogOffsetMetadata(partitionData.fetchOffset), partitionData))
+      disklessFetchInfos.foreach {
+        case (k, partitionData) =>
+          disklessFetchPartitionStatus.put(k, new FetchPartitionStatus(new LogOffsetMetadata(partitionData.fetchOffset), partitionData))
       }
       // If there are diskless fetches, enforce a lower bound on maxWaitMs to ensure that we wait at least as long as the
       // configured remote fetch max wait time. This is to ensure that we give enough time for the diskless fetches to complete,
@@ -1883,13 +1884,16 @@ class ReplicaManager(val config: KafkaConfig,
       )
 
       // create a list of (topic, partition) pairs to use as keys for this delayed fetch operation
-      val classicDelayedFetchKeys = classicFetchPartitionStatus.asScala.map { case (tp, _) => new TopicPartitionOperationKey(tp) }.toList
-      val disklessDelayedFetchKeys = disklessFetchPartitionStatus.asScala.map { case (tp, _) => new TopicPartitionOperationKey(tp) }.toList
+      val watchKeys = new util.LinkedList[TopicPartitionOperationKey]()
+      val classicDelayedFetchKeys = classicFetchPartitionStatus.keySet().stream().map(new TopicPartitionOperationKey(_)).toList()
+      val disklessDelayedFetchKeys = disklessFetchPartitionStatus.keySet().stream().map(new TopicPartitionOperationKey(_)).toList()
+      watchKeys.addAll(classicDelayedFetchKeys)
+      watchKeys.addAll(disklessDelayedFetchKeys)
 
       // try to complete the request immediately, otherwise put it into the purgatory;
       // this is because while the delayed fetch operation is being created, new requests
       // may arrive and hence make this operation completable.
-      delayedFetchPurgatory.tryCompleteElseWatch(delayedFetch, (classicDelayedFetchKeys ++ disklessDelayedFetchKeys).asJava)
+      delayedFetchPurgatory.tryCompleteElseWatch(delayedFetch, watchKeys)
     }
 
     if (classicFetchInfos.isEmpty) {
@@ -1957,38 +1961,33 @@ class ReplicaManager(val config: KafkaConfig,
         // In case of remote fetches, synchronously wait for diskless records and then perform the remote fetch.
         // This is currently a workaround to avoid modifying the DelayedRemoteFetch in order to correctly process
         // diskless fetches.
-        if (disklessFetchInfos.nonEmpty) {
-          val disklessFetchResults = try {
-            val disklessParams = fetchParamsWithNewMaxBytes(params, disklessFetchInfos.size.toFloat / fetchInfos.size.toFloat)
-            val disklessResponsesFuture = fetchDisklessMessages(disklessParams, disklessFetchInfos)
+        val disklessFetchResults = new util.LinkedHashMap[TopicIdPartition, LogReadResult]()
+        try {
+          val disklessParams = fetchParamsWithNewMaxBytes(params, disklessFetchInfos.size.toFloat / fetchInfos.size.toFloat)
+          val disklessResponsesFuture = fetchDisklessMessages(disklessParams, disklessFetchInfos)
 
-            val response = disklessResponsesFuture.get(maxWaitMs, TimeUnit.MILLISECONDS)
-            response.map { case (tp, data) =>
-              tp -> new LogReadResult(
-                new FetchDataInfo(new LogOffsetMetadata(0L), data.records), // offset is ignored
-                data.divergingEpoch, data.highWatermark, data.logStartOffset, data.highWatermark, data.logStartOffset,
-                0L, // fetchTimeMs is ignored
-                data.lastStableOffset, data.preferredReadReplica,
-                data.error
-              )
+          val response = disklessResponsesFuture.get(maxWaitMs, TimeUnit.MILLISECONDS)
+          response.foreach { case (tp, data) =>
+            disklessFetchResults.put(tp, new LogReadResult(
+              new FetchDataInfo(new LogOffsetMetadata(0L), data.records), // offset is ignored
+              data.divergingEpoch, data.highWatermark, data.logStartOffset, data.highWatermark, data.logStartOffset,
+              0L, // fetchTimeMs is ignored
+              data.lastStableOffset, data.preferredReadReplica,
+              data.error
+            ))
+          }
+        } catch {
+          case e: Throwable =>
+            disklessFetchInfos.foreach { case (tp, _) =>
+              disklessFetchResults.put(tp, new LogReadResult(
+                FetchDataInfo.empty(-1L),
+                Optional.empty(), -1L, -1L, -1L, -1L, 0L, OptionalLong.empty(), OptionalInt.empty(),
+                Errors.forException(e)
+              ))
             }
-          } catch {
-            case e: Throwable =>
-              val errorCode = Errors.forException(e)
-              disklessFetchInfos.map { case (tp, _) =>
-                tp -> new LogReadResult(
-                  FetchDataInfo.empty(-1L),
-                  Optional.empty(), -1L, -1L, -1L, -1L, 0L, OptionalLong.empty(), OptionalInt.empty(),
-                  errorCode
-                )
-              }
-          }
-          // Add diskless results to the log read results map so they are included in the response
-          disklessFetchResults.foreach { case (tp, result) =>
-            logReadResultMap.put(tp, result)
-          }
         }
-        processRemoteFetches(remoteFetchInfos, classicParams, responseCallback, logReadResultMap, fetchPartitionStatus)
+        logReadResultMap.putAll(disklessFetchResults)
+        processRemoteFetches(remoteFetchInfos, params, responseCallback, logReadResultMap, fetchPartitionStatus)
       } else {
         if (disklessFetchInfos.isEmpty && (bytesReadable >= params.minBytes || params.maxWaitMs <= 0)) {
           responseCallback(fetchPartitionData)
@@ -2740,7 +2739,7 @@ class ReplicaManager(val config: KafkaConfig,
       if (!_inklessMetadataView.isDisklessTopic(tp.topic()))
         getOrCreatePartition(tp, delta, info.topicId).foreach { case (partition, isNew) =>
           try {
-            val partitionAssignedDirectoryId = directoryIds.find(_._1.topicPartition() == tp).map(_._2)
+            val  partitionAssignedDirectoryId = directoryIds.find(_._1.topicPartition() == tp).map(_._2)
             partition.makeLeader(info.partition, isNew, offsetCheckpoints, Some(info.topicId), partitionAssignedDirectoryId)
 
             changedPartitions.add(partition)
@@ -2782,7 +2781,7 @@ class ReplicaManager(val config: KafkaConfig,
             // - This also ensures that the local replica is created even if the leader
             //   is unavailable. This is required to ensure that we include the partition's
             //   high watermark in the checkpoint file (see KAFKA-1647).
-            val partitionAssignedDirectoryId = directoryIds.find(_._1.topicPartition() == tp).map(_._2)
+            val  partitionAssignedDirectoryId = directoryIds.find(_._1.topicPartition() == tp).map(_._2)
             val isNewLeaderEpoch = partition.makeFollower(info.partition, isNew, offsetCheckpoints, Some(info.topicId), partitionAssignedDirectoryId)
 
             if (isInControlledShutdown && (info.partition.leader == NO_LEADER ||
