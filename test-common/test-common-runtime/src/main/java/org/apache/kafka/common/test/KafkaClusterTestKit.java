@@ -47,6 +47,7 @@ import org.apache.kafka.raft.QuorumConfig;
 import org.apache.kafka.server.common.ApiMessageAndVersion;
 import org.apache.kafka.server.config.KRaftConfigs;
 import org.apache.kafka.server.config.ServerConfigs;
+import org.apache.kafka.server.log.remote.storage.RemoteLogManagerConfig;
 import org.apache.kafka.server.fault.FaultHandler;
 import org.apache.kafka.storage.internals.log.CleanerConfig;
 
@@ -180,6 +181,14 @@ public class KafkaClusterTestKit implements AutoCloseable {
             props.putIfAbsent(SocketServerConfigs.LISTENERS_CONFIG, listeners(node.id()));
             props.putIfAbsent(INTER_BROKER_LISTENER_NAME_CONFIG, brokerListenerName);
             props.putIfAbsent(KRaftConfigs.CONTROLLER_LISTENER_NAMES_CONFIG, controllerListenerName);
+
+            log.info("TestKit node {} config: remote.log.storage.system.enable={}, remote.log.metadata.manager.listener.name={}, diskless.storage.system.enable={}, listeners={}, listener.security.protocol.map={}",
+                    node.id(),
+                    props.get(RemoteLogManagerConfig.REMOTE_LOG_STORAGE_SYSTEM_ENABLE_PROP),
+                    props.get(RemoteLogManagerConfig.REMOTE_LOG_METADATA_MANAGER_LISTENER_NAME_PROP),
+                    props.get(ServerConfigs.DISKLESS_STORAGE_SYSTEM_ENABLE_CONFIG),
+                    props.get(SocketServerConfigs.LISTENERS_CONFIG),
+                    props.get(SocketServerConfigs.LISTENER_SECURITY_PROTOCOL_MAP_CONFIG));
 
             if (!standalone && initialVoterSet.isEmpty()) {
                 StringBuilder quorumVoterStringBuilder = new StringBuilder();

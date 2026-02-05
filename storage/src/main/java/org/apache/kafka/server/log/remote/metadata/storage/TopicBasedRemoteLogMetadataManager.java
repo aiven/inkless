@@ -323,7 +323,12 @@ public class TopicBasedRemoteLogMetadataManager implements BrokerReadyCallback, 
         boolean isTopicCreated = false;
         long startTimeMs = time.milliseconds();
         boolean initializationFailed = false;
-        try (Admin admin = Admin.create(rlmmConfig.commonProperties())) {
+        Map<String, Object> commonProps = rlmmConfig.commonProperties();
+        log.info("RLMM initializeResources: commonProps keys={}, bootstrap.servers={}, bootstrap.controllers={}",
+                commonProps.keySet(),
+                commonProps.get("bootstrap.servers"),
+                commonProps.get("bootstrap.controllers"));
+        try (Admin admin = Admin.create(commonProps)) {
             while (!(initialized.get() || closing.get() || initializationFailed)) {
                 if (time.milliseconds() - startTimeMs > retryMaxTimeoutMs) {
                     log.error("Timed out to initialize the resources within {} ms.", retryMaxTimeoutMs);

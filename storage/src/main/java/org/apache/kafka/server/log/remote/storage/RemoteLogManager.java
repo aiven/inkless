@@ -422,6 +422,14 @@ public class RemoteLogManager implements Closeable, AsyncOffsetReader {
         rlmmProps.put(LOG_DIR_CONFIG, logDir);
         rlmmProps.put("cluster.id", clusterId);
 
+        Object bootstrapServers = rlmmProps.get(REMOTE_LOG_METADATA_COMMON_CLIENT_PREFIX + "bootstrap.servers");
+        Object bootstrapControllers = rlmmProps.get(REMOTE_LOG_METADATA_COMMON_CLIENT_PREFIX + "bootstrap.controllers");
+        LOGGER.info("RLMM props: bootstrap.servers={}, bootstrap.controllers={}, listener.name={}, endpoint.present={}",
+                bootstrapServers,
+                bootstrapControllers,
+                rlmConfig.remoteLogMetadataManagerListenerName(),
+                endpoint.isPresent());
+
         rlmm.configure(rlmmProps);
         return Plugin.wrapInstance(rlmm, metrics, RemoteLogManagerConfig.REMOTE_LOG_METADATA_MANAGER_CLASS_NAME_PROP);
     }
