@@ -25,24 +25,15 @@ import java.util.concurrent.TimeUnit
 import org.apache.kafka.common.TopicIdPartition
 import org.apache.kafka.common.errors._
 import org.apache.kafka.common.protocol.Errors
-import org.apache.kafka.common.requests.FetchRequest.PartitionData
 import org.apache.kafka.common.requests.OffsetsForLeaderEpochResponse.{UNDEFINED_EPOCH, UNDEFINED_EPOCH_OFFSET}
 import org.apache.kafka.server.metrics.KafkaMetricsGroup
 import org.apache.kafka.server.purgatory.DelayedOperation
 import org.apache.kafka.server.storage.log.{FetchIsolation, FetchParams, FetchPartitionData}
-import org.apache.kafka.storage.internals.log.LogOffsetMetadata
+import org.apache.kafka.storage.internals.log.{FetchPartitionStatus, LogOffsetMetadata}
 
+import java.util
 import scala.collection._
 import scala.jdk.CollectionConverters._
-
-case class FetchPartitionStatus(startOffsetMetadata: LogOffsetMetadata, fetchInfo: PartitionData) {
-
-  override def toString: String = {
-    "[startOffsetMetadata: " + startOffsetMetadata +
-      ", fetchInfo: " + fetchInfo +
-      "]"
-  }
-}
 
 /**
  * A delayed fetch operation that can be created by the replica manager and watched
@@ -137,7 +128,7 @@ class DelayedFetch(
             }
           }
         } catch {
-          case _: NotLeaderOrFollowerException =>  // Case A or Case B
+          case _: NotLeaderOrFollowerException => // Case A or Case B
             debug(s"Broker is no longer the leader or follower of $topicIdPartition, satisfy $this immediately")
             return forceComplete()
           case _: UnknownTopicOrPartitionException => // Case C
@@ -293,7 +284,10 @@ class DelayedFetch(
 }
 
 object DelayedFetchMetrics {
-  private val metricsGroup = new KafkaMetricsGroup(DelayedFetchMetrics.getClass)
+  // Changing the package or class name may cause incompatibility with existing code and metrics configuration
+  private val metricsPackage = "kafka.server"
+  private val metricsClassName = "DelayedFetchMetrics"
+  private val metricsGroup = new KafkaMetricsGroup(metricsPackage, metricsClassName)
   private val FetcherTypeKey = "fetcherType"
   val followerExpiredRequestMeter: Meter = metricsGroup.newMeter("ExpiresPerSec", "requests", TimeUnit.SECONDS, Map(FetcherTypeKey -> "follower").asJava)
   val consumerExpiredRequestMeter: Meter = metricsGroup.newMeter("ExpiresPerSec", "requests", TimeUnit.SECONDS, Map(FetcherTypeKey -> "consumer").asJava)
