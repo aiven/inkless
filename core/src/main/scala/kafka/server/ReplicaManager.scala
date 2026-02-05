@@ -1863,10 +1863,10 @@ class ReplicaManager(val config: KafkaConfig,
     val maxWaitMs = if (disklessFetchInfos.nonEmpty) Math.max(config.disklessFetchMaxWaitMs.toLong, params.maxWaitMs) else params.maxWaitMs
     val minBytes = if (disklessFetchInfos.nonEmpty) Math.max(config.disklessFetchMinBytes, params.minBytes) else params.minBytes
 
-    def delayedResponse(classicFetchPartitionStatus: Seq[(TopicIdPartition, FetchPartitionStatus)]): Boolean = {
-      val disklessFetchPartitionStatus = disklessFetchInfos.map {
-        case (k, partitionData) =>
-          k -> new FetchPartitionStatus(new LogOffsetMetadata(partitionData.fetchOffset), partitionData)
+    def delayedResponse(classicFetchPartitionStatus: util.LinkedHashMap[TopicIdPartition, FetchPartitionStatus]): Boolean = {
+      val disklessFetchPartitionStatus = new util.LinkedHashMap[TopicIdPartition, FetchPartitionStatus]()
+      disklessFetchInfos.foreach { case (k, partitionData) =>
+        disklessFetchPartitionStatus.put(k, new FetchPartitionStatus(new LogOffsetMetadata(partitionData.fetchOffset), partitionData))
       }
       // If there are diskless fetches, enforce a lower bound on maxWaitMs to ensure that we wait at least as long as the
       // configured remote fetch max wait time. This is to ensure that we give enough time for the diskless fetches to complete,
@@ -1883,8 +1883,8 @@ class ReplicaManager(val config: KafkaConfig,
       )
 
       // create a list of (topic, partition) pairs to use as keys for this delayed fetch operation
-      val classicDelayedFetchKeys = classicFetchPartitionStatus.map { case (tp, _) => new TopicPartitionOperationKey(tp) }.toList
-      val disklessDelayedFetchKeys = disklessFetchPartitionStatus.map { case (tp, _) => new TopicPartitionOperationKey(tp) }.toList
+      val classicDelayedFetchKeys = classicFetchPartitionStatus.asScala.map { case (tp, _) => new TopicPartitionOperationKey(tp) }.toList
+      val disklessDelayedFetchKeys = disklessFetchPartitionStatus.asScala.map { case (tp, _) => new TopicPartitionOperationKey(tp) }.toList
 
       // try to complete the request immediately, otherwise put it into the purgatory;
       // this is because while the delayed fetch operation is being created, new requests
@@ -1893,7 +1893,7 @@ class ReplicaManager(val config: KafkaConfig,
     }
 
     if (classicFetchInfos.isEmpty) {
-      delayedResponse(Seq.empty)
+      delayedResponse(new util.LinkedHashMap[TopicIdPartition, FetchPartitionStatus]())
       return
     }
 
@@ -1993,7 +1993,7 @@ class ReplicaManager(val config: KafkaConfig,
         if (disklessFetchInfos.isEmpty && (bytesReadable >= params.minBytes || params.maxWaitMs <= 0)) {
           responseCallback(fetchPartitionData)
         } else {
-          delayedResponse(fetchPartitionStatus.asScala.toSeq)
+          delayedResponse(fetchPartitionStatus)
         }
       }
     }

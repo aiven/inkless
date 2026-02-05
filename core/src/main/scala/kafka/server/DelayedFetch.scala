@@ -31,6 +31,7 @@ import org.apache.kafka.server.purgatory.DelayedOperation
 import org.apache.kafka.server.storage.log.{FetchIsolation, FetchParams, FetchPartitionData}
 import org.apache.kafka.storage.internals.log.{FetchPartitionStatus, LogOffsetMetadata}
 
+import java.util
 import scala.collection._
 import scala.jdk.CollectionConverters._
 
@@ -42,8 +43,8 @@ import scala.jdk.CollectionConverters._
  */
 class DelayedFetch(
   params: FetchParams,
-  classicFetchPartitionStatus: Seq[(TopicIdPartition, FetchPartitionStatus)],
-  disklessFetchPartitionStatus: Seq[(TopicIdPartition, FetchPartitionStatus)] = Seq.empty,
+  classicFetchPartitionStatus: util.LinkedHashMap[TopicIdPartition, FetchPartitionStatus],
+  disklessFetchPartitionStatus: util.LinkedHashMap[TopicIdPartition, FetchPartitionStatus] = new util.LinkedHashMap[TopicIdPartition, FetchPartitionStatus](),
   replicaManager: ReplicaManager,
   quota: ReplicaQuota,
   maxWaitMs: Option[Long] = None,
@@ -73,8 +74,7 @@ class DelayedFetch(
    */
   override def tryComplete(): Boolean = {
     var accumulatedSize = 0L
-    classicFetchPartitionStatus.foreach {
-      case (topicIdPartition, fetchStatus) =>
+    classicFetchPartitionStatus.forEach { (topicIdPartition, fetchStatus) =>
         val fetchOffset = fetchStatus.startOffsetMetadata
         val fetchLeaderEpoch = fetchStatus.fetchInfo.currentLeaderEpoch
         try {
@@ -143,7 +143,7 @@ class DelayedFetch(
         }
     }
 
-    tryCompleteDiskless(disklessFetchPartitionStatus) match {
+    tryCompleteDiskless(disklessFetchPartitionStatus.asScala.toSeq) match {
       case Some(disklessAccumulatedSize) => accumulatedSize += disklessAccumulatedSize
       case None => forceComplete()
     }
@@ -226,9 +226,9 @@ class DelayedFetch(
    */
   override def onComplete(): Unit = {
     // Complete the classic fetches first
-    val classicFetchInfos = classicFetchPartitionStatus.map { case (tp, status) =>
+    val classicFetchInfos = classicFetchPartitionStatus.asScala.map { case (tp, status) =>
       tp -> status.fetchInfo
-    }
+    }.toSeq
 
     val classicRequestsSize = classicFetchPartitionStatus.size.toFloat
     val disklessRequestsSize = disklessFetchPartitionStatus.size.toFloat
@@ -265,9 +265,9 @@ class DelayedFetch(
       // adjust the max bytes for diskless fetches based on the percentage of diskless partitions
       val disklessPercentage = disklessRequestsSize / totalRequestsSize
       val disklessParams = replicaManager.fetchParamsWithNewMaxBytes(params, disklessPercentage)
-      val disklessFetchInfos = disklessFetchPartitionStatus.map { case (tp, status) =>
+      val disklessFetchInfos = disklessFetchPartitionStatus.asScala.map { case (tp, status) =>
         tp -> status.fetchInfo
-      }
+      }.toSeq
       val disklessFetchResponseFuture = replicaManager.fetchDisklessMessages(disklessParams, disklessFetchInfos)
 
       // Combine the classic fetch results with the diskless fetch results

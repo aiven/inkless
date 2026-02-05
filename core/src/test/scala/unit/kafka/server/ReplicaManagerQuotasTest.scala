@@ -17,6 +17,7 @@
 package kafka.server
 
 import java.io.File
+import java.util
 import java.util.{Collections, Optional, Properties}
 import kafka.cluster.{Partition, PartitionTest}
 import kafka.log.LogManager
@@ -184,9 +185,12 @@ class ReplicaManagerQuotasTest {
         Optional.empty()
       )
 
+      val classicFetchPartitionStatus = new util.LinkedHashMap[TopicIdPartition, FetchPartitionStatus]()
+      classicFetchPartitionStatus.put(tp, fetchPartitionStatus)
+
       new DelayedFetch(
         params = fetchParams,
-        classicFetchPartitionStatus = Seq(tp -> fetchPartitionStatus),
+        classicFetchPartitionStatus = classicFetchPartitionStatus,
         replicaManager = replicaManager,
         quota = null,
         responseCallback = null
@@ -235,9 +239,12 @@ class ReplicaManagerQuotasTest {
         Optional.empty()
       )
 
+      val classicFetchPartitionStatus = new util.LinkedHashMap[TopicIdPartition, FetchPartitionStatus]()
+      classicFetchPartitionStatus.put(tidp, fetchPartitionStatus)
+
       new DelayedFetch(
         params = fetchParams,
-        classicFetchPartitionStatus = Seq(tidp -> fetchPartitionStatus),
+        classicFetchPartitionStatus = classicFetchPartitionStatus,
         replicaManager = replicaManager,
         quota = null,
         responseCallback = null
