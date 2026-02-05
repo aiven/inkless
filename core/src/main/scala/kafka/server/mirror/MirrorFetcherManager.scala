@@ -193,7 +193,7 @@ class MirrorFetcherManager(brokerConfig: KafkaConfig,
   }
 
   /**
-   * Computes and updates the mirroring lag for a partition.
+   * Update partition lag info.
    *
    * @param mirrorName mirror name
    * @param topicPartition partition
@@ -209,7 +209,7 @@ class MirrorFetcherManager(brokerConfig: KafkaConfig,
   }
 
   /**
-   * Retrieves lag information by mirror name.
+   * Get partition lag info.
    *
    * @param mirrorName mirror name
    * @return lag info

@@ -768,13 +768,13 @@ public class MirrorCoordinator {
     }
 
     /**
-     * Get mirror partitions this broker is fetching from.
+     * Get mirror partition states this broker is fetching from.
      *
      * @param mirrorName mirror name
      * @return partition state map
      */
-    public Map<TopicPartition, MirrorPartitionState> getMirrorPartitions(String mirrorName) {
-        return mirrorMetadataManager.getMirrorPartitions(mirrorName);
+    public Map<TopicPartition, MirrorPartitionState> getMirrorStates(String mirrorName) {
+        return mirrorMetadataManager.getMirrorStates(mirrorName);
     }
 
     /**
