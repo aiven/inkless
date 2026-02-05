@@ -154,7 +154,7 @@ jobs:
             -x generateJooqClasses
             -PtestLoggingEvents=started,passed,skipped,failed 
             -PmaxParallelForks=1
-            -Dorg.gradle.jvmargs='-Xmx3g -XX:MaxMetaspaceSize=512m'
+            -Dorg.gradle.jvmargs="-Xmx3g -XX:MaxMetaspaceSize=512m"
             -PshowStandardStreams=true
             -PmaxTestRetries=1 -PmaxTestRetryFailures=3 
             -PmaxQuarantineTestRetries=3 -PmaxQuarantineTestRetryFailures=0 
