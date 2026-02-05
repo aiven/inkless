@@ -1866,7 +1866,7 @@ class ReplicaManager(val config: KafkaConfig,
     def delayedResponse(classicFetchPartitionStatus: Seq[(TopicIdPartition, FetchPartitionStatus)]): Boolean = {
       val disklessFetchPartitionStatus = disklessFetchInfos.map {
         case (k, partitionData) =>
-          k -> FetchPartitionStatus(new LogOffsetMetadata(partitionData.fetchOffset), partitionData)
+          k -> new FetchPartitionStatus(new LogOffsetMetadata(partitionData.fetchOffset), partitionData)
       }
       // If there are diskless fetches, enforce a lower bound on maxWaitMs to ensure that we wait at least as long as the
       // configured remote fetch max wait time. This is to ensure that we give enough time for the diskless fetches to complete,
@@ -1939,65 +1939,61 @@ class ReplicaManager(val config: KafkaConfig,
     //                        4) some error happens while reading data
     //                        5) we found a diverging epoch
     //                        6) has a preferred read replica
-    if (!remoteFetchInfo.isPresent && disklessFetchInfos.isEmpty && (params.maxWaitMs <= 0 || bytesReadable >= params.minBytes || errorReadingData ||
+    if (remoteFetchInfos.isEmpty && disklessFetchInfos.isEmpty && (params.maxWaitMs <= 0 || bytesReadable >= params.minBytes || errorReadingData ||
       hasDivergingEpoch || hasPreferredReadReplica)) {
       responseCallback(fetchPartitionData)
     } else {
       // construct the fetch results from the read results
-      val fetchPartitionStatus = new mutable.ArrayBuffer[(TopicIdPartition, FetchPartitionStatus)]
+      val fetchPartitionStatus = new util.LinkedHashMap[TopicIdPartition, FetchPartitionStatus]
       classicFetchInfos.foreach { case (topicIdPartition, partitionData) =>
-        logReadResultMap.get(topicIdPartition).foreach(logReadResult => {
+        val logReadResult = logReadResultMap.get(topicIdPartition)
+        if (logReadResult != null) {
           val logOffsetMetadata = logReadResult.info.fetchOffsetMetadata
-          fetchPartitionStatus += topicIdPartition -> new FetchPartitionStatus(logOffsetMetadata, partitionData)
-        })
+          fetchPartitionStatus.put(topicIdPartition, new FetchPartitionStatus(logOffsetMetadata, partitionData))
+        }
       }
 
-      if (remoteFetchInfo.isPresent) {
+      if (!remoteFetchInfos.isEmpty) {
         // In case of remote fetches, synchronously wait for diskless records and then perform the remote fetch.
         // This is currently a workaround to avoid modifying the DelayedRemoteFetch in order to correctly process
         // diskless fetches.
-        val disklessFetchResults = try {
-          val disklessParams = fetchParamsWithNewMaxBytes(params, disklessFetchInfos.size.toFloat / fetchInfos.size.toFloat)
-          val disklessResponsesFuture = fetchDisklessMessages(disklessParams, disklessFetchInfos)
+        if (disklessFetchInfos.nonEmpty) {
+          val disklessFetchResults = try {
+            val disklessParams = fetchParamsWithNewMaxBytes(params, disklessFetchInfos.size.toFloat / fetchInfos.size.toFloat)
+            val disklessResponsesFuture = fetchDisklessMessages(disklessParams, disklessFetchInfos)
 
-          val response = disklessResponsesFuture.get(maxWaitMs, TimeUnit.MILLISECONDS)
-          response.map { case (tp, data) =>
-            val exception: Optional[Throwable] = data.error match {
-              case Errors.NONE => Optional.empty()
-              case ex => Optional.of(ex.exception())
-            }
-            tp -> new LogReadResult(
-              new FetchDataInfo(new LogOffsetMetadata(0L), data.records), // offset is ignored
-              data.divergingEpoch, data.highWatermark, data.logStartOffset, data.highWatermark, data.logStartOffset,
-              0L, // fetchTimeMs is ignored
-              data.lastStableOffset, data.preferredReadReplica,
-              exception
-            )
-          }
-        } catch {
-          case e: Throwable =>
-            disklessFetchInfos.map { case (tp, _) =>
+            val response = disklessResponsesFuture.get(maxWaitMs, TimeUnit.MILLISECONDS)
+            response.map { case (tp, data) =>
               tp -> new LogReadResult(
-                FetchDataInfo.empty(-1L),
-                Optional.empty(), -1L, -1L, -1L, -1L, 0L, OptionalLong.empty(), OptionalInt.empty(),
-                Optional.of(e)
+                new FetchDataInfo(new LogOffsetMetadata(0L), data.records), // offset is ignored
+                data.divergingEpoch, data.highWatermark, data.logStartOffset, data.highWatermark, data.logStartOffset,
+                0L, // fetchTimeMs is ignored
+                data.lastStableOffset, data.preferredReadReplica,
+                data.error
               )
             }
+          } catch {
+            case e: Throwable =>
+              val errorCode = Errors.forException(e)
+              disklessFetchInfos.map { case (tp, _) =>
+                tp -> new LogReadResult(
+                  FetchDataInfo.empty(-1L),
+                  Optional.empty(), -1L, -1L, -1L, -1L, 0L, OptionalLong.empty(), OptionalInt.empty(),
+                  errorCode
+                )
+              }
+          }
+          // Add diskless results to the log read results map so they are included in the response
+          disklessFetchResults.foreach { case (tp, result) =>
+            logReadResultMap.put(tp, result)
+          }
         }
-        val readResults = logReadResults ++ disklessFetchResults
-        val maybeLogReadResultWithError = processRemoteFetch(remoteFetchInfo.get(), classicParams, responseCallback, readResults, fetchPartitionStatus)
-        if (maybeLogReadResultWithError.isDefined) {
-          // If there is an error in scheduling the remote fetch task, return what we currently have
-          // (the data read from local log segment for the other topic-partitions) and an error for the topic-partition
-          // that we couldn't read from remote storage
-          val partitionToFetchPartitionData = buildPartitionToFetchPartitionData(readResults, remoteFetchInfo.get().topicPartition, maybeLogReadResultWithError.get)
-          responseCallback(partitionToFetchPartitionData)
-        }
+        processRemoteFetches(remoteFetchInfos, classicParams, responseCallback, logReadResultMap, fetchPartitionStatus)
       } else {
         if (disklessFetchInfos.isEmpty && (bytesReadable >= params.minBytes || params.maxWaitMs <= 0)) {
           responseCallback(fetchPartitionData)
         } else {
-          delayedResponse(fetchPartitionStatus)
+          delayedResponse(fetchPartitionStatus.asScala.toSeq)
         }
       }
     }

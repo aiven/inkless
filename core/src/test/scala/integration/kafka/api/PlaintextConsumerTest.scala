@@ -12,19 +12,27 @@
   */
 package kafka.api
 
+import java.time.Duration
 import java.util
 import java.util.{Locale, Optional, Properties}
+import java.util.concurrent.{CompletableFuture, ExecutionException, TimeUnit}
 import kafka.server.{KafkaBroker, GroupProtocolAndMaybeTopicTypeProvider}
+import org.apache.kafka.server.quota.QuotaType
 import kafka.utils.{TestInfoUtils, TestUtils}
+import org.apache.kafka.clients.admin.{NewPartitions, NewTopic}
 import org.apache.kafka.clients.consumer._
-import org.apache.kafka.common.errors.InterruptException
+import org.apache.kafka.clients.producer.{ProducerConfig, ProducerRecord}
+import org.apache.kafka.common.{MetricName, TopicPartition}
+import org.apache.kafka.common.config.TopicConfig
+import org.apache.kafka.common.errors.{InterruptException, InvalidGroupIdException, InvalidTopicException, TimeoutException, WakeupException}
+import org.apache.kafka.common.record.{CompressionType, TimestampType}
+import org.apache.kafka.common.serialization.{ByteArrayDeserializer, ByteArraySerializer, Deserializer, Serializer, StringDeserializer, StringSerializer}
 import org.apache.kafka.common.test.api.Flaky
+import org.apache.kafka.test.{MockConsumerInterceptor, MockProducerInterceptor}
 import org.junit.jupiter.api.Assertions._
 import org.junit.jupiter.api.{Tag, Timeout}
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.ArgumentsSource
-
-import java.util.concurrent.ExecutionException
 
 @Tag("inkless")
 @Timeout(600)
@@ -83,9 +91,9 @@ class PlaintextConsumerTest extends BaseConsumerTest {
   @ParameterizedTest(name = TestInfoUtils.TestWithParameterizedGroupProtocolNamesAndTopicType)
   @ArgumentsSource(classOf[GroupProtocolAndMaybeTopicTypeProvider])
   def testHeadersSerializerDeserializer(groupProtocol: String, topicType: String): Unit = {
-    val extendedSerializer = new SerializerImpl
+    val extendedSerializer = new ByteArraySerializer
 
-    val extendedDeserializer = new DeserializerImpl
+    val extendedDeserializer = new ByteArrayDeserializer
 
     testHeadersSerializeDeserialize(extendedSerializer, extendedDeserializer)
   }

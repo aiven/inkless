@@ -31,7 +31,6 @@ import org.apache.kafka.server.purgatory.DelayedOperation
 import org.apache.kafka.server.storage.log.{FetchIsolation, FetchParams, FetchPartitionData}
 import org.apache.kafka.storage.internals.log.{FetchPartitionStatus, LogOffsetMetadata}
 
-import java.util
 import scala.collection._
 import scala.jdk.CollectionConverters._
 

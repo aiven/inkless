@@ -38,8 +38,6 @@ import org.mockito.Mockito.{mock, never, verify, when}
 
 import java.util.concurrent.CompletableFuture
 
-import java.util
-
 class DelayedFetchTest {
   private val maxBytes = 1024
   private val replicaManager: ReplicaManager = mock(classOf[ReplicaManager])
@@ -295,7 +293,7 @@ class DelayedFetchTest {
       val currentLeaderEpoch = Optional.of[Integer](10)
       val minBytes = 100
 
-      val fetchStatus = FetchPartitionStatus(
+      val fetchStatus = new FetchPartitionStatus(
         startOffsetMetadata = new LogOffsetMetadata(fetchOffset),
         fetchInfo = new FetchRequest.PartitionData(topicIdPartition.topicId(), fetchOffset, logStartOffset, maxBytes, currentLeaderEpoch)
       )
@@ -383,7 +381,7 @@ class DelayedFetchTest {
       val minBytes = 100
       val estimatedBatchSize = 150L // This would exceed minBytes if counted, but won't be since fetchOffset == endOffset
 
-      val fetchStatus = FetchPartitionStatus(
+      val fetchStatus = new FetchPartitionStatus(
         startOffsetMetadata = new LogOffsetMetadata(fetchOffset),
         fetchInfo = new FetchRequest.PartitionData(topicIdPartition.topicId(), fetchOffset, logStartOffset, maxBytes, currentLeaderEpoch)
       )
@@ -468,7 +466,7 @@ class DelayedFetchTest {
       val minBytes = 200 // Set threshold higher than available bytes
       val estimatedBatchSize = 50L // This will NOT exceed minBytes
 
-      val fetchStatus = FetchPartitionStatus(
+      val fetchStatus = new FetchPartitionStatus(
         startOffsetMetadata = new LogOffsetMetadata(fetchOffset),
         fetchInfo = new FetchRequest.PartitionData(topicIdPartition.topicId(), fetchOffset, logStartOffset, maxBytes, currentLeaderEpoch)
       )
@@ -550,7 +548,7 @@ class DelayedFetchTest {
       val minBytes = 100
       val estimatedBatchSize = 150L // This will exceed minBytes
 
-      val fetchStatus = FetchPartitionStatus(
+      val fetchStatus = new FetchPartitionStatus(
         startOffsetMetadata = new LogOffsetMetadata(fetchOffset),
         fetchInfo = new FetchRequest.PartitionData(topicIdPartition.topicId(), fetchOffset, logStartOffset, maxBytes, currentLeaderEpoch)
       )
@@ -635,7 +633,7 @@ class DelayedFetchTest {
       val currentLeaderEpoch = Optional.of[Integer](10)
       val minBytes = 100
 
-      val fetchStatus = FetchPartitionStatus(
+      val fetchStatus = new FetchPartitionStatus(
         startOffsetMetadata = new LogOffsetMetadata(fetchOffset),
         fetchInfo = new FetchRequest.PartitionData(topicIdPartition.topicId(), fetchOffset, logStartOffset, maxBytes, currentLeaderEpoch)
       )

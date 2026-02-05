@@ -1967,7 +1967,7 @@ class KafkaApis(val requestChannel: RequestChannel,
             txnCoordinator.handleAddPartitionsToTransaction(transactionalId,
               transaction.producerId,
               transaction.producerEpoch,
-              authorizedPartitions,
+              authorizedPartitions.asJava,
               sendResponseCallback,
               TransactionVersion.transactionVersionForAddPartitionsToTxn(addPartitionsToTxnRequest),
               requestLocal)
@@ -1975,7 +1975,7 @@ class KafkaApis(val requestChannel: RequestChannel,
             txnCoordinator.handleVerifyPartitionsInTransaction(transactionalId,
               transaction.producerId,
               transaction.producerEpoch,
-              authorizedPartitions,
+              authorizedPartitions.asJava,
               addResultAndMaybeSendResponse)
           }
         }

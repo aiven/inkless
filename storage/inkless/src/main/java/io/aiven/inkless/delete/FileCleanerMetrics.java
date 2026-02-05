@@ -30,7 +30,8 @@ public class FileCleanerMetrics {
     static final String FILE_CLEANER_FILES_RATE = "FileCleanerFilesRate";
     static final String FILE_CLEANER_ERROR_RATE = "FileCleanerErrorRate";
 
-    private final KafkaMetricsGroup metricsGroup = new KafkaMetricsGroup(FileCleaner.class);
+    private final KafkaMetricsGroup metricsGroup = new KafkaMetricsGroup(
+        FileCleaner.class.getPackageName(), FileCleaner.class.getSimpleName());
     private final Histogram fileCleanerTotalTime;
     private final LongAdder fileCleanerRate = new LongAdder();
     private final LongAdder fileCleanerFiles = new LongAdder();

@@ -69,7 +69,7 @@ import org.apache.kafka.server.log.remote.TopicPartitionLog
 import org.apache.kafka.server.log.remote.storage._
 import org.apache.kafka.server.metrics.{KafkaMetricsGroup, KafkaYammerMetrics}
 import org.apache.kafka.server.network.BrokerEndPoint
-import org.apache.kafka.server.{LogReadResult, PartitionFetchState}
+import org.apache.kafka.server.PartitionFetchState
 import org.apache.kafka.server.purgatory.{DelayedDeleteRecords, DelayedOperationPurgatory, DelayedRemoteFetch, DelayedRemoteListOffsets, TopicPartitionOperationKey}
 import org.apache.kafka.server.share.SharePartitionKey
 import org.apache.kafka.server.share.fetch.{DelayedShareFetchGroupKey, DelayedShareFetchKey, ShareFetch}
@@ -6521,7 +6521,7 @@ class ReplicaManagerTest {
       doReturn(Seq(classicTopicPartition ->
         new LogReadResult(
           new FetchDataInfo(new LogOffsetMetadata(1L, 0L, 0), RECORDS),
-          Optional.empty(), 10L, 0L, 10L, 0L, 0L, OptionalLong.empty()
+          Optional.empty(), 10L, 0L, 10L, 0L, 0L, OptionalLong.empty(), OptionalInt.empty(), Errors.NONE
         ))
       ).when(replicaManager).readFromLog(any(), any(), any(), any())
       val partition = mock(classOf[Partition])
@@ -6601,7 +6601,7 @@ class ReplicaManagerTest {
       doReturn(Seq(classicTopicPartition ->
         new LogReadResult(
           new FetchDataInfo(new LogOffsetMetadata(1L, 0L, 0), RECORDS),
-          Optional.empty(), 10L, 0L, 10L, 0L, 0L, OptionalLong.empty()
+          Optional.empty(), 10L, 0L, 10L, 0L, 0L, OptionalLong.empty(), OptionalInt.empty(), Errors.NONE
         ))
       ).when(replicaManager).readFromLog(any(), any(), any(), any())
       val partition = mock(classOf[Partition])
@@ -6738,7 +6738,7 @@ class ReplicaManagerTest {
       doReturn(Seq(classicTopicPartition ->
         new LogReadResult(
           new FetchDataInfo(new LogOffsetMetadata(1L, 0L, 0), RECORDS),
-          Optional.empty(), 10L, 0L, 10L, 0L, 0L, OptionalLong.empty()
+          Optional.empty(), 10L, 0L, 10L, 0L, 0L, OptionalLong.empty(), OptionalInt.empty(), Errors.NONE
         ))
       ).when(replicaManager).readFromLog(any(), any(), any(), any())
       val partition = mock(classOf[Partition])
@@ -6813,7 +6813,7 @@ class ReplicaManagerTest {
       doReturn(Seq(classicTopicPartition ->
         new LogReadResult(
           new FetchDataInfo(new LogOffsetMetadata(1L, 0L, 0), RECORDS),
-          Optional.empty(), 10L, 0L, 10L, 0L, 0L, OptionalLong.empty()
+          Optional.empty(), 10L, 0L, 10L, 0L, 0L, OptionalLong.empty(), OptionalInt.empty(), Errors.NONE
         ))
       ).when(replicaManager).readFromLog(any(), any(), any(), any())
       val partition = mock(classOf[Partition])
@@ -6908,7 +6908,6 @@ class ReplicaManagerTest {
         metadataCache = new KRaftMetadataCache(config.brokerId, () => KRaftVersion.KRAFT_VERSION_0),
         logDirFailureChannel = logDirFailureChannel,
         alterPartitionManager = alterPartitionManager,
-        threadNamePrefix = Option(this.getClass.getName),
         inklessSharedState = Some(sharedState),
         inklessMetadataView = Some(inklessMetadata),
       )

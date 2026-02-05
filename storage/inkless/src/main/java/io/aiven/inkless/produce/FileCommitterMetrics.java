@@ -57,7 +57,8 @@ class FileCommitterMetrics implements Closeable {
 
     private final Time time;
 
-    private final KafkaMetricsGroup metricsGroup = new KafkaMetricsGroup(FileCommitter.class);
+    private final KafkaMetricsGroup metricsGroup = new KafkaMetricsGroup(
+        FileCommitter.class.getPackageName(), FileCommitter.class.getSimpleName());
     private final Histogram fileTotalLifeTimeHistogram;
     private final Histogram fileUploadAndCommitTimeHistogram;
     private final Histogram fileUploadTimeHistogram;

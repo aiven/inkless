@@ -31,7 +31,8 @@ public class ClientAzAwarenessMetrics implements Closeable {
     private static final String CLIENT_AZ_MISS_RATE = "client-az-miss-rate";
     private static final String CLIENT_AZ_UNAWARE_RATE = "client-az-unaware-rate";
 
-    private final KafkaMetricsGroup metricsGroup = new KafkaMetricsGroup(ClientAzAwarenessMetrics.class);
+    private final KafkaMetricsGroup metricsGroup = new KafkaMetricsGroup(
+        ClientAzAwarenessMetrics.class.getPackageName(), ClientAzAwarenessMetrics.class.getSimpleName());
     final Meter clientAzHitRate;
     final Meter clientAzMissRate;
     final Map<String, Meter> clientAzHitRatesPerAz;
