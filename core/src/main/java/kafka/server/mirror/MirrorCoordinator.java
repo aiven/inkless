@@ -183,8 +183,10 @@ public class MirrorCoordinator {
                 break;
             case STOPPING:
                 LOG.info("!!! STOPPING for topics {}.", topicPartitions);
-                // 1. truncating the log into LSO
-                // 2. register the last mirrored offsets for each partition in internal topic
+                // 1. remove mirror fetcher for partitions
+                // 2. truncating the log into LSO
+                // 3. register the last mirrored offsets for each partition in internal topic
+                replicaManager.mirrorFetcherManager().removeFetcherForPartitions(CollectionConverters.asScala(topicPartitions));
                 truncateLogToLSO(topicPartitions, tp -> updateLastMirroredOffsets(mirrorName, Set.of(tp)));
                 break;
             case STOPPED:
