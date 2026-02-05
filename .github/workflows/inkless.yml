@@ -153,7 +153,9 @@ jobs:
             --build-cache --no-scan
             -x generateJooqClasses
             -PtestLoggingEvents=started,passed,skipped,failed 
-            -PmaxParallelForks=1 
+            -PmaxParallelForks=1
+            -Dorg.gradle.jvmargs='-Xmx3g -XX:MaxMetaspaceSize=512m'
+            -PshowStandardStreams=true
             -PmaxTestRetries=1 -PmaxTestRetryFailures=3 
             -PmaxQuarantineTestRetries=3 -PmaxQuarantineTestRetryFailures=0 
             -PcommitId=xxxxxxxxxxxxxxxx
@@ -177,6 +179,13 @@ jobs:
             **/build/reports/tests/*
           compression-level: 9
           if-no-files-found: ignore
+      - name: Debug Test Failure
+        if: failure()
+        run: |
+            echo "Dumping last 200 lines of test logs..."
+            find . -name "*.log" -exec tail -n 50 {} +
+            echo "Checking for crash dumps..."
+            ls -lh hs_err_pid*.log || echo "No JVM crash logs found"
       - name: Archive JUnit XML
         uses: actions/upload-artifact@v4
         with:
