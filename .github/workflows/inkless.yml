@@ -153,7 +153,7 @@ jobs:
             --build-cache --no-scan
             -x generateJooqClasses
             -PtestLoggingEvents=started,passed,skipped,failed 
-            -PmaxParallelForks=2 
+            -PmaxParallelForks=1 
             -PmaxTestRetries=1 -PmaxTestRetryFailures=3 
             -PmaxQuarantineTestRetries=3 -PmaxQuarantineTestRetryFailures=0 
             -PcommitId=xxxxxxxxxxxxxxxx
