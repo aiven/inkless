@@ -149,17 +149,16 @@ jobs:
         id: junit-test
         env:
           TIMEOUT_MINUTES: 30
+          GRADLE_OPTS: -Dorg.gradle.jvmargs="-Xmx3g -XX:MaxMetaspaceSize=512m"
           GRADLE_ARGS: >-
             --build-cache --no-scan
             -x generateJooqClasses
             -PtestLoggingEvents=started,passed,skipped,failed 
             -PmaxParallelForks=1
-            -Dorg.gradle.jvmargs="-Xmx3g -XX:MaxMetaspaceSize=512m"
             -PshowStandardStreams=true
             -PmaxTestRetries=1 -PmaxTestRetryFailures=3 
             -PmaxQuarantineTestRetries=3 -PmaxQuarantineTestRetryFailures=0 
             -PcommitId=xxxxxxxxxxxxxxxx
-        # Point to inkless tests
         run: |
           set +e
           ./.github/scripts/thread-dump.sh &
