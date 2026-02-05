@@ -310,6 +310,7 @@ if (repo != null) {
         'dump-schema-compose.yml',
         'inkless-benchmarks/**',
         'tests/kafkatest/tests/inkless/**',
+        '.sync/**',
         // end of inkless ignored files
         'licenses/*',
         '**/generated/**',
