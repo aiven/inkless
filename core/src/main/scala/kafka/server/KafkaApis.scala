@@ -472,7 +472,7 @@ class KafkaApis(val requestChannel: RequestChannel,
                 .setSourceOffset(lagInfoMap.get(topicPartition).map(_.sourceOffset).getOrElse(-1L))
                 .setDestinationOffset(lagInfoMap.get(topicPartition).map(_.destinationOffset).getOrElse(-1L))
                 .setLag(lagInfoMap.get(topicPartition).map(_.lag).getOrElse(-1L))
-                .setState(partitionStates.getOrElse(topicPartition, MirrorPartitionState.MIRRORING).name())
+                .setState(partitionStates.getOrElse(topicPartition, MirrorPartitionState.UNKNOWN).name())
 
               topicPartitions.partitions().add(partitionDetail)
             }
