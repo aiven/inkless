@@ -92,7 +92,7 @@ class MirrorBlockingSender(sourceBroker: BrokerEndPoint,
       config.getLong(MirrorConfig.SOCKET_CONNECTION_SETUP_TIMEOUT_MS_CONFIG).toInt,
       config.getLong(MirrorConfig.SOCKET_CONNECTION_SETUP_TIMEOUT_MAX_MS_CONFIG).toInt,
       time,
-      false,
+      true,
       new ApiVersions,
       logContext,
       MetadataRecoveryStrategy.NONE

@@ -1250,11 +1250,16 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     private void syncConsumerGroupOffsets(List<MirrorBlockingSender> senders) {
         // 1. list group
         ListGroupsRequest.Builder builder = new ListGroupsRequest.Builder(new ListGroupsRequestData()
-                .setTypesFilter(List.of(GroupType.CLASSIC.name(), GroupType.CONSUMER.name()))
+                // TODO: if the source cluster is in old version, it won't support types filter
+//                .setTypesFilter(List.of(GroupType.CLASSIC.name(), GroupType.CONSUMER.name()))
                 .setStatesFilter(singletonList(GroupState.STABLE.name())));
         var listGroupResponse = getRandomSender(senders).sendRequest(builder);
         if (listGroupResponse.responseBody() instanceof ListGroupsResponse listGroupsRes) {
             LOG.info("!!! Periodic list group: {}", listGroupsRes);
+
+            if (listGroupsRes.data().groups().isEmpty()) {
+                return;
+            }
 
             // 2. get committed offsets for each group
             OffsetFetchRequest.Builder offsetFetchBuilder = OffsetFetchRequest.Builder.forTopicNames(
