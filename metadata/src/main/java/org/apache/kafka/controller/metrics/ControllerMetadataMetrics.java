@@ -70,6 +70,12 @@ public final class ControllerMetadataMetrics implements AutoCloseable {
         "ControllerStats", "ElectionFromEligibleLeaderReplicasPerSec");
     private static final MetricName IGNORED_STATIC_VOTERS = getMetricName(
         "KafkaController", "IgnoredStaticVoters");
+    private static final MetricName DISKLESS_TOPIC_COUNT = getMetricName(
+        "KafkaController", "DisklessTopicCount");
+    private static final MetricName DISKLESS_UNMANAGED_REPLICAS_TOPIC_COUNT = getMetricName(
+        "KafkaController", "DisklessUnmanagedReplicasTopicCount");
+    private static final MetricName DISKLESS_MANAGED_REPLICAS_TOPIC_COUNT = getMetricName(
+        "KafkaController", "DisklessManagedReplicasTopicCount");
 
     private final Optional<MetricsRegistry> registry;
     private final AtomicInteger fencedBrokerCount = new AtomicInteger(0);
@@ -84,6 +90,9 @@ public final class ControllerMetadataMetrics implements AutoCloseable {
     private Optional<Meter> uncleanLeaderElectionMeter = Optional.empty();
     private Optional<Meter> electionFromEligibleLeaderReplicasMeter = Optional.empty();
     private final AtomicBoolean ignoredStaticVoters = new AtomicBoolean(false);
+    private final AtomicInteger disklessTopicCount = new AtomicInteger(0);
+    private final AtomicInteger disklessUnmanagedReplicasTopicCount = new AtomicInteger(0);
+    private final AtomicInteger disklessManagedReplicasTopicCount = new AtomicInteger(0);
 
     /**
      * Create a new ControllerMetadataMetrics object.
@@ -149,6 +158,24 @@ public final class ControllerMetadataMetrics implements AutoCloseable {
             @Override
             public Integer value() {
                 return ignoredStaticVoters() ? 1 : 0;
+            }
+        }));
+        registry.ifPresent(r -> r.newGauge(DISKLESS_TOPIC_COUNT, new Gauge<Integer>() {
+            @Override
+            public Integer value() {
+                return disklessTopicCount();
+            }
+        }));
+        registry.ifPresent(r -> r.newGauge(DISKLESS_UNMANAGED_REPLICAS_TOPIC_COUNT, new Gauge<Integer>() {
+            @Override
+            public Integer value() {
+                return disklessUnmanagedReplicasTopicCount();
+            }
+        }));
+        registry.ifPresent(r -> r.newGauge(DISKLESS_MANAGED_REPLICAS_TOPIC_COUNT, new Gauge<Integer>() {
+            @Override
+            public Integer value() {
+                return disklessManagedReplicasTopicCount();
             }
         }));
     }
@@ -309,6 +336,42 @@ public final class ControllerMetadataMetrics implements AutoCloseable {
         return ignoredStaticVoters.get();
     }
 
+    public void setDisklessTopicCount(int count) {
+        this.disklessTopicCount.set(count);
+    }
+
+    public void addToDisklessTopicCount(int delta) {
+        this.disklessTopicCount.addAndGet(delta);
+    }
+
+    public int disklessTopicCount() {
+        return this.disklessTopicCount.get();
+    }
+
+    public void setDisklessUnmanagedReplicasTopicCount(int count) {
+        this.disklessUnmanagedReplicasTopicCount.set(count);
+    }
+
+    public void addToDisklessUnmanagedReplicasTopicCount(int delta) {
+        this.disklessUnmanagedReplicasTopicCount.addAndGet(delta);
+    }
+
+    public int disklessUnmanagedReplicasTopicCount() {
+        return this.disklessUnmanagedReplicasTopicCount.get();
+    }
+
+    public void setDisklessManagedReplicasTopicCount(int count) {
+        this.disklessManagedReplicasTopicCount.set(count);
+    }
+
+    public void addToDisklessManagedReplicasTopicCount(int delta) {
+        this.disklessManagedReplicasTopicCount.addAndGet(delta);
+    }
+
+    public int disklessManagedReplicasTopicCount() {
+        return this.disklessManagedReplicasTopicCount.get();
+    }
+
     @Override
     public void close() {
         registry.ifPresent(r -> List.of(
@@ -322,7 +385,10 @@ public final class ControllerMetadataMetrics implements AutoCloseable {
             METADATA_ERROR_COUNT,
             UNCLEAN_LEADER_ELECTIONS_PER_SEC,
             ELECTION_FROM_ELIGIBLE_LEADER_REPLICAS_PER_SEC,
-            IGNORED_STATIC_VOTERS
+            IGNORED_STATIC_VOTERS,
+            DISKLESS_TOPIC_COUNT,
+            DISKLESS_UNMANAGED_REPLICAS_TOPIC_COUNT,
+            DISKLESS_MANAGED_REPLICAS_TOPIC_COUNT
         ).forEach(r::removeMetric));
         for (int brokerId : brokerRegistrationStates.keySet()) {
             removeBrokerRegistrationStateMetric(brokerId);

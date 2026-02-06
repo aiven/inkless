@@ -18,9 +18,12 @@
 package org.apache.kafka.controller.metrics;
 
 import org.apache.kafka.common.Uuid;
+import org.apache.kafka.common.config.ConfigResource;
+import org.apache.kafka.common.config.TopicConfig;
 import org.apache.kafka.image.AclsImage;
 import org.apache.kafka.image.ClientQuotasImage;
 import org.apache.kafka.image.ClusterImage;
+import org.apache.kafka.image.ConfigurationImage;
 import org.apache.kafka.image.ConfigurationsImage;
 import org.apache.kafka.image.DelegationTokenImage;
 import org.apache.kafka.image.FeaturesImage;
@@ -29,6 +32,7 @@ import org.apache.kafka.image.MetadataImage;
 import org.apache.kafka.image.MetadataProvenance;
 import org.apache.kafka.image.ProducerIdsImage;
 import org.apache.kafka.image.ScramImage;
+import org.apache.kafka.image.TopicImage;
 import org.apache.kafka.image.TopicsImage;
 import org.apache.kafka.image.loader.LoaderManifest;
 import org.apache.kafka.image.loader.LogDeltaManifest;
@@ -41,6 +45,8 @@ import org.apache.kafka.server.fault.MockFaultHandler;
 
 import org.junit.jupiter.api.Test;
 
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Optional;
 
 import static org.apache.kafka.controller.metrics.ControllerMetricsTestUtils.FakePartitionRegistrationType.NON_PREFERRED_LEADER;
@@ -87,12 +93,16 @@ public class ControllerMetadataMetricsPublisherTest {
     }
 
     static MetadataImage fakeImageFromTopicsImage(TopicsImage topicsImage) {
+        return fakeImageFromTopicsImage(topicsImage, ConfigurationsImage.EMPTY);
+    }
+
+    static MetadataImage fakeImageFromTopicsImage(TopicsImage topicsImage, ConfigurationsImage configurationsImage) {
         return new MetadataImage(
             MetadataProvenance.EMPTY,
             FeaturesImage.EMPTY,
             ClusterImage.EMPTY,
             topicsImage,
-            ConfigurationsImage.EMPTY,
+            configurationsImage,
             ClientQuotasImage.EMPTY,
             ProducerIdsImage.EMPTY,
             AclsImage.EMPTY,
@@ -100,9 +110,24 @@ public class ControllerMetadataMetricsPublisherTest {
             DelegationTokenImage.EMPTY);
     }
 
+    static ConfigurationsImage fakeDisklessConfigsImage(TopicsImage topicsImage) {
+        Map<ConfigResource, ConfigurationImage> configs = new HashMap<>();
+        for (TopicImage topicImage : topicsImage.topicsById().values()) {
+            ConfigResource resource = new ConfigResource(ConfigResource.Type.TOPIC, topicImage.name());
+            ConfigurationImage configImage = new ConfigurationImage(
+                resource,
+                Map.of(TopicConfig.DISKLESS_ENABLE_CONFIG, "true")
+            );
+            configs.put(resource, configImage);
+        }
+        return new ConfigurationsImage(configs);
+    }
+
     static final TopicsImage TOPICS_IMAGE1;
 
     static final MetadataImage IMAGE1;
+
+    static final MetadataImage IMAGE1_DISKLESS;
 
     static {
         TOPICS_IMAGE1 = fakeTopicsImage(
@@ -121,6 +146,7 @@ public class ControllerMetadataMetricsPublisherTest {
                     fakePartitionRegistration(OFFLINE))
         );
         IMAGE1 = fakeImageFromTopicsImage(TOPICS_IMAGE1);
+        IMAGE1_DISKLESS = fakeImageFromTopicsImage(TOPICS_IMAGE1, fakeDisklessConfigsImage(TOPICS_IMAGE1));
     }
 
     @Test
@@ -161,23 +187,31 @@ public class ControllerMetadataMetricsPublisherTest {
             assertEquals(3, env.metrics.offlinePartitionCount());
             assertEquals(4, env.metrics.preferredReplicaImbalanceCount());
             assertEquals(0, env.metrics.metadataErrorCount());
+            // No diskless topics in IMAGE1
+            assertEquals(0, env.metrics.disklessTopicCount());
+            assertEquals(0, env.metrics.disklessUnmanagedReplicasTopicCount());
+            assertEquals(0, env.metrics.disklessManagedReplicasTopicCount());
         }
     }
 
     @Test
     public void testLoadSnapshotWithDisklessTopics() {
-        try (TestEnv env = new TestEnv(true)) {
+        try (TestEnv env = new TestEnv()) {
             MetadataDelta delta = new MetadataDelta(MetadataImage.EMPTY);
             ImageReWriter writer = new ImageReWriter(delta);
-            IMAGE1.write(writer, new ImageWriterOptions.Builder(MetadataVersion.MINIMUM_VERSION).build());
-            env.publisher.onMetadataUpdate(delta, IMAGE1, fakeManifest(true));
+            IMAGE1_DISKLESS.write(writer, new ImageWriterOptions.Builder(MetadataVersion.MINIMUM_VERSION).build());
+            env.publisher.onMetadataUpdate(delta, IMAGE1_DISKLESS, fakeManifest(true));
             assertEquals(0, env.metrics.activeBrokerCount());
             assertEquals(3, env.metrics.globalTopicCount());
             assertEquals(7, env.metrics.globalPartitionCount());
-            // Diskless topics are not counted in the metrics
+            // Diskless topics are not counted in offline/imbalance metrics
             assertEquals(0, env.metrics.offlinePartitionCount());
             assertEquals(0, env.metrics.preferredReplicaImbalanceCount());
             assertEquals(0, env.metrics.metadataErrorCount());
+            // All 3 topics should be counted as diskless with managed replicas (RF=3)
+            assertEquals(3, env.metrics.disklessTopicCount());
+            assertEquals(0, env.metrics.disklessUnmanagedReplicasTopicCount());
+            assertEquals(3, env.metrics.disklessManagedReplicasTopicCount());
         }
     }
 }

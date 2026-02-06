@@ -63,6 +63,9 @@ class ControllerMetricsChanges {
     private int partitionsWithoutPreferredLeaderChange = 0;
     private int uncleanLeaderElection = 0;
     private int electionFromElr = 0;
+    private int disklessTopicsChange = 0;
+    private int disklessUnmanagedReplicasTopicsChange = 0;
+    private int disklessManagedReplicasTopicsChange = 0;
 
     public int fencedBrokersChange() {
         return fencedBrokersChange;
@@ -130,14 +133,42 @@ class ControllerMetricsChanges {
     }
 
     void handleDeletedTopic(TopicImage deletedTopic) {
-        deletedTopic.partitions().values().forEach(prev -> handlePartitionChange(prev, null, isDisklessTopic.apply(deletedTopic.name())));
+        handleDeletedTopic(deletedTopic, isDisklessTopic.apply(deletedTopic.name()));
+    }
+
+    void handleDeletedTopic(TopicImage deletedTopic, boolean isDiskless) {
+        deletedTopic.partitions().values().forEach(prev -> handlePartitionChange(prev, null, isDiskless));
         globalTopicsChange--;
+        if (isDiskless) {
+            disklessTopicsChange--;
+            // Check RF from first partition to determine managed vs unmanaged
+            if (!deletedTopic.partitions().isEmpty()) {
+                int rf = deletedTopic.partitions().values().iterator().next().replicas.length;
+                if (rf > 1) {
+                    disklessManagedReplicasTopicsChange--;
+                } else {
+                    disklessUnmanagedReplicasTopicsChange--;
+                }
+            }
+        }
     }
 
     void handleTopicChange(TopicImage prev, TopicDelta topicDelta) {
         final Boolean isDiskless = isDisklessTopic.apply(topicDelta.name());
         if (prev == null) {
             globalTopicsChange++;
+            if (isDiskless) {
+                disklessTopicsChange++;
+                // Check RF from first partition to determine managed vs unmanaged
+                if (!topicDelta.partitionChanges().isEmpty()) {
+                    int rf = topicDelta.partitionChanges().values().iterator().next().replicas.length;
+                    if (rf > 1) {
+                        disklessManagedReplicasTopicsChange++;
+                    } else {
+                        disklessUnmanagedReplicasTopicsChange++;
+                    }
+                }
+            }
             for (PartitionRegistration nextPartition : topicDelta.partitionChanges().values()) {
                 handlePartitionChange(null, nextPartition, isDiskless);
             }
@@ -219,6 +250,15 @@ class ControllerMetricsChanges {
         if (electionFromElr > 0) {
             metrics.updateElectionFromEligibleLeaderReplicasCount(electionFromElr);
             electionFromElr = 0;
+        }
+        if (disklessTopicsChange != 0) {
+            metrics.addToDisklessTopicCount(disklessTopicsChange);
+        }
+        if (disklessUnmanagedReplicasTopicsChange != 0) {
+            metrics.addToDisklessUnmanagedReplicasTopicCount(disklessUnmanagedReplicasTopicsChange);
+        }
+        if (disklessManagedReplicasTopicsChange != 0) {
+            metrics.addToDisklessManagedReplicasTopicCount(disklessManagedReplicasTopicsChange);
         }
     }
 }
