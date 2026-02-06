@@ -269,6 +269,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
             interBrokerSender.start();
         }
 
+        // caching the image for query purpose
         this.metadataImage = newImage;
 
         // get all mirror partition leaders on this node based on the delta
@@ -1451,12 +1452,12 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     }
 
     /**
-     * Get mirror partitions this broker is fetching from.
+     * Get mirror partition states this broker is fetching from.
      *
      * @param mirrorName the name of the cluster mirror
      * @return partition state map
      */
-    public Map<TopicPartition, MirrorPartitionState> getMirrorPartitions(String mirrorName) {
+    public Map<TopicPartition, MirrorPartitionState> getMirrorStates(String mirrorName) {
         Map<TopicPartition, MirrorPartitionState> result = new HashMap<>();
         mirrorPartitionState.forEach((key, state) -> {
             if (key.mirrorName().equals(mirrorName)) {

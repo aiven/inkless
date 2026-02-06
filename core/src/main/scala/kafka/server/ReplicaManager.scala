@@ -2670,7 +2670,8 @@ class ReplicaManager(val config: KafkaConfig,
   }
 
   /**
-   * Updates the mirroring lag for a partition.
+   * Update mirror partition lag info.
+   * This only consider mirror leader partitions hosted by this broker.
    *
    * @param mirrorName mirror name
    * @param topicPartition partition
@@ -2681,7 +2682,8 @@ class ReplicaManager(val config: KafkaConfig,
     mirrorFetcherManager.updateLag(mirrorName, topicPartition, sourceOffset, destinationOffset)
 
   /**
-   * Retrieves lag information for a specific mirror.
+   * Get mirror partition lag info.
+   * This only consider mirror leader partitions hosted by this broker.
    *
    * @param mirrorName mirror name
    * @return lag info

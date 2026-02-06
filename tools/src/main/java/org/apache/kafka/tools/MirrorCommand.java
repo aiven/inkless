@@ -355,13 +355,13 @@ public abstract class MirrorCommand {
                 System.out.printf("%-30s %-40s %-10s %-15s %-18s %-10s %-12s%n",
                     "MIRROR", "TOPIC", "PARTITION", "SOURCE-OFFSET", "DESTINATION-OFFSET", "LAG", "STATE");
                 for (PartitionInfo info : partitionInfos) {
-                    System.out.printf("%-30s %-40s %-10d %-15d %-18d %-10d %-12s%n",
+                    System.out.printf("%-30s %-40s %-10d %-15s %-18s %-10s %-12s%n",
                         truncateLeft(info.mirror, 30),
                         truncateLeft(info.topic, 40),
                         info.partition,
-                        info.sourceOffset,
-                        info.destinationOffset,
-                        info.lag,
+                        formatOffset(info.sourceOffset),
+                        formatOffset(info.destinationOffset),
+                        formatOffset(info.lag),
                         info.state);
                 }
             }
@@ -374,6 +374,11 @@ public abstract class MirrorCommand {
                 return str;
             }
             return "..." + str.substring(str.length() - (maxLength - 3));
+        }
+
+        // Format offset value, displaying "-" for unavailable offsets (-1)
+        private String formatOffset(long offset) {
+            return offset == -1 ? "-" : String.valueOf(offset);
         }
 
         @Override
