@@ -64,7 +64,7 @@ DEFAULT_FIX_VERSION = os.environ.get("DEFAULT_FIX_VERSION", "4.0.1-inkless")
 ### 7. gradle/dependencies.gradle
 **Resolution**: Take upstream changes (new dependencies added)
 - Added: commonsBeanutils, commonsLang
-- Removed: commonsIo (ZooKeeper dependency no longer needed)
+- Removed: commonsIo (upstream removed it, marked as "ZooKeeper dependency going away")
 
 ### 8. streams/quickstart/pom.xml
 **Resolution**: Use inkless version pattern
@@ -96,7 +96,7 @@ DEFAULT_FIX_VERSION = os.environ.get("DEFAULT_FIX_VERSION", "4.0.1-inkless")
 - [x] Resolve tests/kafkatest/version.py
 - [x] Resolve docs/js/templateData.js
 - [x] Resolve committer-tools/kafka-merge-pr.py
-- [x] Resolve gradle/dependencies.gradle (kept commonsIo + added new deps)
+- [x] Resolve gradle/dependencies.gradle (added new deps from upstream)
 - [x] Resolve streams/quickstart/pom.xml (kept upstream 4.0.1)
 - [x] Resolve streams/quickstart/java/pom.xml (kept upstream 4.0.1)
 - [x] Resolve streams/quickstart/java/.../pom.xml (kept upstream 4.0.1)
@@ -104,7 +104,8 @@ DEFAULT_FIX_VERSION = os.environ.get("DEFAULT_FIX_VERSION", "4.0.1-inkless")
 - [x] Commit merge
 - [x] Verify build (make build - PASSED)
 - [x] Verify tests (make test - PASSED)
-- [ ] Push changes
+- [x] Dependency cleanup (removed unused commonsIo)
+- [x] Push changes
 
 ## Merge Commit
 
@@ -123,3 +124,20 @@ Upstream removed `shallowOffsetOfMaxTimestamp` parameter from `LogAppendInfo` co
 **Fix**: Removed the extra `RecordBatch.NO_TIMESTAMP` parameter from constructor call.
 
 **Commit**: `bd9a88089c fix(inkless): adapt to LogAppendInfo constructor change in 4.0.1`
+
+## Dependency Cleanup
+
+### commonsIo removal
+
+Upstream removed `commonsIo` dependency (marked as "ZooKeeper dependency, going away").
+
+**Verification**:
+- Searched inkless code for `org.apache.commons.io` imports - none found
+- Build passes without the dependency
+- All tests pass without the dependency
+
+**Files changed**:
+- `gradle/dependencies.gradle` - removed version and lib entries
+- `build.gradle` - removed `implementation libs.commonsIo` from `:storage:inkless`
+
+**Commit**: `7d04fed476 build(inkless): remove unused commonsIo dependency`
