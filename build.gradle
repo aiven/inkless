@@ -300,6 +300,8 @@ if (repo != null) {
         'LICENSE.md',
         'LICENSE-AGPL',
         'Makefile',
+        '.sync/**',
+        'scripts/sync/**',
         'storage/inkless/**',
         'docker/examples/docker-compose-files/inkless/**',
         'config/inkless/**',
