@@ -18,13 +18,21 @@
 package kafka.server.metadata
 
 import kafka.coordinator.transaction.TransactionCoordinator
+
+import java.util.Collections.{singleton, singletonList, singletonMap}
+import java.util.{OptionalInt, Properties}
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.{AtomicInteger, AtomicReference}
 import kafka.log.LogManager
 import kafka.server.{BrokerServer, KafkaConfig, ReplicaManager}
 import kafka.utils.TestUtils
 import org.apache.kafka.clients.admin.AlterConfigOp.OpType.SET
 import org.apache.kafka.clients.admin.{Admin, AlterConfigOp, ConfigEntry, NewTopic}
+import org.apache.kafka.common.Uuid
 import org.apache.kafka.common.config.ConfigResource
 import org.apache.kafka.common.config.ConfigResource.Type.BROKER
+import org.apache.kafka.common.internals.Topic
+import org.apache.kafka.common.metadata.{PartitionRecord, RemoveTopicRecord, TopicRecord}
 import org.apache.kafka.common.test.{KafkaClusterTestKit, TestKitNodes}
 import org.apache.kafka.common.utils.Exit
 import org.apache.kafka.coordinator.group.GroupCoordinator
@@ -43,10 +51,6 @@ import org.mockito.Mockito.{doThrow, mock, verify}
 import org.mockito.invocation.InvocationOnMock
 import org.mockito.stubbing.Answer
 
-import java.util.Collections.{singleton, singletonList, singletonMap}
-import java.util.Properties
-import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.{AtomicInteger, AtomicReference}
 import scala.jdk.CollectionConverters._
 
 class BrokerMetadataPublisherTest {
@@ -176,6 +180,69 @@ class BrokerMetadataPublisherTest {
       cluster.nonFatalFaultHandler().setIgnore(true)
       cluster.close()
     }
+  }
+
+  @Test
+  def testGroupCoordinatorTopicDeletion(): Unit = {
+    val config = KafkaConfig.fromProps(TestUtils.createBrokerConfig(0))
+    val metadataCache = new KRaftMetadataCache(0, () => KRaftVersion.KRAFT_VERSION_1)
+    val logManager = mock(classOf[LogManager])
+    val replicaManager = mock(classOf[ReplicaManager])
+    val groupCoordinator = mock(classOf[GroupCoordinator])
+    val faultHandler = mock(classOf[FaultHandler])
+
+    val metadataPublisher = new BrokerMetadataPublisher(
+      config,
+      metadataCache,
+      logManager,
+      replicaManager,
+      groupCoordinator,
+      mock(classOf[TransactionCoordinator]),
+      Some(mock(classOf[ShareCoordinator])),
+      mock(classOf[DynamicConfigPublisher]),
+      mock(classOf[DynamicClientQuotaPublisher]),
+      mock(classOf[DynamicTopicClusterQuotaPublisher]),
+      mock(classOf[ScramPublisher]),
+      mock(classOf[DelegationTokenPublisher]),
+      mock(classOf[AclPublisher]),
+      faultHandler,
+      faultHandler
+    )
+
+    val topicId = Uuid.randomUuid()
+    var delta = new MetadataDelta(MetadataImage.EMPTY)
+    delta.replay(new TopicRecord()
+      .setName(Topic.GROUP_METADATA_TOPIC_NAME)
+      .setTopicId(topicId)
+    )
+    delta.replay(new PartitionRecord()
+      .setTopicId(topicId)
+      .setPartitionId(0)
+      .setLeader(config.brokerId)
+    )
+    delta.replay(new PartitionRecord()
+      .setTopicId(topicId)
+      .setPartitionId(1)
+      .setLeader(config.brokerId)
+    )
+    val image = delta.apply(MetadataProvenance.EMPTY)
+
+    delta = new MetadataDelta(image)
+    delta.replay(new RemoveTopicRecord()
+      .setTopicId(topicId)
+    )
+
+    metadataPublisher.onMetadataUpdate(delta, delta.apply(MetadataProvenance.EMPTY),
+      LogDeltaManifest.newBuilder()
+        .provenance(MetadataProvenance.EMPTY)
+        .leaderAndEpoch(LeaderAndEpoch.UNKNOWN)
+        .numBatches(1)
+        .elapsedNs(100)
+        .numBytes(42)
+        .build())
+
+    verify(groupCoordinator).onResignation(0, OptionalInt.empty())
+    verify(groupCoordinator).onResignation(1, OptionalInt.empty())
   }
 
   @Test
