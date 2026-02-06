@@ -2470,7 +2470,6 @@ project(':storage:inkless') {
       exclude group: 'com.google.guava', module: 'listenablefuture'
     }
     implementation libs.metrics
-    implementation libs.commonsIo
     implementation libs.caffeine
     implementation libs.bucket4jCore
 

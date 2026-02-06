@@ -63,7 +63,6 @@ versions += [
   caffeine: "3.1.8",
   checkstyle: project.hasProperty('checkstyleVersion') ? checkstyleVersion : "10.20.2",
   commonsBeanutils: "1.11.0",
-  commonsIo: "2.14.0", // ZooKeeper dependency. Do not use, this is going away.
   commonsLang: "3.18.0",
   commonsValidator: "1.9.0",
   classgraph: "4.8.173",
@@ -169,7 +168,6 @@ libs += [
   caffeine: "com.github.ben-manes.caffeine:caffeine:$versions.caffeine",
   classgraph: "io.github.classgraph:classgraph:$versions.classgraph",
   commonsBeanutils: "commons-beanutils:commons-beanutils:$versions.commonsBeanutils",
-  commonsIo: "commons-io:commons-io:$versions.commonsIo",
   commonsLang: "org.apache.commons:commons-lang3:$versions.commonsLang",
   commonsValidator: "commons-validator:commons-validator:$versions.commonsValidator",
   gcsSdk: "com.google.cloud:google-cloud-storage:$versions.gcsSdk",
