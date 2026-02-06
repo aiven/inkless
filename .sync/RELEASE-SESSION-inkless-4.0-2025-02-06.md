@@ -102,7 +102,8 @@ DEFAULT_FIX_VERSION = os.environ.get("DEFAULT_FIX_VERSION", "4.0.1-inkless")
 - [x] Resolve streams/quickstart/java/.../pom.xml (kept upstream 4.0.1)
 - [x] Resolve BrokerMetadataPublisherTest.scala
 - [x] Commit merge
-- [ ] Verify build
+- [x] Verify build (make build - PASSED)
+- [x] Verify tests (make test - PASSED)
 - [ ] Push changes
 
 ## Merge Commit
@@ -110,3 +111,15 @@ DEFAULT_FIX_VERSION = os.environ.get("DEFAULT_FIX_VERSION", "4.0.1-inkless")
 ```
 bbedf3248e Merge upstream 4.0.1 into inkless-4.0-sync-4.0.1
 ```
+
+## API Adaptation
+
+### LogAppendInfo constructor change
+
+Upstream removed `shallowOffsetOfMaxTimestamp` parameter from `LogAppendInfo` constructor.
+
+**File**: `storage/inkless/src/main/java/io/aiven/inkless/produce/UnifiedLog.java`
+
+**Fix**: Removed the extra `RecordBatch.NO_TIMESTAMP` parameter from constructor call.
+
+**Commit**: `bd9a88089c fix(inkless): adapt to LogAppendInfo constructor change in 4.0.1`

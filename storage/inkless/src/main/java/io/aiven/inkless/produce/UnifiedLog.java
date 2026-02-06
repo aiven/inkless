@@ -187,7 +187,7 @@ class UnifiedLog {
             : OptionalInt.empty();
 
         return new LogAppendInfo(firstOffset, lastOffset, lastLeaderEpochOpt, maxTimestamp, RecordBatch.NO_TIMESTAMP,
-            RecordBatch.NO_TIMESTAMP, logStartOffset, RecordValidationStats.EMPTY, sourceCompression,
+            logStartOffset, RecordValidationStats.EMPTY, sourceCompression,
             validBytesCount, lastOffsetOfFirstBatch, Collections.emptyList(), LeaderHwChange.NONE);
     }
 
