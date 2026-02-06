@@ -341,6 +341,7 @@ class Partition(val topicPartition: TopicPartition,
   @volatile var leaderReplicaIdOpt: Option[Int] = None
   @volatile private[cluster] var partitionState: PartitionState = CommittedPartitionState(Set.empty, LeaderRecoveryState.RECOVERED)
   @volatile var assignmentState: AssignmentState = SimpleAssignmentState(Seq.empty)
+  @volatile var onComplete: Optional[Consumer[TopicPartition]] = Optional.empty()
 
   // Logs belonging to this partition. Majority of time it will be only one log, but if log directory
   // is getting changed (as a result of ReplicaAlterLogDirs command), we may have two logs until copy
@@ -1227,13 +1228,15 @@ class Partition(val topicPartition: TopicPartition,
    */
   def maybeCompleteIsrTruncation(leaderLog: UnifiedLog,
                                   currentTimeMs: Long = time.milliseconds,
-                                  onComplete: Optional[Consumer[TopicPartition]] = Optional.empty()): Boolean = {
+                                  onCompleteCallback: Optional[Consumer[TopicPartition]] = Optional.empty()): Boolean = {
+    if (onCompleteCallback.isPresent) {
+      onComplete = onCompleteCallback
+    }
+
     // Only perform truncation validation for mirrored partitions (when callback is provided)
     if (onComplete.isEmpty) {
       return false
     }
-
-    info("!!! maybeCompleteIsrTruncation: " + leaderLog)
 
     if (isUnderMinIsr) {
       trace(s"Not increasing HWM because partition is under min ISR (ISR=${partitionState.isr})")
@@ -1262,7 +1265,10 @@ class Partition(val topicPartition: TopicPartition,
     }
 
     // move state if truncation are done for all ISR
-    onComplete.ifPresent(callback => callback.accept(topicPartition))
+    onComplete.ifPresent(callback => {
+      callback.accept(topicPartition)
+      onComplete = Optional.empty()
+    })
     true
   }
 
