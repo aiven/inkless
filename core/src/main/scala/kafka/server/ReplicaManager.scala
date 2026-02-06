@@ -1676,7 +1676,7 @@ class ReplicaManager(val config: KafkaConfig,
       getLog(tp).map(log => {
         log.truncateTo(offset)
         val partition = getPartitionOrException(tp)
-        partition.maybeCompleteIsrTruncation(log, onComplete = Optional.of(callback))
+        partition.maybeCompleteIsrTruncation(log, onCompleteCallback = Optional.of(callback))
       })
     })
   }
