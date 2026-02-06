@@ -30,7 +30,8 @@ import java.util.concurrent.atomic.LongAdder;
 public class PostgresControlPlaneMetrics implements Closeable {
     final Time time;
 
-    private final KafkaMetricsGroup metricsGroup = new KafkaMetricsGroup(PostgresControlPlane.class);
+    private final KafkaMetricsGroup metricsGroup = new KafkaMetricsGroup(
+        PostgresControlPlane.class.getPackageName(), PostgresControlPlane.class.getSimpleName());
     private final QueryMetrics findBatchesMetrics = new QueryMetrics("FindBatches");
     private final QueryMetrics getLogsMetrics = new QueryMetrics("GetLogs");
     private final QueryMetrics commitFileMetrics = new QueryMetrics("CommitFile");

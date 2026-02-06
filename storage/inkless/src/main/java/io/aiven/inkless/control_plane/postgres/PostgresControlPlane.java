@@ -68,7 +68,8 @@ public class PostgresControlPlane extends AbstractControlPlane {
 
     private static final String POOL_NAME = "pg-control-plane";
 
-    private final KafkaMetricsGroup metrics = new KafkaMetricsGroup(PostgresConnectionPoolMetrics.class);
+    private final KafkaMetricsGroup metrics = new KafkaMetricsGroup(
+        PostgresConnectionPoolMetrics.class.getPackageName(), PostgresConnectionPoolMetrics.class.getSimpleName());
     private final PostgresControlPlaneMetrics pgMetrics;
 
     private HikariDataSource jobsDataSource;

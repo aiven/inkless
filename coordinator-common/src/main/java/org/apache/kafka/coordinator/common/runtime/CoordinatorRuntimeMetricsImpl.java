@@ -23,6 +23,7 @@ import org.apache.kafka.common.metrics.Sensor;
 import org.apache.kafka.common.metrics.stats.Avg;
 import org.apache.kafka.common.metrics.stats.Max;
 import org.apache.kafka.common.metrics.stats.Rate;
+import org.apache.kafka.common.metrics.stats.WindowedCount;
 import org.apache.kafka.coordinator.common.runtime.CoordinatorRuntime.CoordinatorState;
 
 import java.util.Arrays;
@@ -57,6 +58,11 @@ public class CoordinatorRuntimeMetricsImpl implements CoordinatorRuntimeMetrics 
      * The event purgatory time metric name.
      */
     public static final String EVENT_PURGATORY_TIME_METRIC_NAME = "event-purgatory-time-ms";
+
+    /**
+     * The effective batch linger time metric name.
+     */
+    public static final String BATCH_LINGER_TIME_METRIC_NAME = "batch-linger-time-ms";
 
     /**
      * The flush time metric name.
@@ -117,9 +123,14 @@ public class CoordinatorRuntimeMetricsImpl implements CoordinatorRuntimeMetrics 
     private final Sensor eventPurgatoryTimeSensor;
 
     /**
-     * Sensor to measure the flush time.
+     * Sensor to measure the effective batch linger time.
      */
-    private final Sensor flushTimeSensor;
+    private final Sensor lingerTimeSensor;
+
+    /**
+     * Sensor to measure the flush time and rate.
+     */
+    private final Sensor flushSensor;
 
     public CoordinatorRuntimeMetricsImpl(Metrics metrics, String metricsGroup) {
         this.metrics = Objects.requireNonNull(metrics);
@@ -149,7 +160,7 @@ public class CoordinatorRuntimeMetricsImpl implements CoordinatorRuntimeMetrics 
         metrics.addMetric(numPartitionsActive, (Gauge<Long>) (config, now) -> numPartitionsActiveCounter.get());
         metrics.addMetric(numPartitionsFailed, (Gauge<Long>) (config, now) -> numPartitionsFailedCounter.get());
 
-        this.partitionLoadSensor = metrics.sensor("GroupPartitionLoadTime");
+        this.partitionLoadSensor = metrics.sensor(this.metricsGroup + "-PartitionLoadTime");
         this.partitionLoadSensor.add(
             metrics.metricName(
                 "partition-load-time-max",
@@ -163,7 +174,7 @@ public class CoordinatorRuntimeMetricsImpl implements CoordinatorRuntimeMetrics 
                 "The average time it took to load the partitions in the last 30 sec."
             ), new Avg());
 
-        this.threadIdleSensor = metrics.sensor("ThreadIdleRatio");
+        this.threadIdleSensor = metrics.sensor(this.metricsGroup + "-ThreadIdleRatio");
         this.threadIdleSensor.add(
             metrics.metricName(
                 "thread-idle-ratio-avg",
@@ -178,7 +189,7 @@ public class CoordinatorRuntimeMetricsImpl implements CoordinatorRuntimeMetrics 
                 "The " + suffix + " event queue time in milliseconds"
             )
         );
-        this.eventQueueTimeSensor = metrics.sensor("EventQueueTime");
+        this.eventQueueTimeSensor = metrics.sensor(this.metricsGroup + "-EventQueueTime");
         this.eventQueueTimeSensor.add(eventQueueTimeHistogram);
 
         KafkaMetricHistogram eventProcessingTimeHistogram = KafkaMetricHistogram.newLatencyHistogram(
@@ -187,7 +198,7 @@ public class CoordinatorRuntimeMetricsImpl implements CoordinatorRuntimeMetrics 
                 "The " + suffix + " event processing time in milliseconds"
             )
         );
-        this.eventProcessingTimeSensor = metrics.sensor("EventProcessingTime");
+        this.eventProcessingTimeSensor = metrics.sensor(this.metricsGroup + "-EventProcessingTime");
         this.eventProcessingTimeSensor.add(eventProcessingTimeHistogram);
 
         KafkaMetricHistogram eventPurgatoryTimeHistogram = KafkaMetricHistogram.newLatencyHistogram(
@@ -196,8 +207,17 @@ public class CoordinatorRuntimeMetricsImpl implements CoordinatorRuntimeMetrics 
                 "The " + suffix + " event purgatory time in milliseconds"
             )
         );
-        this.eventPurgatoryTimeSensor = metrics.sensor("EventPurgatoryTime");
+        this.eventPurgatoryTimeSensor = metrics.sensor(this.metricsGroup + "-EventPurgatoryTime");
         this.eventPurgatoryTimeSensor.add(eventPurgatoryTimeHistogram);
+
+        KafkaMetricHistogram lingerTimeHistogram = KafkaMetricHistogram.newLatencyHistogram(
+            suffix -> kafkaMetricName(
+                BATCH_LINGER_TIME_METRIC_NAME + "-" + suffix,
+                "The " + suffix + " effective linger time in milliseconds"
+            )
+        );
+        this.lingerTimeSensor = metrics.sensor(this.metricsGroup + "-LingerTime");
+        this.lingerTimeSensor.add(lingerTimeHistogram);
 
         KafkaMetricHistogram flushTimeHistogram = KafkaMetricHistogram.newLatencyHistogram(
             suffix -> kafkaMetricName(
@@ -205,8 +225,14 @@ public class CoordinatorRuntimeMetricsImpl implements CoordinatorRuntimeMetrics 
                 "The " + suffix + " flush time in milliseconds"
             )
         );
-        this.flushTimeSensor = metrics.sensor("FlushTime");
-        this.flushTimeSensor.add(flushTimeHistogram);
+        this.flushSensor = metrics.sensor(this.metricsGroup + "-Flush");
+        this.flushSensor.add(flushTimeHistogram);
+        this.flushSensor.add(
+            metrics.metricName(
+                "batch-flush-rate",
+                this.metricsGroup,
+                "The flushes per second."),
+            new Rate(TimeUnit.SECONDS, new WindowedCount()));
     }
 
     /**
@@ -234,7 +260,8 @@ public class CoordinatorRuntimeMetricsImpl implements CoordinatorRuntimeMetrics 
         metrics.removeSensor(eventQueueTimeSensor.name());
         metrics.removeSensor(eventProcessingTimeSensor.name());
         metrics.removeSensor(eventPurgatoryTimeSensor.name());
-        metrics.removeSensor(flushTimeSensor.name());
+        metrics.removeSensor(lingerTimeSensor.name());
+        metrics.removeSensor(flushSensor.name());
     }
 
     /**
@@ -295,8 +322,13 @@ public class CoordinatorRuntimeMetricsImpl implements CoordinatorRuntimeMetrics 
     }
 
     @Override
+    public void recordLingerTime(long durationMs) {
+        lingerTimeSensor.record(durationMs);
+    }
+
+    @Override
     public void recordFlushTime(long durationMs) {
-        flushTimeSensor.record(durationMs);
+        flushSensor.record(durationMs);
     }
 
     @Override

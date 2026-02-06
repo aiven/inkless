@@ -66,7 +66,8 @@ public class InklessFetchMetrics {
 
     private final Time time;
 
-    private final KafkaMetricsGroup metricsGroup = new KafkaMetricsGroup(InklessFetchMetrics.class);
+    private final KafkaMetricsGroup metricsGroup = new KafkaMetricsGroup(
+        InklessFetchMetrics.class.getPackageName(), InklessFetchMetrics.class.getSimpleName());
     private final Histogram fetchTimeHistogram;
     private final Histogram findBatchesTimeHistogram;
     private final Histogram fetchPlanTimeHistogram;

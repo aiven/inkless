@@ -21,6 +21,13 @@ import java.util.function.Function;
 
 /**
  * Provides a flattened iterator over the inner elements of an outer iterator.
+ *
+ * <p><b>INKLESS NOTE:</b> This class was removed from upstream Apache Kafka in commit
+ * 64aebb5621 (MINOR: remove unused FlattenedIterator #20067). It is retained here
+ * specifically for inkless functionality (used by ConcatenatedRecords).
+ *
+ * <p>TODO(inkless): Consider migrating to an alternative implementation or inlining
+ * this logic in ConcatenatedRecords to reduce divergence from upstream.
  */
 public final class FlattenedIterator<O, I> extends AbstractIterator<I> {
     private final Iterator<O> outerIterator;

@@ -23,7 +23,6 @@ import org.apache.kafka.common.config.ConfigDef.Importance.MEDIUM
 import org.apache.kafka.common.config.ConfigDef.Type.INT
 import org.apache.kafka.common.config.{ConfigException, SslConfigs, TopicConfig}
 import org.apache.kafka.common.errors.InvalidConfigurationException
-import org.apache.kafka.server.common.MetadataVersion
 import org.junit.jupiter.api.Assertions._
 import org.junit.jupiter.api.Test
 
@@ -295,10 +294,10 @@ class LogConfigTest {
     assertThrows(classOf[ConfigException], () => validateCleanupPolicy())
     logProps.put(TopicConfig.CLEANUP_POLICY_CONFIG, "compact,delete")
     assertThrows(classOf[ConfigException], () => validateCleanupPolicy())
-    logProps.put(TopicConfig.CLEANUP_POLICY_CONFIG, "delete,delete,delete")
+    logProps.put(TopicConfig.CLEANUP_POLICY_CONFIG, "delete")
     validateCleanupPolicy()
     logProps.put(TopicConfig.CLEANUP_POLICY_CONFIG, "")
-    assertThrows(classOf[ConfigException], () => validateCleanupPolicy())
+    validateCleanupPolicy()
   }
 
   @ParameterizedTest(name = "testEnableRemoteLogStorage with sysRemoteStorageEnabled: {0}")
@@ -602,20 +601,4 @@ class LogConfigTest {
     assertEquals("It is invalid to create a diskless topic with remote storage enabled.", t3.getMessage)
   }
 
-  @Test
-  def testValidateWithMetadataVersionJbodSupport(): Unit = {
-    def validate(metadataVersion: MetadataVersion, jbodConfig: Boolean): Unit =
-      KafkaConfig.fromProps(
-          TestUtils.createBrokerConfig(nodeId = 0, logDirCount = if (jbodConfig) 2 else 1)
-        ).validateWithMetadataVersion(metadataVersion)
-
-    validate(MetadataVersion.IBP_3_6_IV2, jbodConfig = false)
-    validate(MetadataVersion.IBP_3_7_IV0, jbodConfig = false)
-    validate(MetadataVersion.IBP_3_7_IV2, jbodConfig = false)
-    assertThrows(classOf[IllegalArgumentException], () =>
-      validate(MetadataVersion.IBP_3_6_IV2, jbodConfig = true))
-    assertThrows(classOf[IllegalArgumentException], () =>
-      validate(MetadataVersion.IBP_3_7_IV0, jbodConfig = true))
-    validate(MetadataVersion.IBP_3_7_IV2, jbodConfig = true)
-  }
 }

@@ -39,7 +39,8 @@ public class InklessFetchOffsetMetrics {
 
     private final Time time;
 
-    private final KafkaMetricsGroup metricsGroup = new KafkaMetricsGroup(InklessFetchOffsetMetrics.class);
+    private final KafkaMetricsGroup metricsGroup = new KafkaMetricsGroup(
+        InklessFetchOffsetMetrics.class.getPackageName(), InklessFetchOffsetMetrics.class.getSimpleName());
 
     private final Histogram fetchOffsetTimeHistogram;
     private final Meter fetchOffsetRate;

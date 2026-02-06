@@ -36,6 +36,7 @@ import org.apache.kafka.server.LeaderEndPoint
 import org.apache.kafka.server.ResultWithPartitions
 import org.apache.kafka.server.ReplicaState
 import org.apache.kafka.server.PartitionFetchState
+import org.apache.kafka.server.log.remote.storage.RetriableRemoteStorageException
 import org.apache.kafka.server.metrics.KafkaMetricsGroup
 import org.apache.kafka.server.util.ShutdownableThread
 import org.apache.kafka.storage.internals.log.LogAppendInfo
@@ -796,7 +797,8 @@ abstract class AbstractFetcherThread(name: String,
         onPartitionFenced(topicPartition, leaderEpochInRequest)
       case e@(_: UnknownTopicOrPartitionException |
               _: UnknownLeaderEpochException |
-              _: NotLeaderOrFollowerException) =>
+              _: NotLeaderOrFollowerException |
+              _: RetriableRemoteStorageException) =>
         info(s"Could not build remote log auxiliary state for $topicPartition due to error: ${e.getMessage}")
         false
       case e: Throwable =>
@@ -886,7 +888,10 @@ object FetcherMetrics {
 }
 
 class FetcherLagMetrics(metricId: ClientIdTopicPartition) {
-  private val metricsGroup = new KafkaMetricsGroup(this.getClass)
+  // Changing the package or class name may cause incompatibility with existing code and metrics configuration
+  private val metricsPackage = "kafka.server"
+  private val metricsClassName = "FetcherLagMetrics"
+  private val metricsGroup = new KafkaMetricsGroup(metricsPackage, metricsClassName)
 
   private[this] val lagVal = new AtomicLong(-1L)
   private[this] val tags = Map(
@@ -925,7 +930,10 @@ class FetcherLagStats(metricId: ClientIdAndBroker) {
 }
 
 class FetcherStats(metricId: ClientIdAndBroker) {
-  private val metricsGroup = new KafkaMetricsGroup(this.getClass)
+  // Changing the package or class name may cause incompatibility with existing code and metrics configuration
+  private val metricsPackage = "kafka.server"
+  private val metricsClassName = "FetcherStats"
+  private val metricsGroup = new KafkaMetricsGroup(metricsPackage, metricsClassName)
 
   val tags: util.Map[String, String] = Map("clientId" -> metricId.clientId,
     "brokerHost" -> metricId.brokerHost,

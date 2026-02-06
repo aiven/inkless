@@ -38,7 +38,8 @@ public class WriterMetrics implements Closeable {
     public static final String REQUEST_RATE = "RequestRate";
     public static final String ROTATION_RATE = "RotationRate";
     public static final String ROTATION_TIME = "RotationTime";
-    private final KafkaMetricsGroup metricsGroup = new KafkaMetricsGroup(WriterMetrics.class);
+    private final KafkaMetricsGroup metricsGroup = new KafkaMetricsGroup(
+        WriterMetrics.class.getPackageName(), WriterMetrics.class.getSimpleName());
     private final Histogram rotationTime;
 
     final Time time;
