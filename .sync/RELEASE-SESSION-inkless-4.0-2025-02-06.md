@@ -15,9 +15,9 @@
 | tests/kafkatest/version.py | 4.0.0-inkless-SNAPSHOT | 4.0.1-inkless-SNAPSHOT |
 | docs/js/templateData.js | 4.0.0-inkless | 4.0.1-inkless |
 | committer-tools/kafka-merge-pr.py | 4.0.0-inkless | 4.0.1-inkless |
-| streams/quickstart/pom.xml | 4.0.0-inkless | 4.0.1-inkless |
-| streams/quickstart/java/pom.xml | 4.0.0-inkless | 4.0.1-inkless |
-| streams/quickstart/java/.../pom.xml | 4.0.0-inkless | 4.0.1-inkless |
+| streams/quickstart/pom.xml | 4.0.0-inkless | 4.0.1 (upstream) |
+| streams/quickstart/java/pom.xml | 4.0.0-inkless | 4.0.1 (upstream) |
+| streams/quickstart/java/.../pom.xml | 4.0.0-inkless | 4.0.1 (upstream) |
 
 ## Conflicts (11 files)
 
@@ -67,21 +67,21 @@ DEFAULT_FIX_VERSION = os.environ.get("DEFAULT_FIX_VERSION", "4.0.1-inkless")
 - Removed: commonsIo (upstream removed it, marked as "ZooKeeper dependency going away")
 
 ### 8. streams/quickstart/pom.xml
-**Resolution**: Use inkless version pattern
+**Resolution**: Keep upstream version (Maven Central compatibility)
 ```xml
-<version>4.0.1-inkless</version>
+<version>4.0.1</version>
 ```
 
 ### 9. streams/quickstart/java/pom.xml
-**Resolution**: Use inkless version pattern
+**Resolution**: Keep upstream version (Maven Central compatibility)
 ```xml
-<version>4.0.1-inkless</version>
+<version>4.0.1</version>
 ```
 
 ### 10. streams/quickstart/java/src/main/resources/archetype-resources/pom.xml
-**Resolution**: Use inkless version pattern
+**Resolution**: Keep upstream version (Maven Central compatibility)
 ```xml
-<kafka.version>4.0.1-inkless</kafka.version>
+<kafka.version>4.0.1</kafka.version>
 ```
 
 ### 11. core/src/test/scala/unit/kafka/server/metadata/BrokerMetadataPublisherTest.scala
