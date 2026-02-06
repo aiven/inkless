@@ -4194,7 +4194,7 @@ public class ReplicationControlManagerTest {
             ctx.unfenceBrokers(0, 1);
 
             String topic = "foo";
-            ctx.createTestTopic(
+            CreatableTopicResult createResult = ctx.createTestTopic(
                 topic,
                 1,
                 (short) 1,
@@ -4215,18 +4215,20 @@ public class ReplicationControlManagerTest {
                 alterResult1.response());
 
             ctx.replay(alterResult1.records());
-            ListPartitionReassignmentsResponseData currentReassigning =
-                new ListPartitionReassignmentsResponseData().setErrorMessage(null).
-                    setTopics(List.of(new OngoingTopicReassignment().setName(topic).setPartitions(List.of(
-                            new OngoingPartitionReassignment().setPartitionIndex(0)
-                                .setRemovingReplicas(List.of(0))
-                                .setAddingReplicas(List.of(1))
-                                .setReplicas(List.of(1, 0))))));
-            assertEquals(currentReassigning, replication.listPartitionReassignments(List.of(
+
+            // For diskless topics, reassignment completes immediately (no staged process).
+            // There should be no ongoing reassignment.
+            assertEquals(NONE_REASSIGNING, replication.listPartitionReassignments(List.of(
                 new ListPartitionReassignmentsTopics().setName(topic).
                     setPartitionIndexes(List.of(0))), Long.MAX_VALUE));
 
-            // Try to increase the replication factor.
+            // Verify the partition now has the new replica (reassignment completed immediately)
+            PartitionRegistration partition = replication.getPartition(createResult.topicId(), 0);
+            assertEquals(List.of(1), Replicas.toList(partition.replicas));
+            // ISR must match replicas — diskless brokers are immediately in-sync via object storage
+            assertEquals(List.of(1), Replicas.toList(partition.isr));
+
+            // Try to increase the replication factor (should fail for diskless).
             ControllerResult<AlterPartitionReassignmentsResponseData> alterResult2 =
                 replication.alterPartitionReassignments(
                     new AlterPartitionReassignmentsRequestData().setTopics(List.of(
@@ -4240,10 +4242,6 @@ public class ReplicationControlManagerTest {
                                 .setErrorCode(INVALID_REPLICATION_FACTOR.code())
                                 .setErrorMessage("The replication factor is changed from 1 to 2"))))),
                 alterResult2.response());
-            ctx.replay(alterResult2.records());
-            assertEquals(currentReassigning, replication.listPartitionReassignments(List.of(
-                new ListPartitionReassignmentsTopics().setName(topic)
-                    .setPartitionIndexes(List.of(0))), Long.MAX_VALUE));
         }
 
         @Test
@@ -4949,7 +4947,7 @@ public class ReplicationControlManagerTest {
             ctx.unfenceBrokers(0, 1);
 
             String topic = "foo";
-            ctx.createTestTopic(topic, new int[][] {new int[] {0}}, Map.of(DISKLESS_ENABLE_CONFIG, "true"), (short) 0);
+            CreatableTopicResult createResult = ctx.createTestTopic(topic, new int[][] {new int[] {0}}, Map.of(DISKLESS_ENABLE_CONFIG, "true"), (short) 0);
 
             // No change in the replication factor.
             ControllerResult<AlterPartitionReassignmentsResponseData> alterResult1 =
@@ -4964,18 +4962,20 @@ public class ReplicationControlManagerTest {
                 alterResult1.response());
 
             ctx.replay(alterResult1.records());
-            ListPartitionReassignmentsResponseData currentReassigning =
-                new ListPartitionReassignmentsResponseData().setErrorMessage(null).
-                    setTopics(List.of(new OngoingTopicReassignment().setName(topic).setPartitions(List.of(
-                        new OngoingPartitionReassignment().setPartitionIndex(0)
-                            .setRemovingReplicas(List.of(0))
-                            .setAddingReplicas(List.of(1))
-                            .setReplicas(List.of(1, 0))))));
-            assertEquals(currentReassigning, replication.listPartitionReassignments(List.of(
+
+            // For diskless topics, reassignment completes immediately (no staged process).
+            // There should be no ongoing reassignment.
+            assertEquals(NONE_REASSIGNING, replication.listPartitionReassignments(List.of(
                 new ListPartitionReassignmentsTopics().setName(topic).
                     setPartitionIndexes(List.of(0))), Long.MAX_VALUE));
 
-            // Try to increase the replication factor.
+            // Verify the partition now has the new replica (reassignment completed immediately)
+            PartitionRegistration partition = replication.getPartition(createResult.topicId(), 0);
+            assertEquals(List.of(1), Replicas.toList(partition.replicas));
+            // ISR must match replicas — diskless brokers are immediately in-sync via object storage
+            assertEquals(List.of(1), Replicas.toList(partition.isr));
+
+            // Try to increase the replication factor (should fail for diskless).
             ControllerResult<AlterPartitionReassignmentsResponseData> alterResult2 =
                 replication.alterPartitionReassignments(
                     new AlterPartitionReassignmentsRequestData().setTopics(List.of(
@@ -4989,10 +4989,6 @@ public class ReplicationControlManagerTest {
                                 .setErrorCode(INVALID_REPLICATION_FACTOR.code())
                                 .setErrorMessage("The replication factor is changed from 1 to 2"))))),
                 alterResult2.response());
-            ctx.replay(alterResult2.records());
-            assertEquals(currentReassigning, replication.listPartitionReassignments(List.of(
-                new ListPartitionReassignmentsTopics().setName(topic)
-                    .setPartitionIndexes(List.of(0))), Long.MAX_VALUE));
         }
 
         @Test

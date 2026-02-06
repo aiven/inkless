@@ -2586,23 +2586,44 @@ public class ReplicationControlManager {
         List<Integer> currentReplicas = Replicas.toList(part.replicas);
         PartitionReassignmentReplicas reassignment =
             new PartitionReassignmentReplicas(currentAssignment, targetAssignment);
+
+        boolean isDiskless = Boolean.parseBoolean(
+            configurationControl.currentTopicConfig(topics.get(tp.topicId()).name)
+                .getOrDefault(DISKLESS_ENABLE_CONFIG, "false"));
+
+        // Diskless topics don't use local directories — skip the directory check in leader election.
+        IntPredicate leaderAcceptor = isDiskless
+            ? clusterControl::isActive
+            : new LeaderAcceptor(clusterControl, part);
+
         PartitionChangeBuilder builder = new PartitionChangeBuilder(
             part,
             tp.topicId(),
             tp.partitionId(),
-            new LeaderAcceptor(clusterControl, part),
+            leaderAcceptor,
             featureControl.metadataVersionOrThrow(),
             getTopicEffectiveMinIsr(topics.get(tp.topicId()).name)
         );
         builder.setEligibleLeaderReplicasEnabled(featureControl.isElrFeatureEnabled());
-        if (!reassignment.replicas().equals(currentReplicas)) {
-            builder.setTargetReplicas(reassignment.replicas());
-        }
-        if (!reassignment.removing().isEmpty()) {
-            builder.setTargetRemoving(reassignment.removing());
-        }
-        if (!reassignment.adding().isEmpty()) {
-            builder.setTargetAdding(reassignment.adding());
+
+        if (isDiskless) {
+            // Diskless: data is in object storage, no replica sync needed.
+            // Apply target replicas directly — skip the staged adding/removing process.
+            // Set ISR = new replicas since all brokers can serve from object storage immediately.
+            if (!target.replicas().equals(currentReplicas)) {
+                builder.setTargetReplicas(target.replicas());
+                builder.setTargetIsr(target.replicas());
+            }
+        } else {
+            if (!reassignment.replicas().equals(currentReplicas)) {
+                builder.setTargetReplicas(reassignment.replicas());
+            }
+            if (!reassignment.removing().isEmpty()) {
+                builder.setTargetRemoving(reassignment.removing());
+            }
+            if (!reassignment.adding().isEmpty()) {
+                builder.setTargetAdding(reassignment.adding());
+            }
         }
         return builder.setDefaultDirProvider(clusterDescriber).build();
     }
