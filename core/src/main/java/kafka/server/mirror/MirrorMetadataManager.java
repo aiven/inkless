@@ -26,7 +26,6 @@ import org.apache.kafka.clients.KafkaClient;
 import org.apache.kafka.clients.admin.AlterConfigOp;
 import org.apache.kafka.clients.admin.ConfigEntry;
 import org.apache.kafka.common.GroupState;
-import org.apache.kafka.common.GroupType;
 import org.apache.kafka.common.Node;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.acl.AccessControlEntryFilter;
@@ -1251,7 +1250,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         // 1. list group
         ListGroupsRequest.Builder builder = new ListGroupsRequest.Builder(new ListGroupsRequestData()
                 // TODO: if the source cluster is in old version, it won't support types filter
-//                .setTypesFilter(List.of(GroupType.CLASSIC.name(), GroupType.CONSUMER.name()))
+                //.setTypesFilter(List.of(GroupType.CLASSIC.name(), GroupType.CONSUMER.name()))
                 .setStatesFilter(singletonList(GroupState.STABLE.name())));
         var listGroupResponse = getRandomSender(senders).sendRequest(builder);
         if (listGroupResponse.responseBody() instanceof ListGroupsResponse listGroupsRes) {
