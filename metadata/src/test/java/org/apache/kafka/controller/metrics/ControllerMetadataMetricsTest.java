@@ -65,6 +65,9 @@ public class ControllerMetadataMetricsTest {
                         "kafka.controller:type=KafkaController,name=OfflinePartitionsCount",
                         "kafka.controller:type=KafkaController,name=PreferredReplicaImbalanceCount",
                         "kafka.controller:type=KafkaController,name=IgnoredStaticVoters",
+                        "kafka.controller:type=KafkaController,name=DisklessTopicCount",
+                        "kafka.controller:type=KafkaController,name=DisklessUnmanagedReplicasTopicCount",
+                        "kafka.controller:type=KafkaController,name=DisklessManagedReplicasTopicCount",
                         "kafka.controller:type=ControllerStats,name=UncleanLeaderElectionsPerSec",
                         "kafka.controller:type=ControllerStats,name=ElectionFromEligibleLeaderReplicasPerSec"
                     )));
@@ -289,6 +292,57 @@ public class ControllerMetadataMetricsTest {
             assertEquals(1, ignoredStaticVoters.value());
             metrics.setIgnoredStaticVoters(false);
             assertEquals(0, ignoredStaticVoters.value());
+        } finally {
+            registry.shutdown();
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    @Test
+    public void testDisklessTopicCountMetric() {
+        MetricsRegistry registry = new MetricsRegistry();
+        try (ControllerMetadataMetrics metrics = new ControllerMetadataMetrics(Optional.of(registry))) {
+            Gauge<Integer> disklessTopicCount = (Gauge<Integer>) registry
+                .allMetrics()
+                .get(metricName("KafkaController", "DisklessTopicCount"));
+            assertEquals(0, disklessTopicCount.value());
+            metrics.setDisklessTopicCount(5);
+            assertEquals(5, disklessTopicCount.value());
+            assertEquals(5, metrics.disklessTopicCount());
+        } finally {
+            registry.shutdown();
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    @Test
+    public void testDisklessUnmanagedReplicasTopicCountMetric() {
+        MetricsRegistry registry = new MetricsRegistry();
+        try (ControllerMetadataMetrics metrics = new ControllerMetadataMetrics(Optional.of(registry))) {
+            Gauge<Integer> disklessUnmanagedReplicasTopicCount = (Gauge<Integer>) registry
+                .allMetrics()
+                .get(metricName("KafkaController", "DisklessUnmanagedReplicasTopicCount"));
+            assertEquals(0, disklessUnmanagedReplicasTopicCount.value());
+            metrics.setDisklessUnmanagedReplicasTopicCount(3);
+            assertEquals(3, disklessUnmanagedReplicasTopicCount.value());
+            assertEquals(3, metrics.disklessUnmanagedReplicasTopicCount());
+        } finally {
+            registry.shutdown();
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    @Test
+    public void testDisklessManagedReplicasTopicCountMetric() {
+        MetricsRegistry registry = new MetricsRegistry();
+        try (ControllerMetadataMetrics metrics = new ControllerMetadataMetrics(Optional.of(registry))) {
+            Gauge<Integer> disklessManagedReplicasTopicCount = (Gauge<Integer>) registry
+                .allMetrics()
+                .get(metricName("KafkaController", "DisklessManagedReplicasTopicCount"));
+            assertEquals(0, disklessManagedReplicasTopicCount.value());
+            metrics.setDisklessManagedReplicasTopicCount(2);
+            assertEquals(2, disklessManagedReplicasTopicCount.value());
+            assertEquals(2, metrics.disklessManagedReplicasTopicCount());
         } finally {
             registry.shutdown();
         }
