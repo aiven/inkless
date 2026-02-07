@@ -1,0 +1,38 @@
+# Inkless Auto-Resolve Patterns
+# Files matching these patterns will be auto-resolved with "ours" (inkless) version during merge conflicts
+# These are files that are completely inkless-owned and safe to auto-resolve
+# Format: One pattern per line, supports glob patterns
+#
+# NOTE: Files requiring manual review (version files, core Kafka files with inkless modifications)
+# should NOT be listed here - they will fall into manual resolution for careful review.
+
+# === INKLESS-OWNED DIRECTORIES (safe to auto-resolve with ours) ===
+
+# Inkless storage module - completely inkless-owned
+storage/inkless/**
+
+# Inkless documentation
+docs/inkless/**
+
+# Inkless Docker files
+docker/inkless/**
+docker/examples/docker-compose-files/inkless/**
+
+# Inkless configs
+config/inkless/**
+
+# Inkless benchmarks
+inkless-benchmarks/**
+
+# Inkless system tests
+tests/kafkatest/tests/inkless/**
+
+# Inkless GitHub workflows
+.github/workflows/inkless*.yml
+
+# === INKLESS-SPECIFIC TEST FILES ===
+core/src/test/java/kafka/server/Inkless*.java
+core/src/test/scala/kafka/server/metadata/Inkless*.scala
+
+# Inkless Makefile targets
+Makefile
