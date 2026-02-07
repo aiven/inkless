@@ -6,10 +6,12 @@ on:
   push:
     branches:
       - 'main'
+      - 'inkless-4.*'
   pull_request:
     types: [ opened, synchronize, ready_for_review, reopened ]
     branches:
       - 'main'
+      - 'inkless-4.*'
 
 jobs:
   validate:
