@@ -300,6 +300,7 @@ if (repo != null) {
         'LICENSE.md',
         'LICENSE-AGPL',
         'Makefile',
+        '.sync/**',
         'storage/inkless/**',
         'docker/examples/docker-compose-files/inkless/**',
         'config/inkless/**',
@@ -311,6 +312,7 @@ if (repo != null) {
         'inkless-benchmarks/**',
         'tests/kafkatest/tests/inkless/**',
         '.sync/**',
+        'inkless-sync/**',
         // end of inkless ignored files
         'licenses/*',
         '**/generated/**',
