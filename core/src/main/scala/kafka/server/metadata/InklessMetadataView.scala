@@ -55,6 +55,10 @@ class InklessMetadataView(val metadataCache: KRaftMetadataCache, val defaultConf
     metadataCache.topicConfig(topicName).getProperty(TopicConfig.DISKLESS_ENABLE_CONFIG, "false").toBoolean
   }
 
+  override def isRemoteStorageEnabled(topicName: String): Boolean = {
+    metadataCache.topicConfig(topicName).getProperty(TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG, "false").toBoolean
+  }
+
   override def getTopicConfig(topicName: String): Properties = {
     metadataCache.topicConfig(topicName)
   }
