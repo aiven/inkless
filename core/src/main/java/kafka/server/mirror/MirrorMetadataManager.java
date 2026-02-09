@@ -308,7 +308,11 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                 stopRequested = false;
             }
             MirrorPartitionKey key = new MirrorPartitionKey(mirrorName, tp.topic(), tp.partition());
-            if (isLocalCoordinator(key.mirrorName, key.topic, key.partition()) && mirrorPartitionState.containsKey(key)) {
+            if (isLocalCoordinator(key.mirrorName, key.topic, key.partition())) {
+                if (!mirrorPartitionState.containsKey(key)) {
+                    // initializing the cache
+                    mirrorPartitionState.put(key, MirrorPartitionState.UNKNOWN);
+                }
                 stateTransitioner.ifPresent(t -> {
                     if (stopRequested && mirrorPartitionState.get(key) != MirrorPartitionState.STOPPED) {
                         t.transitionTo(key.mirrorName, tp, MirrorPartitionState.STOPPING);
