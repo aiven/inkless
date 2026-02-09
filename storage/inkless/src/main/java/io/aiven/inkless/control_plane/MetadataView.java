@@ -38,6 +38,8 @@ public interface MetadataView {
 
     boolean isDisklessTopic(String topicName);
 
+    boolean isRemoteStorageEnabled(String topicName);
+
     Properties getTopicConfig(String topicName);
 
     Set<TopicIdPartition> getDisklessTopicPartitions();
