@@ -22,6 +22,9 @@ import org.apache.kafka.image.TopicImage;
 import org.apache.kafka.metadata.BrokerRegistration;
 import org.apache.kafka.metadata.PartitionRegistration;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.util.Map.Entry;
 import java.util.function.Function;
 
@@ -32,6 +35,7 @@ import java.util.function.Function;
  */
 @SuppressWarnings("NPathComplexity")
 class ControllerMetricsChanges {
+    private static final Logger log = LoggerFactory.getLogger(ControllerMetricsChanges.class);
 
     private final Function<String, Boolean> isDisklessTopic;
 
@@ -164,8 +168,12 @@ class ControllerMetricsChanges {
                     int rf = topicDelta.partitionChanges().values().iterator().next().replicas.length;
                     if (rf > 1) {
                         disklessManagedReplicasTopicsChange++;
+                        log.info("Created diskless topic '{}' with managed replicas (RF={})",
+                            topicDelta.name(), rf);
                     } else {
                         disklessUnmanagedReplicasTopicsChange++;
+                        log.info("Created diskless topic '{}' with unmanaged replicas (RF=1)",
+                            topicDelta.name());
                     }
                 }
             }
