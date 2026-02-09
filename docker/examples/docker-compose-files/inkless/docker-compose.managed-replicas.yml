@@ -1,0 +1,26 @@
+# Overlay for testing diskless managed replicas (RF = rack_count)
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.s3-local.yml -f docker-compose.managed-replicas.yml up -d
+#
+# This enables:
+#   - diskless.managed.rf.enable=true (RF computed from rack topology)
+#   - Broker racks configured (az1, az2)
+#
+# Expected behavior:
+#   - New diskless topics created with RF=2 (one replica per AZ)
+#   - Use: kafka-topics.sh --describe --topic <topic> to verify placement
+
+services:
+  broker:
+    environment:
+      # Enable managed replicas for diskless topics
+      KAFKA_DISKLESS_MANAGED_RF_ENABLE: "true"
+      # Configure rack/AZ
+      KAFKA_BROKER_RACK: "az1"
+
+  broker2:
+    environment:
+      # Enable managed replicas for diskless topics
+      KAFKA_DISKLESS_MANAGED_RF_ENABLE: "true"
+      # Configure rack/AZ
+      KAFKA_BROKER_RACK: "az2"
