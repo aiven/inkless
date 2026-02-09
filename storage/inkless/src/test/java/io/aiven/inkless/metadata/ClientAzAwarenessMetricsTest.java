@@ -60,6 +60,39 @@ class ClientAzAwarenessMetricsTest {
     }
 
     @Test
+    void testRecordFallback() {
+        final ClientAzAwarenessMetrics metrics = new ClientAzAwarenessMetrics();
+        assertEquals(0, metrics.fallbackTotal.count());
+        metrics.recordFallback();
+        assertEquals(1, metrics.fallbackTotal.count());
+        metrics.recordFallback();
+        assertEquals(2, metrics.fallbackTotal.count());
+        metrics.close();
+    }
+
+    @Test
+    void testRecordOfflineReplicasRoutedAround() {
+        final ClientAzAwarenessMetrics metrics = new ClientAzAwarenessMetrics();
+        assertEquals(0, metrics.offlineReplicasRoutedAround.count());
+        metrics.recordOfflineReplicasRoutedAround();
+        assertEquals(1, metrics.offlineReplicasRoutedAround.count());
+        metrics.recordOfflineReplicasRoutedAround();
+        assertEquals(2, metrics.offlineReplicasRoutedAround.count());
+        metrics.close();
+    }
+
+    @Test
+    void testRecordCrossAzRouting() {
+        final ClientAzAwarenessMetrics metrics = new ClientAzAwarenessMetrics();
+        assertEquals(0, metrics.crossAzRoutingTotal.count());
+        metrics.recordCrossAzRouting();
+        assertEquals(1, metrics.crossAzRoutingTotal.count());
+        metrics.recordCrossAzRouting();
+        assertEquals(2, metrics.crossAzRoutingTotal.count());
+        metrics.close();
+    }
+
+    @Test
     @Timeout(30) // Without concurrent access handling, this test may hang indefinitely
     void testConcurrentClientAzAccess() throws InterruptedException {
         final ClientAzAwarenessMetrics metrics = new ClientAzAwarenessMetrics();
