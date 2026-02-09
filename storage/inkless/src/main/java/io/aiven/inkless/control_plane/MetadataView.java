@@ -23,10 +23,11 @@ import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.network.ListenerName;
 import org.apache.kafka.storage.internals.log.LogConfig;
 
+import java.util.List;
 import java.util.Set;
 
 public interface MetadataView {
-    Iterable<Node> getAliveBrokerNodes(ListenerName listenerName);
+    List<Node> getAliveBrokerNodes(ListenerName listenerName);
 
     Integer getBrokerCount();
 
