@@ -272,6 +272,9 @@ public class InklessTopicMetadataTransformer implements Closeable {
         final int selectedLeader;
         final boolean partitionAvailable;
 
+        // Track if any replicas are offline but we can still route
+        final boolean hasOfflineReplicas = aliveReplicas.size() < assignedReplicas.size();
+
         if (isRemoteStorageEnabled) {
             // Remote storage enabled: must stay on replicas (RLM requires UnifiedLog)
             // Priority: same-AZ replica > cross-AZ replica > unavailable
@@ -281,11 +284,21 @@ public class InklessTopicMetadataTransformer implements Closeable {
                 selectedLeader = selectByHash(topicId, partitionIndex, aliveReplicasInClientAZ);
                 partitionAvailable = true;
                 metrics.recordClientAz(clientAZ, true);
+                if (hasOfflineReplicas) {
+                    metrics.recordOfflineReplicasRoutedAround();
+                }
             } else if (!aliveReplicas.isEmpty()) {
                 // Fallback: replica in other AZ (cross-AZ)
                 selectedLeader = selectByHash(topicId, partitionIndex, aliveReplicas);
                 partitionAvailable = true;
                 metrics.recordClientAz(clientAZ, false);
+                // Only record cross-AZ routing if we know the client's AZ
+                if (clientAZ != null) {
+                    metrics.recordCrossAzRouting();
+                }
+                if (hasOfflineReplicas) {
+                    metrics.recordOfflineReplicasRoutedAround();
+                }
                 LOG.debug("Tiered partition {}-{}: no replica in client AZ {}, using cross-AZ replica",
                     topicId, partitionIndex, clientAZ);
             } else {
@@ -306,11 +319,16 @@ public class InklessTopicMetadataTransformer implements Closeable {
                 selectedLeader = selectByHash(topicId, partitionIndex, aliveReplicasInClientAZ);
                 partitionAvailable = true;
                 metrics.recordClientAz(clientAZ, true);
+                if (hasOfflineReplicas) {
+                    metrics.recordOfflineReplicasRoutedAround();
+                }
             } else if (!allAliveBrokersInClientAZ.isEmpty()) {
                 // Assigned replica in client AZ is offline, but other brokers in AZ are alive
                 selectedLeader = selectByHash(topicId, partitionIndex, allAliveBrokersInClientAZ);
                 partitionAvailable = true;
                 metrics.recordClientAz(clientAZ, true);
+                metrics.recordFallback();
+                metrics.recordOfflineReplicasRoutedAround();
                 LOG.debug("Diskless partition {}-{}: no replica in client AZ {}, using same-AZ non-replica broker",
                     topicId, partitionIndex, clientAZ);
             } else if (!aliveReplicas.isEmpty()) {
@@ -318,6 +336,13 @@ public class InklessTopicMetadataTransformer implements Closeable {
                 selectedLeader = selectByHash(topicId, partitionIndex, aliveReplicas);
                 partitionAvailable = true;
                 metrics.recordClientAz(clientAZ, false);
+                // Only record cross-AZ routing if we know the client's AZ
+                if (clientAZ != null) {
+                    metrics.recordCrossAzRouting();
+                }
+                if (hasOfflineReplicas) {
+                    metrics.recordOfflineReplicasRoutedAround();
+                }
                 LOG.debug("Diskless partition {}-{}: no brokers in client AZ {}, using cross-AZ replica",
                     topicId, partitionIndex, clientAZ);
             } else {
@@ -327,6 +352,12 @@ public class InklessTopicMetadataTransformer implements Closeable {
                     selectedLeader = selectByHash(topicId, partitionIndex, allAliveBrokers);
                     partitionAvailable = true;
                     metrics.recordClientAz(clientAZ, false);
+                    metrics.recordFallback();
+                    // Only record cross-AZ routing if we know the client's AZ
+                    if (clientAZ != null) {
+                        metrics.recordCrossAzRouting();
+                    }
+                    metrics.recordOfflineReplicasRoutedAround();
                     LOG.warn("Diskless partition {}-{}: all replicas offline, falling back to non-replica broker {}",
                         topicId, partitionIndex, selectedLeader);
                 } else {
