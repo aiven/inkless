@@ -19,7 +19,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        java: [ 17, 23 ]  # If we change these, make sure to adjust ci-complete.yml
+        java: [ 17, 25 ]  # If we change these, make sure to adjust ci-complete.yml
     name: JUnit tests Java ${{ matrix.java }}
     steps:
       - name: Checkout code

@@ -36,12 +36,12 @@ jobs:
         with:
           python-version: '3.12'
 
-      # Generate JOOQ classes with JDK 23 to include @SuppressWarnings("this-escape") annotations
-      - name: Setup JDK 23 for JOOQ generation
+      # Generate JOOQ classes with JDK 25 to include @SuppressWarnings("this-escape") annotations
+      - name: Setup JDK 25 for JOOQ generation
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: 23
+          java-version: 25
 
       - name: Generate JOOQ classes
         run: make jooq
@@ -53,7 +53,7 @@ jobs:
             git status -s -- storage/inkless/src/main/jooq
             git diff --stat -- storage/inkless/src/main/jooq
             echo ""
-            echo "Please run 'make jooq' with JDK 23 and commit the changes"
+            echo "Please run 'make jooq' with JDK 25 and commit the changes"
             exit 1
           else
             echo "JOOQ classes are up-to-date."
@@ -121,7 +121,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        java: [ 17, 23 ]  # If we change these, make sure to adjust ci-complete.yml
+        java: [ 17, 25 ]  # If we change these, make sure to adjust ci-complete.yml
     name: JUnit tests Java ${{ matrix.java }}
     steps:
       - name: Checkout code
@@ -145,7 +145,7 @@ jobs:
         # --no-scan:      Don't attempt to publish the scan yet. We want to archive it first.
         # --continue:     Keep running even if a test fails
         # -PcommitId      Prevent the Git SHA being written into the jar files (which breaks caching)
-        # JOOQ classes are pre-committed with JDK 23, so no regeneration needed
+        # JOOQ classes are pre-committed with JDK 25, so no regeneration needed
         id: junit-test
         env:
           TIMEOUT_MINUTES: 30
