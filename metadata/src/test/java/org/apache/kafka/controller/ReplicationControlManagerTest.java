@@ -3987,7 +3987,7 @@ public class ReplicationControlManagerTest {
             ctx.unfenceBrokers(0, 1);
 
             String topic = "foo";
-            ctx.createTestTopic(
+            CreatableTopicResult createResult = ctx.createTestTopic(
                 topic,
                 1,
                 (short) 1,
@@ -4008,18 +4008,20 @@ public class ReplicationControlManagerTest {
                 alterResult1.response());
 
             ctx.replay(alterResult1.records());
-            ListPartitionReassignmentsResponseData currentReassigning =
-                new ListPartitionReassignmentsResponseData().setErrorMessage(null).
-                    setTopics(List.of(new OngoingTopicReassignment().setName(topic).setPartitions(List.of(
-                            new OngoingPartitionReassignment().setPartitionIndex(0)
-                                .setRemovingReplicas(List.of(0))
-                                .setAddingReplicas(List.of(1))
-                                .setReplicas(List.of(1, 0))))));
-            assertEquals(currentReassigning, replication.listPartitionReassignments(List.of(
+
+            // For diskless topics, reassignment completes immediately (no staged process).
+            // There should be no ongoing reassignment.
+            ListPartitionReassignmentsResponseData noOngoingReassignment =
+                new ListPartitionReassignmentsResponseData().setErrorMessage(null).setTopics(List.of());
+            assertEquals(noOngoingReassignment, replication.listPartitionReassignments(List.of(
                 new ListPartitionReassignmentsTopics().setName(topic).
                     setPartitionIndexes(List.of(0))), Long.MAX_VALUE));
 
-            // Try to increase the replication factor.
+            // Verify the partition now has the new replica (reassignment completed immediately)
+            PartitionRegistration partition = replication.getPartition(createResult.topicId(), 0);
+            assertEquals(List.of(1), Replicas.toList(partition.replicas));
+
+            // Try to increase the replication factor (should fail for diskless).
             ControllerResult<AlterPartitionReassignmentsResponseData> alterResult2 =
                 replication.alterPartitionReassignments(
                     new AlterPartitionReassignmentsRequestData().setTopics(List.of(
@@ -4033,10 +4035,6 @@ public class ReplicationControlManagerTest {
                                 .setErrorCode(INVALID_REPLICATION_FACTOR.code())
                                 .setErrorMessage("The replication factor is changed from 1 to 2"))))),
                 alterResult2.response());
-            ctx.replay(alterResult2.records());
-            assertEquals(currentReassigning, replication.listPartitionReassignments(List.of(
-                new ListPartitionReassignmentsTopics().setName(topic)
-                    .setPartitionIndexes(List.of(0))), Long.MAX_VALUE));
         }
 
         @Test
@@ -4752,7 +4750,7 @@ public class ReplicationControlManagerTest {
             ctx.unfenceBrokers(0, 1);
 
             String topic = "foo";
-            ctx.createTestTopic(topic, new int[][] {new int[] {0}}, Map.of(DISKLESS_ENABLE_CONFIG, "true"), (short) 0);
+            CreatableTopicResult createResult = ctx.createTestTopic(topic, new int[][] {new int[] {0}}, Map.of(DISKLESS_ENABLE_CONFIG, "true"), (short) 0);
 
             // No change in the replication factor.
             ControllerResult<AlterPartitionReassignmentsResponseData> alterResult1 =
@@ -4767,18 +4765,20 @@ public class ReplicationControlManagerTest {
                 alterResult1.response());
 
             ctx.replay(alterResult1.records());
-            ListPartitionReassignmentsResponseData currentReassigning =
-                new ListPartitionReassignmentsResponseData().setErrorMessage(null).
-                    setTopics(List.of(new OngoingTopicReassignment().setName(topic).setPartitions(List.of(
-                        new OngoingPartitionReassignment().setPartitionIndex(0)
-                            .setRemovingReplicas(List.of(0))
-                            .setAddingReplicas(List.of(1))
-                            .setReplicas(List.of(1, 0))))));
-            assertEquals(currentReassigning, replication.listPartitionReassignments(List.of(
+
+            // For diskless topics, reassignment completes immediately (no staged process).
+            // There should be no ongoing reassignment.
+            ListPartitionReassignmentsResponseData noOngoingReassignment =
+                new ListPartitionReassignmentsResponseData().setErrorMessage(null).setTopics(List.of());
+            assertEquals(noOngoingReassignment, replication.listPartitionReassignments(List.of(
                 new ListPartitionReassignmentsTopics().setName(topic).
                     setPartitionIndexes(List.of(0))), Long.MAX_VALUE));
 
-            // Try to increase the replication factor.
+            // Verify the partition now has the new replica (reassignment completed immediately)
+            PartitionRegistration partition = replication.getPartition(createResult.topicId(), 0);
+            assertEquals(List.of(1), Replicas.toList(partition.replicas));
+
+            // Try to increase the replication factor (should fail for diskless).
             ControllerResult<AlterPartitionReassignmentsResponseData> alterResult2 =
                 replication.alterPartitionReassignments(
                     new AlterPartitionReassignmentsRequestData().setTopics(List.of(
@@ -4792,10 +4792,6 @@ public class ReplicationControlManagerTest {
                                 .setErrorCode(INVALID_REPLICATION_FACTOR.code())
                                 .setErrorMessage("The replication factor is changed from 1 to 2"))))),
                 alterResult2.response());
-            ctx.replay(alterResult2.records());
-            assertEquals(currentReassigning, replication.listPartitionReassignments(List.of(
-                new ListPartitionReassignmentsTopics().setName(topic)
-                    .setPartitionIndexes(List.of(0))), Long.MAX_VALUE));
         }
 
         @Test
@@ -5024,6 +5020,68 @@ public class ReplicationControlManagerTest {
                 Map.of(DISKLESS_ENABLE_CONFIG, "true"),
                 NONE.code()
             );
+        }
+
+        @Test
+        void testAddPartitionsInheritsRFAndUsesRackAwarePlacement() {
+            // Phase 3: Adding partitions to diskless managed replica topics should:
+            // 1. Inherit RF from existing partitions
+            // 2. Use rack-aware placement (one replica per rack)
+            ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+                .setDisklessStorageSystemEnabled(true)
+                .setDisklessManagedReplicasEnabled(true)
+                .build();
+            ReplicationControlManager replication = ctx.replicationControl;
+            ctx.registerBrokersWithRacks(0, "a", 1, "b", 2, "c");
+            ctx.unfenceBrokers(0, 1, 2);
+
+            // Create diskless topic with managed replicas (RF=3, one per rack)
+            String topic = "foo";
+            CreatableTopicResult createResult = ctx.createTestTopic(
+                topic,
+                1,  // 1 partition initially
+                (short) 1,  // RF=-1 or 1 triggers managed RF
+                Map.of(DISKLESS_ENABLE_CONFIG, "true"),
+                NONE.code()
+            );
+            Uuid topicId = createResult.topicId();
+
+            // Verify initial partition has RF=3 (one per rack)
+            PartitionRegistration partition0 = replication.getPartition(topicId, 0);
+            assertEquals(3, partition0.replicas.length, "Initial partition should have RF=3 (one per rack)");
+
+            // Add 2 more partitions without manual assignments
+            ControllerRequestContext requestContext = anonymousContextFor(ApiKeys.CREATE_PARTITIONS);
+            ControllerResult<List<CreatePartitionsTopicResult>> addPartitionsResult =
+                replication.createPartitions(requestContext, List.of(
+                    new CreatePartitionsTopic().setName(topic).setCount(3).setAssignments(null)
+                ));
+            assertEquals(NONE.code(), addPartitionsResult.response().get(0).errorCode(),
+                "Adding partitions should succeed");
+            ctx.replay(addPartitionsResult.records());
+
+            // Verify new partitions also have RF=3
+            PartitionRegistration partition1 = replication.getPartition(topicId, 1);
+            PartitionRegistration partition2 = replication.getPartition(topicId, 2);
+            assertEquals(3, partition1.replicas.length, "New partition 1 should inherit RF=3");
+            assertEquals(3, partition2.replicas.length, "New partition 2 should inherit RF=3");
+
+            // Verify rack-aware placement: each partition should have replicas in different racks
+            Set<String> partition1Racks = getRacksForReplicas(ctx, partition1.replicas);
+            Set<String> partition2Racks = getRacksForReplicas(ctx, partition2.replicas);
+            assertEquals(3, partition1Racks.size(), "Partition 1 should have replicas in 3 different racks");
+            assertEquals(3, partition2Racks.size(), "Partition 2 should have replicas in 3 different racks");
+        }
+
+        private Set<String> getRacksForReplicas(ReplicationControlTestContext ctx, int[] replicas) {
+            Set<String> racks = new HashSet<>();
+            for (int replica : replicas) {
+                BrokerRegistration registration = ctx.clusterControl.brokerRegistrations().get(replica);
+                if (registration != null && registration.rack().isPresent()) {
+                    racks.add(registration.rack().get());
+                }
+            }
+            return racks;
         }
     }
 }
