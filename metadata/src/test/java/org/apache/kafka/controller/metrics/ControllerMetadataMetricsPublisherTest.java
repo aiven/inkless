@@ -66,11 +66,7 @@ public class ControllerMetadataMetricsPublisherTest {
         ControllerMetadataMetricsPublisher publisher;
 
         TestEnv() {
-            this(false);
-        }
-
-        TestEnv(boolean isDisklessTopics) {
-            publisher = new ControllerMetadataMetricsPublisher(metrics, faultHandler, topicName -> isDisklessTopics);
+            publisher = new ControllerMetadataMetricsPublisher(metrics, faultHandler);
         }
 
         @Override

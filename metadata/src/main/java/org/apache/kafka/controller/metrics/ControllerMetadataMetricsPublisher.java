@@ -49,14 +49,9 @@ public class ControllerMetadataMetricsPublisher implements MetadataPublisher {
     private final FaultHandler faultHandler;
     private MetadataImage prevImage = MetadataImage.EMPTY;
 
-    /**
-     * @param isDisklessTopic This parameter is kept for backward compatibility but is no longer used.
-     *                        The publisher now checks diskless status directly from MetadataImage configs.
-     */
     public ControllerMetadataMetricsPublisher(
         ControllerMetadataMetrics metrics,
-        FaultHandler faultHandler,
-        Function<String, Boolean> isDisklessTopic
+        FaultHandler faultHandler
     ) {
         this.metrics = metrics;
         this.faultHandler = faultHandler;
