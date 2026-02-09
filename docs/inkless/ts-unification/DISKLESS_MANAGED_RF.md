@@ -908,25 +908,31 @@ FOR each diskless partition:
 
 ### Metrics
 
-**Controller metrics:**
-- `kafka.controller.diskless.effective_rf{topic}` - RF assigned at creation
-- `kafka.controller.diskless.rack_aware{topic,partition}` - 1 if one-per-rack, 0 if not
-- `kafka.controller.diskless.rf1_topics_total` - Legacy topics not yet modernized
+**Controller metrics (implemented):**
+- `kafka.controller:type=KafkaController,name=DisklessTopicCount` - Total diskless topics
+- `kafka.controller:type=KafkaController,name=DisklessManagedReplicasTopicCount` - RF>1 diskless topics
+- `kafka.controller:type=KafkaController,name=DisklessUnmanagedReplicasTopicCount` - RF=1 diskless topics (legacy)
 
-**Placement quality metrics (for alerting on suboptimal placements):**
-- `kafka.controller.diskless.non_rack_aware_partitions_total` - Partitions where replicas don't span all racks
-- `kafka.controller.diskless.rf_mismatch_partitions_total` - Partitions where RF != rack_count
-- `kafka.controller.diskless.single_rack_partitions_total` - Partitions with all replicas in same rack (no AZ redundancy)
+> **Note:** Per-topic metrics like `effective_rf{topic}` and per-partition metrics like `rack_aware{topic,partition}`
+> were considered but deferred due to high cardinality concerns. Instead, topic creation details are logged at INFO level,
+> and aggregate counts are exposed as metrics. This provides operational visibility without metric explosion.
 
-These metrics help operators identify topics created with manual assignments that deviate from optimal rack-aware
-placement. Suggested alerting thresholds:
-- **Warning**: `non_rack_aware_partitions_total > 0` — review placement, may be intentional
-- **Critical**: `single_rack_partitions_total > 0` — no AZ redundancy for job ownership
+**Placement quality (logging-based approach):**
 
-**Transformer metrics:**
-- `kafka.server.diskless.transformer.fallback_total` - Count of hash fallbacks
-- `kafka.server.diskless.transformer.offline_replicas_routed_around` - Routing decisions
-- `kafka.server.diskless.transformer.cross_az_routing_total` - Requests routed to different AZ than client
+Rather than high-cardinality metrics, placement quality is monitored via logging:
+- Topic creation logs RF and replica assignment
+- Snapshot load logs summary of managed vs unmanaged topics
+- Unmanaged (RF=1) topic names are logged for operator review
+
+This approach avoids metric cardinality issues while still enabling alerting via log aggregation.
+
+**Transformer metrics (implemented):**
+- `io.aiven.inkless.metadata:type=ClientAzAwarenessMetrics,name=fallback-total` - Count of fallbacks to non-replica brokers
+- `io.aiven.inkless.metadata:type=ClientAzAwarenessMetrics,name=offline-replicas-routed-around` - Routing decisions when some replicas offline
+- `io.aiven.inkless.metadata:type=ClientAzAwarenessMetrics,name=cross-az-routing-total` - Requests routed to different AZ than client
+- `io.aiven.inkless.metadata:type=ClientAzAwarenessMetrics,name=client-az-hit-rate` - Requests where broker found in client AZ
+- `io.aiven.inkless.metadata:type=ClientAzAwarenessMetrics,name=client-az-miss-rate` - Requests where no broker in client AZ
+- `io.aiven.inkless.metadata:type=ClientAzAwarenessMetrics,name=client-az-unaware-rate` - Requests without client AZ info
 
 **Standard Kafka metrics:**
 - `UnderReplicatedPartitions` - Will show diskless partitions with offline brokers
