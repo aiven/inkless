@@ -67,6 +67,8 @@ public interface ControlPlane extends Closeable, Configurable {
 
     List<ListOffsetsResponse> listOffsets(List<ListOffsetsRequest> requests);
 
+    List<InitDisklessLogResponse> initDisklessLog(List<InitDisklessLogRequest> requests);
+
     FileMergeWorkItem getFileMergeWorkItem();
 
     void commitFileMergeWorkItem(

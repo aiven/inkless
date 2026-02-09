@@ -667,6 +667,42 @@ public abstract class AbstractControlPlaneTest {
         assertThat(controlPlane.getFilesToDelete()).isEmpty();
     }
 
+    @Test
+    void initDisklessLogIsIdempotentAndStable() {
+        final List<InitDisklessLogResponse> responses = controlPlane.initDisklessLog(List.of(
+            new InitDisklessLogRequest(EXISTING_TOPIC_1_ID, 0, 0),
+            new InitDisklessLogRequest(EXISTING_TOPIC_1_ID, 0, 0),
+            new InitDisklessLogRequest(EXISTING_TOPIC_1_ID, 0, 12),
+            new InitDisklessLogRequest(NONEXISTENT_TOPIC_ID, 0, 10),
+            new InitDisklessLogRequest(EXISTING_TOPIC_1_ID, 0, -1)
+        ));
+
+        assertThat(responses).containsExactly(
+            InitDisklessLogResponse.success(0),
+            InitDisklessLogResponse.success(0),
+            InitDisklessLogResponse.conflictingStartOffset(0),
+            InitDisklessLogResponse.success(10),
+            InitDisklessLogResponse.invalidRequest()
+        );
+    }
+
+    @Test
+    void initDisklessLogStartingFromGreaterThanZero() {
+        final List<InitDisklessLogResponse> responses = controlPlane.initDisklessLog(List.of(
+            new InitDisklessLogRequest(NONEXISTENT_TOPIC_ID, 0, 5),
+            new InitDisklessLogRequest(NONEXISTENT_TOPIC_ID, 0, 5),
+            new InitDisklessLogRequest(NONEXISTENT_TOPIC_ID, 0, 12),
+            new InitDisklessLogRequest(NONEXISTENT_TOPIC_ID, 0, 3)
+        ));
+
+        assertThat(responses).containsExactly(
+            InitDisklessLogResponse.success(5),
+            InitDisklessLogResponse.success(5),
+            InitDisklessLogResponse.conflictingStartOffset(5),
+            InitDisklessLogResponse.conflictingStartOffset(5)
+        );
+    }
+
     @Nested
     class Retention {
         private static final String FILE_NAME = "obj1";
