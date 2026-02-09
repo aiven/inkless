@@ -23,10 +23,10 @@ import org.apache.kafka.common.config.TopicConfig
 import org.apache.kafka.common.network.ListenerName
 import org.apache.kafka.common.{Node, TopicIdPartition, Uuid}
 
+import java.util
 import java.util.Properties
 import java.util.function.Supplier
 import java.util.stream.{Collectors, IntStream}
-import java.{lang, util}
 import scala.jdk.CollectionConverters._
 
 class InklessMetadataView(val metadataCache: KRaftMetadataCache, val defaultConfig: Supplier[util.Map[String, Object]]) extends MetadataView {
@@ -39,7 +39,7 @@ class InklessMetadataView(val metadataCache: KRaftMetadataCache, val defaultConf
     filtered
   }
 
-  override def getAliveBrokerNodes(listenerName: ListenerName): lang.Iterable[Node] = {
+  override def getAliveBrokerNodes(listenerName: ListenerName): util.List[Node] = {
     metadataCache.getAliveBrokerNodes(listenerName)
   }
 
