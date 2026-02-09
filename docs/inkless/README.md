@@ -6,7 +6,7 @@ Each release on version branches represents stable progress of the Inkless imple
 
 ## Requirements
 
-- Java 17 or 23 (Java 11 for clients only)
+- Java 17 or 25 (Java 11 for clients only)
 - Scala 2.13.16
 - Docker (required for building - jOOQ plugin uses a PostgreSQL container for Flyway migrations and class generation)
 - Object storage (AWS S3, Google Cloud Storage, or Azure Blob Storage)
