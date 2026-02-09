@@ -72,12 +72,20 @@ class MirrorFetcherManager(brokerConfig: KafkaConfig,
   override def minFetchRate: Double = {
     // current min fetch rate across all fetchers/topics/partitions
     val headRate = mirrorFetcherThreadMap.values.headOption.map(_.fetcherStats.requestRate.oneMinuteRate).getOrElse(0.0)
+<<<<<<< HEAD
+=======
+    info("!!! mirrorFetcherThreadMap: " + mirrorFetcherThreadMap + ";;" + fetcherThreadMap + ";;" + headRate)
+>>>>>>> 942af298c9 (maxLag... metrics works)
     mirrorFetcherThreadMap.values.foldLeft(headRate)((curMinAll, fetcherThread) =>
       math.min(curMinAll, fetcherThread.fetcherStats.requestRate.oneMinuteRate))
   }
 
   override def maxLag: Long = {
     // current max lag across all fetchers/topics/partitions
+<<<<<<< HEAD
+=======
+    info("!!! mirrorFetcherThreadMap: " + mirrorFetcherThreadMap + fetcherThreadMap)
+>>>>>>> 942af298c9 (maxLag... metrics works)
     mirrorFetcherThreadMap.values.foldLeft(0L) { (curMaxLagAll, fetcherThread) =>
       val maxLagThread = fetcherThread.fetcherLagStats.stats.values.stream().mapToLong(v => v.lag).max().orElse(0L)
       math.max(curMaxLagAll, maxLagThread)
