@@ -30,6 +30,11 @@ import org.apache.kafka.metadata.BrokerRegistration;
 import org.apache.kafka.metadata.PartitionRegistration;
 import org.apache.kafka.server.fault.FaultHandler;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map.Entry;
 import java.util.Optional;
 import java.util.Properties;
@@ -45,6 +50,8 @@ import java.util.function.Function;
  *
  */
 public class ControllerMetadataMetricsPublisher implements MetadataPublisher {
+    private static final Logger log = LoggerFactory.getLogger(ControllerMetadataMetricsPublisher.class);
+
     private final ControllerMetadataMetrics metrics;
     private final FaultHandler faultHandler;
     private MetadataImage prevImage = MetadataImage.EMPTY;
@@ -156,6 +163,7 @@ public class ControllerMetadataMetricsPublisher implements MetadataPublisher {
         int disklessTopics = 0;
         int disklessUnmanagedReplicasTopics = 0;
         int disklessManagedReplicasTopics = 0;
+        List<String> unmanagedReplicasTopicNames = new ArrayList<>();
         for (TopicImage topicImage : newImage.topics().topicsById().values()) {
             // Check diskless from newImage configs directly for consistency with delta path
             ConfigResource resource = new ConfigResource(ConfigResource.Type.TOPIC, topicImage.name());
@@ -170,6 +178,7 @@ public class ControllerMetadataMetricsPublisher implements MetadataPublisher {
                         disklessManagedReplicasTopics++;
                     } else {
                         disklessUnmanagedReplicasTopics++;
+                        unmanagedReplicasTopicNames.add(topicImage.name());
                     }
                 }
             }
@@ -191,6 +200,15 @@ public class ControllerMetadataMetricsPublisher implements MetadataPublisher {
         metrics.setDisklessTopicCount(disklessTopics);
         metrics.setDisklessUnmanagedReplicasTopicCount(disklessUnmanagedReplicasTopics);
         metrics.setDisklessManagedReplicasTopicCount(disklessManagedReplicasTopics);
+
+        // Log summary of diskless topics for operational visibility
+        if (disklessTopics > 0) {
+            log.info("Diskless topics summary: total={}, managed={}, unmanaged={}",
+                disklessTopics, disklessManagedReplicasTopics, disklessUnmanagedReplicasTopics);
+        }
+        if (!unmanagedReplicasTopicNames.isEmpty()) {
+            log.info("Diskless topics with unmanaged replicas (RF=1): {}", unmanagedReplicasTopicNames);
+        }
     }
 
     @Override
