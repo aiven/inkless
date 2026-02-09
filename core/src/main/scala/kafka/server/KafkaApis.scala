@@ -362,31 +362,11 @@ class KafkaApis(val requestChannel: RequestChannel,
   }
 
   def handleAddTopicsToMirror(request: RequestChannel.Request): Unit = {
-//    if (isClusterMirroringEnabled) {
-//      val addTopicsToMirrorRequest = request.body[AddTopicsToMirrorRequest]
-//      val mirrorTopics = addTopicsToMirrorRequest.data.topics().stream()
-//        .filter(t => t.mirrorName() != null && !t.mirrorName().isEmpty)
-//        .collect(Collectors.toList())
-//      if (!mirrorTopics.isEmpty) {
-//        val mirrorName = mirrorTopics.get(0).mirrorName()
-//        val topicNames = mirrorTopics.stream()
-//          .map(t => t.topicName())
-//          .collect(Collectors.toSet())
-//        logger.info(s"!!! Handling adding mirror topics request: $mirrorName with topics: $topicNames")
-//        val topicPartitions = new util.HashSet[TopicPartition]()
-//        // TODO: We should return error if the topic is not created, yet
-//        topicNames.forEach(topicName => {
-//          metadataCache.numPartitions(topicName).map(num => {
-//            for (i <- 0 until num) {
-//              topicPartitions.add(new TopicPartition(topicName, i))
-//            }
-//          })
-//        })
-//        mirrorCoordinator.transitionTo(mirrorName, topicPartitions, MirrorPartitionState.INITIALIZING)
-//      }
-//    } else {
-//      logger.warn("Cluster Mirroring is disabled (mirror.version=0), ignoring add topics to mirror request")
-//    }
+    // TODO: do the mirror partition state validation before forwarding to controller
+    if (!isClusterMirroringEnabled) {
+      logger.warn("Cluster Mirroring is disabled (mirror.version=0), ignoring add topics to mirror request")
+      requestHelper.sendMaybeThrottle(request, new AddTopicsToMirrorResponse(new AddTopicsToMirrorResponseData().setErrorCode(Errors.INVALID_REQUEST.code)))
+    }
     forwardToController(request)
   }
 
