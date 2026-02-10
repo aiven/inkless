@@ -1158,8 +1158,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     private Map<String, Map<String, String>> detectConfigurationChanges(
             String mirrorName, DescribeConfigsResponse describeConfigsRes, MirrorConfig mirrorConfig) {
         Map<String, Map<String, String>> configsToChange = new HashMap<>();
-        Pattern includePattern = mirrorConfig.propertiesIncludePattern();
-        Set<String> excludeSet = MirrorConfig.propertiesExclude();
+        Pattern excludePattern = mirrorConfig.topicPropertiesExcludePattern();
 
         describeConfigsRes.data().results().forEach(describeConfigResult -> {
             if (describeConfigResult.resourceType() == ConfigResource.Type.TOPIC.id() &&
@@ -1173,8 +1172,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                     // by source cluster configs (which wouldn't have this config set)
                     if (con.configSource() == DescribeConfigsResponse.ConfigSource.TOPIC_CONFIG.id()
                             && !con.name().equals(TopicConfig.MIRROR_NAME_CONFIG)
-                            && !excludeSet.contains(con.name())
-                            && includePattern.matcher(con.name()).matches()) {
+                            && !excludePattern.matcher(con.name()).matches()) {
                         if (props.containsKey(con.name())) {
                             if (!props.get(con.name()).equals(con.value())) {
                                 conChange.put(con.name(), con.value());

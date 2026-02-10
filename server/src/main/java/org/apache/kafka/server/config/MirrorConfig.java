@@ -30,7 +30,6 @@ import org.apache.kafka.common.security.auth.SecurityProtocol;
 import java.util.List;
 import java.util.Locale;
 import java.util.Properties;
-import java.util.Set;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
@@ -60,33 +59,32 @@ public class MirrorConfig {
     public static final String MIRROR_TOPIC_REPLICATION_FACTOR_DOC = "The replication factor for the Cluster Mirror internal topic. " +
             "Topic creation will fail until the cluster size meets this replication factor requirement.";
 
-    // Topic properties include filter (regex patterns)
-    public static final String PROPERTIES_INCLUDE_CONFIG = "mirror.properties.include";
-    public static final String PROPERTIES_INCLUDE_DEFAULT = ".*";
-    public static final String PROPERTIES_INCLUDE_DOC = "A comma-separated list of regex patterns for topic config properties to include in synchronization. "
-            + "Only properties whose names match at least one of the patterns will be replicated from the source cluster. "
-            + "Properties in the internal exclude list are always excluded regardless of this setting.";
-
-    // Properties that should never be synced regardless of the include pattern
-    private static final Set<String> PROPERTIES_EXCLUDE = Set.of(
-            "follower.replication.throttled.replicas",
-            "leader.replication.throttled.replicas",
-            "message.timestamp.difference.max.ms",
-            "message.timestamp.type",
-            "unclean.leader.election.enable",
-            "min.insync.replicas"
-    );
+    // Topic properties exclude filter (regex patterns)
+    public static final String MIRROR_TOPIC_PROPERTIES_EXCLUDE_CONFIG = "mirror.topic.properties.exclude";
+    public static final String MIRROR_TOPIC_PROPERTIES_EXCLUDE_DEFAULT =
+            "follower.replication.throttled.replicas,"
+            + "leader.replication.throttled.replicas,"
+            + "message.timestamp.difference.max.ms,"
+            + "log.message.timestamp.before.max.ms,"
+            + "log.message.timestamp.after.max.ms,"
+            + "message.timestamp.type,"
+            + "unclean.leader.election.enable,"
+            + "min.insync.replicas,"
+            + "mirror.name";
+    public static final String MIRROR_TOPIC_PROPERTIES_EXCLUDE_DOC = "A comma-separated list of topic config property names to exclude from synchronization. "
+            + "Properties in this list will not be replicated from the source cluster. "
+            + "The mirror.name property is always excluded regardless of this setting.";
 
     // Consumer group include filter (regex patterns)
-    public static final String GROUPS_INCLUDE_CONFIG = "mirror.groups.include";
-    public static final String GROUPS_INCLUDE_DEFAULT = ".*";
-    public static final String GROUPS_INCLUDE_DOC = "A comma-separated list of regex patterns for consumer group IDs to include in offset synchronization. "
+    public static final String MIRROR_GROUPS_INCLUDE_CONFIG = "mirror.groups.include";
+    public static final String MIRROR_GROUPS_INCLUDE_DEFAULT = ".*";
+    public static final String MIRROR_GROUPS_INCLUDE_DOC = "A comma-separated list of regex patterns for consumer group IDs to include in offset synchronization. "
             + "Only consumer groups whose IDs match at least one of the patterns will have their offsets replicated from the source cluster.";
 
     // ACL include filter (semicolon-separated rules)
-    public static final String ACL_INCLUDE_CONFIG = "mirror.acl.include";
-    public static final String ACL_INCLUDE_DEFAULT = "*";
-    public static final String ACL_INCLUDE_DOC = "A comma-separated list of ACL include rules. Each rule uses semicolon-separated fields: "
+    public static final String MIRROR_ACL_INCLUDE_CONFIG = "mirror.acl.include";
+    public static final String MIRROR_ACL_INCLUDE_DEFAULT = "*";
+    public static final String MIRROR_ACL_INCLUDE_DOC = "A comma-separated list of ACL include rules. Each rule uses semicolon-separated fields: "
             + "resourceType;resourceName;operation;permissionType;principal. Use '*' as wildcard for any field. The resourceName field supports "
             + "regex patterns. Trailing wildcard fields can be omitted. See AclRule javadoc for examples.";
 
@@ -242,9 +240,9 @@ public class MirrorConfig {
      * This includes all supported configurations with proper validation, defaults, and documentation.
      */
     public static final ConfigDef CONFIG_DEF = new ConfigDef()
-            .define(PROPERTIES_INCLUDE_CONFIG, LIST, PROPERTIES_INCLUDE_DEFAULT, LOW, PROPERTIES_INCLUDE_DOC)
-            .define(GROUPS_INCLUDE_CONFIG, LIST, GROUPS_INCLUDE_DEFAULT, LOW, GROUPS_INCLUDE_DOC)
-            .define(ACL_INCLUDE_CONFIG, LIST, ACL_INCLUDE_DEFAULT, LOW, ACL_INCLUDE_DOC)
+            .define(MIRROR_TOPIC_PROPERTIES_EXCLUDE_CONFIG, LIST, MIRROR_TOPIC_PROPERTIES_EXCLUDE_DEFAULT, LOW, MIRROR_TOPIC_PROPERTIES_EXCLUDE_DOC)
+            .define(MIRROR_GROUPS_INCLUDE_CONFIG, LIST, MIRROR_GROUPS_INCLUDE_DEFAULT, LOW, MIRROR_GROUPS_INCLUDE_DOC)
+            .define(MIRROR_ACL_INCLUDE_CONFIG, LIST, MIRROR_ACL_INCLUDE_DEFAULT, LOW, MIRROR_ACL_INCLUDE_DOC)
             .define(MIRROR_TOPIC_NUM_PARTITIONS_CONFIG, INT, MIRROR_TOPIC_NUM_PARTITIONS_DEFAULT, atLeast(1), HIGH, MIRROR_TOPIC_NUM_PARTITIONS_DOC)
             .define(MIRROR_TOPIC_REPLICATION_FACTOR_CONFIG, SHORT, MIRROR_TOPIC_REPLICATION_FACTOR_DEFAULT, atLeast(1), HIGH, MIRROR_TOPIC_REPLICATION_FACTOR_DOC)
             .define(NUM_REPLICA_FETCHERS_CONFIG, INT, NUM_REPLICA_FETCHERS_DEFAULT, atLeast(1), HIGH, NUM_REPLICA_FETCHERS_DOC)
@@ -289,21 +287,21 @@ public class MirrorConfig {
             .define(SSL_ENGINE_FACTORY_CLASS_CONFIG, STRING, null, LOW, SSL_ENGINE_FACTORY_CLASS_DOC);
 
     private final AbstractConfig config;
-    private final Pattern propertiesIncludePattern;
+    private final Pattern topicPropertiesExcludePattern;
     private final Pattern groupsIncludePattern;
     private final List<AclRule> aclIncludeRules;
-    private final int mirrorTopicNumPartitions;
-    private final short mirrorTopicReplicationFactor;
+    private final int topicNumPartitions;
+    private final short topicReplicationFactor;
     private final String securityProtocol;
     private final String saslMechanism;
 
     public MirrorConfig(AbstractConfig config) {
         this.config = config;
-        propertiesIncludePattern = compilePatternList(config.getList(PROPERTIES_INCLUDE_CONFIG));
-        groupsIncludePattern = compilePatternList(config.getList(GROUPS_INCLUDE_CONFIG));
-        aclIncludeRules = parseAclRules(config.getList(ACL_INCLUDE_CONFIG));
-        mirrorTopicNumPartitions = config.getInt(MIRROR_TOPIC_NUM_PARTITIONS_CONFIG);
-        mirrorTopicReplicationFactor = config.getShort(MIRROR_TOPIC_REPLICATION_FACTOR_CONFIG);
+        topicPropertiesExcludePattern = compilePatternList(config.getList(MIRROR_TOPIC_PROPERTIES_EXCLUDE_CONFIG));
+        groupsIncludePattern = compilePatternList(config.getList(MIRROR_GROUPS_INCLUDE_CONFIG));
+        aclIncludeRules = parseAclRules(config.getList(MIRROR_ACL_INCLUDE_CONFIG));
+        topicNumPartitions = config.getInt(MIRROR_TOPIC_NUM_PARTITIONS_CONFIG);
+        topicReplicationFactor = config.getShort(MIRROR_TOPIC_REPLICATION_FACTOR_CONFIG);
         securityProtocol = config.getString(SECURITY_PROTOCOL_CONFIG);
         saslMechanism = config.getString(SASL_MECHANISM_CONFIG);
     }
@@ -321,12 +319,8 @@ public class MirrorConfig {
         return new MirrorConfig(config);
     }
 
-    public Pattern propertiesIncludePattern() {
-        return propertiesIncludePattern;
-    }
-
-    public static Set<String> propertiesExclude() {
-        return PROPERTIES_EXCLUDE;
+    public Pattern topicPropertiesExcludePattern() {
+        return topicPropertiesExcludePattern;
     }
 
     public Pattern groupsIncludePattern() {
@@ -337,12 +331,12 @@ public class MirrorConfig {
         return aclIncludeRules;
     }
 
-    public int mirrorTopicNumPartitions() {
-        return mirrorTopicNumPartitions;
+    public int topicNumPartitions() {
+        return topicNumPartitions;
     }
 
-    public short mirrorTopicReplicationFactor() {
-        return mirrorTopicReplicationFactor;
+    public short topicReplicationFactor() {
+        return topicReplicationFactor;
     }
 
     public String securityProtocol() {
@@ -418,9 +412,9 @@ public class MirrorConfig {
      */
     public static ConfigDef topicConfigDef() {
         return new ConfigDef()
-            .define(PROPERTIES_INCLUDE_CONFIG, LIST, PROPERTIES_INCLUDE_DEFAULT, LOW, PROPERTIES_INCLUDE_DOC)
-            .define(GROUPS_INCLUDE_CONFIG, LIST, GROUPS_INCLUDE_DEFAULT, LOW, GROUPS_INCLUDE_DOC)
-            .define(ACL_INCLUDE_CONFIG, LIST, ACL_INCLUDE_DEFAULT, LOW, ACL_INCLUDE_DOC)
+            .define(MIRROR_TOPIC_PROPERTIES_EXCLUDE_CONFIG, LIST, MIRROR_TOPIC_PROPERTIES_EXCLUDE_DEFAULT, LOW, MIRROR_TOPIC_PROPERTIES_EXCLUDE_DOC)
+            .define(MIRROR_GROUPS_INCLUDE_CONFIG, LIST, MIRROR_GROUPS_INCLUDE_DEFAULT, LOW, MIRROR_GROUPS_INCLUDE_DOC)
+            .define(MIRROR_ACL_INCLUDE_CONFIG, LIST, MIRROR_ACL_INCLUDE_DEFAULT, LOW, MIRROR_ACL_INCLUDE_DOC)
             .define(MIRROR_TOPIC_NUM_PARTITIONS_CONFIG, INT, MIRROR_TOPIC_NUM_PARTITIONS_DEFAULT, atLeast(1), HIGH, MIRROR_TOPIC_NUM_PARTITIONS_DOC)
             .define(MIRROR_TOPIC_REPLICATION_FACTOR_CONFIG, SHORT, MIRROR_TOPIC_REPLICATION_FACTOR_DEFAULT, atLeast(1), HIGH, MIRROR_TOPIC_REPLICATION_FACTOR_DOC)
             .define(NUM_REPLICA_FETCHERS_CONFIG, INT, NUM_REPLICA_FETCHERS_DEFAULT, atLeast(1), HIGH, NUM_REPLICA_FETCHERS_DOC)

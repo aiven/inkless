@@ -434,7 +434,7 @@ public class MirrorCoordinator {
                 metadataRefreshIntervalMs,
                 metadataRefreshIntervalMs
         );
-        numPartitions = kafkaConfig.mirrorConfig().mirrorTopicNumPartitions();
+        numPartitions = kafkaConfig.mirrorConfig().topicNumPartitions();
     }
 
     /**
