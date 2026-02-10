@@ -295,28 +295,48 @@ public class MirrorConfig {
     private final String securityProtocol;
     private final String saslMechanism;
 
+    /**
+     * Creates a MirrorConfig from broker-level config.
+     * Filter configs are not available at broker level, so defaults are used.
+     */
     public MirrorConfig(AbstractConfig config) {
         this.config = config;
-        topicPropertiesExcludePattern = compilePatternList(config.getList(MIRROR_TOPIC_PROPERTIES_EXCLUDE_CONFIG));
-        groupsIncludePattern = compilePatternList(config.getList(MIRROR_GROUPS_INCLUDE_CONFIG));
-        aclIncludeRules = parseAclRules(config.getList(MIRROR_ACL_INCLUDE_CONFIG));
         topicNumPartitions = config.getInt(MIRROR_TOPIC_NUM_PARTITIONS_CONFIG);
         topicReplicationFactor = config.getShort(MIRROR_TOPIC_REPLICATION_FACTOR_CONFIG);
         securityProtocol = config.getString(SECURITY_PROTOCOL_CONFIG);
         saslMechanism = config.getString(SASL_MECHANISM_CONFIG);
+        topicPropertiesExcludePattern = compilePatternList(List.of(MIRROR_TOPIC_PROPERTIES_EXCLUDE_DEFAULT));
+        groupsIncludePattern = compilePatternList(List.of(MIRROR_GROUPS_INCLUDE_DEFAULT));
+        aclIncludeRules = parseAclRules(List.of(MIRROR_ACL_INCLUDE_DEFAULT));
     }
 
     /**
-     * Creates a MirrorConfig instance from Properties, using AbstractConfig's
-     * built-in config provider resolution and password handling.
+     * Creates a MirrorConfig from mirror metadata properties stored in the cluster metadata topic.
+     * Filter configs are loaded from the metadata, with defaults applied for any missing values.
      *
-     * @param properties the raw properties
-     * @return a new MirrorConfig instance with processed properties
+     * @param properties the mirror metadata properties
+     * @return a new MirrorConfig instance
      */
     public static MirrorConfig fromProperties(Properties properties) {
-        // AbstractConfig handles config provider resolution and password conversion
         AbstractConfig config = new AbstractConfig(CONFIG_DEF, properties, false) { };
-        return new MirrorConfig(config);
+        return new MirrorConfig(config,
+                config.getList(MIRROR_TOPIC_PROPERTIES_EXCLUDE_CONFIG),
+                config.getList(MIRROR_GROUPS_INCLUDE_CONFIG),
+                config.getList(MIRROR_ACL_INCLUDE_CONFIG));
+    }
+
+    private MirrorConfig(AbstractConfig config,
+                         List<String> topicPropertiesExclude,
+                         List<String> groupsInclude,
+                         List<String> aclInclude) {
+        this.config = config;
+        topicNumPartitions = config.getInt(MIRROR_TOPIC_NUM_PARTITIONS_CONFIG);
+        topicReplicationFactor = config.getShort(MIRROR_TOPIC_REPLICATION_FACTOR_CONFIG);
+        securityProtocol = config.getString(SECURITY_PROTOCOL_CONFIG);
+        saslMechanism = config.getString(SASL_MECHANISM_CONFIG);
+        topicPropertiesExcludePattern = compilePatternList(topicPropertiesExclude);
+        groupsIncludePattern = compilePatternList(groupsInclude);
+        aclIncludeRules = parseAclRules(aclInclude);
     }
 
     public Pattern topicPropertiesExcludePattern() {
@@ -412,9 +432,6 @@ public class MirrorConfig {
      */
     public static ConfigDef topicConfigDef() {
         return new ConfigDef()
-            .define(MIRROR_TOPIC_PROPERTIES_EXCLUDE_CONFIG, LIST, MIRROR_TOPIC_PROPERTIES_EXCLUDE_DEFAULT, LOW, MIRROR_TOPIC_PROPERTIES_EXCLUDE_DOC)
-            .define(MIRROR_GROUPS_INCLUDE_CONFIG, LIST, MIRROR_GROUPS_INCLUDE_DEFAULT, LOW, MIRROR_GROUPS_INCLUDE_DOC)
-            .define(MIRROR_ACL_INCLUDE_CONFIG, LIST, MIRROR_ACL_INCLUDE_DEFAULT, LOW, MIRROR_ACL_INCLUDE_DOC)
             .define(MIRROR_TOPIC_NUM_PARTITIONS_CONFIG, INT, MIRROR_TOPIC_NUM_PARTITIONS_DEFAULT, atLeast(1), HIGH, MIRROR_TOPIC_NUM_PARTITIONS_DOC)
             .define(MIRROR_TOPIC_REPLICATION_FACTOR_CONFIG, SHORT, MIRROR_TOPIC_REPLICATION_FACTOR_DEFAULT, atLeast(1), HIGH, MIRROR_TOPIC_REPLICATION_FACTOR_DOC)
             .define(NUM_REPLICA_FETCHERS_CONFIG, INT, NUM_REPLICA_FETCHERS_DEFAULT, atLeast(1), HIGH, NUM_REPLICA_FETCHERS_DOC)

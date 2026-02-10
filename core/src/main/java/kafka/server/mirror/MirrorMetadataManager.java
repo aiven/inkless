@@ -1041,7 +1041,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                 metrics,
                 time,
                 brokerEndpoint.id(),
-                "broker-" + nodeId + "-cluster-mirror-metadata-manager-" + mirrorName,
+                "broker-" + nodeId + "-mirror-metadata-manager-" + mirrorName,
                 logContext
         );
         remoteBrokers.put(mirrorName, List.of(sender));
