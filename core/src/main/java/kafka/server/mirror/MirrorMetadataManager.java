@@ -1080,7 +1080,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     }
 
     private void syncTopicConfigurations(String mirrorName, List<MirrorBlockingSender> senders, MirrorConfig mirrorConfig) {
-        LOG.debug("!!! Describing topic configs for topics: {}", mirrorTopics);
+        LOG.info("!!! Describing topic configs for topics: {}", mirrorTopics);
         topicConfigSyncError++;
 
         List<DescribeConfigsRequestData.DescribeConfigsResource> describeConfigsResources =
@@ -1269,10 +1269,13 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     }
 
     private void syncConsumerGroupOffsets(String mirrorName, List<MirrorBlockingSender> senders, MirrorConfig mirrorConfig) {
+<<<<<<< HEAD
         consumerGroupOffsetSyncError++;
 
+=======
+            consumerGroupOffsetSyncError++;
+>>>>>>> 11cda36f81 (add metrics)
         Pattern groupsIncludePattern = mirrorConfig.groupsIncludePattern();
-
         // 1. list group
         ListGroupsRequest.Builder builder = new ListGroupsRequest.Builder(new ListGroupsRequestData()
                 // TODO: if the source cluster is in old version, it won't support types filter
