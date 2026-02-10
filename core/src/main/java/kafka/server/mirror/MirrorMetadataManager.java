@@ -309,20 +309,17 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
             }
             MirrorPartitionKey key = new MirrorPartitionKey(mirrorName, tp.topic(), tp.partition());
             if (isLocalCoordinator(key.mirrorName, key.topic, key.partition())) {
-                if (!mirrorPartitionState.containsKey(key)) {
-                    // initializing the cache
-                    mirrorPartitionState.put(key, MirrorPartitionState.UNKNOWN);
-                }
+                MirrorPartitionState curState = mirrorPartitionState.getOrDefault(key, MirrorPartitionState.UNKNOWN);
                 stateTransitioner.ifPresent(t -> {
-                    if (stopRequested && mirrorPartitionState.get(key) != MirrorPartitionState.STOPPED) {
+                    if (stopRequested && curState != MirrorPartitionState.STOPPED) {
                         t.transitionTo(key.mirrorName, tp, MirrorPartitionState.STOPPING);
                     } else {
                         // moving to preparing_mirroring if it's starting because it's waiting for metadata update.
                         // otherwise, move to what the current state is
-                        if (mirrorPartitionState.get(key) == MirrorPartitionState.UNKNOWN) {
+                        if (curState == MirrorPartitionState.UNKNOWN || curState == MirrorPartitionState.STOPPED) {
                             t.transitionTo(key.mirrorName, tp, MirrorPartitionState.PREPARING);
                         } else {
-                            t.transitionTo(key.mirrorName, tp, mirrorPartitionState.get(key));
+                            t.transitionTo(key.mirrorName, tp, curState);
                         }
                     }
                 });
@@ -335,10 +332,11 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                                 MirrorPartitionState state = MirrorPartitionState.fromValue(partition.state());
                                 putPartitionState(new MirrorPartitionKey(key.mirrorName, tp.topic(), tp.partition()), state);
                                 stateTransitioner.ifPresent(t -> {
-                                    if (stopRequested && mirrorPartitionState.get(key) != MirrorPartitionState.STOPPED) {
+                                    MirrorPartitionState curState = mirrorPartitionState.getOrDefault(key, MirrorPartitionState.UNKNOWN);
+                                    if (stopRequested && curState != MirrorPartitionState.STOPPED) {
                                         t.transitionTo(key.mirrorName, tp, MirrorPartitionState.STOPPING);
                                     } else {
-                                        if (mirrorPartitionState.get(key) == MirrorPartitionState.UNKNOWN) {
+                                        if (curState == MirrorPartitionState.UNKNOWN || curState == MirrorPartitionState.STOPPED) {
                                             t.transitionTo(key.mirrorName, tp, MirrorPartitionState.PREPARING);
                                         } else {
                                             t.transitionTo(key.mirrorName, tp, state);
