@@ -216,8 +216,8 @@ class DefaultAutoTopicCreationManager(
         properties.put(TopicConfig.RETENTION_MS_CONFIG, -1)
         new CreatableTopic()
           .setName(topic)
-          .setNumPartitions(config.mirrorConfig.mirrorTopicNumPartitions())
-          .setReplicationFactor(config.mirrorConfig.mirrorTopicReplicationFactor())
+          .setNumPartitions(config.mirrorConfig.topicNumPartitions())
+          .setReplicationFactor(config.mirrorConfig.topicReplicationFactor())
           .setConfigs(convertToTopicConfigCollections(properties))
       case topicName =>
         new CreatableTopic()

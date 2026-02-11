@@ -85,6 +85,7 @@ import org.apache.kafka.common.security.auth.KafkaPrincipal;
 import org.apache.kafka.common.security.auth.SecurityProtocol;
 import org.apache.kafka.common.utils.LogContext;
 import org.apache.kafka.common.utils.Time;
+import org.apache.kafka.coordinator.group.Group;
 import org.apache.kafka.coordinator.group.GroupCoordinator;
 import org.apache.kafka.coordinator.mirror.MirrorRecordKey;
 import org.apache.kafka.image.ConfigurationDelta;
@@ -122,6 +123,7 @@ import java.util.concurrent.ConcurrentSkipListSet;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Supplier;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 import static java.util.Collections.singletonList;
@@ -995,9 +997,11 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
 
             // Only coordinator syncs configurations, consumer groups, and ACLs
             if (isLocalCoordinator(mirrorName)) {
-                syncTopicConfigurations(mirrorName, senders);
-                syncConsumerGroupOffsets(senders);
-                syncACLs(mirrorName, senders);
+                MirrorConfig mirrorConfig = MirrorConfig.fromProperties(
+                        metadataCache.config(new ConfigResource(ConfigResource.Type.MIRROR, mirrorName)));
+                syncTopicConfigurations(mirrorName, senders, mirrorConfig);
+                syncConsumerGroupOffsets(mirrorName, senders, mirrorConfig);
+                syncAccessControlLists(mirrorName, senders, mirrorConfig);
             }
         });
     }
@@ -1038,7 +1042,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                 metrics,
                 time,
                 brokerEndpoint.id(),
-                "broker-" + nodeId + "-cluster-mirror-metadata-manager-" + mirrorName,
+                "broker-" + nodeId + "-mirror-metadata-manager-" + mirrorName,
                 logContext
         );
         remoteBrokers.put(mirrorName, List.of(sender));
@@ -1061,7 +1065,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         }
     }
 
-    private void syncTopicConfigurations(String mirrorName, List<MirrorBlockingSender> senders) {
+    private void syncTopicConfigurations(String mirrorName, List<MirrorBlockingSender> senders, MirrorConfig mirrorConfig) {
         LOG.info("!!! Describing topic configs for topics: {}", mirrorTopics);
 
         List<DescribeConfigsRequestData.DescribeConfigsResource> describeConfigsResources =
@@ -1077,9 +1081,8 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         var describeConfigResponse = getRandomSender(senders).sendRequest(describeConfigsRequest);
         if (describeConfigResponse.responseBody() instanceof DescribeConfigsResponse describeConfigsRes) {
             LOG.debug("!!! Periodic describeConfigResponse: {}", describeConfigsRes);
-
             checkUncleanLeaderElection(mirrorName, describeConfigsRes);
-            Map<String, Map<String, String>> configsToChange = detectConfigurationChanges(mirrorName, describeConfigsRes);
+            Map<String, Map<String, String>> configsToChange = detectConfigurationChanges(mirrorName, describeConfigsRes, mirrorConfig);
             applyConfigurationChanges(configsToChange);
         }
     }
@@ -1154,8 +1157,9 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     }
 
     private Map<String, Map<String, String>> detectConfigurationChanges(
-            String mirrorName, DescribeConfigsResponse describeConfigsRes) {
+            String mirrorName, DescribeConfigsResponse describeConfigsRes, MirrorConfig mirrorConfig) {
         Map<String, Map<String, String>> configsToChange = new HashMap<>();
+        Pattern excludePattern = mirrorConfig.topicPropertiesExcludePattern();
 
         describeConfigsRes.data().results().forEach(describeConfigResult -> {
             if (describeConfigResult.resourceType() == ConfigResource.Type.TOPIC.id() &&
@@ -1168,7 +1172,8 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                     // Ensures the destination cluster's mirror.name setting is never overwritten
                     // by source cluster configs (which wouldn't have this config set)
                     if (con.configSource() == DescribeConfigsResponse.ConfigSource.TOPIC_CONFIG.id()
-                            && !con.name().equals(TopicConfig.MIRROR_NAME_CONFIG)) {
+                            && !con.name().equals(TopicConfig.MIRROR_NAME_CONFIG)
+                            && !excludePattern.matcher(con.name()).matches()) {
                         if (props.containsKey(con.name())) {
                             if (!props.get(con.name()).equals(con.value())) {
                                 conChange.put(con.name(), con.value());
@@ -1246,17 +1251,24 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         deletedTopics.forEach(name -> mirrorTopics.get(mirrorName).remove(name));
     }
 
-    private void syncConsumerGroupOffsets(List<MirrorBlockingSender> senders) {
+    private void syncConsumerGroupOffsets(String mirrorName, List<MirrorBlockingSender> senders, MirrorConfig mirrorConfig) {
+        Pattern groupsIncludePattern = mirrorConfig.groupsIncludePattern();
+
         // 1. list group
         ListGroupsRequest.Builder builder = new ListGroupsRequest.Builder(new ListGroupsRequestData()
                 // TODO: if the source cluster is in old version, it won't support types filter
-                //.setTypesFilter(List.of(GroupType.CLASSIC.name(), GroupType.CONSUMER.name()))
+                .setTypesFilter(List.of(Group.GroupType.CLASSIC.name(), Group.GroupType.CONSUMER.name()))
                 .setStatesFilter(singletonList(GroupState.STABLE.name())));
         var listGroupResponse = getRandomSender(senders).sendRequest(builder);
         if (listGroupResponse.responseBody() instanceof ListGroupsResponse listGroupsRes) {
-            LOG.info("!!! Periodic list group: {}", listGroupsRes);
+            LOG.info("!!! listGroupsRes for mirror {}: {}", mirrorName, listGroupsRes);
 
-            if (listGroupsRes.data().groups().isEmpty()) {
+            // Filter groups by include pattern
+            var matchingGroups = listGroupsRes.data().groups().stream()
+                    .filter(group -> groupsIncludePattern.matcher(group.groupId()).matches())
+                    .toList();
+
+            if (matchingGroups.isEmpty()) {
                 return;
             }
 
@@ -1264,7 +1276,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
             OffsetFetchRequest.Builder offsetFetchBuilder = OffsetFetchRequest.Builder.forTopicNames(
                     new OffsetFetchRequestData()
                             .setRequireStable(false)
-                            .setGroups(listGroupsRes.data().groups().stream().map(group -> new OffsetFetchRequestData.OffsetFetchRequestGroup()
+                            .setGroups(matchingGroups.stream().map(group -> new OffsetFetchRequestData.OffsetFetchRequestGroup()
                                     .setGroupId(group.groupId())
                                     .setTopics(null)).toList()), false);
             var offsetFetchResponse = getRandomSender(senders).sendRequest(offsetFetchBuilder);
@@ -1331,7 +1343,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         });
     }
 
-    private void syncACLs(String mirrorName, List<MirrorBlockingSender> senders) {
+    private void syncAccessControlLists(String mirrorName, List<MirrorBlockingSender> senders, MirrorConfig mirrorConfig) {
         // TODO: We currently mirror all ACLs from the source to the target.
         //       Any ACLs added/removed directly on the target will be overwritten
         //       on the next sync to match the source.
@@ -1349,9 +1361,13 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
 
         LOG.info("!!! describeAclsResponse from remote cluster {}: {}", mirrorName, aclsResponse);
 
-        var allRemoteAcls = DescribeAclsResponse.aclBindings(aclsResponse.acls());
+        // Filter ACLs by include rules
+        List<MirrorConfig.AclRule> aclIncludeRules = mirrorConfig.aclIncludeRules();
+        var allRemoteAcls = DescribeAclsResponse.aclBindings(aclsResponse.acls()).stream()
+                .filter(acl -> aclIncludeRules.stream().anyMatch(rule -> rule.matches(acl)))
+                .toList();
         var aclChanges = detectACLChanges(allRemoteAcls);
-        applyACLChanges(mirrorName, aclChanges);
+        applyAccessControlListChanges(mirrorName, aclChanges);
     }
 
     private ACLChanges detectACLChanges(List<AclBinding> allRemoteAcls) {
@@ -1376,7 +1392,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         return new ACLChanges(addACLsList, deleteACLsList);
     }
 
-    private void applyACLChanges(String mirrorName, ACLChanges aclChanges) {
+    private void applyAccessControlListChanges(String mirrorName, ACLChanges aclChanges) {
         // send createAcls request
         if (!aclChanges.aclsToAdd().isEmpty()) {
             LOG.info("!!! Adding {} ACLs from remote cluster {}", aclChanges.aclsToAdd().size(), mirrorName);

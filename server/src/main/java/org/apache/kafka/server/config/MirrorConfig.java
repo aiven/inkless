@@ -17,13 +17,21 @@
 package org.apache.kafka.server.config;
 
 import org.apache.kafka.clients.CommonClientConfigs;
+import org.apache.kafka.common.acl.AclBinding;
+import org.apache.kafka.common.acl.AclOperation;
+import org.apache.kafka.common.acl.AclPermissionType;
 import org.apache.kafka.common.config.AbstractConfig;
 import org.apache.kafka.common.config.ConfigDef;
 import org.apache.kafka.common.config.SaslConfigs;
 import org.apache.kafka.common.config.SslConfigs;
+import org.apache.kafka.common.resource.ResourceType;
 import org.apache.kafka.common.security.auth.SecurityProtocol;
 
+import java.util.List;
+import java.util.Locale;
 import java.util.Properties;
+import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 import static org.apache.kafka.common.config.ConfigDef.Importance.HIGH;
 import static org.apache.kafka.common.config.ConfigDef.Importance.LOW;
@@ -50,6 +58,35 @@ public class MirrorConfig {
     public static final short MIRROR_TOPIC_REPLICATION_FACTOR_DEFAULT = 1; // TODO restore 3 after POC testing
     public static final String MIRROR_TOPIC_REPLICATION_FACTOR_DOC = "The replication factor for the Cluster Mirror internal topic. " +
             "Topic creation will fail until the cluster size meets this replication factor requirement.";
+
+    // Topic properties exclude filter (regex patterns)
+    public static final String MIRROR_TOPIC_PROPERTIES_EXCLUDE_CONFIG = "mirror.topic.properties.exclude";
+    public static final String MIRROR_TOPIC_PROPERTIES_EXCLUDE_DEFAULT =
+            "follower.replication.throttled.replicas,"
+            + "leader.replication.throttled.replicas,"
+            + "message.timestamp.difference.max.ms,"
+            + "log.message.timestamp.before.max.ms,"
+            + "log.message.timestamp.after.max.ms,"
+            + "message.timestamp.type,"
+            + "unclean.leader.election.enable,"
+            + "min.insync.replicas,"
+            + "mirror.name";
+    public static final String MIRROR_TOPIC_PROPERTIES_EXCLUDE_DOC = "A comma-separated list of topic config property names to exclude from synchronization. "
+            + "Properties in this list will not be replicated from the source cluster. "
+            + "The mirror.name property is always excluded regardless of this setting.";
+
+    // Consumer group include filter (regex patterns)
+    public static final String MIRROR_GROUPS_INCLUDE_CONFIG = "mirror.groups.include";
+    public static final String MIRROR_GROUPS_INCLUDE_DEFAULT = ".*";
+    public static final String MIRROR_GROUPS_INCLUDE_DOC = "A comma-separated list of regex patterns for consumer group IDs to include in offset synchronization. "
+            + "Only consumer groups whose IDs match at least one of the patterns will have their offsets replicated from the source cluster.";
+
+    // ACL include filter (semicolon-separated rules)
+    public static final String MIRROR_ACL_INCLUDE_CONFIG = "mirror.acl.include";
+    public static final String MIRROR_ACL_INCLUDE_DEFAULT = "*";
+    public static final String MIRROR_ACL_INCLUDE_DOC = "A comma-separated list of ACL include rules. Each rule uses semicolon-separated fields: "
+            + "resourceType;resourceName;operation;permissionType;principal. Use '*' as wildcard for any field. The resourceName field supports "
+            + "regex patterns. Trailing wildcard fields can be omitted. See AclRule javadoc for examples.";
 
     // Fetcher configuration
     public static final String NUM_REPLICA_FETCHERS_CONFIG = "mirror.num.replica.fetchers";
@@ -203,6 +240,9 @@ public class MirrorConfig {
      * This includes all supported configurations with proper validation, defaults, and documentation.
      */
     public static final ConfigDef CONFIG_DEF = new ConfigDef()
+            .define(MIRROR_TOPIC_PROPERTIES_EXCLUDE_CONFIG, LIST, MIRROR_TOPIC_PROPERTIES_EXCLUDE_DEFAULT, LOW, MIRROR_TOPIC_PROPERTIES_EXCLUDE_DOC)
+            .define(MIRROR_GROUPS_INCLUDE_CONFIG, LIST, MIRROR_GROUPS_INCLUDE_DEFAULT, LOW, MIRROR_GROUPS_INCLUDE_DOC)
+            .define(MIRROR_ACL_INCLUDE_CONFIG, LIST, MIRROR_ACL_INCLUDE_DEFAULT, LOW, MIRROR_ACL_INCLUDE_DOC)
             .define(MIRROR_TOPIC_NUM_PARTITIONS_CONFIG, INT, MIRROR_TOPIC_NUM_PARTITIONS_DEFAULT, atLeast(1), HIGH, MIRROR_TOPIC_NUM_PARTITIONS_DOC)
             .define(MIRROR_TOPIC_REPLICATION_FACTOR_CONFIG, SHORT, MIRROR_TOPIC_REPLICATION_FACTOR_DEFAULT, atLeast(1), HIGH, MIRROR_TOPIC_REPLICATION_FACTOR_DOC)
             .define(NUM_REPLICA_FETCHERS_CONFIG, INT, NUM_REPLICA_FETCHERS_DEFAULT, atLeast(1), HIGH, NUM_REPLICA_FETCHERS_DOC)
@@ -247,38 +287,76 @@ public class MirrorConfig {
             .define(SSL_ENGINE_FACTORY_CLASS_CONFIG, STRING, null, LOW, SSL_ENGINE_FACTORY_CLASS_DOC);
 
     private final AbstractConfig config;
-    private final int mirrorTopicNumPartitions;
-    private final short mirrorTopicReplicationFactor;
+    private final Pattern topicPropertiesExcludePattern;
+    private final Pattern groupsIncludePattern;
+    private final List<AclRule> aclIncludeRules;
+    private final int topicNumPartitions;
+    private final short topicReplicationFactor;
     private final String securityProtocol;
     private final String saslMechanism;
 
+    /**
+     * Creates a MirrorConfig from broker-level config.
+     * Filter configs are not available at broker level, so defaults are used.
+     */
     public MirrorConfig(AbstractConfig config) {
         this.config = config;
-        mirrorTopicNumPartitions = config.getInt(MIRROR_TOPIC_NUM_PARTITIONS_CONFIG);
-        mirrorTopicReplicationFactor = config.getShort(MIRROR_TOPIC_REPLICATION_FACTOR_CONFIG);
+        topicNumPartitions = config.getInt(MIRROR_TOPIC_NUM_PARTITIONS_CONFIG);
+        topicReplicationFactor = config.getShort(MIRROR_TOPIC_REPLICATION_FACTOR_CONFIG);
         securityProtocol = config.getString(SECURITY_PROTOCOL_CONFIG);
         saslMechanism = config.getString(SASL_MECHANISM_CONFIG);
+        topicPropertiesExcludePattern = compilePatternList(List.of(MIRROR_TOPIC_PROPERTIES_EXCLUDE_DEFAULT));
+        groupsIncludePattern = compilePatternList(List.of(MIRROR_GROUPS_INCLUDE_DEFAULT));
+        aclIncludeRules = parseAclRules(List.of(MIRROR_ACL_INCLUDE_DEFAULT));
     }
 
     /**
-     * Creates a MirrorConfig instance from Properties, using AbstractConfig's
-     * built-in config provider resolution and password handling.
+     * Creates a MirrorConfig from mirror metadata properties stored in the cluster metadata topic.
+     * Filter configs are loaded from the metadata, with defaults applied for any missing values.
      *
-     * @param properties the raw properties
-     * @return a new MirrorConfig instance with processed properties
+     * @param properties the mirror metadata properties
+     * @return a new MirrorConfig instance
      */
     public static MirrorConfig fromProperties(Properties properties) {
-        // AbstractConfig handles config provider resolution and password conversion
         AbstractConfig config = new AbstractConfig(CONFIG_DEF, properties, false) { };
-        return new MirrorConfig(config);
+        return new MirrorConfig(config,
+                config.getList(MIRROR_TOPIC_PROPERTIES_EXCLUDE_CONFIG),
+                config.getList(MIRROR_GROUPS_INCLUDE_CONFIG),
+                config.getList(MIRROR_ACL_INCLUDE_CONFIG));
     }
 
-    public int mirrorTopicNumPartitions() {
-        return mirrorTopicNumPartitions;
+    private MirrorConfig(AbstractConfig config,
+                         List<String> topicPropertiesExclude,
+                         List<String> groupsInclude,
+                         List<String> aclInclude) {
+        this.config = config;
+        topicNumPartitions = config.getInt(MIRROR_TOPIC_NUM_PARTITIONS_CONFIG);
+        topicReplicationFactor = config.getShort(MIRROR_TOPIC_REPLICATION_FACTOR_CONFIG);
+        securityProtocol = config.getString(SECURITY_PROTOCOL_CONFIG);
+        saslMechanism = config.getString(SASL_MECHANISM_CONFIG);
+        topicPropertiesExcludePattern = compilePatternList(topicPropertiesExclude);
+        groupsIncludePattern = compilePatternList(groupsInclude);
+        aclIncludeRules = parseAclRules(aclInclude);
     }
 
-    public short mirrorTopicReplicationFactor() {
-        return mirrorTopicReplicationFactor;
+    public Pattern topicPropertiesExcludePattern() {
+        return topicPropertiesExcludePattern;
+    }
+
+    public Pattern groupsIncludePattern() {
+        return groupsIncludePattern;
+    }
+
+    public List<AclRule> aclIncludeRules() {
+        return aclIncludeRules;
+    }
+
+    public int topicNumPartitions() {
+        return topicNumPartitions;
+    }
+
+    public short topicReplicationFactor() {
+        return topicReplicationFactor;
     }
 
     public String securityProtocol() {
@@ -319,6 +397,34 @@ public class MirrorConfig {
     }
 
     /**
+     * Compiles a list of regex pattern strings into a single {@link Pattern} by joining them with {@code |}.
+     *
+     * @param patterns the list of regex pattern strings
+     * @return a compiled Pattern that matches any of the given patterns
+     */
+    public static Pattern compilePatternList(List<String> patterns) {
+        String combined = patterns.stream()
+                .map(String::trim)
+                .filter(s -> !s.isEmpty())
+                .collect(Collectors.joining("|"));
+        return Pattern.compile(combined);
+    }
+
+    /**
+     * Parses a list of ACL rule strings into a list of {@link AclRule} instances.
+     *
+     * @param rules the list of rule strings in semicolon-separated format
+     * @return parsed list of AclRule instances
+     */
+    public static List<AclRule> parseAclRules(List<String> rules) {
+        return rules.stream()
+                .map(String::trim)
+                .filter(s -> !s.isEmpty())
+                .map(AclRule::parse)
+                .toList();
+    }
+
+    /**
      * Creates a ConfigDef that includes broker-level mirror configurations.
      * This is used in AbstractKafkaConfig to merge mirror configurations into the broker config.
      *
@@ -330,5 +436,106 @@ public class MirrorConfig {
             .define(MIRROR_TOPIC_REPLICATION_FACTOR_CONFIG, SHORT, MIRROR_TOPIC_REPLICATION_FACTOR_DEFAULT, atLeast(1), HIGH, MIRROR_TOPIC_REPLICATION_FACTOR_DOC)
             .define(NUM_REPLICA_FETCHERS_CONFIG, INT, NUM_REPLICA_FETCHERS_DEFAULT, atLeast(1), HIGH, NUM_REPLICA_FETCHERS_DOC)
             .define(METADATA_REFRESH_INTERVAL_MS_CONFIG, LONG, METADATA_REFRESH_INTERVAL_MS_DEFAULT, atLeast(0L), MEDIUM, METADATA_REFRESH_INTERVAL_MS_DOC);
+    }
+
+    /**
+     * Represents an ACL include rule parsed from the semicolon-separated format:
+     * resourceType;resourceName;operation;permissionType;principal
+     *
+     * Each field uses * as a wildcard (match all). The resourceName and principal
+     * fields support regex patterns. Trailing wildcard fields can be omitted.
+     *
+     * Valid resourceType values: TOPIC, GROUP, CLUSTER, TRANSACTIONAL_ID, DELEGATION_TOKEN, USER.
+     * Valid operation values: READ, WRITE, CREATE, DELETE, ALTER, DESCRIBE, CLUSTER_ACTION,
+     * DESCRIBE_CONFIGS, ALTER_CONFIGS, IDEMPOTENT_WRITE, ALL, etc.
+     * Valid permissionType values: ALLOW, DENY.
+     *
+     * Examples:
+     * <pre>
+     * *                                       - match all ACLs (default)
+     * TOPIC;orders.*                          - all ACLs for topics matching orders.*
+     * *;*;*;*;User:alice                      - all ACLs for principal User:alice
+     * *;*;*;*;User:app-.*                     - all ACLs for principals matching User:app-.*
+     * TOPIC;*;READ;ALLOW                      - all topic READ/ALLOW ACLs
+     * GROUP;consumer-.*;READ;ALLOW;User:bob   - READ/ALLOW ACLs on groups matching consumer-.* for User:bob
+     * </pre>
+     *
+     * Config usage example:
+     * <pre>
+     * mirror.acl.include=TOPIC;orders.*, *;*;*;*;User:alice
+     * </pre>
+     *
+     * @param resourceType the resource type to match, or null for wildcard
+     * @param resourceNamePattern regex pattern for the resource name, or null for wildcard
+     * @param operation the ACL operation to match, or null for wildcard
+     * @param permissionType the ACL permission type to match, or null for wildcard
+     * @param principalPattern regex pattern for the principal, or null for wildcard
+     */
+    public record AclRule(
+            ResourceType resourceType,
+            Pattern resourceNamePattern,
+            AclOperation operation,
+            AclPermissionType permissionType,
+            Pattern principalPattern
+    ) {
+        /**
+         * Parses a semicolon-separated rule string into an AclRule.
+         *
+         * @param rule the rule string (e.g., "TOPIC;orders.*;READ;ALLOW;User:alice")
+         * @return the parsed AclRule
+         */
+        public static AclRule parse(String rule) {
+            String[] parts = rule.trim().split(";", -1);
+
+            ResourceType resourceType = null;
+            Pattern resourceNamePattern = null;
+            AclOperation operation = null;
+            AclPermissionType permissionType = null;
+            Pattern principalPattern = null;
+
+            if (parts.length >= 1 && !"*".equals(parts[0].trim())) {
+                resourceType = ResourceType.valueOf(parts[0].trim().toUpperCase(Locale.ROOT));
+            }
+            if (parts.length >= 2 && !"*".equals(parts[1].trim())) {
+                resourceNamePattern = Pattern.compile(parts[1].trim());
+            }
+            if (parts.length >= 3 && !"*".equals(parts[2].trim())) {
+                operation = AclOperation.valueOf(parts[2].trim().toUpperCase(Locale.ROOT));
+            }
+            if (parts.length >= 4 && !"*".equals(parts[3].trim())) {
+                permissionType = AclPermissionType.valueOf(parts[3].trim().toUpperCase(Locale.ROOT));
+            }
+            if (parts.length >= 5 && !"*".equals(parts[4].trim())) {
+                principalPattern = Pattern.compile(parts[4].trim());
+            }
+
+            return new AclRule(resourceType, resourceNamePattern, operation, permissionType, principalPattern);
+        }
+
+        /**
+         * Tests whether the given AclBinding matches this rule.
+         * A null field acts as a wildcard and matches any value.
+         *
+         * @param binding the ACL binding to test
+         * @return true if the binding matches all non-wildcard fields of this rule
+         */
+        public boolean matches(AclBinding binding) {
+            if (resourceType != null && binding.pattern().resourceType() != resourceType) {
+                return false;
+            }
+            if (resourceNamePattern != null && !resourceNamePattern.matcher(binding.pattern().name()).matches()) {
+                return false;
+            }
+            if (operation != null && binding.entry().operation() != operation) {
+                return false;
+            }
+            if (permissionType != null && binding.entry().permissionType() != permissionType) {
+                return false;
+            }
+            if (principalPattern != null && !principalPattern.matcher(binding.entry().principal()).matches()) {
+                return false;
+            }
+            return true;
+        }
     }
 }
