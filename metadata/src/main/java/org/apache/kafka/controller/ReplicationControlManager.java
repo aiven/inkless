@@ -710,6 +710,12 @@ public class ReplicationControlManager {
                                  List<ApiMessageAndVersion> configRecords,
                                  boolean authorizedToReturnConfigs) {
         Map<String, String> creationConfigs = translateCreationConfigs(topic.configs());
+        boolean useProvidedTopicId = false;
+        // should keep source topicId for mirror topics
+        if (topic.mirrorInfo() != null && !topic.mirrorInfo().topicId().equals(Uuid.ZERO_UUID)) {
+            useProvidedTopicId = true;
+        }
+
         Map<Integer, PartitionRegistration> newParts = new HashMap<>();
         if (!topic.assignments().isEmpty()) {
             if (topic.replicationFactor() != -1) {
@@ -739,6 +745,14 @@ public class ReplicationControlManager {
                         "All brokers specified in the manual partition assignment for " +
                         "partition " + assignment.partitionIndex() + " are fenced or in controlled shutdown.");
                 }
+
+                if (useProvidedTopicId && isr.size() < assignment.brokerIds().size()) {
+                    return new ApiError(Errors.INVALID_REPLICA_ASSIGNMENT,
+                        "Some brokers specified in the manual partition assignment for " +
+                        "partition " + assignment.partitionIndex() + " are fenced or in controlled shutdown. " +
+                        "For mirror topic creation, all brokers specified in the manual partition assignment must be active.");
+                }
+
                 newParts.put(
                     assignment.partitionIndex(),
                     buildPartitionRegistration(partitionAssignment, isr)
@@ -786,6 +800,13 @@ public class ReplicationControlManager {
                             "Unable to replicate the partition " + replicationFactor +
                                 " time(s): All brokers are currently fenced or in controlled shutdown.");
                     }
+                    if (useProvidedTopicId && isr.size() < partitionAssignment.replicas().size()) {
+                        return new ApiError(Errors.INVALID_REPLICATION_FACTOR,
+                            "Unable to replicate the partition " + replicationFactor +
+                                " time(s): Some brokers are currently fenced or in controlled shutdown. " +
+                                "For mirror topic creation, all replicas being assigned must be active.");
+                    }
+
                     newParts.put(
                         partitionId,
                         buildPartitionRegistration(partitionAssignment, isr)
@@ -809,11 +830,7 @@ public class ReplicationControlManager {
             return ApiError.fromThrowable(e);
         }
 
-        Uuid topicId = Uuid.randomUuid();
-        // keep source topicId for mirror topics
-        if (topic.mirrorInfo() != null && !topic.mirrorInfo().topicId().equals(Uuid.ZERO_UUID)) {
-            topicId = topic.mirrorInfo().topicId();
-        }
+        Uuid topicId = useProvidedTopicId ? topic.mirrorInfo().topicId() : Uuid.randomUuid();
 
         CreatableTopicResult result = new CreatableTopicResult().
             setName(topic.name()).
