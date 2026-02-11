@@ -85,6 +85,7 @@ import org.apache.kafka.common.security.auth.KafkaPrincipal;
 import org.apache.kafka.common.security.auth.SecurityProtocol;
 import org.apache.kafka.common.utils.LogContext;
 import org.apache.kafka.common.utils.Time;
+import org.apache.kafka.coordinator.group.Group;
 import org.apache.kafka.coordinator.group.GroupCoordinator;
 import org.apache.kafka.coordinator.mirror.MirrorRecordKey;
 import org.apache.kafka.image.ConfigurationDelta;
@@ -1256,11 +1257,11 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         // 1. list group
         ListGroupsRequest.Builder builder = new ListGroupsRequest.Builder(new ListGroupsRequestData()
                 // TODO: if the source cluster is in old version, it won't support types filter
-                //.setTypesFilter(List.of(GroupType.CLASSIC.name(), GroupType.CONSUMER.name()))
+                .setTypesFilter(List.of(Group.GroupType.CLASSIC.name(), Group.GroupType.CONSUMER.name()))
                 .setStatesFilter(singletonList(GroupState.STABLE.name())));
         var listGroupResponse = getRandomSender(senders).sendRequest(builder);
         if (listGroupResponse.responseBody() instanceof ListGroupsResponse listGroupsRes) {
-            LOG.info("!!! listGroupsRes from for mirror {}: {}", mirrorName, listGroupsRes);
+            LOG.info("!!! listGroupsRes for mirror {}: {}", mirrorName, listGroupsRes);
 
             // Filter groups by include pattern
             var matchingGroups = listGroupsRes.data().groups().stream()
