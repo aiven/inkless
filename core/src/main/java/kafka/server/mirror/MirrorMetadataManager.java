@@ -297,6 +297,9 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         }
 
         LOG.info("!!! onMetadataUpdate: {}", mirrorLeaders);
+        // TODO: We now send a separate ReadMirrorStates request for each individual partition rather than batching. This increases
+        // TODO: network overhead significantly, especially for mirrors with many partitions. Partitions that hash to the same
+        // TODO: coordinator could still be batched together.
         mirrorLeaders.forEach(tp -> {
             boolean stopRequested;
             String mirrorName = (String) newImage.configs().configProperties(

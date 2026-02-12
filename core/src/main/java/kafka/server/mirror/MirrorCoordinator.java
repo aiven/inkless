@@ -484,6 +484,9 @@ public class MirrorCoordinator {
      * @param partitionOffsets map of topic names to partition offsets
      */
     public void updateLastMirroredOffsetsMetadata(String mirrorName, Map<String, Map<Integer, Long>> partitionOffsets, boolean stateChange) {
+        // TODO: We now send a separate WriteMirrorStates request for each individual partition rather than batching. This increases
+        // TODO: network overhead significantly, especially for mirrors with many partitions. Partitions that hash to the same
+        // TODO: coordinator could still be batched together.
         partitionOffsets.forEach((topic, offsetMap) -> {
             offsetMap.forEach((par, off) -> {
                 if (isLocalCoordinator(mirrorName, topic, par)) {
@@ -533,8 +536,6 @@ public class MirrorCoordinator {
             });
 
         });
-
-
     }
 
     private static CoordinatorRecord generateMirrorPartitionState(String mirrorName, TopicPartition topicPartition, MirrorPartitionState state) {
