@@ -16,33 +16,58 @@
  */
 package org.apache.kafka.coordinator.mirror;
 
+import org.apache.kafka.common.Uuid;
+import org.apache.kafka.server.share.SharePartitionKey;
+
 import java.util.Objects;
 
 /**
  * This key is used to uniquely identify a cluster mirror by its name.
  */
-public record MirrorRecordKey(String mirrorName) {
-    public MirrorRecordKey(String mirrorName) {
+public record MirrorRecordKey(String mirrorName, String topic, int partition) {
+    public MirrorRecordKey(String mirrorName, String topic, int partition) {
         this.mirrorName = Objects.requireNonNull(mirrorName, "Mirror name cannot be null");
+        this.topic = Objects.requireNonNull(topic, "topic cannot be null");
+        this.partition = Objects.requireNonNull(partition, "partition cannot be null");
     }
 
     public static MirrorRecordKey getInstance(String key) {
         validate(key);
-        return new MirrorRecordKey(key);
+        String[] tokens = key.split(":");
+        return new MirrorRecordKey(
+                tokens[0].trim(),
+                tokens[1],
+                Integer.parseInt(tokens[2])
+        );
     }
 
     public String asCoordinatorKey() {
-        return asCoordinatorKey(mirrorName);
+        return asCoordinatorKey(mirrorName, topic, partition);
     }
 
-    public static String asCoordinatorKey(String mirrorName) {
-        return mirrorName;
+    public static String asCoordinatorKey(String mirrorName, String topic, int partition) {
+        return String.format("%s:%s:%d", mirrorName, topic, partition);
     }
 
     public static void validate(String key) {
-        Objects.requireNonNull(key, "Mirror name cannot be null");
+        Objects.requireNonNull(key, "Key cannot be null");
         if (key.isEmpty()) {
-            throw new IllegalArgumentException("Mirror name cannot be empty");
+            throw new IllegalArgumentException("Mirror key cannot be empty");
+        }
+
+        String[] tokens = key.split(":");
+        if (tokens.length != 3) {
+            throw new IllegalArgumentException("Invalid key format: expected - mirrorName:topic:partition, found -  " + key);
+        }
+
+        if (tokens[0].trim().isEmpty()) {
+            throw new IllegalArgumentException("mirror name must be alphanumeric string");
+        }
+
+        try {
+            Integer.parseInt(tokens[2]);
+        } catch (Exception e) {
+            throw new IllegalArgumentException("Invalid partition: " + tokens[2], e);
         }
     }
 }

@@ -4877,7 +4877,7 @@ public class KafkaAdminClient extends AdminClient {
         final KafkaFutureImpl<Void> future = new KafkaFutureImpl<>();
         final long now = time.milliseconds();
         final Call call = new Call("addTopicsToMirror", calcDeadlineMs(now, options.timeoutMs()),
-                new ConstantNodeIdProvider(destinationNodeId)) {
+                new LeastLoadedNodeProvider()) {
 
             @Override
             AddTopicsToMirrorRequest.Builder createRequest(int timeoutMs) {

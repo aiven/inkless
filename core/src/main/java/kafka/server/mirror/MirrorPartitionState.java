@@ -101,7 +101,9 @@ public enum MirrorPartitionState {
             case INITIALIZING:
                 return source == null || source == MirrorPartitionState.STOPPED || source == MirrorPartitionState.FAILED;
             case PREPARING:
-                return source == MirrorPartitionState.INITIALIZING
+                return source == null
+                        || source == MirrorPartitionState.UNKNOWN
+                        || source == MirrorPartitionState.INITIALIZING
                         || source == MirrorPartitionState.STOPPED
                         || source == MirrorPartitionState.FAILED;
             case MIRRORING:
