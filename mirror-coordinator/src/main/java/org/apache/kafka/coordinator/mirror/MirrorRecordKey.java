@@ -24,10 +24,10 @@ import java.util.Objects;
 /**
  * This key is used to uniquely identify a cluster mirror by its name.
  */
-public record MirrorRecordKey(String mirrorName, String topic, int partition) {
-    public MirrorRecordKey(String mirrorName, String topic, int partition) {
+public record MirrorRecordKey(String mirrorName, Uuid topicId, int partition) {
+    public MirrorRecordKey(String mirrorName, Uuid topicId, int partition) {
         this.mirrorName = Objects.requireNonNull(mirrorName, "Mirror name cannot be null");
-        this.topic = Objects.requireNonNull(topic, "topic cannot be null");
+        this.topicId = Objects.requireNonNull(topicId, "topicId cannot be null");
         this.partition = Objects.requireNonNull(partition, "partition cannot be null");
     }
 
@@ -36,17 +36,17 @@ public record MirrorRecordKey(String mirrorName, String topic, int partition) {
         String[] tokens = key.split(":");
         return new MirrorRecordKey(
                 tokens[0].trim(),
-                tokens[1],
+                Uuid.fromString(tokens[1]),
                 Integer.parseInt(tokens[2])
         );
     }
 
     public String asCoordinatorKey() {
-        return asCoordinatorKey(mirrorName, topic, partition);
+        return asCoordinatorKey(mirrorName, topicId, partition);
     }
 
-    public static String asCoordinatorKey(String mirrorName, String topic, int partition) {
-        return String.format("%s:%s:%d", mirrorName, topic, partition);
+    public static String asCoordinatorKey(String mirrorName, Uuid topicId, int partition) {
+        return String.format("%s:%s:%d", mirrorName, topicId, partition);
     }
 
     public static void validate(String key) {
@@ -62,6 +62,12 @@ public record MirrorRecordKey(String mirrorName, String topic, int partition) {
 
         if (tokens[0].trim().isEmpty()) {
             throw new IllegalArgumentException("mirror name must be alphanumeric string");
+        }
+
+        try {
+            Uuid.fromString(tokens[1]);
+        } catch (Exception e) {
+            throw new IllegalArgumentException("Invalid topic ID: " + tokens[1], e);
         }
 
         try {

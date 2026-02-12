@@ -146,7 +146,7 @@ public class MirrorCoordinator {
      * @return true if this broker is the leader of the coordinator partition for this mirror
      */
     public boolean isLocalCoordinator(String mirrorName, String topic, int partition) {
-        var mirrorTopicPartition = new TopicPartition(Topic.MIRROR_STATE_TOPIC_NAME, getCoordinatingPartitionByKey(new MirrorRecordKey(mirrorName, topic, partition)));
+        var mirrorTopicPartition = new TopicPartition(Topic.MIRROR_STATE_TOPIC_NAME, getCoordinatingPartitionByKey(new MirrorRecordKey(mirrorName, metadataCache.getTopicId(topic), partition)));
         var optLeaderAndIsr = metadataCache.getLeaderAndIsr(mirrorTopicPartition.topic(), mirrorTopicPartition.partition());
         return optLeaderAndIsr.isPresent() && optLeaderAndIsr.get().leader() == kafkaConfig.nodeId();
     }
@@ -168,10 +168,6 @@ public class MirrorCoordinator {
      */
     private void handleStateTransition(String mirrorName, Set<TopicPartition> topicPartitions, MirrorPartitionState newState) {
         switch (newState) {
-            case INITIALIZING:
-                LOG.info("!!! INITIALIZING for topics {}.", topicPartitions);
-                // waiting for metadata update
-                break;
             case PREPARING:
                 LOG.info("!!! PREPARING for topics {}.", topicPartitions);
                 scheduleTruncation(mirrorName, topicPartitions);
@@ -361,7 +357,7 @@ public class MirrorCoordinator {
         CompletableFuture<Optional<TopicPartition>> future = new CompletableFuture<>();
         if (isLocalCoordinator(mirrorName, topicPartition.topic(), topicPartition.partition())) {
             // this is the leader of the coordinator (async disk I/O operation)
-            var mirrorTopicPartition = new TopicPartition(Topic.MIRROR_STATE_TOPIC_NAME, getCoordinatingPartitionByKey(new MirrorRecordKey(mirrorName, topicPartition.topic(), topicPartition.partition())));
+            var mirrorTopicPartition = new TopicPartition(Topic.MIRROR_STATE_TOPIC_NAME, getCoordinatingPartitionByKey(new MirrorRecordKey(mirrorName, metadataCache.getTopicId(topicPartition.topic()), topicPartition.partition())));
             var mirrorTopicIdPartition = replicaManager.topicIdPartition(mirrorTopicPartition);
             var record = generateMirrorPartitionState(mirrorName, topicPartition, newState);
             var keyBytes = serde.serializeKey(record);
@@ -492,7 +488,7 @@ public class MirrorCoordinator {
             offsetMap.forEach((par, off) -> {
                 if (isLocalCoordinator(mirrorName, topic, par)) {
                     // this is the leader of the coordinator
-                    var mirrorTopicPartition = new TopicPartition(Topic.MIRROR_STATE_TOPIC_NAME, getCoordinatingPartitionByKey(new MirrorRecordKey(mirrorName, topic, par)));
+                    var mirrorTopicPartition = new TopicPartition(Topic.MIRROR_STATE_TOPIC_NAME, getCoordinatingPartitionByKey(new MirrorRecordKey(mirrorName, metadataCache.getTopicId(topic), par)));
                     var mirrorTopicIdPartition = replicaManager.topicIdPartition(mirrorTopicPartition);
 
 

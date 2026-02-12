@@ -366,6 +366,7 @@ class KafkaApis(val requestChannel: RequestChannel,
     if (!isClusterMirroringEnabled) {
       logger.warn("Cluster Mirroring is disabled (mirror.version=0), ignoring add topics to mirror request")
       requestHelper.sendMaybeThrottle(request, new AddTopicsToMirrorResponse(new AddTopicsToMirrorResponseData().setErrorCode(Errors.INVALID_REQUEST.code)))
+      return
     }
     forwardToController(request)
   }

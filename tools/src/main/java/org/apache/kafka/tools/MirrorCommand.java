@@ -243,8 +243,7 @@ public abstract class MirrorCommand {
             // TODO: We should return error and let the command retry if the topic metadata is not propagated to brokers. Right now, we sleep 1 sec
             Thread.sleep(1000);
             // Ensures the mirror.name config is properly set even when topics already exist
-            AddTopicsToMirrorResult addResult = adminClient.addTopicsToMirror(
-                    -1, topics, new AddTopicsToMirrorOptions());
+            AddTopicsToMirrorResult addResult = adminClient.addTopicsToMirror(topics, new AddTopicsToMirrorOptions());
             addResult.all().get();
 
             System.out.printf("Added %d topic(s) to mirror %s: %s%n", topics.size(), mirrorName, topics.keySet());

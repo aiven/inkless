@@ -259,7 +259,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     private boolean isLocalCoordinator(String mirrorName, String topic, int partition) {
         if (coordinatingPartFinder.isPresent()) {
             int activeCoordinator = metadataImage.topics().getTopic(MIRROR_STATE_TOPIC_NAME)
-                    .partitions().get(coordinatingPartFinder.get().apply(new MirrorRecordKey(mirrorName, topic, partition))).leader;
+                    .partitions().get(coordinatingPartFinder.get().apply(new MirrorRecordKey(mirrorName, metadataCache.getTopicId(topic), partition))).leader;
             return activeCoordinator == brokerConfig.nodeId();
         }
         return false;
@@ -545,7 +545,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
             metadata.forEach(m -> {
                 WriteMirrorStatesRequestData data = new WriteMirrorStatesRequestData().setMirrorName(mirrorName);
                 List<WriteMirrorStatesRequestData.TopicState> topicStates = new ArrayList<>();
-                MirrorRecordKey key = new MirrorRecordKey(mirrorName, t, m.partition);
+                MirrorRecordKey key = new MirrorRecordKey(mirrorName, metadataCache.getTopicId(t), m.partition);
                 Node coordinatorNode = coordinatorNodes.get(key);
                 if (coordinatorNode == null) {
                     coordinatorNode = findMirrorCoordinatorNode(key);
@@ -618,7 +618,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
 
         partitions.forEach((tp, parts) -> {
             parts.forEach(part -> {
-                MirrorRecordKey key = new MirrorRecordKey(mirrorName, tp, part);
+                MirrorRecordKey key = new MirrorRecordKey(mirrorName, metadataCache.getTopicId(tp), part);
                 Node coordinatorNode = coordinatorNodes.get(key);
                 if (coordinatorNode == null) {
                     coordinatorNode = findMirrorCoordinatorNode(key);
