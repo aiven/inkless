@@ -77,7 +77,7 @@ jobs:
         # --scan:         Publish the build scan. This will only work on PRs from apache/kafka and trunk
         # --no-scan:      For public fork PRs, we won't attempt to publish the scan
         run: |
-          ./gradlew --build-cache --info $SCAN_ARG check -x test -x generateJooqClasses
+          ./gradlew --info $SCAN_ARG check -x test -x generateJooqClasses
 
       - name: Gen docs
         run: make docs
