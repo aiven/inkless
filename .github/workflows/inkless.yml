@@ -65,7 +65,7 @@ jobs:
         uses: ./.github/actions/setup-gradle
         with:
           java-version: 17
-          gradle-cache-read-only: ${{ inputs.gradle-cache-read-only }}
+          gradle-cache-read-only: true
           gradle-cache-write-only: ${{ inputs.gradle-cache-write-only }}
 
       - name: Compile and validate
