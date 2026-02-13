@@ -45,7 +45,7 @@ plugins {
   id 'com.diffplug.spotless' version "8.0.0"
 
   id 'info.solidsoft.pitest' version '1.19.0-rc.3' apply false
-  id 'dev.monosoul.jooq-docker'  version "6.1.19" apply false
+  id 'dev.monosoul.jooq-docker'  version "8.0.12" apply false
 }
 
 ext {
