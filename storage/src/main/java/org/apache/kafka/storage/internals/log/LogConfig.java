@@ -30,7 +30,6 @@ import org.apache.kafka.common.record.TimestampType;
 import org.apache.kafka.common.utils.ConfigUtils;
 import org.apache.kafka.common.utils.Utils;
 import org.apache.kafka.server.config.QuotaConfig;
-import org.apache.kafka.server.config.ServerConfigs;
 import org.apache.kafka.server.config.ServerLogConfigs;
 import org.apache.kafka.server.config.ServerTopicConfigSynonyms;
 import org.apache.kafka.server.record.BrokerCompressionType;
@@ -525,10 +524,7 @@ public class LogConfig extends AbstractConfig {
                     } else {
                         // Was not diskless (false or not set): migration requires both flags
                         if (!isDisklessAllowFromClassicEnabled || !isRemoteLogStorageEnabled) {
-                            throw new InvalidConfigurationException("To migrate a classic topic to diskless, both "
-                                + TopicConfig.DISKLESS_ENABLE_CONFIG + " and "
-                                + TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG + " must be set to true, and the broker config "
-                                + ServerConfigs.DISKLESS_ALLOW_FROM_CLASSIC_ENABLE_CONFIG + " must also be enabled.");
+                            throw new InvalidConfigurationException("It is invalid to enable diskless on an already existing topic.");
                         }
                     }
                 } else {
