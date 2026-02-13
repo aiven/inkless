@@ -163,6 +163,8 @@ public class ReplicationControlManager {
         private int defaultNumPartitions = 1;
         private boolean defaultDisklessEnable = false;
         private boolean isDisklessStorageSystemEnabled = false;
+        private boolean defaultRemoteStorageForTopicCreateEnabled = false;
+        private String defaultRemoteStorageForTopicCreateLocalOnlyTopicRegex = "";
 
         private int maxElectionsPerImbalance = MAX_ELECTIONS_PER_IMBALANCE;
         private ConfigurationControlManager configurationControl = null;
@@ -197,6 +199,21 @@ public class ReplicationControlManager {
 
         public Builder setDisklessStorageSystemEnabled(boolean isDisklessStorageSystemEnabled) {
             this.isDisklessStorageSystemEnabled = isDisklessStorageSystemEnabled;
+            return this;
+        }
+
+        public Builder setDefaultRemoteStorageForTopicCreateEnabled(boolean defaultRemoteStorageForTopicCreateEnabled) {
+            this.defaultRemoteStorageForTopicCreateEnabled = defaultRemoteStorageForTopicCreateEnabled;
+            return this;
+        }
+
+        public Builder setDefaultRemoteStorageForTopicCreateLocalOnlyTopicRegex(
+            String defaultRemoteStorageForTopicCreateLocalOnlyTopicRegex
+        ) {
+            this.defaultRemoteStorageForTopicCreateLocalOnlyTopicRegex =
+                defaultRemoteStorageForTopicCreateLocalOnlyTopicRegex == null
+                    ? ""
+                    : defaultRemoteStorageForTopicCreateLocalOnlyTopicRegex;
             return this;
         }
 
@@ -242,6 +259,8 @@ public class ReplicationControlManager {
                 defaultNumPartitions,
                 defaultDisklessEnable,
                 isDisklessStorageSystemEnabled,
+                defaultRemoteStorageForTopicCreateEnabled,
+                defaultRemoteStorageForTopicCreateLocalOnlyTopicRegex,
                 maxElectionsPerImbalance,
                 configurationControl,
                 clusterControl,
@@ -320,6 +339,7 @@ public class ReplicationControlManager {
     private final boolean defaultDisklessEnable;
 
     private final boolean isDisklessStorageSystemEnabled;
+    private final TopicCreateRemoteStoragePolicy topicCreateRemoteStoragePolicy;
 
     /**
      * Maximum number of leader elections to perform during one partition leader balancing operation.
@@ -411,6 +431,8 @@ public class ReplicationControlManager {
         int defaultNumPartitions,
         boolean defaultDisklessEnable,
         boolean isDisklessStorageSystemEnabled,
+        boolean defaultRemoteStorageForTopicCreateEnabled,
+        String defaultRemoteStorageForTopicCreateLocalOnlyTopicRegex,
         int maxElectionsPerImbalance,
         ConfigurationControlManager configurationControl,
         ClusterControlManager clusterControl,
@@ -423,6 +445,10 @@ public class ReplicationControlManager {
         this.defaultNumPartitions = defaultNumPartitions;
         this.defaultDisklessEnable = defaultDisklessEnable;
         this.isDisklessStorageSystemEnabled = isDisklessStorageSystemEnabled;
+        this.topicCreateRemoteStoragePolicy = new TopicCreateRemoteStoragePolicy(
+            defaultRemoteStorageForTopicCreateEnabled,
+            defaultRemoteStorageForTopicCreateLocalOnlyTopicRegex
+        );
         this.maxElectionsPerImbalance = maxElectionsPerImbalance;
         this.configurationControl = configurationControl;
         this.createTopicPolicy = createTopicPolicy;
@@ -678,6 +704,8 @@ public class ReplicationControlManager {
             // Figure out what ConfigRecords should be created, if any.
             ConfigResource configResource = new ConfigResource(TOPIC, topic.name());
             Map<String, Entry<OpType, String>> keyToOps = configChanges.get(configResource);
+            Map<String, String> creationConfigs = translateCreationConfigs(topic.configs());
+            keyToOps = topicCreateRemoteStoragePolicy.apply(topic.name(), keyToOps, isDisklessEnabledAtCreate(creationConfigs));
             List<ApiMessageAndVersion> configRecords;
             if (keyToOps != null) {
                 ControllerResult<ApiError> configResult =
@@ -891,7 +919,7 @@ public class ReplicationControlManager {
                 numPartitions, e.throttleTimeMs());
             return ApiError.fromThrowable(e);
         }
-        final CreatableTopicResult result = buildCreatableTopicResult(topic, authorizedToReturnConfigs, topicId, creationConfigs, numPartitions, newParts);
+        final CreatableTopicResult result = buildCreatableTopicResult(topic, authorizedToReturnConfigs, topicId, normalizeCreateTopicResponseConfigs(topic.name(), creationConfigs, disklessEnabled), numPartitions, newParts);
         successes.put(topic.name(), result);
         records.add(new ApiMessageAndVersion(new TopicRecord().
             setName(topic.name()).
@@ -907,6 +935,31 @@ public class ReplicationControlManager {
                 build()));
         }
         return ApiError.NONE;
+    }
+
+    private Map<String, String> normalizeCreateTopicResponseConfigs(
+                                String topicName,
+                                Map<String, String> creationConfigs,
+                                boolean disklessEnabled) {
+        final Map<String, String> responseCreationConfigs = new HashMap<>(creationConfigs);
+        Map<String, Entry<OpType, String>> responseConfigOps =
+            topicCreateRemoteStoragePolicy.apply(topicName, null, disklessEnabled);
+        if (responseConfigOps != null) {
+            for (Entry<String, Entry<OpType, String>> entry : responseConfigOps.entrySet()) {
+                if (entry.getValue().getKey() == SET) {
+                    responseCreationConfigs.put(entry.getKey(), entry.getValue().getValue());
+                }
+            }
+        }
+        return responseCreationConfigs;
+    }
+
+    private boolean isDisklessEnabledAtCreate(Map<String, String> creationConfigs) {
+        String disklessEnableConfigValue = creationConfigs.get(DISKLESS_ENABLE_CONFIG);
+        if (disklessEnableConfigValue == null) {
+            return defaultDisklessEnable;
+        }
+        return Boolean.parseBoolean(disklessEnableConfigValue);
     }
 
     private List<ApiMessageAndVersion> validConfigRecords(CreatableTopic topic, List<ApiMessageAndVersion> configRecords, boolean disklessEnabled) {

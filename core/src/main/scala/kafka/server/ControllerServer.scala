@@ -228,6 +228,8 @@ class ControllerServer(
           setDefaultNumPartitions(config.numPartitions.intValue()).
           setDefaultDisklessEnable(config.logDisklessEnable).
           setDisklessStorageSystemEnabled(config.disklessStorageSystemEnabled).
+          setDefaultRemoteStorageForTopicCreateEnabled(config.defaultRemoteStorageForTopicCreateEnabled).
+          setDefaultRemoteStorageForTopicCreateLocalOnlyTopicRegex(config.defaultRemoteStorageForTopicCreateLocalOnlyTopicRegex).
           setSessionTimeoutNs(TimeUnit.NANOSECONDS.convert(config.brokerSessionTimeoutMs.longValue(),
             TimeUnit.MILLISECONDS)).
           setLeaderImbalanceCheckIntervalNs(leaderImbalanceCheckIntervalNs).

@@ -531,10 +531,7 @@ public class LogConfig extends AbstractConfig {
                     } else {
                         // Was not diskless (false or not set): migration requires both flags
                         if (!isDisklessAllowFromClassicEnabled || !isRemoteLogStorageEnabled) {
-                            throw new InvalidConfigurationException("To migrate a classic topic to diskless, both "
-                                + TopicConfig.DISKLESS_ENABLE_CONFIG + " and "
-                                + TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG + " must be set to true, and the broker config "
-                                + "diskless.allow.from.classic.enable must also be enabled.");
+                            throw new InvalidConfigurationException("It is invalid to enable diskless on an already existing topic.");
                         }
                     }
                 } else {

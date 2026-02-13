@@ -229,6 +229,8 @@ public final class QuorumController implements Controller {
         private String interBrokerListenerName = "PLAINTEXT";
         private boolean defaultDisklessEnable = false;
         private boolean disklessStorageSystemEnabled = false;
+        private boolean defaultRemoteStorageForTopicCreateEnabled = false;
+        private String defaultRemoteStorageForTopicCreateLocalOnlyTopicRegex = "";
 
         public Builder(int nodeId, String clusterId) {
             this.nodeId = nodeId;
@@ -296,6 +298,21 @@ public final class QuorumController implements Controller {
 
         public Builder setDisklessStorageSystemEnabled(boolean disklessStorageSystemEnabled) {
             this.disklessStorageSystemEnabled = disklessStorageSystemEnabled;
+            return this;
+        }
+
+        public Builder setDefaultRemoteStorageForTopicCreateEnabled(boolean defaultRemoteStorageForTopicCreateEnabled) {
+            this.defaultRemoteStorageForTopicCreateEnabled = defaultRemoteStorageForTopicCreateEnabled;
+            return this;
+        }
+
+        public Builder setDefaultRemoteStorageForTopicCreateLocalOnlyTopicRegex(
+            String defaultRemoteStorageForTopicCreateLocalOnlyTopicRegex
+        ) {
+            this.defaultRemoteStorageForTopicCreateLocalOnlyTopicRegex =
+                defaultRemoteStorageForTopicCreateLocalOnlyTopicRegex == null
+                    ? ""
+                    : defaultRemoteStorageForTopicCreateLocalOnlyTopicRegex;
             return this;
         }
 
@@ -445,6 +462,8 @@ public final class QuorumController implements Controller {
                     defaultNumPartitions,
                     defaultDisklessEnable,
                     disklessStorageSystemEnabled,
+                    defaultRemoteStorageForTopicCreateEnabled,
+                    defaultRemoteStorageForTopicCreateLocalOnlyTopicRegex,
                     replicaPlacer,
                     leaderImbalanceCheckIntervalNs,
                     maxIdleIntervalNs,
@@ -1505,6 +1524,8 @@ public final class QuorumController implements Controller {
         int defaultNumPartitions,
         boolean defaultDisklessEnable,
         boolean disklessStorageSystemEnabled,
+        boolean defaultRemoteStorageForTopicCreateEnabled,
+        String defaultRemoteStorageForTopicCreateLocalOnlyTopicRegex,
         ReplicaPlacer replicaPlacer,
         OptionalLong leaderImbalanceCheckIntervalNs,
         OptionalLong maxIdleIntervalNs,
@@ -1589,6 +1610,8 @@ public final class QuorumController implements Controller {
             setDefaultNumPartitions(defaultNumPartitions).
             setDefaultDisklessEnable(defaultDisklessEnable).
             setDisklessStorageSystemEnabled(disklessStorageSystemEnabled).
+            setDefaultRemoteStorageForTopicCreateEnabled(defaultRemoteStorageForTopicCreateEnabled).
+            setDefaultRemoteStorageForTopicCreateLocalOnlyTopicRegex(defaultRemoteStorageForTopicCreateLocalOnlyTopicRegex).
             setMaxElectionsPerImbalance(ReplicationControlManager.MAX_ELECTIONS_PER_IMBALANCE).
             setConfigurationControl(configurationControl).
             setClusterControl(clusterControl).

@@ -137,6 +137,18 @@ public class ServerConfigs {
         "This should only be enabled in non-production environments for testing or migration purposes. " +
         "When enabled, topics can have their diskless.enable config changed from false to true.";
 
+    public static final String DEFAULT_REMOTE_STORAGE_FOR_TOPIC_CREATE_ENABLE_CONFIG = "default.remote.storage.for.topic.create.enable";
+    public static final boolean DEFAULT_REMOTE_STORAGE_FOR_TOPIC_CREATE_ENABLE_DEFAULT = false;
+    public static final String DEFAULT_REMOTE_STORAGE_FOR_TOPIC_CREATE_ENABLE_DOC =
+        "When enabled, topic creation defaults non-diskless regular topics to remote.storage.enable=true. "
+            + "When disabled, topic creation keeps the request/default remote.storage.enable behavior unchanged.";
+    public static final String DEFAULT_REMOTE_STORAGE_FOR_TOPIC_CREATE_LOCAL_ONLY_TOPIC_REGEX_CONFIG =
+        "default.remote.storage.for.topic.create.local.only.topic.regex";
+    public static final String DEFAULT_REMOTE_STORAGE_FOR_TOPIC_CREATE_LOCAL_ONLY_TOPIC_REGEX_DEFAULT = "";
+    public static final String DEFAULT_REMOTE_STORAGE_FOR_TOPIC_CREATE_LOCAL_ONLY_TOPIC_REGEX_DOC =
+        "A regular expression that marks topics as local-only during topic creation. "
+            + "When default remote storage for topic creation is enabled, topics matching this pattern "
+            + "will be created with remote.storage.enable=false.";
 
     /************* Authorizer Configuration ***********/
     public static final String AUTHORIZER_CLASS_NAME_CONFIG = "authorizer.class.name";
@@ -186,6 +198,11 @@ public class ServerConfigs {
                 DISKLESS_STORAGE_SYSTEM_ENABLE_DOC)
             .define(DISKLESS_ALLOW_FROM_CLASSIC_ENABLE_CONFIG, BOOLEAN, DISKLESS_ALLOW_FROM_CLASSIC_ENABLE_DEFAULT, LOW,
                 DISKLESS_ALLOW_FROM_CLASSIC_ENABLE_DOC)
+            .define(DEFAULT_REMOTE_STORAGE_FOR_TOPIC_CREATE_ENABLE_CONFIG, BOOLEAN, DEFAULT_REMOTE_STORAGE_FOR_TOPIC_CREATE_ENABLE_DEFAULT, MEDIUM,
+                DEFAULT_REMOTE_STORAGE_FOR_TOPIC_CREATE_ENABLE_DOC)
+            .define(DEFAULT_REMOTE_STORAGE_FOR_TOPIC_CREATE_LOCAL_ONLY_TOPIC_REGEX_CONFIG, STRING,
+                DEFAULT_REMOTE_STORAGE_FOR_TOPIC_CREATE_LOCAL_ONLY_TOPIC_REGEX_DEFAULT,
+                MEDIUM, DEFAULT_REMOTE_STORAGE_FOR_TOPIC_CREATE_LOCAL_ONLY_TOPIC_REGEX_DOC)
             /** Internal Configurations **/
             // This indicates whether unreleased APIs should be advertised by this node.
             .defineInternal(UNSTABLE_API_VERSIONS_ENABLE_CONFIG, BOOLEAN, false, HIGH)
