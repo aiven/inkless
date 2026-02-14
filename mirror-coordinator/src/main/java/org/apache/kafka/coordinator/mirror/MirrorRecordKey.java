@@ -17,7 +17,6 @@
 package org.apache.kafka.coordinator.mirror;
 
 import org.apache.kafka.common.Uuid;
-import org.apache.kafka.server.share.SharePartitionKey;
 
 import java.util.Objects;
 

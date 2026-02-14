@@ -70,7 +70,6 @@ import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
-import java.util.stream.Collectors;
 
 import scala.jdk.javaapi.CollectionConverters;
 
@@ -427,12 +426,12 @@ public class MirrorCoordinator {
         scheduler.startup();
 
         // periodically query source cluster to get the metadata
-        long metadataRefreshIntervalMs = kafkaConfig.mirrorConfig().metadataRefreshIntervalMs();
-        scheduler.schedule("mirror-metadata-refresh",
-                mirrorMetadataManager::refreshMetadata,
-                metadataRefreshIntervalMs,
-                metadataRefreshIntervalMs
-        );
+//        long metadataRefreshIntervalMs = kafkaConfig.mirrorConfig().metadataRefreshIntervalMs();
+//        scheduler.schedule("mirror-metadata-refresh",
+//                mirrorMetadataManager::refreshMetadata,
+//                metadataRefreshIntervalMs,
+//                metadataRefreshIntervalMs
+//        );
 
         LOG.info("Startup complete.");
     }
