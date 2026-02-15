@@ -71,6 +71,19 @@ public class FileFetchJob implements Callable<FileExtent> {
 
     private FileExtent doWork() throws IOException, StorageBackendException {
         final ByteBuffer byteBuffer = objectFetcher.readToByteBuffer(objectFetcher.fetch(key, range));
+        if (range != null && !range.empty()) {
+            // Why this exists:
+            // We read from a stream/channel until EOF; EOF can happen before the requested range is fully delivered
+            // due to network/transient backend issues.
+            // SDKs often throw on transport failures, but not all cases surface as exceptions, so we validate length.
+            final int expectedBytes = range.bufferSize();
+            final int actualBytes = byteBuffer.remaining();
+            if (actualBytes != expectedBytes) {
+                throw new StorageBackendException(
+                    "Short read for " + key + " range " + range + ": expected " + expectedBytes + " bytes, got " + actualBytes
+                );
+            }
+        }
         return createFileExtent(key, range, byteBuffer);
     }
 
