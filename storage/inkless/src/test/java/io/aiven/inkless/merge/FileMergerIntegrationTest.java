@@ -39,7 +39,6 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.Mock;
@@ -154,8 +153,6 @@ class FileMergerIntegrationTest {
 
     ControlPlane controlPlane;
     SharedState sharedState;
-    @TempDir
-    Path logDir;
 
     @BeforeEach
     void setup() {
@@ -271,10 +268,9 @@ class FileMergerIntegrationTest {
         }
 
         CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).orTimeout(60, TimeUnit.SECONDS);
-        futures.forEach(response -> {
-            response.join()
-                .forEach((tp, partitionResponse) -> assertThat(partitionResponse.error).isEqualTo(Errors.NONE));
-        });
+        futures.forEach(response ->
+            response.join().forEach((tp, partitionResponse) ->
+                assertThat(partitionResponse.error).isEqualTo(Errors.NONE)));
     }
 
     private Map<TopicIdPartition, Long> getHighWatermarks(final ControlPlane controlPlane) {

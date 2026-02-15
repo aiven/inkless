@@ -41,6 +41,7 @@ import io.aiven.inkless.control_plane.DeleteFilesRequest;
 import io.aiven.inkless.control_plane.FileToDelete;
 import io.aiven.inkless.storage_backend.common.StorageBackend;
 
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -57,6 +58,14 @@ class FileCleanerMockedTest {
     StorageBackend storageBackend;
 
     static final ObjectKeyCreator OBJECT_KEY_CREATOR = ObjectKey.creator("", false);
+
+    @Test
+    void close() throws Exception {
+        final var cleaner = new FileCleaner(time, controlPlane, storageBackend, OBJECT_KEY_CREATOR, RETENTION_PERIOD);
+        cleaner.close();
+        // storage is shared across background jobs and is managed by SharedState.
+        verify(storageBackend, never()).close();
+    }
 
     @Test
     void empty() throws Exception {

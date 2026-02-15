@@ -70,7 +70,7 @@ import io.aiven.inkless.control_plane.ControlPlane;
 import io.aiven.inkless.control_plane.FindBatchRequest;
 import io.aiven.inkless.control_plane.FindBatchResponse;
 import io.aiven.inkless.generated.FileExtent;
-import io.aiven.inkless.storage_backend.common.ObjectFetcher;
+import io.aiven.inkless.storage_backend.common.StorageBackend;
 import io.aiven.inkless.storage_backend.common.StorageBackendException;
 
 import static java.util.concurrent.TimeUnit.SECONDS;
@@ -109,7 +109,7 @@ public class ReaderTest {
     @Mock
     private ControlPlane controlPlane;
     @Mock
-    private ObjectFetcher objectFetcher;
+    private StorageBackend objectFetcher;
     @Mock
     private FetchParams fetchParams;
     @Mock
@@ -133,7 +133,7 @@ public class ReaderTest {
         reader.close();
         verify(metadataExecutor, atLeastOnce()).shutdown();
         verify(fetchDataExecutor, atLeastOnce()).shutdown();
-        verify(laggingFetchDataExecutor, atLeastOnce()).shutdown();
+        // laggingFetchDataExecutor is not used by getReader() which uses Optional.empty()
     }
 
     @Nested
@@ -690,10 +690,10 @@ public class ReaderTest {
             0,
             metadataExecutor,
             fetchDataExecutor,
-            objectFetcher,
+            Optional.empty(),
             Long.MAX_VALUE,
             0,
-            laggingFetchDataExecutor,
+            Optional.empty(),
             fetchMetrics,
             new BrokerTopicStats());
     }
@@ -715,6 +715,9 @@ public class ReaderTest {
         private ExecutorService metadataExecutor;
         private ExecutorService fetchDataExecutor;
         private ExecutorService laggingFetchDataExecutor;
+
+        @Mock
+        private StorageBackend laggingObjectFetcher;
 
         @BeforeEach
         public void setup() {
@@ -766,8 +769,8 @@ public class ReaderTest {
                 .thenReturn(List.of(oldResponse));
 
             final ReadableByteChannel channel = mock(ReadableByteChannel.class);
-            when(objectFetcher.fetch(any(), any())).thenReturn(channel);
-            when(objectFetcher.readToByteBuffer(channel)).thenReturn(records.buffer());
+            when(laggingObjectFetcher.fetch(any(), any())).thenReturn(channel);
+            when(laggingObjectFetcher.readToByteBuffer(channel)).thenReturn(records.buffer());
 
             try (final var reader = new Reader(
                 time,
@@ -779,10 +782,10 @@ public class ReaderTest {
                 0,
                 metadataExecutor,
                 fetchDataExecutor,
-                objectFetcher,
+                Optional.of(laggingObjectFetcher),
                 LAGGING_THRESHOLD_MS,
                 RATE_LIMIT_REQ_PER_SEC,
-                laggingFetchDataExecutor,
+                Optional.of(laggingFetchDataExecutor),
                 fetchMetrics,
                 new BrokerTopicStats())) {
 
@@ -845,8 +848,8 @@ public class ReaderTest {
                 .thenReturn(List.of(oldResponse));
 
             final ReadableByteChannel channel = mock(ReadableByteChannel.class);
-            when(objectFetcher.fetch(any(), any())).thenReturn(channel);
-            when(objectFetcher.readToByteBuffer(channel)).thenReturn(records.buffer());
+            when(laggingObjectFetcher.fetch(any(), any())).thenReturn(channel);
+            when(laggingObjectFetcher.readToByteBuffer(channel)).thenReturn(records.buffer());
 
             try (final var reader = new Reader(
                 time,
@@ -858,10 +861,10 @@ public class ReaderTest {
                 0,
                 metadataExecutor,
                 fetchDataExecutor,
-                objectFetcher,
+                Optional.of(laggingObjectFetcher),
                 LAGGING_THRESHOLD_MS,
                 0, // Rate limiting disabled
-                laggingFetchDataExecutor,
+                Optional.of(laggingFetchDataExecutor),
                 fetchMetrics,
                 new BrokerTopicStats())) {
 
@@ -993,10 +996,10 @@ public class ReaderTest {
                 0,
                 testMetadataExecutor,
                 testFetchDataExecutor,
-                objectFetcher, // Use same fetcher for lagging to simplify test
+                Optional.of(laggingObjectFetcher),
                 LAGGING_THRESHOLD_MS,
                 RATE_LIMIT_REQ_PER_SEC,
-                saturatedLaggingExecutor, // Saturated executor for lagging path
+                Optional.of(saturatedLaggingExecutor), // Saturated executor for lagging path
                 fetchMetrics,
                 new BrokerTopicStats())) {
 
@@ -1088,10 +1091,10 @@ public class ReaderTest {
                 0,
                 metadataExecutor,
                 fetchDataExecutor,
-                objectFetcher,
+                Optional.of(objectFetcher),
                 LAGGING_THRESHOLD_MS,
                 RATE_LIMIT_REQ_PER_SEC,
-                laggingFetchDataExecutor,
+                Optional.of(laggingFetchDataExecutor),
                 fetchMetrics,
                 new BrokerTopicStats())) {
 
