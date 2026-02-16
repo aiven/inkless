@@ -133,7 +133,7 @@ versions += [
   slf4j: "1.7.36",
   snappy: "1.1.10.5",
   spotbugs: "4.8.6",
-  testcontainers: "1.20.3",
+  testcontainers: "1.21.4",
   zinc: "1.9.2",
   // When updating the zstd version, please do as well in docker/native/native-image-configs/resource-config.json
   // Also make sure the compression levels in org.apache.kafka.common.record.CompressionType are still valid
