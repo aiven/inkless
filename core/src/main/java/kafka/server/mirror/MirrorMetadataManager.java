@@ -132,51 +132,18 @@ import static org.apache.kafka.common.internals.Topic.MIRROR_STATE_TOPIC_NAME;
 import static org.apache.kafka.controller.ConfigurationControlManager.REMOVED_TOPIC_SUFFIX;
 
 /**
- * Manages cluster state synchronization and remote cluster communication for Cluster Mirroring.
+ * Bridges the local destination cluster and remote source clusters for Cluster Mirroring.
  *
- * The MirrorMetadataManager acts as the bridge between the local destination cluster and remote
- * source clusters, handling bidirectional communication for metadata synchronization and state
- * coordination. It implements {@link MetadataPublisher} to react to local cluster metadata changes
- * and maintains in-memory caches of mirror partition states and last mirrored offsets.
+ * Implements {@link MetadataPublisher} to detect leadership and config changes, triggering
+ * partition state transitions (PREPARING, MIRRORING, STOPPING, STOPPED) via the
+ * {@link MirrorCoordinator}. Manages remote cluster connections using {@link MirrorBlockingSender}
+ * and periodically syncs topic metadata, configs, consumer group offsets, and ACLs from source
+ * clusters.
  *
- * Synchronized State Elements:
- * - Topic Metadata: Partition counts, leadership, and topic existence
- * - Topic Configurations: Dynamic topic configs (excluding mirror.name)
- * - Consumer Group Offsets: Stable consumer group committed offsets
- * - Access Control Lists (ACLs): Security policies and permissions
- *
- * Key Responsibilities:
- * - Remote Cluster Communication: Establishes and manages connections to source cluster
- *   brokers using {@link MirrorBlockingSender} for metadata queries and state synchronization
- * - Periodic Metadata Refresh: Polls source clusters for metadata changes (topic metadata,
- *   configs, consumer groups, ACLs) and propagates updates to the local cluster via controller
- * - Coordinator Communication: Routes mirror partition state reads/writes to the appropriate
- *   coordinator broker (local or remote) via inter-broker sender
- * - Partition State Caching: Maintains in-memory cache of mirror partition states and last
- *   mirrored offsets for fast lookups and state transitions
- * - Metadata Change Handling: Responds to local metadata changes (leadership, config updates)
- *   by triggering appropriate state transitions for affected mirror partitions
- * - Dynamic Scaling Support: Detects partition count changes in source clusters and triggers
- *   CreatePartitions requests to scale destination topics accordingly
- * - Topic Deletion Propagation: Monitors source cluster for deleted topics and initiates
- *   corresponding deletions in the destination cluster
- * - Truncation Coordination: Queries source cluster for last mirrored offsets and coordinates
- *   truncation operations with ReplicaManager before resuming mirroring
- *
- * State Management:
- * The manager maintains two primary in-memory caches:
- * - mirrorPartitionState: Maps (mirror, topic, partition) to {@link MirrorPartitionState}
- * - lastMirroredOffsets: Maps (mirror, topic, partition) to last successfully mirrored offset
- * These caches are populated from the {@code __cluster_mirror_state} topic during coordinator
- * leadership election and updated as partition states transition. When a broker loses partition
- * leadership or is not the coordinator, it clears cached state for those partitions.
- *
- * Integration with {@link MetadataPublisher}:
- * As a metadata publisher, this component receives callbacks when cluster metadata changes
- * (topics, partitions, configs) and it processes these changes to:
- * - Detect new mirror partitions this broker leads
- * - Trigger state transitions when mirror.name config changes
- * - Clean up state for partitions that transitioned from leader to follower
+ * Maintains in-memory caches of partition states and last mirrored offsets, populated from
+ * the {@code __cluster_mirror_state} topic on coordinator election and cleared on resignation
+ * or leadership loss. Routes state reads/writes to the appropriate coordinator broker, batching
+ * requests per coordinator node to reduce network overhead.
  */
 @SuppressWarnings({"ClassDataAbstractionCoupling", "ClassFanOutComplexity"})
 public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
@@ -188,10 +155,6 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     private final int nodeId;
     // Mapping from remote bootstrap servers to its corresponding broker sender and topics.
     // TODO: A better key might be a cluster id or cluster-mirror. For now, we use remote bootstrap servers for demo.
-    private final Map<String, List<MirrorBlockingSender>> remoteBrokers;
-    private final Map<String, Set<String>> mirrorTopics;
-    private final Map<String, Map<Integer, Node>> remoteClusterNodes;
-    private final Map<String, Map<TopicPartition, Node>> remotePartitionLeaders;
     private final Metrics metrics;
     private final Time time;
     private final Random random;
@@ -199,9 +162,6 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     private MetadataCache metadataCache;
     private NodeToControllerChannelManager channelManager;
     private final Supplier<GroupCoordinator> groupCoordinatorSupplier;
-    private Map<MirrorPartitionKey, Long> lastMirroredOffsets = new ConcurrentHashMap<>();
-    private Map<MirrorPartitionKey, MirrorPartitionState> mirrorPartitionState = new ConcurrentHashMap<>();
-    private Map<MirrorRecordKey, Node> coordinatorNodes = new ConcurrentHashMap<>();
     private InterBrokerSender interBrokerSender;
     private Optional<StateTransitioner> stateTransitioner = Optional.empty();
     private Optional<Function<MirrorRecordKey, Integer>> coordinatingPartFinder = Optional.empty();
@@ -211,6 +171,15 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     private final AtomicLong aclSyncError = new AtomicLong();
     private final AtomicLong metadataRefreshError = new AtomicLong();
     private final Map<MirrorPartitionState, AtomicLong> partitionStateCounts = new ConcurrentHashMap<>();
+
+    // in-memory cache
+    private Map<String, List<MirrorBlockingSender>> remoteBrokers;
+    private Map<String, Set<String>> mirrorTopics;
+    private Map<String, Map<Integer, Node>> remoteClusterNodes;
+    private Map<String, Map<TopicPartition, Node>> remotePartitionLeaders;
+    private Map<MirrorPartitionKey, Long> lastMirroredOffsets;
+    private Map<MirrorPartitionKey, MirrorPartitionState> mirrorPartitionState;
+    private Map<MirrorRecordKey, Node> coordinatorNodes;
 
     public MirrorMetadataManager(
         KafkaConfig config,
@@ -222,10 +191,6 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     ) {
         this.brokerConfig = config;
         this.nodeId = config.nodeId();
-        this.remoteBrokers = new HashMap<>();
-        this.mirrorTopics = new HashMap<>();
-        this.remoteClusterNodes = new HashMap<>();
-        this.remotePartitionLeaders = new HashMap<>();
         this.metrics = metrics;
         this.time = time;
         this.metadataImage = MetadataImage.EMPTY;
@@ -233,6 +198,14 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         this.metadataCache = metadataCache;
         this.channelManager = channelManager;
         this.groupCoordinatorSupplier = groupCoordinatorSupplier;
+
+        this.remoteBrokers = new HashMap<>();
+        this.mirrorTopics = new HashMap<>();
+        this.remoteClusterNodes = new HashMap<>();
+        this.remotePartitionLeaders = new HashMap<>();
+        this.lastMirroredOffsets = new ConcurrentHashMap<>();
+        this.mirrorPartitionState = new ConcurrentHashMap<>();
+        this.coordinatorNodes = new ConcurrentHashMap<>();
 
         metricsGroup.newGauge("TopicConfigSyncError", topicConfigSyncError::get);
         metricsGroup.newGauge("ConsumerGroupOffsetSyncError", consumerGroupOffsetSyncError::get);

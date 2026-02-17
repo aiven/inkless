@@ -43,8 +43,6 @@ import org.apache.kafka.coordinator.mirror.generated.LastMirroredOffsetsKey;
 import org.apache.kafka.coordinator.mirror.generated.LastMirroredOffsetsValue;
 import org.apache.kafka.coordinator.mirror.generated.MirrorPartitionStateKey;
 import org.apache.kafka.coordinator.mirror.generated.MirrorPartitionStateValue;
-import org.apache.kafka.coordinator.mirror.generated.MirrorTopicsKey;
-import org.apache.kafka.coordinator.mirror.generated.MirrorTopicsValue;
 import org.apache.kafka.metadata.MetadataCache;
 import org.apache.kafka.server.common.ApiMessageAndVersion;
 import org.apache.kafka.server.common.RequestLocal;
@@ -78,33 +76,15 @@ import static org.apache.kafka.common.utils.Utils.require;
 /**
  * Replicated state machine that coordinates partition-level state transitions for Cluster Mirroring.
  *
- * The MirrorCoordinator manages the lifecycle of mirror partitions by orchestrating transitions
- * through different states: INITIALIZING -> PREPARING -> MIRRORING -> STOPPING -> STOPPED.
- * It persists partition state and last mirrored offsets in the internal {@code __cluster_mirror_state}
- * topic to enable failover and failback with delta.
+ * Orchestrates transitions through PREPARING, MIRRORING, STOPPING, and STOPPED states,
+ * triggering truncation, fetcher startup/shutdown, and offset persistence at each stage.
+ * Persists partition state and last mirrored offsets in the {@code __cluster_mirror_state}
+ * internal topic, loading them on coordinator election and clearing on resignation.
  *
- * Core Responsibilities:
- * - State Transition Management: Coordinates partition transitions between mirror states,
- *   triggering appropriate actions at each stage (metadata sync, truncation, fetcher startup, etc.)
- * - Internal Topic Management: Reads and writes partition states and last mirrored offsets
- *   to/from the {@code __cluster_mirror_state} topic for persistence and coordinator failover
- * - Leadership Handling: Responds to leadership changes in {@code __cluster_mirror_state} partitions,
- *   loading metadata on election and clearing cache on resignation
- * - Coordinator Routing: Determines which broker is the coordinator for each mirror and routes
- *   state update requests accordingly (local writes vs remote coordinator requests)
- * - Metadata Refresh Scheduling: Schedules periodic metadata refresh from source clusters
- *   via the {@link MirrorMetadataManager}
- *
- * Integration Points:
- * - {@link MirrorMetadataManager}: Delegates metadata synchronization, remote cluster communication,
- *   and partition state caching
- * - {@link ReplicaManager}: Coordinates log operations including truncation and mirror fetcher management
- * - {@link Scheduler}: Manages background tasks for metadata refresh and retry operations
- *
- * Coordinator Distribution:
- * Mirror state is partitioned across brokers using the {@code __cluster_mirror_state} topic.
- * Each mirror's state is managed by the broker leading the corresponding partition, determined
- * by hashing the mirror name. This enables horizontal scaling and fault tolerance.
+ * State is distributed across brokers by hashing the mirror record key to a partition in
+ * {@code __cluster_mirror_state}. Updates are written locally when this broker leads the
+ * coordinator partition, or forwarded to the remote coordinator via
+ * {@link MirrorMetadataManager}.
  */
 public class MirrorCoordinator {
     private static final Logger LOG = LoggerFactory.getLogger(MirrorCoordinator.class);
@@ -584,27 +564,13 @@ public class MirrorCoordinator {
 
     private String readMirrorNameFromKey(ByteBuffer buffer) {
         short version = buffer.getShort();
-        if (version == CoordinatorRecordType.MIRROR_TOPICS.id()) {
-            return new MirrorTopicsKey(new ByteBufferAccessor(buffer), version).mirrorName();
-        } else if (version == CoordinatorRecordType.LAST_MIRRORED_OFFSETS.id()) {
+        if (version == CoordinatorRecordType.LAST_MIRRORED_OFFSETS.id()) {
             return new LastMirroredOffsetsKey(new ByteBufferAccessor(buffer), version).mirrorName();
         } else if (version == CoordinatorRecordType.MIRROR_PARTITION_STATE.id()) {
             return new MirrorPartitionStateKey(new ByteBufferAccessor(buffer), version).mirrorName();
         } else {
             throw new IllegalArgumentException("Unknown cluster mirror log key version " + version);
         }
-    }
-
-    private Set<String> readMirrorTopicsFromValue(ByteBuffer buffer) {
-        Set<String> topics = new HashSet<>();
-        short version = buffer.getShort();
-        if (version >= MirrorTopicsValue.LOWEST_SUPPORTED_VERSION && version <= MirrorTopicsValue.HIGHEST_SUPPORTED_VERSION) {
-            MirrorTopicsValue value = new MirrorTopicsValue(new ByteBufferAccessor(buffer), version);
-            value.topics().forEach(t -> topics.add(t.name()));
-        } else {
-            throw new IllegalStateException("Unknown version {} from the mirror topic value");
-        }
-        return topics;
     }
 
     private Map<String, Map<Integer, Long>> readLastMirroredOffsetsValue(ByteBuffer buffer) {
@@ -684,11 +650,7 @@ public class MirrorCoordinator {
                         batch.iterator().forEachRemaining(record -> {
                             require(record.hasKey(), "Mirror log's key should not be null");
                             short version = record.key().getShort();
-                            if (version ==  CoordinatorRecordType.MIRROR_TOPICS.id()) {
-                                String clusterName = readMirrorNameFromKey(record.key());
-                                Set<String> topics = readMirrorTopicsFromValue(record.value());
-                                mirrorMetadataManager.updateMirrorTopics(clusterName, topics, Set.of());
-                            } else if (version == CoordinatorRecordType.LAST_MIRRORED_OFFSETS.id()) {
+                            if (version == CoordinatorRecordType.LAST_MIRRORED_OFFSETS.id()) {
                                 String clusterName = readMirrorNameFromKey(record.key());
                                 Map<String, Map<Integer, Long>> offsets = readLastMirroredOffsetsValue(record.value());
                                 mirrorMetadataManager.updateLastMirroredOffsets(clusterName, offsets, Map.of());
