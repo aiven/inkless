@@ -129,6 +129,7 @@ import static org.apache.kafka.clients.admin.AlterConfigOp.OpType.SET;
 import static org.apache.kafka.common.config.ConfigResource.Type.TOPIC;
 import static org.apache.kafka.common.config.TopicConfig.DISKLESS_ENABLE_CONFIG;
 import static org.apache.kafka.common.config.TopicConfig.MIN_IN_SYNC_REPLICAS_CONFIG;
+import static org.apache.kafka.common.config.TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG;
 import static org.apache.kafka.common.protocol.Errors.FENCED_LEADER_EPOCH;
 import static org.apache.kafka.common.protocol.Errors.INELIGIBLE_REPLICA;
 import static org.apache.kafka.common.protocol.Errors.INVALID_REQUEST;
@@ -296,6 +297,18 @@ public class ReplicationControlManager {
         HashMap<String, String> result = new HashMap<>();
         collection.forEach(config -> result.put(config.name(), config.value()));
         return Collections.unmodifiableMap(result);
+    }
+
+    private static Map<String, String> normalizedCreationConfigsForDiskless(
+        Map<String, String> creationConfigs,
+        boolean disklessEnabled
+    ) {
+        if (!disklessEnabled || "false".equals(creationConfigs.get(REMOTE_LOG_STORAGE_ENABLE_CONFIG))) {
+            return creationConfigs;
+        }
+        HashMap<String, String> normalizedConfigs = new HashMap<>(creationConfigs);
+        normalizedConfigs.put(REMOTE_LOG_STORAGE_ENABLE_CONFIG, "false");
+        return Collections.unmodifiableMap(normalizedConfigs);
     }
 
     private final SnapshotRegistry snapshotRegistry;
@@ -731,7 +744,6 @@ public class ReplicationControlManager {
             return ControllerResult.atomicOf(records, data);
         }
     }
-
     private ApiError createTopic(ControllerRequestContext context,
                                  CreatableTopic topic,
                                  List<ApiMessageAndVersion> records,
@@ -754,6 +766,8 @@ public class ReplicationControlManager {
         }
 
         final boolean disklessEnabled = disklessConfigEnabled && !Topic.isInternal(topic.name());
+        final Map<String, String> normalizedCreationConfigs =
+            normalizedCreationConfigsForDiskless(creationConfigs, disklessEnabled);
         if (disklessEnabled) {
             if (!isDisklessStorageSystemEnabled) {
                 return new ApiError(INVALID_REQUEST,
@@ -766,7 +780,6 @@ public class ReplicationControlManager {
                     "Replication factor for diskless topics must be 1 or -1 to use the default value (1).");
             }
         }
-
         if (!topic.assignments().isEmpty()) {
             if (topic.replicationFactor() != -1) {
                 return new ApiError(INVALID_REQUEST,
@@ -814,7 +827,7 @@ public class ReplicationControlManager {
                 Map<Integer, List<Integer>> assignments = new HashMap<>();
                 newParts.forEach((key, value) -> assignments.put(key, Replicas.toList(value.replicas)));
                 return new CreateTopicPolicy.RequestMetadata(
-                    topic.name(), null, null, assignments, creationConfigs);
+                    topic.name(), null, null, assignments, normalizedCreationConfigs);
             });
             if (error.isFailure()) return error;
         } else if (topic.replicationFactor() < -1 || topic.replicationFactor() == 0) {
@@ -870,7 +883,7 @@ public class ReplicationControlManager {
                         " time(s): " + e.getMessage());
             }
             ApiError error = maybeCheckCreateTopicPolicy(() -> new CreateTopicPolicy.RequestMetadata(
-                topic.name(), numPartitions, replicationFactor, null, creationConfigs));
+                topic.name(), numPartitions, replicationFactor, null, normalizedCreationConfigs));
             if (error.isFailure()) return error;
         }
         int numPartitions = newParts.size();
@@ -882,8 +895,7 @@ public class ReplicationControlManager {
             return ApiError.fromThrowable(e);
         }
         Uuid topicId = Uuid.randomUuid();
-        final CreatableTopicResult result = buildCreatableTopicResult(topic, authorizedToReturnConfigs, topicId, creationConfigs, numPartitions, newParts);
-
+        final CreatableTopicResult result = buildCreatableTopicResult(topic, authorizedToReturnConfigs, topicId, normalizedCreationConfigs, numPartitions, newParts);
         successes.put(topic.name(), result);
         records.add(new ApiMessageAndVersion(new TopicRecord().
             setName(topic.name()).
@@ -904,6 +916,7 @@ public class ReplicationControlManager {
     private List<ApiMessageAndVersion> validConfigRecords(CreatableTopic topic, List<ApiMessageAndVersion> configRecords, boolean disklessEnabled) {
         final List<ApiMessageAndVersion> validConfigRecord = new ArrayList<>();
         boolean isDisklessEnableDefined = false;
+        boolean isRemoteStorageEnableDefined = false;
         boolean isInklessEnableDefined = false;
         for (ApiMessageAndVersion configRecord: configRecords) {
             ConfigRecord record;
@@ -923,8 +936,18 @@ public class ReplicationControlManager {
                     .setResourceType(ResourceType.TOPIC.code()), (short) 0);
                 validConfigRecord.add(disklessEnableMessage);
                 isDisklessEnableDefined = true;
+            } else if (record.name().equals(REMOTE_LOG_STORAGE_ENABLE_CONFIG) && disklessEnabled) {
+                validConfigRecord.add(new ApiMessageAndVersion(new ConfigRecord()
+                    .setName(REMOTE_LOG_STORAGE_ENABLE_CONFIG)
+                    .setValue("false")
+                    .setResourceName(topic.name())
+                    .setResourceType(ResourceType.TOPIC.code()), (short) 0));
+                isRemoteStorageEnableDefined = true;
             } else {
                 validConfigRecord.add(configRecord);
+                if (record.name().equals(REMOTE_LOG_STORAGE_ENABLE_CONFIG)) {
+                    isRemoteStorageEnableDefined = true;
+                }
             }
         }
         // Ensure that diskless.enable config is always defined if diskless is enabled.
@@ -933,6 +956,13 @@ public class ReplicationControlManager {
             validConfigRecord.add(new ApiMessageAndVersion(new ConfigRecord()
                 .setName(DISKLESS_ENABLE_CONFIG)
                 .setValue("true")
+                .setResourceName(topic.name())
+                .setResourceType(ResourceType.TOPIC.code()), (short) 0));
+        }
+        if (disklessEnabled && !isRemoteStorageEnableDefined) {
+            validConfigRecord.add(new ApiMessageAndVersion(new ConfigRecord()
+                .setName(REMOTE_LOG_STORAGE_ENABLE_CONFIG)
+                .setValue("false")
                 .setResourceName(topic.name())
                 .setResourceType(ResourceType.TOPIC.code()), (short) 0));
         }
