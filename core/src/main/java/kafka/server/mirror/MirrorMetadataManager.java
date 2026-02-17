@@ -268,13 +268,18 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     /**
      * Called when cluster metadata is updated.
      * Updates the local metadata image to reflect the latest cluster state.
-     * 
+     *
      * The metadata cache can't be used here because it is updated concurrently.
-     * 
+     *
      * This must be called after ReplicaManager#applyDelta because:
      * - ReplicaManager determines which partitions are local leaders/followers for this broker
      * - MirrorMetadataManager needs that information to know which mirror partitions to start managing
-     * 
+     *
+     * For partitions whose coordinator is on a remote broker, this method collects all such partitions
+     * grouped by mirror name and issues batched {@code ReadMirrorStatesRequest} calls (one per mirror)
+     * rather than individual requests per partition. The per-node batching within each mirror is handled
+     * by {@link #readStatesFromRemoteCoordinator}.
+     *
      * @param delta the metadata delta containing changes
      * @param newImage the new complete metadata image
      * @param manifest the loader manifest with provenance information
@@ -296,66 +301,84 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
             return;
         }
 
-        LOG.info("!!! onMetadataUpdate: {}", mirrorLeaders);
-        // TODO: We now send a separate ReadMirrorStates request for each individual partition rather than batching. This increases
-        // TODO: network overhead significantly, especially for mirrors with many partitions. Partitions that hash to the same
-        // TODO: coordinator could still be batched together.
+        LOG.info("onMetadataUpdate: {}", mirrorLeaders);
+
+        // Collect remote coordinator partitions grouped by mirrorName for batched reads
+        Map<String, Map<String, Set<Integer>>> remotePartitionsByMirror = new HashMap<>();
+        Map<String, Map<TopicPartition, Boolean>> remoteStopFlags = new HashMap<>();
+
         mirrorLeaders.forEach(tp -> {
-            boolean stopRequested;
-            String mirrorName = (String) newImage.configs().configProperties(
+            String rawMirrorName = (String) newImage.configs().configProperties(
                     new ConfigResource(ConfigResource.Type.TOPIC, tp.topic())).get(TopicConfig.MIRROR_NAME_CONFIG);
-            if (mirrorName.endsWith(REMOVED_TOPIC_SUFFIX)) {
-                stopRequested = true;
-                mirrorName = mirrorName.substring(0, mirrorName.length() - REMOVED_TOPIC_SUFFIX.length());
-            } else {
-                stopRequested = false;
-            }
+            boolean stopRequested = rawMirrorName.endsWith(REMOVED_TOPIC_SUFFIX);
+            String mirrorName = stopRequested
+                    ? rawMirrorName.substring(0, rawMirrorName.length() - REMOVED_TOPIC_SUFFIX.length())
+                    : rawMirrorName;
+
             MirrorPartitionKey key = new MirrorPartitionKey(mirrorName, tp.topic(), tp.partition());
             if (isLocalCoordinator(key.mirrorName, key.topic, key.partition())) {
+                // Handle local coordinator partitions inline (no network call needed)
                 MirrorPartitionState curState = mirrorPartitionState.getOrDefault(key, MirrorPartitionState.UNKNOWN);
-                stateTransitioner.ifPresent(t -> {
-                    if (stopRequested && curState != MirrorPartitionState.STOPPED) {
-                        t.transitionTo(key.mirrorName, tp, MirrorPartitionState.STOPPING);
-                    } else {
-                        // moving to preparing_mirroring if it's starting because it's waiting for metadata update.
-                        // otherwise, move to what the current state is
-                        if (curState == MirrorPartitionState.UNKNOWN || curState == MirrorPartitionState.STOPPED) {
-                            t.transitionTo(key.mirrorName, tp, MirrorPartitionState.PREPARING);
-                        } else {
-                            t.transitionTo(key.mirrorName, tp, curState);
-                        }
-                    }
-                });
+                applyMirrorStateTransition(key.mirrorName, tp, curState, null, stopRequested);
             } else {
-                // get the state from remote coordinator
-                readStatesFromRemoteCoordinator(key.mirrorName, Map.of(tp.topic(), Set.of(tp.partition())), res -> {
-                    res.data().topics().forEach(topic -> {
-                        topic.partitions().forEach(partition -> {
-                            if (partition.state() != -1) {
-                                MirrorPartitionState state = MirrorPartitionState.fromValue(partition.state());
-                                putPartitionState(new MirrorPartitionKey(key.mirrorName, tp.topic(), tp.partition()), state);
-                                stateTransitioner.ifPresent(t -> {
-                                    MirrorPartitionState curState = mirrorPartitionState.getOrDefault(key, MirrorPartitionState.UNKNOWN);
-                                    if (stopRequested && curState != MirrorPartitionState.STOPPED) {
-                                        t.transitionTo(key.mirrorName, tp, MirrorPartitionState.STOPPING);
-                                    } else {
-                                        if (curState == MirrorPartitionState.UNKNOWN || curState == MirrorPartitionState.STOPPED) {
-                                            t.transitionTo(key.mirrorName, tp, MirrorPartitionState.PREPARING);
-                                        } else {
-                                            t.transitionTo(key.mirrorName, tp, state);
-                                        }
-                                    }
-                                });
-                            }
-                        });
-                    });
-                });
+                // Collect for batched remote read
+                remotePartitionsByMirror
+                    .computeIfAbsent(mirrorName, k -> new HashMap<>())
+                    .computeIfAbsent(tp.topic(), k -> new HashSet<>())
+                    .add(tp.partition());
+                remoteStopFlags
+                    .computeIfAbsent(mirrorName, k -> new HashMap<>())
+                    .put(tp, stopRequested);
             }
+        });
+
+        // Send one batched read per mirrorName (readStatesFromRemoteCoordinator handles per-node batching internally)
+        remotePartitionsByMirror.forEach((mirrorName, partitions) -> {
+            Map<TopicPartition, Boolean> stopFlags = remoteStopFlags.get(mirrorName);
+            readStatesFromRemoteCoordinator(mirrorName, partitions, res ->
+                res.data().topics().forEach(topic ->
+                    topic.partitions().forEach(partition -> {
+                        if (partition.state() != -1) {
+                            TopicPartition resTp = new TopicPartition(topic.name(), partition.partitionIndex());
+                            MirrorPartitionState state = MirrorPartitionState.fromValue(partition.state());
+                            boolean stopRequested = stopFlags.getOrDefault(resTp, false);
+                            MirrorPartitionKey mpk = new MirrorPartitionKey(mirrorName, resTp.topic(), resTp.partition());
+                            MirrorPartitionState curState = mirrorPartitionState.getOrDefault(mpk, MirrorPartitionState.UNKNOWN);
+                            applyMirrorStateTransition(mirrorName, resTp, curState, state, stopRequested);
+                        }
+                    })));
         });
 
         if (delta.topicsDelta() != null) {
             clearFollowersState(delta.topicsDelta().localChanges(nodeId).followers().keySet(), newImage);
         }
+    }
+
+    /**
+     * Applies the appropriate state transition for a mirror partition based on current state and stop flag.
+     *
+     * If stopRequested is true and the partition is not already STOPPED, transitions to STOPPING.
+     * Otherwise, transitions to PREPARING if the partition is in UNKNOWN or STOPPED state,
+     * or maintains the current/fetched state for partitions already in progress.
+     *
+     * @param mirrorName the name of the cluster mirror
+     * @param tp the topic partition to transition
+     * @param curState the current cached state of the partition
+     * @param fetchedState the state fetched from the remote coordinator, or null for local coordinator partitions
+     * @param stopRequested whether the mirror removal has been requested for this partition
+     */
+    private void applyMirrorStateTransition(String mirrorName, TopicPartition tp,
+                                            MirrorPartitionState curState, MirrorPartitionState fetchedState,
+                                            boolean stopRequested) {
+        stateTransitioner.ifPresent(t -> {
+            if (stopRequested && curState != MirrorPartitionState.STOPPED) {
+                t.transitionTo(mirrorName, tp, MirrorPartitionState.STOPPING);
+            } else if (curState == MirrorPartitionState.UNKNOWN || curState == MirrorPartitionState.STOPPED) {
+                t.transitionTo(mirrorName, tp, MirrorPartitionState.PREPARING);
+            } else {
+                t.transitionTo(mirrorName, tp, fetchedState != null ? fetchedState : curState);
+            }
+        });
     }
 
     /**
@@ -456,7 +479,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
      * @param key The mirror record key to find the coordinator for
      * @return The coordinator Node, or Node.noNode() if the coordinator cannot be found
      */
-    public Node findMirrorCoordinatorNode(MirrorRecordKey key) {
+    private Node findMirrorCoordinatorNode(MirrorRecordKey key) {
         try {
             if (metadataCache.contains(MIRROR_STATE_TOPIC_NAME)) {
                 Set<String> topicSet = new HashSet<>();
@@ -520,168 +543,189 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     }
 
     /**
-     * Asynchronously writes mirror partition states to the remote coordinator.
+     * Asynchronously writes mirror partition states to remote coordinators.
      *
      * This method sends partition state updates (including state and last mirrored offset) to the
-     * coordinator broker responsible for this mirror. The coordinator persists these states to the
+     * coordinator brokers responsible for this mirror. The coordinators persist these states to the
      * {@code __cluster_mirror_state} internal topic. This enables failover scenarios where another
      * broker can resume mirroring from the last known state.
      *
+     * Partitions are grouped by their coordinator node so that all partitions managed by the same
+     * coordinator are sent in a single batched {@code WriteMirrorStatesRequest}, reducing network
+     * overhead compared to sending individual requests per partition.
+     *
      * The method performs the following:
-     * - Finds the coordinator broker for the given mirror (caching the result)
-     * - Constructs a WriteMirrorStatesRequest with partition metadata and removed topics
-     * - Sends the request asynchronously via inter-broker sender
-     * - Invokes the response callback when the coordinator responds
+     * - Resolves the coordinator node for each partition (caching the result)
+     * - Groups partitions by coordinator node
+     * - Constructs one WriteMirrorStatesRequest per coordinator node with all its partitions
+     * - Sends each request asynchronously via inter-broker sender
+     * - Invokes the response callback for each coordinator response
      *
      * @param mirrorName the name of the cluster mirror
      * @param topicMetadata map of topic names to sets of partition metadata (state and offset)
      * @param removedTopics set of topic names that have been removed from the mirror
-     * @param responseCallback callback invoked with the coordinator's response
+     * @param callback callback invoked with each coordinator's response
      */
     public void writeStatesToRemoteCoordinator(String mirrorName,
                                                Map<String, Set<MirrorPartitionMetadata>> topicMetadata,
                                                Set<String> removedTopics,
-                                               Consumer<WriteMirrorStatesResponse> responseCallback) {
+                                               Consumer<WriteMirrorStatesResponse> callback) {
         LOG.info("!!! writeStatesToRemoteCoordinator: {} {} {}", mirrorName, topicMetadata, removedTopics);
 
-        topicMetadata.forEach((t, metadata) -> {
+        // Group partitions by coordinator node for batching
+        Map<Node, Map<String, List<WriteMirrorStatesRequestData.PartitionData>>> nodeToTopicPartitions = new HashMap<>();
+
+        topicMetadata.forEach((topic, metadata) -> {
             metadata.forEach(m -> {
-                WriteMirrorStatesRequestData data = new WriteMirrorStatesRequestData().setMirrorName(mirrorName);
-                List<WriteMirrorStatesRequestData.TopicState> topicStates = new ArrayList<>();
-                MirrorRecordKey key = new MirrorRecordKey(mirrorName, metadataCache.getTopicId(t), m.partition);
+                MirrorRecordKey key = new MirrorRecordKey(mirrorName, metadataCache.getTopicId(topic), m.partition());
                 Node coordinatorNode = coordinatorNodes.get(key);
                 if (coordinatorNode == null) {
                     coordinatorNode = findMirrorCoordinatorNode(key);
                     if (coordinatorNode.equals(Node.noNode())) {
-                        // coordinator is not available, return it now.
-                        LOG.error("!!! coordinator is not available, return it now.");
+                        LOG.error("!!! Coordinator is not available for mirror {} partition {}-{}", mirrorName, topic, m.partition());
                         return;
                     }
+                    coordinatorNodes.put(key, coordinatorNode);
                 }
 
-                coordinatorNodes.put(key, coordinatorNode);
+                WriteMirrorStatesRequestData.PartitionData partitionData = new WriteMirrorStatesRequestData.PartitionData();
+                partitionData.setState(m.state() == null ? MirrorPartitionState.UNKNOWN.value() : m.state().value());
+                partitionData.setLastMirroredOffset(m.offset());
+                partitionData.setPartitionIndex(m.partition());
 
-                List<WriteMirrorStatesRequestData.PartitionState> partitionStates = new ArrayList<>();
-                WriteMirrorStatesRequestData.PartitionState partitionState = new WriteMirrorStatesRequestData.PartitionState();
-                partitionState.setState(m.state() == null ? MirrorPartitionState.UNKNOWN.value() : m.state.value());
-                partitionState.setLastMirroredOffset(m.offset);
-                partitionState.setPartitionIndex(m.partition);
-                partitionStates.add(partitionState);
-
-                WriteMirrorStatesRequestData.TopicState state = new WriteMirrorStatesRequestData.TopicState().setName(t).setPartitions(partitionStates);
-                topicStates.add(state);
-
-                data.setTopicsUpdated(topicStates);
-                data.setRemovedTopics(new ArrayList<>(removedTopics));
-
-                // send
-                interBrokerSender.enqueue(new RequestAndCompletionHandler(
-                        time.milliseconds(),
-                        coordinatorNode,
-                        new WriteMirrorStatesRequest.Builder(data),
-                        response -> {
-                            LOG.info("!!! writeStatesToRemoteCoordinator onComplete: {}", response.responseBody());
-                            if (response.responseBody() instanceof WriteMirrorStatesResponse writeMirrorStatesResponse) {
-                                responseCallback.accept(writeMirrorStatesResponse);
-                            }
-                        }
-                ));
+                nodeToTopicPartitions
+                    .computeIfAbsent(coordinatorNode, k -> new HashMap<>())
+                    .computeIfAbsent(topic, k -> new ArrayList<>())
+                    .add(partitionData);
             });
-
-
         });
 
+        // Send one batched request per coordinator node
+        nodeToTopicPartitions.forEach((node, topicPartitionsMap) -> {
+            WriteMirrorStatesRequestData data = new WriteMirrorStatesRequestData().setMirrorName(mirrorName);
+            List<WriteMirrorStatesRequestData.TopicData> topicDataList = new ArrayList<>();
+
+            topicPartitionsMap.forEach((topic, partitionDataList) ->
+                topicDataList.add(new WriteMirrorStatesRequestData.TopicData()
+                    .setName(topic)
+                    .setPartitions(partitionDataList)));
+
+            data.setTopics(topicDataList);
+            data.setRemovedTopics(new ArrayList<>(removedTopics));
+
+            interBrokerSender.enqueue(new RequestAndCompletionHandler(
+                time.milliseconds(),
+                node,
+                new WriteMirrorStatesRequest.Builder(data),
+                response -> {
+                    LOG.info("!!! writeStatesToRemoteCoordinator completed: {}", response.responseBody());
+                    if (response.responseBody() instanceof WriteMirrorStatesResponse writeMirrorStatesResponse) {
+                        callback.accept(writeMirrorStatesResponse);
+                    }
+                }
+            ));
+        });
     }
 
     /**
-     * Asynchronously reads mirror partition states from the remote coordinator.
+     * Asynchronously reads mirror partition states from remote coordinators.
      *
-     * This method queries the coordinator broker responsible for this mirror to retrieve the
-     * current state and last mirrored offset for the specified partitions. The coordinator reads
-     * this data from the {@code __cluster_mirror_state} internal topic.
+     * This method queries the coordinator brokers responsible for this mirror to retrieve the
+     * current state and last mirrored offset for the specified partitions. Each coordinator reads
+     * this data from its partition of the {@code __cluster_mirror_state} internal topic.
+     *
+     * Partitions are grouped by their coordinator node so that all partitions managed by the same
+     * coordinator are queried in a single batched {@code ReadMirrorStatesRequest}, reducing network
+     * overhead compared to sending individual requests per partition.
      *
      * The method performs the following:
-     * - Finds the coordinator broker for the given mirror
-     * - Constructs a ReadMirrorStatesRequest for the specified partitions
-     * - Sends the request asynchronously via inter-broker sender
-     * - Updates local cache (lastMirroredOffsets and mirrorPartitionState) with the response
-     * - Invokes the callback with the coordinator's response
-     *
-     * This is useful when a broker needs to query the authoritative state from the coordinator,
-     * for example when handling describe requests or during initialization.
+     * - Resolves the coordinator node for each partition (caching the result)
+     * - Groups partitions by coordinator node
+     * - Constructs one ReadMirrorStatesRequest per coordinator node with all its partitions
+     * - Sends each request asynchronously via inter-broker sender
+     * - Updates local cache (lastMirroredOffsets, mirrorPartitionState, mirrorTopics) with each response
+     * - Invokes the callback for each coordinator response
      *
      * @param mirrorName the name of the cluster mirror
      * @param partitions map of topic names to their partition indices to query
-     * @param onWriteComplete callback invoked with the coordinator's response containing partition states
+     * @param callback callback invoked with each coordinator's response containing partition states
      */
     public void readStatesFromRemoteCoordinator(String mirrorName,
                                                 Map<String, Set<Integer>> partitions,
-                                                Consumer<ReadMirrorStatesResponse> onWriteComplete) {
-        LOG.info("!!! readStatesToRemoteCoordinator: {} {}", mirrorName, partitions);
+                                                Consumer<ReadMirrorStatesResponse> callback) {
+        LOG.info("!!! readStatesFromRemoteCoordinator: {} {}", mirrorName, partitions);
 
-        partitions.forEach((tp, parts) -> {
+        // Group partitions by coordinator node for batching
+        Map<Node, Map<String, List<ReadMirrorStatesRequestData.PartitionData>>> nodeToTopicPartitions = new HashMap<>();
+
+        partitions.forEach((topic, parts) -> {
             parts.forEach(part -> {
-                MirrorRecordKey key = new MirrorRecordKey(mirrorName, metadataCache.getTopicId(tp), part);
+                MirrorRecordKey key = new MirrorRecordKey(mirrorName, metadataCache.getTopicId(topic), part);
                 Node coordinatorNode = coordinatorNodes.get(key);
                 if (coordinatorNode == null) {
                     coordinatorNode = findMirrorCoordinatorNode(key);
                     if (coordinatorNode.equals(Node.noNode())) {
-                        // coordinator is not available, return it now.
-                        LOG.error("!!! coordinator is not available, return it now.");
+                        LOG.error("!!! Coordinator is not available for mirror {} partition {}:{}", mirrorName, topic, part);
                         return;
                     }
+                    coordinatorNodes.put(key, coordinatorNode);
                 }
-                coordinatorNodes.put(key, coordinatorNode);
 
-                ReadMirrorStatesRequestData data = new ReadMirrorStatesRequestData().setMirrorName(mirrorName);
-                List<ReadMirrorStatesRequestData.TopicState> topicStates = new ArrayList<>();
+                ReadMirrorStatesRequestData.PartitionData partitionData = new ReadMirrorStatesRequestData.PartitionData();
+                partitionData.setPartitionIndex(part);
 
-                ReadMirrorStatesRequestData.TopicState state = new ReadMirrorStatesRequestData.TopicState().setName(tp);
-                List<ReadMirrorStatesRequestData.PartitionState> partitionStates = new ArrayList<>();
-
-                ReadMirrorStatesRequestData.PartitionState partitionState = new ReadMirrorStatesRequestData.PartitionState();
-                partitionState.setPartitionIndex(part);
-                partitionStates.add(partitionState);
-
-                state.setPartitions(partitionStates);
-                topicStates.add(state);
-
-                data.setMirrorName(mirrorName).setTopics(topicStates);
-
-                // send
-                interBrokerSender.enqueue(new RequestAndCompletionHandler(
-                        time.milliseconds(),
-                        coordinatorNode,
-                        new ReadMirrorStatesRequest.Builder(data),
-                        response -> {
-                            if (response.responseBody() instanceof ReadMirrorStatesResponse readMirrorStatesResponse) {
-                                LOG.info("!!! readMirrorStatesResponse onComplete: {}", response.responseBody());
-                                onWriteComplete.accept(readMirrorStatesResponse);
-
-                                // update cache
-                                readMirrorStatesResponse.data().topics().forEach(topic -> {
-                                    topic.partitions().forEach(partition -> {
-                                        if (partition.lastMirroredOffset() != -1) {
-                                            lastMirroredOffsets.put(new MirrorPartitionKey(mirrorName, topic.name(), partition.partitionIndex()), partition.lastMirroredOffset());
-                                        }
-                                        if (partition.state() != -1) {
-                                            mirrorPartitionState.put(new MirrorPartitionKey(mirrorName, topic.name(), partition.partitionIndex()), MirrorPartitionState.fromValue(partition.state()));
-                                        }
-                                        mirrorTopics.compute(mirrorName, (k, oldVal) -> {
-                                            if (oldVal == null) {
-                                                return Set.of(topic.name());
-                                            } else {
-                                                Set<String> newSet = new HashSet<>(oldVal);
-                                                newSet.add(topic.name());
-                                                return newSet;
-                                            }
-                                        });
-                                    });
-                                });
-                            }
-                        }
-                ));
+                nodeToTopicPartitions
+                    .computeIfAbsent(coordinatorNode, k -> new HashMap<>())
+                    .computeIfAbsent(topic, k -> new ArrayList<>())
+                    .add(partitionData);
             });
+        });
+
+        // Send one batched request per coordinator node
+        nodeToTopicPartitions.forEach((node, topicPartitionsMap) -> {
+            ReadMirrorStatesRequestData data = new ReadMirrorStatesRequestData().setMirrorName(mirrorName);
+            List<ReadMirrorStatesRequestData.TopicData> topicDataList = new ArrayList<>();
+
+            topicPartitionsMap.forEach((topic, partitionDataList) ->
+                topicDataList.add(new ReadMirrorStatesRequestData.TopicData()
+                    .setName(topic)
+                    .setPartitions(partitionDataList)));
+
+            data.setTopics(topicDataList);
+
+            interBrokerSender.enqueue(new RequestAndCompletionHandler(
+                time.milliseconds(),
+                node,
+                new ReadMirrorStatesRequest.Builder(data),
+                response -> {
+                    if (response.responseBody() instanceof ReadMirrorStatesResponse readMirrorStatesResponse) {
+                        LOG.info("!!! readMirrorStatesResponse completed: {}", response.responseBody());
+
+                        // Update cache
+                        readMirrorStatesResponse.data().topics().forEach(topic -> {
+                            topic.partitions().forEach(partition -> {
+                                if (partition.lastMirroredOffset() != -1) {
+                                    lastMirroredOffsets.put(new MirrorPartitionKey(mirrorName, topic.name(), partition.partitionIndex()), partition.lastMirroredOffset());
+                                }
+                                if (partition.state() != -1) {
+                                    mirrorPartitionState.put(new MirrorPartitionKey(mirrorName, topic.name(), partition.partitionIndex()), MirrorPartitionState.fromValue(partition.state()));
+                                }
+                                mirrorTopics.compute(mirrorName, (k, oldVal) -> {
+                                    if (oldVal == null) {
+                                        return Set.of(topic.name());
+                                    } else {
+                                        Set<String> newSet = new HashSet<>(oldVal);
+                                        newSet.add(topic.name());
+                                        return newSet;
+                                    }
+                                });
+                            });
+                        });
+
+                        callback.accept(readMirrorStatesResponse);
+                    }
+                }
+            ));
         });
     }
 
@@ -711,21 +755,21 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                                                      Map<String, Set<Integer>> partitions,
                                                      Consumer<ReadMirrorStatesResponse> responseCallback) {
         ReadMirrorStatesResponseData data = new ReadMirrorStatesResponseData();
-        List<ReadMirrorStatesResponseData.TopicState> topicStates = new ArrayList<>();
+        List<ReadMirrorStatesResponseData.TopicResult> topicResults = new ArrayList<>();
         partitions.forEach((tp, parts) -> {
-            ReadMirrorStatesResponseData.TopicState state = new ReadMirrorStatesResponseData.TopicState().setName(tp);
-            List<ReadMirrorStatesResponseData.PartitionState> partitionStates = new ArrayList<>();
+            ReadMirrorStatesResponseData.TopicResult topicResult = new ReadMirrorStatesResponseData.TopicResult().setName(tp);
+            List<ReadMirrorStatesResponseData.PartitionResult> partitionResults = new ArrayList<>();
             parts.forEach(part -> {
-                ReadMirrorStatesResponseData.PartitionState partitionState = new ReadMirrorStatesResponseData.PartitionState();
-                partitionState.setPartitionIndex(part);
-                partitionState.setLastMirroredOffset(lastMirroredOffsets.getOrDefault(new MirrorPartitionKey(mirrorName, tp, part), -1L));
-                partitionState.setState(mirrorPartitionState.getOrDefault(new MirrorPartitionKey(mirrorName, tp, part), MirrorPartitionState.UNKNOWN).value());
-                partitionStates.add(partitionState);
+                ReadMirrorStatesResponseData.PartitionResult partitionResult = new ReadMirrorStatesResponseData.PartitionResult();
+                partitionResult.setPartitionIndex(part);
+                partitionResult.setLastMirroredOffset(lastMirroredOffsets.getOrDefault(new MirrorPartitionKey(mirrorName, tp, part), -1L));
+                partitionResult.setState(mirrorPartitionState.getOrDefault(new MirrorPartitionKey(mirrorName, tp, part), MirrorPartitionState.UNKNOWN).value());
+                partitionResults.add(partitionResult);
             });
-            state.setPartitions(partitionStates);
-            topicStates.add(state);
+            topicResult.setPartitions(partitionResults);
+            topicResults.add(topicResult);
         });
-        data.setTopics(topicStates);
+        data.setTopics(topicResults);
 
         responseCallback.accept(new ReadMirrorStatesResponse(data));
     }

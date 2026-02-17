@@ -296,7 +296,7 @@ class KafkaApis(val requestChannel: RequestChannel,
       info("!!! writeMirrorStatesRequest:" + writeMirrorStatesRequest)
       val mirrorName = writeMirrorStatesRequest.data().mirrorName()
       val partitionMetadata = new util.HashMap[String, util.Set[MirrorPartitionMetadata]]()
-      writeMirrorStatesRequest.data().topicsUpdated().forEach(topic => {
+      writeMirrorStatesRequest.data().topics().forEach(topic => {
         val partMetadata = new util.HashSet[MirrorPartitionMetadata]()
         topic.partitions().forEach(part => {
           partMetadata.add(new MirrorPartitionMetadata(part.partitionIndex(), MirrorPartitionState.fromValue(part.state()), part.lastMirroredOffset()))
