@@ -129,7 +129,10 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
+import static org.apache.kafka.common.config.TopicConfig.CLEANUP_POLICY_COMPACT;
+import static org.apache.kafka.common.config.TopicConfig.CLEANUP_POLICY_CONFIG;
 import static org.apache.kafka.common.config.TopicConfig.DISKLESS_ENABLE_CONFIG;
+import static org.apache.kafka.common.config.TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG;
 import static org.apache.kafka.common.config.TopicConfig.SEGMENT_BYTES_CONFIG;
 import static org.apache.kafka.common.metadata.MetadataRecordType.CLEAR_ELR_RECORD;
 import static org.apache.kafka.common.protocol.Errors.ELECTION_NOT_NEEDED;
@@ -180,6 +183,8 @@ public class ReplicationControlManagerTest {
             private final Map<String, Object> staticConfig = new HashMap<>();
             private boolean defaultDisklessEnable = false;
             private boolean disklessStorageSystemEnable = false;
+            private boolean classicRemoteStorageForceEnabled = false;
+            private List<String> classicRemoteStorageForceExcludeTopicRegexes = List.of();
 
             Builder setCreateTopicPolicy(CreateTopicPolicy createTopicPolicy) {
                 this.createTopicPolicy = Optional.of(createTopicPolicy);
@@ -216,6 +221,16 @@ public class ReplicationControlManagerTest {
                 return this;
             }
 
+            Builder setClassicRemoteStorageForceEnabled(final boolean classicRemoteStorageForceEnabled) {
+                this.classicRemoteStorageForceEnabled = classicRemoteStorageForceEnabled;
+                return this;
+            }
+
+            Builder setClassicRemoteStorageForceExcludeTopicRegexes(final List<String> classicRemoteStorageForceExcludeTopicRegexes) {
+                this.classicRemoteStorageForceExcludeTopicRegexes = classicRemoteStorageForceExcludeTopicRegexes;
+                return this;
+            }
+
             ReplicationControlTestContext build() {
                 return new ReplicationControlTestContext(metadataVersion,
                     createTopicPolicy,
@@ -223,7 +238,9 @@ public class ReplicationControlManagerTest {
                     isElrEnabled,
                     staticConfig,
                     defaultDisklessEnable,
-                    disklessStorageSystemEnable);
+                    disklessStorageSystemEnable,
+                    classicRemoteStorageForceEnabled,
+                    classicRemoteStorageForceExcludeTopicRegexes);
             }
         }
 
@@ -250,7 +267,9 @@ public class ReplicationControlManagerTest {
             boolean isElrEnabled,
             Map<String, Object> staticConfig,
             boolean defaultDisklessEnable,
-            boolean disklessStorageSystemEnable
+            boolean disklessStorageSystemEnable,
+            final boolean classicRemoteStorageForceEnabled,
+            final List<String> classicRemoteStorageForceExcludeTopicRegexes
         ) {
             this.time = time;
             this.featureControl = new FeatureControlManager.Builder().
@@ -296,6 +315,8 @@ public class ReplicationControlManagerTest {
                 setFeatureControl(featureControl).
                 setDefaultDisklessEnable(defaultDisklessEnable).
                 setDisklessStorageSystemEnabled(disklessStorageSystemEnable).
+                setClassicRemoteStorageForceEnabled(classicRemoteStorageForceEnabled).
+                setClassicRemoteStorageForceExcludeTopicRegexes(classicRemoteStorageForceExcludeTopicRegexes).
                 build();
             clusterControl.activate();
         }
@@ -3496,6 +3517,155 @@ public class ReplicationControlManagerTest {
         int partitionEpoch = ctx.replicationControl.getPartition(fooId, 0).partitionEpoch;
         ctx.replay(List.of(new ApiMessageAndVersion(new ClearElrRecord(), CLEAR_ELR_RECORD.highestSupportedVersion())));
         assertEquals(partitionEpoch, ctx.replicationControl.getPartition(fooId, 0).partitionEpoch);
+    }
+
+    @Test
+    void testForceClassicRemoteStorageEnableOverridesExplicitFalse() {
+        final ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+            .setClassicRemoteStorageForceEnabled(true)
+            .setDisklessStorageSystemEnabled(true)
+            .build();
+        ctx.registerBrokers(0, 1, 2);
+        ctx.unfenceBrokers(0, 1, 2);
+
+        final CreateTopicsRequestData request = new CreateTopicsRequestData();
+        final CreateTopicsRequestData.CreatableTopicConfigCollection configs = new CreateTopicsRequestData.CreatableTopicConfigCollection();
+        configs.add(new CreateTopicsRequestData.CreatableTopicConfig()
+            .setName(REMOTE_LOG_STORAGE_ENABLE_CONFIG)
+            .setValue("false"));
+        request.topics().add(new CreatableTopic()
+            .setName("foo")
+            .setNumPartitions(1)
+            .setReplicationFactor((short) 1)
+            .setConfigs(configs));
+
+        final ControllerResult<CreateTopicsResponseData> result = ctx.replicationControl.createTopics(
+            anonymousContextFor(ApiKeys.CREATE_TOPICS), request, Set.of("foo"));
+        assertEquals(NONE.code(), result.response().topics().find("foo").errorCode());
+        assertTrue(result.records().stream()
+            .filter(m -> m.message() instanceof ConfigRecord)
+            .map(m -> (ConfigRecord) m.message())
+            .anyMatch(r -> r.name().equals(REMOTE_LOG_STORAGE_ENABLE_CONFIG) && r.value().equals("true")));
+    }
+
+    @Test
+    void testForceClassicRemoteStorageEnableNotAppliedToDisklessTopics() {
+        final ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+            .setClassicRemoteStorageForceEnabled(true)
+            .setDisklessStorageSystemEnabled(true)
+            .build();
+        ctx.registerBrokers(0, 1, 2);
+        ctx.unfenceBrokers(0, 1, 2);
+
+        final CreateTopicsRequestData request = new CreateTopicsRequestData();
+        final CreateTopicsRequestData.CreatableTopicConfigCollection configs = new CreateTopicsRequestData.CreatableTopicConfigCollection();
+        configs.add(new CreateTopicsRequestData.CreatableTopicConfig()
+            .setName(DISKLESS_ENABLE_CONFIG)
+            .setValue("true"));
+        request.topics().add(new CreatableTopic()
+            .setName("foo")
+            .setNumPartitions(-1)
+            .setReplicationFactor((short) -1)
+            .setConfigs(configs));
+
+        final ControllerResult<CreateTopicsResponseData> result = ctx.replicationControl.createTopics(
+            anonymousContextFor(ApiKeys.CREATE_TOPICS), request, Set.of("foo"));
+        assertEquals(NONE.code(), result.response().topics().find("foo").errorCode());
+        assertTrue(result.records().stream()
+            .filter(m -> m.message() instanceof ConfigRecord)
+            .map(m -> (ConfigRecord) m.message())
+            .noneMatch(r -> r.name().equals(REMOTE_LOG_STORAGE_ENABLE_CONFIG) && r.value().equals("true")));
+    }
+
+    @Test
+    void testForceClassicRemoteStorageEnableNotAppliedToCompactedTopics() {
+        final ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+            .setClassicRemoteStorageForceEnabled(true)
+            .setDisklessStorageSystemEnabled(true)
+            .build();
+        ctx.registerBrokers(0, 1, 2);
+        ctx.unfenceBrokers(0, 1, 2);
+
+        final CreateTopicsRequestData request = new CreateTopicsRequestData();
+        final CreateTopicsRequestData.CreatableTopicConfigCollection configs = new CreateTopicsRequestData.CreatableTopicConfigCollection();
+        configs.add(new CreateTopicsRequestData.CreatableTopicConfig()
+            .setName(CLEANUP_POLICY_CONFIG)
+            .setValue(CLEANUP_POLICY_COMPACT));
+        configs.add(new CreateTopicsRequestData.CreatableTopicConfig()
+            .setName(REMOTE_LOG_STORAGE_ENABLE_CONFIG)
+            .setValue("false"));
+        request.topics().add(new CreatableTopic()
+            .setName("foo")
+            .setNumPartitions(1)
+            .setReplicationFactor((short) 1)
+            .setConfigs(configs));
+
+        final ControllerResult<CreateTopicsResponseData> result = ctx.replicationControl.createTopics(
+            anonymousContextFor(ApiKeys.CREATE_TOPICS), request, Set.of("foo"));
+        assertEquals(NONE.code(), result.response().topics().find("foo").errorCode());
+        assertTrue(result.records().stream()
+            .filter(m -> m.message() instanceof ConfigRecord)
+            .map(m -> (ConfigRecord) m.message())
+            .noneMatch(r -> r.name().equals(REMOTE_LOG_STORAGE_ENABLE_CONFIG) && r.value().equals("true")));
+    }
+
+    @Test
+    void testForceClassicRemoteStorageEnableNotAppliedToInternalTopics() {
+        final ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+            .setClassicRemoteStorageForceEnabled(true)
+            .setDisklessStorageSystemEnabled(true)
+            .build();
+        ctx.registerBrokers(0, 1, 2);
+        ctx.unfenceBrokers(0, 1, 2);
+
+        final CreateTopicsRequestData request = new CreateTopicsRequestData();
+        final CreateTopicsRequestData.CreatableTopicConfigCollection configs = new CreateTopicsRequestData.CreatableTopicConfigCollection();
+        configs.add(new CreateTopicsRequestData.CreatableTopicConfig()
+            .setName(REMOTE_LOG_STORAGE_ENABLE_CONFIG)
+            .setValue("false"));
+        request.topics().add(new CreatableTopic()
+            .setName(Topic.GROUP_METADATA_TOPIC_NAME)
+            .setNumPartitions(1)
+            .setReplicationFactor((short) 1)
+            .setConfigs(configs));
+
+        final ControllerResult<CreateTopicsResponseData> result = ctx.replicationControl.createTopics(
+            anonymousContextFor(ApiKeys.CREATE_TOPICS), request, Set.of(Topic.GROUP_METADATA_TOPIC_NAME));
+        assertEquals(NONE.code(), result.response().topics().find(Topic.GROUP_METADATA_TOPIC_NAME).errorCode());
+        assertTrue(result.records().stream()
+            .filter(m -> m.message() instanceof ConfigRecord)
+            .map(m -> (ConfigRecord) m.message())
+            .noneMatch(r -> r.name().equals(REMOTE_LOG_STORAGE_ENABLE_CONFIG) && r.value().equals("true")));
+    }
+
+    @Test
+    void testForceClassicRemoteStorageEnableNotAppliedToExcludedRegexTopics() {
+        final ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+            .setClassicRemoteStorageForceEnabled(true)
+            .setClassicRemoteStorageForceExcludeTopicRegexes(List.of("mm2-(.*)"))
+            .setDisklessStorageSystemEnabled(true)
+            .build();
+        ctx.registerBrokers(0, 1, 2);
+        ctx.unfenceBrokers(0, 1, 2);
+
+        final CreateTopicsRequestData request = new CreateTopicsRequestData();
+        final CreateTopicsRequestData.CreatableTopicConfigCollection configs = new CreateTopicsRequestData.CreatableTopicConfigCollection();
+        configs.add(new CreateTopicsRequestData.CreatableTopicConfig()
+            .setName(REMOTE_LOG_STORAGE_ENABLE_CONFIG)
+            .setValue("false"));
+        request.topics().add(new CreatableTopic()
+            .setName("mm2-foo")
+            .setNumPartitions(1)
+            .setReplicationFactor((short) 1)
+            .setConfigs(configs));
+
+        final ControllerResult<CreateTopicsResponseData> result = ctx.replicationControl.createTopics(
+            anonymousContextFor(ApiKeys.CREATE_TOPICS), request, Set.of("mm2-foo"));
+        assertEquals(NONE.code(), result.response().topics().find("mm2-foo").errorCode());
+        assertTrue(result.records().stream()
+            .filter(m -> m.message() instanceof ConfigRecord)
+            .map(m -> (ConfigRecord) m.message())
+            .noneMatch(r -> r.name().equals(REMOTE_LOG_STORAGE_ENABLE_CONFIG) && r.value().equals("true")));
     }
 
     @Nested

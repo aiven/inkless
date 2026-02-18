@@ -16,8 +16,11 @@
  */
 package org.apache.kafka.server.config;
 
+import java.util.HashSet;
+import java.util.List;
 import org.apache.kafka.clients.CommonClientConfigs;
 import org.apache.kafka.common.config.ConfigDef;
+import org.apache.kafka.common.config.ConfigException;
 import org.apache.kafka.common.config.TopicConfig;
 import org.apache.kafka.common.record.CompressionType;
 import org.apache.kafka.server.authorizer.Authorizer;
@@ -29,6 +32,7 @@ import static org.apache.kafka.common.config.ConfigDef.Importance.MEDIUM;
 import static org.apache.kafka.common.config.ConfigDef.Range.atLeast;
 import static org.apache.kafka.common.config.ConfigDef.Type.BOOLEAN;
 import static org.apache.kafka.common.config.ConfigDef.Type.INT;
+import static org.apache.kafka.common.config.ConfigDef.Type.LIST;
 import static org.apache.kafka.common.config.ConfigDef.Type.LONG;
 import static org.apache.kafka.common.config.ConfigDef.Type.STRING;
 
@@ -137,6 +141,16 @@ public class ServerConfigs {
         "This should only be enabled in non-production environments for testing or migration purposes. " +
         "When enabled, topics can have their diskless.enable config changed from false to true.";
 
+    public static final String CLASSIC_REMOTE_STORAGE_FORCE_ENABLE_CONFIG = "classic.remote.storage.force.enable";
+    public static final boolean CLASSIC_REMOTE_STORAGE_FORCE_ENABLE_DEFAULT = false;
+    public static final String CLASSIC_REMOTE_STORAGE_FORCE_ENABLE_DOC = "Force classic topics to be created with remote.storage.enable=true, " +
+        "unless excluded by topic-level exceptions such as diskless topics, compacted topics, internal topics, or explicit exclusion regex rules.";
+
+    public static final String CLASSIC_REMOTE_STORAGE_FORCE_EXCLUDE_TOPIC_REGEXES_CONFIG = "classic.remote.storage.force.exclude.topic.regexes";
+    public static final List<String> CLASSIC_REMOTE_STORAGE_FORCE_EXCLUDE_TOPIC_REGEXES_DEFAULT = List.of();
+    public static final String CLASSIC_REMOTE_STORAGE_FORCE_EXCLUDE_TOPIC_REGEXES_DOC = "A list of topic name regular expressions excluded from " +
+        "classic.remote.storage.force.enable.";
+
 
     /************* Authorizer Configuration ***********/
     public static final String AUTHORIZER_CLASS_NAME_CONFIG = "authorizer.class.name";
@@ -186,9 +200,28 @@ public class ServerConfigs {
                 DISKLESS_STORAGE_SYSTEM_ENABLE_DOC)
             .define(DISKLESS_ALLOW_FROM_CLASSIC_ENABLE_CONFIG, BOOLEAN, DISKLESS_ALLOW_FROM_CLASSIC_ENABLE_DEFAULT, LOW,
                 DISKLESS_ALLOW_FROM_CLASSIC_ENABLE_DOC)
+            .define(CLASSIC_REMOTE_STORAGE_FORCE_ENABLE_CONFIG, BOOLEAN, CLASSIC_REMOTE_STORAGE_FORCE_ENABLE_DEFAULT, LOW,
+                CLASSIC_REMOTE_STORAGE_FORCE_ENABLE_DOC)
+            .define(CLASSIC_REMOTE_STORAGE_FORCE_EXCLUDE_TOPIC_REGEXES_CONFIG, LIST, CLASSIC_REMOTE_STORAGE_FORCE_EXCLUDE_TOPIC_REGEXES_DEFAULT,
+                ConfigDef.LambdaValidator.with(
+                    ServerConfigs::ensureNonDuplicateListValues,
+                    () -> "non-duplicate list"), LOW, CLASSIC_REMOTE_STORAGE_FORCE_EXCLUDE_TOPIC_REGEXES_DOC)
             /** Internal Configurations **/
             // This indicates whether unreleased APIs should be advertised by this node.
             .defineInternal(UNSTABLE_API_VERSIONS_ENABLE_CONFIG, BOOLEAN, false, HIGH)
             // This indicates whether unreleased MetadataVersions should be enabled on this node.
             .defineInternal(UNSTABLE_FEATURE_VERSIONS_ENABLE_CONFIG, BOOLEAN, false, HIGH);
+
+    @SuppressWarnings("unchecked")
+    private static void ensureNonDuplicateListValues(String name, Object value) {
+        List<String> values = (List<String>) value;
+        if (values == null) {
+            return;
+        }
+
+        HashSet<String> uniqueValues = new HashSet<>(values);
+        if (uniqueValues.size() != values.size()) {
+            throw new ConfigException(name, value, "List values must not contain duplicates");
+        }
+    }
 }
