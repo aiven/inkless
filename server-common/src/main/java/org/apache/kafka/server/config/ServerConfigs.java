@@ -142,6 +142,16 @@ public class ServerConfigs {
         "This should only be enabled in non-production environments for testing or migration purposes. " +
         "When enabled, topics can have their diskless.enable config changed from false to true.";
 
+    public static final String CLASSIC_REMOTE_STORAGE_FORCE_ENABLE_CONFIG = "classic.remote.storage.force.enable";
+    public static final boolean CLASSIC_REMOTE_STORAGE_FORCE_ENABLE_DEFAULT = false;
+    public static final String CLASSIC_REMOTE_STORAGE_FORCE_ENABLE_DOC = "Force classic topics to be created with remote.storage.enable=true, " +
+        "unless excluded by topic-level exceptions such as diskless topics, compacted topics, internal topics, or explicit exclusion regex rules.";
+
+    public static final String CLASSIC_REMOTE_STORAGE_FORCE_EXCLUDE_TOPIC_REGEXES_CONFIG = "classic.remote.storage.force.exclude.topic.regexes";
+    public static final List<String> CLASSIC_REMOTE_STORAGE_FORCE_EXCLUDE_TOPIC_REGEXES_DEFAULT = List.of();
+    public static final String CLASSIC_REMOTE_STORAGE_FORCE_EXCLUDE_TOPIC_REGEXES_DOC = "A list of topic name regular expressions excluded from " +
+        "classic.remote.storage.force.enable.";
+
 
     /************* Authorizer Configuration ***********/
     public static final String AUTHORIZER_CLASS_NAME_CONFIG = "authorizer.class.name";
@@ -192,6 +202,10 @@ public class ServerConfigs {
                 DISKLESS_STORAGE_SYSTEM_ENABLE_DOC)
             .define(DISKLESS_ALLOW_FROM_CLASSIC_ENABLE_CONFIG, BOOLEAN, DISKLESS_ALLOW_FROM_CLASSIC_ENABLE_DEFAULT, LOW,
                 DISKLESS_ALLOW_FROM_CLASSIC_ENABLE_DOC)
+            .define(CLASSIC_REMOTE_STORAGE_FORCE_ENABLE_CONFIG, BOOLEAN, CLASSIC_REMOTE_STORAGE_FORCE_ENABLE_DEFAULT, LOW,
+                CLASSIC_REMOTE_STORAGE_FORCE_ENABLE_DOC)
+            .define(CLASSIC_REMOTE_STORAGE_FORCE_EXCLUDE_TOPIC_REGEXES_CONFIG, LIST, CLASSIC_REMOTE_STORAGE_FORCE_EXCLUDE_TOPIC_REGEXES_DEFAULT,
+                ConfigDef.ValidList.anyNonDuplicateValues(true, false), LOW, CLASSIC_REMOTE_STORAGE_FORCE_EXCLUDE_TOPIC_REGEXES_DOC)
             /** Internal Configurations **/
             // This indicates whether unreleased APIs should be advertised by this node.
             .defineInternal(UNSTABLE_API_VERSIONS_ENABLE_CONFIG, BOOLEAN, false, HIGH)
