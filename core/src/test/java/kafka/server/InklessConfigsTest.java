@@ -194,27 +194,6 @@ public class InklessConfigsTest {
         cluster.close();
     }
 
-    @Test
-    public void disklessMigrationRequiresRemoteStorage() throws Exception {
-        var cluster = init(false, true, true);
-        Map<String, Object> clientConfigs = new HashMap<>();
-        clientConfigs.put(CommonClientConfigs.BOOTSTRAP_SERVERS_CONFIG, cluster.bootstrapServers());
-
-        try (Admin admin = AdminClient.create(clientConfigs)) {
-            // When creating a new topic with diskless.enable=false WITHOUT remote storage
-            final String classicTopic = "classicTopic";
-            createTopic(admin, classicTopic, Map.of(DISKLESS_ENABLE_CONFIG, "false"));
-            // Then diskless.enable is set to false in the topic config
-            var classicTopicConfig = getTopicConfig(admin, classicTopic);
-            assertEquals("false", classicTopicConfig.get(DISKLESS_ENABLE_CONFIG));
-
-            // Even with migration enabled, it should NOT be possible to turn on diskless
-            // because remote storage is not enabled on this topic
-            assertThrows(ExecutionException.class, () -> alterTopicConfig(admin, classicTopic, Map.of(DISKLESS_ENABLE_CONFIG, "true")));
-        }
-        cluster.close();
-    }
-
     public void createTopic(Admin admin, String topic, Map<String, String> configs) throws Exception {
         admin.createTopics(Collections.singletonList(
             new NewTopic(topic, 1, (short) 1)

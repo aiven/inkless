@@ -501,6 +501,8 @@ public class LogConfig extends AbstractConfig {
         final boolean isCreation = existingConfigs.isEmpty();
         final boolean isDisklessExplicitlySet = requestedConfigs.containsKey(TopicConfig.DISKLESS_ENABLE_CONFIG);
         final boolean isRemoteStorageExplicitlySet = requestedConfigs.containsKey(TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG);
+        final boolean wasDisklessExplicitlySet = existingConfigs.containsKey(TopicConfig.DISKLESS_ENABLE_CONFIG);
+        final boolean wasRemoteStorageExplicitlySet = existingConfigs.containsKey(TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG);
         final boolean wasDisklessEnabled = Boolean.parseBoolean(existingConfigs.getOrDefault(TopicConfig.DISKLESS_ENABLE_CONFIG, "false"));
         final boolean requestedDisklessEnabled = (Boolean) newConfigs.get(TopicConfig.DISKLESS_ENABLE_CONFIG);
 
@@ -521,8 +523,11 @@ public class LogConfig extends AbstractConfig {
             throw new InvalidConfigurationException("It is invalid to disable diskless.");
         }
 
-        // When diskless is enabled, remote storage cannot be set
-        if (isDisklessEnabled && isRemoteStorageExplicitlySet) {
+        // Only one between diskless.enable and remote.storage.enable can be set, no matter the value.
+        final boolean hasExplicitDiskless = isDisklessExplicitlySet || wasDisklessExplicitlySet;
+        final boolean hasExplicitRemoteStorage = isRemoteStorageExplicitlySet || wasRemoteStorageExplicitlySet;
+        if ((isDisklessExplicitlySet && hasExplicitRemoteStorage) ||
+            (isRemoteStorageExplicitlySet && hasExplicitDiskless)) {
             throw new InvalidConfigurationException("remote.storage.enable cannot be set if diskless.enable is set to true.");
         }
     }

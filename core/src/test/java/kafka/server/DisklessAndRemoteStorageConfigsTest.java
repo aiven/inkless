@@ -94,26 +94,29 @@ public class DisklessAndRemoteStorageConfigsTest {
                 createTopicAndAssertEffective(admin, "no-diskless-no-remote", Map.of(), "false", "false");
                 createTopicAndAssertEffective(admin, "diskless-true", Map.of(DISKLESS_ENABLE_CONFIG, "true"), "true", "false");
                 createTopicAndAssertEffective(admin, "remote-true", Map.of(REMOTE_LOG_STORAGE_ENABLE_CONFIG, "true"), "false", "true");
-                createTopicAndAssertEffective(admin, "diskless-false-remote-false", Map.of(
+                final Optional<String> disklessFalseRemoteFalseError = createTopic(admin, "diskless-false-remote-false-invalid", Map.of(
                     DISKLESS_ENABLE_CONFIG, "false",
                     REMOTE_LOG_STORAGE_ENABLE_CONFIG, "false"
-                ), "false", "false");
-                createTopicAndAssertEffective(admin, "diskless-false-remote-true", Map.of(
+                ));
+                assertEquals(DISKLESS_REMOTE_SET_ERROR, disklessFalseRemoteFalseError.get());
+
+                final Optional<String> disklessFalseRemoteTrueError = createTopic(admin, "diskless-false-remote-true-invalid", Map.of(
                     DISKLESS_ENABLE_CONFIG, "false",
                     REMOTE_LOG_STORAGE_ENABLE_CONFIG, "true"
-                ), "false", "true");
+                ));
+                assertEquals(DISKLESS_REMOTE_SET_ERROR, disklessFalseRemoteTrueError.get());
 
-                var case5 = createTopic(admin, "diskless-true-remote-false-invalid", Map.of(
+                final Optional<String> disklessTrueRemoteFalseError = createTopic(admin, "diskless-true-remote-false-invalid", Map.of(
                     DISKLESS_ENABLE_CONFIG, "true",
                     REMOTE_LOG_STORAGE_ENABLE_CONFIG, "false"
                 ));
-                assertEquals(DISKLESS_REMOTE_SET_ERROR, case5.get());
+                assertEquals(DISKLESS_REMOTE_SET_ERROR, disklessTrueRemoteFalseError.get());
 
-                var case6 = createTopic(admin, "diskless-true-remote-true-invalid", Map.of(
+                final Optional<String> disklessTrueRemoteTrueError = createTopic(admin, "diskless-true-remote-true-invalid", Map.of(
                     DISKLESS_ENABLE_CONFIG, "true",
                     REMOTE_LOG_STORAGE_ENABLE_CONFIG, "true"
                 ));
-                assertEquals(DISKLESS_REMOTE_SET_ERROR, case6.get());
+                assertEquals(DISKLESS_REMOTE_SET_ERROR, disklessTrueRemoteTrueError.get());
             } finally {
                 cluster.close();
             }
@@ -163,11 +166,11 @@ public class DisklessAndRemoteStorageConfigsTest {
 
                 String setDisklessFalseFromRemoteFalseTopic = "set-diskless-false-from-remote-false";
                 createTopicAndAssertEffective(admin, setDisklessFalseFromRemoteFalseTopic, Map.of(REMOTE_LOG_STORAGE_ENABLE_CONFIG, "false"), "false", "false");
-                assertTrue(incrementalAlterTopicConfig(admin, setDisklessFalseFromRemoteFalseTopic, Map.of(DISKLESS_ENABLE_CONFIG, "false")).isEmpty());
+                assertEquals(DISKLESS_REMOTE_SET_ERROR, incrementalAlterTopicConfig(admin, setDisklessFalseFromRemoteFalseTopic, Map.of(DISKLESS_ENABLE_CONFIG, "false")).get());
 
                 String setDisklessFalseFromRemoteTrueTopic = "set-diskless-false-from-remote-true";
                 createTopicAndAssertEffective(admin, setDisklessFalseFromRemoteTrueTopic, Map.of(REMOTE_LOG_STORAGE_ENABLE_CONFIG, "true"), "false", "true");
-                assertTrue(incrementalAlterTopicConfig(admin, setDisklessFalseFromRemoteTrueTopic, Map.of(DISKLESS_ENABLE_CONFIG, "false")).isEmpty());
+                assertEquals(DISKLESS_REMOTE_SET_ERROR, incrementalAlterTopicConfig(admin, setDisklessFalseFromRemoteTrueTopic, Map.of(DISKLESS_ENABLE_CONFIG, "false")).get());
 
                 String setRemoteTrueFromEmptyConfigsTopic = "set-remote-true-from-empty-configs";
                 createTopicAndAssertEffective(admin, setRemoteTrueFromEmptyConfigsTopic, Map.of(), "false", "false");
@@ -175,7 +178,7 @@ public class DisklessAndRemoteStorageConfigsTest {
 
                 String setRemoteTrueFromDisklessFalseTopic = "set-remote-true-from-diskless-false";
                 createTopicAndAssertEffective(admin, setRemoteTrueFromDisklessFalseTopic, Map.of(DISKLESS_ENABLE_CONFIG, "false"), "false", "false");
-                assertTrue(incrementalAlterTopicConfig(admin, setRemoteTrueFromDisklessFalseTopic, Map.of(REMOTE_LOG_STORAGE_ENABLE_CONFIG, "true")).isEmpty());
+                assertEquals(DISKLESS_REMOTE_SET_ERROR, incrementalAlterTopicConfig(admin, setRemoteTrueFromDisklessFalseTopic, Map.of(REMOTE_LOG_STORAGE_ENABLE_CONFIG, "true")).get());
 
                 String setRemoteTrueFromDisklessTrueTopic = "set-remote-true-from-diskless-true";
                 createTopicAndAssertEffective(admin, setRemoteTrueFromDisklessTrueTopic, Map.of(DISKLESS_ENABLE_CONFIG, "true"), "true", "false");
@@ -195,7 +198,7 @@ public class DisklessAndRemoteStorageConfigsTest {
 
                 String setRemoteFalseFromDisklessFalseTopic = "set-remote-false-from-diskless-false";
                 createTopicAndAssertEffective(admin, setRemoteFalseFromDisklessFalseTopic, Map.of(DISKLESS_ENABLE_CONFIG, "false"), "false", "false");
-                assertTrue(incrementalAlterTopicConfig(admin, setRemoteFalseFromDisklessFalseTopic, Map.of(REMOTE_LOG_STORAGE_ENABLE_CONFIG, "false")).isEmpty());
+                assertEquals(DISKLESS_REMOTE_SET_ERROR, incrementalAlterTopicConfig(admin, setRemoteFalseFromDisklessFalseTopic, Map.of(REMOTE_LOG_STORAGE_ENABLE_CONFIG, "false")).get());
 
                 String setRemoteFalseFromDisklessTrueTopic = "set-remote-false-from-diskless-true";
                 createTopicAndAssertEffective(admin, setRemoteFalseFromDisklessTrueTopic, Map.of(DISKLESS_ENABLE_CONFIG, "true"), "true", "false");
