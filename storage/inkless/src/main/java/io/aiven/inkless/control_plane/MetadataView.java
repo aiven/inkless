@@ -22,6 +22,7 @@ import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.network.ListenerName;
 
+import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
@@ -29,13 +30,15 @@ import java.util.Set;
 public interface MetadataView {
     Map<String, Object> getDefaultConfig();
 
-    Iterable<Node> getAliveBrokerNodes(ListenerName listenerName);
+    List<Node> getAliveBrokerNodes(ListenerName listenerName);
 
     Integer getBrokerCount();
 
     Uuid getTopicId(String topicName);
 
     boolean isDisklessTopic(String topicName);
+
+    boolean isRemoteStorageEnabled(String topicName);
 
     Properties getTopicConfig(String topicName);
 

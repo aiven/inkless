@@ -118,9 +118,31 @@ class InklessMetadataViewTest {
     }
   }
 
-  private def createTopicProps(diskless: Option[String]): Properties = {
+  @Test
+  def testIsRemoteStorageEnabled(): Unit = {
+    val metadataCache = mock(classOf[KRaftMetadataCache])
+    val metadataView = new InklessMetadataView(metadataCache, null)
+
+    // Each tuple contains: (description, properties object, expected result)
+    val testCases = Seq(
+      ("remote.storage.enable=true", createTopicProps(remoteStorageEnable = Some("true")), true),
+      ("case-insensitive", createTopicProps(remoteStorageEnable = Some("TRUE")), true),
+      ("remote.storage.enable=false", createTopicProps(remoteStorageEnable = Some("false")), false),
+      ("empty properties", new Properties(), false),
+      ("unrelated properties", {val p = new Properties(); p.put("foo", "bar"); p}, false),
+    )
+
+    testCases.foreach { case (description, props, expected) =>
+      val topicName = description.replaceAll(" ", "-")
+      when(metadataCache.topicConfig(topicName)).thenReturn(props)
+      assertEquals(expected, metadataView.isRemoteStorageEnabled(topicName), s"Failed on case: '$description'")
+    }
+  }
+
+  private def createTopicProps(diskless: Option[String] = None, remoteStorageEnable: Option[String] = None): Properties = {
     val props = new Properties()
     diskless.foreach(v => props.put(TopicConfig.DISKLESS_ENABLE_CONFIG, v))
+    remoteStorageEnable.foreach(v => props.put(TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG, v))
     props
   }
 
