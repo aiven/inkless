@@ -21,6 +21,7 @@ import org.apache.kafka.clients.admin.Admin;
 import org.apache.kafka.clients.admin.AdminClient;
 import org.apache.kafka.clients.admin.AlterConfigOp;
 import org.apache.kafka.clients.admin.ConfigEntry;
+import org.apache.kafka.clients.admin.CreateTopicsResult;
 import org.apache.kafka.clients.admin.NewTopic;
 import org.apache.kafka.common.config.ConfigResource;
 import org.apache.kafka.common.errors.UnknownTopicOrPartitionException;
@@ -32,6 +33,7 @@ import org.apache.kafka.server.config.ServerLogConfigs;
 import org.apache.kafka.server.log.remote.storage.RemoteLogManagerConfig;
 
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInfo;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -58,8 +60,12 @@ import io.aiven.inkless.test_utils.MinioContainer;
 import io.aiven.inkless.test_utils.PostgreSQLTestContainer;
 import io.aiven.inkless.test_utils.S3TestContainer;
 
+import static org.apache.kafka.common.config.TopicConfig.CLEANUP_POLICY_COMPACT;
+import static org.apache.kafka.common.config.TopicConfig.CLEANUP_POLICY_CONFIG;
 import static org.apache.kafka.common.config.TopicConfig.DISKLESS_ENABLE_CONFIG;
+import static org.apache.kafka.common.config.TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 @Testcontainers
@@ -74,6 +80,14 @@ public class InklessConfigsTest {
     }
 
     private KafkaClusterTestKit init(boolean defaultDisklessEnableConfig, boolean disklessStorageEnableConfig, boolean isDisklessAllowFromClassicEnabled) throws Exception {
+        return init(defaultDisklessEnableConfig, disklessStorageEnableConfig, isDisklessAllowFromClassicEnabled, false, List.of());
+    }
+
+    private KafkaClusterTestKit init(boolean defaultDisklessEnableConfig,
+                                     boolean disklessStorageEnableConfig,
+                                     boolean isDisklessAllowFromClassicEnabled,
+                                     boolean classicRemoteStorageForceEnabled,
+                                     List<String> classicRemoteStorageForceExcludeTopicRegexes) throws Exception {
         final TestKitNodes nodes = new TestKitNodes.Builder()
             .setCombined(true)
             .setNumBrokerNodes(1)
@@ -84,6 +98,9 @@ public class InklessConfigsTest {
             .setConfigProp(ServerLogConfigs.DISKLESS_ENABLE_CONFIG, String.valueOf(defaultDisklessEnableConfig))
             .setConfigProp(ServerConfigs.DISKLESS_STORAGE_SYSTEM_ENABLE_CONFIG, String.valueOf(disklessStorageEnableConfig))
             .setConfigProp(ServerConfigs.DISKLESS_ALLOW_FROM_CLASSIC_ENABLE_CONFIG, String.valueOf(isDisklessAllowFromClassicEnabled))
+            .setConfigProp(ServerConfigs.CLASSIC_REMOTE_STORAGE_FORCE_ENABLE_CONFIG, String.valueOf(classicRemoteStorageForceEnabled))
+            .setConfigProp(ServerConfigs.CLASSIC_REMOTE_STORAGE_FORCE_EXCLUDE_TOPIC_REGEXES_CONFIG,
+                String.join(",", classicRemoteStorageForceExcludeTopicRegexes))
             .setConfigProp(RemoteLogManagerConfig.REMOTE_LOG_STORAGE_SYSTEM_ENABLE_PROP, "true")
             .setConfigProp(RemoteLogManagerConfig.REMOTE_STORAGE_MANAGER_CLASS_NAME_PROP, "org.apache.kafka.server.log.remote.storage.NoOpRemoteStorageManager")
             // PG control plane config
@@ -193,11 +210,153 @@ public class InklessConfigsTest {
         cluster.close();
     }
 
+    @Nested
+    final class ClassicRemoteStorageForcePolicy {
+        private static final List<String> EXCLUDED_TOPIC_REGEXES = List.of("_schemas", "mm2-(.*)");
+
+        private KafkaClusterTestKit initWithClassicRemoteStorageForceEnabled() throws Exception {
+            return init(false, true, false, true, EXCLUDED_TOPIC_REGEXES);
+        }
+
+        @Test
+        void remoteStorageEnableIsAlwaysTrueForClassicTopics() throws Exception {
+            final KafkaClusterTestKit cluster = initWithClassicRemoteStorageForceEnabled();
+            final Map<String, Object> clientConfigs = new HashMap<>();
+            clientConfigs.put(CommonClientConfigs.BOOTSTRAP_SERVERS_CONFIG, cluster.bootstrapServers());
+
+            try (final Admin admin = AdminClient.create(clientConfigs)) {
+                final String noRemoteConfigTopic = "classic-no-remote-config";
+                assertEquals("true", createTopicAndGetRemoteStorageFromCreateResponse(admin, noRemoteConfigTopic, Map.of()));
+                assertEquals("true", getTopicConfig(admin, noRemoteConfigTopic).get(REMOTE_LOG_STORAGE_ENABLE_CONFIG));
+
+                final String remoteFalseTopic = "classic-remote-false";
+                assertEquals("true", createTopicAndGetRemoteStorageFromCreateResponse(
+                    admin, remoteFalseTopic, Map.of(REMOTE_LOG_STORAGE_ENABLE_CONFIG, "false")));
+                assertEquals("true", getTopicConfig(admin, remoteFalseTopic).get(REMOTE_LOG_STORAGE_ENABLE_CONFIG));
+
+                final String remoteTrueTopic = "classic-remote-true";
+                assertEquals("true", createTopicAndGetRemoteStorageFromCreateResponse(
+                    admin, remoteTrueTopic, Map.of(REMOTE_LOG_STORAGE_ENABLE_CONFIG, "true")));
+                assertEquals("true", getTopicConfig(admin, remoteTrueTopic).get(REMOTE_LOG_STORAGE_ENABLE_CONFIG));
+            } finally {
+                cluster.close();
+            }
+        }
+
+        @Test
+        void compactedTopicsAreExcludedFromForcePolicy() throws Exception {
+            final KafkaClusterTestKit cluster = initWithClassicRemoteStorageForceEnabled();
+            final Map<String, Object> clientConfigs = new HashMap<>();
+            clientConfigs.put(CommonClientConfigs.BOOTSTRAP_SERVERS_CONFIG, cluster.bootstrapServers());
+
+            try (final Admin admin = AdminClient.create(clientConfigs)) {
+                // Compacted topic gets remote.storage.enable=false when not specified
+                final String compactedNoRemoteTopic = "compacted-no-remote";
+                assertEquals("false", createTopicAndGetRemoteStorageFromCreateResponse(
+                    admin, compactedNoRemoteTopic, Map.of(CLEANUP_POLICY_CONFIG, CLEANUP_POLICY_COMPACT)));
+                assertEquals("false", getTopicConfig(admin, compactedNoRemoteTopic).get(REMOTE_LOG_STORAGE_ENABLE_CONFIG));
+
+                // Setting remote.storage.enable=false is allowed for a compacted topic
+                final String compactedRemoteFalseTopic = "compacted-remote-false";
+                assertEquals("false", createTopicAndGetRemoteStorageFromCreateResponse(
+                    admin,
+                    compactedRemoteFalseTopic,
+                    Map.of(
+                        CLEANUP_POLICY_CONFIG, CLEANUP_POLICY_COMPACT,
+                        REMOTE_LOG_STORAGE_ENABLE_CONFIG, "false"
+                    )));
+                assertEquals("false", getTopicConfig(admin, compactedRemoteFalseTopic).get(REMOTE_LOG_STORAGE_ENABLE_CONFIG));
+
+                // Compacted tiered topics are not supported by Kafka
+                final String compactedRemoteTrueTopic = "compacted-remote-true";
+                final ExecutionException exception = assertThrows(
+                    ExecutionException.class,
+                    () -> createTopicAndGetRemoteStorageFromCreateResponse(
+                        admin,
+                        compactedRemoteTrueTopic,
+                        Map.of(
+                            CLEANUP_POLICY_CONFIG, CLEANUP_POLICY_COMPACT,
+                            REMOTE_LOG_STORAGE_ENABLE_CONFIG, "true"
+                        )
+                    )
+                );
+                assertEquals(
+                    "Remote log storage is unsupported for the compacted topics",
+                    exception.getCause().getMessage()
+                );
+            } finally {
+                cluster.close();
+            }
+        }
+
+        @Test
+        void regexExcludedTopicsAreExcludedFromForcePolicy() throws Exception {
+            final KafkaClusterTestKit cluster = initWithClassicRemoteStorageForceEnabled();
+            final Map<String, Object> clientConfigs = new HashMap<>();
+            clientConfigs.put(CommonClientConfigs.BOOTSTRAP_SERVERS_CONFIG, cluster.bootstrapServers());
+
+            try (final Admin admin = AdminClient.create(clientConfigs)) {
+                // Excluded topic gets remote.storage.enable=false when not setting it
+                final String schemasTopic = "_schemas";
+                assertEquals("false", createTopicAndGetRemoteStorageFromCreateResponse(admin, schemasTopic, Map.of()));
+                assertEquals("false", getTopicConfig(admin, schemasTopic).get(REMOTE_LOG_STORAGE_ENABLE_CONFIG));
+
+                // Setting remote.storage.enable=false is allowed for an excluded topic
+                final String mm2TopicRemoteFalse = "mm2-heartbeats";
+                assertEquals("false", createTopicAndGetRemoteStorageFromCreateResponse(
+                    admin, mm2TopicRemoteFalse, Map.of(REMOTE_LOG_STORAGE_ENABLE_CONFIG, "false")));
+                assertEquals("false", getTopicConfig(admin, mm2TopicRemoteFalse).get(REMOTE_LOG_STORAGE_ENABLE_CONFIG));
+
+                // Excluded topic can still have remote.storage.enable=true if explicitly set
+                final String mm2TopicRemoteTrue = "mm2-checkpoints";
+                assertEquals("true", createTopicAndGetRemoteStorageFromCreateResponse(
+                    admin, mm2TopicRemoteTrue, Map.of(REMOTE_LOG_STORAGE_ENABLE_CONFIG, "true")));
+                assertEquals("true", getTopicConfig(admin, mm2TopicRemoteTrue).get(REMOTE_LOG_STORAGE_ENABLE_CONFIG));
+            } finally {
+                cluster.close();
+            }
+        }
+
+        @Test
+        void compactedRegexExcludedTopicIsExcludedFromForcePolicy() throws Exception {
+            final KafkaClusterTestKit cluster = initWithClassicRemoteStorageForceEnabled();
+            final Map<String, Object> clientConfigs = new HashMap<>();
+            clientConfigs.put(CommonClientConfigs.BOOTSTRAP_SERVERS_CONFIG, cluster.bootstrapServers());
+
+            try (final Admin admin = AdminClient.create(clientConfigs)) {
+                final String compactedSchemasTopic = "_schemas";
+                assertEquals("false", createTopicAndGetRemoteStorageFromCreateResponse(
+                    admin,
+                    compactedSchemasTopic,
+                    Map.of(CLEANUP_POLICY_CONFIG, CLEANUP_POLICY_COMPACT)
+                ));
+                assertEquals("false", getTopicConfig(admin, compactedSchemasTopic).get(REMOTE_LOG_STORAGE_ENABLE_CONFIG));
+            } finally {
+                cluster.close();
+            }
+        }
+    }
+
     public void createTopic(Admin admin, String topic, Map<String, String> configs) throws Exception {
         admin.createTopics(Collections.singletonList(
             new NewTopic(topic, 1, (short) 1)
                 .configs(configs)
         )).all().get(10, TimeUnit.SECONDS);
+    }
+
+    private String createTopicAndGetRemoteStorageFromCreateResponse(
+        final Admin admin,
+        final String topic,
+        final Map<String, String> configs
+    ) throws Exception {
+        final CreateTopicsResult createResult = admin.createTopics(Collections.singletonList(
+            new NewTopic(topic, 1, (short) 1).configs(configs)
+        ));
+        createResult.all().get(10, TimeUnit.SECONDS);
+        final ConfigEntry remoteStorageConfig = createResult.config(topic).get(10, TimeUnit.SECONDS)
+            .get(REMOTE_LOG_STORAGE_ENABLE_CONFIG);
+        assertNotNull(remoteStorageConfig);
+        return remoteStorageConfig.value();
     }
 
     private Map<String, String> getTopicConfig(Admin admin, String topic)
