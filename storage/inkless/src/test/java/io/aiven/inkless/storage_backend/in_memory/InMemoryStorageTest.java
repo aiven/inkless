@@ -17,6 +17,8 @@
  */
 package io.aiven.inkless.storage_backend.in_memory;
 
+import org.apache.kafka.common.metrics.Metrics;
+
 import org.junit.jupiter.api.Test;
 
 import java.io.ByteArrayInputStream;
@@ -39,7 +41,8 @@ class InMemoryStorageTest {
 
     @Test
     void fetchNulls() {
-        final InMemoryStorage storage = new InMemoryStorage();
+        final Metrics metrics = new Metrics();
+        final InMemoryStorage storage = new InMemoryStorage(metrics);
         assertThatThrownBy(() -> storage.fetch(null, new ByteRange(0, 10)))
             .isInstanceOf(NullPointerException.class)
             .hasMessage("key cannot be null");
@@ -50,7 +53,8 @@ class InMemoryStorageTest {
 
     @Test
     void deleteNulls() {
-        final InMemoryStorage storage = new InMemoryStorage();
+        final Metrics metrics = new Metrics();
+        final InMemoryStorage storage = new InMemoryStorage(metrics);
         assertThatThrownBy(() -> storage.delete((ObjectKey) null))
             .isInstanceOf(NullPointerException.class)
             .hasMessage("key cannot be null");
@@ -61,14 +65,16 @@ class InMemoryStorageTest {
 
     @Test
     void fetchNonExistent() {
-        final InMemoryStorage storage = new InMemoryStorage();
+        final Metrics metrics = new Metrics();
+        final InMemoryStorage storage = new InMemoryStorage(metrics);
         assertThatThrownBy(() -> storage.fetch(OBJECT_KEY, ByteRange.maxRange()))
             .isInstanceOf(KeyNotFoundException.class);
     }
 
     @Test
     void uploadAndFetch() throws StorageBackendException, IOException {
-        final InMemoryStorage storage = new InMemoryStorage();
+        final Metrics metrics = new Metrics();
+        final InMemoryStorage storage = new InMemoryStorage(metrics);
         final byte[] data = new byte[10];
         storage.upload(OBJECT_KEY, new ByteArrayInputStream(data), data.length);
 
@@ -79,7 +85,8 @@ class InMemoryStorageTest {
 
     @Test
     void fetchRanged() throws StorageBackendException, IOException {
-        final InMemoryStorage storage = new InMemoryStorage();
+        final Metrics metrics = new Metrics();
+        final InMemoryStorage storage = new InMemoryStorage(metrics);
         final byte[] data = new byte[]{0, 1, 2, 3, 4, 5, 6, 7};
         storage.upload(OBJECT_KEY, new ByteArrayInputStream(data), data.length);
 
@@ -92,7 +99,8 @@ class InMemoryStorageTest {
 
     @Test
     void fetchOutsideOfSize() throws StorageBackendException {
-        final InMemoryStorage storage = new InMemoryStorage();
+        final Metrics metrics = new Metrics();
+        final InMemoryStorage storage = new InMemoryStorage(metrics);
         final byte[] data = new byte[]{0, 1, 2, 3, 4, 5, 6, 7};
         storage.upload(OBJECT_KEY, new ByteArrayInputStream(data), data.length);
 
@@ -103,7 +111,8 @@ class InMemoryStorageTest {
 
     @Test
     void delete() throws StorageBackendException, IOException {
-        final InMemoryStorage storage = new InMemoryStorage();
+        final Metrics metrics = new Metrics();
+        final InMemoryStorage storage = new InMemoryStorage(metrics);
         final byte[] data = new byte[]{0, 1, 2, 3, 4, 5, 6, 7};
         storage.upload(OBJECT_KEY, new ByteArrayInputStream(data), data.length);
 
@@ -118,7 +127,8 @@ class InMemoryStorageTest {
 
     @Test
     void deleteMany() throws StorageBackendException, IOException {
-        final InMemoryStorage storage = new InMemoryStorage();
+        final Metrics metrics = new Metrics();
+        final InMemoryStorage storage = new InMemoryStorage(metrics);
         final byte[] data = new byte[]{0, 1, 2, 3, 4, 5, 6, 7};
         storage.upload(OBJECT_KEY, new ByteArrayInputStream(data), data.length);
 
