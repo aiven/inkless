@@ -305,6 +305,8 @@
               files="(QuorumController|QuorumControllerTest|ReplicationControlManager|ReplicationControlManagerTest|ClusterControlManagerTest|KRaftMigrationDriverTest).java"/>
     <suppress checks="ClassFanOutComplexity"
               files="(QuorumController|QuorumControllerTest|ReplicationControlManager|ReplicationControlManagerTest).java"/>
+    <suppress checks="MethodLength"
+              files="ReplicationControlManager.java"/>
     <suppress checks="(ParameterNumber|ClassDataAbstractionCoupling)"
               files="(QuorumController).java"/>
     <suppress checks="(CyclomaticComplexity|NPathComplexity)"
