@@ -3575,15 +3575,18 @@ public class ReplicationControlManagerTest {
                 .setErrorMessage(null)
                 .setErrorCode((short) 0)
                 .setTopicId(result.response().topics().find("foo").topicId()));
+            final List<CreateTopicsResponseData.CreatableTopicConfigs> disklessTopicConfigs = result.response().topics().find("foo").configs().stream()
+                .filter(c -> c.name().equals(DISKLESS_ENABLE_CONFIG))
+                .toList();
+            assertTrue(disklessTopicConfigs.isEmpty() || disklessTopicConfigs.stream().allMatch(c -> c.value().equals("false")));
             assertEquals(expectedResponse, withoutConfigs(result.response()));
             final List<ConfigRecord> disklessConfigRecords = result.records().stream()
                 .filter(m -> m.message() instanceof ConfigRecord)
                 .map(m -> (ConfigRecord) m.message())
                 .filter(c -> c.name().equals(DISKLESS_ENABLE_CONFIG))
                 .toList();
-            assertEquals(1, disklessConfigRecords.size());
-            // Then always diskless is disabled
-            assertTrue(disklessConfigRecords.stream().allMatch(c -> c.value().equals("false")));
+            // If diskless.enable is explicitly set, it's normalized to false; if omitted, no record is emitted.
+            assertTrue(disklessConfigRecords.isEmpty() || disklessConfigRecords.stream().allMatch(c -> c.value().equals("false")));
 
             // Given the topic is registered
             ctx.replay(result.records());

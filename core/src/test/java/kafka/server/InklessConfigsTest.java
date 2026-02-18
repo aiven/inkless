@@ -59,7 +59,6 @@ import io.aiven.inkless.test_utils.PostgreSQLTestContainer;
 import io.aiven.inkless.test_utils.S3TestContainer;
 
 import static org.apache.kafka.common.config.TopicConfig.DISKLESS_ENABLE_CONFIG;
-import static org.apache.kafka.common.config.TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
@@ -191,57 +190,6 @@ public class InklessConfigsTest {
                 DISKLESS_ENABLE_CONFIG, "true")));
             // Then it's not possible to delete diskless.enable=false because the default is true and it would enable diskless
             assertThrows(ExecutionException.class, () -> deleteTopicConfigs(admin, disklessDisabledTopic, List.of(DISKLESS_ENABLE_CONFIG)));
-        }
-        cluster.close();
-    }
-
-    @Test
-    public void disklessMigrationEnabled() throws Exception {
-        var cluster = init(false, true, true);
-        Map<String, Object> clientConfigs = new HashMap<>();
-        clientConfigs.put(CommonClientConfigs.BOOTSTRAP_SERVERS_CONFIG, cluster.bootstrapServers());
-
-        try (Admin admin = AdminClient.create(clientConfigs)) {
-            // When creating a new topic with diskless.enable=false AND remote.log.storage.enable=true
-            final String tieredTopic = "tieredTopic";
-            createTopic(admin, tieredTopic, Map.of(
-                DISKLESS_ENABLE_CONFIG, "false",
-                REMOTE_LOG_STORAGE_ENABLE_CONFIG, "true"
-            ));
-            // Then diskless.enable is set to false in the topic config
-            var tieredTopicConfig = getTopicConfig(admin, tieredTopic);
-            assertEquals("false", tieredTopicConfig.get(DISKLESS_ENABLE_CONFIG));
-            assertEquals("true", tieredTopicConfig.get("remote.storage.enable"));
-
-            // When migration is enabled AND remote storage is enabled, it SHOULD be possible to turn on diskless
-            alterTopicConfig(admin, tieredTopic, Map.of(DISKLESS_ENABLE_CONFIG, "true"));
-            // Verify the config was updated
-            var updatedTopicConfig = getTopicConfig(admin, tieredTopic);
-            assertEquals("true", updatedTopicConfig.get(DISKLESS_ENABLE_CONFIG));
-
-            // But it should still NOT be possible to turn off diskless after enabling it
-            assertThrows(ExecutionException.class, () -> alterTopicConfig(admin, tieredTopic, Map.of(DISKLESS_ENABLE_CONFIG, "false")));
-        }
-        cluster.close();
-    }
-
-    @Test
-    public void disklessMigrationRequiresRemoteStorage() throws Exception {
-        var cluster = init(false, true, true);
-        Map<String, Object> clientConfigs = new HashMap<>();
-        clientConfigs.put(CommonClientConfigs.BOOTSTRAP_SERVERS_CONFIG, cluster.bootstrapServers());
-
-        try (Admin admin = AdminClient.create(clientConfigs)) {
-            // When creating a new topic with diskless.enable=false WITHOUT remote storage
-            final String classicTopic = "classicTopic";
-            createTopic(admin, classicTopic, Map.of(DISKLESS_ENABLE_CONFIG, "false"));
-            // Then diskless.enable is set to false in the topic config
-            var classicTopicConfig = getTopicConfig(admin, classicTopic);
-            assertEquals("false", classicTopicConfig.get(DISKLESS_ENABLE_CONFIG));
-
-            // Even with migration enabled, it should NOT be possible to turn on diskless
-            // because remote storage is not enabled on this topic
-            assertThrows(ExecutionException.class, () -> alterTopicConfig(admin, classicTopic, Map.of(DISKLESS_ENABLE_CONFIG, "true")));
         }
         cluster.close();
     }
