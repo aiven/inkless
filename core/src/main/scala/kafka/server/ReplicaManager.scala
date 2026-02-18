@@ -22,6 +22,7 @@ import io.aiven.inkless.consume.{FetchHandler, FetchOffsetHandler}
 import io.aiven.inkless.control_plane.{BatchInfo, FindBatchRequest, FindBatchResponse, MetadataView}
 import io.aiven.inkless.delete.{DeleteRecordsInterceptor, FileCleaner, RetentionEnforcer}
 import io.aiven.inkless.merge.FileMerger
+import io.aiven.inkless.metrics.InklessLogMetrics
 import io.aiven.inkless.produce.AppendHandler
 import kafka.cluster.Partition
 import kafka.log.LogManager
@@ -274,6 +275,7 @@ class ReplicaManager(val config: KafkaConfig,
   private val inklessFileCleaner: Option[FileCleaner] = inklessSharedState.map(new FileCleaner(_))
   // FIXME: FileMerger is having issues with hanging queries. Disabling until fixed.
   private val inklessFileMerger: Option[FileMerger] = None // inklessSharedState.map(new FileMerger(_))
+  private val inklessLogMetrics: Option[InklessLogMetrics] = inklessSharedState.map(new InklessLogMetrics(_))
 
   /* epoch of the controller that last changed the leader */
   protected val localBrokerId = config.brokerId
@@ -366,6 +368,8 @@ class ReplicaManager(val config: KafkaConfig,
 
       // There are internal delays in case of errors or absence of work items, no need for extra delays here.
       scheduler.schedule("inkless-file-merger", () => inklessFileMerger.foreach(_.run()), sharedState.config().fileMergerInterval().toMillis, sharedState.config().fileMergerInterval().toMillis)
+
+      scheduler.schedule("inkless-log-metrics", () => inklessLogMetrics.foreach(_.run()), config.logInitialTaskDelayMs, 30000L)
     }
   }
 
@@ -2484,6 +2488,7 @@ class ReplicaManager(val config: KafkaConfig,
     inklessFetchOffsetHandler.foreach(_.close())
     inklessRetentionEnforcer.foreach(_.close())
     inklessFileCleaner.foreach(_.close())
+    inklessLogMetrics.foreach(_.close())
     inklessSharedState.foreach(_.close())
     info("Shut down completely")
   }
