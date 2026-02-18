@@ -31,6 +31,12 @@ s3-aws:
 	KAFKA_VERSION=$(KAFKA_VERSION) $(DOCKER) compose -f docker-compose.yml -f docker-compose.monitoring.yml -f docker-compose.demo.yml -f docker-compose.s3-aws.yml up
 	$(MAKE) destroy
 
+# Multi-AZ cluster with managed replicas (RF=rack_count)
+.PHONY: managed-replicas
+managed-replicas:
+	KAFKA_VERSION=$(KAFKA_VERSION) $(DOCKER) compose -f docker-compose.yml -f docker-compose.s3-local.yml -f docker-compose.managed-replicas.yml up
+	$(MAKE) destroy
+
 .PHONY: destroy
 destroy:
 	$(DOCKER) compose down --remove-orphans
