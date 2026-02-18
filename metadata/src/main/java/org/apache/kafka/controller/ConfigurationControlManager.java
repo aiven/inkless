@@ -377,7 +377,14 @@ public class ConfigurationControlManager {
             if (!newlyCreatedResource) {
                 existenceChecker.accept(configResource);
             }
-            alterConfigPolicy.ifPresent(policy -> policy.validate(new RequestMetadata(configResource, alteredConfigsForAlterConfigPolicyCheck)));
+            // When a resource is being created (e.g. topic creation), we may generate ConfigRecords
+            // before the resource is fully visible to other controller components. In that flow, we
+            // intentionally do not apply AlterConfigPolicy validation to the CreateTopics payload
+            // (ZooKeeper mode historically only applied CreateTopicPolicy during topic creation).
+            if (!newlyCreatedResource) {
+                alterConfigPolicy.ifPresent(policy ->
+                    policy.validate(new RequestMetadata(configResource, alteredConfigsForAlterConfigPolicyCheck)));
+            }
         } catch (ConfigException e) {
             return new ApiError(INVALID_CONFIG, e.getMessage());
         } catch (Throwable e) {
