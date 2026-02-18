@@ -904,7 +904,6 @@ public class ReplicationControlManager {
     private List<ApiMessageAndVersion> validConfigRecords(CreatableTopic topic, List<ApiMessageAndVersion> configRecords, boolean disklessEnabled) {
         final List<ApiMessageAndVersion> validConfigRecord = new ArrayList<>();
         boolean isDisklessEnableDefined = false;
-        boolean isInklessEnableDefined = false;
         for (ApiMessageAndVersion configRecord: configRecords) {
             ConfigRecord record;
             try {
@@ -933,16 +932,6 @@ public class ReplicationControlManager {
             validConfigRecord.add(new ApiMessageAndVersion(new ConfigRecord()
                 .setName(DISKLESS_ENABLE_CONFIG)
                 .setValue("true")
-                .setResourceName(topic.name())
-                .setResourceType(ResourceType.TOPIC.code()), (short) 0));
-        }
-        // Ensure that diskless.enable config is always defined if diskless feature is not set at all.
-        // This ensures that is possible to discern between cases where there's no config set (topic already created
-        // but diskless is disabled by default) and cases where no config is set because the topic is being created
-        if (isDisklessStorageSystemEnabled && !isInklessEnableDefined && !isDisklessEnableDefined && !disklessEnabled) {
-            validConfigRecord.add(new ApiMessageAndVersion(new ConfigRecord()
-                .setName(DISKLESS_ENABLE_CONFIG)
-                .setValue("false")
                 .setResourceName(topic.name())
                 .setResourceType(ResourceType.TOPIC.code()), (short) 0));
         }

@@ -273,6 +273,14 @@ public class ConfigurationControlManager {
             String opValue = opTypeAndNewValue.getValue();
             switch (opType) {
                 case SET:
+                    if (!newlyCreatedResource &&
+                        configResource.type().equals(Type.TOPIC) &&
+                        Objects.equals(key, TopicConfig.DISKLESS_ENABLE_CONFIG) &&
+                        Boolean.parseBoolean(opValue) &&
+                        !Boolean.parseBoolean(currentValue)) {
+                        return ApiError.fromThrowable(
+                            new InvalidConfigurationException("It is invalid to enable diskless on an already existing topic."));
+                    }
                     newValue = opValue;
                     break;
                 case DELETE:
