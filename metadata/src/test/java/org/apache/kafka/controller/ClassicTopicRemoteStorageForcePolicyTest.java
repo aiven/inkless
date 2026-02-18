@@ -45,10 +45,7 @@ public class ClassicTopicRemoteStorageForcePolicyTest {
         policy.maybeForceRemoteStorageEnable(topicName, false, requestConfigs, targetConfigOps);
         policy.maybeForceRemoteStorageEnable(topicName, false, targetConfigs);
 
-        assertEquals(Map.of(
-            TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG, Map.entry(SET, "true")
-        ), targetConfigOps);
-        assertEquals("true", targetConfigs.get(TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG));
+        assertRemoteStorageEnabled(targetConfigOps, targetConfigs);
     }
 
     @Test
@@ -62,7 +59,7 @@ public class ClassicTopicRemoteStorageForcePolicyTest {
         policy.maybeForceRemoteStorageEnable(topicName, false, requestConfigs, targetConfigOps);
         policy.maybeForceRemoteStorageEnable(topicName, false, targetConfigs);
 
-        assertTrueMissing(targetConfigOps, targetConfigs);
+        assertRemoteStorageDisabled(targetConfigOps, targetConfigs);
     }
 
     @Test
@@ -78,7 +75,7 @@ public class ClassicTopicRemoteStorageForcePolicyTest {
         policy.maybeForceRemoteStorageEnable(topicName, false, requestConfigs, targetConfigOps);
         policy.maybeForceRemoteStorageEnable(topicName, false, targetConfigs);
 
-        assertTrueMissing(targetConfigOps, targetConfigs);
+        assertRemoteStorageDisabled(targetConfigOps, targetConfigs);
     }
 
     @Test
@@ -94,7 +91,7 @@ public class ClassicTopicRemoteStorageForcePolicyTest {
         policy.maybeForceRemoteStorageEnable(topicName, false, requestConfigs, targetConfigOps);
         policy.maybeForceRemoteStorageEnable(topicName, false, targetConfigs);
 
-        assertTrueMissing(targetConfigOps, targetConfigs);
+        assertRemoteStorageDisabled(targetConfigOps, targetConfigs);
     }
 
     @Test
@@ -110,7 +107,7 @@ public class ClassicTopicRemoteStorageForcePolicyTest {
         policy.maybeForceRemoteStorageEnable(topicName, false, requestConfigs, targetConfigOps);
         policy.maybeForceRemoteStorageEnable(topicName, false, targetConfigs);
 
-        assertTrueMissing(targetConfigOps, targetConfigs);
+        assertRemoteStorageDisabled(targetConfigOps, targetConfigs);
     }
 
     @Test
@@ -122,7 +119,7 @@ public class ClassicTopicRemoteStorageForcePolicyTest {
         policy.maybeForceRemoteStorageEnable("_schemas", false, Map.of(), targetConfigOps);
         policy.maybeForceRemoteStorageEnable("mm2-heartbeats", false, targetConfigs);
 
-        assertTrueMissing(targetConfigOps, targetConfigs);
+        assertRemoteStorageDisabled(targetConfigOps, targetConfigs);
     }
 
     @Test
@@ -138,31 +135,55 @@ public class ClassicTopicRemoteStorageForcePolicyTest {
         policy.maybeForceRemoteStorageEnable(topicName, false, compactedConfigs, targetConfigOps);
         policy.maybeForceRemoteStorageEnable(topicName, false, targetConfigs);
 
-        assertTrueMissing(targetConfigOps, targetConfigs);
+        assertRemoteStorageDisabled(targetConfigOps, targetConfigs);
     }
 
     @Test
     public void doesNotForceForDisklessTopic() {
         final var policy = new ClassicTopicRemoteStorageForcePolicy(true, List.of());
         final String topicName = "diskless-topic";
+        final Map<String, String> requestConfigs = new HashMap<>();
         final Map<String, Entry<OpType, String>> targetConfigOps = new HashMap<>();
+        final Map<String, String> targetConfigs = new HashMap<>();
 
-        policy.maybeForceRemoteStorageEnable(topicName, true, Map.of(), targetConfigOps);
+        policy.maybeForceRemoteStorageEnable(topicName, true, requestConfigs, targetConfigOps);
+        policy.maybeForceRemoteStorageEnable(topicName, true, targetConfigs);
 
-        assertFalse(targetConfigOps.containsKey(TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG));
+        assertRemoteStorageDisabled(targetConfigOps, targetConfigs);
     }
 
     @Test
-    public void doesNotForceForInternalTopic() {
+    public void doesNotForceForAllExcludedInternalTopics() {
         final var policy = new ClassicTopicRemoteStorageForcePolicy(true, List.of());
-        final Map<String, String> targetConfigs = new HashMap<>();
+        for (String topicName : List.of(
+            Topic.GROUP_METADATA_TOPIC_NAME,
+            Topic.TRANSACTION_STATE_TOPIC_NAME,
+            Topic.SHARE_GROUP_STATE_TOPIC_NAME,
+            Topic.CLUSTER_METADATA_TOPIC_NAME,
+            "__remote_log_metadata"
+        )) {
+            final Map<String, String> requestConfigs = new HashMap<>();
+            final Map<String, Entry<OpType, String>> targetConfigOps = new HashMap<>();
+            final Map<String, String> targetConfigs = new HashMap<>();
 
-        policy.maybeForceRemoteStorageEnable(Topic.GROUP_METADATA_TOPIC_NAME, false, targetConfigs);
+            policy.maybeForceRemoteStorageEnable(topicName, false, requestConfigs, targetConfigOps);
+            policy.maybeForceRemoteStorageEnable(topicName, false, targetConfigs);
 
-        assertNull(targetConfigs.get(TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG));
+            assertRemoteStorageDisabled(targetConfigOps, targetConfigs);
+        }
     }
 
-    private static void assertTrueMissing(
+    private static void assertRemoteStorageEnabled(
+        final Map<String, Entry<OpType, String>> targetConfigOps,
+        final Map<String, String> targetConfigs
+    ) {
+        assertEquals(Map.of(
+            TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG, Map.entry(SET, "true")
+        ), targetConfigOps);
+        assertEquals("true", targetConfigs.get(TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG));
+    }
+
+    private static void assertRemoteStorageDisabled(
         final Map<String, Entry<OpType, String>> targetConfigOps,
         final Map<String, String> targetConfigs
     ) {

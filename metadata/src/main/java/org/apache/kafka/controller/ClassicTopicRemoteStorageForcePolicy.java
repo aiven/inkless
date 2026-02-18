@@ -25,13 +25,18 @@ import java.util.AbstractMap.SimpleImmutableEntry;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
+import java.util.Set;
 import java.util.regex.Pattern;
 
 import static org.apache.kafka.clients.admin.AlterConfigOp.OpType.SET;
+import static org.apache.kafka.common.internals.Topic.CLUSTER_METADATA_TOPIC_NAME;
 
 final class ClassicTopicRemoteStorageForcePolicy {
     private final boolean enabled;
     private final List<Pattern> excludeTopicPatterns;
+    private static final Set<String>
+        ADDITIONAL_INTERNAL_TOPICS = Set.of(CLUSTER_METADATA_TOPIC_NAME, "__remote_log_metadata");
+
 
     ClassicTopicRemoteStorageForcePolicy(final boolean enabled, final List<String> excludeTopicRegexes) {
         this.enabled = enabled;
@@ -71,9 +76,15 @@ final class ClassicTopicRemoteStorageForcePolicy {
         final Map<String, String> topicConfigs
     ) {
         return !(disklessEnabled
-            || Topic.isInternal(topicName)
+            || isInternalTopic(topicName)
             || topicExcludedByRegex(topicName)
             || cleanupPolicyContainsCompact(topicConfigs));
+    }
+
+    private boolean isInternalTopic(final String topicName) {
+        if (Topic.isInternal(topicName)) {
+            return true;
+        } else return ADDITIONAL_INTERNAL_TOPICS.contains(topicName);
     }
 
     private boolean cleanupPolicyContainsCompact(final Map<String, String> topicConfigs) {
