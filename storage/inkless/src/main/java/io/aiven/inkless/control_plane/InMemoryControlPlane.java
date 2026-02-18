@@ -402,6 +402,36 @@ public class InMemoryControlPlane extends AbstractControlPlane {
     }
 
     @Override
+    public synchronized List<InitDisklessLogResponse> initDisklessLog(final List<InitDisklessLogRequest> requests) {
+        final List<InitDisklessLogResponse> responses = new ArrayList<>(requests.size());
+        for (final InitDisklessLogRequest request : requests) {
+            responses.add(initDisklessLogForPartition(request));
+        }
+        return responses;
+    }
+
+    private InitDisklessLogResponse initDisklessLogForPartition(final InitDisklessLogRequest request) {
+        if (request.disklessStartOffset() < 0) {
+            return InitDisklessLogResponse.invalidRequest();
+        }
+
+        final TopicIdPartition topicIdPartition = findTopicIdPartition(request.topicId(), request.partition());
+        final LogInfo logInfo = topicIdPartition == null ? null : logs.get(topicIdPartition);
+        if (logInfo == null) {
+            final TopicIdPartition newTopicIdPartition = new TopicIdPartition(request.topicId(), request.partition(), null);
+            final LogInfo newLogInfo = new LogInfo();
+            newLogInfo.disklessStartOffset = request.disklessStartOffset();
+            logs.put(newTopicIdPartition, newLogInfo);
+            return InitDisklessLogResponse.success(request.disklessStartOffset());
+        }
+
+        if (logInfo.disklessStartOffset == request.disklessStartOffset()) {
+            return InitDisklessLogResponse.success(logInfo.disklessStartOffset);
+        }
+        return InitDisklessLogResponse.conflictingStartOffset(logInfo.disklessStartOffset);
+    }
+
+    @Override
     protected Iterator<ListOffsetsResponse> listOffsetsForExistingPartitions(Stream<ListOffsetsRequest> requests) {
         return requests
                 .map(request -> listOffset(request))
@@ -679,6 +709,7 @@ public class InMemoryControlPlane extends AbstractControlPlane {
         long logStartOffset = 0;
         long highWatermark = 0;
         long byteSize = 0;
+        long disklessStartOffset = 0L;
     }
 
     private static class FileInfo {
