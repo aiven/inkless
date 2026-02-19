@@ -434,7 +434,7 @@ class LogConfigTest {
   def testDisklessAndRemoteStorageAtCreation(): Unit = {
     val kafkaConfig = KafkaConfig.fromProps(TestUtils.createDummyBrokerConfig())
     val noExisting: util.Map[String, String] = util.Map.of()
-    val mutualExclusionError = "remote.storage.enable cannot be set if diskless.enable is set to true."
+    val mutualExclusionError = "It is not valid to set a value for both diskless.enable and remote.storage.enable."
 
     // Allowed to set diskless.enable=true at creation
     assertValid(noExisting, topicProps(TopicConfig.DISKLESS_ENABLE_CONFIG -> "true"), kafkaConfig)
@@ -474,7 +474,7 @@ class LogConfigTest {
   @Test
   def testDisklessAndRemoteStorageAtUpdate(): Unit = {
     val kafkaConfig = KafkaConfig.fromProps(TestUtils.createDummyBrokerConfig())
-    val mutualExclusionError = "remote.storage.enable cannot be set if diskless.enable is set to true."
+    val mutualExclusionError = "It is not valid to set a value for both diskless.enable and remote.storage.enable."
     val existingWithoutDisklessOrRemote = util.Map.of(TopicConfig.RETENTION_MS_CONFIG, "1000")
     val existingWithDisklessFalse = util.Map.of(TopicConfig.DISKLESS_ENABLE_CONFIG, "false")
     val existingWithDisklessTrue = util.Map.of(TopicConfig.DISKLESS_ENABLE_CONFIG, "true")

@@ -71,7 +71,7 @@ public class DisklessAndRemoteStorageConfigsTest {
 
     private static final String ENABLE_DISKLESS_ERROR = "It is invalid to enable diskless on an already existing topic.";
     private static final String DISABLE_DISKLESS_ERROR = "It is invalid to disable diskless.";
-    private static final String DISKLESS_REMOTE_SET_ERROR = "remote.storage.enable cannot be set if diskless.enable is set to true.";
+    private static final String DISKLESS_REMOTE_SET_ERROR = "It is not valid to set a value for both diskless.enable and remote.storage.enable.";
     private static final String DISABLE_REMOTE_WITHOUT_DELETE_ERROR = "It is invalid to disable remote storage without deleting remote data. "
         + "If you want to keep the remote data and turn to read only, please set `remote.storage.enable=true,remote.log.copy.disable=true`. "
         + "If you want to disable remote storage and delete all remote data, please set `remote.storage.enable=false,remote.log.delete.on.disable=true`.";
