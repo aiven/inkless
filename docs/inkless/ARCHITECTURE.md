@@ -279,3 +279,25 @@ Above is a diagram representing an example layout of 6 segments for a single par
 * Fetches for data in tiered segments (0-2000) is served from Tiered Storage.
 * Fetches for data not in the local segments or tiered storage (2000-4000) is served directly from WAL Segments
 * Nodes that are elected the leader of the partition will begin assembling segments at the earliest non-tiered segment (2000). This data is not served to consumers.
+
+```mermaid
+---
+title: Relationship with Tiered Storage
+---
+flowchart LR
+    Producer --> Classic["Classic Topics<br><i>Low Latency</i>"]
+    
+    Producer --> Diskless["Diskless Topics<br><i>Low Replication Cost</i>"]
+    Classic --> Tiered["Tiered Storage<br><i>Low Storage Cost</i>"]
+    Diskless --> Tiered
+    Classic --> Consumer
+    Tiered --> Consumer
+    Diskless --> Consumer
+```
+
+Producers can produce data for both classic and diskless topics.
+After data is ordered, it will be asynchronously copied to Tiered Storage and then cleaned out from the ingest engines.
+This permits the Classic storage engine to be write-latency-optimized and the Diskless storage engine to be replication-cost-optimized.
+Once the data is moved to Tiered Storage, it will be storage-cost-optimized both for archival and access.
+Data will remain visible to consumers between the time it is given an order by the ingest engine, and when it is finally cleaned up due to retention in tiered storage. 
+
