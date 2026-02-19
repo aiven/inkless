@@ -24,7 +24,7 @@
   "validVersions": "0",
   "flexibleVersions": "0+",
   "fields": [
-    { "name": "MirrorName", "type": "string", "versions": "0+", "nullableVersions": "0+",
+    { "name": "MirrorName", "type": "string", "versions": "0+", "nullableVersions": "0+", "entityType": "mirrorName",
       "about": "The cluster mirror name."},
     { "name": "Config", "type": "[]MirrorConfig", "versions": "0+",
       "about": "The cluster mirror configurations.",  "fields": [
