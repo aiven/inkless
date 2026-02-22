@@ -59,5 +59,6 @@
     <allow pkg="org.apache.kafka.network" />
     <allow class="org.apache.kafka.raft.QuorumConfig"/>
     <allow pkg="joptsimple"/>
+    <allow pkg="io.aiven.inkless"/>
 
 </import-control>

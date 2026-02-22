@@ -63,6 +63,29 @@ Under ``inkless.``
   * Valid Values: non-null string
   * Importance: medium
 
+``produce.buffer.pool.enabled``
+  If true, reuse buffers from a pool instead of allocating fresh byte arrays for each produce batch.
+
+  * Type: boolean
+  * Default: false
+  * Importance: medium
+
+``produce.buffer.pool.prewarm.count``
+  The number of buffers to pre-allocate per size class at startup. Pre-warming eliminates allocation latency spikes during initial load. Set to 0 for lazy allocation (buffers allocated on demand). Set to -1 to pre-warm all buffers (equals buffer.pool.size.per.class). Values greater than buffer.pool.size.per.class are clamped to that maximum.
+
+  * Type: int
+  * Default: -1
+  * Valid Values: [-1,...]
+  * Importance: medium
+
+``produce.buffer.pool.size.per.class``
+  The number of buffers to pool per size class. Each size class (1MB, 2MB, 4MB, 8MB, 16MB, 32MB, 64MB) will have this many pooled buffers.
+
+  * Type: int
+  * Default: 4
+  * Valid Values: [1,...,128]
+  * Importance: medium
+
 ``produce.max.upload.attempts``
   The max number of attempts to upload a file to the object storage.
 
@@ -194,6 +217,14 @@ Under ``inkless.``
 
   * Type: boolean
   * Default: false
+  * Importance: low
+
+``produce.buffer.pool.min.size.bytes``
+  The minimum buffer size in bytes to use the pool. Smaller buffers use fresh allocation instead of the pool. Set to 0 to always use the pool. Maximum value is 1MB (smallest pool size class).
+
+  * Type: int
+  * Default: 65536 (64 kibibytes)
+  * Valid Values: [0,...,1048576]
   * Importance: low
 
 ``produce.upload.thread.pool.size``

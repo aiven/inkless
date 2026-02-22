@@ -28,8 +28,6 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
-import java.time.Duration;
-
 import io.aiven.inkless.produce.buffer.BufferPool;
 import io.aiven.inkless.produce.buffer.ElasticBufferPool;
 import io.aiven.inkless.produce.buffer.HeapBatchBufferData;

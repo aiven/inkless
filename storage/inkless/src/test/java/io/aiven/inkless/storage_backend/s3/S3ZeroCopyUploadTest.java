@@ -20,7 +20,6 @@ package io.aiven.inkless.storage_backend.s3;
 import org.junit.jupiter.api.Test;
 
 import java.nio.ByteBuffer;
-import java.time.Duration;
 import java.util.Optional;
 
 import io.aiven.inkless.produce.buffer.BatchBufferData;

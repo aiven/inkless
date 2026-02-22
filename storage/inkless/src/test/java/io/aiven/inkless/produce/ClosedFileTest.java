@@ -33,7 +33,6 @@ import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 
 import io.aiven.inkless.control_plane.CommitBatchRequest;
-
 import io.aiven.inkless.produce.buffer.BatchBufferData;
 import io.aiven.inkless.produce.buffer.HeapBatchBufferData;
 
