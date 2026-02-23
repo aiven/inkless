@@ -528,7 +528,7 @@ public class LogConfig extends AbstractConfig {
         final boolean hasExplicitRemoteStorage = isRemoteStorageExplicitlySet || wasRemoteStorageExplicitlySet;
         if ((isDisklessExplicitlySet && hasExplicitRemoteStorage) ||
             (isRemoteStorageExplicitlySet && hasExplicitDiskless)) {
-            throw new InvalidConfigurationException("remote.storage.enable cannot be set if diskless.enable is set to true.");
+            throw new InvalidConfigurationException("It is not valid to set a value for both diskless.enable and remote.storage.enable.");
         }
     }
 
