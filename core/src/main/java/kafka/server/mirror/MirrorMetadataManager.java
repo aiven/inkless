@@ -36,7 +36,6 @@ import org.apache.kafka.common.config.TopicConfig;
 import org.apache.kafka.common.message.CreateAclsRequestData;
 import org.apache.kafka.common.message.CreatePartitionsRequestData;
 import org.apache.kafka.common.message.DeleteAclsRequestData;
-import org.apache.kafka.common.message.DeleteTopicsRequestData;
 import org.apache.kafka.common.message.DescribeConfigsRequestData;
 import org.apache.kafka.common.message.IncrementalAlterConfigsRequestData;
 import org.apache.kafka.common.message.LastMirroredOffsetsRequestData;
@@ -58,7 +57,6 @@ import org.apache.kafka.common.requests.ApiVersionsResponse;
 import org.apache.kafka.common.requests.CreateAclsRequest;
 import org.apache.kafka.common.requests.CreatePartitionsRequest;
 import org.apache.kafka.common.requests.DeleteAclsRequest;
-import org.apache.kafka.common.requests.DeleteTopicsRequest;
 import org.apache.kafka.common.requests.DescribeAclsRequest;
 import org.apache.kafka.common.requests.DescribeAclsResponse;
 import org.apache.kafka.common.requests.DescribeConfigsRequest;
@@ -1031,7 +1029,6 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     }
 
     private MirrorBlockingSender createMirrorConnection(String mirrorName, String host, int port) {
-
         // Use random node id here because we don't know node id of remote brokers.
         var brokerEndpoint = new BrokerEndPoint(random.nextInt(), host, port);
         var logContext = new LogContext("[" + MirrorMetadataManager.class.getName() + " replicaId=" + nodeId + ", mirrorName=" + mirrorName + "] ");
@@ -1060,7 +1057,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
             LOG.debug("!!! Periodic metadataResponse: {}", metadataResponse);
             updateRemoteClusterNodes(mirrorName, metadataResponse);
             var createPartitionsTopics = processTopicMetadata(mirrorName, metadataResponse.topicMetadata());
-            maybeDeleteTopic(mirrorName, metadataResponse.topicMetadata());
+            maybeStopDeletedTopics(mirrorName, metadataResponse.topicMetadata());
             handlePartitionScaling(createPartitionsTopics);
         }
     }
@@ -1229,26 +1226,28 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         return senders.get(random.nextInt(senders.size()));
     }
 
-    private void maybeDeleteTopic(String mirrorName, Collection<MetadataResponse.TopicMetadata> topicMetadataResp) {
-        LOG.info("!!! Deleting topics from topicMetadataResp: {}", topicMetadataResp);
-        List<String> deletedTopics = new ArrayList<>();
-        // deleted topics if needed
-        List<String> remoteTopicNamesDeleted = topicMetadataResp.stream()
-                .filter(topicMetadata -> topicMetadata.error() == Errors.UNKNOWN_TOPIC_OR_PARTITION)
+    /**
+     * Detects topics deleted on the source cluster and transitions their mirror partitions
+     * to STOPPING, rather than propagating the deletion to the destination cluster.
+     * If the topic is later recreated on the source and re-added to the mirror, the operator
+     * must first delete the stale destination topic to avoid topic ID conflicts.
+     *
+     * @param mirrorName Mirror name
+     * @param topicMetadata Topic metadata
+     */
+    private void maybeStopDeletedTopics(String mirrorName, Collection<MetadataResponse.TopicMetadata> topicMetadata) {
+        List<String> remoteTopicNamesDeleted = topicMetadata.stream()
+                .filter(tm -> tm.error() == Errors.UNKNOWN_TOPIC_OR_PARTITION)
                 .map(MetadataResponse.TopicMetadata::topic).toList();
-        mirrorTopics.get(mirrorName).forEach(name -> {
+        mirrorTopics.getOrDefault(mirrorName, Set.of()).forEach(name -> {
             if (remoteTopicNamesDeleted.contains(name)) {
-                LOG.info("!!! Detected topic {} deleted in remote cluster {}, removing it locally too", name, mirrorName);
-                // send a delete topic request to the controller
-                channelManager.sendRequest(new DeleteTopicsRequest.Builder(
-                        new DeleteTopicsRequestData()
-                                .setTopicNames(List.of(name))
-                                .setTimeoutMs(10000)), new TimeoutHandler());
-                LOG.info("!!! Sent delete topic request for {}", name);
-                deletedTopics.add(name);
+                LOG.info("!!! Detected topic {} deleted in remote cluster {}, stopping mirror partitions", name, mirrorName);
+                mirrorPartitionState.keySet().stream()
+                        .filter(key -> key.mirrorName().equals(mirrorName) && key.topic().equals(name))
+                        .forEach(key -> stateTransitioner.ifPresent(t ->
+                                t.transitionTo(mirrorName, new TopicPartition(key.topic(), key.partition()), MirrorPartitionState.STOPPING)));
             }
         });
-        deletedTopics.forEach(name -> mirrorTopics.get(mirrorName).remove(name));
     }
 
     private void syncConsumerGroupOffsets(String mirrorName, List<MirrorBlockingSender> senders, MirrorConfig mirrorConfig) {
