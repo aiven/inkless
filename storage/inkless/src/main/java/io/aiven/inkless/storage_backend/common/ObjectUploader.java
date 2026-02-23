@@ -17,8 +17,11 @@
  */
 package io.aiven.inkless.storage_backend.common;
 
+import org.apache.kafka.common.utils.ByteBufferInputStream;
+
 import java.io.Closeable;
 import java.io.InputStream;
+import java.nio.ByteBuffer;
 
 import io.aiven.inkless.common.ObjectKey;
 
@@ -34,5 +37,19 @@ public interface ObjectUploader extends Closeable {
      * @throws StorageBackendException if there are errors during the upload.
      */
     void upload(ObjectKey key, InputStream inputStream, long length) throws StorageBackendException;
+
+    /**
+     * Uploads an object to object storage from a ByteBuffer.
+     *
+     * <p>Default implementation converts to InputStream. Implementations may override
+     * to use ByteBuffer directly (e.g., S3 RequestBody.fromByteBuffer()).
+     *
+     * @param key        key of the object to upload.
+     * @param byteBuffer data to upload. Position and limit indicate the data range.
+     * @throws StorageBackendException if there are errors during the upload.
+     */
+    default void upload(ObjectKey key, ByteBuffer byteBuffer) throws StorageBackendException {
+        upload(key, new ByteBufferInputStream(byteBuffer), byteBuffer.remaining());
+    }
 
 }

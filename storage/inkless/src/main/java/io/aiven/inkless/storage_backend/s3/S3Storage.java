@@ -24,6 +24,7 @@ import com.groupcdg.pitest.annotations.CoverageIgnore;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.ByteBuffer;
 import java.nio.channels.Channels;
 import java.nio.channels.ReadableByteChannel;
 import java.util.ArrayList;
@@ -99,6 +100,27 @@ public final class S3Storage extends StorageBackend {
         } catch (final ApiCallTimeoutException | ApiCallAttemptTimeoutException e) {
             throw new StorageBackendTimeoutException("Failed to upload " + key, e);
         } catch (final IOException | SdkException e) {
+            throw new StorageBackendException("Failed to upload " + key, e);
+        }
+    }
+
+    @Override
+    public void upload(final ObjectKey key, final ByteBuffer byteBuffer) throws StorageBackendException {
+        Objects.requireNonNull(key, "key cannot be null");
+        Objects.requireNonNull(byteBuffer, "byteBuffer cannot be null");
+        if (byteBuffer.remaining() <= 0) {
+            throw new IllegalArgumentException("byteBuffer must have remaining bytes");
+        }
+        final PutObjectRequest putObjectRequest = PutObjectRequest.builder()
+            .bucket(bucketName)
+            .key(key.value())
+            .build();
+        final RequestBody requestBody = RequestBody.fromByteBuffer(byteBuffer);
+        try {
+            s3Client.putObject(putObjectRequest, requestBody);
+        } catch (final ApiCallTimeoutException | ApiCallAttemptTimeoutException e) {
+            throw new StorageBackendTimeoutException("Failed to upload " + key, e);
+        } catch (final SdkException e) {
             throw new StorageBackendException("Failed to upload " + key, e);
         }
     }
