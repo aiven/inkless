@@ -105,7 +105,7 @@ public record PartitionFetchState(
     }
 
     public boolean isMirrorFetch() {
-        return mirrorName != null && !mirrorName.isEmpty();
+        return mirrorName != null && !mirrorName.isBlank();
     }
 
     @Override
