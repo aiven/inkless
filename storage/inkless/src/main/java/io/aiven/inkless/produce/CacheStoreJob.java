@@ -19,7 +19,9 @@ package io.aiven.inkless.produce;
 
 import org.apache.kafka.common.utils.Time;
 
+import java.nio.ByteBuffer;
 import java.util.Collections;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.Future;
 import java.util.function.Consumer;
@@ -31,17 +33,18 @@ import io.aiven.inkless.common.ByteRange;
 import io.aiven.inkless.common.ObjectKey;
 import io.aiven.inkless.generated.CacheKey;
 import io.aiven.inkless.generated.FileExtent;
+import io.aiven.inkless.produce.buffer.BatchBufferData;
 
 public class CacheStoreJob implements Runnable {
 
     private final Time time;
     private final ObjectCache cache;
     private final KeyAlignmentStrategy keyAlignmentStrategy;
-    private final byte[] data;
+    private final BatchBufferData data;
     private final Future<ObjectKey> uploadFuture;
     private final Consumer<Long> cacheStoreDurationCallback;
 
-    public CacheStoreJob(Time time, ObjectCache cache, KeyAlignmentStrategy keyAlignmentStrategy, byte[] data, Future<ObjectKey> uploadFuture, Consumer<Long> cacheStoreDurationCallback) {
+    public CacheStoreJob(Time time, ObjectCache cache, KeyAlignmentStrategy keyAlignmentStrategy, BatchBufferData data, Future<ObjectKey> uploadFuture, Consumer<Long> cacheStoreDurationCallback) {
         this.time = time;
         this.cache = cache;
         this.keyAlignmentStrategy = keyAlignmentStrategy;
@@ -57,11 +60,14 @@ public class CacheStoreJob implements Runnable {
             storeToCache(objectKey);
         } catch (final Throwable e) {
             // If the upload failed there's nothing to cache and we succeed vacuously.
+        } finally {
+            // Release the buffer reference when cache store is done
+            data.release();
         }
     }
 
     private void storeToCache(ObjectKey objectKey) {
-        ByteRange fileRange = new ByteRange(0, data.length);
+        ByteRange fileRange = new ByteRange(0, data.size());
         Set<ByteRange> ranges = keyAlignmentStrategy.align(Collections.singletonList(fileRange));
         String object = objectKey.value();
         for (ByteRange range : ranges) {
@@ -71,8 +77,7 @@ public class CacheStoreJob implements Runnable {
                             .setOffset(range.offset())
                             .setLength(range.size()));
             ByteRange intersect = ByteRange.intersect(range, fileRange);
-            byte[] extentBytes = new byte[intersect.bufferSize()];
-            System.arraycopy(data, intersect.bufferOffset(), extentBytes, 0, extentBytes.length);
+            byte[] extentBytes = extractBytes(intersect);
             FileExtent extent = new FileExtent()
                     .setObject(object)
                     .setRange(new FileExtent.ByteRange()
@@ -81,5 +86,26 @@ public class CacheStoreJob implements Runnable {
                     .setData(extentBytes);
             TimeUtils.measureDurationMs(time, () -> cache.put(key, extent), cacheStoreDurationCallback);
         }
+    }
+
+    /**
+     * Extract bytes for the given range from the buffer data.
+     * Uses ByteBuffer slice when available, falls back to copyTo().
+     */
+    private byte[] extractBytes(ByteRange range) {
+        // Try ByteBuffer slice path for pooled buffers
+        Optional<ByteBuffer> slice = data.asSlice(range);
+        if (slice.isPresent()) {
+            ByteBuffer buf = slice.get();
+            byte[] bytes = new byte[buf.remaining()];
+            buf.get(bytes);
+            return bytes;
+        }
+
+        // Fall back to copyTo for heap byte array data
+        int size = range.bufferSize();
+        byte[] bytes = new byte[size];
+        data.copyTo(range.bufferOffset(), bytes, 0, size);
+        return bytes;
     }
 }

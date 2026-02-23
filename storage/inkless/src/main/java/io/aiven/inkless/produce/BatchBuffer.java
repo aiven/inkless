@@ -27,12 +27,38 @@ import java.util.List;
 import java.util.Objects;
 
 import io.aiven.inkless.control_plane.CommitBatchRequest;
+import io.aiven.inkless.produce.buffer.BatchBufferData;
+import io.aiven.inkless.produce.buffer.BufferPool;
+import io.aiven.inkless.produce.buffer.HeapBatchBufferData;
+import io.aiven.inkless.produce.buffer.PooledBatchBufferData;
+import io.aiven.inkless.produce.buffer.PooledBuffer;
 
 class BatchBuffer {
+    /**
+     * Default minimum buffer size to use the pool (64KB).
+     * Smaller buffers don't benefit much from pooling due to lower GC impact.
+     */
+    static final int DEFAULT_MIN_POOL_SIZE_BYTES = 64 * 1024;
+
     private final List<BatchHolder> batches = new ArrayList<>();
+    private final BufferPool bufferPool;  // nullable - when null, use fresh allocation
+    private final int minPoolSizeBytes;
 
     private int totalSize = 0;
     private boolean closed = false;
+
+    BatchBuffer() {
+        this(null, DEFAULT_MIN_POOL_SIZE_BYTES);
+    }
+
+    BatchBuffer(final BufferPool bufferPool) {
+        this(bufferPool, DEFAULT_MIN_POOL_SIZE_BYTES);
+    }
+
+    BatchBuffer(final BufferPool bufferPool, final int minPoolSizeBytes) {
+        this.bufferPool = bufferPool;
+        this.minPoolSizeBytes = minPoolSizeBytes;
+    }
 
     void addBatch(final TopicIdPartition topicPartition,
                   final MutableRecordBatch batch,
@@ -49,7 +75,7 @@ class BatchBuffer {
     }
 
     CloseResult close() {
-        int totalSize = totalSize();
+        final int dataSize = totalSize();
 
         // Group together by topic-partition.
         // The sort is stable so the relative order of batches of the same partition won't change.
@@ -58,7 +84,11 @@ class BatchBuffer {
                 .thenComparing(b -> b.topicIdPartition().partition())
         );
 
-        final ByteBuffer byteBuffer = ByteBuffer.allocate(totalSize);
+        // Try to use pooled buffer to reduce GC pressure from repeated allocations
+        PooledBuffer pooledBuffer = tryAcquirePooledBuffer(dataSize);
+        final ByteBuffer targetBuffer = (pooledBuffer != null)
+            ? pooledBuffer.buffer()
+            : ByteBuffer.allocate(dataSize);
 
         final List<CommitBatchRequest> commitBatchRequests = new ArrayList<>();
         for (final BatchHolder batchHolder : batches) {
@@ -66,19 +96,46 @@ class BatchBuffer {
                 CommitBatchRequest.of(
                     batchHolder.requestId,
                     batchHolder.topicIdPartition(),
-                    byteBuffer.position(),
+                    targetBuffer.position(),
                     batchHolder.batch
                 )
             );
-            batchHolder.batch.writeTo(byteBuffer);
+            batchHolder.batch.writeTo(targetBuffer);
         }
 
         closed = true;
-        return new CloseResult(commitBatchRequests, byteBuffer.array());
+
+        final BatchBufferData data;
+        if (pooledBuffer != null) {
+            targetBuffer.flip();
+            data = new PooledBatchBufferData(pooledBuffer, dataSize);
+        } else {
+            data = new HeapBatchBufferData(targetBuffer.array());
+        }
+
+        return new CloseResult(commitBatchRequests, data);
     }
 
     int totalSize() {
         return totalSize;
+    }
+
+    /**
+     * Attempts to acquire a pooled buffer. Returns null if pool is not available
+     * or size is below the minimum threshold.
+     *
+     * <p>ElasticBufferPool.acquire() is non-blocking and handles fallback internally,
+     * so we don't need try-catch or manual fallback recording here.
+     */
+    private PooledBuffer tryAcquirePooledBuffer(final int size) {
+        if (bufferPool == null || size == 0) {
+            return null;
+        }
+        // Skip pool for small buffers - pooling overhead not worth it for small sizes
+        if (size < minPoolSizeBytes) {
+            return null;
+        }
+        return bufferPool.acquire(size);
     }
 
     private record BatchHolder(TopicIdPartition topicIdPartition,
@@ -92,6 +149,6 @@ class BatchBuffer {
      * @param commitBatchRequests commit batch requests matching in order the batches in {@code data}.
      */
     record CloseResult(List<CommitBatchRequest> commitBatchRequests,
-                       byte[] data) {
+                       BatchBufferData data) {
     }
 }

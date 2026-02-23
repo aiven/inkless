@@ -38,6 +38,7 @@ import java.util.List;
 import java.util.Map;
 
 import io.aiven.inkless.control_plane.CommitBatchRequest;
+import io.aiven.inkless.produce.buffer.HeapBatchBufferData;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -133,8 +134,8 @@ class ActiveFileTest {
         assertThat(result)
             .usingRecursiveComparison()
             .ignoringFields("data")
-            .isEqualTo(new ClosedFile(start, Map.of(), Map.of(), List.of(), Map.of(), new byte[0]));
-        assertThat(result.data()).isEmpty();
+            .isEqualTo(new ClosedFile(start, Map.of(), Map.of(), List.of(), Map.of(), HeapBatchBufferData.EMPTY));
+        assertThat(result.data().size()).isZero();
         assertThat(result.isEmpty()).isTrue();
     }
 
@@ -169,7 +170,7 @@ class ActiveFileTest {
             CommitBatchRequest.of(1, T0P1, 156, 78, 0, 0, 3000, TimestampType.CREATE_TIME),
             CommitBatchRequest.of(1, T1P0, 234, 78, 0, 0, time.milliseconds(), TimestampType.LOG_APPEND_TIME)
         );
-        assertThat(result.data()).hasSize(312);
+        assertThat(result.data().size()).isEqualTo(312);
         assertThat(result.isEmpty()).isFalse();
     }
 
@@ -206,6 +207,6 @@ class ActiveFileTest {
         );
         assertThat(result.invalidResponseByRequest().get(0))
             .containsExactly(Map.entry(T0P1, new ProduceResponse.PartitionResponse(Errors.INVALID_RECORD)));
-        assertThat(result.data()).hasSize(312 - 78); // 78 bytes of the invalid batch
+        assertThat(result.data().size()).isEqualTo(312 - 78); // 78 bytes of the invalid batch
     }
 }

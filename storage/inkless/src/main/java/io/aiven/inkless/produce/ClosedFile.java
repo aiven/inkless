@@ -29,6 +29,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.stream.Collectors;
 
 import io.aiven.inkless.control_plane.CommitBatchRequest;
+import io.aiven.inkless.produce.buffer.BatchBufferData;
 
 /**
  * A closed file that contains all the information needed to commit the file to the control plane.
@@ -48,7 +49,7 @@ record ClosedFile(Instant start,
                   Map<Integer, CompletableFuture<Map<TopicIdPartition, PartitionResponse>>> awaitingFuturesByRequest,
                   List<CommitBatchRequest> commitBatchRequests,
                   Map<Integer, Map<TopicIdPartition, PartitionResponse>> invalidResponseByRequest,
-                  byte[] data) {
+                  BatchBufferData data) {
     ClosedFile {
         Objects.requireNonNull(originalRequests, "originalRequests cannot be null");
         Objects.requireNonNull(awaitingFuturesByRequest, "awaitingFuturesByRequest cannot be null");
@@ -111,16 +112,16 @@ record ClosedFile(Instant start,
         }
 
         // Validate data consistency
-        if (commitBatchRequests.isEmpty() != (data.length == 0)) {
+        if (commitBatchRequests.isEmpty() != (data.size() == 0)) {
             throw new IllegalArgumentException("data must be empty if commitBatchRequests is empty");
         }
     }
 
     int size() {
-        return data.length;
+        return data.size();
     }
 
     public boolean isEmpty() {
-        return data.length == 0;
+        return data.size() == 0;
     }
 }

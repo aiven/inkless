@@ -29,13 +29,16 @@ import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 
 import java.io.InputStream;
+import java.nio.ByteBuffer;
 import java.time.Duration;
 import java.util.HashSet;
+import java.util.Optional;
 import java.util.function.Consumer;
 
 import io.aiven.inkless.common.ObjectKey;
 import io.aiven.inkless.common.ObjectKeyCreator;
 import io.aiven.inkless.common.PlainObjectKey;
+import io.aiven.inkless.produce.buffer.BatchBufferData;
 import io.aiven.inkless.storage_backend.common.ObjectUploader;
 import io.aiven.inkless.storage_backend.common.StorageBackendException;
 
@@ -183,5 +186,168 @@ class FileUploadJobTest {
             OBJECT_KEY_CREATOR, objectUploader, time, 2, Duration.ofMillis(100), new byte[1], null))
             .isInstanceOf(NullPointerException.class)
             .hasMessage("durationCallback cannot be null");
+    }
+
+    // Zero-copy ByteBuffer upload tests
+
+    @Test
+    void zeroCopyUpload_usesDirectByteBuffer() throws Exception {
+        final byte[] testData = {1, 2, 3, 4};
+        final ByteBuffer directBuffer = ByteBuffer.allocateDirect(testData.length);
+        directBuffer.put(testData);
+        directBuffer.flip();
+
+        // Create a mock BatchBufferData that provides a direct ByteBuffer
+        final BatchBufferData batchBufferData = new BatchBufferData() {
+            @Override
+            public int size() {
+                return testData.length;
+            }
+
+            @Override
+            public java.util.function.Supplier<InputStream> asInputStreamSupplier() {
+                return () -> new java.io.ByteArrayInputStream(testData);
+            }
+
+            @Override
+            public void copyTo(int srcOffset, byte[] dest, int destOffset, int length) {
+                System.arraycopy(testData, srcOffset, dest, destOffset, length);
+            }
+
+            @Override
+            public BatchBufferData retain() {
+                return this;
+            }
+
+            @Override
+            public void release() {
+            }
+
+            @Override
+            public Optional<ByteBuffer> asByteBuffer() {
+                ByteBuffer buf = directBuffer.duplicate();
+                buf.rewind();
+                return Optional.of(buf.asReadOnlyBuffer());
+            }
+        };
+
+        doNothing().when(objectUploader).upload(eq(OBJECT_KEY), any(ByteBuffer.class));
+        when(time.nanoseconds()).thenReturn(10_000_000L, 20_000_000L);
+
+        final FileUploadJob fileUploadJob = FileUploadJob.createFromBatchBufferData(
+            OBJECT_KEY_CREATOR, objectUploader, time, 1, Duration.ofMillis(100), batchBufferData, uploadTimeDurationCallback);
+
+        final ObjectKey objectKey = fileUploadJob.call();
+
+        assertThat(objectKey).isEqualTo(OBJECT_KEY);
+        // Verify ByteBuffer upload was called, not InputStream upload
+        verify(objectUploader).upload(eq(OBJECT_KEY), any(ByteBuffer.class));
+        verify(objectUploader, never()).upload(eq(OBJECT_KEY), any(InputStream.class), anyLong());
+        verify(uploadTimeDurationCallback).accept(eq(10L));
+    }
+
+    @Test
+    void zeroCopyUpload_fallsBackToInputStream_whenNoDirectBuffer() throws Exception {
+        final byte[] testData = {1, 2, 3, 4};
+
+        // Create a mock BatchBufferData that does NOT provide a direct ByteBuffer (like HeapBatchBufferData)
+        final BatchBufferData batchBufferData = new BatchBufferData() {
+            @Override
+            public int size() {
+                return testData.length;
+            }
+
+            @Override
+            public java.util.function.Supplier<InputStream> asInputStreamSupplier() {
+                return () -> new java.io.ByteArrayInputStream(testData);
+            }
+
+            @Override
+            public void copyTo(int srcOffset, byte[] dest, int destOffset, int length) {
+                System.arraycopy(testData, srcOffset, dest, destOffset, length);
+            }
+
+            @Override
+            public BatchBufferData retain() {
+                return this;
+            }
+
+            @Override
+            public void release() {
+            }
+
+            // Uses default implementation returning Optional.empty()
+        };
+
+        doNothing().when(objectUploader).upload(eq(OBJECT_KEY), any(InputStream.class), eq((long) testData.length));
+        when(time.nanoseconds()).thenReturn(10_000_000L, 20_000_000L);
+
+        final FileUploadJob fileUploadJob = FileUploadJob.createFromBatchBufferData(
+            OBJECT_KEY_CREATOR, objectUploader, time, 1, Duration.ofMillis(100), batchBufferData, uploadTimeDurationCallback);
+
+        final ObjectKey objectKey = fileUploadJob.call();
+
+        assertThat(objectKey).isEqualTo(OBJECT_KEY);
+        // Verify InputStream upload was called, not ByteBuffer upload
+        verify(objectUploader).upload(eq(OBJECT_KEY), any(InputStream.class), eq((long) testData.length));
+        verify(objectUploader, never()).upload(eq(OBJECT_KEY), any(ByteBuffer.class));
+        verify(uploadTimeDurationCallback).accept(eq(10L));
+    }
+
+    @Test
+    void zeroCopyUpload_retriesWithByteBuffer() throws Exception {
+        final byte[] testData = {1, 2, 3, 4};
+        final ByteBuffer directBuffer = ByteBuffer.allocateDirect(testData.length);
+        directBuffer.put(testData);
+        directBuffer.flip();
+
+        final BatchBufferData batchBufferData = new BatchBufferData() {
+            @Override
+            public int size() {
+                return testData.length;
+            }
+
+            @Override
+            public java.util.function.Supplier<InputStream> asInputStreamSupplier() {
+                return () -> new java.io.ByteArrayInputStream(testData);
+            }
+
+            @Override
+            public void copyTo(int srcOffset, byte[] dest, int destOffset, int length) {
+                System.arraycopy(testData, srcOffset, dest, destOffset, length);
+            }
+
+            @Override
+            public BatchBufferData retain() {
+                return this;
+            }
+
+            @Override
+            public void release() {
+            }
+
+            @Override
+            public Optional<ByteBuffer> asByteBuffer() {
+                ByteBuffer buf = directBuffer.duplicate();
+                buf.rewind();
+                return Optional.of(buf.asReadOnlyBuffer());
+            }
+        };
+
+        // First attempt fails, second succeeds
+        doThrow(new StorageBackendException("Test"))
+            .doNothing()
+            .when(objectUploader).upload(eq(OBJECT_KEY), any(ByteBuffer.class));
+        when(time.nanoseconds()).thenReturn(10_000_000L, 20_000_000L);
+
+        final FileUploadJob fileUploadJob = FileUploadJob.createFromBatchBufferData(
+            OBJECT_KEY_CREATOR, objectUploader, time, 2, Duration.ofMillis(100), batchBufferData, uploadTimeDurationCallback);
+
+        final ObjectKey objectKey = fileUploadJob.call();
+
+        assertThat(objectKey).isEqualTo(OBJECT_KEY);
+        verify(objectUploader, times(2)).upload(eq(OBJECT_KEY), any(ByteBuffer.class));
+        verify(time, times(1)).sleep(eq(100L));
+        verify(uploadTimeDurationCallback).accept(eq(10L));
     }
 }

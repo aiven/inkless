@@ -52,6 +52,7 @@ import io.aiven.inkless.cache.ObjectCache;
 import io.aiven.inkless.common.InklessThreadFactory;
 import io.aiven.inkless.common.ObjectKeyCreator;
 import io.aiven.inkless.control_plane.ControlPlane;
+import io.aiven.inkless.produce.buffer.BufferPool;
 import io.aiven.inkless.storage_backend.common.StorageBackend;
 
 /**
@@ -79,6 +80,8 @@ class Writer implements Closeable {
     private boolean closed = false;
     private final WriterMetrics writerMetrics;
     private final BrokerTopicStats brokerTopicStats;
+    private final BufferPool bufferPool;  // nullable
+    private final int bufferPoolMinSizeBytes;
     private Instant openedAt;
     private ScheduledFuture<?> scheduledTick;
 
@@ -96,7 +99,9 @@ class Writer implements Closeable {
            final int maxFileUploadAttempts,
            final Duration fileUploadRetryBackoff,
            final int fileUploaderThreadPoolSize,
-           final BrokerTopicStats brokerTopicStats
+           final BrokerTopicStats brokerTopicStats,
+           final BufferPool bufferPool,
+           final int bufferPoolMinSizeBytes
     ) {
         this(
             time,
@@ -110,7 +115,9 @@ class Writer implements Closeable {
                 maxFileUploadAttempts, fileUploadRetryBackoff,
                 fileUploaderThreadPoolSize),
             new WriterMetrics(time),
-            brokerTopicStats
+            brokerTopicStats,
+            bufferPool,
+            bufferPoolMinSizeBytes
         );
     }
 
@@ -122,7 +129,9 @@ class Writer implements Closeable {
            final StorageBackend storage,
            final FileCommitter fileCommitter,
            final WriterMetrics writerMetrics,
-           final BrokerTopicStats brokerTopicStats) {
+           final BrokerTopicStats brokerTopicStats,
+           final BufferPool bufferPool,
+           final int bufferPoolMinSizeBytes) {
         this.time = Objects.requireNonNull(time, "time cannot be null");
         this.commitInterval = Objects.requireNonNull(commitInterval, "commitInterval cannot be null");
         if (maxBufferSize <= 0) {
@@ -133,8 +142,10 @@ class Writer implements Closeable {
         this.storage = Objects.requireNonNull(storage, "storage cannot be null");
         this.fileCommitter = Objects.requireNonNull(fileCommitter, "fileCommitter cannot be null");
         this.writerMetrics = Objects.requireNonNull(writerMetrics, "writerMetrics cannot be null");
-        this.brokerTopicStats = brokerTopicStats;
-        this.activeFile = new ActiveFile(time, brokerTopicStats);
+        this.brokerTopicStats = brokerTopicStats;  // nullable
+        this.bufferPool = bufferPool;  // nullable
+        this.bufferPoolMinSizeBytes = bufferPoolMinSizeBytes;
+        this.activeFile = new ActiveFile(time, brokerTopicStats, bufferPool, bufferPoolMinSizeBytes);
     }
 
     CompletableFuture<Map<TopicIdPartition, PartitionResponse>> write(
@@ -237,7 +248,7 @@ class Writer implements Closeable {
     private void rotateFile(final boolean swallowInterrupted) {
         LOGGER.debug("Rotating active file");
         final ActiveFile prevActiveFile = this.activeFile;
-        this.activeFile = new ActiveFile(time, brokerTopicStats);
+        this.activeFile = new ActiveFile(time, brokerTopicStats, bufferPool, bufferPoolMinSizeBytes);
 
         try {
             this.fileCommitter.commit(prevActiveFile.close());

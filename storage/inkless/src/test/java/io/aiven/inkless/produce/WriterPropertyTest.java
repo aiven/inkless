@@ -251,7 +251,9 @@ class WriterPropertyTest {
                 storage,
                 fileCommitter,
                 mock(WriterMetrics.class),
-                new BrokerTopicStats()
+                new BrokerTopicStats(),
+                null,
+                0  // bufferPoolMinSizeBytes
             );
 
             final Arbitrary<Map<TopicIdPartition, MemoryRecords>> requestArbitrary = requests();

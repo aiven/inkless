@@ -50,6 +50,8 @@ import io.aiven.inkless.control_plane.CommitBatchRequest;
 import io.aiven.inkless.control_plane.CommitBatchResponse;
 import io.aiven.inkless.control_plane.ControlPlaneException;
 import io.aiven.inkless.control_plane.InMemoryControlPlane;
+import io.aiven.inkless.produce.buffer.BatchBufferData;
+import io.aiven.inkless.produce.buffer.HeapBatchBufferData;
 import io.aiven.inkless.storage_backend.common.ObjectDeleter;
 import io.aiven.inkless.storage_backend.common.StorageBackendException;
 
@@ -91,8 +93,8 @@ class FileCommitJobTest {
         CommitBatchRequest.of(1, T1P0, 300, 100, 0, 9, 1000, TimestampType.LOG_APPEND_TIME)
     );
 
-    static final byte[] DATA = new byte[10];
-    static final long FILE_SIZE = DATA.length;
+    static final BatchBufferData DATA = new HeapBatchBufferData(new byte[10]);
+    static final long FILE_SIZE = DATA.size();
     static final String OBJECT_KEY_MAIN_PART = "obj";
     static final ObjectKey OBJECT_KEY = PlainObjectKey.create("", OBJECT_KEY_MAIN_PART);
 

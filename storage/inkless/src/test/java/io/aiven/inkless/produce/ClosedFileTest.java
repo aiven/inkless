@@ -34,8 +34,13 @@ import java.util.concurrent.CompletableFuture;
 
 import io.aiven.inkless.control_plane.CommitBatchRequest;
 
+import io.aiven.inkless.produce.buffer.BatchBufferData;
+import io.aiven.inkless.produce.buffer.HeapBatchBufferData;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 class ClosedFileTest {
     public static final TopicPartition T0P0 = new TopicPartition("t0", 0);
@@ -43,35 +48,35 @@ class ClosedFileTest {
 
     @Test
     void originalRequestsNull() {
-        assertThatThrownBy(() -> new ClosedFile(Instant.EPOCH, null, Map.of(), List.of(), Map.of(), new byte[1]))
+        assertThatThrownBy(() -> new ClosedFile(Instant.EPOCH, null, Map.of(), List.of(), Map.of(), new HeapBatchBufferData(new byte[1])))
             .isInstanceOf(NullPointerException.class)
             .hasMessage("originalRequests cannot be null");
     }
 
     @Test
     void awaitingFuturesByRequestNull() {
-        assertThatThrownBy(() -> new ClosedFile(Instant.EPOCH, Map.of(), null, List.of(), Map.of(), new byte[1]))
+        assertThatThrownBy(() -> new ClosedFile(Instant.EPOCH, Map.of(), null, List.of(), Map.of(), new HeapBatchBufferData(new byte[1])))
             .isInstanceOf(NullPointerException.class)
             .hasMessage("awaitingFuturesByRequest cannot be null");
     }
 
     @Test
     void invalidResponseByRequestNull() {
-        assertThatThrownBy(() -> new ClosedFile(Instant.EPOCH, Map.of(), Map.of(), List.of(), null, new byte[1]))
+        assertThatThrownBy(() -> new ClosedFile(Instant.EPOCH, Map.of(), Map.of(), List.of(), null, new HeapBatchBufferData(new byte[1])))
             .isInstanceOf(NullPointerException.class)
             .hasMessage("invalidResponseByRequest cannot be null");
     }
 
     @Test
     void commitBatchRequestsNull() {
-        assertThatThrownBy(() -> new ClosedFile(Instant.EPOCH, Map.of(), Map.of(), null, Map.of(), new byte[1]))
+        assertThatThrownBy(() -> new ClosedFile(Instant.EPOCH, Map.of(), Map.of(), null, Map.of(), new HeapBatchBufferData(new byte[1])))
             .isInstanceOf(NullPointerException.class)
             .hasMessage("commitBatchRequests cannot be null");
     }
 
     @Test
     void requestsWithDifferentLengths() {
-        assertThatThrownBy(() -> new ClosedFile(Instant.EPOCH, Map.of(1, Map.of()), Map.of(), List.of(), Map.of(), new byte[1]))
+        assertThatThrownBy(() -> new ClosedFile(Instant.EPOCH, Map.of(1, Map.of()), Map.of(), List.of(), Map.of(), new HeapBatchBufferData(new byte[1])))
             .isInstanceOf(IllegalArgumentException.class)
             .hasMessage("originalRequests and awaitingFuturesByRequest must be of same size");
     }
@@ -85,7 +90,7 @@ class ClosedFileTest {
 
     @Test
     void dataRequestMismatch() {
-        assertThatThrownBy(() -> new ClosedFile(Instant.EPOCH, Map.of(), Map.of(), List.of(), Map.of(), new byte[10]))
+        assertThatThrownBy(() -> new ClosedFile(Instant.EPOCH, Map.of(), Map.of(), List.of(), Map.of(), new HeapBatchBufferData(new byte[10])))
             .isInstanceOf(IllegalArgumentException.class)
             .hasMessage("data must be empty if commitBatchRequests is empty");
         assertThatThrownBy(() -> new ClosedFile(Instant.EPOCH,
@@ -93,7 +98,7 @@ class ClosedFileTest {
             Map.of(1, new CompletableFuture<>()),
             List.of(CommitBatchRequest.of(1, TID0P0, 0, 0, 0, 0, 0, TimestampType.CREATE_TIME)),
             Map.of(),
-            new byte[0])
+            HeapBatchBufferData.EMPTY)
         )
             .isInstanceOf(IllegalArgumentException.class)
             .hasMessage("No corresponding valid or invalid response found for partition t0-0 in request 1");
@@ -106,8 +111,21 @@ class ClosedFileTest {
             Map.of(1, new CompletableFuture<>()),
             List.of(CommitBatchRequest.of(1, TID0P0, 0, 0, 0, 0, 0, TimestampType.CREATE_TIME)),
             Map.of(),
-            new byte[10]).size();
+            new HeapBatchBufferData(new byte[10])).size();
         assertThat(size).isEqualTo(10);
+    }
+
+    @Test
+    void sizeDelegatesToBatchBufferData() {
+        final BatchBufferData mockData = mock(BatchBufferData.class);
+        when(mockData.size()).thenReturn(42);
+        final ClosedFile closedFile = new ClosedFile(Instant.EPOCH,
+            Map.of(1, Map.of(TID0P0, MemoryRecords.EMPTY)),
+            Map.of(1, new CompletableFuture<>()),
+            List.of(CommitBatchRequest.of(1, TID0P0, 0, 0, 0, 0, 0, TimestampType.CREATE_TIME)),
+            Map.of(),
+            mockData);
+        assertThat(closedFile.size()).isEqualTo(42);
     }
 
     @Test
@@ -118,7 +136,7 @@ class ClosedFileTest {
                 Map.of(1, new CompletableFuture<>()),
                 List.of(CommitBatchRequest.of(1, TID0P0, 0, 0, 0, 0, 0, TimestampType.CREATE_TIME)),
                 Map.of(1, Map.of(TID0P0, new PartitionResponse(Errors.KAFKA_STORAGE_ERROR))),
-                new byte[10]).size())
+                new HeapBatchBufferData(new byte[10])).size())
             .isInstanceOf(IllegalArgumentException.class)
             .hasMessage("Partition t0-0 in request 1 found in both valid and invalid collections");
     }
@@ -131,7 +149,7 @@ class ClosedFileTest {
                 Map.of(1, new CompletableFuture<>()),
                 List.of(), // no commit request
                 Map.of(2, Map.of(TID0P0, new PartitionResponse(Errors.KAFKA_STORAGE_ERROR))), // invalid with different request ID
-                new byte[10]).size())
+                new HeapBatchBufferData(new byte[10])).size())
             .isInstanceOf(IllegalArgumentException.class)
             .hasMessage("No corresponding valid or invalid response found for partition t0-0 in request 1");
     }
@@ -144,7 +162,7 @@ class ClosedFileTest {
                 Map.of(1, new CompletableFuture<>()),
                 List.of(CommitBatchRequest.of(1, TID0P0, 0, 0, 0, 0, 0, TimestampType.CREATE_TIME)),
                 Map.of(1, Map.of(new TopicIdPartition(Uuid.randomUuid(), 1, "t0"), new PartitionResponse(Errors.KAFKA_STORAGE_ERROR))), // another partition
-                new byte[10]).size())
+                new HeapBatchBufferData(new byte[10])).size())
             .isInstanceOf(IllegalArgumentException.class)
             .hasMessage("Total number of valid and invalid responses doesn't match original requests for request id 1");
     }
@@ -156,7 +174,7 @@ class ClosedFileTest {
             Map.of(),
             List.of(),
             Map.of(),
-            new byte[0]).size();
+            HeapBatchBufferData.EMPTY).size();
         assertThat(size).isEqualTo(0);
     }
 
@@ -169,9 +187,22 @@ class ClosedFileTest {
                 Map.of(1, new CompletableFuture<>()),
                 List.of(CommitBatchRequest.of(1, TID0P0, 0, 0, 0, 0, 0, TimestampType.CREATE_TIME)),
                 Map.of(),
-                new byte[10]).size()
+                new HeapBatchBufferData(new byte[10])).size()
         )
             .isInstanceOf(IllegalArgumentException.class)
             .hasMessage("start time cannot be null if there are requests processed");
+    }
+
+    @Test
+    void acceptsBatchBufferData() {
+        final BatchBufferData data = new HeapBatchBufferData(new byte[]{1, 2, 3, 4, 5});
+        final ClosedFile closedFile = new ClosedFile(Instant.EPOCH,
+            Map.of(1, Map.of(TID0P0, MemoryRecords.EMPTY)),
+            Map.of(1, new CompletableFuture<>()),
+            List.of(CommitBatchRequest.of(1, TID0P0, 0, 0, 0, 0, 0, TimestampType.CREATE_TIME)),
+            Map.of(),
+            data);
+        assertThat(closedFile.data()).isSameAs(data);
+        assertThat(closedFile.size()).isEqualTo(5);
     }
 }

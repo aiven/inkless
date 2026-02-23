@@ -40,6 +40,8 @@ import java.util.concurrent.CompletableFuture;
 import io.aiven.inkless.cache.BatchCoordinateCache;
 import io.aiven.inkless.control_plane.CommitBatchRequest;
 import io.aiven.inkless.control_plane.CommitBatchResponse;
+import io.aiven.inkless.produce.buffer.BatchBufferData;
+import io.aiven.inkless.produce.buffer.HeapBatchBufferData;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -78,7 +80,7 @@ class AppendCompleterTest {
         CommitBatchRequest.of(1, T1P0, 300, 100, 0, 9, 1000, TimestampType.LOG_APPEND_TIME)
     );
 
-    static final byte[] DATA = new byte[10];
+    static final BatchBufferData DATA = new HeapBatchBufferData(new byte[10]);
 
     @Test
     void commitFinishedSuccessfully() throws Exception {
@@ -160,7 +162,7 @@ class AppendCompleterTest {
 
         final List<CommitBatchResponse> commitBatchResponses = List.of();
 
-        final ClosedFile file = new ClosedFile(Instant.EPOCH, REQUESTS, awaitingFuturesByRequest, List.of(), invalidResponses, new byte[0]);
+        final ClosedFile file = new ClosedFile(Instant.EPOCH, REQUESTS, awaitingFuturesByRequest, List.of(), invalidResponses, HeapBatchBufferData.EMPTY);
         final BatchCoordinateCache cache = mock(BatchCoordinateCache.class);
         final AppendCompleter job = new AppendCompleter(file, cache);
 

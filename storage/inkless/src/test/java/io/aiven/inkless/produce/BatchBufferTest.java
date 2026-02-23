@@ -39,6 +39,7 @@ import java.util.Iterator;
 import java.util.stream.Stream;
 
 import io.aiven.inkless.control_plane.CommitBatchRequest;
+import io.aiven.inkless.produce.buffer.BatchBufferData;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -76,11 +77,11 @@ class BatchBufferTest {
 
         BatchBuffer.CloseResult result = buffer.close();
         assertThat(result.commitBatchRequests()).isEmpty();
-        assertThat(result.data()).isEmpty();
+        assertThat(result.data().size()).isZero();
 
         result = buffer.close();
         assertThat(result.commitBatchRequests()).isEmpty();
-        assertThat(result.data()).isEmpty();
+        assertThat(result.data().size()).isZero();
     }
 
     public static Stream<Arguments> singleBatchParams() {
@@ -107,8 +108,8 @@ class BatchBufferTest {
 
         final BatchBuffer.CloseResult result = buffer.close();
         assertThat(result.commitBatchRequests()).containsExactly(expectedRequest);
-        assertThat(result.data()).containsExactly(batchToBytes(batch));
-        assertThat(result.data()).containsExactly(beforeAdding);
+        assertThat(extractBytes(result.data())).containsExactly(batchToBytes(batch));
+        assertThat(extractBytes(result.data())).containsExactly(beforeAdding);
         assertThat(batch.hasProducerId()).isEqualTo(expectedRequest.hasProducerId());
     }
 
@@ -171,7 +172,7 @@ class BatchBufferTest {
         t1p0b0.writeTo(expectedBytes);
         t1p0b1.writeTo(expectedBytes);
         t1p0b2.writeTo(expectedBytes);
-        assertThat(result.data()).containsExactly(expectedBytes.array());
+        assertThat(extractBytes(result.data())).containsExactly(expectedBytes.array());
     }
 
     @Test
@@ -185,7 +186,7 @@ class BatchBufferTest {
         assertThat(result1.commitBatchRequests()).containsExactly(
             CommitBatchRequest.of(0, T0P0, 0, batch1.sizeInBytes(), 19, 19, time.milliseconds(), TimestampType.LOG_APPEND_TIME)
         );
-        assertThat(result1.data()).containsExactly(batchToBytes(batch1));
+        assertThat(extractBytes(result1.data())).containsExactly(batchToBytes(batch1));
 
         final MutableRecordBatch batch2 = createBatch(TimestampType.CREATE_TIME, time, T1P0 + "-0-longer");
         assertThatThrownBy(() -> buffer.addBatch(T1P0, batch2, 1))
@@ -230,6 +231,12 @@ class BatchBufferTest {
         final ByteBuffer buf = ByteBuffer.allocate(batch.sizeInBytes());
         batch.writeTo(buf);
         return buf.array();
+    }
+
+    static byte[] extractBytes(final BatchBufferData data) {
+        final byte[] result = new byte[data.size()];
+        data.copyTo(0, result, 0, data.size());
+        return result;
     }
 
     @Test

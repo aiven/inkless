@@ -54,6 +54,7 @@ import io.aiven.inkless.common.PlainObjectKey;
 import io.aiven.inkless.control_plane.CommitBatchRequest;
 import io.aiven.inkless.control_plane.ControlPlane;
 import io.aiven.inkless.control_plane.ControlPlaneException;
+import io.aiven.inkless.produce.buffer.HeapBatchBufferData;
 import io.aiven.inkless.storage_backend.common.StorageBackend;
 import io.aiven.inkless.storage_backend.common.StorageBackendException;
 
@@ -92,7 +93,7 @@ class FileCommitterTest {
         Map.of(1, new CompletableFuture<>()),
         List.of(CommitBatchRequest.of(1, TID0P0, 0, 0, 0, 0, 0, TimestampType.CREATE_TIME)),
         Map.of(),
-        new byte[10]);
+        new HeapBatchBufferData(new byte[10]));
     static final KeyAlignmentStrategy KEY_ALIGNMENT_STRATEGY = new FixedBlockAlignment(Integer.MAX_VALUE);
     static final ObjectCache OBJECT_CACHE = new NullCache();
     static final BatchCoordinateCache BATCH_COORDINATE_CACHE = new CaffeineBatchCoordinateCache(Duration.ofSeconds(30));
@@ -121,7 +122,7 @@ class FileCommitterTest {
     @SuppressWarnings("unchecked")
     void success() throws Exception {
         doNothing()
-            .when(storage).upload(eq(OBJECT_KEY), any(InputStream.class), eq((long) FILE.data().length));
+            .when(storage).upload(eq(OBJECT_KEY), any(InputStream.class), eq((long) FILE.data().size()));
 
         when(time.nanoseconds()).thenReturn(10_000_000L);
 
@@ -145,7 +146,7 @@ class FileCommitterTest {
         committer.commit(FILE);
 
         assertThat(committer.totalFilesInProgress()).isOne();
-        assertThat(committer.totalBytesInProgress()).isEqualTo(FILE.data().length);
+        assertThat(committer.totalBytesInProgress()).isEqualTo(FILE.data().size());
 
         verify(executorServiceUpload).submit(uploadCallableCaptor.capture());
         final Callable<ObjectKey> uploadCallable = uploadCallableCaptor.getValue();
@@ -170,7 +171,7 @@ class FileCommitterTest {
     @SuppressWarnings("unchecked")
     void commitFailed() throws Exception {
         doNothing()
-            .when(storage).upload(eq(OBJECT_KEY), any(InputStream.class), eq((long) FILE.data().length));
+            .when(storage).upload(eq(OBJECT_KEY), any(InputStream.class), eq((long) FILE.data().size()));
 
         when(time.nanoseconds()).thenReturn(10_000_000L);
 
@@ -194,7 +195,7 @@ class FileCommitterTest {
         committer.commit(FILE);
 
         assertThat(committer.totalFilesInProgress()).isOne();
-        assertThat(committer.totalBytesInProgress()).isEqualTo(FILE.data().length);
+        assertThat(committer.totalBytesInProgress()).isEqualTo(FILE.data().size());
 
         verify(executorServiceUpload).submit(uploadCallableCaptor.capture());
         final Callable<ObjectKey> uploadCallable = uploadCallableCaptor.getValue();
@@ -221,7 +222,7 @@ class FileCommitterTest {
     @SuppressWarnings("unchecked")
     void uploadFailed() throws Exception {
         doNothing()
-            .when(storage).upload(eq(OBJECT_KEY), any(InputStream.class), eq((long) FILE.data().length));
+            .when(storage).upload(eq(OBJECT_KEY), any(InputStream.class), eq((long) FILE.data().size()));
 
         when(time.nanoseconds()).thenReturn(10_000_000L);
 
@@ -242,7 +243,7 @@ class FileCommitterTest {
         committer.commit(FILE);
 
         assertThat(committer.totalFilesInProgress()).isOne();
-        assertThat(committer.totalBytesInProgress()).isEqualTo(FILE.data().length);
+        assertThat(committer.totalBytesInProgress()).isEqualTo(FILE.data().size());
 
         verify(executorServiceUpload).submit(uploadCallableCaptor.capture());
         final Callable<ObjectKey> uploadCallable = uploadCallableCaptor.getValue();

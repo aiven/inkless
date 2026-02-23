@@ -46,6 +46,7 @@ import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 
 import io.aiven.inkless.TimeUtils;
+import io.aiven.inkless.produce.buffer.BufferPool;
 
 import static org.apache.kafka.storage.internals.log.UnifiedLog.newValidatorMetricsRecorder;
 
@@ -72,8 +73,10 @@ class ActiveFile {
     private final LogValidator.MetricsRecorder validatorMetricsRecorder;
 
     ActiveFile(final Time time,
-               final BrokerTopicStats brokerTopicStats) {
-        this.buffer = new BatchBuffer();
+               final BrokerTopicStats brokerTopicStats,
+               final BufferPool bufferPool,
+               final int minPoolSizeBytes) {
+        this.buffer = new BatchBuffer(bufferPool, minPoolSizeBytes);
         this.time = time;
         this.brokerTopicStats = brokerTopicStats;
         this.validatorMetricsRecorder = newValidatorMetricsRecorder(brokerTopicStats.allTopicsStats());

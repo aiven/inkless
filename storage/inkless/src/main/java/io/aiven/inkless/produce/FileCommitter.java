@@ -35,6 +35,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
@@ -97,7 +98,10 @@ class FileCommitter implements Closeable {
             Executors.newFixedThreadPool(fileUploaderThreadPoolSize, new InklessThreadFactory("inkless-file-uploader-", false)),
             // It must be single-thread to preserve the commit order.
             Executors.newSingleThreadExecutor(new InklessThreadFactory("inkless-file-committer-", false)),
-            // Reuse the same thread pool size as uploads, as there are no more concurrency expected to handle
+            // Cache store uses non-daemon threads to ensure proper buffer release during shutdown.
+            // While caching is optional for correctness, we want buffers to be cleanly released
+            // to avoid leaving the buffer pool in an inconsistent state. The close() method
+            // provides a graceful shutdown timeout for these tasks.
             Executors.newFixedThreadPool(fileUploaderThreadPoolSize, new InklessThreadFactory("inkless-file-cache-store-", false)),
             new FileCommitterMetrics(time)
         );
@@ -167,10 +171,17 @@ class FileCommitter implements Closeable {
                 totalFilesInProgress.addAndGet(1);
                 totalBytesInProgress.addAndGet(file.size());
 
-                // Start uploading and add to the commit queue (as Runnable).
-                // This ensures files are uploaded in concurrently, but committed to the control plane sequentially,
-                // because `executorServiceCommit` is single-threaded.
-                final FileUploadJob uploadJob = FileUploadJob.createFromByteArray(
+                // Buffer refCount starts at 1. retain() increments for CacheStoreJob.
+                // FileUploadJob and CacheStoreJob each release; buffer returns to pool when both complete.
+                try {
+                    file.data().retain();
+                } catch (final IllegalStateException e) {
+                    LOGGER.error("Failed to retain buffer for file upload - buffer already released. "
+                        + "This indicates a bug in buffer lifecycle management.", e);
+                    throw e;
+                }
+
+                final FileUploadJob uploadJob = FileUploadJob.createFromBatchBufferData(
                         objectKeyCreator,
                         storage,
                         time,
@@ -244,9 +255,23 @@ class FileCommitter implements Closeable {
 
     @Override
     public void close() throws IOException {
-        // Don't wait here, they should try to finish their work.
         executorServiceUpload.shutdown();
         executorServiceCommit.shutdown();
+        executorServiceCacheStore.shutdown();
+
+        // Wait for cache store to release buffers back to pool
+        try {
+            if (!executorServiceCacheStore.awaitTermination(5, TimeUnit.SECONDS)) {
+                LOGGER.warn("Cache store executor did not terminate within timeout. "
+                    + "Some buffers may not be released cleanly.");
+                executorServiceCacheStore.shutdownNow();
+            }
+        } catch (final InterruptedException e) {
+            LOGGER.warn("Interrupted while waiting for cache store shutdown", e);
+            executorServiceCacheStore.shutdownNow();
+            Thread.currentThread().interrupt();
+        }
+
         metrics.close();
         if (threadPoolMonitor != null) threadPoolMonitor.close();
     }

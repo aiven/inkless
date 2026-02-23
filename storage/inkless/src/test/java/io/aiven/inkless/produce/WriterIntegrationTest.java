@@ -140,7 +140,9 @@ class WriterIntegrationTest {
                 1,
                 Duration.ofMillis(10),
                 8,
-                new BrokerTopicStats()
+                new BrokerTopicStats(),
+                null,
+                0  // bufferPoolMinSizeBytes
             )
         ) {
             time.sleep(100);
