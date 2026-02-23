@@ -1569,6 +1569,8 @@ public final class QuorumController implements Controller {
             setValidator(configurationValidator).
             setStaticConfig(staticConfig).
             setNodeId(nodeId).
+            setClassicRemoteStorageForceEnabled(classicRemoteStorageForceEnabled).
+            setClassicRemoteStorageForceExcludeTopicRegexes(classicRemoteStorageForceExcludeTopicRegexes).
             setFeatureControl(featureControl).
             build();
         this.producerIdControlManager = new ProducerIdControlManager.Builder().
