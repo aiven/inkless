@@ -805,21 +805,21 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
             }
         }
 
-        List<LastMirroredOffsetsRequestData.TopicState> topicStates = new ArrayList<>();
+        List<LastMirroredOffsetsRequestData.TopicData> topicDataList = new ArrayList<>();
         convertToTopicToPartitions(topicPartitionSet).forEach((topic, partitions) -> {
-            List<LastMirroredOffsetsRequestData.PartitionState> partitionStates = new ArrayList<>();
+            List<LastMirroredOffsetsRequestData.PartitionData> partitionDataList = new ArrayList<>();
             partitions.forEach(partition -> {
-                LastMirroredOffsetsRequestData.PartitionState partitionState = new LastMirroredOffsetsRequestData.PartitionState();
-                partitionState.setPartitionIndex(partition);
-                partitionStates.add(partitionState);
+                LastMirroredOffsetsRequestData.PartitionData partitionData = new LastMirroredOffsetsRequestData.PartitionData();
+                partitionData.setPartitionIndex(partition);
+                partitionDataList.add(partitionData);
             });
-            LastMirroredOffsetsRequestData.TopicState state = new LastMirroredOffsetsRequestData.TopicState().setName(topic).setPartitions(partitionStates);
-            topicStates.add(state);
+            LastMirroredOffsetsRequestData.TopicData topicData = new LastMirroredOffsetsRequestData.TopicData().setName(topic).setPartitions(partitionDataList);
+            topicDataList.add(topicData);
         });
 
         var response = getRandomSender(remoteBrokers.get(mirrorName)).sendRequest(
                 new LastMirroredOffsetsRequest.Builder(
-                        new LastMirroredOffsetsRequestData().setMirrorName(mirrorName).setTopics(topicStates))
+                        new LastMirroredOffsetsRequestData().setMirrorName(mirrorName).setTopics(topicDataList))
         );
 
         if (response.responseBody() instanceof LastMirroredOffsetsResponse lastMirroredOffsetResponse) {

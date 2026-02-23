@@ -23,7 +23,6 @@ import org.apache.kafka.common.protocol.ApiKeys;
 import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.protocol.Readable;
 
-
 public class LastMirroredOffsetsRequest extends AbstractRequest {
     public static class Builder extends AbstractRequest.Builder<LastMirroredOffsetsRequest> {
 
@@ -72,5 +71,4 @@ public class LastMirroredOffsetsRequest extends AbstractRequest {
                 version
         );
     }
-
 }
