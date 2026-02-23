@@ -210,6 +210,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     private final AtomicLong consumerGroupOffsetSyncError = new AtomicLong();
     private final AtomicLong metadataRefreshError = new AtomicLong();
     private final AtomicLong topicConfigSyncError = new AtomicLong();
+    private final Map<MirrorPartitionState, AtomicLong> partitionStateCounts = new ConcurrentHashMap<>();
 
     public MirrorMetadataManager(
         KafkaConfig config,
@@ -237,11 +238,11 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         metricsGroup.newGauge("ConsumerGroupOffsetSyncError", consumerGroupOffsetSyncError::get);
         metricsGroup.newGauge("TopicMetadataRefreshError", metadataRefreshError::get);
         metricsGroup.newGauge("TopicConfigSyncError", topicConfigSyncError::get);
-        metricsGroup.newGauge("PreparingPartitionState", () -> mirrorPartitionState.values().stream().filter(s -> s == MirrorPartitionState.PREPARING).count());
-        metricsGroup.newGauge("MirroringPartitionState", () -> mirrorPartitionState.values().stream().filter(s -> s == MirrorPartitionState.MIRRORING).count());
-        metricsGroup.newGauge("StoppingPartitionState", () -> mirrorPartitionState.values().stream().filter(s -> s == MirrorPartitionState.STOPPING).count());
-        metricsGroup.newGauge("StoppedPartitionState", () -> mirrorPartitionState.values().stream().filter(s -> s == MirrorPartitionState.STOPPED).count());
-        metricsGroup.newGauge("FailedPartitionState", () -> mirrorPartitionState.values().stream().filter(s -> s == MirrorPartitionState.FAILED).count());
+        metricsGroup.newGauge("PreparingPartitionState", () -> partitionStateCount(MirrorPartitionState.PREPARING));
+        metricsGroup.newGauge("MirroringPartitionState", () -> partitionStateCount(MirrorPartitionState.MIRRORING));
+        metricsGroup.newGauge("StoppingPartitionState", () -> partitionStateCount(MirrorPartitionState.STOPPING));
+        metricsGroup.newGauge("StoppedPartitionState", () -> partitionStateCount(MirrorPartitionState.STOPPED));
+        metricsGroup.newGauge("FailedPartitionState", () -> partitionStateCount(MirrorPartitionState.FAILED));
     }
 
     /**
@@ -327,7 +328,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                         topic.partitions().forEach(partition -> {
                             if (partition.state() != -1) {
                                 MirrorPartitionState state = MirrorPartitionState.fromValue(partition.state());
-                                mirrorPartitionState.put(new MirrorPartitionKey(key.mirrorName, tp.topic(), tp.partition()), state);
+                                putPartitionState(new MirrorPartitionKey(key.mirrorName, tp.topic(), tp.partition()), state);
                                 stateTransitioner.ifPresent(t -> {
                                     if (stopRequested && mirrorPartitionState.get(key) != MirrorPartitionState.STOPPED) {
                                         t.transitionTo(key.mirrorName, tp, MirrorPartitionState.STOPPING);
@@ -427,7 +428,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
             if (mirrorName != null && !mirrorName.isEmpty() && !isLocalCoordinator(mirrorName)) {
                 String updatedMirrorName = originalMirrorName(mirrorName);
                 MirrorPartitionKey key = new MirrorPartitionKey(updatedMirrorName, followerTp.topic(), followerTp.partition());
-                mirrorPartitionState.remove(key);
+                removePartitionState(key);
                 lastMirroredOffsets.remove(key);
             }
         });
@@ -650,7 +651,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                                     lastMirroredOffsets.put(new MirrorPartitionKey(mirrorName, topic.name(), partition.partitionIndex()), partition.lastMirroredOffset());
                                 }
                                 if (partition.state() != -1) {
-                                    mirrorPartitionState.put(new MirrorPartitionKey(mirrorName, topic.name(), partition.partitionIndex()), MirrorPartitionState.fromValue(partition.state()));
+                                    putPartitionState(new MirrorPartitionKey(mirrorName, topic.name(), partition.partitionIndex()), MirrorPartitionState.fromValue(partition.state()));
                                 }
                                 mirrorTopics.compute(mirrorName, (key, oldVal) -> {
                                     if (oldVal == null) {
@@ -899,7 +900,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
      * @param mirrorState The new mirror partition state
      */
     public void updateMirrorPartitionState(String clusterName, TopicPartition topicPartition, MirrorPartitionState mirrorState) {
-        mirrorPartitionState.put(new MirrorPartitionKey(clusterName, topicPartition.topic(), topicPartition.partition()), mirrorState);
+        putPartitionState(new MirrorPartitionKey(clusterName, topicPartition.topic(), topicPartition.partition()), mirrorState);
         mirrorTopics.compute(clusterName, (key, oldVal) -> {
             if (oldVal == null) {
                 return Set.of(topicPartition.topic());
@@ -909,6 +910,27 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                 return newSet;
             }
         });
+    }
+
+    private void putPartitionState(MirrorPartitionKey key, MirrorPartitionState newState) {
+        MirrorPartitionState oldState = mirrorPartitionState.put(key, newState);
+        if (oldState != null && oldState != newState) {
+            partitionStateCounts.computeIfAbsent(oldState, s -> new AtomicLong()).decrementAndGet();
+        }
+        if (oldState != newState) {
+            partitionStateCounts.computeIfAbsent(newState, s -> new AtomicLong()).incrementAndGet();
+        }
+    }
+
+    private void removePartitionState(MirrorPartitionKey key) {
+        MirrorPartitionState oldState = mirrorPartitionState.remove(key);
+        if (oldState != null) {
+            partitionStateCounts.computeIfAbsent(oldState, s -> new AtomicLong()).decrementAndGet();
+        }
+    }
+
+    private long partitionStateCount(MirrorPartitionState state) {
+        return partitionStateCounts.computeIfAbsent(state, s -> new AtomicLong()).get();
     }
 
     /**
