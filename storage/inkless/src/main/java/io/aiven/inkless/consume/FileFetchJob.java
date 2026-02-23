@@ -29,6 +29,7 @@ import io.aiven.inkless.TimeUtils;
 import io.aiven.inkless.common.ByteRange;
 import io.aiven.inkless.common.ObjectKey;
 import io.aiven.inkless.generated.FileExtent;
+import io.aiven.inkless.produce.buffer.BufferPool;
 import io.aiven.inkless.storage_backend.common.ObjectFetcher;
 import io.aiven.inkless.storage_backend.common.StorageBackendException;
 
@@ -40,18 +41,21 @@ public class FileFetchJob implements Callable<FileExtent> {
     private final ByteRange range;
     private final int size;
     private final Consumer<Long> durationCallback;
+    private final BufferPool bufferPool;
 
     public FileFetchJob(Time time,
                         ObjectFetcher objectFetcher,
                         ObjectKey key,
                         ByteRange range,
-                        Consumer<Long> durationCallback) {
+                        Consumer<Long> durationCallback,
+                        BufferPool bufferPool) {
         this.time = time;
         this.objectFetcher = objectFetcher;
         this.key = key;
         this.range = range;
         this.durationCallback = durationCallback;
         this.size = range.bufferSize();
+        this.bufferPool = bufferPool;
     }
 
     // visible for testing
@@ -70,7 +74,7 @@ public class FileFetchJob implements Callable<FileExtent> {
     }
 
     private FileExtent doWork() throws IOException, StorageBackendException {
-        final ByteBuffer byteBuffer = objectFetcher.readToByteBuffer(objectFetcher.fetch(key, range));
+        final ByteBuffer byteBuffer = objectFetcher.readToByteBuffer(objectFetcher.fetch(key, range), bufferPool);
         return createFileExtent(key, range, byteBuffer);
     }
 
@@ -83,11 +87,12 @@ public class FileFetchJob implements Callable<FileExtent> {
         return size == that.size
                 && Objects.equals(objectFetcher, that.objectFetcher)
                 && Objects.equals(key, that.key)
-                && Objects.equals(range, that.range);
+                && Objects.equals(range, that.range)
+                && Objects.equals(bufferPool, that.bufferPool);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(objectFetcher, key, range, size);
+        return Objects.hash(objectFetcher, key, range, size, bufferPool);
     }
 }

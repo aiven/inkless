@@ -50,6 +50,7 @@ import io.aiven.inkless.common.ObjectKeyCreator;
 import io.aiven.inkless.common.metrics.ThreadPoolMonitor;
 import io.aiven.inkless.control_plane.ControlPlane;
 import io.aiven.inkless.generated.FileExtent;
+import io.aiven.inkless.produce.buffer.BufferPool;
 import io.aiven.inkless.storage_backend.common.ObjectFetcher;
 import io.github.bucket4j.Bandwidth;
 import io.github.bucket4j.Bucket;
@@ -93,6 +94,7 @@ public class Reader implements AutoCloseable {
     private final InklessFetchMetrics fetchMetrics;
     private final BrokerTopicStats brokerTopicStats;
     private final Bucket rateLimiter;
+    private final BufferPool bufferPool;
     private ThreadPoolMonitor metadataThreadPoolMonitor;
     private ThreadPoolMonitor dataThreadPoolMonitor;
     private ThreadPoolMonitor laggingConsumerThreadPoolMonitor;
@@ -111,7 +113,8 @@ public class Reader implements AutoCloseable {
         long laggingConsumerThresholdMs,
         int laggingConsumerRequestRateLimit,
         int laggingConsumerThreadPoolSize,
-        int maxBatchesPerPartitionToFind
+        int maxBatchesPerPartitionToFind,
+        BufferPool bufferPool
     ) {
         this(
             time,
@@ -135,7 +138,8 @@ public class Reader implements AutoCloseable {
                 ? createBoundedThreadPool(laggingConsumerThreadPoolSize)
                 : null,
             new InklessFetchMetrics(time, cache),
-            brokerTopicStats
+            brokerTopicStats,
+            bufferPool
         );
     }
 
@@ -171,7 +175,8 @@ public class Reader implements AutoCloseable {
         int laggingConsumerRequestRateLimit,
         ExecutorService laggingFetchDataExecutor,
         InklessFetchMetrics fetchMetrics,
-        BrokerTopicStats brokerTopicStats
+        BrokerTopicStats brokerTopicStats,
+        BufferPool bufferPool
     ) {
         this.time = time;
         this.objectKeyCreator = objectKeyCreator;
@@ -221,6 +226,7 @@ public class Reader implements AutoCloseable {
 
         this.fetchMetrics = fetchMetrics;
         this.brokerTopicStats = brokerTopicStats;
+        this.bufferPool = bufferPool;
         try {
             // Initialize all monitors first, then assign to fields to ensure all-or-nothing semantics.
             // If any monitor creation fails, none are assigned, preventing inconsistent monitoring state.
@@ -302,7 +308,8 @@ public class Reader implements AutoCloseable {
                     rateLimiter,
                     laggingFetchDataExecutor,
                     coordinates,
-                    fetchMetrics
+                    fetchMetrics,
+                    bufferPool
                 ).get();
             })
             // Fetch Data (dataExecutor): Flatten list of futures into single future with all results

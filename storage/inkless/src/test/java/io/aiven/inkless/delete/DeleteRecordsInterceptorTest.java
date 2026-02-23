@@ -111,7 +111,10 @@ class DeleteRecordsInterceptorTest {
             OBJECT_CACHE,
             BATCH_COORDINATE_CACHE,
             brokerTopicStats,
-            DEFAULT_TOPIC_CONFIGS
+            DEFAULT_TOPIC_CONFIGS,
+            null,
+            null,
+            0
         );
         final DeleteRecordsInterceptor interceptor = new DeleteRecordsInterceptor(state);
 
@@ -146,7 +149,7 @@ class DeleteRecordsInterceptorTest {
         when(metadataView.isDisklessTopic(eq("non_diskless"))).thenReturn(false);
         final DeleteRecordsInterceptor interceptor = new DeleteRecordsInterceptor(
             new SharedState(time, BROKER_ID, disklessConfig, metadataView, controlPlane,
-                OBJECT_KEY_CREATOR, KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, BATCH_COORDINATE_CACHE, brokerTopicStats, DEFAULT_TOPIC_CONFIGS));
+                OBJECT_KEY_CREATOR, KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, BATCH_COORDINATE_CACHE, brokerTopicStats, DEFAULT_TOPIC_CONFIGS, null, null, 0));
 
         final Map<TopicPartition, Long> entriesPerPartition = Map.of(
             new TopicPartition("non_diskless", 0), 4567L
@@ -183,7 +186,7 @@ class DeleteRecordsInterceptorTest {
 
         final DeleteRecordsInterceptor interceptor = new DeleteRecordsInterceptor(
             new SharedState(time, BROKER_ID, disklessConfig, metadataView, controlPlane,
-                OBJECT_KEY_CREATOR, KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, BATCH_COORDINATE_CACHE, brokerTopicStats, DEFAULT_TOPIC_CONFIGS),
+                OBJECT_KEY_CREATOR, KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, BATCH_COORDINATE_CACHE, brokerTopicStats, DEFAULT_TOPIC_CONFIGS, null, null, 0),
             new SynchronousExecutor());
 
         final TopicPartition tp0 = new TopicPartition("diskless", 0);
@@ -226,7 +229,7 @@ class DeleteRecordsInterceptorTest {
 
         final DeleteRecordsInterceptor interceptor = new DeleteRecordsInterceptor(
             new SharedState(time, BROKER_ID, disklessConfig, metadataView, controlPlane,
-                OBJECT_KEY_CREATOR, KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, BATCH_COORDINATE_CACHE, brokerTopicStats, DEFAULT_TOPIC_CONFIGS),
+                OBJECT_KEY_CREATOR, KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, BATCH_COORDINATE_CACHE, brokerTopicStats, DEFAULT_TOPIC_CONFIGS, null, null, 0),
             new SynchronousExecutor());
 
         final TopicPartition topicPartition = new TopicPartition("diskless", 1);
@@ -267,7 +270,7 @@ class DeleteRecordsInterceptorTest {
 
         final DeleteRecordsInterceptor interceptor = new DeleteRecordsInterceptor(
             new SharedState(time, BROKER_ID, disklessConfig, metadataView, controlPlane,
-                OBJECT_KEY_CREATOR, KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, BATCH_COORDINATE_CACHE, brokerTopicStats, DEFAULT_TOPIC_CONFIGS),
+                OBJECT_KEY_CREATOR, KEY_ALIGNMENT_STRATEGY, OBJECT_CACHE, BATCH_COORDINATE_CACHE, brokerTopicStats, DEFAULT_TOPIC_CONFIGS, null, null, 0),
             new SynchronousExecutor());
 
         final TopicPartition topicPartition1 = new TopicPartition("diskless1", 1);

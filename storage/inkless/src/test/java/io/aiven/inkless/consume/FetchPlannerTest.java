@@ -359,7 +359,7 @@ public class FetchPlannerTest {
 
                 // Mock readToByteBuffer to return the test data we want to verify
                 // Order matters: first call returns dataA, second call returns dataB
-                when(fetcher.readToByteBuffer(any()))
+                when(fetcher.readToByteBuffer(any(), any()))
                     .thenReturn(ByteBuffer.wrap(dataA))
                     .thenReturn(ByteBuffer.wrap(dataB));
 
@@ -422,7 +422,7 @@ public class FetchPlannerTest {
                 // Mock the fetcher to return data via ByteBuffer
                 when(fetcher.fetch(any(ObjectKey.class), any(ByteRange.class)))
                     .thenReturn(null); // channel not used directly
-                when(fetcher.readToByteBuffer(any()))
+                when(fetcher.readToByteBuffer(any(), any()))
                     .thenReturn(byteBuffer);
 
                 final Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of(
@@ -553,7 +553,7 @@ public class FetchPlannerTest {
                 when(fetcher.fetch(any(ObjectKey.class), any(ByteRange.class)))
                     .thenThrow(new RuntimeException("Transient S3 error"))
                     .thenReturn(null);
-                when(fetcher.readToByteBuffer(any()))
+                when(fetcher.readToByteBuffer(any(), any()))
                     .thenReturn(ByteBuffer.wrap(expectedData));
 
                 final Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of(
@@ -606,7 +606,7 @@ public class FetchPlannerTest {
                 // Mock fetcher to return data
                 when(fetcher.fetch(eq(OBJECT_KEY_A), any(ByteRange.class)))
                     .thenReturn(null);
-                when(fetcher.readToByteBuffer(any()))
+                when(fetcher.readToByteBuffer(any(), any()))
                     .thenReturn(ByteBuffer.wrap(expectedData));
 
                 // Create coordinates with TWO batches that map to the SAME cache key
@@ -655,7 +655,7 @@ public class FetchPlannerTest {
 
                 when(fetcher.fetch(eq(OBJECT_KEY_A), any(ByteRange.class))).thenReturn(null);
                 when(fetcher.fetch(eq(OBJECT_KEY_B), any(ByteRange.class))).thenReturn(null);
-                when(fetcher.readToByteBuffer(any()))
+                when(fetcher.readToByteBuffer(any(), any()))
                     .thenReturn(ByteBuffer.wrap(dataA))
                     .thenReturn(ByteBuffer.wrap(dataB));
 
@@ -701,7 +701,7 @@ public class FetchPlannerTest {
                 final byte[] expectedData = "old-data-but-hot-path".getBytes();
 
                 when(fetcher.fetch(eq(OBJECT_KEY_A), any(ByteRange.class))).thenReturn(null);
-                when(fetcher.readToByteBuffer(any())).thenReturn(ByteBuffer.wrap(expectedData));
+                when(fetcher.readToByteBuffer(any(), any())).thenReturn(ByteBuffer.wrap(expectedData));
 
                 // Very old timestamp - would be "lagging" if feature was enabled
                 final long veryOldTimestamp = time.milliseconds() - 3600_000L; // 1 hour ago
@@ -783,7 +783,7 @@ public class FetchPlannerTest {
                         .build();
 
                     when(fetcher.fetch(eq(OBJECT_KEY_A), any(ByteRange.class))).thenReturn(null);
-                    when(fetcher.readToByteBuffer(any())).thenReturn(ByteBuffer.wrap(expectedData));
+                    when(fetcher.readToByteBuffer(any(), any())).thenReturn(ByteBuffer.wrap(expectedData));
 
                     final long recentTimestamp = time.milliseconds() - 30000L; // 30 seconds ago (recent)
                     final Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of(
@@ -823,7 +823,7 @@ public class FetchPlannerTest {
                     final long threshold = 60 * 1000L;
 
                     when(fetcher.fetch(eq(OBJECT_KEY_A), any(ByteRange.class))).thenReturn(null);
-                    when(fetcher.readToByteBuffer(any())).thenReturn(ByteBuffer.wrap(expectedData));
+                    when(fetcher.readToByteBuffer(any(), any())).thenReturn(ByteBuffer.wrap(expectedData));
 
                     final long exactThresholdTimestamp = time.milliseconds() - threshold;
                     final Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of(
@@ -865,7 +865,7 @@ public class FetchPlannerTest {
                         .build();
 
                     when(fetcher.fetch(eq(OBJECT_KEY_A), any(ByteRange.class))).thenReturn(null);
-                    when(fetcher.readToByteBuffer(any())).thenReturn(ByteBuffer.wrap(expectedData));
+                    when(fetcher.readToByteBuffer(any(), any())).thenReturn(ByteBuffer.wrap(expectedData));
 
                     final long oldTimestamp = time.milliseconds() - 120000L; // 2 minutes ago (old)
                     final Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of(
@@ -905,7 +905,7 @@ public class FetchPlannerTest {
                     final byte[] expectedData = "old-data-no-limit".getBytes();
 
                     when(fetcher.fetch(eq(OBJECT_KEY_A), any(ByteRange.class))).thenReturn(null);
-                    when(fetcher.readToByteBuffer(any())).thenReturn(ByteBuffer.wrap(expectedData));
+                    when(fetcher.readToByteBuffer(any(), any())).thenReturn(ByteBuffer.wrap(expectedData));
 
                     final long oldTimestamp = time.milliseconds() - 120000L;
                     final Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of(
@@ -1046,7 +1046,8 @@ public class FetchPlannerTest {
                             null, // No rate limiter
                             saturatedExecutor, // Saturated executor
                             coordinates,
-                            metrics
+                            metrics,
+                            null // bufferPool
                         );
 
                         // Execute: Cold path returns failed future instead of throwing
@@ -1121,7 +1122,8 @@ public class FetchPlannerTest {
                         null, // No rate limiter
                         shutdownExecutor, // Shutdown executor
                         coordinates,
-                        metrics
+                        metrics,
+                        null // bufferPool
                     );
 
                     // Execute: Cold path returns failed future instead of throwing
@@ -1161,7 +1163,7 @@ public class FetchPlannerTest {
 
                     when(fetcher.fetch(eq(OBJECT_KEY_A), any(ByteRange.class))).thenReturn(null);
                     when(fetcher.fetch(eq(OBJECT_KEY_B), any(ByteRange.class))).thenReturn(null);
-                    when(fetcher.readToByteBuffer(any()))
+                    when(fetcher.readToByteBuffer(any(), any()))
                         .thenReturn(ByteBuffer.wrap(recentData))
                         .thenReturn(ByteBuffer.wrap(oldData));
 
@@ -1212,7 +1214,7 @@ public class FetchPlannerTest {
                     try {
                         when(fetcher.fetch(eq(OBJECT_KEY_A), any(ByteRange.class))).thenReturn(null);
                         when(fetcher.fetch(eq(OBJECT_KEY_B), any(ByteRange.class))).thenReturn(null);
-                        when(fetcher.readToByteBuffer(any()))
+                        when(fetcher.readToByteBuffer(any(), any()))
                             .thenReturn(ByteBuffer.wrap(recentData))
                             .thenReturn(ByteBuffer.wrap(oldData));
 
@@ -1240,7 +1242,8 @@ public class FetchPlannerTest {
                             null, // No rate limiter
                             coldExecutor, // Cold path executor
                             coordinates,
-                            metrics
+                            metrics,
+                            null // bufferPool
                         );
 
                         // Execute both paths concurrently
@@ -1288,7 +1291,7 @@ public class FetchPlannerTest {
                 try (CaffeineCache caffeineCache = new CaffeineCache(100, 3600, 180)) {
                     final byte[] expectedData = "all-recent".getBytes();
                     when(fetcher.fetch(eq(OBJECT_KEY_A), any(ByteRange.class))).thenReturn(null);
-                    when(fetcher.readToByteBuffer(any())).thenReturn(ByteBuffer.wrap(expectedData));
+                    when(fetcher.readToByteBuffer(any(), any())).thenReturn(ByteBuffer.wrap(expectedData));
 
                     final long oldTimestamp = time.milliseconds() - 120000L; // Would be lagging if feature enabled
                     final Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of(
@@ -1321,7 +1324,7 @@ public class FetchPlannerTest {
                 try (CaffeineCache caffeineCache = new CaffeineCache(100, 3600, 180)) {
                     final byte[] expectedData = "cold-no-limit".getBytes();
                     when(fetcher.fetch(eq(OBJECT_KEY_A), any(ByteRange.class))).thenReturn(null);
-                    when(fetcher.readToByteBuffer(any())).thenReturn(ByteBuffer.wrap(expectedData));
+                    when(fetcher.readToByteBuffer(any(), any())).thenReturn(ByteBuffer.wrap(expectedData));
 
                     final long oldTimestamp = time.milliseconds() - 120000L;
                     final Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of(
@@ -1358,7 +1361,7 @@ public class FetchPlannerTest {
                         .addLimit(limit -> limit.capacity(10).refillGreedy(10, java.time.Duration.ofSeconds(1)))
                         .build();
                     when(fetcher.fetch(eq(OBJECT_KEY_A), any(ByteRange.class))).thenReturn(null);
-                    when(fetcher.readToByteBuffer(any())).thenReturn(ByteBuffer.wrap(expectedData));
+                    when(fetcher.readToByteBuffer(any(), any())).thenReturn(ByteBuffer.wrap(expectedData));
 
                     final long oldTimestamp = time.milliseconds() - 120000L;
                     final Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of(
@@ -1412,7 +1415,8 @@ public class FetchPlannerTest {
             rateLimiter,
             laggingConsumerExecutor,
             batchCoordinatesFuture,
-            metrics
+            metrics,
+            null  // bufferPool not used in tests
         );
     }
 

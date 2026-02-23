@@ -41,6 +41,7 @@ import io.aiven.inkless.control_plane.BatchInfo;
 import io.aiven.inkless.control_plane.FindBatchResponse;
 import io.aiven.inkless.generated.CacheKey;
 import io.aiven.inkless.generated.FileExtent;
+import io.aiven.inkless.produce.buffer.BufferPool;
 import io.aiven.inkless.storage_backend.common.ObjectFetcher;
 import io.github.bucket4j.Bucket;
 
@@ -75,6 +76,7 @@ public class FetchPlanner implements Supplier<List<FetchPlanner.FetchRequestWith
     private final Bucket laggingRateLimiter;
     private final Map<TopicIdPartition, FindBatchResponse> batchCoordinates;
     private final InklessFetchMetrics metrics;
+    private final BufferPool bufferPool;
 
     public FetchPlanner(
         Time time,
@@ -88,7 +90,8 @@ public class FetchPlanner implements Supplier<List<FetchPlanner.FetchRequestWith
         Bucket laggingRateLimiter,
         ExecutorService laggingFetchDataExecutor,
         Map<TopicIdPartition, FindBatchResponse> batchCoordinates,
-        InklessFetchMetrics metrics
+        InklessFetchMetrics metrics,
+        BufferPool bufferPool
     ) {
         this.time = time;
         this.objectKeyCreator = objectKeyCreator;
@@ -102,6 +105,7 @@ public class FetchPlanner implements Supplier<List<FetchPlanner.FetchRequestWith
         this.laggingRateLimiter = laggingRateLimiter;
         this.batchCoordinates = batchCoordinates;
         this.metrics = metrics;
+        this.bufferPool = bufferPool;
     }
 
     /**
@@ -296,7 +300,8 @@ public class FetchPlanner implements Supplier<List<FetchPlanner.FetchRequestWith
                 fetcher,
                 request.objectKey(),
                 request.byteRange(),
-                metrics::fetchFileFinished
+                metrics::fetchFileFinished,
+                bufferPool
             );
             final FileExtent fileExtent = job.call();
 
