@@ -564,4 +564,127 @@ class InklessConfigTest {
         assertThat(config.fetchLaggingConsumerRequestRateLimit()).isEqualTo(300);
         assertThat(config.maxBatchesPerEnforcementRequest()).isEqualTo(10);
     }
+
+    @Test
+    void bufferPoolConfigDefaults() {
+        final var config = new InklessConfig(
+            Map.of(
+                "control.plane.class", InMemoryControlPlane.class.getCanonicalName(),
+                "storage.backend.class", ConfigTestStorageBackend.class.getCanonicalName()
+            )
+        );
+
+        assertThat(config.isProduceBufferPoolEnabled()).isFalse();
+        assertThat(config.produceBufferPoolSizePerClass()).isEqualTo(4);
+        assertThat(config.produceBufferPoolMinSizeBytes()).isEqualTo(64 * 1024); // 64KB default
+    }
+
+    @Test
+    void bufferPoolConfigExplicitValues() {
+        final Map<String, String> configs = new HashMap<>();
+        configs.put("control.plane.class", InMemoryControlPlane.class.getCanonicalName());
+        configs.put("storage.backend.class", ConfigTestStorageBackend.class.getCanonicalName());
+        configs.put("produce.buffer.pool.enabled", "true");
+        configs.put("produce.buffer.pool.size.per.class", "8");
+        configs.put("produce.buffer.pool.min.size.bytes", "32768"); // 32KB
+
+        final var config = new InklessConfig(configs);
+
+        assertThat(config.isProduceBufferPoolEnabled()).isTrue();
+        assertThat(config.produceBufferPoolSizePerClass()).isEqualTo(8);
+        assertThat(config.produceBufferPoolMinSizeBytes()).isEqualTo(32768);
+    }
+
+    @Test
+    void bufferPoolSizePerClassZeroInvalid() {
+        final Map<String, String> config = Map.of(
+            "control.plane.class", InMemoryControlPlane.class.getCanonicalName(),
+            "storage.backend.class", ConfigTestStorageBackend.class.getCanonicalName(),
+            "produce.buffer.pool.size.per.class", "0"
+        );
+        assertThatThrownBy(() -> new InklessConfig(config))
+            .isInstanceOf(ConfigException.class)
+            .hasMessage("Invalid value 0 for configuration produce.buffer.pool.size.per.class: Value must be at least 1");
+    }
+
+    @Test
+    void bufferPoolSizePerClassExceedsUpperBoundInvalid() {
+        // Test that buffer pool size exceeding upper bound (128) is invalid
+        // This prevents accidental excessive memory allocation (128 * 127MB = 16GB per size class)
+        final Map<String, String> config = Map.of(
+            "control.plane.class", InMemoryControlPlane.class.getCanonicalName(),
+            "storage.backend.class", ConfigTestStorageBackend.class.getCanonicalName(),
+            "produce.buffer.pool.size.per.class", "129"
+        );
+        assertThatThrownBy(() -> new InklessConfig(config))
+            .isInstanceOf(ConfigException.class)
+            .hasMessageContaining("produce.buffer.pool.size.per.class")
+            .hasMessageContaining("Value must be no more than 128");
+    }
+
+    @Test
+    void bufferPoolSizePerClassAtUpperBoundValid() {
+        // Test that buffer pool size at upper bound (128) is valid
+        final Map<String, String> config = Map.of(
+            "control.plane.class", InMemoryControlPlane.class.getCanonicalName(),
+            "storage.backend.class", ConfigTestStorageBackend.class.getCanonicalName(),
+            "produce.buffer.pool.size.per.class", "128"
+        );
+        final var inklessConfig = new InklessConfig(config);
+        assertThat(inklessConfig.produceBufferPoolSizePerClass()).isEqualTo(128);
+    }
+
+    @Test
+    void bufferPoolMinSizeBytesZeroValid() {
+        // Setting min size to 0 means always use the pool (no minimum threshold)
+        final Map<String, String> config = Map.of(
+            "control.plane.class", InMemoryControlPlane.class.getCanonicalName(),
+            "storage.backend.class", ConfigTestStorageBackend.class.getCanonicalName(),
+            "produce.buffer.pool.min.size.bytes", "0"
+        );
+        final var inklessConfig = new InklessConfig(config);
+        assertThat(inklessConfig.produceBufferPoolMinSizeBytes()).isEqualTo(0);
+    }
+
+    @Test
+    void bufferPoolMinSizeBytesNegativeInvalid() {
+        final Map<String, String> config = Map.of(
+            "control.plane.class", InMemoryControlPlane.class.getCanonicalName(),
+            "storage.backend.class", ConfigTestStorageBackend.class.getCanonicalName(),
+            "produce.buffer.pool.min.size.bytes", "-1"
+        );
+        assertThatThrownBy(() -> new InklessConfig(config))
+            .isInstanceOf(ConfigException.class)
+            .hasMessageContaining("produce.buffer.pool.min.size.bytes");
+    }
+
+    @Test
+    void bufferPoolMinSizeBytesExceedsUpperBoundInvalid() {
+        // Test that min size exceeding 1MB (smallest size class) is invalid
+        // Values > 1MB would effectively disable pooling since all requests
+        // would be below the minimum threshold
+        final int oneMbPlusOne = 1024 * 1024 + 1;
+        final Map<String, String> config = Map.of(
+            "control.plane.class", InMemoryControlPlane.class.getCanonicalName(),
+            "storage.backend.class", ConfigTestStorageBackend.class.getCanonicalName(),
+            "produce.buffer.pool.min.size.bytes", String.valueOf(oneMbPlusOne)
+        );
+        assertThatThrownBy(() -> new InklessConfig(config))
+            .isInstanceOf(ConfigException.class)
+            .hasMessageContaining("produce.buffer.pool.min.size.bytes")
+            .hasMessageContaining("Value must be no more than 1048576");
+    }
+
+    @Test
+    void bufferPoolMinSizeBytesAtUpperBoundValid() {
+        // Test that min size at 1MB (smallest size class) is valid
+        final int oneMb = 1024 * 1024;
+        final Map<String, String> config = Map.of(
+            "control.plane.class", InMemoryControlPlane.class.getCanonicalName(),
+            "storage.backend.class", ConfigTestStorageBackend.class.getCanonicalName(),
+            "produce.buffer.pool.min.size.bytes", String.valueOf(oneMb)
+        );
+        final var inklessConfig = new InklessConfig(config);
+        assertThat(inklessConfig.produceBufferPoolMinSizeBytes()).isEqualTo(oneMb);
+    }
 }

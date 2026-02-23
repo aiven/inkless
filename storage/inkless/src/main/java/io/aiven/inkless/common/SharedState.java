@@ -26,6 +26,9 @@ import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.storage.internals.log.LogConfig;
 import org.apache.kafka.storage.log.metrics.BrokerTopicStats;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.io.Closeable;
 import java.io.IOException;
 import java.time.Duration;
@@ -42,10 +45,18 @@ import io.aiven.inkless.cache.ObjectCache;
 import io.aiven.inkless.config.InklessConfig;
 import io.aiven.inkless.control_plane.ControlPlane;
 import io.aiven.inkless.control_plane.MetadataView;
+import io.aiven.inkless.produce.buffer.BufferPool;
+import io.aiven.inkless.produce.buffer.BufferPoolMetrics;
+import io.aiven.inkless.produce.buffer.ElasticBufferPool;
 import io.aiven.inkless.storage_backend.common.StorageBackend;
 
 public final class SharedState implements Closeable {
+    private static final Logger log = LoggerFactory.getLogger(SharedState.class);
     public static final String STORAGE_METRIC_CONTEXT = "io.aiven.inkless.storage";
+
+    // Buffer pool size classes: 1MB, 2MB, 4MB, 8MB, 16MB, 32MB, 64MB
+    private static final int[] BUFFER_POOL_SIZE_CLASSES = {1, 2, 4, 8, 16, 32, 64};
+    private static final int BUFFER_POOL_HIGH_COUNT_THRESHOLD = 8;
 
     private final Time time;
     private final int brokerId;
@@ -59,6 +70,9 @@ public final class SharedState implements Closeable {
     private final BrokerTopicStats brokerTopicStats;
     private final Supplier<LogConfig> defaultTopicConfigs;
     private final Metrics storageMetrics;
+    private final BufferPool bufferPool;  // null when disabled
+    private final BufferPoolMetrics bufferPoolMetrics;  // null when pool disabled
+    private final int bufferPoolMinSizeBytes;
 
     public SharedState(
         final Time time,
@@ -71,7 +85,10 @@ public final class SharedState implements Closeable {
         final ObjectCache cache,
         final BatchCoordinateCache batchCoordinateCache,
         final BrokerTopicStats brokerTopicStats,
-        final Supplier<LogConfig> defaultTopicConfigs
+        final Supplier<LogConfig> defaultTopicConfigs,
+        final BufferPool bufferPool,
+        final BufferPoolMetrics bufferPoolMetrics,
+        final int bufferPoolMinSizeBytes
     ) {
         this.time = time;
         this.brokerId = brokerId;
@@ -84,12 +101,70 @@ public final class SharedState implements Closeable {
         this.batchCoordinateCache = batchCoordinateCache;
         this.brokerTopicStats = brokerTopicStats;
         this.defaultTopicConfigs = defaultTopicConfigs;
+        this.bufferPool = bufferPool;
+        this.bufferPoolMetrics = bufferPoolMetrics;
+        this.bufferPoolMinSizeBytes = bufferPoolMinSizeBytes;
 
         final MetricsReporter reporter = new JmxReporter();
         this.storageMetrics = new Metrics(
             new MetricConfig(), List.of(reporter), Time.SYSTEM,
             new KafkaMetricsContext(STORAGE_METRIC_CONTEXT)
         );
+    }
+
+    /**
+     * Result of buffer pool initialization containing the pool, metrics, and min size threshold.
+     */
+    private record BufferPoolInitResult(
+        ElasticBufferPool pool,
+        BufferPoolMetrics metrics,
+        int minSizeBytes
+    ) {
+        static final BufferPoolInitResult DISABLED = new BufferPoolInitResult(null, null, 0);
+    }
+
+    /**
+     * Creates and initializes the buffer pool based on configuration.
+     *
+     * @param config the Inkless configuration
+     * @return the initialization result containing pool, metrics, and min size threshold
+     */
+    private static BufferPoolInitResult initializeBufferPool(InklessConfig config) {
+        if (!config.isProduceBufferPoolEnabled()) {
+            return BufferPoolInitResult.DISABLED;
+        }
+
+        int buffersPerClass = config.produceBufferPoolSizePerClass();
+        int minPoolSizeBytes = config.produceBufferPoolMinSizeBytes();
+
+        // Calculate total pool memory for logging
+        long totalPoolSizeMb = 0;
+        for (int sizeClassMb : BUFFER_POOL_SIZE_CLASSES) {
+            totalPoolSizeMb += (long) sizeClassMb * buffersPerClass;
+        }
+
+        // Warn if buffer count is very high
+        if (buffersPerClass > BUFFER_POOL_HIGH_COUNT_THRESHOLD) {
+            log.warn("Buffer pool configured with {} buffers per size class. "
+                + "This allocates {}MB of heap memory. Consider reducing if memory constrained.",
+                buffersPerClass, totalPoolSizeMb);
+        }
+
+        // Determine prewarm count: -1 means all, 0 means lazy, positive is exact count
+        int configuredPrewarm = config.produceBufferPoolPrewarmCount();
+        int prewarmCount;
+        if (configuredPrewarm == -1) {
+            prewarmCount = buffersPerClass;  // Pre-warm all
+        } else {
+            prewarmCount = Math.min(configuredPrewarm, buffersPerClass);  // Clamp to max
+        }
+
+        log.info("Initializing elastic buffer pool: {} buffers per size class, {}MB max memory, minSize={}KB, prewarm={}.",
+            buffersPerClass, totalPoolSizeMb, minPoolSizeBytes / 1024, prewarmCount);
+
+        ElasticBufferPool pool = new ElasticBufferPool(buffersPerClass, prewarmCount);
+        BufferPoolMetrics metrics = new BufferPoolMetrics(pool);
+        return new BufferPoolInitResult(pool, metrics, minPoolSizeBytes);
     }
 
     public static SharedState initialize(
@@ -107,6 +182,9 @@ public final class SharedState implements Closeable {
                 "Value of consume.batch.coordinate.cache.ttl.ms exceeds file.cleaner.retention.period.ms / 2"
             );
         }
+
+        BufferPoolInitResult bufferPoolResult = initializeBufferPool(config);
+
         return new SharedState(
             time,
             brokerId,
@@ -122,7 +200,10 @@ public final class SharedState implements Closeable {
             ),
             config.isBatchCoordinateCacheEnabled() ? new CaffeineBatchCoordinateCache(config.batchCoordinateCacheTtl()) : new NullBatchCoordinateCache(),
             brokerTopicStats,
-            defaultTopicConfigs
+            defaultTopicConfigs,
+            bufferPoolResult.pool(),
+            bufferPoolResult.metrics(),
+            bufferPoolResult.minSizeBytes()
         );
     }
 
@@ -132,6 +213,12 @@ public final class SharedState implements Closeable {
             cache.close();
             controlPlane.close();
             storageMetrics.close();
+            if (bufferPoolMetrics != null) {
+                bufferPoolMetrics.close();
+            }
+            if (bufferPool != null) {
+                bufferPool.close();
+            }
         } catch (Exception e) {
             throw new RuntimeException(e);
         }
@@ -187,5 +274,24 @@ public final class SharedState implements Closeable {
 
     public StorageBackend buildStorage() {
         return config.storage(storageMetrics);
+    }
+
+    /**
+     * Returns the buffer pool for produce buffers, or null if disabled.
+     *
+     * @return the buffer pool, or null if {@code produce.buffer.pool.enabled} is false
+     */
+    public BufferPool bufferPool() {
+        return bufferPool;
+    }
+
+    /**
+     * Returns the minimum buffer size in bytes to use the pool.
+     * Smaller buffers use heap allocation directly.
+     *
+     * @return min pool size threshold in bytes, or 0 if pool is disabled
+     */
+    public int bufferPoolMinSizeBytes() {
+        return bufferPoolMinSizeBytes;
     }
 }

@@ -67,6 +67,30 @@ public class InklessConfig extends AbstractConfig {
     private static final String PRODUCE_UPLOAD_BACKOFF_MS_DOC = "The number of millisecond to back off for before the next upload attempt.";
     private static final int PRODUCE_UPLOAD_BACKOFF_MS_DEFAULT = 10;
 
+    public static final String PRODUCE_BUFFER_POOL_ENABLED_CONFIG = PRODUCE_PREFIX + "buffer.pool.enabled";
+    private static final String PRODUCE_BUFFER_POOL_ENABLED_DOC = "If true, reuse buffers from a pool instead of allocating fresh byte arrays for each produce batch.";
+    private static final boolean PRODUCE_BUFFER_POOL_ENABLED_DEFAULT = false;
+
+    public static final String PRODUCE_BUFFER_POOL_SIZE_PER_CLASS_CONFIG = PRODUCE_PREFIX + "buffer.pool.size.per.class";
+    private static final String PRODUCE_BUFFER_POOL_SIZE_PER_CLASS_DOC = "The number of buffers to pool per size class. "
+        + "Each size class (1MB, 2MB, 4MB, 8MB, 16MB, 32MB, 64MB) will have this many pooled buffers.";
+    private static final int PRODUCE_BUFFER_POOL_SIZE_PER_CLASS_DEFAULT = 4;
+
+    public static final String PRODUCE_BUFFER_POOL_MIN_SIZE_BYTES_CONFIG = PRODUCE_PREFIX + "buffer.pool.min.size.bytes";
+    private static final String PRODUCE_BUFFER_POOL_MIN_SIZE_BYTES_DOC = "The minimum buffer size in bytes to use the pool. "
+        + "Smaller buffers use fresh allocation instead of the pool. Set to 0 to always use the pool. "
+        + "Maximum value is 1MB (smallest pool size class).";
+    private static final int PRODUCE_BUFFER_POOL_MIN_SIZE_BYTES_DEFAULT = 64 * 1024;
+    private static final int PRODUCE_BUFFER_POOL_MIN_SIZE_BYTES_MAX = 1024 * 1024;
+
+    public static final String PRODUCE_BUFFER_POOL_PREWARM_COUNT_CONFIG = PRODUCE_PREFIX + "buffer.pool.prewarm.count";
+    private static final String PRODUCE_BUFFER_POOL_PREWARM_COUNT_DOC = "The number of buffers to pre-allocate per size class at startup. "
+        + "Pre-warming eliminates allocation latency spikes during initial load. "
+        + "Set to 0 for lazy allocation (buffers allocated on demand). "
+        + "Set to -1 to pre-warm all buffers (equals buffer.pool.size.per.class). "
+        + "Values greater than buffer.pool.size.per.class are clamped to that maximum.";
+    private static final int PRODUCE_BUFFER_POOL_PREWARM_COUNT_DEFAULT = -1;  // Pre-warm all by default
+
     public static final String STORAGE_PREFIX = "storage.";
 
     public static final String STORAGE_BACKEND_CLASS_CONFIG = STORAGE_PREFIX + "backend.class";
@@ -259,6 +283,41 @@ public class InklessConfig extends AbstractConfig {
             ConfigDef.Range.atLeast(0),
             ConfigDef.Importance.MEDIUM,
             PRODUCE_UPLOAD_BACKOFF_MS_DOC
+        );
+
+        configDef.define(
+            PRODUCE_BUFFER_POOL_ENABLED_CONFIG,
+            ConfigDef.Type.BOOLEAN,
+            PRODUCE_BUFFER_POOL_ENABLED_DEFAULT,
+            ConfigDef.Importance.MEDIUM,
+            PRODUCE_BUFFER_POOL_ENABLED_DOC
+        );
+
+        configDef.define(
+            PRODUCE_BUFFER_POOL_SIZE_PER_CLASS_CONFIG,
+            ConfigDef.Type.INT,
+            PRODUCE_BUFFER_POOL_SIZE_PER_CLASS_DEFAULT,
+            ConfigDef.Range.between(1, 128),
+            ConfigDef.Importance.MEDIUM,
+            PRODUCE_BUFFER_POOL_SIZE_PER_CLASS_DOC
+        );
+
+        configDef.define(
+            PRODUCE_BUFFER_POOL_MIN_SIZE_BYTES_CONFIG,
+            ConfigDef.Type.INT,
+            PRODUCE_BUFFER_POOL_MIN_SIZE_BYTES_DEFAULT,
+            ConfigDef.Range.between(0, PRODUCE_BUFFER_POOL_MIN_SIZE_BYTES_MAX),
+            ConfigDef.Importance.LOW,
+            PRODUCE_BUFFER_POOL_MIN_SIZE_BYTES_DOC
+        );
+
+        configDef.define(
+            PRODUCE_BUFFER_POOL_PREWARM_COUNT_CONFIG,
+            ConfigDef.Type.INT,
+            PRODUCE_BUFFER_POOL_PREWARM_COUNT_DEFAULT,
+            ConfigDef.Range.atLeast(-1),
+            ConfigDef.Importance.MEDIUM,
+            PRODUCE_BUFFER_POOL_PREWARM_COUNT_DOC
         );
 
         configDef.define(
@@ -542,6 +601,28 @@ public class InklessConfig extends AbstractConfig {
     }
     public Duration produceUploadBackoff() {
         return Duration.ofMillis(getInt(PRODUCE_UPLOAD_BACKOFF_MS_CONFIG));
+    }
+
+    public boolean isProduceBufferPoolEnabled() {
+        return getBoolean(PRODUCE_BUFFER_POOL_ENABLED_CONFIG);
+    }
+
+    public int produceBufferPoolSizePerClass() {
+        return getInt(PRODUCE_BUFFER_POOL_SIZE_PER_CLASS_CONFIG);
+    }
+
+    public int produceBufferPoolMinSizeBytes() {
+        return getInt(PRODUCE_BUFFER_POOL_MIN_SIZE_BYTES_CONFIG);
+    }
+
+    /**
+     * Returns the number of buffers to pre-warm per size class.
+     *
+     * @return prewarm count: -1 means pre-warm all (use buffer.pool.size.per.class),
+     *         0 means lazy allocation, positive values specify exact count
+     */
+    public int produceBufferPoolPrewarmCount() {
+        return getInt(PRODUCE_BUFFER_POOL_PREWARM_COUNT_CONFIG);
     }
 
     public int fetchCacheBlockBytes() {
