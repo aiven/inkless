@@ -119,6 +119,7 @@ import java.util.Random;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentSkipListSet;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Supplier;
@@ -205,10 +206,10 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     private Optional<StateTransitioner> stateTransitioner = Optional.empty();
     private Optional<Function<MirrorRecordKey, Integer>> coordinatingPartFinder = Optional.empty();
     private KafkaMetricsGroup metricsGroup = new KafkaMetricsGroup(this.getClass());
-    private volatile long aclSyncError = 0;
-    private volatile long consumerGroupOffsetSyncError = 0;
-    private volatile long metadataRefreshError = 0;
-    private volatile long topicConfigSyncError = 0;
+    private final AtomicLong aclSyncError = new AtomicLong();
+    private final AtomicLong consumerGroupOffsetSyncError = new AtomicLong();
+    private final AtomicLong metadataRefreshError = new AtomicLong();
+    private final AtomicLong topicConfigSyncError = new AtomicLong();
 
     public MirrorMetadataManager(
         KafkaConfig config,
@@ -232,10 +233,10 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         this.channelManager = channelManager;
         this.groupCoordinatorSupplier = groupCoordinatorSupplier;
 
-        metricsGroup.newGauge("AclSyncError", () -> aclSyncError);
-        metricsGroup.newGauge("ConsumerGroupOffsetSyncError", () -> consumerGroupOffsetSyncError);
-        metricsGroup.newGauge("TopicMetadataRefreshError", () -> metadataRefreshError);
-        metricsGroup.newGauge("TopicConfigSyncError", () -> topicConfigSyncError);
+        metricsGroup.newGauge("AclSyncError", aclSyncError::get);
+        metricsGroup.newGauge("ConsumerGroupOffsetSyncError", consumerGroupOffsetSyncError::get);
+        metricsGroup.newGauge("TopicMetadataRefreshError", metadataRefreshError::get);
+        metricsGroup.newGauge("TopicConfigSyncError", topicConfigSyncError::get);
         metricsGroup.newGauge("PreparingPartitionState", () -> mirrorPartitionState.values().stream().filter(s -> s == MirrorPartitionState.PREPARING).count());
         metricsGroup.newGauge("MirroringPartitionState", () -> mirrorPartitionState.values().stream().filter(s -> s == MirrorPartitionState.MIRRORING).count());
         metricsGroup.newGauge("StoppingPartitionState", () -> mirrorPartitionState.values().stream().filter(s -> s == MirrorPartitionState.STOPPING).count());
@@ -1018,7 +1019,8 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                 syncAccessControlLists(mirrorName, senders, mirrorConfig);
             }
         });
-        metadataRefreshError++;
+        // TODO: This is incremented on every metadata refresh for testing purpose, as we don't have error handling at this stage
+        metadataRefreshError.incrementAndGet();
     }
 
     private void checkMirrorConnections() {
@@ -1081,7 +1083,8 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
 
     private void syncTopicConfigurations(String mirrorName, List<MirrorBlockingSender> senders, MirrorConfig mirrorConfig) {
         LOG.info("!!! Describing topic configs for topics: {}", mirrorTopics);
-        topicConfigSyncError++;
+        // TODO: This is incremented on every metadata refresh for testing purpose, as we don't have error handling at this stage
+        topicConfigSyncError.incrementAndGet();
 
         List<DescribeConfigsRequestData.DescribeConfigsResource> describeConfigsResources =
             mirrorTopics.get(mirrorName).stream()
@@ -1269,12 +1272,8 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     }
 
     private void syncConsumerGroupOffsets(String mirrorName, List<MirrorBlockingSender> senders, MirrorConfig mirrorConfig) {
-<<<<<<< HEAD
-        consumerGroupOffsetSyncError++;
-
-=======
-            consumerGroupOffsetSyncError++;
->>>>>>> 11cda36f81 (add metrics)
+        // TODO: This is incremented on every metadata refresh for testing purpose, as we don't have error handling at this stage
+        consumerGroupOffsetSyncError.incrementAndGet();
         Pattern groupsIncludePattern = mirrorConfig.groupsIncludePattern();
         // 1. list group
         ListGroupsRequest.Builder builder = new ListGroupsRequest.Builder(new ListGroupsRequestData()
@@ -1378,7 +1377,8 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         var describeAclsResponse = getRandomSender(senders).sendRequest(describeAclsRequest);
         if (!(describeAclsResponse.responseBody() instanceof DescribeAclsResponse aclsResponse)) {
             LOG.warn("!!! describeAclsResponse is not DescribeAclsResponse: {}", describeAclsResponse);
-            aclSyncError++;
+            // TODO: This is incremented on every metadata refresh for testing purpose, as we don't have error handling at this stage
+            aclSyncError.incrementAndGet();
             return;
         }
 
