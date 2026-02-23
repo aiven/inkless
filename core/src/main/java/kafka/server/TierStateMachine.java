@@ -125,7 +125,7 @@ public class TierStateMachine {
         long initialLag = leaderEndOffset - offsetToFetch;
 
         return new PartitionFetchState(currentFetchState.topicId(), offsetToFetch, Optional.of(initialLag), currentFetchState.currentLeaderEpoch(),
-                ReplicaState.FETCHING, unifiedLog.latestEpoch(), currentFetchState.isMirrorFetch(), 0);
+                ReplicaState.FETCHING, unifiedLog.latestEpoch(), currentFetchState.mirrorName(), 0);
 
     }
 

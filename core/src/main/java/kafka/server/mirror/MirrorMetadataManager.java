@@ -100,6 +100,7 @@ import org.apache.kafka.server.common.ControllerRequestCompletionHandler;
 import org.apache.kafka.server.common.NodeToControllerChannelManager;
 import org.apache.kafka.server.common.RequestLocal;
 import org.apache.kafka.server.config.MirrorConfig;
+import org.apache.kafka.server.metrics.KafkaMetricsGroup;
 import org.apache.kafka.server.network.BrokerEndPoint;
 import org.apache.kafka.server.util.RequestAndCompletionHandler;
 
@@ -205,6 +206,11 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     private InterBrokerSender interBrokerSender;
     private Optional<StateTransitioner> stateTransitioner = Optional.empty();
     private Optional<Function<MirrorRecordKey, Integer>> coordinatingPartFinder = Optional.empty();
+    private KafkaMetricsGroup metricsGroup = new KafkaMetricsGroup(this.getClass());
+    private volatile long aclSyncError = 0;
+    private volatile long consumerGroupOffsetSyncError = 0;
+    private volatile long metadataRefreshError = 0;
+    private volatile long topicConfigSyncError = 0;
 
     public MirrorMetadataManager(
         KafkaConfig config,
@@ -227,6 +233,16 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         this.metadataCache = metadataCache;
         this.channelManager = channelManager;
         this.groupCoordinatorSupplier = groupCoordinatorSupplier;
+
+        metricsGroup.newGauge("AclSyncError", () -> aclSyncError);
+        metricsGroup.newGauge("ConsumerGroupOffsetSyncError", () -> consumerGroupOffsetSyncError);
+        metricsGroup.newGauge("TopicMetadataRefreshError", () -> metadataRefreshError);
+        metricsGroup.newGauge("TopicConfigSyncError", () -> topicConfigSyncError);
+        metricsGroup.newGauge("PreparingPartitionState", () -> mirrorPartitionState.values().stream().filter(s -> s == MirrorPartitionState.PREPARING).count());
+        metricsGroup.newGauge("MirroringPartitionState", () -> mirrorPartitionState.values().stream().filter(s -> s == MirrorPartitionState.MIRRORING).count());
+        metricsGroup.newGauge("StoppingPartitionState", () -> mirrorPartitionState.values().stream().filter(s -> s == MirrorPartitionState.STOPPING).count());
+        metricsGroup.newGauge("StoppedPartitionState", () -> mirrorPartitionState.values().stream().filter(s -> s == MirrorPartitionState.STOPPED).count());
+        metricsGroup.newGauge("FailedPartitionState", () -> mirrorPartitionState.values().stream().filter(s -> s == MirrorPartitionState.FAILED).count());
     }
 
     /**
@@ -1004,6 +1020,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                 syncAccessControlLists(mirrorName, senders, mirrorConfig);
             }
         });
+        metadataRefreshError++;
     }
 
     private void checkMirrorConnections() {
@@ -1067,6 +1084,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
 
     private void syncTopicConfigurations(String mirrorName, List<MirrorBlockingSender> senders, MirrorConfig mirrorConfig) {
         LOG.debug("!!! Describing topic configs for topics: {}", mirrorTopics);
+        topicConfigSyncError++;
 
         List<DescribeConfigsRequestData.DescribeConfigsResource> describeConfigsResources =
             mirrorTopics.get(mirrorName).stream()
@@ -1252,6 +1270,8 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     }
 
     private void syncConsumerGroupOffsets(String mirrorName, List<MirrorBlockingSender> senders, MirrorConfig mirrorConfig) {
+        consumerGroupOffsetSyncError++;
+
         Pattern groupsIncludePattern = mirrorConfig.groupsIncludePattern();
 
         // 1. list group
@@ -1356,6 +1376,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         var describeAclsResponse = getRandomSender(senders).sendRequest(describeAclsRequest);
         if (!(describeAclsResponse.responseBody() instanceof DescribeAclsResponse aclsResponse)) {
             LOG.warn("!!! describeAclsResponse is not DescribeAclsResponse: {}", describeAclsResponse);
+            aclSyncError++;
             return;
         }
 
@@ -1430,6 +1451,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                     new TimeoutHandler()
             );
         }
+
     }
 
     private record ACLChanges(List<AclBinding> aclsToAdd, List<AclBinding> aclsToDelete) { }

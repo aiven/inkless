@@ -72,14 +72,12 @@ class MirrorFetcherManager(brokerConfig: KafkaConfig,
   override def minFetchRate: Double = {
     // current min fetch rate across all fetchers/topics/partitions
     val headRate = mirrorFetcherThreadMap.values.headOption.map(_.fetcherStats.requestRate.oneMinuteRate).getOrElse(0.0)
-    info("!!! mirrorFetcherThreadMap: " + mirrorFetcherThreadMap + ";;" + fetcherThreadMap + ";;" + headRate)
     mirrorFetcherThreadMap.values.foldLeft(headRate)((curMinAll, fetcherThread) =>
       math.min(curMinAll, fetcherThread.fetcherStats.requestRate.oneMinuteRate))
   }
 
   override def maxLag: Long = {
     // current max lag across all fetchers/topics/partitions
-    info("!!! mirrorFetcherThreadMap: " + mirrorFetcherThreadMap + fetcherThreadMap)
     mirrorFetcherThreadMap.values.foldLeft(0L) { (curMaxLagAll, fetcherThread) =>
       val maxLagThread = fetcherThread.fetcherLagStats.stats.values.stream().mapToLong(v => v.lag).max().orElse(0L)
       math.max(curMaxLagAll, maxLagThread)
@@ -289,7 +287,7 @@ case class MirrorPartitionKey(mirrorName: String, topicPartition: TopicPartition
  * Lag information for a mirrored partition.
  *
  * @param sourceOffset The high watermark offset from the source cluster leader
- * @param destinationOffset The log end offset on the destination cluster
+ * @param destinationOffset The high watermark on the destination cluster
  * @param lag The computed lag (sourceOffset - destinationOffset)
  * @param lastUpdateMs Timestamp when this lag was last updated
  */
