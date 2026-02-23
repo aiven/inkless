@@ -67,6 +67,25 @@ class MirrorFetcherManager(brokerConfig: KafkaConfig,
   private val mirrorFetcherThreadMap = new mutable.HashMap[BrokerAndFetcherIdWithMirror, MirrorFetcherThread]
   private val lagInfo = new mutable.HashMap[MirrorPartitionKey, MirrorLagInfo]
 
+  override def deadThreadCount: Int = lock synchronized { mirrorFetcherThreadMap.values.count(_.isThreadFailed) }
+
+  override def minFetchRate: Double = {
+    // current min fetch rate across all fetchers/topics/partitions
+    val headRate = mirrorFetcherThreadMap.values.headOption.map(_.fetcherStats.requestRate.oneMinuteRate).getOrElse(0.0)
+    info("!!! mirrorFetcherThreadMap: " + mirrorFetcherThreadMap + ";;" + fetcherThreadMap + ";;" + headRate)
+    mirrorFetcherThreadMap.values.foldLeft(headRate)((curMinAll, fetcherThread) =>
+      math.min(curMinAll, fetcherThread.fetcherStats.requestRate.oneMinuteRate))
+  }
+
+  override def maxLag: Long = {
+    // current max lag across all fetchers/topics/partitions
+    info("!!! mirrorFetcherThreadMap: " + mirrorFetcherThreadMap + fetcherThreadMap)
+    mirrorFetcherThreadMap.values.foldLeft(0L) { (curMaxLagAll, fetcherThread) =>
+      val maxLagThread = fetcherThread.fetcherLagStats.stats.values.stream().mapToLong(v => v.lag).max().orElse(0L)
+      math.max(curMaxLagAll, maxLagThread)
+    }
+  }
+
   override def createFetcherThread(fetcherId: Int, sourceBroker: BrokerEndPoint): MirrorFetcherThread = {
     throw new UnsupportedOperationException("Use createMirrorFetcherThread for mirror fetchers")
   }

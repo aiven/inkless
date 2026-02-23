@@ -986,7 +986,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
      */
     public void refreshMetadata() {
         if (!mirrorTopics.isEmpty()) {
-            LOG.info("!!! Refreshing mirror metadata for topics:" + mirrorTopics);
+            LOG.debug("!!! Refreshing mirror metadata for topics:" + mirrorTopics);
         }
 
         checkMirrorConnections();
@@ -1066,7 +1066,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     }
 
     private void syncTopicConfigurations(String mirrorName, List<MirrorBlockingSender> senders, MirrorConfig mirrorConfig) {
-        LOG.info("!!! Describing topic configs for topics: {}", mirrorTopics);
+        LOG.debug("!!! Describing topic configs for topics: {}", mirrorTopics);
 
         List<DescribeConfigsRequestData.DescribeConfigsResource> describeConfigsResources =
             mirrorTopics.get(mirrorName).stream()
@@ -1194,7 +1194,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     }
 
     private void applyConfigurationChanges(Map<String, Map<String, String>> configsToChange) {
-        LOG.info("!!! Applying config change: {}", configsToChange);
+        LOG.debug("!!! Applying config change: {}", configsToChange);
 
         Map<ConfigResource, Collection<AlterConfigOp>> configOps = new HashMap<>();
         configsToChange.forEach((name, changes) -> {
@@ -1230,7 +1230,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     }
 
     private void maybeDeleteTopic(String mirrorName, Collection<MetadataResponse.TopicMetadata> topicMetadataResp) {
-        LOG.info("!!! Deleting topics from topicMetadataResp: {}", topicMetadataResp);
+        LOG.debug("!!! Deleting topics from topicMetadataResp: {}", topicMetadataResp);
         List<String> deletedTopics = new ArrayList<>();
         // deleted topics if needed
         List<String> remoteTopicNamesDeleted = topicMetadataResp.stream()
@@ -1238,13 +1238,13 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                 .map(MetadataResponse.TopicMetadata::topic).toList();
         mirrorTopics.get(mirrorName).forEach(name -> {
             if (remoteTopicNamesDeleted.contains(name)) {
-                LOG.info("!!! Detected topic {} deleted in remote cluster {}, removing it locally too", name, mirrorName);
+                LOG.debug("!!! Detected topic {} deleted in remote cluster {}, removing it locally too", name, mirrorName);
                 // send a delete topic request to the controller
                 channelManager.sendRequest(new DeleteTopicsRequest.Builder(
                         new DeleteTopicsRequestData()
                                 .setTopicNames(List.of(name))
                                 .setTimeoutMs(10000)), new TimeoutHandler());
-                LOG.info("!!! Sent delete topic request for {}", name);
+                LOG.debug("!!! Sent delete topic request for {}", name);
                 deletedTopics.add(name);
             }
         });
@@ -1261,7 +1261,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                 .setStatesFilter(singletonList(GroupState.STABLE.name())));
         var listGroupResponse = getRandomSender(senders).sendRequest(builder);
         if (listGroupResponse.responseBody() instanceof ListGroupsResponse listGroupsRes) {
-            LOG.info("!!! listGroupsRes for mirror {}: {}", mirrorName, listGroupsRes);
+            LOG.debug("!!! listGroupsRes for mirror {}: {}", mirrorName, listGroupsRes);
 
             // Filter groups by include pattern
             var matchingGroups = listGroupsRes.data().groups().stream()
@@ -1281,7 +1281,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                                     .setTopics(null)).toList()), false);
             var offsetFetchResponse = getRandomSender(senders).sendRequest(offsetFetchBuilder);
             if (offsetFetchResponse.responseBody() instanceof OffsetFetchResponse offsetFetchRes) {
-                LOG.info("!!! Periodic offset fetch: {}", offsetFetchRes);
+                LOG.debug("!!! Periodic offset fetch: {}", offsetFetchRes);
 
                 // 3. commit offsets to consumer group coordinator
                 // TODO: need to find the current group coordinator for each group
@@ -1359,7 +1359,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
             return;
         }
 
-        LOG.info("!!! describeAclsResponse from remote cluster {}: {}", mirrorName, aclsResponse);
+        LOG.debug("!!! describeAclsResponse from remote cluster {}: {}", mirrorName, aclsResponse);
 
         // Filter ACLs by include rules
         List<MirrorConfig.AclRule> aclIncludeRules = mirrorConfig.aclIncludeRules();
