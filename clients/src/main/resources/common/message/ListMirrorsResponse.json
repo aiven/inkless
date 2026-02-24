@@ -27,8 +27,8 @@
       "about": "The error code, or 0 if there was no error." },
     { "name": "Mirrors", "type": "[]ListedMirror", "versions": "0+",
       "about": "Each mirror in the response.", "fields": [
-      { "name": "MirrorName", "type": "string", "versions": "0+",
-        "about": "The mirror name." },
+      { "name": "MirrorName", "type": "string", "versions": "0+", "entityType": "mirrorName",
+        "about": "The cluster mirror name." },
       { "name": "SourceBootstrap", "type": "string", "versions": "0+",
         "about": "The source cluster bootstrap servers." },
       { "name": "TopicCount", "type": "int32", "versions": "0+", "default": "0",

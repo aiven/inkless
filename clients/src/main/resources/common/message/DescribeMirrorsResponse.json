@@ -27,8 +27,8 @@
       "about": "Each described mirror.", "fields": [
       { "name": "ErrorCode", "type": "int16", "versions": "0+",
         "about": "The error code, or 0 if there was no error." },
-      { "name": "MirrorName", "type": "string", "versions": "0+",
-        "about": "The mirror name." },
+      { "name": "MirrorName", "type": "string", "versions": "0+", "entityType": "mirrorName",
+        "about": "The cluster mirror name." },
       { "name": "Topics", "type": "[]TopicPartitions", "versions": "0+",
         "about": "Each topic in the mirror.", "fields": [
         { "name": "TopicName", "type": "string", "versions": "0+",

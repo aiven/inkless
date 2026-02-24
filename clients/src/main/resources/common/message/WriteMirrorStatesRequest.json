@@ -21,7 +21,7 @@
   "validVersions": "0",
   "flexibleVersions": "0+",
   "fields": [
-    { "name": "MirrorName", "type": "string", "versions": "0+", "about": "The mirror name." },
+    { "name": "MirrorName", "type": "string", "versions": "0+", "entityType": "mirrorName", "about": "The cluster mirror name." },
     { "name": "TopicsUpdated", "type": "[]TopicState", "versions": "0",
       "about": "The topics to be updated.", "fields": [
       { "name": "Name", "type": "string", "versions": "0", "entityType": "topicName",
