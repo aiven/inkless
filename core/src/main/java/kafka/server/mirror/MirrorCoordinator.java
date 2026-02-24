@@ -424,9 +424,12 @@ public class MirrorCoordinator {
         }
 
         LOG.info("Starting up.");
+        numPartitions = kafkaConfig.mirrorConfig().topicNumPartitions();
         mirrorMetadataManager.setStateTransitioner((mirrorName, tp, state) -> transitionTo(mirrorName, Set.of(tp), state));
         mirrorMetadataManager.setCoordinatingPartitionFinder(key -> getCoordinatingPartitionByKey(key));
+
         scheduler.startup();
+
         // periodically query source cluster to get the metadata
         long metadataRefreshIntervalMs = kafkaConfig.mirrorConfig().metadataRefreshIntervalMs();
         scheduler.schedule("mirror-metadata-refresh",
@@ -434,7 +437,8 @@ public class MirrorCoordinator {
                 metadataRefreshIntervalMs,
                 metadataRefreshIntervalMs
         );
-        numPartitions = kafkaConfig.mirrorConfig().topicNumPartitions();
+
+        LOG.info("Startup complete.");
     }
 
     /**

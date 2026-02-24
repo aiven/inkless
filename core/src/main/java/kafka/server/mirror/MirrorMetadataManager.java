@@ -206,10 +206,10 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     private Optional<StateTransitioner> stateTransitioner = Optional.empty();
     private Optional<Function<MirrorRecordKey, Integer>> coordinatingPartFinder = Optional.empty();
     private KafkaMetricsGroup metricsGroup = new KafkaMetricsGroup(this.getClass());
-    private final AtomicLong aclSyncError = new AtomicLong();
-    private final AtomicLong consumerGroupOffsetSyncError = new AtomicLong();
-    private final AtomicLong metadataRefreshError = new AtomicLong();
     private final AtomicLong topicConfigSyncError = new AtomicLong();
+    private final AtomicLong consumerGroupOffsetSyncError = new AtomicLong();
+    private final AtomicLong aclSyncError = new AtomicLong();
+    private final AtomicLong metadataRefreshError = new AtomicLong();
     private final Map<MirrorPartitionState, AtomicLong> partitionStateCounts = new ConcurrentHashMap<>();
 
     public MirrorMetadataManager(
@@ -234,10 +234,11 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         this.channelManager = channelManager;
         this.groupCoordinatorSupplier = groupCoordinatorSupplier;
 
-        metricsGroup.newGauge("AclSyncError", aclSyncError::get);
-        metricsGroup.newGauge("ConsumerGroupOffsetSyncError", consumerGroupOffsetSyncError::get);
-        metricsGroup.newGauge("TopicMetadataRefreshError", metadataRefreshError::get);
         metricsGroup.newGauge("TopicConfigSyncError", topicConfigSyncError::get);
+        metricsGroup.newGauge("ConsumerGroupOffsetSyncError", consumerGroupOffsetSyncError::get);
+        metricsGroup.newGauge("AclSyncError", aclSyncError::get);
+        metricsGroup.newGauge("TopicMetadataRefreshError", metadataRefreshError::get);
+
         metricsGroup.newGauge("PreparingPartitionState", () -> partitionStateCount(MirrorPartitionState.PREPARING));
         metricsGroup.newGauge("MirroringPartitionState", () -> partitionStateCount(MirrorPartitionState.MIRRORING));
         metricsGroup.newGauge("StoppingPartitionState", () -> partitionStateCount(MirrorPartitionState.STOPPING));
@@ -1041,6 +1042,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                 syncAccessControlLists(mirrorName, senders, mirrorConfig);
             }
         });
+
         // TODO: This is incremented on every metadata refresh for testing purpose, as we don't have error handling at this stage
         metadataRefreshError.incrementAndGet();
     }
@@ -1394,13 +1396,14 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         // TODO: How do we disambiguate ACLs that reference the same resource name
         //       when multiple cluster mirrors exist?
 
+        // TODO: This is incremented on every metadata refresh for testing purpose, as we don't have error handling at this stage
+        aclSyncError.incrementAndGet();
+
         // list remote acls
         var describeAclsRequest = new DescribeAclsRequest.Builder(ANY_RESOURCE_ACL);
         var describeAclsResponse = getRandomSender(senders).sendRequest(describeAclsRequest);
         if (!(describeAclsResponse.responseBody() instanceof DescribeAclsResponse aclsResponse)) {
             LOG.warn("!!! describeAclsResponse is not DescribeAclsResponse: {}", describeAclsResponse);
-            // TODO: This is incremented on every metadata refresh for testing purpose, as we don't have error handling at this stage
-            aclSyncError.incrementAndGet();
             return;
         }
 
