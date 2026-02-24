@@ -14,7 +14,7 @@
 // limitations under the License.
 
 {
-  "apiKey":96,
+  "apiKey": 96,
   "type": "response",
   "name": "RemoveTopicsFromMirrorResponse",
   // Version 0 is the initial version.

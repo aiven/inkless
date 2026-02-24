@@ -14,7 +14,7 @@
 // limitations under the License.
 
 {
-  "apiKey":95,
+  "apiKey": 95,
   "type": "request",
   "listeners": ["broker", "controller"],
   "name": "AddTopicsToMirrorRequest",
