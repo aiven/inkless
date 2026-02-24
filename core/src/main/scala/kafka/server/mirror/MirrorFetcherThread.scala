@@ -129,6 +129,12 @@ class MirrorFetcherThread(name: String,
     logAppendInfo
   }
 
+  // return the mirror partition lag
+  // TODO: Since we already record the lag in stats, maybe we don't cache the logInfo in mirrorFetcherManager anymore.
+  override def getPartitionLag(topicPartition: TopicPartition, leaderHW: Long, nextOffset: Long, mirrorName: String): Long = {
+    replicaMgr.mirrorFetcherManager.getLagInfo(mirrorName).get(topicPartition).map(_.lag).getOrElse(0L)
+  }
+
   override def initiateShutdown(): Boolean = {
     val justShutdown = super.initiateShutdown()
     if (justShutdown) {

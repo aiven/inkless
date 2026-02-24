@@ -38,7 +38,7 @@ import java.util.Optional;
  * @param state The current replica state (TRUNCATING, FETCHING, etc.)
  * @param lastFetchedEpoch The last fetched epoch from the log
  * @param dueMs The time when this partition is due for fetch (if delayed)
- * @param isMirrorFetch True if this is a mirroring fetch, false for local fetch
+ * @param mirrorName non-empty if this is a mirroring fetch
  */
 public record PartitionFetchState(
         Optional<Uuid> topicId,
@@ -49,7 +49,7 @@ public record PartitionFetchState(
         ReplicaState state,
         Optional<Integer> lastFetchedEpoch,
         Optional<Long> dueMs,
-        boolean isMirrorFetch
+        String mirrorName
 ) {
     public PartitionFetchState(
             Optional<Uuid> topicId,
@@ -69,10 +69,10 @@ public record PartitionFetchState(
             int currentLeaderEpoch,
             ReplicaState state,
             Optional<Integer> lastFetchedEpoch,
-            boolean isMirrorFetch,
+            String mirrorName,
             long dueMs) {
         this(topicId, fetchOffset, lag, currentLeaderEpoch,
-                Optional.empty(), state, lastFetchedEpoch, Optional.empty(), isMirrorFetch);
+                Optional.empty(), state, lastFetchedEpoch, Optional.empty(), mirrorName);
     }
 
     public PartitionFetchState(
@@ -85,7 +85,7 @@ public record PartitionFetchState(
             Optional<Integer> lastFetchedEpoch) {
         this(topicId, fetchOffset, lag, currentLeaderEpoch,
                 delay, state, lastFetchedEpoch,
-                delay.map(aLong -> aLong + Time.SYSTEM.milliseconds()), false);
+                delay.map(aLong -> aLong + Time.SYSTEM.milliseconds()), "");
     }
 
     public boolean isReadyForFetch() {
@@ -104,6 +104,10 @@ public record PartitionFetchState(
         return dueMs.filter(aLong -> aLong > Time.SYSTEM.milliseconds()).isPresent();
     }
 
+    public boolean isMirrorFetch() {
+        return mirrorName != null && !mirrorName.isBlank();
+    }
+
     @Override
     public String toString() {
         return "FetchState(topicId=" + topicId +
@@ -113,12 +117,12 @@ public record PartitionFetchState(
                 ", state=" + state +
                 ", lag=" + lag +
                 ", delay=" + delay.orElse(0L) + "ms)" +
-                ", isMirrorFetch=" + isMirrorFetch + ")";
+                ", mirrorName=" + mirrorName + ")";
     }
 
     public PartitionFetchState updateTopicId(Optional<Uuid> newTopicId) {
         return new PartitionFetchState(newTopicId, this.fetchOffset, this.lag,
                 this.currentLeaderEpoch, this.delay,
-                this.state, this.lastFetchedEpoch, this.dueMs, this.isMirrorFetch);
+                this.state, this.lastFetchedEpoch, this.dueMs, this.mirrorName);
     }
 }

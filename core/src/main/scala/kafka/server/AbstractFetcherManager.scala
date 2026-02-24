@@ -35,31 +35,35 @@ abstract class AbstractFetcherManager[T <: AbstractFetcherThread](val name: Stri
   // map of (source broker_id, fetcher_id per source broker) => fetcher.
   // package private for test
   private[server] val fetcherThreadMap = new mutable.HashMap[BrokerIdAndFetcherId, T]
-  private val lock = new Object
+  private[server] val lock = new Object
   private var numFetchersPerBroker = numFetchers
   val failedPartitions = new FailedPartitions
   this.logIdent = "[" + name + "] "
 
   private val tags = Map("clientId" -> clientId).asJava
 
-  metricsGroup.newGauge("MaxLag", () => {
+  metricsGroup.newGauge("MaxLag", () => maxLag, tags)
+
+  metricsGroup.newGauge("MinFetchRate", () => minFetchRate, tags)
+
+  metricsGroup.newGauge("FailedPartitionsCount", () => failedPartitions.size, tags)
+
+  metricsGroup.newGauge("DeadThreadCount", () => deadThreadCount, tags)
+
+  private[server] def minFetchRate: Double = {
+    // current min fetch rate across all fetchers/topics/partitions
+    val headRate = fetcherThreadMap.values.headOption.map(_.fetcherStats.requestRate.oneMinuteRate).getOrElse(0.0)
+    fetcherThreadMap.values.foldLeft(headRate)((curMinAll, fetcherThread) =>
+      math.min(curMinAll, fetcherThread.fetcherStats.requestRate.oneMinuteRate))
+  }
+
+  private[server] def maxLag: Long = {
     // current max lag across all fetchers/topics/partitions
     fetcherThreadMap.values.foldLeft(0L) { (curMaxLagAll, fetcherThread) =>
       val maxLagThread = fetcherThread.fetcherLagStats.stats.values.stream().mapToLong(v => v.lag).max().orElse(0L)
       math.max(curMaxLagAll, maxLagThread)
     }
-  }, tags)
-
-  metricsGroup.newGauge("MinFetchRate", () => {
-    // current min fetch rate across all fetchers/topics/partitions
-    val headRate = fetcherThreadMap.values.headOption.map(_.fetcherStats.requestRate.oneMinuteRate).getOrElse(0.0)
-    fetcherThreadMap.values.foldLeft(headRate)((curMinAll, fetcherThread) =>
-      math.min(curMinAll, fetcherThread.fetcherStats.requestRate.oneMinuteRate))
-  }, tags)
-
-  metricsGroup.newGauge("FailedPartitionsCount", () => failedPartitions.size, tags)
-
-  metricsGroup.newGauge("DeadThreadCount", () => deadThreadCount, tags)
+  }
 
   private[server] def deadThreadCount: Int = lock synchronized { fetcherThreadMap.values.count(_.isThreadFailed) }
 

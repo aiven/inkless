@@ -98,6 +98,7 @@ import org.apache.kafka.server.common.ControllerRequestCompletionHandler;
 import org.apache.kafka.server.common.NodeToControllerChannelManager;
 import org.apache.kafka.server.common.RequestLocal;
 import org.apache.kafka.server.config.MirrorConfig;
+import org.apache.kafka.server.metrics.KafkaMetricsGroup;
 import org.apache.kafka.server.network.BrokerEndPoint;
 import org.apache.kafka.server.util.RequestAndCompletionHandler;
 
@@ -118,6 +119,7 @@ import java.util.Random;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentSkipListSet;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Supplier;
@@ -203,6 +205,12 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     private InterBrokerSender interBrokerSender;
     private Optional<StateTransitioner> stateTransitioner = Optional.empty();
     private Optional<Function<MirrorRecordKey, Integer>> coordinatingPartFinder = Optional.empty();
+    private KafkaMetricsGroup metricsGroup = new KafkaMetricsGroup(this.getClass());
+    private final AtomicLong aclSyncError = new AtomicLong();
+    private final AtomicLong consumerGroupOffsetSyncError = new AtomicLong();
+    private final AtomicLong metadataRefreshError = new AtomicLong();
+    private final AtomicLong topicConfigSyncError = new AtomicLong();
+    private final Map<MirrorPartitionState, AtomicLong> partitionStateCounts = new ConcurrentHashMap<>();
 
     public MirrorMetadataManager(
         KafkaConfig config,
@@ -225,6 +233,16 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         this.metadataCache = metadataCache;
         this.channelManager = channelManager;
         this.groupCoordinatorSupplier = groupCoordinatorSupplier;
+
+        metricsGroup.newGauge("AclSyncError", aclSyncError::get);
+        metricsGroup.newGauge("ConsumerGroupOffsetSyncError", consumerGroupOffsetSyncError::get);
+        metricsGroup.newGauge("TopicMetadataRefreshError", metadataRefreshError::get);
+        metricsGroup.newGauge("TopicConfigSyncError", topicConfigSyncError::get);
+        metricsGroup.newGauge("PreparingPartitionState", () -> partitionStateCount(MirrorPartitionState.PREPARING));
+        metricsGroup.newGauge("MirroringPartitionState", () -> partitionStateCount(MirrorPartitionState.MIRRORING));
+        metricsGroup.newGauge("StoppingPartitionState", () -> partitionStateCount(MirrorPartitionState.STOPPING));
+        metricsGroup.newGauge("StoppedPartitionState", () -> partitionStateCount(MirrorPartitionState.STOPPED));
+        metricsGroup.newGauge("FailedPartitionState", () -> partitionStateCount(MirrorPartitionState.FAILED));
     }
 
     /**
@@ -310,7 +328,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                         topic.partitions().forEach(partition -> {
                             if (partition.state() != -1) {
                                 MirrorPartitionState state = MirrorPartitionState.fromValue(partition.state());
-                                mirrorPartitionState.put(new MirrorPartitionKey(key.mirrorName, tp.topic(), tp.partition()), state);
+                                putPartitionState(new MirrorPartitionKey(key.mirrorName, tp.topic(), tp.partition()), state);
                                 stateTransitioner.ifPresent(t -> {
                                     if (stopRequested && mirrorPartitionState.get(key) != MirrorPartitionState.STOPPED) {
                                         t.transitionTo(key.mirrorName, tp, MirrorPartitionState.STOPPING);
@@ -410,7 +428,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
             if (mirrorName != null && !mirrorName.isEmpty() && !isLocalCoordinator(mirrorName)) {
                 String updatedMirrorName = originalMirrorName(mirrorName);
                 MirrorPartitionKey key = new MirrorPartitionKey(updatedMirrorName, followerTp.topic(), followerTp.partition());
-                mirrorPartitionState.remove(key);
+                removePartitionState(key);
                 lastMirroredOffsets.remove(key);
             }
         });
@@ -633,7 +651,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                                     lastMirroredOffsets.put(new MirrorPartitionKey(mirrorName, topic.name(), partition.partitionIndex()), partition.lastMirroredOffset());
                                 }
                                 if (partition.state() != -1) {
-                                    mirrorPartitionState.put(new MirrorPartitionKey(mirrorName, topic.name(), partition.partitionIndex()), MirrorPartitionState.fromValue(partition.state()));
+                                    putPartitionState(new MirrorPartitionKey(mirrorName, topic.name(), partition.partitionIndex()), MirrorPartitionState.fromValue(partition.state()));
                                 }
                                 mirrorTopics.compute(mirrorName, (key, oldVal) -> {
                                     if (oldVal == null) {
@@ -882,7 +900,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
      * @param mirrorState The new mirror partition state
      */
     public void updateMirrorPartitionState(String clusterName, TopicPartition topicPartition, MirrorPartitionState mirrorState) {
-        mirrorPartitionState.put(new MirrorPartitionKey(clusterName, topicPartition.topic(), topicPartition.partition()), mirrorState);
+        putPartitionState(new MirrorPartitionKey(clusterName, topicPartition.topic(), topicPartition.partition()), mirrorState);
         mirrorTopics.compute(clusterName, (key, oldVal) -> {
             if (oldVal == null) {
                 return Set.of(topicPartition.topic());
@@ -892,6 +910,27 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                 return newSet;
             }
         });
+    }
+
+    private void putPartitionState(MirrorPartitionKey key, MirrorPartitionState newState) {
+        MirrorPartitionState oldState = mirrorPartitionState.put(key, newState);
+        if (oldState != null && oldState != newState) {
+            partitionStateCounts.computeIfAbsent(oldState, s -> new AtomicLong()).decrementAndGet();
+        }
+        if (oldState != newState) {
+            partitionStateCounts.computeIfAbsent(newState, s -> new AtomicLong()).incrementAndGet();
+        }
+    }
+
+    private void removePartitionState(MirrorPartitionKey key) {
+        MirrorPartitionState oldState = mirrorPartitionState.remove(key);
+        if (oldState != null) {
+            partitionStateCounts.computeIfAbsent(oldState, s -> new AtomicLong()).decrementAndGet();
+        }
+    }
+
+    private long partitionStateCount(MirrorPartitionState state) {
+        return partitionStateCounts.computeIfAbsent(state, s -> new AtomicLong()).get();
     }
 
     /**
@@ -984,7 +1023,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
      */
     public void refreshMetadata() {
         if (!mirrorTopics.isEmpty()) {
-            LOG.info("!!! Refreshing mirror metadata for topics:" + mirrorTopics);
+            LOG.debug("!!! Refreshing mirror metadata for topics:" + mirrorTopics);
         }
 
         checkMirrorConnections();
@@ -1002,6 +1041,8 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                 syncAccessControlLists(mirrorName, senders, mirrorConfig);
             }
         });
+        // TODO: This is incremented on every metadata refresh for testing purpose, as we don't have error handling at this stage
+        metadataRefreshError.incrementAndGet();
     }
 
     private void checkMirrorConnections() {
@@ -1064,6 +1105,8 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
 
     private void syncTopicConfigurations(String mirrorName, List<MirrorBlockingSender> senders, MirrorConfig mirrorConfig) {
         LOG.info("!!! Describing topic configs for topics: {}", mirrorTopics);
+        // TODO: This is incremented on every metadata refresh for testing purpose, as we don't have error handling at this stage
+        topicConfigSyncError.incrementAndGet();
 
         List<DescribeConfigsRequestData.DescribeConfigsResource> describeConfigsResources =
             mirrorTopics.get(mirrorName).stream()
@@ -1191,7 +1234,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     }
 
     private void applyConfigurationChanges(Map<String, Map<String, String>> configsToChange) {
-        LOG.info("!!! Applying config change: {}", configsToChange);
+        LOG.debug("!!! Applying config change: {}", configsToChange);
 
         Map<ConfigResource, Collection<AlterConfigOp>> configOps = new HashMap<>();
         configsToChange.forEach((name, changes) -> {
@@ -1251,8 +1294,9 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     }
 
     private void syncConsumerGroupOffsets(String mirrorName, List<MirrorBlockingSender> senders, MirrorConfig mirrorConfig) {
+        // TODO: This is incremented on every metadata refresh for testing purpose, as we don't have error handling at this stage
+        consumerGroupOffsetSyncError.incrementAndGet();
         Pattern groupsIncludePattern = mirrorConfig.groupsIncludePattern();
-
         // 1. list group
         ListGroupsRequest.Builder builder = new ListGroupsRequest.Builder(new ListGroupsRequestData()
                 // TODO: if the source cluster is in old version, it won't support types filter
@@ -1260,7 +1304,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                 .setStatesFilter(singletonList(GroupState.STABLE.name())));
         var listGroupResponse = getRandomSender(senders).sendRequest(builder);
         if (listGroupResponse.responseBody() instanceof ListGroupsResponse listGroupsRes) {
-            LOG.info("!!! listGroupsRes for mirror {}: {}", mirrorName, listGroupsRes);
+            LOG.debug("!!! listGroupsRes for mirror {}: {}", mirrorName, listGroupsRes);
 
             // Filter groups by include pattern
             var matchingGroups = listGroupsRes.data().groups().stream()
@@ -1280,7 +1324,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                                     .setTopics(null)).toList()), false);
             var offsetFetchResponse = getRandomSender(senders).sendRequest(offsetFetchBuilder);
             if (offsetFetchResponse.responseBody() instanceof OffsetFetchResponse offsetFetchRes) {
-                LOG.info("!!! Periodic offset fetch: {}", offsetFetchRes);
+                LOG.debug("!!! Periodic offset fetch: {}", offsetFetchRes);
 
                 // 3. commit offsets to consumer group coordinator
                 // TODO: need to find the current group coordinator for each group
@@ -1355,10 +1399,12 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         var describeAclsResponse = getRandomSender(senders).sendRequest(describeAclsRequest);
         if (!(describeAclsResponse.responseBody() instanceof DescribeAclsResponse aclsResponse)) {
             LOG.warn("!!! describeAclsResponse is not DescribeAclsResponse: {}", describeAclsResponse);
+            // TODO: This is incremented on every metadata refresh for testing purpose, as we don't have error handling at this stage
+            aclSyncError.incrementAndGet();
             return;
         }
 
-        LOG.info("!!! describeAclsResponse from remote cluster {}: {}", mirrorName, aclsResponse);
+        LOG.debug("!!! describeAclsResponse from remote cluster {}: {}", mirrorName, aclsResponse);
 
         // Filter ACLs by include rules
         List<MirrorConfig.AclRule> aclIncludeRules = mirrorConfig.aclIncludeRules();
@@ -1429,6 +1475,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                     new TimeoutHandler()
             );
         }
+
     }
 
     private record ACLChanges(List<AclBinding> aclsToAdd, List<AclBinding> aclsToDelete) { }
