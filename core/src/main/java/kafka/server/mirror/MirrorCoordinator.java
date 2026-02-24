@@ -88,17 +88,19 @@ import static org.apache.kafka.common.utils.Utils.require;
  */
 public class MirrorCoordinator {
     private static final Logger LOG = LoggerFactory.getLogger(MirrorCoordinator.class);
+
     private final AtomicBoolean isActive = new AtomicBoolean(false);
     private final KafkaConfig kafkaConfig;
     private final ReplicaManager replicaManager;
+    private final MirrorMetadataManager mirrorMetadataManager;
     private final Scheduler scheduler;
     private final Metrics metrics;
-    private final MetadataCache metadataCache;
     private final Time time;
+    private final MirrorRecordSerde serde;
+    private MetadataCache metadataCache;
+    private Map<String, MirrorBlockingSender> sourceSenders;
+
     private volatile int numPartitions = -1;
-    private final Map<String, MirrorBlockingSender> remoteBrokers = new HashMap<>();
-    private final MirrorRecordSerde serde = new MirrorRecordSerde();
-    private final MirrorMetadataManager mirrorMetadataManager;
 
     public MirrorCoordinator(
             KafkaConfig kafkaConfig,
@@ -111,11 +113,13 @@ public class MirrorCoordinator {
     ) {
         this.kafkaConfig = kafkaConfig;
         this.replicaManager = replicaManager;
+        this.mirrorMetadataManager = mirrorMetadataManager;
         this.scheduler = scheduler;
         this.metrics = metrics;
-        this.metadataCache = metadataCache;
         this.time = time;
-        this.mirrorMetadataManager = mirrorMetadataManager;
+        this.serde = new MirrorRecordSerde();
+        this.metadataCache = metadataCache;
+        this.sourceSenders = new HashMap<>();
     }
 
     /**
@@ -125,7 +129,8 @@ public class MirrorCoordinator {
      * @return true if this broker is the leader of the coordinator partition for this mirror
      */
     public boolean isLocalCoordinator(String mirrorName, String topic, int partition) {
-        var mirrorTopicPartition = new TopicPartition(Topic.MIRROR_STATE_TOPIC_NAME, getCoordinatingPartitionByKey(new MirrorRecordKey(mirrorName, metadataCache.getTopicId(topic), partition)));
+        var mirrorTopicPartition = new TopicPartition(Topic.MIRROR_STATE_TOPIC_NAME,
+                getCoordinatingPartitionByKey(new MirrorRecordKey(mirrorName, metadataCache.getTopicId(topic), partition)));
         var optLeaderAndIsr = metadataCache.getLeaderAndIsr(mirrorTopicPartition.topic(), mirrorTopicPartition.partition());
         return optLeaderAndIsr.isPresent() && optLeaderAndIsr.get().leader() == kafkaConfig.nodeId();
     }
@@ -400,18 +405,34 @@ public class MirrorCoordinator {
         numPartitions = kafkaConfig.mirrorConfig().topicNumPartitions();
         mirrorMetadataManager.setStateTransitioner((mirrorName, tp, state) -> transitionTo(mirrorName, Set.of(tp), state));
         mirrorMetadataManager.setCoordinatingPartitionFinder(key -> getCoordinatingPartitionByKey(key));
+        mirrorMetadataManager.setCoordinatingPartitionByNameFinder(mirrorName -> getCoordinatingPartitionByName(mirrorName));
 
         scheduler.startup();
 
         // periodically query source cluster to get the metadata
-//        long metadataRefreshIntervalMs = kafkaConfig.mirrorConfig().metadataRefreshIntervalMs();
-//        scheduler.schedule("mirror-metadata-refresh",
-//                mirrorMetadataManager::refreshMetadata,
-//                metadataRefreshIntervalMs,
-//                metadataRefreshIntervalMs
-//        );
+        long metadataRefreshIntervalMs = kafkaConfig.mirrorConfig().metadataRefreshIntervalMs();
+        scheduler.schedule("mirror-metadata-refresh",
+                () -> {
+                    mirrorMetadataManager.syncTopicMetadataFromSourceClusters();
+                    mirrorMetadataManager.syncMirrorMetadataFromSourceClusters();
+                },
+                metadataRefreshIntervalMs,
+                metadataRefreshIntervalMs
+        );
 
         LOG.info("Startup complete.");
+    }
+
+    /**
+     * Returns the partition index for the given mirror record key.
+     * Used to determine which partition in the mirror state topic should handle metadata sync.
+     *
+     * @param mirrorName the mirror name
+     * @return the partition index
+     */
+    public int getCoordinatingPartitionByName(String mirrorName) {
+        throwIfNotActive();
+        return Utils.abs(mirrorName.hashCode()) % numPartitions;
     }
 
     /**
@@ -716,11 +737,11 @@ public class MirrorCoordinator {
             int partitionIndex,
             OptionalInt partitionLeaderEpoch
     ) {
-        clearCache();
+        clear();
     }
 
-    private void clearCache() {
-        remoteBrokers.clear();
+    private void clear() {
+        sourceSenders.clear();
         mirrorMetadataManager.clear();
     }
 
