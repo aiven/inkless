@@ -42,26 +42,23 @@ package kafka.server.mirror;
  * </pre>
  */
 public enum MirrorPartitionState {
-    /** Initial state when mirror metadata changes are detected and need to be synchronized */
-    INITIALIZING((byte) 0),
-
     /** Topics are being prepared for mirroring (truncation may be needed) */
-    PREPARING((byte) 1),
+    PREPARING((byte) 0),
 
     /** Active mirroring from source cluster is in progress */
-    MIRRORING((byte) 2),
+    MIRRORING((byte) 1),
 
     /** Mirroring is being gracefully stopped */
-    STOPPING((byte) 4),
+    STOPPING((byte) 2),
 
     /** Mirroring has stopped; topic is now writable on this cluster */
-    STOPPED((byte) 8),
+    STOPPED((byte) 4),
 
     /** Error occurred during preparation or mirroring */
-    FAILED((byte) 16),
+    FAILED((byte) 8),
 
     /** Unknown state */
-    UNKNOWN((byte) 32);
+    UNKNOWN((byte) 16);
 
     private final byte value;
 
@@ -76,18 +73,16 @@ public enum MirrorPartitionState {
     public static MirrorPartitionState fromValue(byte value) {
         switch (value) {
             case 0:
-                return INITIALIZING;
-            case 1:
                 return PREPARING;
-            case 2:
+            case 1:
                 return MIRRORING;
-            case 4:
+            case 2:
                 return STOPPING;
-            case 8:
+            case 4:
                 return STOPPED;
-            case 16:
+            case 8:
                 return FAILED;
-            case 32:
+            case 16:
                 return UNKNOWN;
         }
         throw new IllegalArgumentException("Illegal mirror state: " + value);
@@ -98,17 +93,15 @@ public enum MirrorPartitionState {
             return true;
         }
         switch (target) {
-            case INITIALIZING:
-                return source == null || source == MirrorPartitionState.STOPPED || source == MirrorPartitionState.FAILED;
             case PREPARING:
-                return source == MirrorPartitionState.INITIALIZING
+                return source == null
+                        || source == MirrorPartitionState.UNKNOWN
                         || source == MirrorPartitionState.STOPPED
                         || source == MirrorPartitionState.FAILED;
             case MIRRORING:
                 return source == MirrorPartitionState.PREPARING;
             case STOPPING:
-                return source == MirrorPartitionState.INITIALIZING
-                        || source == MirrorPartitionState.PREPARING
+                return source == MirrorPartitionState.PREPARING
                         || source == MirrorPartitionState.MIRRORING;
             case STOPPED:
                 return source == MirrorPartitionState.STOPPING;

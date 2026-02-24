@@ -39,7 +39,7 @@ public class RemoveTopicsFromMirrorRequest extends AbstractRequest {
             super(ApiKeys.REMOVE_TOPICS_FROM_MIRROR, ApiKeys.REMOVE_TOPICS_FROM_MIRROR.oldestVersion(),
                     ApiKeys.REMOVE_TOPICS_FROM_MIRROR.latestVersion());
             RemoveTopicsFromMirrorRequestData data = new RemoveTopicsFromMirrorRequestData();
-            topics.forEach(topic -> data.topics().add(new RemoveTopicsFromMirrorRequestData.TopicState().setTopicName(topic)));
+            topics.forEach(topic -> data.topics().add(new RemoveTopicsFromMirrorRequestData.TopicData().setTopicName(topic)));
             this.data = data;
         }
 

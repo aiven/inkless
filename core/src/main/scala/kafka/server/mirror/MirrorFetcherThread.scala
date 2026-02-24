@@ -35,9 +35,10 @@ import scala.collection.{Map, Set}
  * cross-cluster replication where source and destination clusters have independent leader epochs.
  *
  * Key differences from ReplicaFetcherThread:
- * - Uses source cluster's leader epoch (not destination's) for append validation
+ * - Tracks source cluster's leader epoch for fetch validation, but rewrites to
+ *   destination cluster's local epoch before appending to the log
+ * - Rewrites producer IDs to negative space to avoid conflicts with local producers
  * - Routes fetcher operations to MirrorFetcherManager (not ReplicaFetcherManager)
- * - Syncs destination partition's epoch with source cluster's epoch
  *
  * @param name The name of the thread
  * @param leader The remote leader endpoint to fetch from (RemoteLeaderEndPoint)
@@ -95,8 +96,8 @@ class MirrorFetcherThread(name: String,
       trace("Mirror follower has replica log end offset %d for partition %s. Received %d bytes of messages and leader hw %d"
         .format(log.logEndOffset, topicPartition, records.sizeInBytes, partitionData.highWatermark))
 
-    // Append batches from the source cluster to the destination partition's log, preserving
-    // the original leader epochs from the source cluster.
+    // Append batches from the source cluster to the destination partition's log. Leader epochs
+    // are rewritten to the destination's local epoch and producer IDs to negative space before append.
     val logAppendInfo = partition.appendRecordsToFollowerOrFutureReplica(records, isFuture = false, partitionLeaderEpoch)
 
     if (logTrace)

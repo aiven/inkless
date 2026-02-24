@@ -296,7 +296,7 @@ class KafkaApis(val requestChannel: RequestChannel,
       info("!!! writeMirrorStatesRequest:" + writeMirrorStatesRequest)
       val mirrorName = writeMirrorStatesRequest.data().mirrorName()
       val partitionMetadata = new util.HashMap[String, util.Set[MirrorPartitionMetadata]]()
-      writeMirrorStatesRequest.data().topicsUpdated().forEach(topic => {
+      writeMirrorStatesRequest.data().topics().forEach(topic => {
         val partMetadata = new util.HashSet[MirrorPartitionMetadata]()
         topic.partitions().forEach(part => {
           partMetadata.add(new MirrorPartitionMetadata(part.partitionIndex(), MirrorPartitionState.fromValue(part.state()), part.lastMirroredOffset()))
@@ -337,22 +337,22 @@ class KafkaApis(val requestChannel: RequestChannel,
       logger.info(s"!!! Handling last mirrored offset request: ${lastMirroredOffsetRequest}")
       val responseData = new LastMirroredOffsetsResponseData()
       val mirrorName = lastMirroredOffsetRequest.data().mirrorName()
-      val topicList = new util.ArrayList[LastMirroredOffsetsResponseData.OffsetResponseTopic]()
+      val topicResults = new util.ArrayList[LastMirroredOffsetsResponseData.TopicResult]()
       lastMirroredOffsetRequest.data().topics().forEach(topic => {
-        val responseTopic = new LastMirroredOffsetsResponseData.OffsetResponseTopic()
-        val partitionList = new util.ArrayList[LastMirroredOffsetsResponseData.OffsetResponsePartition]()
+        val topicResult = new LastMirroredOffsetsResponseData.TopicResult()
+        val partitionResults = new util.ArrayList[LastMirroredOffsetsResponseData.PartitionResult]()
         topic.partitions().forEach(par => {
           val partition = new TopicPartition(topic.name(), par.partitionIndex())
-          val offsetPartition = new LastMirroredOffsetsResponseData.OffsetResponsePartition()
-          offsetPartition.setPartitionIndex(par.partitionIndex())
+          val partitionResult = new LastMirroredOffsetsResponseData.PartitionResult()
+          partitionResult.setPartitionIndex(par.partitionIndex())
             .setLastMirroredOffset(mirrorCoordinator.getLastMirroredOffset(mirrorName, partition))
-          partitionList.add(offsetPartition)
+          partitionResults.add(partitionResult)
         })
-        responseTopic.setName(topic.name())
-        responseTopic.setPartitions(partitionList)
-        topicList.add(responseTopic)
+        topicResult.setName(topic.name())
+        topicResult.setPartitions(partitionResults)
+        topicResults.add(topicResult)
       })
-      responseData.setTopics(topicList)
+      responseData.setTopics(topicResults)
 
       requestHelper.sendMaybeThrottle(request, new LastMirroredOffsetsResponse(responseData))
     } else {
@@ -362,30 +362,11 @@ class KafkaApis(val requestChannel: RequestChannel,
   }
 
   def handleAddTopicsToMirror(request: RequestChannel.Request): Unit = {
-    if (isClusterMirroringEnabled) {
-      val addTopicsToMirrorRequest = request.body[AddTopicsToMirrorRequest]
-      val mirrorTopics = addTopicsToMirrorRequest.data.topics().stream()
-        .filter(t => t.mirrorName() != null && !t.mirrorName().isEmpty)
-        .collect(Collectors.toList())
-      if (!mirrorTopics.isEmpty) {
-        val mirrorName = mirrorTopics.get(0).mirrorName()
-        val topicNames = mirrorTopics.stream()
-          .map(t => t.topicName())
-          .collect(Collectors.toSet())
-        logger.info(s"!!! Handling adding mirror topics request: $mirrorName with topics: $topicNames")
-        val topicPartitions = new util.HashSet[TopicPartition]()
-        // TODO: We should return error if the topic is not created, yet
-        topicNames.forEach(topicName => {
-          metadataCache.numPartitions(topicName).map(num => {
-            for (i <- 0 until num) {
-              topicPartitions.add(new TopicPartition(topicName, i))
-            }
-          })
-        })
-        mirrorCoordinator.transitionTo(mirrorName, topicPartitions, MirrorPartitionState.INITIALIZING)
-      }
-    } else {
+    // TODO: do the mirror partition state validation before forwarding to controller
+    if (!isClusterMirroringEnabled) {
       logger.warn("Cluster Mirroring is disabled (mirror.version=0), ignoring add topics to mirror request")
+      requestHelper.sendMaybeThrottle(request, new AddTopicsToMirrorResponse(new AddTopicsToMirrorResponseData().setErrorCode(Errors.INVALID_REQUEST.code)))
+      return
     }
     forwardToController(request)
   }

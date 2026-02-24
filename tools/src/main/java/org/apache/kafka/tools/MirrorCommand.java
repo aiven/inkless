@@ -210,71 +210,60 @@ public abstract class MirrorCommand {
                 }
             }
 
-            Node coordinatorNode = findCoordinator(mirrorName);
-            String bootstrapServer = coordinatorNode.host() + ":" + coordinatorNode.port();
-
-            try (Admin admin = createAdminClient(Optional.of(bootstrapServer), commandConfig)) {
-                // Prepare all NewTopic objects for batch creation
-                Set<NewTopic> newTopics = new HashSet<>();
-                for (String topicName : matchingTopics) {
-                    String topicId = topicIds.get(topicName);
-                    int partNum = partNums.get(topicName);
-                    NewTopic newTopic = new NewTopic(topicName,
-                        Optional.of(partNum), // use source topic partitions
-                        opts.replicationFactor(), // use provided replicationFactor or cluster default
-                        Optional.of(topicId));
-                    newTopics.add(newTopic);
-                }
-
-                // Try to create all matching topics
-                CreateTopicsResult createResult = admin.createTopics(newTopics,
-                    new CreateTopicsOptions().retryOnQuotaViolation(false));
-
-                // Attach created and existing topic to the mirror
-                Map<String, String> topics = new HashMap<>();
-                for (String topicName : matchingTopics) {
-                    try {
-                        createResult.values().get(topicName).get();
-                    } catch (ExecutionException e) {
-                        if (!(e.getCause() instanceof TopicExistsException)) {
-                            System.err.printf("Failed to add topic %s: %s%n", topicName, e.getCause().getMessage());
-                        }
-                    } finally {
-                        topics.put(topicName, mirrorName);
-                    }
-                }
-
-                // TODO: We should return error and let the command retry if the topic metadata is not propagated to brokers. Right now, we sleep 1 sec
-                Thread.sleep(1000);
-                // Ensures the mirror.name config is properly set even when topics already exist
-                AddTopicsToMirrorResult addResult = admin.addTopicsToMirror(
-                        coordinatorNode.id(), topics, new AddTopicsToMirrorOptions());
-                addResult.all().get();
-
-                System.out.printf("Added %d topic(s) to mirror %s: %s%n", topics.size(), mirrorName, topics.keySet());
+            // Prepare all NewTopic objects for batch creation
+            Set<NewTopic> newTopics = new HashSet<>();
+            for (String topicName : matchingTopics) {
+                String topicId = topicIds.get(topicName);
+                int partNum = partNums.get(topicName);
+                NewTopic newTopic = new NewTopic(topicName,
+                    Optional.of(partNum), // use source topic partitions
+                    opts.replicationFactor(), // use provided replicationFactor or cluster default
+                    Optional.of(topicId));
+                newTopics.add(newTopic);
             }
+
+            // Try to create all matching topics
+            CreateTopicsResult createResult = adminClient.createTopics(newTopics,
+                new CreateTopicsOptions().retryOnQuotaViolation(false));
+
+            // Attach created and existing topic to the mirror
+            Map<String, String> topics = new HashMap<>();
+            for (String topicName : matchingTopics) {
+                try {
+                    createResult.values().get(topicName).get();
+                } catch (ExecutionException e) {
+                    if (!(e.getCause() instanceof TopicExistsException)) {
+                        System.err.printf("Failed to add topic %s: %s%n", topicName, e.getCause().getMessage());
+                    }
+                } finally {
+                    topics.put(topicName, mirrorName);
+                }
+            }
+
+            // TODO: We should return error and let the command retry if the topic metadata is not propagated to brokers. Right now, we sleep 1 sec
+            Thread.sleep(1000);
+            // Ensures the mirror.name config is properly set even when topics already exist
+            AddTopicsToMirrorResult addResult = adminClient.addTopicsToMirror(topics, new AddTopicsToMirrorOptions());
+            addResult.all().get();
+
+            System.out.printf("Added %d topic(s) to mirror %s: %s%n", topics.size(), mirrorName, topics.keySet());
         }
 
         public void removeTopicsFromMirror(MirrorCommandOptions opts) throws Exception {
             String topicPattern = opts.topic().get();
             String mirrorName = opts.mirror().get();
 
-            Node node = findCoordinator(mirrorName);
-            String bootstrapServer = node.host() + ":" + node.port();
-
             Set<String> matchingTopics;
 
-            try (Admin admin = createAdminClient(Optional.of(bootstrapServer), commandConfig)) {
-                // List all topics from destination cluster and match against the pattern
-                var allTopics = admin.listTopics().names().get();
-                matchingTopics = matchTopics(allTopics, topicPattern);
+            // List all topics from destination cluster and match against the pattern
+            var allTopics = adminClient.listTopics().names().get();
+            matchingTopics = matchTopics(allTopics, topicPattern);
 
-                // Remove all matching topics from the mirror
-                RemoveTopicsFromMirrorResult removeTopicsFromMirrorResult = admin.removeTopicsFromMirror(
-                    matchingTopics, new RemoveTopicsFromMirrorOptions());
-                removeTopicsFromMirrorResult.all().get();
-                System.out.printf("Removed %d topic(s) from mirror %s: %s%n", matchingTopics.size(), mirrorName, matchingTopics);
-            }
+            // Remove all matching topics from the mirror
+            RemoveTopicsFromMirrorResult removeTopicsFromMirrorResult = adminClient.removeTopicsFromMirror(
+                matchingTopics, new RemoveTopicsFromMirrorOptions());
+            removeTopicsFromMirrorResult.all().get();
+            System.out.printf("Removed %d topic(s) from mirror %s: %s%n", matchingTopics.size(), mirrorName, matchingTopics);
         }
 
         public void listMirrors() throws ExecutionException, InterruptedException {

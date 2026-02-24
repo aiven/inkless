@@ -14,17 +14,16 @@
 // limitations under the License.
 
 {
-  "apiKey":94,
+  "apiKey": 94,
   "type": "request",
   "listeners": ["broker", "controller"],
   "name": "CreateMirrorRequest",
-  // The CreateMirrorRequest API is added as part of cluster mirroring.
-  // The API is not exposed by default unless explicitly enabled.
   "latestVersionUnstable": true,
+  // Version 0 is the initial version.
   "validVersions": "0",
   "flexibleVersions": "0+",
   "fields": [
-    { "name": "MirrorName", "type": "string", "versions": "0+", "nullableVersions": "0+", "entityType": "mirrorName",
+    { "name": "MirrorName", "type": "string", "versions": "0+", "entityType": "mirrorName",
       "about": "The cluster mirror name."},
     { "name": "Config", "type": "[]MirrorConfig", "versions": "0+",
       "about": "The cluster mirror configurations.",  "fields": [
