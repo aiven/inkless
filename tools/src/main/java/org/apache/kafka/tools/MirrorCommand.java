@@ -26,7 +26,6 @@ import org.apache.kafka.clients.admin.CreateTopicsOptions;
 import org.apache.kafka.clients.admin.CreateTopicsResult;
 import org.apache.kafka.clients.admin.DescribeMirrorsOptions;
 import org.apache.kafka.clients.admin.DescribeMirrorsResult;
-import org.apache.kafka.clients.admin.FindCoordinatorResult;
 import org.apache.kafka.clients.admin.ListMirrorsResult;
 import org.apache.kafka.clients.admin.MirrorDescription;
 import org.apache.kafka.clients.admin.MirrorListing;
@@ -34,16 +33,12 @@ import org.apache.kafka.clients.admin.NewTopic;
 import org.apache.kafka.clients.admin.RemoveTopicsFromMirrorOptions;
 import org.apache.kafka.clients.admin.RemoveTopicsFromMirrorResult;
 import org.apache.kafka.clients.admin.TopicDescription;
-import org.apache.kafka.common.Node;
 import org.apache.kafka.common.config.ConfigResource;
 import org.apache.kafka.common.errors.TopicExistsException;
 import org.apache.kafka.common.utils.Exit;
 import org.apache.kafka.common.utils.Utils;
 import org.apache.kafka.server.util.CommandDefaultOptions;
 import org.apache.kafka.server.util.CommandLineUtils;
-
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -56,6 +51,7 @@ import java.util.Optional;
 import java.util.Properties;
 import java.util.Set;
 import java.util.concurrent.ExecutionException;
+import java.util.regex.Pattern;
 
 import joptsimple.ArgumentAcceptingOptionSpec;
 import joptsimple.OptionSpec;
@@ -65,8 +61,6 @@ import joptsimple.OptionSpecBuilder;
  * Command-line tool for managing cluster mirrors.
  */
 public abstract class MirrorCommand {
-    private static final Logger LOG = LoggerFactory.getLogger(MirrorCommand.class);
-
     public static void main(String... args) {
         Exit.exit(mainNoExit(args));
     }
@@ -84,9 +78,7 @@ public abstract class MirrorCommand {
 
     static void execute(String... args) throws Exception {
         MirrorCommandOptions opts = new MirrorCommandOptions(args);
-        MirrorService mirrorService = new MirrorService(opts.bootstrapServer(), opts.commandConfig(), opts.mirrorConfig());
-        int exitCode = 0;
-        try {
+        try (MirrorService mirrorService = new MirrorService(opts.bootstrapServer(), opts.commandConfig(), opts.mirrorConfig())) {
             if (opts.hasCreateOption()) {
                 mirrorService.createMirror(opts);
             } else if (opts.hasAddOption()) {
@@ -98,35 +90,15 @@ public abstract class MirrorCommand {
             } else if (opts.hasDescribeOption()) {
                 mirrorService.describeMirrors(opts);
             }
-        } catch (ExecutionException e) {
-            Throwable cause = e.getCause();
-            printException(cause != null ? cause : e);
-            exitCode = 1;
-        } catch (Throwable e) {
-            printException(e);
-            exitCode = 1;
-        } finally {
-            mirrorService.close();
-            Exit.exit(exitCode);
         }
     }
 
-    private static void printException(Throwable e) {
-        System.out.println("Error while executing mirror command : " + e.getMessage());
-        LOG.error(Utils.stackTrace(e));
-    }
-
-    /*
-     * Service class that handles the core mirror operations using Kafka Admin Client.
-     */
-    public static class MirrorService implements AutoCloseable {
+    private static class MirrorService implements AutoCloseable {
         private final Admin adminClient;
-        private final Properties commandConfig;
         private final Properties mirrorConfigs;
 
-        public MirrorService(Optional<String> bootstrapServer, Properties commandConfig, Properties mirrorConfigs) {
+        MirrorService(Optional<String> bootstrapServer, Properties commandConfig, Properties mirrorConfigs) {
             this.adminClient = createAdminClient(bootstrapServer, commandConfig);
-            this.commandConfig = commandConfig;
             this.mirrorConfigs = mirrorConfigs;
         }
 
@@ -135,18 +107,9 @@ public abstract class MirrorCommand {
             return Admin.create(commandConfig);
         }
 
-        private Node findCoordinator(String mirrorName) throws ExecutionException, InterruptedException {
-            FindCoordinatorResult findCoordinatorResult = adminClient.findCoordinator(mirrorName);
-            Node coordinator = findCoordinatorResult.node().get();
-            if (coordinator == null) {
-                throw new RuntimeException("Could not find coordinator for mirror " + mirrorName);
-            }
-            return coordinator;
-        }
-
         private Set<String> matchTopics(Set<String> allTopics, String topicPattern) {
             Set<String> matchingTopics = new HashSet<>();
-            var pattern = java.util.regex.Pattern.compile(topicPattern);
+            Pattern pattern = Pattern.compile(topicPattern);
             for (String topic : allTopics) {
                 if (topic.equals(topicPattern) || pattern.matcher(topic).matches()) {
                     matchingTopics.add(topic);
@@ -158,7 +121,7 @@ public abstract class MirrorCommand {
             return matchingTopics;
         }
 
-        public void createMirror(MirrorCommandOptions opts) throws ExecutionException, InterruptedException {
+        private void createMirror(MirrorCommandOptions opts) throws ExecutionException, InterruptedException {
             Map<String, String> configMap = new HashMap<>();
             mirrorConfigs.forEach((k, v) -> configMap.put(k.toString(), v.toString()));
 
@@ -171,7 +134,7 @@ public abstract class MirrorCommand {
             System.out.printf("Created mirror %s%n", opts.mirror().get());
         }
 
-        public void addTopicsToMirror(MirrorCommandOptions opts) throws Exception {
+        private void addTopicsToMirror(MirrorCommandOptions opts) throws Exception {
             String topicPattern = opts.topic().get();
             String mirrorName = opts.mirror().get();
 
@@ -249,7 +212,7 @@ public abstract class MirrorCommand {
             System.out.printf("Added %d topic(s) to mirror %s: %s%n", topics.size(), mirrorName, topics.keySet());
         }
 
-        public void removeTopicsFromMirror(MirrorCommandOptions opts) throws Exception {
+        private void removeTopicsFromMirror(MirrorCommandOptions opts) throws Exception {
             String topicPattern = opts.topic().get();
             String mirrorName = opts.mirror().get();
 
@@ -266,7 +229,7 @@ public abstract class MirrorCommand {
             System.out.printf("Removed %d topic(s) from mirror %s: %s%n", matchingTopics.size(), mirrorName, matchingTopics);
         }
 
-        public void listMirrors() throws ExecutionException, InterruptedException {
+        private void listMirrors() throws ExecutionException, InterruptedException {
             ListMirrorsResult result = adminClient.listMirrors();
             List<MirrorListing> listings = new ArrayList<>(result.all().get());
 
@@ -293,7 +256,7 @@ public abstract class MirrorCommand {
             }
         }
 
-        public void describeMirrors(MirrorCommandOptions opts) throws ExecutionException, InterruptedException {
+        private void describeMirrors(MirrorCommandOptions opts) throws ExecutionException, InterruptedException {
             // If --mirror is specified, describe only that mirror; otherwise describe all mirrors
             List<String> mirrorNames = opts.mirror().isPresent()
                 ? List.of(opts.mirror().get())
@@ -345,13 +308,13 @@ public abstract class MirrorCommand {
                     "MIRROR", "TOPIC", "PARTITION", "SOURCE-OFFSET", "DESTINATION-OFFSET", "LAG", "STATE");
                 for (PartitionInfo info : partitionInfos) {
                     System.out.printf("%-30s %-40s %-10d %-15s %-18s %-10s %-12s%n",
-                        truncateLeft(info.mirror, 30),
-                        truncateLeft(info.topic, 40),
-                        info.partition,
-                        formatOffset(info.sourceOffset),
-                        formatOffset(info.destinationOffset),
-                        formatOffset(info.lag),
-                        info.state);
+                        truncateLeft(info.mirror(), 30),
+                        truncateLeft(info.topic(), 40),
+                        info.partition(),
+                        formatOffset(info.sourceOffset()),
+                        formatOffset(info.destinationOffset()),
+                        formatOffset(info.lag()),
+                        info.state());
                 }
             }
         }
@@ -375,43 +338,11 @@ public abstract class MirrorCommand {
             adminClient.close();
         }
 
-        // Helper class for formatting partition information
-        // Each partition is an independent replication unit with its own state
-        private static class PartitionInfo {
-            private final String mirror;
-            private final String topic;
-            private final int partition;
-            private final long sourceOffset;
-            private final long destinationOffset;
-            private final long lag;
-            private final String state;
-
-            PartitionInfo(String mirror, String topic, int partition, long sourceOffset,
-                          long destinationOffset, long lag, String state) {
-                this.mirror = mirror;
-                this.topic = topic;
-                this.partition = partition;
-                this.sourceOffset = sourceOffset;
-                this.destinationOffset = destinationOffset;
-                this.lag = lag;
-                this.state = state;
-            }
-
-            String mirror() {
-                return mirror;
-            }
-
-            String topic() {
-                return topic;
-            }
-
-            int partition() {
-                return partition;
-            }
-        }
+        private record PartitionInfo(String mirror, String topic, int partition,
+                                     long sourceOffset, long destinationOffset, long lag, String state) { }
     }
 
-    public static final class MirrorCommandOptions extends CommandDefaultOptions {
+    private static final class MirrorCommandOptions extends CommandDefaultOptions {
         private final ArgumentAcceptingOptionSpec<String> bootstrapServerOpt;
         private final ArgumentAcceptingOptionSpec<String> commandConfigOpt;
         private final ArgumentAcceptingOptionSpec<String> mirrorConfigOpt;
@@ -424,7 +355,7 @@ public abstract class MirrorCommand {
         private final ArgumentAcceptingOptionSpec<String> topicOpt;
         private final ArgumentAcceptingOptionSpec<Short> replicationFactorOpt;
 
-        public MirrorCommandOptions(String[] args) {
+        MirrorCommandOptions(String[] args) {
             super(args);
 
             bootstrapServerOpt = parser.accepts("bootstrap-server", "REQUIRED: The destination Kafka server to connect to.")
@@ -467,39 +398,39 @@ public abstract class MirrorCommand {
             checkArgs();
         }
 
-        public boolean has(OptionSpec<?> builder) {
+        private boolean has(OptionSpec<?> builder) {
             return options.has(builder);
         }
 
-        public <A> Optional<A> valueAsOption(OptionSpec<A> option) {
+        private <A> Optional<A> valueAsOption(OptionSpec<A> option) {
             return options.has(option) ? Optional.of(options.valueOf(option)) : Optional.empty();
         }
 
-        public boolean hasCreateOption() {
+        private boolean hasCreateOption() {
             return has(createOpt);
         }
 
-        public boolean hasAddOption() {
+        private boolean hasAddOption() {
             return has(addOpt);
         }
 
-        public boolean hasRemoveOption() {
+        private boolean hasRemoveOption() {
             return has(removeOpt);
         }
 
-        public boolean hasListOption() {
+        private boolean hasListOption() {
             return has(listOpt);
         }
 
-        public boolean hasDescribeOption() {
+        private boolean hasDescribeOption() {
             return has(describeOpt);
         }
 
-        public Optional<String> bootstrapServer() {
+        private Optional<String> bootstrapServer() {
             return valueAsOption(bootstrapServerOpt);
         }
 
-        public Properties commandConfig() throws IOException {
+        private Properties commandConfig() throws IOException {
             if (has(commandConfigOpt)) {
                 return Utils.loadProps(options.valueOf(commandConfigOpt));
             } else {
@@ -507,7 +438,7 @@ public abstract class MirrorCommand {
             }
         }
 
-        public Properties mirrorConfig() throws IOException {
+        private Properties mirrorConfig() throws IOException {
             if (has(mirrorConfigOpt)) {
                 return Utils.loadProps(options.valueOf(mirrorConfigOpt));
             } else {
@@ -515,15 +446,15 @@ public abstract class MirrorCommand {
             }
         }
 
-        public Optional<String> mirror() {
+        private Optional<String> mirror() {
             return valueAsOption(mirrorOpt);
         }
 
-        public Optional<String> topic() {
+        private Optional<String> topic() {
             return valueAsOption(topicOpt);
         }
 
-        public Optional<Short> replicationFactor() {
+        private Optional<Short> replicationFactor() {
             return valueAsOption(replicationFactorOpt);
         }
 

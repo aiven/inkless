@@ -26,9 +26,14 @@ import java.util.Collection;
 import java.util.List;
 import java.util.concurrent.ConcurrentLinkedQueue;
 
+/**
+ * Queue-based sender for asynchronous inter-broker requests used by {@link MirrorMetadataManager}
+ * to forward mirror state updates to remote coordinator brokers.
+ */
 class InterBrokerSender extends InterBrokerSendThread {
-    ConcurrentLinkedQueue<RequestAndCompletionHandler> queue = new ConcurrentLinkedQueue<>();
-    protected InterBrokerSender(String name, KafkaClient networkClient, int requestTimeoutMs, Time time) {
+    private final ConcurrentLinkedQueue<RequestAndCompletionHandler> queue = new ConcurrentLinkedQueue<>();
+
+    InterBrokerSender(String name, KafkaClient networkClient, int requestTimeoutMs, Time time) {
         super(name, networkClient, requestTimeoutMs, time);
     }
 
@@ -39,14 +44,11 @@ class InterBrokerSender extends InterBrokerSendThread {
 
     @Override
     public Collection<RequestAndCompletionHandler> generateRequests() {
-        if (!queue.isEmpty()) {
-            List<RequestAndCompletionHandler> requests = new ArrayList<>();
-            while (queue.peek() != null) {
-                var requestAndCompletionHandler = queue.poll();
-                requests.add(requestAndCompletionHandler);
-            }
-            return requests;
+        List<RequestAndCompletionHandler> requests = new ArrayList<>();
+        RequestAndCompletionHandler request;
+        while ((request = queue.poll()) != null) {
+            requests.add(request);
         }
-        return List.of();
+        return requests;
     }
 }

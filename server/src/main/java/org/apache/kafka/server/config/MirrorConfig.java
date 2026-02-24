@@ -48,7 +48,7 @@ import static org.apache.kafka.common.config.ConfigDef.Type.STRING;
  * This class provides proper validation, defaults, and documentation for all
  * configurations supported by the Cluster Mirroring feature.
  */
-public class MirrorConfig {
+public final class MirrorConfig {
     // Internal topic configuration
     public static final String MIRROR_TOPIC_NUM_PARTITIONS_CONFIG = "mirror.topic.num.partitions";
     public static final int MIRROR_TOPIC_NUM_PARTITIONS_DEFAULT = 3; // TODO restore 50 after POC testing
@@ -386,17 +386,6 @@ public class MirrorConfig {
     }
 
     /**
-     * Creates a ConfigDef that can be used to validate Cluster Mirror properties.
-     * This is useful for components that need to validate Cluster Mirror configurations
-     * without creating a full MirrorConfig instance.
-     *
-     * @return ConfigDef for Cluster Mirror configurations
-     */
-    public static ConfigDef configDef() {
-        return CONFIG_DEF;
-    }
-
-    /**
      * Compiles a list of regex pattern strings into a single {@link Pattern} by joining them with {@code |}.
      *
      * @param patterns the list of regex pattern strings
@@ -416,7 +405,7 @@ public class MirrorConfig {
      * @param rules the list of rule strings in semicolon-separated format
      * @return parsed list of AclRule instances
      */
-    public static List<AclRule> parseAclRules(List<String> rules) {
+    private static List<AclRule> parseAclRules(List<String> rules) {
         return rules.stream()
                 .map(String::trim)
                 .filter(s -> !s.isEmpty())
