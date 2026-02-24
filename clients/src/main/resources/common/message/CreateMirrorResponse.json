@@ -17,6 +17,7 @@
   "apiKey":94,
   "type": "response",
   "name": "CreateMirrorResponse",
+  // Version 0 is the initial version.
   "validVersions": "0",
   "flexibleVersions": "0+",
   "fields": [

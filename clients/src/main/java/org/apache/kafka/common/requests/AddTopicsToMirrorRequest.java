@@ -39,7 +39,7 @@ public class AddTopicsToMirrorRequest extends AbstractRequest {
             super(ApiKeys.ADD_TOPICS_TO_MIRROR, ApiKeys.ADD_TOPICS_TO_MIRROR.oldestVersion(),
                     ApiKeys.ADD_TOPICS_TO_MIRROR.latestVersion());
             AddTopicsToMirrorRequestData data = new AddTopicsToMirrorRequestData();
-            topicToMirrorName.forEach((topic, mirrorName) -> data.topics().add(new AddTopicsToMirrorRequestData.TopicState().setTopicName(topic).setMirrorName(mirrorName)));
+            topicToMirrorName.forEach((topic, mirrorName) -> data.topics().add(new AddTopicsToMirrorRequestData.TopicData().setTopicName(topic).setMirrorName(mirrorName)));
             this.data = data;
         }
 

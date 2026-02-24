@@ -17,6 +17,7 @@
   "apiKey": 101,
   "type": "response",
   "name": "WriteMirrorStatesResponse",
+  // Version 0 is the initial version.
   "validVersions": "0",
   "flexibleVersions": "0+",
   "fields": [

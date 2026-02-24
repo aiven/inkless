@@ -18,10 +18,11 @@
   "type": "request",
   "listeners": ["broker", "controller"],
   "name": "RemoveTopicsFromMirrorRequest",
+  // Version 0 is the initial version.
   "validVersions": "0",
   "flexibleVersions": "0+",
   "fields": [
-    { "name": "Topics", "type": "[]TopicState", "versions": "0+", "about": "The topic state.",
+    { "name": "Topics", "type": "[]TopicData", "versions": "0+", "about": "The data for the topics.",
       "fields": [
         { "name": "TopicId", "type": "uuid", "versions": "0+", "about": "The unique topic ID."},
         { "name": "TopicName", "type": "string", "versions": "0+", "mapKey": true, "entityType": "topicName",

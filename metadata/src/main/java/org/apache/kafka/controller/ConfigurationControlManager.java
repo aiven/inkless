@@ -223,11 +223,11 @@ public class ConfigurationControlManager {
     ControllerResult<RemoveTopicsFromMirrorResponseData> removeTopicsFromMirror(Set<String> topics) {
         List<ApiMessageAndVersion> records = BoundedList.newArrayBacked(MAX_RECORDS_PER_USER_OP);
         RemoveTopicsFromMirrorResponseData data = new RemoveTopicsFromMirrorResponseData();
-        List<RemoveTopicsFromMirrorResponseData.TopicResponse> topicResList = new ArrayList<>();
+        List<RemoveTopicsFromMirrorResponseData.TopicResult> topicResList = new ArrayList<>();
         for (String topic : topics) {
             String mirrorNameConfig = TopicConfig.MIRROR_NAME_CONFIG;
 
-            RemoveTopicsFromMirrorResponseData.TopicResponse topicRes = new RemoveTopicsFromMirrorResponseData.TopicResponse();
+            RemoveTopicsFromMirrorResponseData.TopicResult topicRes = new RemoveTopicsFromMirrorResponseData.TopicResult();
 
             ConfigResource configResource = new ConfigResource(Type.TOPIC, topic);
 
@@ -269,12 +269,12 @@ public class ConfigurationControlManager {
     ControllerResult<AddTopicsToMirrorResponseData> addTopicsToMirror(Map<String, String> topicToMirrorName) {
         List<ApiMessageAndVersion> records = BoundedList.newArrayBacked(MAX_RECORDS_PER_USER_OP);
         AddTopicsToMirrorResponseData data = new AddTopicsToMirrorResponseData();
-        List<AddTopicsToMirrorResponseData.TopicResponse> topicResList = new ArrayList<>();
+        List<AddTopicsToMirrorResponseData.TopicResult> topicResList = new ArrayList<>();
         for (Entry<String, String> topicToMirrorNameEntry : topicToMirrorName.entrySet()) {
             String topic = topicToMirrorNameEntry.getKey();
             String mirrorName = topicToMirrorNameEntry.getValue();
 
-            AddTopicsToMirrorResponseData.TopicResponse topicRes = new AddTopicsToMirrorResponseData.TopicResponse();
+            AddTopicsToMirrorResponseData.TopicResult topicRes = new AddTopicsToMirrorResponseData.TopicResult();
             ConfigResource configResource = new ConfigResource(Type.TOPIC, topic);
 
             TimelineHashMap<String, String> currentConfigs = configData.get(configResource);

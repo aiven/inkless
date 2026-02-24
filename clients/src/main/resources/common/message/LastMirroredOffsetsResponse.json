@@ -17,6 +17,7 @@
   "apiKey": 97,
   "type": "response",
   "name": "LastMirroredOffsetsResponse",
+  // Version 0 is the initial version.
   "validVersions": "0",
   "flexibleVersions": "0+",
   "fields": [
