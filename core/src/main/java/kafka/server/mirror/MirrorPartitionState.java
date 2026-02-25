@@ -18,25 +18,29 @@ package kafka.server.mirror;
 
 /**
  * Represents the lifecycle states of a mirror partition.
- * FAILED state can be entered from PREPARING or MIRRORING when errors occur.
+ * FAILED state can be entered from any state when errors occur.
  * <pre>
- * 1. INITIALIZING
- *    Triggered by: AddTopicsToMirror API call
- *    Waits for: Metadata update (partition becomes read-only leader)
- *
- * 2. PREPARING
+ * 1. PREPARING
  *    Triggered by: Metadata update callback in MirrorMetadataManager
  *    Actions: Fetch last mirrored offsets, schedule truncation
  *
- * 3. MIRRORING
+ * 2. MIRRORING
  *    Triggered by: ISR truncation completion in Partition.checkIsrTruncationAndTransition
  *    Actions: Start MirrorFetcherThread to replicate data
  *
- * 4. STOPPING
+ * 3. PAUSING
+ *    Triggered by: PauseMirrorTopics API (appends .paused suffix to mirror.name)
+ *    Actions: Remove fetchers, record current LEO offsets
+ *
+ * 4. PAUSED
+ *    Triggered by: Paused offsets persisted
+ *    Result: Partition stays read-only, no active fetchers, metadata sync continues
+ *
+ * 5. STOPPING
  *    Triggered by: RemoveTopicsFromMirror API or topic deletion
  *    Actions: Record last mirrored offsets to internal topic
  *
- * 5. STOPPED
+ * 6. STOPPED
  *    Triggered by: Last mirrored offsets persisted
  *    Result: Topic becomes writable on destination cluster
  * </pre>
@@ -48,14 +52,20 @@ public enum MirrorPartitionState {
     /** Active mirroring from source cluster is in progress */
     MIRRORING((byte) 1),
 
+    /** Mirroring is being paused; fetchers removed and offsets recorded */
+    PAUSING((byte) 2),
+
+    /** Mirroring is paused; partition stays read-only with no active fetchers */
+    PAUSED((byte) 3),
+
     /** Mirroring is being gracefully stopped */
-    STOPPING((byte) 2),
+    STOPPING((byte) 4),
 
     /** Mirroring has stopped; topic is now writable on this cluster */
-    STOPPED((byte) 4),
+    STOPPED((byte) 5),
 
     /** Error occurred during preparation or mirroring */
-    FAILED((byte) 8),
+    FAILED((byte) 6),
 
     /** Unknown state */
     UNKNOWN((byte) 16);
@@ -77,10 +87,14 @@ public enum MirrorPartitionState {
             case 1:
                 return MIRRORING;
             case 2:
-                return STOPPING;
+                return PAUSING;
+            case 3:
+                return PAUSED;
             case 4:
+                return STOPPING;
+            case 5:
                 return STOPPED;
-            case 8:
+            case 6:
                 return FAILED;
             case 16:
                 return UNKNOWN;
@@ -97,12 +111,19 @@ public enum MirrorPartitionState {
                 return source == null
                         || source == MirrorPartitionState.UNKNOWN
                         || source == MirrorPartitionState.STOPPED
+                        || source == MirrorPartitionState.PAUSED
                         || source == MirrorPartitionState.FAILED;
             case MIRRORING:
                 return source == MirrorPartitionState.PREPARING;
+            case PAUSING:
+                return source == MirrorPartitionState.MIRRORING
+                        || source == MirrorPartitionState.PREPARING;
+            case PAUSED:
+                return source == MirrorPartitionState.PAUSING;
             case STOPPING:
                 return source == MirrorPartitionState.PREPARING
-                        || source == MirrorPartitionState.MIRRORING;
+                        || source == MirrorPartitionState.MIRRORING
+                        || source == MirrorPartitionState.PAUSED;
             case STOPPED:
                 return source == MirrorPartitionState.STOPPING;
             case FAILED:

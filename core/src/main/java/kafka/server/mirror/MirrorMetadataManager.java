@@ -130,6 +130,7 @@ import static kafka.server.mirror.MirrorUtils.groupPartitionsByTopic;
 import static kafka.server.mirror.MirrorUtils.originalMirrorName;
 import static org.apache.kafka.clients.CommonClientConfigs.BOOTSTRAP_SERVERS_CONFIG;
 import static org.apache.kafka.common.internals.Topic.MIRROR_STATE_TOPIC_NAME;
+import static org.apache.kafka.controller.ConfigurationControlManager.PAUSED_TOPIC_SUFFIX;
 import static org.apache.kafka.controller.ConfigurationControlManager.REMOVED_TOPIC_SUFFIX;
 
 /**
@@ -219,6 +220,8 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         metricsGroup.newGauge("TopicMetadataRefreshError", metadataRefreshError::get);
         metricsGroup.newGauge("PreparingPartitionState", () -> partitionStateCount(MirrorPartitionState.PREPARING));
         metricsGroup.newGauge("MirroringPartitionState", () -> partitionStateCount(MirrorPartitionState.MIRRORING));
+        metricsGroup.newGauge("PausingPartitionState", () -> partitionStateCount(MirrorPartitionState.PAUSING));
+        metricsGroup.newGauge("PausedPartitionState", () -> partitionStateCount(MirrorPartitionState.PAUSED));
         metricsGroup.newGauge("StoppingPartitionState", () -> partitionStateCount(MirrorPartitionState.STOPPING));
         metricsGroup.newGauge("StoppedPartitionState", () -> partitionStateCount(MirrorPartitionState.STOPPED));
         metricsGroup.newGauge("FailedPartitionState", () -> partitionStateCount(MirrorPartitionState.FAILED));
@@ -258,20 +261,20 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         // Collect remote coordinator partitions grouped by mirrorName for batched reads
         Map<String, Map<String, Set<Integer>>> remotePartitionsByMirror = new HashMap<>();
         Map<String, Map<TopicPartition, Boolean>> remoteStopFlags = new HashMap<>();
+        Map<String, Map<TopicPartition, Boolean>> remotePauseFlags = new HashMap<>();
 
         mirrorLeaders.forEach(tp -> {
             String rawMirrorName = (String) newImage.configs().configProperties(
                     new ConfigResource(ConfigResource.Type.TOPIC, tp.topic())).get(TopicConfig.MIRROR_NAME_CONFIG);
             boolean stopRequested = rawMirrorName.endsWith(REMOVED_TOPIC_SUFFIX);
-            String mirrorName = stopRequested
-                    ? rawMirrorName.substring(0, rawMirrorName.length() - REMOVED_TOPIC_SUFFIX.length())
-                    : rawMirrorName;
+            boolean pauseRequested = rawMirrorName.endsWith(PAUSED_TOPIC_SUFFIX);
+            String mirrorName = MirrorUtils.originalMirrorName(rawMirrorName);
 
             MirrorUtils.PartitionKey key = new MirrorUtils.PartitionKey(mirrorName, tp.topic(), tp.partition());
             if (isLocalCoordinator(key.mirrorName(), key.topic(), key.partition())) {
                 // Handle local coordinator partitions inline (no network call needed)
                 MirrorPartitionState curState = partitionStates.getOrDefault(key, MirrorPartitionState.UNKNOWN);
-                applyMirrorStateTransition(key.mirrorName(), tp, curState, null, stopRequested);
+                applyMirrorStateTransition(key.mirrorName(), tp, curState, null, stopRequested, pauseRequested);
             } else {
                 // Collect for batched remote read
                 remotePartitionsByMirror
@@ -281,12 +284,16 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                 remoteStopFlags
                     .computeIfAbsent(mirrorName, k -> new HashMap<>())
                     .put(tp, stopRequested);
+                remotePauseFlags
+                    .computeIfAbsent(mirrorName, k -> new HashMap<>())
+                    .put(tp, pauseRequested);
             }
         });
 
         // Send one batched read per mirrorName (readStatesFromRemoteCoordinator handles per-node batching internally)
         remotePartitionsByMirror.forEach((mirrorName, partitions) -> {
             Map<TopicPartition, Boolean> stopFlags = remoteStopFlags.get(mirrorName);
+            Map<TopicPartition, Boolean> pauseFlags = remotePauseFlags.get(mirrorName);
             readStatesFromRemoteCoordinator(mirrorName, partitions, res ->
                 res.data().topics().forEach(topic ->
                     topic.partitions().forEach(partition -> {
@@ -294,9 +301,10 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                             TopicPartition resTp = new TopicPartition(topic.name(), partition.partitionIndex());
                             MirrorPartitionState state = MirrorPartitionState.fromValue(partition.state());
                             boolean stopRequested = stopFlags.getOrDefault(resTp, false);
+                            boolean pauseRequested = pauseFlags.getOrDefault(resTp, false);
                             MirrorUtils.PartitionKey mpk = new MirrorUtils.PartitionKey(mirrorName, resTp.topic(), resTp.partition());
                             MirrorPartitionState curState = partitionStates.getOrDefault(mpk, MirrorPartitionState.UNKNOWN);
-                            applyMirrorStateTransition(mirrorName, resTp, curState, state, stopRequested);
+                            applyMirrorStateTransition(mirrorName, resTp, curState, state, stopRequested, pauseRequested);
                         }
                     })));
         });
@@ -360,11 +368,17 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     // Applies the appropriate state transition based on current state and stop flag
     private void applyMirrorStateTransition(String mirrorName, TopicPartition tp,
                                             MirrorPartitionState curState, MirrorPartitionState fetchedState,
-                                            boolean stopRequested) {
+                                            boolean stopRequested, boolean pauseRequested) {
         stateTransitioner.ifPresent(t -> {
             if (stopRequested && curState != MirrorPartitionState.STOPPED) {
                 t.transitionTo(mirrorName, tp, MirrorPartitionState.STOPPING);
-            } else if (curState == MirrorPartitionState.UNKNOWN || curState == MirrorPartitionState.STOPPED) {
+            } else if (pauseRequested
+                    && curState != MirrorPartitionState.PAUSED
+                    && curState != MirrorPartitionState.PAUSING) {
+                t.transitionTo(mirrorName, tp, MirrorPartitionState.PAUSING);
+            } else if (curState == MirrorPartitionState.UNKNOWN
+                    || curState == MirrorPartitionState.STOPPED
+                    || curState == MirrorPartitionState.PAUSED) {
                 t.transitionTo(mirrorName, tp, MirrorPartitionState.PREPARING);
             } else {
                 t.transitionTo(mirrorName, tp, fetchedState != null ? fetchedState : curState);
@@ -1258,7 +1272,12 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
 
     Set<String> getConfiguredTopics(String mirrorName) {
         return metadataCache.getAllTopics().stream()
-                .filter(topic -> mirrorName.equals(metadataCache.topicConfig(topic).get(TopicConfig.MIRROR_NAME_CONFIG)))
+                .filter(topic -> {
+                    String topicMirrorName = (String) metadataCache.topicConfig(topic).get(TopicConfig.MIRROR_NAME_CONFIG);
+                    if (topicMirrorName == null) return false;
+                    if (topicMirrorName.endsWith(PAUSED_TOPIC_SUFFIX)) return false;
+                    return mirrorName.equals(MirrorUtils.originalMirrorName(topicMirrorName));
+                })
                 .collect(Collectors.toSet());
     }
 

@@ -143,7 +143,9 @@ public enum ApiKeys {
     WRITE_MIRROR_STATES(ApiMessageType.WRITE_MIRROR_STATES),
     READ_MIRROR_STATES(ApiMessageType.READ_MIRROR_STATES),
     LIST_MIRRORS(ApiMessageType.LIST_MIRRORS),
-    DESCRIBE_MIRRORS(ApiMessageType.DESCRIBE_MIRRORS);
+    DESCRIBE_MIRRORS(ApiMessageType.DESCRIBE_MIRRORS),
+    PAUSE_MIRROR_TOPICS(ApiMessageType.PAUSE_MIRROR_TOPICS, false, true),
+    RESUME_MIRROR_TOPICS(ApiMessageType.RESUME_MIRROR_TOPICS, false, true);
 
     private static final Map<ApiMessageType.ListenerType, EnumSet<ApiKeys>> APIS_BY_LISTENER =
         new EnumMap<>(ApiMessageType.ListenerType.class);

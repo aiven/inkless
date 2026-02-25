@@ -53,9 +53,11 @@ import org.apache.kafka.common.message.ExpireDelegationTokenRequestData;
 import org.apache.kafka.common.message.ExpireDelegationTokenResponseData;
 import org.apache.kafka.common.message.ListPartitionReassignmentsRequestData;
 import org.apache.kafka.common.message.ListPartitionReassignmentsResponseData;
+import org.apache.kafka.common.message.PauseMirrorTopicsResponseData;
 import org.apache.kafka.common.message.RemoveTopicsFromMirrorResponseData;
 import org.apache.kafka.common.message.RenewDelegationTokenRequestData;
 import org.apache.kafka.common.message.RenewDelegationTokenResponseData;
+import org.apache.kafka.common.message.ResumeMirrorTopicsResponseData;
 import org.apache.kafka.common.message.UpdateFeaturesRequestData;
 import org.apache.kafka.common.message.UpdateFeaturesResponseData;
 import org.apache.kafka.common.protocol.Errors;
@@ -130,6 +132,19 @@ public class MockController implements Controller {
         throw new UnsupportedOperationException();
     }
 
+    @Override
+    public CompletableFuture<PauseMirrorTopicsResponseData> pauseMirrorTopics(
+            ControllerRequestContext context,
+            Set<String> topics) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public CompletableFuture<ResumeMirrorTopicsResponseData> resumeMirrorTopics(
+            ControllerRequestContext context,
+            Set<String> topics) {
+        throw new UnsupportedOperationException();
+    }
 
     public static class Builder {
         private final Map<String, MockTopic> initialTopics = new HashMap<>();

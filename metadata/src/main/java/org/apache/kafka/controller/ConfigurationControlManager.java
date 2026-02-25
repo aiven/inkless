@@ -27,7 +27,9 @@ import org.apache.kafka.common.config.TopicConfig;
 import org.apache.kafka.common.config.types.Password;
 import org.apache.kafka.common.message.AddTopicsToMirrorResponseData;
 import org.apache.kafka.common.message.CreateMirrorResponseData;
+import org.apache.kafka.common.message.PauseMirrorTopicsResponseData;
 import org.apache.kafka.common.message.RemoveTopicsFromMirrorResponseData;
+import org.apache.kafka.common.message.ResumeMirrorTopicsResponseData;
 import org.apache.kafka.common.metadata.ClearElrRecord;
 import org.apache.kafka.common.metadata.ConfigRecord;
 import org.apache.kafka.common.protocol.Errors;
@@ -70,6 +72,7 @@ import static org.apache.kafka.controller.QuorumController.MAX_RECORDS_PER_USER_
 public class ConfigurationControlManager {
     public static final ConfigResource DEFAULT_NODE = new ConfigResource(Type.BROKER, "");
     public static final String REMOVED_TOPIC_SUFFIX = ".removed";
+    public static final String PAUSED_TOPIC_SUFFIX = ".paused";
 
     private final Logger log;
     private final SnapshotRegistry snapshotRegistry;
@@ -248,6 +251,105 @@ public class ConfigurationControlManager {
                 // decide if we should clear the mirror name or append a stopped symbol
                 String newMirrorName = curVal.endsWith(REMOVED_TOPIC_SUFFIX) ? "" : curVal + REMOVED_TOPIC_SUFFIX;
                 Map<String, Entry<OpType, String>> keyToOps = Map.of(mirrorNameConfig, new AbstractMap.SimpleImmutableEntry<>(SET, newMirrorName));
+
+                ControllerResult<ApiError> configResult = incrementalAlterConfig(configResource, keyToOps, true);
+                if (configResult.response().isFailure()) {
+                    topicRes.setErrorCode(configResult.response().error().code()).setName(topic);
+                    topicResList.add(topicRes);
+                    continue;
+                }
+
+                records.addAll(configResult.records());
+                topicRes.setName(topic);
+                topicResList.add(topicRes);
+            }
+        }
+        data.setTopics(topicResList);
+
+        return ControllerResult.of(records, data);
+    }
+
+    ControllerResult<PauseMirrorTopicsResponseData> pauseMirrorTopics(Set<String> topics) {
+        List<ApiMessageAndVersion> records = BoundedList.newArrayBacked(MAX_RECORDS_PER_USER_OP);
+        PauseMirrorTopicsResponseData data = new PauseMirrorTopicsResponseData();
+        List<PauseMirrorTopicsResponseData.TopicResult> topicResList = new ArrayList<>();
+        for (String topic : topics) {
+            PauseMirrorTopicsResponseData.TopicResult topicRes = new PauseMirrorTopicsResponseData.TopicResult();
+            ConfigResource configResource = new ConfigResource(Type.TOPIC, topic);
+
+            TimelineHashMap<String, String> currentConfigs = configData.get(configResource);
+            if (currentConfigs == null) {
+                topicRes.setErrorCode(Errors.INVALID_REQUEST.code());
+            } else {
+                String curVal = currentConfigs.get(TopicConfig.MIRROR_NAME_CONFIG);
+                if (curVal == null || curVal.isBlank()) {
+                    topicRes.setErrorCode(Errors.INVALID_REQUEST.code()).setName(topic);
+                    topicResList.add(topicRes);
+                    continue;
+                }
+
+                if (curVal.endsWith(PAUSED_TOPIC_SUFFIX)) {
+                    // Already paused, idempotent success
+                    topicRes.setName(topic);
+                    topicResList.add(topicRes);
+                    continue;
+                }
+
+                if (curVal.endsWith(REMOVED_TOPIC_SUFFIX)) {
+                    topicRes.setErrorCode(Errors.INVALID_REQUEST.code()).setName(topic);
+                    topicResList.add(topicRes);
+                    continue;
+                }
+
+                String pausedMirrorName = curVal + PAUSED_TOPIC_SUFFIX;
+                Map<String, Entry<OpType, String>> keyToOps = Map.of(TopicConfig.MIRROR_NAME_CONFIG,
+                    new AbstractMap.SimpleImmutableEntry<>(SET, pausedMirrorName));
+
+                ControllerResult<ApiError> configResult = incrementalAlterConfig(configResource, keyToOps, true);
+                if (configResult.response().isFailure()) {
+                    topicRes.setErrorCode(configResult.response().error().code()).setName(topic);
+                    topicResList.add(topicRes);
+                    continue;
+                }
+
+                records.addAll(configResult.records());
+                topicRes.setName(topic);
+                topicResList.add(topicRes);
+            }
+        }
+        data.setTopics(topicResList);
+
+        return ControllerResult.of(records, data);
+    }
+
+    ControllerResult<ResumeMirrorTopicsResponseData> resumeMirrorTopics(Set<String> topics) {
+        List<ApiMessageAndVersion> records = BoundedList.newArrayBacked(MAX_RECORDS_PER_USER_OP);
+        ResumeMirrorTopicsResponseData data = new ResumeMirrorTopicsResponseData();
+        List<ResumeMirrorTopicsResponseData.TopicResult> topicResList = new ArrayList<>();
+        for (String topic : topics) {
+            ResumeMirrorTopicsResponseData.TopicResult topicRes = new ResumeMirrorTopicsResponseData.TopicResult();
+            ConfigResource configResource = new ConfigResource(Type.TOPIC, topic);
+
+            TimelineHashMap<String, String> currentConfigs = configData.get(configResource);
+            if (currentConfigs == null) {
+                topicRes.setErrorCode(Errors.INVALID_REQUEST.code());
+            } else {
+                String curVal = currentConfigs.get(TopicConfig.MIRROR_NAME_CONFIG);
+                if (curVal == null || curVal.isBlank()) {
+                    topicRes.setErrorCode(Errors.INVALID_REQUEST.code()).setName(topic);
+                    topicResList.add(topicRes);
+                    continue;
+                }
+
+                if (!curVal.endsWith(PAUSED_TOPIC_SUFFIX)) {
+                    topicRes.setErrorCode(Errors.INVALID_REQUEST.code()).setName(topic);
+                    topicResList.add(topicRes);
+                    continue;
+                }
+
+                String originalMirrorName = curVal.substring(0, curVal.length() - PAUSED_TOPIC_SUFFIX.length());
+                Map<String, Entry<OpType, String>> keyToOps = Map.of(TopicConfig.MIRROR_NAME_CONFIG,
+                    new AbstractMap.SimpleImmutableEntry<>(SET, originalMirrorName));
 
                 ControllerResult<ApiError> configResult = incrementalAlterConfig(configResource, keyToOps, true);
                 if (configResult.response().isFailure()) {

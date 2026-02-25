@@ -133,17 +133,23 @@ public class MirrorCoordinator {
                 // start mirroring
                 replicaManager.maybeCreateMirrorFetchers(mirrorName, topicPartitions);
                 break;
+            case PAUSING:
+                LOG.info("PAUSING mirroring for topics {}.", topicPartitions);
+                replicaManager.mirrorFetcherManager().removeFetcherForPartitions(CollectionConverters.asScala(topicPartitions));
+                recordPausedOffsets(mirrorName, topicPartitions);
+                break;
+            case PAUSED:
+                LOG.info("PAUSED mirroring for topics {}.", topicPartitions);
+                // topic is still read-only
+                break;
             case STOPPING:
                 LOG.debug("STOPPING for topics {}.", topicPartitions);
-                // 1. remove mirror fetcher for partitions
-                // 2. truncating the log into LSO
-                // 3. register the last mirrored offsets for each partition in internal topic
                 replicaManager.mirrorFetcherManager().removeFetcherForPartitions(CollectionConverters.asScala(topicPartitions));
                 truncateToLastStableOffset(topicPartitions, tp -> updateLastMirroredOffsets(mirrorName, Set.of(tp)));
                 break;
             case STOPPED:
                 LOG.debug("STOPPED for topics {}.", topicPartitions);
-                // topic becomes writable
+                // topic is writable
                 break;
             case FAILED:
                 LOG.debug("FAILED for topics {}.", topicPartitions);
@@ -177,6 +183,19 @@ public class MirrorCoordinator {
                         mirrorMetadataManager.getPartitionState(mirrorName, tp), newState, tp);
             }
         });
+    }
+
+    private void recordPausedOffsets(String mirrorName, Set<TopicPartition> topicPartitions) {
+        Map<String, Map<Integer, Long>> partitionOffsets = new HashMap<>();
+        MirrorUtils.groupPartitionsByTopic(topicPartitions).forEach((topic, parts) -> {
+            Map<Integer, Long> offsets = new HashMap<>();
+            parts.forEach(i -> replicaManager.getPartitionOrException(
+                    new TopicPartition(topic, i)).log().foreach(log -> offsets.put(i, log.logEndOffset())));
+            partitionOffsets.put(topic, offsets);
+        });
+        updateLastMirroredOffsets(mirrorName, partitionOffsets, false);
+        topicPartitions.forEach(tp ->
+                transitionTo(mirrorName, Set.of(tp), MirrorPartitionState.PAUSED));
     }
 
     private void truncateToLastStableOffset(Set<TopicPartition> topicPartitions,

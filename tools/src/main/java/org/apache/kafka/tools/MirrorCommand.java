@@ -30,8 +30,12 @@ import org.apache.kafka.clients.admin.ListMirrorsResult;
 import org.apache.kafka.clients.admin.MirrorDescription;
 import org.apache.kafka.clients.admin.MirrorListing;
 import org.apache.kafka.clients.admin.NewTopic;
+import org.apache.kafka.clients.admin.PauseMirrorTopicsOptions;
+import org.apache.kafka.clients.admin.PauseMirrorTopicsResult;
 import org.apache.kafka.clients.admin.RemoveTopicsFromMirrorOptions;
 import org.apache.kafka.clients.admin.RemoveTopicsFromMirrorResult;
+import org.apache.kafka.clients.admin.ResumeMirrorTopicsOptions;
+import org.apache.kafka.clients.admin.ResumeMirrorTopicsResult;
 import org.apache.kafka.clients.admin.TopicDescription;
 import org.apache.kafka.common.config.ConfigResource;
 import org.apache.kafka.common.errors.TopicExistsException;
@@ -85,6 +89,10 @@ public abstract class MirrorCommand {
                 mirrorService.addTopicsToMirror(opts);
             } else if (opts.hasRemoveOption()) {
                 mirrorService.removeTopicsFromMirror(opts);
+            } else if (opts.hasPauseOption()) {
+                mirrorService.pauseMirrorTopics(opts);
+            } else if (opts.hasResumeOption()) {
+                mirrorService.resumeMirrorTopics(opts);
             } else if (opts.hasListOption()) {
                 mirrorService.listMirrors();
             } else if (opts.hasDescribeOption()) {
@@ -229,6 +237,28 @@ public abstract class MirrorCommand {
             System.out.printf("Removed %d topic(s) from mirror %s: %s%n", matchingTopics.size(), mirrorName, matchingTopics);
         }
 
+        private void pauseMirrorTopics(MirrorCommandOptions opts) throws Exception {
+            String topicPattern = opts.topic().get();
+
+            var allTopics = adminClient.listTopics().names().get();
+            Set<String> matchingTopics = matchTopics(allTopics, topicPattern);
+
+            PauseMirrorTopicsResult result = adminClient.pauseMirrorTopics(matchingTopics, new PauseMirrorTopicsOptions());
+            result.all().get();
+            System.out.printf("Paused mirroring for %d topic(s): %s%n", matchingTopics.size(), matchingTopics);
+        }
+
+        private void resumeMirrorTopics(MirrorCommandOptions opts) throws Exception {
+            String topicPattern = opts.topic().get();
+
+            var allTopics = adminClient.listTopics().names().get();
+            Set<String> matchingTopics = matchTopics(allTopics, topicPattern);
+
+            ResumeMirrorTopicsResult result = adminClient.resumeMirrorTopics(matchingTopics, new ResumeMirrorTopicsOptions());
+            result.all().get();
+            System.out.printf("Resumed mirroring for %d topic(s): %s%n", matchingTopics.size(), matchingTopics);
+        }
+
         private void listMirrors() throws ExecutionException, InterruptedException {
             ListMirrorsResult result = adminClient.listMirrors();
             List<MirrorListing> listings = new ArrayList<>(result.all().get());
@@ -349,6 +379,8 @@ public abstract class MirrorCommand {
         private final OptionSpecBuilder createOpt;
         private final OptionSpecBuilder addOpt;
         private final OptionSpecBuilder removeOpt;
+        private final OptionSpecBuilder pauseOpt;
+        private final OptionSpecBuilder resumeOpt;
         private final OptionSpecBuilder listOpt;
         private final OptionSpecBuilder describeOpt;
         private final ArgumentAcceptingOptionSpec<String> mirrorOpt;
@@ -376,6 +408,8 @@ public abstract class MirrorCommand {
             createOpt = parser.accepts("create", "Create a new cluster mirror from a source cluster.");
             addOpt = parser.accepts("add", "Add topic(s) to an existing cluster mirror (supports regex).");
             removeOpt = parser.accepts("remove", "Remove topic(s) from an existing cluster mirror (supports regex).");
+            pauseOpt = parser.accepts("pause", "Pause mirroring for topic(s) matching the pattern (supports regex).");
+            resumeOpt = parser.accepts("resume", "Resume mirroring for previously paused topic(s) matching the pattern (supports regex).");
             listOpt = parser.accepts("list", "List all cluster mirrors.");
             describeOpt = parser.accepts("describe", "Describe a cluster mirror including partition lag and state.");
 
@@ -416,6 +450,14 @@ public abstract class MirrorCommand {
 
         private boolean hasRemoveOption() {
             return has(removeOpt);
+        }
+
+        private boolean hasPauseOption() {
+            return has(pauseOpt);
+        }
+
+        private boolean hasResumeOption() {
+            return has(resumeOpt);
         }
 
         private boolean hasListOption() {
@@ -467,15 +509,16 @@ public abstract class MirrorCommand {
 
             // should have exactly one action
             if ((has(createOpt) ? 1 : 0) + (has(addOpt) ? 1 : 0) + (has(removeOpt) ? 1 : 0)
+                    + (has(pauseOpt) ? 1 : 0) + (has(resumeOpt) ? 1 : 0)
                     + (has(listOpt) ? 1 : 0) + (has(describeOpt) ? 1 : 0) != 1)
-                CommandLineUtils.printUsageAndExit(parser, "Command must include exactly one action: --create, --add, --remove, --list, or --describe");
+                CommandLineUtils.printUsageAndExit(parser, "Command must include exactly one action: --create, --add, --remove, --pause, --resume, --list, or --describe");
 
             // check required args
             if (!has(bootstrapServerOpt))
                 throw new IllegalArgumentException("--bootstrap-server must be specified");
 
-            // --mirror is required for create, add, and remove operations, but optional for list and describe
-            if (!has(listOpt) && !has(describeOpt) && !has(mirrorOpt))
+            // --mirror is required for create, add, and remove operations, but optional for list, describe, pause, and resume
+            if (!has(listOpt) && !has(describeOpt) && !has(pauseOpt) && !has(resumeOpt) && !has(mirrorOpt))
                 throw new IllegalArgumentException("--mirror must be specified");
 
             if (has(createOpt) && !has(mirrorConfigOpt))
@@ -486,6 +529,12 @@ public abstract class MirrorCommand {
 
             if (has(removeOpt) && !has(topicOpt))
                 throw new IllegalArgumentException("--topic must be specified when removing topic(s) from a mirror");
+
+            if (has(pauseOpt) && !has(topicOpt))
+                throw new IllegalArgumentException("--topic must be specified when pausing mirror topic(s)");
+
+            if (has(resumeOpt) && !has(topicOpt))
+                throw new IllegalArgumentException("--topic must be specified when resuming mirror topic(s)");
         }
     }
 }

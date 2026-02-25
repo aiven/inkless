@@ -23,6 +23,7 @@ import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 
+import static org.apache.kafka.controller.ConfigurationControlManager.PAUSED_TOPIC_SUFFIX;
 import static org.apache.kafka.controller.ConfigurationControlManager.REMOVED_TOPIC_SUFFIX;
 
 /**
@@ -56,6 +57,9 @@ public final class MirrorUtils {
         }
         if (mirrorName.endsWith(REMOVED_TOPIC_SUFFIX)) {
             return mirrorName.substring(0, mirrorName.length() - REMOVED_TOPIC_SUFFIX.length());
+        }
+        if (mirrorName.endsWith(PAUSED_TOPIC_SUFFIX)) {
+            return mirrorName.substring(0, mirrorName.length() - PAUSED_TOPIC_SUFFIX.length());
         }
         return mirrorName;
     }

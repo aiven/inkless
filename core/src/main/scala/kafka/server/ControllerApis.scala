@@ -137,6 +137,8 @@ class ControllerApis(
         case ApiKeys.CREATE_MIRROR => handleCreateMirror(request)
         case ApiKeys.ADD_TOPICS_TO_MIRROR => handleAddTopicsToMirror(request)
         case ApiKeys.REMOVE_TOPICS_FROM_MIRROR => handleRemoveTopicsFromMirror(request)
+        case ApiKeys.PAUSE_MIRROR_TOPICS => handlePauseMirrorTopics(request)
+        case ApiKeys.RESUME_MIRROR_TOPICS => handleResumeMirrorTopics(request)
         case _ => throw new ApiException(s"Unsupported ApiKey ${request.context.header.apiKey}")
       }
 
@@ -212,6 +214,44 @@ class ControllerApis(
         }
       }
 
+    CompletableFuture.completedFuture[Unit](())
+  }
+
+  def handlePauseMirrorTopics(request: RequestChannel.Request): CompletableFuture[Unit] = {
+    authHelper.authorizeClusterOperation(request, CLUSTER_ACTION)
+    val pauseRequest = request.body[PauseMirrorTopicsRequest]
+    val context = new ControllerRequestContext(request.context.header.data, request.context.principal,
+      OptionalLong.empty())
+    val topics: util.Set[String] = new util.HashSet[String]()
+    pauseRequest.data().topics().forEach(topic => topics.add(topic.topicName()))
+    controller.pauseMirrorTopics(context, topics)
+      .handle[Unit] { (response, exception) =>
+        if (exception != null) {
+          requestHelper.handleError(request, exception)
+        } else {
+          requestHelper.sendResponseMaybeThrottle(request, throttleMs =>
+            new PauseMirrorTopicsResponse(response.setThrottleTimeMs(throttleMs)))
+        }
+      }
+    CompletableFuture.completedFuture[Unit](())
+  }
+
+  def handleResumeMirrorTopics(request: RequestChannel.Request): CompletableFuture[Unit] = {
+    authHelper.authorizeClusterOperation(request, CLUSTER_ACTION)
+    val resumeRequest = request.body[ResumeMirrorTopicsRequest]
+    val context = new ControllerRequestContext(request.context.header.data, request.context.principal,
+      OptionalLong.empty())
+    val topics: util.Set[String] = new util.HashSet[String]()
+    resumeRequest.data().topics().forEach(topic => topics.add(topic.topicName()))
+    controller.resumeMirrorTopics(context, topics)
+      .handle[Unit] { (response, exception) =>
+        if (exception != null) {
+          requestHelper.handleError(request, exception)
+        } else {
+          requestHelper.sendResponseMaybeThrottle(request, throttleMs =>
+            new ResumeMirrorTopicsResponse(response.setThrottleTimeMs(throttleMs)))
+        }
+      }
     CompletableFuture.completedFuture[Unit](())
   }
 
