@@ -949,11 +949,11 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
 
     // Transitions mirror partitions to STOPPING when the topic is deleted on the source cluster.
     private void maybeStopDeletedTopics(String mirrorName, Collection<MetadataResponse.TopicMetadata> topicMetadata) {
-        List<String> remoteTopicNamesDeleted = topicMetadata.stream()
+        List<String> deletedSourceTopicNames = topicMetadata.stream()
                 .filter(tm -> tm.error() == Errors.UNKNOWN_TOPIC_OR_PARTITION)
                 .map(MetadataResponse.TopicMetadata::topic).toList();
-        getConfiguredTopics(mirrorName).forEach(name -> {
-            if (remoteTopicNamesDeleted.contains(name)) {
+        getConfiguredTopics(mirrorName, true).forEach(name -> {
+            if (deletedSourceTopicNames.contains(name)) {
                 LOG.info("Detected topic {} deleted in remote cluster {}, stopping mirror partitions", name, mirrorName);
                 partitionStates.keySet().stream()
                         .filter(key -> key.mirrorName().equals(mirrorName) && key.topic().equals(name))
@@ -1271,11 +1271,15 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     }
 
     Set<String> getConfiguredTopics(String mirrorName) {
+        return getConfiguredTopics(mirrorName, false);
+    }
+
+    Set<String> getConfiguredTopics(String mirrorName, boolean includePaused) {
         return metadataCache.getAllTopics().stream()
                 .filter(topic -> {
                     String topicMirrorName = (String) metadataCache.topicConfig(topic).get(TopicConfig.MIRROR_NAME_CONFIG);
                     if (topicMirrorName == null) return false;
-                    if (topicMirrorName.endsWith(PAUSED_TOPIC_SUFFIX)) return false;
+                    if (!includePaused && topicMirrorName.endsWith(PAUSED_TOPIC_SUFFIX)) return false;
                     return mirrorName.equals(MirrorUtils.originalMirrorName(topicMirrorName));
                 })
                 .collect(Collectors.toSet());
