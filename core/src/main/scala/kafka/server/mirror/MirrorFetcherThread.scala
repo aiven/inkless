@@ -28,26 +28,9 @@ import java.util.Optional
 import scala.collection.{Map, Set}
 
 /**
- * Specialized fetcher thread for cross-cluster mirroring.
- *
- * This class extends AbstractFetcherThread to handle partitions that replicate from remote clusters.
- * Unlike ReplicaFetcherThread which handles intra-cluster replication, MirrorFetcherThread handles
- * cross-cluster replication where source and destination clusters have independent leader epochs.
- *
- * Key differences from ReplicaFetcherThread:
- * - Tracks source cluster's leader epoch for fetch validation, but rewrites to
- *   destination cluster's local epoch before appending to the log
- * - Rewrites producer IDs to negative space to avoid conflicts with local producers
- * - Routes fetcher operations to MirrorFetcherManager (not ReplicaFetcherManager)
- *
- * @param name The name of the thread
- * @param leader The remote leader endpoint to fetch from (RemoteLeaderEndPoint)
- * @param brokerConfig Broker configuration
- * @param failedPartitions Tracker for partitions with errors
- * @param replicaMgr The local ReplicaManager
- * @param quota Replication quota for throttling
- * @param logPrefix Log prefix for this thread
- * @param mirrorName The name of the cluster mirror configuration
+ * Fetcher thread for cross-cluster mirroring. Unlike ReplicaFetcherThread, this rewrites
+ * leader epochs to the destination's local epoch and producer IDs to negative space,
+ * and routes fetcher operations to MirrorFetcherManager.
  */
 class MirrorFetcherThread(name: String,
                           leader: LeaderEndPoint,
@@ -133,7 +116,7 @@ class MirrorFetcherThread(name: String,
   // return the mirror partition lag
   // TODO: Since we already record the lag in stats, maybe we don't cache the logInfo in mirrorFetcherManager anymore.
   override def getPartitionLag(topicPartition: TopicPartition, leaderHW: Long, nextOffset: Long, mirrorName: String): Long = {
-    replicaMgr.mirrorFetcherManager.getLagInfo(mirrorName).get(topicPartition).map(_.lag).getOrElse(0L)
+    replicaMgr.mirrorFetcherManager.getMirrorLagInfo(mirrorName).get(topicPartition).map(_.lag).getOrElse(0L)
   }
 
   override def initiateShutdown(): Boolean = {

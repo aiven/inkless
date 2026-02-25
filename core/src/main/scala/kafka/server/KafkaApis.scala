@@ -21,7 +21,7 @@ import kafka.coordinator.transaction.{InitProducerIdResult, TransactionCoordinat
 import kafka.network.RequestChannel
 import kafka.server.QuotaFactory.{QuotaManagers, UNBOUNDED_QUOTA}
 import kafka.server.handlers.DescribeTopicPartitionsRequestHandler
-import kafka.server.mirror.MirrorMetadataManager.MirrorPartitionMetadata
+import kafka.server.mirror.MirrorUtils.PartitionStateInfo
 import kafka.server.mirror.{MirrorCoordinator, MirrorPartitionState}
 import kafka.server.share.{ShareFetchUtils, SharePartitionManager}
 import kafka.utils.Logging
@@ -295,15 +295,15 @@ class KafkaApis(val requestChannel: RequestChannel,
       val writeMirrorStatesRequest = request.body[WriteMirrorStatesRequest]
       info("!!! writeMirrorStatesRequest:" + writeMirrorStatesRequest)
       val mirrorName = writeMirrorStatesRequest.data().mirrorName()
-      val partitionMetadata = new util.HashMap[String, util.Set[MirrorPartitionMetadata]]()
+      val partitionMetadata = new util.HashMap[String, util.Set[PartitionStateInfo]]()
       writeMirrorStatesRequest.data().topics().forEach(topic => {
-        val partMetadata = new util.HashSet[MirrorPartitionMetadata]()
+        val partMetadata = new util.HashSet[PartitionStateInfo]()
         topic.partitions().forEach(part => {
-          partMetadata.add(new MirrorPartitionMetadata(part.partitionIndex(), MirrorPartitionState.fromValue(part.state()), part.lastMirroredOffset()))
+          partMetadata.add(new PartitionStateInfo(part.partitionIndex(), MirrorPartitionState.fromValue(part.state()), part.lastMirroredOffset()))
         })
         partitionMetadata.put(topic.name(), partMetadata)
       })
-      mirrorCoordinator.writeMirrorPartitionMetadata(mirrorName, partitionMetadata, res => requestHelper.sendMaybeThrottle(request, res))
+      mirrorCoordinator.writePartitionStateInfo(mirrorName, partitionMetadata, res => requestHelper.sendMaybeThrottle(request, res))
     } else {
       logger.warn("Cluster Mirroring is disabled (mirror.version=0), ignoring write mirror states request")
       requestHelper.sendMaybeThrottle(request, new WriteMirrorStatesResponse(new WriteMirrorStatesResponseData().setErrorCode(Errors.UNSUPPORTED_VERSION.code)))
@@ -323,7 +323,7 @@ class KafkaApis(val requestChannel: RequestChannel,
         })
         partitionMetadata.put(topic.name(), parts)
       })
-      mirrorCoordinator.readMirrorPartitionMetadataFromCache(mirrorName, partitionMetadata,
+      mirrorCoordinator.getCachedPartitionMetadata(mirrorName, partitionMetadata,
         res => requestHelper.sendMaybeThrottle(request, res))
     } else {
       logger.warn("Cluster Mirroring is disabled (mirror.version=0), ignoring read mirror states request")
@@ -1570,7 +1570,7 @@ class KafkaApis(val requestChannel: RequestChannel,
           (shareCoordinator.partitionFor(SharePartitionKey.getInstance(key)), SHARE_GROUP_STATE_TOPIC_NAME)
 
         case CoordinatorType.MIRROR =>
-          (mirrorCoordinator.getCoordinatingPartitionByKey(MirrorRecordKey.getInstance(key)), MIRROR_STATE_TOPIC_NAME)
+          (mirrorCoordinator.getCoordinatorPartitionByKey(MirrorRecordKey.getInstance(key)), MIRROR_STATE_TOPIC_NAME)
       }
 
       val topicMetadata = metadataCache.getTopicMetadata(Set(internalTopicName).asJava, request.context.listenerName, false, false).asScala

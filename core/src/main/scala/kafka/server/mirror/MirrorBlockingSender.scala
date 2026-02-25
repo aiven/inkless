@@ -34,19 +34,8 @@ import org.apache.kafka.server.network.BrokerEndPoint
 import scala.jdk.CollectionConverters._
 
 /**
- * BlockingSend implementation that supports cross-cluster mirroring with authentication.
- *
- * This class creates a dedicated NetworkClient configured with cluster-specific credentials
- * and security settings from MirrorConfig. It supports various authentication mechanisms
- * including SASL and SSL for secure cross-cluster communication.
- *
- * @param sourceBroker The remote broker endpoint to connect to
- * @param mirrorConfig Configuration for the cluster mirror, including security settings
- * @param metrics Metrics registry for network and client metrics
- * @param time Time instance for scheduling and timeouts
- * @param fetcherId Fetcher thread ID for metric tagging
- * @param clientId Client identifier for logging and metrics
- * @param logContext Logging context for prefixing log messages
+ * BlockingSend implementation for cross-cluster mirroring. Creates a dedicated NetworkClient
+ * configured with cluster-specific security settings (SASL/SSL) from MirrorConfig.
  */
 class MirrorBlockingSender(sourceBroker: BrokerEndPoint,
                            mirrorConfig: MirrorConfig,

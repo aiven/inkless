@@ -31,26 +31,8 @@ import org.apache.kafka.server.network.BrokerEndPoint
 import scala.collection.{Map, mutable}
 
 /**
- * Component that manages replica fetcher threads for cluster mirroring scenarios
- * where the local Kafka cluster needs to replicate data from multiple remote Kafka clusters.
- *
- * This manager extends the standard AbstractFetcherManager with specialized logic for handling
- * multiple cluster mirrors simultaneously. The key architectural decision is to ensure that
- * partitions from different cluster mirrors are assigned to separate fetcher threads, providing:
- *
- * 1. Authentication Isolation: Each cluster mirror can have its own authentication
- *    credentials and security configuration, preventing credential conflicts.
- *
- * 2. Configuration Isolation: Different cluster mirrors can have distinct connection
- *    properties, timeouts, and other networking configurations.
- *
- * 3. Load Balancing: Within each cluster mirror, partitions are distributed across
- *    multiple fetcher threads based on the num.cluster.mirror.replica.fetchers configuration.
- *
- * The manager uses a three-dimensional key (source broker endpoint + fetcher ID + mirror name)
- * to organize fetcher threads, ensuring proper isolation while maintaining efficient resource
- * utilization. This design allows a single Kafka cluster to simultaneously mirror data from
- * multiple remote clusters without interference between their respective configurations.
+ * Manages replica fetcher threads for cluster mirroring, assigning partitions from different
+ * mirrors to separate threads for authentication, configuration, and load balancing isolation.
  */
 class MirrorFetcherManager(brokerConfig: KafkaConfig,
                            protected val replicaManager: ReplicaManager,
@@ -64,22 +46,20 @@ class MirrorFetcherManager(brokerConfig: KafkaConfig,
       name = "MirrorFetcherManager on broker " + brokerConfig.brokerId,
       clientId = "MirrorReplica",
       numFetchers = brokerConfig.mirrorConfig.numReplicaFetchers) {
-  private val mirrorFetcherThreadMap = new mutable.HashMap[BrokerAndFetcherIdWithMirror, MirrorFetcherThread]
-  private val lagInfo = new mutable.HashMap[MirrorPartitionKey, MirrorLagInfo]
+  private val mirrorFetcherThreadMap = new mutable.HashMap[FetcherThreadKey, MirrorFetcherThread]
+  private val lagInfo = new mutable.HashMap[PartitionLagKey, LagInfo]
 
   override def deadThreadCount: Int = lock synchronized { mirrorFetcherThreadMap.values.count(_.isThreadFailed) }
 
   override def minFetchRate: Double = {
     // current min fetch rate across all fetchers/topics/partitions
     val headRate = mirrorFetcherThreadMap.values.headOption.map(_.fetcherStats.requestRate.oneMinuteRate).getOrElse(0.0)
-    info("!!! mirrorFetcherThreadMap: " + mirrorFetcherThreadMap + ";;" + fetcherThreadMap + ";;" + headRate)
     mirrorFetcherThreadMap.values.foldLeft(headRate)((curMinAll, fetcherThread) =>
       math.min(curMinAll, fetcherThread.fetcherStats.requestRate.oneMinuteRate))
   }
 
   override def maxLag: Long = {
     // current max lag across all fetchers/topics/partitions
-    info("!!! mirrorFetcherThreadMap: " + mirrorFetcherThreadMap + fetcherThreadMap)
     mirrorFetcherThreadMap.values.foldLeft(0L) { (curMaxLagAll, fetcherThread) =>
       val maxLagThread = fetcherThread.fetcherLagStats.stats.values.stream().mapToLong(v => v.lag).max().orElse(0L)
       math.max(curMaxLagAll, maxLagThread)
@@ -91,11 +71,11 @@ class MirrorFetcherManager(brokerConfig: KafkaConfig,
   }
 
   override def addFetcherForPartitions(partitionAndOffsets: Map[TopicPartition, InitialFetchState]): Unit = {
-    logger.info("!!! mirrorFetcherThreadMap: " + mirrorFetcherThreadMap.keys)
+    logger.debug("Adding fetcher for partitions, existing fetchers: {}", mirrorFetcherThreadMap.keys)
     // Ensures partitions with different cluster mirrors get separate fetcher threads.
     // This is crucial because different cluster mirrors may require different authentication credentials.
     val partitionsPerFetcher = partitionAndOffsets.groupBy { case (topicPartition, brokerAndInitialFetchOffset) =>
-      BrokerAndFetcherIdWithMirror(
+      FetcherThreadKey(
         brokerAndInitialFetchOffset.leader,
         getFetcherId(topicPartition),
         brokerAndInitialFetchOffset.mirrorName
@@ -103,10 +83,10 @@ class MirrorFetcherManager(brokerConfig: KafkaConfig,
     }
 
     this.synchronized {
-      def addAndStartFetcherThread(remoteFetcherKey: BrokerAndFetcherIdWithMirror): MirrorFetcherThread = {
-        val fetcherThread = createMirrorFetcherThread(remoteFetcherKey.fetcherId, remoteFetcherKey.sourceBroker,
-          remoteFetcherKey.mirrorName)
-        mirrorFetcherThreadMap.put(remoteFetcherKey, fetcherThread)
+      def addAndStartFetcherThread(fetcherKey: FetcherThreadKey): MirrorFetcherThread = {
+        val fetcherThread = createMirrorFetcherThread(fetcherKey.fetcherId, fetcherKey.sourceBroker,
+          fetcherKey.mirrorName)
+        mirrorFetcherThreadMap.put(fetcherKey, fetcherThread)
         fetcherThread.start()
         fetcherThread
       }
@@ -115,14 +95,14 @@ class MirrorFetcherManager(brokerConfig: KafkaConfig,
         val fetcherThread = mirrorFetcherThreadMap.get(remoteFetcherKey) match {
           case Some(currentFetcherThread) if currentFetcherThread.leader.brokerEndPoint() == remoteFetcherKey.sourceBroker =>
             // reuse the fetcher thread
-            logger.info("!!! Reusing mirror fetcher")
+            logger.debug("Reusing mirror fetcher for {}", remoteFetcherKey)
             currentFetcherThread
           case Some(f) =>
-            logger.info("!!! Recreating mirror fetcher")
+            logger.debug("Recreating mirror fetcher for {}", remoteFetcherKey)
             f.shutdown()
             addAndStartFetcherThread(remoteFetcherKey)
           case None =>
-            logger.info("!!! Creating new mirror fetcher")
+            logger.debug("Creating new mirror fetcher for {}", remoteFetcherKey)
             addAndStartFetcherThread(remoteFetcherKey)
         }
         // failed partitions are removed when added partitions to thread
@@ -130,14 +110,14 @@ class MirrorFetcherManager(brokerConfig: KafkaConfig,
 
         // Initialize lag information for newly added partitions
         initialFetchOffsets.foreach { case (topicPartition, initialState) =>
-          val lagKey = MirrorPartitionKey(remoteFetcherKey.mirrorName, topicPartition)
+          val lagKey = PartitionLagKey(remoteFetcherKey.mirrorName, topicPartition)
           // Initialize with 0 values until first fetch updates it
           val destinationOffset = replicaManager.getPartition(topicPartition) match {
             case HostedPartition.Online(partition) =>
               partition.log.map(_.highWatermark).getOrElse(0L)
             case _ => 0L
           }
-          lagInfo.put(lagKey, MirrorLagInfo(destinationOffset, destinationOffset, 0, time.milliseconds()))
+          lagInfo.put(lagKey, LagInfo(destinationOffset, destinationOffset, 0, time.milliseconds()))
         }
       }
     }
@@ -173,7 +153,7 @@ class MirrorFetcherManager(brokerConfig: KafkaConfig,
         fetchStates ++= removed
         // Remove lag cache entries for partitions that were actually removed
         for (partition <- removed.keys) {
-          val lagKey = MirrorPartitionKey(key.mirrorName, partition)
+          val lagKey = PartitionLagKey(key.mirrorName, partition)
           lagInfo.remove(lagKey)
         }
       }
@@ -181,13 +161,13 @@ class MirrorFetcherManager(brokerConfig: KafkaConfig,
     }
     // Only log if we actually removed mirror partitions (not regular partitions)
     if (fetchStates.nonEmpty)
-      info(s"!!! Removed mirror fetcher for partitions ${fetchStates.keySet}")
+      info(s"Removed mirror fetcher for partitions ${fetchStates.keySet}")
     fetchStates
   }
 
   override def shutdownIdleFetcherThreads(): Unit = {
     this.synchronized {
-      val keysToBeRemoved = new mutable.HashSet[BrokerAndFetcherIdWithMirror]
+      val keysToBeRemoved = new mutable.HashSet[FetcherThreadKey]
       for ((key, fetcher) <- mirrorFetcherThreadMap) {
         if (fetcher.partitionCount <= 0) {
           fetcher.shutdown()
@@ -211,29 +191,15 @@ class MirrorFetcherManager(brokerConfig: KafkaConfig,
     }
   }
 
-  /**
-   * Update partition lag info.
-   *
-   * @param mirrorName mirror name
-   * @param topicPartition partition
-   * @param sourceOffset source HW
-   * @param destinationOffset destination HW
-   */
-  def updateLag(mirrorName: String, topicPartition: TopicPartition, sourceOffset: Long, destinationOffset: Long): Unit = {
+  def updatePartitionLag(mirrorName: String, topicPartition: TopicPartition, sourceOffset: Long, destinationOffset: Long): Unit = {
     this.synchronized {
-      val key = MirrorPartitionKey(mirrorName, topicPartition)
+      val key = PartitionLagKey(mirrorName, topicPartition)
       val lag = Math.max(0, sourceOffset - destinationOffset)
-      lagInfo.put(key, MirrorLagInfo(sourceOffset, destinationOffset, lag, time.milliseconds()))
+      lagInfo.put(key, LagInfo(sourceOffset, destinationOffset, lag, time.milliseconds()))
     }
   }
 
-  /**
-   * Get partition lag info.
-   *
-   * @param mirrorName mirror name
-   * @return lag info
-   */
-  def getLagInfo(mirrorName: String): Map[TopicPartition, MirrorLagInfo] = {
+  def getMirrorLagInfo(mirrorName: String): Map[TopicPartition, LagInfo] = {
     this.synchronized {
       lagInfo.collect {
         case (key, lagInfo) if key.mirrorName == mirrorName => key.topicPartition -> lagInfo
@@ -253,7 +219,13 @@ class MirrorFetcherManager(brokerConfig: KafkaConfig,
  * Three-dimensional key for grouping mirror fetcher threads.
  *
  * Multiple partitions share the same fetcher thread when they have identical keys
- * (same source broker, fetcher ID, and mirror name). This key determines thread reuse.
+ * (source broker, fetcher ID, and mirror name). This key determines thread reuse.
+ *
+ * Thread creation rules:
+ * - Same source broker + same fetcher ID + same mirror -> REUSE thread
+ * - Different source broker -> NEW thread (source leader changed)
+ * - Different mirror name -> NEW thread (different auth credentials)
+ * - Different fetcher ID -> NEW thread (load balancing)
  *
  * Example with num.mirror.replica.fetchers = 2:
  *
@@ -271,26 +243,9 @@ class MirrorFetcherManager(brokerConfig: KafkaConfig,
  * - MirrorFetcherThread-1-1-cluster-A: [topic1-p1, topic2-p1] --- Same key
  * - MirrorFetcherThread-0-2-cluster-A: [topic3-p0]
  * - MirrorFetcherThread-0-1-cluster-B: [topic4-p0]
- *
- * Thread creation rules:
- * - Same source broker + same fetcher ID + same mirror -> REUSE thread
- * - Different source broker -> NEW thread (source leader changed)
- * - Different mirror name -> NEW thread (different auth credentials)
- * - Different fetcher ID -> NEW thread (load balancing)
  */
-case class BrokerAndFetcherIdWithMirror(sourceBroker: BrokerEndPoint, fetcherId: Int, mirrorName: String)
+case class FetcherThreadKey(sourceBroker: BrokerEndPoint, fetcherId: Int, mirrorName: String)
 
-/**
- * Key for identifying a partition within a specific mirror.
- */
-case class MirrorPartitionKey(mirrorName: String, topicPartition: TopicPartition)
+case class PartitionLagKey(mirrorName: String, topicPartition: TopicPartition)
 
-/**
- * Lag information for a mirrored partition.
- *
- * @param sourceOffset The high watermark offset from the source cluster leader
- * @param destinationOffset The high watermark on the destination cluster
- * @param lag The computed lag (sourceOffset - destinationOffset)
- * @param lastUpdateMs Timestamp when this lag was last updated
- */
-case class MirrorLagInfo(sourceOffset: Long, destinationOffset: Long, lag: Long, lastUpdateMs: Long)
+case class LagInfo(sourceOffset: Long, destinationOffset: Long, lag: Long, lastUpdateMs: Long)
