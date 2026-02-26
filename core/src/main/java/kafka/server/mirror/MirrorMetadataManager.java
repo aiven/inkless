@@ -153,17 +153,21 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     private static final ResourcePatternFilter ANY_RESOURCE = new ResourcePatternFilter(ResourceType.ANY, null, PatternType.ANY);
     private static final AclBindingFilter ANY_RESOURCE_ACL = new AclBindingFilter(ANY_RESOURCE, AccessControlEntryFilter.ANY);
 
-    private final KafkaConfig kafkaConfig;
+    private final KafkaConfig brokerConfig;
     private final int nodeId;
     private final Metrics metrics;
     private final Time time;
     private final Random random;
-    private final NodeToControllerChannelManager channelManager;
-    private final Supplier<GroupCoordinator> groupCoordinatorSupplier;
     private InterBrokerSender interBrokerSender;
     private MetadataImage metadataImage;
     private final MetadataCache metadataCache;
 
+    // components
+    private final NodeToControllerChannelManager channelManager;
+    private final Supplier<GroupCoordinator> groupCoordinatorSupplier;
+    private final Supplier<MirrorFetcherManager> mirrorFetcherManagerSupplier;
+
+    // functions
     private Optional<MirrorUtils.StateTransitioner> stateTransitioner = Optional.empty();
     private Optional<Function<MirrorRecordKey, Integer>> coordinatorPartitionFinder = Optional.empty();
     private Optional<Function<String, Integer>> coordinatorPartitionByNameFinder = Optional.empty();
@@ -184,20 +188,22 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     private AtomicLong aclSyncError;
 
     public MirrorMetadataManager(
-        KafkaConfig kafkaConfig,
+        KafkaConfig brokerConfig,
         Metrics metrics,
         Time time,
         MetadataCache metadataCache,
         NodeToControllerChannelManager channelManager,
-        Supplier<GroupCoordinator> groupCoordinatorSupplier
+        Supplier<GroupCoordinator> groupCoordinatorSupplier,
+        Supplier<MirrorFetcherManager> mirrorFetcherManagerSupplier
     ) {
-        this.kafkaConfig = kafkaConfig;
-        this.nodeId = kafkaConfig.nodeId();
+        this.brokerConfig = brokerConfig;
+        this.nodeId = brokerConfig.nodeId();
         this.metrics = metrics;
         this.time = time;
         this.random = new Random();
         this.channelManager = channelManager;
         this.groupCoordinatorSupplier = groupCoordinatorSupplier;
+        this.mirrorFetcherManagerSupplier = mirrorFetcherManagerSupplier;
 
         this.metadataImage = MetadataImage.EMPTY;
         this.metadataCache = metadataCache;
@@ -229,7 +235,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
 
     @Override
     public String name() {
-        return "MirrorMetadataManager(id=" + kafkaConfig.nodeId() + ")";
+        return "MirrorMetadataManager(id=" + brokerConfig.nodeId() + ")";
     }
 
     /**
@@ -242,13 +248,29 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
     @Override
     public void onMetadataUpdate(MetadataDelta delta, MetadataImage newImage, LoaderManifest manifest) {
         if (interBrokerSender == null) {
-            KafkaClient networkClient = NetworkUtils.buildNetworkClient("MirrorMetadataManager", kafkaConfig, metrics, time, new LogContext(name()));
-            interBrokerSender = new InterBrokerSender("mirror-inter-broker-sender", networkClient, kafkaConfig.requestTimeoutMs(), Time.SYSTEM);
+            KafkaClient networkClient = NetworkUtils.buildNetworkClient("MirrorMetadataManager", brokerConfig, metrics, time, new LogContext(name()));
+            interBrokerSender = new InterBrokerSender("mirror-inter-broker-sender", networkClient, brokerConfig.requestTimeoutMs(), Time.SYSTEM);
             interBrokerSender.start();
         }
 
         // caching the image for query purpose
         this.metadataImage = newImage;
+
+        // detect mirror config changes and close stale connections to trigger reconnection
+        if (delta.configsDelta() != null) {
+            delta.configsDelta().changes().entrySet().stream()
+                .filter(e -> e.getKey().type() == ConfigResource.Type.MIRROR)
+                .forEach(e -> {
+                    String mirrorName = e.getKey().name();
+                    List<MirrorBlockingSender> senders = sourceSenders.remove(mirrorName);
+                    if (senders != null) {
+                        LOG.info("Mirror config changed for '{}'. Closing existing connections "
+                            + "to trigger reconnection with updated configuration.", mirrorName);
+                        senders.forEach(MirrorBlockingSender::close);
+                    }
+                    mirrorFetcherManagerSupplier.get().restartFetchersForMirror(mirrorName);
+                });
+        }
 
         // get all mirror partition leaders on this node based on the delta
         Set<TopicPartition> mirrorLeaders = getMirrorLeaders(delta, newImage);
@@ -407,7 +429,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
             int activeCoordinator = metadataImage.topics().getTopic(MIRROR_STATE_TOPIC_NAME)
                     .partitions().get(coordinatorPartitionFinder.get().apply(
                             new MirrorRecordKey(mirrorName, metadataCache.getTopicId(topic), partition))).leader;
-            return activeCoordinator == kafkaConfig.nodeId();
+            return activeCoordinator == brokerConfig.nodeId();
         }
         return false;
     }
@@ -416,7 +438,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         if (coordinatorPartitionByNameFinder.isPresent()) {
             int activeCoordinator = metadataImage.topics().getTopic(MIRROR_STATE_TOPIC_NAME)
                     .partitions().get(coordinatorPartitionByNameFinder.get().apply(mirrorName)).leader;
-            return activeCoordinator == kafkaConfig.nodeId();
+            return activeCoordinator == brokerConfig.nodeId();
         }
         return false;
     }
@@ -428,7 +450,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                 Set<String> topicSet = new HashSet<>();
                 topicSet.add(MIRROR_STATE_TOPIC_NAME);
 
-                var interBrokerListenerName = kafkaConfig.interBrokerListenerName();
+                var interBrokerListenerName = brokerConfig.interBrokerListenerName();
 
                 List<MetadataResponseData.MetadataResponseTopic> topicMetadata = metadataCache.getTopicMetadata(
                         topicSet,
@@ -646,6 +668,8 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                 .map(Object::toString)
                 .orElseThrow(() -> new IllegalArgumentException("Remote bootstrap server not found in Cluster Mirror config: " + mirrorName));
 
+        LOG.info("Mirror config for '{}': {}", mirrorName, props);
+
         var addresses = ClientUtils.parseAndValidateAddresses(Arrays.stream(bootstrapServers.split(",")).toList(), "use_all_dns_ips");
         // Use random node id here because we don't know node id of remote brokers
         int rand = random.nextInt(addresses.size());
@@ -655,6 +679,7 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         MirrorBlockingSender sender = new MirrorBlockingSender(
                 brokerEndpoint,
                 MirrorConfig.fromProperties(props),
+                brokerConfig,
                 metrics,
                 time,
                 brokerEndpoint.id(),
@@ -862,7 +887,6 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
         }
 
         mirrors.forEach(this::ensureMirrorConnection);
-
         sourceSenders.forEach((mirror, senders) -> syncTopicMetadata(mirror, senders));
 
         // TODO: This is incremented on every metadata refresh for testing purpose, as we don't have error handling at this stage

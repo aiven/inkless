@@ -82,7 +82,7 @@ public class MirrorCoordinator {
     private static final Logger LOG = LoggerFactory.getLogger(MirrorCoordinator.class);
 
     private final AtomicBoolean isActive = new AtomicBoolean(false);
-    private final KafkaConfig kafkaConfig;
+    private final KafkaConfig brokerConfig;
     private final ReplicaManager replicaManager;
     private final MirrorMetadataManager mirrorMetadataManager;
     private final Scheduler scheduler;
@@ -95,7 +95,7 @@ public class MirrorCoordinator {
     private volatile int numPartitions = -1;
 
     public MirrorCoordinator(
-            KafkaConfig kafkaConfig,
+            KafkaConfig brokerConfig,
             ReplicaManager replicaManager,
             Scheduler scheduler,
             Metrics metrics,
@@ -103,7 +103,7 @@ public class MirrorCoordinator {
             Time time,
             MirrorMetadataManager mirrorMetadataManager
     ) {
-        this.kafkaConfig = kafkaConfig;
+        this.brokerConfig = brokerConfig;
         this.replicaManager = replicaManager;
         this.mirrorMetadataManager = mirrorMetadataManager;
         this.scheduler = scheduler;
@@ -118,7 +118,7 @@ public class MirrorCoordinator {
         var mirrorTopicPartition = new TopicPartition(Topic.MIRROR_STATE_TOPIC_NAME,
                 getCoordinatorPartitionByKey(new MirrorRecordKey(mirrorName, metadataCache.getTopicId(topic), partition)));
         var optLeaderAndIsr = metadataCache.getLeaderAndIsr(mirrorTopicPartition.topic(), mirrorTopicPartition.partition());
-        return optLeaderAndIsr.isPresent() && optLeaderAndIsr.get().leader() == kafkaConfig.nodeId();
+        return optLeaderAndIsr.isPresent() && optLeaderAndIsr.get().leader() == brokerConfig.nodeId();
     }
 
     // Executes the appropriate actions for a state transition.
@@ -333,7 +333,7 @@ public class MirrorCoordinator {
         }
 
         LOG.info("Starting up.");
-        numPartitions = kafkaConfig.mirrorConfig().topicNumPartitions();
+        numPartitions = brokerConfig.mirrorConfig().topicNumPartitions();
         mirrorMetadataManager.setStateTransitioner((mirrorName, tp, state) -> transitionTo(mirrorName, Set.of(tp), state));
         mirrorMetadataManager.setCoordinatorPartitionByKeyFinder(key -> getCoordinatorPartitionByKey(key));
         mirrorMetadataManager.setCoordinatorPartitionByNameFinder(mirrorName -> getCoordinatorPartitionByName(mirrorName));
@@ -341,7 +341,7 @@ public class MirrorCoordinator {
         scheduler.startup();
 
         // periodically query source cluster to get the metadata
-        long metadataRefreshIntervalMs = kafkaConfig.mirrorConfig().metadataRefreshIntervalMs();
+        long metadataRefreshIntervalMs = brokerConfig.mirrorConfig().metadataRefreshIntervalMs();
         scheduler.schedule("mirror-metadata-refresh",
                 () -> {
                     mirrorMetadataManager.syncTopicMetadataFromSourceClusters();

@@ -30,6 +30,7 @@ import org.apache.kafka.common.requests.AbstractRequest.Builder
 import org.apache.kafka.common.security.auth.SecurityProtocol
 import org.apache.kafka.server.config.MirrorConfig
 import org.apache.kafka.server.network.BrokerEndPoint
+import kafka.server.KafkaConfig
 
 import scala.jdk.CollectionConverters._
 
@@ -39,20 +40,20 @@ import scala.jdk.CollectionConverters._
  */
 class MirrorBlockingSender(sourceBroker: BrokerEndPoint,
                            mirrorConfig: MirrorConfig,
+                           brokerConfig: KafkaConfig,
                            metrics: Metrics,
                            time: Time,
                            fetcherId: Int,
                            clientId: String,
                            logContext: LogContext) extends BlockingSend {
   private val sourceNode = new Node(sourceBroker.id, sourceBroker.host, sourceBroker.port)
-  private val config = mirrorConfig.getConfig()
-  private val socketTimeout: Int = config.getLong(MirrorConfig.SOCKET_CONNECTION_SETUP_TIMEOUT_MS_CONFIG).toInt
+  private val socketTimeout: Int = brokerConfig.replicaSocketTimeoutMs
 
   private val networkClient = {
     val channelBuilder = ChannelBuilders.clientChannelBuilder(
       SecurityProtocol.forName(mirrorConfig.securityProtocol()),
       JaasContext.Type.CLIENT,
-      config,
+      mirrorConfig.getConfig(),
       null,
       mirrorConfig.saslMechanism(),
       time,
@@ -60,7 +61,7 @@ class MirrorBlockingSender(sourceBroker: BrokerEndPoint,
     )
     val selector = new Selector(
       NetworkReceive.UNLIMITED,
-      config.getLong(MirrorConfig.METADATA_MAX_AGE_CONFIG),
+      brokerConfig.connectionsMaxIdleMs,
       metrics,
       time,
       "mirror-" + clientId,
@@ -75,11 +76,11 @@ class MirrorBlockingSender(sourceBroker: BrokerEndPoint,
       1,
       0,
       0,
-      config.getInt(MirrorConfig.SEND_BUFFER_CONFIG),
-      config.getInt(MirrorConfig.RECEIVE_BUFFER_CONFIG),
-      config.getInt(MirrorConfig.REQUEST_TIMEOUT_MS_CONFIG),
-      config.getLong(MirrorConfig.SOCKET_CONNECTION_SETUP_TIMEOUT_MS_CONFIG).toInt,
-      config.getLong(MirrorConfig.SOCKET_CONNECTION_SETUP_TIMEOUT_MAX_MS_CONFIG).toInt,
+      Selectable.USE_DEFAULT_BUFFER_SIZE,
+      brokerConfig.replicaSocketReceiveBufferBytes,
+      brokerConfig.requestTimeoutMs,
+      brokerConfig.connectionSetupTimeoutMs,
+      brokerConfig.connectionSetupTimeoutMaxMs,
       time,
       true,
       new ApiVersions,
