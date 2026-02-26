@@ -240,7 +240,6 @@ public class ConfigurationControlManager {
                 topicRes.setErrorCode(Errors.INVALID_REQUEST.code());
             } else {
                 curVal = currentConfigs.get(mirrorNameConfig);
-                log.info("!!! curVal: {} for topic: {}", curVal, topic);
                 // Verify the current value should not be empty
                 if (curVal == null || curVal.isBlank()) {
                     topicRes.setErrorCode(Errors.INVALID_REQUEST.code()).setName(topic);
@@ -382,7 +381,6 @@ public class ConfigurationControlManager {
             TimelineHashMap<String, String> currentConfigs = configData.get(configResource);
             if (currentConfigs != null) {
                 String currMirrorNameValue = currentConfigs.get(TopicConfig.MIRROR_NAME_CONFIG);
-                log.info("!!! currMirrorNameValue: {} for topic: {}", currMirrorNameValue, topic);
                 // Verify the current value should be empty or ends with removed suffix
                 if (currMirrorNameValue != null && (currMirrorNameValue.isBlank() || !currMirrorNameValue.endsWith(REMOVED_TOPIC_SUFFIX))) {
                     topicRes.setErrorCode(Errors.INVALID_REQUEST.code()).setName(topic);

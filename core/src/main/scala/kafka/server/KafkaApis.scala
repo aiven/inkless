@@ -295,7 +295,6 @@ class KafkaApis(val requestChannel: RequestChannel,
   def handleWriteMirrorStates(request: RequestChannel.Request): Unit = {
     if (isClusterMirroringEnabled) {
       val writeMirrorStatesRequest = request.body[WriteMirrorStatesRequest]
-      info("!!! writeMirrorStatesRequest:" + writeMirrorStatesRequest)
       val mirrorName = writeMirrorStatesRequest.data().mirrorName()
       val partitionMetadata = new util.HashMap[String, util.Set[PartitionStateInfo]]()
       writeMirrorStatesRequest.data().topics().forEach(topic => {
@@ -315,7 +314,6 @@ class KafkaApis(val requestChannel: RequestChannel,
   def handleReadMirrorStates(request: RequestChannel.Request): Unit = {
     if (isClusterMirroringEnabled) {
       val readMirrorStatesRequest = request.body[ReadMirrorStatesRequest]
-      info("!!! readMirrorStatesRequest:" + readMirrorStatesRequest)
       val mirrorName = readMirrorStatesRequest.data().mirrorName()
       val partitionMetadata = new util.HashMap[String, util.Set[Integer]]()
       readMirrorStatesRequest.data().topics().forEach(topic => {
@@ -336,7 +334,6 @@ class KafkaApis(val requestChannel: RequestChannel,
   def handleLastMirroredOffset(request: RequestChannel.Request): Unit = {
     if (isClusterMirroringEnabled) {
       val lastMirroredOffsetRequest = request.body[LastMirroredOffsetsRequest]
-      logger.info(s"!!! Handling last mirrored offset request: ${lastMirroredOffsetRequest}")
       val responseData = new LastMirroredOffsetsResponseData()
       val mirrorName = lastMirroredOffsetRequest.data().mirrorName()
       val topicResults = new util.ArrayList[LastMirroredOffsetsResponseData.TopicResult]()
@@ -378,8 +375,6 @@ class KafkaApis(val requestChannel: RequestChannel,
       val removeTopicsFromMirrorRequest = request.body[RemoveTopicsFromMirrorRequest]
       // TODO: might need to have a better way to pass the cluster mirror
       val topicNames: util.Set[String] = removeTopicsFromMirrorRequest.data.topics.stream().map(t => t.topicName()).collect(Collectors.toSet())
-      logger.info(s"!!! Handling remove topics from mirror request: $removeTopicsFromMirrorRequest $topicNames")
-      // update the cached topics in coordinator
     } else {
       logger.warn("Cluster Mirroring is disabled (mirror.version=0), ignoring remove topics from mirror request")
     }
