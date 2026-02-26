@@ -18,56 +18,62 @@ package kafka.server.mirror;
 
 /**
  * Represents the lifecycle states of a mirror partition.
- * FAILED state can be entered from any state when errors occur.
- * <pre>
- * 1. PREPARING
- *    Triggered by: Metadata update callback in MirrorMetadataManager
- *    Actions: Fetch last mirrored offsets, schedule truncation
- *
- * 2. MIRRORING
- *    Triggered by: ISR truncation completion in Partition.checkIsrTruncationAndTransition
- *    Actions: Start MirrorFetcherThread to replicate data
- *
- * 3. PAUSING
- *    Triggered by: PauseMirrorTopics API (appends .paused suffix to mirror.name)
- *    Actions: Remove fetchers
- *
- * 4. PAUSED
- *    Triggered by: Fetchers removed
- *    Result: Partition stays read-only, no active fetchers, no metadata sync
- *
- * 5. STOPPING
- *    Triggered by: RemoveTopicsFromMirror API or topic deletion
- *    Actions: Record last mirrored offsets to internal topic
- *
- * 6. STOPPED
- *    Triggered by: Last mirrored offsets persisted
- *    Result: Topic becomes writable on destination cluster
- * </pre>
  */
 public enum MirrorPartitionState {
-    /** Topics are being prepared for mirroring (truncation may be needed) */
+    /**
+     * The coordinator detects via onMetadataUpdate that it leads a mirror partition.
+     * It fetches last mirrored offsets from the source cluster and truncates logs to
+     * align the local log with the source.
+     * Valid from: null, UNKNOWN, STOPPED, FAILED.
+     */
     PREPARING((byte) 0),
 
-    /** Active mirroring from source cluster is in progress */
+    /**
+     * All ISR members have completed truncation. A MirrorFetcherThread is started to
+     * continuously replicate records from the source cluster.
+     * Valid from: PREPARING, PAUSED.
+     */
     MIRRORING((byte) 1),
 
-    /** Mirroring is being paused; fetchers removed and offsets recorded */
+    /**
+     * Triggered by PauseMirrorTopics API (appends .paused suffix to mirror.name config).
+     * The system removes fetchers for the affected partitions.
+     * Valid from: MIRRORING only.
+     */
     PAUSING((byte) 2),
 
-    /** Mirroring is paused; partition stays read-only with no active fetchers */
+    /**
+     * Fetchers have been removed. The partition stays read-only with no active fetchers
+     * and no metadata sync (configs, consumer groups, ACLs). On resume, transitions
+     * directly to MIRRORING (fetchers resume from local LEO, no truncation needed).
+     * Valid from: PAUSING only.
+     */
     PAUSED((byte) 3),
 
-    /** Mirroring is being gracefully stopped */
+    /**
+     * Triggered by RemoveTopicsFromMirror API (fail over) or topic deletion on the source.
+     * The system records the last mirrored offset to the internal topic.
+     * Valid from: PREPARING, MIRRORING, PAUSING (race guard), PAUSED.
+     */
     STOPPING((byte) 4),
 
-    /** Mirroring has stopped; topic is now writable on this cluster */
+    /**
+     * Last mirrored offsets have been persisted. The topic becomes writable on the
+     * destination cluster (fetcher removed, read-only flag cleared).
+     * Valid from: STOPPING only.
+     */
     STOPPED((byte) 5),
 
-    /** Error occurred during preparation or mirroring */
+    /**
+     * An error occurred. Can transition back to PREPARING to retry.
+     * Valid from: any state.
+     */
     FAILED((byte) 6),
 
-    /** Unknown state */
+    /**
+     * No cached state (broker just became leader, state not loaded yet).
+     * Not an explicit API-driven state, just the absence of state.
+     */
     UNKNOWN((byte) 16);
 
     private final byte value;
