@@ -30,11 +30,11 @@ package kafka.server.mirror;
  *
  * 3. PAUSING
  *    Triggered by: PauseMirrorTopics API (appends .paused suffix to mirror.name)
- *    Actions: Remove fetchers, record current LEO offsets
+ *    Actions: Remove fetchers
  *
  * 4. PAUSED
- *    Triggered by: Paused offsets persisted
- *    Result: Partition stays read-only, no active fetchers, metadata sync continues
+ *    Triggered by: Fetchers removed
+ *    Result: Partition stays read-only, no active fetchers, no metadata sync
  *
  * 5. STOPPING
  *    Triggered by: RemoveTopicsFromMirror API or topic deletion
@@ -111,18 +111,19 @@ public enum MirrorPartitionState {
                 return source == null
                         || source == MirrorPartitionState.UNKNOWN
                         || source == MirrorPartitionState.STOPPED
-                        || source == MirrorPartitionState.PAUSED
                         || source == MirrorPartitionState.FAILED;
             case MIRRORING:
-                return source == MirrorPartitionState.PREPARING;
+                return source == MirrorPartitionState.PREPARING
+                        || source == MirrorPartitionState.PAUSED;
             case PAUSING:
-                return source == MirrorPartitionState.MIRRORING
-                        || source == MirrorPartitionState.PREPARING;
+                return source == MirrorPartitionState.MIRRORING;
             case PAUSED:
                 return source == MirrorPartitionState.PAUSING;
             case STOPPING:
+                // TODO: remove PAUSING once state transitions are serialized via the shared queue
                 return source == MirrorPartitionState.PREPARING
                         || source == MirrorPartitionState.MIRRORING
+                        || source == MirrorPartitionState.PAUSING
                         || source == MirrorPartitionState.PAUSED;
             case STOPPED:
                 return source == MirrorPartitionState.STOPPING;

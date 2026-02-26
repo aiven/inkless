@@ -136,7 +136,8 @@ public class MirrorCoordinator {
             case PAUSING:
                 LOG.info("PAUSING mirroring for topics {}.", topicPartitions);
                 replicaManager.mirrorFetcherManager().removeFetcherForPartitions(CollectionConverters.asScala(topicPartitions));
-                recordPausedOffsets(mirrorName, topicPartitions);
+                topicPartitions.forEach(tp ->
+                        transitionTo(mirrorName, Set.of(tp), MirrorPartitionState.PAUSED));
                 break;
             case PAUSED:
                 LOG.info("PAUSED mirroring for topics {}.", topicPartitions);
@@ -183,19 +184,6 @@ public class MirrorCoordinator {
                         mirrorMetadataManager.getPartitionState(mirrorName, tp), newState, tp);
             }
         });
-    }
-
-    private void recordPausedOffsets(String mirrorName, Set<TopicPartition> topicPartitions) {
-        Map<String, Map<Integer, Long>> partitionOffsets = new HashMap<>();
-        MirrorUtils.groupPartitionsByTopic(topicPartitions).forEach((topic, parts) -> {
-            Map<Integer, Long> offsets = new HashMap<>();
-            parts.forEach(i -> replicaManager.getPartitionOrException(
-                    new TopicPartition(topic, i)).log().foreach(log -> offsets.put(i, log.logEndOffset())));
-            partitionOffsets.put(topic, offsets);
-        });
-        updateLastMirroredOffsets(mirrorName, partitionOffsets, false);
-        topicPartitions.forEach(tp ->
-                transitionTo(mirrorName, Set.of(tp), MirrorPartitionState.PAUSED));
     }
 
     private void truncateToLastStableOffset(Set<TopicPartition> topicPartitions,

@@ -376,9 +376,10 @@ public class MirrorMetadataManager implements MetadataPublisher, AutoCloseable {
                     && curState != MirrorPartitionState.PAUSED
                     && curState != MirrorPartitionState.PAUSING) {
                 t.transitionTo(mirrorName, tp, MirrorPartitionState.PAUSING);
+            } else if (curState == MirrorPartitionState.PAUSED) {
+                t.transitionTo(mirrorName, tp, MirrorPartitionState.MIRRORING);
             } else if (curState == MirrorPartitionState.UNKNOWN
-                    || curState == MirrorPartitionState.STOPPED
-                    || curState == MirrorPartitionState.PAUSED) {
+                    || curState == MirrorPartitionState.STOPPED) {
                 t.transitionTo(mirrorName, tp, MirrorPartitionState.PREPARING);
             } else {
                 t.transitionTo(mirrorName, tp, fetchedState != null ? fetchedState : curState);
