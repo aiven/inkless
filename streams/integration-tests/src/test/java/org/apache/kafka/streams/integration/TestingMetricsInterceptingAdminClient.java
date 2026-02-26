@@ -146,6 +146,8 @@ import org.apache.kafka.clients.admin.NewPartitionReassignment;
 import org.apache.kafka.clients.admin.NewPartitions;
 import org.apache.kafka.clients.admin.NewTopic;
 import org.apache.kafka.clients.admin.OffsetSpec;
+import org.apache.kafka.clients.admin.PauseMirrorTopicsOptions;
+import org.apache.kafka.clients.admin.PauseMirrorTopicsResult;
 import org.apache.kafka.clients.admin.RaftVoterEndpoint;
 import org.apache.kafka.clients.admin.RecordsToDelete;
 import org.apache.kafka.clients.admin.RemoveMembersFromConsumerGroupOptions;
@@ -156,6 +158,8 @@ import org.apache.kafka.clients.admin.RemoveTopicsFromMirrorOptions;
 import org.apache.kafka.clients.admin.RemoveTopicsFromMirrorResult;
 import org.apache.kafka.clients.admin.RenewDelegationTokenOptions;
 import org.apache.kafka.clients.admin.RenewDelegationTokenResult;
+import org.apache.kafka.clients.admin.ResumeMirrorTopicsOptions;
+import org.apache.kafka.clients.admin.ResumeMirrorTopicsResult;
 import org.apache.kafka.clients.admin.TerminateTransactionOptions;
 import org.apache.kafka.clients.admin.TerminateTransactionResult;
 import org.apache.kafka.clients.admin.UnregisterBrokerOptions;
@@ -441,6 +445,16 @@ public class TestingMetricsInterceptingAdminClient extends AdminClient {
     @Override
     public RemoveTopicsFromMirrorResult removeTopicsFromMirror(final Set<String> topics, final RemoveTopicsFromMirrorOptions options) {
         return adminDelegate.removeTopicsFromMirror(topics, options);
+    }
+
+    @Override
+    public PauseMirrorTopicsResult pauseMirrorTopics(final Set<String> topics, final PauseMirrorTopicsOptions options) {
+        return adminDelegate.pauseMirrorTopics(topics, options);
+    }
+
+    @Override
+    public ResumeMirrorTopicsResult resumeMirrorTopics(final Set<String> topics, final ResumeMirrorTopicsOptions options) {
+        return adminDelegate.resumeMirrorTopics(topics, options);
     }
 
     @Override

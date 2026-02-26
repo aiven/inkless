@@ -255,6 +255,8 @@ class KafkaApis(val requestChannel: RequestChannel,
         case ApiKeys.CREATE_MIRROR => forwardToController(request)
         case ApiKeys.ADD_TOPICS_TO_MIRROR => handleAddTopicsToMirror(request)
         case ApiKeys.REMOVE_TOPICS_FROM_MIRROR => handleRemoveTopicsFromMirror(request)
+        case ApiKeys.PAUSE_MIRROR_TOPICS => handlePauseMirrorTopics(request)
+        case ApiKeys.RESUME_MIRROR_TOPICS => handleResumeMirrorTopics(request)
         case ApiKeys.LIST_MIRRORS => handleListMirrorsRequest(request)
         case ApiKeys.DESCRIBE_MIRRORS => handleDescribeMirrorsRequest(request)
         case ApiKeys.LAST_MIRRORED_OFFSETS => handleLastMirroredOffset(request)
@@ -380,6 +382,26 @@ class KafkaApis(val requestChannel: RequestChannel,
       // update the cached topics in coordinator
     } else {
       logger.warn("Cluster Mirroring is disabled (mirror.version=0), ignoring remove topics from mirror request")
+    }
+    forwardToController(request)
+  }
+
+  def handlePauseMirrorTopics(request: RequestChannel.Request): Unit = {
+    if (!isClusterMirroringEnabled) {
+      requestHelper.sendMaybeThrottle(request,
+        new PauseMirrorTopicsResponse(
+          new PauseMirrorTopicsResponseData().setErrorCode(Errors.UNSUPPORTED_VERSION.code)))
+      return
+    }
+    forwardToController(request)
+  }
+
+  def handleResumeMirrorTopics(request: RequestChannel.Request): Unit = {
+    if (!isClusterMirroringEnabled) {
+      requestHelper.sendMaybeThrottle(request,
+        new ResumeMirrorTopicsResponse(
+          new ResumeMirrorTopicsResponseData().setErrorCode(Errors.UNSUPPORTED_VERSION.code)))
+      return
     }
     forwardToController(request)
   }

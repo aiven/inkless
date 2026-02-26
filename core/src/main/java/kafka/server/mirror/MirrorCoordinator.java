@@ -133,17 +133,24 @@ public class MirrorCoordinator {
                 // start mirroring
                 replicaManager.maybeCreateMirrorFetchers(mirrorName, topicPartitions);
                 break;
+            case PAUSING:
+                LOG.info("PAUSING mirroring for topics {}.", topicPartitions);
+                replicaManager.mirrorFetcherManager().removeFetcherForPartitions(CollectionConverters.asScala(topicPartitions));
+                topicPartitions.forEach(tp ->
+                        transitionTo(mirrorName, Set.of(tp), MirrorPartitionState.PAUSED));
+                break;
+            case PAUSED:
+                LOG.info("PAUSED mirroring for topics {}.", topicPartitions);
+                // topic is still read-only
+                break;
             case STOPPING:
                 LOG.debug("STOPPING for topics {}.", topicPartitions);
-                // 1. remove mirror fetcher for partitions
-                // 2. truncating the log into LSO
-                // 3. register the last mirrored offsets for each partition in internal topic
                 replicaManager.mirrorFetcherManager().removeFetcherForPartitions(CollectionConverters.asScala(topicPartitions));
                 truncateToLastStableOffset(topicPartitions, tp -> updateLastMirroredOffsets(mirrorName, Set.of(tp)));
                 break;
             case STOPPED:
                 LOG.debug("STOPPED for topics {}.", topicPartitions);
-                // topic becomes writable
+                // topic is writable
                 break;
             case FAILED:
                 LOG.debug("FAILED for topics {}.", topicPartitions);

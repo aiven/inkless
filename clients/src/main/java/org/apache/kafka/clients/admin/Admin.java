@@ -1724,6 +1724,18 @@ public interface Admin extends AutoCloseable {
      */
     RemoveTopicsFromMirrorResult removeTopicsFromMirror(Set<String> topics, RemoveTopicsFromMirrorOptions options);
 
+    PauseMirrorTopicsResult pauseMirrorTopics(Set<String> topics, PauseMirrorTopicsOptions options);
+
+    default PauseMirrorTopicsResult pauseMirrorTopics(Set<String> topics) {
+        return pauseMirrorTopics(topics, new PauseMirrorTopicsOptions());
+    }
+
+    ResumeMirrorTopicsResult resumeMirrorTopics(Set<String> topics, ResumeMirrorTopicsOptions options);
+
+    default ResumeMirrorTopicsResult resumeMirrorTopics(Set<String> topics) {
+        return resumeMirrorTopics(topics, new ResumeMirrorTopicsOptions());
+    }
+
     /**
      * Describe cluster mirrors with the default options.
      *
