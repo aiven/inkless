@@ -37,6 +37,7 @@ import org.apache.kafka.common.message.AssignReplicasToDirsRequestData;
 import org.apache.kafka.common.message.AssignReplicasToDirsResponseData;
 import org.apache.kafka.common.message.BrokerHeartbeatRequestData;
 import org.apache.kafka.common.message.BrokerRegistrationRequestData;
+import org.apache.kafka.common.message.BumpLeaderEpochResponseData;
 import org.apache.kafka.common.message.ControllerRegistrationRequestData;
 import org.apache.kafka.common.message.CreateDelegationTokenRequestData;
 import org.apache.kafka.common.message.CreateDelegationTokenResponseData;
@@ -130,6 +131,11 @@ public class MockController implements Controller {
         throw new UnsupportedOperationException();
     }
 
+    public CompletableFuture<BumpLeaderEpochResponseData> bumpLeaderEpoch(
+            ControllerRequestContext context,
+            Map<Uuid, Map<Integer, Integer>> partitionLeaderEpochs) {
+        throw new UnsupportedOperationException();
+    }
 
     public static class Builder {
         private final Map<String, MockTopic> initialTopics = new HashMap<>();

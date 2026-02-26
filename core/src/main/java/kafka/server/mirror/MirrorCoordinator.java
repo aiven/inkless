@@ -139,6 +139,7 @@ public class MirrorCoordinator {
                 // 2. truncating the log into LSO
                 // 3. register the last mirrored offsets for each partition in internal topic
                 replicaManager.mirrorFetcherManager().removeFetcherForPartitions(CollectionConverters.asScala(topicPartitions));
+                mirrorMetadataManager.sendBumpLeaderEpoch(replicaManager.logManager(), topicPartitions);
                 truncateToLastStableOffset(topicPartitions, tp -> updateLastMirroredOffsets(mirrorName, Set.of(tp)));
                 break;
             case STOPPED:

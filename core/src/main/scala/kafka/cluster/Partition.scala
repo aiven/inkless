@@ -793,7 +793,12 @@ class Partition(val topicPartition: TopicPartition,
         // to ensure that these followers can truncate to the right offset, we must cache the new
         // leader epoch and the start offset since it should be larger than any epoch that a follower
         // would try to query.
-        leaderLog.assignEpochStartOffset(partitionState.leaderEpoch, leaderEpochStartOffset)
+
+        // don't update the leader epoch if the partition is a mirrored leader, we'll update it when receiving batches
+        // from source cluster leader
+        if (getMirrorName().isEmpty) {
+          leaderLog.assignEpochStartOffset(partitionState.leaderEpoch, leaderEpochStartOffset)
+        }
 
         // Initialize lastCaughtUpTime of replicas as well as their lastFetchTimeMs and
         // lastFetchLeaderLogEndOffset.

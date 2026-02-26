@@ -437,7 +437,8 @@ public class PartitionChangeBuilder {
     public Optional<ApiMessageAndVersion> build() {
         PartitionChangeRecord record = new PartitionChangeRecord().
             setTopicId(topicId).
-            setPartitionId(partitionId);
+            setPartitionId(partitionId)
+            .setMinLeaderEpoch(minLeaderEpoch);
         completeReassignmentIfNeeded();
 
         maybePopulateTargetElr();

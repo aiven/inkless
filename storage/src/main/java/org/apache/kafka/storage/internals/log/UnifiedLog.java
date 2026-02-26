@@ -1285,8 +1285,6 @@ public class UnifiedLog implements AutoCloseable {
     private void maybeOverrideProducerIdAndLeaderEpoch(MemoryRecords records, boolean isMirrorLeader) {
         if (isMirrorLeader) {
             for (MutableRecordBatch batch : records.batches()) {
-                // Keep using local leader epochs
-                batch.setPartitionLeaderEpoch(latestEpoch().orElse(0));
                 // Mirrored producer IDs occupy the negative space to avoid any conflict
                 batch.setProducerId(-(batch.producerId() + 2));
             }
