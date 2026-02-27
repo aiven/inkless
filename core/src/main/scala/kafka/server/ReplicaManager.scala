@@ -281,6 +281,7 @@ class ReplicaManager(val config: KafkaConfig,
   private val replicaStateChangeLock = new Object
   val replicaFetcherManager = createReplicaFetcherManager(metrics, time, quotaManagers.follower)
   private[server] val replicaAlterLogDirsManager = createReplicaAlterLogDirsManager(quotaManagers.alterLogDirs, brokerTopicStats)
+  private[server] val walUnificationFetcherManager: Option[WalUnificationFetcherManager] = createWalUnificationFetcherManager()
   private val highWatermarkCheckPointThreadStarted = new AtomicBoolean(false)
   @volatile private[server] var highWatermarkCheckpoints: Map[String, OffsetCheckpointFile] = logManager.liveLogDirs.map(dir =>
     (dir.getAbsolutePath, new OffsetCheckpointFile(new File(dir, ReplicaManager.HighWatermarkFilename), logDirFailureChannel))).toMap
@@ -2468,6 +2469,7 @@ class ReplicaManager(val config: KafkaConfig,
       logDirFailureHandler.shutdown()
     replicaFetcherManager.shutdown()
     replicaAlterLogDirsManager.shutdown()
+    walUnificationFetcherManager.foreach(_.shutdown())
     delayedFetchPurgatory.shutdown()
     delayedRemoteFetchPurgatory.shutdown()
     delayedRemoteListOffsetsPurgatory.shutdown()
@@ -2502,6 +2504,18 @@ class ReplicaManager(val config: KafkaConfig,
 
   protected def createReplicaAlterLogDirsManager(quotaManager: ReplicationQuotaManager, brokerTopicStats: BrokerTopicStats) = {
     new ReplicaAlterLogDirsManager(config, this, quotaManager, brokerTopicStats, directoryEventHandler)
+  }
+
+  protected def createWalUnificationFetcherManager(): Option[WalUnificationFetcherManager] = {
+    if (config.disklessTsUnificationEnable && inklessSharedState.isDefined) {
+      val sharedState = inklessSharedState.get
+      val maxBytes = config.replicaFetchResponseMaxBytes
+      val fetchTimeoutMs = config.replicaFetchWaitMaxMs.toLong
+      val helper = new WalUnificationFetchHelper(sharedState, maxBytes, fetchTimeoutMs)
+      Some(new WalUnificationFetcherManager(config, this, helper))
+    } else {
+      None
+    }
   }
 
   private def createReplicaSelector(metrics: Metrics): Option[Plugin[ReplicaSelector]] = {
@@ -2714,6 +2728,7 @@ class ReplicaManager(val config: KafkaConfig,
 
         replicaFetcherManager.shutdownIdleFetcherThreads()
         replicaAlterLogDirsManager.shutdownIdleFetcherThreads()
+        walUnificationFetcherManager.foreach(_.shutdownIdleFetcherThreads())
 
         remoteLogManager.foreach(rlm => rlm.onLeadershipChange((leaderChangedPartitions.toSet: Set[TopicPartitionLog]).asJava, (followerChangedPartitions.toSet: Set[TopicPartitionLog]).asJava, localChanges.topicIds()))
       }
@@ -2820,6 +2835,7 @@ class ReplicaManager(val config: KafkaConfig,
       // Stopping the fetchers must be done first in order to initialize the fetch
       // position correctly.
       replicaFetcherManager.removeFetcherForPartitions(partitionsToStartFetching.keySet)
+      walUnificationFetcherManager.foreach(_.removeFetcherForPartitions(partitionsToStartFetching.keySet.toSet))
       stateChangeLogger.info(s"Stopped fetchers as part of become-follower for ${partitionsToStartFetching.size} partitions")
 
       val listenerName = config.interBrokerListenerName.value
@@ -2846,6 +2862,17 @@ class ReplicaManager(val config: KafkaConfig,
       }
 
       replicaFetcherManager.addFetcherForPartitions(partitionAndOffsets)
+      walUnificationFetcherManager.foreach { m =>
+        val disklessPartitions = partitionAndOffsets.filter { case (tp, _) => _inklessMetadataView.isDisklessTopic(tp.topic()) }
+        if (disklessPartitions.nonEmpty) {
+          val unificationOffsets = disklessPartitions.map { case (tp, state) =>
+            val log = getPartitionOrException(tp).localLogOrException
+            val initOffset = math.max(log.logEndOffset, 0L)
+            tp -> InitialFetchState(state.topicId, m.syntheticBrokerEndPoint, state.currentLeaderEpoch, initOffset)
+          }.toMap
+          m.addFetcherForPartitions(unificationOffsets)
+        }
+      }
       stateChangeLogger.info(s"Started fetchers as part of become-follower for ${partitionsToStartFetching.size} partitions")
 
       partitionsToStartFetching.foreach{ case (topicPartition, partition) =>
