@@ -44,10 +44,6 @@ jobs:
           java-version: 23
 
       - name: Generate JOOQ classes
-        env:
-          # Force Docker daemon API compatibility.
-          TESTCONTAINERS_DOCKER_CLIENT_STRATEGY: "org.testcontainers.dockerclient.EnvironmentAndSystemPropertyClientProviderStrategy"
-          GRADLE_OPTS: "-Dapi.version=1.44 -Ddocker.api.version=1.44"
         run: ./gradlew :storage:inkless:generateJooqClasses
 
       - name: Verify JOOQ classes are up-to-date

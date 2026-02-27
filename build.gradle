@@ -2482,6 +2482,12 @@ project(':storage:inkless') {
     jooqCodegen libs.postgresql
   }
 
+  // Needed for Docker compatibility when generating classes using jooq
+  System.setProperty("api.version", "1.44")
+  System.setProperty("docker.api.version", "1.44")
+  System.setProperty("docker.client.strategy",
+    "org.testcontainers.dockerclient.EnvironmentAndSystemPropertyClientProviderStrategy")
+
   task processMessages(type:JavaExec) {
     mainClass = "org.apache.kafka.message.MessageGenerator"
     classpath = configurations.generator
