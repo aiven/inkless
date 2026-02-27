@@ -173,7 +173,7 @@ public class MirrorCoordinator {
                             if (ex != null) {
                                 // TODO: a new component will handle state transitions from a shared queue, so retry means put back in the queue
                                 LOG.error("Failed to update partition state for {}: {}, retrying", tp, ex.getMessage());
-                                scheduler.scheduleOnce("retry-mirror-state-update", () -> updateMirrorPartitionState(mirrorName, tp, newState), 100);
+                                scheduler.scheduleOnce("MirrorStateUpdateRetry", () -> updateMirrorPartitionState(mirrorName, tp, newState), 100);
                             } else {
                                 // successfully writes data into internal log
                                 optTp.ifPresent(tp1 -> handleStateTransition(mirrorName, Set.of(tp1), newState));
@@ -342,10 +342,10 @@ public class MirrorCoordinator {
 
         // periodically query source cluster to get the metadata
         long metadataRefreshIntervalMs = brokerConfig.mirrorConfig().metadataRefreshIntervalMs();
-        scheduler.schedule("mirror-metadata-refresh",
+        scheduler.schedule("MirrorMetadataRefresh",
                 () -> {
-                    mirrorMetadataManager.syncTopicMetadataFromSourceClusters();
-                    mirrorMetadataManager.syncMirrorMetadataFromSourceClusters();
+                    mirrorMetadataManager.syncTopicMetadata();
+                    mirrorMetadataManager.syncMirrorMetadata();
                 },
                 metadataRefreshIntervalMs,
                 metadataRefreshIntervalMs
@@ -356,7 +356,7 @@ public class MirrorCoordinator {
 
     // Schedules truncation to align replicas with last mirrored offsets before resuming.
     private void scheduleTruncation(String mirrorName, Set<TopicPartition> topicPartitions) {
-        scheduler.scheduleOnce("last-mirrored-offset-truncation",
+        scheduler.scheduleOnce("LastMirroredOffsetTruncation",
             () -> mirrorMetadataManager.truncateToLastMirroredOffsets(replicaManager, mirrorName, topicPartitions,
                     partition -> transitionTo(mirrorName, Set.of(partition), MirrorPartitionState.MIRRORING)));
     }
@@ -586,16 +586,15 @@ public class MirrorCoordinator {
         });
     }
 
-    /** Loads mirror metadata from the internal topic on leadership election. */
+    /** Loads metadata from __mirror_state on leadership election. */
     public void onElection(
             int partitionIndex,
             int partitionLeaderEpoch
     ) {
-        // load the data from the internal topic
         loadMirrorMetadata(new TopicPartition(Topic.MIRROR_STATE_TOPIC_NAME, partitionIndex));
     }
 
-    /** Clears cached mirror metadata on leadership resignation. */
+    /** Clears cached metadata on leadership resignation. */
     public void onResignation(
             int partitionIndex,
             OptionalInt partitionLeaderEpoch

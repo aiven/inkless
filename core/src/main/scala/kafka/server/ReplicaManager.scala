@@ -2587,16 +2587,6 @@ class ReplicaManager(val config: KafkaConfig,
    * a read-only leader for mirrored partitions. Read-only leaders replicate data from a
    * source cluster partition rather than accepting local writes.
    *
-   * The method performs the following steps:
-   * 1. Stops any existing fetchers for these partitions to ensure clean state
-   * 2. Sets the mirrorName on each partition for epoch metadata tracking
-   * 3. Queries the mirror metadata manager for the current source cluster leader endpoint
-   * 4. Creates InitialFetchState with source leader info and current log end offset
-   * 5. Starts new MirrorFetcherThreads that will fetch from the source cluster
-   *
-   * The fetch position is initialized to the local log end offset, allowing the mirror
-   * fetcher to continue from where it left off (or start from beginning if log is empty).
-   *
    * TODO: we should handle the error cases like in applyLocalFollowersDelta
    *
    * @param mirrorLeaders Map of partitions to their metadata for partitions that became
@@ -2613,7 +2603,7 @@ class ReplicaManager(val config: KafkaConfig,
         case HostedPartition.Online(partition) =>
           try {
             if (mirrorName != null && !mirrorName.isEmpty) {
-              // Get the source partition leader from mirror metadata manager
+              // Get the source partition leader
               val sourceLeader = mirrorMetadataManager.get.resolveSourceLeader(mirrorName, tp)
               val leaderEndpoint = new BrokerEndPoint(sourceLeader.id(), sourceLeader.host(), sourceLeader.port())
 

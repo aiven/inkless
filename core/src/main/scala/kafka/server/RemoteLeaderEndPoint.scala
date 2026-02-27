@@ -61,7 +61,7 @@ import scala.collection.mutable
  * @param quota Replication quota for throttling fetches
  * @param metadataVersionSupplier Provides the current metadata version, determines fetch request version
  * @param brokerEpochSupplier Provides the current broker epoch for fencing
- * @param isCrossClusterMirror Whether we are doing cross-cluster mirroring
+ * @param isClusterMirror Whether we are doing cross-cluster mirroring
  */
 class RemoteLeaderEndPoint(logPrefix: String,
                            blockingSender: BlockingSend,
@@ -71,7 +71,7 @@ class RemoteLeaderEndPoint(logPrefix: String,
                            quota: ReplicaQuota,
                            metadataVersionSupplier: () => MetadataVersion,
                            brokerEpochSupplier: () => Long,
-                           isCrossClusterMirror: Boolean = false) extends LeaderEndPoint with Logging {
+                           isClusterMirror: Boolean = false) extends LeaderEndPoint with Logging {
 
   this.logIdent = logPrefix
 
@@ -240,7 +240,7 @@ class RemoteLeaderEndPoint(logPrefix: String,
         metadataVersion.fetchRequestVersion
       }
       // Use different fetch request types based on whether we're doing cross-cluster mirroring.
-      val requestBuilder = if (isCrossClusterMirror) {
+      val requestBuilder = if (isClusterMirror) {
         // Cross-cluster mirroring (MirrorFetcherThread): Use consumer fetch to skip ISR logic on source cluster.
         FetchRequest.Builder.forConsumer(version, maxWait, minBytes, fetchData.toSend).isolationLevel(IsolationLevel.READ_COMMITTED)
       } else {
