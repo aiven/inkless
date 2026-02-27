@@ -27,11 +27,10 @@ import kafka.cluster.Partition
 import kafka.log.LogManager
 import kafka.server.HostedPartition.Online
 import kafka.server.QuotaFactory.QuotaManagers
-import kafka.server.ReplicaManager.{AtMinIsrPartitionCountMetricName, FailedIsrUpdatesPerSecMetricName, IsrExpandsPerSecMetricName, IsrShrinksPerSecMetricName, LeaderCountMetricName, OfflineReplicaCountMetricName, PartitionCountMetricName, PartitionsWithLateTransactionsCountMetricName, ProducerIdCountMetricName, ReassigningPartitionsMetricName, UnderMinIsrPartitionCountMetricName, UnderReplicatedPartitionsMetricName, createLogReadResult, isListOffsetsTimestampUnsupported}
+import kafka.server.ReplicaManager._
 import kafka.server.metadata.{InklessMetadataView, KRaftMetadataCache}
 import kafka.server.share.DelayedShareFetch
 import kafka.utils._
-import org.apache.kafka.common.{IsolationLevel, Node, TopicIdPartition, TopicPartition, Uuid}
 import org.apache.kafka.common.errors._
 import org.apache.kafka.common.internals.{Plugin, Topic}
 import org.apache.kafka.common.message.DeleteRecordsResponseData.DeleteRecordsPartitionResult
@@ -52,20 +51,20 @@ import org.apache.kafka.common.requests.FetchRequest.PartitionData
 import org.apache.kafka.common.requests.ProduceResponse.PartitionResponse
 import org.apache.kafka.common.requests._
 import org.apache.kafka.common.utils.{Exit, Time, Utils}
+import org.apache.kafka.common._
 import org.apache.kafka.coordinator.transaction.{AddPartitionsToTxnConfig, TransactionLogConfig}
 import org.apache.kafka.image.{LocalReplicaChanges, MetadataImage, TopicsDelta}
 import org.apache.kafka.logger.StateChangeLogger
-import org.apache.kafka.metadata.LeaderAndIsr
 import org.apache.kafka.metadata.LeaderConstants.NO_LEADER
-import org.apache.kafka.metadata.MetadataCache
+import org.apache.kafka.metadata.{LeaderAndIsr, MetadataCache}
 import org.apache.kafka.server.common.{DirectoryEventHandler, RequestLocal, StopPartition, TransactionVersion}
-import org.apache.kafka.server.log.remote.TopicPartitionLog
 import org.apache.kafka.server.config.ReplicationConfigs
+import org.apache.kafka.server.log.remote.TopicPartitionLog
 import org.apache.kafka.server.log.remote.storage.RemoteLogManager
 import org.apache.kafka.server.metrics.KafkaMetricsGroup
 import org.apache.kafka.server.network.BrokerEndPoint
 import org.apache.kafka.server.partition.PartitionListener
-import org.apache.kafka.server.purgatory.{DelayedDeleteRecords, DelayedOperationPurgatory, DelayedRemoteFetch, DelayedRemoteListOffsets, DeleteRecordsPartitionStatus, ListOffsetsPartitionStatus, TopicPartitionOperationKey}
+import org.apache.kafka.server.purgatory._
 import org.apache.kafka.server.share.fetch.{DelayedShareFetchKey, DelayedShareFetchPartitionKey}
 import org.apache.kafka.server.storage.log.{FetchParams, FetchPartitionData}
 import org.apache.kafka.server.transaction.AddPartitionsToTxnManager
@@ -74,7 +73,7 @@ import org.apache.kafka.server.util.timer.{SystemTimer, TimerTask}
 import org.apache.kafka.server.util.{Scheduler, ShutdownableThread}
 import org.apache.kafka.server.{ActionQueue, DelayedActionQueue, common}
 import org.apache.kafka.storage.internals.checkpoint.{LazyOffsetCheckpoints, OffsetCheckpointFile, OffsetCheckpoints}
-import org.apache.kafka.storage.internals.log.{AppendOrigin, AsyncOffsetReadFutureHolder, FetchDataInfo, FetchPartitionStatus, LeaderHwChange, LogAppendInfo, LogConfig, LogDirFailureChannel, LogOffsetMetadata, LogReadInfo, LogReadResult, OffsetResultHolder, RecordValidationException, RemoteLogReadResult, RemoteStorageFetchInfo, UnifiedLog, VerificationGuard}
+import org.apache.kafka.storage.internals.log._
 import org.apache.kafka.storage.log.metrics.BrokerTopicStats
 
 import java.io.File
@@ -82,10 +81,10 @@ import java.lang.{Long => JLong}
 import java.nio.file.{Files, Paths}
 import java.util
 import java.util.concurrent.atomic.AtomicBoolean
-import java.util.concurrent.{CompletableFuture, ConcurrentHashMap, Future, RejectedExecutionException, TimeUnit}
-import java.util.{Collections, Optional, OptionalInt, OptionalLong}
+import java.util.concurrent._
 import java.util.function.Consumer
 import java.util.stream.Collectors
+import java.util.{Collections, Optional, OptionalInt, OptionalLong}
 import scala.collection.{Map, Seq, Set, immutable, mutable}
 import scala.jdk.CollectionConverters._
 import scala.jdk.OptionConverters.RichOptional
@@ -2751,7 +2750,18 @@ class ReplicaManager(val config: KafkaConfig,
       "local leaders.")
     replicaFetcherManager.removeFetcherForPartitions(localLeaders.keySet)
     localLeaders.foreachEntry { (tp, info) =>
-      if (!_inklessMetadataView.isDisklessTopic(tp.topic()))
+      if (_inklessMetadataView.isDisklessTopic(tp.topic)) {
+        walUnificationFetcherManager.foreach { m =>
+          getOrCreatePartition(tp, delta, info.topicId).foreach { case (partition, _) =>
+            val  partitionAssignedDirectoryId = directoryIds.find(_._1.topicPartition() == tp).map(_._2)
+            partition.createLogIfNotExists(isNew = true, isFutureReplica = false, offsetCheckpoints = offsetCheckpoints, topicId = partition.topicId, targetLogDirectoryId = partitionAssignedDirectoryId)
+            partition.log.foreach { log =>
+              val initOffset = math.max(log.logEndOffset, 0L)
+              m.addFetcherForPartitions(tp, InitialFetchState(partition.topicId, m.syntheticBrokerEndPoint, partition.getLeaderEpoch, initOffset))
+            }
+          }
+        }
+      } else {
         getOrCreatePartition(tp, delta, info.topicId).foreach { case (partition, isNew) =>
           try {
             val  partitionAssignedDirectoryId = directoryIds.find(_._1.topicPartition() == tp).map(_._2)
@@ -2769,6 +2779,7 @@ class ReplicaManager(val config: KafkaConfig,
               markPartitionOffline(tp)
           }
         }
+      }
     }
   }
 
@@ -2862,17 +2873,6 @@ class ReplicaManager(val config: KafkaConfig,
       }
 
       replicaFetcherManager.addFetcherForPartitions(partitionAndOffsets)
-      walUnificationFetcherManager.foreach { m =>
-        val disklessPartitions = partitionAndOffsets.filter { case (tp, _) => _inklessMetadataView.isDisklessTopic(tp.topic()) }
-        if (disklessPartitions.nonEmpty) {
-          val unificationOffsets = disklessPartitions.map { case (tp, state) =>
-            val log = getPartitionOrException(tp).localLogOrException
-            val initOffset = math.max(log.logEndOffset, 0L)
-            tp -> InitialFetchState(state.topicId, m.syntheticBrokerEndPoint, state.currentLeaderEpoch, initOffset)
-          }.toMap
-          m.addFetcherForPartitions(unificationOffsets)
-        }
-      }
       stateChangeLogger.info(s"Started fetchers as part of become-follower for ${partitionsToStartFetching.size} partitions")
 
       partitionsToStartFetching.foreach{ case (topicPartition, partition) =>

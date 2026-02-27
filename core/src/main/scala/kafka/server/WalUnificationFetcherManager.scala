@@ -51,27 +51,24 @@ class WalUnificationFetcherManager(
     Utils.abs(31 * topicPartition.topic.hashCode() + topicPartition.partition) % numFetchers
   }
 
-  def addFetcherForPartitions(partitionAndOffsets: Map[TopicPartition, InitialFetchState]): Unit = {
-    if (partitionAndOffsets.isEmpty) return
+  def addFetcherForPartitions(tp: TopicPartition, fetchState: InitialFetchState): Unit = {
     lock.synchronized {
-      val byFetcherId = partitionAndOffsets.groupBy { case (tp, _) => getFetcherId(tp) }
-      byFetcherId.foreach { case (fetcherId, initialFetchStates) =>
-        val thread = fetcherThreadMap.getOrElseUpdate(fetcherId, {
-          val name = s"WalUnificationFetcherThread-$fetcherId"
-          val t = new WalUnificationFetcherThread(
-            name,
-            fetcherId,
-            walFetchHelper,
-            brokerConfig,
-            failedPartitions,
-            replicaMgr
-          )
-          t.start()
-          t
-        })
-        thread.addPartitions(initialFetchStates)
-      }
-      info(s"Added WAL unification fetcher for partitions $partitionAndOffsets")
+      val fetcherId = getFetcherId(tp)
+      val thread = fetcherThreadMap.getOrElseUpdate(fetcherId, {
+        val name = s"WalUnificationFetcherThread-$fetcherId"
+        val t = new WalUnificationFetcherThread(
+          name,
+          fetcherId,
+          walFetchHelper,
+          brokerConfig,
+          failedPartitions,
+          replicaMgr
+        )
+        t.start()
+        t
+      })
+      thread.addPartitions(Map(tp -> fetchState))
+      info(s"Added WAL unification fetcher for partition $tp")
     }
   }
 
