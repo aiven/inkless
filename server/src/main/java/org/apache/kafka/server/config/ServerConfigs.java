@@ -16,16 +16,17 @@
  */
 package org.apache.kafka.server.config;
 
-import java.util.HashSet;
-import java.util.List;
 import org.apache.kafka.clients.CommonClientConfigs;
-import org.apache.kafka.common.config.ConfigException;
 import org.apache.kafka.common.config.ConfigDef;
+import org.apache.kafka.common.config.ConfigException;
 import org.apache.kafka.common.config.TopicConfig;
 import org.apache.kafka.common.record.CompressionType;
 import org.apache.kafka.server.authorizer.Authorizer;
 import org.apache.kafka.server.record.BrokerCompressionType;
 import org.apache.kafka.storage.internals.log.LogConfig;
+
+import java.util.HashSet;
+import java.util.List;
 
 import static org.apache.kafka.common.config.ConfigDef.Importance.HIGH;
 import static org.apache.kafka.common.config.ConfigDef.Importance.LOW;
