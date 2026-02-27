@@ -368,6 +368,21 @@ public class DefaultRecordBatch extends AbstractRecordBatch implements MutableRe
     }
 
     @Override
+    public void setOffsets(long baseOffset, long lastOffset) {
+        if (lastOffset < baseOffset) {
+            throw new IllegalArgumentException("lastOffset must be >= baseOffset, got baseOffset=" + baseOffset + ", lastOffset=" + lastOffset);
+        }
+        int delta = (int) (lastOffset - baseOffset);
+        if (delta != lastOffset - baseOffset) {
+            throw new IllegalArgumentException("lastOffset - baseOffset must fit in int, got " + (lastOffset - baseOffset));
+        }
+        buffer.putLong(BASE_OFFSET_OFFSET, baseOffset);
+        buffer.putInt(LAST_OFFSET_DELTA_OFFSET, delta);
+        long crc = computeChecksum();
+        ByteUtils.writeUnsignedInt(buffer, CRC_OFFSET, crc);
+    }
+
+    @Override
     public void setMaxTimestamp(TimestampType timestampType, long maxTimestamp) {
         long currentMaxTimestamp = maxTimestamp();
         // We don't need to recompute crc if the timestamp is not updated.

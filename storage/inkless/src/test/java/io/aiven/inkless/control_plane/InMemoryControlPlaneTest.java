@@ -17,7 +17,18 @@
  */
 package io.aiven.inkless.control_plane;
 
+import org.apache.kafka.common.record.TimestampType;
+
+import org.junit.jupiter.api.Nested;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInfo;
+
+import java.util.List;
+import java.util.Set;
+
+import io.aiven.inkless.common.ObjectFormat;
+
+import static org.assertj.core.api.Assertions.assertThat;
 
 
 class InMemoryControlPlaneTest extends AbstractControlPlaneTest {
@@ -29,5 +40,81 @@ class InMemoryControlPlaneTest extends AbstractControlPlaneTest {
     @Override
     protected void tearDownControlPlane() {
         // no-op
+    }
+
+    @Nested
+    class Consolidation {
+        @Test
+        void getWalFilesEligibleForConsolidationDeletionEmptyWhenNoConsolidatedOffset() {
+            controlPlane.createTopicAndPartitions(Set.of(
+                new CreateTopicAndPartitionsRequest(EXISTING_TOPIC_1_ID, EXISTING_TOPIC_1, EXISTING_TOPIC_1_PARTITIONS)
+            ));
+            controlPlane.commitFile(
+                "wal1",
+                ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT,
+                BROKER_ID,
+                FILE_SIZE,
+                List.of(CommitBatchRequest.of(0, EXISTING_TOPIC_1_ID_PARTITION_0, 0, 100, 0, 10, 1000, TimestampType.CREATE_TIME))
+            );
+            assertThat(controlPlane.getWalFilesEligibleForConsolidationDeletion()).isEmpty();
+        }
+
+        @Test
+        void getWalFilesEligibleForConsolidationDeletionReturnsFileAfterConsolidatedOffsetUpdated() {
+            controlPlane.createTopicAndPartitions(Set.of(
+                new CreateTopicAndPartitionsRequest(EXISTING_TOPIC_1_ID, EXISTING_TOPIC_1, EXISTING_TOPIC_1_PARTITIONS)
+            ));
+            controlPlane.commitFile(
+                "wal1",
+                ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT,
+                BROKER_ID,
+                FILE_SIZE,
+                List.of(CommitBatchRequest.of(0, EXISTING_TOPIC_1_ID_PARTITION_0, 0, 100, 0, 10, 1000, TimestampType.CREATE_TIME))
+            );
+            controlPlane.updateConsolidatedTieredEndOffset(EXISTING_TOPIC_1_ID, 0, 10);
+            assertThat(controlPlane.getWalFilesEligibleForConsolidationDeletion())
+                .extracting(WalFileEligibleForDeletion::objectKey)
+                .containsExactlyInAnyOrder("wal1");
+        }
+
+        @Test
+        void markWalFilesEligibleForConsolidationDeletionMarksFilesAndTheyAppearInGetFilesToDelete() {
+            controlPlane.createTopicAndPartitions(Set.of(
+                new CreateTopicAndPartitionsRequest(EXISTING_TOPIC_1_ID, EXISTING_TOPIC_1, EXISTING_TOPIC_1_PARTITIONS)
+            ));
+            controlPlane.commitFile(
+                "wal1",
+                ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT,
+                BROKER_ID,
+                FILE_SIZE,
+                List.of(CommitBatchRequest.of(0, EXISTING_TOPIC_1_ID_PARTITION_0, 0, 100, 0, 10, 1000, TimestampType.CREATE_TIME))
+            );
+            controlPlane.updateConsolidatedTieredEndOffset(EXISTING_TOPIC_1_ID, 0, 10);
+            int marked = controlPlane.markWalFilesEligibleForConsolidationDeletion();
+            assertThat(marked).isEqualTo(1);
+            assertThat(controlPlane.getFilesToDelete())
+                .extracting(FileToDelete::objectKey)
+                .containsExactlyInAnyOrder("wal1");
+        }
+
+        @Test
+        void updateConsolidatedTieredEndOffsetOnlyIncreases() {
+            controlPlane.createTopicAndPartitions(Set.of(
+                new CreateTopicAndPartitionsRequest(EXISTING_TOPIC_1_ID, EXISTING_TOPIC_1, EXISTING_TOPIC_1_PARTITIONS)
+            ));
+            controlPlane.updateConsolidatedTieredEndOffset(EXISTING_TOPIC_1_ID, 0, 100);
+            controlPlane.updateConsolidatedTieredEndOffset(EXISTING_TOPIC_1_ID, 0, 50);
+            controlPlane.commitFile(
+                "wal1",
+                ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT,
+                BROKER_ID,
+                FILE_SIZE,
+                List.of(CommitBatchRequest.of(0, EXISTING_TOPIC_1_ID_PARTITION_0, 0, 100, 0, 10, 1000, TimestampType.CREATE_TIME))
+            );
+            controlPlane.updateConsolidatedTieredEndOffset(EXISTING_TOPIC_1_ID, 0, 10);
+            assertThat(controlPlane.getWalFilesEligibleForConsolidationDeletion())
+                .extracting(WalFileEligibleForDeletion::objectKey)
+                .containsExactlyInAnyOrder("wal1");
+        }
     }
 }

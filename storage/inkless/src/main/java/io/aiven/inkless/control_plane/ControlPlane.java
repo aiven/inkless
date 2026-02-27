@@ -18,6 +18,7 @@
 package io.aiven.inkless.control_plane;
 
 import org.apache.kafka.common.Configurable;
+import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.utils.Time;
 
@@ -25,6 +26,7 @@ import java.io.Closeable;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.InvocationTargetException;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 import io.aiven.inkless.common.ObjectFormat;
@@ -93,6 +95,33 @@ public interface ControlPlane extends Closeable, Configurable {
     }
 
     boolean isSafeToDeleteFile(String objectKeyPath);
+
+    /**
+     * Update the consolidated tiered end offset for a partition after a segment has been copied to tiered storage.
+     * Only increases the stored value; idempotent.
+     */
+    void updateConsolidatedTieredEndOffset(Uuid topicId, int partition, long endOffset);
+
+    /**
+     * Bulk update of consolidated tiered end offsets.
+     */
+    default void updateConsolidatedTieredEndOffsets(Map<TopicIdPartition, Long> offsets) {
+        for (Map.Entry<TopicIdPartition, Long> e : offsets.entrySet()) {
+            updateConsolidatedTieredEndOffset(e.getKey().topicId(), e.getKey().partition(), e.getValue());
+        }
+    }
+
+    /**
+     * Return WAL files (produce, WRITE_AHEAD_MULTI_SEGMENT) that are fully covered by consolidated tiered segments.
+     * Does not mark them for deletion; use {@link #markWalFilesEligibleForConsolidationDeletion()} for that.
+     */
+    List<WalFileEligibleForDeletion> getWalFilesEligibleForConsolidationDeletion();
+
+    /**
+     * Mark WAL files eligible for consolidation deletion (set state = 'deleting').
+     * Returns the number of files marked.
+     */
+    int markWalFilesEligibleForConsolidationDeletion();
 
     // used for testing purposes only
     List<GetLogInfoResponse> getLogInfo(List<GetLogInfoRequest> requests);

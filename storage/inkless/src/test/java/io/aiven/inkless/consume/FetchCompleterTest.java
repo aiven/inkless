@@ -191,6 +191,48 @@ public class FetchCompleterTest {
         assertThat(data.highWatermark).isEqualTo(highWatermark);
     }
 
+    /**
+     * Verifies that base and last offset in the returned records come from the BatchMetadata (canonical offsets
+     * from the batches table), not from the raw batch bytes. Raw bytes may contain incorrect offsets; the fetcher
+     * must overlay the authoritative offsets from the control plane.
+     */
+    @Test
+    public void testFetchUsesCanonicalOffsetsFromBatchesTable() {
+        long rawBaseOffset = 100L;
+        MemoryRecords records = MemoryRecords.withRecords(rawBaseOffset, Compression.NONE, new SimpleRecord("key".getBytes(), "value".getBytes()));
+        long canonicalBaseOffset = 10L;
+        long canonicalLastOffset = 10L;
+
+        Map<TopicIdPartition, FetchRequest.PartitionData> fetchInfos = Map.of(
+            partition0, new FetchRequest.PartitionData(topicId, 0, 0, 1000, Optional.empty())
+        );
+        Map<TopicIdPartition, FindBatchResponse> coordinates = Map.of(
+            partition0, FindBatchResponse.success(List.of(
+                new BatchInfo(1L, OBJECT_KEY_A.value(), BatchMetadata.of(partition0, 0, records.sizeInBytes(),
+                    canonicalBaseOffset, canonicalLastOffset, 10L, 20L, TimestampType.CREATE_TIME))
+            ), 0, 11)
+        );
+        List<FileExtentResult> files = List.of(
+            new FileExtentResult.Success(OBJECT_KEY_A, new ByteRange(0, records.sizeInBytes()),
+                FileFetchJob.createFileExtent(OBJECT_KEY_A, new ByteRange(0, records.sizeInBytes()), records.buffer()))
+        );
+        FetchCompleter job = new FetchCompleter(
+            new MockTime(),
+            OBJECT_KEY_CREATOR,
+            fetchInfos,
+            coordinates,
+            files,
+            durationMs -> {}
+        );
+        Map<TopicIdPartition, FetchPartitionData> result = job.get();
+        FetchPartitionData data = result.get(partition0);
+        assertThat(data.error).isEqualTo(Errors.NONE);
+        var batch = data.records.batches().iterator().next();
+        assertThat(batch).isNotNull();
+        assertThat(batch.baseOffset()).isEqualTo(canonicalBaseOffset);
+        assertThat(batch.lastOffset()).isEqualTo(canonicalLastOffset);
+    }
+
     @Test
     public void testFetchMultipleFiles() {
         MemoryRecords records = MemoryRecords.withRecords(0L, Compression.NONE, new SimpleRecord((byte[]) null));

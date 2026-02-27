@@ -47,6 +47,9 @@ public class PostgresControlPlaneMetrics implements Closeable {
     private final QueryMetrics releaseFileMergeWorkItemMetrics = new QueryMetrics("ReleaseFileMergeWorkItem");
     private final QueryMetrics safeDeleteFileCheckMetrics = new QueryMetrics("SafeDeleteFileCheck");
     private final QueryMetrics getLogInfoMetrics = new QueryMetrics("GetLogInfo");
+    private final QueryMetrics updateConsolidatedTieredEndOffsetMetrics = new QueryMetrics("UpdateConsolidatedTieredEndOffset");
+    private final QueryMetrics getWalFilesEligibleForConsolidationDeletionMetrics = new QueryMetrics("GetWalFilesEligibleForConsolidationDeletion");
+    private final QueryMetrics markWalFilesEligibleForConsolidationDeletionMetrics = new QueryMetrics("MarkWalFilesEligibleForConsolidationDeletion");
 
     public PostgresControlPlaneMetrics(Time time) {
         this.time = Objects.requireNonNull(time, "time cannot be null");
@@ -112,6 +115,18 @@ public class PostgresControlPlaneMetrics implements Closeable {
         getLogInfoMetrics.record(duration);
     }
 
+    public void onUpdateConsolidatedTieredEndOffsetCompleted(Long duration) {
+        updateConsolidatedTieredEndOffsetMetrics.record(duration);
+    }
+
+    public void onGetWalFilesEligibleForConsolidationDeletionCompleted(Long duration) {
+        getWalFilesEligibleForConsolidationDeletionMetrics.record(duration);
+    }
+
+    public void onMarkWalFilesEligibleForConsolidationDeletionCompleted(Long duration) {
+        markWalFilesEligibleForConsolidationDeletionMetrics.record(duration);
+    }
+
     @Override
     public void close() {
         findBatchesMetrics.remove();
@@ -129,6 +144,9 @@ public class PostgresControlPlaneMetrics implements Closeable {
         releaseFileMergeWorkItemMetrics.remove();
         safeDeleteFileCheckMetrics.remove();
         getLogInfoMetrics.remove();
+        updateConsolidatedTieredEndOffsetMetrics.remove();
+        getWalFilesEligibleForConsolidationDeletionMetrics.remove();
+        markWalFilesEligibleForConsolidationDeletionMetrics.remove();
     }
 
     private class QueryMetrics {

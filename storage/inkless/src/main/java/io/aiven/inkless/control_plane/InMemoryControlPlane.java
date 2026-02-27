@@ -645,6 +645,68 @@ public class InMemoryControlPlane extends AbstractControlPlane {
     }
 
     @Override
+    public synchronized void updateConsolidatedTieredEndOffset(final Uuid topicId, final int partition, final long endOffset) {
+        final TopicIdPartition tidp = findTopicIdPartition(topicId, partition);
+        if (tidp == null) {
+            return;
+        }
+        final LogInfo logInfo = logs.get(tidp);
+        if (logInfo == null) {
+            return;
+        }
+        if (logInfo.consolidatedRemoteLogEndOffset == null || logInfo.consolidatedRemoteLogEndOffset < endOffset) {
+            logInfo.consolidatedRemoteLogEndOffset = endOffset;
+        }
+    }
+
+    @Override
+    public synchronized List<WalFileEligibleForDeletion> getWalFilesEligibleForConsolidationDeletion() {
+        final List<WalFileEligibleForDeletion> result = new ArrayList<>();
+        for (final FileInfo fileInfo : files.values()) {
+            if (fileInfo.fileReason != FileReason.PRODUCE
+                || fileInfo.format != ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT
+                || fileInfo.fileState != FileState.UPLOADED
+                || fileInfo.batches.isEmpty()) {
+                continue;
+            }
+            final Map<TopicIdPartition, Long> maxLastOffsetByPartition = new HashMap<>();
+            for (final BatchInfo batch : fileInfo.batches) {
+                final TopicIdPartition tidp = batch.metadata().topicIdPartition();
+                maxLastOffsetByPartition.merge(tidp, batch.metadata().lastOffset(), Math::max);
+            }
+            boolean fullyCovered = true;
+            for (final Map.Entry<TopicIdPartition, Long> e : maxLastOffsetByPartition.entrySet()) {
+                final LogInfo logInfo = logs.get(e.getKey());
+                if (logInfo == null || logInfo.consolidatedRemoteLogEndOffset == null
+                    || e.getValue() > logInfo.consolidatedRemoteLogEndOffset) {
+                    fullyCovered = false;
+                    break;
+                }
+            }
+            if (fullyCovered) {
+                result.add(new WalFileEligibleForDeletion(fileInfo.fileId, fileInfo.objectKey));
+            }
+        }
+        return result;
+    }
+
+    @Override
+    public synchronized int markWalFilesEligibleForConsolidationDeletion() {
+        final List<WalFileEligibleForDeletion> eligible = getWalFilesEligibleForConsolidationDeletion();
+        final Instant now = TimeUtils.now(time);
+        for (final WalFileEligibleForDeletion f : eligible) {
+            final FileInfo fileInfo = files.values().stream()
+                .filter(fi -> fi.fileId == f.fileId())
+                .findFirst()
+                .orElse(null);
+            if (fileInfo != null && fileInfo.fileState == FileState.UPLOADED) {
+                fileInfo.markDeleted(now);
+            }
+        }
+        return eligible.size();
+    }
+
+    @Override
     public synchronized List<GetLogInfoResponse> getLogInfo(final List<GetLogInfoRequest> requests) {
         final List<GetLogInfoResponse> result = new ArrayList<>();
         for (final GetLogInfoRequest request : requests) {
@@ -679,6 +741,7 @@ public class InMemoryControlPlane extends AbstractControlPlane {
         long logStartOffset = 0;
         long highWatermark = 0;
         long byteSize = 0;
+        Long consolidatedRemoteLogEndOffset = null;
     }
 
     private static class FileInfo {

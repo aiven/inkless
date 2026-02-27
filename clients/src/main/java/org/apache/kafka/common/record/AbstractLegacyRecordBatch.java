@@ -482,6 +482,11 @@ public abstract class AbstractLegacyRecordBatch extends AbstractRecordBatch impl
         }
 
         @Override
+        public void setOffsets(long baseOffset, long lastOffset) {
+            buffer.putLong(OFFSET_OFFSET, lastOffset);
+        }
+
+        @Override
         public void setMaxTimestamp(TimestampType timestampType, long timestamp) {
             if (record.magic() == RecordBatch.MAGIC_VALUE_V0)
                 throw new UnsupportedOperationException("Cannot set timestamp for a record with magic = 0");

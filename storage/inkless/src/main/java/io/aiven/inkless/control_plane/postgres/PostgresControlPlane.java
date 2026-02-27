@@ -62,6 +62,7 @@ import io.aiven.inkless.control_plane.GetLogInfoResponse;
 import io.aiven.inkless.control_plane.ListOffsetsRequest;
 import io.aiven.inkless.control_plane.ListOffsetsResponse;
 import io.aiven.inkless.control_plane.MergedFileBatch;
+import io.aiven.inkless.control_plane.WalFileEligibleForDeletion;
 
 public class PostgresControlPlane extends AbstractControlPlane {
     private static final org.slf4j.Logger LOGGER = org.slf4j.LoggerFactory.getLogger(PostgresControlPlane.class);
@@ -332,6 +333,30 @@ public class PostgresControlPlane extends AbstractControlPlane {
         } catch (Exception e) {
             throw new ControlPlaneException("Error when checking if safe to delete file " + objectKeyPath, e);
         }
+    }
+
+    @Override
+    public void updateConsolidatedTieredEndOffset(final Uuid topicId, final int partition, final long endOffset) {
+        final UpdateConsolidatedTieredEndOffsetJob job = new UpdateConsolidatedTieredEndOffsetJob(
+            time, writeJooqCtx, topicId, partition, endOffset, pgMetrics::onUpdateConsolidatedTieredEndOffsetCompleted
+        );
+        job.call();
+    }
+
+    @Override
+    public List<WalFileEligibleForDeletion> getWalFilesEligibleForConsolidationDeletion() {
+        final GetWalFilesEligibleForConsolidationDeletionJob job = new GetWalFilesEligibleForConsolidationDeletionJob(
+            time, writeJooqCtx, pgMetrics::onGetWalFilesEligibleForConsolidationDeletionCompleted
+        );
+        return job.call();
+    }
+
+    @Override
+    public int markWalFilesEligibleForConsolidationDeletion() {
+        final MarkWalFilesEligibleForConsolidationDeletionJob job = new MarkWalFilesEligibleForConsolidationDeletionJob(
+            time, writeJooqCtx, pgMetrics::onMarkWalFilesEligibleForConsolidationDeletionCompleted
+        );
+        return job.call();
     }
 
     @Override

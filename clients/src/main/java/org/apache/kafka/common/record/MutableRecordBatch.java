@@ -33,6 +33,15 @@ public interface MutableRecordBatch extends RecordBatch {
     void setLastOffset(long offset);
 
     /**
+     * Set both base and last offset of this batch from canonical metadata (e.g. from the batches table).
+     * Use this when the raw batch bytes may contain incorrect offsets and the authoritative values
+     * are stored elsewhere.
+     * @param baseOffset The canonical base offset
+     * @param lastOffset The canonical last offset (must be &gt;= baseOffset)
+     */
+    void setOffsets(long baseOffset, long lastOffset);
+
+    /**
      * Set the max timestamp for this batch. When using log append time, this effectively overrides the individual
      * timestamps of all the records contained in the batch. To avoid recompression, the record fields are not updated
      * by this method, but clients ignore them if the timestamp time is log append time. Note that baseTimestamp is not
