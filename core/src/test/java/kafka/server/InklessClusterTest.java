@@ -291,6 +291,99 @@ public class InklessClusterTest {
     }
 
     /**
+     * Integration test for WAL unification fetcher when fetch returns multiple batches
+     * (ConcatenatedRecords). Ensures the fetcher thread handles ConcatenatedRecords by
+     * converting to MemoryRecords instead of throwing Unsupported Records type.
+     */
+    @Nested
+    @Testcontainers
+    class WalUnificationConcatenatedRecordsIntegration {
+        private KafkaClusterTestKit unificationCluster;
+
+        @BeforeEach
+        public void setupUnification(final TestInfo testInfo) throws Exception {
+            s3Container.createBucket(testInfo);
+            pgContainer.createDatabase(testInfo);
+
+            final TestKitNodes nodes = new TestKitNodes.Builder()
+                .setCombined(true)
+                .setNumBrokerNodes(1)
+                .setNumControllerNodes(1)
+                .build();
+            unificationCluster = new KafkaClusterTestKit.Builder(nodes)
+                .setConfigProp(GroupCoordinatorConfig.OFFSETS_TOPIC_REPLICATION_FACTOR_CONFIG, "1")
+                .setConfigProp(ServerConfigs.DISKLESS_STORAGE_SYSTEM_ENABLE_CONFIG, "true")
+                .setConfigProp(ServerConfigs.DISKLESS_TS_UNIFICATION_ENABLE_CONFIG, "true")
+                .setConfigProp(InklessConfig.PREFIX + InklessConfig.CONTROL_PLANE_CLASS_CONFIG, PostgresControlPlane.class.getName())
+                .setConfigProp(InklessConfig.PREFIX + InklessConfig.CONTROL_PLANE_PREFIX + PostgresControlPlaneConfig.CONNECTION_STRING_CONFIG, pgContainer.getJdbcUrl())
+                .setConfigProp(InklessConfig.PREFIX + InklessConfig.CONTROL_PLANE_PREFIX + PostgresControlPlaneConfig.USERNAME_CONFIG, PostgreSQLTestContainer.USERNAME)
+                .setConfigProp(InklessConfig.PREFIX + InklessConfig.CONTROL_PLANE_PREFIX + PostgresControlPlaneConfig.PASSWORD_CONFIG, PostgreSQLTestContainer.PASSWORD)
+                .setConfigProp(InklessConfig.PREFIX + InklessConfig.STORAGE_BACKEND_CLASS_CONFIG, S3Storage.class.getName())
+                .setConfigProp(InklessConfig.PREFIX + InklessConfig.STORAGE_PREFIX + S3StorageConfig.S3_BUCKET_NAME_CONFIG, s3Container.getBucketName())
+                .setConfigProp(InklessConfig.PREFIX + InklessConfig.STORAGE_PREFIX + S3StorageConfig.S3_REGION_CONFIG, s3Container.getRegion())
+                .setConfigProp(InklessConfig.PREFIX + InklessConfig.STORAGE_PREFIX + S3StorageConfig.S3_ENDPOINT_URL_CONFIG, s3Container.getEndpoint())
+                .setConfigProp(InklessConfig.PREFIX + InklessConfig.STORAGE_PREFIX + S3StorageConfig.S3_PATH_STYLE_ENABLED_CONFIG, "true")
+                .setConfigProp(InklessConfig.PREFIX + InklessConfig.STORAGE_PREFIX + S3StorageConfig.AWS_ACCESS_KEY_ID_CONFIG, s3Container.getAccessKey())
+                .setConfigProp(InklessConfig.PREFIX + InklessConfig.STORAGE_PREFIX + S3StorageConfig.AWS_SECRET_ACCESS_KEY_CONFIG, s3Container.getSecretKey())
+                .setConfigProp(InklessConfig.PREFIX + InklessConfig.CONSUME_CACHE_BLOCK_BYTES_CONFIG, "16384")
+                .build();
+            unificationCluster.format();
+            unificationCluster.startup();
+            unificationCluster.waitForReadyBrokers();
+        }
+
+        @AfterEach
+        public void teardownUnification() throws Exception {
+            if (unificationCluster != null) {
+                unificationCluster.close();
+            }
+        }
+
+        @Test
+        public void disklessTopicWithUnificationHandlesConcatenatedRecords() throws Exception {
+            Map<String, Object> clientConfigs = new HashMap<>();
+            clientConfigs.put(CommonClientConfigs.BOOTSTRAP_SERVERS_CONFIG, unificationCluster.bootstrapServers());
+            clientConfigs.put(ProducerConfig.LINGER_MS_CONFIG, "100");
+            clientConfigs.put(ProducerConfig.BATCH_SIZE_CONFIG, "1024");
+            clientConfigs.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, ByteArraySerializer.class.getName());
+            clientConfigs.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, ByteArraySerializer.class.getName());
+            clientConfigs.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, ByteArrayDeserializer.class.getName());
+            clientConfigs.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, ByteArrayDeserializer.class.getName());
+            clientConfigs.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, AutoOffsetResetStrategy.EARLIEST.name());
+
+            String topicName = "wal-unification-concat-test";
+            int numRecords = 20;
+
+            try (Admin admin = AdminClient.create(clientConfigs)) {
+                NewTopic topic = new NewTopic(topicName, 1, (short) 1)
+                    .configs(Map.of(TopicConfig.DISKLESS_ENABLE_CONFIG, "true"));
+                admin.createTopics(Collections.singletonList(topic)).all().get(10, TimeUnit.SECONDS);
+            }
+
+            try (Producer<byte[], byte[]> producer = new KafkaProducer<>(clientConfigs)) {
+                for (int i = 0; i < numRecords; i++) {
+                    producer.send(new ProducerRecord<>(topicName, 0, ("key-" + i).getBytes(), ("value-" + i).getBytes()));
+                }
+                producer.flush();
+            }
+
+            Thread.sleep(3000);
+
+            int consumed = 0;
+            try (Consumer<byte[], byte[]> consumer = new KafkaConsumer<>(clientConfigs)) {
+                consumer.assign(Collections.singletonList(new TopicPartition(topicName, 0)));
+                long deadline = System.currentTimeMillis() + 15_000;
+                while (consumed < numRecords && System.currentTimeMillis() < deadline) {
+                    ConsumerRecords<byte[], byte[]> records = consumer.poll(Duration.ofSeconds(2));
+                    consumed += records.count();
+                }
+            }
+            assertTrue(consumed >= numRecords,
+                "Expected at least " + numRecords + " records (unification fetcher should have appended ConcatenatedRecords); got " + consumed);
+        }
+    }
+
+    /**
      * Tests for diskless topics with managed replicas (RF > 1).
      * Uses a 3-broker cluster with rack assignments to verify rack-aware placement.
      */

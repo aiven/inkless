@@ -26,6 +26,7 @@ import org.apache.kafka.common.utils.AbstractIterator;
 import org.apache.kafka.common.utils.FlattenedIterator;
 
 import java.io.IOException;
+import java.nio.ByteBuffer;
 import java.util.List;
 import java.util.Objects;
 
@@ -41,6 +42,25 @@ public class ConcatenatedRecords extends AbstractRecords {
             totalSize += backingRecord.sizeInBytes();
         }
         this.sizeInBytes = totalSize;
+    }
+
+    /**
+     * Copy all backing MemoryRecords into a single ByteBuffer and return as MemoryRecords.
+     * Used by consumers (e.g. WalUnificationFetcherThread) that require MemoryRecords.
+     */
+    public MemoryRecords toMemoryRecords() {
+        if (backingRecords.isEmpty()) {
+            return MemoryRecords.EMPTY;
+        }
+        if (backingRecords.size() == 1) {
+            return backingRecords.get(0);
+        }
+        ByteBuffer buffer = ByteBuffer.allocate(sizeInBytes);
+        for (MemoryRecords records : backingRecords) {
+            buffer.put(records.buffer().duplicate());
+        }
+        buffer.flip();
+        return MemoryRecords.readableRecords(buffer);
     }
 
     @Override

@@ -83,6 +83,31 @@ class ConcatenatedRecordsTest {
     }
 
     @Test
+    void testToMemoryRecordsEmpty() {
+        ConcatenatedRecords records = new ConcatenatedRecords(Collections.emptyList());
+        assertThat(records.toMemoryRecords()).isSameAs(MemoryRecords.EMPTY);
+    }
+
+    @Test
+    void testToMemoryRecordsSingle() {
+        MemoryRecords backing = MemoryRecords.withRecords(0L, Compression.NONE, new SimpleRecord("k".getBytes(), "v".getBytes()));
+        ConcatenatedRecords records = new ConcatenatedRecords(List.of(backing));
+        MemoryRecords result = records.toMemoryRecords();
+        assertThat(result).isSameAs(backing);
+    }
+
+    @Test
+    void testToMemoryRecordsMultiple() {
+        MemoryRecords backing1 = MemoryRecords.withRecords(0L, Compression.NONE, new SimpleRecord("a".getBytes(), "1".getBytes()));
+        MemoryRecords backing2 = MemoryRecords.withRecords(1L, Compression.NONE, new SimpleRecord("b".getBytes(), "2".getBytes()));
+        ConcatenatedRecords records = new ConcatenatedRecords(List.of(backing1, backing2));
+        MemoryRecords result = records.toMemoryRecords();
+        assertThat(result).isNotSameAs(backing1).isNotSameAs(backing2);
+        assertThat(result.sizeInBytes()).isEqualTo(backing1.sizeInBytes() + backing2.sizeInBytes());
+        assertThat(result.batches().iterator().hasNext()).isTrue();
+    }
+
+    @Test
     void testListWithOneBatch() throws IOException {
         MemoryRecords backingRecords = MemoryRecords.withRecords(0L, Compression.NONE, new SimpleRecord((byte[]) null));
         ConcatenatedRecords records = new ConcatenatedRecords(List.of(backingRecords));

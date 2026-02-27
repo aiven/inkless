@@ -139,9 +139,11 @@ class WalUnificationFetcherThread(
                   val buffer = java.nio.ByteBuffer.allocate(r.sizeInBytes())
                   r.readInto(buffer, 0)
                   org.apache.kafka.common.record.MemoryRecords.readableRecords(buffer)
+                case r: io.aiven.inkless.consume.ConcatenatedRecords =>
+                  r.toMemoryRecords()
                 case other =>
                   throw new IllegalStateException(
-                    s"Unsupported Records type from WAL fetch: ${other.getClass.getName}. Expected MemoryRecords or FileRecords.")
+                    s"Unsupported Records type from WAL fetch: ${other.getClass.getName}. Expected MemoryRecords, FileRecords, or ConcatenatedRecords.")
               }
               if (fetchOffset != log.logEndOffset) {
                 throw new IllegalStateException(
